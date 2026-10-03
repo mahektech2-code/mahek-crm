@@ -45,7 +45,7 @@ export async function hrmsRunBulk(screen: string, action: string, ids: string[],
     const ctx = await requireHrmsWrite(screen);
     const handler = hrmsScreenModule(screen)?.bulk?.[action];
     if (!handler) return err("That action is not available.", "not_found");
-    if (!ids.length) return err("Nothing selected.");
+    if (!ids.length) return err("Select at least one row first.");
     const res = await handler(ctx, ids, values);
     if (res.ok) revalidate(screen);
     return res;
@@ -90,7 +90,7 @@ export async function hrmsRunTool(screen: string, tool: string, values: Record<s
   try {
     const ctx = await requireHrmsWrite(screen);
     const handler = hrmsScreenModule(screen)?.tools?.[tool];
-    if (!handler) return err("That is not available.", "not_found");
+    if (!handler) return err("That tool is not available.", "not_found");
     const res = await handler(ctx, values);
     if (res.ok) revalidate(screen);
     return res;

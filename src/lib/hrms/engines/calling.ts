@@ -16,18 +16,44 @@ export type CallingStatus = (typeof CALLING_STATUSES)[number];
 export const NOT_PICKED = "Call Not Pick Up";
 export const ORDER_RECEIVED = "Order Received";
 
+/**
+ * How each stored calling status reads on a screen. The stored words are the
+ * source's and stay as they are in `hrms_calling` — rules and counts compare
+ * against them — so only what a person reads is plain English.
+ */
+export const CALLING_LABEL: Record<CallingStatus, string> = {
+  "Call Not Pick Up": "Did not pick up",
+  "Order Received": "Order received",
+  "No Requirement": "No requirement",
+  "Reminder Call Back": "Asked to call back",
+};
+
+/** A stored status as a person reads it; anything unrecognised is shown as stored. */
+export function callingLabel(status: string | null | undefined): string {
+  const v = String(status ?? "").trim();
+  return (CALLING_LABEL as Record<string, string>)[v] ?? v;
+}
+
+/** What a form sent — a label, or the stored word itself — as the stored status. Unrecognised text is returned trimmed, for `checkCall` to refuse. */
+export function callingStatusFrom(value: string | null | undefined): string {
+  const v = String(value ?? "").trim();
+  const hit = CALLING_STATUSES.find((st) => st === v || CALLING_LABEL[st].toLowerCase() === v.toLowerCase());
+  return hit ?? v;
+}
+
 export type SuggestionCfg = { factor: number; threshold: number };
 export const DEFAULT_SUGGESTION: SuggestionCfg = { factor: 7, threshold: 7 };
 
-export type Suggestion = "Do FollowUp" | "Do Deactivate This Customer";
+export type Suggestion = "Keep following up" | "Consider deactivating";
 
 /**
  * A29/A32: calls − factor × orders ≤ threshold → keep following up, else
  * the calls are not turning into orders and the customer is worth closing.
- * A fixed rule the source called "A.I Suggetion"; labelled "Suggestion" here.
+ * A fixed rule, not a model: the source labelled it an AI suggestion; it is
+ * labelled "Suggestion" here.
  */
 export function suggestion(calls: number, orders: number, cfg: SuggestionCfg = DEFAULT_SUGGESTION): Suggestion {
-  return calls - cfg.factor * orders <= cfg.threshold ? "Do FollowUp" : "Do Deactivate This Customer";
+  return calls - cfg.factor * orders <= cfg.threshold ? "Keep following up" : "Consider deactivating";
 }
 
 /** Orders on the calling desk: rows whose status is Order Received (A29 — the source's typo made this always 0). */
@@ -53,15 +79,15 @@ export function callingTab(
   return "Older";
 }
 
-/** The "Log call" validations, in the source's words. Null when the call may be saved. */
+/** The "Log call" validations. Null when the call may be saved. */
 export function checkCall(
   v: { status: string; second: string; followUp: string },
   today: string,
 ): { field: string; message: string } | null {
-  if (!(CALLING_STATUSES as readonly string[]).includes(v.status)) return { field: "status", message: "Calling status is required" };
+  if (!(CALLING_STATUSES as readonly string[]).includes(v.status)) return { field: "status", message: "Pick how the call went" };
   if (v.status === NOT_PICKED && !(CALLING_STATUSES as readonly string[]).includes(v.second))
-    return { field: "second", message: "2nd calling status is required when the call is not picked up" };
-  if (v.followUp && v.followUp < today) return { field: "followUp", message: "INVALID" };
+    return { field: "second", message: "The customer did not pick up: pick what happens next" };
+  if (v.followUp && v.followUp < today) return { field: "followUp", message: "The follow-up date is in the past. Pick today or a later date" };
   return null;
 }
 

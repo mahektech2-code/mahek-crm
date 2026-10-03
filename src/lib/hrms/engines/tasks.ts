@@ -6,6 +6,7 @@
  * ------------------------------------------------------------------------- */
 
 import { addDaysISO, daysBetweenISO, daysIn, monthOf, tmin, weekdayOf, WEEKDAYS } from "../time";
+import { CHECKLIST_NA } from "../values";
 
 export const FREQUENCIES = ["Daily", "Weekly", "Monthly"] as const;
 export const TASK_CATEGORIES = ["Urgent and Important", "Important", "To-Do Only"] as const;
@@ -36,7 +37,8 @@ export const isUrgentCategory = (category: string | null | undefined) => categor
 /* ----------------------------------------------------------- templates */
 
 /**
- * The template form's rules (spec §13.1), in the source's words. A Daily
+ * The template form's rules (spec §13.1), each with a sentence that says what
+ * to fix. A Daily
  * template with no weekdays picked runs every day — that is what Daily
  * means — while a Weekly one has to say which.
  */
@@ -49,17 +51,17 @@ export function checkTemplate(x: {
   startTime: string | null;
   endTime: string | null;
 }): { field: string; message: string } | null {
-  if (!(FREQUENCIES as readonly string[]).includes(x.frequency)) return { field: "freq", message: "INVALID" };
+  if (!(FREQUENCIES as readonly string[]).includes(x.frequency)) return { field: "freq", message: "Pick daily, weekly or monthly" };
   if (x.frequency === "Monthly") {
-    if (x.category && !(TASK_CATEGORIES as readonly string[]).includes(x.category)) return { field: "category", message: "INVALID" };
-    if (x.dayOfMonth == null || x.dayOfMonth < 1 || x.dayOfMonth > 31) return { field: "dom", message: "INVALID" };
-    if (x.beforeDay != null && x.beforeDay <= x.dayOfMonth) return { field: "before", message: "Before Should be Greater Than Selected Date !" };
-    if (x.beforeDay != null && x.beforeDay > 31) return { field: "before", message: "INVALID" };
+    if (x.category && !(TASK_CATEGORIES as readonly string[]).includes(x.category)) return { field: "category", message: "Pick a category from the list" };
+    if (x.dayOfMonth == null || x.dayOfMonth < 1 || x.dayOfMonth > 31) return { field: "dom", message: "Enter a day of the month from 1 to 31" };
+    if (x.beforeDay != null && x.beforeDay <= x.dayOfMonth) return { field: "before", message: `The complete-before day must be later than day ${x.dayOfMonth}` };
+    if (x.beforeDay != null && x.beforeDay > 31) return { field: "before", message: "Enter a complete-before day from 1 to 31" };
   } else {
-    if (x.weekdays.some((d) => !(WEEKDAYS as readonly string[]).includes(d))) return { field: "weekdays", message: "INVALID" };
+    if (x.weekdays.some((d) => !(WEEKDAYS as readonly string[]).includes(d))) return { field: "weekdays", message: "Pick weekdays from the list" };
     if (x.frequency === "Weekly" && !x.weekdays.length) return { field: "weekdays", message: "Pick the weekdays this task runs on" };
   }
-  if (x.startTime && x.endTime && (tmin(x.endTime) ?? 0) <= (tmin(x.startTime) ?? 0)) return { field: "end", message: "INVALID" };
+  if (x.startTime && x.endTime && (tmin(x.endTime) ?? 0) <= (tmin(x.startTime) ?? 0)) return { field: "end", message: "The end time must be after the start time" };
   return null;
 }
 
@@ -131,7 +133,7 @@ export function todoExpired(tillDate: string | null, today: string): boolean {
 }
 
 export function expiredMessage(task: string, tillDate: string): string {
-  return `${task} Task of ${taskDate(tillDate)} Date Expired`;
+  return `“${task}” was due by ${taskDate(tillDate)} and has expired, so it can no longer be marked`;
 }
 
 /**
@@ -179,13 +181,13 @@ function numbered(items: string[]): string {
 }
 
 /**
- * The Task EOD message (spec §13.5), in the source's format. The overdue list
+ * The Task EOD message (spec §13.5), in the source's layout. The overdue list
  * is the to-dos given to this person, still open, for a date up to today in
  * this month — oldest first.
  */
 export function taskEodMessage(x: { name: string; employeeId: string; today: string; checklist: EodChecklist[]; todos: EodTodo[] }): string {
   const done = x.checklist.filter((c) => c.status === "Done").length;
-  const na = x.checklist.filter((c) => c.status === "N/A");
+  const na = x.checklist.filter((c) => c.status === CHECKLIST_NA);
   const pending = x.checklist.filter((c) => checklistOpen(c.status)).length;
   const month = monthOf(x.today);
   const overdue = x.todos
@@ -193,20 +195,20 @@ export function taskEodMessage(x: { name: string; employeeId: string; today: str
     .sort((a, b) => a.forDate.localeCompare(b.forDate));
   const rule = "--------------------------------";
   return [
-    `* 📝 Task EOD - ${x.name}*`,
+    `*📝 Task EOD - ${x.name}*`,
     `📅 *Date:* ${taskDate(x.today)}`,
     rule,
     "📊 *Summary:*",
-    `🔹 *Total Tasks:* ${x.checklist.length}`,
-    `✅ *Total Completed:* ${done}`,
-    `⏳ *Total Pending:* ${pending}`,
-    `🚫 *Total Not Applicable:* ${na.length}`,
+    `🔹 *Total tasks:* ${x.checklist.length}`,
+    `✅ *Completed:* ${done}`,
+    `⏳ *Pending:* ${pending}`,
+    `🚫 *Not applicable:* ${na.length}`,
     rule,
-    "🚫 *Not Applicable Tasks Details:*",
+    "🚫 *Not applicable tasks:*",
     `*Task:* ${numbered(na.map((c) => c.task))}`,
     `*Reason:* ${numbered(na.map((c) => c.naReason ?? c.remark ?? ""))}`,
     rule,
-    "⚠ *Overdue / Pending Todo List:*",
+    "⚠ *Overdue and pending to-dos:*",
     numbered(overdue.map((t) => t.task)),
   ].join("\n");
 }

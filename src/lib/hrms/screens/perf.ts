@@ -29,6 +29,7 @@ import {
 import { addDaysISO, datesBetween, datesOfMonth, daysBetweenISO, fdShort, hm, monLabel, monthOf, prevMonth, weekdayOf } from "../time";
 import { hrmsLink } from "../registry";
 import { personFrom, personOption, scopeFor } from "./attendance";
+import { BUDDY_DONE, CHECKLIST_NA } from "../values";
 
 /* ---------------------------------------------------------------------------
  * Performance (spec §12): the salesman's daily KPI entry, the daily score it
@@ -252,7 +253,7 @@ function periodOf(q: ScreenQuery, defFrom: string, defTo: string): { from: strin
   return { from, to: to < from ? from : to };
 }
 
-/* ------------------------------------------------------------------ KPI KRA */
+/* -------------------------------------- daily sales entries (the KPI) */
 
 const KPI_COLS: ColSpec[] = [
   { k: "date", l: "Date", t: "d" },
@@ -264,8 +265,8 @@ const KPI_COLS: ColSpec[] = [
   { k: "km", l: "Km", t: "n" },
   { k: "amount", l: "Sales", t: "m" },
   { k: "outstanding", l: "Outstanding", t: "m" },
-  { k: "punchIn", l: "In", t: "t" },
-  { k: "punchOut", l: "Out", t: "t" },
+  { k: "punchIn", l: "Check-in", t: "t" },
+  { k: "punchOut", l: "Check-out", t: "t" },
   { k: "onFieldTxt", l: "On field", t: "t" },
   { k: "f", l: "", t: "f" },
 ];
@@ -282,7 +283,7 @@ function kpiPickable(ctx: HrmsContext, people: Person[]): Person[] {
 }
 
 const canTouchKpi = (ctx: HrmsContext, k: Kpi) => kpiWide(ctx) || k.employeeId === ctx.employee?.id;
-const KPI_WHY = "Only the salesman, the sales desk or HR changes a KPI entry";
+const KPI_WHY = "Only the salesman, the sales desk or HR can change this sales entry";
 
 async function kpiForm(ctx: HrmsContext, people: Person[], rec?: Kpi): Promise<FormSpec | undefined> {
   const pick = kpiPickable(ctx, people);
@@ -300,16 +301,16 @@ async function kpiForm(ctx: HrmsContext, people: Person[], rec?: Kpi): Promise<F
     { k: "date", l: "Date", t: "date", req: true, readOnly: !!rec },
     rec
       ? { k: "emp", l: "Salesman", t: "text", readOnly: true }
-      : { k: "emp", l: "Salesman", t: "select", req: true, opts: pick.map(personOption), hint: kpiWide(ctx) ? "Active Sales employees." : undefined },
+      : { k: "emp", l: "Salesman", t: "select", req: true, opts: pick.map(personOption), hint: kpiWide(ctx) ? "Active sales staff." : undefined },
     areas.length ? { k: "area", l: "Area visited", t: "suggest", req: true, opts: areas } : { k: "area", l: "Area visited", t: "text", req: true },
-    { k: "visits", l: "Visits", t: "num", req: true, min: 0, hint: mbos ? `From MBOS · ${mbos} check-in${mbos > 1 ? "s" : ""} today` : undefined },
+    { k: "visits", l: "Visits", t: "num", req: true, min: 0, hint: mbos ? `Filled in from ${mbos} field-app check-in${mbos > 1 ? "s" : ""} today` : undefined },
     { k: "productive", l: "Productive counters", t: "num", req: true, min: 0 },
     { k: "litres", l: "Litre sales", t: "num", req: true, min: 0 },
     { k: "km", l: "Km", t: "num", req: true, min: 0 },
     { k: "amount", l: "Amount of sales (₹)", t: "num", req: true, min: 0 },
     { k: "outstanding", l: "Outstanding (₹)", t: "num", min: 0 },
     { k: "stoppage", l: "Unplanned stop (min)", t: "num", min: 0 },
-    { k: "punch", l: "Punch in / out", t: "text", readOnly: true, hint: "From that day’s attendance." },
+    { k: "punch", l: "Check-in and check-out", t: "text", readOnly: true, hint: "From that day’s attendance." },
     { k: "notes", l: "Meeting notes", t: "area", mic: true },
   ];
   const init: Record<string, string> = rec
@@ -327,13 +328,13 @@ async function kpiForm(ctx: HrmsContext, people: Person[], rec?: Kpi): Promise<F
         notes: rec.notes ?? "",
       }
     : { date, emp: who ? personOption(who) : "", area: who?.area ?? "", ...(mbos ? { visits: String(mbos) } : {}), stoppage: "0" };
-  init.punch = att ? `${att.checkIn} – ${att.checkOut ?? "still working"}` : "No attendance that day";
+  init.punch = att ? `${att.checkIn} – ${att.checkOut ?? "not checked out yet"}` : "No attendance marked that day";
   return {
     screen: "kpi",
     id: "kpi",
-    title: rec ? "Edit KPI" : "Enter today’s KPI",
-    sub: "Visits are pre-filled from MBOS where the salesman’s check-ins exist; punch times come from attendance. Correct anything that is wrong.",
-    submit: "Save KPI",
+    title: rec ? "Edit sales entry" : "Enter today’s sales",
+    sub: "Visits are filled in from the salesman’s field-app check-ins where there are any; check-in and check-out times come from attendance. Correct anything that is wrong.",
+    submit: "Save entry",
     header,
     init,
     recordId: rec?.id,
@@ -353,10 +354,10 @@ function kpiRow(ctx: HrmsContext, k: Kpi, p: Person | undefined, att: DayRow | u
   const fields: RowField[] = [
     { l: "Productive counters", v: String(k.productive) },
     { l: "Unplanned stop (min)", v: String(k.stoppageMin) },
-    { l: "On-field time", v: punch.onField == null ? (att ? "Not checked out" : "No attendance that day") : hm(punch.onField), der: true },
+    { l: "On-field time", v: punch.onField == null ? (att ? "Not checked out" : "No attendance marked that day") : hm(punch.onField), der: true },
     { l: "Time remark", v: att ? timeRemark(att.fig, name, att.method) : "", der: true },
     { l: "Time with customers (min)", v: String(dayTime(k, acts)), der: !!acts?.length },
-    { l: "Meeting-note length", v: String(notes.reduce((a, n) => a + noteLength(n), 0)), der: true },
+    { l: "Meeting-note length (characters)", v: String(notes.reduce((a, n) => a + noteLength(n), 0)), der: true },
     { l: "Meeting notes", v: notes.join(" · ") },
     { l: "Pre-filled from", v: pre.length ? pre.map(([f, s]) => `${f}: ${s}`).join(" · ") : "Typed by hand" },
   ];
@@ -364,7 +365,7 @@ function kpiRow(ctx: HrmsContext, k: Kpi, p: Person | undefined, att: DayRow | u
   const actions: ActionSpec[] = [
     { id: "edit", l: "Edit", loadsForm: true, why },
     { id: "score", l: "Open score", href: hrmsLink("salesPerf", { who: k.employeeId, from: k.date }) },
-    { id: "delete", l: "Delete", why, confirm: `Delete ${name}’s KPI for ${fdShort(k.date)}? The day’s score goes with it.` },
+    { id: "delete", l: "Delete", why, confirm: `Delete ${name}’s sales entry for ${fdShort(k.date)}? The day’s score is deleted with it.` },
   ];
   return {
     id: k.id,
@@ -419,8 +420,8 @@ const kpi: HrmsScreenModule = {
         sortDefault: ["date", -1],
         godownKey: "office",
         newForm: form,
-        newLabel: "Enter today’s KPI",
-        noDataLine: "No KPI entered in this window.",
+        newLabel: "Enter today’s sales",
+        noDataLine: "No sales entries in this period.",
         hrms: {
           scope: { current: scope, options },
           period: { label: `${fdShort(from)} – ${fdShort(to)}`, params: [{ k: "from", l: "From", v: from, type: "date" }, { k: "to", l: "To", v: to, type: "date" }] },
@@ -442,14 +443,16 @@ const kpi: HrmsScreenModule = {
       let existing: Kpi | undefined;
       if (recordId) {
         [existing] = await db.select().from(hrmsKpi).where(eq(hrmsKpi.id, recordId));
-        if (!existing) return err("That KPI entry no longer exists.", "not_found");
+        if (!existing) return err("That sales entry no longer exists.", "not_found");
         if (!canTouchKpi(ctx, existing)) return err(KPI_WHY, "not_permitted");
       }
       const p = existing ? people.find((x) => x.id === existing!.employeeId) : personFrom(h.emp, people);
-      if (!p) return fieldErr("emp", "invalid Name");
-      if (!existing && !kpiPickable(ctx, people).some((x) => x.id === p.id)) return fieldErr("emp", "invalid Name");
+      if (!p) return fieldErr("emp", "Pick a salesman from the list");
+      if (!existing && !kpiPickable(ctx, people).some((x) => x.id === p.id))
+        return fieldErr("emp", kpiWide(ctx) ? `${p.name} is not active sales staff. Pick a salesman from the list` : "You can enter sales only for yourself");
       const date = existing?.date ?? isoDate(h.date);
-      if (!date || date > today()) return fieldErr("date", "INVALID");
+      if (!date) return fieldErr("date", "Enter the date of the sales entry");
+      if (date > today()) return fieldErr("date", `${fdShort(date)} is in the future. Enter sales for today or an earlier date`);
       const area = text(h.area);
       if (!area) return fieldErr("area", "Area visited is required");
       for (const [k, l] of [
@@ -489,9 +492,9 @@ const kpi: HrmsScreenModule = {
       if (existing) {
         await db.update(hrmsKpi).set(values).where(eq(hrmsKpi.id, existing.id));
         await hrmsAudit(ctx, "hrms.kpi.edit", "hrms_kpi", existing.id, existing, values);
-        return okVoid(`KPI saved for ${p.name}`);
+        return okVoid(`Sales entry saved for ${p.name}`);
       }
-      const dupeMsg = `${p.name} already has a KPI entry for ${fdShort(date)}`;
+      const dupeMsg = `${p.name} already has a sales entry for ${fdShort(date)}. Edit that one instead`;
       const id = hrmsId("hkpi");
       /* One per employee per date: the unique index decides, so two saves at once cannot both land. */
       const inserted = await db
@@ -501,17 +504,17 @@ const kpi: HrmsScreenModule = {
         .returning({ id: hrmsKpi.id });
       if (!inserted.length) return fieldErr("date", dupeMsg);
       await hrmsAudit(ctx, "hrms.kpi.add", "hrms_kpi", id, null, { employee: p.code, date, ...values });
-      return okVoid("KPI saved · the day’s score is on Sales performance");
+      return okVoid("Sales entry saved · the day’s score is on the Sales score tab");
     },
   },
   actions: {
     async delete(ctx, id) {
       const [k] = await db.select().from(hrmsKpi).where(eq(hrmsKpi.id, id));
-      if (!k) return err("That KPI entry no longer exists.", "not_found");
+      if (!k) return err("That sales entry no longer exists.", "not_found");
       if (!canTouchKpi(ctx, k)) return err(KPI_WHY, "not_permitted");
       await db.delete(hrmsKpi).where(eq(hrmsKpi.id, id));
       await hrmsAudit(ctx, "hrms.kpi.delete", "hrms_kpi", id, k, null);
-      return okVoid("KPI deleted");
+      return okVoid("Sales entry deleted");
     },
   },
 };
@@ -556,7 +559,7 @@ const salesPerf: HrmsScreenModule = {
         sortDefault: ["date", -1],
         godownKey: "office",
         readOnly: true,
-        noDataLine: "No KPI in this window, so no score yet. Scores come from KPI KRA.",
+        noDataLine: "No sales entries in this period, so no score yet. Scores come from Daily sales entries.",
         hrms: {
           scope: { current: scope, options },
           period: { label: `${fdShort(from)} – ${fdShort(to)}`, params: [{ k: "from", l: "From", v: from, type: "date" }, { k: "to", l: "To", v: to, type: "date" }] },
@@ -598,7 +601,7 @@ const salesPerf: HrmsScreenModule = {
             der: true,
           },
           { l: `Tasks (${todos.filter((x) => x.recheck === "Verified").length} verified of ${todos.length} to-dos)`, v: `${part("tasks").got} / ${part("tasks").max}`, der: true },
-          { l: "Per-day performance", v: String(s.total), der: true },
+          { l: "Day’s score", v: String(s.total), der: true },
           { l: "Meeting notes", v: notes.join(" · ") },
           { l: "Month", v: monLabel(monthOf(k.date)) },
         ];
@@ -616,7 +619,7 @@ const salesPerf: HrmsScreenModule = {
           title: `${p?.name ?? ""} · ${fdShort(k.date)}`,
           header: `Score ${Math.round(s.total * 10) / 10} / 100`,
           fields,
-          actions: [{ id: "kpi", l: "Open KPI", href: hrmsLink("kpi", { from: k.date, to: k.date, scope: scope === "mine" ? undefined : scope }) }],
+          actions: [{ id: "kpi", l: "Open sales entry", href: hrmsLink("kpi", { from: k.date, to: k.date, scope: scope === "mine" ? undefined : scope }) }],
         };
       }),
     };
@@ -700,7 +703,7 @@ async function staffRows(ctx: HrmsContext, q: ScreenQuery) {
           daysGiven: x.tillDate ? daysBetweenISO(x.forDate, x.tillDate) : null,
           daysTaken: x.status === "Done" && x.doneOn ? daysBetweenISO(x.forDate, x.doneOn) : null,
         })),
-        buddy: (bdBy.get(k) ?? []).map((b) => ({ done: b.status === "Task done" })),
+        buddy: (bdBy.get(k) ?? []).map((b) => ({ done: b.status === BUDDY_DONE })),
       });
       rows.push({ employee: p, month: m, m: mm, sales });
     }
@@ -731,15 +734,15 @@ function staffRowOut(r: StaffRow): ListRow {
     title: `${p.name} · ${monLabel(r.month)}`,
     header: `Overall ${r.m.overallPct}%`,
     fields: [
-      { l: "Employee position", v: p.positionType ?? "" },
-      { l: "Working hours performance", v: pctTxt(r.m.workingHoursPct), der: true },
-      { l: "On-time punctuality", v: pctTxt(r.m.punctualityPct), der: true },
-      { l: "Not-done daily tasks", v: String(r.m.notDoneChecklist), der: true },
-      { l: r.sales ? "KPI performance" : "Daily done task performance", v: pctTxt(r.m.dailyTaskPct), der: true },
-      { l: "Working speed & not-done to-dos", v: r.m.speed, der: true },
-      { l: "Done to-do performance", v: pctTxt(r.m.todoPct), der: true },
-      { l: "Not-done buddy tasks", v: String(r.m.notDoneBuddy), der: true },
-      { l: "Done buddy task performance", v: r.m.buddyPct == null ? "No buddy tasks this month" : pctTxt(r.m.buddyPct), der: true },
+      { l: "Position type", v: p.positionType ?? "" },
+      { l: "Working hours against target", v: pctTxt(r.m.workingHoursPct), der: true },
+      { l: "Days on time", v: pctTxt(r.m.punctualityPct), der: true },
+      { l: "Daily tasks not done", v: String(r.m.notDoneChecklist), der: true },
+      { l: r.sales ? "Field work score (visits, time, notes, km)" : "Daily tasks done", v: pctTxt(r.m.dailyTaskPct), der: true },
+      { l: "Working speed and to-dos not done", v: r.m.speed, der: true },
+      { l: "To-do speed against time given", v: pctTxt(r.m.todoPct), der: true },
+      { l: "Buddy tasks not done", v: String(r.m.notDoneBuddy), der: true },
+      { l: "Buddy tasks done", v: r.m.buddyPct == null ? "No buddy tasks this month" : pctTxt(r.m.buddyPct), der: true },
       { l: "Overall performance", v: pctTxt(r.m.overallPct), der: true },
     ],
     actions: [{ id: "att", l: "Open attendance", href: hrmsLink("attendance", { from: `${r.month}-01` }) }],
@@ -861,7 +864,7 @@ export async function pointsFor(people: Person[], from: string, to: string): Pro
     const dayMinutes = new Map<string, number>();
     for (const [d, list] of groupBy(ac, (a) => a.date)) dayMinutes.set(d, list.reduce((a, x) => a + x.minutes, 0));
     for (const k of inK) if (!dayMinutes.has(k.date) && k.timeGivenMin > 0) dayMinutes.set(k.date, k.timeGivenMin);
-    const na = cl.filter((c) => c.status === "N/A");
+    const na = cl.filter((c) => c.status === CHECKLIST_NA);
     const points = performancePoints(
       {
         kind: pointKind(p.positionType),
@@ -871,7 +874,7 @@ export async function pointsFor(people: Person[], from: string, to: string): Pro
         taggedHolidays: hol.filter((h) => holidayApplies(h, p.id, p.office)).length,
         durationMin: days.reduce((a, d) => a + (d.fig.durationMin ?? 0), 0),
         checklistTotal: cl.length,
-        checklistCleared: cl.filter((c) => c.status === "Done" || c.status === "N/A").length,
+        checklistCleared: cl.filter((c) => c.status === "Done" || c.status === CHECKLIST_NA).length,
         todosTotal: td.length,
         todosDone: td.filter((x) => x.status === "Done").length,
         naReasons: na.map((c) => c.naReason ?? ""),
@@ -909,30 +912,30 @@ export function pointLines(r: PointsRow, financialDate: string): { l: string; v:
     { l: "Average working hours", v: n(x.avgHours) },
     { l: "Working hour point", v: n(x.workingHourPoint) },
   ];
-  if (x.taskCount != null) lines.push({ l: "Task count", v: String(x.taskCount) }, { l: "N/A reasons", v: x.naText ?? "" }, { l: "Task point", v: n(x.taskPoint) });
+  if (x.taskCount != null) lines.push({ l: "Task count", v: String(x.taskCount) }, { l: "Not applicable", v: x.naText ?? "" }, { l: "Task point", v: n(x.taskPoint) });
   if (x.salesPaise != null)
     lines.push(
       { l: "Sales amount", v: inr(x.salesPaise) },
       { l: "Sales amount points", v: n(x.salesPoint) },
       { l: "Litre sales", v: n(x.litres) },
       { l: "Litre sales points", v: n(x.litrePoint) },
-      { l: "Outstanding count", v: x.outstandingCount == null ? "Owed with no sale since the financial date" : n(x.outstandingCount) },
+      { l: "Outstanding (average payment days)", v: x.outstandingCount == null ? "Money owed with no sale since the financial date" : n(x.outstandingCount) },
       { l: "Financial date", v: fdShort(financialDate) },
       { l: "Outstanding point", v: n(x.outstandingPoint) },
       { l: "Time with customer (min a day)", v: n(x.timeGiven) },
       { l: "Time point", v: n(x.timePoint) },
       { l: "Note length (characters a visit)", v: n(x.noteLength) },
-      { l: "Description point", v: n(x.descriptionPoint) },
+      { l: "Note length point", v: n(x.descriptionPoint) },
     );
   lines.push({ l: "Total", v: `${n(x.total, 3)} (${Math.round(x.total * 1000) / 10}%)` });
   return lines;
 }
 
 export const REVIEW_QUESTIONS = [
-  { k: "issues", l: "Issues faced last time" },
-  { k: "ideas", l: "Opportunities and new ideas for this time" },
-  { k: "nextPlan", l: "Next meeting plan" },
-  { k: "actionForSir", l: "Action for Sir" },
+  { k: "issues", l: "Problems faced in the last period" },
+  { k: "ideas", l: "Opportunities and new ideas for this period" },
+  { k: "nextPlan", l: "Plan until the next meeting" },
+  { k: "actionForSir", l: "What you need from management" },
 ] as const;
 
 const pointsWide = (ctx: HrmsContext) => has(ctx, "perfAdmin") || has(ctx, "hr") || ctx.administrator;
@@ -955,9 +958,9 @@ const reportHref = (emp: string, from: string, to: string) => `/api/hrms/perform
 
 async function reviewGate(ctx: HrmsContext, id: string) {
   const pid = pointsId(id);
-  if (!pid) return { refusal: err("That period is not valid.", "not_found") };
+  if (!pid) return { refusal: err("That review period is not valid: it needs a from date on or before its to date.", "not_found") };
   const people = await allPeople();
-  if (!people.some((p) => p.id === pid.emp) || !canSeePoints(ctx, people, pid.emp)) return { refusal: err("That person's performance is not yours to see.", "not_permitted") };
+  if (!people.some((p) => p.id === pid.emp) || !canSeePoints(ctx, people, pid.emp)) return { refusal: err("You cannot see this person’s performance.", "not_permitted") };
   return { pid };
 }
 
@@ -981,7 +984,7 @@ const points: HrmsScreenModule = {
           { k: "punctual", l: "On time", t: "n" },
           { k: "hours", l: "Hours", t: "t" },
           { k: "tasks", l: "Tasks", t: "t" },
-          { k: "na", l: "N/A", t: "n" },
+          { k: "na", l: "Not applicable", t: "n" },
           { k: "sales", l: "Sales", t: "m" },
           { k: "litres", l: "Litres", t: "n" },
           { k: "total", l: "Points", t: "n", u: "%" },
@@ -1005,7 +1008,8 @@ const points: HrmsScreenModule = {
         const totalPct = Math.round(x.total * 1000) / 10;
         const fields: RowField[] = pointLines(r, financialDate).map((l) => ({ ...l, der: true }));
         for (const qq of REVIEW_QUESTIONS) fields.push({ l: qq.l, v: rv?.[qq.k] ?? "" });
-        fields.push({ l: "Office", v: p.office ?? "" }, { l: "Report", v: rv?.pdfCode ? `Version ${rv.pdfCode}` : "Version 1" });
+        const version = Number(rv?.pdfCode) || 1;
+        fields.push({ l: "Office", v: p.office ?? "" }, { l: "Report version", v: String(version) });
         return {
           id: `${p.id}|${from}|${to}`,
           v: {
@@ -1014,7 +1018,7 @@ const points: HrmsScreenModule = {
             office: p.office ?? "",
             attendance: x.attendanceCount,
             punctual: x.punctualityCount,
-            hours: `${Math.round(x.avgHours * 10) / 10}h avg`,
+            hours: `${Math.round(x.avgHours * 10) / 10}h average`,
             tasks: x.taskCount == null ? "" : String(x.taskCount),
             na: x.taskCount == null ? null : r.naCount,
             sales: x.salesPaise,
@@ -1028,7 +1032,7 @@ const points: HrmsScreenModule = {
           actions: [
             {
               id: "review",
-              l: "Review form",
+              l: "Fill in review",
               primary: true,
               prompt: {
                 title: "Performance review",
@@ -1039,7 +1043,11 @@ const points: HrmsScreenModule = {
               },
             },
             { id: "pdf", l: "Open PDF report", href: reportHref(p.id, from, to) },
-            { id: "regenerate", l: "Regenerate", confirm: `Regenerate the report for ${p.name} with the latest attendance, tasks and sales?` },
+            {
+              id: "regenerate",
+              l: "Mark report revised",
+              confirm: `Mark ${p.name}’s report as revised? The PDF is always drawn from the latest attendance, tasks and sales; this only moves its version number from ${version} to ${version + 1}.`,
+            },
           ],
           by: rv ? stampLine(null, rv.updatedAt) : undefined,
         };
@@ -1082,7 +1090,7 @@ const points: HrmsScreenModule = {
         .onConflictDoUpdate({ target: [hrmsReviews.employeeId, hrmsReviews.fromDate, hrmsReviews.toDate], set: { pdfCode: code, updatedAt: new Date(), updatedById: ctx.user.id } })
         .returning({ id: hrmsReviews.id });
       await hrmsAudit(ctx, "hrms.points.regenerate", "hrms_reviews", row?.id ?? null, { pdfCode: prev?.pdfCode ?? null }, { pdfCode: code });
-      return okVoid(`Report regenerated · version ${code}`);
+      return okVoid(`Report marked as revised · now version ${code}`);
     },
   },
 };

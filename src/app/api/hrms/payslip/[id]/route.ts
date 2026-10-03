@@ -12,7 +12,8 @@ import { monLabel } from "@/lib/hrms/time";
 /**
  * A salary's payslip (spec §18.2), drawn on request from the salary's FROZEN
  * figures — never from today's attendance — so the paper always says what was
- * approved and paid. Regenerating changes the payslip code printed on it.
+ * approved and paid. Nothing is stored: "New payslip code" changes only the
+ * code printed on it.
  *
  * The employee opens their own once it is Paid; whoever runs or pays payroll
  * opens any. Anything else — including a salary that does not exist — answers
@@ -117,11 +118,11 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       title: "Earnings",
       rows: [
         ["Fixed salary", rs(f.fixedPaise)],
-        ["Basic", rs(f.basicPaise)],
+        ["Basic salary", rs(f.basicPaise)],
         ["Incentive", rs(f.incentivePaise)],
-        ["Conveyance", rs(f.conveyancePaise)],
+        ["Conveyance allowance", rs(f.conveyancePaise)],
         ["Special allowance", rs(f.specialPaise)],
-        ["Gross earning", rs(f.grossPaise)],
+        ["Gross earnings", rs(f.grossPaise)],
       ],
     },
     {
@@ -132,7 +133,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
         ["Professional tax", rs(f.ptPaise)],
         ["Advance deduction", rs(f.advanceDeductionPaise)],
         ["Late deduction", rs(f.lateDeductionPaise)],
-        ["Gross deduction", rs(f.grossDeductionPaise)],
+        ["Total deductions", rs(f.grossDeductionPaise)],
       ],
     },
   ];
@@ -172,7 +173,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   for (const [l, v] of [
     ["Employer PF", rs(f.employerPfPaise)],
     ["Employer ESIC", rs(f.employerEsicPaise)],
-    ["CTC gross", rs(f.ctcPaise)],
+    ["Cost to company (CTC)", rs(f.ctcPaise)],
   ] as [string, string][]) {
     text(l, M + 4, y, { size: 8.5, color: MUTED });
     right(v, M + 4 + colW, y, { size: 8.5 });
@@ -185,7 +186,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   const pay: [string, string][] = [
     ["PF/ESIC applicable", `${f.pfEsic ?? ""}${f.uanNo ? ` · UAN ${f.uanNo}` : ""}${f.esicNo ? ` · ESIC ${f.esicNo}` : ""}`],
     ["Bank details", f.bank ?? ""],
-    ["Payment UTR no.", s.utr ?? (s.status === "Paid" ? "" : `Not paid yet · ${s.status}`)],
+    ["Payment UTR number", s.utr ?? (s.status === "Paid" ? "" : `Not paid yet (${s.status.toLowerCase()})`)],
     ["Payment date", s.paidOn ? fdLong(s.paidOn) : "—"],
     ["Salary date", fdLong(s.salaryDate)],
   ];
@@ -195,7 +196,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     y -= 13;
   }
 
-  text(`Payslip ${s.payslipCode ?? ""} · This is a computer-generated payslip.`, M, M, { size: 7.5, color: MUTED });
+  text(`Payslip code ${s.payslipCode ?? ""} · This payslip is computer-generated.`, M, M, { size: 7.5, color: MUTED });
 
   const bytes = await doc.save();
   const file = `payslip-${e?.code ?? "employee"}-${s.month}.pdf`;

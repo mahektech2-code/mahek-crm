@@ -261,7 +261,7 @@ function Branch({
             {person.status === "inactive" ? <Badge tone="neutral">Left</Badge> : null}
             {person.reports.length ? (
               <span className="text-[11px] text-muted">
-                {person.reports.length} direct
+                {person.reports.length} direct {person.reports.length === 1 ? "report" : "reports"}
               </span>
             ) : null}
           </span>
@@ -274,7 +274,7 @@ function Branch({
                 reporting information HR has had until now, and hiding it would
                 read as data lost rather than superseded. */}
             {person.sheetReportsTo ? (
-              <span className="text-line-strong"> · sheet: {person.sheetReportsTo}</span>
+              <span className="text-line-strong"> · the sheet says {person.sheetReportsTo}</span>
             ) : null}
           </span>
         </span>
@@ -388,7 +388,7 @@ function ManagerDialog({
                   </span>
                 </span>
                 {p.id === person.managerId ? (
-                  <span className="flex-none text-[12px] font-medium text-brand">current</span>
+                  <span className="flex-none text-[12px] font-medium text-brand">Current manager</span>
                 ) : null}
               </button>
             ))

@@ -23,7 +23,7 @@ test("under the full-day percent is a half day; stoppage comes off", () => {
 });
 
 test("no check-out: on working today, no check-out on an earlier day", () => {
-  assert.equal(dayFigures({ ...day, checkOut: null }, cfg, "2026-10-01").current, "On Working");
+  assert.equal(dayFigures({ ...day, checkOut: null }, cfg, "2026-10-01").current, "Working");
   assert.equal(dayFigures({ ...day, checkOut: null }, cfg, "2026-10-02").current, "No check-out");
   assert.equal(dayFigures({ ...day, checkOut: null }, cfg, "2026-10-02").workDay, "");
 });
@@ -35,11 +35,11 @@ test("QR days use their own grace and a strict full-day threshold", () => {
   assert.equal(f.workDay, "Half Day");
 });
 
-test("the remark names early and late in the source's words", () => {
+test("the remark says how far inside or past the grace the check-in was", () => {
   const early = dayFigures({ ...day, checkIn: "09:20" }, cfg, "2026-10-01");
-  assert.match(timeRemark(early, "Priya"), /^You Are Early\. 0:40:00/);
+  assert.equal(timeRemark(early, "Priya"), "On time, with 40 minutes to spare — well done, Priya.");
   const late = dayFigures({ ...day, checkIn: "10:15" }, cfg, "2026-10-01");
-  assert.match(timeRemark(late, "Priya"), /^You Are late\. 0:15:00/);
+  assert.equal(timeRemark(late, "Priya"), "15 minutes past the grace period today, Priya.");
 });
 
 const base = { alreadyToday: false, distanceM: 50, officeHasPin: true, officeName: "Thane", radiusM: 200, privileged: false, privilegedRangeM: 9000, officialIn: "09:30", now: "09:45", graceMinutes: 30, name: "Priya" };

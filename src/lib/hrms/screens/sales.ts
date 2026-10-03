@@ -30,6 +30,8 @@ import {
   CALLING_STATUSES,
   NOT_PICKED,
   ORDER_RECEIVED,
+  callingLabel,
+  callingStatusFrom,
   callingTab,
   checkCall,
   followUpSelection,
@@ -46,7 +48,7 @@ import { personFrom, personOption, scopeFor } from "./attendance";
  *
  * Customers are MahekOne's own `customers` rows — read and written in place,
  * never copied — so a deactivation asked for here is the same request the
- * CRM's managers see, and a customer closed in the CRM is Deactive here. The
+ * CRM's managers see, and a customer closed in the CRM is Deactivated here. The
  * calling rules (suggestion, tab, who Take follow-up adds) live in
  * `engines/calling.ts`, so the customer record and the calling list cannot
  * disagree about one customer.
@@ -114,11 +116,11 @@ async function oneCustomer(id: string): Promise<Cust | null> {
 /** The area the calling list groups by: the customer's area, else its city. */
 const areaOf = (c: Pick<Cust, "area" | "city">) => (c.area ?? "").trim() || (c.city ?? "").trim();
 
-type CustStatus = "Active" | "Pending deactivation" | "Deactive";
+type CustStatus = "Active" | "Pending deactivation" | "Deactivated";
 
-/** Deactive for a closed or quiet account; Pending while a request is open on a live one. */
+/** Deactivated for a closed or quiet account; Pending while a request is open on a live one. */
 function statusOf(c: Pick<Cust, "status" | "deactivationRequested">): CustStatus {
-  if (c.status !== "active") return "Deactive";
+  if (c.status !== "active") return "Deactivated";
   return c.deactivationRequested ? "Pending deactivation" : "Active";
 }
 
@@ -211,6 +213,11 @@ const CUSTOMER_COLS: ColSpec[] = [
 
 const RATINGS = ["High Value", "Medium Value", "Low Value"];
 
+const WITHDRAW_WHY = "Only the person who asked, this customer’s back office, or someone who decides deactivations can withdraw the request";
+const DECIDE_WHY = "Accepting or rejecting a deactivation needs the “Decide customer deactivations” power";
+const REACTIVATE_WHY = "Making a customer active again needs the “Decide customer deactivations” power";
+const STOPPED_BUYING = "This customer is inactive because they stopped buying. Their next order makes them active again";
+
 function customerActions(ctx: HrmsContext, c: Cust, st: CustStatus, calledToday: boolean): ActionSpec[] {
   const a: ActionSpec[] = [];
   const decide = has(ctx, "custStatus");
@@ -219,19 +226,19 @@ function customerActions(ctx: HrmsContext, c: Cust, st: CustStatus, calledToday:
       id: "takeFollowUp",
       l: "Take follow-up",
       primary: true,
-      why: !ctx.employee ? "Your account is not linked to an employee record yet" : calledToday ? "Already on a calling list today" : undefined,
+      why: !ctx.employee ? "Your account is not linked to an employee record yet" : calledToday ? "This customer is already on a calling list today" : undefined,
       confirm: `Add your active customers in ${areaOf(c) || "this area"} to your calling list?`,
     });
   if (st === "Active")
     a.push({
       id: "requestDeactivation",
-      l: "Deactivation request",
-      prompt: { title: "Request deactivation", sub: c.name, submit: "Send request", fields: [{ k: "reason", l: "Write Deactivation Reason", t: "area", req: !decide }] },
+      l: "Request deactivation",
+      prompt: { title: "Request deactivation", sub: c.name, submit: "Send request", fields: [{ k: "reason", l: "Why should this customer be deactivated?", t: "area", req: !decide }] },
     });
   if (st === "Pending deactivation") {
     const mayWithdraw = decide || c.deactivationRequestedById === ctx.user.id || backOfficeIsMe(ctx, c);
-    a.push({ id: "withdrawRequest", l: "Withdraw request", why: mayWithdraw ? undefined : "Only who asked, the back office or admin withdraws it" });
-    const why = decide ? undefined : "Only admin decides deactivations";
+    a.push({ id: "withdrawRequest", l: "Withdraw request", why: mayWithdraw ? undefined : WITHDRAW_WHY });
+    const why = decide ? undefined : DECIDE_WHY;
     a.push({
       id: "acceptDeactivation",
       l: "Accept",
@@ -246,11 +253,11 @@ function customerActions(ctx: HrmsContext, c: Cust, st: CustStatus, calledToday:
       prompt: { title: "Reject deactivation", sub: c.name, submit: "Keep active", fields: [{ k: "remark", l: "Remark", t: "area", req: true }] },
     });
   }
-  if (st === "Deactive")
+  if (st === "Deactivated")
     a.push({
       id: "makeActive",
       l: "Make active again",
-      why: !decide ? "Only admin reactivates a customer" : c.status === "inactive" ? "Inactive because they stopped buying — their next order brings them back" : undefined,
+      why: !decide ? REACTIVATE_WHY : c.status === "inactive" ? STOPPED_BUYING : undefined,
       confirm: `Make ${c.name} active again?`,
     });
   if (has(ctx, "salesAll")) a.push({ id: "edit", l: "Edit", loadsForm: true });
@@ -268,7 +275,7 @@ function customerRow(ctx: HrmsContext, c: Cust, stats: Stats, called: Set<string
     { l: "State", v: c.region ?? "" },
     { l: "Tagged employee", v: c.taggedEmployeeName ?? "" },
     { l: "Special instructions", v: c.specialInstructions ?? "" },
-    { l: "Deactivation request", v: c.deactivationRequested ? "Deactivation Request Received" : "" },
+    { l: "Deactivation request", v: c.deactivationRequested ? "Waiting for a decision" : "" },
     { l: "Deactivation remark", v: c.deactivationReason ?? "" },
     { l: "Calls", v: `${calls} call${calls === 1 ? "" : "s"}`, der: true },
     { l: "Sales activities", v: `${acts} activit${acts === 1 ? "y" : "ies"}`, der: true },
@@ -350,9 +357,9 @@ const customersScreen: HrmsScreenModule = {
     const inScope = nameScope(ctx, visibleIds(ctx, scope, people), people);
     const decide = has(ctx, "custStatus");
     const [all, stats, called] = await Promise.all([loadCustomers(), customerStats(), callingToday()]);
-    /* Deactive customers are a decider's tab in the source (Deactive
-       Customers, admin); everybody else works the live book. */
-    const scoped = all.filter((c) => (!inScope || inScope(c)) && (decide || statusOf(c) !== "Deactive"));
+    /* Deactivated customers are a decider's tab in the source (admin's
+       list of deactivated customers); everybody else works the live book. */
+    const scoped = all.filter((c) => (!inScope || inScope(c)) && (decide || statusOf(c) !== "Deactivated"));
     /* The book is thousands of shops for whoever sees everybody, each row
        carrying its actions, so the server searches and pages it. The search
        runs over the whole book; the list below then filters the page. */
@@ -404,8 +411,8 @@ const customersScreen: HrmsScreenModule = {
       if (!me) return err(NOT_LINKED, "not_permitted");
       const c = await oneCustomer(id);
       if (!c) return err("That customer no longer exists.", "not_found");
-      if (!backOfficeIsMe(ctx, c)) return err("Only the back office of this customer takes its follow-up.", "not_permitted");
-      if (statusOf(c) !== "Active") return err("Only an active customer is followed up.");
+      if (!backOfficeIsMe(ctx, c)) return err("Only this customer’s back office can take its follow-up.", "not_permitted");
+      if (statusOf(c) !== "Active") return err(`${c.name} is not active, so it cannot be followed up.`);
       const area = areaOf(c);
       const t = today();
       const res = await inTx(async (tx) => {
@@ -441,9 +448,14 @@ const customersScreen: HrmsScreenModule = {
     async requestDeactivation(ctx, id, v) {
       const c = await oneCustomer(id);
       if (!c) return err("That customer no longer exists.", "not_found");
-      if (statusOf(c) !== "Active") return err("Only an active customer with no pending request can be put forward.");
+      if (statusOf(c) !== "Active")
+        return err(
+          statusOf(c) === "Pending deactivation"
+            ? `${c.name} already has a deactivation request waiting for a decision.`
+            : `${c.name} is already deactivated.`,
+        );
       const reason = text(v.reason);
-      if (!reason && !has(ctx, "custStatus")) return fieldErr("reason", "Write Deactivation Reason");
+      if (!reason && !has(ctx, "custStatus")) return fieldErr("reason", "Write why this customer should be deactivated");
       /* The CRM's own request columns, so its managers' pending list and this
          one are one queue. `requestDeactivation` in actions/crm.ts cannot be
          called: it gates on the CRM book, which a back-office person on HRMS
@@ -470,14 +482,14 @@ const customersScreen: HrmsScreenModule = {
           href: hrmsLink("customers", { open: id }),
         })),
       );
-      return okVoid("Deactivation requested · admin decides");
+      return okVoid("Deactivation requested · someone who decides deactivations will decide");
     },
     async withdrawRequest(ctx, id) {
       const c = await oneCustomer(id);
       if (!c) return err("That customer no longer exists.", "not_found");
-      if (!c.deactivationRequested) return err("There is no request to withdraw.");
+      if (!c.deactivationRequested) return err(`${c.name} has no deactivation request to withdraw.`);
       if (!(has(ctx, "custStatus") || c.deactivationRequestedById === ctx.user.id || backOfficeIsMe(ctx, c)))
-        return err("Only who asked, the back office or admin withdraws it", "not_permitted");
+        return err(WITHDRAW_WHY, "not_permitted");
       await db
         .update(customers)
         .set({
@@ -493,10 +505,10 @@ const customersScreen: HrmsScreenModule = {
       return okVoid("Request withdrawn");
     },
     async acceptDeactivation(ctx, id, v) {
-      if (!has(ctx, "custStatus")) return err("Only admin decides deactivations", "not_permitted");
+      if (!has(ctx, "custStatus")) return err(DECIDE_WHY, "not_permitted");
       const c = await oneCustomer(id);
       if (!c) return err("That customer no longer exists.", "not_found");
-      if (!c.deactivationRequested) return err("There is no pending request on this customer.");
+      if (!c.deactivationRequested) return err(`${c.name} has no deactivation request waiting.`);
       const reason = text(v.remark) ?? c.deactivationReason ?? `Accepted by ${ctx.user.name}`;
       /* The same write as the CRM's `decideDeactivation`: a status a person
          decided, which the party sheet may no longer restate. */
@@ -520,12 +532,12 @@ const customersScreen: HrmsScreenModule = {
       return okVoid(`${c.name} deactivated`);
     },
     async rejectDeactivation(ctx, id, v) {
-      if (!has(ctx, "custStatus")) return err("Only admin decides deactivations", "not_permitted");
+      if (!has(ctx, "custStatus")) return err(DECIDE_WHY, "not_permitted");
       const remark = text(v.remark);
-      if (!remark) return fieldErr("remark", "Remark is required");
+      if (!remark) return fieldErr("remark", "Write why this customer stays active");
       const c = await oneCustomer(id);
       if (!c) return err("That customer no longer exists.", "not_found");
-      if (!c.deactivationRequested) return err("There is no pending request on this customer.");
+      if (!c.deactivationRequested) return err(`${c.name} has no deactivation request waiting.`);
       await db
         .update(customers)
         .set({ deactivationRequested: false, deactivationReason: null, updatedAt: new Date(), updatedById: ctx.user.id })
@@ -538,13 +550,13 @@ const customersScreen: HrmsScreenModule = {
       return okVoid("Kept active");
     },
     async makeActive(ctx, id) {
-      if (!has(ctx, "custStatus")) return err("Only admin reactivates a customer", "not_permitted");
+      if (!has(ctx, "custStatus")) return err(REACTIVATE_WHY, "not_permitted");
       const c = await oneCustomer(id);
       if (!c) return err("That customer no longer exists.", "not_found");
       /* `inactive` is derived from buying and rebuilt nightly; setting it
          active by hand would be undone. Only a decided closure is reversed. */
       if (c.status !== "deactivated")
-        return err(c.status === "active" ? "That customer is already active." : "Inactive because they stopped buying — their next order brings them back");
+        return err(c.status === "active" ? `${c.name} is already active.` : STOPPED_BUYING);
       /* The CRM's `decideReactivation` write: the closure's fields cleared and
          the decision marked, so the sheet does not close it again. */
       await db
@@ -578,11 +590,11 @@ const customersScreen: HrmsScreenModule = {
   },
   forms: {
     async edit(ctx, h, _lines, recordId) {
-      if (!has(ctx, "salesAll")) return err("Editing customers needs the Sales desk for everyone.", "not_permitted");
+      if (!has(ctx, "salesAll")) return err("Editing customers needs Sales desk access for everyone.", "not_permitted");
       const c = recordId ? await oneCustomer(recordId) : null;
       if (!c) return err("That customer no longer exists.", "not_found");
       const rating = text(h.rating);
-      if (rating && !RATINGS.includes(rating)) return fieldErr("rating", "INVALID");
+      if (rating && !RATINGS.includes(rating)) return fieldErr("rating", `Pick a rating from the list: ${RATINGS.join(", ")}`);
       const after = { rating, segmentation: text(h.segmentation), taggedEmployeeName: text(h.tagged), specialInstructions: text(h.instr) };
       await db
         .update(customers)
@@ -610,14 +622,19 @@ const CALLING_COLS: ColSpec[] = [
   { k: "mobile", l: "Mobile", t: "ph" },
   { k: "area", l: "Area", t: "t" },
   { k: "salesPerson", l: "Sales person", t: "t" },
-  { k: "status", l: "Status", t: "s" },
-  { k: "second", l: "Second status", t: "t" },
+  { k: "status", l: "Call status", t: "s" },
+  { k: "second", l: "What happens next", t: "t" },
   { k: "note", l: "Discussion", t: "t" },
   { k: "followUp", l: "Follow-up", t: "d" },
   { k: "orders", l: "Orders", t: "n" },
   { k: "suggestion", l: "Suggestion", t: "t" },
   { k: "f", l: "Flags", t: "f" },
 ];
+
+const CALLER_WHY = "Only the person this call is assigned to, or an HRMS administrator, can log it";
+const DELETE_CALL_WHY = "Deleting a calling row needs the “Decide customer deactivations” power";
+/** The four statuses in the words the form shows; `callingStatusFrom` reads them back. */
+const STATUS_OPTS = CALLING_STATUSES.map((st) => callingLabel(st));
 
 const callingScreen: HrmsScreenModule = {
   key: "calling",
@@ -642,7 +659,7 @@ const callingScreen: HrmsScreenModule = {
         hidden: [],
         chips: "tab",
         sortDefault: ["date", -1],
-        noDataLine: "Nothing on your calling list. Open a customer you back-office and Take follow-up to fill it.",
+        noDataLine: "Nothing on your calling list. Open a customer you look after as back office and press Take follow-up to fill it.",
         hrms: { scope: { current: scope, options } },
       },
       rows: rows.map((r): ListRow => {
@@ -659,22 +676,22 @@ const callingScreen: HrmsScreenModule = {
             id: "logCall",
             l: "Log call",
             primary: true,
-            why: mine || has(ctx, "admin") ? undefined : "Only the caller logs this call",
+            why: mine || has(ctx, "admin") ? undefined : CALLER_WHY,
             prompt: {
               title: "Log call",
               sub: `${c?.name ?? ""} · ${c?.phone ?? ""}`,
               submit: "Save call",
-              init: { status: r.status, second: r.secondStatus ?? "", note: r.note ?? "", followUp: r.followUp ?? "" },
+              init: { status: callingLabel(r.status), second: callingLabel(r.secondStatus), note: r.note ?? "", followUp: r.followUp ?? "" },
               fields: [
-                { k: "status", l: "Calling status", t: "select", req: true, opts: [...CALLING_STATUSES] },
-                { k: "second", l: "2nd calling status", t: "select", req: true, opts: [...CALLING_STATUSES], when: { k: "status", eq: NOT_PICKED } },
+                { k: "status", l: "How did the call go?", t: "select", req: true, opts: STATUS_OPTS },
+                { k: "second", l: "What happens next?", t: "select", req: true, opts: STATUS_OPTS, when: { k: "status", eq: callingLabel(NOT_PICKED) } },
                 { k: "note", l: "Discussion note", t: "area", mic: true },
                 { k: "followUp", l: "Follow-up date", t: "date", hint: "Not in the past." },
               ],
             },
           },
           { id: "customer", l: "View customer", href: hrmsLink("customers", { open: r.customerId }) },
-          { id: "delete", l: "Delete", why: has(ctx, "custStatus") ? undefined : "Only admin deletes a calling row", confirm: "Delete this calling row? It cannot be undone." },
+          { id: "delete", l: "Delete", why: has(ctx, "custStatus") ? undefined : DELETE_CALL_WHY, confirm: "Delete this calling row? It cannot be undone." },
         ];
         return {
           id: r.id,
@@ -685,8 +702,8 @@ const callingScreen: HrmsScreenModule = {
             mobile: c?.phone ?? "",
             area: c ? areaOf(c) : "",
             salesPerson: c?.salesPersonName ?? "",
-            status: r.status,
-            second: r.secondStatus ?? "",
+            status: callingLabel(r.status),
+            second: callingLabel(r.secondStatus),
             note: r.note ?? "",
             followUp: r.followUp ?? "",
             orders,
@@ -695,7 +712,7 @@ const callingScreen: HrmsScreenModule = {
           },
           flags: r.status === NOT_PICKED && !(r.secondStatus ?? "").trim() ? ["secondCall"] : [],
           title: c?.name ?? "",
-          header: `${fdShort(r.date)} · ${r.status || "To call"}${scope === "mine" ? "" : ` · ${caller}`}`,
+          header: `${fdShort(r.date)} · ${callingLabel(r.status) || "To call"}${scope === "mine" ? "" : ` · ${caller}`}`,
           fields: [
             { l: "Special instruction", v: c?.specialInstructions ?? "" },
             { l: "Grade", v: grade || "No activity mood yet", der: true },
@@ -716,10 +733,12 @@ const callingScreen: HrmsScreenModule = {
     async logCall(ctx, id, v) {
       const [r] = await db.select().from(hrmsCalling).where(eq(hrmsCalling.id, id));
       if (!r) return err("That calling row no longer exists.", "not_found");
-      if (!(r.employeeId === ctx.employee?.id || has(ctx, "admin"))) return err("Only the caller logs this call", "not_permitted");
+      if (!(r.employeeId === ctx.employee?.id || has(ctx, "admin"))) return err(CALLER_WHY, "not_permitted");
       const t = today();
-      const status = String(v.status ?? "").trim();
-      const second = status === NOT_PICKED ? String(v.second ?? "").trim() : "";
+      /* The form shows each status in plain words; what is stored, compared
+         and counted is the stored word, so it is read back here first. */
+      const status = callingStatusFrom(v.status);
+      const second = status === NOT_PICKED ? callingStatusFrom(v.second) : "";
       const followUp = text(v.followUp) ?? "";
       const bad = checkCall({ status, second, followUp }, t);
       if (bad) return fieldErr(bad.field, bad.message);
@@ -747,14 +766,14 @@ const callingScreen: HrmsScreenModule = {
           sourceRecordId: `${id}:${t}:${status}`,
           occurredAt: new Date(),
           actorUserId: ctx.user.id,
-          summary: [`Back office call · ${status}`, second || null, followUp ? `follow-up ${fdShort(followUp)}` : null, note].filter(Boolean).join(" · "),
+          summary: [`Back office call · ${callingLabel(status)}`, second ? `next: ${callingLabel(second)}` : null, followUp ? `follow-up ${fdShort(followUp)}` : null, note].filter(Boolean).join(" · "),
         });
       });
       await hrmsAudit(ctx, "hrms.calling.log", "hrms_calling", id, { status: r.status, secondStatus: r.secondStatus }, { status, secondStatus: second || null, followUp });
-      return okVoid(`Call logged · ${status}${followUp ? ` · follow-up ${fdShort(followUp)}` : ""}`);
+      return okVoid(`Call logged · ${callingLabel(status)}${followUp ? ` · follow-up ${fdShort(followUp)}` : ""}`);
     },
     async delete(ctx, id) {
-      if (!has(ctx, "custStatus")) return err("Only admin deletes a calling row", "not_permitted");
+      if (!has(ctx, "custStatus")) return err(DELETE_CALL_WHY, "not_permitted");
       const [r] = await db.select().from(hrmsCalling).where(eq(hrmsCalling.id, id));
       if (!r) return err("That calling row no longer exists.", "not_found");
       await db.delete(hrmsCalling).where(eq(hrmsCalling.id, id));
@@ -785,6 +804,9 @@ function activityPeople(ctx: HrmsContext, people: Person[]): Person[] {
   return people.filter((p) => p.id === ctx.employee?.id);
 }
 
+const ACTIVITY_EDIT_WHY = "Only the person who logged it, or someone with the Sales desk for everyone, can edit it";
+const ACTIVITY_DELETE_WHY = "Deleting an activity needs the HR or HRMS administration power";
+
 const mayEditActivity = (ctx: HrmsContext, employeeId: string) => employeeId === ctx.employee?.id || has(ctx, "salesAll");
 
 async function activityForm(ctx: HrmsContext, init?: Record<string, string>, recordId?: string): Promise<FormSpec | undefined> {
@@ -802,7 +824,7 @@ async function activityForm(ctx: HrmsContext, init?: Record<string, string>, rec
   if (has(ctx, "salesAll"))
     header.push({ k: "emp", l: "Salesman", t: "select", req: true, opts: activityPeople(ctx, people).map(personOption), hint: "Active sales staff with no date of leaving." });
   header.push(
-    { k: "customer", l: "Customer", t: "select", req: true, opts: custs.filter((c) => statusOf(c) !== "Deactive").map(custOption) },
+    { k: "customer", l: "Customer", t: "select", req: true, opts: custs.filter((c) => statusOf(c) !== "Deactivated").map(custOption) },
     { k: "note", l: "Meeting note", t: "area", req: true, mic: true },
     { k: "minutes", l: "Time given (minutes)", t: "num", req: true, min: 1 },
     { k: "mood", l: "Mood", t: "select", opts: moods.length ? moods : ["Happy", "Normal"] },
@@ -869,10 +891,10 @@ const activityScreen: HrmsScreenModule = {
         const name = c?.name ?? r.customerName ?? "";
         const area = r.area ?? (c ? areaOf(c) : "");
         const actions: ActionSpec[] = [
-          { id: "edit", l: "Edit", loadsForm: true, why: mayEditActivity(ctx, r.employeeId) ? undefined : "Only who logged it, or the Sales desk for everyone, edits it" },
+          { id: "edit", l: "Edit", loadsForm: true, why: mayEditActivity(ctx, r.employeeId) ? undefined : ACTIVITY_EDIT_WHY },
         ];
         if (r.customerId) actions.push({ id: "customer", l: "View customer", href: hrmsLink("customers", { open: r.customerId }) });
-        actions.push({ id: "delete", l: "Delete", why: mayDelete ? undefined : "Only admin or HR deletes an activity", confirm: "Delete this activity? It cannot be undone." });
+        actions.push({ id: "delete", l: "Delete", why: mayDelete ? undefined : ACTIVITY_DELETE_WHY, confirm: "Delete this activity? It cannot be undone." });
         return {
           id: r.id,
           v: {
@@ -934,21 +956,23 @@ const activityScreen: HrmsScreenModule = {
       let emp: Person | undefined;
       if (has(ctx, "salesAll")) {
         emp = personFrom(h.emp, activityPeople(ctx, people));
-        if (!emp) return fieldErr("emp", "invalid Name");
+        if (!emp) return fieldErr("emp", "Pick a salesman from the list");
       } else {
         emp = people.find((p) => p.id === ctx.employee?.id);
         if (!emp) return err(NOT_LINKED, "not_permitted");
       }
       const date = text(h.date);
-      if (!date || !ISO.test(date)) return fieldErr("date", "INVALID");
+      if (!date) return fieldErr("date", "Enter the date of the meeting");
+      if (!ISO.test(date)) return fieldErr("date", "Enter the date as a calendar date");
       const c = custFrom(h.customer, await loadCustomers());
-      if (!c || statusOf(c) === "Deactive") return fieldErr("customer", "Choose an active customer");
+      if (!c) return fieldErr("customer", "Pick a customer from the list");
+      if (statusOf(c) === "Deactivated") return fieldErr("customer", `${c.name} is deactivated. Pick an active customer`);
       const note = text(h.note);
-      if (!note) return fieldErr("note", "Meeting note is required");
+      if (!note) return fieldErr("note", "Write what was discussed in the meeting");
       const minutes = int(h.minutes);
       if (minutes == null || minutes <= 0) return fieldErr("minutes", "Time given must be more than 0 minutes");
       const reminder = text(h.reminder);
-      if (reminder && !ISO.test(reminder)) return fieldErr("reminder", "INVALID");
+      if (reminder && !ISO.test(reminder)) return fieldErr("reminder", "Enter the reminder as a calendar date");
       const values = {
         date,
         employeeId: emp.id,
@@ -966,7 +990,7 @@ const activityScreen: HrmsScreenModule = {
       if (recordId) {
         const [r] = await db.select().from(hrmsActivities).where(eq(hrmsActivities.id, recordId));
         if (!r) return err("That activity no longer exists.", "not_found");
-        if (!mayEditActivity(ctx, r.employeeId)) return err("Only who logged it, or the Sales desk for everyone, edits it", "not_permitted");
+        if (!mayEditActivity(ctx, r.employeeId)) return err(ACTIVITY_EDIT_WHY, "not_permitted");
         await db
           .update(hrmsActivities)
           .set({ ...values, updatedAt: new Date(), updatedById: ctx.user.id })
@@ -982,7 +1006,7 @@ const activityScreen: HrmsScreenModule = {
   },
   actions: {
     async delete(ctx, id) {
-      if (!(has(ctx, "admin") || has(ctx, "hr"))) return err("Only admin or HR deletes an activity", "not_permitted");
+      if (!(has(ctx, "admin") || has(ctx, "hr"))) return err(ACTIVITY_DELETE_WHY, "not_permitted");
       const [r] = await db.select().from(hrmsActivities).where(eq(hrmsActivities.id, id));
       if (!r) return err("That activity no longer exists.", "not_found");
       await db.delete(hrmsActivities).where(eq(hrmsActivities.id, id));
@@ -1000,6 +1024,9 @@ function journeyPeople(ctx: HrmsContext, people: Person[]): Person[] {
   if (has(ctx, "salesAll")) return people.filter((p) => isActive(p) && isSales(p) && !p.dateOfLeaving);
   return people.filter((p) => p.id === ctx.employee?.id);
 }
+
+const JOURNEY_EDIT_WHY = "Only the person who planned it, the employee it is for, or someone with the Sales desk for everyone, can edit it";
+const JOURNEY_DELETE_WHY = "Only the person who planned it, the employee it is for, or someone with the Sales desk for everyone, can delete it";
 
 const mayChangeJourney = (ctx: HrmsContext, r: { createdById: string | null; employeeId: string }) =>
   r.createdById === ctx.user.id || r.employeeId === ctx.employee?.id || has(ctx, "salesAll");
@@ -1101,8 +1128,8 @@ const journeyScreen: HrmsScreenModule = {
           ],
           contacts: r.fileAttachmentId ? [{ l: "Open file", href: `/api/attachments/${r.fileAttachmentId}` }] : [],
           actions: [
-            { id: "edit", l: "Edit", primary: true, loadsForm: true, why: may ? undefined : "Only who planned it, or the Sales desk for everyone, edits it" },
-            { id: "delete", l: "Delete", why: may ? undefined : "Only who planned it, or the Sales desk for everyone, deletes it", confirm: "Delete this journey plan?" },
+            { id: "edit", l: "Edit", primary: true, loadsForm: true, why: may ? undefined : JOURNEY_EDIT_WHY },
+            { id: "delete", l: "Delete", why: may ? undefined : JOURNEY_DELETE_WHY, confirm: "Delete this journey plan?" },
           ],
           by: stampLine(null, r.createdAt),
         };
@@ -1137,17 +1164,18 @@ const journeyScreen: HrmsScreenModule = {
     async journey(ctx, h, _lines, recordId) {
       const people = await allPeople();
       const emp = personFrom(h.emp, journeyPeople(ctx, people));
-      if (!emp) return fieldErr("emp", "invalid Name");
+      if (!emp) return fieldErr("emp", "Pick an employee from the list");
       const start = text(h.start);
       const end = text(h.end) ?? start;
-      if (!start || !ISO.test(start)) return fieldErr("start", "INVALID");
-      if (!end || !ISO.test(end)) return fieldErr("end", "INVALID");
-      if (end < start) return fieldErr("end", "Before Date should Be Greater Than For Date!");
+      if (!start) return fieldErr("start", "Enter the from date");
+      if (!ISO.test(start)) return fieldErr("start", "Enter the from date as a calendar date");
+      if (!end || !ISO.test(end)) return fieldErr("end", "Enter the to date as a calendar date");
+      if (end < start) return fieldErr("end", `The to date (${fdShort(end)}) is before the from date (${fdShort(start)})`);
       const location = text(h.location);
       const locations = await refList("Journey locations");
-      if (!location || (locations.length && !locations.includes(location))) return fieldErr("location", "Choose a location");
+      if (!location || (locations.length && !locations.includes(location))) return fieldErr("location", "Pick a location from the list");
       const plan = text(h.plan);
-      if (!plan) return fieldErr("plan", "Plan is required");
+      if (!plan) return fieldErr("plan", "Write the plan for this journey");
       const custs = await loadCustomers();
       const customerIds: string[] = [];
       for (const o of multi(h.customers)) {
@@ -1161,7 +1189,7 @@ const journeyScreen: HrmsScreenModule = {
       if (recordId) {
         const [r] = await db.select().from(hrmsJourneys).where(eq(hrmsJourneys.id, recordId));
         if (!r) return err("That plan no longer exists.", "not_found");
-        if (!mayChangeJourney(ctx, r)) return err("Only who planned it, or the Sales desk for everyone, edits it", "not_permitted");
+        if (!mayChangeJourney(ctx, r)) return err(JOURNEY_EDIT_WHY, "not_permitted");
         const res = await inTx(async (tx) => {
           await tx
             .update(hrmsJourneys)
@@ -1187,7 +1215,7 @@ const journeyScreen: HrmsScreenModule = {
     async delete(ctx, id) {
       const [r] = await db.select().from(hrmsJourneys).where(eq(hrmsJourneys.id, id));
       if (!r) return err("That plan no longer exists.", "not_found");
-      if (!mayChangeJourney(ctx, r)) return err("Only who planned it, or the Sales desk for everyone, deletes it", "not_permitted");
+      if (!mayChangeJourney(ctx, r)) return err(JOURNEY_DELETE_WHY, "not_permitted");
       await db.delete(hrmsJourneys).where(eq(hrmsJourneys.id, id));
       await hrmsAudit(ctx, "hrms.journey.delete", "hrms_journeys", id, r, null);
       return okVoid("Journey plan deleted");

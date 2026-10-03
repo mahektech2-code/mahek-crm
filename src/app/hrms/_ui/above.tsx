@@ -120,7 +120,7 @@ function Paged({ p, withParam }: { p: NonNullable<HrmsExtras["paged"]>; withPara
         ) : null}
       </form>
       <span className="text-muted">
-        {p.total ? `${p.from.toLocaleString("en-IN")}–${p.to.toLocaleString("en-IN")} of ${p.total.toLocaleString("en-IN")}` : "None match"}
+        {p.total ? `${p.from.toLocaleString("en-IN")}–${p.to.toLocaleString("en-IN")} of ${p.total.toLocaleString("en-IN")}` : "Nothing matches"}
         {p.pages > 1 ? " · the list below filters this page only" : ""}
       </span>
       {p.pages > 1 ? (
@@ -225,7 +225,7 @@ function Chart({ c, onPick }: { c: NonNullable<HrmsExtras["chart"]>; withParam: 
   });
   const b = den ? num / den : 0;
   const a0 = my - b * mxx;
-  const word = b > 0.05 ? "Trending up" : b < -0.05 ? "Trending down" : "Flat";
+  const word = b > 0.05 ? "Trending up" : b < -0.05 ? "Trending down" : "Steady";
   const ticks = s.filter((_, i) => i % Math.max(1, Math.ceil(n / 6)) === 0);
   return (
     <div className="rounded-[8px] border border-line bg-surface p-3">
