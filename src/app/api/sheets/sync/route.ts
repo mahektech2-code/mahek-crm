@@ -31,6 +31,10 @@ import { SyncAlreadyRunningError } from "@/lib/services/sheet-sync-core";
  *                     the MBOS sweeps and escalations, the complaint SLA.
  *                     Read by the handset rather than derived there, so an
  *                     hour is the most a phone is ever behind the ledger.
+ *   ?mode=punch-out-reminders
+ *                     a notification to anybody still punched in from
+ *                     `mbos.attendance.punchOutPromptHour`, and a second
+ *                     later. Half-hourly, from the cycle.
  *   ?mode=nightly     rebuilds every derived value. Nothing else does: buying
  *                     cycles, the inactive watch, follow-up stages and slow
  *                     payers are caches, and on a deployment with no cron they
@@ -105,6 +109,10 @@ const JOBS: Record<string, JobName> = {
    * half rather than three days.
    */
   hourly: "hourly",
+  /* Every half hour from the cycle, so a reminder due at six is sent by seven
+     minutes past rather than at ten to seven. Cheap outside the evening: it
+     answers from the clock before it reads a row. */
+  "punch-out-reminders": "punch-out-reminders",
 };
 
 export async function GET(request: Request) {

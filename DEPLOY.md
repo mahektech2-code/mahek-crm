@@ -239,7 +239,7 @@ The host clock is **UTC**, so the crontab is written in UTC.
 
 | UTC | IST | What |
 |---|---|---|
-| `:07`, `:37` hourly | — | `sheet-sync.sh cycle` — append, taken, payments, parties, then project |
+| `:07`, `:37` hourly | — | `sheet-sync.sh cycle` — append, taken, payments, parties, then project, then the punch-out reminders |
 | `:22` hourly | — | `sheet-sync.sh hourly` — the salesman score, the MBOS sweeps and escalations |
 | `20:13` | 01:43 | `sheet-sync.sh nightly` — reconcile, project, then the recomputes |
 | `20:45` | 02:15 | `backup.sh` — dump to R2, after the nightly has settled |

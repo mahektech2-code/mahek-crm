@@ -5,6 +5,7 @@ import Constants from 'expo-constants';
 import * as Device from 'expo-device';
 import { registerPushToken } from '../sync/api';
 import { getConfig } from '../data/config';
+import { getKv, setKv } from '../db';
 import { PhoneSetup } from '../../modules/phone-setup';
 import { bannerCanShow } from '../state/push-banner';
 
@@ -207,7 +208,37 @@ export async function pushStatus(): Promise<PushReadiness> {
  * was a refused permission, a missing project id, or a push service that had
  * never been asked. `Profile` prints this now.
  */
+/**
+ * Whether THIS phone holds a push token the office can send to.
+ *
+ * Read by the handset's own punch-out reminder, which exists only because push
+ * reached no phone when it was written: once a token is registered the
+ * office's notification does the job, and leaving the local one on would buzz
+ * him twice at six. Written on every registration, either way, so a phone that
+ * loses its permission goes back to the local reminder on its next open.
+ */
+export const PUSH_REGISTERED_KEY = 'push.registered';
+
+export async function hasPushToken(): Promise<boolean> {
+  try {
+    return (await getKv(PUSH_REGISTERED_KEY)) === '1';
+  } catch {
+    return false;
+  }
+}
+
 export async function registerForPush(): Promise<PushReadiness> {
+  const result = await registerForPushOnce();
+  try {
+    await setKv(PUSH_REGISTERED_KEY, result.ok ? '1' : '');
+  } catch {
+    /* A flag that could not be written leaves the local reminder on, which is
+       the safe side: two buzzes beat none. */
+  }
+  return result;
+}
+
+async function registerForPushOnce(): Promise<PushReadiness> {
   try {
     await ensureChannels();
 

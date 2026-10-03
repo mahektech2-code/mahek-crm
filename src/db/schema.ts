@@ -2,6 +2,7 @@ import {
   pgTable,
   text,
   integer,
+  smallint,
   bigint,
   numeric,
   boolean,
@@ -7777,6 +7778,8 @@ export const mbosAttendanceDays = pgTable(
       .default([]),
     /** True where the day closed itself because nobody checked out. */
     autoCheckedOut: boolean("auto_checked_out").notNull().default(false),
+    /** Server-sent punch-out reminders this day has had — see drizzle/0200. */
+    punchOutReminders: smallint("punch_out_reminders").notNull().default(0),
 
     /** Derived cache: seconds between the two marks. Rebuilt, never typed. */
     workedSeconds: integer("worked_seconds"),

@@ -88,6 +88,9 @@ case "${1:-cycle}" in
     # previous cycle's data as though it were fresh.
     for m in append taken payments parties; do sync "$m"; done
     sync "project&owner=${OWNER}"
+    # Not a sheet mode — it rides this cycle for its clock. `hourly` runs at
+    # :52 IST, which would send a six o'clock reminder at ten to seven.
+    sync punch-out-reminders
     ;;
   hourly)
     # THE ONE CYCLE THAT HAD NO CALLER. `runHourly` shipped with the MBOS
