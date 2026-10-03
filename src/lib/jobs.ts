@@ -111,6 +111,8 @@ export type JobName =
   | "whatsapp-automation"
   | "escalate-complaint-sla"
   | "auto-eod"
+  /** Tell anybody still punched in at the end of the day. Half-hourly. */
+  | "punch-out-reminders"
   | "roll-reminders"
   | "sweep-orphan-attachments"
   | "sheet-append"
@@ -801,6 +803,20 @@ export async function runJob(
       return runHourly(triggeredById);
     case "day-boundary":
       return runDayBoundary(triggeredById);
+    case "punch-out-reminders":
+      /* Its own mode rather than a step of `hourly`: that one runs at :52 IST
+         on the droplet's clock, which would land a six o'clock reminder at
+         ten to seven. The half-hourly cycle runs at :07 and :37. */
+      return [
+        await run(
+          "punch-out-reminders",
+          async () => {
+            const { sendPunchOutReminders } = await import("./services/punch-out-reminder-service");
+            return sendPunchOutReminders();
+          },
+          triggeredById,
+        ),
+      ];
     case "build-queues":
       /*
        * Build every telecaller's list for today, before the shift.

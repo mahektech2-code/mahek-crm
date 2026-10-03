@@ -5,6 +5,7 @@ import { AndroidImportance, SchedulableTriggerInputTypes } from 'expo-notificati
 import { dayState } from '../data/attendance';
 import { getConfig } from '../data/config';
 import { punchOutReminderTimes } from '../engines/punch-out';
+import { hasPushToken } from './push';
 
 /**
  * The buzz at the end of the day, for somebody still punched in.
@@ -15,10 +16,15 @@ import { punchOutReminderTimes } from '../engines/punch-out';
  * system overnight with no closing photo. A notification is the one thing on
  * this phone that can reach him then.
  *
- * LOCAL, NOT PUSH. Scheduled on the handset when the day opens, so it fires in
- * a lane with no signal, needs no project id or Firebase setup, and costs the
- * server nothing. The rule for WHEN is `punchOutReminderTimes`, pure and
- * tested; this file is only the wiring.
+ * A STOPGAP FOR PUSH, AND IT KNOWS IT. Every notification in MBOS is the
+ * office's — a row on the bell and a push — and the punch-out reminder is too:
+ * `sendPunchOutReminders` on the server. But push reached no phone when this
+ * was written (no Firebase in the APK, so no handset could get a token), so a
+ * reminder that only the server sent would buzz nobody. This one is scheduled
+ * on the phone and fires with no signal, and it stands down by itself the
+ * moment the phone holds a push token (`hasPushToken`), so nobody hears it
+ * twice. Delete this file once every phone in the field is on an APK with
+ * Firebase. The rule for WHEN is `punchOutReminderTimes`, pure and tested.
  *
  * RECONCILED, NOT TRACKED. Every caller asks the same question — is a session
  * open, and what should be scheduled for the rest of today — and the answer
@@ -69,6 +75,9 @@ export async function cancelPunchOutReminders(): Promise<void> {
 export async function syncPunchOutReminders(userId: string): Promise<void> {
   try {
     await cancelPunchOutReminders();
+    /* The office sends the same reminder as a notification. Once this phone
+       can receive it, this one stands down — see `hasPushToken`. */
+    if (await hasPushToken()) return;
     const day = await dayState(userId);
     if (!day.running) return;
 
