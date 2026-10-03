@@ -19,6 +19,7 @@ import { clock, phoneDisplay, shortDate } from "@/lib/format";
 import { previewOf, whenLabel } from "@/lib/whatsapp-status";
 import { MEDIA_LABEL, type MediaType } from "@/lib/whatsapp-delivery";
 import { ReplyMedia } from "./reply-media";
+import { ImageViewer, type ViewerImage } from "./image-viewer";
 import type {
   ChatShow,
   Conversation,
@@ -428,6 +429,23 @@ function ThreadPane({
   const [composeKey, setComposeKey] = React.useState(() => crypto.randomUUID());
   const scroller = React.useRef<HTMLDivElement>(null);
 
+  // Every photograph in the conversation, in order, so the viewer can step
+  // from one to the next — a slip and the cheque sent after it, side by side.
+  const photos = React.useMemo(() => {
+    const list: Array<ViewerImage & { eventId: string }> = [];
+    for (const e of t.events) {
+      if (e.media?.type !== "image") continue;
+      list.push({
+        eventId: e.id,
+        url: e.media.url,
+        caption: e.text && e.text !== MEDIA_LABEL["image" as MediaType] ? e.text : null,
+        meta: `${e.fromThem ? t.name : e.viaRule ? "Automatic rule" : (e.by ?? "Mahek")} · ${whenLabel(e.at, businessDay)}`,
+      });
+    }
+    return list;
+  }, [t.events, t.name, businessDay]);
+  const [viewing, setViewing] = React.useState<number | null>(null);
+
   const ends = t.windowEndsAt ? new Date(t.windowEndsAt) : null;
   const windowOpen = ends !== null && ends.getTime() > now;
   const canType = !t.blockedWhy && windowOpen;
@@ -467,6 +485,9 @@ function ThreadPane({
   const days = t.events.map((e) => calendarDate(new Date(e.at)));
   return (
     <div className="flex min-h-0 flex-col">
+      {viewing !== null && photos[viewing] ? (
+        <ImageViewer images={photos} index={viewing} onIndex={setViewing} onClose={() => setViewing(null)} />
+      ) : null}
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2.5">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -560,7 +581,17 @@ function ThreadPane({
                   ) : null}
                   {e.media ? (
                     <div className="mt-0.5 mb-1">
-                      <ReplyMedia type={e.media.type} url={e.media.url} pdf={e.media.pdf} caption={e.text} />
+                      <ReplyMedia
+                        type={e.media.type}
+                        url={e.media.url}
+                        pdf={e.media.pdf}
+                        caption={e.text}
+                        onOpen={
+                          e.media.type === "image"
+                            ? () => setViewing(photos.findIndex((p) => p.eventId === e.id))
+                            : undefined
+                        }
+                      />
                     </div>
                   ) : null}
                   {/* A file with no caption has only its label for words, which the file itself already says. */}
