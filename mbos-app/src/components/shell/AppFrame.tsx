@@ -6,7 +6,7 @@ import { color as C, HIT, type, weight } from '../../theme/tokens';
 import { Header, StatusStrip, TabBar, TabBarAction, type StripTone, type TabKey } from './Chrome';
 import { ActionSheet, ConfirmSheet, Toast } from '../ui/overlays';
 import { Icon } from '../ui/Icon';
-import { useKeyboardHeight } from '../ui/keyboard';
+import { useKeyboardHeight, useRevealFocusedField } from '../ui/keyboard';
 import { useTicker } from '../ui/use-ticker';
 import { Appear } from '../ui/motion';
 import { useCustomer, useDaysToAgreeCount, usePendingCount, useStore, useUnreadCount } from '../../state/store';
@@ -193,6 +193,7 @@ export function AppFrame({
   const here = (pathname ?? '').replace(/^\/+/, '').split('/')[0] || 'home';
   const fromHere = `?from=${here}`;
   const keyboardHeight = useKeyboardHeight();
+  const reveal = useRevealFocusedField(keyboardHeight);
   const [footerHeight, setFooterHeight] = React.useState(0);
   const unread = useUnreadCount();
   const waiting = usePendingCount();
@@ -333,6 +334,9 @@ export function AppFrame({
    */
   const body = scroll ? (
     <ScrollView
+      ref={reveal.ref}
+      onScroll={reveal.onScroll}
+      scrollEventThrottle={16}
       style={{ flex: 1 }}
       contentContainerStyle={[contentStyle, keyboardHeight > 0 && { paddingBottom: keyboardHeight + 24 }]}
       keyboardShouldPersistTaps="handled"

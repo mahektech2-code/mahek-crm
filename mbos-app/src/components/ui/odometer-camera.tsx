@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { color as C, HIT, radius, weight } from '../../theme/tokens';
 import { Icon } from './Icon';
+import { useKeyboardHeight } from './keyboard';
 import { PrimaryButton, SecondaryButton, T } from './primitives';
 import { checkOdometer } from '../../lib/travel-leg';
 
@@ -63,6 +64,7 @@ export function OdometerCamera({
   onDone: (result: OdometerResult) => void;
 }) {
   const insets = useSafeAreaInsets();
+  const keyboardHeight = useKeyboardHeight();
   const [permission, requestPermission] = useCameraPermissions();
   const camera = React.useRef<CameraView>(null);
   const [ready, setReady] = React.useState(false);
@@ -125,7 +127,11 @@ export function OdometerCamera({
 
   return (
     <Modal visible={open} animationType="slide" onRequestClose={() => onDone(null)} statusBarTranslucent>
-      <View style={{ flex: 1, backgroundColor: '#000000' }}>
+      {/* The reading is typed under the photo it came from, so the keyboard
+          opens over exactly the box and the Save button. An edge-to-edge
+          window does not shrink for it, so this does: the photo gives up the
+          height and the field sits on the keys. */}
+      <View style={{ flex: 1, backgroundColor: '#000000', paddingBottom: keyboardHeight }}>
         {/* ---- what is being asked for, and the way out ---- */}
         <View
           style={{
@@ -166,7 +172,7 @@ export function OdometerCamera({
         </View>
 
         {/* ---- the shutter, or the reading that goes with what it took ---- */}
-        <View style={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: insets.bottom + 16, gap: 10 }}>
+        <View style={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: (keyboardHeight > 0 ? 0 : insets.bottom) + 16, gap: 10 }}>
           {shot ? (
             <>
               <T style={{ fontSize: 13, lineHeight: 18, color: 'rgba(255,255,255,0.65)' }}>
