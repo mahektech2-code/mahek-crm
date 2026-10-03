@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 import { ADMIN_REDIRECTS } from "./src/lib/admin-redirects";
+import { HRMS_RETIRED_SLUGS, hrmsLink } from "./src/lib/hrms/registry";
 
 const nextConfig: NextConfig = {
   /*
@@ -167,7 +168,10 @@ const nextConfig: NextConfig = {
       { source: "/erp/paid-freight", destination: "/erp/transport?view=paidFreight", permanent: true },
       { source: "/erp/credits", destination: "/erp/expenses?view=credits", permanent: true },
       { source: "/erp/powers", destination: "/admin/people", permanent: true },
-      { source: "/erp/employees", destination: "/hrms/employees", permanent: true },
+      { source: "/erp/employees", destination: "/hrms/people", permanent: true },
+      /* The HRMS's 41 screens became 14 (lib/hrms/registry.ts): each old
+         screen is a tab now, reached at its screen's URL with ?view=. */
+      ...Object.entries(HRMS_RETIRED_SLUGS).map(([slug, key]) => ({ source: `/hrms/${slug}`, destination: hrmsLink(key), permanent: true })),
       /* The sales-order lists and Order details are tabs of one Orders screen;
          order follow-up is the CRM's buying cycle now, so its old screens land
          on the ERP's home rather than on a 404. */

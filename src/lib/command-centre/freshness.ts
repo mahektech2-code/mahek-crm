@@ -394,7 +394,7 @@ const SHEETS: SheetDef[] = [
     expected: "On HRMS open",
     staleAfter: STALE_AFTER_HOURS.hrSheet,
     job: "hrms-sync",
-    href: { label: "HRMS employees", url: "/hrms/employees" },
+    href: { label: "HRMS employees", url: "/hrms/people" },
     suffix: (age) => `${age} old — only syncs when HRMS opens`,
   },
   {

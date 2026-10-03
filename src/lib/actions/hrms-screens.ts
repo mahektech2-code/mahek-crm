@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
 import { HrmsNotPermitted, requireHrmsWrite } from "@/lib/hrms/access";
 import { hrmsScreenModule } from "@/lib/hrms/screens";
-import { hrmsHref } from "@/lib/hrms/registry";
+import { hrmsHref, hrmsScreen } from "@/lib/hrms/registry";
 import type { FormSpec } from "@/lib/erp/ui";
 
 /* ---------------------------------------------------------------------------
@@ -21,7 +21,9 @@ function refused(e: unknown): Result<never> {
 }
 
 function revalidate(screen: string) {
-  revalidatePath(hrmsHref(screen));
+  /* `screen` names the tab that wrote; the path is the screen it is a tab of. */
+  const on = hrmsScreen(screen);
+  if (on) revalidatePath(hrmsHref(on));
   revalidatePath("/hrms");
 }
 

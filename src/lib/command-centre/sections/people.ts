@@ -395,7 +395,7 @@ async function record(ctx: Ctx, table: string, id: string): Promise<RecordView> 
     timeline,
     audit,
     acts: [],
-    href: { label: "Open in HRMS", url: "/hrms/employees" },
+    href: { label: "Open in HRMS", url: "/hrms/people" },
     noteTarget: { kind: "employee", id },
   };
 }

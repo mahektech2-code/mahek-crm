@@ -1,4 +1,5 @@
 import "server-only";
+import { cache } from "react";
 import { and, eq, isNull, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { hrmsAttendance, hrmsBuddyTasks, hrmsGrievances, hrmsHelp, hrmsLeaveRequests, hrmsSalaries, hrmsTodos } from "@/db/schema";
@@ -10,7 +11,8 @@ import { today } from "./server";
  * Only work waiting on THEM: a count they cannot act on is noise.
  * ------------------------------------------------------------------------- */
 
-export async function hrmsNavCounts(ctx: HrmsContext): Promise<Record<string, number>> {
+/** Cached per request: the layout draws the sidebar badges and the page the tab badges. */
+export const hrmsNavCounts = cache(async function hrmsNavCounts(ctx: HrmsContext): Promise<Record<string, number>> {
   const out: Record<string, number> = {};
   const me = ctx.employee?.id ?? null;
   const n = (rows: { n: number }[]) => Number(rows[0]?.n ?? 0);
@@ -38,4 +40,4 @@ export async function hrmsNavCounts(ctx: HrmsContext): Promise<Record<string, nu
     jobs.push(db.select({ n: count }).from(hrmsSalaries).where(sql`${hrmsSalaries.status} <> 'Paid'`).then((r) => void (out.payroll = n(r))));
   await Promise.all(jobs);
   return out;
-}
+});

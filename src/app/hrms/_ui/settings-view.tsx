@@ -1,26 +1,21 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
-import { hrmsContext } from "@/lib/hrms/access";
 import { getConfig } from "@/lib/config/store";
 import { hrmsSchema } from "@/lib/config/schema-contract";
 import type { Config } from "@/lib/config/registry";
-import { isPlatformAdmin } from "@/lib/access-control";
 import { ADMIN } from "@/lib/admin-routes";
-
-export const dynamic = "force-dynamic";
-export const metadata = { title: "HRMS settings — MahekOne" };
 
 /**
  * HRMS settings are edited in ONE place, the Admin Console's HRMS section —
- * the same audited writer every other setting goes through. Somebody who can
- * open the console is taken there; anybody else holding this screen reads the
- * values in force and who changes them, rather than a second editor that could
- * drift from the first.
+ * the same audited writer every other setting goes through. This tab reads
+ * the values in force and says where they are changed, rather than being a
+ * second editor that could drift from the first.
+ *
+ * It used to send a platform admin straight to the console. Now that it is a
+ * tab beside the pick lists, that would have made the pick lists unreachable
+ * for exactly the people who maintain them, so everybody reads it here and the
+ * console is a link away.
  */
-export default async function HrmsSettings() {
-  const ctx = await hrmsContext();
-  if (!ctx.screens.has("settings")) redirect("/hrms");
-  if (await isPlatformAdmin(ctx.user)) redirect(ADMIN.settingsFor("hrms"));
+export async function SettingsView() {
   const config = await getConfig();
   const schema = hrmsSchema();
   return (

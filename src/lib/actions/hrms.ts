@@ -85,7 +85,7 @@ export async function syncEmployeesAction(
       triggeredById: user.id,
     });
 
-    revalidatePath("/hrms/employees");
+    revalidatePath("/hrms/people");
     revalidatePath("/apps");
 
     return ok(
