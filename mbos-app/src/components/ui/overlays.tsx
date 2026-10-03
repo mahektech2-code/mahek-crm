@@ -6,7 +6,7 @@ import { Input, PrimaryButton, SecondaryButton } from './primitives';
 import { isoDate, monthName } from '../../lib/format';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { TAB_BAR_HEIGHT } from '../shell/Chrome';
-import { useKeyboardHeight } from './keyboard';
+import { useKeyboardHeight, useRevealFocusedField } from './keyboard';
 import { useReduceMotion, EASE } from './motion';
 import { feedback } from './feedback';
 import { useModalOpen } from '../../state/push-banner';
@@ -408,6 +408,7 @@ export function BottomSheet({
 }) {
   const keyboardHeight = useKeyboardHeight();
   const { height: screenHeight } = useWindowDimensions();
+  const reveal = useRevealFocusedField(keyboardHeight);
 
   /**
    * The sheet sits ON the keyboard, on BOTH platforms.
@@ -436,6 +437,9 @@ export function BottomSheet({
         <View style={[st.grabber, { marginTop: 8, marginBottom: -4 }]} />
         {scroll ? (
           <ScrollView
+            ref={reveal.ref}
+            onScroll={reveal.onScroll}
+            scrollEventThrottle={16}
             style={{ maxHeight: available }}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="interactive"
@@ -444,6 +448,9 @@ export function BottomSheet({
           </ScrollView>
         ) : (
           <ScrollView
+            ref={reveal.ref}
+            onScroll={reveal.onScroll}
+            scrollEventThrottle={16}
             style={{ maxHeight: available }}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}>
