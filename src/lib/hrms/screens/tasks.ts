@@ -312,7 +312,7 @@ const templates: HrmsScreenModule = {
   async load(ctx, q) {
     const people = await allPeople();
     const { scope, options } = scopeFor(ctx, q, "tasksAdmin");
-    const ids = visibleIds(ctx, scope, people);
+    const ids = visibleIds(ctx, scope);
     const where = ids ? (ids.size ? inArray(hrmsTaskTemplates.employeeId, [...ids]) : sql`false`) : undefined;
     const rows = await db.select().from(hrmsTaskTemplates).where(where).orderBy(asc(hrmsTaskTemplates.serial));
     const pb = byId(people);
@@ -494,7 +494,7 @@ const checklist: HrmsScreenModule = {
     const t = today();
     const people = await allPeople();
     const { scope, options } = scopeFor(ctx, q, "tasksAdmin");
-    const ids = visibleIds(ctx, scope, people);
+    const ids = visibleIds(ctx, scope);
     const from = isISO(q.from) ? q.from : addDaysISO(t, -30);
     const where: SQL[] = [gte(hrmsChecklist.date, from)];
     if (isISO(q.to)) where.push(lte(hrmsChecklist.date, q.to));
@@ -741,7 +741,7 @@ const todos: HrmsScreenModule = {
     const t = today();
     const people = await allPeople();
     const { scope, options } = scopeFor(ctx, q, "tasksAdmin");
-    const ids = visibleIds(ctx, scope, people);
+    const ids = visibleIds(ctx, scope);
     const list = ids ? [...ids] : null;
     /* A to-do belongs to both ends: the person given it and the person who gave it. */
     const where = list ? (list.length ? or(inArray(hrmsTodos.toEmployeeId, list), inArray(hrmsTodos.fromEmployeeId, list)) : sql`false`) : undefined;
@@ -986,7 +986,7 @@ const buddy: HrmsScreenModule = {
     const t = today();
     const people = await allPeople();
     const { scope, options } = scopeFor(ctx, q, "tasksAdmin");
-    const ids = visibleIds(ctx, scope, people);
+    const ids = visibleIds(ctx, scope);
     const list = ids ? [...ids] : null;
     const where = list ? (list.length ? or(inArray(hrmsBuddyTasks.toEmployeeId, list), inArray(hrmsBuddyTasks.fromEmployeeId, list)) : sql`false`) : undefined;
     const rows = await db.select().from(hrmsBuddyTasks).where(where).orderBy(desc(hrmsBuddyTasks.date));

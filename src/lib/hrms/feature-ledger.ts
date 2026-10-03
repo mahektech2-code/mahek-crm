@@ -163,4 +163,15 @@ export const FEATURES: Record<string, Feature> = {
   calendar: { what: "Month calendar view with holidays (leave calendar, journey planner)", file: "src/app/hrms/_ui/above.tsx", marker: "function Calendar" },
   chart: { what: "Trend chart with a parts breakdown (attendance chart, sales score)", file: "src/app/hrms/_ui/above.tsx", marker: "function Chart" },
   oldUrls: { what: "Every first-build URL redirects to the tab it became", file: "next.config.ts", marker: "HRMS_RETIRED_SLUGS" },
+
+  /* -------------------------------------- shared with the rest of MahekOne */
+  documentLibrary: { what: "HR's documents are rows of the company library (mbos_documents), with an audience", file: "src/lib/hrms/screens/misc.ts", marker: "async function hrDocuments" },
+  documentWithdraw: { what: "A document is withdrawn, never deleted, and tombstoned off the handsets", file: "src/lib/hrms/screens/misc.ts", marker: "entity: \"documents\"" },
+  announcements: { what: "One sender for HRMS Announcements and the Sales Dashboard's Send a notification; edits and deletes reach the bell", file: "src/lib/services/announcement-service.ts", marker: "export async function announce" },
+  salesBroadcastLogged: { what: "A Sales Dashboard broadcast is on record beside the office's announcements", file: "src/lib/actions/sales.ts", marker: "source: \"sales\"" },
+  teamFromChart: { what: "My team is the org chart, with the Report To job title only for people the chart has not placed", file: "src/lib/hrms/access.ts", marker: "async function teamOf" },
+  activityTimeline: { what: "A logged sales activity reaches the customer's shared history", file: "src/lib/hrms/screens/sales.ts", marker: "HRMS_EVENT.activity" },
+  helpWritesDay: { what: "Approving an attendance help request can write its times onto the day", file: "src/lib/hrms/screens/attendance.ts", marker: "export async function correctDayFromHelp" },
+  headReach: { what: "A head acts on their team and office only, enforced on the server", file: "src/lib/hrms/services/people.ts", marker: "export function staffInReach" },
+  storedWords: { what: "Every renamed stored value, and the old spelling read from an old file", file: "src/lib/hrms/values.ts", marker: "export function fromOld" },
 };

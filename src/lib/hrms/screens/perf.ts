@@ -62,7 +62,8 @@ async function perfCfg(): Promise<Cfg> {
     dailyDivisor: c["hrms.performance.dailyDivisor"],
     gstPercent: c["hrms.performance.gstPercent"],
     fyStart: c["hrms.performance.financialYearStart"],
-    pointsFrom: c["hrms.performance.pointsFinancialDate"],
+    /* One financial year start for the score and the points alike. */
+    pointsFrom: c["hrms.performance.financialYearStart"],
     periodDivisor: c["hrms.performance.periodDivisor"],
     standardHours: c["hrms.performance.standardHours"],
     eomPercent: c["hrms.performance.employeeOfMonthPercent"],
@@ -399,7 +400,7 @@ const kpi: HrmsScreenModule = {
     const t = today();
     const people = await allPeople();
     const { scope, options } = scopeFor(ctx, q, "salesAll", "hr", "perfAdmin");
-    const ids = visibleIds(ctx, scope, people);
+    const ids = visibleIds(ctx, scope);
     const idList = ids ? [...ids] : null;
     const { from, to } = periodOf(q, addDaysISO(t, -30), t);
     const [rows, att, acts, form] = await Promise.all([
@@ -527,7 +528,7 @@ const salesPerf: HrmsScreenModule = {
     const t = today();
     const people = await allPeople();
     const { scope, options } = scopeFor(ctx, q, "perfAdmin", "hr", "salesAll");
-    const ids = visibleIds(ctx, scope, people);
+    const ids = visibleIds(ctx, scope);
     const idList = ids ? [...ids] : null;
     const { from, to } = periodOf(q, addDaysISO(t, -30), t);
     const [rows, book] = await Promise.all([kpiRows(idList, from, to), scoreBook(idList, from, to)]);
@@ -645,7 +646,7 @@ async function staffRows(ctx: HrmsContext, q: ScreenQuery) {
   const cfg = await perfCfg();
   const people = await allPeople();
   const sc = scopeFor(ctx, q, "perfAdmin", "hr");
-  const ids = visibleIds(ctx, sc.scope, people);
+  const ids = visibleIds(ctx, sc.scope);
   const offices = new Set(cfg.staffOffices.map((o) => o.trim().toLowerCase()));
   const staff = people.filter((p) => isActive(p) && offices.has((p.office ?? "").trim().toLowerCase()) && (!ids || ids.has(p.id)));
   const toMonth = q.month && /^\d{4}-\d{2}$/.test(q.month) ? q.month : monthOf(t);
@@ -950,7 +951,7 @@ function pointsId(id: string): { emp: string; from: string; to: string } | null 
 export function canSeePoints(ctx: HrmsContext, people: Person[], employeeId: string): boolean {
   if (pointsWide(ctx)) return true;
   const { scope } = scopeFor(ctx, {}, "perfAdmin", "hr");
-  const ids = visibleIds(ctx, scope, people);
+  const ids = visibleIds(ctx, scope);
   return !ids || ids.has(employeeId);
 }
 
@@ -970,7 +971,7 @@ const points: HrmsScreenModule = {
     const t = today();
     const people = await allPeople();
     const { scope, options } = scopeFor(ctx, q, "perfAdmin", "hr");
-    const ids = visibleIds(ctx, scope, people);
+    const ids = visibleIds(ctx, scope);
     const { from, to } = periodOf(q, `${monthOf(t)}-01`, t);
     const staff = people.filter((p) => isActive(p) && !p.dateOfLeaving && (!ids || ids.has(p.id)));
     const { rows, financialDate } = await pointsFor(staff, from, to);
