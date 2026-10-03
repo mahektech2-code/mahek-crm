@@ -16,6 +16,11 @@ import { getConfig } from "@/lib/config/store";
  * `auth.console.confirmMinutes`, and each console page opened moves that
  * forward, so somebody working in it is asked once and left alone.
  *
+ * Mahek asked for it OFF, so the setting's default is 0, which means never
+ * ask: moving from another app to the console opens it on the sign-in alone.
+ * Everything below stays in place, so turning it back on is a number on the
+ * Settings screen rather than a deploy.
+ *
  * It is enforced twice, for the reason every check here is: the console's
  * layout redirects to `/login/confirm`, and `requirePlatformAdminUser` — the
  * gate on every act that changes who can reach what — refuses a stale
@@ -31,9 +36,12 @@ export class ConsoleNotConfirmedError extends Error {
   }
 }
 
+async function confirmMinutes(): Promise<number> {
+  return Number((await getConfig())["auth.console.confirmMinutes"]);
+}
+
 async function cutoff(): Promise<Date> {
-  const minutes = Number((await getConfig())["auth.console.confirmMinutes"]);
-  return new Date(Date.now() - minutes * 60_000);
+  return new Date(Date.now() - (await confirmMinutes()) * 60_000);
 }
 
 /**
@@ -43,6 +51,8 @@ async function cutoff(): Promise<Date> {
  */
 export async function isConsoleConfirmed(): Promise<boolean> {
   if (process.env.NODE_ENV === "test") return true;
+  // 0 switches the second password off: the sign-in alone opens the console.
+  if ((await confirmMinutes()) === 0) return true;
   const id = await currentSessionId();
   if (!id) return false;
   const [row] = await db

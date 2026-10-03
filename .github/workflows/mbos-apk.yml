@@ -84,6 +84,31 @@ jobs:
         working-directory: mbos-app
         run: npm ci
 
+      # PUSH NEEDS FIREBASE ON ANDROID, and nothing gave it any. Without
+      # google-services.json in the build, `getExpoPushTokenAsync` fails on
+      # every handset, no phone holds a token, and every notification the office
+      # sends — an order declined, a task escalated, the punch-out reminder —
+      # reaches the bell and never the lock screen. The file comes from the
+      # Firebase project (Project settings → Your apps → Android, package
+      # in.mahek.mbos) and is stored as a repository secret, then named in
+      # app.json for this build only. Missing, the build still succeeds and
+      # says plainly that push will not work: refusing would stop every release
+      # until somebody with the Google account has done the setup.
+      - name: Give the build Firebase, so push can get a token
+        working-directory: mbos-app
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.MBOS_GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -z "$GOOGLE_SERVICES_JSON" ]; then
+            echo "::warning::MBOS_GOOGLE_SERVICES_JSON is not set. This APK cannot receive push notifications — notifications still land on the in-app bell. See DEPLOY.md, 'Push notifications'."
+            exit 0
+          fi
+          printf '%s' "$GOOGLE_SERVICES_JSON" > google-services.json
+          node -e "JSON.parse(require('fs').readFileSync('google-services.json','utf8'))" \
+            || { echo "::error::MBOS_GOOGLE_SERVICES_JSON is not valid JSON."; exit 1; }
+          node -e "const f='app.json',fs=require('fs'),j=JSON.parse(fs.readFileSync(f,'utf8'));j.expo.android.googleServicesFile='./google-services.json';fs.writeFileSync(f,JSON.stringify(j,null,2)+'\n')"
+          echo "Firebase configured for this build."
+
       # `android/` is gitignored and regenerated every time. The signing plugin
       # runs as part of this and re-applies the release signing config to the
       # freshly generated build.gradle — see plugins/withReleaseSigning.js.
