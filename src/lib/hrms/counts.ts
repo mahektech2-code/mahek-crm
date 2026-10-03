@@ -1,10 +1,11 @@
 import "server-only";
 import { cache } from "react";
-import { and, eq, isNull, lt, sql } from "drizzle-orm";
+import { and, eq, isNull, lt, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { hrmsAttendance, hrmsBuddyTasks, hrmsGrievances, hrmsHelp, hrmsLeaveRequests, hrmsSalaries, hrmsTodos } from "@/db/schema";
 import type { HrmsContext } from "./access";
 import { today } from "./server";
+import { BUDDY_DONE, LEAVE_WAITING } from "./values";
 
 /* ---------------------------------------------------------------------------
  * What is waiting on each screen for this person — the sidebar's badges.
@@ -24,7 +25,7 @@ export const hrmsNavCounts = cache(async function hrmsNavCounts(ctx: HrmsContext
         .then((r) => void (out.pendingOut = n(r))),
     );
   if (ctx.screens.has("approvals") && ctx.powers.has("approveLeave"))
-    jobs.push(db.select({ n: count }).from(hrmsLeaveRequests).where(eq(hrmsLeaveRequests.status, "Requesting")).then((r) => void (out.approvals = n(r))));
+    jobs.push(db.select({ n: count }).from(hrmsLeaveRequests).where(eq(hrmsLeaveRequests.status, LEAVE_WAITING)).then((r) => void (out.approvals = n(r))));
   if (ctx.screens.has("help") && ctx.powers.has("resolve"))
     jobs.push(db.select({ n: count }).from(hrmsHelp).where(eq(hrmsHelp.status, "Pending")).then((r) => void (out.help = n(r))));
   if (ctx.screens.has("grievances") && ctx.powers.has("resolve"))
@@ -33,7 +34,7 @@ export const hrmsNavCounts = cache(async function hrmsNavCounts(ctx: HrmsContext
     jobs.push(db.select({ n: count }).from(hrmsTodos).where(and(eq(hrmsTodos.toEmployeeId, me), eq(hrmsTodos.status, "Open"))).then((r) => void (out.todos = n(r))));
   if (me && ctx.screens.has("buddy"))
     jobs.push(
-      db.select({ n: count }).from(hrmsBuddyTasks).where(and(eq(hrmsBuddyTasks.toEmployeeId, me), eq(hrmsBuddyTasks.date, today()), sql`${hrmsBuddyTasks.status} <> 'Task done'`))
+      db.select({ n: count }).from(hrmsBuddyTasks).where(and(eq(hrmsBuddyTasks.toEmployeeId, me), eq(hrmsBuddyTasks.date, today()), ne(hrmsBuddyTasks.status, BUDDY_DONE)))
         .then((r) => void (out.buddy = n(r))),
     );
   if (ctx.screens.has("payroll") && (ctx.powers.has("payroll") || ctx.powers.has("pay")))

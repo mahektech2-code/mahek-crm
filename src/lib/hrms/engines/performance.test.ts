@@ -120,7 +120,7 @@ test("staff month: hours, punctuality, checklist, to-dos, buddy (A21, A22)", () 
       { durationMin: null, early: true },
     ],
     targetMinutes: [480, 480, 480],
-    checklist: [{ status: "Done" }, { status: "N/A" }, { status: "Not Done" }, { status: "" }],
+    checklist: [{ status: "Done" }, { status: "Not applicable" }, { status: "Not Done" }, { status: "" }],
     kpiParts: [],
     todos: [
       { done: true, daysGiven: 4, daysTaken: 1 },
@@ -136,7 +136,7 @@ test("staff month: hours, punctuality, checklist, to-dos, buddy (A21, A22)", () 
   assert.equal(m.avgDaysToComplete, 2);
   assert.equal(m.todoPct, 50);
   assert.equal(m.notDoneTodos, 1);
-  assert.equal(m.speed, "Working Speed :- 2 Days Average And 1 Task Not Done");
+  assert.equal(m.speed, "Takes 2 days on average; 1 to-do not done");
   assert.equal(m.buddyPct, 25);
   assert.equal(m.notDoneBuddy, 3);
   assert.equal(m.overallPct, Math.round(((50 + 50 + 50 + 66.7) / 4) * 10) / 10);
@@ -158,6 +158,7 @@ test("staff month for sales: daily task is the four KPI components ÷ 25", () =>
   assert.equal(m.dailyTaskPct, 70);
   assert.equal(m.todoPct, 100);
   assert.equal(m.buddyPct, null);
+  assert.equal(m.speed, "No to-dos finished yet; 0 to-dos not done");
 });
 
 test("employee of the month at or above the mark", () => {
@@ -222,7 +223,7 @@ test("points for OfficeStaff: the four-point average (A20)", () => {
   const p = performancePoints({ ...pts, kind: "OfficeStaff" }, pcfg);
   assert.equal(p.taskCount, 10);
   assert.equal(p.taskPoint, 0.8);
-  assert.equal(p.naText, "Task: 10 Not Applicable Reason Stock audit");
+  assert.equal(p.naText, "10 tasks · not applicable: Stock audit");
   assert.equal(p.total, Math.round(((0.8 + 1 + 0.8 + 1) / 4) * 1000) / 1000);
 });
 

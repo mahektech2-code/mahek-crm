@@ -40,5 +40,5 @@ registerCalc("hrms.ot.hours", ({ h, data }) => {
   const b = tmin(x?.e);
   if (a == null || b == null) return x ? "No check-out that day" : "";
   const m = b - a;
-  return m > Number(data.minMinutes ?? 10) ? hm(m) : "OT not Applicable";
+  return m > Number(data.minMinutes ?? 10) ? hm(m) : `Not overtime: it must be more than ${Number(data.minMinutes ?? 10)} minutes`;
 });

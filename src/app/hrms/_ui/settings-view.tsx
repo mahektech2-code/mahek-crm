@@ -21,7 +21,7 @@ export async function SettingsView() {
   return (
     <div className="grid gap-4">
       <div className="rounded-[6px] border border-line bg-surface px-4 py-3 text-[13px] text-body">
-        These are the rules HRMS runs on. They are changed by an administrator in the{" "}
+        These are the rules HRMS runs on. An administrator changes them in the{" "}
         <Link href={ADMIN.settingsFor("hrms")}>Admin Console</Link>, where every change is recorded.
       </div>
       {schema.tabs.map((t) => (
@@ -49,6 +49,7 @@ export async function SettingsView() {
 function show(v: unknown): string {
   if (typeof v === "boolean") return v ? "On" : "Off";
   if (v == null || v === "") return "—";
+  if (Array.isArray(v)) return v.length ? v.map((x) => (typeof x === "object" ? JSON.stringify(x) : String(x))).join(", ") : "—";
   if (typeof v === "object") return JSON.stringify(v);
   return String(v);
 }

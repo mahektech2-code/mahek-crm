@@ -11611,8 +11611,8 @@ export const hrmsLeaveRequests = pgTable(
     endDate: date("end_date").notNull(),
     days: numeric("days", { precision: 5, scale: 2, mode: "number" }).notNull(),
     reason: text("reason"),
-    /** Requesting · Approved · Rejected. */
-    status: text("status").notNull().default("Requesting"),
+    /** Waiting · Approved · Rejected (src/lib/hrms/values.ts). */
+    status: text("status").notNull().default("Waiting"),
     paid: numeric("paid", { precision: 5, scale: 2, mode: "number" }),
     unpaid: numeric("unpaid", { precision: 5, scale: 2, mode: "number" }),
     approvedByName: text("approved_by_name"),
@@ -11764,7 +11764,7 @@ export const hrmsExpenses = pgTable(
       .notNull()
       .references(() => employees.id, { onDelete: "cascade" }),
     date: date("date").notNull(),
-    /** "Expense Claim" or "Expense Paid". */
+    /** "Claim" or "Payment" (src/lib/hrms/values.ts). */
     payType: text("pay_type").notNull(),
     location: text("location"),
     category: text("category"),
@@ -11819,7 +11819,7 @@ export const hrmsChecklist = pgTable(
     weekday: text("weekday"),
     startTime: text("start_time"),
     endTime: text("end_time"),
-    /** "" (not yet) · Done · Not Done · N/A. */
+    /** "" (not yet) · Done · Not applicable; "Not Done" from the source reads as not yet. */
     status: text("status").notNull().default(""),
     workingTime: text("working_time"),
     remark: text("remark"),
@@ -11876,7 +11876,7 @@ export const hrmsBuddyTasks = pgTable(
       .references(() => employees.id, { onDelete: "cascade" }),
     task: text("task").notNull(),
     note: text("note"),
-    /** Shared · Accepted · Task done. */
+    /** Shared · Accepted · Done. */
     status: text("status").notNull().default("Shared"),
     acceptedAt: timestamp("accepted_at", { withTimezone: true }),
     doneAt: timestamp("done_at", { withTimezone: true }),
@@ -12007,7 +12007,7 @@ export const hrmsAssetStock = pgTable(
     code: text("code").notNull(),
     purchaseDate: date("purchase_date").notNull(),
     name: text("name").notNull(),
-    /** Stationery · Tangible Assets · Other. */
+    /** Stationery · Equipment · Other. */
     category: text("category").notNull(),
     costPaise: bigint("cost_paise", { mode: "number" }).notNull().default(0),
     qty: integer("qty").notNull(),

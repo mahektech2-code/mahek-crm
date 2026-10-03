@@ -33,8 +33,8 @@ const COLS: ColSpec[] = [
   { k: "date", l: "Date", t: "d" },
   { k: "emp", l: "Employee", t: "b" },
   { k: "office", l: "Office", t: "t" },
-  { k: "in", l: "Check in", t: "t" },
-  { k: "out", l: "Check out", t: "t" },
+  { k: "in", l: "Check-in", t: "t" },
+  { k: "out", l: "Check-out", t: "t" },
   { k: "dur", l: "Duration", t: "t" },
   { k: "late", l: "Late / early", t: "t" },
   { k: "workDay", l: "Day", t: "s" },
@@ -80,15 +80,15 @@ function actionsFor(ctx: HrmsContext, r: DayRow, t: string): ActionSpec[] {
   if (!r.checkOut && !own)
     a.push({
       id: "officerOut",
-      l: "Check out by officer",
-      why: has(ctx, "checkoutStaff") ? undefined : "Only a head, HR or admin checks out another person",
+      l: "Check out on their behalf",
+      why: has(ctx, "checkoutStaff") ? undefined : "Only a department head or someone who can check out other people can do this",
       prompt: {
-        title: "Check out",
+        title: "Check out on their behalf",
         sub: `${fdShort(r.date)} · checked in ${r.checkIn}`,
         submit: "Check out",
         init: { out: r.officialOut ?? "" },
         fields: [
-          { k: "out", l: "Check Out Time", t: "time", req: true },
+          { k: "out", l: "Check-out time", t: "time", req: true },
           { k: "remark", l: "Remark", t: "text" },
         ],
       },
@@ -102,7 +102,7 @@ function actionsFor(ctx: HrmsContext, r: DayRow, t: string): ActionSpec[] {
         submit: "Save time",
         init: { in: r.checkIn },
         fields: [
-          { k: "in", l: "Check-in", t: "time", req: true },
+          { k: "in", l: "Check-in time", t: "time", req: true },
           { k: "remark", l: "Remark", t: "text", req: true },
         ],
       },
@@ -111,7 +111,7 @@ function actionsFor(ctx: HrmsContext, r: DayRow, t: string): ActionSpec[] {
     a.push({
       id: "remark",
       l: "Remark",
-      prompt: { title: "Remark", submit: "Save remark", init: { remark: r.remark ?? "" }, fields: [{ k: "remark", l: "Write Remark", t: "area", req: true }] },
+      prompt: { title: "Remark", submit: "Save remark", init: { remark: r.remark ?? "" }, fields: [{ k: "remark", l: "Remark", t: "area", req: true }] },
     });
   if (r.method === "qr" && has(ctx, "admin") && !r.editHelp) a.push({ id: "editHelp", l: "Edit help" });
   if (has(ctx, "editAtt")) a.push({ id: "delete", l: "Delete", confirm: "Delete this attendance day? It cannot be undone." });
@@ -131,7 +131,7 @@ export function attendanceRow(ctx: HrmsContext, r: DayRow, p: Person | undefined
     { l: "Remark", v: r.remark ?? "" },
     {
       l: "How it was recorded",
-      v: r.method === "officer" ? `Marked by ${r.markedByName ?? "a head"}` : r.method === "qr" ? `QR code ${r.checkInCode ?? ""}` : r.method === "import" ? "Imported" : "Location check",
+      v: r.method === "officer" ? `Marked by ${r.markedByName ?? "a department head"}` : r.method === "qr" ? `QR code ${r.checkInCode ?? ""}` : r.method === "import" ? "Imported" : "Location check",
     },
     { l: "Check-in photo", v: r.inPhotoId ? "Attached" : "None" },
     { l: "Check-out photo", v: r.outPhotoId ? "Attached" : "None" },
@@ -153,7 +153,7 @@ export function attendanceRow(ctx: HrmsContext, r: DayRow, p: Person | undefined
       workDay: r.fig.workDay,
       current: r.fig.current,
       pct: r.fig.pct,
-      distance: r.method === "officer" ? "Marked by head" : distanceLabel(r.distanceM),
+      distance: r.method === "officer" ? "Marked by department head" : distanceLabel(r.distanceM),
       dayTab: r.date === t ? "Today" : "Earlier",
     },
     flags: flagsOf(r, t),
@@ -174,14 +174,14 @@ function markForm(ctx: HrmsContext, people: Person[], marked: Set<string>, t: st
     screen: "attendance",
     id: "mark",
     title: "Mark attendance for staff",
-    sub: "Field and other staff of your office who are not yet marked today. Heads are never marked by someone else.",
+    sub: "Field and other staff of your office who are not yet marked today. A department head cannot be marked by someone else.",
     submit: "Mark attendance",
     init: { date: t, in: "09:30" },
     header: [
       { k: "emp", l: "Employee", t: "select", req: true, opts: staff.map((p) => `${p.name} · ${p.code}`), hint: "Only active field and other staff of your office, not yet marked for this date." },
       { k: "date", l: "Date", t: "date", req: true },
-      { k: "in", l: "Check in", t: "time", req: true },
-      { k: "out", l: "Check out", t: "time" },
+      { k: "in", l: "Check-in time", t: "time", req: true },
+      { k: "out", l: "Check-out time", t: "time" },
       { k: "stoppage", l: "Unplanned stoppage (min)", t: "num", min: 0 },
       { k: "office", l: "Office", t: "text", readOnly: true, def: ctx.employee?.office ?? "" },
       { k: "photo", l: "Photo", t: "photo" },
@@ -231,8 +231,8 @@ async function readImport(csvText: string): Promise<ImportLine[]> {
     let error = "";
     if (!byCode.get(code.toUpperCase())) error = `Unknown employee ID ${code || "(blank)"}`;
     else if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) error = "Date must be YYYY-MM-DD";
-    else if (tmin(inT) == null) error = "Check In must be HH:MM";
-    else if (outT && minutesBetween(inT, outT) == null) error = "Check-out is before check-in";
+    else if (tmin(inT) == null) error = "Check In must be a time like 09:30";
+    else if (outT && minutesBetween(inT, outT) == null) error = `Check Out ${outT} must be after Check In ${inT}`;
     return { code, date, in: inT, out: outT, remark: pick(r, "remark"), error };
   });
 }
@@ -277,18 +277,18 @@ const attendance: HrmsScreenModule = {
     async checkOutLate(ctx, id, v) {
       const [r] = await db.select().from(hrmsAttendance).where(eq(hrmsAttendance.id, id));
       if (!r || r.employeeId !== ctx.employee?.id) return err("That day is not yours.", "not_permitted");
-      if (r.checkOut) return err("Already checked out.");
-      if (minutesBetween(r.checkIn, v.out) == null) return fieldErr("out", "Check-out must be after check-in");
+      if (r.checkOut) return err(`You already checked out at ${r.checkOut} on ${fdShort(r.date)}`);
+      if (minutesBetween(r.checkIn, v.out) == null) return fieldErr("out", `Check-out must be after your check-in at ${r.checkIn}`);
       await db.update(hrmsAttendance).set({ checkOut: v.out, remark: text(v.remark), updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(hrmsAttendance.id, id));
       await hrmsAudit(ctx, "hrms.attendance.checkOut", "hrms_attendance", id, { checkOut: null }, { checkOut: v.out });
       return okVoid(`Checked out for ${fdShort(r.date)} at ${v.out}`);
     },
     async officerOut(ctx, id, v) {
-      if (!has(ctx, "checkoutStaff")) return err("Only a head, HR or admin checks out another person", "not_permitted");
+      if (!has(ctx, "checkoutStaff")) return err("Only a department head or someone who can check out other people can do this", "not_permitted");
       const [r] = await db.select().from(hrmsAttendance).where(eq(hrmsAttendance.id, id));
       if (!r) return err("That day no longer exists.", "not_found");
-      if (r.checkOut) return err("Already checked out.");
-      if (minutesBetween(r.checkIn, v.out) == null) return fieldErr("out", "Check-out must be after check-in");
+      if (r.checkOut) return err(`Already checked out at ${r.checkOut} on ${fdShort(r.date)}`);
+      if (minutesBetween(r.checkIn, v.out) == null) return fieldErr("out", `Check-out must be after the check-in at ${r.checkIn}`);
       await db
         .update(hrmsAttendance)
         .set({ checkOut: v.out, remark: text(v.remark) ?? `Checked out by ${ctx.user.name}`, updatedAt: new Date(), updatedById: ctx.user.id })
@@ -297,11 +297,11 @@ const attendance: HrmsScreenModule = {
       return okVoid(`Checked out at ${v.out}`);
     },
     async setIn(ctx, id, v) {
-      if (!has(ctx, "editAtt")) return err("Only admin sets a check-in time", "not_permitted");
-      if (tmin(v.in) == null) return fieldErr("in", "INVALID");
+      if (!has(ctx, "editAtt")) return err("Only someone who can edit attendance can set a check-in time", "not_permitted");
+      if (tmin(v.in) == null) return fieldErr("in", "Enter the check-in time as HH:MM");
       const [r] = await db.select().from(hrmsAttendance).where(eq(hrmsAttendance.id, id));
       if (!r) return err("That day no longer exists.", "not_found");
-      if (r.checkOut && minutesBetween(v.in, r.checkOut) == null) return fieldErr("in", "Check-in must be before check-out");
+      if (r.checkOut && minutesBetween(v.in, r.checkOut) == null) return fieldErr("in", `Check-in must be before the check-out at ${r.checkOut}`);
       await db.update(hrmsAttendance).set({ checkIn: v.in, remark: text(v.remark), updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(hrmsAttendance.id, id));
       await hrmsAudit(ctx, "hrms.attendance.setIn", "hrms_attendance", id, { checkIn: r.checkIn }, { checkIn: v.in });
       return okVoid(`Check-in set to ${v.in}`);
@@ -309,17 +309,17 @@ const attendance: HrmsScreenModule = {
     async remark(ctx, id, v) {
       const [r] = await db.select().from(hrmsAttendance).where(eq(hrmsAttendance.id, id));
       if (!r) return err("That day no longer exists.", "not_found");
-      if (!(has(ctx, "editAtt") || has(ctx, "checkoutStaff") || r.employeeId === ctx.employee?.id)) return err("Not yours to remark on.", "not_permitted");
+      if (!(has(ctx, "editAtt") || has(ctx, "checkoutStaff") || r.employeeId === ctx.employee?.id)) return err("You can add a remark only to your own days, unless you can edit attendance or check out staff", "not_permitted");
       await db.update(hrmsAttendance).set({ remark: text(v.remark), updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(hrmsAttendance.id, id));
       return okVoid("Remark saved");
     },
     async editHelp(ctx, id) {
-      if (!has(ctx, "admin")) return err("Admin only", "not_permitted");
+      if (!has(ctx, "admin")) return err("Only an HRMS administrator can switch on edit help", "not_permitted");
       await db.update(hrmsAttendance).set({ editHelp: true, updatedAt: new Date() }).where(eq(hrmsAttendance.id, id));
       return okVoid("Edit help switched on for this day");
     },
     async delete(ctx, id) {
-      if (!has(ctx, "editAtt")) return err("Only admin deletes attendance", "not_permitted");
+      if (!has(ctx, "editAtt")) return err("Only someone who can edit attendance can delete it", "not_permitted");
       const [r] = await db.select().from(hrmsAttendance).where(eq(hrmsAttendance.id, id));
       if (!r) return err("That day no longer exists.", "not_found");
       await db.delete(hrmsAttendance).where(eq(hrmsAttendance.id, id));
@@ -329,16 +329,17 @@ const attendance: HrmsScreenModule = {
   },
   forms: {
     async mark(ctx, h) {
-      if (!has(ctx, "markStaff")) return err("Only a head, HR or admin marks attendance for staff", "not_permitted");
+      if (!has(ctx, "markStaff")) return err("Only a department head or someone who marks attendance for staff can do this", "not_permitted");
       const people = await allPeople();
       const p = personFrom(h.emp, people);
-      if (!p) return fieldErr("emp", "invalid Name");
+      if (!p) return fieldErr("emp", "Pick a person from the list");
       const wide = has(ctx, "hr") || ctx.administrator;
-      if (!markableStaff(ctx, people, wide).some((x) => x.id === p.id)) return fieldErr("emp", "invalid Name");
+      if (!markableStaff(ctx, people, wide).some((x) => x.id === p.id)) return fieldErr("emp", `${p.name} is not one of the staff you can mark`);
       const date = text(h.date);
-      if (!date || date > today()) return fieldErr("date", "INVALID");
-      if (tmin(h.in) == null) return fieldErr("in", "Check in is required");
-      if (h.out && minutesBetween(h.in, h.out) == null) return fieldErr("out", "Check-out must be after check-in");
+      if (!date) return fieldErr("date", "Pick a date");
+      if (date > today()) return fieldErr("date", `${fdShort(date)} is in the future`);
+      if (tmin(h.in) == null) return fieldErr("in", "Enter the check-in time");
+      if (h.out && minutesBetween(h.in, h.out) == null) return fieldErr("out", `Check-out must be after the check-in at ${h.in}`);
       const timings = await timingMap();
       const tm = timings.get(`${p.id}|${weekdayOf(date)}`);
       const id = hrmsId("hatt");
@@ -370,7 +371,7 @@ const attendance: HrmsScreenModule = {
           const { bindHrmsFiles } = await import("../attachments");
           await bindHrmsFiles(tx, [h.photo], "hrms_attendance", id, ctx.user.id);
         }
-        return okVoid(`Attendance marked for ${p.name}${h.out ? "" : " · check them out at the end of the day"}`);
+        return okVoid(`Attendance marked for ${p.name}${h.out ? "" : ". Check them out at the end of the day."}`);
       });
       if (res.ok) await hrmsAudit(ctx, "hrms.attendance.mark", "hrms_attendance", id, null, { employee: p.code, date });
       return res;
@@ -378,7 +379,7 @@ const attendance: HrmsScreenModule = {
   },
   tools: {
     async import(ctx, v) {
-      if (!(has(ctx, "editAtt") || has(ctx, "import"))) return err("Importing attendance is not on your account.", "not_permitted");
+      if (!(has(ctx, "editAtt") || has(ctx, "import"))) return err("Only someone who can import or edit attendance can do this", "not_permitted");
       const lines = await readImport(v.csv ?? "");
       if (!lines.length) return fieldErr("csv", "The file has no rows under its header.");
       const good = lines.filter((l) => !l.error).length;
@@ -395,7 +396,7 @@ const attendance: HrmsScreenModule = {
       });
     },
     async importConfirm(ctx, v) {
-      if (!(has(ctx, "editAtt") || has(ctx, "import"))) return err("Importing attendance is not on your account.", "not_permitted");
+      if (!(has(ctx, "editAtt") || has(ctx, "import"))) return err("Only someone who can import or edit attendance can do this", "not_permitted");
       const lines = (await readImport(v.csv ?? "")).filter((l) => !l.error);
       const people = await allPeople();
       const byCode = new Map(people.map((p) => [p.code.toUpperCase(), p]));
@@ -450,7 +451,7 @@ const pendingOut: HrmsScreenModule = {
           { k: "date", l: "Date", t: "d" },
           { k: "emp", l: "Employee", t: "b" },
           { k: "office", l: "Office", t: "t" },
-          { k: "in", l: "Check in", t: "t" },
+          { k: "in", l: "Check-in", t: "t" },
           { k: "current", l: "Status", t: "s" },
           { k: "f", l: "Flags", t: "f" },
         ],

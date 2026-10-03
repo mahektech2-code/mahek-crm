@@ -33,6 +33,7 @@ import { hrmsLink } from "../registry";
 import { availability, dutyDuration, officeDuration } from "../calcs/people";
 import { personFrom, personOption, scopeFor } from "./attendance";
 import { ADMIN } from "@/lib/admin-routes";
+import { ASSET_CATEGORIES, ASSET_EQUIPMENT, OFFICE_ALL_HOURS, OFFICE_TIMINGS } from "../values";
 
 /* ---------------------------------------------------------------------------
  * People (spec §4, §5, §15): the employee directory and its sign-up form, ID
@@ -63,6 +64,28 @@ const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const withCurrent = (list: string[], v: string | null | undefined) => (v && !list.includes(v) ? [...list, v] : list);
 
+/** What a refused date or number is called in its message. */
+const DATE_LABEL: Record<string, string> = {
+  birth: "birth date",
+  anniversary: "marriage anniversary",
+  child1: "birthday for child 1",
+  child2: "birthday for child 2",
+  leaving: "leaving date",
+};
+const NUM_LABEL: Record<string, string> = {
+  conveyance: "Conveyance",
+  otherSalary: "Other salary",
+  tVisits: "The visit target",
+  tKm: "The km target",
+  tLitres: "The litre sales target",
+  tHours: "The working hour target",
+  tAmount: "The sales amount target",
+  monthlyPL: "Monthly paid leave",
+  yearlyMax: "Yearly maximum leave",
+};
+const mobileRefusal = (d: string) => `A mobile number has 10 digits; this one has ${d.length}`;
+const staffCount = (n: number, verb: [string, string]) => (n === 1 ? `1 active employee ${verb[0]}` : `${n} active employees ${verb[1]}`);
+
 /** Salary, conveyance, other salary and the bank: payroll, HR, admin and the person themself. */
 function seesPay(ctx: HrmsContext, e: { id: string }): boolean {
   return has(ctx, "payroll") || has(ctx, "pay") || has(ctx, "hr") || has(ctx, "admin") || ctx.employee?.id === e.id;
@@ -87,7 +110,7 @@ function headPositions(people: Person[]): string[] {
 
 /** A select where the list has values, else free text — an empty list must not make a field unfillable. */
 function pick(k: string, l: string, opts: string[], extra: Partial<FieldSpec> = {}): FieldSpec {
-  return opts.length ? { k, l, t: "select", opts, ...extra } : { k, l, t: "text", hint: `The “${l}” list is empty — add values in Reference lists.`, ...extra };
+  return opts.length ? { k, l, t: "select", opts, ...extra } : { k, l, t: "text", hint: `The “${l}” list is empty — add values in Pick lists.`, ...extra };
 }
 
 /** How many related rows each employee has, one query for the whole directory. */
@@ -178,7 +201,7 @@ function employeeRow(ctx: HrmsContext, e: Employee, counts: Record<string, numbe
     },
   );
   const legacy = Object.entries(e.raw ?? {}).find(([k]) => k.trim().toLowerCase() === "permissions")?.[1];
-  if (legacy) fields.push({ l: "Legacy permissions", v: legacy });
+  if (legacy) fields.push({ l: "Permissions in the old app", v: legacy });
 
   const contacts: Contact[] = [];
   const tel = (l: string, v: string | null) => {
@@ -194,16 +217,16 @@ function employeeRow(ctx: HrmsContext, e: Employee, counts: Record<string, numbe
   if (e.photoAttachmentId) contacts.push({ l: "Photo", href: attHref(e.photoAttachmentId) });
   if (e.idCardAttachmentId) contacts.push({ l: "ID card", href: attHref(e.idCardAttachmentId) });
 
-  const actions: ActionSpec[] = [{ id: "edit", l: "Edit", primary: true, loadsForm: true, why: hr ? undefined : "Only HR or admin edits an employee" }];
+  const actions: ActionSpec[] = [{ id: "edit", l: "Edit", primary: true, loadsForm: true, why: hr ? undefined : "Editing an employee needs the HR power" }];
   if (own && !hr) actions.push({ id: "editSelf", l: "Edit my details", loadsForm: true });
   if (e.status !== "inactive")
     actions.push({
       id: "deactivate",
       l: "Deactivate",
       confirm: `Deactivate ${e.name}? They can no longer sign in to MahekOne, and any open session ends.`,
-      why: !hr ? "Only HR or admin deactivates an employee" : own ? "You cannot deactivate your own record" : undefined,
+      why: !hr ? "Deactivating an employee needs the HR power" : own ? "You cannot deactivate your own record" : undefined,
     });
-  if (e.status !== "active") actions.push({ id: "activate", l: "Activate", why: hr ? undefined : "Only HR or admin activates an employee" });
+  if (e.status !== "active") actions.push({ id: "activate", l: "Activate", why: hr ? undefined : "Activating an employee needs the HR power" });
   if (has(ctx, "admin")) actions.push({ id: "access", l: "Manage access", href: ADMIN.access });
   if (own || hr)
     actions.push({
@@ -298,7 +321,7 @@ async function employeeForm(ctx: HrmsContext, mode: EmpFormMode, e?: Employee): 
       "Statutory",
       canAadhaar
         ? { k: "aadhaar", l: "Aadhaar", t: "text", req: mode === "new", hint: mode === "edit" ? "Leave blank to keep the number on file." : "12 digits." }
-        : { k: "aadhaarShown", l: "Aadhaar", t: "text", readOnly: true, hint: "Only a holder of the Aadhaar power changes it." },
+        : { k: "aadhaarShown", l: "Aadhaar", t: "text", readOnly: true, hint: "Changing it needs the “See and edit the full Aadhaar number” power." },
     ),
     sec("Sales targets", pick("area", "Sales area", withCurrent(areas, e?.areaAllocated), { req: true, when: whenSales })),
     sec("Sales targets", { k: "tVisits", l: "Visit target (a month)", t: "num", min: 0, when: whenSales }),
@@ -386,32 +409,32 @@ async function readEmployee(
     .from(employees)
     .where(and(sql`lower(${employees.name}) = ${name.toLowerCase()}`, e ? ne(employees.id, e.id) : undefined))
     .limit(1);
-  if (dupe) return bad("name", "Duplicate Entry!");
+  if (dupe) return bad("name", `There is already an employee called ${name}. Open their record instead, or add something to the name that tells the two apart.`);
   if (!text(h.gender)) return bad("gender", "Required");
   const mobile = digits(h.mobile);
   if (!mobile) return bad("mobile", "Required");
-  if (mobile.length !== 10) return bad("mobile", "INVALID");
+  if (mobile.length !== 10) return bad("mobile", mobileRefusal(mobile));
   if (!text(h.emergency)) return bad("emergency", "Required");
   if (!text(h.address)) return bad("address", "Required");
   const office = text(h.office);
   if (!office) return bad("office", "Required");
-  if (office !== e?.officeName && !(await offices()).some((o) => o.name === office)) return bad("office", "Pick one of the offices");
+  if (office !== e?.officeName && !(await offices()).some((o) => o.name === office)) return bad("office", "Pick an office from the list");
   const posType = text(h.posType);
   if (!posType) return bad("posType", "Required");
   if (!text(h.position)) return bad("position", "Required");
   const joining = text(h.joining);
   if (!joining || !DATE.test(joining)) return bad("joining", "Required");
-  for (const k of ["birth", "anniversary", "child1", "child2", "leaving"]) if (text(h[k]) && !DATE.test(h[k])) return bad(k, "INVALID");
+  for (const k of ["birth", "anniversary", "child1", "child2", "leaving"]) if (text(h[k]) && !DATE.test(h[k])) return bad(k, `Enter a valid ${DATE_LABEL[k]}`);
   const salary = paise(h.salary);
-  if (salary == null || salary < 0) return bad("salary", salary == null ? "Required" : "INVALID");
+  if (salary == null || salary < 0) return bad("salary", salary == null ? "Required" : "Salary cannot be negative");
   for (const k of ["conveyance", "otherSalary", "tVisits", "tKm", "tLitres", "tHours", "tAmount", "monthlyPL", "yearlyMax"]) {
     const n = num(h[k]);
-    if (text(h[k]) && (n == null || n < 0)) return bad(k, "INVALID");
+    if (text(h[k]) && (n == null || n < 0)) return bad(k, `${NUM_LABEL[k]} must be a number, 0 or more`);
   }
   if (!text(h.bank)) return bad("bank", "Required");
   const ifsc = (text(h.ifsc) ?? "").toUpperCase();
   if (!ifsc) return bad("ifsc", "Required");
-  if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifsc)) return bad("ifsc", "INVALID");
+  if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifsc)) return bad("ifsc", "An IFSC code is 11 characters: 4 letters, a zero, then 6 letters or digits (for example HDFC0001234)");
   const pf = text(h.pf);
   if (pf !== "Yes" && pf !== "No") return bad("pf", "Required");
   if (pf === "Yes" && !text(h.uan)) return bad("uan", "Required");
@@ -459,7 +482,7 @@ async function readEmployee(
   const account = digits(h.account);
   if (!e && !account) return bad("account", "Required");
   if (account) {
-    if (account.length < 6 || account.length > 20 || account !== String(h.account).trim()) return bad("account", "INVALID");
+    if (account.length < 6 || account.length > 20 || account !== String(h.account).trim()) return bad("account", "An account number is 6 to 20 digits, with no spaces or other characters");
     cols.accountNumber = account;
     cols.accountNumberLast4 = account.slice(-4);
   }
@@ -468,7 +491,7 @@ async function readEmployee(
   if (!e || has(ctx, "aadhaar")) {
     const a = String(h.aadhaar ?? "").replace(/\s/g, "");
     if (a || !e) {
-      if (!/^\d{12}$/.test(a)) return bad("aadhaar", "Enter 12 Digit Valid Adhar Number");
+      if (!/^\d{12}$/.test(a)) return bad("aadhaar", "An Aadhaar number has 12 digits");
       cols.aadhaarNumber = a;
       cols.aadhaarLast4 = a.slice(-4);
     }
@@ -491,7 +514,7 @@ async function readEmployee(
  * Stamps `hrmsDecidedAt` so the sheet's own status column cannot undo it.
  */
 async function setEmployeeStatus(ctx: HrmsContext, ids: string[], active: boolean) {
-  if (!has(ctx, "hr")) return err(`Only HR or admin ${active ? "activates" : "deactivates"} an employee`, "not_permitted");
+  if (!has(ctx, "hr")) return err(`${active ? "Activating" : "Deactivating"} an employee needs the HR power`, "not_permitted");
   if (!active && ctx.employee && ids.includes(ctx.employee.id)) return err("You cannot deactivate your own record.");
   const rows = await db
     .select({ id: employees.id, name: employees.name, status: employees.status, leaving: employees.dateOfLeaving })
@@ -628,7 +651,7 @@ const employeesScreen: HrmsScreenModule = {
   },
   forms: {
     async new(ctx, h) {
-      if (!has(ctx, "hr")) return err("Only HR or admin signs up an employee", "not_permitted");
+      if (!has(ctx, "hr")) return err("Signing up an employee needs the HR power", "not_permitted");
       const read = await readEmployee(ctx, h);
       if (!read.ok) return read.res;
       const id = hrmsId("emp");
@@ -663,7 +686,7 @@ const employeesScreen: HrmsScreenModule = {
       return res;
     },
     async edit(ctx, h, _lines, recordId) {
-      if (!has(ctx, "hr")) return err("Only HR or admin edits an employee", "not_permitted");
+      if (!has(ctx, "hr")) return err("Editing an employee needs the HR power", "not_permitted");
       const e = recordId ? await employeeById(recordId) : null;
       if (!e) return err("That employee no longer exists.", "not_found");
       const read = await readEmployee(ctx, h, e);
@@ -680,13 +703,13 @@ const employeesScreen: HrmsScreenModule = {
       return okVoid(`${read.cols.name} updated`);
     },
     async editSelf(ctx, h, _lines, recordId) {
-      if (!recordId || ctx.employee?.id !== recordId) return err("You edit only your own details here.", "not_permitted");
+      if (!recordId || ctx.employee?.id !== recordId) return err("This form changes only your own details.", "not_permitted");
       const mobile = digits(h.mobile);
       if (!mobile) return fieldErr("mobile", "Required");
-      if (mobile.length !== 10) return fieldErr("mobile", "INVALID");
+      if (mobile.length !== 10) return fieldErr("mobile", mobileRefusal(mobile));
       if (!text(h.emergency)) return fieldErr("emergency", "Required");
       if (!text(h.address)) return fieldErr("address", "Required");
-      for (const k of ["anniversary", "child1", "child2"]) if (text(h[k]) && !DATE.test(h[k])) return fieldErr(k, "INVALID");
+      for (const k of ["anniversary", "child1", "child2"]) if (text(h[k]) && !DATE.test(h[k])) return fieldErr(k, `Enter a valid ${DATE_LABEL[k]}`);
       const cols = {
         personalMobile: mobile,
         alternateMobile: text(h.altMobile),
@@ -714,7 +737,7 @@ const employeesScreen: HrmsScreenModule = {
       return setEmployeeStatus(ctx, [id], true);
     },
     async photo(ctx, id, v) {
-      if (!(ctx.employee?.id === id || has(ctx, "hr"))) return err("Only the person or HR changes a profile photo.", "not_permitted");
+      if (!(ctx.employee?.id === id || has(ctx, "hr"))) return err("Only the person themself, or someone with the HR power, changes a profile photo.", "not_permitted");
       const photo = text(v.photo);
       if (!photo) return fieldErr("photo", "Required");
       const res = await inTx(async (tx) => {
@@ -727,7 +750,7 @@ const employeesScreen: HrmsScreenModule = {
       return res;
     },
     async delete(ctx, id) {
-      if (!has(ctx, "admin")) return err("Only admin deletes an employee", "not_permitted");
+      if (!has(ctx, "admin")) return err("Deleting an employee needs the HRMS administration power", "not_permitted");
       const e = await employeeById(id);
       if (!e) return err("That employee no longer exists.", "not_found");
       const c = (await relatedCounts([id])).get(id) ?? {};
@@ -758,7 +781,7 @@ const employeesScreen: HrmsScreenModule = {
   },
   tools: {
     async pullSheet(ctx) {
-      if (!has(ctx, "hr")) return err("Only HR or admin pulls the employee sheet", "not_permitted");
+      if (!has(ctx, "hr")) return err("Pulling the employee sheet needs the HR power", "not_permitted");
       return syncEmployeesAction(true);
     },
   },
@@ -809,10 +832,10 @@ const idCards: HrmsScreenModule = {
           id: "upload",
           l: r.card ? "Replace ID card" : "Upload ID card",
           primary: !r.card,
-          why: hr ? undefined : "HR uploads ID cards",
+          why: hr ? undefined : "Uploading an ID card needs the HR power",
           prompt: { title: "ID card image", sub: `${r.name} · ${r.code}`, submit: "Save ID card", fields: [{ k: "image", l: "ID card image", t: "photo", req: true }] },
         });
-        if (r.card) actions.push({ id: "remove", l: "Remove ID card", why: has(ctx, "admin") ? undefined : "Only admin removes an ID card", confirm: `Remove ${r.name}’s ID card image?` });
+        if (r.card) actions.push({ id: "remove", l: "Remove ID card", why: has(ctx, "admin") ? undefined : "Removing an ID card needs the HRMS administration power", confirm: `Remove ${r.name}’s ID card image?` });
         const contacts: Contact[] = [];
         if (r.card) contacts.push({ l: "ID card", href: attHref(r.card) });
         if (r.photo) contacts.push({ l: "Photo", href: attHref(r.photo) });
@@ -830,7 +853,7 @@ const idCards: HrmsScreenModule = {
   },
   actions: {
     async upload(ctx, id, v) {
-      if (!has(ctx, "hr")) return err("HR uploads ID cards", "not_permitted");
+      if (!has(ctx, "hr")) return err("Uploading an ID card needs the HR power", "not_permitted");
       const image = text(v.image);
       if (!image) return fieldErr("image", "Required");
       const res = await inTx(async (tx) => {
@@ -843,7 +866,7 @@ const idCards: HrmsScreenModule = {
       return res;
     },
     async remove(ctx, id) {
-      if (!has(ctx, "admin")) return err("Only admin removes an ID card", "not_permitted");
+      if (!has(ctx, "admin")) return err("Removing an ID card needs the HRMS administration power", "not_permitted");
       await db.update(employees).set({ idCardAttachmentId: null, updatedAt: new Date() }).where(eq(employees.id, id));
       await hrmsAudit(ctx, "hrms.employee.idCardRemove", "employees", id, null, null);
       return okVoid("ID card removed");
@@ -890,7 +913,7 @@ async function officeForm(office?: Office): Promise<FormSpec> {
       { k: "radius", l: "Radius (metres)", t: "num", req: true, min: 1, max },
       { k: "open", l: "Opening time", t: "time", req: true },
       { k: "close", l: "Closing time", t: "time", req: true },
-      { k: "timing", l: "Timing type", t: "select", req: true, opts: ["Full Day", "Half Day", "24*7"] },
+      { k: "timing", l: "Timing type", t: "select", req: true, opts: [...OFFICE_TIMINGS] },
       { k: "duration", l: "Duration", t: "derived", calc: "hrms.office.duration" },
       { k: "plNote", l: "Official paid-leave note", t: "area" },
       {
@@ -922,25 +945,25 @@ async function officeForm(office?: Office): Promise<FormSpec> {
 }
 
 async function saveOffice(ctx: HrmsContext, h: Values, existing?: Office) {
-  if (!canOffice(ctx)) return err("Only HR or admin sets up offices", "not_permitted");
+  if (!canOffice(ctx)) return err("Setting up offices needs the HR or HRMS administration power", "not_permitted");
   const max = (await getConfig())["hrms.office.maxRangeM"];
   const name = existing ? existing.name : text(h.name);
   if (!name) return fieldErr("name", "Required");
   for (const k of ["city", "state", "region", "address"]) if (!text(h[k])) return fieldErr(k, "Required");
   const pin = parsePin(h.pin);
-  if (!pin) return fieldErr("pin", "INVALID");
+  if (!pin) return fieldErr("pin", "Pick the pin on the map, or type latitude, longitude (for example 19.2094, 73.0939)");
   const radius = num(h.radius);
   if (radius == null) return fieldErr("radius", "Required");
   // A42: the source's limit is 20 km whatever its message says.
-  if (radius > max) return fieldErr("radius", `Set Range less than ${max / 1000} km`);
-  if (radius <= 0) return fieldErr("radius", "INVALID");
+  if (radius > max) return fieldErr("radius", `The radius can be at most ${max} metres (${max / 1000} km)`);
+  if (radius <= 0) return fieldErr("radius", "The radius must be more than 0 metres");
   const timing = text(h.timing) ?? "Full Day";
-  if (!["Full Day", "Half Day", "24*7"].includes(timing)) return fieldErr("timing", "INVALID");
+  if (!(OFFICE_TIMINGS as readonly string[]).includes(timing)) return fieldErr("timing", "Pick how long the office is open");
   const open = tmin(h.open);
   const close = tmin(h.close);
   if (open == null) return fieldErr("open", "Required");
   if (close == null) return fieldErr("close", "Required");
-  if (timing !== "24*7" && close <= open) return fieldErr("close", "Closing must be after opening");
+  if (timing !== OFFICE_ALL_HOURS && close <= open) return fieldErr("close", "Closing time must be after opening time");
   const cols = {
     city: text(h.city),
     state: text(h.state),
@@ -962,7 +985,7 @@ async function saveOffice(ctx: HrmsContext, h: Values, existing?: Office) {
         .from(hrmsOffices)
         .where(sql`lower(${hrmsOffices.name}) = ${name.toLowerCase()}`)
         .limit(1);
-      if (dupe) return refuse(fieldErr("name", "Duplicate Entry!"));
+      if (dupe) return refuse(fieldErr("name", `${name} is already an office`));
     }
     const qr = text(h.qr) ?? existing?.qrText ?? `MMI-ATT-${100 + (await nextSeries(tx, "officeQr"))}`;
     const [qrDupe] = await tx
@@ -970,7 +993,7 @@ async function saveOffice(ctx: HrmsContext, h: Values, existing?: Office) {
       .from(hrmsOffices)
       .where(and(eq(hrmsOffices.qrText, qr), ne(hrmsOffices.id, id)))
       .limit(1);
-    if (qrDupe) return refuse(fieldErr("qr", "Duplicate Entry!"));
+    if (qrDupe) return refuse(fieldErr("qr", `Another office already uses the QR text ${qr}. Each office needs its own.`));
     const image = text(h.image);
     if (existing)
       await tx
@@ -1030,11 +1053,11 @@ const officesScreen: HrmsScreenModule = {
         if (o.imageAttachmentId) contacts.push({ l: "Office image", href: attHref(o.imageAttachmentId) });
         const actions: ActionSpec[] = [
           { id: "qr", l: "Print QR code", primary: true, href: `/hrms/offices/${o.id}/qr`, why: o.qrText ? undefined : "Give the office a QR text first" },
-          { id: "edit", l: "Edit", loadsForm: true, why: can ? undefined : "Only HR or admin edits an office" },
+          { id: "edit", l: "Edit", loadsForm: true, why: can ? undefined : "Editing an office needs the HR or HRMS administration power" },
         ];
         if (pin) actions.push({ id: "map", l: "View map", href: mapHref(pin) });
         if (has(ctx, "admin"))
-          actions.push({ id: "delete", l: "Delete", confirm: `Delete ${o.name}? Its QR code stops working.`, why: n ? `${plural(n, "active employee")} work here` : undefined });
+          actions.push({ id: "delete", l: "Delete", confirm: `Delete ${o.name}? Its QR code stops working.`, why: n ? `${staffCount(n, ["works", "work"])} here` : undefined });
         return {
           id: o.id,
           v: { name: o.name, city: o.city ?? "", region: o.region ?? "", radius: o.radiusM, open: o.openingTime ?? "", close: o.closingTime ?? "", timing: o.timingType, emp: n },
@@ -1068,11 +1091,11 @@ const officesScreen: HrmsScreenModule = {
   },
   actions: {
     async delete(ctx, id) {
-      if (!has(ctx, "admin")) return err("Only admin deletes an office", "not_permitted");
+      if (!has(ctx, "admin")) return err("Deleting an office needs the HRMS administration power", "not_permitted");
       const [o] = await db.select().from(hrmsOffices).where(eq(hrmsOffices.id, id)).limit(1);
       if (!o) return err("That office no longer exists.", "not_found");
       const n = (await allPeople()).filter((p) => isActive(p) && p.office === o.name).length;
-      if (n) return err(`${plural(n, "active employee")} work at ${o.name}. Move them first.`, "rule_violation");
+      if (n) return err(`${staffCount(n, ["works", "work"])} at ${o.name}. Move them to another office first.`, "rule_violation");
       await db.delete(hrmsOffices).where(eq(hrmsOffices.id, id));
       await hrmsAudit(ctx, "hrms.office.delete", "hrms_offices", id, o, null);
       return okVoid(`${o.name} deleted`);
@@ -1100,7 +1123,7 @@ function badTimes(v: Values): Refusal | null {
   return null;
 }
 
-/** One row per employee per weekday (A50): a second is "Duplicate Entry!". */
+/** One row per employee per weekday (A50): a second for the same weekday is refused. */
 async function addTiming(ctx: HrmsContext, employeeId: string, weekday: string, inT: string, outT: string) {
   const id = hrmsId("htim");
   const res = await inTx(async (tx) => {
@@ -1109,7 +1132,7 @@ async function addTiming(ctx: HrmsContext, employeeId: string, weekday: string, 
       .from(hrmsStaffTimings)
       .where(and(eq(hrmsStaffTimings.employeeId, employeeId), eq(hrmsStaffTimings.weekday, weekday)))
       .limit(1);
-    if (dupe) return refuse(fieldErr("weekday", "Duplicate Entry!"));
+    if (dupe) return refuse(fieldErr("weekday", `This person already has a timing for ${weekday}. Edit that one instead.`));
     await tx.insert(hrmsStaffTimings).values({ id, employeeId, weekday, inTime: inT, outTime: outT, createdById: ctx.user.id });
     return okVoid();
   });
@@ -1172,7 +1195,7 @@ const timings: HrmsScreenModule = {
             id: "addMore",
             l: "Add more time",
             primary: true,
-            why: !can ? "Only HR or whoever sets timings adds them" : free.length ? undefined : "Every weekday has a timing",
+            why: !can ? "Adding timings needs the “Set staff timings” or HR power" : free.length ? undefined : "Every weekday has a timing",
             prompt: {
               title: "Copy to another weekday",
               sub: `${p?.name ?? ""} · ${r.inTime}–${r.outTime}`,
@@ -1183,7 +1206,7 @@ const timings: HrmsScreenModule = {
           {
             id: "quickEdit",
             l: "Quick edit",
-            why: can ? undefined : "Only HR or whoever sets timings changes them",
+            why: can ? undefined : "Changing timings needs the “Set staff timings” or HR power",
             prompt: {
               title: "Edit timing",
               sub: `${p?.name ?? ""} · ${r.weekday}`,
@@ -1216,9 +1239,9 @@ const timings: HrmsScreenModule = {
   },
   forms: {
     async new(ctx, h) {
-      if (!canTimings(ctx)) return err("Only HR or whoever sets timings adds them", "not_permitted");
+      if (!canTimings(ctx)) return err("Adding timings needs the “Set staff timings” or HR power", "not_permitted");
       const p = personFrom(h.emp, await allPeople());
-      if (!p) return fieldErr("emp", "invalid Name");
+      if (!p) return fieldErr("emp", "Pick a person from the list");
       if (!WEEK.includes(h.weekday)) return fieldErr("weekday", "Required");
       const bad = badTimes(h);
       if (bad) return bad;
@@ -1228,7 +1251,7 @@ const timings: HrmsScreenModule = {
   },
   actions: {
     async addMore(ctx, id, v) {
-      if (!canTimings(ctx)) return err("Only HR or whoever sets timings adds them", "not_permitted");
+      if (!canTimings(ctx)) return err("Adding timings needs the “Set staff timings” or HR power", "not_permitted");
       const [r] = await db.select().from(hrmsStaffTimings).where(eq(hrmsStaffTimings.id, id)).limit(1);
       if (!r) return err("That timing no longer exists.", "not_found");
       if (!WEEK.includes(v.weekday)) return fieldErr("weekday", "Required");
@@ -1236,7 +1259,7 @@ const timings: HrmsScreenModule = {
       return res.ok ? okVoid(`Added for ${v.weekday}`) : res;
     },
     async quickEdit(ctx, id, v) {
-      if (!canTimings(ctx)) return err("Only HR or whoever sets timings changes them", "not_permitted");
+      if (!canTimings(ctx)) return err("Changing timings needs the “Set staff timings” or HR power", "not_permitted");
       const bad = badTimes(v);
       if (bad) return bad;
       const [r] = await db.select().from(hrmsStaffTimings).where(eq(hrmsStaffTimings.id, id)).limit(1);
@@ -1249,7 +1272,7 @@ const timings: HrmsScreenModule = {
       return okVoid("Timing updated · days already recorded keep the timing they were stamped with");
     },
     async delete(ctx, id) {
-      if (!canTimings(ctx)) return err("Only HR or whoever sets timings deletes them", "not_permitted");
+      if (!canTimings(ctx)) return err("Deleting timings needs the “Set staff timings” or HR power", "not_permitted");
       const [r] = await db.select().from(hrmsStaffTimings).where(eq(hrmsStaffTimings.id, id)).limit(1);
       if (!r) return err("That timing no longer exists.", "not_found");
       await db.delete(hrmsStaffTimings).where(eq(hrmsStaffTimings.id, id));
@@ -1262,7 +1285,7 @@ const timings: HrmsScreenModule = {
 /* ============================================================ ASSET STOCK */
 
 type Stock = typeof hrmsAssetStock.$inferSelect;
-const CATEGORIES = ["Stationery", "Tangible Assets", "Other"];
+const CATEGORIES: string[] = [...ASSET_CATEGORIES];
 
 async function stockAndAssignments() {
   const [stock, assigned] = await Promise.all([db.select().from(hrmsAssetStock), db.select().from(hrmsAssetAssignments)]);
@@ -1271,7 +1294,7 @@ async function stockAndAssignments() {
 
 async function assetForm(stock?: Stock): Promise<FormSpec> {
   const [names, officeList] = await Promise.all([refList("Asset names"), offices()]);
-  const tangible = { k: "category", eq: "Tangible Assets" };
+  const tangible = { k: "category", eq: ASSET_EQUIPMENT };
   return {
     screen: "assetStock",
     id: stock ? "edit" : "new",
@@ -1307,7 +1330,7 @@ async function assetForm(stock?: Stock): Promise<FormSpec> {
 }
 
 async function saveStock(ctx: HrmsContext, h: Values, existing?: Stock) {
-  if (!has(ctx, "hr")) return err("Only HR keeps the asset stock", "not_permitted");
+  if (!has(ctx, "hr")) return err("Managing the asset stock needs the HR power", "not_permitted");
   const date = text(h.date);
   if (!date || !DATE.test(date)) return fieldErr("date", "Required");
   const name = text(h.name);
@@ -1315,13 +1338,13 @@ async function saveStock(ctx: HrmsContext, h: Values, existing?: Stock) {
   const category = text(h.category);
   if (!category || !CATEGORIES.includes(category)) return fieldErr("category", "Required");
   const cost = paise(h.cost);
-  if (cost == null || cost < 0) return fieldErr("cost", cost == null ? "Required" : "INVALID");
+  if (cost == null || cost < 0) return fieldErr("cost", cost == null ? "Required" : "The cost cannot be negative");
   const qty = int(h.qty);
-  if (qty == null || qty < 1) return fieldErr("qty", qty == null ? "Required" : "INVALID");
+  if (qty == null || qty < 1) return fieldErr("qty", qty == null ? "Required" : "The quantity must be at least 1");
   const office = text(h.office);
   if (!office) return fieldErr("office", "Required");
-  const tangible = category === "Tangible Assets";
-  if (tangible && text(h.warranty) && !DATE.test(h.warranty)) return fieldErr("warranty", "INVALID");
+  const tangible = category === ASSET_EQUIPMENT;
+  if (tangible && text(h.warranty) && !DATE.test(h.warranty)) return fieldErr("warranty", "Enter a valid warranty date");
   const cols = {
     purchaseDate: date,
     name,
@@ -1389,10 +1412,10 @@ const assetStock: HrmsScreenModule = {
         if (s.invoiceAttachmentId) contacts.push({ l: "Invoice image", href: attHref(s.invoiceAttachmentId) });
         if (s.imageAttachmentId) contacts.push({ l: "Asset image", href: attHref(s.imageAttachmentId) });
         const actions: ActionSpec[] = [
-          { id: "edit", l: "Edit", primary: true, loadsForm: true, why: hr ? undefined : "Only HR keeps the asset stock" },
+          { id: "edit", l: "Edit", primary: true, loadsForm: true, why: hr ? undefined : "Managing the asset stock needs the HR power" },
           { id: "assignments", l: "View assignments", href: hrmsLink("assignments", { scope: "all" }) },
         ];
-        if (hr) actions.push({ id: "delete", l: "Delete", confirm: `Delete ${s.code}?`, why: n ? `${plural(n, "assignment")} name this lot` : undefined });
+        if (hr) actions.push({ id: "delete", l: "Delete", confirm: `Delete ${s.code}?`, why: n ? `${n === 1 ? "1 assignment uses" : `${n} assignments use`} this lot` : undefined });
         return {
           id: s.id,
           v: {
@@ -1443,7 +1466,7 @@ const assetStock: HrmsScreenModule = {
   },
   actions: {
     async delete(ctx, id) {
-      if (!has(ctx, "hr")) return err("Only HR keeps the asset stock", "not_permitted");
+      if (!has(ctx, "hr")) return err("Managing the asset stock needs the HR power", "not_permitted");
       const [s] = await db.select().from(hrmsAssetStock).where(eq(hrmsAssetStock.id, id)).limit(1);
       if (!s) return err("That stock no longer exists.", "not_found");
       const [used] = await db.select({ id: hrmsAssetAssignments.id }).from(hrmsAssetAssignments).where(eq(hrmsAssetAssignments.stockId, id)).limit(1);
@@ -1479,7 +1502,7 @@ const assignments: HrmsScreenModule = {
         cols: [
           { k: "to", l: "Assigned to", t: "b" },
           { k: "asset", l: "Asset", t: "t" },
-          { k: "qty", l: "Qty", t: "n" },
+          { k: "qty", l: "Quantity", t: "n" },
           { k: "restoredQty", l: "Restored", t: "n" },
           { k: "inUse", l: "In use", t: "n" },
           { k: "from", l: "From", t: "t" },
@@ -1524,25 +1547,25 @@ const assignments: HrmsScreenModule = {
         const contacts: Contact[] = [];
         if (a.photo1Id) contacts.push({ l: "Photo 1", href: attHref(a.photo1Id) });
         if (a.photo2Id) contacts.push({ l: "Photo 2", href: attHref(a.photo2Id) });
-        if (a.restoredPhotoId) contacts.push({ l: "Restore photo", href: attHref(a.restoredPhotoId) });
+        if (a.restoredPhotoId) contacts.push({ l: "Return photo", href: attHref(a.restoredPhotoId) });
         const actions: ActionSpec[] = [];
         if (a.status === "Assigned")
           actions.push({
             id: "restore",
-            l: "Restored asset",
+            l: "Record return",
             primary: true,
-            why: hr ? undefined : "HR records a return",
+            why: hr ? undefined : "Recording a return needs the HR power",
             prompt: {
-              title: "Restore asset",
+              title: "Record a return",
               sub: `${s?.name ?? ""} · ${p?.name ?? ""}`,
-              submit: "Mark restored",
+              submit: "Record return",
               init: { date: today(), by: ctx.employee?.name ?? ctx.user.name, qty: String(a.qty) },
               fields: [
                 { k: "date", l: "Restored date", t: "date", req: true },
                 { k: "by", l: "Restored by", t: "text", req: true },
                 { k: "qty", l: "Restored quantity", t: "num", req: true, min: 1, max: a.qty },
                 { k: "remark", l: "Restored remark", t: "area", req: true },
-                { k: "photo", l: "Restore-time image", t: "photo", req: true },
+                { k: "photo", l: "Photo at return", t: "photo", req: true },
               ],
             },
           });
@@ -1583,14 +1606,14 @@ const assignments: HrmsScreenModule = {
   },
   forms: {
     async new(ctx, h) {
-      if (!has(ctx, "hr")) return err("Only HR assigns assets", "not_permitted");
+      if (!has(ctx, "hr")) return err("Assigning assets needs the HR power", "not_permitted");
       const p = personFrom(h.to, await allPeople());
-      if (!p || !isActive(p)) return fieldErr("to", "invalid Name");
+      if (!p || !isActive(p)) return fieldErr("to", "Pick an active employee from the list");
       const { stock, lot } = await stockAndAssignments();
       const s = stock.find((x) => stockLabel(x) === h.stock || x.id === h.stock);
       if (!s) return fieldErr("stock", "Required");
       const qty = int(h.qty);
-      if (qty == null || qty < 1) return fieldErr("qty", qty == null ? "Required" : "INVALID");
+      if (qty == null || qty < 1) return fieldErr("qty", qty == null ? "Required" : "The quantity must be at least 1");
       const date = text(h.date);
       if (!date || !DATE.test(date)) return fieldErr("date", "Required");
       // Image 1 defaults to the asset's own image (spec §15.2); image 2 only beside a first.
@@ -1625,18 +1648,18 @@ const assignments: HrmsScreenModule = {
   },
   actions: {
     async restore(ctx, id, v) {
-      if (!has(ctx, "hr")) return err("HR records a return", "not_permitted");
+      if (!has(ctx, "hr")) return err("Recording a return needs the HR power", "not_permitted");
       const [a] = await db.select().from(hrmsAssetAssignments).where(eq(hrmsAssetAssignments.id, id)).limit(1);
       if (!a) return err("That assignment no longer exists.", "not_found");
-      if (a.status !== "Assigned") return err("Already restored.");
+      if (a.status !== "Assigned") return err("This asset has already been returned.");
       const date = text(v.date);
       if (!date || !DATE.test(date)) return fieldErr("date", "Required");
-      if (date < a.date) return fieldErr("date", "INVALID");
+      if (date < a.date) return fieldErr("date", `The restored date cannot be before the assigned date, ${fdShort(a.date)}`);
       const by = text(v.by);
       if (!by) return fieldErr("by", "Required");
       const qty = int(v.qty);
       if (qty == null) return fieldErr("qty", "Required");
-      if (qty < 1 || qty > a.qty) return fieldErr("qty", "INVALID");
+      if (qty < 1 || qty > a.qty) return fieldErr("qty", `The restored quantity must be between 1 and ${a.qty}`);
       const remark = text(v.remark);
       if (!remark) return fieldErr("remark", "Required");
       const photo = text(v.photo);
@@ -1653,7 +1676,7 @@ const assignments: HrmsScreenModule = {
       return res;
     },
     async delete(ctx, id) {
-      if (!has(ctx, "admin")) return err("Only admin deletes an assignment", "not_permitted");
+      if (!has(ctx, "admin")) return err("Deleting an assignment needs the HRMS administration power", "not_permitted");
       const [a] = await db.select().from(hrmsAssetAssignments).where(eq(hrmsAssetAssignments.id, id)).limit(1);
       if (!a) return err("That assignment no longer exists.", "not_found");
       await db.delete(hrmsAssetAssignments).where(eq(hrmsAssetAssignments.id, id));

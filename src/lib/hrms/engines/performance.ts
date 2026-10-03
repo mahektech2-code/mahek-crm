@@ -1,3 +1,4 @@
+import { CHECKLIST_NA } from "../values";
 /* ---------------------------------------------------------------------------
  * Performance rules (spec §12), PURE: the daily sales score (§12.2), the
  * monthly staff performance (§12.3), performance points for any period
@@ -202,7 +203,7 @@ export function staffMonth(x: StaffMonthInput): StaffMonth {
   const target = x.targetMinutes.reduce((a, b) => a + b, 0);
   const workingHoursPct = pct(ratio(worked, target));
   const punctualityPct = pct(ratio(x.days.filter((d) => d.early).length, x.days.length));
-  const cleared = x.checklist.filter((c) => c.status === "Done" || c.status === "N/A").length;
+  const cleared = x.checklist.filter((c) => c.status === "Done" || c.status === CHECKLIST_NA).length;
   const notDoneChecklist = x.checklist.length - cleared;
   let dailyTaskPct: number;
   if (x.sales) {
@@ -224,7 +225,9 @@ export function staffMonth(x: StaffMonthInput): StaffMonth {
     else todo = avgTaken > 0 ? 0 : 1;
   }
   const todoPct = pct(Math.max(0, Math.min(1, todo)));
-  const speed = `Working Speed :- ${avgTaken == null ? 0 : Math.round(avgTaken * 10) / 10} Days Average And ${notDoneTodos} Task Not Done`;
+  const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+  const avgDays = avgTaken == null ? null : Math.round(avgTaken * 10) / 10;
+  const speed = `${avgDays == null ? "No to-dos finished yet" : `Takes ${plural(avgDays, "day", "days")} on average`}; ${plural(notDoneTodos, "to-do", "to-dos")} not done`;
 
   const buddyDone = x.buddy.filter((b) => b.done).length;
   /* A21: done ÷ all, not done ÷ not-done. */
@@ -348,7 +351,8 @@ export function performancePoints(x: PointsInput, cfg: PointsCfg): Points {
   const taskCount = x.checklistTotal + x.todosTotal;
   /* No checklist item and no to-do in the period is not a failure to do them; it scores nothing only because there is nothing to score. */
   const taskPoint = withTasks ? ratio(x.checklistCleared + x.todosDone, taskCount) : null;
-  const naText = withTasks ? `Task: ${taskCount} Not Applicable Reason ${x.naReasons.filter(Boolean).join(", ")}` : null;
+  const reasons = x.naReasons.filter(Boolean).join(", ");
+  const naText = withTasks ? `${taskCount} task${taskCount === 1 ? "" : "s"} · ${reasons ? `not applicable: ${reasons}` : "no reasons given for not applicable"}` : null;
 
   const sales = x.kind === "Sales";
   const per = (target: number | null) => ((target ?? 0) / (cfg.periodDivisor || 30)) * days;

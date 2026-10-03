@@ -39,6 +39,7 @@ import { addDaysISO, daysBetweenISO, daysIn, fdShort, hm, monLabel, monthName, m
 import { hrmsLink } from "../registry";
 import { runMonthlyLeaveCredit } from "../jobs";
 import { personFrom, personOption, scopeFor } from "./attendance";
+import { fromOld, HOLIDAY_CATEGORIES, LEAVE_WAITING } from "../values";
 
 /* ---------------------------------------------------------------------------
  * Leave & holidays (spec §7), overtime (§8) and the monthly attendance
@@ -53,7 +54,7 @@ type Holiday = Awaited<ReturnType<typeof holidays>>[number];
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 const MONTH = /^\d{4}-\d{2}$/;
-const DELETE_WORDS = "Are You Sure ! You Want Delete This Request";
+const DELETE_WORDS = "Delete this leave request? It cannot be undone.";
 const NOT_LINKED = "Your account is not linked to an employee record yet. Ask HR to link it on the Access screen.";
 const hasP = (ctx: HrmsContext) => (p: string) => has(ctx, p as HrmsPower);
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
@@ -179,9 +180,9 @@ const LEAVE_COLS: (ColSpec & { pw?: string })[] = [
   { k: "f", l: "Flags", t: "f" },
 ];
 
-/** "Pooja Wait For Admin Approval" / "Pooja Enjoy Leave" — the source's wait/enjoy line. */
-function waitLine(r: Req, name: string): string {
-  return r.status === "Approved" ? `${first(name)} Enjoy Leave` : r.status === "Rejected" ? "Rejected" : `${first(name)} Wait For Admin Approval`;
+/** The request's one-line state — "Waiting for a decision" / "Approved" / "Rejected" (the source's wait/enjoy line). */
+function waitLine(r: Req): string {
+  return r.status === "Approved" ? "Approved" : r.status === "Rejected" ? "Rejected" : "Waiting for a decision";
 }
 
 function leaveFlags(r: Req): string[] {
@@ -200,15 +201,15 @@ function leaveActions(ctx: HrmsContext, r: Req, name: string, bal: Balances): Ac
       id: "approve",
       l: "Approve",
       primary: true,
-      why: approver ? undefined : "Only admin approves leave",
+      why: approver ? undefined : "Only someone who approves leave can do this",
       prompt: {
         title: `Approve ${first(name)}’s leave`,
         sub: `${span(r)} · ${plural(days, "day")} · available paid ${bal.paid}, unpaid ${bal.unpaid}`,
         submit: "Approve",
         init: { paid: String(Math.min(days, bal.paid)) },
         fields: [
-          { k: "paid", l: "Paid Leave", t: "num", req: true, min: 0, max: days, hint: "The rest is unpaid." },
-          { k: "remark", l: "Admin remark", t: "text" },
+          { k: "paid", l: "Paid days", t: "num", req: true, min: 0, max: days, hint: `Up to ${days}. The rest is unpaid.` },
+          { k: "remark", l: "Approver’s remark", t: "text" },
         ],
       },
     });
@@ -216,14 +217,14 @@ function leaveActions(ctx: HrmsContext, r: Req, name: string, bal: Balances): Ac
     a.push({
       id: "reject",
       l: "Reject",
-      why: approver ? undefined : "Only admin rejects leave",
-      prompt: { title: "Reject leave", sub: `${name} · ${span(r)}`, submit: "Reject", fields: [{ k: "remark", l: "Admin remark", t: "area", req: true }] },
+      why: approver ? undefined : "Only someone who approves leave can do this",
+      prompt: { title: "Reject leave", sub: `${name} · ${span(r)}`, submit: "Reject", fields: [{ k: "remark", l: "Reason for rejecting", t: "area", req: true }] },
     });
   if (approver) {
-    a.push({ id: "remark", l: "Admin remark", prompt: { title: "Admin remark", submit: "Save remark", init: { remark: r.officerRemark ?? "" }, fields: [{ k: "remark", l: "Admin Remark", t: "area", req: true }] } });
+    a.push({ id: "remark", l: "Approver’s remark", prompt: { title: "Approver’s remark", submit: "Save remark", init: { remark: r.officerRemark ?? "" }, fields: [{ k: "remark", l: "Remark", t: "area", req: true }] } });
     a.push({ id: "edit", l: "Edit", loadsForm: true, why: r.status === "Approved" ? "Reject an approved request before changing its dates or type" : undefined });
   }
-  if (approver || (own && r.status === "Requesting")) a.push({ id: "delete", l: approver ? "Delete" : "Delete request", confirm: DELETE_WORDS });
+  if (approver || (own && r.status === LEAVE_WAITING)) a.push({ id: "delete", l: approver ? "Delete" : "Delete request", confirm: DELETE_WORDS });
   return a;
 }
 
@@ -249,7 +250,7 @@ function leaveRow(ctx: HrmsContext, r: Req, p: Person | undefined, x: { book: Ba
       : []),
     { l: "Approved by", v: r.approvedByName ?? "" },
     { l: "Approved on", v: fdShort(r.approvedOn) },
-    { l: "Officer remark", v: r.officerRemark ?? "" },
+    { l: "Approver’s remark", v: r.officerRemark ?? "" },
     { l: "Status time", v: at(r.statusAt) },
     { l: "Requested at", v: at(r.createdAt) },
   ];
@@ -266,7 +267,7 @@ function leaveRow(ctx: HrmsContext, r: Req, p: Person | undefined, x: { book: Ba
         end: r.endDate,
         days: Number(r.days),
         status: r.status,
-        line: waitLine(r, name),
+        line: waitLine(r),
         paid: r.paid == null ? "" : Number(r.paid),
         unpaid: r.unpaid == null ? "" : Number(r.unpaid),
         monthLbl: monLabel(monthOf(r.startDate)),
@@ -345,18 +346,18 @@ async function applyForm(ctx: HrmsContext, people: Person[], screen: string): Pr
   header.push(
     { k: "type", l: "Type", t: "select", req: true, opts: ["Leave", "Half Day"], def: "Leave" },
     { k: "start", l: "Start date", t: "date", req: true, def: t },
-    { k: "end", l: "End date", t: "date", req: true, when: { k: "type", eq: "Leave" }, hint: "Same month as the start. For next month apply a separate leave." },
+    { k: "end", l: "End date", t: "date", req: true, when: { k: "type", eq: "Leave" }, hint: "In the same month as the start. Apply for next month’s days as a separate request." },
     { k: "days", l: "Days", t: "derived", calc: "hrms.leave.days" },
     { k: "bPaid", l: "Available paid leave this month", t: "derived", calc: "hrms.leave.paid" },
     { k: "bUnpaid", l: "Available unpaid leave this year", t: "derived", calc: "hrms.leave.unpaid" },
-    { k: "reason", l: "Write Correct Full Reason", t: "area", req: true, mic: true },
+    { k: "reason", l: "Reason", t: "area", req: true, mic: true, hint: "Say why you need the leave, in full." },
   );
   return {
     screen,
     id: "apply",
-    title: "Apply leave",
+    title: "Apply for leave",
     sub: "One request per month. Your balances update as you choose the dates.",
-    submit: "Apply leave",
+    submit: "Send request",
     header,
     data: { bal, me: me ? personOption(me) : "" },
   };
@@ -369,9 +370,9 @@ function readDates(h: Values): { type: LeaveType; start: string; end: string; da
   const type = h.type as LeaveType;
   if (!LEAVE_TYPES.includes(type)) return fieldErr("type", "Pick Leave or Half Day");
   const start = text(h.start) ?? "";
-  if (!ISO.test(start)) return fieldErr("start", "INVALID");
+  if (!ISO.test(start)) return fieldErr("start", "Pick a start date");
   const end = type === "Half Day" ? start : (text(h.end) ?? "");
-  if (!ISO.test(end)) return fieldErr("end", "Please select valid leave end date");
+  if (!ISO.test(end)) return fieldErr("end", "Pick an end date");
   return { type, start, end, days: leaveDays(type, start, end) };
 }
 
@@ -399,7 +400,7 @@ async function submitApply(ctx: HrmsContext, h: Values) {
   let p: Person | undefined;
   if (choices && text(h.emp)) {
     p = personFrom(h.emp, choices);
-    if (!p || !choices.some((x) => x.id === p!.id)) return fieldErr("emp", "invalid Name");
+    if (!p || !choices.some((x) => x.id === p!.id)) return fieldErr("emp", "Pick a person from the list");
   } else if (ctx.employee) {
     p = byId(people).get(ctx.employee.id);
   } else if (choices) return fieldErr("emp", "Pick who the leave is for");
@@ -424,10 +425,10 @@ async function submitApply(ctx: HrmsContext, h: Values) {
       endDate: d.end,
       days: d.days,
       reason: text(h.reason),
-      status: "Requesting",
+      status: LEAVE_WAITING,
       createdById: ctx.user.id,
     });
-    return okVoid(`${first(who.name)} Wait For Admin Approval · ${plural(d.days, "day")}`);
+    return okVoid(`Leave request ${box.reqNo} sent for ${first(who.name)} · ${plural(d.days, "day")} · waiting for a decision`);
   });
   if (res.ok) {
     await hrmsAudit(ctx, "hrms.leave.apply", "hrms_leave_requests", id, null, { reqNo: box.reqNo, employee: who.code, ...d });
@@ -453,15 +454,15 @@ function editLoader(screen: string) {
         { k: "start", l: "Start date", t: "date", req: true },
         { k: "end", l: "End date", t: "date", req: true, when: { k: "type", eq: "Leave" } },
         { k: "days", l: "Days", t: "derived", calc: "hrms.leave.days" },
-        { k: "reason", l: "Write Correct Full Reason", t: "area", req: true },
+        { k: "reason", l: "Reason", t: "area", req: true },
       ],
     };
   };
 }
 
 async function submitEdit(ctx: HrmsContext, h: Values, _lines: Values[], recordId?: string) {
-  if (!has(ctx, "approveLeave")) return err("Only admin edits a leave request", "not_permitted");
-  if (!recordId) return err("Which request?", "not_found");
+  if (!has(ctx, "approveLeave")) return err("Only someone who approves leave can do this", "not_permitted");
+  if (!recordId) return err("That request could not be found. Open it from the list again.", "not_found");
   const d = readDates(h);
   if ("ok" in d) return d;
   const box: { before?: Req } = {};
@@ -494,7 +495,7 @@ type Approved = { r: Req; paid: number; unpaid: number };
 async function approveOne(ctx: HrmsContext, tx: Tx, id: string, paidWanted: number | "available"): Promise<Approved | { error: string; r?: Req }> {
   const [r] = await tx.select().from(hrmsLeaveRequests).where(eq(hrmsLeaveRequests.id, id)).for("update");
   if (!r) return { error: "That request no longer exists." };
-  if (r.status === "Approved") return { error: "Already approved.", r };
+  if (r.status === "Approved") return { error: `${r.reqNo} is already approved`, r };
   const book = await balBook([r.employeeId], tx);
   const bal = balOf(book, r.employeeId, r.startDate);
   const days = Number(r.days);
@@ -540,9 +541,9 @@ const REJECTED = (ctx: HrmsContext, remark: string) => ({
 
 const LEAVE_ACTIONS: HrmsScreenModule["actions"] = {
   async approve(ctx, id, v) {
-    if (!has(ctx, "approveLeave")) return err("Only admin approves leave", "not_permitted");
+    if (!has(ctx, "approveLeave")) return err("Only someone who approves leave can do this", "not_permitted");
     const paid = num(v.paid);
-    if (paid == null) return fieldErr("paid", "INVALID");
+    if (paid == null) return fieldErr("paid", "Enter the number of paid days");
     const box: { done?: Approved } = {};
     const res = await inTx(async (tx) => {
       const out = await approveOne(ctx, tx, id, paid);
@@ -555,22 +556,22 @@ const LEAVE_ACTIONS: HrmsScreenModule["actions"] = {
     const { r, unpaid } = box.done;
     await hrmsAudit(ctx, "hrms.leave.approve", "hrms_leave_requests", id, { status: r.status }, { status: "Approved", paid, unpaid });
     await tellEmployee(ctx, r, `Approved · ${span(r)} · ${paid} paid, ${unpaid} unpaid${text(v.remark) ? ` · ${text(v.remark)}` : ""}`, "success");
-    return okVoid(`Approved · ${paid} paid, ${unpaid} unpaid · ${first(await nameOf(r.employeeId))} Enjoy Leave`);
+    return okVoid(`Approved ${first(await nameOf(r.employeeId))}’s leave · ${paid} paid, ${unpaid} unpaid`);
   },
   async reject(ctx, id, v) {
-    if (!has(ctx, "approveLeave")) return err("Only admin rejects leave", "not_permitted");
+    if (!has(ctx, "approveLeave")) return err("Only someone who approves leave can do this", "not_permitted");
     const remark = text(v.remark);
-    if (!remark) return fieldErr("remark", "Admin remark is required");
+    if (!remark) return fieldErr("remark", "Give a reason for rejecting");
     const [r] = await db.select().from(hrmsLeaveRequests).where(eq(hrmsLeaveRequests.id, id));
     if (!r) return err("That request no longer exists.", "not_found");
-    if (r.status === "Rejected") return err("Already rejected.");
+    if (r.status === "Rejected") return err(`${r.reqNo} is already rejected`);
     await db.update(hrmsLeaveRequests).set(REJECTED(ctx, remark)).where(eq(hrmsLeaveRequests.id, id));
     await hrmsAudit(ctx, "hrms.leave.reject", "hrms_leave_requests", id, { status: r.status, paid: r.paid, unpaid: r.unpaid }, { status: "Rejected", remark });
     await tellEmployee(ctx, r, `Rejected · ${span(r)} · ${remark}`, "warn");
-    return okVoid(`Rejected · ${first(await nameOf(r.employeeId))} is told why`);
+    return okVoid(`Rejected · ${first(await nameOf(r.employeeId))} has been told why`);
   },
   async remark(ctx, id, v) {
-    if (!has(ctx, "approveLeave")) return err("Only admin writes an admin remark", "not_permitted");
+    if (!has(ctx, "approveLeave")) return err("Only someone who approves leave can do this", "not_permitted");
     const [r] = await db.select({ remark: hrmsLeaveRequests.officerRemark }).from(hrmsLeaveRequests).where(eq(hrmsLeaveRequests.id, id));
     if (!r) return err("That request no longer exists.", "not_found");
     await db.update(hrmsLeaveRequests).set({ officerRemark: text(v.remark), updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(hrmsLeaveRequests.id, id));
@@ -580,8 +581,8 @@ const LEAVE_ACTIONS: HrmsScreenModule["actions"] = {
   async delete(ctx, id) {
     const [r] = await db.select().from(hrmsLeaveRequests).where(eq(hrmsLeaveRequests.id, id));
     if (!r) return err("That request no longer exists.", "not_found");
-    const own = r.employeeId === ctx.employee?.id && r.status === "Requesting";
-    if (!(has(ctx, "approveLeave") || own)) return err("You can delete only your own request while it is waiting", "not_permitted");
+    const own = r.employeeId === ctx.employee?.id && r.status === LEAVE_WAITING;
+    if (!(has(ctx, "approveLeave") || own)) return err("You can delete only your own request, and only while it is waiting for a decision", "not_permitted");
     await db.delete(hrmsLeaveRequests).where(eq(hrmsLeaveRequests.id, id));
     await hrmsAudit(ctx, "hrms.leave.delete", "hrms_leave_requests", id, r, null);
     return okVoid("Request deleted");
@@ -593,7 +594,7 @@ const LEAVE_BULK: HrmsScreenModule["bulk"] = {
      paid days as its employee has left, in turn and in one transaction, so
      two requests of one person in the same batch cannot spend one balance. */
   async approveBulk(ctx, ids) {
-    if (!has(ctx, "approveLeave")) return err("Only admin approves leave", "not_permitted");
+    if (!has(ctx, "approveLeave")) return err("Only someone who approves leave can do this", "not_permitted");
     const short: string[] = [];
     const decided: Approved[] = [];
     const res = await inTx(async (tx) => {
@@ -614,10 +615,10 @@ const LEAVE_BULK: HrmsScreenModule["bulk"] = {
     }
     const people = byId(await allPeople());
     const names = [...new Set(short)].map((e) => first(people.get(e)?.name));
-    return okVoid(`${decided.length} approved${names.length ? ` · Insufficient Unpaid Leave for ${names.join(", ")}` : ""}`);
+    return okVoid(`${decided.length} approved${names.length ? ` · not approved for ${names.join(", ")}: not enough unpaid leave left this year` : ""}`);
   },
   async rejectBulk(ctx, ids, v) {
-    if (!has(ctx, "approveLeave")) return err("Only admin rejects leave", "not_permitted");
+    if (!has(ctx, "approveLeave")) return err("Only someone who approves leave can do this", "not_permitted");
     if (!ids.length) return okVoid("Nothing selected");
     const remark = text(v.remark) ?? "Rejected in bulk";
     const rows = (await db.select().from(hrmsLeaveRequests).where(inArray(hrmsLeaveRequests.id, ids))).filter((r) => r.status !== "Rejected");
@@ -656,7 +657,7 @@ const leave: HrmsScreenModule = {
         chips: "status",
         sortDefault: ["start", -1],
         newForm: form,
-        newLabel: "Apply leave",
+        newLabel: "Apply for leave",
         noDataLine: "No leave requests yet.",
         hrms: {
           scope: { current: scope, options },
@@ -677,7 +678,7 @@ const approvals: HrmsScreenModule = {
     const people = await allPeople();
     const { scope, options } = scopeFor(ctx, q, "approveLeave", "hr");
     const ids = visibleIds(ctx, scope, people);
-    const reqs = (await requestsFor(ids)).filter((r) => r.status === "Requesting");
+    const reqs = (await requestsFor(ids)).filter((r) => r.status === LEAVE_WAITING);
     const [book, hol] = await Promise.all([balBook([...new Set(reqs.map((r) => r.employeeId))]), holidays()]);
     const pb = byId(people);
     const approver = has(ctx, "approveLeave");
@@ -702,13 +703,13 @@ const approvals: HrmsScreenModule = {
         bulk: approver
           ? [
               { id: "approveBulk", l: "Approve with available paid", confirm: "Approve the selected requests, each with as much paid leave as its employee has left?" },
-              { id: "rejectBulk", l: "Reject", prompt: { title: "Reject the selected requests", submit: "Reject", fields: [{ k: "remark", l: "Admin remark", t: "area" }] } },
+              { id: "rejectBulk", l: "Reject", prompt: { title: "Reject the selected requests", submit: "Reject", fields: [{ k: "remark", l: "Reason for rejecting", t: "area" }] } },
             ]
           : [],
         noDataLine: "Nothing is waiting for a decision.",
         hrms: {
           scope: { current: scope, options },
-          ...(approver ? {} : { notice: { text: "Only admin approves leave — you can read the queue", tone: "info" as const } }),
+          ...(approver ? {} : { notice: { text: "You can read this queue. Only someone who approves leave can decide on it.", tone: "info" as const } }),
         },
       },
       rows: reqs.map((r) => leaveRow(ctx, r, pb.get(r.employeeId), { book, hol, hiddenKeys: [] })),
@@ -814,7 +815,7 @@ const leaveSetup: HrmsScreenModule = {
           {
             id: "runCredits",
             l: "Run now",
-            why: canRunCredits(ctx) ? undefined : "Only HR, a leave approver or admin runs the monthly credit",
+            why: canRunCredits(ctx) ? undefined : "Only HR, someone who approves leave, or an HRMS administrator can run the monthly credit",
             confirm: `Credit ${monthName(t)}’s paid leave to every active employee who has not had it yet?`,
           },
         ],
@@ -831,7 +832,7 @@ const leaveSetup: HrmsScreenModule = {
             l: "Edit",
             prompt: { title: "Edit credit", sub: `${p?.name ?? ""} · ${monLabel(c.month)}`, submit: "Save", init: { days: String(days) }, fields: [{ k: "days", l: "Days", t: "num", req: true, min: 0, max: 31 }] },
           });
-        a.push({ id: "deleteCredit", l: "Delete", why: has(ctx, "admin") ? undefined : "Only admin deletes a credit", confirm: `Delete ${p?.name ?? ""}’s ${monLabel(c.month)} credit?` });
+        a.push({ id: "deleteCredit", l: "Delete", why: has(ctx, "admin") ? undefined : "Only an HRMS administrator can delete a credit", confirm: `Delete ${p?.name ?? ""}’s ${monLabel(c.month)} credit?` });
         return {
           id: c.id,
           v: { month: c.month, monthLbl: monLabel(c.month), emp: p?.name ?? "", office: p?.office ?? "", days, auto: c.source === "job" ? "Monthly job" : "Added by hand" },
@@ -851,9 +852,9 @@ const leaveSetup: HrmsScreenModule = {
   },
   actions: {
     async editCredit(ctx, id, v) {
-      if (!canHandCredit(ctx)) return err("Only HR or admin changes a credit", "not_permitted");
+      if (!canHandCredit(ctx)) return err("Only HR or an HRMS administrator can change a credit", "not_permitted");
       const days = num(v.days);
-      if (days == null || days < 0 || days > 31) return fieldErr("days", "INVALID");
+      if (days == null || days < 0 || days > 31) return fieldErr("days", "Days must be a number from 0 to 31");
       const [c] = await db.select().from(hrmsLeaveCredits).where(eq(hrmsLeaveCredits.id, id));
       if (!c) return err("That credit no longer exists.", "not_found");
       await db.update(hrmsLeaveCredits).set({ days, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(hrmsLeaveCredits.id, id));
@@ -861,7 +862,7 @@ const leaveSetup: HrmsScreenModule = {
       return okVoid("Credit saved");
     },
     async deleteCredit(ctx, id) {
-      if (!has(ctx, "admin")) return err("Only admin deletes a credit", "not_permitted");
+      if (!has(ctx, "admin")) return err("Only an HRMS administrator can delete a credit", "not_permitted");
       const [c] = await db.select().from(hrmsLeaveCredits).where(eq(hrmsLeaveCredits.id, id));
       if (!c) return err("That credit no longer exists.", "not_found");
       await db.delete(hrmsLeaveCredits).where(eq(hrmsLeaveCredits.id, id));
@@ -871,13 +872,13 @@ const leaveSetup: HrmsScreenModule = {
   },
   forms: {
     async credit(ctx, h) {
-      if (!canHandCredit(ctx)) return err("Only HR or admin adds a credit", "not_permitted");
+      if (!canHandCredit(ctx)) return err("Only HR or an HRMS administrator can add a credit", "not_permitted");
       const p = personFrom(h.emp, (await allPeople()).filter(isActive));
-      if (!p) return fieldErr("emp", "invalid Name");
+      if (!p) return fieldErr("emp", "Pick an active employee from the list");
       const month = text(h.month) ?? "";
-      if (!MONTH.test(month)) return fieldErr("month", "INVALID");
+      if (!MONTH.test(month)) return fieldErr("month", "Pick a month from the list");
       const days = num(h.days);
-      if (days == null || days < 0 || days > 31) return fieldErr("days", "INVALID");
+      if (days == null || days < 0 || days > 31) return fieldErr("days", "Days must be a number from 0 to 31");
       const id = hrmsId("hlc");
       await db.insert(hrmsLeaveCredits).values({ id, employeeId: p.id, month, days, source: "hand", createdById: ctx.user.id });
       await hrmsAudit(ctx, "hrms.leaveCredit.add", "hrms_leave_credits", id, null, { employee: p.code, month, days });
@@ -886,7 +887,7 @@ const leaveSetup: HrmsScreenModule = {
   },
   tools: {
     async runCredits(ctx) {
-      if (!canRunCredits(ctx)) return err("Only HR, a leave approver or admin runs the monthly credit", "not_permitted");
+      if (!canRunCredits(ctx)) return err("Only HR, someone who approves leave, or an HRMS administrator can run the monthly credit", "not_permitted");
       const m = monthOf(today());
       const { created } = await runMonthlyLeaveCredit(m);
       await hrmsAudit(ctx, "hrms.leaveCredit.run", "hrms_leave_credits", null, null, { month: m, created });
@@ -897,22 +898,23 @@ const leaveSetup: HrmsScreenModule = {
 
 /* --------------------------------------------------------------- holidays */
 
-const HOLIDAY_CATS = ["Festival", "Weekly", "National", "Nature"];
+const HOLIDAY_CATS: string[] = [...HOLIDAY_CATEGORIES];
 const EVERYONE = "All employees";
 const NAMED = "Named employees";
 const canKeepHolidays = (ctx: HrmsContext) => has(ctx, "hr") || has(ctx, "admin");
 const canImportHolidays = (ctx: HrmsContext) => has(ctx, "import") || has(ctx, "admin");
 
-/** "Festival Holiday" (the source's spelling) and "festival" both read as Festival. */
+/** "Festival Holiday" (the source's spelling), "festival" and the old "Nature" all read as today's word. */
 function readCategory(v: string | undefined): string | null {
-  const s = String(v ?? "")
-    .trim()
-    .replace(/\s+holiday$/i, "")
-    .toLowerCase();
+  const s = fromOld(
+    String(v ?? "")
+      .trim()
+      .replace(/\s+holiday$/i, ""),
+  ).toLowerCase();
   return HOLIDAY_CATS.find((c) => c.toLowerCase() === s) ?? null;
 }
 
-/** Same date, and either side covers everybody or both name the same group: "Duplicate Entry!". */
+/** Same date, and either side covers everybody or both name the same group: a duplicate. */
 function clashes(a: { date: string; tagged: string }, b: { date: string; tagged: string }) {
   return a.date === b.date && (a.tagged === b.tagged || a.tagged === EVERYONE || b.tagged === EVERYONE);
 }
@@ -960,7 +962,7 @@ async function readHolidayCsv(csvText: string): Promise<HolidayLine[]> {
     else if (!category) error = `Category must be one of ${HOLIDAY_CATS.join(", ")}`;
     else if (!name) error = "Holiday name is required";
     else if (tagged !== EVERYONE && !officeNames.has(tagged)) error = `Unknown office ${tagged}`;
-    else if (taken.some((t) => clashes(t, { date, tagged }))) error = "Duplicate Entry!";
+    else if (taken.some((t) => clashes(t, { date, tagged }))) error = `A holiday for ${tagged} on ${date} already exists`;
     if (!error) taken.push({ date, tagged });
     return { date, category: category ?? "", name, tagged, remark: pick(r, "remark"), error };
   });
@@ -1040,7 +1042,7 @@ const holidaysScreen: HrmsScreenModule = {
             },
           });
         }
-        a.push({ id: "delete", l: "Delete", why: has(ctx, "admin") ? undefined : "Only admin deletes a holiday", confirm: `Delete ${h.name} on ${fdShort(h.date)}?` });
+        a.push({ id: "delete", l: "Delete", why: has(ctx, "admin") ? undefined : "Only an HRMS administrator can delete a holiday", confirm: `Delete ${h.name} on ${fdShort(h.date)}?` });
         return {
           id: h.id,
           v: { date: h.date, day: weekdayOf(h.date), category: h.category, name: h.name, tagged, remark: h.remark ?? "", monthLbl: monLabel(monthOf(h.date)), year: h.date.slice(0, 4) },
@@ -1060,14 +1062,14 @@ const holidaysScreen: HrmsScreenModule = {
   },
   actions: {
     async edit(ctx, id, v) {
-      if (!canKeepHolidays(ctx)) return err("Only HR or admin edits a holiday", "not_permitted");
+      if (!canKeepHolidays(ctx)) return err("Only HR or an HRMS administrator can edit a holiday", "not_permitted");
       const [h] = await db.select().from(hrmsHolidays).where(eq(hrmsHolidays.id, id));
       if (!h) return err("That holiday no longer exists.", "not_found");
       const window = (await getConfig())["hrms.holidays.editWindowDays"];
       const t = today();
       if (h.date < t && daysBetweenISO(h.date, t) > window) return err(`Only holidays from the last ${window} days can be edited`);
       const category = readCategory(v.category);
-      if (!category) return fieldErr("category", "INVALID");
+      if (!category) return fieldErr("category", "Pick a category from the list");
       const name = text(v.name);
       if (!name) return fieldErr("name", "Holiday name is required");
       const after = { name, category, remark: text(v.remark) };
@@ -1076,7 +1078,7 @@ const holidaysScreen: HrmsScreenModule = {
       return okVoid("Holiday updated");
     },
     async delete(ctx, id) {
-      if (!has(ctx, "admin")) return err("Only admin deletes a holiday", "not_permitted");
+      if (!has(ctx, "admin")) return err("Only an HRMS administrator can delete a holiday", "not_permitted");
       const [h] = await db.select().from(hrmsHolidays).where(eq(hrmsHolidays.id, id));
       if (!h) return err("That holiday no longer exists.", "not_found");
       await db.delete(hrmsHolidays).where(eq(hrmsHolidays.id, id));
@@ -1086,16 +1088,16 @@ const holidaysScreen: HrmsScreenModule = {
   },
   forms: {
     async add(ctx, h, lines) {
-      if (!canKeepHolidays(ctx)) return err("Only HR or admin adds holidays", "not_permitted");
+      if (!canKeepHolidays(ctx)) return err("Only HR or an HRMS administrator can add holidays", "not_permitted");
       const [officeRows, people, existing] = await Promise.all([offices(), allPeople(), holidays()]);
       const tagged = text(h.tagged) ?? "";
-      if (tagged !== EVERYONE && tagged !== NAMED && !officeRows.some((o) => o.name === tagged)) return fieldErr("tagged", "INVALID");
+      if (tagged !== EVERYONE && tagged !== NAMED && !officeRows.some((o) => o.name === tagged)) return fieldErr("tagged", tagged ? `${tagged} is not one of the choices. Pick from the list.` : "Pick who the holidays are for");
       let named: string[] = [];
       if (tagged === NAMED) {
         const act = people.filter(isActive);
         const picked = multi(h.people).map((o) => personFrom(o, act));
         if (!picked.length) return fieldErr("people", "Pick who the holiday is for");
-        if (picked.some((p) => !p)) return fieldErr("people", "invalid Name");
+        if (picked.some((p) => !p)) return fieldErr("people", "Pick active employees from the list");
         named = picked.map((p) => p!.id);
       }
       if (!lines.length) return err("Add at least one holiday");
@@ -1103,15 +1105,15 @@ const holidaysScreen: HrmsScreenModule = {
       const taken = existing.map((x) => ({ date: x.date, tagged: x.tagged }));
       for (const [i, l] of lines.entries()) {
         const date = text(l.date) ?? "";
-        if (!ISO.test(date)) return fieldErr(`l${i}.date`, "INVALID");
+        if (!ISO.test(date)) return fieldErr(`l${i}.date`, "Pick a date");
         const category = readCategory(l.category);
-        if (!category) return fieldErr(`l${i}.category`, "Category is required");
+        if (!category) return fieldErr(`l${i}.category`, "Pick a category");
         const name = text(l.name);
         if (!name) return fieldErr(`l${i}.name`, "Holiday name is required");
         /* A holiday for named people clashes only with an everybody holiday:
            two different lists of names on one date are two holidays. */
         const dupe = tagged === NAMED ? taken.some((x) => x.date === date && x.tagged === EVERYONE) : taken.some((x) => clashes(x, { date, tagged }));
-        if (dupe) return fieldErr(`l${i}.date`, "Duplicate Entry!");
+        if (dupe) return fieldErr(`l${i}.date`, `There is already a holiday on ${fdShort(date)} for these employees`);
         if (tagged !== NAMED) taken.push({ date, tagged });
         rows.push({ id: hrmsId("hhol"), date, category, name, tagged, taggedEmployeeIds: named, remark: text(l.remark), createdByName: ctx.user.name, createdById: ctx.user.id });
       }
@@ -1122,7 +1124,7 @@ const holidaysScreen: HrmsScreenModule = {
   },
   tools: {
     async import(ctx, v) {
-      if (!canImportHolidays(ctx)) return err("Importing holidays is not on your account.", "not_permitted");
+      if (!canImportHolidays(ctx)) return err("Only someone who can import holidays can do this", "not_permitted");
       const lines = await readHolidayCsv(v.csv ?? "");
       if (!lines.length) return fieldErr("csv", "The file has no rows under its header.");
       const good = lines.filter((l) => !l.error).length;
@@ -1139,7 +1141,7 @@ const holidaysScreen: HrmsScreenModule = {
       });
     },
     async importConfirm(ctx, v) {
-      if (!canImportHolidays(ctx)) return err("Importing holidays is not on your account.", "not_permitted");
+      if (!canImportHolidays(ctx)) return err("Only someone who can import holidays can do this", "not_permitted");
       /* Read again rather than trusting the preview: a holiday added since is a duplicate now. */
       const lines = (await readHolidayCsv(v.csv ?? "")).filter((l) => !l.error);
       if (!lines.length) return okVoid("Nothing to import");
@@ -1170,6 +1172,13 @@ function otSpan(a: OtDay | undefined, slot: string): { start: string; end: strin
 }
 
 const canOtAnyone = (ctx: HrmsContext) => has(ctx, "hr") || has(ctx, "admin");
+
+/** Why a slot gives no overtime, said for the case at hand. */
+function otRefusal(s: { minutes: number | null } | null, slot: string, minMin: number): string {
+  if (!s) return `That day’s attendance does not have the times needed for overtime ${slot.toLowerCase()}`;
+  if (s.minutes == null) return `No overtime ${slot.toLowerCase()} that day`;
+  return `Not overtime: ${s.minutes} minutes ${slot.toLowerCase()}, and it must be more than ${minMin}`;
+}
 const OT_SLOTS = ["After Duty", "Before Duty"];
 
 async function attendanceDay(employeeId: string, date: string): Promise<OtDay | undefined> {
@@ -1248,7 +1257,7 @@ const overtime: HrmsScreenModule = {
         sortDefault: ["date", -1],
         newForm: form,
         newLabel: "Add overtime",
-        noDataLine: `No overtime yet. Overtime of ${minMin} minutes or less is not applicable.`,
+        noDataLine: `No overtime yet. Overtime must be more than ${minMin} minutes to count.`,
         hrms: {
           scope: { current: scope, options },
           ...(ctx.flags.ot ? {} : { notice: { text: "Overtime is switched off in HRMS settings", tone: "warn" as const } }),
@@ -1275,7 +1284,7 @@ const overtime: HrmsScreenModule = {
             {
               id: "edit",
               l: "Edit",
-              why: mayChange ? undefined : "Only the employee, HR or admin changes overtime",
+              why: mayChange ? undefined : "Only the employee, HR or an HRMS administrator can change this overtime",
               prompt: {
                 title: "Edit overtime",
                 sub: `${p?.name ?? ""} · ${fdShort(r.date)} · start and end are read again from that day’s attendance`,
@@ -1287,7 +1296,7 @@ const overtime: HrmsScreenModule = {
                 ],
               },
             },
-            { id: "delete", l: "Delete", why: mayChange ? undefined : "Only the employee, HR or admin deletes overtime", confirm: "Delete this overtime record?" },
+            { id: "delete", l: "Delete", why: mayChange ? undefined : "Only the employee, HR or an HRMS administrator can delete this overtime", confirm: "Delete this overtime record?" },
           ],
           by: stampLine(null, r.createdAt),
         };
@@ -1299,11 +1308,11 @@ const overtime: HrmsScreenModule = {
       if (!ctx.flags.ot) return err("Overtime is switched off", "not_permitted");
       const [r] = await db.select().from(hrmsOvertime).where(eq(hrmsOvertime.id, id));
       if (!r) return err("That overtime no longer exists.", "not_found");
-      if (!(r.employeeId === ctx.employee?.id || canOtAnyone(ctx))) return err("Only the employee, HR or admin changes overtime", "not_permitted");
-      if (!OT_SLOTS.includes(v.slot)) return fieldErr("slot", "INVALID");
+      if (!(r.employeeId === ctx.employee?.id || canOtAnyone(ctx))) return err("Only the employee, HR or an HRMS administrator can change this overtime", "not_permitted");
+      if (!OT_SLOTS.includes(v.slot)) return fieldErr("slot", "Pick Before Duty or After Duty");
       const minMin = (await getConfig())["hrms.ot.minMinutes"];
       const s = otSpan(await attendanceDay(r.employeeId, r.date), v.slot);
-      if (!s || s.minutes == null || s.minutes <= minMin) return fieldErr("slot", "OT not Applicable");
+      if (!s || s.minutes == null || s.minutes <= minMin) return fieldErr("slot", otRefusal(s, v.slot, minMin));
       const after = { slot: v.slot, startTime: s.start, endTime: s.end, minutes: s.minutes, remark: text(v.remark) };
       await db.update(hrmsOvertime).set({ ...after, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(hrmsOvertime.id, id));
       await hrmsAudit(ctx, "hrms.overtime.edit", "hrms_overtime", id, { slot: r.slot, minutes: r.minutes, remark: r.remark }, after);
@@ -1312,7 +1321,7 @@ const overtime: HrmsScreenModule = {
     async delete(ctx, id) {
       const [r] = await db.select().from(hrmsOvertime).where(eq(hrmsOvertime.id, id));
       if (!r) return err("That overtime no longer exists.", "not_found");
-      if (!(r.employeeId === ctx.employee?.id || canOtAnyone(ctx))) return err("Only the employee, HR or admin deletes overtime", "not_permitted");
+      if (!(r.employeeId === ctx.employee?.id || canOtAnyone(ctx))) return err("Only the employee, HR or an HRMS administrator can delete this overtime", "not_permitted");
       await db.delete(hrmsOvertime).where(eq(hrmsOvertime.id, id));
       await hrmsAudit(ctx, "hrms.overtime.delete", "hrms_overtime", id, r, null);
       return okVoid("Overtime deleted");
@@ -1326,21 +1335,22 @@ const overtime: HrmsScreenModule = {
       if (canOtAnyone(ctx)) p = personFrom(h.emp, people.filter(isActive));
       else if (ctx.employee) {
         p = people.find((x) => x.id === ctx.employee!.id);
-        if (text(h.emp) && personFrom(h.emp, people)?.id !== p?.id) return fieldErr("emp", "You add overtime for yourself");
+        if (text(h.emp) && personFrom(h.emp, people)?.id !== p?.id) return fieldErr("emp", "You can add overtime only for yourself");
       } else return err(NOT_LINKED, "not_permitted");
-      if (!p) return fieldErr("emp", "invalid Name");
+      if (!p) return fieldErr("emp", "Pick an active employee from the list");
       const date = text(h.date) ?? "";
-      if (!ISO.test(date) || date > today()) return fieldErr("date", "INVALID");
-      if (!OT_SLOTS.includes(h.slot)) return fieldErr("slot", "INVALID");
+      if (!ISO.test(date)) return fieldErr("date", "Pick a date");
+      if (date > today()) return fieldErr("date", `${fdShort(date)} is in the future`);
+      if (!OT_SLOTS.includes(h.slot)) return fieldErr("slot", "Pick Before Duty or After Duty");
       const [dupe] = await db
         .select({ id: hrmsOvertime.id })
         .from(hrmsOvertime)
         .where(and(eq(hrmsOvertime.employeeId, p.id), eq(hrmsOvertime.date, date)));
-      if (dupe) return fieldErr("date", "OT Already Added");
+      if (dupe) return fieldErr("date", `Overtime for ${p.name} on ${fdShort(date)} is already added`);
       const minMin = (await getConfig())["hrms.ot.minMinutes"];
       const s = otSpan(await attendanceDay(p.id, date), h.slot);
       /* Spec §8: the OT must EXCEED the shortest overtime; at or under it is not applicable. */
-      if (!s || s.minutes == null || s.minutes <= minMin) return fieldErr("slot", "OT not Applicable");
+      if (!s || s.minutes == null || s.minutes <= minMin) return fieldErr("slot", otRefusal(s, h.slot, minMin));
       const id = hrmsId("hot");
       const res = await db
         .insert(hrmsOvertime)
@@ -1348,7 +1358,7 @@ const overtime: HrmsScreenModule = {
         .onConflictDoNothing()
         .returning({ id: hrmsOvertime.id });
       /* The unique index answers the race two saves of one day would otherwise win together. */
-      if (!res.length) return fieldErr("date", "OT Already Added");
+      if (!res.length) return fieldErr("date", `Overtime for ${p.name} on ${fdShort(date)} is already added`);
       await hrmsAudit(ctx, "hrms.overtime.add", "hrms_overtime", id, null, { employee: p.code, date, slot: h.slot, minutes: s.minutes });
       return okVoid(`${hm(s.minutes)} overtime added`);
     },
@@ -1419,11 +1429,11 @@ const monthly: HrmsScreenModule = {
           id: "editRemark",
           l: "Edit remark",
           primary: true,
-          why: editor ? undefined : "Only HR writes a report remark",
+          why: editor ? undefined : "Only HR can write a report remark",
           prompt: { title: "Remark", sub: `${p?.name ?? ""} · ${monLabel(month)}`, submit: "Save remark", init: { remark: rm?.remark ?? "" }, fields: [{ k: "remark", l: "Remark", t: "area", req: true }] },
         },
       ];
-      if (rm) a.push({ id: "deleteRemark", l: "Delete remark", why: has(ctx, "admin") ? undefined : "Only admin deletes a report remark", confirm: "Delete this report’s remark?" });
+      if (rm) a.push({ id: "deleteRemark", l: "Delete remark", why: has(ctx, "admin") ? undefined : "Only an HRMS administrator can delete a report remark", confirm: "Delete this report’s remark?" });
       const lateTotal = hm(f.lateDurationMin) || "0h 00m";
       rows.push({
         id: monthlyKey(employeeId, month),
@@ -1500,11 +1510,11 @@ const monthly: HrmsScreenModule = {
   },
   actions: {
     async editRemark(ctx, id, v) {
-      if (!has(ctx, "hr")) return err("Only HR writes a report remark", "not_permitted");
+      if (!has(ctx, "hr")) return err("Only HR can write a report remark", "not_permitted");
       const k = readMonthlyKey(id);
       if (!k) return err("That report no longer exists.", "not_found");
       const remark = text(v.remark);
-      if (!remark) return fieldErr("remark", "Remark is required");
+      if (!remark) return fieldErr("remark", "Write the remark");
       const [before] = await db
         .select()
         .from(hrmsMonthlyRemarks)
@@ -1517,7 +1527,7 @@ const monthly: HrmsScreenModule = {
       return okVoid("Remark saved");
     },
     async deleteRemark(ctx, id) {
-      if (!has(ctx, "admin")) return err("Only admin deletes a report remark", "not_permitted");
+      if (!has(ctx, "admin")) return err("Only an HRMS administrator can delete a report remark", "not_permitted");
       const k = readMonthlyKey(id);
       if (!k) return err("That report no longer exists.", "not_found");
       const gone = await db

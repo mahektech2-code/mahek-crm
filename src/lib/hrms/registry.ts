@@ -114,7 +114,7 @@ export const HRMS_GROUPS: HrmsGroup[] = [
           t("checklist", "Checklist", "Today’s tasks, what is still open this week, and every checklist before."),
           t("todos", "To-dos", "Work given to you and by you. Whoever gave it checks it once it is done."),
           t("buddy", "Buddy tasks", "One of today’s tasks handed to a colleague, who accepts it and marks it done."),
-          t("templates", "Templates", "Your daily, weekly and monthly tasks. Take my tasks copies today’s into your checklist."),
+          t("templates", "Templates", "Your daily, weekly and monthly tasks. Take my task copies today’s into your checklist."),
         ],
       }),
       s("payroll", "pay", "Pay", "wallet", "", {

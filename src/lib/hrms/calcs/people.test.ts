@@ -24,8 +24,8 @@ test("asset availability counts by lot and by name, giving restored quantity bac
 
 test("office duration and duty duration", () => {
   assert.equal(officeDuration("09:30", "18:30", "Full Day"), "9h 00m");
-  assert.equal(officeDuration("09:30", "18:30", "24*7"), "24 h");
-  assert.equal(officeDuration("18:30", "09:30", "Half Day"), "Closing must be after opening");
+  assert.equal(officeDuration("09:30", "18:30", "24 hours"), "24 h");
+  assert.equal(officeDuration("18:30", "09:30", "Half Day"), "Closing time must be after opening time");
   assert.equal(dutyDuration("10:00", "14:15"), "4h 15m");
   assert.equal(dutyDuration("", "14:15"), "");
 });
