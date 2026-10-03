@@ -17,6 +17,8 @@ import { markThreadHandled, sendChatMessage } from "@/lib/actions/crm";
 import { addDays, calendarDate, type BusinessDate } from "@/lib/business-date";
 import { clock, phoneDisplay, shortDate } from "@/lib/format";
 import { previewOf, whenLabel } from "@/lib/whatsapp-status";
+import { MEDIA_LABEL, type MediaType } from "@/lib/whatsapp-delivery";
+import { ReplyMedia } from "./reply-media";
 import type {
   ChatShow,
   Conversation,
@@ -556,9 +558,15 @@ function ThreadPane({
                       {e.templateName}
                     </div>
                   ) : null}
-                  <p className="text-sm whitespace-pre-wrap text-ink">
-                    {e.text}
-                  </p>
+                  {e.media ? (
+                    <div className="mt-0.5 mb-1">
+                      <ReplyMedia type={e.media.type} url={e.media.url} pdf={e.media.pdf} caption={e.text} />
+                    </div>
+                  ) : null}
+                  {/* A file with no caption has only its label for words, which the file itself already says. */}
+                  {e.media && (e.text === MEDIA_LABEL[e.media.type as MediaType] || e.media.type === "document") ? null : (
+                    <p className="text-sm whitespace-pre-wrap text-ink">{e.text}</p>
+                  )}
                   <div className="mt-0.5 flex flex-wrap items-center justify-end gap-1.5 text-[11px] text-muted">
                     {e.fromThem ? null : (
                       <span>{e.viaRule ? "Automatic rule" : (e.by ?? "")}</span>

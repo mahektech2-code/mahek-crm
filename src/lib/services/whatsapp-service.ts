@@ -26,14 +26,18 @@ import { recomputeLastContact, today } from "../recompute";
 import { err, ok, okVoid, type Result } from "../result";
 import { effectiveDueDate } from "../engines/escalation";
 import { billCreditDaysSql } from "../bill-terms";
+import { asDate } from "../business-date";
 import {
   advancedStatus,
   deliveryRoute,
+  mediaKind,
+  replyMedia,
+  replyText,
   resolveWatiParams,
   waNumber,
   type WatiEvent,
 } from "../whatsapp-delivery";
-import { isApproved, listWatiTemplates, sendWatiTemplate, watiConfig } from "../wati";
+import { isApproved, listWatiTemplates, sendWatiTemplate, watiConfig, watiHistory } from "../wati";
 import { announceWa } from "../wa-live";
 import { whatsappServiceState } from "./whatsapp-switch-service";
 import { factsFor } from "./wati-facts-service";
@@ -982,6 +986,8 @@ export async function applyWatiEvent(event: WatiEvent): Promise<string> {
         waId: event.waId,
         senderName: event.senderName,
         providerMessageId: event.providerMessageId,
+        mediaType: event.media?.type ?? null,
+        mediaPath: event.media?.path ?? null,
       })
       .onConflictDoNothing()
       .returning({ id: waReplies.id });
@@ -1143,9 +1149,66 @@ export async function listReplies() {
   // those are listed on the Founder Dashboard's WhatsApp screen instead.
   return rows.map(({ reply, customerName }) => ({
     ...reply,
+    message: replyText(reply.message, reply.mediaType),
     customerId: reply.customerId as string,
     customerName,
   }));
+}
+
+/**
+ * FILES THAT ARRIVED BEFORE THEY WERE KEPT, found again in Wati's history.
+ *
+ * Until the webhook kept `data`, a photograph arrived as the row "[image]" with
+ * nothing pointing at the file. Wati still holds it, in the contact's history —
+ * but that history carries Wati's own ids and not WhatsApp's, so a row is
+ * matched on what both sides do know: the same number, the same kind of file,
+ * received within a couple of minutes, nearest first, each history message
+ * used once. Three photographs sent in one second are matched in order, which
+ * is the order they were stored in.
+ *
+ * Idempotent — only rows with no file are looked at — so it is safe by hand and
+ * on the hourly pass, where it catches any file the webhook ever arrives
+ * without. `sinceDays` bounds that pass; by hand it reads everything.
+ */
+export async function backfillReplyMedia(sinceDays?: number): Promise<{ found: number; looked: number; numbers: number }> {
+  const rows = await db.execute<{ id: string; wa_id: string; message: string; received_at: unknown }>(sql`
+    select r.id, r.wa_id, r.message, r.received_at from wa_replies r
+     where r.media_path is null and r.wa_id is not null
+       and r.message ~* '^\\[(image|document|video|audio|voice|ptt|sticker)\\]$'
+       ${sinceDays ? sql`and r.received_at > now() - make_interval(days => ${sinceDays}::int)` : sql``}
+     order by r.received_at asc, r.id asc
+  `);
+  const byNumber = new Map<string, Array<(typeof rows)[number]>>();
+  for (const r of rows) byNumber.set(r.wa_id, [...(byNumber.get(r.wa_id) ?? []), r]);
+
+  const WINDOW_MS = 2 * 60_000;
+  let found = 0;
+  for (const [waId, mine] of byNumber) {
+    const history = await watiHistory(waId);
+    if (!history) continue;
+    const files = history
+      .filter((h) => h.inbound)
+      .map((h) => ({ ...h, media: replyMedia(h.type, h.data) }))
+      .filter((h) => h.media)
+      .sort((a, b) => a.at.getTime() - b.at.getTime());
+    const used = new Set<string>();
+    for (const r of mine) {
+      const kind = mediaKind(r.message.slice(1, -1));
+      const at = asDate(r.received_at)?.getTime();
+      if (!kind || at === undefined) continue;
+      const match = files
+        .filter((f) => !used.has(f.id) && f.media!.type === kind && Math.abs(f.at.getTime() - at) <= WINDOW_MS)
+        .sort((a, b) => Math.abs(a.at.getTime() - at) - Math.abs(b.at.getTime() - at) || a.at.getTime() - b.at.getTime())[0];
+      if (!match) continue;
+      used.add(match.id);
+      await db
+        .update(waReplies)
+        .set({ mediaType: match.media!.type, mediaPath: match.media!.path, message: replyText(r.message, match.media!.type) })
+        .where(and(eq(waReplies.id, r.id), isNull(waReplies.mediaPath)));
+      found++;
+    }
+  }
+  return { found, looked: rows.length, numbers: byNumber.size };
 }
 
 /** Replies from numbers matching no customer — kept, and shown, never dropped. */

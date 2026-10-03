@@ -136,11 +136,85 @@ export type WatiEvent =
       waId: string;
       senderName: string | null;
       text: string;
+      /** What they sent when it was not words, and Wati's path to the file. */
+      media: ReplyMedia | null;
     }
   | { kind: "ignored"; why: string };
 
 const str = (v: unknown): string | null =>
   typeof v === "string" && v.trim() ? v.trim() : null;
+
+/* ------------------------------------------------------------ their files */
+
+export type MediaType = "image" | "document" | "video" | "audio" | "sticker";
+export type ReplyMedia = { type: MediaType; path: string };
+
+/** WhatsApp's message types that carry a file, and the kind each is kept as. */
+const MEDIA_TYPES: Record<string, MediaType> = {
+  image: "image",
+  document: "document",
+  video: "video",
+  audio: "audio",
+  voice: "audio",
+  ptt: "audio",
+  sticker: "sticker",
+};
+
+/** The words a file is shown with where there is no caption — a list preview, a search. */
+export const MEDIA_LABEL: Record<MediaType, string> = {
+  image: "Photo",
+  document: "Document",
+  video: "Video",
+  audio: "Voice note",
+  sticker: "Sticker",
+};
+
+/**
+ * Wati's path to a file, from whatever `data` carries.
+ *
+ * It is a bare path in the message history (`data/images/<uuid>.jpg`) and may
+ * be a full `showFile?fileName=…` address on the webhook. Only the path is
+ * kept, and only one of Wati's own shape: it is later handed back to Wati to
+ * fetch the bytes, so a value that is anything else — another host, a `..` —
+ * is refused here rather than trusted there.
+ */
+export function watiMediaPath(data: unknown): string | null {
+  let value = str(data);
+  if (!value) return null;
+  if (/^https?:\/\//i.test(value)) {
+    try {
+      value = new URL(value).searchParams.get("fileName") ?? "";
+    } catch {
+      return null;
+    }
+  }
+  value = value.replace(/^\/+/, "");
+  return /^data\/[a-z]+\/[A-Za-z0-9._-]+$/.test(value) && !value.includes("..") ? value : null;
+}
+
+/** The kind of file a WhatsApp message type carries, or null for words. */
+export function mediaKind(type: unknown): MediaType | null {
+  return MEDIA_TYPES[(str(type) ?? "").toLowerCase()] ?? null;
+}
+
+/** A message's file, if it carries one. */
+export function replyMedia(type: unknown, data: unknown): ReplyMedia | null {
+  const kind = mediaKind(type);
+  const path = kind ? watiMediaPath(data) : null;
+  return kind && path ? { type: kind, path } : null;
+}
+
+/**
+ * The text a message is shown with. Rows written before files were kept read
+ * "[image]"; those, and a file sent with no caption, are given the file's own
+ * word rather than a bracketed type.
+ */
+export function replyText(text: string, mediaType: string | null): string {
+  const placeholder = /^\[(\w+)\]$/.exec(text.trim());
+  const kind = (mediaType ?? (placeholder ? MEDIA_TYPES[placeholder[1].toLowerCase()] : null)) as MediaType | null;
+  if (kind && (!text.trim() || placeholder)) return MEDIA_LABEL[kind] ?? text;
+  return text;
+}
 
 /**
  * One Wati webhook body, read into the only facts MahekOne acts on.
@@ -165,12 +239,13 @@ export function parseWatiEvent(body: unknown): WatiEvent {
     const waId = str(b.waId);
     const id = ref ?? str(b.id);
     if (!waId || !id) return { kind: "ignored", why: "reply without a sender or id" };
+    const media = replyMedia(b.type, b.data);
     const text =
       str(b.text) ??
       str((b.buttonReply as Record<string, unknown> | null)?.text) ??
       str((b.listReply as Record<string, unknown> | null)?.title) ??
-      `[${str(b.type) ?? "message"}]`;
-    return { kind: "reply", providerMessageId: id, waId, senderName: str(b.senderName), text };
+      (media ? MEDIA_LABEL[media.type] : `[${str(b.type) ?? "message"}]`);
+    return { kind: "reply", providerMessageId: id, waId, senderName: str(b.senderName), text, media };
   }
 
   // A free-text reply we sent comes back with WhatsApp's id and none of ours;

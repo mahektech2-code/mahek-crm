@@ -1926,6 +1926,23 @@ world. Status only moves forward (a late "delivered" never demotes "read"), and
 a reply from a number the book does not know is stored with a null customer
 rather than dropped, and listed on the founder's screen.
 
+**A PHOTOGRAPH A CUSTOMER SENDS IS SHOWN WHERE THEY SENT IT.** A payment slip
+or a PDF statement arrived on the webhook with Wati's path to the file in
+`data`, and the path was dropped — the chat showed "[image]", and the thing the
+message was about could only be seen in Wati. `wa_replies.media_type` and
+`media_path` keep it now. The bytes stay with Wati: `/api/whatsapp/media/<id>`
+fetches them through `fetchWatiMedia`, behind `getReplyMedia`, which asks the
+same `resolveThread` gate as the conversation — so a file is exactly as
+visible as the chat it arrived in. Only a photograph, a PDF, audio and video
+are served inline; anything else a customer sends is handed over as a
+download, because "a document" can be an HTML page and must never run on this
+origin. The path is kept only in Wati's own shape (`data/<kind>/<file>`) and
+checked again before it is fetched. Reading a file and a contact's history are
+v1-only, which names the tenant — `WATI_TENANT_ID`, defaulting to Mahek's.
+Files that arrived before the path was kept are found again in Wati's history
+by `backfillReplyMedia`, matched on number, kind and time (the history carries
+Wati's ids, not WhatsApp's); the hourly pass repeats it over two days.
+
 **A payment reminder that went is a follow-up attempt.** The collections plan
 dates the next stage-1 nudge from the newest WhatsApp row in
 `follow_up_attempts`, and no path that sent a reminder — manual or otherwise —

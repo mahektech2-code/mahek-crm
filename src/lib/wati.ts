@@ -17,6 +17,18 @@ import { readSecret } from "./secrets";
  * ------------------------------------------------------------------------- */
 
 const DEFAULT_BASE = "https://live-mt-server.wati.io";
+/**
+ * Mahek's Wati account. Two calls exist only on the legacy v1 path, which names
+ * the tenant — reading a customer's file, and reading a contact's history — and
+ * the scoped key does not say which tenant it belongs to. An id names an
+ * account; it does not open one, so it is a constant like the HR workbook's id,
+ * and `WATI_TENANT_ID` overrides it for a deployment on another account.
+ */
+const DEFAULT_TENANT = "10225208";
+
+function tenant(): string {
+  return process.env.WATI_TENANT_ID?.trim() || DEFAULT_TENANT;
+}
 const TIMEOUT_MS = 15_000;
 
 export type WatiConfig = { base: string; token: string };
@@ -81,6 +93,86 @@ async function call<T>(
     return { ok: false, status: res.status, error: why };
   }
   return { ok: true, data: json as T };
+}
+
+/* ------------------------------------------------------------ their files */
+
+export type WatiFile =
+  | { ok: true; bytes: ArrayBuffer; contentType: string }
+  | { ok: false; status: number | null; error: string };
+
+/**
+ * A file a customer sent, read from Wati by its path (`data/images/….jpg`).
+ *
+ * The path must be one `watiMediaPath` accepted — it is checked again here,
+ * because this is the call that would fetch whatever it was handed. Nothing is
+ * stored: the bytes go straight to the person who asked, so a payment slip
+ * lives in one place, Wati's, and MahekOne is only ever the door to it.
+ */
+export async function fetchWatiMedia(path: string): Promise<WatiFile> {
+  if (!/^data\/[a-z]+\/[A-Za-z0-9._-]+$/.test(path) || path.includes("..")) {
+    return { ok: false, status: 400, error: "Not a Wati file path." };
+  }
+  const cfg = await watiConfig();
+  if (!cfg) return { ok: false, status: null, error: "No Wati key is configured." };
+  let res: Response;
+  try {
+    res = await fetch(`${cfg.base}/${tenant()}/api/v1/getMedia?fileName=${encodeURIComponent(path)}`, {
+      headers: { Authorization: `Bearer ${cfg.token}` },
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+      cache: "no-store",
+    });
+  } catch {
+    return { ok: false, status: null, error: "Wati could not be reached." };
+  }
+  if (!res.ok) return { ok: false, status: res.status, error: `Wati answered ${res.status}.` };
+  return {
+    ok: true,
+    bytes: await res.arrayBuffer(),
+    contentType: res.headers.get("content-type") ?? "application/octet-stream",
+  };
+}
+
+/** One message from a contact's history, as far as a backfill needs it. */
+export type WatiHistoryMessage = {
+  /** Wati's own id — the history does not carry WhatsApp's. */
+  id: string;
+  type: string;
+  data: string | null;
+  /** From them, not us. */
+  inbound: boolean;
+  at: Date;
+};
+
+/**
+ * A contact's message history, newest first, up to `pages` pages of 100.
+ * Read-only — what the backfill matches old "[image]" rows against.
+ */
+export async function watiHistory(waId: string, pages = 3): Promise<WatiHistoryMessage[] | null> {
+  const cfg = await watiConfig();
+  if (!cfg) return null;
+  const out: WatiHistoryMessage[] = [];
+  for (let page = 1; page <= pages; page++) {
+    const r = await call<{ messages?: { items?: Array<Record<string, unknown>> } }>(
+      cfg,
+      `/${tenant()}/api/v1/getMessages/${encodeURIComponent(waId)}?pageSize=100&pageNumber=${page}`,
+    );
+    if (!r.ok) return page === 1 ? null : out;
+    const items = r.data?.messages?.items ?? [];
+    for (const m of items) {
+      const created = typeof m.created === "string" ? new Date(m.created) : null;
+      if (!created || Number.isNaN(created.getTime()) || typeof m.id !== "string") continue;
+      out.push({
+        id: m.id,
+        type: typeof m.type === "string" ? m.type : "",
+        data: typeof m.data === "string" ? m.data : null,
+        inbound: m.owner === false,
+        at: created,
+      });
+    }
+    if (items.length < 100) break;
+  }
+  return out;
 }
 
 /* -------------------------------------------------------------- templates */

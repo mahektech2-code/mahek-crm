@@ -14,7 +14,7 @@ import { requireUser } from "../auth";
 import { asDate } from "../business-date";
 import { err, ok, type Result } from "../result";
 import { sendWatiText } from "../wati";
-import { waNumber } from "../whatsapp-delivery";
+import { replyText, waNumber } from "../whatsapp-delivery";
 import { sessionWindowEnds, type TrackedMessage } from "../whatsapp-status";
 import { announceWa } from "../wa-live";
 import { deliveryContext, recomputeLastWhatsapp } from "./whatsapp-service";
@@ -165,7 +165,7 @@ export async function listConversations(opts: { show: ChatShow; q?: string }): P
       thirdParty: Boolean(r.third_party),
       number: r.customer_id ? r.phone : r.num,
       lastAt: iso(r.last_at)!,
-      lastText: r.text ?? "",
+      lastText: r.from_them ? replyText(r.text ?? "", null) : (r.text ?? ""),
       lastFromThem: Boolean(r.from_them),
       unanswered: Number(r.unanswered),
       assignedToName: r.assigned_to_name,
@@ -190,6 +190,11 @@ export type ChatEvent = {
   receipts: TrackedMessage | null;
   /** Their message: answered or marked handled. */
   handled: boolean;
+  /**
+   * A file they sent — a photograph, a PDF — read through MahekOne at `url`,
+   * behind the same gate as this conversation. Null for words.
+   */
+  media: { type: string; url: string; pdf: boolean } | null;
 };
 
 export type Thread = {
@@ -263,12 +268,15 @@ export async function getThread(key: string): Promise<Result<Thread>> {
     read_at: unknown;
     failure_reason: string | null;
     handled: boolean;
+    media_type: string | null;
+    media_path: string | null;
   };
   const inbound = sql`
     select r.id, true as from_them, r.received_at as at, r.message as text, null as template_name,
            r.sender_name as by, false as via_rule, null as status, null as mode, null as prepared_at,
            null as sent_at, null as confirmed_sent_at, null as delivered_at, null as read_at,
-           null as failure_reason, r.actioned as handled
+           null as failure_reason, r.actioned as handled,
+           case when r.media_path is not null then r.media_type end as media_type, r.media_path
       from wa_replies r where ${theirs(t)}
   `;
   const outbound =
@@ -277,13 +285,13 @@ export async function getThread(key: string): Promise<Result<Thread>> {
     select m.id, false, coalesce(m.sent_at, m.confirmed_sent_at, m.prepared_at), m.body, m.template_name,
            case when m.trigger_id is not null then 'Automatic rule' else u.name end, m.trigger_id is not null,
            m.status::text, m.mode::text, m.prepared_at, m.sent_at, m.confirmed_sent_at, m.delivered_at,
-           m.read_at, m.failure_reason, true
+           m.read_at, m.failure_reason, true, null, null
       from wa_messages m left join users u on u.id = m.user_id
      where m.customer_id = ${t.customer.id} and m.status not in ('prepared', 'cancelled')`
       : sql`
     select r.id || ':answer', false, r.answered_at, r.answer_body, 'Reply', u.name, false,
            case when r.answer_status = 'sent' then 'sent' else 'failed' end, 'automatic', r.answered_at,
-           r.answered_at, r.answered_at, null, null, r.answer_failure, true
+           r.answered_at, r.answered_at, null, null, r.answer_failure, true, null, null
       from wa_replies r left join users u on u.id = r.answered_by_id
      where ${theirs(t)} and r.answer_body is not null and r.answer_status in ('sent', 'failed')`;
 
@@ -303,7 +311,7 @@ export async function getThread(key: string): Promise<Result<Thread>> {
       id: r.id,
       fromThem: Boolean(r.from_them),
       at: iso(r.at)!,
-      text: r.text ?? "",
+      text: r.from_them ? replyText(r.text ?? "", r.media_type) : (r.text ?? ""),
       templateName: r.template_name,
       by: r.by,
       viaRule: Boolean(r.via_rule),
@@ -320,6 +328,13 @@ export async function getThread(key: string): Promise<Result<Thread>> {
             failureReason: r.failure_reason,
           },
       handled: Boolean(r.handled),
+      media: r.media_type
+        ? {
+            type: r.media_type,
+            url: `/api/whatsapp/media/${encodeURIComponent(r.id)}`,
+            pdf: /\.pdf$/i.test(r.media_path ?? ""),
+          }
+        : null,
     }))
     .reverse();
 
@@ -356,6 +371,31 @@ export async function getThread(key: string): Promise<Result<Thread>> {
     blockedWhy,
     unanswered: Number(lastIn[0]?.unanswered ?? 0),
   });
+}
+
+/**
+ * The file one of their messages carries, for somebody allowed to see it.
+ *
+ * Asked through `resolveThread`, the gate every read here goes through: a
+ * customer out of scope throws, and a number on nobody's book is refused to
+ * anybody who does not see the whole book. So a payment slip is exactly as
+ * visible as the conversation it arrived in, and a guessed id opens nothing.
+ */
+export async function getReplyMedia(replyId: string): Promise<Result<{ type: string; path: string }>> {
+  const [reply] = await db
+    .select({
+      customerId: waReplies.customerId,
+      waId: waReplies.waId,
+      mediaType: waReplies.mediaType,
+      mediaPath: waReplies.mediaPath,
+    })
+    .from(waReplies)
+    .where(eq(waReplies.id, replyId));
+  if (!reply?.mediaType || !reply.mediaPath) return err("No such file.", "not_found");
+  const key = reply.customerId ?? `n:${(reply.waId ?? "").replace(/\D/g, "").slice(-10)}`;
+  const t = await resolveThread(key);
+  if (isRefusal(t)) return t;
+  return ok({ type: reply.mediaType, path: reply.mediaPath });
 }
 
 /**
