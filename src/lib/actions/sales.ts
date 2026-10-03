@@ -11,7 +11,6 @@ import {
   mbosApprovals,
   mbosCourses,
   mbosDeletions,
-  mbosDevices,
   mbosDocuments,
   mbosHolidays,
   mbosLeaveRequests,
@@ -23,7 +22,6 @@ import {
   mbosTasks,
   mbosTravelLegs,
   mbosVisits,
-  notifications,
   users,
 } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
@@ -55,6 +53,7 @@ import type { LeadView } from "@/lib/lead-views";
 import { today } from "@/lib/recompute";
 import type { DocumentCategory } from "@/lib/mbos/library-labels";
 import { err, fromThrown, ok, okVoid, type Result } from "@/lib/result";
+import { releaseHandsetBinding } from "@/lib/services/handset-release";
 import {
   PARENT_KIND,
   setWorkingTerritories,
@@ -1729,69 +1728,16 @@ export async function releaseDevice(input: {
 }): Promise<Result> {
   try {
     const user = await requireSalesAccess(SALES_MANAGER("sales.people", "sales.logins"));
-
-    const reason = input.reason.trim();
-    if (reason.length < 3) {
-      return err(
-        "Say why this handset is being released — somebody reading the row in six months has only this sentence.",
-        "validation",
-      );
-    }
-
-    const [row] = await db
-      .select()
-      .from(mbosDevices)
-      .where(eq(mbosDevices.deviceId, input.deviceId))
-      .limit(1);
-    if (!row) return err("That handset is not registered to anybody.", "not_found");
     /* Releasing signs somebody out mid-day, so it is for their own manager. */
-    if (await salesmanOutsideScope(row.userId)) return err(NOT_YOUR_TEAM, "not_permitted");
-    if (!row.active) {
-      return err("That handset has already been released.", "validation");
-    }
-
-    const [owner] = await db
-      .select({ name: users.name })
-      .from(users)
-      .where(eq(users.id, row.userId))
-      .limit(1);
-
-    await db
-      .update(mbosDevices)
-      .set({
-        active: false,
-        releasedAt: new Date(),
-        releaseReason: reason,
-        updatedById: user.id,
-        updatedAt: new Date(),
-      })
-      .where(eq(mbosDevices.id, row.id));
-
-    await db.insert(auditLog).values({
-      id: gen("aud"),
-      actorId: user.id,
-      action: "mbos.device.release",
-      entityType: "mbos_device",
-      entityId: row.id,
-      beforeState: { deviceId: row.deviceId, model: row.model, active: true } as never,
-      afterState: { active: false, releaseReason: reason } as never,
+    const result = await releaseHandsetBinding({
+      actor: user,
+      deviceId: input.deviceId,
+      reason: input.reason,
+      outsideScope: salesmanOutsideScope,
+      refusedOutsideScope: NOT_YOUR_TEAM,
     });
-
-    /* The salesman finds out from the handset — it stops syncing on the next
-       call — so he is told here as well, with the reason, rather than being
-       left to discover it in a market with a phone that has stopped working. */
-    await db.insert(notifications).values({
-      id: gen("ntf"),
-      userId: row.userId,
-      kind: "neutral",
-      title: "Your handset was released",
-      body: `${user.name} released the phone you were signed in on — ${reason}. Sign in again on the handset you are using now.`,
-    });
-
-    refresh();
-    return okVoid(
-      `${owner?.name ?? "That salesman"} can sign in on a new handset now.`,
-    );
+    if (result.ok) refresh();
+    return result;
   } catch (e) {
     return fromThrown(e);
   }
