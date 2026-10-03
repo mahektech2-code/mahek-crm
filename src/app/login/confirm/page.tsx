@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { BrandPanel, BrandPanelHeading } from "@/components/shell/brand-panel";
 import { Icon } from "@/components/shell/icons";
 import { requireUser } from "@/lib/auth";
@@ -19,6 +20,8 @@ export default async function ConsoleConfirmPage({
   const user = await requireUser();
   const { next } = await searchParams;
   const minutes = Number((await getConfig())["auth.console.confirmMinutes"]);
+  // Switched off: a bookmark or a stale link to this page has nothing to ask.
+  if (minutes === 0) redirect(/^\/admin(\/[\w\-/.%]*)?$/.test(next ?? "") ? next! : "/admin");
 
   return (
     <div className="animate-fade-in grid min-h-screen grid-cols-1 md:grid-cols-2">
