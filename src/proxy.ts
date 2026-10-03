@@ -45,7 +45,7 @@ const APP_ROUTES: ReadonlyArray<readonly [string, string]> = [
      associate on the Sales Dashboard reading (and writing) as a manager. */
   ["/sales-lead-pipeline", "sales"],
   ["/people", "people"],
-  ["/reports", "reports"],
+  ["/reports", "reports"], // retired — next.config redirects it to /apps
   ["/hrms", "hrms"],
   ["/admin", "admin"],
   ["/founder", "founder"],

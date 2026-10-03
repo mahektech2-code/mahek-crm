@@ -174,7 +174,7 @@ const TEAM = [
     email: "neha@mahek.in",
     phone: "9820011005",
     role: "associate" as const,
-    apps: ["crm", "reports"],
+    apps: ["crm"],
   },
   {
     name: "Vikram Rao",
@@ -185,7 +185,7 @@ const TEAM = [
     // things — he ran every screen in the product and still could not change
     // an account manager, because that capability is accounts-and-admin only.
     role: "admin" as const,
-    apps: ["crm", "accounts", "reports", "people", "hrms", "admin", "founder"],
+    apps: ["crm", "accounts", "people", "hrms", "admin", "founder"],
   },
   {
     name: "Mahesh Parab",

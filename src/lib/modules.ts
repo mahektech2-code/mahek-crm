@@ -116,20 +116,6 @@ const crm = (
   note,
 });
 
-const reports = (
-  slug: string,
-  label: string,
-  group: string,
-  note?: string,
-): AppModule => ({
-  key: `reports.${slug}`,
-  app: "reports",
-  label,
-  group,
-  href: `/reports/${slug}`,
-  note,
-});
-
 const sales = (
   slug: string,
   label: string,
@@ -809,49 +795,10 @@ export const APP_MODULES: AppModule[] = [
     note: "The whole console. Its own sections are not separately grantable yet.",
   },
 
-  /* ---------------------------------------------------- apps not built yet */
+  /* ------------------------------------- apps not built yet, or retired */
   { key: "field.home", app: "field", label: "Salesman App", group: "App", href: "/field" },
   { key: "people.home", app: "people", label: "Attendance & People", group: "App", href: "/people" },
   { key: "reports.home", app: "reports", label: "Reports", group: "App", href: "/reports" },
-  /* ------------------------------------------------------------- Reports */
-  /*
-   * The owner's five, and the three screens behind them.
-   *
-   * Modules rather than one screen because the four questions are held by
-   * different people in practice: whoever chases lead generation is not always
-   * whoever is answerable for retention, and `app_module_access` is what lets
-   * that be true without a second app. The overview is deliberately its own
-   * module too — somebody can be given the headline figures without the
-   * customer-by-customer lists underneath them.
-   */
-  { key: "reports.overview", app: "reports", label: "Overview", group: "The five", href: "/reports", exact: true },
-  reports(
-    "leads",
-    "Leads & conversion",
-    "The five",
-    "Where new business comes from and what became of it, by cohort. Withholding it leaves the overview's first two figures with nowhere to click.",
-  ),
-  reports(
-    "sales",
-    "Bill size & frequency",
-    "The five",
-    "What an average order is worth and how often one comes.",
-  ),
-  reports(
-    "customers",
-    "Customer health",
-    "The five",
-    "Active, at risk, dormant and lost, and who moved between them. The list behind it names customers, their salesperson and what they owe.",
-  ),
-
-  /* ------------------------------------------------------ §M, the field's cost */
-  reports(
-    "expenses",
-    "Field cost & exceptions",
-    "The five",
-    "What the sales team costs a month, broken down, against what it brought in — with only the exceptions that need somebody, and the trend behind both. Revenue rather than margin, because MahekOne holds no product costs.",
-  ),
-
   /* --------------------------------------------------- the Founder Dashboard */
   /*
    * Five modules for one reason: whoever reads company revenue is not always

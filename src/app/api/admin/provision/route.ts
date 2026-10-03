@@ -14,7 +14,7 @@ import { provisionUser } from "@/lib/services/provisioning-service";
  * passwords, and every change written to the audit log.
  *
  *   ?user=vikram@mahek.in&name=Pritesh%20Doshi&email=pritesh@mahek.in
- *   ?user=pritesh@mahek.in&role=admin&apps=crm,orders,people,reports,hrms,admin
+ *   ?user=pritesh@mahek.in&role=admin&apps=crm,accounts,hrms,admin
  *   ?user=pritesh@mahek.in&addApps=hrms
  *
  * `apps` replaces the whole set; `addApps` leaves the rest alone. Both report

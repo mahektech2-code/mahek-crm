@@ -878,36 +878,3 @@ function addDays(iso: string, days: number): string {
     at.getUTCDate(),
   ).padStart(2, "0")}`;
 }
-
-/**
- * The launcher tile's sentence.
- *
- * Read from the SNAPSHOT rather than banded live: the launcher draws for
- * everybody on every visit to `/apps`, and a full scan of the book to fill one
- * line of text is not a thing to do on a page nobody is reading yet. It is at
- * most a night old, and the tile says nothing about freshness because a
- * headline count that moved overnight is not a figure anybody acts on directly.
- *
- * The badge stays at zero, like HRMS's headcount. An at-risk customer is real
- * work but it is not work done HERE — the chasing happens in the CRM, and a red
- * pill over a reporting app would read as a queue somebody has to clear.
- */
-export async function healthTileLine(period: string): Promise<string> {
-  const rows = await db.execute<{ band: string; n: number }>(sql`
-    select band, count(*)::int as n
-      from customer_health_snapshots
-     where period = ${period}
-     group by band
-  `);
-  if (!rows.length) return "No reading yet - the first runs tonight";
-
-  const by = new Map(rows.map((r) => [r.band, Number(r.n)]));
-  const parts: string[] = [];
-  const active = by.get("active") ?? 0;
-  const atRisk = by.get("at-risk") ?? 0;
-  const dormant = by.get("dormant") ?? 0;
-  if (active) parts.push(`${active} active`);
-  if (atRisk) parts.push(`${atRisk} at risk`);
-  if (dormant) parts.push(`${dormant} dormant`);
-  return parts.length ? parts.join(" \u00b7 ") : "Nothing banded yet";
-}

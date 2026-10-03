@@ -87,7 +87,7 @@ export const SETTINGS_PAGES: SettingsPage[] = [
     id: "reports",
     label: "Reports",
     blurb: "How the owner's KPIs are measured, and when a customer counts as at risk or lost.",
-    owners: ["reports", "founder"],
+    owners: ["founder"],
     icon: "eye",
   },
   {

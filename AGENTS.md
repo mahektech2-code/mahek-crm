@@ -111,8 +111,8 @@ pair amounts to, not a value stored anywhere.
 | `rakesh@mahek.in` | 9820011002 | associate (telecaller) | CRM | straight into the CRM |
 | `anjali@mahek.in` | 9820011003 | associate (telecaller) | CRM | straight into the CRM |
 | `suresh@mahek.in` | 9820011004 | associate (telecaller) | CRM | straight into the CRM |
-| `neha@mahek.in` | 9820011005 | associate | CRM, Reports | the launcher |
-| `vikram@mahek.in` | 9820011006 | manager | CRM, Accounts, Reports, People, HRMS, Admin | the launcher |
+| `neha@mahek.in` | 9820011005 | associate | CRM | straight into the CRM |
+| `vikram@mahek.in` | 9820011006 | manager | CRM, Accounts, People, HRMS, Admin, Founder | the launcher |
 | `mahesh@mahek.in` | 9820011007 | associate (field salesman) | Salesman App | signs in on the web to `/apps`, which says there is nothing for him there — his app is MBOS, the mobile handset, not a browser |
 | `deepa@mahek.in` | 9820011008 | manager (the ledger desk) | Accounts | straight into order approvals |
 
@@ -1614,15 +1614,12 @@ src/
     apps/                  the launcher, 1–9 opens an app — `field` is never
                            one of the 1–9: it is `mobileOnly` in lib/apps.ts,
                            MBOS's own handset, and has no route here at all
-    reports/               the Reports app — the owner's five KPIs, and the
-                           three screens behind them: leads & conversion,
-                           bill size & frequency, customer health
     accounts/              the Accounts app — today, order approvals, payments
                            to confirm, credit notes, record a payment,
                            outstanding, bills, customer account, on account,
                            sheet import, audit, sales targets, customer targets
                            (was `orders/`; /orders still redirects here)
-    people/ reports/
+    people/
     admin/                 the Admin Console — one real route per screen, every
                            address built from lib/admin-routes.ts; _shell/ is
                            the frame and the gate, access/ who opens what
@@ -5051,9 +5048,14 @@ stops being overwritten on the last night of the month, so no job has to fire on
 exactly the right day. **It cannot be backfilled**, and the screen says "we
 cannot say yet" rather than drawing a movement of zero.
 
-**The Reports app narrows by scope like every other list.** It is the owner's,
-but a manager granted it must not see the whole company through it — a reporting
-screen that skips the narrowing is a way around it rather than a report.
+**The Reports app is RETIRED, and its engine and service are not.** It was
+the owner's five on screens of their own, and the Founder Command Centre now
+reads the same `owner-dashboard-service` functions — so the screens went and
+the numbers stayed. `reports` stays an `APP_IDS` value with `retiredInto:
+"founder"`, the same treatment `people` got: a grant made before the
+retirement still resolves, nothing draws it, and `/reports` redirects to the
+launcher rather than to `/founder`, which is granted separately. The nightly
+health snapshot still runs, because the founder's retention movement reads it.
 
 **A SALESMAN IS NOT MEASURED IN RUPEES ALONE, and the reason is arithmetic
 rather than philosophy.** A price revision moves every rupee figure in the

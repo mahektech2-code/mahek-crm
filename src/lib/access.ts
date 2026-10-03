@@ -20,7 +20,6 @@ import {
 // that started yesterday, and the boundary is configurable.
 import { today } from "./recompute";
 import { pendingOrderCount } from "./services/order-approval-service";
-import { healthTileLine } from "./services/owner-dashboard-service";
 import { crmBadgeCounts } from "./queries";
 import { pendingReceiptCount } from "./services/receipt-service";
 import { pendingCreditNoteCount } from "./services/credit-note-service";
@@ -263,23 +262,7 @@ export async function launcherApps(user: User): Promise<LauncherApp[]> {
       continue;
     }
 
-    /*
-     * A report has nothing waiting in it, so the tile says what the book looks
-     * like rather than what somebody has to do. The badge stays at zero for the
-     * same reason HRMS's does: the chasing an at-risk customer implies happens
-     * in the CRM, and a red pill over a reporting app reads as a queue.
-     */
-    if (app.id === "reports") {
-      const day = await today();
-      out.push({
-        ...app,
-        count: 0,
-        status: await healthTileLine(day.slice(0, 7)),
-      });
-      continue;
-    }
-
-    // A pure rollup, like Reports and HRMS — nothing is decided here, so the
+    // A pure rollup, like HRMS — nothing is decided here, so the
     // badge stays at zero and the sentence says what the screen is rather
     // than pretending to a queue.
     if (app.id === "founder") {
