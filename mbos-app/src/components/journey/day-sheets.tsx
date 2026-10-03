@@ -8,6 +8,7 @@ import { color as C, radius, weight, tabular } from '../../theme/tokens';
 import { dayLabelRelative, hhmm, inrFromPaise, plural } from '../../lib/format';
 import { dayHistory, pickShops, pickedShops, type PlanDay, type ShopDay } from '../../data/journey';
 import { useStore } from '../../state/store';
+import { outcomeLabel } from '../../data/fixtures';
 
 /*
  * The two views of a day that is not today.
@@ -233,7 +234,7 @@ function PastShop({ s, onPress }: { s: ShopDay; onPress: () => void }) {
         {s.payments.map((p) => (
           <Line key={p.id} icon="money" text={'Collected ' + inrFromPaise(p.amountPaise) + (p.mode ? ' · ' + p.mode : '')} />
         ))}
-        {s.visit?.outcome ? <Line icon="note" text={s.visit.outcome} /> : null}
+        {s.visit?.outcome ? <Line icon="note" text={outcomeLabel(s.visit.outcome) ?? s.visit.outcome} /> : null}
         {s.visit?.notes ? (
           <T s="small" numberOfLines={3} style={{ color: C.body, marginTop: 4, fontStyle: 'italic' }}>
             “{s.visit.notes}”
@@ -320,7 +321,7 @@ function ShopDayView({
   for (const p of s.payments) {
     entries.push({ key: 'p' + p.id, at: p.at, icon: 'money', title: 'Collected ' + inrFromPaise(p.amountPaise), detail: p.mode ?? undefined });
   }
-  if (s.visit?.outcome) entries.push({ key: 'out', at: null, icon: 'note', title: 'Outcome', detail: s.visit.outcome });
+  if (s.visit?.outcome) entries.push({ key: 'out', at: null, icon: 'note', title: 'Outcome', detail: outcomeLabel(s.visit.outcome) ?? s.visit.outcome });
   if (s.visit?.notes) entries.push({ key: 'note', at: null, icon: 'note', title: 'His note', detail: '“' + s.visit.notes + '”' });
   for (const e of s.other) entries.push({ key: 'e' + e.id, at: e.at, icon: 'clock', title: e.summary });
   if (s.visit?.checkOutAt) {
