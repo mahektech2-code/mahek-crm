@@ -1,20 +1,28 @@
-import { ADMIN, ADMIN_TABS, tabIndexOf, type TabsOf } from "@/lib/admin-routes";
-import { auditRows } from "@/lib/services/admin-platform-service";
+import { ADMIN_TABS, tabIndexOf } from "@/lib/admin-routes";
+import { auditFeed, parseAuditFilters } from "@/lib/services/audit-feed-service";
+import { today } from "@/lib/queries";
 import { AdminPage } from "../../_shell/admin-page";
 import { requirePlatformAdmin } from "../../_shell/context";
-import { AuditTab } from "../../platform-real";
+import { AuditFeedScreen } from "../audit-feed";
 
-export default async function AuditPage({ params }: { params: Promise<{ tab?: string[] }> }) {
+export default async function AuditPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ tab?: string[] }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   await requirePlatformAdmin();
-  const { tab } = await params;
+  const [{ tab }, search] = await Promise.all([params, searchParams]);
   const slug = ADMIN_TABS.audit[tabIndexOf(ADMIN_TABS.audit, tab?.[0])].slug;
+  const filters = parseAuditFilters(search, slug);
+  const [feed, day] = await Promise.all([auditFeed(filters), today()]);
   return (
     <AdminPage
       title="Audit log"
-      subtitle="Everything MahekOne has recorded happening. Read-only, and never editable."
-      tabs={{ items: ADMIN_TABS.audit, active: slug, href: (s) => ADMIN.audit(s as TabsOf<"audit">) }}
+      subtitle="Everything that has happened in MahekOne, who did it, and what changed — in plain words. Open any line to see the details."
     >
-      <AuditTab data={{ audit: await auditRows() }} kind={slug} />
+      <AuditFeedScreen feed={feed} filters={filters} today={day} />
     </AdminPage>
   );
 }

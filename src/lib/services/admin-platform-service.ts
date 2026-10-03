@@ -1,11 +1,10 @@
 import "server-only";
 import { fileStorage } from "@/lib/storage";
-import { and, desc, eq, gte, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   appAccess,
   appSettings,
-  auditLog,
   jobRuns,
   notifications,
   sessions,
@@ -538,99 +537,6 @@ export async function jobHealth(): Promise<JobRow[]> {
   }
 
   return [...latest.values()].sort((a, b) => Number(a.ok) - Number(b.ok));
-}
-
-/* ---------------------------------------------------------------- audit */
-
-export type AuditKind = "config" | "access" | "signin" | "work";
-
-export type AuditRow = {
-  kind: AuditKind;
-  action: string;
-  entityType: string;
-  entityId: string | null;
-  detail: string;
-  actor: string | null;
-  at: string;
-};
-
-/**
- * The audit log, sorted into the three kinds the console shows.
- *
- * The kind is derived from the action rather than stored, because the log is
- * written by a dozen call sites that should not have to know how a console
- * groups them.
- */
-/** The newest audit rows — every one, or only those by or about one account. */
-export async function auditRows(limit = 400, userId?: string): Promise<AuditRow[]> {
-  const rows = await db
-    .select({
-      action: auditLog.action,
-      entityType: auditLog.entityType,
-      entityId: auditLog.entityId,
-      before: auditLog.beforeState,
-      after: auditLog.afterState,
-      at: auditLog.at,
-      actor: sql<string | null>`(select name from users u where u.id = audit_log.actor_id)`,
-    })
-    .from(auditLog)
-    .where(userId ? or(eq(auditLog.actorId, userId), eq(auditLog.entityId, userId)) : undefined)
-    .orderBy(desc(auditLog.at))
-    .limit(limit);
-
-  return rows.map((r) => ({
-    kind: auditKind(r.action, r.entityType),
-    action: r.action,
-    entityType: r.entityType,
-    entityId: r.entityId,
-    detail: auditDetail(r.before, r.after),
-    actor: r.actor,
-    at: r.at.toISOString(),
-  }));
-}
-
-/**
- * Four kinds, derived from the action.
- *
- * Signing in is not an access CHANGE and business work is not an admin
- * action; folding either into "admin" is how an audit tab becomes a list
- * nobody can read a question out of. The kinds are derived here rather than
- * stored, because the dozen call sites that write the log should not have to
- * know how a console groups them.
- */
-function auditKind(action: string, entityType: string): AuditKind {
-  if (action === "sign-in" || action === "sign-out") return "signin";
-  if (entityType === "setting" || action.includes("config") || action.includes("setting")) {
-    return "config";
-  }
-  if (
-    entityType === "user" ||
-    action.includes("access") ||
-    action.includes("role") ||
-    action.includes("password") ||
-    action.includes("deactivate")
-  ) {
-    return "access";
-  }
-  return "work";
-}
-
-function auditDetail(before: unknown, after: unknown): string {
-  const pick = (v: unknown): string => {
-    if (v == null) return "";
-    if (typeof v === "string") return v;
-    if (typeof v === "object") {
-      const o = v as Record<string, unknown>;
-      const d = o.detail ?? o.message ?? o.reason;
-      if (typeof d === "string") return d;
-      return JSON.stringify(v);
-    }
-    return String(v);
-  };
-  const b = pick(before);
-  const a = pick(after);
-  if (b && a) return `${b} → ${a}`;
-  return a || b || "—";
 }
 
 /* ------------------------------------------------------------------ data */

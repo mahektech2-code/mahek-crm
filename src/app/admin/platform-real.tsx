@@ -25,7 +25,6 @@ import { CardGrid } from "@/components/ui/card-grid";
 import type {
   AppHealth,
   AttentionItem,
-  AuditRow,
   DriftRow,
   Fact,
   ImportRow,
@@ -54,7 +53,6 @@ export type PlatformData = {
   usage: { facts: UsageRow[] };
   drift: { rows: DriftRow[]; warnings: string[] };
   jobs: JobRow[];
-  audit: AuditRow[];
   imports: ImportRow[];
   migrations: { applied: MigrationRow[]; pending: number };
   notifications: NotificationRow[];
@@ -568,63 +566,6 @@ export function JobsTab({ data }: { data: Pick<PlatformData, "jobs" | "queues"> 
       )}
     </Card>
     </>
-  );
-}
-
-/* ----------------------------------------------------------------- audit */
-
-const AUDIT_KIND_LABEL: Record<string, string> = {
-  config: "Configuration",
-  access: "Accounts & access",
-  signin: "Sign-in",
-  work: "App activity",
-};
-
-export function AuditTab({ data, kind }: { data: Pick<PlatformData, "audit">; kind: string }) {
-  const rows = kind === "all" ? data.audit : data.audit.filter((r) => r.kind === kind);
-
-  return (
-    <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
-      {rows.length === 0 ? (
-        <EmptyState
-          title="Nothing of this kind has been recorded"
-          body="The audit log is written as work happens. Nothing is ever edited or deleted from it, including by a platform admin."
-        />
-      ) : (
-        <div className="overflow-auto">
-          <table className="[&_td]:whitespace-nowrap">
-            <thead>
-              <tr>
-                <Th>What happened</Th>
-                <Th>Kind</Th>
-                <Th>About</Th>
-                <Th>Detail</Th>
-                <Th>Who</Th>
-                <Th>When</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r, i) => (
-                <Tr key={`${r.action}-${r.at}-${i}`} className={i % 2 ? "bg-canvas" : ""}>
-                  <Td className="font-medium text-ink">{r.action}</Td>
-                  <Td>{AUDIT_KIND_LABEL[r.kind]}</Td>
-                  <Td>{r.entityType}</Td>
-                  <Td className="max-w-[380px] truncate whitespace-normal text-muted">
-                    {r.detail}
-                  </Td>
-                  <Td>{r.actor ?? "System"}</Td>
-                  <Td>{stamp(r.at)}</Td>
-                </Tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-      <div className="bg-canvas px-5 py-2.5 text-[13px] text-muted">
-        Read-only. Audit records cannot be edited or deleted by anyone, including a platform
-        admin.
-      </div>
-    </Card>
   );
 }
 
