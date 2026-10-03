@@ -381,3 +381,14 @@ export function phoneReadiness(i: ReadinessInput): Readiness {
 
   return { items, mayCheckIn, deadEnd };
 }
+
+/**
+ * Did any recorder leave proof of life on or after this check-in?
+ *
+ * Pure, so the case that broke can be pinned without a phone: a service-mode
+ * day leaves the expo task's mark where yesterday left it and moves only the
+ * shared one, and reading the first alone called that day silent.
+ */
+export function hadTrailSince(checkInAt: number, marks: readonly (number | null)[]): boolean {
+  return marks.some((m) => m != null && Number.isFinite(m) && m >= checkInAt);
+}

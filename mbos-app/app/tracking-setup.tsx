@@ -162,7 +162,7 @@ export default function TrackingSetupScreen() {
     setRestarting(true);
     if (!(await restartApp())) {
       setRestarting(false);
-      notify('Could not restart. Close MahekOne fully and open it again.', 'error');
+      notify('Could not restart. Close Mahek MBOS fully and open it again.', 'error');
     }
     /* No `finally`. On the path that worked there is nothing after this: the
        reload is already posted to the main thread and no code here may assume
@@ -177,12 +177,12 @@ export default function TrackingSetupScreen() {
         <T style={[{ fontSize: 16, color: C.ink }, weight(600)]}>Why this matters</T>
         <T style={{ fontSize: 14, lineHeight: 20, color: C.body }}>
           Your phone saves battery by stopping apps you are not using. When it stops
-          MahekOne, your route is not recorded. Then the office sees you standing still
+          Mahek MBOS, your route is not recorded. Then the office sees you standing still
           at a place you left hours ago.
         </T>
         <T style={{ fontSize: 14, lineHeight: 20, color: C.muted }}>
-          These two settings keep MahekOne running during your work day. It still
-          stops when you check out.
+          These two settings keep Mahek MBOS running during your work day. It still
+          stops when you punch out.
         </T>
       </Card>
 
@@ -237,8 +237,8 @@ export default function TrackingSetupScreen() {
                 color: exemption === 'exempt' ? C.muted : C.danger,
               }}>
               {exemption === 'exempt'
-                ? 'Battery saving is off for MahekOne. This step is done.'
-                : 'Battery saving is still on for MahekOne. It can stop your route at any time. Tap Allow it.'}
+                ? 'Battery saving is off for Mahek MBOS. This step is done.'
+                : 'Battery saving is still on for Mahek MBOS. It can stop your route at any time. Tap Allow it.'}
             </T>
             </Swap>
           ) : null}
@@ -290,7 +290,7 @@ export default function TrackingSetupScreen() {
 
         {verdict.action === 'restart_app' ? (
           <PrimaryButton
-            label={restarting ? 'Restarting…' : 'Restart MahekOne'}
+            label={restarting ? 'Restarting…' : 'Restart Mahek MBOS'}
             onPress={() => void act()}
             disabled={restarting}
             style={{ borderRadius: radius.xl }}

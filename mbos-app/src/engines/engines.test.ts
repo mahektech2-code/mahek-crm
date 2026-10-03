@@ -592,7 +592,7 @@ test('a missed check-out is flagged, not guessed at', () => {
   assert.deepEqual(r.openSessionIds, ['s2']);
   assert.equal(r.needsRegularization, true);
   assert.equal(r.status, 'Half Day');
-  assert.ok(r.sentence.includes('regularize'));
+  assert.ok(r.sentence.includes('Ask your manager to fix this day'));
 });
 
 test('leave and non-working days are not absences', () => {

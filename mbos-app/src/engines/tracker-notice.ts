@@ -71,7 +71,7 @@ export function trackerNotice(i: {
       detail:
         i.exemption === 'optimised'
           ? 'Your route stopped saving while the phone was in your pocket. Battery saving is ' +
-            'still switched on for MahekOne. Change two settings to stop this.'
+            'still switched on for Mahek MBOS. Change two settings to stop this.'
           : 'Your route stopped saving while the phone was in your pocket. Change two settings to stop ' +
             'this.',
     };
@@ -83,7 +83,7 @@ export function trackerNotice(i: {
       tone: 'danger',
       title: 'Your phone will stop the tracker',
       detail:
-        'Battery saving is on for MahekOne. Your phone can stop it when the phone ' +
+        'Battery saving is on for Mahek MBOS. Your phone can stop it when the phone ' +
         'goes in your pocket. One tap fixes it.',
     };
   }
@@ -91,15 +91,15 @@ export function trackerNotice(i: {
   if (i.failure === 'no_foreground_permission') {
     return {
       tone: 'danger',
-      title: 'MahekOne cannot see where you are',
-      detail: 'Location is not allowed for MahekOne. Nothing you do today is saved.',
+      title: 'Mahek MBOS cannot see where you are',
+      detail: 'Location is not allowed for Mahek MBOS. Nothing you do today is saved.',
     };
   }
 
   if (i.failure === 'no_background_permission') {
     return {
       tone: 'danger',
-      title: 'MahekOne can only see you while it is open',
+      title: 'Mahek MBOS can only see you while it is open',
       detail:
         'Choose “Allow all the time” for location. With any other choice, your route stops ' +
         'when you put the phone away.',
@@ -148,7 +148,7 @@ export function trackerNotice(i: {
     tone: 'plain',
     title: 'Keep tracking on',
     detail:
-      'If your route has gaps, your phone is stopping MahekOne to save battery. Change two settings ' +
+      'If your route has gaps, your phone is stopping Mahek MBOS to save battery. Change two settings ' +
       'to fix it.',
   };
 }
