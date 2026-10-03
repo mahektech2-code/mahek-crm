@@ -1857,6 +1857,31 @@ export const SETTINGS = [
     min: 1,
     max: 6,
   },
+  /*
+   * FILLING A LEAD BY VOICE — the New lead form's "Speak about the shop" on
+   * the MBOS handset. Reading words needs no eyes, so unlike the card scan it
+   * takes the OpenAI-then-Sarvam ladder the visit assistant uses. How long a
+   * recording may run is NOT here: it is `voice.maxSeconds`, the one ceiling
+   * every microphone on the handset shares.
+   */
+  {
+    key: "leadVoice.enabled",
+    type: "boolean",
+    category: "voice",
+    label: "Fill a lead by voice",
+    description:
+      "On the MBOS handset's New lead form, let a salesman say everything he learned about a shop, in any language, and have every answer on the form filled in for him to check — the shop, the person, the number, the town, what they buy and how much, who they buy from, when to come back. Nothing is saved until he presses Add lead, and what he said is not stored. Off removes the button from every handset on its next sync.",
+    default: true,
+  },
+  {
+    key: "leadVoice.model",
+    type: "text",
+    category: "voice",
+    label: "Lead by voice model",
+    description:
+      "The OpenAI model that reads what the salesman said into the form. Where OpenAI cannot answer, Sarvam is asked instead; where neither can, he fills the form as usual.",
+    default: "gpt-5-mini",
+  },
   {
     key: "callIntel.model",
     type: "text",
@@ -5482,6 +5507,8 @@ export type Config = {
   "leadScan.enabled": boolean;
   "leadScan.model": string;
   "leadScan.maxImages": number;
+  "leadVoice.enabled": boolean;
+  "leadVoice.model": string;
 
   /* ------------------------------------------------- MBOS — field sales */
   "mbos.location.gpsAccuracyThresholdM": number;

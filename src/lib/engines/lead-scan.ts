@@ -93,7 +93,7 @@ function isMobile(digits: string): boolean {
   return /^[6-9]\d{9}$/.test(digits);
 }
 
-function pickNumbers(phones: LeadScanReading["phones"]): {
+export function pickNumbers(phones: LeadScanReading["phones"]): {
   mobile: string | null;
   otherNumbers: string[];
 } {
@@ -165,7 +165,7 @@ const TO_LETTER: Record<string, string> = { "0": "O", "1": "I", "2": "Z", "5": "
  * A GSTIN as read, repaired only where the format forces it, then judged by
  * its checksum. Null when there is nothing fifteen characters long to judge.
  */
-function checkGstin(raw: string | null | undefined): { gstin: string; check: GstinCheck } | null {
+export function checkGstin(raw: string | null | undefined): { gstin: string; check: GstinCheck } | null {
   const s = tidy(raw, 40)?.toUpperCase().replace(/[^0-9A-Z]/g, "") ?? "";
   if (s.length !== 15) return s ? { gstin: s, check: "invalid" } : null;
   if (isValidGstin(s)) return { gstin: s, check: "valid" };
@@ -228,6 +228,11 @@ const GST_STATE_CODES: Record<string, string> = {
   "38": "Ladakh",
 };
 
+/** The state a GSTIN's first two digits name, or null for an unknown code. */
+export function gstState(gstin: string): string | null {
+  return GST_STATE_CODES[gstin.slice(0, 2)] ?? null;
+}
+
 /* ------------------------------------------------------------------ whole */
 
 export function cleanScan(reading: LeadScanReading): LeadScanResult {
@@ -239,7 +244,7 @@ export function cleanScan(reading: LeadScanReading): LeadScanResult {
      registration fills it — never the other way round, since a shop may well
      be trading outside the state it registered in, and the board is where it
      is standing. */
-  const gstState = gst && gst.check !== "invalid" ? GST_STATE_CODES[gst.gstin.slice(0, 2)] ?? null : null;
+  const registeredIn = gst && gst.check !== "invalid" ? gstState(gst.gstin) : null;
 
   const address = tidy(reading.address, 500);
   const pincode = tidy(reading.pincode, 10)?.replace(/\D/g, "") ?? "";
@@ -259,7 +264,7 @@ export function cleanScan(reading: LeadScanReading): LeadScanResult {
     otherNumbers: otherNumbers.slice(0, 6),
     /* The lead schema's own ceilings: city 120, state 80. */
     city: tidy(reading.city, 120),
-    state: tidy(reading.state, 80) ?? gstState,
+    state: tidy(reading.state, 80) ?? registeredIn,
     address: withPin,
     gstin: gst?.gstin ?? null,
     gstinCheck: gst?.check ?? null,

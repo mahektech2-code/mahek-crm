@@ -19,6 +19,7 @@ import { getConfig } from "../config/store";
 import { liveOlaKey } from "./ola-key-service";
 import { dictationAvailability } from "../dictation-requests";
 import { visitAssistAvailability } from "../visit-assist-availability";
+import { leadVoiceAvailability } from "../lead-voice-availability";
 import { leadScanAvailability } from "../lead-scan-availability";
 import {
   territoriesFor,
@@ -637,6 +638,13 @@ export async function mbosConfigPayload(): Promise<Record<string, unknown>> {
     leadScan?.available === true
       ? { available: true, maxImages: leadScan.maxImages }
       : { available: false };
+
+  /*
+   * WHETHER TO OFFER "SPEAK ABOUT THE SHOP" on the same form — an answer like
+   * the three above, and caught for the same reason.
+   */
+  const leadVoice = await leadVoiceAvailability().catch(() => null);
+  out["mbos.ai.leadVoice"] = { available: leadVoice?.available === true };
 
   return out;
 }

@@ -3497,6 +3497,42 @@ person where there is one and the shop where there is not, and the person also
 travels as `contactPerson`; the GSTIN travels on the create, which
 `leadSchema` already accepted and the handset never sent.
 
+**AND THE REST OF THE FORM CAN BE SPOKEN.** A card fills six answers from what
+is printed; the other ten are what he learned standing there — what they buy,
+how much, from whom, who decides, when to come back — and none of that is on a
+card. "Speak about the shop", at the top of the New lead sheet, opens a box
+with the ordinary microphone in it: he says everything once, in any language,
+for up to `voice.maxSeconds` a go (two minutes — the one ceiling every mic on
+the handset shares, which is why `leadVoice.*` has no duration of its own), and
+presses the mic again to ADD a second take. `/api/mbos/lead-voice` reads the
+box into all sixteen answers and the panel lists them exactly as the scan
+does: ticked where heard, editable, "Fill the form" moves only the ticked ones,
+"Add lead" is still the only save — and what was NOT heard is named, because a
+gap he can see is one he fills.
+
+**TEXT GOES UP, NOT AUDIO, and that is the design rather than a shortcut.** The
+dictation sheet is the ear: it pauses, sends short audio to Sarvam and long
+audio to OpenAI, and shows him the English to correct BEFORE anything is read.
+So what the model reads is words he has already checked, a misheard digit is
+fixed in the box rather than discovered in the form, and the hearing half is
+not built twice. The original-language transcript of each take rides along
+while it still belongs to the box, and the prompt prefers it for names and
+numbers, as the visit assistant's does. Reading words needs no eyes, so unlike
+the scan this takes `readStructured`'s OpenAI-then-Sarvam ladder, and
+`mbos.ai.leadVoice` is available on either key — but the handset also asks
+`mbos.ai.dictation`, because without an ear there is nothing to speak into.
+
+**`engines/lead-voice.ts` checks what was heard, on top of the scan's rules.**
+The mobile and GSTIN rules are the scan's own functions, because they are about
+the values and not how they arrived. Speech adds three: a choice (kind of sale,
+source, kind of business) must be a code on the office's list or it is dropped
+and said; a follow-up is a CUE resolved by `datedFrom` against the working
+week, offered as chips where it could mean two days and never filled from a
+date the model computed; and a rupee or litre figure past any real shop is a
+mishearing ("forty" as "four crore") and is left empty with a line saying so.
+The handset re-checks the codes against the lists IT draws, since a phone that
+has not pulled since `leads.sources` was edited holds the older list.
+
 **An order taken on a call is the customer saying yes, not the business.**
 Accounts check who they are and what they already owe before it is accepted,
 so a new order sits at `pending_approval` until they decide. Two different

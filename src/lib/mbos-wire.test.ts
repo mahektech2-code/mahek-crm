@@ -1409,7 +1409,21 @@ test("the book-reconcile field is spelled the same on both sides", () => {
    The test below pins its spelling at both ends. */
 /* `mbos.ai.leadScan` too: whether the New lead form may offer to read a
    visiting card, from `leadScan.enabled` and the OpenAI key. */
-const INJECTED = new Set(["mbos.ai.dictation", "mbos.ai.visitAssistant", "mbos.ai.leadScan"]);
+/* And `mbos.ai.leadVoice`: whether the same form may offer to be filled from
+   what the salesman says, from `leadVoice.enabled` and either model key. */
+const INJECTED = new Set(["mbos.ai.dictation", "mbos.ai.visitAssistant", "mbos.ai.leadScan", "mbos.ai.leadVoice"]);
+
+test("the voice filler's answer is written under the key the handset reads", () => {
+  const server = readFileSync("src/lib/services/mbos-service.ts", "utf8");
+  const handset = readFileSync("mbos-app/src/components/leads/lead-voice.tsx", "utf8");
+  const defaults = readFileSync("mbos-app/src/data/config.ts", "utf8");
+  assert.ok(server.includes('out["mbos.ai.leadVoice"]'));
+  assert.ok(handset.includes("'mbos.ai.leadVoice'"));
+  assert.ok(
+    defaults.includes("'mbos.ai.leadVoice': { available: false }"),
+    "unavailable until the office says otherwise",
+  );
+});
 
 test("the card scanner's answer is written under the key the handset reads", () => {
   const server = readFileSync("src/lib/services/mbos-service.ts", "utf8");
