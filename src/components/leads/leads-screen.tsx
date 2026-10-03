@@ -8,7 +8,7 @@ import Link from "next/link";
 import { money, shortDate, stamp } from "@/lib/format";
 import { Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
-import { ExportButton } from "@/app/reports/export-button";
+import { ExportButton } from "@/components/ui/export-button";
 import {
   archiveLead,
   bulkArchiveLeads,

@@ -88,6 +88,14 @@ const nextConfig: NextConfig = {
       ...ADMIN_REDIRECTS,
 
       /*
+       * The Reports app is retired. A bookmark lands on the launcher rather
+       * than a 404 — not on /founder, which is granted separately and would
+       * only refuse most of the people holding an old Reports link.
+       */
+      { source: "/reports", destination: "/apps", permanent: false },
+      { source: "/reports/:path*", destination: "/apps", permanent: false },
+
+      /*
        * The Accounts app was called Orders, and lived at /orders, until it grew
        * past the name — it now holds approvals, receipts, the bill ledger,
        * credit notes, on-account balances, the sheet import and the audit log.

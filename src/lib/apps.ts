@@ -127,12 +127,16 @@ export const APPS: AppDefinition[] = [
   },
   {
     id: "reports",
+    // Retired. Its screens are gone; the owner's figures it drew are read by
+    // the Founder Command Centre from the same service. The id stays so a
+    // grant made before the retirement still resolves to something.
     name: "Reports",
     initials: "RP",
-    description: "New business, what it is worth, and whether customers are still buying.",
-    href: "/reports",
+    description: "Retired — the owner's figures are in the Founder Command Centre.",
+    href: "/founder",
     tone: "neutral",
-    built: true,
+    built: false,
+    retiredInto: "founder",
   },
   {
     id: "hrms",
@@ -157,12 +161,9 @@ export const APPS: AppDefinition[] = [
     id: "founder",
     /*
      * Performance across every app, on one screen — a pure composition layer
-     * over what Reports, the Sales Dashboard, Accounts and HRMS already
-     * compute. No new derived numbers live here; this reads and rolls up.
-     *
-     * A standalone app rather than a tab on Reports, deliberately: Reports is
-     * the CRM's order-book economics, and this is meant as the founder's own
-     * front door onto the whole company, granted separately from it.
+     * over what the owner's KPIs, the Sales Dashboard, Accounts and HRMS
+     * already compute. No new derived numbers live here; this reads and
+     * rolls up. It is also where the retired Reports app's figures now live.
      */
     name: "Founder Command Centre",
     initials: "FC",

@@ -103,7 +103,7 @@ export async function backOfficeNames(): Promise<{ name: string; parties: number
 export async function provisionBackOffice(options: {
   password: string;
   /** Apps a newly created telecaller gets. */
-  apps?: ("crm" | "reports")[];
+  apps?: "crm"[];
   dryRun?: boolean;
 }): Promise<TeamReport> {
   const names = await backOfficeNames();
