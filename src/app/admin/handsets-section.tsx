@@ -13,6 +13,8 @@ import {
   type Presence,
   type VersionStatus,
 } from "@/lib/handset-versions";
+import { releaseHandsetFromConsole } from "@/lib/actions/handsets";
+import { ReleaseButton } from "@/app/sales/logins/release-button";
 
 /* ---------------------------------------------------------------------------
  * HANDSETS — which MBOS build every salesman's phone is running, live.
@@ -53,6 +55,9 @@ export function HandsetsSection() {
   const [q, setQ] = React.useState("");
   const [flash, setFlash] = React.useState<Record<string, number>>({});
   const seen = React.useRef<Map<string, string | null> | null>(null);
+  /* Bumped after a release, so the table re-reads at once rather than
+     showing the old binding for up to ten seconds. */
+  const [reloadKey, setReloadKey] = React.useState(0);
 
   /* The table's clock — read in an effect, never during render. */
   React.useEffect(() => {
@@ -112,7 +117,7 @@ export function HandsetsSection() {
       controller?.abort();
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, []);
+  }, [reloadKey]);
 
   const reference = data?.reference ?? null;
   const rows = React.useMemo(
@@ -275,6 +280,7 @@ export function HandsetsSection() {
                   <Th>Status</Th>
                   <Th>On this build</Th>
                   <Th align="right">Last heard</Th>
+                  <Th align="right"> </Th>
                 </tr>
               </thead>
               <tbody>
@@ -285,6 +291,7 @@ export function HandsetsSection() {
                     status={status}
                     now={now}
                     lit={!!(now && flash[row.userId] && now - flash[row.userId] < FLASH_MS)}
+                    onReleased={() => setReloadKey((k) => k + 1)}
                   />
                 ))}
               </tbody>
@@ -384,11 +391,13 @@ function HandsetLine({
   status,
   now,
   lit,
+  onReleased,
 }: {
   row: HandsetRow;
   status: VersionStatus;
   now: number | null;
   lit: boolean;
+  onReleased: () => void;
 }) {
   const label = parseBuildLabel(row.appVersion);
   const p = now ? presence(row.lastHeardAt, now) : "never";
@@ -478,6 +487,21 @@ function HandsetLine({
           <span className="text-[13px] text-ink">{now ? ago(row.lastHeardAt, now) : "—"}</span>
         </div>
         <div className="text-[11px] text-muted">{PRESENCE[p].word}</div>
+      </Td>
+      {/* The sign-in refusal tells a salesman on a new phone to ask an admin
+          to release the old one — this is where that admin is standing. Only
+          a bound row has anything to release; the list carries active
+          bindings only, so a released phone leaves the row on the next read. */}
+      <Td align="right" className="py-3">
+        {row.deviceId ? (
+          <ReleaseButton
+            deviceId={row.deviceId}
+            salesmanName={row.name}
+            handset={row.model ?? row.platform ?? "the handset he is signed in on"}
+            release={releaseHandsetFromConsole}
+            onReleased={onReleased}
+          />
+        ) : null}
       </Td>
     </tr>
   );
