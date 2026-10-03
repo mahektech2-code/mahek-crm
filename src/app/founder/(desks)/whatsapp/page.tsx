@@ -1,5 +1,4 @@
 import { requireUser } from "@/lib/auth";
-import { listUserApps } from "@/lib/access";
 import { secretStatuses } from "@/lib/secrets";
 import { appOrigin } from "@/lib/password-reset";
 import { currentWebhookToken, listWatiTemplates, watiHealth } from "@/lib/wati";
@@ -11,6 +10,7 @@ import {
   MERGE_FIELDS,
 } from "@/lib/services/whatsapp-service";
 import { WhatsappControl } from "./whatsapp-control";
+import { isPlatformAdmin } from "@/lib/access-control";
 import { specFor } from "@/lib/wati-templates";
 
 export const metadata = { title: "WhatsApp - Founder Command Centre - MahekOne" };
@@ -26,9 +26,9 @@ export const metadata = { title: "WhatsApp - Founder Command Centre - MahekOne" 
  */
 export default async function Page() {
   const user = await requireUser();
-  const [apps, state, history, secrets, health, watiTemplates, crmTemplates, counts, unmatched, token, origin] =
+  const [platformAdmin, state, history, secrets, health, watiTemplates, crmTemplates, counts, unmatched, token, origin] =
     await Promise.all([
-      listUserApps(user.id),
+      isPlatformAdmin(user),
       whatsappServiceState(),
       serviceHistory(20),
       secretStatuses(),
@@ -64,7 +64,7 @@ export default async function Page() {
         last4: key?.last4 ?? null,
         updatedAt: key?.updatedAt?.toISOString() ?? null,
       }}
-      canWriteKey={apps.includes("admin")}
+      canWriteKey={platformAdmin}
       health={health}
       watiTemplates={
         watiTemplates.ok

@@ -34,12 +34,16 @@ export type NavItem = {
    */
   legacy?: boolean;
   /**
-   * Hidden from anybody who is not a manager or an admin, on top of the module
-   * grant.
+   * Hidden from anybody who cannot DECIDE what the screen queues, on top of the
+   * module grant.
    *
    * This flag existed on the type and was read by nothing — declared, never
-   * honoured, so every item carrying it was visible to everybody. It is honoured
-   * now, and `navForModules` takes the role to do it.
+   * honoured, so every item carrying it was visible to everybody. It was then
+   * honoured against `isManager`, the widest level held in ANY app, which drew
+   * the deactivation queue for a telecaller who managed Reports. The one item
+   * carrying it is the Close/Reopen queue, so `navForModules` is now handed
+   * whether the person holds `customer.deactivate` — the capability that
+   * queue's actions and its route both ask.
    */
   managerOnly?: boolean;
 };
@@ -72,6 +76,7 @@ export function pinnedForModules(allowed: readonly string[]): NavItem[] {
 
 export function navForModules(
   allowed: readonly string[],
+  /** Holds `customer.deactivate` — see `NavItem.managerOnly`. */
   isManager = true,
 ): NavGroup[] {
   const set = new Set(allowed);
@@ -235,8 +240,10 @@ export const NAV: NavGroup[] = [
         badge: "leadsAttention",
       },
       { href: at("/leads/intake"), label: "Intake", icon: "plus" },
-      // role-name-ok: a display label for the Calling desk screen, not a role value.
-      { href: at("/leads/calling-desk"), label: "Telecaller", icon: "phone" },
+      /* The module's own name. It read "Telecaller" here while the access
+         screen called the same grant "Calling desk", so a manager ticking one
+         could not find it in the other. */
+      { href: at("/leads/calling-desk"), label: "Calling desk", icon: "phone" },
       { href: at("/leads/sales-manager"), label: "Sales Manager", icon: "people" },
       { href: at("/leads/appointments"), label: "Distributor appointments", icon: "people" },
       { href: at("/leads/lost"), label: "Lost", icon: "warning" },

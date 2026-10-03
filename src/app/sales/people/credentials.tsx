@@ -21,7 +21,7 @@ import { ReasonModal, RowMenu } from "@/components/console/parts";
  *
  * THEY ARE NOT ALL THE SAME KIND OF ACT and the menu says so:
  *
- *   A sign-in link is the ordinary one. It works once, expires, and is the
+ *   A password-reset link is the ordinary one. It works once, expires, and is the
  *   answer to "he has forgotten his password".
  *
  *   Ending sessions signs him out everywhere. It is what you do when a phone
@@ -33,17 +33,22 @@ import { ReasonModal, RowMenu } from "@/components/console/parts";
  *   the OLD phone can bind again. That is why it takes a reason, like every
  *   other release in this app.
  *
- * The first two are guarded by `isManager`, not by holding this app, and that
- * boundary is deliberate: handing out credentials is an account decision
- * rather than a sales one. Somebody who cannot do it sees the control disabled
- * with the reason on it, rather than a button that fails when pressed.
+ * The first two belong to a PLATFORM ADMINISTRATOR — `people.ts` checks
+ * `requirePlatformAdminUser`, not holding this app and not `isManager`, and
+ * that boundary is deliberate: handing out credentials is an account decision
+ * rather than a sales one. They used to be drawn disabled for everybody else
+ * with the reason on them; they are now not drawn at all, because a national
+ * sales manager is never going to become a platform administrator by reading
+ * a tooltip, and a menu where two of three items are permanently grey is a
+ * menu people stop opening. The release stays for everybody who holds the
+ * screen — it is the Sales Dashboard's own act.
  */
 export function Credentials({
   salesman,
   canManageAccounts,
 }: {
   salesman: Salesman;
-  /** Whether the viewer passes `isManager` — see `people.ts`'s own guard. */
+  /** Whether the viewer is a platform administrator — see `people.ts`'s own guard. */
   canManageAccounts: boolean;
 }) {
   const router = useRouter();
@@ -59,31 +64,28 @@ export function Credentials({
     if (r.ok) router.refresh();
   };
 
-  const notAccountManager = canManageAccounts
-    ? undefined
-    : "Only a manager can change an account's sign-in. Ask somebody who holds the Admin Console.";
-
   return (
     <>
       <RowMenu
         items={[
-          {
-            label: "Send a sign-in link",
-            disabled: !canManageAccounts || !salesman.active,
-            title: !salesman.active
-              ? "This account is closed, so it cannot be signed in to."
-              : (notAccountManager ??
-                "Mails a single-use link to their work email. It expires, and using it signs them out everywhere else."),
-            run: () => void sendPasswordResetFor(salesman.id).then(say),
-          },
-          {
-            label: "Sign them out everywhere",
-            disabled: !canManageAccounts,
-            title:
-              notAccountManager ??
-              "Ends every session this account has open, on the web and on the handset. They sign in again with the password they already have.",
-            run: () => void endSessionsFor(salesman.id).then(say),
-          },
+          ...(canManageAccounts
+            ? [
+                {
+                  label: "Send a password-reset link",
+                  disabled: !salesman.active,
+                  title: !salesman.active
+                    ? "This account is closed, so it cannot be signed in to."
+                    : "Mails a single-use link to their work email. It expires, and using it signs them out everywhere else.",
+                  run: () => void sendPasswordResetFor(salesman.id).then(say),
+                },
+                {
+                  label: "Sign them out everywhere",
+                  title:
+                    "Ends every session this account has open, on the web and on the handset. They sign in again with the password they already have.",
+                  run: () => void endSessionsFor(salesman.id).then(say),
+                },
+              ]
+            : []),
           {
             label: "Release their handset",
             danger: true,

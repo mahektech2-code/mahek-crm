@@ -180,7 +180,7 @@ beforeEach(async () => {
     { id: id("aa"), userId: salesman.id, app: "field" },
     /* The Sales Dashboard grant is what `requireSales` reads, and it is what
        decides who may answer a pin correction at all. */
-    { id: id("aa"), userId: manager.id, app: "sales" },
+    { id: id("aa"), userId: manager.id, app: "sales", role: "manager" },
   ]);
 
   shop = await makeShop("Sai Paint Depot", SHOP);

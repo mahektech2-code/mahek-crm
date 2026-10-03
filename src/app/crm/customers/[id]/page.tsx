@@ -5,7 +5,7 @@ import { orderCountsSql } from "@/lib/order-status";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { orders, payments } from "@/db/schema";
-import { isManager, requireUser } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import {
   assertCustomerInScope,
   NotPermittedError,
@@ -26,7 +26,7 @@ import {
   distributorsFor,
   suggestedDistributors,
 } from "@/lib/services/distributor-service";
-import { canFor } from "@/lib/access-control";
+import { canFor, levelInApp } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
 import { popularProducts } from "@/lib/services/product-service";
 import {
@@ -319,8 +319,9 @@ export default async function CustomerRecordPage({
          because a ceiling that only exists in a browser is not a ceiling; the
          save re-checks it against the same two settings. */
       discountAuthority={{
-        level:
-          user.role === "admin" ? "admin" : isManager(user) ? "manager" : "associate",
+        /* The CRM level, the same function the save asks — not the widest
+           level held anywhere. See `interaction-service.ts`. */
+        level: (await levelInApp(user, "crm")) ?? "associate",
         associateMaxBp: config["pricing.associateMaxDiscountBp"],
         managerMaxBp: config["pricing.managerMaxDiscountBp"],
       }}

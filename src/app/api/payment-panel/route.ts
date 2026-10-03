@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
+import { opensTheBook } from "@/app/api/book-door";
 import { getFollowUpPanel } from "@/lib/services/payment-followup-service";
 import { previewPaymentReminder } from "@/lib/services/whatsapp-service";
 import { messagesForCustomer, ruleOutlookFor } from "@/lib/services/whatsapp-tracker-service";
@@ -12,6 +13,11 @@ import { messagesForCustomer, ruleOutlookFor } from "@/lib/services/whatsapp-tra
 export async function GET(request: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ panel: null }, { status: 401 });
+
+  /* A screen this belongs to, first — see `book-door.ts`. */
+  if (!(await opensTheBook(user.id))) {
+    return NextResponse.json({ panel: null }, { status: 403 });
+  }
 
   const customerId = new URL(request.url).searchParams.get("customerId");
   if (!customerId) return NextResponse.json({ panel: null }, { status: 400 });

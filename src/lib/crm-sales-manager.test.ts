@@ -385,10 +385,31 @@ describe("I — it is the salesman's lead, not a copy of it", () => {
 describe("X — the scope is this workspace's, and only this workspace's", () => {
   test("outside the workspace the territory scope is what it was: a manager with no region row is national", async () => {
     setTestWorkspace(null);
+    /* A MANAGER of the Sales Dashboard — the app the territory rule belongs
+       to, and the one a request naming no app is read against. No region row
+       still means national for them; the seat narrowed nothing. */
+    const salesBoss = await makeUser("Sales Boss", "manager", [{ app: "sales", role: "manager" }]);
+    setTestUser(salesBoss);
     assert.deepEqual(
       await listIds(),
       [mineA.id, mineANoOwner.id, mineB.id, ownerOnly.id, unassigned.id].sort(),
       "the Sales Dashboard's scope is untouched — nothing here narrowed it",
+    );
+  });
+
+  test("outside the workspace an ASSOCIATE holding the seat sees their own book, not the company's", async () => {
+    setTestWorkspace(null);
+    /* Manager Aye is a CRM associate. Outside this workspace the seat drives no
+       scope, and the territory rule is a rule about MANAGERS — it used to
+       answer national for anybody with no region row, which handed an
+       associate every lead in the company. The level is read first now: their
+       own book, plus the leads nobody owns, which `leadsVisible` shows to
+       anybody who can open a lead list. `mineANoOwner` is here because it is
+       unowned, not because Aye holds its seat. */
+    assert.deepEqual(
+      await listIds(),
+      [mineANoOwner.id, unassigned.id].sort(),
+      "an associate outside the workspace saw more than their own book",
     );
   });
 

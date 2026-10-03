@@ -1,5 +1,5 @@
-import { isManager, requireUser } from "@/lib/auth";
-import { getScope, scopeLabel } from "@/lib/scope";
+import { requireUser } from "@/lib/auth";
+import { getScope, scopeLabel, managesHere } from "@/lib/scope";
 import { getCustomer } from "@/lib/queries";
 import {
   billLedgerPage,
@@ -48,6 +48,8 @@ export default async function BillsPage({
   const params = await searchParams;
   const customerId = params.customer;
   const user = await requireUser();
+  /* A manager OF THE CRM — `isManager` was the widest level held in any app. */
+  const managerHere = await managesHere(user, "crm");
   const scope = await getScope(user);
 
   // The ledger is ten thousand bills across three years. A year is the cut a
@@ -127,7 +129,7 @@ export default async function BillsPage({
       datedModes={config["payments.datedModes"]}
       today={day}
       scopeLabel={scopeLabel(scope, user)}
-      isManager={isManager(user)}
+      isManager={managerHere}
       rows={ledger.rows}
       total={ledger.total}
       page={ledger.total ? Math.min(page, Math.max(1, Math.ceil(ledger.total / perPage))) : 1}

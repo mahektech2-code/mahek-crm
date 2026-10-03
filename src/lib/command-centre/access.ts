@@ -63,3 +63,50 @@ export async function requireActIn(section: SectionKey) {
   if (section === "prices" || section === "whatsapp") return a;
   throw new NotAllowedHere("Your access to the Command Centre is read-only here. The founder or a manager-level delegate can do this.");
 }
+
+/**
+ * WHICH SECTIONS OWN A NOTE'S TARGET.
+ *
+ * "Add a note" posted to an action that asked only whether the caller held the
+ * Founder app — so a delegate given Money alone could write a note against an
+ * employee, a complaint or a price list by sending a different `kind`, and an
+ * associate the screen calls read-only could write against anything. A note is
+ * an act in the section the record belongs to, so it is asked exactly as
+ * `runAction` asks: the section's module, and a level that may act there.
+ *
+ * Several sections draw the same kind of record — a customer is on Customers
+ * and on Money, a person on four screens — so holding ANY of them is enough. A
+ * kind nobody listed here is refused rather than guessed at: a new note target
+ * added without a line here fails shut, which is the direction to fail.
+ */
+export const NOTE_SECTIONS: Record<string, readonly SectionKey[]> = {
+  customer: ["customers", "money"],
+  user: ["team", "field", "calling", "people"],
+  employee: ["people"],
+  order: ["sales"],
+  lead_funnel: ["sales"],
+  bill: ["money"],
+  payment_receipt: ["money"],
+  aging_bucket: ["money"],
+  price_list: ["prices"],
+  price_request: ["prices"],
+  enquiry: ["enquiries"],
+  lead: ["leads"],
+  lead_cohort: ["leads"],
+  complaint: ["service"],
+  whatsapp_readiness: ["whatsapp"],
+  system_source: ["system"],
+};
+
+export async function requireNoteIn(kind: string) {
+  const sections = NOTE_SECTIONS[kind] ?? [];
+  let refusal: unknown = new NotAllowedHere("A note cannot be added to that record here.");
+  for (const section of sections) {
+    try {
+      return await requireActIn(section);
+    } catch (e) {
+      refusal = e;
+    }
+  }
+  throw refusal;
+}

@@ -1,7 +1,7 @@
-import { isManager, requireUser } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import { canFor } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
-import { getScope, scopeLabel } from "@/lib/scope";
+import { getScope, scopeLabel, managesHere } from "@/lib/scope";
 import {
   listAmFilterOptions,
   listPlaceFilterOptions,
@@ -40,6 +40,8 @@ export default async function CustomersPage({
   };
 
   const user = await requireUser();
+  /* A manager OF THE CRM — `isManager` was the widest level held in any app. */
+  const managerHere = await managesHere(user, "crm");
   const scope = await getScope(user);
   // The SERVER's working day, for the Next call column — a client component
   // may not read the clock in render, and a laptop set to the wrong date must
@@ -84,7 +86,7 @@ export default async function CustomersPage({
     <CustomersScreen
       app="crm"
       scopeLabel={scopeLabel(scope, user)}
-      isManager={isManager(user)}
+      isManager={managerHere}
       // Asked of the same function the action asks, so a visible button and a
       // permitted action can never disagree. The action checks again anyway —
       // a disabled control is not a permission.

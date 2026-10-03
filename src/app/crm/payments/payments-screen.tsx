@@ -88,7 +88,8 @@ export function PaymentsScreen({
   today: businessDay,
   scopeLabel,
   showAssignee,
-  isManager,
+  canBulk,
+  canExport,
   rows,
   aging,
   workingDaysLeft,
@@ -112,7 +113,15 @@ export function PaymentsScreen({
   scopeLabel: string;
   /** Team view: every row belongs to somebody, so every row says who. */
   showAssignee: boolean;
-  isManager: boolean;
+  /**
+   * The two capabilities behind the two header buttons, asked by name. Both
+   * were `isManager` — the widest level held in any app — so the buttons were
+   * drawn for people the actions would refuse, and withheld from people they
+   * would allow. The export is a CSV of rows already on this page, so the
+   * button IS the gate for it; the batch is checked again in its action.
+   */
+  canBulk: boolean;
+  canExport: boolean;
   rows: Row[];
   aging: { total: number; buckets: Array<{ label: string; amount: number }> };
   workingDaysLeft: number;
@@ -234,10 +243,10 @@ export function PaymentsScreen({
           <>
           <Button
             variant="secondary"
-            disabled={!isManager || batchCount === 0}
+            disabled={!canBulk || batchCount === 0}
             title={
-              !isManager
-                ? "Bulk sending is a manager action"
+              !canBulk
+                ? "Bulk sending needs the right to send WhatsApp in bulk"
                 : batchCount === 0
                   ? "Nobody at stage 1 is due a reminder today - the four-day interval runs from the last one actually sent"
                   : `Queue the stage 1 reminder for ${plural(batchCount, "customer")}`
@@ -253,8 +262,8 @@ export function PaymentsScreen({
           </Button>
           <Button
             variant="secondary"
-            disabled={!isManager}
-            title={isManager ? "Download as CSV" : "Export is a manager action"}
+            disabled={!canExport}
+            title={canExport ? "Download as CSV" : "Exporting needs the right to export customers"}
             onClick={() => {
               downloadCsv(
                 "mahek-collections",

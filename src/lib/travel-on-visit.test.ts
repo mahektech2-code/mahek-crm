@@ -163,7 +163,7 @@ beforeEach(async () => {
     { id: id("aa"), userId: colleague.id, app: "field" },
     /* The Sales Dashboard grant, which is what actually decides who may look
        at somebody else's day — see `canReadTravelLegPhoto`. */
-    { id: id("aa"), userId: manager.id, app: "sales" },
+    { id: id("aa"), userId: manager.id, app: "sales", role: "manager" },
   ]);
 
   const [c] = await db

@@ -3,7 +3,8 @@
 import { z } from "zod";
 import { db } from "@/db";
 import { bills, customers } from "@/db/schema";
-import { isManager, requireUser } from "@/lib/auth";
+import { canOpen } from "@/lib/access";
+import { NotPermittedError, requireCapability } from "@/lib/access-control";
 import { randomUUID } from "node:crypto";
 import { auditLog } from "@/db/schema";
 import { recomputeOutstanding } from "@/lib/recompute";
@@ -24,7 +25,30 @@ export type ImportSummary = {
   created: number;
   updated: number;
   skipped: ImportIssue[];
+  /**
+   * What the file asked for and the import deliberately did not do — said in
+   * words on the result, because a column silently ignored reads afterwards as
+   * an import that did not work.
+   */
+  notes: string[];
 };
+
+/*
+ * WHO MAY RUN AN IMPORT, asked on the server for both files.
+ *
+ * It was `isManager`, the widest level held anywhere — so a manager of the
+ * Reports app or of HRMS, with no business in the calling book at all, could
+ * post a CSV that created and rewrote customers. It is `sheet.import` now, the
+ * capability every other import door in MahekOne asks for, AND the CRM grant,
+ * because this is the CRM's import screen: a capability is a union over hats,
+ * and holding it on the ledger desk is not a reason to be writing the calling
+ * book from a door the CRM layout would never have shown you.
+ */
+async function requireImporter() {
+  const ctx = await requireCapability("sheet.import");
+  if (!(await canOpen(ctx.user.id, "crm"))) throw new NotPermittedError("sheet.import");
+  return ctx.user;
+}
 
 const customerRow = z.object({
   name: z.string().trim().min(2),
@@ -69,19 +93,21 @@ async function importCustomersInner(
   rows: Array<Record<string, string>>,
   defaultOwnerId: string,
 ): Promise<ActionResult<ImportSummary>> {
-  const user = await requireUser();
-  if (!isManager(user)) return fail("Importing customers is a manager action.");
+  const user = await requireImporter();
   if (!rows.length) return fail("That file had no rows.");
 
   const team = await db.query.users.findMany();
   const ownerByName = new Map(team.map((t) => [t.name.toLowerCase(), t.id]));
 
   const existing = await db.query.customers.findMany({
-    columns: { id: true, phone: true },
+    columns: { id: true, phone: true, ownerId: true },
   });
   const byPhone = new Map(existing.map((c) => [c.phone, c.id]));
+  const ownerOf = new Map(existing.map((c) => [c.id, c.ownerId]));
 
-  const summary: ImportSummary = { created: 0, updated: 0, skipped: [] };
+  const summary: ImportSummary = { created: 0, updated: 0, skipped: [], notes: [] };
+  /* Existing customers whose row named a different owner — kept, and counted. */
+  let ownerKept = 0;
 
   for (const [i, raw] of rows.entries()) {
     const parsed = customerRow.safeParse(raw);
@@ -114,7 +140,21 @@ async function importCustomersInner(
     // Phone is the natural key — re-importing the same sheet updates, not duplicates.
     const found = byPhone.get(d.phone);
     if (found) {
-      await db.update(customers).set(values).where(eqId(found));
+      /*
+       * AN IMPORT NEVER MOVES AN EXISTING CUSTOMER'S BOOK.
+       *
+       * Whose book an account sits in decides who is credited for its orders,
+       * whose target it counts towards and whose Call Log it lands on — which is
+       * why reassignment is `customer.reassign`, accounts' and admin's, with a
+       * reason, a history row and both people told. A re-imported sheet carrying
+       * a different owner column was a way to do all of that silently, by
+       * anybody who could import, with no record of who decided it. So the owner
+       * is written on CREATE only; a row that asks to move an existing account
+       * is applied everywhere else and counted, and the result says so.
+       */
+      const { ownerId: asked, ...rest } = values;
+      if (asked !== ownerOf.get(found)) ownerKept += 1;
+      await db.update(customers).set(rest).where(eqId(found));
       summary.updated += 1;
     } else {
       const id = newId("cus");
@@ -124,6 +164,12 @@ async function importCustomersInner(
       byPhone.set(d.phone, id);
       summary.created += 1;
     }
+  }
+
+  if (ownerKept) {
+    summary.notes.push(
+      `${ownerKept} existing customer${ownerKept === 1 ? "" : "s"} named a different owner in the file and ${ownerKept === 1 ? "was" : "were"} left in the book ${ownerKept === 1 ? "it was" : "they were"} in. An import does not reassign accounts — change the account manager from the customer list, where the move is recorded and both people are told.`,
+    );
   }
 
   await db.insert(auditLog).values({
@@ -166,8 +212,7 @@ export async function importBills(
 async function importBillsInner(
   rows: Array<Record<string, string>>,
 ): Promise<ActionResult<ImportSummary>> {
-  const user = await requireUser();
-  if (!isManager(user)) return fail("Importing bills is a manager action.");
+  const user = await requireImporter();
   if (!rows.length) return fail("That file had no rows.");
 
   const existingCustomers = await db.query.customers.findMany({
@@ -180,8 +225,10 @@ async function importBillsInner(
   });
   const byNo = new Map(existingBills.map((b) => [b.billNo, b.id]));
 
-  const summary: ImportSummary = { created: 0, updated: 0, skipped: [] };
+  const summary: ImportSummary = { created: 0, updated: 0, skipped: [], notes: [] };
   const touched = new Set<string>();
+  /* Rows that carried a paid figure, which the import does not write. */
+  let paidIgnored = 0;
 
   for (const [i, raw] of rows.entries()) {
     const parsed = billRow.safeParse(raw);
@@ -205,14 +252,29 @@ async function importBillsInner(
       continue;
     }
 
+    /*
+     * A FILE NEVER WRITES MONEY — the rule the order-sheet projection already
+     * keeps, applied to its CSV cousin.
+     *
+     * This wrote the file's `paid` column straight into `bills.paidAmount`, so
+     * a spreadsheet cell reduced outstanding, aged the debt and took customers
+     * off the collections list with no person behind any of it. `paidAmount`
+     * is rebuilt from CONFIRMED receipts and nothing else; whether money
+     * arrived is the ledger desk's to record. So a new bill lands `unstated` —
+     * neither paid nor owed, held out of outstanding and collections until
+     * somebody speaks for it — exactly as the projection inserts one, and an
+     * existing bill keeps the position and paid figure it already has: a bill
+     * somebody has spoken for must not be returned to silence by a re-import.
+     * A paid figure in the file is counted and said, not quietly dropped.
+     */
     // Rupees in the sheet, paise in the database.
     const values = {
       customerId,
       billDate: d.billDate,
       dueDate: d.dueDate,
       amount: Math.round(d.amount * 100),
-      paidAmount: Math.round(d.paid * 100),
     };
+    if (d.paid > 0) paidIgnored += 1;
 
     const found = byNo.get(d.billNo);
     if (found) {
@@ -220,7 +282,9 @@ async function importBillsInner(
       summary.updated += 1;
     } else {
       const id = newId("bil");
-      await db.insert(bills).values({ ...values, id, billNo: d.billNo });
+      await db
+        .insert(bills)
+        .values({ ...values, id, billNo: d.billNo, paymentPosition: "unstated" });
       byNo.set(d.billNo, id);
       summary.created += 1;
     }
@@ -228,6 +292,12 @@ async function importBillsInner(
   }
 
   for (const customerId of touched) await recomputeOutstanding(customerId);
+
+  if (paidIgnored) {
+    summary.notes.push(
+      `${paidIgnored} row${paidIgnored === 1 ? "" : "s"} carried a paid amount, which was not recorded. A file cannot say money arrived — record or confirm the payment in Accounts, and the bill's balance follows from that.`,
+    );
+  }
 
   await db.insert(auditLog).values({
     id: newId("aud"),

@@ -16,7 +16,7 @@ import { parseRupees } from "@/lib/format";
 import { crore } from "./format";
 import { fromOwning, refusal, type Ctx } from "./provider";
 import { providerFor } from "./registry";
-import type { FormSpec, Result } from "./types";
+import type { FormSpec, Result, SectionKey } from "./types";
 
 /* ---------------------------------------------------------------------------
  * THE DESIGN'S EIGHT QUICK ACTIONS — "Start from anywhere" — each running the
@@ -34,6 +34,28 @@ export const QUICK_ITEMS: [string, string][] = [
   ["Send a WhatsApp message", "Through the API or prepared to paste"],
   ["Approve a special price", "From the requests waiting"],
   ["Run a sync", "Order sheet, HR sheet or customer master"],
+];
+
+/**
+ * WHICH SECTION EACH QUICK ACTION ACTS IN, by index into `QUICK_ITEMS`.
+ *
+ * The quick actions run the owning app's own action, and that action asks its
+ * own capability — but a capability rides on the APP grant, not on the Command
+ * Centre module, so a delegate narrowed to Money could still raise a complaint
+ * or send a WhatsApp message from here. Each item is an act in one section and
+ * is asked as one, through `requireActIn`, exactly as a row action is. The two
+ * desks associates have always run (WhatsApp and price lists) keep that through
+ * the same function rather than through an index check of their own.
+ */
+export const QUICK_SECTION: readonly SectionKey[] = [
+  "calling", // log a call or an order received
+  "money", // record a payment
+  "service", // raise a complaint
+  "calling", // set a reminder
+  "customers", // create a lead or a customer
+  "whatsapp", // send a WhatsApp message
+  "prices", // approve a special price
+  "system", // run a sync
 ];
 
 const opt = (v: string, l?: string) => ({ v, l: l ?? v });

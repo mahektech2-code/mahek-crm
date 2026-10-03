@@ -1,5 +1,6 @@
-import { isManager, requireUser } from "@/lib/auth";
-import { getScope, scopeLabel } from "@/lib/scope";
+import { requireUser } from "@/lib/auth";
+import { canFor } from "@/lib/access-control";
+import { getScope, scopeLabel, managesHere } from "@/lib/scope";
 import { dayActivity, listInteractions, listTeam, today } from "@/lib/queries";
 import { listReminders } from "@/lib/services/worklist-services";
 import { nowMs } from "@/lib/format";
@@ -20,8 +21,10 @@ const CALL_HISTORY_LIMIT = 400;
 
 export default async function HistoryPage() {
   const user = await requireUser();
+  /* A manager OF THE CRM — `isManager` was the widest level held in any app. */
+  const managerHere = await managesHere(user, "crm");
   const scope = await getScope(user);
-  const teamView = scope === "team" && isManager(user);
+  const teamView = scope === "team" && managerHere;
   const day = await today();
 
   const [rows, team, activity, reminders] = await Promise.all([
@@ -34,7 +37,7 @@ export default async function HistoryPage() {
   return (
     <HistoryScreen
       scopeLabel={scopeLabel(scope, user)}
-      isManager={isManager(user)}
+      canExport={await canFor(user, "customer.export")}
       team={team.map((t) => t.name)}
       /* A full page is a page that was cut off. There is no `count(*)` behind
          this yet — `listInteractions` returns rows and nothing else — so the

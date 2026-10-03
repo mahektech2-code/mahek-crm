@@ -210,6 +210,15 @@ describe("B/C — the Lost list, and where each row was lost from", () => {
     const closedB = await advanceLeadStage({ customerId: b.id, to: "lost", reasonCode: "quality" });
     assert.equal(closedB.ok, true, closedB.ok ? "" : closedB.error);
 
+    // READ by somebody whose scope covers both books. An associate's is their
+    // own — it used to answer national here, which is the fail-open
+    // `managerScope` no longer has — so a filter by another person's name is
+    // asked by a manager. A test names no app on its request, so the level is
+    // read on the Sales Dashboard, which is where that manager holds it.
+    const reader = await makeUser("Meera Manager", "manager");
+    await db.insert(appAccess).values({ id: id("aca"), userId: reader.id, app: "sales", role: "manager" });
+    setTestUser(reader);
+
     const byOwner = await lostLeadsPage({ filters: { owner: salesman.id } });
     assert.deepEqual(byOwner.rows.map((r) => r.id), [a.id]);
 

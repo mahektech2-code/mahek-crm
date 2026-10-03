@@ -50,6 +50,14 @@ async function makeUser(name: string, role: "associate" | "manager", extraApp?: 
     })
     .returning();
   await db.insert(appAccess).values({ id: id("aca"), userId: row.id, app: "crm", role });
+  /* A manager here is a manager OF THE SALES DASHBOARD too. These reads are the
+     lead worklists `managerScope` narrows, and a test names no app on its
+     request — so the level is read against the Sales Dashboard, the only app
+     whose screens that scope draws. A CRM manager with no Sales grant is, there,
+     nobody's manager, and is narrowed to their own (empty) book. */
+  if (role === "manager") {
+    await db.insert(appAccess).values({ id: id("aca"), userId: row.id, app: "sales", role: "manager" });
+  }
   if (extraApp) await db.insert(appAccess).values({ id: id("aca"), userId: row.id, app: extraApp });
   return row;
 }

@@ -79,7 +79,8 @@ npm run jobs -- resolve-places             # build `places` and point every
                            # shop at its leaf. Also the REPARSE: the one to
                            # run when the READING changed, not the answers
 npm run hrms:sync    # pull the employee sheet now
-npm run app:grant -- hrms vikram@mahek.in   # give somebody an app
+npm run app:grant -- hrms vikram@mahek.in --level=manager
+                     # give somebody an app; the level defaults to associate
 npm run report:qualification   # READ-ONLY: what the Telecaller-owned Qualification
                      # rules mean for the leads already in the book — writes nothing
 npm run catalogue:parse    # regenerate the product master from the document
@@ -112,7 +113,7 @@ pair amounts to, not a value stored anywhere.
 | `anjali@mahek.in` | 9820011003 | associate (telecaller) | CRM | straight into the CRM |
 | `suresh@mahek.in` | 9820011004 | associate (telecaller) | CRM | straight into the CRM |
 | `neha@mahek.in` | 9820011005 | associate | CRM | straight into the CRM |
-| `vikram@mahek.in` | 9820011006 | manager | CRM, Accounts, People, HRMS, Admin, Founder | the launcher |
+| `vikram@mahek.in` | 9820011006 | admin (platform administrator — Admin on the Admin Console; associate on Accounts) | CRM, Accounts, HRMS, Founder, Admin (and the retired People) | the launcher |
 | `mahesh@mahek.in` | 9820011007 | associate (field salesman) | Salesman App | signs in on the web to `/apps`, which says there is nothing for him there — his app is MBOS, the mobile handset, not a browser |
 | `deepa@mahek.in` | 9820011008 | manager (the ledger desk) | Accounts | straight into order approvals |
 
@@ -1233,9 +1234,46 @@ Accounts is the clerk, associate on the CRM is the telecaller, associate on the
 Salesman App is the field salesman — one level, three jobs, decided by the
 grant rather than by a word.
 
-**The matrix is one table, in `lib/access-control.ts`.** Each app names what
-its own two lower levels carry; `admin` holds everything everywhere and is not
-listed. The three bundles it hands out — `BOOK_WORK`, `BOOK_MANAGEMENT`,
+**ADMIN ON AN APP IS ADMIN OF THAT APP, and only Admin on the Admin Console is
+the platform.** Until `0197_admin_is_per_app`, `can()` answered yes to every
+capability for any hat whose level was `admin`, whatever app it was worn in, and
+the account level copied the widest level onto `users.role` — so "HRMS admin",
+given to somebody to hand them every HRMS power, approved orders, confirmed
+payments, read every salary and could sign in as anybody. Admin of an app now
+holds that app's manager list, every power of that app (HRMS, ERP) and its
+off-by-default screens, and nothing anywhere else. Admin on the Admin Console is
+the PLATFORM ADMINISTRATOR and holds everything; `isPlatformAdmin` reads it off
+the grants, and `users.role = 'admin'` is derived for exactly that person and
+nobody else, so the checks that read the account's level as "may do anything"
+(impersonation, the HRMS/ERP administrator bypass, national sales scope) now mean
+it. `admin-is-per-app.test.ts` pins every half.
+
+**ONLY A PLATFORM ADMINISTRATOR CHANGES ACCESS.** `setAccess`, disabling a
+sign-in, ending sessions, mailing a reset link and issuing a password all go
+through `requirePlatformAdminUser` (`access.manage`, in `ADMIN_ONLY`). They were
+gated on `isManager` — a manager of ANY app — and a server action is a URL, so
+the Admin Console's page gate protected nothing: any manager could post
+`setAccess` for themselves with `admin` on every app. Nobody removes their own
+administration, and nobody removes or disables the last platform administrator.
+`setUserRole`, `setUserApps`, `createUser`, `updateUserIdentity`,
+`createTeamMember` and `setAppAccess` were deleted: no screen called them and
+each was a second door onto grants that knew nothing about modules or levels.
+
+**A GRANT WITH NO LEVEL IS AN ASSOCIATE'S.** It used to mean the account's own
+level — the widest held anywhere — so a CRM grant made from a terminal became a
+CRM manager the day its holder was made a manager of anything else. The
+migration wrote every null row down to the level it was resolving to that day,
+so nobody's reach moved on deploy; `npm run app:grant` and the provisioning
+endpoint now write a level (`--level=`, default associate) and derive the
+account level rather than typing it.
+
+**The matrix is one table, in `lib/capability-matrix.ts`** — pure and
+client-safe, so the Access screen can say what a level CARRIES
+(`lib/capability-labels.ts`, a `Record` over every capability so a new one fails
+the build until it is worded) from the same table the server enforces.
+`access-control.ts` re-exports it. Each app names what its own two lower levels
+carry; admin of an app reads its manager list, and the platform administrator
+holds everything and is not listed. The three bundles it hands out — `BOOK_WORK`, `BOOK_MANAGEMENT`,
 `LEDGER_DECISIONS` — are DERIVED from the capability sets above them rather
 than retyped, because those sets carry the reasoning for why each capability
 sits where it does, and a hand-typed copy would be a second answer that drifts
@@ -1280,26 +1318,35 @@ book. It used to key on `role === "accounts"`; keying on the LEVEL instead
 would empty the queue from either end — an associate scoped to their own book,
 a manager scoped to their reports, and a clerk has neither. Where the request
 names an app, `hat.app === "accounts"` answers it. Where it names none — a job,
-a script, a test, the MBOS API — `hatInForce` asks the GRANTS instead and
+a script, a test, the MBOS handset — `hatInForce` asks the GRANTS instead and
 honours only the case that used to be expressible: somebody whose apps are the
 ledger desk and nothing else, which is exactly who `users.role = 'accounts'`
 meant. A person who also holds the CRM is left to the header, as they already
 were.
 
-`users.role` stays derived — the widest LEVEL held anywhere — because two
-things still want "is this person a manager at all": `isManager`, on thirty-one
-screens deciding whether to DRAW a control, and the fallback where there is no
-app to ask about. One consequence is worth naming rather than discovering: an
+`users.role` stays derived — `admin` for the platform administrator, `manager`
+for anybody who runs or administers any app, `associate` otherwise — because two
+things still want "is this person a manager at all": `isManager`, on screens
+deciding whether to DRAW a control, and the fallback where there is no app to
+ask about. **It is not "a manager HERE."** A screen deciding what to draw inside
+one app asks that app's level (`managesHere` in `lib/scope.ts`,
+`levelInApp`), and a write asks a capability: a manager of HRMS is an associate
+in the CRM and gets the CRM associate's view, discount ceiling and buttons. One consequence is worth naming rather than discovering: an
 Accounts manager now passes `isManager`, where the old `accounts` role did not.
 That is the model working — a manager of the ledger is a manager — and it
 widens the handful of things gated on `isManager` alone rather than on a
 capability, feedback triage among them.
 
-**And it can only ever NARROW.** The derived level is the widest of the hats, so
-a per-app hat is by construction no wider. Resolving per app can lose reach and
+**And it can only ever NARROW.** The derived level is no narrower than any hat,
+so a per-app hat is by construction no wider. Resolving per app can lose reach and
 cannot gain it — which is why 73 call sites of `resolveScope` did not have to be
 audited one at a time. The header is stripped off the incoming request before
-the proxy writes it, so a client cannot post its own `x-mahek-app: admin`.
+the proxy writes it, so a client cannot post its own `x-mahek-app: admin`. An
+`/api/*` route names no app by its path, so the proxy takes the app from a
+SAME-HOST Referer instead (host, not origin: behind Caddy the app sees http); without that, every shared API read fell back to
+the account's widest level, and an HRMS manager searched the CRM book as a
+manager. Believing the Referer is safe for the same reason the header is:
+`requestHat` still demands a real grant in the app it names.
 
 **The audit records WHICH HAT allowed it, and that now takes TWO columns.**
 With one role per person, "was he allowed to do this" was answerable from the
@@ -1335,9 +1382,11 @@ half somebody reads. **A conflict is between two HATS**, not two roles: it used
 to read "telecaller and accounts", which was a sentence only because two of the
 four role values were secretly app names. "Associate and associate" says
 nothing, so the pair names the apps, and the level sits beside it where the
-level is what makes the pair bite — an Accounts ASSOCIATE decides nothing and
-clashes with nobody. An admin matches every pair by construction, so they are
-told none: four warnings on every administrator is four warnings nobody reads.
+level is what makes the pair bite. An Accounts associate approves nothing, but
+edits price lists, so it clashes with whoever quotes prices on a call. A
+PLATFORM administrator matches every pair by construction, so they are told
+none; admin of one app is checked like any other hat, and a rule naming the
+manager level is true of that app's administrator too.
 
 **Access is granted to a person, and the people are in HRMS.** The console's
 People section is one screen, Access, and its dialog reads the employee master
@@ -5305,7 +5354,7 @@ adds one thing that screen never had: a **revision history** drawer reading
 nothing ever calling it. Holding `order.approve` and `target.set` together is a
 new hat combination worth naming on its own terms: an accounts user who is
 ALSO a telecaller could now set their own target, which is why
-`lib/role-conflicts.ts` carries a second telecaller+accounts entry for it,
+`lib/role-conflicts.ts` names the CRM + Accounts manager pair for it,
 beside the one about reporting a payment and then confirming it.
 
 **A person's target and a customer's are two different grains, and they stay

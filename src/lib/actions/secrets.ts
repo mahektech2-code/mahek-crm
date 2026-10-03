@@ -6,9 +6,9 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { appSecrets, auditLog } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
-import { listUserApps } from "@/lib/access";
 import { isSecretName, SECRET_NAMES, type SecretName } from "@/lib/secrets";
 import { err as fail, okVoid, type Result } from "@/lib/result";
+import { isPlatformAdmin } from "@/lib/access-control";
 import { ADMIN } from "@/lib/admin-routes";
 
 /* ---------------------------------------------------------------------------
@@ -29,8 +29,7 @@ import { ADMIN } from "@/lib/admin-routes";
 
 async function requirePlatformAdmin() {
   const user = await requireUser();
-  const apps = await listUserApps(user.id);
-  if (!apps.includes("admin")) {
+  if (!(await isPlatformAdmin(user))) {
     return { user: null, error: fail("Only a platform admin can change credentials.", "not_permitted") };
   }
   return { user, error: null };

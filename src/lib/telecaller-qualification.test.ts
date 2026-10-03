@@ -93,6 +93,17 @@ async function makeUser(
   return row;
 }
 
+/**
+ * The lead record is a `managerScope` read, and a test names no app on its
+ * request — so the reader's level is asked on the Sales Dashboard. A CRM
+ * manager with no Sales grant is narrowed to their own book there (it used to
+ * answer national for anybody without a region row, the fail-open the scope no
+ * longer has), so the manager reading another person's lead holds Sales too.
+ */
+async function readsLeadsAsManager(userId: string) {
+  await db.insert(appAccess).values({ id: id("aca"), userId, app: "sales", role: "manager" });
+}
+
 /** The Calling desk is a module of its own, granted to a person. */
 async function grantDesk(userId: string) {
   await db
@@ -246,6 +257,7 @@ describe("the creator is the initial owner, and Created By never moves", () => {
     assert.equal(created.length, 1);
     assert.equal(created[0].actorUserId, tele.id);
     setTestUser(mgr);
+    await readsLeadsAsManager(mgr.id);
     assert.equal((await leadRecord(r.data.customerId, DAY))?.createdByName, "Tara Telecaller");
   });
 
@@ -285,6 +297,7 @@ describe("reassignment changes the owner and nothing about who raised the lead",
     assert.equal(r.ok, true, r.ok ? "" : r.error);
     assert.equal((await row(leadId)).ownerId, tele2.id);
 
+    await readsLeadsAsManager(mgr.id);
     assert.equal((await leadRecord(leadId, DAY))?.createdByName, "Tara Telecaller", "the creator does not change");
     const moves = await db
       .select()

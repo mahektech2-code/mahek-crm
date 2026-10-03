@@ -8,7 +8,7 @@ import { asc, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { appAccess, appModuleAccess, employees, erpUserPowers, hrmsUserPowers, users } from "@/db/schema";
 import { APPS, type AppId } from "@/lib/apps";
-import { moduleAllowed, moduleKeysForApp, modulesForApp } from "@/lib/modules";
+import { isAlwaysOpen, moduleAllowed, moduleKeysForApp, modulesForApp } from "@/lib/modules";
 
 /* ---------------------------------------------------------------------------
  * Who can open what, read for the Access screen.
@@ -36,12 +36,18 @@ export type AppGrant = {
   app: AppId;
   appName: string;
   /**
-   * The hat this app is held under. Null means the account's own role, which
-   * is what every grant meant before roles existed and what `app:grant`
-   * writes — the screen shows the account's role there rather than an empty
-   * box, because "inherited" and "unset" look identical and are not.
+   * The level this app is held under, and NEVER null on the way out.
+   *
+   * Null used to mean "the account's own role", which made a grant with no
+   * level the widest thing the person held anywhere — so a CRM manager given
+   * Reports from a terminal was a Reports manager without anybody choosing
+   * that. `0197` wrote every stored null down to what it resolved to, and a
+   * null that still arrives (an older row, a hand-written insert) is read as
+   * an associate's, the same rule `levelInApp` applies. Resolving it HERE
+   * means the dialog seeds its selects with the level the server is actually
+   * enforcing, not with a guess of its own.
    */
-  role: Role | null;
+  role: Role;
   /** Every module of the app, ticked or not — the review table renders this. */
   modules: ModuleGrant[];
   grantedCount: number;
@@ -167,8 +173,7 @@ async function employeeRows(): Promise<EmployeeLite[]> {
 function buildGrants(
   apps: AppId[],
   modulesByApp: Map<AppId, string[]>,
-  roleFor: (app: AppId) => Role | null,
-  accountRole: Role,
+  roleFor: (app: AppId) => Role,
 ): AppGrant[] {
   return APPS.filter((a) => apps.includes(a.id)).map((a) => {
     const stored = modulesByApp.get(a.id) ?? [];
@@ -177,15 +182,19 @@ function buildGrants(
     // once in `moduleAllowed` and shown here rather than re-derived.
     const whole = stored.length === 0;
     const role = roleFor(a.id);
-    /* Asked of `moduleAllowed` with the same level `listUserModules` reads — the
-       grant's own, else the account's — so this screen cannot show a module as
-       withheld that the guard lets an administrator through. */
-    const administrator = (role ?? accountRole) === "admin";
+    /* Asked of `moduleAllowed` with the same level `listUserModules` reads —
+       the grant's own, and nothing else — so this screen cannot show a module
+       as withheld that the guard lets an administrator through. */
+    const administrator = role === "admin";
     const modules: ModuleGrant[] = all.map((m) => ({
       key: m.key,
       label: m.label,
       group: m.group,
-      granted: moduleAllowed(m.key, stored, a.id, administrator),
+      /* An always-open module (HRMS check-in, the ERP's dashboard and
+         settings) is reached by every holder of the app, whatever was ticked
+         — `lib/hrms/access.ts` and `lib/erp/access.ts` add it — so it is
+         shown as held rather than as a withheld box that withholds nothing. */
+      granted: isAlwaysOpen(m.key) || moduleAllowed(m.key, stored, a.id, administrator),
     }));
     return {
       app: a.id,
@@ -236,12 +245,13 @@ export async function listAccess(): Promise<AccessRow[]> {
   for (const p of powerRows) powersByUser.set(p.userId, [...(powersByUser.get(p.userId) ?? []), p.power]);
 
   const appsByUser = new Map<string, AppId[]>();
-  const rolesByUserApp = new Map<string, Role | null>();
+  /* A grant with no level is an associate's — see `AppGrant.role`. */
+  const rolesByUserApp = new Map<string, Role>();
   for (const a of access) {
     const list = appsByUser.get(a.userId) ?? [];
     list.push(a.app as AppId);
     appsByUser.set(a.userId, list);
-    rolesByUserApp.set(`${a.userId}:${a.app}`, (a.role as Role) ?? null);
+    rolesByUserApp.set(`${a.userId}:${a.app}`, (a.role as Role | null) ?? "associate");
   }
 
   const modulesByUser = new Map<string, Map<AppId, string[]>>();
@@ -265,21 +275,18 @@ export async function listAccess(): Promise<AccessRow[]> {
 
   return accounts.map((u) => {
     /*
-     * Every hat, the account's own included: a grant with no role of its own
-     * is held under it, so it is one of the hats this person wears.
+     * Every hat, one per app granted. The account's own level is NOT one: it
+     * is derived from these, and a grant with no level is an associate's.
      *
      * The APP travels with the level now. A conflict is between two apps —
      * the calling book and the ledger desk — and with roles reduced to levels
      * a list of bare roles could no longer express one: "associate and
      * associate" is not a sentence about anything.
      */
-    const heldHats = [
-      { app: null as string | null, role: u.role as Role },
-      ...(appsByUser.get(u.id) ?? []).map((app) => ({
-        app: app as string | null,
-        role: rolesByUserApp.get(`${u.id}:${app}`) ?? (u.role as Role),
-      })),
-    ];
+    const heldHats = (appsByUser.get(u.id) ?? []).map((app) => ({
+      app: app as string | null,
+      role: rolesByUserApp.get(`${u.id}:${app}`) ?? ("associate" as Role),
+    }));
     const heldRoles = [...new Set<Role>(heldHats.map((h) => h.role))];
     /* The link somebody made first, and only then the guess — the same order
        lib/employee-link.ts applies in SQL for the salary figures, said once
@@ -311,8 +318,7 @@ export async function listAccess(): Promise<AccessRow[]> {
       grants: buildGrants(
         appsByUser.get(u.id) ?? [],
         modulesByUser.get(u.id) ?? new Map(),
-        (app) => rolesByUserApp.get(`${u.id}:${app}`) ?? null,
-        u.role as Role,
+        (app) => rolesByUserApp.get(`${u.id}:${app}`) ?? "associate",
       ),
       roles: heldRoles,
       conflicts: conflictsFor(heldHats),

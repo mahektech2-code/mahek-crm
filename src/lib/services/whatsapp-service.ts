@@ -18,7 +18,10 @@ import {
   assertCustomerInScope,
   requireCapability,
   resolveScope,
-  scopedUserIds, scopedToUsers,} from "../access-control";
+  scopedUserIds, scopedToUsers,
+  canFor,
+  NotPermittedError,
+} from "../access-control";
 import { requireUser } from "../auth";
 import { getConfig } from "../config/store";
 import { longDate } from "../format";
@@ -1133,7 +1136,18 @@ export async function listMessages(filters?: MessageFilters) {
  * The manager's watch metric: copied, never confirmed, older than the expiry.
  * Each one is a customer who may or may not have been contacted.
  */
+/**
+ * Copied and never confirmed, past the expiry — the manager's sweep list.
+ *
+ * SCOPED LIKE EVERY OTHER LIST OF MESSAGES. It read the whole company's
+ * unconfirmed copies for anybody the page let through, so a manager of one
+ * team read (and was invited to confirm) another team's sends. It narrows
+ * through `scopedToUsers` on the customer, exactly as `listReplies` beside it
+ * does, which also keeps a trashed lead's messages off it.
+ */
 export async function listUnconfirmedCopies() {
+  const ctx = await resolveScope();
+  const ids = scopedUserIds(ctx.scope);
   const config = await getConfig();
   const cutoff = new Date(
     Date.now() - config["whatsapp.unconfirmedExpiryHours"] * 3_600_000,
@@ -1143,7 +1157,13 @@ export async function listUnconfirmedCopies() {
     .select({ message: waMessages, customerName: customers.name })
     .from(waMessages)
     .innerJoin(customers, eq(customers.id, waMessages.customerId))
-    .where(and(eq(waMessages.status, "copied"), lt(waMessages.copiedAt, cutoff)))
+    .where(
+      and(
+        eq(waMessages.status, "copied"),
+        lt(waMessages.copiedAt, cutoff),
+        scopedToUsers(ids),
+      ),
+    )
     .orderBy(asc(waMessages.copiedAt));
 
   return rows.map(({ message, customerName }) => ({ ...message, customerName }));
@@ -1443,11 +1463,40 @@ export async function findResumableRun(userId: string) {
   return run ? getRun(run.id) : null;
 }
 
+/**
+ * A RUN IS ITS STARTER'S TO DRIVE.
+ *
+ * Pausing, finishing and stepping a run took a run id and nothing else, so any
+ * signed-in person could stop — or mark as completed — somebody else's batch
+ * half way through, and step its messages on. A run is one person working down
+ * a list; the person who started it drives it, and beyond them only somebody
+ * who holds `whatsapp.bulk` — the capability that starts runs at all — may
+ * step in on one, which is a manager clearing a run its owner abandoned.
+ */
+async function requireRunDriver(runId: string) {
+  const user = await requireUser();
+  const [run] = await db.select().from(waRuns).where(eq(waRuns.id, runId));
+  if (!run) return null;
+  if (run.userId !== user.id && !(await canFor(user, "whatsapp.bulk"))) {
+    throw new NotPermittedError("whatsapp.bulk");
+  }
+  return run;
+}
+
 export async function advanceRun(
   runId: string,
   messageId: string,
   outcome: "sent" | "skipped",
 ): Promise<Result> {
+  if (!(await requireRunDriver(runId))) return err("That run no longer exists.", "not_found");
+  /* And the message has to be one of this run's — otherwise stepping a run you
+     drive is a way to confirm or cancel anybody's message by id. */
+  const [msg] = await db
+    .select({ runId: waMessages.runId })
+    .from(waMessages)
+    .where(eq(waMessages.id, messageId));
+  if (!msg || msg.runId !== runId) return err("That message is not part of this run.", "not_found");
+
   const result =
     outcome === "sent" ? await confirmSent(messageId) : await cancelMessage(messageId);
   if (!result.ok) return result;
@@ -1477,6 +1526,7 @@ export async function setRunStatus(
   runId: string,
   status: "active" | "paused" | "cancelled" | "completed",
 ): Promise<Result> {
+  if (!(await requireRunDriver(runId))) return err("That run no longer exists.", "not_found");
   await db
     .update(waRuns)
     .set({
