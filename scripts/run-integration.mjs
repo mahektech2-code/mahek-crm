@@ -84,6 +84,7 @@ const files = [
   "src/lib/credential-issue.test.ts",
   "src/lib/whatsapp-api.test.ts",
   "src/lib/whatsapp-automation.test.ts",
+  "src/lib/wati-backfill.test.ts",
   "src/lib/lead-trash.test.ts",
   "src/lib/change-password.test.ts",
   "src/lib/otp.test.ts",

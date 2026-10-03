@@ -6050,6 +6050,12 @@ export const mbosDevices = pgTable(
     model: text("model"),
     platform: text("platform"),
     appVersion: text("app_version"),
+    /** Any authenticated MBOS request from this device — the handset's heartbeat. */
+    lastRequestAt: timestamp("last_request_at", { withTimezone: true }),
+    /** The last request that carried `x-mbos-app-version`. Null: this build never says. */
+    appVersionReportedAt: timestamp("app_version_reported_at", { withTimezone: true }),
+    /** When `appVersion` last moved to a new value — an upgrade landing. */
+    appVersionChangedAt: timestamp("app_version_changed_at", { withTimezone: true }),
     boundAt: timestamp("bound_at", { withTimezone: true }).notNull().defaultNow(),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
     active: boolean("active").notNull().default(true),

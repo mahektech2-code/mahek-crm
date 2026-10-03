@@ -17,19 +17,15 @@ import { readSecret } from "./secrets";
  * ------------------------------------------------------------------------- */
 
 const DEFAULT_BASE = "https://live-mt-server.wati.io";
-/**
- * Mahek's Wati account. Two calls exist only on the legacy v1 path, which names
- * the tenant — reading a customer's file, and reading a contact's history — and
- * the scoped key does not say which tenant it belongs to. An id names an
- * account; it does not open one, so it is a constant like the HR workbook's id,
- * and `WATI_TENANT_ID` overrides it for a deployment on another account.
- */
-const DEFAULT_TENANT = "10225208";
-
-function tenant(): string {
-  return process.env.WATI_TENANT_ID?.trim() || DEFAULT_TENANT;
-}
 const TIMEOUT_MS = 15_000;
+
+/**
+ * Mahek's Wati ACCOUNT, for the v1 endpoints that are addressed by it. An id
+ * names an account; it does not open one — the key does, and stays a secret —
+ * so it is written here like the HR workbook's id, with `WATI_TENANT_ID` to
+ * point a staging deploy at another account.
+ */
+const WATI_TENANT = process.env.WATI_TENANT_ID?.trim() || "10225208";
 
 export type WatiConfig = { base: string; token: string };
 
@@ -117,7 +113,7 @@ export async function fetchWatiMedia(path: string): Promise<WatiFile> {
   if (!cfg) return { ok: false, status: null, error: "No Wati key is configured." };
   let res: Response;
   try {
-    res = await fetch(`${cfg.base}/${tenant()}/api/v1/getMedia?fileName=${encodeURIComponent(path)}`, {
+    res = await fetch(`${cfg.base}/${WATI_TENANT}/api/v1/getMedia?fileName=${encodeURIComponent(path)}`, {
       headers: { Authorization: `Bearer ${cfg.token}` },
       signal: AbortSignal.timeout(TIMEOUT_MS),
       cache: "no-store",
@@ -131,48 +127,6 @@ export async function fetchWatiMedia(path: string): Promise<WatiFile> {
     bytes: await res.arrayBuffer(),
     contentType: res.headers.get("content-type") ?? "application/octet-stream",
   };
-}
-
-/** One message from a contact's history, as far as a backfill needs it. */
-export type WatiHistoryMessage = {
-  /** Wati's own id — the history does not carry WhatsApp's. */
-  id: string;
-  type: string;
-  data: string | null;
-  /** From them, not us. */
-  inbound: boolean;
-  at: Date;
-};
-
-/**
- * A contact's message history, newest first, up to `pages` pages of 100.
- * Read-only — what the backfill matches old "[image]" rows against.
- */
-export async function watiHistory(waId: string, pages = 3): Promise<WatiHistoryMessage[] | null> {
-  const cfg = await watiConfig();
-  if (!cfg) return null;
-  const out: WatiHistoryMessage[] = [];
-  for (let page = 1; page <= pages; page++) {
-    const r = await call<{ messages?: { items?: Array<Record<string, unknown>> } }>(
-      cfg,
-      `/${tenant()}/api/v1/getMessages/${encodeURIComponent(waId)}?pageSize=100&pageNumber=${page}`,
-    );
-    if (!r.ok) return page === 1 ? null : out;
-    const items = r.data?.messages?.items ?? [];
-    for (const m of items) {
-      const created = typeof m.created === "string" ? new Date(m.created) : null;
-      if (!created || Number.isNaN(created.getTime()) || typeof m.id !== "string") continue;
-      out.push({
-        id: m.id,
-        type: typeof m.type === "string" ? m.type : "",
-        data: typeof m.data === "string" ? m.data : null,
-        inbound: m.owner === false,
-        at: created,
-      });
-    }
-    if (items.length < 100) break;
-  }
-  return out;
 }
 
 /* -------------------------------------------------------------- templates */
@@ -353,6 +307,62 @@ export async function sendWatiText(input: {
     (v): v is string => typeof v === "string" && v.length > 0,
   );
   return { ok: true, providerRef: ref ?? null };
+}
+
+/* -------------------------------------------- reading back what happened */
+
+
+export type WatiContact = { waId: string; name: string | null; lastUpdated: string | null };
+
+/** Every contact the business number has, a page at a time. */
+export async function listWatiContacts(): Promise<{ ok: true; contacts: WatiContact[] } | { ok: false; error: string }> {
+  const cfg = await watiConfig();
+  if (!cfg) return { ok: false, error: "No Wati key is configured." };
+  const out: WatiContact[] = [];
+  for (let page = 1; page <= 100; page++) {
+    const r = await call<{ contact_list?: Array<{ wa_id?: string; name?: string; last_updated?: string }> }>(
+      cfg,
+      `/api/ext/v3/contacts?page_size=100&page_number=${page}`,
+    );
+    if (!r.ok) return { ok: false, error: r.error };
+    const list = r.data?.contact_list ?? [];
+    for (const c of list) {
+      if (c.wa_id) out.push({ waId: c.wa_id, name: c.name?.trim() || null, lastUpdated: c.last_updated ?? null });
+    }
+    if (list.length < 100) break;
+  }
+  return { ok: true, contacts: out };
+}
+
+/** One item of a conversation as Wati's v1 history returns it — only what we read. */
+export type WatiHistoryItem = {
+  id: string;
+  eventType: string;
+  /** False: the customer wrote it. True: we did (an agent in Wati, or MahekOne). */
+  owner?: boolean;
+  type?: string;
+  text?: string | null;
+  created: string;
+  /** WhatsApp's own id — the same one the webhook files a reply under. */
+  whatsappMessageId?: string | null;
+  /** Wati's path to the file, where the message is a photograph, a PDF, a voice note. */
+  data?: string | null;
+};
+
+/** A page of one number's conversation, newest first. */
+export async function watiHistoryPage(
+  waId: string,
+  page: number,
+  pageSize = 100,
+): Promise<{ ok: true; items: WatiHistoryItem[] } | { ok: false; error: string }> {
+  const cfg = await watiConfig();
+  if (!cfg) return { ok: false, error: "No Wati key is configured." };
+  const r = await call<{ messages?: { items?: WatiHistoryItem[] } }>(
+    cfg,
+    `/${WATI_TENANT}/api/v1/getMessages/${encodeURIComponent(waId)}?pageSize=${pageSize}&pageNumber=${page}`,
+  );
+  if (!r.ok) return { ok: false, error: r.error };
+  return { ok: true, items: r.data?.messages?.items ?? [] };
 }
 
 /* ------------------------------------------------------ connection health */

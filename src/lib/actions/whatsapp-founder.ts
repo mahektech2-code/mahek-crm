@@ -26,6 +26,10 @@ import {
 } from "@/lib/services/whatsapp-automation-service";
 import type { RuleStatus, WindowSettings } from "@/lib/whatsapp-rules";
 import { dndHistory, setWhatsappDnd } from "@/lib/services/whatsapp-dnd-service";
+import {
+  backfillWatiReplies,
+  type BackfillSummary,
+} from "@/lib/services/wati-reply-backfill-service";
 
 /* ---------------------------------------------------------------------------
  * The Founder Dashboard's WhatsApp screen — its two writes.
@@ -207,6 +211,21 @@ export async function dndHistoryAction(
   try {
     const rows = await dndHistory(customerId);
     return ok(rows.map((r) => ({ dnd: r.dnd, reason: r.reason, byName: r.changedByName, at: r.at.toISOString() })));
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * Replies from before the webhook, read back from Wati. `dryRun` counts and
+ * writes nothing; the real run is idempotent, so pressing it twice is the
+ * same as pressing it once. The desk check is in the service.
+ */
+export async function backfillWatiRepliesAction(dryRun: boolean): Promise<Result<BackfillSummary>> {
+  try {
+    const r = await backfillWatiReplies({ dryRun: dryRun === true });
+    if (r.ok && !dryRun) refresh();
+    return r;
   } catch (e) {
     return fromThrown(e);
   }

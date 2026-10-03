@@ -37,7 +37,7 @@ import {
   waNumber,
   type WatiEvent,
 } from "../whatsapp-delivery";
-import { isApproved, listWatiTemplates, sendWatiTemplate, watiConfig, watiHistory } from "../wati";
+import { isApproved, listWatiTemplates, sendWatiTemplate, watiConfig, watiHistoryPage } from "../wati";
 import { announceWa } from "../wa-live";
 import { whatsappServiceState } from "./whatsapp-switch-service";
 import { factsFor } from "./wati-facts-service";
@@ -958,16 +958,14 @@ export async function recomputeLastWhatsapp(customerId: string): Promise<void> {
 }
 
 /**
- * One webhook event from Wati, applied. Idempotent: Wati retries, and every
- * status only moves forward (`advancedStatus`), so a repeat changes nothing.
- * Returns what it did, for the route's log line.
+ * WHOSE NUMBER THIS IS — the one rule, read by the webhook and by the import
+ * of replies from before it. Either the WhatsApp number or the phone on the
+ * record; a customer over a lead where both carry it; the most recently
+ * touched where several do. A lead in the trash is filed against nobody: the
+ * message is kept as an unknown number's, where an administrator sees it.
  */
-export async function applyWatiEvent(event: WatiEvent): Promise<string> {
-  if (event.kind === "ignored") return `ignored: ${event.why}`;
-
-  if (event.kind === "reply") {
-    const last10 = event.waId.replace(/\D/g, "").slice(-10);
-    const [match] = await db.execute<{ id: string }>(sql`
+export async function customerIdForNumber(last10: string): Promise<string | null> {
+  const [match] = await db.execute<{ id: string }>(sql`
       select c.id from customers c
       where (right(regexp_replace(coalesce(c.whatsapp_phone, ''), '[^0-9]', '', 'g'), 10) = ${last10}
          or right(regexp_replace(coalesce(c.phone, ''), '[^0-9]', '', 'g'), 10) = ${last10})
@@ -977,6 +975,21 @@ export async function applyWatiEvent(event: WatiEvent): Promise<string> {
       order by (c.kind = 'customer') desc, c.updated_at desc
       limit 1
     `);
+  return match?.id ?? null;
+}
+
+/**
+ * One webhook event from Wati, applied. Idempotent: Wati retries, and every
+ * status only moves forward (`advancedStatus`), so a repeat changes nothing.
+ * Returns what it did, for the route's log line.
+ */
+export async function applyWatiEvent(event: WatiEvent): Promise<string> {
+  if (event.kind === "ignored") return `ignored: ${event.why}`;
+
+  if (event.kind === "reply") {
+    const last10 = event.waId.replace(/\D/g, "").slice(-10);
+    const matchId = await customerIdForNumber(last10);
+    const match = matchId ? { id: matchId } : undefined;
     const inserted = await db
       .insert(waReplies)
       .values({
@@ -1184,11 +1197,16 @@ export async function backfillReplyMedia(sinceDays?: number): Promise<{ found: n
   const WINDOW_MS = 2 * 60_000;
   let found = 0;
   for (const [waId, mine] of byNumber) {
-    const history = await watiHistory(waId);
-    if (!history) continue;
-    const files = history
-      .filter((h) => h.inbound)
-      .map((h) => ({ ...h, media: replyMedia(h.type, h.data) }))
+    const items = [];
+    for (let page = 1; page <= 3; page++) {
+      const r = await watiHistoryPage(waId, page);
+      if (!r.ok) break;
+      items.push(...r.items);
+      if (r.items.length < 100) break;
+    }
+    const files = items
+      .filter((h) => h.owner === false && !Number.isNaN(Date.parse(h.created)))
+      .map((h) => ({ id: h.id, at: new Date(h.created), media: replyMedia(h.type, h.data) }))
       .filter((h) => h.media)
       .sort((a, b) => a.at.getTime() - b.at.getTime());
     const used = new Set<string>();

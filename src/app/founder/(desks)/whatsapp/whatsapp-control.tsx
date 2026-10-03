@@ -21,12 +21,14 @@ import { Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { stamp } from "@/lib/format";
 import {
+  backfillWatiRepliesAction,
   findCustomersAction,
   founderPreviewAction,
   linkWatiTemplateAction,
   setWhatsappServiceAction,
 } from "@/lib/actions/whatsapp-founder";
 import type { MessagePreview } from "@/lib/services/whatsapp-service";
+import type { BackfillSummary } from "@/lib/services/wati-reply-backfill-service";
 import { MessagePreviewView } from "./message-preview";
 import {
   SecretCredentialRow,
@@ -241,6 +243,7 @@ export function WhatsappControl(props: {
             <p className="mt-2 text-[13px] text-danger">Set a key first — the address is made from it.</p>
           )}
         </div>
+        <ReplyBackfill />
       </Card>
 
       {/* -------------------------------------------- replies we could not file */}
@@ -701,5 +704,89 @@ function TryOnCustomer({ templates }: { templates: CrmTemplateRow[] }) {
         </div>
       </div>
     </Card>
+  );
+}
+
+/* ------------------------------------------- replies from before the webhook */
+
+/**
+ * Bring in what customers wrote before the webhook was connected. Preview
+ * first — it counts and writes nothing — then Import. Running it again is
+ * harmless: a reply already here, by the webhook or an earlier run, is
+ * skipped by WhatsApp's own message id.
+ */
+function ReplyBackfill() {
+  const { push } = useToast();
+  const [busy, setBusy] = React.useState<"preview" | "import" | null>(null);
+  const [summary, setSummary] = React.useState<BackfillSummary | null>(null);
+
+  const go = async (dryRun: boolean) => {
+    setBusy(dryRun ? "preview" : "import");
+    try {
+      const r = await backfillWatiRepliesAction(dryRun);
+      if (!r.ok) {
+        push(r.error, "error");
+        return;
+      }
+      setSummary(r.data);
+      push(r.message ?? (dryRun ? "Preview ready" : "Imported"));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="border-t border-divider px-5 py-4">
+      <div className="text-sm font-medium text-ink">Replies from before the webhook</div>
+      <p className="mt-1 text-[13px] text-muted">
+        Customers&rsquo; answers sent before the webhook was connected are only in Wati. This reads
+        every conversation on the business number from the last 90 days and brings in what customers
+        wrote — filed against the customer whose number it is, like any reply. One somebody already
+        answered inside Wati arrives as handled. Nothing is ever brought in twice.
+      </p>
+      <div className="mt-2.5 flex flex-wrap items-center gap-2">
+        <Button size="sm" variant="secondary" disabled={busy !== null} onClick={() => void go(true)}>
+          {busy === "preview" ? "Reading Wati…" : "Preview"}
+        </Button>
+        <Button
+          size="sm"
+          variant="primary"
+          disabled={busy !== null || !summary || !summary.dryRun || summary.imported === 0}
+          title={!summary ? "Preview first, to see what would come in" : undefined}
+          onClick={() => void go(false)}
+        >
+          {busy === "import" ? "Importing…" : summary?.dryRun && summary.imported ? `Import ${summary.imported}` : "Import"}
+        </Button>
+      </div>
+      {summary ? (
+        <div className="mt-3 rounded-[6px] border border-line bg-canvas px-3.5 py-2.5 text-[13px] text-body">
+          <div className="font-medium text-ink">
+            {summary.dryRun
+              ? `${summary.imported} ${summary.imported === 1 ? "reply" : "replies"} would come in`
+              : `${summary.imported} ${summary.imported === 1 ? "reply" : "replies"} brought in`}
+          </div>
+          <div className="mt-1 text-muted">
+            {summary.contacts} conversations read · {summary.found} customer messages in the last 90 days ·{" "}
+            {summary.alreadyHere} already in MahekOne
+          </div>
+          {summary.imported ? (
+            <div className="mt-1 text-muted">
+              {summary.matched} filed against a customer or lead · {summary.unmatched} from numbers on nobody&rsquo;s
+              book · {summary.answeredInWati} already answered in Wati, so arriving as handled
+              {summary.oldest && summary.newest ? ` · ${stamp(summary.oldest)} to ${stamp(summary.newest)}` : ""}
+            </div>
+          ) : null}
+          {summary.failed.length ? (
+            <div className="mt-1 text-danger">
+              {summary.failed.length} {summary.failed.length === 1 ? "conversation" : "conversations"} could not be
+              read: {summary.failed[0].error}
+            </div>
+          ) : null}
+          {!summary.dryRun ? (
+            <div className="mt-1 text-muted">They are in the CRM&rsquo;s WhatsApp → Chats now.</div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
   );
 }

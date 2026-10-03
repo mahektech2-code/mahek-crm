@@ -57,6 +57,7 @@ import { MapsSection, MAPS_SUBTITLE, type MapsData } from "./maps-section";
 import { ComponentsScreen } from "./components-section";
 import { LeadOversightSection } from "./lead-oversight-section";
 import { TrashSection, type TrashFilters as TrashUrlFilters } from "./trash-section";
+import { HandsetsSection } from "./handsets-section";
 
 export type TrashData = { filters: TrashUrlFilters; canRestore: boolean };
 import type { Person } from "@/lib/services/admin-people-service";
@@ -85,6 +86,7 @@ const PLATFORM_NAV = [
   { key: "feedback", label: "Feedback" },
   { key: "voice", label: "Voice" },
   { key: "maps", label: "Maps" },
+  { key: "handsets", label: "Handsets" },
   { key: "components", label: "Components" },
   { key: "oversight", label: "Lead oversight" },
   { key: "trash", label: "Trash" },
@@ -945,6 +947,12 @@ function SectionBody({
      Management sidebar. A way to the screens, not a copy of them. */
   if (section === "oversight") {
     return <LeadOversightSection />;
+  }
+
+  /* Which MBOS build every salesman's phone is running, read live. The API
+     refuses anybody without the admin grant, and the screen says why. */
+  if (section === "handsets") {
+    return <HandsetsSection />;
   }
 
   /* Deleted leads, and the one place they come back from. Administrators
