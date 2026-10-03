@@ -556,7 +556,11 @@ export default function JourneyScreen() {
               <T style={type.h1}>
                 {awaitingRoute
                   ? plural(awaitingRoute.picked, 'shop') + ' picked'
-                  : doneCount + ' of ' + stops.length + ' done'}
+                  : stops.length
+                    ? doneCount + ' of ' + stops.length + ' done'
+                    : /* "0 of 0 done" over "Nothing planned for today" was
+                         a fraction of nothing; the heading says the fact. */
+                      'No route today'}
               </T>
               <T s="small" style={{ color: C.muted, marginTop: 2 }}>
                 {awaitingRoute
