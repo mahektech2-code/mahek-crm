@@ -21,7 +21,13 @@ export function ReplyMedia({
   url,
   pdf,
   caption,
+  onOpen,
 }: {
+  /**
+   * Opens the photograph in the in-page viewer. A Ctrl/⌘/Shift or middle
+   * click still opens it in a new tab, as a link does.
+   */
+  onOpen?: () => void;
   type: string;
   url: string;
   /** Only a PDF is previewed: anything else the route hands over as a download, and previewing that would download it. */
@@ -41,7 +47,18 @@ export function ReplyMedia({
 
   if (type === "image" || type === "sticker") {
     return (
-      <a href={url} target="_blank" rel="noreferrer" title="Open full size" className="block">
+      <a
+        href={url}
+        target="_blank"
+        rel="noreferrer"
+        title="Open full size"
+        className="block cursor-zoom-in"
+        onClick={(e) => {
+          if (!onOpen || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+          e.preventDefault();
+          onOpen();
+        }}
+      >
         {/* A customer's file, served by our own route; next/image would cache a copy. */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
