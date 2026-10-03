@@ -18,6 +18,7 @@ import { pendingCount, queueCounts } from '../src/sync/queue';
 import { savedMaps } from '../src/data/offline-maps';
 import { bookMoney } from '../src/data/customer-account';
 import { isoDate, plural } from '../src/lib/format';
+import { Pop, Stagger } from '../src/components/ui/motion';
 
 /**
  * Everything the four tabs do not carry.
@@ -249,8 +250,13 @@ export default function MoreScreen() {
 
   return (
     <AppFrame title="More" activeTab="more" contentStyle={{ paddingTop: 12, paddingBottom: 24 }}>
-      {GROUPS.map((g) => (
-        <View key={g.label} style={{ marginBottom: 20 }}>
+      {/* The GROUPS settle in one after another, not the rows: thirty rows
+          cascading down a menu is a wait, and five groups is a glance.
+          The rows keep the tint they press with rather than scaling — a
+          full-width row shrinking inside its bordered group pulls away from
+          the edges, which reads as the list coming loose, not as a press. */}
+      {GROUPS.map((g, gi) => (
+        <Stagger key={g.label} index={gi} style={{ marginBottom: 20 }}>
           <SectionLabel style={{ paddingHorizontal: 16, paddingBottom: 8 }}>{g.label}</SectionLabel>
           <View
             style={{
@@ -277,16 +283,20 @@ export default function MoreScreen() {
                   pressed && { backgroundColor: C.wash },
                 ]}>
                 <T style={{ flex: 1, minWidth: 0, fontSize: 15, color: C.ink }}>{i.label}</T>
+                {/* Pops when its count CHANGES — "2 to send" becoming "1 to
+                    send" after a sync is the news this screen exists for. */}
                 {i.badge ? (
-                  <View style={{ backgroundColor: C.warnEdge, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 }}>
-                    <T style={[{ fontSize: 12, color: C.warnInk }, weight(500)]}>{i.badge}</T>
-                  </View>
+                  <Pop trigger={i.badge}>
+                    <View style={{ backgroundColor: C.warnEdge, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 }}>
+                      <T style={[{ fontSize: 12, color: C.warnInk }, weight(500)]}>{i.badge}</T>
+                    </View>
+                  </Pop>
                 ) : null}
                 <Icon name="forward" size={20} color={C.faint} strokeWidth={1.5} />
               </Pressable>
             ))}
           </View>
-        </View>
+        </Stagger>
       ))}
     </AppFrame>
   );

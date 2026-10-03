@@ -6,6 +6,7 @@ import { Badge, Card, ListCard, T } from '../src/components/ui/primitives';
 import { color as C, type, weight, type BadgeTone } from '../src/theme/tokens';
 import { listCourses, type CourseRow } from '../src/data/library';
 import { useStore } from '../src/state/store';
+import { Stagger } from '../src/components/ui/motion';
 
 /**
  * Training, short enough to do between two shops.
@@ -64,42 +65,43 @@ export default function KnowledgeScreen() {
             const isDue = !done && k.mandatory === 1;
             const tone: BadgeTone = done ? 'success' : isDue ? 'amber' : 'neutral';
             return (
-              <Pressable
-                key={k.id}
-                /* A DURATION CANNOT SAY WHETHER THERE IS ANYTHING TO OPEN, and
-                   it was the thing deciding. This chose between "about 20
-                   minutes" and "nothing attached to open" on `minutes`, so a
-                   course with material and no stated length said there was
-                   nothing there, and one with a length and no material said how
-                   long it would take and then did nothing at all.
+              <Stagger key={k.id} index={i}>
+                <Pressable
+                  /* A DURATION CANNOT SAY WHETHER THERE IS ANYTHING TO OPEN, and
+                     it was the thing deciding. This chose between "about 20
+                     minutes" and "nothing attached to open" on `minutes`, so a
+                     course with material and no stated length said there was
+                     nothing there, and one with a length and no material said how
+                     long it would take and then did nothing at all.
 
-                   The handset cannot answer that question either way:
-                   `mbos_courses.attachment_id` exists in the office and is not
-                   on the wire, so there is no file reference on this row to
-                   branch on. Until it is sent, the tap says the one thing that
-                   is true of every row — which is a refusal, and better than a
-                   confident wrong sentence about somebody's training. */
-                onPress={() => notify(k.title + ' cannot be opened on the phone yet.', 'error')}
-                accessibilityRole="button"
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 12,
-                  paddingHorizontal: 16,
-                  paddingVertical: 14,
-                  borderTopWidth: i ? 1 : 0,
-                  borderTopColor: C.wash,
-                }}>
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <T style={[{ fontSize: 15, color: C.ink }, weight(500)]}>{k.title}</T>
-                  <T s="caption">
-                    {[k.kind, k.minutes ? k.minutes + ' min' : null, k.deadline ? 'by ' + k.deadline : null]
-                      .filter(Boolean)
-                      .join(' · ') || 'Course'}
-                  </T>
-                </View>
-                <Badge tone={tone}>{done ? 'Done' : isDue ? 'Due' : 'Not started'}</Badge>
-              </Pressable>
+                     The handset cannot answer that question either way:
+                     `mbos_courses.attachment_id` exists in the office and is not
+                     on the wire, so there is no file reference on this row to
+                     branch on. Until it is sent, the tap says the one thing that
+                     is true of every row — which is a refusal, and better than a
+                     confident wrong sentence about somebody's training. */
+                  onPress={() => notify(k.title + ' cannot be opened on the phone yet.', 'error')}
+                  accessibilityRole="button"
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 12,
+                    paddingHorizontal: 16,
+                    paddingVertical: 14,
+                    borderTopWidth: i ? 1 : 0,
+                    borderTopColor: C.wash,
+                  }}>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <T style={[{ fontSize: 15, color: C.ink }, weight(500)]}>{k.title}</T>
+                    <T s="caption">
+                      {[k.kind, k.minutes ? k.minutes + ' min' : null, k.deadline ? 'by ' + k.deadline : null]
+                        .filter(Boolean)
+                        .join(' · ') || 'Course'}
+                    </T>
+                  </View>
+                  <Badge tone={tone}>{done ? 'Done' : isDue ? 'Due' : 'Not started'}</Badge>
+                </Pressable>
+              </Stagger>
             );
           })}
         </ListCard>

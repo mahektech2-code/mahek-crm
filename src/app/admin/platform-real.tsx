@@ -30,7 +30,6 @@ import type {
   ImportRow,
   Integration,
   JobRow,
-  MigrationRow,
   NotificationRow,
   SessionRow,
   UsageRow,
@@ -54,7 +53,6 @@ export type PlatformData = {
   drift: { rows: DriftRow[]; warnings: string[] };
   jobs: JobRow[];
   imports: ImportRow[];
-  migrations: { applied: MigrationRow[]; pending: number };
   notifications: NotificationRow[];
   sessions: SessionRow[];
   onboarding: Array<{ name: string; email: string | null; createdAt: string; apps: number }>;
@@ -628,52 +626,6 @@ export function ImportsTab({ data }: { data: Pick<PlatformData, "imports"> }) {
         </div>
       )}
     </Card>
-  );
-}
-
-export function MigrationsTab({ data }: { data: Pick<PlatformData, "migrations"> }) {
-  const { applied, pending } = data.migrations;
-  return (
-    <div className="mt-5">
-      <Card className="mb-4 p-5 shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
-        <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-          Schema
-        </div>
-        <div className="mt-1 text-[28px] leading-9 font-semibold text-ink">
-          {pending === 0 ? "Up to date" : `${pending} behind`}
-        </div>
-        <div className="text-[13px] text-muted">
-          {applied.length
-            ? `${applied.length} of the most recent migrations are listed below.`
-            : "This database has no migration record."}
-          {pending > 0
-            ? " A deploy runs the outstanding ones; until then some columns this build expects may not exist."
-            : ""}
-        </div>
-      </Card>
-
-      <Card className="overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
-        <CardHeader title="Applied migrations" hint="Newest first, from Drizzle's own record." />
-        <div className="overflow-auto">
-          <table className="[&_td]:whitespace-nowrap">
-            <thead>
-              <tr>
-                <Th>Hash</Th>
-                <Th>Applied</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {applied.map((m, i) => (
-                <Tr key={m.tag} className={i % 2 ? "bg-canvas" : ""}>
-                  <Td className="font-mono text-ink">{m.tag}</Td>
-                  <Td>{stamp(m.appliedAt)}</Td>
-                </Tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Card>
-    </div>
   );
 }
 

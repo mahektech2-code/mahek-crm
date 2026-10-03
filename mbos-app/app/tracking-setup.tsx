@@ -24,6 +24,8 @@ import { batteryExemption } from '../src/native/phone-setup';
 import type { BatteryExemption } from '../src/engines/phone-readiness';
 import { useStore } from '../src/state/store';
 import { color as C, radius, weight } from '../src/theme/tokens';
+import { Pop, Swap } from '../src/components/ui/motion';
+import { feedback } from '../src/components/ui/feedback';
 
 /**
  * KEEPING THE ROUTE RECORDING WHEN THE PHONE IS IN A POCKET.
@@ -127,6 +129,18 @@ export default function TrackingSetupScreen() {
     }
   };
 
+  /*
+   * The battery step turning green under his thumb is the one completion this
+   * screen can actually SEE — autostart is unreadable — so it is the one that
+   * buzzes. Only on the change: a phone already exempt when the screen opened
+   * has done nothing just now. The previous answer is kept by the effect.
+   */
+  const wasExempt = React.useRef<BatteryExemption | null>(null);
+  React.useEffect(() => {
+    if (wasExempt.current === 'optimised' && exemption === 'exempt') feedback('success');
+    if (exemption !== 'unknown') wasExempt.current = exemption;
+  }, [exemption]);
+
   const verdict: TrackingVerdict = trackingVerdict({ capture, exemption, canRestart: canRestart() });
 
   /*
@@ -175,6 +189,8 @@ export default function TrackingSetupScreen() {
       {steps.map((step, i) => (
         <Card key={step.key} style={{ marginTop: 12, gap: 8 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            {/* Fills with a pop once the screen has been opened for him. */}
+            <Pop trigger={!!opened[step.key]}>
             <View
               style={{
                 width: 24,
@@ -188,6 +204,7 @@ export default function TrackingSetupScreen() {
                 {i + 1}
               </T>
             </View>
+            </Pop>
             <T style={[{ fontSize: 15, color: C.ink, flex: 1 }, weight(600)]}>{step.title}</T>
           </View>
 
@@ -212,6 +229,7 @@ export default function TrackingSetupScreen() {
               still unreadable and still matters — so it states only what was
               asked and what the phone said back. */}
           {step.grantable && exemption !== 'unknown' ? (
+            <Swap id={exemption}>
             <T
               style={{
                 fontSize: 13,
@@ -222,6 +240,7 @@ export default function TrackingSetupScreen() {
                 ? 'Battery saving is off for MahekOne. This step is done.'
                 : 'Battery saving is still on for MahekOne. It can stop your route at any time. Tap Allow it.'}
             </T>
+            </Swap>
           ) : null}
 
           {opened[step.key] && !step.grantable ? (
@@ -256,6 +275,9 @@ export default function TrackingSetupScreen() {
           backgroundColor: C.surface,
           gap: 8,
         }}>
+        {/* The verdict is re-read on every return from Settings; a new one
+            settles in where the old one stood. */}
+        <Swap id={verdict.title} style={{ gap: 8 }}>
         <T
           style={[
             { fontSize: 15, color: verdict.tone === 'act' ? C.danger : C.ink },
@@ -264,6 +286,7 @@ export default function TrackingSetupScreen() {
           {verdict.title}
         </T>
         <T style={{ fontSize: 14, lineHeight: 20, color: C.body }}>{verdict.detail}</T>
+        </Swap>
 
         {verdict.action === 'restart_app' ? (
           <PrimaryButton

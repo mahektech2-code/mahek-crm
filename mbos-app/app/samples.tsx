@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Pressable } from 'react-native';
+import { Animated, View } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Badge, Card, Choice, DashedButton, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../src/components/ui/primitives';
@@ -24,6 +24,7 @@ import { getCustomer, listCustomersPage, searchProducts, type Customer } from '.
 import { isoDate, plural } from '../src/lib/format';
 import { type CodedOption } from '../src/engines/funnel';
 import { useStore } from '../src/state/store';
+import { PressableScale, Pop, Presence, Stagger, animateLayoutFor, useShake } from '../src/components/ui/motion';
 import { skuLines } from '../src/lib/sku-lines';
 
 /**
@@ -189,13 +190,21 @@ export default function SamplesScreen() {
           <Choice
             label={'Needs follow-up · ' + open.length}
             selected={view === 'open'}
-            onPress={() => setView('open')}
+            onPress={() => {
+              /* Narrowing to what is owed takes the finished ones out of the
+                 middle of the list; they fade and the rest close up. */
+              if (view !== 'open') animateLayoutFor(rows.length);
+              setView('open');
+            }}
             style={{ flex: 1 }}
           />
           <Choice
             label={'All · ' + rows.length}
             selected={view === 'all'}
-            onPress={() => setView('all')}
+            onPress={() => {
+              if (view !== 'all') animateLayoutFor(rows.length);
+              setView('all');
+            }}
             style={{ flex: 1 }}
           />
         </View>
@@ -228,7 +237,7 @@ export default function SamplesScreen() {
       ) : null}
 
       <View style={{ gap: 12, marginTop: 16 }}>
-        {shown.map((x) => {
+        {shown.map((x, i) => {
           const days = Math.max(0, Math.round((now - x.requestedAt) / 86_400_000));
           const name = names[x.customerId] ?? 'Unknown shop';
           const owed = whatIsOwed(x);
@@ -248,8 +257,8 @@ export default function SamplesScreen() {
            * tab is still there for reading.
            */
           return (
-            <Pressable
-              key={x.id}
+            <Stagger key={x.id} index={i}>
+            <PressableScale
               onPress={() => router.push(`/sample?id=${x.id}&from=samples`)}
               accessibilityRole="button">
               <Card style={isSampleOverdue(x, today) ? { borderLeftWidth: 3, borderLeftColor: C.danger } : undefined}>
@@ -260,7 +269,11 @@ export default function SamplesScreen() {
                       {[skuText(x.sku), x.productName, x.cans ? plural(x.cans, 'can') : null].filter(Boolean).join(' · ')}
                     </T>
                   </View>
-                  <Badge tone={toneFor(x.state)}>{x.state}</Badge>
+                  {/* Pops when the office moves it on — dispatched, received —
+                      which reaches this list on a pull while it is open. */}
+                  <Pop trigger={x.state}>
+                    <Badge tone={toneFor(x.state)}>{x.state}</Badge>
+                  </Pop>
                 </View>
 
                 {owed ? (
@@ -304,7 +317,8 @@ export default function SamplesScreen() {
                   </T>
                 ) : null}
               </Card>
-            </Pressable>
+            </PressableScale>
+            </Stagger>
           );
         })}
       </View>
@@ -320,7 +334,7 @@ export default function SamplesScreen() {
         onPickShop={setPicked}
         onClose={() => setAskOpen(false)}
         onSubmit={async (form) => {
-          if (!picked) return notify('Which shop is the trial for?', 'error');
+          if (!picked) return notify('Which shop is the trial for?', 'warn');
           const r = await requestLeadSample({
             customerId: picked.id,
             leadId: params.lead ?? null,
@@ -421,16 +435,24 @@ function RequestSheet({
     };
   }, [locked, shopQuery]);
 
+  /* A refusal shakes the box that says it and buzzes `warning`: on a sheet
+     this long the box can sit below the fold, and the buzz is what says look. */
+  const refusal = useShake('warning');
+  const refuse = (message: string) => {
+    setErr(message);
+    refusal.shake();
+  };
+
   const submit = async () => {
     /* The sheet closes only once the write returns, so a second tap on a slow
        phone raised a second sample request — and a second approval behind it —
        for one trial. Only one of the two would ever be chased. */
     if (saving) return;
-    if (!shop) return setErr('Which shop is the trial for?');
-    if (!product) return setErr('Which product is the sample for?');
-    if (!(Number(cans) > 0)) return setErr('How many cans?');
-    if (!application.trim()) return setErr('What will they use it on? This is needed.');
-    if (!reasonCode) return setErr('Say why they want a trial.');
+    if (!shop) return refuse('Which shop is the trial for?');
+    if (!product) return refuse('Which product is the sample for?');
+    if (!(Number(cans) > 0)) return refuse('How many cans?');
+    if (!application.trim()) return refuse('What will they use it on? This is needed.');
+    if (!reasonCode) return refuse('Say why they want a trial.');
     setSaving(true);
     try {
       await onSubmit({
@@ -566,11 +588,12 @@ function RequestSheet({
         </View>
       </View>
 
-      {err ? (
-        <View style={{ marginTop: 12, backgroundColor: C.dangerBg, borderRadius: radius.lg, padding: 12 }}>
+      <Presence show={!!err}>
+        <Animated.View
+          style={[{ marginTop: 12, backgroundColor: C.dangerBg, borderRadius: radius.lg, padding: 12 }, refusal.style]}>
           <T style={[{ fontSize: 14, lineHeight: 20, color: C.danger }, weight(500)]}>{err}</T>
-        </View>
-      ) : null}
+        </Animated.View>
+      </Presence>
 
       <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
         <SecondaryButton label="Cancel" onPress={onClose} style={{ flex: 1, borderRadius: radius.xl }} />

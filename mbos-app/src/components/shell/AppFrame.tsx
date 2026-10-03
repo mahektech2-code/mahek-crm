@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Pressable, Platform, ScrollView, StyleSheet } from 'react-native';
+import { View, Text, Pressable, Platform, RefreshControl, ScrollView, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams, usePathname } from 'expo-router';
 import { color as C, HIT, type, weight } from '../../theme/tokens';
@@ -8,12 +8,14 @@ import { ActionSheet, ConfirmSheet, Toast } from '../ui/overlays';
 import { Icon } from '../ui/Icon';
 import { useKeyboardHeight, useRevealFocusedField } from '../ui/keyboard';
 import { useTicker } from '../ui/use-ticker';
-import { Appear } from '../ui/motion';
-import { useCustomer, useDaysToAgreeCount, usePendingCount, useStore, useUnreadCount } from '../../state/store';
+import { Appear, Presence } from '../ui/motion';
+import { feedback } from '../ui/feedback';
+import { useCustomer, useDaysToAgreeCount, usePendingCount, useStore, useUnreadCountOrNull } from '../../state/store';
 import { TravelGate } from './TravelGate';
 import { refreshEverything } from '../../native/refresh';
 import { useBoot } from '../../state/boot';
-import { todayRow } from '../../data/attendance';
+import { dayState, workedMs, workedLabel, type Session } from '../../data/attendance';
+import { punchOutDue } from '../../engines/punch-out';
 import { hhmm, plural } from '../../lib/format';
 import { elapsedLabel } from '../../lib/visit';
 import { gpsVerdict, type GpsHealth } from '../../engines/gps-health';
@@ -195,10 +197,12 @@ export function AppFrame({
   const keyboardHeight = useKeyboardHeight();
   const reveal = useRevealFocusedField(keyboardHeight);
   const [footerHeight, setFooterHeight] = React.useState(0);
-  const unread = useUnreadCount();
+  const unreadOrNull = useUnreadCountOrNull();
+  const unread = unreadOrNull ?? 0;
   const waiting = usePendingCount();
   const daysToAgree = useDaysToAgreeCount();
-  const checkInAt = useCheckInTime();
+  const clock = useDayClock();
+  const checkInAt = clock.checkInAt;
   const checkedIn = checkInAt != null;
   /* From the radio, not from `store.gps` — see `useGpsHealth` above, and
      `engines/gps-health.ts` for why that field cannot answer this question. */
@@ -222,12 +226,18 @@ export function AppFrame({
 
   /* The top-bar refresh. A new version wins the screen; otherwise the toast
      says what the sync did, so the press is never silent. */
-  const refresh = React.useCallback(async () => {
+  const refresh = React.useCallback(async (opts: { offerUpdates?: boolean } = {}) => {
     setRefreshing(true);
     try {
       const verdict = await refreshEverything();
-      if (verdict.offer) offerUpdate(verdict.offer);
-      else notify(verdict.summary);
+      /* Only the BUTTON may raise the update prompt. A pull can happen by
+         accident at the top of a half-filled order form, and a modal asking to
+         restart the app is the last thing that should land on it then. */
+      if (verdict.offer && opts.offerUpdates !== false) offerUpdate(verdict.offer);
+      /* A note, not a confirmation: the summary is as often "No signal" or
+         "3 entries were not accepted" as it is good news, and a success buzz
+         on either would say the opposite of the sentence. */
+      else notify(verdict.summary, 'info');
     } finally {
       setRefreshing(false);
     }
@@ -342,7 +352,23 @@ export function AppFrame({
       keyboardShouldPersistTaps="handled"
       keyboardDismissMode="interactive"
       automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
-      showsVerticalScrollIndicator={false}>
+      showsVerticalScrollIndicator={false}
+      /* PULL DOWN TO REFRESH runs the same thing as the header's refresh
+         button — send, fetch, look for a new version — because pulling a list
+         down is the gesture every phone has taught people for "get me the
+         latest", and the button in the corner is the one they never find. */
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={() => {
+            feedback('tap');
+            void refresh({ offerUpdates: false });
+          }}
+          colors={[C.primary]}
+          tintColor={C.primary}
+          progressBackgroundColor={C.surface}
+        />
+      }>
       {/* The quieter half of the transition: the screen has arrived, and this
           is it settling. It also covers the frame or two where SQLite has not
           answered yet, so data reads as arriving rather than popping in. */}
@@ -361,6 +387,7 @@ export function AppFrame({
           title={title}
           onBack={onBack}
           unread={unread}
+          unreadLoaded={unreadOrNull !== null}
           onRefresh={() => void refresh()}
           refreshing={refreshing}
           /* No bell on the notifications screen. A control whose whole job is
@@ -382,6 +409,10 @@ export function AppFrame({
         rather than something to dismiss. Hidden on the visit screen itself,
         where the same question is already the whole page.
       */}
+      {/* Each of these three bars rises into place and sinks out of it rather
+          than blinking — a bar that appears in one frame over the bottom of a
+          list reads as the list being cut off. */}
+      <Presence show={!!arrival && arrival.checkedInAt == null && here !== 'visit'} distance={12}>
       {arrival && arrival.checkedInAt == null && here !== 'visit' ? (
         <ArrivedBar
           name={arrival.customerName}
@@ -392,6 +423,7 @@ export function AppFrame({
           }}
         />
       ) : null}
+      </Presence>
 
       {/*
         AND ONCE HE IS INSIDE, THE VISIT FOLLOWS HIM TOO.
@@ -402,6 +434,7 @@ export function AppFrame({
         the app, or whether Android reaped it, can stop it. Tapping the bar is
         the way back to the check-out.
       */}
+      <Presence show={!!arrival && arrival.checkedInAt != null && here !== 'visit'} distance={12}>
       {arrival && arrival.checkedInAt != null && here !== 'visit' ? (
         <InVisitBar
           name={arrival.customerName}
@@ -413,6 +446,26 @@ export function AppFrame({
           }}
         />
       ) : null}
+      </Presence>
+
+      {/*
+        AND IN THE EVENING, THE DAY FOLLOWS HIM.
+        Punching out was a button on Home and nowhere else, and the end of a
+        day is spent on the visit, journey and close-the-day screens — so the
+        one control that decides his hours was on the one screen he was not
+        looking at. From the prompt hour on, while a session is open, it is on
+        every screen. A visit still open wins: he has to check out of the shop
+        before he can close the day, and two bars would be two questions. Not
+        on Home, where the same question is already the main button.
+      */}
+      <Presence show={clock.due && !arrival && here !== 'home'} distance={12}>
+        {clock.due && !arrival && here !== 'home' ? (
+          <PunchOutBar
+            sessions={clock.sessions}
+            onPress={() => router.replace('/home?punchOut=1')}
+          />
+        ) : null}
+      </Presence>
 
       {/* Measured rather than guessed, so the toast can sit above whatever the
           screen pinned here — see `Toast`. A screen with no footer measures 0
@@ -464,7 +517,10 @@ export function AppFrame({
           if (!confirm) return;
           const r = confirmReason.trim();
           /* A reason that was asked for and not given stops the action, not the dialog. */
-          if (confirm.reasonLabel && !r) return set({ confirmErr: true });
+          if (confirm.reasonLabel && !r) {
+            feedback('warning');
+            return set({ confirmErr: true });
+          }
           confirm.run(r);
           closeConfirm();
         }}
@@ -570,16 +626,61 @@ function InVisitBar({
 }
 
 /**
- * When the day started, from the attendance row rather than from a flag.
+ * "On the clock · 9h 40m — Punch out." The open day, on every screen, in the
+ * evening.
  *
- * The strip is on every screen including the ones opened after a restart, so a
- * boolean held in memory would read "Not checked in" to somebody who has been
- * working since nine.
+ * Amber rather than the primary blue the visit bars use: those say where he
+ * is, which is ordinary; this says something is left undone at the end of the
+ * day, and the colour is what separates the two at a glance on a bike.
  */
-function useCheckInTime(): number | null {
+function PunchOutBar({ sessions, onPress }: { sessions: Session[]; onPress: () => void }) {
+  const now = useTicker(60_000);
+  const worked = workedLabel(workedMs(sessions, now), false);
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`You are still punched in, ${worked}. Punch out to close your day.`}
+      style={({ pressed }) => ({
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        minHeight: HIT,
+        paddingHorizontal: 16,
+        paddingVertical: 10,
+        backgroundColor: pressed ? C.warnInk : C.warn,
+      })}>
+      <Icon name="camera" size={18} color="#FFFFFF" strokeWidth={1.8} />
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text numberOfLines={1} style={[{ fontSize: 14, color: '#FFFFFF' }, weight(600)]}>
+          Still punched in
+        </Text>
+        <Text numberOfLines={1} style={{ fontSize: 12, lineHeight: 16, color: 'rgba(255,255,255,0.9)' }}>
+          {worked + ' · done for the day?'}
+        </Text>
+      </View>
+      <Text style={[{ fontSize: 14, color: '#FFFFFF' }, weight(600)]}>Punch out</Text>
+    </Pressable>
+  );
+}
+
+/**
+ * The day as the frame needs it: when it started, whether a session is open,
+ * and whether it is late enough to ask for the punch-out.
+ *
+ * From the attendance row rather than from a flag. The strip is on every
+ * screen including the ones opened after a restart, so a boolean held in
+ * memory would read "Not checked in" to somebody who has been working since
+ * nine — and the punch-out bar would never appear for him at all.
+ */
+function useDayClock(): { checkInAt: number | null; sessions: Session[]; due: boolean } {
   const boot = useBoot();
   const userId = boot.session?.user.id ?? null;
-  const [at, setAt] = React.useState<number | null>(null);
+  const [state, setState] = React.useState<{ checkInAt: number | null; sessions: Session[]; due: boolean }>({
+    checkInAt: null,
+    sessions: [],
+    due: false,
+  });
 
   React.useEffect(() => {
     let live = true;
@@ -587,9 +688,17 @@ function useCheckInTime(): number | null {
        frame is unmounted the moment somebody signs out. */
     if (!userId) return;
     const tick = () => {
-      void todayRow(userId).then((row) => {
-        if (live) setAt(row?.checkInAt ?? null);
-      });
+      void Promise.all([dayState(userId), getConfig<number>('mbos.attendance.punchOutPromptHour', 18)])
+        .then(([day, promptHour]) => {
+          if (!live) return;
+          setState({
+            checkInAt: day.firstInAt,
+            sessions: day.sessions,
+            due: punchOutDue({ running: day.running, nowMs: Date.now(), promptHour }),
+          });
+        })
+        /* A status read may not break a screen; the next tick tries again. */
+        .catch(() => {});
     };
     tick();
     const t = setInterval(tick, 10_000);
@@ -599,7 +708,7 @@ function useCheckInTime(): number | null {
     };
   }, [userId]);
 
-  return at;
+  return state;
 }
 
 

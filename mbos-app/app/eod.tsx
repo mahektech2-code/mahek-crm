@@ -1,6 +1,6 @@
 import React from 'react';
 import { View } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Badge, Card, Divider, Input, Field, PrimaryButton, T } from '../src/components/ui/primitives';
@@ -8,8 +8,10 @@ import { ConfirmSheet } from '../src/components/ui/overlays';
 import { useBoot } from '../src/state/boot';
 import { useStore } from '../src/state/store';
 import { inrFromPaise, isoDate } from '../src/lib/format';
-import { color as C, weight, tabular } from '../src/theme/tokens';
+import { CountUp, Stagger, Swap } from '../src/components/ui/motion';
+import { color as C, weight, tabular, type as typeScale } from '../src/theme/tokens';
 import { priceDay, submitDay } from '../src/data/travel';
+import { dayState } from '../src/data/attendance';
 
 /**
  * Closing the day.
@@ -30,6 +32,7 @@ export default function EodScreen() {
   const back = useCameFrom('day');
   const boot = useBoot();
   const notify = useStore((s) => s.notify);
+  const askConfirm = useStore((s) => s.askConfirm);
   const userId = boot.session?.user.id ?? '';
   /* ONE reading of the clock for the life of the screen. Read in the component
      body it re-derived on every render, so a day that rolled over while the
@@ -94,6 +97,30 @@ export default function EodScreen() {
       if (!r.ok) return notify(r.reason ?? 'Not sent. Try again.', 'error');
       notify('Sent to the office.');
       load();
+      /*
+       * SENDING THE DAY IN FEELS LIKE THE END OF IT, AND IT IS NOT. This is
+       * the last thing he does in the evening, and the punch-out that decides
+       * his hours was a button on a different screen — so he sent the claim,
+       * put the phone away, and the day was closed overnight by the system
+       * with no closing photo. Asked here, at the moment he already feels
+       * done. Only while a session is open; the answer goes through Home's own
+       * punch-out, so there is one way to close a day and it asks for the
+       * same photograph wherever it starts.
+       */
+      try {
+        const state = await dayState(userId);
+        if (state.running) {
+          askConfirm({
+            title: 'Punch out too?',
+            body: 'Your day is sent, but you are still punched in. Punch out now so today’s hours stop here.',
+            confirmLabel: 'Punch out · photo',
+            run: () => router.replace('/home?punchOut=1'),
+          });
+        }
+      } catch {
+        /* The claim is sent; a prompt that could not be worked out is not a
+           failure of anything he did. Home still has the button. */
+      }
     } finally {
       sending.current = false;
       setBusy(false);
@@ -171,9 +198,16 @@ export default function EodScreen() {
                 </View>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 6 }}>
                   <T s="small" style={{ color: C.muted }}>The policy allows</T>
-                  <T style={[{ fontSize: 22, color: C.ink }, weight(600), tabular]}>
-                    {inrFromPaise(c.totalEligiblePaise)}
-                  </T>
+                  {/* The figure the whole screen is checked against. It counts
+                      up when the day is priced so the total reads as the sum
+                      of the lines above it arriving, and counts again if a
+                      revisit re-prices it — not from zero, which would make
+                      every visit look like a fresh calculation. */}
+                  <CountUp
+                    value={c.totalEligiblePaise}
+                    format={(n) => inrFromPaise(Math.round(n))}
+                    style={[typeScale.body, { fontSize: 22, color: C.ink }, weight(600), tabular]}
+                  />
                 </View>
 
                 {/* Requirement 41, said here rather than left for month end. */}
@@ -197,6 +231,7 @@ export default function EodScreen() {
           {/* The meals he did NOT earn, and why. Silence here is what makes
               somebody think the app lost their breakfast. */}
           {c && c.meals.some((m) => !m.earned) ? (
+            <Stagger index={1}>
             <Card style={{ marginTop: 10 }}>
               <T style={[{ fontSize: 14, color: C.ink }, weight(600)]}>Meals not paid today</T>
               {c.meals
@@ -207,9 +242,11 @@ export default function EodScreen() {
                   </T>
                 ))}
             </Card>
+            </Stagger>
           ) : null}
 
           {c && c.exceptions.length ? (
+            <Stagger index={2}>
             <Card style={{ marginTop: 10 }}>
               <T style={[{ fontSize: 14, color: C.ink }, weight(600)]}>Your manager will see</T>
               {c.exceptions.map((e, i) => (
@@ -221,8 +258,13 @@ export default function EodScreen() {
                 </View>
               ))}
             </Card>
+            </Stagger>
           ) : null}
 
+          {/* Sending turns the form into the locked notice in the same place —
+              one state replacing another, so it reads as the day closing
+              rather than as the form vanishing. The toast already buzzes. */}
+          <Swap id={locked ? 'locked' : 'open'}>
           {locked ? (
             <Card style={{ marginTop: 12, backgroundColor: C.warnBg }}>
               <T s="small" style={{ color: C.ink }}>
@@ -247,6 +289,7 @@ export default function EodScreen() {
               />
             </>
           )}
+          </Swap>
         </>
       )}
 

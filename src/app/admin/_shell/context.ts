@@ -7,6 +7,7 @@ import { listUserApps } from "@/lib/access";
 import { canFor, isPlatformAdmin as holdsPlatformAdmin } from "@/lib/access-control";
 import { ADMIN } from "@/lib/admin-routes";
 import { SETTINGS_PAGES, type SettingsPage } from "@/lib/config/settings-pages";
+import { isConsoleConfirmed, keepConsoleConfirmed } from "@/lib/console-confirm";
 
 /* ---------------------------------------------------------------------------
  * Who is looking at the console, worked out once per request.
@@ -46,6 +47,12 @@ export const adminContext = cache(async (): Promise<AdminContext> => {
   );
 
   if (!isPlatformAdmin && settingsPages.length === 0) redirect("/apps");
+
+  /* The password, again: see `lib/console-confirm.ts`. Asked after the access
+     check, so somebody with no console at all is sent to their apps rather
+     than asked for a password that would open nothing. */
+  if (!(await isConsoleConfirmed())) redirect("/login/confirm?next=/admin");
+  await keepConsoleConfirmed();
 
   return {
     user,

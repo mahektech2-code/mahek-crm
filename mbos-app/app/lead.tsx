@@ -1,5 +1,5 @@
 import React from 'react';
-import { Image, View, Pressable, ScrollView } from 'react-native';
+import { Animated, Image, View, Pressable, ScrollView } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Badge, Card, Choice, DashedButton, Divider, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../src/components/ui/primitives';
@@ -67,6 +67,8 @@ import {
 } from '../src/engines/funnel';
 import { dmy, inrFromPaise, isoDate, plural, pretty } from '../src/lib/format';
 import { useStore } from '../src/state/store';
+import { Appear, FillBar, Pop, Presence, Stagger, useShake } from '../src/components/ui/motion';
+import { feedback } from '../src/components/ui/feedback';
 
 /**
  * One lead, on its own ladder.
@@ -154,6 +156,23 @@ export default function LeadRecord() {
   const [returning, setReturning] = React.useState(false);
 
   /*
+   * THE LADDER MOVES WHEN HE MOVES IT, and only then.
+   *
+   * `moves` counts the rungs climbed from THIS screen. The rung he is standing
+   * on is drawn inside a `Pop` that pops on mount only once he has moved —
+   * opening a record half way up a ladder is not news, reaching the rung is.
+   * A counter rather than a "just moved" flag, so nothing has to reset it.
+   */
+  const [moves, setMoves] = React.useState(0);
+  /* The rung above, refused. The buzz is the shake's own: the sentence it
+     answers with is the rung's description, an `info` toast that does not buzz,
+     and the list of what is missing sits directly under the chips. */
+  const rungRefusal = useShake('warning');
+  /* Each refused tap re-pops the "still to do" card, which is what ties a
+     shaking chip to the list that explains it. */
+  const [refusals, setRefusals] = React.useState(0);
+
+  /*
    * PARKING IS THREE QUESTIONS AND THEY ARE ASKED ONE AT A TIME.
    *
    * Why it stopped, the day it comes back, and what happens when it does —
@@ -239,6 +258,17 @@ export default function LeadRecord() {
 
   useFocusEffect(load);
 
+  /* §4 — the decision screen REPLACES the record, so arriving on it is a
+     refusal of everything else on the lead, said once as a buzz. Fired from an
+     effect on the transition rather than on every render, and only once per
+     time the screen takes over. */
+  const mustDecideNow = Boolean(view?.mustDecide);
+  const buzzedDecide = React.useRef(false);
+  React.useEffect(() => {
+    if (mustDecideNow && !buzzedDecide.current) feedback('warning');
+    buzzedDecide.current = mustDecideNow;
+  }, [mustDecideNow]);
+
   if (!view) {
     return (
       <AppFrame title="Lead" activeTab={null} onBack={back.go} contentStyle={{ padding: 16, paddingBottom: 24 }}>
@@ -311,6 +341,7 @@ export default function LeadRecord() {
       <AppFrame title="Lead" activeTab={null} onBack={back.go} contentStyle={{ padding: 16, paddingBottom: 24 }}>
         <BackLink label={back.label} onPress={back.go} />
 
+        <Appear>
         <Card>
           <T style={[{ fontSize: 19, lineHeight: 25, color: C.ink }, weight(600)]}>{title}</T>
           <T s="caption" style={{ marginTop: 2 }}>
@@ -338,6 +369,7 @@ export default function LeadRecord() {
             style={{ marginTop: 10 }}
           />
         </Card>
+        </Appear>
 
         {suspectSheet()}
       </AppFrame>
@@ -348,14 +380,17 @@ export default function LeadRecord() {
 
   const move = async (to: LeadStage) => {
     const r = await advanceStage(lead.id, to);
-    if (!r.ok) return notify(r.message);
+    if (!r.ok) return notify(r.message, 'warn');
+    /* Counted before the reload lands, so the rung that mounts under the new
+       stage pops. The `success` toast below is the buzz; none is added. */
+    setMoves((m) => m + 1);
     load();
     notify(stageLabel(to));
   };
 
   const saveNote = async () => {
     const r = await addLeadNote(lead.id, note);
-    if (!r.ok) return notify(r.message);
+    if (!r.ok) return notify(r.message, 'warn');
     setNote('');
     load();
     notify('Noted');
@@ -368,7 +403,7 @@ export default function LeadRecord() {
       confirmLabel: 'Convert',
       run: () => {
         void convertToCustomer(lead, today).then((r) => {
-          if (!r.ok) return notify(r.message);
+          if (!r.ok) return notify(r.message, 'warn');
           notify('Customer added · ' + title);
           set({ custId: r.value, pTab: 0 });
           router.push('/customer');
@@ -445,7 +480,7 @@ export default function LeadRecord() {
                 accessibilityLabel={'Call ' + title}
                 onPress={() => {
                   void callNumber(lead.mobile!).then((out) => {
-                    if (out.status === 'failed') return notify(out.reason);
+                    if (out.status === 'failed') return notify(out.reason, 'warn');
                     /* The clock moves on the ATTEMPT, not on a connected call:
                        the handset cannot tell us whether they picked up, and
                        treating an unanswered ring as no work would age exactly
@@ -589,16 +624,59 @@ export default function LeadRecord() {
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={{ gap: 8, paddingVertical: 2, paddingRight: 8 }}
             style={{ marginHorizontal: -16, paddingHorizontal: 16 }}>
-            {ladder.map((rung) => (
-              <Choice
-                key={rung}
-                label={stageLabel(rung)}
-                selected={rung === stage}
-                onPress={() => notify(stageSentence(rung))}
-                style={{ paddingHorizontal: 14 }}
-              />
-            ))}
+            {ladder.map((rung) => {
+              const chip = (
+                <Choice
+                  label={stageLabel(rung)}
+                  selected={rung === stage}
+                  onPress={() => {
+                    /* The rung above, shut: the chip shakes its head and the
+                       list under the button pops, so "why not" is answered
+                       where he is looking. The sentence is the same one any
+                       other rung gives, as a note rather than a tick. */
+                    if (rung === next && !gate.open) {
+                      rungRefusal.shake();
+                      setRefusals((n) => n + 1);
+                    }
+                    notify(stageSentence(rung), 'info');
+                  }}
+                  style={{ paddingHorizontal: 14 }}
+                />
+              );
+              /* Three shapes for three facts, keyed by rung so swapping the
+                 wrapper is a remount: the rung he is on pops when he has just
+                 reached it, the shut rung above can shake, every other rung
+                 is plain. */
+              if (rung === stage) {
+                return (
+                  <Pop key={rung + ':here'} trigger={stage} popOnMount={moves > 0} from={0.8}>
+                    {chip}
+                  </Pop>
+                );
+              }
+              if (rung === next && !gate.open) {
+                return (
+                  <Animated.View key={rung + ':shut'} style={rungRefusal.style}>
+                    {chip}
+                  </Animated.View>
+                );
+              }
+              return <View key={rung}>{chip}</View>;
+            })}
           </ScrollView>
+          {/* How far up the ladder, as a line rather than a number: the fill
+              eases to the new rung when he climbs one, which is the movement
+              between two chips that the chips alone cannot draw. */}
+          {ladder.indexOf(stage) >= 0 ? (
+            <View style={{ flexDirection: 'row', marginTop: 10 }}>
+              <FillBar
+                pct={((ladder.indexOf(stage) + 1) / ladder.length) * 100}
+                fill={C.primary}
+                track={C.hairline}
+                height={4}
+              />
+            </View>
+          ) : null}
 
           {/* ------------------------------------------------- §28 the gate */}
           <View style={{ marginTop: 14 }}>
@@ -614,12 +692,19 @@ export default function LeadRecord() {
                   }
                   onPress={() => {
                     if (!gate.open) {
-                      return notify(gate.missing[0]?.says ?? 'Something is still missing.');
+                      /* The button shakes and buzzes itself; the toast's own
+                         `warning` lands inside the same debounce. */
+                      setRefusals((n) => n + 1);
+                      return notify(gate.missing[0]?.says ?? 'Something is still missing.', 'warn');
                     }
                     void move(next);
                   }}
                 />
-                {gate.open ? null : (
+                {/* In and out rather than snapping: the list goes the moment
+                    the last condition is answered, and the button above it
+                    should not jump while his thumb is on its way to it. */}
+                <Presence show={!gate.open}>
+                  <Pop trigger={refusals} from={0.94}>
                   <View
                     style={{
                       marginTop: 10,
@@ -631,13 +716,16 @@ export default function LeadRecord() {
                       gap: 6,
                     }}>
                     <T s="caption">{'Before ' + stageLabel(next) + ', still to do'}</T>
-                    {gate.missing.map((c) => (
-                      <T key={c.id} style={{ fontSize: 15, lineHeight: 21, color: C.ink }}>
-                        {'· ' + c.says}
-                      </T>
+                    {gate.missing.map((c, i) => (
+                      <Stagger key={c.id} index={i}>
+                        <T style={{ fontSize: 15, lineHeight: 21, color: C.ink }}>
+                          {'· ' + c.says}
+                        </T>
+                      </Stagger>
                     ))}
                   </View>
-                )}
+                  </Pop>
+                </Presence>
               </>
             ) : parked ? (
               /* ON HOLD — NOT LOST, AND NOT FINISHED.
@@ -863,7 +951,7 @@ export default function LeadRecord() {
             }
             onPress={() => {
               if (!sampleGate.open) {
-                return notify(sampleGate.missing[0]?.says ?? 'Not yet.');
+                return notify(sampleGate.missing[0]?.says ?? 'Not yet.', 'warn');
               }
               router.push(`/samples?lead=${lead.id}&ask=1&from=lead`);
             }}
@@ -906,14 +994,14 @@ export default function LeadRecord() {
             lead.mobile
               ? () => {
                   void callNumber(lead.mobile!).then((out) => {
-                    if (out.status === 'failed') notify(out.reason);
+                    if (out.status === 'failed') notify(out.reason, 'warn');
                   });
                 }
               : undefined
           }
           onRecord={(args) => {
             void recordCommunication({ customerId: lead.id, ...args }).then((r) => {
-              if (!r.ok) return notify(r.message);
+              if (!r.ok) return notify(r.message, 'warn');
               /* The clock moves on this exactly as it does on a ring from the
                  header: reaching out IS work on the lead, and a record that
                  aged while somebody was working it is how a live shop reaches
@@ -1145,7 +1233,7 @@ export default function LeadRecord() {
           onPick={(iso) => {
             setCal(false);
             void setFollowUp(lead.id, iso, today).then((r) => {
-              if (!r.ok) return notify(r.message);
+              if (!r.ok) return notify(r.message, 'warn');
               load();
               notify('Back to them on ' + dmy(iso));
             });
@@ -1167,7 +1255,7 @@ export default function LeadRecord() {
         onConfirm={(code, said) => {
           setLost(false);
           void markLost(lead.id, code, said).then((r) => {
-            if (!r.ok) return notify(r.message);
+            if (!r.ok) return notify(r.message, 'warn');
             load();
             notify('Lost');
           });
@@ -1267,7 +1355,7 @@ export default function LeadRecord() {
             next: n,
           })
             .then((r) => {
-              if (!r.ok) return notify(r.message);
+              if (!r.ok) return notify(r.message, 'warn');
               load();
               notify('On hold until ' + dmy(until));
             })
@@ -1287,7 +1375,7 @@ export default function LeadRecord() {
         onSave={(n) => {
           setNextOpen(false);
           void setNextAction(lead.id, n).then((r) => {
-            if (!r.ok) return notify(r.message);
+            if (!r.ok) return notify(r.message, 'warn');
             load();
             notify('Next: ' + n.action);
           });
@@ -1302,7 +1390,7 @@ export default function LeadRecord() {
         onPick={(t, reason) => {
           setLadderOpen(false);
           void setSalesType(lead.id, t, reason).then((r) => {
-            if (!r.ok) return notify(r.message);
+            if (!r.ok) return notify(r.message, 'warn');
             load();
             notify(salesTypeLabel(t) + '. Lead goes back to the first stage.');
           });
@@ -1337,7 +1425,7 @@ export default function LeadRecord() {
             blockerCode: c.blockerCode,
           })
             .then((r) => {
-              if (!r.ok) return notify(r.message);
+              if (!r.ok) return notify(r.message, 'warn');
               load();
               /* The confirmation says what it DID and, in the same breath, what
                  it did not: a salesman who has just written down a promise will
@@ -1358,7 +1446,7 @@ export default function LeadRecord() {
         onSave={(p) => {
           setParties(false);
           void setLeadParties(lead.id, p).then((r) => {
-            if (!r.ok) return notify(r.message);
+            if (!r.ok) return notify(r.message, 'warn');
             load();
             notify('Saved');
           });
@@ -1390,7 +1478,7 @@ export default function LeadRecord() {
           const wanted = asking === 'prospect';
           setSuspect(null);
           void decideSuspect(view.lead.id, { prospect: wanted, reasonCode: code, note: said }).then((r) => {
-            if (!r.ok) return notify(r.message);
+            if (!r.ok) return notify(r.message, 'warn');
             load();
             notify(wanted ? 'Now a Prospect' : 'Closed');
           });

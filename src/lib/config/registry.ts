@@ -714,6 +714,51 @@ export const SETTINGS = [
   },
   /* -------------------------------------------------------------- sign-in */
   /*
+   * Passwords and the Admin Console. A password could be guessed as fast as
+   * somebody could post the form; the console, which can sign in as anybody
+   * and grant anybody anything, opened for any session up to thirty days old.
+   */
+  {
+    key: "auth.password.maxFailures",
+    type: "integer",
+    category: "auth",
+    label: "Wrong passwords before an account pauses",
+    description: "How many wrong passwords one account tolerates inside the window below before sign-in is refused for it until the window passes. The pause is on the account, not the person: somebody locked out can still sign in with a WhatsApp code, which has its own limits.",
+    default: 5,
+    min: 3,
+    max: 20,
+  },
+  {
+    key: "auth.password.failureWindowMinutes",
+    type: "integer",
+    category: "auth",
+    label: "Window for counting wrong passwords",
+    description: "Minutes over which wrong passwords are counted, for one account and for one network address. It is also how long a paused account waits.",
+    default: 15,
+    min: 5,
+    max: 240,
+  },
+  {
+    key: "auth.password.maxFailuresPerAddress",
+    type: "integer",
+    category: "auth",
+    label: "Wrong passwords from one address",
+    description: "How many wrong passwords one network address may send across every account inside the window. The per-account limit stops somebody guessing one password; this stops them guessing one common password against everybody. An office shares one address, so it is set well above the per-account figure.",
+    default: 30,
+    min: 10,
+    max: 500,
+  },
+  {
+    key: "auth.console.confirmMinutes",
+    type: "integer",
+    category: "auth",
+    label: "Admin Console: ask for the password again after",
+    description: "Minutes a session may sit idle before the Admin Console asks for the password again. Every console page opened moves it forward, so somebody working in the console is not interrupted. The rest of MahekOne is unaffected; a session stays signed in for thirty days, and only the console asks.",
+    default: 30,
+    min: 5,
+    max: 240,
+  },
+  /*
    * NOTHING READS THESE YET, and a reader should know it before tuning one.
    * They were written for a sign-in where a work number and a code sent to it
    * are the whole credential. That flow is not built: `otp_channel` is an enum
@@ -2771,6 +2816,39 @@ export const SETTINGS = [
     default: 22,
     min: 0,
     max: 23,
+  },
+  {
+    key: "mbos.attendance.punchOutPromptHour",
+    type: "integer",
+    category: "mbos-attendance",
+    label: "Hour the handset asks for a punch-out",
+    description:
+      "From this local hour, a salesman still punched in sees Punch out as the main button on Home and a bar across every other screen asking him to close the day. Before it, Punch out stays a quiet secondary button, because a prompt shown all day stops being read.",
+    default: 18,
+    min: 0,
+    max: 23,
+  },
+  {
+    key: "mbos.attendance.punchOutSecondReminderMinutes",
+    type: "integer",
+    category: "mbos-attendance",
+    label: "Second punch-out reminder, minutes after the first",
+    description:
+      "A salesman still punched in gets a phone notification at the punch-out prompt hour, and a second one this many minutes later. Zero sends only the first. There is no third: a reminder that repeats until midnight gets its notifications switched off.",
+    default: 90,
+    min: 0,
+    max: 360,
+  },
+  {
+    key: "mbos.attendance.missedPunchOutWindowDays",
+    type: "integer",
+    category: "mbos-attendance",
+    label: "Days counted for missed punch-outs",
+    description:
+      "How far back the attendance screen and the salesman's own handset count days he punched in to and never punched out of. One number for both, so the manager and the salesman see the same figure.",
+    default: 30,
+    min: 7,
+    max: 90,
   },
   {
     key: "mbos.attendance.selfieRequired",
@@ -5152,6 +5230,10 @@ export type Config = {
   "people.companyName": string;
   "people.pickerSearchThreshold": number;
 
+  "auth.password.maxFailures": number;
+  "auth.password.failureWindowMinutes": number;
+  "auth.password.maxFailuresPerAddress": number;
+  "auth.console.confirmMinutes": number;
   "auth.otp.codeLength": number;
   "auth.otp.ttlMinutes": number;
   "auth.otp.maxVerifyAttempts": number;
@@ -5439,6 +5521,9 @@ export type Config = {
   "mbos.attendance.fullDayHours": number;
   "mbos.attendance.halfDayHours": number;
   "mbos.attendance.autoCheckOutHour": number;
+  "mbos.attendance.punchOutPromptHour": number;
+  "mbos.attendance.punchOutSecondReminderMinutes": number;
+  "mbos.attendance.missedPunchOutWindowDays": number;
   "mbos.attendance.selfieRequired": boolean;
   "mbos.attendance.selfieRetentionHours": number;
 

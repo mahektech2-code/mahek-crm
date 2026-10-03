@@ -1,6 +1,7 @@
 import React from 'react';
 import { View } from 'react-native';
 import { BottomSheet, Calendar } from '../ui/overlays';
+import { Swap } from '../ui/motion';
 import { Choice, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../ui/primitives';
 import { skuText, useSkus } from '../ui/sku';
 import { color as C, radius, weight } from '../../theme/tokens';
@@ -86,6 +87,9 @@ export function CommitmentSheet({
 
       <View style={{ marginTop: 14 }}>
         <SectionLabel style={{ marginBottom: 6 }}>When will they order</SectionLabel>
+        {/* The button opens into the calendar in place, and the calendar
+            folds back into the button once a day is picked. */}
+        <Swap id={picking ? 'calendar' : 'button'}>
         {picking ? (
           <Calendar
             key="commitment-cal"
@@ -106,6 +110,7 @@ export function CommitmentSheet({
             style={{ borderRadius: radius.lg }}
           />
         )}
+        </Swap>
       </View>
 
       <View style={{ marginTop: 14 }}>

@@ -36,7 +36,7 @@ export const SETTINGS_PAGES: SettingsPage[] = [
   {
     id: "platform",
     label: "Platform",
-    blurb: "Sign-in codes, the working day, file uploads and the other settings every app shares.",
+    blurb: "Sign-in, the working day, file uploads and the other settings every app shares.",
     owners: [],
     icon: "settings",
   },

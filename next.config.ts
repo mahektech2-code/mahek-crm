@@ -79,6 +79,35 @@ const nextConfig: NextConfig = {
    */
   deploymentId: process.env.NEXT_DEPLOYMENT_ID,
 
+  /*
+   * Set by the app rather than by Caddy, because the Caddyfile is copied to
+   * the droplet by hand and a deploy never touches it — a header written
+   * there would reach production only when somebody remembered to.
+   *
+   * HSTS: HTTPS, always, for a year. Caddy already redirects http to https;
+   * this is what stops the browser asking over http at all, where the first
+   * request on café Wi-Fi is one an attacker can answer.
+   *
+   * Not inside somebody else's page: without these any site could load the
+   * Admin Console in an invisible frame over a button of its own and have a
+   * signed-in administrator press Save on the Access screen without seeing
+   * it. SAMEORIGIN rather than DENY because the price-list editor previews
+   * its own print page in a frame. The first is the old spelling, the second
+   * the current one.
+   */
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          { key: "Strict-Transport-Security", value: "max-age=31536000" },
+          { key: "X-Frame-Options", value: "SAMEORIGIN" },
+          { key: "Content-Security-Policy", value: "frame-ancestors 'self'" },
+        ],
+      },
+    ];
+  },
+
   async redirects() {
     return [
       /*

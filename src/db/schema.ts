@@ -984,8 +984,33 @@ export const sessions = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    /**
+     * When this session last proved its password. The Admin Console opens only
+     * for a session confirmed within `auth.console.confirmMinutes`; null is a
+     * session that has to confirm first. See `lib/console-confirm.ts`.
+     */
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
   },
   (t) => [index("sessions_user_idx").on(t.userId)],
+);
+
+/**
+ * One wrong password. `account` is the user id where the name typed matched
+ * somebody, otherwise the name as normalised; `address` is the client IP.
+ * Read by `lib/services/sign-in-throttle.ts` and nothing else.
+ */
+export const signInFailures = pgTable(
+  "sign_in_failures",
+  {
+    id: text("id").primaryKey(),
+    account: text("account").notNull(),
+    address: text("address"),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("sign_in_failures_account_idx").on(t.account, t.at),
+    index("sign_in_failures_address_idx").on(t.address, t.at),
+  ],
 );
 
 /**

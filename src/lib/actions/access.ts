@@ -31,6 +31,7 @@ import {
   type LinkableEmployee,
 } from "@/lib/services/access-service";
 import { ADMIN } from "@/lib/admin-routes";
+import { ConsoleNotConfirmedError } from "@/lib/console-confirm";
 
 /* ---------------------------------------------------------------------------
  * Granting and narrowing access.
@@ -68,7 +69,8 @@ const newId = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 async function actor() {
   try {
     return await requirePlatformAdminUser();
-  } catch {
+  } catch (e) {
+    if (e instanceof ConsoleNotConfirmedError) throw e;
     throw new Error("Only a platform administrator can change access.");
   }
 }

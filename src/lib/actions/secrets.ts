@@ -10,6 +10,7 @@ import { isSecretName, SECRET_NAMES, type SecretName } from "@/lib/secrets";
 import { err as fail, okVoid, type Result } from "@/lib/result";
 import { isPlatformAdmin } from "@/lib/access-control";
 import { ADMIN } from "@/lib/admin-routes";
+import { ConsoleNotConfirmedError, isConsoleConfirmed } from "@/lib/console-confirm";
 
 /* ---------------------------------------------------------------------------
  * Setting and clearing the credentials MahekOne calls outside services with.
@@ -31,6 +32,9 @@ async function requirePlatformAdmin() {
   const user = await requireUser();
   if (!(await isPlatformAdmin(user))) {
     return { user: null, error: fail("Only a platform admin can change credentials.", "not_permitted") };
+  }
+  if (!(await isConsoleConfirmed())) {
+    return { user: null, error: fail(new ConsoleNotConfirmedError().message, "not_permitted") };
   }
   return { user, error: null };
 }

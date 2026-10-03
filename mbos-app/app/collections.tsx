@@ -17,6 +17,7 @@ import { dmy, inrFromPaise, isoDate } from '../src/lib/format';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { color as C, radius, tabular, weight, type BadgeTone } from '../src/theme/tokens';
+import { CountUp, Stagger, animateLayoutFor } from '../src/components/ui/motion';
 
 /**
  * What he has collected, and the two things he can say about it afterwards.
@@ -75,11 +76,14 @@ export default function CollectionsScreen() {
    */
   const [nowMs, setNowMs] = React.useState(() => Date.now());
 
-  const load = React.useCallback(() => {
+  /* `animate` after banking or a bounce: the row grows a line and loses its
+     buttons, and the rows under it should slide rather than jump. */
+  const load = React.useCallback((animate?: boolean) => {
     let live = true;
     if (!userId) return;
     void Promise.all([listPayments(), cashInHand(userId)]).then(([p, c]) => {
       if (!live) return;
+      if (animate === true) animateLayoutFor(p.length);
       setNowMs(Date.now());
       setRows(p);
       setCash({ totalPaise: c.totalPaise, sentence: c.sentence });
@@ -89,7 +93,7 @@ export default function CollectionsScreen() {
     };
   }, [userId]);
 
-  useFocusEffect(load);
+  useFocusEffect(React.useCallback(() => load(), [load]));
 
   /**
    * Banking it, with the slip.
@@ -123,7 +127,7 @@ export default function CollectionsScreen() {
             });
             const proofId = shot.ok ? shot.mediaId : null;
             await markDeposited([p.id], proofId);
-            load();
+            load(true);
             notify(
               proofId
                 ? 'Banked · slip photo added'
@@ -162,7 +166,7 @@ export default function CollectionsScreen() {
           setBusy(p.id);
           try {
             await markBounced(p.id, reason);
-            load();
+            load(true);
             notify('Saved · ' + inrFromPaise(p.amountPaise) + ' is back on their account');
           } finally {
             setBusy(null);
@@ -195,9 +199,20 @@ export default function CollectionsScreen() {
           borderLeftColor: cash?.totalPaise ? C.warn : C.border,
         }}>
         <T s="label">Cash on you</T>
-        <T style={[{ fontSize: 26, lineHeight: 32, color: C.ink, marginTop: 2 }, weight(600), tabular]}>
-          {inrFromPaise(cash?.totalPaise ?? 0)}
-        </T>
+        {/* Mounted only once the figure is read, so opening the screen shows
+            it standing still; banking cash then counts it DOWN, which is the
+            moment the number is actually news. */}
+        {cash ? (
+          <CountUp
+            value={cash.totalPaise}
+            format={(n) => inrFromPaise(Math.round(n))}
+            style={[{ fontSize: 26, lineHeight: 32, color: C.ink, marginTop: 2 }, weight(600), tabular]}
+          />
+        ) : (
+          <T style={[{ fontSize: 26, lineHeight: 32, color: C.ink, marginTop: 2 }, weight(600), tabular]}>
+            {inrFromPaise(0)}
+          </T>
+        )}
         <T s="small" style={{ color: cash?.totalPaise ? C.warnInk : C.muted, marginTop: 2 }}>
           {cash?.sentence ?? 'Loading…'}
         </T>
@@ -226,8 +241,9 @@ export default function CollectionsScreen() {
             const canDeposit = !p.deposited && !p.bounced && p.mode === 'Cash';
 
             return (
-              <View
+              <Stagger
                 key={p.id}
+                index={i}
                 style={{ paddingHorizontal: 16, paddingVertical: 14, borderTopWidth: i ? 1 : 0, borderTopColor: C.wash }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                   <T
@@ -328,7 +344,7 @@ export default function CollectionsScreen() {
                     ) : null}
                   </View>
                 ) : null}
-              </View>
+              </Stagger>
             );
           })}
         </ListCard>

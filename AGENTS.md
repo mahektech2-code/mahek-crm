@@ -159,8 +159,8 @@ past it to the first module they do hold.
 **No module rows for an app means every module of it.** That is why adding this
 moved nothing: every grant that already existed carried on meaning exactly what
 it meant, on every screen, for everybody, and a grant narrows only once somebody
-unticks something. It is also what keeps `npm run app:grant` and the
-provisioning endpoint honest — neither knows modules exist, and an app granted
+unticks something. It is also what keeps `npm run app:grant` honest — it does
+not know modules exist, and an app granted
 from a terminal has to open whole rather than open empty. A grant with every
 module ticked stores no rows at all, so a fifteenth CRM screen reaches everybody
 holding the whole app and nobody who was deliberately narrowed.
@@ -1263,8 +1263,7 @@ each was a second door onto grants that knew nothing about modules or levels.
 level — the widest held anywhere — so a CRM grant made from a terminal became a
 CRM manager the day its holder was made a manager of anything else. The
 migration wrote every null row down to the level it was resolving to that day,
-so nobody's reach moved on deploy; `npm run app:grant` and the provisioning
-endpoint now write a level (`--level=`, default associate) and derive the
+so nobody's reach moved on deploy; `npm run app:grant` now writes a level (`--level=`, default associate) and derive the
 account level rather than typing it.
 
 **The matrix is one table, in `lib/capability-matrix.ts`** — pure and
@@ -1452,6 +1451,45 @@ account had. The reply is the same whether or not the address has an account —
 this form is not a staff directory. Without `RESEND_API_KEY` and `MAIL_FROM`
 the mail is written to the server log rather than sent, and the screen says so
 rather than claiming it went.
+
+**A WRONG PASSWORD IS COUNTED, and enough of them shut the door for a while.**
+Nothing limited guesses: the form could be posted as fast as a script could
+post it, and a platform administrator's password was the whole of what stood
+between the internet and every power in the console. `sign_in_failures` holds
+one row per wrong password, counted per ACCOUNT (`auth.password.maxFailures`)
+and per ADDRESS (`auth.password.maxFailuresPerAddress`, set well above it
+because an office shares one) over `auth.password.failureWindowMinutes`. The
+web sign-in, the handset sign-in and "change password" share ONE count, keyed
+on the account — a second door with its own fresh allowance is not a limit. It
+is asked BEFORE the password is checked, so a paused account answers the same
+whether or not the guess was right; otherwise the pause is an oracle. The way
+round it — a WhatsApp code, or a reset — is named only where it exists.
+
+**THE CONSOLE ASKS FOR THE PASSWORD AGAIN.** A session lasts thirty days and the
+console can sign in as anybody, so a laptop left open used to be a platform
+administrator. `sessions.confirmed_at` is when the session last proved its
+password: signing in sets it, an impersonation link does NOT (it proves nothing
+about the person it signs in as), and the console's layout sends anything older
+than `auth.console.confirmMinutes` to `/login/confirm`. Each console page moves
+a fresh one forward, so the clock measures time AWAY. It is enforced again in
+`requirePlatformAdminUser`, in the secrets actions and in a platform
+administrator's settings writes, because an action is a URL with no layout in
+front of it. The rest of MahekOne never asks.
+
+**Impersonation tells the person.** The audit row is under the administrator's
+id, where the account holder will never look; a warn notification on their own
+bell is what makes a link used by the wrong person something somebody notices.
+
+**There is no HTTP door that grants access any more.** `/api/admin/provision`
+granted anything to anybody behind `CRON_SECRET` — the secret the Apps Script
+on two workbooks holds so the syncs can run, so editing a sheet was enough to
+read it and make yourself a platform administrator. It is deleted. The Access
+screen and `npm run app:grant` are the ways in.
+
+**Security headers come from `next.config.ts`, not the Caddyfile**, because a
+deploy never copies the Caddyfile: HSTS for a year, and `frame-ancestors 'self'`
+(with `X-Frame-Options: SAMEORIGIN`) so no other site can frame the console and
+steer an administrator's click.
 
 **A WHATSAPP CODE IS THE OTHER WAY IN, offered only where it can work.**
 `lib/services/otp-service.ts` sends a one-time code to the WORK NUMBER ON THE
@@ -4729,6 +4767,66 @@ machine happens to have a JDK. That has happened, on 2026-09-08, because the
 release path was written down nowhere anybody looks — which is why it is
 written here. Local `gradlew assembleRelease` is for trying a change on your own
 phone and nothing else. See DEPLOY.md, "Releasing the handset app".
+
+**THE HANDSET MOVES, BUZZES AND CHIMES THROUGH THREE FILES, and no screen
+reaches past them.** `components/ui/motion.tsx` is every animation —
+`Stagger`, `Presence`, `Swap`, `Pop`, `CountUp`, `FillBar`, `DrawnTick`,
+`PressableScale`, `SwipeRow`, `useShake`, `animateLayout` — and its rule is the
+one it has always stated: motion says something about how two states relate,
+or it is not there. `engines/feedback.ts` decides whether an event buzzes or
+chimes, pure and tested; `components/ui/feedback.ts` is the only code that
+touches the motor or the speaker. A screen calls `feedback('success')` and
+names a KIND — six of them — never a pattern or a file, because a buzz only
+means something if the same thing always feels the same. `route-motion.test.ts`
+fails the build on `expo-haptics` or an audio player imported anywhere else,
+and on a screen in `app/` with no entry in `ROUTE_MOTION`.
+
+**No Reanimated, deliberately.** It went with worklets and gesture-handler to
+make the APK lean (0ae86207), and nothing here needs it: transforms and opacity
+run on the native driver, and the few things that cannot — a bar's width, a
+number counting, an SVG stroke — are short and one-off. The sheets drag and the
+rows swipe on plain `PanResponder`.
+
+**The toast is where most outcomes are FELT.** Every save that confirms itself
+does it through `notify()`, so one line in `Toast` gives forty screens the same
+success buzz and every refusal the same "no", without any of them learning a
+motor exists. A screen that already toasts does not also call `feedback` for
+the same event.
+
+**Sounds are OFF until the salesman turns them on, and silent unless the ringer
+is on normal.** He is standing in somebody else's shop; a phone that chimes at
+every order is not a default anybody should have to find a switch to undo. UI
+sounds play on the MEDIA stream, which Android's silent and vibrate modes do not
+govern, so `ringerMode` in the phone-setup module is asked before every chime —
+and `unknown`, which is every build before 1.16.0, is read as silent. The WAVs
+are synthesised by `scripts/make-sounds.mjs`, so there is no licence to track.
+
+**`expo-haptics` is imported LAZILY,** for the reason `native/capture.ts` gives
+about the document picker: main's JavaScript goes over the air to older APKs,
+and a package that calls `requireNativeModule` at import would stop every
+screen that buzzes from opening on a build without it. Older builds simply do
+not buzz; they have no VIBRATE permission for a fallback either.
+
+**A PUSH THAT LANDS WHILE THE APP IS OPEN IS DRAWN BY THE APP.** `PushBanner`
+replaces the system heads-up — which covered the bell it was about and played
+the stock tone a foot from somebody's face — with a card in the app's own
+colours, toned by the notification's kind, opened through the same `openFrom` a
+tapped notification uses so the two cannot disagree about where a push goes. It
+also SYNCS on arrival, so the bell's count rises while the banner is still on
+screen. The notification handler suppresses the system banner only while ours
+is mounted, so a push nothing drew is never a push that silently vanished.
+
+**Two channels have sounds of their own, and both ends are gated on the build.**
+`decisions-v1` is approvals and refusals, `updates-v1` everything else, and the
+server chooses between them in `channelFor`. An Android channel's sound is
+fixed the moment the channel exists, so the handset creates these only on an
+APK that carries the sound files — created on an older one by an over-the-air
+bundle, they would be silent and STAY silent after the upgrade. The server
+sends to them only from `SOUND_CHANNELS_FROM` (1.16.0), reading
+`mbos_devices.app_version`; anything older, or unreported, keeps `default`. A
+test reads the handset's `push.ts` and fails if either side's spelling of a
+channel drifts, because a misspelt channel does not fail — it falls back to
+Expo's generic one and just loses its sound.
 
 **A DELTA MUST SEND WHAT THE BOOTSTRAP SENDS, and the only way to be sure of
 that is for it to be the same function.** The customers channel was two

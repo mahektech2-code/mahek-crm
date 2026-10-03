@@ -31,6 +31,13 @@ import {
   verifyOtp,
 } from "@/lib/services/otp-service";
 import {
+  accountKey,
+  clearSignInFailures,
+  clientAddress,
+  recordSignInFailure,
+  signInRefusal,
+} from "@/lib/services/sign-in-throttle";
+import {
   appOrigin,
   findLiveReset,
   hashResetToken,
@@ -101,13 +108,21 @@ export async function signIn(
     .where(phone ? or(eq(users.email, email), eq(users.phone, phone)) : eq(users.email, email))
     .limit(1);
 
+  // Counted before the password is checked, so a paused account answers the
+  // same whether or not this guess was right. See `services/sign-in-throttle`.
+  const account = accountKey(user?.id ?? null, parsed.data.identifier);
+  const address = await clientAddress();
+  const refused = await signInRefusal(account, address);
+  if (refused) return fail(refused);
+
   // Same message either way — never reveal which half was wrong.
   const wrong =
     "That did not match an account. Check the spelling, or ask your manager to reset it.";
-  if (!user || !user.active) return fail(wrong);
-  if (!(await verifyPassword(parsed.data.password, user.passwordHash))) {
+  if (!user || !user.active || !(await verifyPassword(parsed.data.password, user.passwordHash))) {
+    await recordSignInFailure(account, address);
     return fail(wrong);
   }
+  await clearSignInFailures(account);
 
   return completeSignIn(user, parsed.data.remember, "sign-in");
 }
@@ -122,7 +137,7 @@ async function completeSignIn(
   remember: boolean,
   action: "sign-in" | "sign-in-code",
 ): Promise<ActionResult> {
-  await createSession(user.id, remember);
+  await createSession(user.id, remember, true);
   await recordSignIn(user.id, newId("att"));
   // Nothing wrote this column, so every screen that asked when somebody last
   // signed in answered "never" — including the console's list of accounts

@@ -6,7 +6,10 @@ import { startBackgroundSync, stopBackgroundSync } from '../sync/engine';
 import { registerBackgroundSync, unregisterBackgroundSync } from '../sync/background-sync-task';
 import * as trail from '../sync/trail';
 import { currentSession, type Session } from '../data/session';
+import { loadFeedbackPrefs } from '../data/feedback-prefs';
+import { primeSounds } from '../components/ui/feedback';
 import { autoCloseMissedCheckouts, dayState } from '../data/attendance';
+import { syncPunchOutReminders } from '../native/punch-out-reminder';
 import { closeOpenVisits } from '../data/visits';
 import { closeStaleLegs, closeStaleSessions } from '../data/travel';
 import { escalateOverdue } from '../data/tasks';
@@ -46,6 +49,9 @@ export function BootProvider({ children }: { children: React.ReactNode }) {
     (async () => {
       await openDb();
       await recoverInterrupted();
+      /* The vibration and sound switches, read before the first screen so the
+         first tap of the day is felt the way he set it. Never blocks boot. */
+      await loadFeedbackPrefs().then(primeSounds).catch(() => {});
 
       const existing = await currentSession();
       if (cancelled) return;
@@ -173,6 +179,10 @@ async function runDayBoundaryWork(userId: string): Promise<void> {
        its owner on Monday still on Friday's meter reading. */
     await closeStaleSessions(userId, startOfToday.getTime());
     await autoCloseMissedCheckouts(userId);
+    /* On every open, because Android may drop a scheduled alarm across a
+       reboot or an app update, and because a day closed overnight above must
+       not leave last night's reminders standing. */
+    await syncPunchOutReminders(userId);
     /* `mbos.tasks.escalationHours`, which is the PUBLISHED key. This read
        `mbos.tasks.escalateAfterHours` — the same question, one word apart, and
        a spelling no office could ever set — so the handset marked a task

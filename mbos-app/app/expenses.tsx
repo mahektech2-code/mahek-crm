@@ -7,6 +7,8 @@ import { Badge, Choice, ListCard, PrimaryButton, SecondaryButton, T } from '../s
 import { VoiceField } from '../src/components/ui/dictate';
 import { BottomSheet, Calendar } from '../src/components/ui/overlays';
 import { Icon } from '../src/components/ui/Icon';
+import { Presence, Stagger, animateLayout, animateLayoutFor } from '../src/components/ui/motion';
+import { feedback } from '../src/components/ui/feedback';
 import { claimExpense, expenseTotals, expensesOn, listExpenses, type Expense } from '../src/data/requests';
 import { getConfig } from '../src/data/config';
 import { activePolicy, previewClaim, CLAIM_KINDS, type ClaimedLine, type LocalPolicy } from '../src/data/travel';
@@ -131,6 +133,9 @@ export default function ExpensesScreen() {
       getConfig<number>('attachments.maxSizeMb', 5),
     ]).then(([e, t, p, age, files, mb]) => {
       if (!live) return;
+      /* A claim just sent arrives at the top and pushes the rest down; that
+         move eases rather than jumps. Capped, like every list here. */
+      animateLayoutFor(e.length);
       setRows(e);
       setTotals(t);
       setPolicy(p);
@@ -310,6 +315,7 @@ export default function ExpensesScreen() {
      a PDF somebody mailed him. */
   const room = Math.max(0, maxFiles - ex.files.length);
   const addFiles = (picked: Picked[]) => {
+    animateLayout();
     setEx((d) => ({ ...d, files: [...d.files, ...picked.map((p) => ({ ...p, fresh: true }))] }));
     setErr([]);
   };
@@ -322,6 +328,9 @@ export default function ExpensesScreen() {
         if (shot.reason !== 'cancelled') notify(shot.reason, 'error');
         return;
       }
+      /* The bill goes back in his pocket the moment the shutter closes; the
+         buzz is what tells him it was taken without looking down. */
+      feedback('tap');
       return addFiles([{ mediaId: shot.mediaId, label: 'Photo', isPdf: false }]);
     }
     if (how === 'gallery') {
@@ -343,6 +352,7 @@ export default function ExpensesScreen() {
   const removeFile = (mediaId: string) => {
     const f = ex.files.find((x) => x.mediaId === mediaId);
     if (f?.fresh) void discardQueuedMedia(mediaId);
+    animateLayout();
     setEx((d) => ({ ...d, files: d.files.filter((x) => x.mediaId !== mediaId) }));
   };
 
@@ -364,7 +374,12 @@ export default function ExpensesScreen() {
     if (!ex.files.length) missing.push('bill');
     if (!ex.whenIso.trim()) missing.push('when');
     if (!ex.note.trim()) missing.push('note');
-    if (missing.length) return setErr(missing);
+    /* Refused with the reasons on the sheet — felt as well, because with the
+       keyboard up the list of what is missing may be the only part he sees. */
+    if (missing.length) {
+      feedback('warning');
+      return setErr(missing);
+    }
 
     /* The day the claim is FOR, checked here as well as in the calendar. The
        calendar greys a refused day, but a corrected claim arrives carrying the
@@ -427,8 +442,9 @@ export default function ExpensesScreen() {
         {rows.map((e, i) => {
           const tone: BadgeTone = e.state === 'Approved' ? 'success' : e.state === 'Pending' ? 'amber' : 'danger';
           return (
-            <View
+            <Stagger
               key={e.id}
+              index={i}
               style={{ paddingHorizontal: 16, paddingVertical: 14, borderTopWidth: i ? 1 : 0, borderTopColor: C.wash }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                 <T style={[{ flex: 1, minWidth: 0, fontSize: 15, lineHeight: 20, color: C.ink }, weight(500)]}>
@@ -459,7 +475,7 @@ export default function ExpensesScreen() {
                   </Pressable>
                 </>
               ) : null}
-            </View>
+            </Stagger>
           );
         })}
       </ListCard>
@@ -662,11 +678,11 @@ export default function ExpensesScreen() {
             above are on the fields and the fields are off-screen behind the
             keyboard; this is the half he can actually read at the moment he
             presses. */}
-        {err.length ? (
+        <Presence show={err.length > 0}>
           <T style={{ fontSize: 13, lineHeight: 19, color: C.danger, marginTop: 16 }}>
             {'Still needed: ' + err.map((k) => MISSING_WORDS[k]).join(', ') + '.'}
           </T>
-        ) : null}
+        </Presence>
 
         <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
           <SecondaryButton label="Cancel" onPress={() => close()} style={{ flex: 1 }} />

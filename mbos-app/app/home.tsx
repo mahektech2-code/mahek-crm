@@ -1,8 +1,9 @@
 import React from 'react';
 import { View, Text, Pressable } from 'react-native';
-import { router, useFocusEffect } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { color as C, HIT, radius, shadow, type, weight, tabular } from '../src/theme/tokens';
 import { Icon } from '../src/components/ui/Icon';
+import { CountUp, PressableScale, Stagger, Swap } from '../src/components/ui/motion';
 import { Card, PrimaryButton, SecondaryButton, T } from '../src/components/ui/primitives';
 import { promptsForExpenses } from '../src/lib/travel-leg';
 import { AppFrame } from '../src/components/shell/AppFrame';
@@ -26,6 +27,8 @@ import { collectionDue } from '../src/data/customers';
 import { listPerformance, shortfalls, type SyncedMonth } from '../src/data/performance';
 import { getConfig } from '../src/data/config';
 import { mayOpenDay } from '../src/data/day-gate';
+import { punchOutDue } from '../src/engines/punch-out';
+import { syncPunchOutReminders } from '../src/native/punch-out-reminder';
 import { ordersToday } from '../src/data/orders';
 import { cashInHand } from '../src/data/payments';
 import { bucketOf, listOpenTasks } from '../src/data/tasks';
@@ -151,6 +154,12 @@ function asAt(iso: string): string {
   }).format(at);
 }
 
+/* What the tiles count in. Rounded before formatting, because a count passes
+   through fractions of a paisa on its way and `inrFromPaise` should only ever
+   be handed whole ones. */
+const rupees = (x: number) => inrFromPaise(Math.round(x));
+const whole = (x: number) => String(Math.round(x));
+
 export default function Home() {
   const boot = useBoot();
   const userId = boot.session?.user.id ?? null;
@@ -218,6 +227,13 @@ export default function Home() {
   /* The day's mode, held while the after-punch-out prompt is up. Null is no
      prompt. See `promptsForExpenses`. */
   const [claimPrompt, setClaimPrompt] = React.useState<{ modeLabel: string | null } | null>(null);
+  /* The hour punching out becomes the main button. Null until read, and read
+     as "not yet" — a prompt that flashes on and off as config lands is worse
+     than one that arrives a frame late. */
+  const [punchOutHour, setPunchOutHour] = React.useState<number | null>(null);
+  /* `?punchOut=1` is the evening bar on every other screen sending him here to
+     do exactly that. See the effect beside `endDay`. */
+  const params = useLocalSearchParams<{ punchOut?: string }>();
 
   /*
    * The clock, as state and ticked — never read during render.
@@ -283,6 +299,12 @@ export default function Home() {
   const load = React.useCallback(() => {
     if (!userId) return;
     const iso = isoDate(new Date());
+
+    /* The evening reminders follow the day. Every punch-in and punch-out on
+       this screen ends in `load()`, and so does every return to Home, so one
+       reconcile here keeps them right through all of it — including a setting
+       changed in the office since the morning. It never throws. */
+    void syncPunchOutReminders(userId);
 
     /*
      * Its own read, deliberately not in the `Promise.all` below: that one
@@ -375,7 +397,16 @@ export default function Home() {
 
   useFocusEffect(load);
 
+  React.useEffect(() => {
+    void getConfig<number>('mbos.attendance.punchOutPromptHour', 18)
+      .then(setPunchOutHour)
+      .catch(() => setPunchOutHour(18));
+  }, []);
+
   const checkedIn = !!day && day.sessionCount > 0;
+  /* See `engines/punch-out.ts`: loud only when it is the right thing to press. */
+  const punchOutLoud =
+    !!day && punchOutHour != null && punchOutDue({ running: day.running, nowMs: now, promptHour: punchOutHour });
 
   const today = new Date(now);
   const dateLine = `${WEEKDAYS[today.getDay()]}, ${today.getDate()} ${MONTHS[today.getMonth()]}`;
@@ -395,7 +426,13 @@ export default function Home() {
   /* The same rule one section down: a handset nothing has reached has no lead
      book either, so its three figures are empty rather than nought. */
   const leadsPending = !leads || neverPulled;
-  const dashValues: { v: string; s: string; small?: boolean }[] = !day
+  /*
+   * `n` is the same figure as a NUMBER, where there is one, so the tile can
+   * count to it. `fmt` draws it exactly as `v` would have — the count is how
+   * the figure arrives, never a second way of writing it. A tile without `n`
+   * (a dash, "Not known yet", "3 of 5") is drawn as text and does not move.
+   */
+  const dashValues: { v: string; s: string; small?: boolean; n?: number; fmt?: (x: number) => string }[] = !day
     ? DASH_CARDS.map(() => ({ v: '—', s: readErr ? 'Did not load' : 'Loading…' }))
     : neverPulled
       ? DASH_CARDS.map(() => ({ v: '—', s: 'Nothing here yet' }))
@@ -408,6 +445,7 @@ export default function Home() {
       v: day.orderValueUnknown ? 'Not known yet' : inrFromPaise(day.orderValuePaise),
       s: plural(day.orders, 'order'),
       small: day.orderValueUnknown,
+      ...(day.orderValueUnknown ? {} : { n: day.orderValuePaise, fmt: rupees }),
     },
     {
       /* THE NUMERATOR IS STOPS DONE, not visits. `visitsToday` counts every
@@ -421,10 +459,10 @@ export default function Home() {
       v: day.stops ? `${day.stopsDone} of ${day.stops}` : String(day.visits),
       s: day.stops ? plural(day.visits, 'visit') + ' done' : 'No plan today',
     },
-    { v: inrFromPaise(day.collectPaise), s: plural(day.collectCustomers, 'customer') },
-    { v: inrFromPaise(day.cashPaise), s: day.cashSentence || 'Nothing to deposit' },
-    { v: String(day.tasks), s: day.tasksOverdue ? plural(day.tasksOverdue, 'overdue') : 'None overdue' },
-    { v: String(day.followUps), s: `${day.followUpsToday} today` },
+    { v: inrFromPaise(day.collectPaise), s: plural(day.collectCustomers, 'customer'), n: day.collectPaise, fmt: rupees },
+    { v: inrFromPaise(day.cashPaise), s: day.cashSentence || 'Nothing to deposit', n: day.cashPaise, fmt: rupees },
+    { v: String(day.tasks), s: day.tasksOverdue ? plural(day.tasksOverdue, 'overdue') : 'None overdue', n: day.tasks, fmt: whole },
+    { v: String(day.followUps), s: `${day.followUpsToday} today`, n: day.followUps, fmt: whole },
   ];
 
   /* Same rule, on the strip under the Start day button: a dash where there is
@@ -893,6 +931,30 @@ export default function Home() {
     }
   };
 
+  /*
+   * THE BAR'S TAP LANDS HERE AND OPENS THE CAMERA. "Punch out" pressed on the
+   * visit screen that only moved him to Home would be a second press for the
+   * same decision, at the end of a day. Once, and only once the day has been
+   * read and is still running — a param left behind must not open a camera
+   * on somebody who has already punched out. The param is cleared first, so a
+   * back-and-forth to Home cannot fire it twice.
+   */
+  const punchOutAsked = React.useRef(false);
+  React.useEffect(() => {
+    /* Re-armed once the param is gone, because Home is a tab root and stays
+       mounted: without this a second tap on the bar or the reminder, later
+       the same evening, would land here and do nothing. */
+    if (params.punchOut !== '1') {
+      punchOutAsked.current = false;
+      return;
+    }
+    if (punchOutAsked.current || !day) return;
+    punchOutAsked.current = true;
+    router.setParams({ punchOut: undefined });
+    if (day.running) void endDay();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- endDay is recreated every render; the ref is the guard
+  }, [params.punchOut, day]);
+
   return (
     <AppFrame title="Home" activeTab="home" contentStyle={{ paddingHorizontal: 16, paddingTop: 14, paddingBottom: 92 }}>
       {/* ---- who and when ---- */}
@@ -946,6 +1008,12 @@ export default function Home() {
           "Start day", and pressing it in that window opens a SECOND session
           against his own record. Neither of the two answers is drawn until
           there is one. */}
+      {/* ONE PLACE, FOUR STATES — not read yet, not started, on the road,
+          closed — and each replaces the last where it stood. Punching in or
+          out is the moment the card changes, so it settles into its new state
+          rather than cutting; no buzz of its own, because every punch already
+          ends in a toast that carries one. */}
+      <Swap id={!day ? 'loading' : !checkedIn ? 'out' : day.running ? 'running' : 'closed'}>
       {!day ? (
         <Card style={{ marginTop: 14, padding: 14 }}>
           <Text style={type.label}>Your day</Text>
@@ -955,7 +1023,7 @@ export default function Home() {
         </Card>
       ) : !checkedIn ? (
         <View style={{ marginTop: 14 }}>
-          <Pressable
+          <PressableScale
             onPress={startDay}
             disabled={starting}
             style={{ flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16, backgroundColor: C.primary, borderRadius: radius.card, boxShadow: shadow.primaryDeep, opacity: starting ? 0.7 : 1 }}>
@@ -971,7 +1039,7 @@ export default function Home() {
               </Text>
             </View>
             <Text style={{ fontSize: 20, color: 'rgba(255,255,255,0.6)' }}>›</Text>
-          </Pressable>
+          </PressableScale>
 
           <View style={{ flexDirection: 'row', backgroundColor: C.surface, borderWidth: 1, borderColor: C.hairline, borderRadius: radius.xl, marginTop: 10, overflow: 'hidden' }}>
             {DAY_AHEAD.map((d, i) => (
@@ -1003,11 +1071,22 @@ export default function Home() {
                 screens — and that one launches turn-by-turn in Google Maps.
                 One word, two things, pressed on a bike. This opens the list,
                 so it is called what the list is called. */}
+            {/* It steps back in the evening, so there is one primary action on
+                the card and it is the one that closes the day. */}
             <Pressable
               onPress={() => router.push('/journey')}
               accessibilityRole="button"
-              style={{ height: HIT, paddingHorizontal: 16, borderRadius: radius.xl, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center' }}>
-              <Text numberOfLines={1} style={[{ fontSize: 15, color: '#FFFFFF' }, weight(500)]}>
+              style={{
+                height: HIT,
+                paddingHorizontal: 16,
+                borderRadius: radius.xl,
+                borderWidth: punchOutLoud ? 1 : 0,
+                borderColor: C.border,
+                backgroundColor: punchOutLoud ? C.surface : C.primary,
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}>
+              <Text numberOfLines={1} style={[{ fontSize: 15, color: punchOutLoud ? C.body : '#FFFFFF' }, weight(500)]}>
                 Today’s route
               </Text>
             </Pressable>
@@ -1019,32 +1098,66 @@ export default function Home() {
             started again afterwards, and the second stretch is ADDED to the
             first rather than replacing it.
           */}
+          {/*
+            AND IN THE EVENING IT IS THE MAIN BUTTON. It was a grey outline
+            under a solid blue one all day, the quietest control on the
+            screen, and salesmen walked past it — every forgotten punch-out is
+            a regularisation for the office and a day with no closing photo.
+            From `mbos.attendance.punchOutPromptHour` it takes the weight
+            "Today's route" gives up, and says why.
+          */}
           <Pressable
             onPress={day.running ? endDay : resumeDay}
             disabled={starting}
+            accessibilityRole="button"
             style={({ pressed }) => ({
               flexDirection: 'row',
               alignItems: 'center',
               justifyContent: 'center',
               gap: 8,
-              height: HIT,
+              minHeight: punchOutLoud ? 56 : HIT,
               marginTop: 12,
               borderRadius: radius.md,
-              borderWidth: 1,
+              borderWidth: punchOutLoud ? 0 : 1,
               borderColor: day.running ? C.border : C.primary,
-              backgroundColor: pressed ? C.wash : day.running ? C.surface : C.primaryTint,
+              backgroundColor: punchOutLoud
+                ? pressed
+                  ? C.primaryDeep
+                  : C.primary
+                : pressed
+                  ? C.wash
+                  : day.running
+                    ? C.surface
+                    : C.primaryTint,
+              boxShadow: punchOutLoud ? shadow.primaryDeep : undefined,
               opacity: starting ? 0.6 : 1,
             })}>
             {/* `camera`, not the clock: what happens when this is pressed is
                 that the camera opens, and the icon that says so is worth more
                 here than the one restating the label. */}
-            <Icon name="camera" size={18} color={day.running ? C.body : C.primaryDeep} />
-            <Text style={[{ fontSize: 15, color: day.running ? C.body : C.primaryDeep }, weight(500)]}>
-              {day.running ? 'Punch out · photo' : 'Punch in again · photo'}
-            </Text>
+            <Icon
+              name="camera"
+              size={punchOutLoud ? 20 : 18}
+              color={punchOutLoud ? '#FFFFFF' : day.running ? C.body : C.primaryDeep}
+            />
+            <View>
+              <Text
+                style={[
+                  { fontSize: punchOutLoud ? 17 : 15, color: punchOutLoud ? '#FFFFFF' : day.running ? C.body : C.primaryDeep },
+                  weight(punchOutLoud ? 600 : 500),
+                ]}>
+                {day.running ? 'Punch out · photo' : 'Punch in again · photo'}
+              </Text>
+              {punchOutLoud ? (
+                <Text style={{ fontSize: 12, lineHeight: 16, color: 'rgba(255,255,255,0.85)' }}>
+                  Done for the day? Close it so your hours count.
+                </Text>
+              ) : null}
+            </View>
           </Pressable>
         </Card>
       )}
+      </Swap>
 
       {/* ---- whether this phone will record the day at all ----
 
@@ -1062,16 +1175,16 @@ export default function Home() {
           the same reason — the danger colour belongs to the tracker having
           actually stopped, which is the Sync card's sentence, not this one's. */}
       {offerSetup ? (
-        <Pressable
+        <PressableScale
           onPress={() => router.push('/tracking-setup?from=home')}
           accessibilityRole="button"
+          outerStyle={{ marginTop: 12 }}
           style={{
             flexDirection: 'row',
             alignItems: 'center',
             gap: 12,
             minHeight: 56,
             paddingHorizontal: 16,
-            marginTop: 12,
             borderWidth: 1,
             borderColor: C.border,
             backgroundColor: C.surface,
@@ -1088,31 +1201,15 @@ export default function Home() {
             </T>
           </View>
           <Icon name="forward" size={20} color={C.muted} strokeWidth={1.5} />
-        </Pressable>
+        </PressableScale>
       ) : null}
 
 
       {/* ---- the six numbers ---- */}
       <Card padded={false} style={{ marginTop: 22, overflow: 'hidden' }}>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-          {DASH_CARDS.map((d, i) => (
-            <Pressable
-              key={d.l}
-              disabled={!d.route}
-              onPress={() => d.route && router.push(`/${d.route}?from=home`)}
-              style={{
-                width: '50%',
-                padding: 14,
-                minHeight: 84,
-                borderTopWidth: i > 1 ? 1 : 0,
-                borderTopColor: C.wash,
-                borderLeftWidth: i % 2 ? 1 : 0,
-                borderLeftColor: C.wash,
-              }}>
-              <Text numberOfLines={1} style={type.label}>{d.l}</Text>
-              <Text
-                numberOfLines={1}
-                style={[
+          {DASH_CARDS.map((d, i) => {
+            const figureStyle = [
                   /* The line height does not move with the size, so a tile
                      saying a sentence is exactly as tall as one saying a
                      number and the grid cannot jump. */
@@ -1134,12 +1231,38 @@ export default function Home() {
                   },
                   weight(600),
                   tabular,
-                ]}>
-                {dashValues[i].v}
-              </Text>
-              <Text numberOfLines={1} style={{ fontSize: 12, color: C.muted }}>{dashValues[i].s}</Text>
-            </Pressable>
-          ))}
+                ];
+            const figure = dashValues[i];
+            return (
+            <PressableScale
+              key={d.l}
+              disabled={!d.route}
+              onPress={() => d.route && router.push(`/${d.route}?from=home`)}
+              outerStyle={{ width: '50%' }}
+              style={{
+                padding: 14,
+                minHeight: 84,
+                borderTopWidth: i > 1 ? 1 : 0,
+                borderTopColor: C.wash,
+                borderLeftWidth: i % 2 ? 1 : 0,
+                borderLeftColor: C.wash,
+              }}>
+              <Text numberOfLines={1} style={type.label}>{d.l}</Text>
+              {/* A real figure counts to its new value when it MOVES — an order
+                  taken, a collection made — and simply stands there the first
+                  time it is drawn: `CountUp` mounts with the read, not before
+                  it, and a figure that is not news should not perform. */}
+              {figure.n != null && figure.fmt ? (
+                <CountUp value={figure.n} format={figure.fmt} numberOfLines={1} style={figureStyle} />
+              ) : (
+                <Text numberOfLines={1} style={figureStyle}>
+                  {figure.v}
+                </Text>
+              )}
+              <Text numberOfLines={1} style={{ fontSize: 12, color: C.muted }}>{figure.s}</Text>
+            </PressableScale>
+            );
+          })}
         </View>
       </Card>
 
@@ -1228,37 +1351,33 @@ export default function Home() {
           { l: 'Overdue', v: leads?.counts.overdue, href: '/lead-actions?view=overdue&from=home', tone: C.danger },
           { l: 'Due today', v: leads?.counts.today, href: '/lead-actions?view=today&from=home', tone: C.ink },
         ] as const).map((stat, i) => (
-          <Pressable
+          <PressableScale
             key={stat.l}
             onPress={() => router.push(stat.href)}
             accessibilityRole="button"
+            outerStyle={{ flex: 1 }}
             style={{
-              flex: 1,
               paddingVertical: 12,
               paddingHorizontal: 8,
               alignItems: 'center',
               borderLeftWidth: i ? 1 : 0,
               borderLeftColor: C.hairline,
             }}>
-            <Text
-              style={[
-                {
-                  fontSize: 19,
-                  lineHeight: 24,
-                  color:
-                    leadsPending || stat.v === undefined
-                      ? C.muted
-                      : stat.v > 0
-                        ? stat.tone
-                        : C.ink,
-                },
-                weight(600),
-                tabular,
-              ]}>
-              {leadsPending || stat.v === undefined ? '—' : String(stat.v)}
-            </Text>
+            {leadsPending || stat.v === undefined ? (
+              <Text style={[{ fontSize: 19, lineHeight: 24, color: C.muted }, weight(600), tabular]}>—</Text>
+            ) : (
+              <CountUp
+                value={stat.v}
+                format={whole}
+                style={[
+                  { fontSize: 19, lineHeight: 24, color: stat.v > 0 ? stat.tone : C.ink },
+                  weight(600),
+                  tabular,
+                ]}
+              />
+            )}
             <Text style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{stat.l}</Text>
-          </Pressable>
+          </PressableScale>
         ))}
       </View>
 
@@ -1294,8 +1413,10 @@ export default function Home() {
         </Card>
       ) : (
         <View style={{ gap: 10, marginTop: 10 }}>
-          {leads.dueToday.map((lead) => (
-            <LeadActionCard key={lead.id} lead={lead} meId={userId} from="home" />
+          {leads.dueToday.map((lead, i) => (
+            <Stagger key={lead.id} index={i}>
+              <LeadActionCard lead={lead} meId={userId} from="home" />
+            </Stagger>
           ))}
           {/* A capped list says what it is a slice of. Six cards over a due
               count of nineteen with nothing saying so is a screen quietly
@@ -1328,9 +1449,9 @@ export default function Home() {
           A sentence that was honest when it was written became the one place
           in the app that contradicted the rest of it, on the screen a salesman
           sees first. It reads the same cache that screen does. */}
-      <Pressable
+      <PressableScale
         onPress={() => router.push('/performance?from=home')}
-        style={{ marginTop: 12 }}>
+        outerStyle={{ marginTop: 12 }}>
         <Card style={{ padding: 14 }}>
           <Text style={type.label}>Your target</Text>
           {readErr ? (
@@ -1355,9 +1476,18 @@ export default function Home() {
                   somebody would otherwise be congratulated for. The score is
                   the office's and is printed, never recomputed here. */}
               <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8, marginTop: 2 }}>
-                <Text style={[{ fontSize: 22, lineHeight: 28, color: C.ink }, weight(600), tabular]}>
-                  {month.totalScoreBp == null ? '—' : (month.totalScoreBp / 100).toFixed(0)}
-                </Text>
+                {/* The office recomputes this hourly; when it has moved since
+                    the last look it counts there, which is the only way a
+                    64 becoming 72 reads as progress rather than as a number. */}
+                {month.totalScoreBp == null ? (
+                  <Text style={[{ fontSize: 22, lineHeight: 28, color: C.ink }, weight(600), tabular]}>—</Text>
+                ) : (
+                  <CountUp
+                    value={month.totalScoreBp / 100}
+                    format={(x) => x.toFixed(0)}
+                    style={[{ fontSize: 22, lineHeight: 28, color: C.ink }, weight(600), tabular]}
+                  />
+                )}
                 <Text style={{ fontSize: 13, color: C.muted }}>out of 100</Text>
                 {month.rating ? (
                   <Text style={{ fontSize: 13, color: C.muted }}>{'· ' + month.rating}</Text>
@@ -1388,7 +1518,7 @@ export default function Home() {
             </>
           )}
         </Card>
-      </Pressable>
+      </PressableScale>
 
       <SelfieCamera
         open={selfieOpen}

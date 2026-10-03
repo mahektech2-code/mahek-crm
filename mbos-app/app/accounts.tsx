@@ -12,6 +12,8 @@ import type { Customer } from '../src/data/customers';
 import { creditUse, longDay } from '../src/engines/account-view';
 import { compactInrFromPaise, inrFromPaise, plural, shopName } from '../src/lib/format';
 import { color as C, radius, tabular, weight } from '../src/theme/tokens';
+import { Stagger } from '../src/components/ui/motion';
+import { feedback } from '../src/components/ui/feedback';
 
 /**
  * CUSTOMER ACCOUNTS — his book, as the Accounts app sees it.
@@ -201,7 +203,10 @@ export default function AccountsScreen() {
           {SORTS.map((s) => (
             <Pressable
               key={s.key}
-              onPress={() => setSort(s.key)}
+              onPress={() => {
+                if (sort !== s.key) feedback('select');
+                setSort(s.key);
+              }}
               accessibilityRole="button"
               accessibilityState={{ selected: sort === s.key }}
               style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: radius.sm, backgroundColor: sort === s.key ? C.primaryTint : 'transparent' }}>
@@ -230,7 +235,9 @@ export default function AccountsScreen() {
       ) : (
         <ListCard style={{ marginTop: 10 }}>
           {rows.map((c, i) => (
-            <AccountRow key={c.id} c={c} first={i === 0} onPress={() => open(c)} />
+            <Stagger key={c.id} index={i}>
+              <AccountRow c={c} first={i === 0} onPress={() => open(c)} />
+            </Stagger>
           ))}
         </ListCard>
       )}
@@ -332,9 +339,14 @@ function Stat({
   onPress: () => void;
   divider?: boolean;
 }) {
+  /* A figure here is also a filter, so pressing one moves the chips below —
+     on, or back off to everything — and ticks like they do. */
   return (
     <Pressable
-      onPress={onPress}
+      onPress={() => {
+        feedback('select');
+        onPress();
+      }}
       accessibilityRole="button"
       accessibilityState={{ selected: on }}
       style={({ pressed }) => [

@@ -1,5 +1,6 @@
 import React from 'react';
-import { Image, Modal, Pressable, TextInput, View } from 'react-native';
+import { useModalOpen } from '../../state/push-banner';
+import { Animated, Image, Modal, Pressable, TextInput, View } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -7,6 +8,8 @@ import { color as C, HIT, radius, weight } from '../../theme/tokens';
 import { Icon } from './Icon';
 import { useKeyboardHeight } from './keyboard';
 import { PrimaryButton, SecondaryButton, T } from './primitives';
+import { Appear, DUR, useShake } from './motion';
+import { feedback } from './feedback';
 import { checkOdometer } from '../../lib/travel-leg';
 
 /**
@@ -72,6 +75,9 @@ export function OdometerCamera({
   const [shot, setShot] = React.useState<string | null>(null);
   const [typed, setTyped] = React.useState('');
   const [err, setErr] = React.useState<string | null>(null);
+  /* A reading refused (below the start, or past the longest leg) shakes the
+     box it is typed in, with the reason under it — a refusal, so `warning`. */
+  const refuse = useShake();
 
   /* Fresh every time it opens. A reading left over from the previous shop is
      the one mistake this screen absolutely cannot make — it would be a
@@ -92,6 +98,10 @@ export function OdometerCamera({
 
   const take = async () => {
     if (!ready || shooting) return;
+    /* The shutter is a physical moment, and the camera gives no sound of its
+       own here — the tap is the only sign the press was taken. Fired as the
+       press is accepted, not when the file lands, which can be a second later. */
+    feedback('tap');
     setShooting(true);
     try {
       const picture = await camera.current?.takePictureAsync({ quality: 1 });
@@ -110,6 +120,7 @@ export function OdometerCamera({
     const verdict = checkOdometer({ typed, previousKm, maxLegKilometres });
     if (!verdict.ok) {
       setErr(verdict.why);
+      refuse.shake();
       return;
     }
     onDone({ uri: shot, km: verdict.km });
@@ -124,6 +135,9 @@ export function OdometerCamera({
     previousKm != null && /^\d{1,7}(\.\d+)?$/.test(typed.trim())
       ? Math.floor(Number(typed)) - previousKm
       : null;
+
+  /* Its own window over the app — see `useModalOpen`. */
+  useModalOpen(open);
 
   return (
     <Modal visible={open} animationType="slide" onRequestClose={() => onDone(null)} statusBarTranslucent>
@@ -158,7 +172,11 @@ export function OdometerCamera({
         {/* ---- the viewfinder, or what is standing in its way ---- */}
         <View style={{ flex: 1, overflow: 'hidden', borderRadius: radius.card, marginHorizontal: 12 }}>
           {shot ? (
-            <Image source={{ uri: shot }} style={{ flex: 1 }} resizeMode="contain" />
+            /* The frozen frame fades up over the black rather than replacing
+               the viewfinder in one frame — the same place, now held still. */
+            <Appear distance={0} duration={DUR.quick} style={{ flex: 1 }}>
+              <Image source={{ uri: shot }} style={{ flex: 1 }} resizeMode="contain" />
+            </Appear>
           ) : denied ? (
             <Refusal body="Camera permission is off for MBOS. You must take a photo of the meter. Turn on the camera in your phone Settings, then try again. If you cannot, tell your manager." />
           ) : permission?.granted ? (
@@ -178,8 +196,8 @@ export function OdometerCamera({
               <T style={{ fontSize: 13, lineHeight: 18, color: 'rgba(255,255,255,0.65)' }}>
                 Now type the meter reading in km.
               </T>
-              <View
-                style={{
+              <Animated.View
+                style={[refuse.style, {
                   flexDirection: 'row',
                   alignItems: 'center',
                   gap: 10,
@@ -188,7 +206,7 @@ export function OdometerCamera({
                   borderWidth: 1,
                   borderColor: err ? C.warn : 'rgba(255,255,255,0.25)',
                   paddingHorizontal: 14,
-                }}>
+                }]}>
                 <TextInput
                   value={typed}
                   onChangeText={(v) => {
@@ -203,7 +221,7 @@ export function OdometerCamera({
                   style={{ flex: 1, height: 52, fontSize: 22, color: '#FFFFFF', letterSpacing: 0.5 }}
                 />
                 <T style={[{ fontSize: 15, color: 'rgba(255,255,255,0.6)' }, weight(500)]}>km</T>
-              </View>
+              </Animated.View>
 
               {err ? (
                 <T style={{ fontSize: 13, lineHeight: 18, color: C.warn }}>{err}</T>
