@@ -19,6 +19,7 @@ import { getConfig } from "../config/store";
 import { liveOlaKey } from "./ola-key-service";
 import { dictationAvailability } from "../dictation-requests";
 import { visitAssistAvailability } from "../visit-assist-availability";
+import { leadScanAvailability } from "../lead-scan-availability";
 import {
   territoriesFor,
   territoryClause,
@@ -617,6 +618,16 @@ export async function mbosConfigPayload(): Promise<Record<string, unknown>> {
    */
   const visitAssist = await visitAssistAvailability().catch(() => null);
   out["mbos.ai.visitAssistant"] = { available: visitAssist?.available === true };
+
+  /*
+   * WHETHER TO DRAW THE SCAN BUTTON on the New lead form, and how many photos
+   * it takes — an answer, like the two above, and caught for the same reason.
+   */
+  const leadScan = await leadScanAvailability().catch(() => null);
+  out["mbos.ai.leadScan"] =
+    leadScan?.available === true
+      ? { available: true, maxImages: leadScan.maxImages }
+      : { available: false };
 
   return out;
 }

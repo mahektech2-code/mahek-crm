@@ -233,6 +233,9 @@ const DEFAULTS: Record<string, unknown> = {
   /* The visit assistant, for the same reason: it needs a model key the phone
      never holds, so it is off until the office says otherwise. */
   'mbos.ai.visitAssistant': { available: false },
+  /* Reading a visiting card on the New lead form: OpenAI's key, never the
+     phone's, so off until the office says otherwise. */
+  'mbos.ai.leadScan': { available: false },
 
   /* leads */
   'mbos.leads.staleDays': 30,
