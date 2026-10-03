@@ -6,7 +6,7 @@ import * as Device from 'expo-device';
 import { registerPushToken } from '../sync/api';
 import { getConfig } from '../data/config';
 import { PhoneSetup } from '../../modules/phone-setup';
-import { hasBannerHost } from '../state/push-banner';
+import { bannerCanShow } from '../state/push-banner';
 
 /**
  * Reaching a handset that is not open.
@@ -99,7 +99,9 @@ async function ensureChannels(): Promise<void> {
     sound: null,
     vibrationPattern: null,
   });
-  await ensureSoundChannels();
+  /* Never allowed to stop registration: a ROM that refuses a channel with a
+     custom sound still has to get a push token, or it gets no push at all. */
+  await ensureSoundChannels().catch(() => {});
 }
 
 /**
@@ -302,13 +304,14 @@ Notifications.setNotificationHandler({
    * Ours drops from under the status bar in the app's own colours, buzzes,
    * and opens the item in one tap.
    *
-   * Only when the banner is actually mounted: before boot, or on a screen
-   * outside the root layout, the system banner still shows, because a push
-   * that nothing displayed is a push that never arrived. It stays in the
+   * Only when ours can actually be SEEN — mounted, the app unlocked, and no
+   * sheet or camera open over it (see `state/push-banner.ts`). Otherwise the
+   * system banner shows, because a push that nothing displayed is a push that
+   * never arrived. It stays in the
    * notification LIST either way, so it can be found later.
    */
   handleNotification: async () => {
-    const ours = hasBannerHost();
+    const ours = bannerCanShow();
     return {
       shouldShowBanner: !ours,
       shouldShowList: true,

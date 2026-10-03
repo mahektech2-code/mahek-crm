@@ -599,9 +599,15 @@ export function CountUp({
   const start = fromZero && !reduce && Number.isFinite(value) ? 0 : value;
   const [shown, setShown] = React.useState(start);
   const fromRef = React.useRef(start);
+  /* Where the figure on screen actually IS, so a value that changes mid-count
+     carries on from there rather than jumping back to the last target. */
+  const onScreen = React.useRef(start);
+  React.useEffect(() => {
+    onScreen.current = shown;
+  }, [shown]);
 
   React.useEffect(() => {
-    const from = fromRef.current;
+    const from = Number.isFinite(onScreen.current) ? onScreen.current : fromRef.current;
     if (reduce || from === value || !Number.isFinite(value) || !Number.isFinite(from)) {
       fromRef.current = value;
       setShown(value);
@@ -800,6 +806,13 @@ export function SwipeRow({
   const actions = React.useRef({ left, right });
   const buzzRef = React.useRef(buzz);
   const [side, setSide] = React.useState<'left' | 'right' | null>(null);
+  const homeTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  React.useEffect(
+    () => () => {
+      if (homeTimer.current) clearTimeout(homeTimer.current);
+    },
+    [],
+  );
   React.useEffect(() => {
     widthRef.current = width;
     actions.current = { left, right };
@@ -834,7 +847,7 @@ export function SwipeRow({
                  back at once flashed it for a frame before it went. If the
                  row is still here a moment later (a refusal, an undo), it
                  slides home. */
-              setTimeout(() => {
+              homeTimer.current = setTimeout(() => {
                 Animated.spring(x, { toValue: 0, useNativeDriver: true, speed: 22, bounciness: 3 }).start(() =>
                   setSide(null),
                 );

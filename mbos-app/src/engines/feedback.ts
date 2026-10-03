@@ -65,10 +65,11 @@ export function plan(
   prefs: FeedbackPrefs,
   ringer: RingerMode,
 ): { haptic: HapticKind | null; sound: SoundName | null } {
-  /* The phone's own silent switch means silent. A vibrate setting still
-     vibrates — that is what the person asked their phone to do instead of
-     ringing — but silent means nothing at all, the way it does for a call. */
-  const haptic = prefs.haptics && ringer !== 'silent' ? kind : null;
+  /* The buzz is not the ringer's to decide. It goes through Android's own
+     touch-feedback channel, which already obeys the phone's "vibrate on
+     touch" setting — so the rule is the person's switch and nothing else, and
+     the buzz never has to wait on a question to the ringer. */
+  const haptic = prefs.haptics ? kind : null;
   /* `unknown` is read as silent: an old APK without the ringer query, or a ROM
      that refuses it. A sound held back costs nothing; a chime on a phone its
      owner silenced is the thing this exists to stop. */

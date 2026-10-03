@@ -7,7 +7,7 @@ import { Icon } from '../ui/Icon';
 import { EASE, useReduceMotion } from '../ui/motion';
 import { feedback } from '../ui/feedback';
 import { feedbackForTone, toneOfNotification, type NotificationTone } from '../../engines/feedback';
-import { registerBannerHost } from '../../state/push-banner';
+import { bannerCanShow, registerBannerHost, useAppLocked } from '../../state/push-banner';
 import { openFrom } from '../../state/push-taps';
 import { useBoot } from '../../state/boot';
 import { syncNow } from '../../sync/engine';
@@ -74,6 +74,11 @@ export function PushBanner() {
   const reduce = useReduceMotion();
   const [queue, setQueue] = React.useState<Item[]>([]);
   const current = queue[0] ?? null;
+  const locked = useAppLocked();
+  /* Leaving is one-way per item: a tap and the dwell timer landing together,
+     or a double tap, must take off ONE banner — each `done` is a `slice(1)`,
+     and a second would drop the next push unseen. */
+  const leaving = React.useRef<string | null>(null);
 
   const y = React.useRef(new Animated.Value(0)).current; // 0 hidden, 1 shown
   const drag = React.useRef(new Animated.Value(0)).current;
@@ -99,7 +104,10 @@ export function PushBanner() {
           data: c.data,
           tone: toneOf(c.data),
         };
-        setQueue((q) => (q.some((x) => x.id === item.id) ? q : [...q, item]));
+        /* Only what WE are showing: when the app is locked or a sheet is up,
+           the handler has already let the system show it. Both read the same
+           answer at the same moment, so a push is shown exactly once. */
+        if (bannerCanShow()) setQueue((q) => (q.some((x) => x.id === item.id) ? q : [...q, item]));
         void syncNow().catch(() => {});
       } catch {
         /* A shape this version does not know. The notification is still in the list. */
@@ -109,9 +117,12 @@ export function PushBanner() {
   }, [boot.ready, signedIn]);
 
   const dismiss = React.useCallback(() => {
+    const id = current?.id ?? null;
+    if (!id || leaving.current === id) return;
+    leaving.current = id;
     const done = () => {
       drag.setValue(0);
-      setQueue((q) => q.slice(1));
+      setQueue((q) => (q[0]?.id === id ? q.slice(1) : q));
     };
     if (reduce) {
       y.setValue(0);
@@ -119,7 +130,21 @@ export function PushBanner() {
       return;
     }
     Animated.timing(y, { toValue: 0, duration: 180, easing: EASE, useNativeDriver: true }).start(done);
-  }, [reduce, y, drag]);
+  }, [reduce, y, drag, current]);
+
+  /* Locking takes whatever was showing away — it stays in the phone's
+     notification list — rather than leaving it to reappear over the app the
+     moment the cover lifts, minutes later and out of context. */
+  React.useEffect(() => {
+    if (!locked) return;
+    y.setValue(0);
+    setQueue([]);
+  }, [locked, y]);
+
+  const dismissRef = React.useRef(dismiss);
+  React.useEffect(() => {
+    dismissRef.current = dismiss;
+  }, [dismiss]);
 
   /* Each item arrives, is felt once, and leaves on its own after a dwell. */
   React.useEffect(() => {
@@ -132,17 +157,13 @@ export function PushBanner() {
     const arm = () => {
       t = setTimeout(() => {
         if (held.current) arm();
-        else dismiss();
+        else dismissRef.current();
       }, DWELL_MS);
     };
     arm();
     return () => clearTimeout(t);
-  }, [current, reduce, y, dismiss]);
+  }, [current, reduce, y]);
 
-  const dismissRef = React.useRef(dismiss);
-  React.useEffect(() => {
-    dismissRef.current = dismiss;
-  }, [dismiss]);
 
   const pan = React.useMemo(
     () =>
@@ -165,7 +186,7 @@ export function PushBanner() {
     [drag],
   );
 
-  if (!current) return null;
+  if (!current || locked) return null;
   const look = LOOK[current.tone];
   const more = queue.length - 1;
 
@@ -192,6 +213,7 @@ export function PushBanner() {
           held.current = false;
         }}
         onPress={() => {
+          if (leaving.current === current.id) return;
           const data = current.data;
           dismiss();
           void openFrom(data).catch(() => {});

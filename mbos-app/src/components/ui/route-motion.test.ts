@@ -46,8 +46,12 @@ test('haptics and UI sound are reached only through components/ui', () => {
       if (e.isDirectory()) walk(p);
       else if (/\.tsx?$/.test(e.name) && !/\.test\.ts$/.test(e.name)) {
         const rel = relative(ROOT, p);
-        if (rel.startsWith(join('src', 'components', 'ui'))) continue;
         const src = readFileSync(p, 'utf8');
+        /* Nowhere — not even in components/ui — may expo-haptics be imported
+           statically: it throws at import on any APK before 1.16.0, and main's
+           JavaScript reaches those over the air. Only a dynamic import(). */
+        if (/^import [^;]*from ['"]expo-haptics['"]/m.test(src)) offenders.push(rel + ' (static expo-haptics import)');
+        if (rel.startsWith(join('src', 'components', 'ui'))) continue;
         if (/from ['"]expo-haptics['"]/.test(src)) offenders.push(rel);
         if (/createAudioPlayer|useAudioPlayer\(/.test(src)) offenders.push(rel);
       }

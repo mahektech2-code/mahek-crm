@@ -96,13 +96,19 @@ let lastSeenUnread = 0;
 function Bell({ onPress, unread, loaded }: { onPress: () => void; unread: number; loaded: boolean }) {
   const ring = useShake(null);
   const shake = ring.shake;
+  /* Each bell keeps its OWN last count, seeded from the last one any bell saw.
+     Every screen in the stack polls, and a hidden screen updating one shared
+     number first would leave the visible bell thinking nothing had risen. */
+  const [seenAtMount] = React.useState(lastSeenUnread);
+  const seen = React.useRef(seenAtMount);
   /* Before the first read the count is a placeholder 0, not a fall to zero. */
-  const rose = loaded && unread > lastSeenUnread;
   React.useEffect(() => {
     if (!loaded) return;
-    if (rose) shake();
+    if (unread > seen.current) shake();
+    seen.current = unread;
     lastSeenUnread = unread;
-  }, [unread, rose, shake, loaded]);
+  }, [unread, shake, loaded]);
+  const rose = loaded && unread > seenAtMount;
 
   return (
     <Pressable onPress={onPress} accessibilityLabel={unread > 0 ? `Notifications, ${unread} unread` : 'Notifications'} style={s.iconBtn}>

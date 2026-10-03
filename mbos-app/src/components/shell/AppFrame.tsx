@@ -225,11 +225,14 @@ export function AppFrame({
 
   /* The top-bar refresh. A new version wins the screen; otherwise the toast
      says what the sync did, so the press is never silent. */
-  const refresh = React.useCallback(async () => {
+  const refresh = React.useCallback(async (opts: { offerUpdates?: boolean } = {}) => {
     setRefreshing(true);
     try {
       const verdict = await refreshEverything();
-      if (verdict.offer) offerUpdate(verdict.offer);
+      /* Only the BUTTON may raise the update prompt. A pull can happen by
+         accident at the top of a half-filled order form, and a modal asking to
+         restart the app is the last thing that should land on it then. */
+      if (verdict.offer && opts.offerUpdates !== false) offerUpdate(verdict.offer);
       /* A note, not a confirmation: the summary is as often "No signal" or
          "3 entries were not accepted" as it is good news, and a success buzz
          on either would say the opposite of the sentence. */
@@ -355,7 +358,7 @@ export function AppFrame({
           refreshing={refreshing}
           onRefresh={() => {
             feedback('tap');
-            void refresh();
+            void refresh({ offerUpdates: false });
           }}
           colors={[C.primary]}
           tintColor={C.primary}

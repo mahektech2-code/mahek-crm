@@ -14,8 +14,8 @@ test('sounds are off and haptics on until somebody chooses otherwise', () => {
   assert.deepEqual(plan('success', DEFAULT_FEEDBACK_PREFS, 'normal'), { haptic: 'success', sound: null });
 });
 
-test('a silenced phone neither buzzes nor chimes', () => {
-  assert.deepEqual(plan('success', { haptics: true, sounds: true }, 'silent'), { haptic: null, sound: null });
+test('a silenced phone never chimes; the buzz is left to the system touch setting', () => {
+  assert.deepEqual(plan('success', { haptics: true, sounds: true }, 'silent'), { haptic: 'success', sound: null });
 });
 
 test('vibrate mode keeps the buzz and drops the chime', () => {

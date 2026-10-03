@@ -1,4 +1,5 @@
 import React from 'react';
+import { useModalOpen } from '../../state/push-banner';
 import { Image, Modal, Pressable, View } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -153,6 +154,9 @@ export function SelfieCamera({
   };
 
   const denied = permission != null && !permission.granted && !permission.canAskAgain;
+
+  /* Its own window over the app — see `useModalOpen`. */
+  useModalOpen(open);
 
   return (
     <Modal visible={open} animationType="slide" onRequestClose={() => onDone(null)} statusBarTranslucent>

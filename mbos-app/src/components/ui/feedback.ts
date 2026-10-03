@@ -168,20 +168,17 @@ export function feedback(kind: FeedbackKind): void {
   const prefs = feedbackPrefs();
   if (!prefs.haptics && !prefs.sounds) return;
 
-  /* The ringer query is a native round trip, so it is only made when a sound
-     might play. A buzz never waits on it: vibrate and normal both buzz, and a
-     phone in silent mode has asked the SYSTEM touch feedback to stop already,
-     which `performHapticFeedback` honours by itself. */
-  if (!prefs.sounds) {
-    const { haptic } = plan(kind, prefs, 'normal');
-    if (haptic) void buzz(haptic);
-    return;
-  }
+  /* THE BUZZ NEVER WAITS, and follows one rule whether sounds are on or off:
+     it goes through `performHapticFeedback`, which already honours the
+     phone's own touch-feedback setting, so it is decided without asking the
+     ringer. Only the SOUND waits on the ringer query — a native round trip —
+     and only when sounds are on at all. */
+  const { haptic } = plan(kind, prefs, 'normal');
+  if (haptic) void buzz(haptic);
+  if (!prefs.sounds) return;
 
   void (async () => {
-    const ringer = await ringerMode();
-    const { haptic, sound } = plan(kind, prefs, ringer);
-    if (haptic) void buzz(haptic);
+    const { sound } = plan(kind, prefs, await ringerMode());
     if (sound) await chime(sound);
   })();
 }

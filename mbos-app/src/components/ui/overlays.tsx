@@ -9,6 +9,7 @@ import { TAB_BAR_HEIGHT } from '../shell/Chrome';
 import { useKeyboardHeight } from './keyboard';
 import { useReduceMotion, EASE } from './motion';
 import { feedback } from './feedback';
+import { useModalOpen } from '../../state/push-banner';
 import type { FeedbackKind } from '../../engines/feedback';
 
 /**
@@ -95,6 +96,9 @@ function SheetModal({
   /* Adjusted during render rather than in an effect, so the Modal is mounted on
      the same pass `open` turns true. */
   if (open && !shown) setShown(true);
+  /* A Modal is its own window over the app, so a push banner drawn under it
+     would never be seen — while one is up, the system shows pushes instead. */
+  useModalOpen(shown);
 
   React.useEffect(() => {
     if (!shown) return;
@@ -277,6 +281,9 @@ export function Toast({
   /* Swiped sideways, it goes — the way every notification on the phone does. */
   const swipe = React.useRef(new Animated.Value(0)).current;
   const leaveRef = React.useRef<() => void>(() => {});
+  /* The dwell timer, so a swipe that ends the toast also ends the timer — or
+     the timer would fire a second `onDone` and clear the NEXT toast. */
+  const dwellTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const pan = React.useMemo(
     () =>
       PanResponder.create({
@@ -290,6 +297,7 @@ export function Toast({
               easing: EASE,
               useNativeDriver: true,
             }).start(() => {
+              if (dwellTimer.current) clearTimeout(dwellTimer.current);
               leaveRef.current();
               swipe.setValue(0);
             });
@@ -318,6 +326,7 @@ export function Toast({
     if (reduce) {
       progress.setValue(1);
       const t = setTimeout(leave, dwell);
+      dwellTimer.current = t;
       return () => clearTimeout(t);
     }
 
@@ -332,6 +341,7 @@ export function Toast({
     /* Leave BEFORE telling the store, so the exit is seen rather than cut off
        by the message being cleared out from under it. */
     const t = setTimeout(leave, dwell);
+    dwellTimer.current = t;
 
     return () => {
       enter.stop();

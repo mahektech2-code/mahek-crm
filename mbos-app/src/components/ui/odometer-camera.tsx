@@ -1,4 +1,5 @@
 import React from 'react';
+import { useModalOpen } from '../../state/push-banner';
 import { Animated, Image, Modal, Pressable, TextInput, View } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -132,6 +133,9 @@ export function OdometerCamera({
     previousKm != null && /^\d{1,7}(\.\d+)?$/.test(typed.trim())
       ? Math.floor(Number(typed)) - previousKm
       : null;
+
+  /* Its own window over the app — see `useModalOpen`. */
+  useModalOpen(open);
 
   return (
     <Modal visible={open} animationType="slide" onRequestClose={() => onDone(null)} statusBarTranslucent>

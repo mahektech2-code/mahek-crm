@@ -9,6 +9,7 @@ import { DUR, EASE, Presence, useReduceMotion, useShake } from '../ui/motion';
 import { forgetUnlock, markLeft, markUnlocked, shouldLock } from '../../data/app-lock';
 import { capability, prompt } from '../../native/biometrics';
 import { useBoot } from '../../state/boot';
+import { setAppLocked } from '../../state/push-banner';
 
 /**
  * The lock screen.
@@ -172,6 +173,12 @@ export function AppLock({ children }: { children: React.ReactNode }) {
    * Kept mounted while it leaves, and touch-transparent while it does: the
    * person is in, and a tap on the app in those 180 ms must land on the app.
    */
+  /* The push banner reads this: while the cover is up it draws nothing, and
+     the system shows the push instead — see `state/push-banner.ts`. */
+  React.useEffect(() => {
+    setAppLocked(locked);
+  }, [locked]);
+
   const reduce = useReduceMotion();
   const fade = React.useRef(new Animated.Value(1)).current;
   const [coverMounted, setCoverMounted] = React.useState(locked);
@@ -203,6 +210,10 @@ export function AppLock({ children }: { children: React.ReactNode }) {
             left: 0,
             right: 0,
             bottom: 0,
+            /* Above everything drawn in the app's window, whatever its order:
+               Android stacks by elevation, and the push banner has some. */
+            zIndex: 1000,
+            elevation: 24,
             opacity: locked ? 1 : fade,
             transform: [{ scale: locked ? 1 : fade.interpolate({ inputRange: [0, 1], outputRange: [1.04, 1] }) }],
           }}>
