@@ -47,3 +47,6 @@ yarn-error.*
 # The release keystore's password — kept out of git deliberately, see
 # keystore/README.md. The keystore file itself IS committed.
 /keystore/*.properties
+
+# Written by the APK workflow from a secret; see DEPLOY.md, "Push notifications".
+google-services.json
