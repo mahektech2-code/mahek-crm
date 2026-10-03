@@ -1,3 +1,5 @@
+import { buildIsBehind } from "../handset-health";
+
 /**
  * The decisions push makes, with nothing plugged in.
  *
@@ -54,4 +56,59 @@ export function withinQuietHours(hour: number, window: readonly number[] | null 
   const to = window?.[1] ?? 0;
   if (from === to) return false;
   return from < to ? hour >= from && hour < to : hour >= from || hour < to;
+}
+
+/* ---------------------------------------------------------------- channels */
+
+/**
+ * The first handset build that carries the two notification sounds and the
+ * channels that play them (`decisions-v1`, `updates-v1` in the handset's
+ * `native/push.ts`).
+ *
+ * A channel named in a push that the phone does not have falls back to
+ * Expo's generic one: the push still arrives, but with no heads-up banner and
+ * none of the sounds. So a build below this keeps receiving `default`, the
+ * channel it has always had — `mbos_devices.app_version` is what says which
+ * build is in whose pocket, and that is exactly the question it exists for.
+ */
+export const SOUND_CHANNELS_FROM = "1.16.0";
+
+export const CHANNEL = {
+  legacy: "default",
+  quiet: "quiet",
+  decisions: "decisions-v1",
+  updates: "updates-v1",
+} as const;
+
+/**
+ * A notification's `kind` is free text on the server — `warn` and `warning`
+ * are both written today — so every spelling of a decision about somebody's
+ * work is folded onto one tone here, the same three the handset's banner
+ * draws. Anything unrecognised is `info`.
+ */
+export function toneOfKind(kind: string | null | undefined): "success" | "warn" | "info" {
+  const k = (kind ?? "").toLowerCase();
+  if (k === "warn" || k === "warning" || k === "danger" || k === "error" || k === "rejected") return "warn";
+  if (k === "success" || k === "accepted" || k === "approved") return "success";
+  return "info";
+}
+
+/**
+ * Which Android channel a push goes out on.
+ *
+ * QUIET HOURS WIN OVER EVERYTHING: a refusal at two in the morning is still
+ * delivered silently, exactly as before. Then the build decides: an older APK,
+ * or one that never reported a version, gets `default`. Only a build known to
+ * carry the sounds is sent the new channels, split by what the message is —
+ * an approval or a refusal is a decision about his work and gets the firmer
+ * sound; everything else is an update.
+ */
+export function channelFor(input: {
+  quiet: boolean;
+  kind: string | null | undefined;
+  appVersion: string | null | undefined;
+}): string {
+  if (input.quiet) return CHANNEL.quiet;
+  if (buildIsBehind(input.appVersion ?? null, SOUND_CHANNELS_FROM) !== false) return CHANNEL.legacy;
+  return toneOfKind(input.kind) === "info" ? CHANNEL.updates : CHANNEL.decisions;
 }

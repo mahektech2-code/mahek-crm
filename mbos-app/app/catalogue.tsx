@@ -9,6 +9,8 @@ import { searchProducts } from '../src/data/customers';
 import { useStore } from '../src/state/store';
 import { SkuChip } from '../src/components/ui/sku';
 import { skuLines } from '../src/lib/sku-lines';
+import { Stagger } from '../src/components/ui/motion';
+import { STAGGER_CAP } from '../src/components/ui/route-motion';
 
 type Row = Awaited<ReturnType<typeof searchProducts>>[number];
 
@@ -95,7 +97,13 @@ export default function CatalogueScreen() {
 
   const asked = catQ.trim();
 
-  const renderRow = ({ item: x }: { item: Row }) => (
+  /* Only the rows the first paint shows cascade in. A FlatList mounts the rest
+     as they scroll into view, and a row that fades in under a moving thumb
+     reads as the list lagging rather than arriving. */
+  const renderRow = ({ item, index }: { item: Row; index: number }) =>
+    index < STAGGER_CAP ? <Stagger index={index}>{row(item)}</Stagger> : row(item);
+
+  const row = (x: Row) => (
     /* NOT PRESSABLE. Every row used to be a button whose whole effect was a
        2.4-second toast at the far end of the screen, `pointerEvents="none"`,
        restating four things already printed on the row — so it read as a

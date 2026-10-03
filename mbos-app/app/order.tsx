@@ -4,6 +4,8 @@ import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Card, Input, ListCard, PrimaryButton, SectionLabel, T } from '../src/components/ui/primitives';
 import { Icon } from '../src/components/ui/Icon';
+import { Appear, CountUp, FillBar, Presence, animateLayout } from '../src/components/ui/motion';
+import { feedback } from '../src/components/ui/feedback';
 import { isOnline } from '../src/sync/engine';
 import { SkuChip } from '../src/components/ui/sku';
 import { color as C, radius, tabular, type, weight } from '../src/theme/tokens';
@@ -89,6 +91,31 @@ export default function OrderScreen() {
   const set = useStore((s) => s.set);
   const setQty = useStore((s) => s.setQty);
   const dropLine = useStore((s) => s.dropLine);
+  /*
+   * A LINE ARRIVING OR LEAVING MOVES THE ORDER UNDER IT. Adding a product puts
+   * a card into "On this order" and pushes the total down; taking one off
+   * pulls everything up. Without the layout animation both happen in a frame,
+   * and the thing he was about to tap is somewhere else. The state change is
+   * made first-class here so every door — the row's Add, the cross, the
+   * stepper going below one, a quantity typed down to nothing — moves the
+   * same way.
+   */
+  const addLine = (id: string) => {
+    animateLayout();
+    setQty(id, '1');
+  };
+  const removeLine = (id: string) => {
+    animateLayout();
+    dropLine(id);
+  };
+  /* One can more or less is a choice moving one notch, felt as a tick — he is
+     counting cans with his thumb while the shopkeeper talks, eyes on the
+     shelf. Typing a number does not tick: the keyboard already clicks. */
+  const stepQty = (id: string, next: number) => {
+    feedback('select');
+    if (next < 1) removeLine(id);
+    else setQty(id, String(next));
+  };
   const notify = useStore((s) => s.notify);
   const markVisitDone = useStore((s) => s.markVisitDone);
 
@@ -396,6 +423,7 @@ export default function OrderScreen() {
     const found = await productsByIds(lastOrder.map((l) => l.productId));
     if (!found.length) return notify('No product from that order is sold now.', 'error');
     remember(found);
+    animateLayout();
     const byId = new Map(lastOrder.map((l) => [l.productId, l.cans]));
     for (const p of found) setQty(p.id, String(Math.max(1, byId.get(p.id) ?? 1)));
     const dropped = lastOrder.length - found.length;
@@ -735,13 +763,13 @@ export default function OrderScreen() {
                     on={!!cart[k.id]}
                     qty={cart[k.id]}
                     onQty={(v) => setQty(k.id, v)}
-                    onDrop={() => dropLine(k.id)}
+                    onDrop={() => removeLine(k.id)}
                     note={
                       'Ordered ' +
                       plural(k.orderCount, 'time') +
                       (k.lastPurchaseDate ? ' · last ' + shortDate(k.lastPurchaseDate) : '')
                     }
-                    onAdd={() => setQty(k.id, '1')}
+                    onAdd={() => addLine(k.id)}
                   />
                 ))}
               </ListCard>
@@ -762,8 +790,8 @@ export default function OrderScreen() {
                     on={!!cart[k.id]}
                     qty={cart[k.id]}
                     onQty={(v) => setQty(k.id, v)}
-                    onDrop={() => dropLine(k.id)}
-                    onAdd={() => setQty(k.id, '1')}
+                    onDrop={() => removeLine(k.id)}
+                    onAdd={() => addLine(k.id)}
                   />
                 ))}
               </ListCard>
@@ -795,8 +823,8 @@ export default function OrderScreen() {
                     on={!!cart[k.id]}
                     qty={cart[k.id]}
                     onQty={(v) => setQty(k.id, v)}
-                    onDrop={() => dropLine(k.id)}
-                    onAdd={() => setQty(k.id, '1')}
+                    onDrop={() => removeLine(k.id)}
+                    onAdd={() => addLine(k.id)}
                   />
               ))}
               {/* Three different empty states, and they must never look alike:
@@ -885,7 +913,10 @@ export default function OrderScreen() {
                       .filter(Boolean)
                       .join(' · ');
                 return (
-                  <Card key={line.productId} padded={false} style={{ paddingHorizontal: 16, paddingVertical: 14 }}>
+                  /* The new line settles in where the layout animation has
+                     opened room for it — the card arriving, not appearing. */
+                  <Appear key={line.productId}>
+                  <Card padded={false} style={{ paddingHorizontal: 16, paddingVertical: 14 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
                       <View style={{ flex: 1, minWidth: 0 }}>
                         {/* THE CART LINE LEADS ON THE SKU, as every row on
@@ -916,7 +947,7 @@ export default function OrderScreen() {
                         })()}
                       </View>
                       <Pressable
-                        onPress={() => dropLine(line.productId)}
+                        onPress={() => removeLine(line.productId)}
                         accessibilityRole="button"
                         accessibilityLabel="Remove this line"
                         /* The design draws this at 36, and 36 is under the
@@ -943,7 +974,7 @@ export default function OrderScreen() {
                         <Pressable
                           /* A line is never at nought: one less than one takes it
                              off the order, the same as the cross above it. */
-                          onPress={() => (qty <= 1 ? dropLine(line.productId) : setQty(line.productId, String(qty - 1)))}
+                          onPress={() => stepQty(line.productId, qty - 1)}
                           accessibilityRole="button"
                           accessibilityLabel={qty <= 1 ? 'Take off the order' : 'One less'}
                           /* 44 is under the 48 floor, on the one control that
@@ -962,7 +993,7 @@ export default function OrderScreen() {
                           /* Empty is allowed while he types a new number; left at
                              nought or empty, the line comes off the order. */
                           onEndEditing={() => {
-                            if (!(parseInt(useStore.getState().cart[line.productId] ?? '', 10) > 0)) dropLine(line.productId);
+                            if (!(parseInt(useStore.getState().cart[line.productId] ?? '', 10) > 0)) removeLine(line.productId);
                           }}
                           placeholder="0"
                           placeholderTextColor={C.faint}
@@ -985,7 +1016,7 @@ export default function OrderScreen() {
                           ]}
                         />
                         <Pressable
-                          onPress={() => setQty(line.productId, String(qty + 1))}
+                          onPress={() => stepQty(line.productId, qty + 1)}
                           accessibilityRole="button"
                           accessibilityLabel="One more"
                           hitSlop={4}
@@ -995,6 +1026,7 @@ export default function OrderScreen() {
                       </View>
                     </View>
                   </Card>
+                  </Appear>
                 );
               })}
             </View>
@@ -1006,7 +1038,19 @@ export default function OrderScreen() {
               {/* An unvalued order is not an order worth nothing. Until a rate
                   source is confirmed the screen says so rather than showing a
                   confident zero. */}
-              <T style={[type.h2, tabular]}>{valueUnavailable ? 'Not known yet' : inr(cartTotal)}</T>
+              {/* The total runs to its new figure as cans are stepped, so the
+                  eye sees the order grow with each tap rather than a number
+                  replaced. Not from zero — opening the screen is not news. */}
+              {valueUnavailable ? (
+                <T style={[type.h2, tabular]}>Not known yet</T>
+              ) : (
+                <CountUp
+                  value={assessment?.valuePaise ?? 0}
+                  format={(n) => inrFromPaise(Math.round(n))}
+                  duration={320}
+                  style={[type.h2, tabular]}
+                />
+              )}
             </View>
             {/* A second, narrower figure: this account's own `mbos_price_list`
                 rate, summed. It is not the office's order value above — that
@@ -1016,18 +1060,25 @@ export default function OrderScreen() {
             {listValuePaise != null ? (
               <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, marginTop: 6 }}>
                 <T s="caption">List value{priceTag ? ' · ' + priceTag : ''}</T>
-                <T s="body" style={[weight(500), tabular]}>{inrFromPaise(listValuePaise)}</T>
+                <CountUp
+                  value={listValuePaise}
+                  format={(n) => inrFromPaise(Math.round(n))}
+                  duration={320}
+                  style={[type.body, weight(500), tabular]}
+                />
               </View>
             ) : null}
             {limit != null ? (
               <>
-                <View style={{ height: 8, backgroundColor: C.hairline, borderRadius: 4, marginTop: 12, overflow: 'hidden' }}>
-                  <View
-                    style={{
-                      width: `${Math.min(100, Math.round((wouldBe / limit) * 100))}%`,
-                      height: '100%',
-                      backgroundColor: needsApproval ? C.danger : C.primary,
-                    }}
+                {/* The credit track eases to what the order would bring the
+                    balance to, so stepping a line up visibly eats into the
+                    limit. A row, so FillBar's flex takes the width. */}
+                <View style={{ flexDirection: 'row', marginTop: 12 }}>
+                  <FillBar
+                    pct={limit > 0 ? Math.round((wouldBe / limit) * 100) : 100}
+                    height={8}
+                    track={C.hairline}
+                    fill={needsApproval ? C.danger : C.primary}
                   />
                 </View>
                 <T s="caption" style={{ marginTop: 8 }}>
@@ -1046,7 +1097,10 @@ export default function OrderScreen() {
                     : 'This account has no price list yet. So there are no rates to check.'}
               </T>
             ) : null}
-            {needsApproval && assessment ? (
+            {/* The approval note opens in place as the order crosses the line,
+                rather than shoving the button down in the frame his thumb is
+                heading for it. */}
+            <Presence show={needsApproval && !!assessment}>
               <View
                 style={{
                   borderWidth: 1,
@@ -1057,9 +1111,9 @@ export default function OrderScreen() {
                   paddingVertical: 12,
                   marginTop: 12,
                 }}>
-                <T style={{ fontSize: 13, lineHeight: 19, color: C.warnInk }}>{assessment.reason}</T>
+                <T style={{ fontSize: 13, lineHeight: 19, color: C.warnInk }}>{assessment?.reason}</T>
               </View>
-            ) : null}
+            </Presence>
           </Card>
 
           {changeId ? (
@@ -1186,7 +1240,11 @@ function ProductRow({
             backgroundColor: C.surface,
           }}>
           <Pressable
-            onPress={() => (n <= 1 ? onDrop?.() : onQty(String(n - 1)))}
+            onPress={() => {
+              feedback('select');
+              if (n <= 1) onDrop?.();
+              else onQty(String(n - 1));
+            }}
             accessibilityRole="button"
             accessibilityLabel={n <= 1 ? 'Take it off the order' : 'One less'}
             hitSlop={4}
@@ -1207,7 +1265,10 @@ function ProductRow({
             ]}
           />
           <Pressable
-            onPress={() => onQty(String(n + 1))}
+            onPress={() => {
+              feedback('select');
+              onQty(String(n + 1));
+            }}
             accessibilityRole="button"
             accessibilityLabel="One more"
             hitSlop={4}

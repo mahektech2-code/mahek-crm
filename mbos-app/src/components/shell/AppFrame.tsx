@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Pressable, Platform, ScrollView, StyleSheet } from 'react-native';
+import { View, Text, Pressable, Platform, RefreshControl, ScrollView, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams, usePathname } from 'expo-router';
 import { color as C, HIT, type, weight } from '../../theme/tokens';
@@ -8,8 +8,9 @@ import { ActionSheet, ConfirmSheet, Toast } from '../ui/overlays';
 import { Icon } from '../ui/Icon';
 import { useKeyboardHeight } from '../ui/keyboard';
 import { useTicker } from '../ui/use-ticker';
-import { Appear } from '../ui/motion';
-import { useCustomer, useDaysToAgreeCount, usePendingCount, useStore, useUnreadCount } from '../../state/store';
+import { Appear, Presence } from '../ui/motion';
+import { feedback } from '../ui/feedback';
+import { useCustomer, useDaysToAgreeCount, usePendingCount, useStore, useUnreadCountOrNull } from '../../state/store';
 import { TravelGate } from './TravelGate';
 import { refreshEverything } from '../../native/refresh';
 import { useBoot } from '../../state/boot';
@@ -195,7 +196,8 @@ export function AppFrame({
   const fromHere = `?from=${here}`;
   const keyboardHeight = useKeyboardHeight();
   const [footerHeight, setFooterHeight] = React.useState(0);
-  const unread = useUnreadCount();
+  const unreadOrNull = useUnreadCountOrNull();
+  const unread = unreadOrNull ?? 0;
   const waiting = usePendingCount();
   const daysToAgree = useDaysToAgreeCount();
   const clock = useDayClock();
@@ -223,12 +225,18 @@ export function AppFrame({
 
   /* The top-bar refresh. A new version wins the screen; otherwise the toast
      says what the sync did, so the press is never silent. */
-  const refresh = React.useCallback(async () => {
+  const refresh = React.useCallback(async (opts: { offerUpdates?: boolean } = {}) => {
     setRefreshing(true);
     try {
       const verdict = await refreshEverything();
-      if (verdict.offer) offerUpdate(verdict.offer);
-      else notify(verdict.summary);
+      /* Only the BUTTON may raise the update prompt. A pull can happen by
+         accident at the top of a half-filled order form, and a modal asking to
+         restart the app is the last thing that should land on it then. */
+      if (verdict.offer && opts.offerUpdates !== false) offerUpdate(verdict.offer);
+      /* A note, not a confirmation: the summary is as often "No signal" or
+         "3 entries were not accepted" as it is good news, and a success buzz
+         on either would say the opposite of the sentence. */
+      else notify(verdict.summary, 'info');
     } finally {
       setRefreshing(false);
     }
@@ -340,7 +348,23 @@ export function AppFrame({
       keyboardShouldPersistTaps="handled"
       keyboardDismissMode="interactive"
       automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
-      showsVerticalScrollIndicator={false}>
+      showsVerticalScrollIndicator={false}
+      /* PULL DOWN TO REFRESH runs the same thing as the header's refresh
+         button — send, fetch, look for a new version — because pulling a list
+         down is the gesture every phone has taught people for "get me the
+         latest", and the button in the corner is the one they never find. */
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={() => {
+            feedback('tap');
+            void refresh({ offerUpdates: false });
+          }}
+          colors={[C.primary]}
+          tintColor={C.primary}
+          progressBackgroundColor={C.surface}
+        />
+      }>
       {/* The quieter half of the transition: the screen has arrived, and this
           is it settling. It also covers the frame or two where SQLite has not
           answered yet, so data reads as arriving rather than popping in. */}
@@ -359,6 +383,7 @@ export function AppFrame({
           title={title}
           onBack={onBack}
           unread={unread}
+          unreadLoaded={unreadOrNull !== null}
           onRefresh={() => void refresh()}
           refreshing={refreshing}
           /* No bell on the notifications screen. A control whose whole job is
@@ -380,6 +405,10 @@ export function AppFrame({
         rather than something to dismiss. Hidden on the visit screen itself,
         where the same question is already the whole page.
       */}
+      {/* Each of these three bars rises into place and sinks out of it rather
+          than blinking — a bar that appears in one frame over the bottom of a
+          list reads as the list being cut off. */}
+      <Presence show={!!arrival && arrival.checkedInAt == null && here !== 'visit'} distance={12}>
       {arrival && arrival.checkedInAt == null && here !== 'visit' ? (
         <ArrivedBar
           name={arrival.customerName}
@@ -390,6 +419,7 @@ export function AppFrame({
           }}
         />
       ) : null}
+      </Presence>
 
       {/*
         AND ONCE HE IS INSIDE, THE VISIT FOLLOWS HIM TOO.
@@ -400,6 +430,7 @@ export function AppFrame({
         the app, or whether Android reaped it, can stop it. Tapping the bar is
         the way back to the check-out.
       */}
+      <Presence show={!!arrival && arrival.checkedInAt != null && here !== 'visit'} distance={12}>
       {arrival && arrival.checkedInAt != null && here !== 'visit' ? (
         <InVisitBar
           name={arrival.customerName}
@@ -411,6 +442,7 @@ export function AppFrame({
           }}
         />
       ) : null}
+      </Presence>
 
       {/*
         AND IN THE EVENING, THE DAY FOLLOWS HIM.
@@ -422,12 +454,14 @@ export function AppFrame({
         before he can close the day, and two bars would be two questions. Not
         on Home, where the same question is already the main button.
       */}
-      {clock.due && !arrival && here !== 'home' ? (
-        <PunchOutBar
-          sessions={clock.sessions}
-          onPress={() => router.replace('/home?punchOut=1')}
-        />
-      ) : null}
+      <Presence show={clock.due && !arrival && here !== 'home'} distance={12}>
+        {clock.due && !arrival && here !== 'home' ? (
+          <PunchOutBar
+            sessions={clock.sessions}
+            onPress={() => router.replace('/home?punchOut=1')}
+          />
+        ) : null}
+      </Presence>
 
       {/* Measured rather than guessed, so the toast can sit above whatever the
           screen pinned here — see `Toast`. A screen with no footer measures 0
@@ -479,7 +513,10 @@ export function AppFrame({
           if (!confirm) return;
           const r = confirmReason.trim();
           /* A reason that was asked for and not given stops the action, not the dialog. */
-          if (confirm.reasonLabel && !r) return set({ confirmErr: true });
+          if (confirm.reasonLabel && !r) {
+            feedback('warning');
+            return set({ confirmErr: true });
+          }
           confirm.run(r);
           closeConfirm();
         }}

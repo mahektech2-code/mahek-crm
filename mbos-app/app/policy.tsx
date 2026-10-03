@@ -4,6 +4,7 @@ import { useFocusEffect } from 'expo-router';
 
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Card, T } from '../src/components/ui/primitives';
+import { Stagger } from '../src/components/ui/motion';
 import { dmy } from '../src/lib/format';
 import { color as C, weight } from '../src/theme/tokens';
 import { activePolicy, type LocalPolicy } from '../src/data/travel';
@@ -69,10 +70,14 @@ export default function PolicyScreen() {
               </T>
             </Card>
           ) : (
+            /* The rules arrive one after another, so they read as a list of
+               separate rules rather than one block of text. */
             policy.sentences.map((sentence, i) => (
-              <Card key={i} style={{ marginBottom: 8 }}>
-                <T s="small" style={{ color: C.ink }}>{sentence}</T>
-              </Card>
+              <Stagger key={i} index={i}>
+                <Card style={{ marginBottom: 8 }}>
+                  <T s="small" style={{ color: C.ink }}>{sentence}</T>
+                </Card>
+              </Stagger>
             ))
           )}
 

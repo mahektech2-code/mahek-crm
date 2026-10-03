@@ -82,6 +82,7 @@ export async function notifyUsers(entries: readonly NotifyEntry[]): Promise<void
       body: e.body,
       href: e.mbosHref ?? null,
       notificationId: rows[i].id,
+      kind: rows[i].kind,
     })),
   );
 }

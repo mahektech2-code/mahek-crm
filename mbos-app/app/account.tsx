@@ -30,6 +30,7 @@ import { PERIODS, periodRange, type PeriodKey } from '../src/engines/statement';
 import { useStore } from '../src/state/store';
 import { inrFromPaise, isoDate, plural, shopName } from '../src/lib/format';
 import { color as C, radius, tabular, weight } from '../src/theme/tokens';
+import { Stagger, Swap, animateLayoutFor } from '../src/components/ui/motion';
 
 /**
  * ONE CUSTOMER'S ACCOUNT, in full — the Accounts app's customer account on
@@ -175,13 +176,16 @@ export default function AccountScreen() {
         />
       </View>
 
-      <View style={{ marginTop: 14 }}>
+      {/* Siblings, so the new tab's body settles in place rather than sliding:
+          there is no direction between Bills and Payments. The tick is in
+          `Tabs` itself. */}
+      <Swap id={tab} style={{ marginTop: 14 }}>
         {tab === 0 ? <Summary view={view} onTab={setTab} /> : null}
         {tab === 1 ? <Statement view={view} /> : null}
         {tab === 2 ? <Bills view={view} /> : null}
         {tab === 3 ? <Payments view={view} /> : null}
         {tab === 4 ? <CreditNotes view={view} /> : null}
-      </View>
+      </Swap>
     </AppFrame>
   );
 }
@@ -524,7 +528,9 @@ function Statement({ view }: { view: AccountView }) {
       ) : (
         <ListCard>
           {w.entries.slice(0, shown).map((e, i) => (
-            <EntryRow key={`${e.kind}-${e.ref}-${e.at}-${i}`} e={e} first={i === 0} />
+            <Stagger key={`${e.kind}-${e.ref}-${e.at}-${i}`} index={i}>
+              <EntryRow e={e} first={i === 0} />
+            </Stagger>
           ))}
           {range.from && shown >= w.entries.length ? (
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: 1, borderTopColor: C.wash, backgroundColor: C.wash }}>
@@ -645,8 +651,19 @@ function Bills({ view }: { view: AccountView }) {
           body={view.bills.length ? 'Try another filter, or clear the search.' : accountWord(view) === 'Third-party customer' ? 'The bill goes to the distributor, so this shop has none.' : 'This account has not been billed yet.'}
         />
       ) : (
-        list.slice(0, shown).map((b) => (
-          <BillCard key={b.id} b={b} open={open === b.id} onToggle={() => setOpen(open === b.id ? null : b.id)} />
+        list.slice(0, shown).map((b, i) => (
+          <Stagger key={b.id} index={i}>
+            <BillCard
+              b={b}
+              open={open === b.id}
+              onToggle={() => {
+                /* Opening a bill pushes the cards under it down; animated, the
+                   eye stays on the one that opened. */
+                animateLayoutFor(Math.min(shown, list.length));
+                setOpen(open === b.id ? null : b.id);
+              }}
+            />
+          </Stagger>
         ))
       )}
       <More shown={shown} total={list.length} onMore={() => setShown(shown + STEP)} />
@@ -817,8 +834,17 @@ function Payments({ view }: { view: AccountView }) {
           body={view.receipts.length ? 'Try another filter, or clear the search.' : 'Nothing has been received on this account yet.'}
         />
       ) : (
-        list.slice(0, shown).map((r) => (
-          <ReceiptCard key={r.id} r={r} open={open === r.id} onToggle={() => setOpen(open === r.id ? null : r.id)} />
+        list.slice(0, shown).map((r, i) => (
+          <Stagger key={r.id} index={i}>
+            <ReceiptCard
+              r={r}
+              open={open === r.id}
+              onToggle={() => {
+                animateLayoutFor(Math.min(shown, list.length));
+                setOpen(open === r.id ? null : r.id);
+              }}
+            />
+          </Stagger>
         ))
       )}
       <More shown={shown} total={list.length} onMore={() => setShown(shown + STEP)} />

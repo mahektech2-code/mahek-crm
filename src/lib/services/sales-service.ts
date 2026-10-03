@@ -3195,6 +3195,15 @@ export type AttendanceRow = {
   workedSeconds: number | null;
   visits: number;
   /**
+   * Of the days he punched in over the window before this one, how many he
+   * never punched out of — closed by the nightly sweep, or still open. The
+   * window is `mbos.attendance.missedPunchOutWindowDays`, the same number the
+   * handset counts its own figure over, so the two cannot disagree about one
+   * man's month.
+   */
+  missedPunchOuts: number;
+  punchedDays: number;
+  /**
    * Every arrival and departure of the day, with the photograph taken at each.
    *
    * The day-level `check_in_selfie_id`/`check_out_selfie_id` are the first-in
@@ -3238,6 +3247,8 @@ export type AttendanceRow = {
  */
 export async function attendanceForDay(day: string): Promise<AttendanceRow[]> {
   const scope = await managerScope();
+  const { getConfig } = await import("../config/store");
+  const windowDays = (await getConfig())["mbos.attendance.missedPunchOutWindowDays"];
   return db.execute<AttendanceRow>(sql`
     select coalesce(d.id, u.id) as id,
            ${day}::text as day,
@@ -3253,6 +3264,17 @@ export async function attendanceForDay(day: string): Promise<AttendanceRow[]> {
            (select count(*)::int from mbos_visits v
              where v.salesman_id = u.id
                and (v.check_in_at ${IST_DAY})::date = ${day}::date) as "visits",
+           /* The window ENDS the day before the one on screen: today is still
+              being worked, and counting its open session would mark everybody
+              down every afternoon. The parameter is typed, because an untyped
+              one beside a date resolves as date minus date. */
+           (select count(*)::int from mbos_attendance_days w
+             where w.user_id = u.id and w.check_in_at is not null
+               and w.day >= ${day}::date - ${windowDays}::int and w.day < ${day}::date
+               and (w.auto_checked_out or w.check_out_at is null)) as "missedPunchOuts",
+           (select count(*)::int from mbos_attendance_days w
+             where w.user_id = u.id and w.check_in_at is not null
+               and w.day >= ${day}::date - ${windowDays}::int and w.day < ${day}::date) as "punchedDays",
            /* The day as the handset reported it. Null on a row written before
               sessions existed, which the screen falls back from rather than
               drawing an empty list. */

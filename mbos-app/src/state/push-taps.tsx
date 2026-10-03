@@ -14,7 +14,7 @@ import { useStore } from './store';
  * from disk first: the background task that raised the reminder may have run
  * in a context whose writes the screens have not seen yet.
  */
-async function openFrom(data: unknown): Promise<void> {
+export async function openFrom(data: unknown): Promise<void> {
   const d = data as { kind?: unknown; customerId?: unknown } | undefined;
   if (d?.kind === 'forgot-checkout' && typeof d.customerId === 'string') {
     const arrival = await readArrival();

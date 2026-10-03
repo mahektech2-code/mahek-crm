@@ -91,6 +91,21 @@ export async function deviceId(): Promise<string> {
   return resolved;
 }
 
+/**
+ * The build label as a header value, percent-encoded.
+ *
+ * The label carries a middle dot ("1.15.1 (22) · embedded"), and since SDK 57
+ * the global `fetch` is `expo/fetch`, which refuses a header value that is not
+ * ASCII — the whole request fails as "NativeRequest.start has been rejected",
+ * before a byte leaves the phone, and every sign-in and sync read as "No
+ * internet". React Native's own fetch stripped the character, which is why
+ * builds before SDK 57 never showed it. The body of a sign-in still carries
+ * the label as written; `reportedVersion` decodes this one.
+ */
+export function versionHeader(): string {
+  return encodeURIComponent(buildLabel());
+}
+
 export async function deviceLabel(): Promise<string> {
   return [Device.manufacturer, Device.modelName].filter(Boolean).join(' ') || 'Unknown handset';
 }
@@ -169,7 +184,7 @@ async function request<T>(
     'x-mbos-device': await deviceId(),
     /* The build on every request, so the office sees an upgrade on the first
        sync after it rather than at the next sign-in, which nobody does. */
-    'x-mbos-app-version': buildLabel(),
+    'x-mbos-app-version': versionHeader(),
     ...(init.headers as Record<string, string> | undefined),
   };
 
@@ -534,7 +549,7 @@ export async function uploadMedia(args: {
     headers: {
       ...(token ? { authorization: `Bearer ${token}` } : {}),
       'x-mbos-device': await deviceId(),
-      'x-mbos-app-version': buildLabel(),
+      'x-mbos-app-version': versionHeader(),
     },
     body: form,
   });
@@ -588,7 +603,7 @@ export async function dictateTranscribe(args: {
       headers: {
         ...(token ? { authorization: `Bearer ${token}` } : {}),
         'x-mbos-device': await deviceId(),
-        'x-mbos-app-version': buildLabel(),
+        'x-mbos-app-version': versionHeader(),
       },
       body: form,
       signal: controller.signal,

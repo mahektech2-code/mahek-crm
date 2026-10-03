@@ -3,7 +3,8 @@ import { View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Card, T } from '../src/components/ui/primitives';
-import { color as C, weight, tabular } from '../src/theme/tokens';
+import { CountUp, Stagger } from '../src/components/ui/motion';
+import { color as C, weight, tabular, type as typeScale } from '../src/theme/tokens';
 import { inrFromPaise, plural } from '../src/lib/format';
 import { listSalary, type SalaryMonth } from '../src/data/salary';
 
@@ -85,7 +86,11 @@ export default function SalaryScreen() {
           </T>
         </Card>
       ) : (
-        months.map((m) => <SalaryCard key={m.period} m={m} />)
+        months.map((m, i) => (
+          <Stagger key={m.period} index={i}>
+            <SalaryCard m={m} />
+          </Stagger>
+        ))
       )}
     </AppFrame>
   );
@@ -104,9 +109,19 @@ function SalaryCard({ m }: { m: SalaryMonth }) {
 
       <View style={{ marginTop: 14, flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' }}>
         <T s="small" style={{ color: C.muted }}>Net salary</T>
-        <T style={[{ fontSize: 22 }, weight(600), tabular]}>
-          {m.netSalaryPaise != null ? inrFromPaise(m.netSalaryPaise) : '—'}
-        </T>
+        {/* Not from zero: a payslip is a statement, not a reveal, and a salary
+            running up from ₹0 is theatre on the one screen that must read as
+            plain fact. It counts only if a later sync corrects the figure, which
+            is the one time movement is the news. */}
+        {m.netSalaryPaise != null ? (
+          <CountUp
+            value={m.netSalaryPaise}
+            format={(n) => inrFromPaise(Math.round(n))}
+            style={[typeScale.body, { fontSize: 22 }, weight(600), tabular]}
+          />
+        ) : (
+          <T style={[{ fontSize: 22 }, weight(600), tabular]}>—</T>
+        )}
       </View>
 
       <View style={{ marginTop: 10, gap: 6 }}>

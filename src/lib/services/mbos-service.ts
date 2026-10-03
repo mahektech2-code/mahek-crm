@@ -354,8 +354,17 @@ export async function authenticate(
  * from a device, so it is trimmed, capped and stripped before it is stored.
  */
 export function reportedVersion(request: Request): string | null {
-  const raw = request.headers.get("x-mbos-app-version");
-  if (!raw) return null;
+  const header = request.headers.get("x-mbos-app-version");
+  if (!header) return null;
+  /* Percent-encoded since SDK 57, whose fetch refuses the label's middle dot
+     in a header; a build before that sends it raw, and a raw label has no
+     `%` in it, so decoding leaves it exactly as it was. */
+  let raw = header;
+  try {
+    raw = decodeURIComponent(header);
+  } catch {
+    /* A stray `%` from a device — store what it sent. */
+  }
   const clean = raw.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 80);
   return clean || null;
 }
