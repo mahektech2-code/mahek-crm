@@ -27,6 +27,7 @@ import { listPerformance, shortfalls, type SyncedMonth } from '../src/data/perfo
 import { getConfig } from '../src/data/config';
 import { mayOpenDay } from '../src/data/day-gate';
 import { punchOutDue } from '../src/engines/punch-out';
+import { syncPunchOutReminders } from '../src/native/punch-out-reminder';
 import { ordersToday } from '../src/data/orders';
 import { cashInHand } from '../src/data/payments';
 import { bucketOf, listOpenTasks } from '../src/data/tasks';
@@ -291,6 +292,12 @@ export default function Home() {
   const load = React.useCallback(() => {
     if (!userId) return;
     const iso = isoDate(new Date());
+
+    /* The evening reminders follow the day. Every punch-in and punch-out on
+       this screen ends in `load()`, and so does every return to Home, so one
+       reconcile here keeps them right through all of it — including a setting
+       changed in the office since the morning. It never throws. */
+    void syncPunchOutReminders(userId);
 
     /*
      * Its own read, deliberately not in the `Promise.all` below: that one
@@ -920,7 +927,14 @@ export default function Home() {
    */
   const punchOutAsked = React.useRef(false);
   React.useEffect(() => {
-    if (params.punchOut !== '1' || punchOutAsked.current || !day) return;
+    /* Re-armed once the param is gone, because Home is a tab root and stays
+       mounted: without this a second tap on the bar or the reminder, later
+       the same evening, would land here and do nothing. */
+    if (params.punchOut !== '1') {
+      punchOutAsked.current = false;
+      return;
+    }
+    if (punchOutAsked.current || !day) return;
     punchOutAsked.current = true;
     router.setParams({ punchOut: undefined });
     if (day.running) void endDay();

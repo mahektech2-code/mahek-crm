@@ -2829,6 +2829,17 @@ export const SETTINGS = [
     max: 23,
   },
   {
+    key: "mbos.attendance.punchOutSecondReminderMinutes",
+    type: "integer",
+    category: "mbos-attendance",
+    label: "Second punch-out reminder, minutes after the first",
+    description:
+      "A salesman still punched in gets a phone notification at the punch-out prompt hour, and a second one this many minutes later. Zero sends only the first. There is no third: a reminder that repeats until midnight gets its notifications switched off.",
+    default: 90,
+    min: 0,
+    max: 360,
+  },
+  {
     key: "mbos.attendance.selfieRequired",
     type: "boolean",
     category: "mbos-attendance",
