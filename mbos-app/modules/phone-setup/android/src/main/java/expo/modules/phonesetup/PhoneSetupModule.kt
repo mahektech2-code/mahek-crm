@@ -3,6 +3,7 @@ package expo.modules.phonesetup
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
@@ -109,6 +110,27 @@ class PhoneSetupModule : Module() {
     AsyncFunction<Boolean>("openLocationSettings") {
       launch(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
     }.runOnQueue(Queues.MAIN)
+
+    /**
+     * WHETHER THE PHONE IS ALLOWED TO MAKE A NOISE, asked before every sound
+     * the app plays itself.
+     *
+     * In-app sounds go out on the MEDIA stream, and Android's silent and
+     * vibrate modes govern the RINGER stream, not media — so a phone set to
+     * silent on a shop counter would still chime on every saved order. JS has
+     * no way to read the ringer mode; this is the one line that does. It
+     * reads only, needs no permission, and answers `unknown` where the
+     * service is missing, which the caller treats as "stay quiet".
+     */
+    AsyncFunction<String>("ringerMode") {
+      val audio = appContext.reactContext?.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+      when (audio?.ringerMode) {
+        AudioManager.RINGER_MODE_NORMAL -> "normal"
+        AudioManager.RINGER_MODE_VIBRATE -> "vibrate"
+        AudioManager.RINGER_MODE_SILENT -> "silent"
+        else -> "unknown"
+      }
+    }
 
     /**
      * READ THE ANSWER BACK; NEVER ASSUME THE USER SAID YES.

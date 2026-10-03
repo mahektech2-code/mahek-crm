@@ -40,6 +40,8 @@ import type { TerritoryState } from '../src/sync/api';
 import { whereNow } from '../src/native/where';
 import { LeadsBook } from '../src/components/leads/leads-book';
 import { countLeads, openLeadCount } from '../src/data/leads';
+import { Appear, DUR, Stagger, animateLayoutFor } from '../src/components/ui/motion';
+import { STAGGER_CAP } from '../src/components/ui/route-motion';
 
 /**
  * The book — and it is ten thousand shops, not six.
@@ -362,6 +364,9 @@ export default function Customers() {
   /* Which half of the book. A customer and a lead are not the same card, so
      these are two lists rather than a filter on one. */
   const [half, setHalf] = React.useState<'customers' | 'leads'>('customers');
+  /* Whether he has switched halves yet. The first half drawn is the screen
+     opening, which the route transition already says; only a SWITCH fades. */
+  const [halfMoved, setHalfMoved] = React.useState(false);
   const view: BookView = 'customers';
   const [leadCount, setLeadCount] = React.useState<number | null>(null);
   const [leadsMatching, setLeadsMatching] = React.useState(0);
@@ -592,7 +597,7 @@ export default function Customers() {
        twice, and the order he is standing there to take goes against one. */
     if (saving) return;
     const biller = billers?.find((b) => b.id === billerId);
-    if (!biller) return notify('Pick who gets the bill for this shop.');
+    if (!biller) return notify('Pick who gets the bill for this shop.', 'warn');
     setSaving(true);
     try {
       const r = await addFieldShop({
@@ -602,7 +607,7 @@ export default function Customers() {
         distributorCustomerId: biller.id,
         distributorName: biller.name,
       });
-      if (!r.ok) return notify(r.message);
+      if (!r.ok) return notify(r.message, 'warn');
       setAdding(false);
       notify((await isOnline()) ? 'Shop added · sending to the office now' : 'Shop added · will send when you have signal');
       set({ custId: r.customerId, pTab: 0 });
@@ -628,14 +633,19 @@ export default function Customers() {
 
   const callShop = React.useCallback(
     (x: Customer) => {
-      if (!x.phone) return notify('No number on this customer');
+      if (!x.phone) return notify('No number on this customer', 'warn');
       void callNumber(x.phone);
     },
     [notify],
   );
 
+  /* THE FIRST SCREENFUL CASCADES AND NOTHING ELSE DOES. A row past the cap is
+     one a FlatList mounts as it scrolls into view, and fading that in under a
+     moving thumb reads as the list lagging — on a book of 2,500 it would be
+     every row he ever scrolls to. The rows stay the plain memoised row. */
   const renderRow = React.useCallback(
-    ({ item }: ListRenderItemInfo<Customer>) => (
+    ({ item, index }: ListRenderItemInfo<Customer>) => {
+      const row = (
       <CustomerRow
         x={item}
         today={today}
@@ -646,7 +656,9 @@ export default function Customers() {
         onMore={setRowMore}
         onCall={callShop}
       />
-    ),
+      );
+      return index < STAGGER_CAP ? <Stagger index={index}>{row}</Stagger> : row;
+    },
     [today, sortMode, healthStrong, healthWatch, openAccount, callShop],
   );
 
@@ -774,134 +786,157 @@ export default function Customers() {
             { key: 'leads', label: 'Leads', badge: leadCount },
           ]}
           value={half}
-          onChange={setHalf}
+          onChange={(h) => {
+            setHalfMoved(true);
+            setHalf(h);
+          }}
         />
       </View>
 
-      {half === 'leads' ? (
-        <LeadsBook seedQuery={custQ} />
-      ) : (
-        <>
-          {/* -------------------------------------------- the controls, fixed */}
-          <View style={{ paddingHorizontal: 16, paddingTop: 12, gap: 10 }}>
-            <View style={{ flexDirection: 'row', gap: 8 }}>
-              <SearchBox
-                value={typed}
-                onChange={setTyped}
-                onClear={clearSearch}
-                placeholder="Name, phone, GST, city or code"
-              />
-              <ToolButton icon="filter" label={'Order: ' + SORT_LABEL[sortMode]} onPress={() => setSorting(true)} />
-              {/* LIST OR MAP. It does not change WHICH shops are in the book,
-                  only how the same page is drawn. */}
-              <ToolButton
-                icon="pin"
-                label={asMap ? 'Show as a list' : 'Show on a map'}
-                on={asMap}
-                onPress={() => setAsMap((m) => !m)}
-              />
-            </View>
+      {/* Two siblings, not a deeper level, so the new half fades in place
+          rather than sliding. No `animateLayout` here: the half arriving
+          carries a list, and moving every frame in it is the cost
+          `animateLayoutFor` exists to refuse. */}
+      <Appear
+        key={half}
+        distance={halfMoved ? 4 : 0}
+        duration={halfMoved ? DUR.quick : 0}
+        style={{ flex: 1 }}>
+        {half === 'leads' ? (
+          <LeadsBook seedQuery={custQ} />
+        ) : (
+          <>
+            {/* -------------------------------------------- the controls, fixed */}
+            <View style={{ paddingHorizontal: 16, paddingTop: 12, gap: 10 }}>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <SearchBox
+                  value={typed}
+                  onChange={setTyped}
+                  onClear={clearSearch}
+                  placeholder="Name, phone, GST, city or code"
+                />
+                <ToolButton icon="filter" label={'Order: ' + SORT_LABEL[sortMode]} onPress={() => setSorting(true)} />
+                {/* LIST OR MAP. It does not change WHICH shops are in the book,
+                    only how the same page is drawn. */}
+                <ToolButton
+                  icon="pin"
+                  label={asMap ? 'Show as a list' : 'Show on a map'}
+                  on={asMap}
+                  onPress={() => setAsMap((m) => !m)}
+                />
+              </View>
 
-            <ChipRow chips={CUSTOMER_FILTERS} value={filter} onChange={setFilter} counts={counts} />
+              {/* The tick is in `ChipRow`. The layout eases only on a short list —
+                  the new page lands later and cascades in by itself. */}
+              <ChipRow
+                chips={CUSTOMER_FILTERS}
+                value={filter}
+                onChange={(f) => {
+                  animateLayoutFor(rows.length);
+                  setFilter(f);
+                }}
+                counts={counts}
+              />
 
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <Text numberOfLines={1} style={[type.caption, { flex: 1, minWidth: 0 }]}>
-                {statusLine}
-              </Text>
-              <Pressable onPress={() => setSorting(true)} accessibilityRole="button" hitSlop={8}>
-                <Text numberOfLines={1} style={[{ fontSize: 13, color: C.primaryDeep, maxWidth: 170 }, weight(600)]}>
-                  {orderWords + ' ▾'}
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Text numberOfLines={1} style={[type.caption, { flex: 1, minWidth: 0 }]}>
+                  {statusLine}
                 </Text>
-              </Pressable>
+                <Pressable onPress={() => setSorting(true)} accessibilityRole="button" hitSlop={8}>
+                  <Text numberOfLines={1} style={[{ fontSize: 13, color: C.primaryDeep, maxWidth: 170 }, weight(600)]}>
+                    {orderWords + ' ▾'}
+                  </Text>
+                </Pressable>
+              </View>
+
+              {/* WHICH PLACES THIS IS CUT TO — a salesman who cannot find a shop
+                  he knows is his needs to see the area before he concludes the
+                  app has lost it. */}
+              {area.length ? (
+                <Text numberOfLines={1} style={[type.caption, { marginTop: -6, color: C.muted }]}>
+                  {'Your area: ' + area.join(', ')}
+                </Text>
+              ) : null}
+              {noFix && sortMode === 'me' ? (
+                <Text style={[type.caption, { marginTop: -6, color: C.muted }]}>
+                  No GPS yet, so the list is A–Z. Punch in, or pick a town to sort from.
+                </Text>
+              ) : null}
             </View>
 
-            {/* WHICH PLACES THIS IS CUT TO — a salesman who cannot find a shop
-                he knows is his needs to see the area before he concludes the
-                app has lost it. */}
-            {area.length ? (
-              <Text numberOfLines={1} style={[type.caption, { marginTop: -6, color: C.muted }]}>
-                {'Your area: ' + area.join(', ')}
-              </Text>
-            ) : null}
-            {noFix && sortMode === 'me' ? (
-              <Text style={[type.caption, { marginTop: -6, color: C.muted }]}>
-                No GPS yet, so the list is A–Z. Punch in, or pick a town to sort from.
-              </Text>
-            ) : null}
-          </View>
-
-          {asMap ? (
-            /* THE MAP draws the shops loaded so far, and says so — a map that
-               quietly showed the whole book would disagree with the count. */
-            <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32 }}>
-              {rows.length ? (
-                <>
-                  <ShopMap
-                    height={440}
-                    pins={rows.map((x) => ({
-                      id: x.id,
-                      name: x.name,
-                      lat: x.gpsLat ?? NaN,
-                      lng: x.gpsLng ?? NaN,
-                      isLead: Boolean(x.isLead),
-                    }))}
-                    onPress={openAccount}
-                  />
-                  <Text style={[type.caption, { marginTop: 8 }]}>
-                    {rows.length < total
-                      ? `The first ${grouped(rows.length)} of ${grouped(total)} in this order. Search or filter to map others, or scroll the list to load more.`
-                      : `All ${grouped(total)} in this list.`}
-                  </Text>
-                  {hasMore ? (
-                    <View style={{ marginTop: 10 }}>
-                      <SecondaryButton
-                        label={loadingMore ? 'Loading…' : 'Add the next ' + Math.min(30, total - rows.length) + ' to the map'}
-                        /* The map has no end to scroll to, so the next page is
-                           asked for here, on purpose, rather than by a gesture. */
-                        onPress={() => void loadMore()}
-                      />
-                    </View>
-                  ) : null}
-                </>
-              ) : (
-                emptyCard
-              )}
-            </ScrollView>
-          ) : (
-            <FlatList
-              style={{ flex: 1 }}
-              contentContainerStyle={{ paddingTop: 8, paddingBottom: 24 }}
-              data={rows}
-              keyExtractor={(x) => x.id}
-              renderItem={renderRow}
-              ItemSeparatorComponent={RowGap}
-              ListEmptyComponent={<View style={{ paddingHorizontal: 16 }}>{emptyCard}</View>}
-              ListFooterComponent={
-                rows.length ? (
-                  <PageFooter
-                    loading={loadingMore}
-                    failed={moreFailed}
-                    done={!hasMore}
-                    total={total}
-                    noun="shop"
-                    onRetry={() => void loadMore()}
-                  />
-                ) : null
-              }
-              onEndReached={() => void loadMore()}
-              onEndReachedThreshold={0.6}
-              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void refresh()} />}
-              initialNumToRender={10}
-              maxToRenderPerBatch={10}
-              windowSize={9}
-              removeClippedSubviews={Platform.OS === 'android'}
-              keyboardShouldPersistTaps="handled"
-              keyboardDismissMode="on-drag"
-              showsVerticalScrollIndicator={false}
-            />
-          )}
-        </>
-      )}
+            {asMap ? (
+              /* THE MAP draws the shops loaded so far, and says so — a map that
+                 quietly showed the whole book would disagree with the count. */
+              <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32 }}>
+                {rows.length ? (
+                  <>
+                    <ShopMap
+                      height={440}
+                      pins={rows.map((x) => ({
+                        id: x.id,
+                        name: x.name,
+                        lat: x.gpsLat ?? NaN,
+                        lng: x.gpsLng ?? NaN,
+                        isLead: Boolean(x.isLead),
+                      }))}
+                      onPress={openAccount}
+                    />
+                    <Text style={[type.caption, { marginTop: 8 }]}>
+                      {rows.length < total
+                        ? `The first ${grouped(rows.length)} of ${grouped(total)} in this order. Search or filter to map others, or scroll the list to load more.`
+                        : `All ${grouped(total)} in this list.`}
+                    </Text>
+                    {hasMore ? (
+                      <View style={{ marginTop: 10 }}>
+                        <SecondaryButton
+                          label={loadingMore ? 'Loading…' : 'Add the next ' + Math.min(30, total - rows.length) + ' to the map'}
+                          /* The map has no end to scroll to, so the next page is
+                             asked for here, on purpose, rather than by a gesture. */
+                          onPress={() => void loadMore()}
+                        />
+                      </View>
+                    ) : null}
+                  </>
+                ) : (
+                  emptyCard
+                )}
+              </ScrollView>
+            ) : (
+              <FlatList
+                style={{ flex: 1 }}
+                contentContainerStyle={{ paddingTop: 8, paddingBottom: 24 }}
+                data={rows}
+                keyExtractor={(x) => x.id}
+                renderItem={renderRow}
+                ItemSeparatorComponent={RowGap}
+                ListEmptyComponent={<View style={{ paddingHorizontal: 16 }}>{emptyCard}</View>}
+                ListFooterComponent={
+                  rows.length ? (
+                    <PageFooter
+                      loading={loadingMore}
+                      failed={moreFailed}
+                      done={!hasMore}
+                      total={total}
+                      noun="shop"
+                      onRetry={() => void loadMore()}
+                    />
+                  ) : null
+                }
+                onEndReached={() => void loadMore()}
+                onEndReachedThreshold={0.6}
+                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void refresh()} />}
+                initialNumToRender={10}
+                maxToRenderPerBatch={10}
+                windowSize={9}
+                removeClippedSubviews={Platform.OS === 'android'}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode="on-drag"
+                showsVerticalScrollIndicator={false}
+              />
+            )}
+          </>
+        )}
+      </Appear>
 
       {/* ------------------------------------------------------------ the order */}
       <BottomSheet open={sorting} onClose={() => setSorting(false)}>
@@ -1048,14 +1083,14 @@ export default function Customers() {
               }} />
               <SheetAction icon="chat" label="WhatsApp" sub="Opens your own WhatsApp. Nothing is sent for you." onPress={async () => {
                 close();
-                if (!x.phone) return notify('No number on this customer');
+                if (!x.phone) return notify('No number on this customer', 'warn');
                 const out = await openWhatsApp(x.phone, '');
-                if (out.status !== 'handed_off') notify(out.reason);
+                if (out.status !== 'handed_off') notify(out.reason, 'warn');
               }} />
               <SheetAction icon="nav" label="Directions" sub={x.gpsLat != null ? 'To the pin on the map' : 'No pin. Searches the name and town.'} onPress={async () => {
                 close();
                 const out = await openMaps({ lat: x.gpsLat, lng: x.gpsLng, name: x.name, city: x.city });
-                if (out.status !== 'opened') notify(out.reason);
+                if (out.status !== 'opened') notify(out.reason, 'warn');
               }} />
               <SheetAction icon="sample" label="Request a sample" sub="Sent for approval" onPress={() => {
                 close();

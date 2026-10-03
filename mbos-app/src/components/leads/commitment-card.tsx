@@ -1,6 +1,7 @@
 import React from 'react';
 import { View } from 'react-native';
 import { Badge, Card, PrimaryButton, SecondaryButton, T } from '../ui/primitives';
+import { Pop } from '../ui/motion';
 import { color as C, weight } from '../../theme/tokens';
 import { dmy, inrFromPaise, plural } from '../../lib/format';
 import { labelOf, ORDER_BLOCKERS, type CodedOption } from '../../engines/funnel';
@@ -76,10 +77,14 @@ export function CommitmentCard({
         <T style={[{ flex: 1, minWidth: 0, fontSize: 16, color: C.ink }, weight(600)]}>
           {date ? 'They promised to order' : 'Order not asked for yet'}
         </T>
+        {/* Pops when the promise changes what it is — blocked, or overtaken
+            by a real order — not when the record merely opens on it. */}
         {date ? (
-          <Badge tone={ordered ? 'success' : blocked ? 'amber' : 'teal'}>
-            {ordered ? 'Ordered' : blocked ? 'Blocked' : 'Promised'}
-          </Badge>
+          <Pop trigger={ordered ? 'ordered' : blocked ? 'blocked' : 'promised'}>
+            <Badge tone={ordered ? 'success' : blocked ? 'amber' : 'teal'}>
+              {ordered ? 'Ordered' : blocked ? 'Blocked' : 'Promised'}
+            </Badge>
+          </Pop>
         ) : null}
       </View>
 

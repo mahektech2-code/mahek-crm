@@ -6,6 +6,8 @@ import { startBackgroundSync, stopBackgroundSync } from '../sync/engine';
 import { registerBackgroundSync, unregisterBackgroundSync } from '../sync/background-sync-task';
 import * as trail from '../sync/trail';
 import { currentSession, type Session } from '../data/session';
+import { loadFeedbackPrefs } from '../data/feedback-prefs';
+import { primeSounds } from '../components/ui/feedback';
 import { autoCloseMissedCheckouts, dayState } from '../data/attendance';
 import { syncPunchOutReminders } from '../native/punch-out-reminder';
 import { closeOpenVisits } from '../data/visits';
@@ -47,6 +49,9 @@ export function BootProvider({ children }: { children: React.ReactNode }) {
     (async () => {
       await openDb();
       await recoverInterrupted();
+      /* The vibration and sound switches, read before the first screen so the
+         first tap of the day is felt the way he set it. Never blocks boot. */
+      await loadFeedbackPrefs().then(primeSounds).catch(() => {});
 
       const existing = await currentSession();
       if (cancelled) return;

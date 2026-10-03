@@ -12,6 +12,7 @@ import { BootProvider, useBoot } from '../src/state/boot';
 import { AppLock } from '../src/components/shell/AppLock';
 import { PushTaps } from '../src/state/push-taps';
 import { UpdatePrompt } from '../src/components/shell/UpdatePrompt';
+import { PushBanner } from '../src/components/shell/PushBanner';
 import { animationFor, durationFor, ROUTE_MOTION, useReduceMotion } from '../src/components/ui/motion';
 /* Side-effect only: registers the trail's background task. The OS can launch
    the app headless, with no screen ever mounted, purely to deliver a location
@@ -154,6 +155,10 @@ export default function RootLayout() {
             its own frame, and a modal that runs a download must not open as
             several copies, one per screen behind the one he is looking at. */}
         <UpdatePrompt />
+        {/* Over every screen, under the lock: a push that lands while the app
+            is open is drawn by the app, and never over a locked screen — a
+            refusal's reason is not for whoever picked the phone up. */}
+        <PushBanner />
       </AppLock>
     </BootProvider>
   );

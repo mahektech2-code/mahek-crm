@@ -4,6 +4,7 @@ import { router } from 'expo-router';
 
 import { BottomSheet } from '../ui/overlays';
 import { SecondaryButton, T } from '../ui/primitives';
+import { feedback } from '../ui/feedback';
 import { color as C, weight } from '../../theme/tokens';
 import { useStore } from '../../state/store';
 import { useBoot } from '../../state/boot';
@@ -55,6 +56,14 @@ export function TravelGate() {
    * nothing left that could ever close it.
    */
   const outstanding = arrival && arrival.checkedInAt == null ? arrival : null;
+
+  /* The sheet below is a refusal — the journey he asked for does not start —
+     with its reason on the sheet, so it gets the refusal buzz as it opens.
+     Keyed on the boolean so a re-render of an open sheet does not buzz again. */
+  const blocked = !!to && !!outstanding;
+  React.useEffect(() => {
+    if (blocked) feedback('warning');
+  }, [blocked]);
 
   const goCheckIn = () => {
     if (!outstanding) return;

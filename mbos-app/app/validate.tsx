@@ -1,5 +1,5 @@
 import React from 'react';
-import { View } from 'react-native';
+import { Animated, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Card, Choice, Divider, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../src/components/ui/primitives';
@@ -18,6 +18,8 @@ import { VERIFICATION_SECTIONS } from '../src/engines/funnel/lead-labels';
 import { getLead, type Lead } from '../src/data/leads';
 import { callNumber } from '../src/lib/messaging';
 import { useStore } from '../src/state/store';
+import { Presence, useShake } from '../src/components/ui/motion';
+import { feedback } from '../src/components/ui/feedback';
 
 /**
  * §E — the Prospect validation call.
@@ -83,6 +85,15 @@ export default function ValidateLead() {
   const [err, setErr] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
   const inFlight = React.useRef(false);
+  /* The box under the verdict shakes when it speaks, and the buzz says which
+     kind of no: `warning` for a call refused before it was written (something
+     is missing he can supply), `error` for a write that failed. */
+  const errShake = useShake(null);
+  const refuse = (message: string, kind: 'warning' | 'error') => {
+    setErr(message);
+    feedback(kind);
+    errShake.shake();
+  };
 
   React.useEffect(() => {
     if (!id) return;
@@ -124,7 +135,7 @@ export default function ValidateLead() {
        sentence he had in mind while the customer's words were fresh is not
        lost to a round trip that comes back with a refusal. */
     const refusal = validationRefusal({ customerId: id, reached, verdict, verdictReason: why.trim() || null });
-    if (refusal) return setErr(refusal);
+    if (refusal) return refuse(refusal, 'warning');
     inFlight.current = true;
     setSaving(true);
 
@@ -149,7 +160,7 @@ export default function ValidateLead() {
       taskId: params.taskId ?? null,
     });
     if (!result.ok) {
-      setErr(result.message ?? 'Could not save. Try again.');
+      refuse(result.message ?? 'Could not save. Try again.', 'error');
       inFlight.current = false;
       setSaving(false);
       return;
@@ -229,7 +240,9 @@ export default function ValidateLead() {
         </View>
       </Card>
 
-      {reached ? (
+      {/* The questions go and come back with "No answer" — in place, so
+          the verdict below slides up to meet his thumb rather than jumping. */}
+      <Presence show={reached}>
         <>
           <Card style={{ marginTop: 12 }}>
             <SectionLabel>What they said</SectionLabel>
@@ -286,7 +299,7 @@ export default function ValidateLead() {
             </Card>
           ))}
         </>
-      ) : null}
+      </Presence>
 
       <Card style={{ marginTop: 12 }}>
         <SectionLabel>Your call</SectionLabel>
@@ -305,7 +318,7 @@ export default function ValidateLead() {
           ))}
         </View>
 
-        {verdict === 'not_qualified' || verdict === 'on_hold' ? (
+        <Presence show={verdict === 'not_qualified' || verdict === 'on_hold'}>
           <View style={{ marginTop: 12 }}>
             <SectionLabel style={{ marginBottom: 6 }}>Why</SectionLabel>
             <Input
@@ -317,19 +330,20 @@ export default function ValidateLead() {
               placeholder={verdict === 'on_hold' ? 'What we are waiting for' : 'What was wrong'}
             />
           </View>
-        ) : null}
+        </Presence>
 
-        {verdict === 'confirmed' ? (
+        <Presence show={verdict === 'confirmed'}>
           <T s="caption" style={{ marginTop: 10 }}>
             When you save, a visit to find their need goes on the salesman&apos;s list.
           </T>
-        ) : null}
+        </Presence>
 
-        {err ? (
-          <View style={{ marginTop: 12, backgroundColor: C.dangerBg, borderRadius: radius.lg, padding: 12 }}>
+        <Presence show={!!err}>
+          <Animated.View
+            style={[{ marginTop: 12, backgroundColor: C.dangerBg, borderRadius: radius.lg, padding: 12 }, errShake.style]}>
             <T style={[{ fontSize: 14, lineHeight: 20, color: C.danger }, weight(500)]}>{err}</T>
-          </View>
-        ) : null}
+          </Animated.View>
+        </Presence>
       </Card>
 
       <Divider style={{ marginTop: 20 }} />

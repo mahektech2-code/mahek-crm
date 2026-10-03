@@ -1,8 +1,9 @@
 import React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 
 import { T } from './primitives';
 import { Icon } from './Icon';
+import { PressableScale } from './motion';
 import { color as C, HIT, radius, weight } from '../../theme/tokens';
 import type { TravelMode } from '../../data/travel';
 
@@ -57,9 +58,13 @@ export function TravelModeList({
 }) {
   return (
     <View style={{ marginTop: 14, gap: 8 }}>
+      {/* A pick is a choice that moved, so it ticks `select` — and for the
+          two modes that open a camera, the tick is the moment he can feel
+          that the tap landed before the camera takes over the screen. */}
       {modes.map((mode) => (
-        <Pressable
+        <PressableScale
           key={mode.key}
+          feedbackKind="select"
           accessibilityRole="button"
           accessibilityLabel={`${mode.label} — ${modeHint(mode, where)}`}
           disabled={busy}
@@ -83,7 +88,7 @@ export function TravelModeList({
             </T>
           </View>
           <Icon name="forward" size={18} color={C.muted} strokeWidth={1.6} />
-        </Pressable>
+        </PressableScale>
       ))}
     </View>
   );

@@ -2,7 +2,7 @@
   "expo": {
     "name": "Mahek MBOS",
     "slug": "mbos",
-    "version": "1.15.0",
+    "version": "1.16.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -19,7 +19,7 @@
       },
       "predictiveBackGestureEnabled": false,
       "package": "in.mahek.mbos",
-      "versionCode": 21,
+      "versionCode": 22,
       "permissions": [
         "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
         "android.permission.REQUEST_INSTALL_PACKAGES"
@@ -70,11 +70,16 @@
       [
         "expo-notifications",
         {
-          "color": "#5223E0"
+          "color": "#5223E0",
+          "sounds": [
+            "./assets/sounds/mbos_alert.wav",
+            "./assets/sounds/mbos_update.wav"
+          ]
         }
       ],
       "./plugins/withReleaseSigning.js",
       "./plugins/withLeanAndroid.js",
+      "./plugins/withKeptNotificationSounds.js",
       "./plugins/withCredentialBackupRules.js",
       "@maplibre/maplibre-react-native",
       "expo-status-bar"
