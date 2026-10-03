@@ -1,7 +1,9 @@
 import { hrmsScreenBySlug } from "@/lib/hrms/registry";
 
-/** "Leave requests — HRMS — MahekOne", the house pattern for a tab title. */
-export function hrmsModuleTitle(slug: string): string {
+/** "Leave & holidays · To decide — HRMS — MahekOne", the house pattern for a tab title. */
+export function hrmsModuleTitle(slug: string, view?: string): string {
   const s = hrmsScreenBySlug(slug);
-  return s ? `${s.label} — HRMS — MahekOne` : "HRMS — MahekOne";
+  if (!s) return "HRMS — MahekOne";
+  const tab = s.views?.find((v) => v.key === view);
+  return `${tab ? `${s.label} · ${tab.label}` : s.label} — HRMS — MahekOne`;
 }
