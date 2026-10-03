@@ -13,8 +13,7 @@ import { useCustomer, useDaysToAgreeCount, usePendingCount, useStore, useUnreadC
 import { TravelGate } from './TravelGate';
 import { refreshEverything } from '../../native/refresh';
 import { useBoot } from '../../state/boot';
-import { dayState, workedMs, workedLabel, type Session } from '../../data/attendance';
-import { punchOutDue } from '../../engines/punch-out';
+import { dayState, type Session } from '../../data/attendance';
 import { hhmm, plural } from '../../lib/format';
 import { elapsedLabel } from '../../lib/visit';
 import { gpsVerdict, type GpsHealth } from '../../engines/gps-health';
@@ -413,32 +412,37 @@ export function AppFrame({
       ) : null}
 
       {/*
-        AND IN THE EVENING, THE DAY FOLLOWS HIM.
-        Punching out was a button on Home and nowhere else, and the end of a
-        day is spent on the visit, journey and close-the-day screens — so the
-        one control that decides his hours was on the one screen he was not
-        looking at. From the prompt hour on, while a session is open, it is on
-        every screen. A visit still open wins: he has to check out of the shop
-        before he can close the day, and two bars would be two questions. Not
-        on Home, where the same question is already the main button.
+        NO PUNCH-OUT BAR ON OTHER SCREENS. One sat above the tab bar on every
+        screen from the prompt hour, and that is exactly where a thumb reaching
+        for a tab lands — a misclick there opens the camera to end somebody's
+        day. Punching out is the main button on Home in the evening, and the
+        reminder notification opens Home at it (`?punchOut=1`).
       */}
-      {clock.due && !arrival && here !== 'home' ? (
-        <PunchOutBar
-          sessions={clock.sessions}
-          onPress={() => router.replace('/home?punchOut=1')}
-        />
-      ) : null}
 
       {/* Measured rather than guessed, so the toast can sit above whatever the
           screen pinned here — see `Toast`. A screen with no footer measures 0
           and nothing moves. */}
       {footer ? (
-        <View onLayout={(e) => setFooterHeight(e.nativeEvent.layout.height)}>{footer}</View>
+        /* The tab bar it now replaces is what kept the bottom of the screen
+           clear of the gesture bar, so the action bar carries that inset
+           itself — on the same white as the bars it sits on. */
+        <View
+          onLayout={(e) => setFooterHeight(e.nativeEvent.layout.height)}
+          style={{ backgroundColor: C.surface, paddingBottom: keyboardHeight === 0 ? insets.bottom : 0 }}>
+          {footer}
+        </View>
       ) : null}
 
       {/* The tab bar is hidden while typing. Left in place it floats over the
-          keyboard on Android, covering the top row of keys. */}
-      {keyboardHeight === 0 ? (
+          keyboard on Android, covering the top row of keys.
+
+          AND ON A SCREEN WITH ITS OWN ACTION BAR. Picking a day's shops and a
+          visit pin their one decision to the bottom, and the tab bar's raised
+          + sat on top of it — over "Not now" on the shop picker, so a thumb
+          meant for one landed on the other — and the two bars together left
+          room for two and a half shops. Those screens are a task with a way
+          back at the top; the tabs return the moment he leaves. */}
+      {keyboardHeight === 0 && !footer ? (
         <>
           <TabBar
             active={activeTab}
@@ -585,60 +589,20 @@ function InVisitBar({
 }
 
 /**
- * "On the clock · 9h 40m — Punch out." The open day, on every screen, in the
- * evening.
- *
- * Amber rather than the primary blue the visit bars use: those say where he
- * is, which is ordinary; this says something is left undone at the end of the
- * day, and the colour is what separates the two at a glance on a bike.
- */
-function PunchOutBar({ sessions, onPress }: { sessions: Session[]; onPress: () => void }) {
-  const now = useTicker(60_000);
-  const worked = workedLabel(workedMs(sessions, now), false);
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={`You are still punched in, ${worked}. Punch out to close your day.`}
-      style={({ pressed }) => ({
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 10,
-        minHeight: HIT,
-        paddingHorizontal: 16,
-        paddingVertical: 10,
-        backgroundColor: pressed ? C.warnInk : C.warn,
-      })}>
-      <Icon name="camera" size={18} color="#FFFFFF" strokeWidth={1.8} />
-      <View style={{ flex: 1, minWidth: 0 }}>
-        <Text numberOfLines={1} style={[{ fontSize: 14, color: '#FFFFFF' }, weight(600)]}>
-          Still punched in
-        </Text>
-        <Text numberOfLines={1} style={{ fontSize: 12, lineHeight: 16, color: 'rgba(255,255,255,0.9)' }}>
-          {worked + ' · done for the day?'}
-        </Text>
-      </View>
-      <Text style={[{ fontSize: 14, color: '#FFFFFF' }, weight(600)]}>Punch out</Text>
-    </Pressable>
-  );
-}
-
-/**
  * The day as the frame needs it: when it started, whether a session is open,
- * and whether it is late enough to ask for the punch-out.
+ * and the sessions behind it.
  *
  * From the attendance row rather than from a flag. The strip is on every
  * screen including the ones opened after a restart, so a boolean held in
  * memory would read "Not checked in" to somebody who has been working since
- * nine — and the punch-out bar would never appear for him at all.
+ * nine.
  */
-function useDayClock(): { checkInAt: number | null; sessions: Session[]; due: boolean } {
+function useDayClock(): { checkInAt: number | null; sessions: Session[] } {
   const boot = useBoot();
   const userId = boot.session?.user.id ?? null;
-  const [state, setState] = React.useState<{ checkInAt: number | null; sessions: Session[]; due: boolean }>({
+  const [state, setState] = React.useState<{ checkInAt: number | null; sessions: Session[] }>({
     checkInAt: null,
     sessions: [],
-    due: false,
   });
 
   React.useEffect(() => {
@@ -647,14 +611,10 @@ function useDayClock(): { checkInAt: number | null; sessions: Session[]; due: bo
        frame is unmounted the moment somebody signs out. */
     if (!userId) return;
     const tick = () => {
-      void Promise.all([dayState(userId), getConfig<number>('mbos.attendance.punchOutPromptHour', 18)])
-        .then(([day, promptHour]) => {
+      void dayState(userId)
+        .then((day) => {
           if (!live) return;
-          setState({
-            checkInAt: day.firstInAt,
-            sessions: day.sessions,
-            due: punchOutDue({ running: day.running, nowMs: Date.now(), promptHour }),
-          });
+          setState({ checkInAt: day.firstInAt, sessions: day.sessions });
         })
         /* A status read may not break a screen; the next tick tries again. */
         .catch(() => {});

@@ -535,6 +535,22 @@ export async function pickCandidates(
  * shops chosen in a doorway had to be chosen again.
  */
 export async function pickedFor(planDayId: string): Promise<string[]> {
+  /*
+   * AN EDIT NOT YET SENT IS THE NEWER ANSWER. `pickShops` writes the list to
+   * `pickedIds` and queues it; the stop rows below are what the office last
+   * sent and stay as they were until the next pull. Reading them first meant
+   * reopening a day he had just changed showed the shops he had just taken
+   * off — so on a queued day the list he sent wins.
+   */
+  const queued = await one<{ pickedIds: string | null }>(
+    "SELECT pickedIds FROM journey_days WHERE id = ? AND syncState = 'queued' AND pickedIds IS NOT NULL",
+    [planDayId],
+  );
+  if (queued?.pickedIds) {
+    const ids = parseIds(queued.pickedIds);
+    if (ids) return ids;
+  }
+
   /* Stops are keyed by the DATE here rather than by the day's id — the handset
      table came down flat, one row per stop with its `planDate`, and adding a
      plan id to it would be a second way of saying the same thing. */
@@ -551,14 +567,214 @@ export async function pickedFor(planDayId: string): Promise<string[]> {
     [planDayId],
   );
   if (!day?.pickedIds) return [];
+  /* A row nobody can parse is a row nobody picked. Losing the ticks is bad;
+     failing the screen that would let somebody re-tick them is worse. */
+  return parseIds(day.pickedIds) ?? [];
+}
+
+function parseIds(raw: string): string[] | null {
   try {
-    const parsed: unknown = JSON.parse(day.pickedIds);
-    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : [];
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : null;
   } catch {
-    /* A row nobody can parse is a row nobody picked. Losing the ticks is bad;
-       failing the screen that would let somebody re-tick them is worse. */
-    return [];
+    return null;
   }
+}
+
+/** The shops picked for a day, in order, with what the screen needs to name them. */
+export async function pickedShops(
+  planDayId: string,
+): Promise<{ customerId: string; name: string; area: string | null; outstandingPaise: number }[]> {
+  const ids = await pickedFor(planDayId);
+  if (!ids.length) return [];
+  const rows = await all<{ id: string; name: string; area: string | null; city: string | null; outstandingPaise: number | null }>(
+    `SELECT id, name, area, city, outstandingPaise FROM customers WHERE id IN (${ids.map(() => '?').join(',')})`,
+    ids,
+  );
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  return ids.map((id) => {
+    const c = byId.get(id);
+    return {
+      customerId: id,
+      /* A shop that has left his book since he picked it keeps its line; the
+         server drops it and says so. Naming it "a shop" is the honest answer. */
+      name: c?.name ?? 'A shop no longer in your list',
+      area: c?.area ?? c?.city ?? null,
+      outstandingPaise: c?.outstandingPaise ?? 0,
+    };
+  });
+}
+
+/* ------------------------------------------------------------ a day, looked back on */
+
+export type ShopDay = {
+  stopId: string;
+  customerId: string;
+  name: string;
+  area: string | null;
+  seq: number;
+  status: string;
+  plannedAt: string | null;
+  arrivedAt: number | null;
+  skipReason: string | null;
+  visit: {
+    checkInAt: number | null;
+    checkOutAt: number | null;
+    durationSeconds: number | null;
+    outcome: string | null;
+    notes: string | null;
+  } | null;
+  orders: {
+    id: string;
+    valuePaise: number | null;
+    lines: number | null;
+    orderNo: string | null;
+    /** What was on it, where this phone took it — the office's copy carries a count, not the lines. */
+    items: { name: string; cans: number }[];
+    at: number | null;
+  }[];
+  payments: { id: string; amountPaise: number; mode: string | null; at: number | null }[];
+  /** Everything else the timeline holds for this shop on this day. */
+  other: { id: string; summary: string; at: number }[];
+};
+
+/**
+ * What happened at each shop on one day — the stop, the visit, the order, the
+ * money, and anything else the timeline knows about that shop that day.
+ *
+ * TWO SOURCES FOR ORDERS AND MONEY, de-duplicated by id: what this phone
+ * took itself (`orders`, `payments`) and the office's copy
+ * (`customer_orders`, `customer_payments`). Either alone misses half — a
+ * phone reinstalled last week has none of its own, and an order taken this
+ * morning has not reached the office's copy yet.
+ *
+ * Days are compared as DATES. The office sends its order and receipt dates
+ * already as Kolkata dates; the phone's own instants are turned into local
+ * dates here with `isoDate`, never by slicing an ISO string, which answers in
+ * UTC and files a 2am order on the day before.
+ */
+export async function dayHistory(planDate: string): Promise<ShopDay[]> {
+  const stops = await all<{
+    id: string;
+    customerId: string;
+    seq: number;
+    status: string;
+    plannedAt: string | null;
+    actualAt: number | null;
+    skipReason: string | null;
+    name: string | null;
+    area: string | null;
+    city: string | null;
+  }>(
+    `SELECT s.id, s.customerId, s.seq, s.status, s.plannedAt, s.actualAt, s.skipReason,
+            c.name, c.area, c.city
+       FROM journey_stops s
+       LEFT JOIN customers c ON c.id = s.customerId
+      WHERE s.planDate = ?
+      ORDER BY s.seq`,
+    [planDate],
+  );
+  if (!stops.length) return [];
+
+  const ids = stops.map((s) => s.customerId);
+  const marks = ids.map(() => '?').join(',');
+  /* A window a day wider at each end, narrowed to the date in JS — the SQL
+     never has to know what zone the phone is in. */
+  const from = new Date(`${planDate}T00:00:00`).getTime() - 86_400_000;
+  const to = from + 3 * 86_400_000;
+  const onDay = (ms: number | null) => ms != null && isoDate(new Date(ms)) === planDate;
+
+  const [visits, ownOrders, officeOrders, ownPayments, officePayments, timeline] = await Promise.all([
+    all<{ customerId: string; checkInAt: number | null; checkOutAt: number | null; durationSeconds: number | null; outcome: string | null; notes: string | null }>(
+      `SELECT customerId, checkInAt, checkOutAt, durationSeconds, outcome, notes FROM visits
+        WHERE customerId IN (${marks}) AND checkInAt BETWEEN ? AND ? ORDER BY checkInAt`,
+      [...ids, from, to],
+    ),
+    all<{ id: string; customerId: string; orderedAt: number; netTotalPaise: number | null; orderNumber: string | null }>(
+      `SELECT id, customerId, orderedAt, netTotalPaise, orderNumber FROM orders
+        WHERE customerId IN (${marks}) AND orderedAt BETWEEN ? AND ?`,
+      [...ids, from, to],
+    ),
+    all<{ id: string; customerId: string; valuePaise: number | null; lines: number | null; orderNo: string | null }>(
+      `SELECT id, customerId, valuePaise, lines, orderNo FROM customer_orders
+        WHERE customerId IN (${marks}) AND orderedAt = ?`,
+      [...ids, planDate],
+    ),
+    all<{ id: string; customerId: string; amountPaise: number; mode: string | null; collectedAt: number }>(
+      `SELECT id, customerId, amountPaise, mode, collectedAt FROM payments
+        WHERE customerId IN (${marks}) AND collectedAt BETWEEN ? AND ?`,
+      [...ids, from, to],
+    ),
+    all<{ id: string; customerId: string; amountPaise: number | null; mode: string | null }>(
+      `SELECT id, customerId, amountPaise, mode FROM customer_payments
+        WHERE customerId IN (${marks}) AND substr(receivedAt, 1, 10) = ?`,
+      [...ids, planDate],
+    ),
+    all<{ id: string; customerId: string; eventType: string; summary: string; occurredAt: number }>(
+      `SELECT id, customerId, eventType, summary, occurredAt FROM timeline_events
+        WHERE customerId IN (${marks}) AND occurredAt BETWEEN ? AND ? ORDER BY occurredAt`,
+      [...ids, from, to],
+    ),
+  ]);
+
+  const ownOrderIds = ownOrders.map((o) => o.id);
+  const lineRows = ownOrderIds.length
+    ? await all<{ orderId: string; productName: string; cans: number }>(
+        `SELECT orderId, productName, cans FROM order_lines WHERE orderId IN (${ownOrderIds.map(() => '?').join(',')})`,
+        ownOrderIds,
+      )
+    : [];
+  const itemsOf = (orderId: string) =>
+    lineRows.filter((l) => l.orderId === orderId).map((l) => ({ name: l.productName, cans: l.cans }));
+
+  return stops.map((s) => {
+    const visit = visits.find((v) => v.customerId === s.customerId && onDay(v.checkInAt)) ?? null;
+    const orders = new Map<string, ShopDay['orders'][number]>();
+    for (const o of ownOrders) {
+      if (o.customerId === s.customerId && onDay(o.orderedAt)) {
+        const items = itemsOf(o.id);
+        orders.set(o.id, { id: o.id, valuePaise: o.netTotalPaise, lines: items.length || null, orderNo: o.orderNumber, items, at: o.orderedAt });
+      }
+    }
+    for (const o of officeOrders) {
+      if (o.customerId === s.customerId && !orders.has(o.id)) {
+        orders.set(o.id, { id: o.id, valuePaise: o.valuePaise, lines: o.lines, orderNo: o.orderNo, items: [], at: null });
+      }
+    }
+    const payments = new Map<string, ShopDay['payments'][number]>();
+    for (const p of ownPayments) {
+      if (p.customerId === s.customerId && onDay(p.collectedAt)) {
+        payments.set(p.id, { id: p.id, amountPaise: p.amountPaise, mode: p.mode, at: p.collectedAt });
+      }
+    }
+    for (const p of officePayments) {
+      if (p.customerId === s.customerId && !payments.has(p.id) && p.amountPaise != null) {
+        payments.set(p.id, { id: p.id, amountPaise: p.amountPaise, mode: p.mode, at: null });
+      }
+    }
+    /* The timeline restates visits, orders and payments too; those are drawn
+       from their own rows above, so only what is left is listed here. */
+    const other = timeline
+      .filter((t) => t.customerId === s.customerId && onDay(t.occurredAt) && !/visit|order|payment|receipt|bill/i.test(t.eventType))
+      .map((t) => ({ id: t.id, summary: t.summary, at: t.occurredAt }));
+    return {
+      stopId: s.id,
+      customerId: s.customerId,
+      name: s.name ?? 'A shop no longer in your list',
+      area: s.area ?? s.city,
+      seq: s.seq,
+      status: s.status,
+      plannedAt: s.plannedAt,
+      arrivedAt: s.actualAt,
+      skipReason: s.skipReason,
+      visit: visit
+        ? { checkInAt: visit.checkInAt, checkOutAt: visit.checkOutAt, durationSeconds: visit.durationSeconds, outcome: visit.outcome, notes: visit.notes }
+        : null,
+      orders: [...orders.values()],
+      payments: [...payments.values()],
+      other,
+    };
+  });
 }
 
 export async function planDay(id: string): Promise<PlanDay | null> {

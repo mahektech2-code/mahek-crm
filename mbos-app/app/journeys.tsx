@@ -67,7 +67,11 @@ function dotColour(d: JourneyDay, today: string): string {
   if (d.dayState === 'refused') return C.danger;
   if (d.dayState === 'proposed') return C.warn;
   if (d.dayState === 'agreed') return C.info;
-  if (d.planDate > today) return C.primary;
+  /* TODAY IS STILL BEING WORKED, so it is not judged yet. Reading it as a
+     past day painted "2 of 6 visited" at noon amber — the colour that means a
+     day only partly done, and the colour of a day still waiting on an answer
+     beside it. A verdict belongs to a day that is over. */
+  if (d.planDate >= today) return C.primary;
   if (!d.stops) return C.faint;
   return d.visited === d.stops ? C.success : d.visited ? C.warn : C.danger;
 }
@@ -534,7 +538,7 @@ function MonthCalendar({
           { c: C.success, l: 'All visited' },
           { c: C.warn, l: 'Part visited / to agree' },
           { c: C.danger, l: 'Missed / sent back' },
-          { c: C.primary, l: 'Planned ahead' },
+          { c: C.primary, l: 'Planned or today' },
           { c: C.info, l: 'Agreed, no shops' },
         ].map((k) => (
           <View key={k.l} style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
@@ -656,5 +660,9 @@ function StopStatus({ stop, future }: { stop: JourneyStop; future: boolean }) {
     );
   }
   if (stop.status === 'skipped') return <Badge tone="danger">Skipped</Badge>;
-  return <Badge tone={future ? 'neutral' : 'amber'}>{future ? 'Planned' : 'Not visited'}</Badge>;
+  /* Nothing on a day still ahead: every stop on it is planned, the header
+     already says so, and seven grey "PLANNED" pills down one sheet are noise
+     the eye has to step over to read the shop names. */
+  if (future) return null;
+  return <Badge tone="amber">Not visited</Badge>;
 }

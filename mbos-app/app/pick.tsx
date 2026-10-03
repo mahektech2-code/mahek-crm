@@ -64,8 +64,12 @@ import { useStore } from '../src/state/store';
  * `inr` — which takes rupees — was handed paise, so a shop owing ₹2,360 was
  * listed as owing ₹2,36,000. */
 export default function PickScreen() {
-  const params = useLocalSearchParams<{ day?: string }>();
+  const params = useLocalSearchParams<{ day?: string; fresh?: string }>();
   const planDayId = typeof params.day === 'string' ? params.day : '';
+  /* "Start over" from the day's sheet: the same screen, nothing ticked. The
+     old picks stand until Plan the day is pressed, so backing out loses
+     nothing. */
+  const fresh = params.fresh === '1';
   const notify = useStore((s) => s.notify);
   /* Every other sub-screen draws the chevron and a link naming where it goes
      back to. This one had neither, so its only exit was a footer button reading
@@ -163,7 +167,7 @@ export default function PickScreen() {
         setDay(d);
         /* Whatever was picked before, so reopening the screen is a correction
            rather than starting again. */
-        setPicked(await pickedFor(planDayId));
+        setPicked(fresh ? [] : await pickedFor(planDayId));
       } catch {
         if (live) setDayFailed(true);
       } finally {
@@ -173,7 +177,7 @@ export default function PickScreen() {
     return () => {
       live = false;
     };
-  }, [planDayId, dayAttempt]);
+  }, [planDayId, dayAttempt, fresh]);
 
   /*
    * The ticked ids go INTO the read, not just out of it.
@@ -307,7 +311,7 @@ export default function PickScreen() {
             paddingTop: 10,
             paddingBottom: 10,
             gap: 8,
-            backgroundColor: C.canvas,
+            backgroundColor: C.surface,
             borderTopWidth: 1,
             borderTopColor: C.hairline,
           }}>
@@ -323,7 +327,6 @@ export default function PickScreen() {
             disabled={saving || picked.length === 0}
             onPress={() => void save()}
           />
-          <SecondaryButton label="Not now" fullWidth onPress={() => router.back()} />
         </View>
       }>
       <BackLink label={back.label} onPress={back.go} />

@@ -1,14 +1,14 @@
 import React from 'react';
 import { View, Text, Pressable } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { color as C, HIT, radius, shadow, type, weight, tabular } from '../src/theme/tokens';
+import { color as C, radius, shadow, type, weight, tabular } from '../src/theme/tokens';
 import { Icon } from '../src/components/ui/Icon';
 import { Card, PrimaryButton, SecondaryButton, T } from '../src/components/ui/primitives';
 import { promptsForExpenses } from '../src/lib/travel-leg';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
-import { compactInrFromPaise, inrFromPaise, isoDate, plural } from '../src/lib/format';
+import { compactInrFromPaise, hhmm, inrFromPaise, isoDate, plural } from '../src/lib/format';
 import { DASH_CARDS, DAY_AHEAD } from '../src/data/fixtures';
 import {
   checkIn,
@@ -69,6 +69,64 @@ import {
  * Every figure on it is a query against the local store. Nothing here waits on
  * the network, so it renders the same in a basement as it does on Wi-Fi.
  */
+
+/**
+ * One of the day card's two buttons. Same height, corners and type whether it
+ * is the filled one or not, so the pair reads as a pair; `tint` is a closed
+ * day's "Punch in again", which is an offer rather than the main action.
+ */
+function DayAction({
+  icon,
+  label,
+  filled,
+  tint = false,
+  disabled = false,
+  onPress,
+}: {
+  icon: 'route' | 'camera';
+  label: string;
+  filled: boolean;
+  tint?: boolean;
+  disabled?: boolean;
+  onPress: () => void;
+}) {
+  const fg = filled ? '#FFFFFF' : tint ? C.primaryDeep : C.body;
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={({ pressed }) => ({
+        flex: 1,
+        minHeight: 52,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        paddingHorizontal: 12,
+        borderRadius: radius.lg,
+        borderWidth: filled ? 0 : 1,
+        borderColor: tint ? C.primaryEdge : C.border,
+        backgroundColor: filled
+          ? pressed
+            ? C.primaryDeep
+            : C.primary
+          : pressed
+            ? C.wash
+            : tint
+              ? C.primaryTint
+              : C.surface,
+        boxShadow: filled ? shadow.primaryLift : undefined,
+        opacity: disabled ? 0.6 : 1,
+      })}>
+      <Icon name={icon} size={18} color={fg} />
+      <Text numberOfLines={1} style={[{ fontSize: 15, color: fg }, weight(600)]}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
 
 type Day = {
   stops: number;
@@ -224,8 +282,8 @@ export default function Home() {
      as "not yet" — a prompt that flashes on and off as config lands is worse
      than one that arrives a frame late. */
   const [punchOutHour, setPunchOutHour] = React.useState<number | null>(null);
-  /* `?punchOut=1` is the evening bar on every other screen sending him here to
-     do exactly that. See the effect beside `endDay`. */
+  /* `?punchOut=1` is the punch-out reminder notification, and the close-the-day
+     screen, sending him here to do exactly that. See the effect beside `endDay`. */
   const params = useLocalSearchParams<{ punchOut?: string }>();
 
   /*
@@ -443,11 +501,18 @@ export default function Home() {
          here; they are the subtitle now. With no plan at all there is no
          denominator to print, so the count stands on its own. */
       v: day.stops ? `${day.stopsDone} of ${day.stops}` : String(day.visits),
-      s: day.stops ? plural(day.visits, 'visit') + ' done' : 'No plan today',
+      /* And the subtitle says what the number IS. It read "0 visits done"
+         under "2 of 6" — a second count of a different thing, contradicting
+         the first in the same tile. The walk-ins are what the visits add, so
+         that is the only part of them worth a line. */
+      s: day.stops
+        ? 'shops done' + (day.visits > day.stopsDone ? ' · ' + (day.visits - day.stopsDone) + ' off the plan' : '')
+        : 'No plan today',
     },
     { v: inrFromPaise(day.collectPaise), s: plural(day.collectCustomers, 'customer') },
     { v: inrFromPaise(day.cashPaise), s: day.cashSentence || 'Nothing to deposit' },
-    { v: String(day.tasks), s: day.tasksOverdue ? plural(day.tasksOverdue, 'overdue') : 'None overdue' },
+    /* "overdue" is not a noun, so it does not take an s: "49 overdue". */
+    { v: String(day.tasks), s: day.tasksOverdue ? day.tasksOverdue + ' overdue' : 'None overdue' },
     { v: String(day.followUps), s: `${day.followUpsToday} today` },
   ];
 
@@ -1033,108 +1098,104 @@ export default function Home() {
           </View>
         </View>
       ) : (
-        <Card style={{ marginTop: 14, padding: 14 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
-            <View style={{ minWidth: 0, flex: 1 }}>
-              <Text style={type.label}>{day.running ? 'On the road' : 'Day closed'}</Text>
-              <Text style={[{ fontSize: 15, color: C.ink }, weight(500)]}>
-                {workedLabel(workedSoFarMs, day.running) + ' · ' + day.stopsDone + ' of ' + day.stops + ' done'}
-              </Text>
-              {/* Two stretches of work is a fact about the day, and this is the
-                  only place it is visible before payroll asks about it. */}
-              {day.sessionCount > 1 ? (
-                <Text style={[type.caption, { marginTop: 2 }]}>{plural(day.sessionCount, 'punch-in')} today</Text>
-              ) : null}
-            </View>
-            {/* NAMED FOR WHERE IT GOES. It read "Navigate", which is the word
-                `NavigateButton` uses two taps away on the journey and visit
-                screens — and that one launches turn-by-turn in Google Maps.
-                One word, two things, pressed on a bike. This opens the list,
-                so it is called what the list is called. */}
-            {/* It steps back in the evening, so there is one primary action on
-                the card and it is the one that closes the day. */}
-            <Pressable
-              onPress={() => router.push('/journey')}
-              accessibilityRole="button"
+        <Card style={{ marginTop: 14, padding: 16 }}>
+          {/* ---- where the day stands ----
+
+              The worked time is the number this card exists for, so it is the
+              large one; the status, the punch-in time and a second stretch of
+              work sit above it as a line rather than competing with it. Two
+              stretches of work is a fact about the day, and this is the only
+              place it is visible before payroll asks about it. */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <View
               style={{
-                height: HIT,
-                paddingHorizontal: 16,
-                borderRadius: radius.xl,
-                borderWidth: punchOutLoud ? 1 : 0,
-                borderColor: C.border,
-                backgroundColor: punchOutLoud ? C.surface : C.primary,
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}>
-              <Text numberOfLines={1} style={[{ fontSize: 15, color: punchOutLoud ? C.body : '#FFFFFF' }, weight(500)]}>
-                Today’s route
-              </Text>
-            </Pressable>
+                width: 8,
+                height: 8,
+                borderRadius: 4,
+                backgroundColor: day.running ? C.success : C.faint,
+              }}
+            />
+            <Text style={[{ fontSize: 13, color: day.running ? C.success : C.muted }, weight(600)]}>
+              {day.running ? 'On the road' : 'Day closed'}
+            </Text>
+            {day.running && day.checkedInAt ? (
+              <Text style={type.caption}>{'since ' + hhmm(day.checkedInAt)}</Text>
+            ) : null}
+            <View style={{ flex: 1 }} />
+            {day.sessionCount > 1 ? <Text style={type.caption}>{plural(day.sessionCount, 'punch-in')}</Text> : null}
           </View>
 
-          {/*
-            Ending the day is the other half of starting it, and it was missing
-            from the design entirely. It is not destructive: a day can be
-            started again afterwards, and the second stretch is ADDED to the
-            first rather than replacing it.
-          */}
-          {/*
-            AND IN THE EVENING IT IS THE MAIN BUTTON. It was a grey outline
-            under a solid blue one all day, the quietest control on the
-            screen, and salesmen walked past it — every forgotten punch-out is
-            a regularisation for the office and a day with no closing photo.
-            From `mbos.attendance.punchOutPromptHour` it takes the weight
-            "Today's route" gives up, and says why.
-          */}
-          <Pressable
-            onPress={day.running ? endDay : resumeDay}
-            disabled={starting}
-            accessibilityRole="button"
-            style={({ pressed }) => ({
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 8,
-              minHeight: punchOutLoud ? 56 : HIT,
-              marginTop: 12,
-              borderRadius: radius.md,
-              borderWidth: punchOutLoud ? 0 : 1,
-              borderColor: day.running ? C.border : C.primary,
-              backgroundColor: punchOutLoud
-                ? pressed
-                  ? C.primaryDeep
-                  : C.primary
-                : pressed
-                  ? C.wash
-                  : day.running
-                    ? C.surface
-                    : C.primaryTint,
-              boxShadow: punchOutLoud ? shadow.primaryDeep : undefined,
-              opacity: starting ? 0.6 : 1,
-            })}>
-            {/* `camera`, not the clock: what happens when this is pressed is
-                that the camera opens, and the icon that says so is worth more
-                here than the one restating the label. */}
-            <Icon
-              name="camera"
-              size={punchOutLoud ? 20 : 18}
-              color={punchOutLoud ? '#FFFFFF' : day.running ? C.body : C.primaryDeep}
-            />
-            <View>
-              <Text
-                style={[
-                  { fontSize: punchOutLoud ? 17 : 15, color: punchOutLoud ? '#FFFFFF' : day.running ? C.body : C.primaryDeep },
-                  weight(punchOutLoud ? 600 : 500),
-                ]}>
-                {day.running ? 'Punch out · photo' : 'Punch in again · photo'}
+          <Text
+            style={[
+              { fontSize: 32, lineHeight: 38, letterSpacing: -0.6, color: C.ink, marginTop: 6 },
+              weight(600),
+              tabular,
+            ]}>
+            {workedLabel(workedSoFarMs, day.running)}
+          </Text>
+          <Text style={type.caption}>worked today</Text>
+
+          {/* Shops, and only when there are some. "0 of 0 done" was printed on
+              every unplanned day — a fraction of nothing, read as a failure. */}
+          {day.stops > 0 ? (
+            <View style={{ marginTop: 12 }}>
+              <View style={{ height: 6, borderRadius: 3, backgroundColor: C.hairline, overflow: 'hidden' }}>
+                <View
+                  style={{
+                    width: `${Math.min(100, Math.round((day.stopsDone / day.stops) * 100))}%`,
+                    height: 6,
+                    borderRadius: 3,
+                    backgroundColor: C.primary,
+                  }}
+                />
+              </View>
+              <Text style={[type.caption, { marginTop: 6 }]}>
+                {day.stopsDone + ' of ' + plural(day.stops, 'shop') + ' done'}
               </Text>
-              {punchOutLoud ? (
-                <Text style={{ fontSize: 12, lineHeight: 16, color: 'rgba(255,255,255,0.85)' }}>
-                  Done for the day? Close it so your hours count.
-                </Text>
-              ) : null}
             </View>
-          </Pressable>
+          ) : (
+            <Text style={[type.caption, { marginTop: 10 }]}>No shops planned today.</Text>
+          )}
+
+          {/*
+            TWO ACTIONS, ONE SHAPE, ONE OF THEM FILLED.
+
+            They used to be two different controls — a pill beside the timer and
+            a full-width bar below it, with different corners, heights and type
+            sizes — so the card read as two cards. Now they are a pair, and the
+            only thing that changes between morning and evening is which one is
+            filled. From `mbos.attendance.punchOutPromptHour` it is punching
+            out: every forgotten punch-out is a regularisation for the office
+            and a day with no closing photo, and the grey outline it used to be
+            all day was the quietest control on the screen.
+
+            "Today's route" is NAMED FOR WHERE IT GOES — it opens the list, not
+            turn-by-turn, which is what `NavigateButton` two taps away does.
+            The camera icon says what pressing Punch out does: the camera
+            opens. Ending the day is not destructive — a second punch-in adds a
+            stretch rather than replacing the first.
+          */}
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
+            <DayAction
+              icon="route"
+              label="Today’s route"
+              filled={!punchOutLoud}
+              onPress={() => router.push('/journey')}
+            />
+            <DayAction
+              icon="camera"
+              label={day.running ? 'Punch out' : 'Punch in again'}
+              filled={punchOutLoud}
+              tint={!day.running}
+              disabled={starting}
+              onPress={day.running ? endDay : resumeDay}
+            />
+          </View>
+          {punchOutLoud ? (
+            <Text style={[type.caption, { marginTop: 10, textAlign: 'center' }]}>
+              Done for the day? Punch out so your hours count. It takes your photo.
+            </Text>
+          ) : null}
         </Card>
       )}
 

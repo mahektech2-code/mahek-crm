@@ -279,7 +279,7 @@ export function PrimaryButton({
           !disabled && { boxShadow: shadow.primary },
           inner,
         ]}>
-        <Text style={[{ fontSize: 16, color: fg }, weight(600)]}>{label}</Text>
+        <Text style={[{ fontSize: 16, lineHeight: 21, color: fg, textAlign: 'center' }, weight(600)]}>{label}</Text>
       </Pressable>
     </Animated.View>
   );
@@ -312,7 +312,7 @@ export function SecondaryButton({
           pressed && { backgroundColor: C.wash },
           inner,
         ]}>
-        <Text style={[{ fontSize: 16, color: C.body }, weight(500)]}>{label}</Text>
+        <Text style={[{ fontSize: 16, lineHeight: 21, color: C.body, textAlign: 'center' }, weight(500)]}>{label}</Text>
       </Pressable>
     </Animated.View>
   );
@@ -592,7 +592,14 @@ const s = StyleSheet.create({
   },
   primaryBtn: {
     width: '100%',
-    height: 52,
+    /* A MINIMUM, not a height. Two of these side by side get half the row
+       each, and a label like "Ask for different cities" does not fit half a
+       phone: at a fixed 52 it wrapped onto two left-aligned lines that ran
+       out through the border. The label is centred and the button grows to
+       hold it; 52 is still the floor for the touch target. */
+    minHeight: 52,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     borderRadius: radius.lg,
     alignItems: 'center',
     justifyContent: 'center',
@@ -606,7 +613,14 @@ const s = StyleSheet.create({
   },
   secondaryBtn: {
     width: '100%',
-    height: 52,
+    /* A MINIMUM, not a height. Two of these side by side get half the row
+       each, and a label like "Ask for different cities" does not fit half a
+       phone: at a fixed 52 it wrapped onto two left-aligned lines that ran
+       out through the border. The label is centred and the button grows to
+       hold it; 52 is still the floor for the touch target. */
+    minHeight: 52,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: C.border,
