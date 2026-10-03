@@ -2840,6 +2840,17 @@ export const SETTINGS = [
     max: 360,
   },
   {
+    key: "mbos.attendance.missedPunchOutWindowDays",
+    type: "integer",
+    category: "mbos-attendance",
+    label: "Days counted for missed punch-outs",
+    description:
+      "How far back the attendance screen and the salesman's own handset count days he punched in to and never punched out of. One number for both, so the manager and the salesman see the same figure.",
+    default: 30,
+    min: 7,
+    max: 90,
+  },
+  {
     key: "mbos.attendance.selfieRequired",
     type: "boolean",
     category: "mbos-attendance",
@@ -5510,6 +5521,9 @@ export type Config = {
   "mbos.attendance.fullDayHours": number;
   "mbos.attendance.halfDayHours": number;
   "mbos.attendance.autoCheckOutHour": number;
+  "mbos.attendance.punchOutPromptHour": number;
+  "mbos.attendance.punchOutSecondReminderMinutes": number;
+  "mbos.attendance.missedPunchOutWindowDays": number;
   "mbos.attendance.selfieRequired": boolean;
   "mbos.attendance.selfieRetentionHours": number;
 

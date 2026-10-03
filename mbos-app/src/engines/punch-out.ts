@@ -88,3 +88,36 @@ export function punchOutReminderTimes(args: {
   if (gap > 0) times.push({ at: first + gap * 60_000, nth: 2 });
   return times.filter((t) => t.at > args.nowMs && t.at <= endOfDay);
 }
+
+/** `iso` minus `n` calendar days, on date strings alone — no zone involved. */
+function isoMinusDays(iso: string, n: number): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d - n)).toISOString().slice(0, 10);
+}
+
+/**
+ * Of the days he punched in over the window before today, how many he never
+ * punched out of.
+ *
+ * TODAY IS LEFT OUT: it is still being worked, and an open session this
+ * afternoon is not a missed punch-out — counting it would mark everybody down
+ * every day until they went home. The window and the rule are the ones the
+ * office's attendance screen uses, over `mbos.attendance.missedPunchOutWindowDays`,
+ * so a salesman and his manager read the same figure about the same month —
+ * as far as this phone remembers, which the screen says.
+ */
+export function missedPunchOuts(
+  days: { day: string; checkInAt: number | null; checkOutAt: number | null }[],
+  today: string,
+  windowDays: number,
+): { missed: number; punched: number } {
+  const from = isoMinusDays(today, Math.max(1, Math.floor(windowDays)));
+  let missed = 0;
+  let punched = 0;
+  for (const d of days) {
+    if (d.checkInAt == null || d.day >= today || d.day < from) continue;
+    punched += 1;
+    if (d.checkOutAt == null) missed += 1;
+  }
+  return { missed, punched };
+}
