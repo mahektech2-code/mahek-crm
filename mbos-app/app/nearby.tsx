@@ -10,6 +10,7 @@ import { whatIsNearby, type NearbyAnswer } from '../src/data/nearby';
    `NavigateButton`, so one failure message cannot drift from the other. */
 import { inrFromPaise } from '../src/lib/format';
 import { useStore } from '../src/state/store';
+import { Appear, Stagger } from '../src/components/ui/motion';
 
 /**
  * §E, §F and §G of the mapping brief — the answer, without the map.
@@ -133,38 +134,40 @@ export default function Nearby() {
               below rather than a second calculation, so the two can never
               disagree about which shop. */}
           {answer.best ? (
-            <Card style={{ marginTop: 16, borderLeftWidth: 3, borderLeftColor: C.primary }}>
-              <SectionLabel>Next best visit</SectionLabel>
-              <T style={[{ fontSize: 17, lineHeight: 23, color: C.ink, marginTop: 4 }, weight(600)]}>
-                {answer.best.shop.name}
-              </T>
-              <T s="caption" style={{ marginTop: 2 }}>
-                {metresLabel(answer.best.metres) + ' · ' + answer.best.reasons.join(' · ')}
-              </T>
-              {/* THE ONE Navigate, not a third hand-rolled one. `navigate.tsx`
-                  exists precisely so a second `openMaps` call site cannot let
-                  the failure message on one screen drift from the other's — and
-                  these two were worse than drift: they called `navigateTo`,
-                  which needs a coordinate and falls back to the clipboard,
-                  while every other Navigate in the app searches the shop's name
-                  and town when there is no pin. Half this book has no pin, and
-                  both of these began `if (!coords) return` — a tap that
-                  acknowledged nothing at all. */}
-              <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
-                <NavigateButton
-                  lat={answer.best.shop.coords?.lat}
-                  lng={answer.best.shop.coords?.lng}
-                  name={answer.best.shop.name}
-                  variant="button"
-                  style={{ flex: 1 }}
-                />
-                <PrimaryButton
-                  label="Open shop"
-                  onPress={() => open(answer.best!.shop.id)}
-                  style={{ flex: 1, borderRadius: radius.xl }}
-                />
-              </View>
-            </Card>
+            <Appear>
+              <Card style={{ marginTop: 16, borderLeftWidth: 3, borderLeftColor: C.primary }}>
+                <SectionLabel>Next best visit</SectionLabel>
+                <T style={[{ fontSize: 17, lineHeight: 23, color: C.ink, marginTop: 4 }, weight(600)]}>
+                  {answer.best.shop.name}
+                </T>
+                <T s="caption" style={{ marginTop: 2 }}>
+                  {metresLabel(answer.best.metres) + ' · ' + answer.best.reasons.join(' · ')}
+                </T>
+                {/* THE ONE Navigate, not a third hand-rolled one. `navigate.tsx`
+                    exists precisely so a second `openMaps` call site cannot let
+                    the failure message on one screen drift from the other's — and
+                    these two were worse than drift: they called `navigateTo`,
+                    which needs a coordinate and falls back to the clipboard,
+                    while every other Navigate in the app searches the shop's name
+                    and town when there is no pin. Half this book has no pin, and
+                    both of these began `if (!coords) return` — a tap that
+                    acknowledged nothing at all. */}
+                <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+                  <NavigateButton
+                    lat={answer.best.shop.coords?.lat}
+                    lng={answer.best.shop.coords?.lng}
+                    name={answer.best.shop.name}
+                    variant="button"
+                    style={{ flex: 1 }}
+                  />
+                  <PrimaryButton
+                    label="Open shop"
+                    onPress={() => open(answer.best!.shop.id)}
+                    style={{ flex: 1, borderRadius: radius.xl }}
+                  />
+                </View>
+              </Card>
+            </Appear>
           ) : null}
 
           <T s="caption" style={{ marginTop: 16 }}>
@@ -180,37 +183,41 @@ export default function Nearby() {
           </T>
 
           <View style={{ gap: 12, marginTop: 8 }}>
-            {answer.shops.slice(0, NEARBY_PAGE).map((r) => (
-              <Card key={r.shop.id}>
-                <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <T numberOfLines={1} style={[{ fontSize: 15, color: C.ink }, weight(500)]}>
-                      {r.shop.name}
-                    </T>
-                    {/* Why it is on the list. A ranking nobody can get behind is
-                        one they stop believing the first time it surprises them. */}
-                    <T s="caption" style={{ marginTop: 2 }}>{r.reasons.join(' · ')}</T>
+            {/* Each radius re-reads and re-mounts the list, so the cascade plays
+                for a new circle and not for a pull that changed nothing. */}
+            {answer.shops.slice(0, NEARBY_PAGE).map((r, i) => (
+              <Stagger key={r.shop.id} index={i + 1}>
+                <Card>
+                  <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <T numberOfLines={1} style={[{ fontSize: 15, color: C.ink }, weight(500)]}>
+                        {r.shop.name}
+                      </T>
+                      {/* Why it is on the list. A ranking nobody can get behind is
+                          one they stop believing the first time it surprises them. */}
+                      <T s="caption" style={{ marginTop: 2 }}>{r.reasons.join(' · ')}</T>
+                    </View>
+                    <Badge tone="neutral">{metresLabel(r.metres)}</Badge>
                   </View>
-                  <Badge tone="neutral">{metresLabel(r.metres)}</Badge>
-                </View>
 
-                {r.shop.outstandingPaise > 0 ? (
-                  <T style={[{ fontSize: 14, marginTop: 8, color: C.danger }, weight(500)]}>
-                    {inrFromPaise(r.shop.outstandingPaise) + ' outstanding'}
-                  </T>
-                ) : null}
+                  {r.shop.outstandingPaise > 0 ? (
+                    <T style={[{ fontSize: 14, marginTop: 8, color: C.danger }, weight(500)]}>
+                      {inrFromPaise(r.shop.outstandingPaise) + ' outstanding'}
+                    </T>
+                  ) : null}
 
-                <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
-                  <NavigateButton
-                    lat={r.shop.coords?.lat}
-                    lng={r.shop.coords?.lng}
-                    name={r.shop.name}
-                    variant="button"
-                    style={{ flex: 1 }}
-                  />
-                  <DashedButton label="Open" onPress={() => open(r.shop.id)} style={{ flex: 1 }} />
-                </View>
-              </Card>
+                  <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+                    <NavigateButton
+                      lat={r.shop.coords?.lat}
+                      lng={r.shop.coords?.lng}
+                      name={r.shop.name}
+                      variant="button"
+                      style={{ flex: 1 }}
+                    />
+                    <DashedButton label="Open" onPress={() => open(r.shop.id)} style={{ flex: 1 }} />
+                  </View>
+                </Card>
+              </Stagger>
             ))}
           </View>
 

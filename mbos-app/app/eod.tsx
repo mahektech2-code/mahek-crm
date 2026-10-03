@@ -8,7 +8,8 @@ import { ConfirmSheet } from '../src/components/ui/overlays';
 import { useBoot } from '../src/state/boot';
 import { useStore } from '../src/state/store';
 import { inrFromPaise, isoDate } from '../src/lib/format';
-import { color as C, weight, tabular } from '../src/theme/tokens';
+import { CountUp, Stagger, Swap } from '../src/components/ui/motion';
+import { color as C, weight, tabular, type as typeScale } from '../src/theme/tokens';
 import { priceDay, submitDay } from '../src/data/travel';
 import { dayState } from '../src/data/attendance';
 
@@ -197,9 +198,16 @@ export default function EodScreen() {
                 </View>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 6 }}>
                   <T s="small" style={{ color: C.muted }}>The policy allows</T>
-                  <T style={[{ fontSize: 22, color: C.ink }, weight(600), tabular]}>
-                    {inrFromPaise(c.totalEligiblePaise)}
-                  </T>
+                  {/* The figure the whole screen is checked against. It counts
+                      up when the day is priced so the total reads as the sum
+                      of the lines above it arriving, and counts again if a
+                      revisit re-prices it — not from zero, which would make
+                      every visit look like a fresh calculation. */}
+                  <CountUp
+                    value={c.totalEligiblePaise}
+                    format={(n) => inrFromPaise(Math.round(n))}
+                    style={[typeScale.body, { fontSize: 22, color: C.ink }, weight(600), tabular]}
+                  />
                 </View>
 
                 {/* Requirement 41, said here rather than left for month end. */}
@@ -223,6 +231,7 @@ export default function EodScreen() {
           {/* The meals he did NOT earn, and why. Silence here is what makes
               somebody think the app lost their breakfast. */}
           {c && c.meals.some((m) => !m.earned) ? (
+            <Stagger index={1}>
             <Card style={{ marginTop: 10 }}>
               <T style={[{ fontSize: 14, color: C.ink }, weight(600)]}>Meals not paid today</T>
               {c.meals
@@ -233,9 +242,11 @@ export default function EodScreen() {
                   </T>
                 ))}
             </Card>
+            </Stagger>
           ) : null}
 
           {c && c.exceptions.length ? (
+            <Stagger index={2}>
             <Card style={{ marginTop: 10 }}>
               <T style={[{ fontSize: 14, color: C.ink }, weight(600)]}>Your manager will see</T>
               {c.exceptions.map((e, i) => (
@@ -247,8 +258,13 @@ export default function EodScreen() {
                 </View>
               ))}
             </Card>
+            </Stagger>
           ) : null}
 
+          {/* Sending turns the form into the locked notice in the same place —
+              one state replacing another, so it reads as the day closing
+              rather than as the form vanishing. The toast already buzzes. */}
+          <Swap id={locked ? 'locked' : 'open'}>
           {locked ? (
             <Card style={{ marginTop: 12, backgroundColor: C.warnBg }}>
               <T s="small" style={{ color: C.ink }}>
@@ -273,6 +289,7 @@ export default function EodScreen() {
               />
             </>
           )}
+          </Swap>
         </>
       )}
 

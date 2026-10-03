@@ -5,7 +5,8 @@ import { router, useFocusEffect } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Card, Choice, PrimaryButton, T } from '../src/components/ui/primitives';
 import { BottomSheet, Calendar } from '../src/components/ui/overlays';
-import { color as C, radius, weight, tabular } from '../src/theme/tokens';
+import { Appear, CountUp, FillBar, Swap } from '../src/components/ui/motion';
+import { color as C, radius, weight, tabular, type as typeScale } from '../src/theme/tokens';
 import { dmy, inrFromPaise, isoDate, plural } from '../src/lib/format';
 import { activitySub, collectionLine } from '../src/engines/performance-labels';
 import {
@@ -202,20 +203,34 @@ export default function PerformanceScreen() {
           </T>
         </Card>
       ) : (
-        <>
+        /* ONE PERIOD REPLACING ANOTHER. Keyed on the range, so picking a new
+           period settles the figures in afresh — and the score, which counts
+           up from nought on arrival, counts again: the number for the new
+           window is news in exactly the way the first one was. The chip
+           itself already ticks `select`, so nothing here buzzes. */
+        <Swap id={rangeKey}>
 
           {current.hasTarget && current.totalScoreBp !== null ? (
             <Card style={{ marginTop: 12, alignItems: 'flex-start' }}>
               <T s="label">Overall</T>
               <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8 }}>
-                <T
+                {/* The score is what this screen is for, so it counts up from
+                    nought rather than simply being there — and when the office's
+                    live answer replaces the synced one, it runs from the old
+                    figure to the new, which is the only way somebody sees that
+                    it moved. */}
+                <CountUp
+                  value={current.totalScoreBp / 100}
+                  format={(n) => n.toFixed(0)}
+                  fromZero
+                  duration={800}
                   style={[
+                    typeScale.body,
                     { fontSize: 34, lineHeight: 40, color: toneFor(current.totalScoreBp) },
                     weight(600),
                     tabular,
-                  ]}>
-                  {(current.totalScoreBp / 100).toFixed(0)}
-                </T>
+                  ]}
+                />
                 <T s="small" style={{ color: C.muted }}>
                   out of 100
                 </T>
@@ -275,19 +290,25 @@ export default function PerformanceScreen() {
             <Figure
               label="Revenue excl. GST"
               value={inrFromPaise(current.revenueActualPaise)}
+              count={{ n: current.revenueActualPaise, format: (n) => inrFromPaise(Math.round(n)) }}
               target={current.revenueTargetPaise ? inrFromPaise(current.revenueTargetPaise) : null}
               bp={current.revenueAchievementBp}
             />
             <Figure
               label="Volume"
               value={litres(current.volumeActualMl)}
+              count={{ n: current.volumeActualMl, format: litres }}
               target={current.volumeTargetMl ? litres(current.volumeTargetMl) : null}
               bp={current.volumeAchievementBp}
             />
           </Card>
 
+          {/* The warning arrives a beat after the two figures it is about, so
+              it reads as a conclusion drawn from them rather than as part of
+              the furniture of the screen. */}
           {priceNotVolume(current) ? (
-            <View
+            <Appear
+              delay={360}
               style={{
                 backgroundColor: C.warnBg,
                 borderWidth: 1,
@@ -301,7 +322,7 @@ export default function PerformanceScreen() {
                 You reached your rupee target but not your litres target. Prices went up,
                 but you sold less quantity. So this month is not as good as it looks.
               </T>
-            </View>
+            </Appear>
           ) : null}
 
           {/* WHAT HE TOOK AND NOBODY HAS DECIDED YET. Revenue counts accepted
@@ -411,7 +432,7 @@ export default function PerformanceScreen() {
                      tick at the edge looked like a stray mark. It comes
                      back the moment something sells into it. */
                   current.categories.filter((c) => c.targetBp > 0 || c.actualBp > 0)
-              ).map((c) => (
+              ).map((c, i) => (
                 <View key={c.name} style={{ marginTop: 14 }}>
                   <View
                     style={{
@@ -430,22 +451,24 @@ export default function PerformanceScreen() {
                     style={{
                       position: 'relative',
                       height: 8,
-                      borderRadius: 4,
-                      backgroundColor: C.hairline,
                       marginTop: 6,
                     }}>
-                    <View
-                      style={{
-                        width: `${Math.min(100, (c.actualBp / 100))}%`,
-                        height: '100%',
-                        borderRadius: 4,
-                        backgroundColor:
-                          c.status === 'below-minimum'
+                    {/* Filled one after another, 60 ms apart, so the eye reads
+                        the shares down the card in order rather than all at
+                        once. The track is FillBar's own; this View only holds
+                        the target rule over it. */}
+                    <FillBar
+                      pct={c.actualBp / 100}
+                      height={8}
+                      delay={i * 60}
+                      track={C.hairline}
+                      fill={
+                        c.status === 'below-minimum'
+                          ? C.warn
+                          : c.status === 'below-target'
                             ? C.warn
-                            : c.status === 'below-target'
-                              ? C.warn
-                              : C.success,
-                      }}
+                            : C.success
+                      }
                     />
                     {/* The target share as a rule across the track, not a second
                         bar: the question is which side of it he is on. No rule
@@ -498,7 +521,7 @@ export default function PerformanceScreen() {
           ) : null}
 
 
-        </>
+        </Swap>
       )}
 
       {/* Outside the branch above on purpose: a man with no score this month
@@ -661,9 +684,18 @@ function Figure({
   base,
   bp,
   half,
+  count,
 }: {
   label: string;
   value: string;
+  /*
+   * The figure as a number, where it is one worth watching move. When the
+   * office's live answer replaces the synced copy, revenue and volume run to
+   * their new values rather than changing in place — so a morning's orders
+   * landing reads as the figure rising. Not from zero: the figure itself is not
+   * news on arrival, only its movement is.
+   */
+  count?: { n: number; format: (n: number) => string };
   target: string | null;
   /*
    * WHAT THE FIGURE IS A SHARE OF, for the two components where it is one.
@@ -689,14 +721,27 @@ function Figure({
         borderTopColor: C.wash,
       }}>
       <T s="label">{label}</T>
-      <T
-        style={[
-          { fontSize: 22, lineHeight: 28, marginVertical: 2, color: C.ink },
-          weight(600),
-          tabular,
-        ]}>
-        {value}
-      </T>
+      {count ? (
+        <CountUp
+          value={count.n}
+          format={count.format}
+          style={[
+            typeScale.body,
+            { fontSize: 22, lineHeight: 28, marginVertical: 2, color: C.ink },
+            weight(600),
+            tabular,
+          ]}
+        />
+      ) : (
+        <T
+          style={[
+            { fontSize: 22, lineHeight: 28, marginVertical: 2, color: C.ink },
+            weight(600),
+            tabular,
+          ]}>
+          {value}
+        </T>
+      )}
       <T s="micro">
         {target ? `of ${target}` : 'no target'}
         {bp === null ? '' : ` · ${(bp / 100).toFixed(0)}%`}

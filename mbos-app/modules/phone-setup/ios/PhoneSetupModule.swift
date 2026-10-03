@@ -33,6 +33,10 @@ public class PhoneSetupModule: Module {
       return "unknown"
     }
 
+    AsyncFunction("ringerMode") { () -> String in
+      return "unknown"
+    }
+
     AsyncFunction("requestBatteryExemption") { () -> String in
       return "unknown"
     }

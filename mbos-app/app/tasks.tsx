@@ -9,6 +9,7 @@ import { bucketOf, completeTask, createTask, listOpenTasks, snoozeTask, type Tas
 import { customerNames, daysSince, listCustomersPage, type Customer } from '../src/data/customers';
 import { dmy, isoDate, plural } from '../src/lib/format';
 import { useStore } from '../src/state/store';
+import { Stagger, SwipeRow, animateLayoutFor } from '../src/components/ui/motion';
 
 /**
  * Tasks, in five buckets.
@@ -76,10 +77,13 @@ export default function TasksScreen() {
   const [pri, setPri] = React.useState<(typeof PRIS)[number]>('Normal');
   const [titleErr, setTitleErr] = React.useState(false);
 
-  const load = React.useCallback(() => {
+  /* `animate` is asked for by the two acts that move a row — done and snooze —
+     and not by focus: a screen opening on its list is not that list changing. */
+  const load = React.useCallback((animate?: boolean) => {
     let live = true;
     void listOpenTasks().then(async (t) => {
       if (!live) return;
+      if (animate === true) animateLayoutFor(t.length);
       setTasks(t);
       const found = await customerNames(t.map((x) => x.customerId ?? '').filter(Boolean));
       if (live) setNames(found);
@@ -89,7 +93,7 @@ export default function TasksScreen() {
     };
   }, []);
 
-  useFocusEffect(load);
+  useFocusEffect(React.useCallback(() => load(), [load]));
 
   /* The book is read by the SEARCH rather than once on focus, which is what
      makes a shop past the first page reachable at all. An empty query is the
@@ -127,10 +131,20 @@ export default function TasksScreen() {
     notify('Task added · ' + t);
   };
 
+  /* The row leaves in the same tick as the tap or the swipe rather than when
+     the re-read answers, and the list closes the gap instead of jumping. It is
+     a local SQLite write, so taking the row off first delays nothing; if the
+     write throws, the re-read puts it back. The toast carries the buzz —
+     nothing here adds a second one. */
   const markDone = async (t: Task) => {
-    await completeTask(t.id, null);
-    load();
-    notify('Done · ' + t.title);
+    animateLayoutFor(tasks.length);
+    setTasks((cur) => cur.filter((x) => x.id !== t.id));
+    try {
+      await completeTask(t.id, null);
+      notify('Done · ' + t.title);
+    } finally {
+      load();
+    }
   };
 
   const snooze = (t: Task) =>
@@ -144,7 +158,7 @@ export default function TasksScreen() {
            rather than replaced, because three snoozes is the story. */
         const to = isoDate(new Date(Date.now() + 86_400_000));
         void snoozeTask(t.id, to, reason).then(() => {
-          load();
+          load(true);
           notify('Moved to tomorrow · ' + reason);
         });
       },
@@ -167,126 +181,140 @@ export default function TasksScreen() {
 
       {BUCKETS.map((g) => {
         const items = tasks.filter((t) => bucketOf(t.dueDate, today) === g);
+        const before = BUCKETS.slice(0, BUCKETS.indexOf(g)).reduce(
+          (n, b) => n + tasks.filter((t) => bucketOf(t.dueDate, today) === b).length,
+          0,
+        );
         if (items.length === 0) return null;
         return (
           <View key={g} style={{ marginTop: 20 }}>
             <SectionLabel style={{ marginBottom: 10 }}>{g}</SectionLabel>
             <View style={{ gap: 10 }}>
-              {items.map((t) => {
+              {items.map((t, i) => {
                 const edge =
                   t.priority === 'High' ? C.danger : g === 'Overdue' ? C.danger : g === 'Today' ? C.warn : C.border;
+                /* Swiping left is a SHORTCUT to the Done button on the row,
+                   which stays — completing here is one direct write with no
+                   note or photograph to ask for, so the gesture can run it. */
                 return (
-                  <View
-                    key={t.id}
-                    style={{
-                      backgroundColor: C.surface,
-                      borderWidth: 1,
-                      borderColor: C.hairline,
-                      borderLeftWidth: 3,
-                      borderLeftColor: edge,
-                      borderRadius: radius.xl,
-                      paddingHorizontal: 16,
-                      paddingVertical: 14,
-                      boxShadow: shadow.soft,
-                    }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
-                      <T style={[{ flex: 1, minWidth: 0, fontSize: 14, lineHeight: 20, color: C.ink }, weight(500)]}>
-                        {t.title}
-                      </T>
-                      {t.priority === 'High' ? (
+                  <Stagger key={t.id} index={before + i}>
+                    <SwipeRow
+                      /* The "Done" toast already buzzes. */
+                      buzz={false}
+                      right={{ label: 'Done', color: C.success, run: () => void markDone(t) }}
+                      style={{ borderRadius: radius.xl, overflow: 'hidden' }}>
+                      <View
+                        style={{
+                          backgroundColor: C.surface,
+                          borderWidth: 1,
+                          borderColor: C.hairline,
+                          borderLeftWidth: 3,
+                          borderLeftColor: edge,
+                          borderRadius: radius.xl,
+                          paddingHorizontal: 16,
+                          paddingVertical: 14,
+                          boxShadow: shadow.soft,
+                        }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
+                          <T style={[{ flex: 1, minWidth: 0, fontSize: 14, lineHeight: 20, color: C.ink }, weight(500)]}>
+                            {t.title}
+                          </T>
+                          {t.priority === 'High' ? (
+                            <View
+                              style={{
+                                backgroundColor: C.dangerBg,
+                                borderRadius: 10,
+                                paddingHorizontal: 8,
+                                paddingVertical: 2,
+                              }}>
+                              <T
+                                style={[
+                                  { fontSize: 11, letterSpacing: 0.33, textTransform: 'uppercase', color: C.danger },
+                                  weight(600),
+                                ]}>
+                                High
+                              </T>
+                            </View>
+                          ) : null}
+                        </View>
+                        <T s="caption" style={{ marginTop: 2 }}>{nameOf(t.customerId)}</T>
+
+                        {/* A task that ASKS for something specific opens the screen
+                            that answers it. Without this the office raises a
+                            validation call and the salesman reads a title with
+                            nowhere to go — which is how a workflow becomes a list
+                            of sentences people tick off without doing. */}
+                        {t.sourceType === 'lead_validation' && t.customerId ? (
+                          <SecondaryButton
+                            label="Call now"
+                            onPress={() =>
+                              router.push(`/validate?id=${t.customerId}&taskId=${t.id}&from=tasks`)
+                            }
+                            style={{ marginTop: 10 }}
+                          />
+                        ) : null}
+                        {t.sourceType === 'requirement_visit' && t.customerId ? (
+                          <SecondaryButton
+                            label="Open shop"
+                            onPress={() => {
+                              set({ custId: t.customerId ?? undefined, pTab: 0 });
+                              router.push('/customer');
+                            }}
+                            style={{ marginTop: 10 }}
+                          />
+                        ) : null}
                         <View
                           style={{
-                            backgroundColor: C.dangerBg,
-                            borderRadius: 10,
-                            paddingHorizontal: 8,
-                            paddingVertical: 2,
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            gap: 12,
+                            marginTop: 12,
                           }}>
-                          <T
-                            style={[
-                              { fontSize: 11, letterSpacing: 0.33, textTransform: 'uppercase', color: C.danger },
-                              weight(600),
-                            ]}>
-                            High
+                          <T style={[{ fontSize: 13, color: g === 'Overdue' ? C.danger : C.muted }, weight(500)]}>
+                            {/* A heading of "Later" says nothing a man planning a
+                                week can use, so anything past tomorrow prints its
+                                own date instead of repeating the bucket's name. */}
+                            {g === 'Overdue'
+                              ? 'Overdue by ' + plural(daysSince(t.dueDate, today) ?? 0, 'day')
+                              : g === 'This week' || g === 'Later'
+                                ? dmy(t.dueDate)
+                                : g}
                           </T>
+                          <View style={{ flexDirection: 'row', gap: 8 }}>
+                            <Pressable
+                              onPress={() => snooze(t)}
+                              accessibilityRole="button"
+                              style={{
+                                height: 48,
+                                paddingHorizontal: 12,
+                                borderWidth: 1,
+                                borderColor: C.border,
+                                backgroundColor: C.surface,
+                                borderRadius: radius.md,
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                              }}>
+                              <T style={{ fontSize: 15, color: C.body }}>Snooze</T>
+                            </Pressable>
+                            <Pressable
+                              onPress={() => markDone(t)}
+                              accessibilityRole="button"
+                              style={{
+                                height: 48,
+                                paddingHorizontal: 14,
+                                backgroundColor: C.primary,
+                                borderRadius: radius.md,
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                              }}>
+                              <T style={[{ fontSize: 15, color: C.surface }, weight(500)]}>Done</T>
+                            </Pressable>
+                          </View>
                         </View>
-                      ) : null}
-                    </View>
-                    <T s="caption" style={{ marginTop: 2 }}>{nameOf(t.customerId)}</T>
-
-                    {/* A task that ASKS for something specific opens the screen
-                        that answers it. Without this the office raises a
-                        validation call and the salesman reads a title with
-                        nowhere to go — which is how a workflow becomes a list
-                        of sentences people tick off without doing. */}
-                    {t.sourceType === 'lead_validation' && t.customerId ? (
-                      <SecondaryButton
-                        label="Call now"
-                        onPress={() =>
-                          router.push(`/validate?id=${t.customerId}&taskId=${t.id}&from=tasks`)
-                        }
-                        style={{ marginTop: 10 }}
-                      />
-                    ) : null}
-                    {t.sourceType === 'requirement_visit' && t.customerId ? (
-                      <SecondaryButton
-                        label="Open shop"
-                        onPress={() => {
-                          set({ custId: t.customerId ?? undefined, pTab: 0 });
-                          router.push('/customer');
-                        }}
-                        style={{ marginTop: 10 }}
-                      />
-                    ) : null}
-                    <View
-                      style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: 12,
-                        marginTop: 12,
-                      }}>
-                      <T style={[{ fontSize: 13, color: g === 'Overdue' ? C.danger : C.muted }, weight(500)]}>
-                        {/* A heading of "Later" says nothing a man planning a
-                            week can use, so anything past tomorrow prints its
-                            own date instead of repeating the bucket's name. */}
-                        {g === 'Overdue'
-                          ? 'Overdue by ' + plural(daysSince(t.dueDate, today) ?? 0, 'day')
-                          : g === 'This week' || g === 'Later'
-                            ? dmy(t.dueDate)
-                            : g}
-                      </T>
-                      <View style={{ flexDirection: 'row', gap: 8 }}>
-                        <Pressable
-                          onPress={() => snooze(t)}
-                          accessibilityRole="button"
-                          style={{
-                            height: 48,
-                            paddingHorizontal: 12,
-                            borderWidth: 1,
-                            borderColor: C.border,
-                            backgroundColor: C.surface,
-                            borderRadius: radius.md,
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                          }}>
-                          <T style={{ fontSize: 15, color: C.body }}>Snooze</T>
-                        </Pressable>
-                        <Pressable
-                          onPress={() => markDone(t)}
-                          accessibilityRole="button"
-                          style={{
-                            height: 48,
-                            paddingHorizontal: 14,
-                            backgroundColor: C.primary,
-                            borderRadius: radius.md,
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                          }}>
-                          <T style={[{ fontSize: 15, color: C.surface }, weight(500)]}>Done</T>
-                        </Pressable>
                       </View>
-                    </View>
-                  </View>
+                    </SwipeRow>
+                  </Stagger>
                 );
               })}
             </View>

@@ -5,6 +5,8 @@ import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFram
 import { Badge, Bar, Card, ListCard, SectionLabel, T } from '../src/components/ui/primitives';
 import { ConfirmSheet } from '../src/components/ui/overlays';
 import { Icon } from '../src/components/ui/Icon';
+import { Presence, Pulse, Swap } from '../src/components/ui/motion';
+import { feedback } from '../src/components/ui/feedback';
 import { color as C, HIT, radius, weight } from '../src/theme/tokens';
 import { dataSize, isoDate, plural, pretty } from '../src/lib/format';
 import { useStore } from '../src/state/store';
@@ -525,6 +527,21 @@ function AreaRow({
    */
   const stopped = failed && !complete;
 
+  /*
+   * A DOWNLOAD FINISHING IS FELT, because it is the one outcome on this screen
+   * nobody is watching for. It runs for twenty minutes; he has put the phone
+   * down or gone to another screen and come back, and nothing else marks the
+   * moment several hundred megabytes became a map. Only the transition buzzes —
+   * a row that opens already saved is not news — and it is written in an
+   * effect, with the ref updated there, so a render never fires it.
+   */
+  const wasDownloading = React.useRef(downloading);
+  React.useEffect(() => {
+    if (wasDownloading.current && !downloading && complete) feedback('success');
+    wasDownloading.current = downloading;
+  }, [downloading, complete]);
+  const rowState = stopped ? 'stopped' : downloading ? 'saving' : complete ? 'saved' : 'none';
+
   const ageDays =
     saved?.savedAt != null ? Math.floor((readAt - saved.savedAt) / 86_400_000) : null;
   const stale = ageDays != null && ageDays > staleAfterDays;
@@ -546,12 +563,26 @@ function AreaRow({
             {complete && area.coverage.state === 'full' ? <Badge tone="success">Saved</Badge> : null}
             {complete && area.coverage.state === 'partial' ? <Badge tone="amber">Part saved</Badge> : null}
             {stopped ? <Badge tone="danger">Stopped</Badge> : null}
-            {downloading && !stopped ? <Badge tone="info">Saving</Badge> : null}
+            {/* Breathing while bytes are actually arriving, still once paused —
+                the difference between "it is working" and "it is waiting for
+                you" is the one this badge alone cannot say in a word. */}
+            {downloading && !stopped ? (
+              <Pulse active={running}>
+                <Badge tone="info">Saving</Badge>
+              </Pulse>
+            ) : null}
             {complete && stale ? <Badge tone="amber">Old</Badge> : null}
           </View>
-          <T s="caption">
-            {describe(area, status, ageDays)}
-          </T>
+          {/* Keyed on the row's STATE, not on the text: the estimate becoming
+              "x of about y" becoming "saved, 312 MB" is the row changing what
+              it is, and settles in. The byte count ticking during a download
+              changes the text without changing the state, and must not flicker
+              on every progress event. */}
+          <Swap id={rowState}>
+            <T s="caption">
+              {describe(area, status, ageDays)}
+            </T>
+          </Swap>
         </View>
 
         {/* ONE action on the row, and it is the obvious one for the state it
@@ -581,7 +612,11 @@ function AreaRow({
         )}
       </View>
 
-      {downloading && status ? (
+      {/* The track opens under the row when a download starts and closes
+          when it finishes, rather than the row jumping a line taller. The fill
+          itself already eases to each new percentage (Bar is a FillBar). */}
+      <Presence show={downloading && !!status}>
+        {status ? (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 10 }}>
           {/* A bar in the primary colour reads as a download in progress. What
               is left of a stopped one is how far it got, which is a different
@@ -591,7 +626,8 @@ function AreaRow({
             {Math.round(status.percentage)}%
           </T>
         </View>
-      ) : null}
+        ) : null}
+      </Presence>
 
       {/* WHY IT CANNOT BE SAVED, on the row rather than in a toast somebody
           has already looked away from. A disabled control with no reason is

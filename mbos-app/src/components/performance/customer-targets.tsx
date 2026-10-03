@@ -2,7 +2,8 @@ import React from 'react';
 import { ScrollView, View } from 'react-native';
 
 import { Badge, Bar, Card, Choice, ListCard, Row, SecondaryButton, T } from '../ui/primitives';
-import { color as C, weight, tabular } from '../../theme/tokens';
+import { CountUp, Stagger, animateLayoutFor } from '../ui/motion';
+import { color as C, weight, tabular, type as typeScale } from '../../theme/tokens';
 import { inrFromPaise, plural } from '../../lib/format';
 import { customerTargetsComputedAt, listCustomerTargets } from '../../data/customer-targets';
 import {
@@ -126,9 +127,11 @@ export function CustomerTargetsCard({
       <Card style={{ marginTop: 12 }}>
         <T s="label">Your customers&apos; targets</T>
         <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
-          <T style={[{ fontSize: 22, lineHeight: 28, color: C.ink }, weight(600), tabular]}>
-            {inrFromPaise(summary.achievedPaise)}
-          </T>
+          <CountUp
+            value={summary.achievedPaise}
+            format={(n) => inrFromPaise(Math.round(n))}
+            style={[typeScale.body, { fontSize: 22, lineHeight: 28, color: C.ink }, weight(600), tabular]}
+          />
           <T s="small" style={{ color: C.muted }}>
             {summary.targetPaise ? `of ${inrFromPaise(summary.targetPaise)}` : 'no targets set'}
           </T>
@@ -171,6 +174,10 @@ export function CustomerTargetsCard({
             label={`${f.label} · ${summary.counts[f.key]}`}
             selected={filter === f.key}
             onPress={() => {
+              /* The slice changes in place: rows that stay slide to their new
+                 places and rows that leave fade, so the list reads as narrowed
+                 rather than replaced. At most a page is on screen. */
+              animateLayoutFor(Math.min(PAGE, data.rows.length));
               setFilter(f.key);
               setShown(PAGE);
             }}
@@ -182,7 +189,9 @@ export function CustomerTargetsCard({
       {visible.length ? (
         <ListCard style={{ marginTop: 10 }}>
           {visible.slice(0, shown).map((r, i) => (
-            <TargetRow key={r.customerId} row={r} first={i === 0} today={today} onPress={() => onOpen(r.customerId)} />
+            <Stagger key={r.customerId} index={i}>
+              <TargetRow row={r} first={i === 0} today={today} onPress={() => onOpen(r.customerId)} />
+            </Stagger>
           ))}
         </ListCard>
       ) : (

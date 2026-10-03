@@ -6,7 +6,8 @@ import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFram
 import { Badge, Card, ListCard, PrimaryButton, SecondaryButton, T } from '../src/components/ui/primitives';
 import { useBoot } from '../src/state/boot';
 import { hhmm, inrFromPaise, isoDate } from '../src/lib/format';
-import { color as C, weight, tabular } from '../src/theme/tokens';
+import { CountUp, Stagger } from '../src/components/ui/motion';
+import { color as C, weight, tabular, type as typeScale } from '../src/theme/tokens';
 import { priceDay, travelModes, type TravelMode } from '../src/data/travel';
 
 /**
@@ -87,9 +88,13 @@ export default function TravelScreen() {
         <Card style={{ marginBottom: 12 }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' }}>
             <T s="small" style={{ color: C.muted }}>Travel today</T>
-            <T style={[{ fontSize: 22, color: C.ink }, weight(600), tabular]}>
-              {inrFromPaise(computation.travelPaise)}
-            </T>
+            {/* Counts only when a revisit re-prices the day — a visit's leg
+                landing since he last looked shows as the figure rising. */}
+            <CountUp
+              value={computation.travelPaise}
+              format={(n) => inrFromPaise(Math.round(n))}
+              style={[typeScale.body, { fontSize: 22, color: C.ink }, weight(600), tabular]}
+            />
           </View>
           <T s="caption" style={{ marginTop: 2 }}>
             {km(computation.totalMetres)} in {computation.legs.length}{' '}
@@ -110,7 +115,7 @@ export default function TravelScreen() {
         </Card>
       ) : null}
 
-      {legs.map((leg) => {
+      {legs.map((leg, i) => {
         const c = computation?.legs.find((l) => l.legId === leg.id) ?? null;
         const zero = c != null && c.eligiblePaise === 0 && c.chosenMetres != null;
         const modeLabel = modes.find((m) => m.key === leg.modeKey)?.label ?? leg.modeKey;
@@ -131,7 +136,8 @@ export default function TravelScreen() {
           .filter(Boolean)
           .join(' · ');
         return (
-          <ListCard key={leg.id} style={{ marginBottom: 8 }}>
+          <Stagger key={leg.id} index={i}>
+          <ListCard style={{ marginBottom: 8 }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
               <View style={{ flex: 1, minWidth: 0, paddingRight: 10 }}>
                 <T style={[{ fontSize: 15, color: C.ink }, weight(600)]} numberOfLines={2}>
@@ -165,6 +171,7 @@ export default function TravelScreen() {
               <T s="caption" style={{ marginTop: 6, color: C.warnInk }}>{c.unpricedReason}</T>
             ) : null}
           </ListCard>
+          </Stagger>
         );
       })}
 

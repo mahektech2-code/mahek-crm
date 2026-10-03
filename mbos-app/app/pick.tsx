@@ -18,6 +18,8 @@ import { daysSince } from '../src/data/customers';
 import { haversineMetres } from '../src/engines/geo';
 import { ShopMap } from '../src/components/ui/shop-map';
 import { useStore } from '../src/state/store';
+import { Pop, PressableScale, Stagger } from '../src/components/ui/motion';
+import { feedback } from '../src/components/ui/feedback';
 
 /**
  * Picking the shops for a day you have agreed.
@@ -220,10 +222,15 @@ export default function PickScreen() {
     };
   }, [day?.city, day?.planDate, today, fix, search, attempt]);
 
-  const toggle = (id: string) =>
+  /* A tick for every shop added or taken off — the thumb is choosing doors
+     one after another, often without looking, and the tick is what says each
+     one landed. The map's pins go through the same function, so they tick too. */
+  const toggle = (id: string) => {
+    feedback('select');
     setPicked((current) =>
       current.includes(id) ? current.filter((x) => x !== id) : [...current, id],
     );
+  };
 
   /* The write is local first, so it fails only where SQLite itself does — and
      when it did, `saving` stayed true for good and the one control on the
@@ -459,7 +466,7 @@ export default function PickScreen() {
           </T>
         ) : null}
 
-        {rows.map((c) => {
+        {rows.map((c, i) => {
           const at = picked.indexOf(c.id);
           const on = at >= 0;
           const gap = daysSince(c.lastVisitDate, today);
@@ -470,9 +477,10 @@ export default function PickScreen() {
           const area = [c.area, elsewhere ? c.city : null].filter(Boolean).join(' · ');
 
           return (
-            <Pressable
-              key={c.id}
+            <Stagger key={c.id} index={i}>
+            <PressableScale
               onPress={() => toggle(c.id)}
+              outerStyle={{ marginBottom: 8 }}
               /* NO HIT SLOP. It was `hitSlop={HIT}` — 48 on all four sides of a
                  card about 74dp tall with 8 between it and the next one, so each
                  row's touch area reached 48 into the card above and 48 into the
@@ -491,7 +499,6 @@ export default function PickScreen() {
                 backgroundColor: C.surface,
                 borderRadius: radius.card,
                 padding: 14,
-                marginBottom: 8,
                 borderWidth: on ? 1 : 0,
                 borderColor: on ? C.primary : 'transparent',
                 boxShadow: shadow.card,
@@ -503,7 +510,13 @@ export default function PickScreen() {
                   grey circle on every row of a fresh book read as a broken
                   avatar or a control still loading — nothing about it said
                   "tap this to add the shop", which is the only thing this
-                  screen asks anybody to do. */}
+                  screen asks anybody to do.
+
+                  It pops as the shop is ticked, keyed on whether it is picked
+                  and not on its number: unticking the second shop renumbers
+                  every one after it, and five badges popping at once would
+                  announce five changes where one was made. */}
+              <Pop trigger={on}>
               <View
                 style={{
                   width: 30,
@@ -521,6 +534,7 @@ export default function PickScreen() {
                   <Icon name="add" size={16} color={C.muted} strokeWidth={1.8} />
                 )}
               </View>
+              </Pop>
 
               <View style={{ flex: 1 }}>
                 <T style={[type.body, weight(on ? 600 : 500), { color: C.ink }]} numberOfLines={1}>
@@ -556,7 +570,8 @@ export default function PickScreen() {
               <T s="small" style={{ color: C.muted }}>
                 {away(c)}
               </T>
-            </Pressable>
+            </PressableScale>
+            </Stagger>
           );
         })}
         </View>
