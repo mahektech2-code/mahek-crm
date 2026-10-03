@@ -1,3 +1,4 @@
+import { isRunningInExpoGo } from 'expo';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import { all, getKv, run, setKv } from '../db';
@@ -86,6 +87,15 @@ import {
  * thing is already running is a true no-op.
  */
 const TASK_NAME = 'mbos-trail';
+
+/* A registration left by an earlier Expo Go run is removed the moment this
+   module loads, not when `start` next decides to retry — the client is killed
+   on every delivery until it goes. See `startBackground`. */
+if (isRunningInExpoGo()) {
+  void TaskManager.isTaskRegisteredAsync(TASK_NAME)
+    .then((registered) => (registered ? Location.stopLocationUpdatesAsync(TASK_NAME) : undefined))
+    .catch(() => undefined);
+}
 
 type Row = { id: string; at: number; lat: number; lng: number; accuracyM: number | null };
 
@@ -414,6 +424,20 @@ async function startBackground(everyMs: number): Promise<BackgroundStart> {
     why: BackgroundStartFailure['why'],
     detail?: string,
   ): BackgroundStart => ({ ok: false, why, at: Date.now(), detail });
+
+  /*
+   * EXPO GO ACCEPTS THE TASK AND THEN DIES OF IT.
+   *
+   * `startLocationUpdatesAsync` answers yes there, and every batch Android
+   * later hands the task makes `TaskService` ask for a headless app loader
+   * Expo Go does not have — a NullPointerException in native code, the whole
+   * client killed, and killed again on the next delivery because the
+   * registration outlives the process. So in Expo Go it is never registered,
+   * and one left by an earlier run is removed when the module loads; the floor timer the
+   * caller falls back to covers a phone with the app open, which is all
+   * Expo Go can ever be. A real build is untouched.
+   */
+  if (isRunningInExpoGo()) return failed('unavailable', 'Expo Go cannot run a background task');
 
   try {
     if (!(await Location.isBackgroundLocationAvailableAsync())) return failed('unavailable');

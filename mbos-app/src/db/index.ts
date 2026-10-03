@@ -41,6 +41,20 @@ export function openDb(): Promise<SQLite.SQLiteDatabase> {
   if (!opening) {
     opening = (async () => {
       const handle = await SQLite.openDatabaseAsync('mbos.db');
+      /*
+       * WAIT FOR A LOCK RATHER THAN FAIL ON IT.
+       *
+       * This is the only connection THIS runtime opens, but it is not the only
+       * one the file ever has: a reload starts a new JavaScript runtime while
+       * the old one's native connection is still open, and SQLite's default
+       * busy timeout is zero — so the first write that met the old
+       * connection's lock threw `database is locked` straight away, as an
+       * unhandled `NativeStatement.finalizeAsync` rejection on whatever screen
+       * was open. Five seconds of waiting turns that into a pause nobody
+       * notices. Per connection and never persisted, so it is set on every
+       * open, before the migration's own writes.
+       */
+      await handle.execAsync('PRAGMA busy_timeout = 5000');
       await migrate(handle);
       db = handle;
       return handle;
