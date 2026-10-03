@@ -1,10 +1,10 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { listUserApps } from "@/lib/access";
 import { hrmsContext } from "@/lib/hrms/access";
 import { getConfig } from "@/lib/config/store";
 import { hrmsSchema } from "@/lib/config/schema-contract";
 import type { Config } from "@/lib/config/registry";
+import { isPlatformAdmin } from "@/lib/access-control";
 import { ADMIN } from "@/lib/admin-routes";
 
 export const dynamic = "force-dynamic";
@@ -20,8 +20,7 @@ export const metadata = { title: "HRMS settings — MahekOne" };
 export default async function HrmsSettings() {
   const ctx = await hrmsContext();
   if (!ctx.screens.has("settings")) redirect("/hrms");
-  const apps = await listUserApps(ctx.user.id);
-  if (apps.includes("admin")) redirect(ADMIN.settingsFor("hrms"));
+  if (await isPlatformAdmin(ctx.user)) redirect(ADMIN.settingsFor("hrms"));
   const config = await getConfig();
   const schema = hrmsSchema();
   return (

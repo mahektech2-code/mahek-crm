@@ -1893,9 +1893,8 @@ export async function rebuildQueues(
 ): Promise<Result<{ users: number; cleared: number; written: number }>> {
   try {
     const ctx = await resolveScope();
-    const { listUserApps } = await import("@/lib/access");
-    const apps = await listUserApps(ctx.user.id);
-    if (!apps.includes("admin")) {
+    const { isPlatformAdmin } = await import("@/lib/access-control");
+    if (!(await isPlatformAdmin(ctx.user))) {
       return err(
         "Rebuilding a call list is an administrator's - it reorders somebody else's day.",
         "not_permitted",

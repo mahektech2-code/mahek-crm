@@ -4,7 +4,7 @@ import { cache } from "react";
 import { redirect } from "next/navigation";
 import { isManager, requireUser } from "@/lib/auth";
 import { listUserApps } from "@/lib/access";
-import { canFor } from "@/lib/access-control";
+import { canFor, isPlatformAdmin as holdsPlatformAdmin } from "@/lib/access-control";
 import { ADMIN } from "@/lib/admin-routes";
 import { SETTINGS_PAGES, type SettingsPage } from "@/lib/config/settings-pages";
 
@@ -16,7 +16,7 @@ import { SETTINGS_PAGES, type SettingsPage } from "@/lib/config/settings-pages";
  * the request rather than asked twice.
  *
  * Two kinds of person get in. A platform administrator holds the `admin` app
- * and sees everything. A manager who may write configuration sees the settings
+ * AT THE ADMIN LEVEL and sees everything. A manager who may write configuration sees the settings
  * of the apps they hold, the business data, and the feedback their team sent,
  * which is what they could reach before the console was split into pages.
  * ------------------------------------------------------------------------- */
@@ -36,7 +36,9 @@ export type AdminContext = {
 export const adminContext = cache(async (): Promise<AdminContext> => {
   const user = await requireUser();
   const apps = await listUserApps(user.id);
-  const isPlatformAdmin = apps.includes("admin");
+  /* Admin ON THE ADMIN CONSOLE, not merely holding it: a manager of the
+     console writes the settings of the apps they hold and nothing more. */
+  const isPlatformAdmin = await holdsPlatformAdmin(user);
   const canWriteConfig = await canFor(user, "config.write");
 
   const settingsPages = SETTINGS_PAGES.filter(

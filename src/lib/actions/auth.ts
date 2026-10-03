@@ -4,17 +4,16 @@ import { redirect } from "next/navigation";
 import { and, eq, isNull, or } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { appAccess, passwordResets, sessions, users } from "@/db/schema";
+import { passwordResets, sessions, users } from "@/db/schema";
 import {
   createSession,
   destroySession,
   getCurrentUser,
   hashPassword,
-  requireManager,
   verifyPassword,
 } from "@/lib/auth";
 import { listUserApps, recordSignIn, recordSignOut } from "@/lib/access";
-import { APP_IDS, webApps, type AppId } from "@/lib/apps";
+import { webApps } from "@/lib/apps";
 import { randomUUID } from "node:crypto";
 import { auditLog } from "@/db/schema";
 import {
@@ -57,7 +56,6 @@ async function audit(
     afterState: detail ? ({ detail } as never) : null,
   });
 }
-import { initialsOf } from "@/lib/format";
 
 /* ---------------------------------------------------------------------------
  * One sign-in for all of MahekOne. Where it lands you depends on what you can
@@ -298,104 +296,6 @@ export async function resetPassword(
 
   await audit({ id: row.userId }, "reset-password", "user", row.userId);
   redirect("/login?reset=1");
-}
-
-/* ------------------------------------------------------------- accounts */
-
-const newUser = z.object({
-  name: z.string().trim().min(2, "Enter the person's full name."),
-  email: z.string().trim().toLowerCase().email("Enter a valid email address."),
-  phone: z
-    .string()
-    .trim()
-    .optional()
-    .transform((v) => (v ? v.replace(/\D/g, "").slice(-10) : undefined)),
-  password: z.string().min(8, "Passwords must be at least 8 characters."),
-  role: z.enum(["associate", "manager"]),
-  apps: z.array(z.enum(APP_IDS)).min(1, "Give them at least one app."),
-});
-
-/** Managers create accounts — there is no self-signup on an internal tool. */
-export async function createTeamMember(
-  _prev: ActionResult | null,
-  formData: FormData,
-): Promise<ActionResult> {
-  let manager;
-  try {
-    manager = await requireManager();
-  } catch {
-    return fail("Only a manager can add team members.");
-  }
-
-  const parsed = newUser.safeParse({
-    name: formData.get("name"),
-    email: formData.get("email"),
-    phone: formData.get("phone"),
-    password: formData.get("password"),
-    role: formData.get("role"),
-    apps: formData.getAll("apps"),
-  });
-  if (!parsed.success) return fail(parsed.error.issues[0].message);
-
-  const existing = await db
-    .select({ id: users.id })
-    .from(users)
-    .where(eq(users.email, parsed.data.email))
-    .limit(1);
-  if (existing.length) return fail("Somebody already uses that email address.");
-
-  const id = newId("usr");
-  await db.transaction(async (tx) => {
-    await tx.insert(users).values({
-      id,
-      name: parsed.data.name,
-      email: parsed.data.email,
-      phone: parsed.data.phone || null,
-      passwordHash: await hashPassword(parsed.data.password),
-      role: parsed.data.role,
-      initials: initialsOf(parsed.data.name),
-    });
-    await tx.insert(appAccess).values(
-      parsed.data.apps.map((app) => ({
-        id: newId("acc"),
-        userId: id,
-        app,
-        grantedById: manager.id,
-      })),
-    );
-  });
-
-  await audit(manager, "create", "user", id, parsed.data.name);
-  return ok(`${parsed.data.name} can now sign in.`);
-}
-
-export async function setAppAccess(
-  userId: string,
-  apps: AppId[],
-): Promise<ActionResult> {
-  let manager;
-  try {
-    manager = await requireManager();
-  } catch {
-    return fail("Only a manager can change app access.");
-  }
-
-  await db.transaction(async (tx) => {
-    await tx.delete(appAccess).where(eq(appAccess.userId, userId));
-    if (apps.length) {
-      await tx.insert(appAccess).values(
-        apps.map((app) => ({
-          id: newId("acc"),
-          userId,
-          app,
-          grantedById: manager.id,
-        })),
-      );
-    }
-  });
-
-  await audit(manager, "set-app-access", "user", userId, apps.join(", "));
-  return ok("App access updated");
 }
 
 /* ------------------------------------------------ WhatsApp one-time codes */

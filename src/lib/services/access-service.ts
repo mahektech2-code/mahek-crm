@@ -168,7 +168,6 @@ function buildGrants(
   apps: AppId[],
   modulesByApp: Map<AppId, string[]>,
   roleFor: (app: AppId) => Role | null,
-  accountRole: Role,
 ): AppGrant[] {
   return APPS.filter((a) => apps.includes(a.id)).map((a) => {
     const stored = modulesByApp.get(a.id) ?? [];
@@ -180,7 +179,7 @@ function buildGrants(
     /* Asked of `moduleAllowed` with the same level `listUserModules` reads — the
        grant's own, else the account's — so this screen cannot show a module as
        withheld that the guard lets an administrator through. */
-    const administrator = (role ?? accountRole) === "admin";
+    const administrator = role === "admin";
     const modules: ModuleGrant[] = all.map((m) => ({
       key: m.key,
       label: m.label,
@@ -265,21 +264,18 @@ export async function listAccess(): Promise<AccessRow[]> {
 
   return accounts.map((u) => {
     /*
-     * Every hat, the account's own included: a grant with no role of its own
-     * is held under it, so it is one of the hats this person wears.
+     * Every hat, one per app granted. The account's own level is NOT one: it
+     * is derived from these, and a grant with no level is an associate's.
      *
      * The APP travels with the level now. A conflict is between two apps —
      * the calling book and the ledger desk — and with roles reduced to levels
      * a list of bare roles could no longer express one: "associate and
      * associate" is not a sentence about anything.
      */
-    const heldHats = [
-      { app: null as string | null, role: u.role as Role },
-      ...(appsByUser.get(u.id) ?? []).map((app) => ({
-        app: app as string | null,
-        role: rolesByUserApp.get(`${u.id}:${app}`) ?? (u.role as Role),
-      })),
-    ];
+    const heldHats = (appsByUser.get(u.id) ?? []).map((app) => ({
+      app: app as string | null,
+      role: rolesByUserApp.get(`${u.id}:${app}`) ?? ("associate" as Role),
+    }));
     const heldRoles = [...new Set<Role>(heldHats.map((h) => h.role))];
     /* The link somebody made first, and only then the guess — the same order
        lib/employee-link.ts applies in SQL for the salary figures, said once
@@ -312,7 +308,6 @@ export async function listAccess(): Promise<AccessRow[]> {
         appsByUser.get(u.id) ?? [],
         modulesByUser.get(u.id) ?? new Map(),
         (app) => rolesByUserApp.get(`${u.id}:${app}`) ?? null,
-        u.role as Role,
       ),
       roles: heldRoles,
       conflicts: conflictsFor(heldHats),

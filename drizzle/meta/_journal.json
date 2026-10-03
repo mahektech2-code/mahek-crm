@@ -1366,6 +1366,13 @@
       "when": 1791015323845,
       "tag": "0196_wa_reply_media",
       "breakpoints": true
+    },
+    {
+      "idx": 196,
+      "version": "7",
+      "when": 1791015423845,
+      "tag": "0197_admin_is_per_app",
+      "breakpoints": true
     }
   ]
 }
