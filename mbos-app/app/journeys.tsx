@@ -6,6 +6,8 @@ import { Badge, Card, Input, PrimaryButton, SecondaryButton, T } from '../src/co
 import { VoiceField } from '../src/components/ui/dictate';
 import { BottomSheet } from '../src/components/ui/overlays';
 import { Icon } from '../src/components/ui/Icon';
+import { PressableScale, Stagger, Swap } from '../src/components/ui/motion';
+import { feedback } from '../src/components/ui/feedback';
 import { color as C, radius, shadow, type, weight, type BadgeTone } from '../src/theme/tokens';
 import {
   JOURNEY_HISTORY_DAYS,
@@ -139,13 +141,19 @@ export default function JourneysScreen() {
 
       <Segmented value={view} onChange={setView} />
 
+      {/* The same days, two ways of looking at them — so the switch swaps in
+          place rather than sliding, which would claim one view is deeper than
+          the other. */}
+      <Swap id={view}>
       {view === 'calendar' ? (
         <MonthCalendar days={days} today={today} from={from} onPick={openDay} />
       ) : (
         <>
           <Section title={upcoming.length ? 'Coming up' : 'Nothing planned ahead yet'}>
-            {upcoming.map((d) => (
-              <DayRow key={d.id} d={d} today={today} onPress={() => openDay(d)} />
+            {upcoming.map((d, i) => (
+              <Stagger key={d.id} index={i}>
+                <DayRow d={d} today={today} onPress={() => openDay(d)} />
+              </Stagger>
             ))}
           </Section>
           <Section title={past.length ? 'The last ' + JOURNEY_HISTORY_DAYS + ' days' : 'No past journeys on this phone'}>
@@ -155,6 +163,7 @@ export default function JourneysScreen() {
           </Section>
         </>
       )}
+      </Swap>
 
       <PastDaySheet key={pastOpen?.id ?? 'none'} day={pastOpen} today={today} onClose={() => setPastOpen(null)} />
       <PlannedDaySheet
@@ -382,7 +391,12 @@ function Segmented({ value, onChange }: { value: View_; onChange: (v: View_) => 
             key={o.key}
             accessibilityRole="button"
             accessibilityState={{ selected: on }}
-            onPress={() => onChange(o.key)}
+            onPress={() => {
+              /* A choice moved — the same tick `Choice` gives. Not on a tap of
+                 the side already chosen, which moves nothing. */
+              if (!on) feedback('select');
+              onChange(o.key);
+            }}
             style={{
               flex: 1,
               minHeight: 38,
@@ -414,9 +428,10 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 function DayRow({ d, today, onPress }: { d: JourneyDay; today: string; onPress: () => void }) {
   const words = STATE_WORDS[d.dayState] ?? STATE_WORDS.planned;
   return (
-    <Pressable
+    <PressableScale
       accessibilityRole="button"
       onPress={onPress}
+      outerStyle={{ marginBottom: 8 }}
       style={{
         flexDirection: 'row',
         alignItems: 'center',
@@ -424,7 +439,6 @@ function DayRow({ d, today, onPress }: { d: JourneyDay; today: string; onPress: 
         backgroundColor: C.surface,
         borderRadius: radius.card,
         padding: 14,
-        marginBottom: 8,
         boxShadow: shadow.card,
       }}>
       <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: dotColour(d, today) }} />
@@ -438,7 +452,7 @@ function DayRow({ d, today, onPress }: { d: JourneyDay; today: string; onPress: 
         </T>
       </View>
       <Icon name="forward" size={18} color={C.muted} strokeWidth={1.5} />
-    </Pressable>
+    </PressableScale>
   );
 }
 
@@ -507,6 +521,8 @@ function MonthCalendar({
         ))}
       </View>
 
+      {/* A new month settles in where the old one was. */}
+      <Swap id={month}>
       {Array.from({ length: cells.length / 7 }, (_, row) => (
         <View key={row} style={{ flexDirection: 'row' }}>
           {cells.slice(row * 7, row * 7 + 7).map((iso, i) => {
@@ -549,6 +565,7 @@ function MonthCalendar({
           })}
         </View>
       ))}
+      </Swap>
 
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 12 }}>
         {[

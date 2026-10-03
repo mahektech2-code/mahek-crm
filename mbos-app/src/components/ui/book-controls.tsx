@@ -3,6 +3,7 @@ import { ActivityIndicator, Pressable, ScrollView, Text, TextInput, View } from 
 import { color as C, HIT, radius, shadow, type, weight } from '../../theme/tokens';
 import { Icon, type IconName } from './Icon';
 import { grouped } from '../../lib/format';
+import { feedback } from './feedback';
 
 /**
  * The controls the two halves of the book share — the Customers list and the
@@ -138,10 +139,17 @@ export function ChipRow<K extends string>({
         const on = c.value === value;
         const n = counts?.[c.value];
         const quiet = n === 0 && !on;
+        /* The tick is here, once, rather than at each screen that renders a
+           row — the same place `Choice` keeps its own. Only a MOVE ticks:
+           re-tapping the chip already chosen changes nothing, and a buzz for
+           nothing teaches the hand that the buzz means nothing. */
         return (
           <Pressable
             key={c.value}
-            onPress={() => onChange(c.value)}
+            onPress={() => {
+              if (!on) feedback('select');
+              onChange(c.value);
+            }}
             accessibilityRole="radio"
             accessibilityState={{ selected: on }}
             accessibilityLabel={n != null ? `${c.label}, ${n}` : c.label}
@@ -203,7 +211,10 @@ export function Segmented<K extends string>({
         return (
           <Pressable
             key={seg.key}
-            onPress={() => onChange(seg.key)}
+            onPress={() => {
+              if (!on) feedback('select');
+              onChange(seg.key);
+            }}
             accessibilityRole="tab"
             accessibilityState={{ selected: on }}
             accessibilityLabel={seg.badge != null ? `${seg.label}, ${seg.badge}` : seg.label}

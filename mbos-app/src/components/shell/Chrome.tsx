@@ -1,7 +1,9 @@
 import React from 'react';
-import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
+import { Animated, View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { color as C, HIT, shadow, weight } from '../../theme/tokens';
 import { Icon } from '../ui/Icon';
+import { EASE, Pop, usePressScale, useReduceMotion, useShake } from '../ui/motion';
+import { feedback } from '../ui/feedback';
 
 /**
  * The frame every in-app screen sits inside: a 52px title bar, the status
@@ -20,6 +22,7 @@ export function Header({
   unread,
   onRefresh,
   refreshing = false,
+  unreadLoaded = true,
 }: {
   title: string;
   onBack?: () => void;
@@ -33,6 +36,8 @@ export function Header({
   /** Absent on the notifications screen itself — see `AppFrame`. */
   onBell?: () => void;
   unread: number;
+  /** False until the count has been read once — see `Bell`. */
+  unreadLoaded?: boolean;
 }) {
   return (
     <View style={{ height: 52, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16 }}>
@@ -63,18 +68,65 @@ export function Header({
           copy of the page. The space is held rather than collapsed, so the title
           does not jump sideways as you arrive. */}
       {onBell ? (
-        <Pressable onPress={onBell} accessibilityLabel="Notifications" style={s.iconBtn}>
-          <Icon name="bell" size={24} color={C.body} strokeWidth={1.5} />
-          {unread > 0 ? (
-            <View style={s.bellBadge}>
-              <Text style={[{ color: '#fff', fontSize: 12, lineHeight: 18, textAlign: 'center' }, weight(500)]}>{unread}</Text>
-            </View>
-          ) : null}
-        </Pressable>
+        <Bell onPress={onBell} unread={unread} loaded={unreadLoaded} />
       ) : (
         <View style={s.iconBtn} />
       )}
     </View>
+  );
+}
+
+/**
+ * The bell, which says when something NEW has arrived rather than only how
+ * many things are waiting.
+ *
+ * A count that goes from 2 to 3 in place is a digit changing in a corner, and
+ * nobody sees it. So a RISE rings the bell — one short shake — and pops the
+ * badge; a fall (somebody read one) moves nothing, because reading a message
+ * is not news. The shake carries no buzz of its own: the push banner that
+ * usually accompanies a rise has already buzzed, and two buzzes for one
+ * message is a stutter.
+ *
+ * "Rose" is measured against this bell's own last count. Every screen draws
+ * its own header, so a fresh screen remembers the count from the module, or
+ * every navigation would ring the bell for messages already rung for.
+ */
+let lastSeenUnread = 0;
+
+function Bell({ onPress, unread, loaded }: { onPress: () => void; unread: number; loaded: boolean }) {
+  const ring = useShake(null);
+  const shake = ring.shake;
+  /* Each bell keeps its OWN last count, seeded from the last one any bell saw.
+     Every screen in the stack polls, and a hidden screen updating one shared
+     number first would leave the visible bell thinking nothing had risen. */
+  const [seenAtMount] = React.useState(lastSeenUnread);
+  const seen = React.useRef(seenAtMount);
+  /* Before the first read the count is a placeholder 0, not a fall to zero. */
+  React.useEffect(() => {
+    if (!loaded) return;
+    if (unread > seen.current) shake();
+    seen.current = unread;
+    lastSeenUnread = unread;
+  }, [unread, shake, loaded]);
+  const rose = loaded && unread > seenAtMount;
+
+  return (
+    <Pressable onPress={onPress} accessibilityLabel={unread > 0 ? `Notifications, ${unread} unread` : 'Notifications'} style={s.iconBtn}>
+      <Animated.View
+        style={{
+          transform: [
+            { translateX: ring.style.transform[0].translateX },
+            { rotate: ring.style.transform[0].translateX.interpolate({ inputRange: [-4, 4], outputRange: ['-12deg', '12deg'] }) },
+          ],
+        }}>
+        <Icon name="bell" size={24} color={C.body} strokeWidth={1.5} />
+      </Animated.View>
+      {unread > 0 ? (
+        <Pop trigger={unread} popOnMount={rose} style={s.bellBadge}>
+          <Text style={[{ color: '#fff', fontSize: 12, lineHeight: 18, textAlign: 'center' }, weight(500)]}>{unread}</Text>
+        </Pop>
+      ) : null}
+    </Pressable>
   );
 }
 
@@ -107,14 +159,20 @@ export function StatusStrip({
              one steal its neighbour's edge. */
           hitSlop={{ top: 10, bottom: 10 }}
           style={[s.stripCell, i > 0 && { borderLeftWidth: 1, borderLeftColor: C.border }]}>
-          <View
+          {/* The light pops when it CHANGES — "GPS locked" arriving, the last
+              thing sent — so a state the salesman was waiting on is seen to
+              arrive rather than found later. */}
+          <Pop
+            trigger={it.tone}
+            from={0.2}
             style={{
               width: 7,
               height: 7,
               borderRadius: 3.5,
               backgroundColor: it.tone === 'ok' ? C.success : it.tone === 'warn' ? C.warn : C.faint,
-            }}
-          />
+            }}>
+            {null}
+          </Pop>
           <Text numberOfLines={1} style={[{ fontSize: 12, color: C.body }, weight(500)]}>
             {it.label}
           </Text>
@@ -135,6 +193,7 @@ export function StatusStrip({
  * to overlap.
  */
 export const TAB_BAR_HEIGHT = 64;
+const INDICATOR_WIDTH = 28;
 
 export type TabKey = 'home' | 'journey' | 'customers' | 'more';
 
@@ -144,6 +203,17 @@ const TABS: { k: TabKey; label: string; ic: string }[] = [
   { k: 'customers', label: 'Customers', ic: 'people' },
   { k: 'more', label: 'More', ic: 'grid' },
 ];
+
+/**
+ * Where the tab indicator last stood, in points from the bar's left edge.
+ *
+ * Every tab root is its own screen with its own `TabBar`, swapped in by
+ * `router.replace` — so there is no ONE bar for an indicator to slide along.
+ * The new bar starts its indicator where the old one left it and slides it
+ * home, which is the same picture: the line travels from the tab you left to
+ * the tab you chose.
+ */
+let lastIndicatorX: number | null = null;
 
 export function TabBar({
   active,
@@ -165,16 +235,52 @@ export function TabBar({
    */
   badges?: Partial<Record<TabKey, number>>;
 }) {
+  const reduce = useReduceMotion();
+  const x = React.useRef(new Animated.Value(lastIndicatorX ?? -100)).current;
+  const [centres, setCentres] = React.useState<Partial<Record<TabKey, number>>>({});
+  const target = active ? centres[active] : undefined;
+
+  React.useEffect(() => {
+    if (target == null) return;
+    const to = target - INDICATOR_WIDTH / 2;
+    const from = lastIndicatorX;
+    lastIndicatorX = to;
+    if (reduce || from == null || from === to) {
+      x.setValue(to);
+      return;
+    }
+    x.setValue(from);
+    const a = Animated.timing(x, { toValue: to, duration: 260, easing: EASE, useNativeDriver: true });
+    a.start();
+    return () => a.stop();
+  }, [target, reduce, x]);
+
+  const measure = (k: TabKey) => (e: { nativeEvent: { layout: { x: number; width: number } } }) => {
+    const { x: left, width } = e.nativeEvent.layout;
+    const c = left + width / 2;
+    setCentres((prev) => (prev[k] === c ? prev : { ...prev, [k]: c }));
+  };
+
+  const choose = (k: TabKey) => {
+    if (k !== active) feedback('select');
+    onTab(k);
+  };
+
   return (
     <View style={[s.tabBar, { height: TAB_BAR_HEIGHT + bottomInset, paddingBottom: bottomInset }]}>
+      {/* The line over the tab you are on. Off the bar entirely on screens
+          that are not a tab root, where no tab is "on". */}
+      {active && target != null ? (
+        <Animated.View pointerEvents="none" style={[s.indicator, { transform: [{ translateX: x }] }]} />
+      ) : null}
       {TABS.slice(0, 2).map((t) => (
-        <Tab key={t.k} tab={t} on={active === t.k} count={badges?.[t.k] ?? 0} onPress={() => onTab(t.k)} />
+        <Tab key={t.k} tab={t} on={active === t.k} count={badges?.[t.k] ?? 0} onPress={() => choose(t.k)} onLayout={measure(t.k)} />
       ))}
       {/* The gap the raised button sits in — it is drawn BESIDE this bar
           rather than inside it, see `TabBarAction`. */}
       <View style={{ flex: 1 }} />
       {TABS.slice(2).map((t) => (
-        <Tab key={t.k} tab={t} on={active === t.k} count={badges?.[t.k] ?? 0} onPress={() => onTab(t.k)} />
+        <Tab key={t.k} tab={t} on={active === t.k} count={badges?.[t.k] ?? 0} onPress={() => choose(t.k)} onLayout={measure(t.k)} />
       ))}
     </View>
   );
@@ -204,13 +310,20 @@ export function TabBar({
  * bottom edge is the bar's bottom edge.
  */
 export function TabBarAction({ onPress, bottomInset }: { onPress: () => void; bottomInset: number }) {
+  /* The most-pressed control in the app, and it gave nothing back. It sinks
+     a little under the thumb like every other button now. */
+  const press = usePressScale(0.92);
   return (
-    <Pressable
-      onPress={onPress}
-      accessibilityLabel="What are you doing?"
-      style={[s.fab, { bottom: TAB_BAR_HEIGHT + bottomInset - 52 + 20 }]}>
-      <Text style={{ color: C.lime, fontSize: 26, lineHeight: 30 }}>+</Text>
-    </Pressable>
+    <Animated.View style={[s.fab, { bottom: TAB_BAR_HEIGHT + bottomInset - 52 + 20 }, press.style]}>
+      <Pressable
+        onPress={onPress}
+        onPressIn={press.onPressIn}
+        onPressOut={press.onPressOut}
+        accessibilityLabel="What are you doing?"
+        style={{ width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center' }}>
+        <Text style={{ color: C.lime, fontSize: 26, lineHeight: 30 }}>+</Text>
+      </Pressable>
+    </Animated.View>
   );
 }
 
@@ -219,15 +332,18 @@ function Tab({
   on,
   count,
   onPress,
+  onLayout,
 }: {
   tab: { k: TabKey; label: string; ic: string };
   on: boolean;
   count: number;
   onPress: () => void;
+  onLayout?: (e: { nativeEvent: { layout: { x: number; width: number } } }) => void;
 }) {
   return (
     <Pressable
       onPress={onPress}
+      onLayout={onLayout}
       accessibilityRole="tab"
       accessibilityState={{ selected: on }}
       /* The count is read out as part of the tab rather than left as a
@@ -237,11 +353,11 @@ function Tab({
       <View style={{ height: 22, alignItems: 'center', justifyContent: 'center' }}>
         <Icon name={tab.ic} size={22} color={on ? C.primary : C.muted} />
         {count > 0 ? (
-          <View style={s.tabBadge}>
+          <Pop trigger={count} style={s.tabBadge}>
             <Text style={[{ color: '#fff', fontSize: 11, lineHeight: 16, textAlign: 'center' }, weight(500)]}>
               {count > 9 ? '9+' : count}
             </Text>
-          </View>
+          </Pop>
         ) : null}
       </View>
       <Text style={[{ fontSize: 12, color: on ? C.primary : C.muted }, weight(on ? 500 : 400)]}>{tab.label}</Text>
@@ -292,6 +408,16 @@ const s = StyleSheet.create({
     justifyContent: 'center',
     gap: 6,
     paddingHorizontal: 8,
+  },
+  indicator: {
+    position: 'absolute',
+    top: -1,
+    left: 0,
+    width: INDICATOR_WIDTH,
+    height: 3,
+    borderBottomLeftRadius: 2,
+    borderBottomRightRadius: 2,
+    backgroundColor: C.primary,
   },
   tabBar: {
     flexDirection: 'row',

@@ -4,6 +4,7 @@ import { router, useFocusEffect } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Badge, Card, ListCard, PrimaryButton, T } from '../src/components/ui/primitives';
 import { Icon } from '../src/components/ui/Icon';
+import { Pop, Pulse, Stagger, animateLayoutFor } from '../src/components/ui/motion';
 import type { UpdateVerdict } from '../src/engines/app-update';
 import { checkForUpdate } from '../src/native/update-check';
 import { backgroundStartFailure, stalledAt as trackerStalledAt } from '../src/sync/trail';
@@ -174,6 +175,10 @@ export default function SyncScreen() {
       batteryExemption().catch<BatteryExemption>(() => 'unknown'),
     ]).then(([q, c, m, k, d, s, x]) => {
       if (!live) return;
+      /* After a pass, the rows that went up leave and the rest close the gap —
+         which is the screen SHOWING his work going, rather than a list that is
+         simply shorter. `listQueue` caps at fifty, under the layout limit. */
+      animateLayoutFor(q.length);
       setRows(q);
       setCounts(c);
       setMedia(m);
@@ -256,9 +261,17 @@ export default function SyncScreen() {
       <BackLink label={back.label} onPress={back.go} />
 
       <Card>
-        <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>
-          {waiting ? plural(waiting, 'thing') + ' waiting to send' : 'All sent to office'}
-        </T>
+        {/* The count pops when a pass changes it — "4 waiting" becoming "1
+            waiting" is the outcome he pressed the button for, and a digit
+            changing in place is easy to miss. It breathes while a pass is in
+            flight, so the headline itself says something is happening. */}
+        <Pulse active={sending} style={{ alignSelf: 'flex-start' }}>
+          <Pop trigger={waiting} from={0.9}>
+            <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>
+              {waiting ? plural(waiting, 'thing') + ' waiting to send' : 'All sent to office'}
+            </T>
+          </Pop>
+        </Pulse>
         <T s="small" style={{ color: C.muted, marginTop: 4 }}>
           You can save without signal. It sends by itself when you have signal.
         </T>
@@ -356,8 +369,9 @@ export default function SyncScreen() {
           </T>
         ) : null}
         {rows.map((q, i) => (
-          <View
+          <Stagger
             key={q.id}
+            index={i}
             style={{
               flexDirection: 'row',
               alignItems: 'center',
@@ -403,7 +417,7 @@ export default function SyncScreen() {
                 <T style={{ fontSize: 15, color: C.body }}>Try again</T>
               </Pressable>
             ) : null}
-          </View>
+          </Stagger>
         ))}
       </ListCard>
       ) : null}

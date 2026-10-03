@@ -6,6 +6,8 @@ import { useFocusEffect } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Badge, Card, ListCard, PrimaryButton, SecondaryButton, T } from '../src/components/ui/primitives';
 import { Icon } from '../src/components/ui/Icon';
+import { Pop, Presence, animateLayout } from '../src/components/ui/motion';
+import { feedback } from '../src/components/ui/feedback';
 import { color as C, radius, weight, type BadgeTone } from '../src/theme/tokens';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
@@ -113,7 +115,11 @@ export default function PhoneSetupScreen() {
   const load = React.useCallback(() => {
     let alive = true;
     void readReadiness(userId).then((r) => {
-      if (alive) setReadiness(r);
+      if (!alive) return;
+      /* A row done on the trip to Settings loses its button on the way back;
+         the list closes the gap rather than jumping under his thumb. */
+      animateLayout();
+      setReadiness(r);
     });
     return () => {
       alive = false;
@@ -192,6 +198,20 @@ export default function PhoneSetupScreen() {
     [load, notify, readiness],
   );
 
+  /*
+   * THE GATE OPENING IS THE ONE THING HERE THAT IS FINISHED, so it is the one
+   * thing that buzzes. Only on the change, seen on this visit — a phone that
+   * was already ready when the screen opened has finished nothing just now.
+   * The previous answer lives in a ref written by the effect, never during
+   * render.
+   */
+  const mayCheckIn = readiness ? readiness.mayCheckIn : null;
+  const wasReady = React.useRef<boolean | null>(null);
+  React.useEffect(() => {
+    if (wasReady.current === false && mayCheckIn === true) feedback('success');
+    if (mayCheckIn !== null) wasReady.current = mayCheckIn;
+  }, [mayCheckIn]);
+
   const autostartBlocked = readiness?.items.some((i) => i.key === 'autostart' && i.state === 'todo') ?? false;
 
   return (
@@ -267,7 +287,11 @@ export default function PhoneSetupScreen() {
             }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
               <T style={[{ flex: 1, fontSize: 15, color: C.ink }, weight(600)]}>{item.title}</T>
-              <Badge tone={TONE[item.state]}>{STATE_WORD[item.state]}</Badge>
+              {/* Pops as the row's state changes — "To do" turning into the
+                  green word is what coming back from Settings is for. */}
+              <Pop trigger={item.state}>
+                <Badge tone={TONE[item.state]}>{STATE_WORD[item.state]}</Badge>
+              </Pop>
             </View>
             <T s="small" style={{ color: C.muted, marginTop: 4 }}>
               {item.detail}
@@ -304,13 +328,15 @@ export default function PhoneSetupScreen() {
         </T>
       ) : null}
 
-      {readiness?.mayCheckIn ? (
+      {/* Arrives in place rather than appearing, so the way out reads as the
+          result of the last row turning green. */}
+      <Presence show={!!readiness?.mayCheckIn} distance={8}>
         <PrimaryButton
           label="Done. Go and punch in"
           onPress={back.go}
           style={{ marginTop: 16, borderRadius: radius.xl }}
         />
-      ) : null}
+      </Presence>
 
       {readiness && !readiness.mayCheckIn && !readiness.deadEnd ? (
         <T s="caption" style={{ marginTop: 16, textAlign: 'center' }}>

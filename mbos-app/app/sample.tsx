@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Image } from 'react-native';
+import { Animated, View, Image } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Badge, Card, Choice, DashedButton, Divider, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../src/components/ui/primitives';
@@ -35,6 +35,8 @@ import { FEEDBACK_FIELDS, REASON_CODE_NEEDING_REMARKS, type CodedOption } from '
 import { ReasonSheet } from '../src/components/leads/reason-sheet';
 import { dmy, isoDate, plural, pretty } from '../src/lib/format';
 import { useStore } from '../src/state/store';
+import { Pop, Presence, Swap, useShake } from '../src/components/ui/motion';
+import { feedback } from '../src/components/ui/feedback';
 
 /**
  * One sample, from the godown to what the customer thought of it.
@@ -199,7 +201,11 @@ export default function SampleRecord() {
               {[skuText(s.sku), s.productName, s.cans ? plural(s.cans, 'can') : null].filter(Boolean).join(' · ')}
             </T>
           </View>
-          <Badge tone={toneFor(s.state)}>{s.state}</Badge>
+          {/* The mark he just made, answered on the badge: it pops as the
+              state moves on. The toast that confirmed the save is the buzz. */}
+          <Pop trigger={s.state}>
+            <Badge tone={toneFor(s.state)}>{s.state}</Badge>
+          </Pop>
         </View>
 
         {owed ? (
@@ -293,7 +299,11 @@ export default function SampleRecord() {
       </Card>
 
       {/* ------------------------------------------------ §15 the next mark */}
+      {/* Keyed on the state, so the next mark REPLACES the one just made in
+          place — "They got it" gives way to "Trial started" — rather than the
+          block snapping to a different height under his thumb. */}
       {finished ? null : (
+        <Swap id={s.state}>
         <View style={{ marginTop: 20, gap: 10 }}>
           <SectionLabel style={{ marginBottom: 0 }}>What happens next</SectionLabel>
 
@@ -412,6 +422,7 @@ export default function SampleRecord() {
               price objection — all read as "trial cancelled" until then. */}
           <DashedButton label="Cancel this sample" onPress={() => setCancelOpen(true)} />
         </View>
+        </Swap>
       )}
 
       {/* ------------------------------------------- §16 the chase ladder */}
@@ -695,6 +706,12 @@ function DispatchSheet({
   const [cal, setCal] = React.useState(false);
   const [err, setErr] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
+  /* The box below the fields shakes when it refuses, and buzzes `warning`. */
+  const refusal = useShake('warning');
+  const refuse = (message: string) => {
+    setErr(message);
+    refusal.shake();
+  };
 
   return (
     <BottomSheet open={open} onClose={onClose} scroll>
@@ -726,11 +743,12 @@ function DispatchSheet({
         ) : null}
       </View>
 
-      {err ? (
-        <View style={{ marginTop: 12, backgroundColor: C.dangerBg, borderRadius: radius.lg, padding: 12 }}>
+      <Presence show={!!err}>
+        <Animated.View
+          style={[{ marginTop: 12, backgroundColor: C.dangerBg, borderRadius: radius.lg, padding: 12 }, refusal.style]}>
           <T style={[{ fontSize: 14, lineHeight: 20, color: C.danger }, weight(500)]}>{err}</T>
-        </View>
-      ) : null}
+        </Animated.View>
+      </Presence>
 
       <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
         <SecondaryButton label="Cancel" onPress={onClose} style={{ flex: 1, borderRadius: radius.xl }} />
@@ -739,9 +757,9 @@ function DispatchSheet({
           disabled={saving}
           onPress={async () => {
             if (saving) return;
-            if (!courier.trim()) return setErr('Who is taking it? Write the courier.');
-            if (!docket.trim()) return setErr('Write the docket number. It is needed to track it.');
-            if (!date) return setErr('Choose the day it should reach.');
+            if (!courier.trim()) return refuse('Who is taking it? Write the courier.');
+            if (!docket.trim()) return refuse('Write the docket number. It is needed to track it.');
+            if (!date) return refuse('Choose the day it should reach.');
             /* The sheet closes only after the write returns; a second tap
                before that queued a second dispatch mark for one parcel. */
             setSaving(true);
@@ -795,6 +813,15 @@ function ReviewSheet({
   const [photo, setPhoto] = React.useState<{ mediaId: string; uri: string } | null>(null);
   const [err, setErr] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
+  /* No buzz of its own: with a missing reason the button is disabled-with-a-
+     reason and shakes and buzzes itself, and the empty-review refusal below
+     buzzes by hand — one buzz per refusal, whichever path it came by. */
+  const refusal = useShake(null);
+  const refuse = (message: string) => {
+    setErr(message);
+    if (!owedWhy) feedback('warning');
+    refusal.shake();
+  };
 
   /*
    * A REJECTED SAMPLE HAS TO SAY WHY, and the button says so before it is
@@ -859,9 +886,11 @@ function ReviewSheet({
         <T s="caption" style={{ marginTop: 6 }}>
           Negotiation opens only after a Yes. That is the rule.
         </T>
-        {owedWhy ? (
+        {/* Arrives the moment "No" is picked, in place, so the boxes above
+            are not shoved down a line as his thumb leaves the chip. */}
+        <Presence show={Boolean(owedWhy)}>
           <T s="caption" style={{ marginTop: 6, color: C.danger }}>{owedWhy}</T>
-        ) : null}
+        </Presence>
       </View>
 
       <View style={{ marginTop: 14 }}>
@@ -879,11 +908,12 @@ function ReviewSheet({
         />
       </View>
 
-      {err ? (
-        <View style={{ marginTop: 12, backgroundColor: C.dangerBg, borderRadius: radius.lg, padding: 12 }}>
+      <Presence show={!!err}>
+        <Animated.View
+          style={[{ marginTop: 12, backgroundColor: C.dangerBg, borderRadius: radius.lg, padding: 12 }, refusal.style]}>
           <T style={[{ fontSize: 14, lineHeight: 20, color: C.danger }, weight(500)]}>{err}</T>
-        </View>
-      ) : null}
+        </Animated.View>
+      </Presence>
 
       <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
         <SecondaryButton label="Cancel" onPress={onClose} style={{ flex: 1, borderRadius: radius.xl }} />
@@ -894,8 +924,8 @@ function ReviewSheet({
           onPress={async () => {
             if (saving) return;
             const any = FEEDBACK_FIELDS.some((f) => (fields[f.id] ?? '').trim());
-            if (!any) return setErr('Write at least one thing they said.');
-            if (owedWhy) return setErr(owedWhy);
+            if (!any) return refuse('Write at least one thing they said.');
+            if (owedWhy) return refuse(owedWhy);
             /* The sheet only closes once the write returns, so without this a
                second tap on a slow phone saved the review twice. */
             setSaving(true);

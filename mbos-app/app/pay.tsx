@@ -5,6 +5,8 @@ import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFram
 import { Card, Choice, Input, PrimaryButton, SectionLabel, T } from '../src/components/ui/primitives';
 import { Calendar } from '../src/components/ui/overlays';
 import { Icon, type IconName } from '../src/components/ui/Icon';
+import { Presence, animateLayout, animateLayoutFor } from '../src/components/ui/motion';
+import { feedback } from '../src/components/ui/feedback';
 import { color as C, radius, shadow, tabular, weight } from '../src/theme/tokens';
 import { dmy, inr, inrFromPaise, isoDate, plural, pretty } from '../src/lib/format';
 import { cashInHand, collectPayment, type PaymentMode } from '../src/data/payments';
@@ -280,6 +282,12 @@ export default function PayScreen() {
   /* Ticking bills fills the amount with what they owe on them. He can still
      change it — a part payment is ordinary, and the remainder stays owed. */
   const toggleBill = (b: CustomerBill) => {
+    /* A tick moves where the money lands, and the lines under the list move
+       with it — the "Not against a particular bill" option leaves as the first
+       bill is named, and the summary line changes length. Those move rather
+       than jump, and the tick is felt as a choice. */
+    feedback('select');
+    animateLayout();
     const next = new Set(picked);
     if (next.has(b.id)) next.delete(b.id);
     else next.add(b.id);
@@ -303,6 +311,9 @@ export default function PayScreen() {
       if (shot.reason !== 'cancelled') notify(shot.reason, 'error');
       return;
     }
+    /* The cheque is going back across the counter in the next few seconds;
+       the buzz says the photograph is in, without him looking down to check. */
+    feedback('tap');
     setChequePhotoId(shot.mediaId);
   };
 
@@ -587,7 +598,10 @@ export default function PayScreen() {
           {!allBills && newestFirst.length > BILLS_SHOWN ? (
             <Pressable
               accessibilityRole="button"
-              onPress={() => setAllBills(true)}
+              onPress={() => {
+                animateLayoutFor(newestFirst.length);
+                setAllBills(true);
+              }}
               hitSlop={8}
               style={{ paddingVertical: 12 }}>
               <T style={[{ fontSize: 15, color: C.primaryDeep }, weight(500)]}>
@@ -610,7 +624,11 @@ export default function PayScreen() {
             <Pressable
               accessibilityRole="checkbox"
               accessibilityState={{ checked: noBill }}
-              onPress={() => setNoBill((v) => !v)}
+              onPress={() => {
+                feedback('select');
+                animateLayout();
+                setNoBill((v) => !v);
+              }}
               hitSlop={8}
               style={{ paddingVertical: 12, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <Icon name={noBill ? 'tick' : 'note'} size={18} color={noBill ? C.primaryDeep : C.muted} />
@@ -619,15 +637,18 @@ export default function PayScreen() {
               </T>
             </Pressable>
           ) : null}
-          {noBill ? (
+          <Presence show={noBill}>
             <T style={{ fontSize: 13, lineHeight: 18, color: C.muted }}>
               It goes against their oldest bills first, and anything over sits on account.
             </T>
-          ) : null}
+          </Presence>
         </View>
       ) : null}
 
       {/* ------------------------------------------------ 3 · the money */}
+      {/* Step 3 opens under step 2 once the bill question is answered — the
+          form growing a step, rather than a block of fields landing at once. */}
+      <Presence show={billsAnswered} distance={8}>
       {billsAnswered ? (
         <View>
           <View style={{ marginTop: 20 }}>
@@ -643,7 +664,13 @@ export default function PayScreen() {
                     return (
                       <Pressable
                         key={m.label}
-                        onPress={() => set({ payMode: m.label })}
+                        onPress={() => {
+                          /* These tiles are hand-drawn rather than `Choice`, so
+                             they tick here; picking the one already picked is
+                             not a choice moving. */
+                          if (!on) feedback('select');
+                          set({ payMode: m.label });
+                        }}
                         accessibilityRole="radio"
                         accessibilityState={{ selected: on }}
                         style={{
@@ -691,6 +718,10 @@ export default function PayScreen() {
               ]}>
               {amt > 0 ? inr(amt) : 'Type what they handed over.'}
             </T>
+            {/* A cheque needs three more answers, and they open under the
+                amount when Cheque is picked — and fold away if he changes his
+                mind — rather than the form jumping by three fields. */}
+            <Presence show={needsCheque}>
             {needsCheque ? (
               <View style={{ marginTop: 16 }}>
                 <SectionLabel style={{ marginBottom: 6 }}>Cheque number and bank</SectionLabel>
@@ -715,6 +746,7 @@ export default function PayScreen() {
                     onPress={() => setPickingDate((v) => !v)}
                     style={{ alignItems: 'flex-start', paddingHorizontal: 14, minHeight: 52 }}
                   />
+                  <Presence show={pickingDate}>
                   {pickingDate ? (
                     <View style={{ marginTop: 10 }}>
                       {/* Neither bounded: a cheque handed over today can be dated
@@ -728,6 +760,7 @@ export default function PayScreen() {
                       />
                     </View>
                   ) : null}
+                  </Presence>
                   {!chequeDate ? (
                     <T s="caption" style={{ marginTop: 8 }}>
                       {CHEQUE_DATE_LINE}
@@ -749,6 +782,7 @@ export default function PayScreen() {
                 </Pressable>
               </View>
             ) : null}
+            </Presence>
           </Card>
 
           <PrimaryButton
@@ -766,6 +800,7 @@ export default function PayScreen() {
           />
         </View>
       ) : null}
+      </Presence>
 
       {/* What he is already carrying, so he is reminded before he takes more. */}
       <View style={{ marginTop: 24 }}>

@@ -6,6 +6,7 @@ import { Card, ListCard, T } from '../src/components/ui/primitives';
 import { color as C, type, weight } from '../src/theme/tokens';
 import { listDocuments, type DocumentRow } from '../src/data/library';
 import { useStore } from '../src/state/store';
+import { Stagger } from '../src/components/ui/motion';
 
 /**
  * The papers he needs in a shop with no signal.
@@ -98,37 +99,38 @@ export default function DocsScreen() {
                disagree the flag is the one that reads as a lie. */
             const onPhone = !!d.localUri?.trim();
             return (
-              <Pressable
-                key={d.id}
-                onPress={() => open(d)}
-                accessibilityRole="button"
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 12,
-                  paddingHorizontal: 16,
-                  paddingVertical: 14,
-                  borderTopWidth: i ? 1 : 0,
-                  borderTopColor: C.wash,
-                }}>
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <T style={[{ fontSize: 15, color: C.ink }, weight(500)]}>{d.title}</T>
-                  <T s="caption">{[d.kind, d.sizeLabel, d.category].filter(Boolean).join(' · ') || 'Document'}</T>
-                </View>
-                {/* An expiry is a fact off the row; nothing is counted down
-                    that the office did not put a date on. */}
-                <T
-                  style={[
-                    { fontSize: 13, color: d.expiresOn ? C.warn : C.muted },
-                    weight(d.expiresOn ? 500 : 400),
-                  ]}>
-                  {d.expiresOn
-                    ? 'Expires ' + d.expiresOn
-                    : onPhone
-                      ? 'Offline'
-                      : 'Not downloaded'}
-                </T>
-              </Pressable>
+              <Stagger key={d.id} index={i}>
+                <Pressable
+                  onPress={() => open(d)}
+                  accessibilityRole="button"
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 12,
+                    paddingHorizontal: 16,
+                    paddingVertical: 14,
+                    borderTopWidth: i ? 1 : 0,
+                    borderTopColor: C.wash,
+                  }}>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <T style={[{ fontSize: 15, color: C.ink }, weight(500)]}>{d.title}</T>
+                    <T s="caption">{[d.kind, d.sizeLabel, d.category].filter(Boolean).join(' · ') || 'Document'}</T>
+                  </View>
+                  {/* An expiry is a fact off the row; nothing is counted down
+                      that the office did not put a date on. */}
+                  <T
+                    style={[
+                      { fontSize: 13, color: d.expiresOn ? C.warn : C.muted },
+                      weight(d.expiresOn ? 500 : 400),
+                    ]}>
+                    {d.expiresOn
+                      ? 'Expires ' + d.expiresOn
+                      : onPhone
+                        ? 'Offline'
+                        : 'Not downloaded'}
+                  </T>
+                </Pressable>
+              </Stagger>
             );
           })}
         </ListCard>

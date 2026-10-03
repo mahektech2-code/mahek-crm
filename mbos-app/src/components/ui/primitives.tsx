@@ -11,7 +11,8 @@ import {
   type StyleProp,
 } from 'react-native';
 import { BADGE, color as C, HIT, radius, shadow, type, weight, tabular, type BadgeTone } from '../../theme/tokens';
-import { usePressScale } from './motion';
+import { FillBar, Presence, useReduceMotion, usePressScale, useShake, EASE } from './motion';
+import { feedback } from './feedback';
 import type { HealthBandValue } from '../../data/customers';
 
 /**
@@ -251,12 +252,16 @@ export function PrimaryButton({
   const bg = disabled ? C.hairline : tone === 'warn' ? C.warn : C.primary;
   const fg = disabled ? C.faint : '#FFFFFF';
   const press = usePressScale();
+  /* A disabled button that still answers (it has a `whyDisabled`) shakes and
+     buzzes as it answers: the reason arrives as a toast at the bottom of the
+     screen, and the shake is what ties that sentence to THIS button. */
+  const refusal = useShake('warning');
   const { outer, inner } = splitStyle(style);
 
   return (
     <Animated.View
       style={[
-        !disabled && press.style,
+        { transform: [...(disabled ? [] : press.style.transform), ...refusal.style.transform] },
         { alignSelf: fullWidth ? 'stretch' : 'center' },
         outer,
       ]}>
@@ -265,7 +270,16 @@ export function PrimaryButton({
            the handler, which already refuses with that reason in words — see
            `collect()` in pay.tsx. A button that swallows the tap teaches
            people it is broken; one that answers teaches them what is missing. */
-        onPress={disabled && !whyDisabled ? undefined : onPress}
+        onPress={
+          disabled && !whyDisabled
+            ? undefined
+            : disabled
+              ? () => {
+                  refusal.shake();
+                  onPress?.();
+                }
+              : onPress
+        }
         onPressIn={disabled ? undefined : press.onPressIn}
         onPressOut={disabled ? undefined : press.onPressOut}
         disabled={disabled && !whyDisabled}
@@ -382,7 +396,18 @@ export function Choice({
 }) {
   return (
     <Pressable
-      onPress={onPress}
+      onPress={
+        onPress
+          ? () => {
+              /* A choice moving is felt as a tick — the same one a tab and a
+                 switch give — so a chip pressed with the phone held low is
+                 known to have taken. Only when it is a CHANGE: tapping the
+                 chip already chosen is not news. */
+              if (!selected) feedback('select');
+              onPress();
+            }
+          : undefined
+      }
       accessibilityRole="radio"
       accessibilityState={{ selected }}
       style={[
@@ -426,7 +451,12 @@ export function Field({
     <View>
       {label ? <SectionLabel style={{ marginBottom: 6 }}>{label}</SectionLabel> : null}
       {children}
-      {error ? <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>{error}</Text> : null}
+      {/* The error drops in under the field rather than shoving the form down a
+          line in one frame — which is exactly when the thumb is on its way to
+          the button below it. */}
+      <Presence show={!!error}>
+        <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>{error}</Text>
+      </Presence>
       {!error && hint ? <Text style={[type.caption, { marginTop: 6 }]}>{hint}</Text> : null}
     </View>
   );
@@ -495,25 +525,59 @@ export function Toggle({
   const w = size === 'lg' ? 52 : 48;
   const h = size === 'lg' ? 32 : 28;
   const knob = h - 6;
+  const reduce = useReduceMotion();
+  /* The knob SLIDES and the track fills behind it. A switch that jumped read
+     as a redraw; one that travels reads as a thing you moved. Two values
+     because the knob's travel runs on the native driver and a colour cannot. */
+  const travel = React.useRef(new Animated.Value(on ? 1 : 0)).current;
+  const tint = React.useRef(new Animated.Value(on ? 1 : 0)).current;
+  React.useEffect(() => {
+    if (reduce) {
+      travel.setValue(on ? 1 : 0);
+      tint.setValue(on ? 1 : 0);
+      return;
+    }
+    const a = Animated.parallel([
+      Animated.timing(travel, { toValue: on ? 1 : 0, duration: 180, easing: EASE, useNativeDriver: true }),
+      Animated.timing(tint, { toValue: on ? 1 : 0, duration: 180, easing: EASE, useNativeDriver: false }),
+    ]);
+    a.start();
+    return () => a.stop();
+  }, [on, reduce, travel, tint]);
+
   return (
     <Pressable
-      onPress={onPress}
+      onPress={
+        onPress
+          ? () => {
+              feedback('select');
+              onPress();
+            }
+          : undefined
+      }
       accessibilityRole="switch"
       accessibilityState={{ checked: on }}
       style={{ width: Math.max(w, HIT), height: HIT, justifyContent: 'center' }}>
-      <View style={{ width: w, height: h, borderRadius: h / 2, backgroundColor: on ? C.primary : C.border }}>
-        <View
+      <Animated.View
+        style={{
+          width: w,
+          height: h,
+          borderRadius: h / 2,
+          backgroundColor: tint.interpolate({ inputRange: [0, 1], outputRange: [C.border, C.primary] }),
+        }}>
+        <Animated.View
           style={{
             position: 'absolute',
             top: 3,
-            left: on ? w - knob - 3 : 3,
+            left: 3,
             width: knob,
             height: knob,
             borderRadius: knob / 2,
             backgroundColor: '#FFFFFF',
+            transform: [{ translateX: travel.interpolate({ inputRange: [0, 1], outputRange: [0, w - knob - 6] }) }],
           }}
         />
-      </View>
+      </Animated.View>
     </Pressable>
   );
 }
@@ -522,11 +586,9 @@ export function Toggle({
 
 /** The thin progress track used by targets, credit and the period card. */
 export function Bar({ pct, fill }: { pct: number; fill: string }) {
-  return (
-    <View style={{ flex: 1, height: 8, borderRadius: 4, backgroundColor: C.hairline, overflow: 'hidden' }}>
-      <View style={{ width: `${Math.min(100, Math.max(0, pct))}%`, height: '100%', borderRadius: 4, backgroundColor: fill }} />
-    </View>
-  );
+  /* It FILLS to its value rather than appearing at it — a target bar that
+     grows says "this far", one that is simply drawn says only "this". */
+  return <FillBar pct={pct} fill={fill} track={C.hairline} />;
 }
 
 export function Divider({ style }: { style?: StyleProp<ViewStyle> }) {

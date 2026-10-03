@@ -27,6 +27,7 @@ import { currentSession } from '../src/data/session';
 import { PROSPECT_CONDITIONS, labelOf, stageLabel } from '../src/engines/funnel';
 import { pretty } from '../src/lib/format';
 import { useStore } from '../src/state/store';
+import { Swap } from '../src/components/ui/motion';
 import { skuLines } from '../src/lib/sku-lines';
 
 /**
@@ -296,7 +297,7 @@ export default function ProspectForm() {
     /* `PrimaryButton` keeps a button with a `whyDisabled` PRESSABLE and hands
        the press to us, so this is where the refusal is actually spoken — the
        same shape `collect()` in pay.tsx uses. */
-    if (refusal) return notify(refusal);
+    if (refusal) return notify(refusal, 'warn');
     saving.current = true;
     try {
       /*
@@ -333,7 +334,7 @@ export default function ProspectForm() {
         gstin: gstin.trim() || null,
         prospectReasonCode: reasonCode ?? lead.prospectReasonCode ?? null,
       }, [...backlog, ...rows]);
-      if (!r.ok) return notify(r.message);
+      if (!r.ok) return notify(r.message, 'warn');
 
       /*
        * AND THE BACKLOG IS FORGOTTEN, now that it has been sent.
@@ -392,7 +393,12 @@ export default function ProspectForm() {
     }
   };
 
-  const productField = () =>
+  /* Picked and searching are one field in two states, so the one replaces the
+     other in place rather than the form jumping by the height of a list. */
+  const productField = () => (
+    <Swap id={product ? 'picked' : 'search'}>{productFieldState()}</Swap>
+  );
+  const productFieldState = () =>
     product ? (
       <Choice
         label={product.name}
@@ -635,7 +641,11 @@ export default function ProspectForm() {
         />
       </View>
 
-      {/* What the gate is still waiting on, in the gate's own words. */}
+      {/* What the gate is still waiting on, in the gate's own words. The last
+          answer swaps the list for the all-answered line in place — the one
+          moment on this page that changes what the page is telling him. No
+          buzz: nothing is saved yet, and Save confirms with its own toast. */}
+      <Swap id={outstanding.length ? 'open' : 'done'}>
       {outstanding.length ? (
         <View
           style={{
@@ -659,6 +669,7 @@ export default function ProspectForm() {
           </T>
         </View>
       )}
+      </Swap>
 
       {/*
         SAID PLAINLY, because he has just typed a sentence for somebody to
@@ -711,7 +722,7 @@ export default function ProspectForm() {
         onSave={(n) => {
           setNextOpen(false);
           void setNextAction(lead.id, n).then((r) => {
-            if (!r.ok) return notify(r.message);
+            if (!r.ok) return notify(r.message, 'warn');
             load();
             notify('Next: ' + n.action);
           });

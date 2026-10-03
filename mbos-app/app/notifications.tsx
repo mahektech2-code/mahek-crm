@@ -1,11 +1,12 @@
 import React from 'react';
-import { View, Pressable } from 'react-native';
+import { Animated, View, Pressable } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { AppFrame, BackLink, StubCard, useCameFrom } from '../src/components/shell/AppFrame';
 import { ListCard, SectionLabel, T } from '../src/components/ui/primitives';
 import { color as C, type, weight } from '../src/theme/tokens';
 import { dmy, isoDate, plural } from '../src/lib/format';
 import { listNotifications, markAllRead, markRead, type Notification } from '../src/data/notifications';
+import { DUR, EASE, Stagger, animateLayoutFor, useReduceMotion } from '../src/components/ui/motion';
 
 /**
  * The bell.
@@ -58,6 +59,46 @@ function stamp(createdAt: number, bucket: string): string {
   return hour + ':' + String(d.getMinutes()).padStart(2, '0') + ' ' + suffix;
 }
 
+/**
+ * The unread dot, which LEAVES rather than vanishes.
+ *
+ * Reading a notification is the one change this screen makes, and the dot is
+ * the whole of how it shows: blinking out in a frame reads as a redraw, while
+ * shrinking away reads as "that one is dealt with". It keeps its 8px either
+ * way, so the row's text never shifts under the thumb that just tapped it.
+ */
+function UnreadDot({ unread, tint }: { unread: boolean; tint: string }) {
+  const reduce = useReduceMotion();
+  const v = React.useRef(new Animated.Value(unread ? 1 : 0)).current;
+  React.useEffect(() => {
+    if (reduce) {
+      v.setValue(unread ? 1 : 0);
+      return;
+    }
+    const anim = Animated.timing(v, {
+      toValue: unread ? 1 : 0,
+      duration: DUR.settle,
+      easing: EASE,
+      useNativeDriver: true,
+    });
+    anim.start();
+    return () => anim.stop();
+  }, [unread, reduce, v]);
+  return (
+    <Animated.View
+      style={{
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        marginTop: 6,
+        backgroundColor: tint,
+        opacity: v,
+        transform: [{ scale: v.interpolate({ inputRange: [0, 1], outputRange: [0.2, 1] }) }],
+      }}
+    />
+  );
+}
+
 export default function NotificationsScreen() {
   const back = useCameFrom('home');
   const [rows, setRows] = React.useState<Notification[]>([]);
@@ -74,11 +115,15 @@ export default function NotificationsScreen() {
   const [loaded, setLoaded] = React.useState(false);
   const [failed, setFailed] = React.useState(false);
 
-  const load = React.useCallback(() => {
+  /* `animate` only after a mark-read: the rows' weight and tint change, the
+     "Mark all read" link goes, and the header line rewrites. Opening the screen
+     is not a change and does not ask. */
+  const load = React.useCallback((animate?: boolean) => {
     let live = true;
     void listNotifications()
       .then((r) => {
         if (!live) return;
+        if (animate === true) animateLayoutFor(r.length);
         setRows(r);
         setFailed(false);
         setLoaded(true);
@@ -93,7 +138,7 @@ export default function NotificationsScreen() {
     };
   }, []);
 
-  useFocusEffect(load);
+  useFocusEffect(React.useCallback(() => load(), [load]));
 
   const unread = rows.filter((n) => n.readAt == null).length;
 
@@ -122,7 +167,7 @@ export default function NotificationsScreen() {
           <Pressable
             onPress={async () => {
               await markAllRead();
-              load();
+              load(true);
             }}
             accessibilityRole="button"
             style={{ minHeight: 48, minWidth: 48, paddingHorizontal: 12, marginRight: -12, justifyContent: 'center' }}>
@@ -165,60 +210,53 @@ export default function NotificationsScreen() {
                 const tone = TONE[n.kind] ?? TONE.neutral;
                 const cta = n.href ? CTA[n.href.split('?')[0]] : undefined;
                 return (
-                  <Pressable
-                    key={n.id}
-                    onPress={async () => {
-                      await markRead(n.id);
-                      load();
-                      /* Reading is not acknowledging — a priority notification
-                         is cleared by the screen that fixes the problem, never
-                         by this one. */
-                      if (n.href) router.push(`${n.href}${n.href.includes('?') ? '&' : '?'}from=notifications`);
-                    }}
-                    accessibilityRole="button"
-                    style={{
-                      flexDirection: 'row',
-                      gap: 10,
-                      paddingHorizontal: 16,
-                      paddingVertical: 14,
-                      borderTopWidth: i ? 1 : 0,
-                      borderTopColor: C.wash,
-                      backgroundColor: isUnread ? C.surface : C.surfaceRead,
-                    }}>
-                    <View
-                      style={{
-                        width: 8,
-                        height: 8,
-                        borderRadius: 4,
-                        marginTop: 6,
-                        backgroundColor: isUnread ? tone.fg : 'transparent',
+                  <Stagger key={n.id} index={rows.indexOf(n)}>
+                    <Pressable
+                      onPress={async () => {
+                        await markRead(n.id);
+                        load();
+                        /* Reading is not acknowledging — a priority notification
+                           is cleared by the screen that fixes the problem, never
+                           by this one. */
+                        if (n.href) router.push(`${n.href}${n.href.includes('?') ? '&' : '?'}from=notifications`);
                       }}
-                    />
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 }}>
-                        <T style={[{ flex: 1, minWidth: 0, fontSize: 16, color: C.ink }, weight(isUnread ? 600 : 500)]}>
-                          {n.title}
-                        </T>
-                        <T s="micro">{stamp(n.createdAt, g)}</T>
-                      </View>
-                      <T s="small" style={{ marginTop: 3 }}>{n.body}</T>
-                      {cta ? (
-                        <View style={{ marginTop: 8, flexDirection: 'row' }}>
-                          <View
-                            style={{
-                              height: 22,
-                              paddingHorizontal: 8,
-                              borderRadius: 11,
-                              backgroundColor: tone.bg,
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                            }}>
-                            <T style={[{ fontSize: 12, color: tone.fg }, weight(600)]}>{cta}</T>
-                          </View>
+                      accessibilityRole="button"
+                      style={{
+                        flexDirection: 'row',
+                        gap: 10,
+                        paddingHorizontal: 16,
+                        paddingVertical: 14,
+                        borderTopWidth: i ? 1 : 0,
+                        borderTopColor: C.wash,
+                        backgroundColor: isUnread ? C.surface : C.surfaceRead,
+                      }}>
+                      <UnreadDot unread={isUnread} tint={tone.fg} />
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 }}>
+                          <T style={[{ flex: 1, minWidth: 0, fontSize: 16, color: C.ink }, weight(isUnread ? 600 : 500)]}>
+                            {n.title}
+                          </T>
+                          <T s="micro">{stamp(n.createdAt, g)}</T>
                         </View>
-                      ) : null}
-                    </View>
-                  </Pressable>
+                        <T s="small" style={{ marginTop: 3 }}>{n.body}</T>
+                        {cta ? (
+                          <View style={{ marginTop: 8, flexDirection: 'row' }}>
+                            <View
+                              style={{
+                                height: 22,
+                                paddingHorizontal: 8,
+                                borderRadius: 11,
+                                backgroundColor: tone.bg,
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                              }}>
+                              <T style={[{ fontSize: 12, color: tone.fg }, weight(600)]}>{cta}</T>
+                            </View>
+                          </View>
+                        ) : null}
+                      </View>
+                    </Pressable>
+                  </Stagger>
                 );
               })}
             </ListCard>

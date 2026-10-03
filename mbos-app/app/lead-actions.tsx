@@ -21,6 +21,7 @@ import { currentSession } from '../src/data/session';
 import { lastPullAt } from '../src/sync/api';
 import { HOLD_REASONS, labelOf } from '../src/engines/funnel';
 import { dmy, isoDate, plural } from '../src/lib/format';
+import { Stagger, animateLayoutFor } from '../src/components/ui/motion';
 
 /**
  * §24 on a phone — the four questions a salesman's morning is made of.
@@ -231,7 +232,13 @@ export default function LeadActionsScreen() {
                 VIEW_TEXT[v].chip + ' · ' + (counts ? String(counts[v]) : '—')
               }
               selected={view === v}
-              onPress={() => setView(v)}
+              onPress={() => {
+                /* Another view is another worklist: the cards it shares with
+                   this one slide to their places and the rest fade, rather
+                   than the screen being swapped in one frame. */
+                if (v !== view) animateLayoutFor(rows.length);
+                setView(v);
+              }}
               style={{ paddingHorizontal: 16 }}
             />
           ))}
@@ -261,14 +268,15 @@ export default function LeadActionsScreen() {
           </Card>
         ) : (
           <View style={{ gap: 12, marginTop: 12 }}>
-            {rows.map((lead) => (
-              <LeadActionCard
-                key={lead.id}
-                lead={lead}
-                meId={meId}
-                headline={headlineFor(lead, view, today)}
-                from="lead-actions"
-              />
+            {rows.map((lead, i) => (
+              <Stagger key={lead.id} index={i}>
+                <LeadActionCard
+                  lead={lead}
+                  meId={meId}
+                  headline={headlineFor(lead, view, today)}
+                  from="lead-actions"
+                />
+              </Stagger>
             ))}
           </View>
         )}

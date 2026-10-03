@@ -551,7 +551,18 @@ export function useCustomer(): Customer | null {
  * observe.
  */
 function usePolledCount(read: () => Promise<number>, everyMs = 10_000): number {
-  const [n, setN] = React.useState(0);
+  return usePolledCountOrNull(read, everyMs) ?? 0;
+}
+
+/**
+ * The same poll, but `null` until the first read has answered.
+ *
+ * The bell needs the difference: it rings when the count RISES, and a count
+ * that starts every screen at 0 and then becomes 3 a frame later is a rise on
+ * every navigation — the bell would ring each time somebody opened a screen.
+ */
+function usePolledCountOrNull(read: () => Promise<number>, everyMs = 10_000): number | null {
+  const [n, setN] = React.useState<number | null>(null);
 
   React.useEffect(() => {
     let live = true;
@@ -573,6 +584,11 @@ function usePolledCount(read: () => Promise<number>, everyMs = 10_000): number {
 
 export function useUnreadCount(): number {
   return usePolledCount(unreadCount);
+}
+
+/** `null` until read — see `usePolledCountOrNull`. For the bell. */
+export function useUnreadCountOrNull(): number | null {
+  return usePolledCountOrNull(unreadCount, 5_000);
 }
 
 /** The status strip's third cell, and the More list's Sync badge, read this. */

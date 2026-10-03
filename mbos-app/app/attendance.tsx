@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
@@ -16,6 +16,7 @@ import {
   type AttendanceDay,
 } from '../src/data/attendance';
 import { useTicker } from '../src/components/ui/use-ticker';
+import { PressableScale, Pulse, Stagger, Swap } from '../src/components/ui/motion';
 import { missedPunchOuts } from '../src/engines/punch-out';
 import { getConfig } from '../src/data/config';
 import { useStore } from '../src/state/store';
@@ -166,12 +167,18 @@ export default function AttendanceScreen() {
 
       <Card style={{ marginTop: 12 }}>
         <T s="label">Today</T>
-        <T s="h3" style={{ marginTop: 4 }}>
-          {today?.checkInAt != null ? 'Punched in ' + hhmm(today.checkInAt) : 'Not punched in'}
-        </T>
-        <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-          {workedSoFar != null ? workedLabel(workedSoFar, running) + ' so far' : 'Punch in from Home.'}
-        </T>
+        {/* Punched in, on a break, or not yet — three states of one day, and
+            the screen is often open on Home's way back from changing it. Keyed
+            on the state, never on the ticking figure, so the clock counting
+            does not re-settle the card every second. */}
+        <Swap id={today?.checkInAt == null ? 'out' : running ? 'on' : 'break'}>
+          <T s="h3" style={{ marginTop: 4 }}>
+            {today?.checkInAt != null ? 'Punched in ' + hhmm(today.checkInAt) : 'Not punched in'}
+          </T>
+          <T s="small" style={{ color: C.muted, marginTop: 2 }}>
+            {workedSoFar != null ? workedLabel(workedSoFar, running) + ' so far' : 'Punch in from Home.'}
+          </T>
+        </Swap>
 
         {/*
           Each stretch of work, named. A day is not one check-in and one
@@ -181,12 +188,18 @@ export default function AttendanceScreen() {
         {todaySessions.length > 0 ? (
           <View style={{ marginTop: 10, borderTopWidth: 1, borderTopColor: C.wash, paddingTop: 8 }}>
             {todaySessions.map((x, i) => (
-              <View key={i} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4 }}>
-                <T s="caption">{'Check-in ' + (i + 1)}</T>
-                <T style={[{ fontSize: 14, color: x.outAt == null ? C.primaryDeep : C.body }, tabular]}>
-                  {hhmm(x.inAt) + ' – ' + (x.outAt == null ? 'still on' : hhmm(x.outAt))}
-                </T>
-              </View>
+              <Stagger key={i} index={i}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4 }}>
+                  <T s="caption">{'Check-in ' + (i + 1)}</T>
+                  {/* The open stretch breathes: it is the one line on this
+                      screen that is still being written. */}
+                  <Pulse active={x.outAt == null}>
+                    <T style={[{ fontSize: 14, color: x.outAt == null ? C.primaryDeep : C.body }, tabular]}>
+                      {hhmm(x.inAt) + ' – ' + (x.outAt == null ? 'still on' : hhmm(x.outAt))}
+                    </T>
+                  </Pulse>
+                </View>
+              </Stagger>
             ))}
           </View>
         ) : null}
@@ -271,57 +284,59 @@ export default function AttendanceScreen() {
           return (
             /* The ASK is on the row, because the row is the only thing that
                knows which day it is. */
-            <Pressable
-              key={d.id}
-              accessibilityRole="button"
-              accessibilityLabel={'Ask about ' + dmy(d.day)}
-              accessibilityHint={
-                asked ? 'You already asked your manager to fix this day' : 'Ask your manager to fix this day'
-              }
-              onPress={() => askCorrection(d)}
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 12,
-                minHeight: 48,
-                paddingHorizontal: 16,
-                paddingVertical: 12,
-                borderTopWidth: i ? 1 : 0,
-                borderTopColor: C.wash,
-              }}>
-              <View style={{ width: 58 }}>
-                <T style={[{ fontSize: 15, lineHeight: 20, color: C.ink }, weight(500)]}>{dmy(d.day)}</T>
-                <T s="micro">{DAY_NAMES[new Date(d.day + 'T00:00:00').getDay()]}</T>
-              </View>
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <T style={[{ fontSize: 15, lineHeight: 20, color: C.ink }, tabular]}>
-                  {isPresent ? hhmm(d.checkInAt) + ' – ' + (noPunchOut ? 'no punch-out' : hhmm(d.checkOutAt)) : '—'}
-                </T>
-                {/* No hours on a day nobody closed: there is no end to count to,
-                    and the line below says why. */}
-                {noPunchOut ? null : (
-                  <T s="caption">
-                    {isPresent
-                      ? hoursLabel(d.workedMinutes) + (sessionsOf(d).length > 1 ? ` · punched in ${sessionsOf(d).length} times` : '')
-                      : state}
+            <Stagger key={d.id} index={i}>
+              <PressableScale
+                scaleTo={0.99}
+                accessibilityRole="button"
+                accessibilityLabel={'Ask about ' + dmy(d.day)}
+                accessibilityHint={
+                  asked ? 'You already asked your manager to fix this day' : 'Ask your manager to fix this day'
+                }
+                onPress={() => askCorrection(d)}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 12,
+                  minHeight: 48,
+                  paddingHorizontal: 16,
+                  paddingVertical: 12,
+                  borderTopWidth: i ? 1 : 0,
+                  borderTopColor: C.wash,
+                }}>
+                <View style={{ width: 58 }}>
+                  <T style={[{ fontSize: 15, lineHeight: 20, color: C.ink }, weight(500)]}>{dmy(d.day)}</T>
+                  <T s="micro">{DAY_NAMES[new Date(d.day + 'T00:00:00').getDay()]}</T>
+                </View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <T style={[{ fontSize: 15, lineHeight: 20, color: C.ink }, tabular]}>
+                    {isPresent ? hhmm(d.checkInAt) + ' – ' + (noPunchOut ? 'no punch-out' : hhmm(d.checkOutAt)) : '—'}
                   </T>
-                )}
-                {/* Said in words rather than left as "09:12 – —", which reads as
-                    a time nobody filled in rather than a punch-out that never
-                    happened. Not today's open session: that is still running. */}
-                {noPunchOut ? (
-                  <T s="caption" style={{ color: C.warnInk, marginTop: 1 }}>
-                    Closed by the system. Tap to ask your manager to fix it.
-                  </T>
-                ) : null}
-                {asked ? (
-                  <T s="caption" style={{ color: C.warnInk, marginTop: 1 }}>
-                    Fix asked. Waiting for your manager.
-                  </T>
-                ) : null}
-              </View>
-              <Badge tone={tone}>{noPunchOut ? 'No punch-out' : flagged && isPresent ? 'Field' : state}</Badge>
-            </Pressable>
+                  {/* No hours on a day nobody closed: there is no end to count to,
+                      and the line below says why. */}
+                  {noPunchOut ? null : (
+                    <T s="caption">
+                      {isPresent
+                        ? hoursLabel(d.workedMinutes) + (sessionsOf(d).length > 1 ? ` · punched in ${sessionsOf(d).length} times` : '')
+                        : state}
+                    </T>
+                  )}
+                  {/* Said in words rather than left as "09:12 – —", which reads as
+                      a time nobody filled in rather than a punch-out that never
+                      happened. Not today's open session: that is still running. */}
+                  {noPunchOut ? (
+                    <T s="caption" style={{ color: C.warnInk, marginTop: 1 }}>
+                      Closed by the system. Tap to ask your manager to fix it.
+                    </T>
+                  ) : null}
+                  {asked ? (
+                    <T s="caption" style={{ color: C.warnInk, marginTop: 1 }}>
+                      Fix asked. Waiting for your manager.
+                    </T>
+                  ) : null}
+                </View>
+                <Badge tone={tone}>{noPunchOut ? 'No punch-out' : flagged && isPresent ? 'Field' : state}</Badge>
+              </PressableScale>
+            </Stagger>
           );
         })}
       </ListCard>

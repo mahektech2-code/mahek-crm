@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Pressable, ScrollView, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
+import { Animated, View, Text, Pressable, ScrollView, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { color as C, HIT, radius, type, weight } from '../src/theme/tokens';
@@ -9,6 +9,9 @@ import { useBoot } from '../src/state/boot';
 import { openPasswordReset, signIn as signInReal, type LoginStep } from '../src/data/session';
 import { useKeyboardHeight } from '../src/components/ui/keyboard';
 import { otpAvailable, requestOtp, ApiError } from '../src/sync/api';
+import { Appear, Pop, Pulse, useShake } from '../src/components/ui/motion';
+import { feedback } from '../src/components/ui/feedback';
+import type { FeedbackKind } from '../src/engines/feedback';
 
 /**
  * Sign in.
@@ -67,6 +70,26 @@ export default function Login() {
   const [code, setCode] = React.useState('');
   const [codeSentTo, setCodeSentTo] = React.useState<string | null>(null);
   const [sendingCode, setSendingCode] = React.useState(false);
+
+  /*
+   * A REFUSAL SHAKES THE FORM, and says it in the hand too.
+   *
+   * The red line under a field is easy to miss on a phone held at waist
+   * height in sunlight, and this screen has no toast to carry the news. The
+   * shake sits on a wrapper that is mounted in BOTH stages, so a refusal that
+   * arrives from the server — which swaps the check ladder back out for the
+   * form in the same breath — still has a view on screen to move.
+   *
+   * The buzz is chosen per refusal rather than fixed on the hook: something
+   * he typed is a `warning`, a code that would not send or a book that would
+   * not save is a failure, `error`.
+   */
+  const { shake, style: shakeStyle } = useShake(null);
+  const refuse = (kind: FeedbackKind = 'warning') => {
+    feedback(kind);
+    shake();
+  };
+
   React.useEffect(() => {
     let live = true;
     otpAvailable().then((v) => { if (live) setCodeOffered(v); }).catch(() => {});
@@ -74,7 +97,10 @@ export default function Login() {
   }, []);
 
   async function sendCode() {
-    if (mob.length !== MOBILE_DIGITS) return setErr('mob');
+    if (mob.length !== MOBILE_DIGITS) {
+      refuse();
+      return setErr('mob');
+    }
     setSendingCode(true);
     setErr(null);
     setServerMessage(null);
@@ -84,6 +110,7 @@ export default function Login() {
     } catch (e) {
       setErr('pw');
       setServerMessage(e instanceof ApiError && e.message ? e.message : 'Code not sent. Check your signal, or use your password.');
+      refuse('error');
     } finally {
       setSendingCode(false);
     }
@@ -133,10 +160,17 @@ export default function Login() {
     /* One at a time. Two overlapping sign-ins are two `setTokens`, two
        persists and two bootstraps writing into the same database. */
     if (stage === 'verifying') return;
-    if (mob.length !== MOBILE_DIGITS) return setErr('mob');
-    if (method === 'password' && pw.length < 8) return setErr('pw');
+    if (mob.length !== MOBILE_DIGITS) {
+      refuse();
+      return setErr('mob');
+    }
+    if (method === 'password' && pw.length < 8) {
+      refuse();
+      return setErr('pw');
+    }
     if (method === 'code' && code.replace(/\D/g, '').length < 4) {
       setServerMessage(codeSentTo ? 'Enter the code from WhatsApp.' : 'Send yourself a code first.');
+      refuse();
       return setErr('pw');
     }
 
@@ -180,6 +214,9 @@ export default function Login() {
               : 'mob',
       );
       setServerMessage(outcome.message);
+      /* A wrong password or an account switched off is a refusal; a book
+         that would not save on this phone is a failure. */
+      refuse(outcome.step === 'payload' ? 'error' : 'warning');
       return;
     }
 
@@ -239,6 +276,11 @@ export default function Login() {
           Mahek field sales. Your accounts team makes your account. There is no sign-up.
         </Text>
 
+        {/* One wrapper for both stages: it carries the refusal shake (see
+            `refuse`), and the Appear inside it is keyed on the stage, so the
+            form settles in on arrival and the ladder settles in over it. */}
+        <Animated.View style={shakeStyle}>
+        <Appear key={stage}>
         {/* ---- the check ladder ---- */}
         {stage === 'verifying' ? (
           <View style={{ borderWidth: 1, borderColor: C.border, backgroundColor: C.wash, borderRadius: radius.xl, padding: 16, marginTop: 24 }}>
@@ -247,14 +289,22 @@ export default function Login() {
               const now = step === i;
               return (
                 <View key={label} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 6 }}>
-                  <View
-                    style={{
-                      width: 18,
-                      height: 18,
-                      borderRadius: 9,
-                      backgroundColor: done ? C.lime : now ? C.primary : C.hairline,
-                    }}
-                  />
+                  {/* The step being checked breathes — it is waiting on the
+                      server, and a still dot reads as stuck — and a step
+                      passed pops as it turns green. These are real checks,
+                      so the movement follows the answers, not a timer. */}
+                  <Pop trigger={done}>
+                    <Pulse active={now}>
+                      <View
+                        style={{
+                          width: 18,
+                          height: 18,
+                          borderRadius: 9,
+                          backgroundColor: done ? C.lime : now ? C.primary : C.hairline,
+                        }}
+                      />
+                    </Pulse>
+                  </Pop>
                   <Text style={{ fontSize: 14, color: done || now ? C.ink : C.muted }}>{label}</Text>
                 </View>
               );
@@ -469,6 +519,8 @@ export default function Login() {
               </View>
           </View>
         ) : null}
+        </Appear>
+        </Animated.View>
 
       </ScrollView>
     </KeyboardAvoidingView>

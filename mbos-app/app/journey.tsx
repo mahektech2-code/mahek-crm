@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Pressable } from 'react-native';
+import { Animated, View, Pressable, type StyleProp, type ViewStyle } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { abandonLeg, openLegOf, travelModes, type TravelLeg } from '../src/data/travel';
@@ -32,6 +32,7 @@ import { openRoute, shareText } from '../src/lib/messaging';
 import { NavigateButton } from '../src/components/ui/navigate';
 import { Segmented } from '../src/components/ui/book-controls';
 import { PastDaySheet, PlannedDaySheet } from '../src/components/journey/day-sheets';
+import { Pop, PressableScale, Stagger, Swap, animateLayout, usePressScale } from '../src/components/ui/motion';
 import { useBoot } from '../src/state/boot';
 import { useStore } from '../src/state/store';
 
@@ -335,7 +336,13 @@ export default function JourneyScreen() {
         /* The SAME window the screen loaded with. `planDays()` defaults to
            today, so re-reading it bare threw away the fortnight of history
            underneath — answering one question emptied the Recently list. */
-        setDays(await planDays(historyFrom));
+        const fresh = await planDays(historyFrom);
+        /* The answered day leaves "to agree" and reappears under "Agreed. Pick
+           the shops" — the layout eases between the two so the eye can follow
+           it down, rather than the card vanishing and a different one
+           appearing. No buzz of its own: the toast below already carries one. */
+        animateLayout();
+        setDays(fresh);
         notify(dayLabel(day.planDate) + ' agreed. Pick your shops when you are ready.');
         return;
       }
@@ -349,7 +356,9 @@ export default function JourneyScreen() {
         run: async (reason: string) => {
           const out = await refuseDay(day.id, reason);
           if (!out.ok) return notify(out.message ?? 'Say why it will not work.', 'error');
-          setDays(await planDays(historyFrom));
+          const fresh = await planDays(historyFrom);
+          animateLayout();
+          setDays(fresh);
           notify('Sent back to your manager.');
         },
       });
@@ -391,6 +400,17 @@ export default function JourneyScreen() {
      The DAY rather than a boolean, so the two lines that read its city and
      its count narrow on it instead of asserting past it. */
   const awaitingRoute = stops.length === 0 ? todayPlanned : undefined;
+
+  /* Which of the card's states is showing — the key `Swap` animates on. */
+  const journeyMoment = leg
+    ? 'leg:' + leg.id
+    : awaitingRoute
+      ? 'awaiting'
+      : next
+        ? 'next:' + next.id
+        : stops.length
+          ? 'done'
+          : 'none';
 
   const reorder = async () => {
     /*
@@ -631,6 +651,11 @@ export default function JourneyScreen() {
             is how a second leg gets opened by accident, and opening one closes the
             first.
           */}
+          {/* ONE CARD, FOUR MOMENTS OF ONE DAY: on the road, waiting for the
+              office, every stop walked, and the next stop. Swapped rather than
+              cut, so a visit saved and the card moving on to the following shop
+              reads as the route advancing rather than as a different screen. */}
+          <Swap id={journeyMoment}>
           {leg ? (
             <View
               style={{
@@ -851,6 +876,7 @@ export default function JourneyScreen() {
               </View>
             </View>
           ) : null}
+          </Swap>
 
           {/* Guarded like the pips: an empty container still spends its top
               margin, and this screen's commonest state has nothing in it. */}
@@ -861,8 +887,13 @@ export default function JourneyScreen() {
                 const done = x.status === 'visited';
                 const last = i === stops.length - 1;
                 return (
-                  <View key={x.id} style={{ flexDirection: 'row', gap: 14, alignItems: 'stretch' }}>
+                  <Stagger key={x.id} index={i} style={{ flexDirection: 'row', gap: 14, alignItems: 'stretch' }}>
                     <View style={{ width: 28, alignItems: 'center' }}>
+                      {/* The marker pops as a stop turns from a number into a
+                          tick — the one change on this list that is news. Keyed on
+                          `done`, so a stop already done when the screen opens
+                          simply sits there. */}
+                      <Pop trigger={done}>
                       <View
                         style={{
                           width: 28,
@@ -880,6 +911,7 @@ export default function JourneyScreen() {
                           <T style={[{ fontSize: 13, color: isNext ? C.surface : C.muted }, weight(600)]}>{String(i + 1)}</T>
                         )}
                       </View>
+                      </Pop>
                       {last ? null : (
                         <View style={{ width: 2, flex: 1, minHeight: 12, backgroundColor: done ? C.primaryEdge : C.hairline }} />
                       )}
@@ -896,7 +928,7 @@ export default function JourneyScreen() {
                       name should open the thing it names; leaving the app is a
                       control that says so.
                     */}
-                    <View
+                    <PressCard
                       style={{
                         flex: 1,
                         minWidth: 0,
@@ -909,7 +941,11 @@ export default function JourneyScreen() {
                         backgroundColor: isNext ? C.primaryTint : C.surface,
                         overflow: 'hidden',
                       }}>
+                      {(press) => (
+                      <>
                       <Pressable
+                        onPressIn={press.onPressIn}
+                        onPressOut={press.onPressOut}
                         onPress={() => openStop(x)}
                         accessibilityRole="button"
                         accessibilityLabel={'Open ' + x.customerName}
@@ -954,8 +990,10 @@ export default function JourneyScreen() {
                         <Icon name="forward" size={18} color={C.muted} strokeWidth={1.5} />
                       </Pressable>
                       <StopMapButton lat={x.gpsLat} lng={x.gpsLng} name={x.customerName} city={x.area} />
-                    </View>
-                  </View>
+                      </>
+                      )}
+                    </PressCard>
+                  </Stagger>
                 );
               })}
             </View>
@@ -1113,14 +1151,14 @@ export default function JourneyScreen() {
               <T s="label" style={{ color: C.muted, marginBottom: 8 }}>
                 {asking.length === 1 ? 'A day to agree' : plural(asking.length, 'day') + ' to agree'}
               </T>
-              {asking.map((d) => {
+              {asking.map((d, i) => {
                 /* Worked out once. It used to be called twice in one expression —
                    and both calls read the clock, so the two halves of one sentence
                    could be measured against different instants. */
                 const waiting = waitingLabel(d.proposedAt, now);
                 return (
+                <Stagger key={d.id} index={i}>
                 <View
-                  key={d.id}
                   style={{
                     backgroundColor: C.surface,
                     borderRadius: radius.card,
@@ -1155,6 +1193,7 @@ export default function JourneyScreen() {
                     </View>
                   </View>
                 </View>
+                </Stagger>
                 );
               })}
             </View>
@@ -1175,9 +1214,10 @@ export default function JourneyScreen() {
               </T>
               {toPick
                 .map((d) => (
-                  <Pressable
+                  <PressableScale
                     key={d.id}
                     onPress={() => router.push({ pathname: '/pick', params: { day: d.id } })}
+                    outerStyle={{ marginBottom: 8 }}
                     style={{
                       flexDirection: 'row',
                       alignItems: 'center',
@@ -1185,7 +1225,6 @@ export default function JourneyScreen() {
                       backgroundColor: C.surface,
                       borderRadius: radius.card,
                       padding: 14,
-                      marginBottom: 8,
                       boxShadow: shadow.card,
                     }}>
                     <View style={{ flex: 1 }}>
@@ -1206,7 +1245,7 @@ export default function JourneyScreen() {
                       ) : null}
                     </View>
                     <Icon name="forward" size={20} color={C.muted} strokeWidth={1.5} />
-                  </Pressable>
+                  </PressableScale>
                 ))}
             </View>
           ) : null}
@@ -1219,12 +1258,13 @@ export default function JourneyScreen() {
                 Coming up
               </T>
               {comingUp.map((d) => (
-                <Pressable
+                <PressableScale
                   key={d.id}
                   /* Opens the day's shops — to see them, take one off, add
                      more or start over — rather than dropping him straight
                      into the picker, which is the wrong place to READ a plan. */
                   onPress={() => setPlannedOpen(d)}
+                  outerStyle={{ marginBottom: 8 }}
                   style={{
                     flexDirection: 'row',
                     alignItems: 'center',
@@ -1232,7 +1272,6 @@ export default function JourneyScreen() {
                     backgroundColor: C.surface,
                     borderRadius: radius.card,
                     padding: 14,
-                    marginBottom: 8,
                     boxShadow: shadow.card,
                   }}>
                   <View style={{ flex: 1 }}>
@@ -1244,7 +1283,7 @@ export default function JourneyScreen() {
                     </T>
                   </View>
                   <Icon name="forward" size={20} color={C.muted} strokeWidth={1.5} />
-                </Pressable>
+                </PressableScale>
               ))}
             </View>
           ) : null}
@@ -1355,9 +1394,10 @@ export default function JourneyScreen() {
           {/* Every journey past and coming, as a list or a calendar, each day open
               in full — and the cities and areas allocated to him, to accept or to
               ask to change. */}
-          <Pressable
+          <PressableScale
             accessibilityRole="button"
             onPress={() => router.push('/journeys?from=journey')}
+            outerStyle={{ marginTop: 16 }}
             style={{
               flexDirection: 'row',
               alignItems: 'center',
@@ -1365,7 +1405,6 @@ export default function JourneyScreen() {
               backgroundColor: C.surface,
               borderRadius: radius.card,
               padding: 14,
-              marginTop: 16,
               boxShadow: shadow.card,
             }}>
             <Icon name="cal" size={20} color={C.primary} strokeWidth={1.75} />
@@ -1376,7 +1415,7 @@ export default function JourneyScreen() {
               </T>
             </View>
             <Icon name="forward" size={20} color={C.muted} strokeWidth={1.5} />
-          </Pressable>
+          </PressableScale>
 
         </>
       ) : (
@@ -1430,9 +1469,10 @@ export default function JourneyScreen() {
           {/* Every journey past and coming, as a list or a calendar, each day open
               in full — and the cities and areas allocated to him, to accept or to
               ask to change. */}
-          <Pressable
+          <PressableScale
             accessibilityRole="button"
             onPress={() => router.push('/journeys?from=journey')}
+            outerStyle={{ marginTop: 16 }}
             style={{
               flexDirection: 'row',
               alignItems: 'center',
@@ -1440,7 +1480,6 @@ export default function JourneyScreen() {
               backgroundColor: C.surface,
               borderRadius: radius.card,
               padding: 14,
-              marginTop: 16,
               boxShadow: shadow.card,
             }}>
             <Icon name="cal" size={20} color={C.primary} strokeWidth={1.75} />
@@ -1451,7 +1490,7 @@ export default function JourneyScreen() {
               </T>
             </View>
             <Icon name="forward" size={20} color={C.muted} strokeWidth={1.5} />
-          </Pressable>
+          </PressableScale>
 
         </>
       )}
@@ -1776,6 +1815,30 @@ function StopMapButton({
       }}>
       <NavigateButton lat={lat} lng={lng} name={name} city={city} variant="icon" />
     </View>
+  );
+}
+
+/**
+ * A stop's card, pressed as one.
+ *
+ * The card holds two controls — the shop and the map glyph — so the card
+ * cannot simply BE a `PressableScale`: its press has to come from the shop
+ * half while the whole card gives. The scale sits on the card and the row's
+ * own `Pressable` drives it, so what moves under the thumb is the thing the
+ * eye reads as the stop.
+ */
+function PressCard({
+  style,
+  children,
+}: {
+  style: StyleProp<ViewStyle>;
+  children: (press: { onPressIn: () => void; onPressOut: () => void }) => React.ReactNode;
+}) {
+  const press = usePressScale(0.98);
+  return (
+    <Animated.View style={[style, press.style]}>
+      {children({ onPressIn: press.onPressIn, onPressOut: press.onPressOut })}
+    </Animated.View>
   );
 }
 

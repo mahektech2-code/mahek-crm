@@ -144,3 +144,25 @@ export async function openLocationSettings(): Promise<boolean> {
     return false;
   }
 }
+
+export type RingerMode = 'normal' | 'vibrate' | 'silent' | 'unknown';
+const RINGER_MODES: RingerMode[] = ['normal', 'vibrate', 'silent', 'unknown'];
+
+/**
+ * The phone's ringer mode — whether it is allowed to make a noise at all.
+ *
+ * `unknown` on iOS, on web, and on any APK built before the native half had
+ * `ringerMode` (it is optional on the type for exactly that reason). Every
+ * caller reads `unknown` as SILENT: a sound held back costs nothing, and a
+ * phone chiming on a counter after its owner switched it to silent is the
+ * one thing this exists to prevent.
+ */
+export async function ringerMode(): Promise<RingerMode> {
+  if (!native?.ringerMode) return 'unknown';
+  try {
+    const v = await native.ringerMode();
+    return RINGER_MODES.includes(v as RingerMode) ? (v as RingerMode) : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}

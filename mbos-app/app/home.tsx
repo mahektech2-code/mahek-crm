@@ -3,6 +3,7 @@ import { View, Text, Pressable } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { color as C, radius, shadow, type, weight, tabular } from '../src/theme/tokens';
 import { Icon } from '../src/components/ui/Icon';
+import { CountUp, PressableScale, Stagger, Swap } from '../src/components/ui/motion';
 import { Card, PrimaryButton, SecondaryButton, T } from '../src/components/ui/primitives';
 import { promptsForExpenses } from '../src/lib/travel-leg';
 import { AppFrame } from '../src/components/shell/AppFrame';
@@ -210,6 +211,12 @@ function asAt(iso: string): string {
     timeZone: 'Asia/Kolkata',
   }).format(at);
 }
+
+/* What the tiles count in. Rounded before formatting, because a count passes
+   through fractions of a paisa on its way and `inrFromPaise` should only ever
+   be handed whole ones. */
+const rupees = (x: number) => inrFromPaise(Math.round(x));
+const whole = (x: number) => String(Math.round(x));
 
 export default function Home() {
   const boot = useBoot();
@@ -477,7 +484,13 @@ export default function Home() {
   /* The same rule one section down: a handset nothing has reached has no lead
      book either, so its three figures are empty rather than nought. */
   const leadsPending = !leads || neverPulled;
-  const dashValues: { v: string; s: string; small?: boolean }[] = !day
+  /*
+   * `n` is the same figure as a NUMBER, where there is one, so the tile can
+   * count to it. `fmt` draws it exactly as `v` would have — the count is how
+   * the figure arrives, never a second way of writing it. A tile without `n`
+   * (a dash, "Not known yet", "3 of 5") is drawn as text and does not move.
+   */
+  const dashValues: { v: string; s: string; small?: boolean; n?: number; fmt?: (x: number) => string }[] = !day
     ? DASH_CARDS.map(() => ({ v: '—', s: readErr ? 'Did not load' : 'Loading…' }))
     : neverPulled
       ? DASH_CARDS.map(() => ({ v: '—', s: 'Nothing here yet' }))
@@ -490,6 +503,7 @@ export default function Home() {
       v: day.orderValueUnknown ? 'Not known yet' : inrFromPaise(day.orderValuePaise),
       s: plural(day.orders, 'order'),
       small: day.orderValueUnknown,
+      ...(day.orderValueUnknown ? {} : { n: day.orderValuePaise, fmt: rupees }),
     },
     {
       /* THE NUMERATOR IS STOPS DONE, not visits. `visitsToday` counts every
@@ -509,11 +523,11 @@ export default function Home() {
         ? 'shops done' + (day.visits > day.stopsDone ? ' · ' + (day.visits - day.stopsDone) + ' off the plan' : '')
         : 'No plan today',
     },
-    { v: inrFromPaise(day.collectPaise), s: plural(day.collectCustomers, 'customer') },
-    { v: inrFromPaise(day.cashPaise), s: day.cashSentence || 'Nothing to deposit' },
+    { v: inrFromPaise(day.collectPaise), s: plural(day.collectCustomers, 'customer'), n: day.collectPaise, fmt: rupees },
+    { v: inrFromPaise(day.cashPaise), s: day.cashSentence || 'Nothing to deposit', n: day.cashPaise, fmt: rupees },
     /* "overdue" is not a noun, so it does not take an s: "49 overdue". */
-    { v: String(day.tasks), s: day.tasksOverdue ? day.tasksOverdue + ' overdue' : 'None overdue' },
-    { v: String(day.followUps), s: `${day.followUpsToday} today` },
+    { v: String(day.tasks), s: day.tasksOverdue ? day.tasksOverdue + ' overdue' : 'None overdue', n: day.tasks, fmt: whole },
+    { v: String(day.followUps), s: `${day.followUpsToday} today`, n: day.followUps, fmt: whole },
   ];
 
   /* Same rule, on the strip under the Start day button: a dash where there is
@@ -1059,6 +1073,12 @@ export default function Home() {
           "Start day", and pressing it in that window opens a SECOND session
           against his own record. Neither of the two answers is drawn until
           there is one. */}
+      {/* ONE PLACE, FOUR STATES — not read yet, not started, on the road,
+          closed — and each replaces the last where it stood. Punching in or
+          out is the moment the card changes, so it settles into its new state
+          rather than cutting; no buzz of its own, because every punch already
+          ends in a toast that carries one. */}
+      <Swap id={!day ? 'loading' : !checkedIn ? 'out' : day.running ? 'running' : 'closed'}>
       {!day ? (
         <Card style={{ marginTop: 14, padding: 14 }}>
           <Text style={type.label}>Your day</Text>
@@ -1068,7 +1088,7 @@ export default function Home() {
         </Card>
       ) : !checkedIn ? (
         <View style={{ marginTop: 14 }}>
-          <Pressable
+          <PressableScale
             onPress={startDay}
             disabled={starting}
             style={{ flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16, backgroundColor: C.primary, borderRadius: radius.card, boxShadow: shadow.primaryDeep, opacity: starting ? 0.7 : 1 }}>
@@ -1084,7 +1104,7 @@ export default function Home() {
               </Text>
             </View>
             <Text style={{ fontSize: 20, color: 'rgba(255,255,255,0.6)' }}>›</Text>
-          </Pressable>
+          </PressableScale>
 
           <View style={{ flexDirection: 'row', backgroundColor: C.surface, borderWidth: 1, borderColor: C.hairline, borderRadius: radius.xl, marginTop: 10, overflow: 'hidden' }}>
             {DAY_AHEAD.map((d, i) => (
@@ -1198,6 +1218,7 @@ export default function Home() {
           ) : null}
         </Card>
       )}
+      </Swap>
 
       {/* ---- whether this phone will record the day at all ----
 
@@ -1215,16 +1236,16 @@ export default function Home() {
           the same reason — the danger colour belongs to the tracker having
           actually stopped, which is the Sync card's sentence, not this one's. */}
       {offerSetup ? (
-        <Pressable
+        <PressableScale
           onPress={() => router.push('/tracking-setup?from=home')}
           accessibilityRole="button"
+          outerStyle={{ marginTop: 12 }}
           style={{
             flexDirection: 'row',
             alignItems: 'center',
             gap: 12,
             minHeight: 56,
             paddingHorizontal: 16,
-            marginTop: 12,
             borderWidth: 1,
             borderColor: C.border,
             backgroundColor: C.surface,
@@ -1241,31 +1262,15 @@ export default function Home() {
             </T>
           </View>
           <Icon name="forward" size={20} color={C.muted} strokeWidth={1.5} />
-        </Pressable>
+        </PressableScale>
       ) : null}
 
 
       {/* ---- the six numbers ---- */}
       <Card padded={false} style={{ marginTop: 22, overflow: 'hidden' }}>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-          {DASH_CARDS.map((d, i) => (
-            <Pressable
-              key={d.l}
-              disabled={!d.route}
-              onPress={() => d.route && router.push(`/${d.route}?from=home`)}
-              style={{
-                width: '50%',
-                padding: 14,
-                minHeight: 84,
-                borderTopWidth: i > 1 ? 1 : 0,
-                borderTopColor: C.wash,
-                borderLeftWidth: i % 2 ? 1 : 0,
-                borderLeftColor: C.wash,
-              }}>
-              <Text numberOfLines={1} style={type.label}>{d.l}</Text>
-              <Text
-                numberOfLines={1}
-                style={[
+          {DASH_CARDS.map((d, i) => {
+            const figureStyle = [
                   /* The line height does not move with the size, so a tile
                      saying a sentence is exactly as tall as one saying a
                      number and the grid cannot jump. */
@@ -1287,12 +1292,38 @@ export default function Home() {
                   },
                   weight(600),
                   tabular,
-                ]}>
-                {dashValues[i].v}
-              </Text>
-              <Text numberOfLines={1} style={{ fontSize: 12, color: C.muted }}>{dashValues[i].s}</Text>
-            </Pressable>
-          ))}
+                ];
+            const figure = dashValues[i];
+            return (
+            <PressableScale
+              key={d.l}
+              disabled={!d.route}
+              onPress={() => d.route && router.push(`/${d.route}?from=home`)}
+              outerStyle={{ width: '50%' }}
+              style={{
+                padding: 14,
+                minHeight: 84,
+                borderTopWidth: i > 1 ? 1 : 0,
+                borderTopColor: C.wash,
+                borderLeftWidth: i % 2 ? 1 : 0,
+                borderLeftColor: C.wash,
+              }}>
+              <Text numberOfLines={1} style={type.label}>{d.l}</Text>
+              {/* A real figure counts to its new value when it MOVES — an order
+                  taken, a collection made — and simply stands there the first
+                  time it is drawn: `CountUp` mounts with the read, not before
+                  it, and a figure that is not news should not perform. */}
+              {figure.n != null && figure.fmt ? (
+                <CountUp value={figure.n} format={figure.fmt} numberOfLines={1} style={figureStyle} />
+              ) : (
+                <Text numberOfLines={1} style={figureStyle}>
+                  {figure.v}
+                </Text>
+              )}
+              <Text numberOfLines={1} style={{ fontSize: 12, color: C.muted }}>{figure.s}</Text>
+            </PressableScale>
+            );
+          })}
         </View>
       </Card>
 
@@ -1381,37 +1412,33 @@ export default function Home() {
           { l: 'Overdue', v: leads?.counts.overdue, href: '/lead-actions?view=overdue&from=home', tone: C.danger },
           { l: 'Due today', v: leads?.counts.today, href: '/lead-actions?view=today&from=home', tone: C.ink },
         ] as const).map((stat, i) => (
-          <Pressable
+          <PressableScale
             key={stat.l}
             onPress={() => router.push(stat.href)}
             accessibilityRole="button"
+            outerStyle={{ flex: 1 }}
             style={{
-              flex: 1,
               paddingVertical: 12,
               paddingHorizontal: 8,
               alignItems: 'center',
               borderLeftWidth: i ? 1 : 0,
               borderLeftColor: C.hairline,
             }}>
-            <Text
-              style={[
-                {
-                  fontSize: 19,
-                  lineHeight: 24,
-                  color:
-                    leadsPending || stat.v === undefined
-                      ? C.muted
-                      : stat.v > 0
-                        ? stat.tone
-                        : C.ink,
-                },
-                weight(600),
-                tabular,
-              ]}>
-              {leadsPending || stat.v === undefined ? '—' : String(stat.v)}
-            </Text>
+            {leadsPending || stat.v === undefined ? (
+              <Text style={[{ fontSize: 19, lineHeight: 24, color: C.muted }, weight(600), tabular]}>—</Text>
+            ) : (
+              <CountUp
+                value={stat.v}
+                format={whole}
+                style={[
+                  { fontSize: 19, lineHeight: 24, color: stat.v > 0 ? stat.tone : C.ink },
+                  weight(600),
+                  tabular,
+                ]}
+              />
+            )}
             <Text style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{stat.l}</Text>
-          </Pressable>
+          </PressableScale>
         ))}
       </View>
 
@@ -1447,8 +1474,10 @@ export default function Home() {
         </Card>
       ) : (
         <View style={{ gap: 10, marginTop: 10 }}>
-          {leads.dueToday.map((lead) => (
-            <LeadActionCard key={lead.id} lead={lead} meId={userId} from="home" />
+          {leads.dueToday.map((lead, i) => (
+            <Stagger key={lead.id} index={i}>
+              <LeadActionCard lead={lead} meId={userId} from="home" />
+            </Stagger>
           ))}
           {/* A capped list says what it is a slice of. Six cards over a due
               count of nineteen with nothing saying so is a screen quietly
@@ -1481,9 +1510,9 @@ export default function Home() {
           A sentence that was honest when it was written became the one place
           in the app that contradicted the rest of it, on the screen a salesman
           sees first. It reads the same cache that screen does. */}
-      <Pressable
+      <PressableScale
         onPress={() => router.push('/performance?from=home')}
-        style={{ marginTop: 12 }}>
+        outerStyle={{ marginTop: 12 }}>
         <Card style={{ padding: 14 }}>
           <Text style={type.label}>Your target</Text>
           {readErr ? (
@@ -1508,9 +1537,18 @@ export default function Home() {
                   somebody would otherwise be congratulated for. The score is
                   the office's and is printed, never recomputed here. */}
               <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8, marginTop: 2 }}>
-                <Text style={[{ fontSize: 22, lineHeight: 28, color: C.ink }, weight(600), tabular]}>
-                  {month.totalScoreBp == null ? '—' : (month.totalScoreBp / 100).toFixed(0)}
-                </Text>
+                {/* The office recomputes this hourly; when it has moved since
+                    the last look it counts there, which is the only way a
+                    64 becoming 72 reads as progress rather than as a number. */}
+                {month.totalScoreBp == null ? (
+                  <Text style={[{ fontSize: 22, lineHeight: 28, color: C.ink }, weight(600), tabular]}>—</Text>
+                ) : (
+                  <CountUp
+                    value={month.totalScoreBp / 100}
+                    format={(x) => x.toFixed(0)}
+                    style={[{ fontSize: 22, lineHeight: 28, color: C.ink }, weight(600), tabular]}
+                  />
+                )}
                 <Text style={{ fontSize: 13, color: C.muted }}>out of 100</Text>
                 {month.rating ? (
                   <Text style={{ fontSize: 13, color: C.muted }}>{'· ' + month.rating}</Text>
@@ -1541,7 +1579,7 @@ export default function Home() {
             </>
           )}
         </Card>
-      </Pressable>
+      </PressableScale>
 
       <SelfieCamera
         open={selfieOpen}

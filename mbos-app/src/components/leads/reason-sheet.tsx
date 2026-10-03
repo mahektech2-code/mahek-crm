@@ -1,5 +1,7 @@
 import React from 'react';
-import { View } from 'react-native';
+import { Animated, View } from 'react-native';
+import { Presence, useShake } from '../ui/motion';
+import { feedback } from '../ui/feedback';
 import { Choice, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../ui/primitives';
 import { BottomSheet } from '../ui/overlays';
 import { color as C, radius, weight } from '../../theme/tokens';
@@ -96,11 +98,21 @@ export function ReasonSheet({
       ? 'You chose “Other”. Write what happened.'
       : null;
 
+  /* One buzz per refusal: where `missing` is set the button is disabled-with-
+     a-reason and shakes and buzzes itself, so only the other refusals buzz
+     here. The box shakes either way — it is where the sentence is. */
+  const refusal = useShake(null);
+  const refuse = (message: string) => {
+    setErr(message);
+    if (!missing) feedback('warning');
+    refusal.shake();
+  };
+
   const confirm = () => {
-    if (!code && !nothingToPick) return setErr('Choose one reason.');
-    if (missing) return setErr(missing);
+    if (!code && !nothingToPick) return refuse('Choose one reason.');
+    if (missing) return refuse(missing);
     if ((requireNote || nothingToPick) && !note.trim()) {
-      return setErr('Write one line about what happened.');
+      return refuse('Write one line about what happened.');
     }
     onConfirm(code ?? '', note.trim());
   };
@@ -146,11 +158,12 @@ export function ReasonSheet({
         />
       </View>
 
-      {err ? (
-        <View style={{ marginTop: 12, backgroundColor: C.dangerBg, borderRadius: radius.lg, padding: 12 }}>
+      <Presence show={!!err}>
+        <Animated.View
+          style={[{ marginTop: 12, backgroundColor: C.dangerBg, borderRadius: radius.lg, padding: 12 }, refusal.style]}>
           <T style={[{ fontSize: 14, lineHeight: 20, color: C.danger }, weight(500)]}>{err}</T>
-        </View>
-      ) : null}
+        </Animated.View>
+      </Presence>
 
       <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
         <SecondaryButton label="Cancel" onPress={onClose} style={{ flex: 1, borderRadius: radius.xl }} />

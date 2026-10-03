@@ -5,6 +5,7 @@ import { router, useFocusEffect } from 'expo-router';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { Card, ListCard, PrimaryButton, SecondaryButton, T } from '../src/components/ui/primitives';
 import { Icon } from '../src/components/ui/Icon';
+import { DrawnTick, Pop, Swap, animateLayout } from '../src/components/ui/motion';
 import { color as C, radius, weight } from '../src/theme/tokens';
 import { useStore } from '../src/state/store';
 import { acknowledgePhoneSetup } from '../src/data/day-gate';
@@ -56,7 +57,13 @@ export default function SetupScreen() {
 
   const load = React.useCallback(() => {
     void readSetupSteps()
-      .then(setSteps)
+      .then((next) => {
+        /* Coming back from Settings with a step done moves the open step
+           down the list; the layout eases there so his eye follows it to the
+           next thing to do. A re-read that changed nothing moves nothing. */
+        animateLayout();
+        setSteps(next);
+      })
       .catch(() => setSteps([]));
   }, []);
 
@@ -129,9 +136,28 @@ export default function SetupScreen() {
   const current = steps ? currentStep(steps) : null;
   const doneCount = steps ? steps.filter((s) => s.state === 'done').length : 0;
 
+  /*
+   * WHETHER HE FINISHED IT HERE, which is the only time the drawn tick is due.
+   *
+   * The tick buzzes `success`, and a phone already set up — opened from More
+   * to check — has finished nothing on this visit. So it is drawn only where
+   * this visit has SEEN a step still to do and then seen none: the walkthrough
+   * completed under his thumb. Set during render rather than in an effect, the
+   * same way `Swap` tracks its previous key.
+   */
+  const [sawUnfinished, setSawUnfinished] = React.useState(false);
+  if (current && !sawUnfinished) setSawUnfinished(true);
+  const finishedHere = !!steps && !current && sawUnfinished;
+
   return (
     <AppFrame title="Set up your phone" activeTab={null} contentStyle={{ padding: 16, paddingBottom: 24 }}>
       <Card>
+        <Swap id={current ? 'todo' : 'done'}>
+        {finishedHere ? (
+          <View style={{ alignItems: 'center', marginBottom: 10 }}>
+            <DrawnTick size={56} color={C.success} background={C.successBg} />
+          </View>
+        ) : null}
         <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>
           {current ? 'Set this up once. It takes one minute.' : 'Your phone is set up'}
         </T>
@@ -141,6 +167,7 @@ export default function SetupScreen() {
               'Do each step below. Each button opens the right place.'
             : 'Everything MBOS needs is allowed. ' + RESTART_ANSWER}
         </T>
+        </Swap>
       </Card>
 
       {steps === null ? (
@@ -170,6 +197,10 @@ export default function SetupScreen() {
                     backgroundColor: open ? C.canvas : undefined,
                   }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                    {/* The number becomes a tick with a pop when he comes back
+                        from Settings having done it. Keyed on `done`, so steps
+                        already done on arrival simply sit there. */}
+                    <Pop trigger={done}>
                     <View
                       style={{
                         width: 24,
@@ -187,6 +218,7 @@ export default function SetupScreen() {
                         </T>
                       )}
                     </View>
+                    </Pop>
                     <T
                       style={[
                         { flex: 1, fontSize: 15, color: done ? C.muted : C.ink },

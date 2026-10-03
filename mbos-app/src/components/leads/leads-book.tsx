@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Pressable, FlatList, RefreshControl, Platform, type ListRenderItemInfo } from 'react-native';
+import { Animated, View, Pressable, FlatList, RefreshControl, Platform, type ListRenderItemInfo } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { Badge, Card, Choice, DashedButton, Divider, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../ui/primitives';
 import { BottomSheet, Calendar } from '../ui/overlays';
@@ -51,6 +51,7 @@ import {
 } from '../../engines/funnel';
 import { compactInrFromPaise, dmy, grouped, isoDate, pretty } from '../../lib/format';
 import { useStore } from '../../state/store';
+import { PressableScale, Presence, Stagger, animateLayoutFor, useShake } from '../ui/motion';
 
 /**
  * Leads — shops that are not on the book yet.
@@ -250,7 +251,7 @@ function LeadRow({
   ].filter(Boolean);
 
   return (
-    <Pressable
+    <PressableScale
       onPress={() => onPress(lead.id)}
       accessibilityRole="button"
       style={({ pressed }) => ({
@@ -288,7 +289,7 @@ function LeadRow({
           {warning}
         </T>
       ) : null}
-    </Pressable>
+    </PressableScale>
   );
 }
 
@@ -352,6 +353,20 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
   /* Which answer is current — a chip tapped mid-read must not have the old
      question's late answer land on top of, or append to, the new one. */
   const asking = React.useRef(0);
+  /*
+   * WHAT IS ON SCREEN, for the next answer to move from. A narrowing — a chip,
+   * a search, a lead closed on the record behind this one — lands as a fresh
+   * page, and `animateLayoutFor` lets the rows that stay slide to their new
+   * places and the ones that go fade, instead of the list jumping. Never on
+   * the first read: a screen opening is not the list changing. Recorded after
+   * each commit, never during render.
+   */
+  const drawnRows = React.useRef(0);
+  const drawnOnce = React.useRef(false);
+  React.useEffect(() => {
+    drawnRows.current = rows.length;
+    if (loaded) drawnOnce.current = true;
+  });
   /*
    * THE SEARCH, the same box the customers half has. Eight stage chips and the
    * owed-when row were the only narrowing here, so finding one named shop in a
@@ -465,6 +480,7 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
         ).catch(() => null),
       ]);
       if (ticket !== asking.current) return;
+      if (drawnOnce.current) animateLayoutFor(Math.max(drawnRows.current, page.rows.length));
       setViewCounts(vc);
       setRows(page.rows);
       setTotal(page.total);
@@ -569,10 +585,19 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
        afterwards. `handleLead` binds it the moment the row is written. */
     const shot = await takePhoto({ parentType: 'lead', parentId: 'pending', kind: 'shop_photo' });
     if (!shot.ok) {
-      if (shot.reason !== 'cancelled') notify(shot.reason);
+      if (shot.reason !== 'cancelled') notify(shot.reason, 'warn');
       return;
     }
     setShopPhotoId(shot.mediaId);
+  };
+
+  /* A refusal on the form says so in the box above the buttons AND in the hand:
+     the box shakes and the phone buzzes `warning`, because the box may be
+     below the fold of a sheet this long and the buzz is what says "look". */
+  const refusal = useShake('warning');
+  const refuse = (message: string) => {
+    setErr(message);
+    refusal.shake();
   };
 
   const save = async () => {
@@ -586,22 +611,22 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
     /* The ladder is asked FIRST and refused first, in that order, so the
        message somebody reads names the question at the top of the form rather
        than the one they have just finished typing. */
-    if (!salesType) return setErr('Choose the kind of sale first.');
-    if (!name.trim()) return setErr('Write a name or the shop name.');
-    if (mobile.replace(/\D/g, '').length < 10) return setErr('Write a 10-digit mobile number.');
-    if (!source) return setErr('Choose how you found them.');
+    if (!salesType) return refuse('Choose the kind of sale first.');
+    if (!name.trim()) return refuse('Write a name or the shop name.');
+    if (mobile.replace(/\D/g, '').length < 10) return refuse('Write a 10-digit mobile number.');
+    if (!source) return refuse('Choose how you found them.');
     /* Mahek's rule: a lead is raised inside his own area. Asked here so it is
        never refused in the office after the shop, the photograph and the pin
        are already behind it. */
     if (areas.kind === 'none') {
-      return setErr('No area is set for you yet. You cannot add a lead. Ask the office to set one.');
+      return refuse('No area is set for you yet. You cannot add a lead. Ask the office to set one.');
     }
-    if (areas.kind === 'pick' && !pickedArea) return setErr('Choose the area this shop is in. It must be in your area.');
-    if (pickedArea && !pickedArea.city && !city.trim()) return setErr('Which town in ' + pickedArea.label + '?');
+    if (areas.kind === 'pick' && !pickedArea) return refuse('Choose the area this shop is in. It must be in your area.');
+    if (pickedArea && !pickedArea.city && !city.trim()) return refuse('Which town in ' + pickedArea.label + '?');
     /* Refused on the phone as well as in the office, because being told after
        the fact loses the sentence he had in mind while he was standing there. */
     if (source === OTHER_SOURCE && !sourceDetail.trim()) {
-      return setErr('You chose "Other". Write where this lead came from.');
+      return refuse('You chose "Other". Write where this lead came from.');
     }
 
     saving.current = true;
@@ -637,8 +662,8 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
       });
 
       if (!result.ok) {
-        setErr(result.message);
         setDup(result.duplicate ?? null);
+        refuse(result.message);
         return;
       }
 
@@ -669,16 +694,22 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
     router.push(`/lead?id=${id}&from=leads`);
   }, []);
 
+  /* Only the first screenful settles in. Rows mounted later by scrolling or
+     by the next page are arriving under his thumb, and a fade there reads as
+     the list lagging rather than as the list arriving. */
   const renderRow = React.useCallback(
-    ({ item }: ListRenderItemInfo<Lead>) => (
-      <LeadRow
-        lead={item}
-        today={today}
-        cfg={cfg}
-        capCfg={capCfg}
-        onPress={openLead}
-      />
-    ),
+    ({ item, index }: ListRenderItemInfo<Lead>) => {
+      const row = (
+        <LeadRow
+          lead={item}
+          today={today}
+          cfg={cfg}
+          capCfg={capCfg}
+          onPress={openLead}
+        />
+      );
+      return index < 8 ? <Stagger index={index}>{row}</Stagger> : row;
+    },
     [today, cfg, capCfg, openLead],
   );
 
@@ -1064,8 +1095,9 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
           />
         </View>
 
-        {err ? (
-          <View style={{ marginTop: 12, backgroundColor: C.dangerBg, borderRadius: radius.lg, padding: 12 }}>
+        <Presence show={!!err}>
+          <Animated.View
+            style={[{ marginTop: 12, backgroundColor: C.dangerBg, borderRadius: radius.lg, padding: 12 }, refusal.style]}>
             <T style={[{ fontSize: 14, lineHeight: 20, color: C.danger }, weight(500)]}>{err}</T>
             {dup ? (
               <SecondaryButton
@@ -1074,8 +1106,8 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
                 style={{ marginTop: 10 }}
               />
             ) : null}
-          </View>
-        ) : null}
+          </Animated.View>
+        </Presence>
 
         {/* Closing the sheet any other way — the scrim, the back gesture —
             keeps what he typed and brings it straight back. Cancel is the one

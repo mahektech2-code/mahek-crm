@@ -39,6 +39,8 @@ import { TIMELINE_PAGE } from '../src/data/customer-query';
 import { getConfig } from '../src/data/config';
 import { inr, inrFromPaise, isoDate, pretty, shopName } from '../src/lib/format';
 import { callNumber, openWhatsApp } from '../src/lib/messaging';
+import { Appear, DUR, Stagger, animateLayoutFor } from '../src/components/ui/motion';
+import { feedback } from '../src/components/ui/feedback';
 
 /**
  * The customer record.
@@ -141,6 +143,9 @@ export default function CustomerRecord() {
   /* Which bill is open to show what was on it. One at a time: a list of
      twenty bills each unfolded into four lines is a screen nobody scrolls. */
   const [openBillId, setOpenBillId] = React.useState<string | null>(null);
+  /* Whether a tab has been switched HERE. The record opening on a tab is the
+     route arriving, which already moved; only a switch fades the body. */
+  const [tabMoved, setTabMoved] = React.useState(false);
   const [samples, setSamples] = React.useState<Sample[]>([]);
   const [gripes, setGripes] = React.useState<Complaint[]>([]);
   const [note, setNote] = React.useState('');
@@ -479,7 +484,13 @@ export default function CustomerRecord() {
           return (
             <Pressable
               key={t}
-              onPress={() => set({ pTab: i })}
+              onPress={() => {
+                if (!on) {
+                  feedback('select');
+                  setTabMoved(true);
+                }
+                set({ pTab: i });
+              }}
               style={{ height: HIT, paddingHorizontal: 16, borderBottomWidth: 2, borderBottomColor: on ? C.primary : 'transparent', alignItems: 'center', justifyContent: 'center' }}>
               <Text style={[{ fontSize: 15, color: on ? C.primaryDeep : C.muted }, weight(on ? 500 : 400)]}>{t}</Text>
             </Pressable>
@@ -487,7 +498,16 @@ export default function CustomerRecord() {
         })}
       </ScrollView>
 
-      <View style={{ padding: 16 }}>
+      {/* THE TAB BODY FADES IN PLACE, keyed on the tab. Not `Swap`: Swap eases
+          the layout with it, and the Account tab can hold thirteen months of
+          bills — moving every one of those frames is the cost
+          `animateLayoutFor` exists to refuse. Siblings fade rather than slide,
+          because there is no direction between Orders and Samples. */}
+      <Appear
+        key={pTab}
+        distance={tabMoved ? 4 : 0}
+        duration={tabMoved ? DUR.quick + 20 : 0}
+        style={{ padding: 16 }}>
         {/* ---- overview ---- */}
         {pTab === 0 ? (
           <View style={{ gap: 12 }}>
@@ -602,7 +622,10 @@ export default function CustomerRecord() {
                 return (
                   <Pressable
                     key={f}
-                    onPress={() => set({ tlFilter: f })}
+                    onPress={() => {
+                      if (!on) feedback('select');
+                      set({ tlFilter: f });
+                    }}
                     style={{ height: HIT, paddingHorizontal: 14, borderRadius: 20, borderWidth: 1, borderColor: on ? C.primary : C.border, backgroundColor: on ? C.primaryTint : C.surface, alignItems: 'center', justifyContent: 'center' }}>
                     <Text style={[{ fontSize: 14, color: on ? C.primaryDeep : C.body }, weight(on ? 500 : 400)]}>{f}</Text>
                   </Pressable>
@@ -640,40 +663,41 @@ export default function CustomerRecord() {
               const last = i === events.length - 1;
               const kind = KIND_LABEL[e.eventType] ?? 'Visit';
               return (
-                <View
-                  key={e.id}
-                  style={{
-                    position: 'relative',
-                    paddingLeft: 20,
-                    paddingBottom: last ? 0 : 18,
-                    marginLeft: 4,
-                    borderLeftWidth: 1,
-                    borderLeftColor: last ? 'transparent' : C.border,
-                  }}>
+                <Stagger key={e.id} index={i}>
                   <View
                     style={{
-                      position: 'absolute',
-                      left: -5,
-                      top: 4,
-                      width: 10,
-                      height: 10,
-                      borderRadius: 5,
-                      borderWidth: 2,
-                      borderColor: C.wash,
-                      backgroundColor: kind === 'Telecaller' ? C.warn : C.faint,
-                    }}
-                  />
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                    <Badge tone={TONES[kind] ?? 'teal'}>{kind}</Badge>
-                    <Text style={{ fontSize: 12, color: C.muted }}>
-                      {pretty(isoDate(new Date(e.occurredAt))) + ' · ' + (e.actor ?? '')}
-                    </Text>
+                      position: 'relative',
+                      paddingLeft: 20,
+                      paddingBottom: last ? 0 : 18,
+                      marginLeft: 4,
+                      borderLeftWidth: 1,
+                      borderLeftColor: last ? 'transparent' : C.border,
+                    }}>
+                    <View
+                      style={{
+                        position: 'absolute',
+                        left: -5,
+                        top: 4,
+                        width: 10,
+                        height: 10,
+                        borderRadius: 5,
+                        borderWidth: 2,
+                        borderColor: C.wash,
+                        backgroundColor: kind === 'Telecaller' ? C.warn : C.faint,
+                      }}
+                    />
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <Badge tone={TONES[kind] ?? 'teal'}>{kind}</Badge>
+                      <Text style={{ fontSize: 12, color: C.muted }}>
+                        {pretty(isoDate(new Date(e.occurredAt))) + ' · ' + (e.actor ?? '')}
+                      </Text>
+                    </View>
+                    <Text style={[type.small, { color: C.ink, marginTop: 4 }]}>{e.summary}</Text>
+                    {e.sourceApp !== 'mbos' ? (
+                      <Text style={[type.caption, { marginTop: 2 }]}>From the office team</Text>
+                    ) : null}
                   </View>
-                  <Text style={[type.small, { color: C.ink, marginTop: 4 }]}>{e.summary}</Text>
-                  {e.sourceApp !== 'mbos' ? (
-                    <Text style={[type.caption, { marginTop: 2 }]}>From the office team</Text>
-                  ) : null}
-                </View>
+                </Stagger>
               );
             })}
 
@@ -708,24 +732,26 @@ export default function CustomerRecord() {
               )
             ) : (
               <>
-                {orders.map((o) => (
-                  <Card key={o.id} style={{ gap: 4 }}>
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
-                      <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>
-                        {o.valuePaise != null ? inrFromPaise(o.valuePaise) : 'Value not recorded'}
+                {orders.map((o, i) => (
+                  <Stagger key={o.id} index={i}>
+                    <Card style={{ gap: 4 }}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
+                        <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>
+                          {o.valuePaise != null ? inrFromPaise(o.valuePaise) : 'Value not recorded'}
+                        </Text>
+                        <Text style={type.caption}>{pretty(o.orderedAt)}</Text>
+                      </View>
+                      <Text style={type.caption}>
+                        {[
+                          o.orderNo ? 'No. ' + o.orderNo : null,
+                          o.lines ? o.lines + (o.lines === 1 ? ' line' : ' lines') : null,
+                          o.status,
+                        ]
+                          .filter(Boolean)
+                          .join(' · ')}
                       </Text>
-                      <Text style={type.caption}>{pretty(o.orderedAt)}</Text>
-                    </View>
-                    <Text style={type.caption}>
-                      {[
-                        o.orderNo ? 'No. ' + o.orderNo : null,
-                        o.lines ? o.lines + (o.lines === 1 ? ' line' : ' lines') : null,
-                        o.status,
-                      ]
-                        .filter(Boolean)
-                        .join(' · ')}
-                    </Text>
-                  </Card>
+                    </Card>
+                  </Stagger>
                 ))}
                 <Slice n={orders.length} noun="order" />
               </>
@@ -771,7 +797,10 @@ export default function CustomerRecord() {
                     return (
                       <Pressable
                         key={p.key}
-                        onPress={() => setPeriod(p.key)}
+                        onPress={() => {
+                          if (!on) feedback('select');
+                          setPeriod(p.key);
+                        }}
                         style={{
                           height: 34,
                           paddingHorizontal: 14,
@@ -854,9 +883,12 @@ export default function CustomerRecord() {
                         bill={e.bill}
                         balanceAfterPaise={e.balancePaise}
                         open={openBillId === e.bill.id}
-                        onToggle={() =>
-                          setOpenBillId(openBillId === e.bill.id ? null : e.bill.id)
-                        }
+                        onToggle={() => {
+                          /* The cards under it move down; eased on an account
+                             short enough to move cheaply, a jump otherwise. */
+                          animateLayoutFor(statement.entries.length);
+                          setOpenBillId(openBillId === e.bill.id ? null : e.bill.id);
+                        }}
                       />
                     ) : (
                       <ReceiptCard
@@ -1076,7 +1108,7 @@ export default function CustomerRecord() {
             </View>
           </View>
         ) : null}
-      </View>
+      </Appear>
     </AppFrame>
   );
 }
