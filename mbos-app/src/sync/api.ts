@@ -735,7 +735,7 @@ export async function scanLead(
       headers: {
         ...(token ? { authorization: `Bearer ${token}` } : {}),
         'x-mbos-device': await deviceId(),
-        'x-mbos-app-version': buildLabel(),
+        'x-mbos-app-version': versionHeader(),
       },
       body: form,
       signal: controller.signal,
