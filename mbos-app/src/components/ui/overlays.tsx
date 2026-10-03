@@ -1,5 +1,5 @@
 import React from 'react';
-import { Animated, Easing, View, Text, Pressable, Modal, ScrollView, StyleSheet, useWindowDimensions } from 'react-native';
+import { Animated, Easing, View, Text, Pressable, Modal, PanResponder, ScrollView, StyleSheet, useWindowDimensions } from 'react-native';
 import { color as C, HIT, radius, shadow, type, weight, tabular } from '../../theme/tokens';
 import { Icon } from './Icon';
 import { Input, PrimaryButton, SecondaryButton } from './primitives';
@@ -7,7 +7,9 @@ import { isoDate, monthName } from '../../lib/format';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { TAB_BAR_HEIGHT } from '../shell/Chrome';
 import { useKeyboardHeight } from './keyboard';
-import { useReduceMotion } from './motion';
+import { useReduceMotion, EASE } from './motion';
+import { feedback } from './feedback';
+import type { FeedbackKind } from '../../engines/feedback';
 
 /**
  * Everything that floats above a screen. All of it goes through `Modal` so it
@@ -48,6 +50,46 @@ function SheetModal({
   const [shown, setShown] = React.useState(open);
   const [sheetHeight, setSheetHeight] = React.useState(480);
 
+  /**
+   * DRAGGED DOWN, IT GOES. The grabber has always been drawn on these sheets
+   * and has never done anything: it is the universal sign for "pull me", and a
+   * sign that does nothing teaches people the app ignores them. Only the top
+   * strip listens (`grab`), never the body — the body is a ScrollView full of
+   * forms, and a sheet that closed when somebody scrolled up through a reason
+   * they were typing would lose the reason.
+   *
+   * Past a third of its own height, or flicked, it closes; anything less
+   * springs back. Plain `PanResponder` rather than gesture-handler, which was
+   * removed to keep the APK lean and is not needed for one vertical drag.
+   */
+  const drag = React.useRef(new Animated.Value(0)).current;
+  const closeRef = React.useRef(onClose);
+  closeRef.current = onClose;
+  const heightRef = React.useRef(sheetHeight);
+  heightRef.current = sheetHeight;
+  const grab = React.useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: (_e, g) => Math.abs(g.dy) > 4,
+        onPanResponderMove: (_e, g) => drag.setValue(Math.max(0, g.dy)),
+        onPanResponderRelease: (_e, g) => {
+          if (g.dy > heightRef.current / 3 || g.vy > 0.9) {
+            feedback('tap');
+            closeRef.current();
+            /* Let the close animation carry on from where the finger left it. */
+            Animated.timing(drag, { toValue: 0, duration: 200, delay: 180, useNativeDriver: true }).start();
+          } else {
+            Animated.spring(drag, { toValue: 0, useNativeDriver: true, speed: 24, bounciness: 4 }).start();
+          }
+        },
+        onPanResponderTerminate: () => {
+          Animated.spring(drag, { toValue: 0, useNativeDriver: true, speed: 24, bounciness: 4 }).start();
+        },
+      }),
+    [drag],
+  );
+
   /* Adjusted during render rather than in an effect, so the Modal is mounted on
      the same pass `open` turns true. */
   if (open && !shown) setShown(true);
@@ -86,9 +128,24 @@ function SheetModal({
         <Animated.View
           onLayout={(e) => setSheetHeight(e.nativeEvent.layout.height)}
           style={{
-            transform: [{ translateY: progress.interpolate({ inputRange: [0, 1], outputRange: [sheetHeight, 0] }) }],
+            transform: [
+              {
+                translateY: Animated.add(
+                  progress.interpolate({ inputRange: [0, 1], outputRange: [sheetHeight, 0] }),
+                  drag,
+                ),
+              },
+            ],
           }}>
           {children}
+          {/* The grab strip: the 160 × 32 points around the grabber and
+              nowhere else, so a close button or a title in a sheet's top
+              corner still takes its own taps. */}
+          <View
+            {...grab.panHandlers}
+            accessibilityLabel="Drag down to close"
+            style={{ position: 'absolute', top: 0, left: '50%', marginLeft: -80, width: 160, height: 32 }}
+          />
         </Animated.View>
       </View>
     </Modal>
@@ -144,11 +201,14 @@ export type ToastTone = 'success' | 'info' | 'warn' | 'error';
  * is carried by an edge, an icon and its tint, never by flooding the whole card
  * with colour. A red card shouts; a red edge on a white card tells.
  */
-const TONE: Record<ToastTone, { accent: string; tint: string; icon: 'tick' | 'bell' | 'alert'; label: string }> = {
-  success: { accent: C.success, tint: C.successBg, icon: 'tick', label: 'Done' },
-  info: { accent: C.primary, tint: C.primaryTint, icon: 'bell', label: 'Note' },
-  warn: { accent: C.warn, tint: C.warnBg, icon: 'alert', label: 'Check this' },
-  error: { accent: C.danger, tint: C.dangerBg, icon: 'alert', label: 'Not done' },
+const TONE: Record<
+  ToastTone,
+  { accent: string; tint: string; icon: 'tick' | 'bell' | 'alert'; label: string; feel: FeedbackKind | null }
+> = {
+  success: { accent: C.success, tint: C.successBg, icon: 'tick', label: 'Done', feel: 'success' },
+  info: { accent: C.primary, tint: C.primaryTint, icon: 'bell', label: 'Note', feel: null },
+  warn: { accent: C.warn, tint: C.warnBg, icon: 'alert', label: 'Check this', feel: 'warning' },
+  error: { accent: C.danger, tint: C.dangerBg, icon: 'alert', label: 'Not done', feel: 'error' },
 };
 
 /* Every notice leaves after three seconds, whatever its tone, and the ×
@@ -198,6 +258,55 @@ export function Toast({
     });
   }, [onDone, progress, reduce]);
 
+  /**
+   * THE TOAST IS WHERE MOST OUTCOMES ARE ANNOUNCED, so it is where most of them
+   * are FELT. Every save in the app that confirms itself does it through
+   * `notify()`, and every refusal too — so one line here gives an order, a
+   * payment, a leave request and forty other saves the same buzz, and a
+   * refusal the same "no", without any of those screens learning that a
+   * motor exists. `info` stays silent: a note is not an outcome.
+   */
+  React.useEffect(() => {
+    if (!message) return;
+    const feel = (TONE[tone] ?? TONE.info).feel;
+    if (feel) feedback(feel);
+  }, [message, tone]);
+
+  /* Swiped sideways, it goes — the way every notification on the phone does. */
+  const swipe = React.useRef(new Animated.Value(0)).current;
+  const leaveRef = React.useRef<() => void>(() => {});
+  const pan = React.useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_e, g) => Math.abs(g.dx) > 8 && Math.abs(g.dx) > Math.abs(g.dy),
+        onPanResponderMove: (_e, g) => swipe.setValue(g.dx),
+        onPanResponderRelease: (_e, g) => {
+          if (Math.abs(g.dx) > 90 || Math.abs(g.vx) > 0.8) {
+            Animated.timing(swipe, {
+              toValue: g.dx > 0 ? 420 : -420,
+              duration: 160,
+              easing: EASE,
+              useNativeDriver: true,
+            }).start(() => {
+              leaveRef.current();
+              swipe.setValue(0);
+            });
+          } else {
+            Animated.spring(swipe, { toValue: 0, useNativeDriver: true, speed: 24, bounciness: 4 }).start();
+          }
+        },
+        onPanResponderTerminate: () => {
+          Animated.spring(swipe, { toValue: 0, useNativeDriver: true }).start();
+        },
+      }),
+    [swipe],
+  );
+  leaveRef.current = () => {
+    progress.setValue(0);
+    setShowing(null);
+    onDone();
+  };
+
   React.useEffect(() => {
     if (!message) return;
     const dwell = DWELL_MS;
@@ -242,9 +351,13 @@ export function Toast({
           /* 28 clears the raised + button, which sits 20 above the bar. */
           bottom: TAB_BAR_HEIGHT + insets.bottom + 28 + lift,
           opacity: progress,
-          transform: [{ translateY: progress.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) }],
+          transform: [
+            { translateY: progress.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) },
+            { translateX: swipe },
+          ],
         },
-      ]}>
+      ]}
+      {...pan.panHandlers}>
       <View style={[st.toastAccent, { backgroundColor: look.accent }]} />
       <View style={[st.toastIcon, { backgroundColor: look.tint }]}>
         <Icon name={look.icon} size={16} color={look.accent} strokeWidth={2.4} />
@@ -305,6 +418,8 @@ export function BottomSheet({
   return (
     <SheetModal open={open} onClose={onClose}>
       <View style={[st.sheet, keyboardHeight > 0 && { marginBottom: keyboardHeight }]}>
+        {/* The grabber says the sheet can be pulled down — and now it can. */}
+        <View style={[st.grabber, { marginTop: 8, marginBottom: -4 }]} />
         {scroll ? (
           <ScrollView
             style={{ maxHeight: available }}
@@ -458,6 +573,19 @@ export function Calendar({ selected, onPick, rangeFrom, rangeTo, disabledReason,
   }, []);
   const [offset, setOffset] = React.useState(0);
   const shown = new Date(today.getFullYear(), today.getMonth() + offset, 1);
+
+  /* A month change SLIDES the way it went — next month comes in from the
+     right, the previous from the left — so it reads as paging through time
+     rather than as the grid being redrawn with different numbers. */
+  const reduce = useReduceMotion();
+  const slide = React.useRef(new Animated.Value(0)).current;
+  const page = (by: number) => {
+    feedback('select');
+    setOffset(offset + by);
+    if (reduce) return;
+    slide.setValue(by * 24);
+    Animated.timing(slide, { toValue: 0, duration: 220, easing: EASE, useNativeDriver: true }).start();
+  };
   const todayIso = isoDate(today);
 
   /* Weeks start on Monday, which is how a working week is read here. */
@@ -480,13 +608,13 @@ export function Calendar({ selected, onPick, rangeFrom, rangeTo, disabledReason,
   return (
     <View>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-        <Pressable onPress={() => setOffset(offset - 1)} accessibilityLabel="Previous month" style={st.calNav}>
+        <Pressable onPress={() => page(-1)} accessibilityLabel="Previous month" style={st.calNav}>
           <Text style={{ fontSize: 20, color: C.body }}>‹</Text>
         </Pressable>
         <Text style={[{ flex: 1, textAlign: 'center', fontSize: 16, color: C.ink }, weight(600)]}>
           {monthName(shown.getMonth()) + ' ' + shown.getFullYear()}
         </Text>
-        <Pressable onPress={() => setOffset(offset + 1)} accessibilityLabel="Next month" style={st.calNav}>
+        <Pressable onPress={() => page(1)} accessibilityLabel="Next month" style={st.calNav}>
           <Text style={{ fontSize: 20, color: C.body }}>›</Text>
         </Pressable>
       </View>
@@ -499,7 +627,13 @@ export function Calendar({ selected, onPick, rangeFrom, rangeTo, disabledReason,
         ))}
       </View>
 
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+      <Animated.View
+        style={{
+          flexDirection: 'row',
+          flexWrap: 'wrap',
+          opacity: slide.interpolate({ inputRange: [-24, 0, 24], outputRange: [0.2, 1, 0.2] }),
+          transform: [{ translateX: slide }],
+        }}>
         {cells.map((d, i) => {
           if (!d) return <View key={i} style={{ width: `${100 / 7}%`, height: 44 }} />;
           const key = isoDate(d);
@@ -512,7 +646,11 @@ export function Calendar({ selected, onPick, rangeFrom, rangeTo, disabledReason,
           return (
             <Pressable
               key={i}
-              onPress={() => !off && onPick(key)}
+              onPress={() => {
+                if (off) return;
+                if (!picked) feedback('select');
+                onPick(key);
+              }}
               disabled={off}
               accessibilityRole="button"
               accessibilityState={{ selected: picked, disabled: off }}
@@ -548,7 +686,7 @@ export function Calendar({ selected, onPick, rangeFrom, rangeTo, disabledReason,
             </Pressable>
           );
         })}
-      </View>
+      </Animated.View>
     </View>
   );
 }

@@ -70,7 +70,11 @@
       [
         "expo-notifications",
         {
-          "color": "#5223E0"
+          "color": "#5223E0",
+          "sounds": [
+            "./assets/sounds/mbos_alert.wav",
+            "./assets/sounds/mbos_update.wav"
+          ]
         }
       ],
       "./plugins/withReleaseSigning.js",

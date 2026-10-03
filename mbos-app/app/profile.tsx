@@ -4,6 +4,8 @@ import { router } from 'expo-router';
 
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Card, ListCard, SecondaryButton, T, Toggle } from '../src/components/ui/primitives';
+import { feedback, primeSounds } from '../src/components/ui/feedback';
+import { setFeedbackPref, useFeedbackPrefs } from '../src/data/feedback-prefs';
 import { openPasswordReset, signOut as signOutReal } from '../src/data/session';
 import { pendingCount } from '../src/sync/queue';
 import { plural } from '../src/lib/format';
@@ -115,6 +117,7 @@ export default function ProfileScreen() {
   const [pushBusy, setPushBusy] = React.useState(false);
 
   const [lockOn, setLockOn] = React.useState(false);
+  const feedbackPrefs = useFeedbackPrefs();
   const [lockOffer, setLockOffer] = React.useState<{ ok: boolean; why: string; label: string } | null>(null);
   const [lockBusy, setLockBusy] = React.useState(false);
 
@@ -377,6 +380,42 @@ export default function ProfileScreen() {
             <Toggle size="sm" on={lockOn} onPress={() => void toggleLock()} />
           ) : null}
         </View>
+
+        {/*
+          VIBRATION AND SOUNDS — what the phone does, besides draw, when
+          something is saved, refused or arrives. Both are kept on this phone
+          (see `data/feedback-prefs.ts`) and both take effect on the next tap.
+
+          Sounds are OFF until somebody turns them on: this is used in other
+          people's shops, and a phone that chimes at every order is not a
+          default anybody should have to find a switch to undo. Turning them
+          on plays one, so the choice is made having heard it.
+        */}
+        <FeedbackRow
+          label="Vibrate on actions"
+          sub="A short buzz when something is saved, refused or arrives."
+          on={feedbackPrefs.haptics}
+          onToggle={() => {
+            const next = !feedbackPrefs.haptics;
+            void setFeedbackPref('haptics', next).then(() => {
+              if (next) feedback('success');
+            });
+          }}
+        />
+        <FeedbackRow
+          label="Sounds"
+          sub="A soft tone with the buzz. Silent when your phone is on silent or vibrate."
+          on={feedbackPrefs.sounds}
+          onToggle={() => {
+            const next = !feedbackPrefs.sounds;
+            void setFeedbackPref('sounds', next).then(() => {
+              if (next) {
+                primeSounds();
+                feedback('success');
+              }
+            });
+          }}
+        />
       </ListCard>
 
       <SecondaryButton
@@ -428,5 +467,28 @@ export default function ProfileScreen() {
         <T style={[{ fontSize: 16, color: C.danger }, weight(600)]}>Sign out</T>
       </Pressable>
     </AppFrame>
+  );
+}
+
+function FeedbackRow({ label, sub, on, onToggle }: { label: string; sub: string; on: boolean; onToggle: () => void }) {
+  return (
+    <View
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 16,
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+        borderTopWidth: 1,
+        borderTopColor: C.wash,
+      }}>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <T style={{ fontSize: 16, lineHeight: 22, color: C.ink }}>{label}</T>
+        <T s="caption" style={{ marginTop: 1 }}>
+          {sub}
+        </T>
+      </View>
+      <Toggle size="sm" on={on} onPress={onToggle} />
+    </View>
   );
 }

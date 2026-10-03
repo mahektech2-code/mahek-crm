@@ -5,6 +5,8 @@ import Constants from 'expo-constants';
 import * as Device from 'expo-device';
 import { registerPushToken } from '../sync/api';
 import { getConfig } from '../data/config';
+import { PhoneSetup } from '../../modules/phone-setup';
+import { hasBannerHost } from '../state/push-banner';
 
 /**
  * Reaching a handset that is not open.
@@ -97,6 +99,59 @@ async function ensureChannels(): Promise<void> {
     sound: null,
     vibrationPattern: null,
   });
+  await ensureSoundChannels();
+}
+
+/**
+ * THE TWO CHANNELS WITH SOUNDS OF THEIR OWN, from 1.16.0.
+ *
+ * `default` played the phone's stock notification sound for everything, so a
+ * refused order and a new document sounded like a WhatsApp message and like
+ * each other. A decision about his work now has its own three-note sound and a
+ * double buzz; an update has a softer chime and one. Two channels rather than
+ * one with per-message sounds, because on Android the CHANNEL owns the sound —
+ * and because a channel is what a person can silence in the phone's own
+ * settings, so a salesman can mute updates without muting refusals.
+ *
+ * Which one a push lands on is the SERVER's choice (`channelFor` in
+ * `src/lib/mbos/push-rules.ts`), and it sends these names only to 1.16.0 and
+ * later. Older builds go on receiving `default`, which they have.
+ *
+ * NOT CREATED WITHOUT THE SOUND FILES IN THE APK. An Android channel's sound
+ * is fixed the moment the channel exists and cannot be changed afterwards. This
+ * JavaScript also reaches older APKs over the air, and a channel created there
+ * — where `res/raw` has no `mbos_alert` — would be created silent and STAY
+ * silent after the phone was upgraded. The sounds and the ringer query arrive
+ * in the same APK, so the query is the test for both. The ids carry a `-v1` so
+ * the day a sound changes, a new id is a new channel rather than a silent
+ * no-op.
+ */
+export const DECISIONS_CHANNEL = 'decisions-v1';
+export const UPDATES_CHANNEL = 'updates-v1';
+
+async function ensureSoundChannels(): Promise<void> {
+  if (!hasNativeSounds()) return;
+  await Notifications.setNotificationChannelAsync(DECISIONS_CHANNEL, {
+    name: 'Approvals and refusals',
+    description: 'Orders, payments and requests the office has decided on.',
+    importance: AndroidImportance.HIGH,
+    sound: 'mbos_alert.wav',
+    vibrationPattern: [0, 140, 90, 140],
+    enableVibrate: true,
+  });
+  await Notifications.setNotificationChannelAsync(UPDATES_CHANNEL, {
+    name: 'Tasks and updates',
+    description: 'New tasks, targets, documents and changes to your book.',
+    importance: AndroidImportance.HIGH,
+    sound: 'mbos_update.wav',
+    vibrationPattern: [0, 220],
+    enableVibrate: true,
+  });
+}
+
+/** Whether this APK carries the notification sounds — see `ensureSoundChannels`. */
+function hasNativeSounds(): boolean {
+  return Platform.OS === 'android' && typeof PhoneSetup?.ringerMode === 'function';
 }
 
 /**
@@ -238,10 +293,27 @@ export function routeForNotification(data: unknown): string {
  * a salesman looking at the screen when a decision lands should still see it.
  */
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  }),
+  /**
+   * WHILE THE APP IS ON SCREEN, MBOS SHOWS ITS OWN BANNER instead of the
+   * system's (`components/shell/PushBanner.tsx`). The system heads-up drops a
+   * grey card over the header, covers the bell it is about, and plays the
+   * stock sound at full notification volume a foot from somebody's face —
+   * and tapping it goes through the OS rather than straight to the thing.
+   * Ours drops from under the status bar in the app's own colours, buzzes,
+   * and opens the item in one tap.
+   *
+   * Only when the banner is actually mounted: before boot, or on a screen
+   * outside the root layout, the system banner still shows, because a push
+   * that nothing displayed is a push that never arrived. It stays in the
+   * notification LIST either way, so it can be found later.
+   */
+  handleNotification: async () => {
+    const ours = hasBannerHost();
+    return {
+      shouldShowBanner: !ours,
+      shouldShowList: true,
+      shouldPlaySound: !ours,
+      shouldSetBadge: false,
+    };
+  },
 });
