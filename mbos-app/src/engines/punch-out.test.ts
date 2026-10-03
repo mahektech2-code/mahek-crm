@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { punchOutDue, workingHour } from './punch-out';
+import { punchOutDue, punchOutReminderTimes, workingHour } from './punch-out';
 
 /**
  * The punch-out prompt, pinned. Both directions matter: a prompt that never
@@ -35,4 +35,39 @@ test('never due once the day is closed', () => {
 test('an out-of-range hour is clamped rather than read literally', () => {
   assert.equal(punchOutDue({ running: true, nowMs: ist(23, 0), promptHour: 40 }), true);
   assert.equal(punchOutDue({ running: true, nowMs: ist(0, 0), promptHour: -3 }), true);
+});
+
+test('reminders: the prompt hour and the second nudge, both still ahead', () => {
+  const at = punchOutReminderTimes({ nowMs: ist(10, 0), promptHour: 18, secondAfterMinutes: 90 });
+  assert.deepEqual(at, [{ at: ist(18, 0), nth: 1 }, { at: ist(19, 30), nth: 2 }]);
+});
+
+test('reminders: one already passed is not scheduled again', () => {
+  const at = punchOutReminderTimes({ nowMs: ist(18, 10), promptHour: 18, secondAfterMinutes: 90 });
+  assert.deepEqual(at, [{ at: ist(19, 30), nth: 2 }]);
+});
+
+test('reminders: none once both have passed', () => {
+  assert.deepEqual(punchOutReminderTimes({ nowMs: ist(20, 0), promptHour: 18, secondAfterMinutes: 90 }), []);
+});
+
+test('reminders: zero turns the second one off', () => {
+  assert.deepEqual(
+    punchOutReminderTimes({ nowMs: ist(9, 0), promptHour: 18, secondAfterMinutes: 0 }),
+    [{ at: ist(18, 0), nth: 1 }],
+  );
+});
+
+test('reminders: never spill past midnight into a day nobody has started', () => {
+  assert.deepEqual(
+    punchOutReminderTimes({ nowMs: ist(9, 0), promptHour: 23, secondAfterMinutes: 120 }),
+    [{ at: ist(23, 0), nth: 1 }],
+  );
+});
+
+test('reminders: an instant just after IST midnight belongs to the new IST day', () => {
+  /* 00:10 IST is 18:40 UTC the previous calendar day — the date must come
+     from Asia/Kolkata, not from UTC, or this schedules for yesterday. */
+  const at = punchOutReminderTimes({ nowMs: ist(0, 10), promptHour: 18, secondAfterMinutes: 0 });
+  assert.deepEqual(at, [{ at: ist(18, 0), nth: 1 }]);
 });

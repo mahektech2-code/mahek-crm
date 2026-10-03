@@ -4,6 +4,7 @@ import { getKv, setKv } from '../db';
 import * as api from '../sync/api';
 import { ApiError } from '../sync/api';
 import { applyPull } from '../sync/pull';
+import { cancelPunchOutReminders } from '../native/punch-out-reminder';
 
 /**
  * Signing in.
@@ -272,6 +273,9 @@ export async function openPasswordReset(): Promise<boolean> {
 export async function signOut(): Promise<void> {
   await api.clearTokens();
   await setKv(SESSION_KEY, '');
+  /* A phone handed back must not buzz its next holder about a day that was
+     never theirs. */
+  await cancelPunchOutReminders();
 }
 
 export async function isSignedIn(): Promise<boolean> {

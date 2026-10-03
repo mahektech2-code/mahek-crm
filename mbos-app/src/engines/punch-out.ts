@@ -42,3 +42,49 @@ export function punchOutDue(args: { running: boolean; nowMs: number; promptHour:
   const hour = Math.min(23, Math.max(0, Math.floor(args.promptHour)));
   return workingHour(args.nowMs) >= hour;
 }
+
+const DATE = new Intl.DateTimeFormat('en-CA', {
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  timeZone: 'Asia/Kolkata',
+});
+
+/** IST is a fixed UTC+05:30 with no daylight saving, so this is exact. */
+const IST_OFFSET_MS = 330 * 60_000;
+
+/** The instant of `hour:minute` IST on the IST day containing `nowMs`. */
+function istInstant(nowMs: number, hour: number, minute: number): number {
+  const [y, m, d] = DATE.format(new Date(nowMs)).split('-').map(Number);
+  return Date.UTC(y, m - 1, d, hour, minute) - IST_OFFSET_MS;
+}
+
+/**
+ * When to buzz somebody who is still punched in, today.
+ *
+ * The first at the prompt hour — the same moment Home and the bar change, so
+ * the notification and the screen say the same thing at the same time — and a
+ * second `secondAfterMinutes` later for whoever was on a bike for the first.
+ * Two and no more: a reminder that repeats every half hour until midnight is
+ * one that gets its channel switched off, and then it reminds nobody of
+ * anything. Zero turns the second off.
+ *
+ * Only instants still ahead of `nowMs`, and never past the end of the IST day:
+ * a reminder scheduled for "tomorrow 00:30" is a reminder about yesterday,
+ * landing on a day nobody has punched in to yet.
+ */
+export function punchOutReminderTimes(args: {
+  nowMs: number;
+  promptHour: number;
+  secondAfterMinutes: number;
+}): { at: number; nth: 1 | 2 }[] {
+  const hour = Math.min(23, Math.max(0, Math.floor(args.promptHour)));
+  const first = istInstant(args.nowMs, hour, 0);
+  const endOfDay = istInstant(args.nowMs, 23, 59);
+  /* `nth` travels with the instant, so the second nudge keeps its own words
+     when the first has already gone off and is not rescheduled. */
+  const times: { at: number; nth: 1 | 2 }[] = [{ at: first, nth: 1 }];
+  const gap = Math.floor(args.secondAfterMinutes);
+  if (gap > 0) times.push({ at: first + gap * 60_000, nth: 2 });
+  return times.filter((t) => t.at > args.nowMs && t.at <= endOfDay);
+}
