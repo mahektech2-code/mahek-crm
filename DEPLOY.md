@@ -339,6 +339,40 @@ the release back on whichever laptop has a JDK — which is the situation this
 workflow exists to end. Local `gradlew assembleRelease` is for trying a change
 on your own phone.
 
+## Push notifications
+
+**Until this is done, no handset can receive a push.** Every notification the
+office sends still lands on the in-app bell, but nothing reaches the lock
+screen: on Android a push token needs Firebase built into the APK, and on
+2026-10-03 not one active handset held a token. It takes two credentials, both
+from one Firebase project, and someone with the Google account has to create
+it.
+
+1. **Create the Firebase project.** console.firebase.google.com → Add project
+   (e.g. `mahek-mbos`). Analytics is not needed.
+2. **Register the Android app.** Project settings → Your apps → Add app →
+   Android, package name **`in.mahek.mbos`** (it must match `app.json`
+   exactly). Download `google-services.json`.
+3. **Give it to the APK build.** GitHub → Settings → Secrets and variables →
+   Actions → New repository secret, named **`MBOS_GOOGLE_SERVICES_JSON`**,
+   with the whole file pasted as the value. The `MBOS APK` workflow writes it
+   into the build and names it in `app.json` for that build only.
+4. **Let Expo send through it.** Firebase → Project settings → Service
+   accounts → Generate new private key (a JSON file). Then, from `mbos-app/`:
+   `npx eas-cli@latest credentials -p android` → production → Google Service
+   Account → *Manage your Google Service Account Key for Push Notifications
+   (FCM V1)* → upload that file. Or the same from expo.dev → the `mbos`
+   project → Credentials. Without this the handsets get tokens and Expo
+   refuses to deliver to them.
+5. **Ship an APK** (`MBOS APK` workflow, after the version bump — see
+   "Releasing the handset app"). This is native, so an over-the-air update
+   cannot carry it. Its run log says "Firebase configured for this build";
+   a warning instead means the secret was not found.
+6. **Check it worked.** Once salesmen have installed it and opened the app,
+   `mbos_devices.push_token` fills in, and Profile on the handset says push is
+   on. The handset's own punch-out reminder then switches itself off, because
+   the office's notification has taken over.
+
 ## Shipping to the handset without reinstalling it
 
 **Most changes to MBOS no longer need an APK.** `expo-updates` is wired in:
