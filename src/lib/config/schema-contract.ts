@@ -1,7 +1,9 @@
 /* ---------------------------------------------------------------------------
- * The CRM's published configuration schema.
+ * Every settings page's published schema.
  *
- * This is the contract the Admin Console renders. It is derived from the
+ * This is the contract the Admin Console renders — one schema per settings
+ * page, the pages listed in `settings-pages.ts` and each setting placed on one
+ * by `settings-placement.ts`. It is derived from the
  * registry and the presentation declaration — never hand-maintained — so a
  * setting added to the registry appears in the console with no console change,
  * and a setting the console shows is always one the CRM actually reads.
@@ -22,9 +24,9 @@ import {
   ISO_DAYS,
   PRESENTATION,
   TABS,
-  TAB_ORDER,
   type Control,
 } from "./presentation";
+import { PAGE_TABS, placeSetting } from "./settings-placement";
 
 export type SchemaField = {
   key: string;
@@ -67,74 +69,89 @@ function fallbackControl(def: SettingDefinition): Control {
   }
 }
 
-/** HRMS publishes its own schema below, so the CRM's does not carry its keys. */
+/** HRMS publishes its own schema below, so no other page carries its keys. */
 const isHrmsKey = (key: string) => key.startsWith("hrms.");
 
-export function crmSchema(): AppSchema {
-  const byTab = new Map<string, Map<string, SchemaField[]>>();
+/** One setting, in the shape the console renders. */
+function fieldOf(raw: SettingDefinition): SchemaField {
+  const p = PRESENTATION[raw.key];
+  const control = p?.control ?? fallbackControl(raw);
+  return {
+    key: raw.key,
+    label: raw.label,
+    control,
+    help: raw.description,
+    unit: p?.unit,
+    min: raw.min,
+    max: raw.max,
+    options: p?.options ? [...p.options] : raw.options ? [...raw.options] : undefined,
+    parts: p?.parts,
+    adminOnly: p?.adminOnly,
+    impact: p?.impact,
+    def: toConsole(raw.default, control, p?.parts),
+  };
+}
+
+/**
+ * One settings page's schema: every setting `placeSetting` puts on it, in its
+ * tabs and groups, plus — on the CRM's page — the collections it lists.
+ */
+export function pageSchema(page: string): AppSchema {
+  if (page === "hrms") return hrmsSchema();
+  const declared = PAGE_TABS[page] ?? [];
+  const byTab = new Map<string, Map<string, { rank: number; note?: string; fields: SchemaField[] }>>();
+  const groupOf = (tab: string, label: string, rank: number, note?: string) => {
+    if (!byTab.has(tab)) byTab.set(tab, new Map());
+    const groups = byTab.get(tab)!;
+    const g = groups.get(label) ?? { rank, note, fields: [] };
+    g.rank = Math.min(g.rank, rank);
+    g.note ??= note;
+    groups.set(label, g);
+    return g;
+  };
 
   for (const raw of SETTINGS as readonly SettingDefinition[]) {
     if (isHrmsKey(raw.key)) continue;
-    const p = PRESENTATION[raw.key];
-    const tab = p?.tab ?? "Other";
-    const group = p?.group ?? "Not yet placed";
-    const control = p?.control ?? fallbackControl(raw);
-
-    const field: SchemaField = {
-      key: raw.key,
-      label: raw.label,
-      control,
-      help: raw.description,
-      unit: p?.unit,
-      min: raw.min,
-      max: raw.max,
-      options: p?.options ? [...p.options] : raw.options ? [...raw.options] : undefined,
-      parts: p?.parts,
-      adminOnly: p?.adminOnly,
-      impact: p?.impact,
-      def: toConsole(raw.default, control, p?.parts),
-    };
-
-    if (!byTab.has(tab)) byTab.set(tab, new Map());
-    const groups = byTab.get(tab)!;
-    if (!groups.has(group)) groups.set(group, []);
-    groups.get(group)!.push(field);
+    const at = placeSetting(raw.key);
+    if (!at || at.page !== page) continue;
+    const presented = PRESENTATION[raw.key]?.tab;
+    groupOf(at.tab, at.group, at.rank, presented ? GROUP_NOTES[`${presented} · ${at.group}`] : undefined).fields.push(
+      fieldOf(raw),
+    );
   }
 
   // Entity collections sit in the same tabs and groups as the settings, because
   // to an admin "the products" and "how products are offered" are one screen.
-  for (const c of ENTITY_COLLECTIONS) {
-    const field: SchemaField = {
-      key: c.key,
-      label: c.label,
-      control: "entity",
-      help: c.help,
-      def: null,
-      entity: { noun: c.noun, cta: c.cta, built: c.built, editable: c.editable, href: c.href },
-    };
-    if (!byTab.has(c.tab)) byTab.set(c.tab, new Map());
-    const groups = byTab.get(c.tab)!;
-    if (!groups.has(c.group)) groups.set(c.group, []);
-    groups.get(c.group)!.unshift(field);
+  if (page === "crm") {
+    for (const c of ENTITY_COLLECTIONS) {
+      const slug = TABS.find((t) => t.label === c.tab)?.slug ?? slugify(c.tab);
+      const rank = (GROUP_ORDER[c.tab] ?? []).indexOf(c.group);
+      groupOf(slug, c.group, rank >= 0 ? rank : 999, GROUP_NOTES[`${c.tab} · ${c.group}`]).fields.unshift({
+        key: c.key,
+        label: c.label,
+        control: "entity",
+        help: c.help,
+        def: null,
+        entity: { noun: c.noun, cta: c.cta, built: c.built, editable: c.editable, href: c.href },
+      });
+    }
   }
 
-  const tabs: SchemaTab[] = [...byTab.entries()]
-    .sort((a, b) => order(TAB_ORDER as readonly string[], a[0]) - order(TAB_ORDER as readonly string[], b[0]))
-    .map(([label, groups]) => ({
-      // Declared where one exists, generated only for a tab nobody has placed
-      // yet — so an unplaced tab is still addressable rather than unreachable.
-      key: TABS.find((t) => t.label === label)?.slug ?? slugify(label),
-      label,
-      groups: [...groups.entries()]
-        .sort((a, b) => order(GROUP_ORDER[label] ?? [], a[0]) - order(GROUP_ORDER[label] ?? [], b[0]))
-        .map(([groupLabel, fields]) => ({
-          label: groupLabel,
-          note: GROUP_NOTES[`${label} · ${groupLabel}`],
-          fields,
-        })),
+  const tabs: SchemaTab[] = declared
+    .filter((t) => byTab.has(t.slug))
+    .map((t) => ({
+      key: t.slug,
+      label: t.label,
+      groups: [...byTab.get(t.slug)!.entries()]
+        .sort((a, b) => a[1].rank - b[1].rank)
+        .map(([label, g]) => ({ label, note: g.note, fields: g.fields })),
     }));
-
   return { tabs };
+}
+
+/** The Telecaller CRM's own settings. */
+export function crmSchema(): AppSchema {
+  return pageSchema("crm");
 }
 
 /* ---------------------------------------------------------------------------
@@ -189,10 +206,6 @@ export function hrmsSchema(): AppSchema {
   return { tabs: tabs.filter((t) => t.groups.length) };
 }
 
-function order(list: readonly string[], value: string): number {
-  const i = list.indexOf(value);
-  return i === -1 ? list.length : i;
-}
 
 /* ------------------------------------------------- value shape conversion */
 

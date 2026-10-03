@@ -418,8 +418,8 @@ export function ShopMap({
           </p>
           <p className="mt-1 max-w-[420px] text-[13px] text-muted">
             {keysSpent
-              ? "Ola has refused every key held for quota, so there are no streets to draw until one of them resets at the start of the month or another is added in Admin Console → Platform → Maps."
-              : "Add an Ola Maps key in Admin Console → Platform → Maps to draw the streets under this."}{" "}
+              ? "Ola has refused every key held for quota, so there are no streets to draw until one of them resets at the start of the month or another is added in Admin Console → Integrations."
+              : "Add an Ola Maps key in Admin Console → Integrations to draw the streets under this."}{" "}
             The table above still has everything that is known.
           </p>
         </div>

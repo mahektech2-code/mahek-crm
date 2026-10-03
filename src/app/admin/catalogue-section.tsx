@@ -1,5 +1,7 @@
 "use client";
 
+import { ADMIN_TABS } from "@/lib/admin-routes";
+
 import * as React from "react";
 import {
   Badge,
@@ -50,18 +52,7 @@ import type { CatalogueData } from "./catalogue-data";
  * this was seeded from is a starting point, and the tables are what is true.
  * ------------------------------------------------------------------------- */
 
-export const CATALOGUE_TABS = [
-  { slug: "skus", label: "All SKUs" },
-  { slug: "goods", label: "Finished goods" },
-  { slug: "brands", label: "Brands & formulations" },
-  { slug: "categories", label: "Categories" },
-  { slug: "duplicates", label: "Duplicates" },
-  { slug: "exceptions", label: "Held & excluded" },
-  { slug: "import", label: "Import" },
-] as const;
-
-export const CATALOGUE_SUBTITLE =
-  "Formulation, brand, finished good and SKU. An order line attaches to a SKU and to nothing else.";
+export const CATALOGUE_TABS = ADMIN_TABS.catalogue;
 
 /** Paise → "₹46.00", and an em dash where there is no number at all. */
 function money(paise: number | null | undefined): string {

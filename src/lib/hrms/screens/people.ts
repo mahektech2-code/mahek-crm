@@ -32,6 +32,7 @@ import { fdShort, tmin, WEEKDAYS, workingAge } from "../time";
 import { hrmsLink } from "../registry";
 import { availability, dutyDuration, officeDuration } from "../calcs/people";
 import { personFrom, personOption, scopeFor } from "./attendance";
+import { ADMIN } from "@/lib/admin-routes";
 
 /* ---------------------------------------------------------------------------
  * People (spec §4, §5, §15): the employee directory and its sign-up form, ID
@@ -203,7 +204,7 @@ function employeeRow(ctx: HrmsContext, e: Employee, counts: Record<string, numbe
       why: !hr ? "Only HR or admin deactivates an employee" : own ? "You cannot deactivate your own record" : undefined,
     });
   if (e.status !== "active") actions.push({ id: "activate", l: "Activate", why: hr ? undefined : "Only HR or admin activates an employee" });
-  if (has(ctx, "admin")) actions.push({ id: "access", l: "Manage access", href: "/admin/access" });
+  if (has(ctx, "admin")) actions.push({ id: "access", l: "Manage access", href: ADMIN.access });
   if (own || hr)
     actions.push({
       id: "photo",

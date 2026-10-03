@@ -119,7 +119,7 @@ export async function readWithVision(bytes: Uint8Array, contentType: string): Pr
   if (!key) {
     return {
       error:
-        "This file has no text in it, so it has to be read by a model, and no OpenAI key is set. Add one in Admin Console → Platform, or upload a PDF that was exported rather than scanned.",
+        "This file has no text in it, so it has to be read by a model, and no OpenAI key is set. Add one in Admin Console → Integrations, or upload a PDF that was exported rather than scanned.",
     };
   }
 

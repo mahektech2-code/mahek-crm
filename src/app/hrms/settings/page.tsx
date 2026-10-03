@@ -5,6 +5,7 @@ import { hrmsContext } from "@/lib/hrms/access";
 import { getConfig } from "@/lib/config/store";
 import { hrmsSchema } from "@/lib/config/schema-contract";
 import type { Config } from "@/lib/config/registry";
+import { ADMIN } from "@/lib/admin-routes";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "HRMS settings — MahekOne" };
@@ -20,14 +21,14 @@ export default async function HrmsSettings() {
   const ctx = await hrmsContext();
   if (!ctx.screens.has("settings")) redirect("/hrms");
   const apps = await listUserApps(ctx.user.id);
-  if (apps.includes("admin")) redirect("/admin/app-hrms");
+  if (apps.includes("admin")) redirect(ADMIN.settingsFor("hrms"));
   const config = await getConfig();
   const schema = hrmsSchema();
   return (
     <div className="grid gap-4">
       <div className="rounded-[6px] border border-line bg-surface px-4 py-3 text-[13px] text-body">
         These are the rules HRMS runs on. They are changed by an administrator in the{" "}
-        <Link href="/admin/app-hrms">Admin Console</Link>, where every change is recorded.
+        <Link href={ADMIN.settingsFor("hrms")}>Admin Console</Link>, where every change is recorded.
       </div>
       {schema.tabs.map((t) => (
         <section key={t.key} className="rounded-[8px] border border-line bg-surface">

@@ -82,11 +82,6 @@ export type MapsData = {
   canWrite: boolean;
 };
 
-export const MAPS_SUBTITLE =
-  "The key the Live map and Territory's shop map call Ola Maps with — for the streets under both, and for laying a salesman's trail onto the road he actually walked.";
-
-export const MAPS_TABS = [{ slug: "credentials", label: "Credentials" }];
-
 const SPARE_META = (position: number): SecretMeta => ({
   label: `Ola Maps — key ${position}`,
   env: `OLAMAPS_API_KEY_${position}`,
