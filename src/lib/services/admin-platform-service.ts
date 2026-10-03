@@ -587,47 +587,6 @@ export async function importHistory(limit = 50): Promise<ImportRow[]> {
   }));
 }
 
-export type MigrationRow = { tag: string; appliedAt: string };
-
-/**
- * What the database has actually been through.
- *
- * Read from Drizzle's own bookkeeping table rather than the migrations folder,
- * because the question this answers is "is this database up to date", and the
- * folder is what SHOULD have been applied.
- */
-export async function migrationStatus(): Promise<{
-  applied: MigrationRow[];
-  pending: number;
-}> {
-  const rows = await db.execute<{ hash: string; created_at: string }>(sql`
-    select hash, created_at from drizzle.__drizzle_migrations order by created_at desc limit 30
-  `);
-
-  // The journal is the list of what exists in the repository. Comparing counts
-  // is enough to say "this database is behind" without shipping the folder.
-  const [{ n }] = await db.execute<{ n: number }>(sql`
-    select count(*)::int as n from drizzle.__drizzle_migrations
-  `);
-
-  const journalLength = MIGRATION_COUNT;
-
-  return {
-    applied: rows.map((r) => ({
-      tag: r.hash.slice(0, 12),
-      appliedAt: new Date(Number(r.created_at)).toISOString(),
-    })),
-    pending: Math.max(0, journalLength - n),
-  };
-}
-
-/**
- * How many migrations the repository holds. A constant rather than a file read
- * because the server bundle has no filesystem access to `drizzle/` in
- * production — and it only ever moves when somebody adds one.
- */
-const MIGRATION_COUNT = 28;
-
 /* --------------------------------------------------------- notifications */
 
 export type NotificationRow = {

@@ -20,6 +20,7 @@ import {
   type Capability,
   type Hat,
 } from "./capability-matrix";
+import { requireConsoleConfirmed } from "@/lib/console-confirm";
 export * from "./capability-matrix";
 export { roleLabel, ROLE_LEVELS, type Role } from "./role-levels";
 import type { Role } from "./role-levels";
@@ -513,6 +514,9 @@ export async function requirePlatformAdminUser(): Promise<User> {
   if (!(await isPlatformAdmin(user))) {
     throw new NotPermittedError("access.manage");
   }
+  // And a password proved recently — the console's own rule, enforced here
+  // because an action is reachable without the console's layout in front.
+  await requireConsoleConfirmed();
   return user;
 }
 

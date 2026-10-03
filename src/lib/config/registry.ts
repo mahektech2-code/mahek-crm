@@ -714,6 +714,51 @@ export const SETTINGS = [
   },
   /* -------------------------------------------------------------- sign-in */
   /*
+   * Passwords and the Admin Console. A password could be guessed as fast as
+   * somebody could post the form; the console, which can sign in as anybody
+   * and grant anybody anything, opened for any session up to thirty days old.
+   */
+  {
+    key: "auth.password.maxFailures",
+    type: "integer",
+    category: "auth",
+    label: "Wrong passwords before an account pauses",
+    description: "How many wrong passwords one account tolerates inside the window below before sign-in is refused for it until the window passes. The pause is on the account, not the person: somebody locked out can still sign in with a WhatsApp code, which has its own limits.",
+    default: 5,
+    min: 3,
+    max: 20,
+  },
+  {
+    key: "auth.password.failureWindowMinutes",
+    type: "integer",
+    category: "auth",
+    label: "Window for counting wrong passwords",
+    description: "Minutes over which wrong passwords are counted, for one account and for one network address. It is also how long a paused account waits.",
+    default: 15,
+    min: 5,
+    max: 240,
+  },
+  {
+    key: "auth.password.maxFailuresPerAddress",
+    type: "integer",
+    category: "auth",
+    label: "Wrong passwords from one address",
+    description: "How many wrong passwords one network address may send across every account inside the window. The per-account limit stops somebody guessing one password; this stops them guessing one common password against everybody. An office shares one address, so it is set well above the per-account figure.",
+    default: 30,
+    min: 10,
+    max: 500,
+  },
+  {
+    key: "auth.console.confirmMinutes",
+    type: "integer",
+    category: "auth",
+    label: "Admin Console: ask for the password again after",
+    description: "Minutes a session may sit idle before the Admin Console asks for the password again. Every console page opened moves it forward, so somebody working in the console is not interrupted. The rest of MahekOne is unaffected; a session stays signed in for thirty days, and only the console asks.",
+    default: 30,
+    min: 5,
+    max: 240,
+  },
+  /*
    * NOTHING READS THESE YET, and a reader should know it before tuning one.
    * They were written for a sign-in where a work number and a code sent to it
    * are the whole credential. That flow is not built: `otp_channel` is an enum
@@ -5152,6 +5197,10 @@ export type Config = {
   "people.companyName": string;
   "people.pickerSearchThreshold": number;
 
+  "auth.password.maxFailures": number;
+  "auth.password.failureWindowMinutes": number;
+  "auth.password.maxFailuresPerAddress": number;
+  "auth.console.confirmMinutes": number;
   "auth.otp.codeLength": number;
   "auth.otp.ttlMinutes": number;
   "auth.otp.maxVerifyAttempts": number;

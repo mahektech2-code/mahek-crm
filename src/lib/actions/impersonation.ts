@@ -4,7 +4,11 @@ import { randomUUID } from "node:crypto";
 import { and, eq, isNull } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLog, impersonationTokens, users } from "@/db/schema";
-import { createSession, requireUser } from "@/lib/auth";
+import { createSession } from "@/lib/auth";
+import { requirePlatformAdminUser } from "@/lib/access-control";
+import { ConsoleNotConfirmedError } from "@/lib/console-confirm";
+import { notifyUser } from "@/lib/notify";
+import { stamp } from "@/lib/format";
 import { listUserApps } from "@/lib/access";
 import { getApp } from "@/lib/apps";
 import { appOrigin } from "@/lib/password-reset";
@@ -21,19 +25,28 @@ import { err as fail, ok, type Result } from "@/lib/result";
  *
  * Two actions, deliberately kept apart from `actions/people.ts`'s manager-
  * gated writes: minting a link needs nobody's password and is checked here
- * against `role === "admin"` specifically, and consuming one needs nobody
- * to be signed in at all — the whole point is that it signs somebody IN. A
- * shared file would have made it easy to reach for the wrong guard.
+ * by `requirePlatformAdminUser` — a platform administrator who has proved
+ * their own password recently (`lib/console-confirm.ts`) — and consuming one
+ * needs nobody to be signed in at all — the whole point is that it signs
+ * somebody IN. A shared file would have made it easy to reach for the wrong
+ * guard.
+ *
+ * The person signed in as is TOLD. This is the single most powerful thing
+ * the console does, and the audit log records it under the administrator's
+ * id where the account holder will never look; a notification on their own
+ * bell is what makes a link used by the wrong person something somebody
+ * notices.
  * ------------------------------------------------------------------------- */
 
 const newId = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
 async function admin() {
-  const user = await requireUser();
-  if (user.role !== "admin") {
-    throw new Error("Only an admin can generate a sign-in link for another account.");
+  try {
+    return await requirePlatformAdminUser();
+  } catch (e) {
+    if (e instanceof ConsoleNotConfirmedError) throw e;
+    throw new Error("Only a platform administrator can generate a sign-in link for another account.");
   }
-  return user;
 }
 
 async function audit(
@@ -161,6 +174,17 @@ export async function enterImpersonatedSession(
     user.id,
     `Signed in as ${user.name}`,
   );
+  const [by] = await db.select({ name: users.name }).from(users).where(eq(users.id, row.createdById)).limit(1);
+  try {
+    await notifyUser({
+      userId: user.id,
+      kind: "warn",
+      title: "An administrator signed in as you",
+      body: `${by?.name ?? "An administrator"} opened MahekOne as you at ${stamp(new Date())}, using a one-time admin link. Nothing about your password changed. If you did not expect this, tell your manager.`,
+    });
+  } catch {
+    // A bell that could not be written must not undo a sign-in already made.
+  }
 
   // Imported lazily: next/navigation pulls in the client React runtime,
   // which cannot be loaded outside a request — see requireUser() in

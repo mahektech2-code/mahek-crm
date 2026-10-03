@@ -1846,7 +1846,15 @@ export async function markNotificationRead(
 async function requireConfigWriteFor(keys: string[]) {
   const ctx = await requireCapability("config.write");
   const { isPlatformAdmin, hatsFor, NotPermittedError } = await import("@/lib/access-control");
-  if (await isPlatformAdmin(ctx.user)) return ctx;
+  if (await isPlatformAdmin(ctx.user)) {
+    // Every key, including the sign-in limits themselves — so the console's
+    // password check applies here too. A manager's write is narrowed to their
+    // own apps' pages below and may come from that app's own settings screen,
+    // so it is not asked.
+    const { requireConsoleConfirmed } = await import("@/lib/console-confirm");
+    await requireConsoleConfirmed();
+    return ctx;
+  }
 
   const { placeSetting } = await import("@/lib/config/settings-placement");
   const { settingsPage } = await import("@/lib/config/settings-pages");

@@ -13,6 +13,13 @@ import {
 } from "@/lib/auth";
 import { err as fail, ok as okData, okVoid as ok, type Result } from "@/lib/result";
 import { otpAvailability, sendOtp, verifyOtp } from "@/lib/services/otp-service";
+import {
+  accountKey,
+  clearSignInFailures,
+  clientAddress,
+  recordSignInFailure,
+  signInRefusal,
+} from "@/lib/services/sign-in-throttle";
 
 /* ---------------------------------------------------------------------------
  * What a person may do to their OWN account, from the account menu in every
@@ -116,11 +123,19 @@ export async function changePassword(
         { field: "current", message: "Enter your current password." },
       ]);
     }
+    // A session somebody walked away from must not become a place to guess
+    // the password at leisure: this shares the sign-in's count.
+    const account = accountKey(user.id, "");
+    const address = await clientAddress();
+    const refused = await signInRefusal(account, address);
+    if (refused) return fail(refused, "validation", [{ field: "current", message: refused }]);
     if (!(await verifyPassword(parsed.data.current, row.passwordHash))) {
+      await recordSignInFailure(account, address);
       return fail("That is not your current password.", "validation", [
         { field: "current", message: "That is not your current password." },
       ]);
     }
+    await clearSignInFailures(account);
   }
 
   const passwordHash = await hashPassword(parsed.data.password);

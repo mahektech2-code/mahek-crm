@@ -42,7 +42,7 @@ export type Placement = {
 /** Every page's tabs, in the order they are drawn. */
 export const PAGE_TABS: Record<string, Array<{ slug: string; label: string }>> = {
   platform: [
-    { slug: "sign-in", label: "Sign-in codes" },
+    { slug: "sign-in", label: "Sign-in" },
     { slug: "workday", label: "Workday" },
     { slug: "attachments", label: "Attachments" },
     { slug: "people", label: "People & names" },
@@ -122,6 +122,7 @@ const RULES: Rule[] = [
     tab: "sign-in",
     group: "How the code is sent",
   },
+  { test: /^auth\.(password|console)\./, page: "platform", tab: "sign-in", group: "Passwords and the console" },
   { test: /^auth\./, page: "platform", tab: "sign-in", group: "The code itself" },
   { test: /^workingDay\./, page: "platform", tab: "workday" },
   { test: /^attachments\.maxPerFeedback$/, page: "platform", tab: "attachments", group: "Limits" },
