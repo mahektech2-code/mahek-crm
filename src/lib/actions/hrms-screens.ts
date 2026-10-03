@@ -117,7 +117,7 @@ export async function hrmsSearch(q: string): Promise<HrmsSearchHit[]> {
     const { allPeople, visibleIds } = await import("@/lib/hrms/services/people");
     const { scopeOf } = await import("@/lib/hrms/access");
     const people = await allPeople();
-    const ids = visibleIds(ctx, scopeOf(ctx, "hr"), people);
+    const ids = visibleIds(ctx, scopeOf(ctx, "hr"));
     const n = term.toLowerCase();
     people
       .filter((p) => (!ids || ids.has(p.id)) && (p.name.toLowerCase().includes(n) || String(p.code ?? "").toLowerCase().includes(n)))

@@ -153,6 +153,10 @@ export const CRM_EVENT = {
 export const HRMS_EVENT = {
   callPlanned: "hrms_call_planned",
   call: "hrms_call",
+  /* A meeting or call a salesman logged on the Sales desk. It reached the
+     customer's history nowhere until the restructure, so the record showed
+     the telecaller's calls and the field visits and not the office's own. */
+  activity: "hrms_activity",
 } as const;
 
 export const MBOS_EVENT = {

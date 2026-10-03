@@ -606,9 +606,9 @@ const employeesScreen: HrmsScreenModule = {
   key: "employees",
   async load(ctx, q) {
     const t = today();
-    const [rows, people] = await Promise.all([db.select().from(employees).orderBy(asc(employees.name)), allPeople()]);
+    const rows = await db.select().from(employees).orderBy(asc(employees.name));
     const { scope, options } = scopeFor(ctx, q, "hr");
-    const ids = visibleIds(ctx, scope, people);
+    const ids = visibleIds(ctx, scope);
     const shown = ids ? rows.filter((r) => ids.has(r.id)) : rows;
     const counts = await relatedCounts(ids ? [...ids] : undefined);
     const hr = has(ctx, "hr");
@@ -1161,7 +1161,7 @@ const officesScreen: HrmsScreenModule = {
          an office that no longer exists. */
       const [stock] = (await db.execute(sql`select count(*)::int as n from hrms_asset_stock where office_name = ${o.name}`)) as unknown as { n: number }[];
       if (Number(stock?.n)) return err(`${plural(Number(stock.n), "asset stock lot")} ${Number(stock.n) === 1 ? "is" : "are"} filed under ${o.name}. Move them first.`, "rule_violation");
-      const [docs] = (await db.execute(sql`select count(*)::int as n from hrms_documents where tagged = ${o.name}`)) as unknown as { n: number }[];
+      const [docs] = (await db.execute(sql`select count(*)::int as n from mbos_documents where audience = ${o.name} and active`)) as unknown as { n: number }[];
       if (Number(docs?.n)) return err(`${plural(Number(docs.n), "document")} ${Number(docs.n) === 1 ? "is" : "are"} meant for ${o.name}. Change who ${Number(docs.n) === 1 ? "it is" : "they are"} for first.`, "rule_violation");
       await db.delete(hrmsOffices).where(eq(hrmsOffices.id, id));
       await hrmsAudit(ctx, "hrms.office.delete", "hrms_offices", id, o, null);
@@ -1212,7 +1212,7 @@ const timings: HrmsScreenModule = {
   async load(ctx, q) {
     const [rows, people] = await Promise.all([db.select().from(hrmsStaffTimings), allPeople()]);
     const { scope, options } = scopeFor(ctx, q, "timings", "hr");
-    const ids = visibleIds(ctx, scope, people);
+    const ids = visibleIds(ctx, scope);
     const pb = byId(people);
     const can = canTimings(ctx);
     const usedBy = new Map<string, Set<string>>();

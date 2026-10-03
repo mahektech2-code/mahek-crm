@@ -66,6 +66,7 @@ import {
 import { bookIdsIgnoringTerritory } from "@/lib/services/mbos-service";
 import { repriceDay, rescoreLeg } from "@/lib/services/expense-submit-service";
 import { notifyUsers } from "../notify";
+import { announce } from "@/lib/services/announcement-service";
 
 /** Count, noun and verb agree at every value. */
 function plural(n: number, noun: string, pl?: string): string {
@@ -1152,14 +1153,25 @@ export async function sendFieldNotification(input: {
       );
     }
 
-    await notifyUsers(targets.map((userId) => ({ userId, title, body })));
+    /* The same sender HRMS's Announcements uses, so the message is on record
+       beside the office's, with exactly who it went to, and the bell is its
+       only read state (lib/services/announcement-service.ts). */
+    const { id: announcementId } = await announce({
+      senderUserId: user.id,
+      fromName: user.name,
+      toLabel: input.audience === "all" ? "The field team" : plural(targets.length, "person in the field team", "people in the field team"),
+      title,
+      text: body,
+      recipients: targets,
+      source: "sales",
+    });
 
     await db.insert(auditLog).values({
       id: gen("aud"),
       actorId: user.id,
       action: "mbos.notification.send",
       entityType: "notification_broadcast",
-      entityId: gen("bcast"),
+      entityId: announcementId,
       afterState: { title, body, audience: input.audience, recipientCount: targets.length } as never,
     });
 

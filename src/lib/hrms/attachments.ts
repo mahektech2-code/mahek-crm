@@ -29,7 +29,7 @@ export async function canReadHrmsAttachment(parentType: string, parentId: string
       /* The register's own rule: a head's team, and the staff of their office
          they mark — the same people whose day they can see and act on. */
       const people = await allPeople();
-      if (visibleIds(ctx, scope, people)?.has(row.employeeId)) return true;
+      if (visibleIds(ctx, scope)?.has(row.employeeId)) return true;
       return staffInReach(ctx, people, "markStaff")?.has(row.employeeId) ?? false;
     }
     case "hrms_employee":

@@ -2,7 +2,7 @@ import "server-only";
 import { cache } from "react";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { employees, hrmsUserPowers, type User } from "@/db/schema";
+import { employeeReporting, employees, hrmsUserPowers, type User } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
 import { isPlatformAdmin, levelInApp } from "@/lib/access-control";
 import { listUserApps, listUserModules } from "@/lib/access";
@@ -49,6 +49,17 @@ export type HrmsContext = {
   employee: HrmsEmployeeRef | null;
   /** A department head: Position ending in "Head" (spec §1.2). */
   isHead: boolean;
+  /**
+   * WHO REPORTS TO THIS PERSON — "my team". The org chart answers it
+   * (`employee_reporting`, a person named as their manager), and the sheet's
+   * Report To job title answers it only for people the chart has not placed
+   * at all. Two models of one question used to give two answers: the CRM read
+   * the chart for sales-manager seats while HRMS read the job title for team
+   * scope, so moving somebody on the chart moved their accounts and not their
+   * attendance. One answer now, with the job title as the fallback rather
+   * than a rival.
+   */
+  team: ReadonlySet<string>;
   /** Holds the Admin Console's Access screen, where grants and powers are changed. */
   platformAdmin: boolean;
   /** Overtime / QR check-in switched on. */
@@ -92,6 +103,7 @@ export const hrmsContext = cache(async function hrmsContext(): Promise<HrmsConte
   }
 
   const isHead = isHeadPosition(employee?.position);
+  const team = employee ? await teamOf(employee) : new Set<string>();
   const powers = new Set<HrmsPower>(
     administrator ? HRMS_POWERS : powerRows.map((r) => r.power).filter((p): p is HrmsPower => (HRMS_POWERS as readonly string[]).includes(p)),
   );
@@ -116,8 +128,27 @@ export const hrmsContext = cache(async function hrmsContext(): Promise<HrmsConte
     for (const tab of sc.views ?? []) if (!tab.flag || flags[tab.flag]) screens.add(tab.key);
   }
 
-  return { user, level, administrator, powers, granted, screens, employee, isHead, platformAdmin, flags };
+  return { user, level, administrator, powers, granted, screens, employee, isHead, team, platformAdmin, flags };
 });
+
+/** Direct reports on the org chart, and — for people the chart has not placed — those whose Report To is my job title. */
+async function teamOf(me: HrmsEmployeeRef): Promise<Set<string>> {
+  const [chart, placed] = await Promise.all([
+    db.select({ id: employeeReporting.employeeId }).from(employeeReporting).where(eq(employeeReporting.managerId, me.id)),
+    db.select({ id: employeeReporting.employeeId }).from(employeeReporting),
+  ]);
+  const ids = new Set(chart.map((r) => r.id));
+  if (me.position) {
+    const onChart = new Set(placed.map((r) => r.id));
+    const byTitle = await db
+      .select({ id: employees.id })
+      .from(employees)
+      .where(sql`lower(trim(${employees.reportsTo})) = ${me.position.trim().toLowerCase()}`);
+    for (const r of byTitle) if (!onChart.has(r.id)) ids.add(r.id);
+  }
+  ids.delete(me.id);
+  return ids;
+}
 
 /** Whether this person holds a power. */
 export const has = (ctx: HrmsContext, p: HrmsPower) => ctx.powers.has(p);
@@ -130,7 +161,7 @@ export const has = (ctx: HrmsContext, p: HrmsPower) => ctx.powers.has(p);
 export function scopeOf(ctx: HrmsContext, ...widening: HrmsPower[]): Scope {
   if (ctx.administrator || ctx.level === "manager") return "all";
   if (widening.some((p) => ctx.granted.has(p))) return "all";
-  if (ctx.isHead) return "team";
+  if (ctx.isHead || ctx.team.size > 0) return "team";
   return "mine";
 }
 

@@ -620,7 +620,7 @@ const leave: HrmsScreenModule = {
   async load(ctx, q) {
     const people = await allPeople();
     const { scope, options } = scopeFor(ctx, q, "approveLeave", "hr");
-    const ids = visibleIds(ctx, scope, people);
+    const ids = visibleIds(ctx, scope);
     const [reqs, book, hol, form] = await Promise.all([requestsFor(ids), balBook(ids ? [...ids] : null), holidays(), applyForm(ctx, people, "leave")]);
     const vc = visibleCols(LEAVE_COLS, hasP(ctx));
     const pb = byId(people);
@@ -653,7 +653,7 @@ const approvals: HrmsScreenModule = {
   async load(ctx, q) {
     const people = await allPeople();
     const { scope, options } = scopeFor(ctx, q, "approveLeave", "hr");
-    const ids = visibleIds(ctx, scope, people);
+    const ids = visibleIds(ctx, scope);
     const reqs = (await requestsFor(ids)).filter((r) => r.status === LEAVE_WAITING);
     const [book, hol] = await Promise.all([balBook([...new Set(reqs.map((r) => r.employeeId))]), holidays()]);
     const pb = byId(people);
@@ -707,7 +707,7 @@ const leaveCal: HrmsScreenModule = {
     const to = monthEnd(month);
     const people = await allPeople();
     const { scope, options } = scopeFor(ctx, q, "approveLeave", "hr");
-    const ids = visibleIds(ctx, scope, people);
+    const ids = visibleIds(ctx, scope);
     const reqs = (await requestsFor(ids)).filter((r) => r.status !== "Rejected" && r.startDate <= to && r.endDate >= from);
     const [book, hol] = await Promise.all([balBook([...new Set(reqs.map((r) => r.employeeId))]), holidays()]);
     const pb = byId(people);
@@ -754,7 +754,7 @@ const leaveSetup: HrmsScreenModule = {
   async load(ctx, q) {
     const people = await allPeople();
     const { scope, options } = scopeFor(ctx, q, "hr", "approveLeave", "entitle");
-    const ids = visibleIds(ctx, scope, people);
+    const ids = visibleIds(ctx, scope);
     const rows = ids && !ids.size ? [] : await db.select().from(hrmsLeaveCredits).where(ids ? inArray(hrmsLeaveCredits.employeeId, [...ids]) : undefined);
     const pb = byId(people);
     const t = monthOf(today());
@@ -1173,7 +1173,7 @@ const overtime: HrmsScreenModule = {
     const people = await allPeople();
     const pb = byId(people);
     const { scope, options } = scopeFor(ctx, q, "hr");
-    const ids = visibleIds(ctx, scope, people);
+    const ids = visibleIds(ctx, scope);
     const rows = ids && !ids.size ? [] : await db.select().from(hrmsOvertime).where(ids ? inArray(hrmsOvertime.employeeId, [...ids]) : undefined);
     /* Spec §8 / A06: the month's total is by month AND year. */
     const total = new Map<string, number>();
@@ -1365,7 +1365,7 @@ const monthly: HrmsScreenModule = {
     const people = await allPeople();
     const pb = byId(people);
     const { scope, options } = scopeFor(ctx, q, "hr", "perfAdmin", "payroll");
-    const ids = visibleIds(ctx, scope, people);
+    const ids = visibleIds(ctx, scope);
     const [cfg, all, hol, approved, remarks] = await Promise.all([
       attendanceCfg(),
       attendanceRows({ from, to }),

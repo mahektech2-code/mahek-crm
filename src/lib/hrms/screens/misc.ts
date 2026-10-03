@@ -1,7 +1,7 @@
 import "server-only";
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { db } from "@/db";
-import { attachments, hrmsAttendance, hrmsDocuments, hrmsGrievances, hrmsHelp, hrmsNotifications, hrmsRefLists, users } from "@/db/schema";
+import { attachments, hrmsAttendance, hrmsGrievances, hrmsHelp, hrmsNotifications, hrmsRefLists, mbosDeletions, mbosDocuments, users } from "@/db/schema";
 import { submitFeedback } from "@/lib/actions/feedback";
 import { bindAttachments } from "@/lib/services/attachment-service";
 import type { ActionSpec, Contact, FormSpec, ListRow, RowField } from "@/lib/erp/ui";
@@ -11,9 +11,11 @@ import { allPeople, byId, isActive, isSales, offices, type Person } from "../ser
 import { bindHrmsFiles } from "../attachments";
 import { HRMS_TABS, hrmsLink, hrmsListLabel } from "../registry";
 import { fdShort, tmin } from "../time";
+import { calendarDate } from "@/lib/business-date";
 import { personFrom, personOption } from "./attendance";
 import { GRIEVANCE_ANSWERED, HELP } from "../values";
 import { hrmsUserIds, powerHolderUserIds, tell, usersOfEmployees } from "../services/notify";
+import { announce, bellsOf, markAnnouncementSeen, rewordAnnouncement, withdrawAnnouncement } from "@/lib/services/announcement-service";
 
 /* ---------------------------------------------------------------------------
  * Help & grievance (spec §16), Documents and Notifications (§17), and the
@@ -473,41 +475,70 @@ const grievances: HrmsScreenModule = {
 
 /* ============================================================ documents §17.1 */
 
+/*
+ * ONE LIBRARY. HRMS's documents are rows of the company's document library,
+ * `mbos_documents` — the one the field app and the Sales Dashboard read — with
+ * an `audience` saying who in HRMS each is for. A document the Sales Dashboard
+ * published to the field team alone has no audience and is not listed here.
+ */
+
 const DOC_TYPES = ["PDF & audio", "Image", "Video", "Link"];
+const EVERYONE = "All employees";
+const FIELD = "Field staff";
 const manageDocs = (ctx: HrmsContext) => has(ctx, "hr") || has(ctx, "admin");
 
-type DocRow = typeof hrmsDocuments.$inferSelect;
+type DocRow = typeof mbosDocuments.$inferSelect;
 
-/** Whether a document is tagged to this person: everyone, field staff, their office, or by name. */
-function docFor(d: DocRow, me: HrmsContext["employee"]): boolean {
-  if (d.tagged === "All employees") return true;
-  if (!me) return false;
-  if (d.taggedEmployeeIds.includes(me.id)) return true;
-  if (d.tagged === "Field staff") return isSales({ positionType: me.positionType } as Person);
-  return !!me.office && d.tagged === me.office;
+/** HR's documents in the shared library, newest first — withdrawn ones only for whoever manages them. */
+async function hrDocuments(includeWithdrawn: boolean): Promise<DocRow[]> {
+  return db
+    .select()
+    .from(mbosDocuments)
+    .where(includeWithdrawn ? isNotNull(mbosDocuments.audience) : and(isNotNull(mbosDocuments.audience), eq(mbosDocuments.active, true)))
+    .orderBy(desc(mbosDocuments.serverCreatedAt));
 }
+
+/** Whether a document is meant for this person: everyone, field staff, their office, or by name. */
+function docFor(d: DocRow, me: HrmsContext["employee"]): boolean {
+  if (!d.active || !d.audience) return false;
+  if (d.audience === EVERYONE) return true;
+  if (!me) return false;
+  if (d.audienceEmployeeIds.includes(me.id)) return true;
+  if (d.audience === FIELD) return isSales({ positionType: me.positionType } as Person);
+  return !!me.office && d.audience === me.office;
+}
+
+/**
+ * Who a document reaches on the handsets: everybody in the field (an empty
+ * role list) when it is for all employees or field staff and has a file;
+ * nobody otherwise — a handset cannot open a link and does not know its
+ * holder's office. "hrms" matches no handset role.
+ */
+const handsetRoles = (media: string, file: string | null, audience: string) => (media !== "Link" && file && (audience === EVERYONE || audience === FIELD) ? [] : ["hrms"]);
 
 /** Whether this person may open a document's file: the screen's own rule. */
 export async function mayReadDocument(ctx: HrmsContext, id: string): Promise<boolean> {
-  const [d] = await db.select().from(hrmsDocuments).where(eq(hrmsDocuments.id, id)).limit(1);
-  return !!d && (manageDocs(ctx) || docFor(d, ctx.employee));
+  const [d] = await db.select().from(mbosDocuments).where(eq(mbosDocuments.id, id)).limit(1);
+  return !!d && !!d.audience && (manageDocs(ctx) || docFor(d, ctx.employee));
 }
 
 /** The header search's documents: the ones this person's Documents screen would list. */
-export async function searchDocuments(ctx: HrmsContext, needle: string, limit: number): Promise<DocRow[]> {
+export async function searchDocuments(ctx: HrmsContext, needle: string, limit: number): Promise<{ id: string; title: string; type: string }[]> {
   const n = needle.trim().toLowerCase();
-  const all = await db.select().from(hrmsDocuments).orderBy(desc(hrmsDocuments.date));
-  return all.filter((d) => (manageDocs(ctx) || docFor(d, ctx.employee)) && d.title.toLowerCase().includes(n)).slice(0, limit);
+  return (await hrDocuments(false))
+    .filter((d) => (manageDocs(ctx) || docFor(d, ctx.employee)) && d.title.toLowerCase().includes(n))
+    .slice(0, limit)
+    .map((d) => ({ id: d.id, title: d.title, type: d.media ?? "" }));
 }
 
-const docHref = (d: DocRow) => (d.type === "Link" ? (d.url ?? "") : d.fileAttachmentId ? `/api/attachments/${d.fileAttachmentId}` : "");
+const docHref = (d: DocRow) => (d.media === "Link" ? (d.linkUrl ?? "") : d.attachmentId ? `/api/attachments/${d.attachmentId}` : "");
 const openLabel: Record<string, string> = { Link: "Open link", Video: "Open video", Image: "Open image", "PDF & audio": "Open PDF or audio" };
 
 const documents: HrmsScreenModule = {
   key: "documents",
   async load(ctx) {
     const manager = manageDocs(ctx);
-    const all = await db.select().from(hrmsDocuments).orderBy(desc(hrmsDocuments.date));
+    const all = await hrDocuments(manager);
     const rows = manager ? all : all.filter((d) => docFor(d, ctx.employee));
     const officeNames = manager ? (await offices()).map((o) => o.name) : [];
     const people = byId(await allPeople());
@@ -520,7 +551,8 @@ const documents: HrmsScreenModule = {
           { k: "type", l: "Type", t: "s" },
           { k: "desc", l: "Description", t: "t" },
           { k: "date", l: "Date", t: "d" },
-          { k: "tagged", l: "Tagged", t: "t" },
+          { k: "tagged", l: "For", t: "t" },
+          { k: "f", l: "", t: "f" },
         ],
         hidden: [],
         chips: "type",
@@ -530,51 +562,59 @@ const documents: HrmsScreenModule = {
               screen: "documents",
               id: "new",
               title: "Add a document",
-              sub: "Tag who should see it.",
+              sub: "Say who should see it. A file for all employees or field staff also reaches the field app.",
               submit: "Add document",
-              init: { tagged: "All employees" },
+              init: { tagged: EVERYONE },
               header: [
                 { k: "title", l: "Title", t: "text", req: true },
                 { k: "type", l: "Type", t: "select", req: true, opts: DOC_TYPES },
                 { k: "file", l: "File", t: "photo", req: true, when: { k: "type", in: ["PDF & audio", "Image", "Video"] } },
                 { k: "url", l: "Link", t: "text", req: true, when: { k: "type", eq: "Link" }, hint: "An http:// or https:// address." },
                 { k: "desc", l: "Description", t: "area" },
-                { k: "tagged", l: "Tagged employees", t: "select", req: true, opts: ["All employees", "Field staff", ...officeNames] },
+                { k: "tagged", l: "Who it is for", t: "select", req: true, opts: [EVERYONE, FIELD, ...officeNames] },
               ],
             }
           : undefined,
         newLabel: "Add document",
-        noDataLine: manager ? "No documents yet." : "No documents are tagged to you yet.",
+        noDataLine: manager ? "No documents yet." : "No documents are meant for you yet.",
       },
       rows: rows.map((d): ListRow => {
         const href = docHref(d);
-        const named = d.taggedEmployeeIds.map((id) => people.get(id)?.name).filter(Boolean).join(", ");
+        const named = d.audienceEmployeeIds.map((id) => people.get(id)?.name).filter(Boolean).join(", ");
         const actions: ActionSpec[] = [href ? { id: "open", l: "Open", primary: true, href } : { id: "open", l: "Open", primary: true, why: "Nothing was attached to this document" }];
-        if (manager) actions.push({ id: "delete", l: "Delete", confirm: `Delete “${d.title}”?` });
-        const fields: RowField[] = [{ l: "File or link", v: d.type === "Link" ? (d.url ?? "") : d.fileAttachmentId ? "Attached" : "None" }];
-        if (named) fields.push({ l: "Tagged by name", v: named });
+        if (manager && d.active) actions.push({ id: "delete", l: "Withdraw", confirm: `Withdraw “${d.title}”? It comes off the list, and off every handset on its next sync. The record is kept.` });
+        const fields: RowField[] = [
+          { l: "File or link", v: d.media === "Link" ? (d.linkUrl ?? "") : d.attachmentId ? "Attached" : "None" },
+          { l: "On the field app", v: d.visibleToRoles.length === 0 ? "Yes" : "No" },
+        ];
+        if (named) fields.push({ l: "Meant for, by name", v: named });
         return {
           id: d.id,
-          v: { title: d.title, type: d.type, desc: d.description ?? "", date: d.date, tagged: d.tagged },
-          flags: [],
+          v: { title: d.title, type: d.media ?? "", desc: d.description ?? "", date: calendarDate(d.serverCreatedAt), tagged: d.audience ?? "" },
+          flags: d.active ? [] : ["inactive"],
           title: d.title,
-          header: `${d.type} · ${d.tagged}`,
+          header: `${d.media ?? ""} · ${d.audience ?? ""}`,
           fields,
-          contacts: href ? [{ l: openLabel[d.type] ?? "Open", href }] : [],
+          contacts: href ? [{ l: openLabel[d.media ?? ""] ?? "Open", href }] : [],
           actions,
-          by: stampLine(creators.get(d.createdById ?? "") ?? null, d.createdAt),
+          by: stampLine(creators.get(d.createdById ?? "") ?? null, d.serverCreatedAt),
         };
       }),
     };
   },
   actions: {
+    /* Withdrawn, never deleted — the library's rule: a policy somebody quoted
+       in March is a fact about March. The tombstone is what takes it off the
+       handsets that already pulled it. */
     async delete(ctx, id) {
-      if (!manageDocs(ctx)) return err("Deleting a document needs the HR or HRMS administration power", "not_permitted");
-      const [d] = await db.select().from(hrmsDocuments).where(eq(hrmsDocuments.id, id));
+      if (!manageDocs(ctx)) return err("Withdrawing a document needs the HR or HRMS administration power", "not_permitted");
+      const [d] = await db.select().from(mbosDocuments).where(and(eq(mbosDocuments.id, id), isNotNull(mbosDocuments.audience)));
       if (!d) return err("That document no longer exists.", "not_found");
-      await db.delete(hrmsDocuments).where(eq(hrmsDocuments.id, id));
-      await hrmsAudit(ctx, "hrms.document.delete", "hrms_documents", id, d, null);
-      return okVoid("Document deleted");
+      if (!d.active) return err(`${d.title} is already withdrawn.`);
+      await db.update(mbosDocuments).set({ active: false, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(mbosDocuments.id, id));
+      await db.insert(mbosDeletions).values({ id: hrmsId("del"), entity: "documents", entityId: id, userId: null, reason: "withdrawn" });
+      await hrmsAudit(ctx, "hrms.document.withdraw", "mbos_documents", id, { active: true }, { active: false });
+      return okVoid(`${d.title} withdrawn`);
     },
   },
   forms: {
@@ -589,16 +629,29 @@ const documents: HrmsScreenModule = {
       if (type === "Link" && !url) return fieldErr("url", "Enter the link");
       if (url && !/^https?:\/\//i.test(url)) return fieldErr("url", "A link starts with http:// or https://");
       if (type !== "Link" && !file) return fieldErr("file", "Attach the file");
-      const tagged = text(h.tagged) ?? "All employees";
+      const tagged = text(h.tagged) ?? EVERYONE;
       const officeNames = (await offices()).map((o) => o.name);
-      if (!["All employees", "Field staff", ...officeNames].includes(tagged)) return fieldErr("tagged", "Choose who should see it: all employees, field staff, or an office");
+      if (![EVERYONE, FIELD, ...officeNames].includes(tagged)) return fieldErr("tagged", "Choose who should see it: all employees, field staff, or an office");
       const id = hrmsId("hdoc");
       const res = await inTx(async (tx) => {
-        await tx.insert(hrmsDocuments).values({ id, title, type, fileAttachmentId: file, url, description: text(h.desc), date: today(), tagged, createdById: ctx.user.id });
+        await tx.insert(mbosDocuments).values({
+          id,
+          title,
+          category: "policy",
+          attachmentId: file,
+          visibleToRoles: handsetRoles(type, file, tagged),
+          active: true,
+          audience: tagged,
+          media: type,
+          linkUrl: url,
+          description: text(h.desc),
+          createdById: ctx.user.id,
+          updatedById: ctx.user.id,
+        });
         if (file) await bindHrmsFiles(tx, [file], "hrms_document", id, ctx.user.id);
         return okVoid(`Document added for ${tagged.toLowerCase()}`);
       });
-      if (res.ok) await hrmsAudit(ctx, "hrms.document.add", "hrms_documents", id, null, { title, type, tagged });
+      if (res.ok) await hrmsAudit(ctx, "hrms.document.add", "mbos_documents", id, null, { title, type, tagged });
       return res;
     },
   },
@@ -626,11 +679,15 @@ const notifications: HrmsScreenModule = {
     const { scope, options } = privateScope(q, admin);
     const me = ctx.employee?.id ?? null;
     const all = await db.select().from(hrmsNotifications).orderBy(desc(hrmsNotifications.createdAt));
-    const toMe = (n: NoteRow) => n.toEmployeeId == null || (!!me && n.toEmployeeId === me);
+    /* Who it went to is the recipient list; rows from before it existed are read the old way. */
+    const toMe = (n: NoteRow) => (n.recipientUserIds.length ? n.recipientUserIds.includes(ctx.user.id) : n.toEmployeeId == null || (!!me && n.toEmployeeId === me));
     const fromMe = (n: NoteRow) => n.createdById === ctx.user.id || (!!me && n.fromEmployeeId === me);
     const rows = scope === "all" ? all : all.filter((n) => toMe(n) || fromMe(n));
     const people = await allPeople();
     const pb = byId(people);
+    /* Seen is the bell's own read mark — one read state, not two. */
+    const bells = await bellsOf(rows.flatMap((n) => n.bellIds));
+    const bellsFor = (n: NoteRow) => bells.filter((b) => n.bellIds.includes(b.id));
     return {
       spec: {
         screen: "notifications",
@@ -640,16 +697,16 @@ const notifications: HrmsScreenModule = {
           { k: "to", l: "To", t: "t" },
           { k: "text", l: "Message", t: "b" },
           { k: "landing", l: "Opens", t: "t" },
-          { k: "seen", l: "Seen", t: "s" },
+          { k: "seen", l: "Seen", t: "t" },
         ],
         hidden: [],
         newForm: writeNotes(ctx)
           ? {
               screen: "notifications",
               id: "new",
-              title: "Write a notification",
+              title: "Write an announcement",
               sub: "It arrives in the MahekOne bell and opens the screen you choose.",
-              submit: "Send notification",
+              submit: "Send",
               init: { landing: hrmsListLabel("home") },
               header: [
                 { k: "to", l: "To", t: "select", req: true, opts: ["All employees", ...people.filter(isActive).map(personOption)] },
@@ -658,8 +715,8 @@ const notifications: HrmsScreenModule = {
               ],
             }
           : undefined,
-        newLabel: "Write a notification",
-        noDataLine: "No notifications sent or received yet.",
+        newLabel: "Write an announcement",
+        noDataLine: "No announcements sent or received yet.",
         hrms: { scope: { current: scope, options } },
       },
       rows: rows.map((n): ListRow => {
@@ -672,18 +729,27 @@ const notifications: HrmsScreenModule = {
         if (r) contacts.push({ l: "Email the recipient", href: r });
         const actions: ActionSpec[] = [];
         if (n.landing) actions.push({ id: "open", l: `Open ${landingLabel(n.landing)}`, primary: true, href: hrmsLink(n.landing) });
-        if (personal && !!me && n.toEmployeeId === me && !n.seenAt) actions.push({ id: "seen", l: "Mark as seen" });
-        if (sender) actions.push({ id: "edit", l: "Edit", prompt: { title: "Edit notification", submit: "Save", init: { text: n.text }, fields: [{ k: "text", l: "Message", t: "area", req: true }] } });
-        if (sender || admin) actions.push({ id: "delete", l: "Delete", confirm: "Delete this notification?" });
+        const mine = bellsFor(n).find((b) => b.userId === ctx.user.id);
+        const sent = bellsFor(n);
+        const seenBy = sent.filter((b) => b.read).length;
+        const legacySeen = !n.bellIds.length && !!n.seenAt;
+        if (mine && !mine.read) actions.push({ id: "seen", l: "Mark as seen" });
+        else if (!n.bellIds.length && personal && !!me && n.toEmployeeId === me && !n.seenAt) actions.push({ id: "seen", l: "Mark as seen" });
+        if (sender) actions.push({ id: "edit", l: "Edit", prompt: { title: "Edit announcement", sub: "Everybody it was sent to sees the new words in their bell.", submit: "Save", init: { text: n.text }, fields: [{ k: "text", l: "Message", t: "area", req: true }] } });
+        if (sender || admin) actions.push({ id: "delete", l: "Delete", confirm: "Delete this announcement? It is taken out of everybody’s bell too." });
         const fields: RowField[] = [
           { l: "To", v: n.toLabel },
           { l: "Opens", v: landingLabel(n.landing) },
+          { l: "Sent from", v: n.source === "sales" ? "Sales Dashboard" : "HRMS" },
         ];
-        if (n.seenAt) fields.push({ l: "Seen", v: when(n.seenAt) });
+        if (n.title) fields.push({ l: "Title", v: n.title });
+        if (sent.length) fields.push({ l: "Seen by", v: `${seenBy} of ${sent.length}` });
+        if (legacySeen) fields.push({ l: "Seen", v: when(n.seenAt) });
+        const seen = sent.length ? (sent.length === 1 ? (seenBy ? "Seen" : "Unseen") : `${seenBy} of ${sent.length}`) : personal ? (legacySeen ? "Seen" : "Unseen") : "";
         return {
           id: n.id,
           /* "All employees" has no one reader, so it carries no seen state. */
-          v: { time: when(n.createdAt), from: n.fromName, to: n.toLabel, text: n.text, landing: landingLabel(n.landing), seen: personal ? (n.seenAt ? "Seen" : "Unseen") : "" },
+          v: { time: when(n.createdAt), from: n.fromName, to: n.toLabel, text: n.text, landing: landingLabel(n.landing), seen },
           flags: [],
           title: `From ${n.fromName}`,
           header: n.text,
@@ -699,6 +765,10 @@ const notifications: HrmsScreenModule = {
     async seen(ctx, id) {
       const [n] = await db.select().from(hrmsNotifications).where(eq(hrmsNotifications.id, id));
       if (!n) return err("That notification no longer exists.", "not_found");
+      if (n.bellIds.length) {
+        if (!(await markAnnouncementSeen(n.bellIds, ctx.user.id))) return err("Only somebody it was sent to can mark it as seen.", "not_permitted");
+        return okVoid("Marked as seen");
+      }
       if (!ctx.employee || n.toEmployeeId !== ctx.employee.id) return err("Only the person it was sent to can mark it as seen.", "not_permitted");
       if (!n.seenAt) await db.update(hrmsNotifications).set({ seenAt: new Date(), updatedAt: new Date() }).where(eq(hrmsNotifications.id, id));
       return okVoid("Marked as seen");
@@ -710,8 +780,9 @@ const notifications: HrmsScreenModule = {
       const body = text(v.text);
       if (!body) return fieldErr("text", "Write the message");
       await db.update(hrmsNotifications).set({ text: body, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(hrmsNotifications.id, id));
+      await rewordAnnouncement(n.bellIds, body);
       await hrmsAudit(ctx, "hrms.notification.edit", "hrms_notifications", id, { text: n.text }, { text: body });
-      return okVoid("Notification updated");
+      return okVoid(n.bellIds.length ? "Announcement updated, in everybody’s bell too" : "Announcement updated");
     },
     async delete(ctx, id) {
       const [n] = await db.select().from(hrmsNotifications).where(eq(hrmsNotifications.id, id));
@@ -719,8 +790,9 @@ const notifications: HrmsScreenModule = {
       const sender = n.createdById === ctx.user.id || (!!ctx.employee && n.fromEmployeeId === ctx.employee.id);
       if (!sender && !has(ctx, "admin")) return err("Only the sender can delete a notification. Deleting anyone else’s needs the HRMS administration power.", "not_permitted");
       await db.delete(hrmsNotifications).where(eq(hrmsNotifications.id, id));
+      await withdrawAnnouncement(n.bellIds);
       await hrmsAudit(ctx, "hrms.notification.delete", "hrms_notifications", id, n, null);
-      return okVoid("Notification deleted");
+      return okVoid("Announcement deleted, and taken out of the bell");
     },
   },
   forms: {
@@ -738,23 +810,23 @@ const notifications: HrmsScreenModule = {
         if (!toEmp || !isActive(toEmp)) return fieldErr("to", "Pick an active employee from the list, or All employees");
       }
       const fromName = ctx.employee?.name ?? ctx.user.name;
-      const id = hrmsId("hntf");
-      await db.insert(hrmsNotifications).values({
-        id,
+      /* Delivery is MahekOne's bell (§18.4): titled with the sender, the text as body, opening the landing screen. */
+      const recipients = toEmp ? await userIdsFor([toEmp.id]) : await hrmsUserIds();
+      const { id, reached } = await announce({
+        senderUserId: ctx.user.id,
         fromEmployeeId: ctx.employee?.id ?? null,
         fromName,
         toEmployeeId: toEmp?.id ?? null,
         toLabel: toEmp?.name ?? "All employees",
         text: body,
         landing: landing.key,
-        createdById: ctx.user.id,
+        href: hrmsLink(landing.key),
+        recipients,
+        source: "hrms",
       });
       await hrmsAudit(ctx, "hrms.notification.send", "hrms_notifications", id, null, { to: toEmp?.code ?? "All employees", landing: landing.key });
-      /* Delivery is MahekOne's bell (§18.4): titled with the sender, the text as body, opening the landing screen. */
-      const recipients = (toEmp ? await userIdsFor([toEmp.id]) : await hrmsUserIds()).filter((u) => u !== ctx.user.id);
-      await tell(recipients.map((userId) => ({ userId, title: fromName, body, href: hrmsLink(landing.key) })));
-      const unreached = toEmp && !recipients.length ? ` · ${toEmp.name} has no MahekOne account yet, so it reached no bell` : "";
-      return okVoid(`Notification sent to ${toEmp?.name ?? "all employees"}${unreached}`);
+      const unreached = toEmp && !reached ? ` · ${toEmp.name} has no MahekOne account yet, so it reached no bell` : "";
+      return okVoid(`Sent to ${toEmp?.name ?? "all employees"}${unreached}`);
     },
   },
 };
