@@ -97,6 +97,7 @@ const ASSISTANT: Record<string, string> = {
   verifyIntel: "The verification call",
   convertIntel: "Convert to Prospect",
   intakeIntel: "Lead intake",
+  leadScan: "Reading a visiting card",
   mbos: "On the handset",
 };
 
@@ -219,7 +220,7 @@ const RULES: Rule[] = [
   { test: /^voice\./, page: "ai", tab: "dictation" },
   { test: /^callIntel\./, page: "ai", tab: "call-assistant" },
   {
-    test: /^(visitIntel|leadCallIntel|verifyIntel|convertIntel|intakeIntel|mbos\.ai)\./,
+    test: /^(visitIntel|leadCallIntel|verifyIntel|convertIntel|intakeIntel|leadScan|mbos\.ai)\./,
     page: "ai",
     tab: "assistants",
     group: (k) => ASSISTANT[k.split(".")[0]] ?? "Other",

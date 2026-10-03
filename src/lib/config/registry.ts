@@ -1822,6 +1822,41 @@ export const SETTINGS = [
       "The OpenAI model that reads a visit. Where OpenAI cannot answer, Sarvam is asked instead; where neither can, the salesman fills the visit as usual.",
     default: "gpt-5-mini",
   },
+  /*
+   * READING A VISITING CARD — the New lead form's scan button on the MBOS
+   * handset. OpenAI only: reading a photograph needs a model that can see, so
+   * unlike the assistants above there is no Sarvam fallback, and without an
+   * OpenAI key the button is simply not drawn.
+   */
+  {
+    key: "leadScan.enabled",
+    type: "boolean",
+    category: "voice",
+    label: "Read a visiting card",
+    description:
+      "On the MBOS handset's New lead form, let a salesman photograph a visiting card, shop board or bill head and have the shop name, contact person, mobile, town, address and GSTIN filled in for him to check. The photographs are read and discarded, never stored. Off removes the button from every handset on its next sync.",
+    default: true,
+  },
+  {
+    key: "leadScan.model",
+    type: "text",
+    category: "voice",
+    label: "Visiting card model",
+    description:
+      "The OpenAI model that reads the photographs. It must accept images.",
+    default: "gpt-5-mini",
+  },
+  {
+    key: "leadScan.maxImages",
+    type: "integer",
+    category: "voice",
+    label: "Photos per scan",
+    description:
+      "How many photographs a salesman may send in one scan — a card's front and back and the shop board are three views of one business, read together.",
+    default: 3,
+    min: 1,
+    max: 6,
+  },
   {
     key: "callIntel.model",
     type: "text",
@@ -5444,6 +5479,9 @@ export type Config = {
   "intakeIntel.model": string;
   "visitIntel.enabled": boolean;
   "visitIntel.model": string;
+  "leadScan.enabled": boolean;
+  "leadScan.model": string;
+  "leadScan.maxImages": number;
 
   /* ------------------------------------------------- MBOS — field sales */
   "mbos.location.gpsAccuracyThresholdM": number;

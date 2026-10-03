@@ -500,6 +500,11 @@ export async function createLead(args: {
   decisionMaker?: string | null;
   shopPhotoId?: string | null;
   competitorName?: string | null;
+  /* The person, where the lead's name is the shop's — `customers.contact_person`
+     at the far end. Not a column here: the row's `name` already carries it. */
+  contactPerson?: string | null;
+  /* Optional at capture; asked for at the qualify step whatever happens here. */
+  gstin?: string | null;
   today?: string;
   /**
    * §2 — which of the three ladders this lead climbs.
@@ -591,6 +596,7 @@ export async function createLead(args: {
       source: wireSource(args.source),
       sourceDetail: args.sourceDetail?.trim() || undefined,
       state: args.state?.trim() || undefined,
+      contactPerson: args.contactPerson?.trim() || undefined,
     },
     row: {
       ...base,
@@ -615,7 +621,7 @@ export async function createLead(args: {
       archived: 0,
       address: args.address?.trim() || null,
       customerType: args.customerType ?? null,
-      gstin: null,
+      gstin: args.gstin?.trim() || null,
       requirement: args.requirement?.trim() || null,
       monthlyVolumeLitres: args.monthlyVolumeLitres ?? null,
       decisionMaker: args.decisionMaker?.trim() || null,

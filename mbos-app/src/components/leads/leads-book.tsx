@@ -20,6 +20,7 @@ import { leadSources } from '../../data/config';
 import { territoryState } from '../../sync/pull';
 import { areaRule, type AreaChoice, type AreaRule } from '../../engines/lead-areas';
 import { takePhoto } from '../../native/capture';
+import { LeadScanPanel, useLeadScan, type LeadScanFill } from './lead-scan';
 import {
   CUSTOMER_TYPES,
   daysBetween,
@@ -452,6 +453,14 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
   const [decisionMaker, setDecisionMaker] = React.useState('');
   const [competitor, setCompetitor] = React.useState('');
   const [shopPhotoId, setShopPhotoId] = React.useState<string | null>(null);
+  /* Asked at the qualify step whatever happens here, and optional on the
+     form — but a card usually prints it, and a scan can read it. */
+  const [gstin, setGstin] = React.useState('');
+  const scanCfg = useLeadScan();
+  const [scanning, setScanning] = React.useState(false);
+  /* Bumped on every fresh scan, so the panel starts blank rather than with
+     the last shop's photos — a key, not an effect that resets state. */
+  const [scanKey, setScanKey] = React.useState(0);
 
   /* One object, so a caller that adds a fourth narrowing does not add a fourth
      argument to two functions. `today` travels with it rather than being read
@@ -561,6 +570,8 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
     setDecisionMaker('');
     setCompetitor('');
     setShopPhotoId(null);
+    setGstin('');
+    setScanning(false);
     setErr(null);
     setDup(null);
   }, []);
@@ -591,6 +602,36 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
     setShopPhotoId(shot.mediaId);
   };
 
+  /* "Fill the form" in the scan panel. Only what he ticked arrives, and it
+     overwrites — he has just looked at each value against the card. */
+  const applyScan = (fill: LeadScanFill) => {
+    if (fill.company) setCompany(fill.company);
+    if (fill.name) setName(fill.name);
+    if (fill.mobile) setMobile(fill.mobile);
+    if (fill.address) setAddress(fill.address);
+    if (fill.gstin) setGstin(fill.gstin);
+    let outside: string | null = null;
+    const loc = fill.location;
+    if (loc?.kind === 'area') {
+      setPickedArea(loc.area);
+      if (loc.city) setCity(loc.city);
+    } else if (loc?.kind === 'free') {
+      setCity(loc.city);
+    } else if (loc?.kind === 'outside') {
+      outside = loc.city;
+    }
+    setDup(null);
+    setScanning(false);
+    setErr(
+      outside
+        ? areas.kind === 'none'
+          ? 'No area is set for you yet. You cannot add a lead. Ask the office to set one.'
+          : outside + ' is not in your area. Choose the area this shop is in.'
+        : null,
+    );
+    notify('Filled from the photos. Check each field before adding.');
+  };
+
   /* A refusal on the form says so in the box above the buttons AND in the hand:
      the box shakes and the phone buzzes `warning`, because the box may be
      below the fold of a sheet this long and the buzz is what says "look". */
@@ -612,7 +653,9 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
        message somebody reads names the question at the top of the form rather
        than the one they have just finished typing. */
     if (!salesType) return refuse('Choose the kind of sale first.');
-    if (!name.trim()) return refuse('Write a name or the shop name.');
+    /* EITHER, and that is what the sentence always said: a shop board names
+       the shop and nobody in it, and a lead raised from one has no person yet. */
+    if (!name.trim() && !company.trim()) return refuse('Write a name or the shop name.');
     if (mobile.replace(/\D/g, '').length < 10) return refuse('Write a 10-digit mobile number.');
     if (!source) return refuse('Choose how you found them.');
     /* Mahek's rule: a lead is raised inside his own area. Asked here so it is
@@ -628,12 +671,18 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
     if (source === OTHER_SOURCE && !sourceDetail.trim()) {
       return refuse('You chose "Other". Write where this lead came from.');
     }
+    const gst = gstin.toUpperCase().replace(/[^0-9A-Z]/g, '');
+    if (gst && gst.length !== 15) return refuse('A GST number is 15 letters and numbers. Check it, or leave it empty.');
 
     saving.current = true;
     try {
       const rupees = Number(potential.replace(/[^\d]/g, ''));
       const result = await createLead({
-        name,
+        /* The person where there is one, the shop where there is not — the
+           lead needs a name on its row either way. */
+        name: name.trim() || company.trim(),
+        contactPerson: name.trim() || null,
+        gstin: gst || null,
         company,
         mobile,
         city: pickedArea?.city ?? city,
@@ -882,10 +931,40 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
 
       {/* ------------------------------------------------------------ form */}
       <BottomSheet open={formOpen} onClose={() => setFormOpen(false)} scroll>
-        <T style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.285, color: C.ink }, weight(600)]}>New lead</T>
-        <T s="caption" style={{ marginTop: 2 }}>
-          We check the number in your list before saving.
-        </T>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <View style={{ flex: 1 }}>
+            <T style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.285, color: C.ink }, weight(600)]}>New lead</T>
+            <T s="caption" style={{ marginTop: 2 }}>
+              We check the number in your list before saving.
+            </T>
+          </View>
+          {/* THE SCAN, in the header rather than down the form: it fills the
+              first six answers, so it is offered before any of them is typed.
+              Not drawn at all where the office cannot read photos — a button
+              that fails when pressed is worse than none. */}
+          {scanCfg.available ? (
+            <ToolButton
+              icon="scan"
+              label="Scan a visiting card or shop board"
+              on={scanning}
+              onPress={() => {
+                if (!scanning) setScanKey((k) => k + 1);
+                setScanning((v) => !v);
+              }}
+            />
+          ) : null}
+        </View>
+
+        {scanning ? (
+          <LeadScanPanel
+            key={scanKey}
+            maxImages={scanCfg.maxImages}
+            areas={areas}
+            current={{ company, name, mobile, location: pickedArea?.label ?? city, address, gstin }}
+            onClose={() => setScanning(false)}
+            onFill={applyScan}
+          />
+        ) : null}
 
         {/* --------------------------------------------------- §2 the ladder
             First on the form, because it decides what the rest of the funnel
@@ -931,6 +1010,19 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
             placeholder="98220 11001"
             keyboardType="phone-pad"
           />
+        </View>
+
+        <View style={{ marginTop: 12 }}>
+          <SectionLabel style={{ marginBottom: 6 }}>GST number</SectionLabel>
+          <Input
+            value={gstin}
+            onChangeText={(v) => { setGstin(v.toUpperCase()); setErr(null); }}
+            placeholder="27AAPFU0939F1ZV"
+            autoCapitalize="characters"
+            autoCorrect={false}
+            maxLength={20}
+          />
+          <T s="caption" style={{ marginTop: 6 }}>If they have one. It is needed later to qualify the lead.</T>
         </View>
 
         <View style={{ marginTop: 12 }}>

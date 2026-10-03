@@ -691,6 +691,80 @@ export async function visitAssist(args: {
 }
 
 /**
+ * What MahekOne read off a visiting card, shop board or bill head — the
+ * server's `LeadScanResult`, restated, because the two cannot import each
+ * other. Every field may be null; none is a guess.
+ */
+export type LeadScanFound = {
+  businessName: string | null;
+  contactPerson: string | null;
+  mobile: string | null;
+  otherNumbers: string[];
+  city: string | null;
+  state: string | null;
+  address: string | null;
+  gstin: string | null;
+  gstinCheck: 'valid' | 'corrected' | 'invalid' | null;
+  note: string | null;
+};
+
+/**
+ * Photographs in, the New lead form's details back, and NOTHING queued or
+ * kept — the photos are read and dropped at the far end. Not queued for the
+ * reason dictation is not: the answer is only worth anything while he is still
+ * holding the card, so it fails without signal and he types instead.
+ *
+ * The uris are files this phone has already resized and compressed.
+ */
+export async function scanLead(
+  uris: string[],
+  retried = false,
+): Promise<({ ok: true } & LeadScanFound) | { ok: false; error: string }> {
+  const form = new FormData();
+  /* The names are cosmetic — the server sniffs the bytes. */
+  uris.forEach((uri, i) => form.append('image', filePart(uri, `scan-${i + 1}.jpg`, 'image/jpeg')));
+
+  const token = await accessToken();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 90_000);
+
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}/api/mbos/lead-scan`, {
+      method: 'POST',
+      headers: {
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        'x-mbos-device': await deviceId(),
+        'x-mbos-app-version': buildLabel(),
+      },
+      body: form,
+      signal: controller.signal,
+    });
+  } catch {
+    return {
+      ok: false,
+      error: controller.signal.aborted
+        ? 'That took too long to send. Your photos are still here. Try again.'
+        : 'No internet. Type the details instead.',
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  /* An access token lapses on its own clock, and a salesman holding a card
+     should not be told to sign in again because of it — `request` refreshes
+     and retries once, and so does this. A form body is rebuilt from the uris
+     rather than resent, since a stream that has been read cannot be. */
+  if (res.status === 401 && !retried && (await tryRefresh())) return scanLead(uris, true);
+
+  const body = (await res.json().catch(() => null)) as (({ ok: true } & LeadScanFound) | { ok: false; error?: string }) | null;
+  if (!body || !body.ok) {
+    return { ok: false, error: body?.error ?? 'No answer came back. Try again, or type the details.' };
+  }
+  return body;
+}
+
+/**
  * What to offer on the order form: this shop's usual products, from the
  * office's whole order history, and the best sellers to start a new shop from.
  *

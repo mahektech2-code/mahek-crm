@@ -3463,6 +3463,40 @@ type is genuinely load bearing, since the service refuses the part before it
 reads a byte. The bytes say `audio/mp4`, which is both the truth and what
 Sarvam can take.
 
+**A VISITING CARD CAN FILL THE NEW LEAD FORM, and only a person moves it in.**
+The scan icon in the New lead sheet's header takes up to `leadScan.maxImages`
+photographs — a card's front and back, the shop board, a bill head — and
+`/api/mbos/lead-scan` reads them in ONE call, because three views of one
+business asked about separately are three half-answers to reconcile. What
+comes back is a review list, every value editable and ticked where found, and
+"Fill the form" moves only the ticked ones; "Add lead" is still the only thing
+that saves. A value about to overwrite something he typed says so.
+
+**OpenAI only, and the photographs are never stored.** Sarvam's chat endpoint
+cannot see, so there is no fallback to fall to, and without an OpenAI key
+`mbos.ai.leadScan` says unavailable and no icon is drawn. The bytes are read
+from the request and dropped, exactly as dictation's audio is — the form's Shop
+photo is the deliberate photograph and goes through the media queue as before.
+
+**What the model read is CHECKED, not trusted, in `engines/lead-scan.ts`.** A
+landline with its STD zero stripped is ten digits that look like a mobile, so
+the model labels each number's kind and only a mobile-shaped number it did not
+call a landline becomes the mobile; the rest are offered as chips. A GSTIN is
+judged by its checksum, repaired only where the FORMAT forces the repair (O for
+0 in a digit position) and the checksum then agrees, and one that still fails
+is passed through UNTICKED with a warning — never dropped, since he can read
+the card and we cannot. A valid GSTIN's state code fills an empty state and
+never overrules the board. A scanned town is matched to his allocated areas
+(`mbos-app/src/engines/lead-scan.ts`), and a town outside them is said rather
+than typed into a box the save would refuse.
+
+**And the contact person is optional now, as the form's own sentence always
+said.** "Write a name or the shop name" was the refusal while it demanded the
+name: a shop board names the shop and nobody in it. The lead's `name` is the
+person where there is one and the shop where there is not, and the person also
+travels as `contactPerson`; the GSTIN travels on the create, which
+`leadSchema` already accepted and the handset never sent.
+
 **An order taken on a call is the customer saying yes, not the business.**
 Accounts check who they are and what they already owe before it is accepted,
 so a new order sits at `pending_approval` until they decide. Two different
