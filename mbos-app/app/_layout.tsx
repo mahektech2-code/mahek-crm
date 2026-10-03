@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, Pressable } from 'react-native';
-import { Stack, type ErrorBoundaryProps } from 'expo-router';
+import { Stack, router, usePathname, type ErrorBoundaryProps } from 'expo-router';
 import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
@@ -8,7 +8,7 @@ import { Inter_400Regular } from '@expo-google-fonts/inter/400Regular';
 import { Inter_500Medium } from '@expo-google-fonts/inter/500Medium';
 import { Inter_600SemiBold } from '@expo-google-fonts/inter/600SemiBold';
 import { color } from '../src/theme/tokens';
-import { BootProvider } from '../src/state/boot';
+import { BootProvider, useBoot } from '../src/state/boot';
 import { AppLock } from '../src/components/shell/AppLock';
 import { PushTaps } from '../src/state/push-taps';
 import { UpdatePrompt } from '../src/components/shell/UpdatePrompt';
@@ -77,6 +77,31 @@ export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
  * semibold on iOS — the kind of difference nobody notices until the two
  * phones are next to each other. The weight is in the name instead.
  */
+/**
+ * NO SESSION, NO SCREEN BUT THE SIGN-IN.
+ *
+ * `index` sends a signed-in person on to Home and nothing sent anybody the
+ * other way: every other screen assumed a session it never checked. So the
+ * app opened straight onto a route — a reload restores the one it was on, a
+ * push tap or a deep link names one — drew Home with an empty name and every
+ * card stuck on "Loading…", because there was nobody to load anything for.
+ * That reads as a slow phone rather than as being signed out.
+ *
+ * One rule, here, rather than a check on forty screens: once boot has read
+ * the stored session and found none, anywhere but `/` goes to `/`. Waiting
+ * for `ready` matters — before it, "no session yet" and "no session" look the
+ * same, and redirecting on the first would bounce a signed-in salesman to the
+ * sign-in screen on every cold start.
+ */
+function SignedOutGuard() {
+  const boot = useBoot();
+  const pathname = usePathname();
+  React.useEffect(() => {
+    if (boot.ready && !boot.session && pathname !== '/') router.replace('/');
+  }, [boot.ready, boot.session, pathname]);
+  return null;
+}
+
 export default function RootLayout() {
   const [loaded, error] = useFonts({ Inter_400Regular, Inter_500Medium, Inter_600SemiBold });
   const reduce = useReduceMotion();
@@ -98,6 +123,7 @@ export default function RootLayout() {
       {/* Renders nothing; it exists so a tapped push opens what it is about,
           including the tap that cold-starts the app. */}
       <PushTaps />
+      <SignedOutGuard />
       <AppLock>
         <Stack
           screenOptions={{
