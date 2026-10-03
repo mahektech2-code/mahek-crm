@@ -47,6 +47,13 @@ import { employeeLateral } from "../employee-link";
 /* The Accounts ledger's own read. See `customerBills` — the handset must not
    have a second opinion about what a shop owes. */
 import { listBills } from "./payment-service";
+import {
+  accountKey,
+  clearSignInFailures,
+  clientAddress,
+  recordSignInFailure,
+  signInRefusal,
+} from "./sign-in-throttle";
 /* What "did we sell anything" means, everywhere. See lib/order-status.ts: the
    eight money queries read it and a status list typed into a query is the half
    that drifts. */
@@ -156,13 +163,21 @@ export async function runLoginChecks(input: {
       error: `A password is at least ${MIN_PASSWORD_LENGTH} characters. That one is shorter, so it cannot be the right one.`,
     };
   }
+  // The same count the web sign-in keeps, keyed on the same account: a phone
+  // is not a second door with its own fresh allowance of guesses.
+  const account = accountKey(user.id, identifier);
+  const address = await clientAddress();
+  const refused = await signInRefusal(account, address);
+  if (refused) return { ok: false, step: "bad_password", error: refused };
   if (!(await verifyPassword(password, user.passwordHash))) {
+    await recordSignInFailure(account, address);
     return {
       ok: false,
       step: "bad_password",
       error: "That password is not right. Try again, or use Forgot password on the web app to set a new one.",
     };
   }
+  await clearSignInFailures(account);
   }
 
   /* 3 — is the account still open? Named separately from the password, because
