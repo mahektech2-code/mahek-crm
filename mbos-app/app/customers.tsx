@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, Pressable, TextInput, FlatList, RefreshControl, ScrollView, Platform, type ListRenderItemInfo } from 'react-native';
+import { isOnline } from '../src/sync/engine';
 import { router, useFocusEffect } from 'expo-router';
 import { color as C, radius, type, weight } from '../src/theme/tokens';
 import { Icon } from '../src/components/ui/Icon';
@@ -603,7 +604,7 @@ export default function Customers() {
       });
       if (!r.ok) return notify(r.message);
       setAdding(false);
-      notify('Shop added · will send when you have signal');
+      notify((await isOnline()) ? 'Shop added · sending to the office now' : 'Shop added · will send when you have signal');
       set({ custId: r.customerId, pTab: 0 });
       router.push('/customer');
     } finally {
