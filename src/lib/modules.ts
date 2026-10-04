@@ -559,7 +559,7 @@ export const APP_MODULES: AppModule[] = [
   sales("tasks", "Tasks", "Field work", "What each salesman has been asked to do, and what is overdue."),
   /* Visits used to be a module of its own. It is a tab of this one now —
      the plan and the visits it produced are one story, allocated against
-     visited — and `0212_sales_visits_into_journeys` moved every grant that
+     visited — and `0213_sales_visits_into_journeys` moved every grant that
      named it here. */
   sales(
     "journeys",

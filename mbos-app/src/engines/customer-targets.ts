@@ -26,6 +26,14 @@ export type CustomerTargetRow = {
   isDefault: boolean;
   carriedForward: boolean;
   lastOrderDate: string | null;
+  /**
+   * Sales bills the office asked of this shop in the month — null where it
+   * asked for none. Optional because a phone that has not pulled since the
+   * office started sending it holds rows without one.
+   */
+  billTarget?: number | null;
+  /** Sales bills raised this month, as the office counts them. */
+  billsAchieved?: number;
 };
 
 export type TargetState = 'met' | 'open' | 'not-started' | 'untargeted';
@@ -43,17 +51,26 @@ export function gapPaise(r: CustomerTargetRow): number {
   return Math.max(0, r.targetPaise - r.achievedPaise);
 }
 
+/** Bills still to raise. Zero where no bill target is set, or it is met. */
+export function billGap(r: CustomerTargetRow): number {
+  return r.billTarget ? Math.max(0, r.billTarget - (r.billsAchieved ?? 0)) : 0;
+}
+
 /**
  * Where one shop stands.
  *
  * A shop with no target is its own answer rather than "met": nothing was asked
  * of it, so it cannot have been met, and calling it met would let a book of
  * untargeted shops read as a perfect month.
+ *
+ * A target is rupees, a number of bills, or both — and a shop asked for both
+ * is met only when both are, the rule the office's Behind/Met tabs follow.
  */
 export function stateOf(r: CustomerTargetRow): TargetState {
-  if (r.targetPaise <= 0) return 'untargeted';
-  if (r.achievedPaise >= r.targetPaise) return 'met';
-  if (r.achievedPaise <= 0) return 'not-started';
+  const billTarget = r.billTarget ?? 0;
+  if (r.targetPaise <= 0 && billTarget <= 0) return 'untargeted';
+  if (gapPaise(r) === 0 && billGap(r) === 0) return 'met';
+  if (r.achievedPaise <= 0 && (r.billsAchieved ?? 0) <= 0) return 'not-started';
   return 'open';
 }
 
@@ -86,6 +103,7 @@ export function sortForWork(rows: CustomerTargetRow[]): CustomerTargetRow[] {
     (a, b) =>
       gapPaise(b) - gapPaise(a) ||
       b.targetPaise - a.targetPaise ||
+      billGap(b) - billGap(a) ||
       a.name.localeCompare(b.name),
   );
 }
@@ -104,6 +122,10 @@ export type TargetSummary = {
   openPaise: number;
   /** Waiting for accounts plus not yet sent. */
   waitingPaise: number;
+  /** Shops carrying a bill target, and the bills asked of and raised by them. */
+  billTargeted: number;
+  billTarget: number;
+  billsAchieved: number;
   counts: Record<TargetFilter, number>;
 };
 
@@ -114,19 +136,39 @@ export function summarise(rows: CustomerTargetRow[]): TargetSummary {
   let achievedPaise = 0;
   let openPaise = 0;
   let waitingPaise = 0;
+  let billTargeted = 0;
+  let billTarget = 0;
+  let billsAchieved = 0;
   for (const r of rows) {
     achievedPaise += r.achievedPaise;
     waitingPaise += r.pendingPaise + r.unsentPaise;
+    if (r.targetPaise > 0 || (r.billTarget ?? 0) > 0) targeted += 1;
     if (r.targetPaise > 0) {
-      targeted += 1;
       targetPaise += r.targetPaise;
       openPaise += gapPaise(r);
+    }
+    // Summed over the shops ASKED for a count, so "12 of 20 bills" compares
+    // like with like — a shop with no bill target adds to neither side.
+    if ((r.billTarget ?? 0) > 0) {
+      billTargeted += 1;
+      billTarget += r.billTarget ?? 0;
+      billsAchieved += r.billsAchieved ?? 0;
     }
     for (const f of ['open', 'not-started', 'met'] as const) {
       if (matches(r, f)) counts[f] += 1;
     }
   }
-  return { targeted, targetPaise, achievedPaise, openPaise, waitingPaise, counts };
+  return {
+    targeted,
+    targetPaise,
+    achievedPaise,
+    openPaise,
+    waitingPaise,
+    billTargeted,
+    billTarget,
+    billsAchieved,
+    counts,
+  };
 }
 
 /**

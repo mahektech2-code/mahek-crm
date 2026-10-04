@@ -304,6 +304,9 @@ export function RecordScreen({
     achieved: number;
     isDefault: boolean;
     shareOfBook: number | null;
+    /** Sales bills asked for this month — null where no count is set. */
+    billTarget: number | null;
+    billsAchieved: number;
   };
   openComplaint: { description: string; category: string } | null;
   openPromise: { amount: number; promisedBy: string } | null;
@@ -1029,6 +1032,15 @@ export function RecordScreen({
                 </span>
               </div>
             )}
+            {target.billTarget ? (
+              <p className="mt-2 text-[13px] text-body">
+                <span className="font-medium text-ink tabular-nums">{target.billsAchieved}</span>{" "}
+                of {target.billTarget} bill{target.billTarget === 1 ? "" : "s"} raised
+                {target.billsAchieved >= target.billTarget ? (
+                  <span className="text-success"> · met</span>
+                ) : null}
+              </p>
+            ) : null}
           </Card>
 
           <Card className="p-5">

@@ -137,6 +137,11 @@ type Row = {
   carriedForward: boolean;
   cycleDays: number;
   contactsThisMonth: number;
+  /** Sales bills asked for in the month — null where none is. */
+  billTarget: number | null;
+  /** Sales bills raised this month so far. */
+  billsAchieved: number;
+  billGap: number;
 };
 
 type Candidate = {
@@ -148,7 +153,25 @@ type Candidate = {
   source: Source | null;
   achieved: number;
   trailing: number[];
+  billTarget: number | null;
+  bills: number;
+  trailingBills: number[];
 };
+
+/** "1 bill", "4 bills" — said the same way everywhere on this screen. */
+function bills(n: number): string {
+  return `${n.toLocaleString("en-IN")} bill${n === 1 ? "" : "s"}`;
+}
+
+/**
+ * How far a row is through its month. The rupee figure leads where one is
+ * set; a bills-only target is measured by its count, so a shop asked for five
+ * bills and nothing else is not drawn at 0% of ₹0.
+ */
+function rowPercent(r: Pick<Row, "target" | "percent" | "billTarget" | "billsAchieved">): number {
+  if (r.target > 0) return r.percent;
+  return r.billTarget ? pct(r.billsAchieved, r.billTarget) : 0;
+}
 
 function sourceOf(r: Pick<Row, "isDefault" | "carriedForward">): Source {
   return r.isDefault ? "default" : r.carriedForward ? "carried" : "hand";
@@ -212,6 +235,9 @@ export function MonthlyTargetsScreen({
     defaults: number;
     behind: number;
     maxGap: number;
+    billTargeted: number;
+    billTarget: number;
+    billsAchieved: number;
   };
   /** Over every direct customer in scope, before any filter. */
   allocation: {
@@ -425,6 +451,8 @@ export function MonthlyTargetsScreen({
                   "Achieved (Rs)",
                   "Gap (Rs)",
                   "Achievement (%)",
+                  "Bill target",
+                  "Bills raised",
                   "Account manager",
                   "Source",
                 ],
@@ -435,6 +463,8 @@ export function MonthlyTargetsScreen({
                   Math.round(r.achieved / 100),
                   Math.round(r.gap / 100),
                   r.percent,
+                  r.billTarget ?? "",
+                  r.billsAchieved,
                   r.ownerName ?? "",
                   SOURCE_LABEL[sourceOf(r)],
                 ]),
@@ -510,6 +540,16 @@ export function MonthlyTargetsScreen({
                 "No targets to measure yet"
               )}
             </div>
+            {totals.billTargeted ? (
+              <div className="mt-1.5 text-[13px] text-muted">
+                <span className="font-medium text-ink tabular-nums">
+                  {totals.billsAchieved.toLocaleString("en-IN")}
+                </span>{" "}
+                of {bills(totals.billTarget)} raised across{" "}
+                {totals.billTargeted.toLocaleString("en-IN")} customer
+                {totals.billTargeted === 1 ? "" : "s"} with a bill target
+              </div>
+            ) : null}
           </div>
 
           <SummaryStat
@@ -701,6 +741,14 @@ export function MonthlyTargetsScreen({
                     Gap
                   </SortableTh>
                   <SortableTh
+                    align="right"
+                    active={sort?.column === "bills"}
+                    direction={sort?.direction ?? "asc"}
+                    onSort={() => sortBy("bills")}
+                  >
+                    Bills
+                  </SortableTh>
+                  <SortableTh
                     active={sort?.column === "achievement"}
                     direction={sort?.direction ?? "asc"}
                     onSort={() => sortBy("achievement")}
@@ -756,13 +804,21 @@ export function MonthlyTargetsScreen({
                         )}
                       </Td>
                       <Td align="right" className="font-medium text-ink tabular-nums">
-                        {money(r.target)}
+                        {r.target ? (
+                          money(r.target)
+                        ) : (
+                          <span className="font-normal text-muted" title="Only a bill target is set">
+                            —
+                          </span>
+                        )}
                       </Td>
                       <Td align="right" className="tabular-nums">
                         {money(r.achieved)}
                       </Td>
                       <Td align="right" className="tabular-nums">
-                        {r.gap ? (
+                        {!r.target ? (
+                          <span className="text-muted">—</span>
+                        ) : r.gap ? (
                           <span className="text-danger">{money(r.gap)}</span>
                         ) : (
                           <span className="inline-flex items-center gap-1 text-success">
@@ -771,15 +827,38 @@ export function MonthlyTargetsScreen({
                           </span>
                         )}
                       </Td>
+                      <Td align="right" className="tabular-nums">
+                        {r.billTarget ? (
+                          <span
+                            className={cx(
+                              "inline-flex items-center gap-1",
+                              r.billGap ? "text-ink" : "text-success",
+                            )}
+                            title={
+                              r.billGap
+                                ? `${bills(r.billGap)} still to raise this month`
+                                : "Bill target met"
+                            }
+                          >
+                            {r.billGap ? null : <Icon name="check" size={14} />}
+                            {r.billsAchieved}
+                            <span className="text-muted">/ {r.billTarget}</span>
+                          </span>
+                        ) : (
+                          <span className="text-muted" title="No bill target this month">
+                            {r.billsAchieved}
+                          </span>
+                        )}
+                      </Td>
                       <Td>
                         <span className="flex min-w-[150px] items-center gap-2.5">
                           <Progress
-                            value={r.percent}
-                            tone={progressTone(r.percent)}
+                            value={rowPercent(r)}
+                            tone={progressTone(rowPercent(r))}
                             className="flex-1"
                           />
                           <span className="w-10 text-right text-[13px] text-body tabular-nums">
-                            {r.percent}%
+                            {rowPercent(r)}%
                           </span>
                         </span>
                       </Td>
@@ -925,8 +1004,8 @@ export function MonthlyTargetsScreen({
           period={period}
           initial={dialog.kind === "edit" ? dialog.row : null}
           onClose={() => setDialog(null)}
-          onSave={async (customerId, amount) => {
-            const result = await run(setTarget(customerId, amount, period));
+          onSave={async (customerId, amount, billCount) => {
+            const result = await run(setTarget(customerId, amount, period, billCount));
             if (result.ok) router.refresh();
             return result.ok;
           }}
@@ -1067,7 +1146,7 @@ function TargetDialog({
   /** The row an edit was opened from; null opens on the customer search. */
   initial: Row | null;
   onClose: () => void;
-  onSave: (customerId: string, amount: string) => Promise<boolean>;
+  onSave: (customerId: string, amount: string, bills: string) => Promise<boolean>;
 }) {
   const allocating = initial === null;
   const [picked, setPicked] = React.useState<Candidate | null>(
@@ -1081,12 +1160,18 @@ function TargetDialog({
           source: sourceOf(initial),
           achieved: initial.achieved,
           trailing: [],
+          billTarget: initial.billTarget,
+          bills: initial.billsAchieved,
+          trailingBills: [],
         }
       : null,
   );
   const [loadingContext, setLoadingContext] = React.useState(Boolean(initial));
   const [amount, setAmount] = React.useState(
     initial && initial.target ? String(Math.round(initial.target / 100)) : "",
+  );
+  const [billCount, setBillCount] = React.useState(
+    initial?.billTarget ? String(initial.billTarget) : "",
   );
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -1100,7 +1185,10 @@ function TargetDialog({
     findTargetCandidates({ period, customerId: initial.customerId }).then((r) => {
       if (!live) return;
       if (r.ok && r.data[0]) {
-        setPicked((p) => (p ? { ...p, trailing: r.data[0].trailing } : p));
+        const ctx = r.data[0];
+        setPicked((p) =>
+          p ? { ...p, trailing: ctx.trailing, trailingBills: ctx.trailingBills, bills: ctx.bills } : p,
+        );
       }
       setLoadingContext(false);
     });
@@ -1110,22 +1198,29 @@ function TargetDialog({
   }, [initial, period]);
 
   const amountPaise = Math.round(Number(amount.replace(/[^0-9.]/g, "") || 0) * 100);
+  const billNumber = Number(billCount.trim() || 0);
+  const billValid = billCount.trim() === "" || (Number.isInteger(billNumber) && billNumber > 0);
 
   async function save(andAnother: boolean) {
     if (!picked) return;
-    if (!amountPaise) {
-      setError("Enter the monthly target in rupees.");
+    if (!billValid) {
+      setError("Enter the number of bills as a whole number, or leave it empty.");
+      return;
+    }
+    if (!amountPaise && !billNumber) {
+      setError("Enter a sales target, a number of bills, or both.");
       return;
     }
     setBusy(true);
     setError(null);
     try {
-      const ok = await onSave(picked.customerId, amount);
+      const ok = await onSave(picked.customerId, amount, billCount);
       if (!ok) return;
       if (andAnother) {
         setSavedCount((n) => n + 1);
         setPicked(null);
         setAmount("");
+        setBillCount("");
       } else {
         onClose();
       }
@@ -1155,6 +1250,7 @@ function TargetDialog({
                 onClick={() => {
                   setPicked(null);
                   setAmount("");
+                  setBillCount("");
                   setError(null);
                 }}
                 className="mr-auto"
@@ -1196,9 +1292,15 @@ function TargetDialog({
           loadingContext={loadingContext}
           amount={amount}
           amountPaise={amountPaise}
+          billCount={billCount}
+          billNumber={billValid ? billNumber : 0}
           error={error}
           onAmount={(v) => {
             setAmount(v);
+            setError(null);
+          }}
+          onBills={(v) => {
+            setBillCount(v.replace(/[^0-9]/g, ""));
             setError(null);
           }}
           onSubmit={() => save(false)}
@@ -1209,6 +1311,7 @@ function TargetDialog({
           onPick={(c) => {
             setPicked(c);
             setAmount(c.target ? String(Math.round(c.target / 100)) : "");
+            setBillCount(c.billTarget ? String(c.billTarget) : "");
             setError(null);
           }}
         />
@@ -1294,6 +1397,7 @@ function CustomerPicker({
           <ul className={cx(loading && "opacity-60")}>
             {rows.map((c) => {
               const avg = average(c.trailing);
+              const avgBills = averageCount(c.trailingBills);
               return (
                 <li key={c.customerId} className="border-b border-divider last:border-b-0">
                   <button
@@ -1308,12 +1412,15 @@ function CustomerPicker({
                       <span className="block truncate text-[12px] text-muted">
                         {[c.city, c.ownerName].filter(Boolean).join(" · ") || "—"}
                         {avg ? ` · averages ${moneyShort(avg)}/month` : " · no recent sales"}
+                        {avgBills ? `, ${bills(avgBills)}` : ""}
                       </span>
                     </span>
-                    {c.target ? (
+                    {c.target || c.billTarget ? (
                       <span className="flex flex-none flex-col items-end">
                         <span className="text-[13px] font-medium text-ink tabular-nums">
-                          {money(c.target)}
+                          {[c.target ? money(c.target) : null, c.billTarget ? bills(c.billTarget) : null]
+                            .filter(Boolean)
+                            .join(" · ")}
                         </span>
                         {c.source ? (
                           <span className="text-[11px] text-muted">{SOURCE_LABEL[c.source]}</span>
@@ -1345,8 +1452,11 @@ function TargetForm({
   loadingContext,
   amount,
   amountPaise,
+  billCount,
+  billNumber,
   error,
   onAmount,
+  onBills,
   onSubmit,
 }: {
   period: string;
@@ -1354,8 +1464,12 @@ function TargetForm({
   loadingContext: boolean;
   amount: string;
   amountPaise: number;
+  billCount: string;
+  /** The typed count, 0 where the box is empty or not a whole number. */
+  billNumber: number;
   error: string | null;
   onAmount: (v: string) => void;
+  onBills: (v: string) => void;
   onSubmit: () => void;
 }) {
   const avg = average(customer.trailing);
@@ -1373,6 +1487,23 @@ function TargetForm({
   ].filter(
     (s, i, all) => s.value > 0 && all.findIndex((o) => o.value === s.value) === i,
   );
+
+  // The same arithmetic on the bill counts, kept to whole bills — "about
+  // four a month, ask for five" is the conversation this field is for.
+  const avgBills = averageCount(customer.trailingBills);
+  const bestBills = Math.max(0, ...customer.trailingBills);
+  const billSuggestions = [
+    { label: "3-month average", value: avgBills },
+    { label: "Average +1", value: avgBills + 1 },
+    { label: "Average +2", value: avgBills + 2 },
+    { label: "Best month", value: bestBills },
+  ].filter((s, i, all) => s.value > 0 && all.findIndex((o) => o.value === s.value) === i);
+  const billsAfter = billNumber
+    ? {
+        percent: pct(customer.bills, billNumber),
+        gap: Math.max(0, billNumber - customer.bills),
+      }
+    : null;
 
   const after = amountPaise
     ? {
@@ -1400,11 +1531,16 @@ function TargetForm({
               {[customer.city, customer.ownerName].filter(Boolean).join(" · ") || "Direct customer"}
             </div>
           </div>
-          {customer.target ? (
+          {customer.target || customer.billTarget ? (
             <span className="flex flex-none flex-col items-end">
               <span className="text-[11px] tracking-[0.04em] text-muted uppercase">Current</span>
               <span className="text-sm font-medium text-ink tabular-nums">
-                {money(customer.target)}
+                {[
+                  customer.target ? money(customer.target) : null,
+                  customer.billTarget ? bills(customer.billTarget) : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
               </span>
               {customer.source ? (
                 <span className="text-[11px] text-muted">{SOURCE_LABEL[customer.source]}</span>
@@ -1418,11 +1554,15 @@ function TargetForm({
         <div className="mt-3 grid grid-cols-4 gap-2 border-t border-divider pt-3">
           {[3, 2, 1].map((back) => {
             const value = customer.trailing[back - 1];
+            const count = customer.trailingBills[back - 1];
             return (
               <div key={back}>
                 <div className="text-[11px] text-muted">{shortMonth(shiftMonth(period, -back))}</div>
                 <div className="text-[13px] font-medium text-ink tabular-nums">
                   {loadingContext || value === undefined ? "…" : money(value)}
+                </div>
+                <div className="text-[12px] text-muted tabular-nums">
+                  {loadingContext || count === undefined ? "…" : bills(count)}
                 </div>
               </div>
             );
@@ -1432,12 +1572,14 @@ function TargetForm({
             <div className="text-[13px] font-medium text-brand tabular-nums">
               {money(customer.achieved)}
             </div>
+            <div className="text-[12px] text-brand tabular-nums">{bills(customer.bills)}</div>
           </div>
         </div>
       </div>
 
+      <div className="grid grid-cols-[1fr_180px] items-start gap-3">
       <Field
-        label={`Target for ${periodLabel(period)} (excl. GST)`}
+        label={`Sales target for ${periodLabel(period)} (excl. GST)`}
         error={error}
         hint={
           customer.source === "default"
@@ -1455,6 +1597,16 @@ function TargetForm({
           invalid={Boolean(error)}
         />
       </Field>
+      <Field label="Bills this month" hint="Optional. Sales bills to raise.">
+        <Input
+          inputMode="numeric"
+          value={billCount}
+          onChange={(e) => onBills(e.target.value)}
+          placeholder="e.g. 5"
+          aria-label="Bill target"
+        />
+      </Field>
+      </div>
 
       {suggestions.length ? (
         <div>
@@ -1518,13 +1670,75 @@ function TargetForm({
           ) : null}
         </div>
       ) : null}
-      {/* Enter saves, as a dialog with one field should. */}
+      {billSuggestions.length ? (
+        <div>
+          <div className="mb-1.5 text-xs font-medium tracking-[0.04em] text-muted uppercase">
+            Bills, based on their months
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {billSuggestions.map((s) => (
+              <button
+                key={s.label}
+                type="button"
+                onClick={() => onBills(String(s.value))}
+                className={cx(
+                  "cursor-pointer rounded-[4px] border px-2.5 py-1.5 text-left",
+                  billNumber === s.value
+                    ? "border-brand bg-brand-soft"
+                    : "border-line bg-surface hover:bg-canvas",
+                )}
+              >
+                <span className="block text-[11px] text-muted">{s.label}</span>
+                <span className="block text-[13px] font-medium text-ink tabular-nums">
+                  {bills(s.value)}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {billsAfter ? (
+        <div className="rounded-[4px] bg-canvas px-3.5 py-2.5 text-[13px] text-body">
+          <div className="mb-2 flex items-center gap-2.5">
+            <Progress
+              value={billsAfter.percent}
+              tone={progressTone(billsAfter.percent)}
+              className="flex-1"
+            />
+            <span className="w-10 text-right font-medium text-ink tabular-nums">
+              {billsAfter.percent}%
+            </span>
+          </div>
+          {billsAfter.gap ? (
+            <>
+              <span className="font-medium text-danger tabular-nums">{bills(billsAfter.gap)}</span>{" "}
+              still to raise this month
+            </>
+          ) : (
+            <span className="font-medium text-success">Bill target already met this month</span>
+          )}
+          <span className="text-muted">
+            {" "}
+            · {bills(customer.bills)} raised so far
+            {avgBills ? `, about ${bills(avgBills)} a month lately` : ""}
+          </span>
+        </div>
+      ) : null}
+
+      {/* Enter saves, as a dialog with its fields should. */}
       <button type="submit" hidden />
     </form>
   );
 }
 
 function average(values: number[]): number {
+  if (!values.length) return 0;
+  return Math.round(values.reduce((a, b) => a + b, 0) / values.length);
+}
+
+/** An average count, to the nearest whole bill. */
+function averageCount(values: number[]): number {
   if (!values.length) return 0;
   return Math.round(values.reduce((a, b) => a + b, 0) / values.length);
 }

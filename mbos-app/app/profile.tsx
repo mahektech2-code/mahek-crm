@@ -348,7 +348,7 @@ export default function ProfileScreen() {
           const opened = await openPasswordReset();
           notify(
             opened
-              ? 'Opening the reset page. Use your work email, or a WhatsApp code if it offers one.'
+              ? 'Opening the reset page. Use your work email, or an OTP if it offers one.'
               : 'Could not open the browser. Ask your manager to reset your password.',
             opened ? 'info' : 'error',
           );

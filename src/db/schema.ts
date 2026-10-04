@@ -4227,6 +4227,15 @@ export const monthlyTargets = pgTable(
      * it is still somebody's decision, just not one made for this month.
      */
     carriedForward: boolean("carried_forward").notNull().default(false),
+    /**
+     * HOW MANY SALES BILLS the month should carry, beside the rupees. Null
+     * means nobody asked for a number of bills — not a target of zero. A
+     * customer billed four times a month for about a lakh is asked for five:
+     * the count is what a telecaller or a salesman can actually move on a
+     * call, and the rupees follow it. Measured off the bills ledger by
+     * `bill_date`, the same count the Top customers report prints.
+     */
+    billTarget: integer("bill_target"),
     setById: text("set_by_id").references(() => users.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

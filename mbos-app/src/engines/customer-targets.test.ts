@@ -81,3 +81,33 @@ test('days since the last order, in words', () => {
   assert.equal(lastOrderWords('2026-09-20', '2026-10-02'), 'Last order 12 days ago');
   assert.equal(lastOrderWords(null, '2026-10-02'), 'No order on record');
 });
+
+test('a bill target alone makes a shop targeted, and is met by its count', () => {
+  const asked = row({ billTarget: 5, billsAchieved: 0 });
+  assert.equal(stateOf(asked), 'not-started');
+  assert.equal(stateOf(row({ billTarget: 5, billsAchieved: 3 })), 'open');
+  assert.equal(stateOf(row({ billTarget: 5, billsAchieved: 5 })), 'met');
+  // A null count is "nothing asked", never a target of zero that reads as met.
+  assert.equal(stateOf(row({ billTarget: null, billsAchieved: 4 })), 'untargeted');
+});
+
+test('a shop asked for rupees AND bills is met only when both are', () => {
+  const rupeesOnly = row({ targetPaise: 10_000, achievedPaise: 12_000, billTarget: 5, billsAchieved: 4 });
+  const billsOnly = row({ targetPaise: 10_000, achievedPaise: 8_000, billTarget: 5, billsAchieved: 6 });
+  const both = row({ targetPaise: 10_000, achievedPaise: 12_000, billTarget: 5, billsAchieved: 5 });
+  assert.equal(stateOf(rupeesOnly), 'open');
+  assert.equal(stateOf(billsOnly), 'open');
+  assert.equal(stateOf(both), 'met');
+});
+
+test('bills are summed over the shops asked for a count', () => {
+  const s = summarise([
+    row({ name: 'a', billTarget: 5, billsAchieved: 3 }),
+    row({ name: 'b', targetPaise: 10_000, billsAchieved: 7 }),
+    row({ name: 'c', targetPaise: 10_000, billTarget: 4, billsAchieved: 4 }),
+  ]);
+  assert.equal(s.targeted, 3);
+  assert.equal(s.billTargeted, 2);
+  assert.equal(s.billTarget, 9);
+  assert.equal(s.billsAchieved, 7);
+});

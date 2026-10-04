@@ -1396,12 +1396,30 @@ export async function setTarget(
   customerId: string,
   amount: string,
   period?: string,
+  /**
+   * Sales bills asked for in the month, as typed. Omitted leaves the stored
+   * count alone; an empty box clears it.
+   */
+  bills?: string,
 ): Promise<Result> {
   try {
-    const paise = parseRupees(amount);
+    // An empty amount is a bills-only target; the service refuses a row that
+    // asks for neither, with the sentence that says so.
+    const paise = /^[\s₹0.,]*$/.test(amount) ? 0 : parseRupees(amount);
     if (paise === null)
       return err("Enter the monthly target in rupees.", "validation");
-    const r = await setTargetService(customerId, paise, period);
+    let billTarget: number | null | undefined;
+    if (bills !== undefined) {
+      const typed = bills.trim();
+      if (!typed) billTarget = null;
+      else {
+        const n = Number(typed);
+        if (!Number.isInteger(n) || n <= 0)
+          return err("Enter the number of bills as a whole number.", "validation");
+        billTarget = n;
+      }
+    }
+    const r = await setTargetService(customerId, paise, period, billTarget);
     refreshAll();
     return r;
   } catch (e) {
