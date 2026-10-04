@@ -430,7 +430,10 @@ export const useStore = create<State & Actions>((set, get) => ({
   offerUpdate: (o) => set({ updateOffer: o }),
   dismissUpdate: () => set({ updateOffer: null }),
 
-  signIn: () => set({ signedIn: true }),
+  /* The password goes the moment it has been used. It sat in this store as
+     plain text until sign-out, which on a phone that is never signed out of
+     is for ever. */
+  signIn: () => set({ signedIn: true, pw: '' }),
 
   /**
    * Signing out keeps the day, the cart and the queue exactly where they were.

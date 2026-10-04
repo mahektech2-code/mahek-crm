@@ -9,6 +9,7 @@ import { Inter_500Medium } from '@expo-google-fonts/inter/500Medium';
 import { Inter_600SemiBold } from '@expo-google-fonts/inter/600SemiBold';
 import { color } from '../src/theme/tokens';
 import { BootProvider, useBoot } from '../src/state/boot';
+import { AuthLostBanner } from '../src/components/shell/AuthLostBanner';
 import { AppLock } from '../src/components/shell/AppLock';
 import { PushTaps } from '../src/state/push-taps';
 import { UpdatePrompt } from '../src/components/shell/UpdatePrompt';
@@ -159,6 +160,9 @@ export default function RootLayout() {
             is open is drawn by the app, and never over a locked screen — a
             refusal's reason is not for whoever picked the phone up. */}
         <PushBanner />
+        {/* Above everything but the lock: a phone that can no longer send has
+            to say so on whichever screen he is on. */}
+        <AuthLostBanner />
       </AppLock>
     </BootProvider>
   );

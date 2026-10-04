@@ -29,7 +29,7 @@ import {
 import { policyForDate, resolveSubject } from "./expense-policy-service";
 import { describeRule } from "../expense-rule-forms";
 import { verifyPassword } from "../password";
-import { verifyOtp } from "./otp-service";
+import { findAccount, verifyOtp } from "./otp-service";
 import { bearerFrom, verifyToken, signingKeyPresent } from "../mbos/token";
 import { today } from "../recompute";
 import { addDays, addMonths, asDate, APP_TIMEZONE, monthKey, type BusinessDate } from "../business-date";
@@ -124,6 +124,17 @@ export type LoginCheckSuccess = { ok: true; user: User };
 /** Minimum password length. A field handset types this on a phone keypad. */
 const MIN_PASSWORD_LENGTH = 8;
 
+/**
+ * ONE ANSWER for "no such number" and "wrong password", word for word and
+ * step for step. They used to differ — "No MahekOne account uses 98…" against
+ * "That password is not right" — which made this screen a way to find out
+ * which numbers belong to staff, the exact thing the WhatsApp-code endpoint
+ * was written to refuse. `unknown_user` stays in the type for an older
+ * handset that still names it.
+ */
+const NO_MATCH =
+  "That number and password do not match an account that can use Mahek MBOS. Check both, or use Forgot password.";
+
 export async function runLoginChecks(input: {
   mobile: string;
   password?: string;
@@ -133,21 +144,27 @@ export async function runLoginChecks(input: {
   const identifier = input.mobile.trim();
 
   /* 1 — is this anybody? Work number OR email, because a salesman knows their
-   * phone and the office knows their address, and one field takes both. */
-  const [user] = await db
-    .select()
-    .from(users)
-    .where(
-      sql`lower(${users.email}) = lower(${identifier}) or ${users.phone} = ${identifier}`,
-    )
-    .limit(1);
+   * phone and the office knows their address, and one field takes both.
+   *
+   * THE SAME LOOKUP THE WHATSAPP CODE USES. This compared `users.phone` to the
+   * typed digits exactly, while the code endpoint matched the last ten digits
+   * of a normalised number — so an account stored as "+91 98200 11006" was
+   * sent a code and then told by this function that no account used the
+   * number it had just messaged. One lookup, `findAccount`, for both doors. */
+  /* A password too short to be anybody's is refused BEFORE the account is
+   * looked up, so its answer cannot depend on whether the account exists. */
+  if (!input.otp && (input.password ?? "").length < MIN_PASSWORD_LENGTH) {
+    return { ok: false, step: "bad_password", error: NO_MATCH };
+  }
 
+  const user = await findAccount(identifier);
+
+  /* NOT FOUND AND NOT ALLOWED READ THE SAME, as they already do on the code
+   * endpoint: a sign-in screen that answers "no account uses this number" for
+   * one and "wrong password" for another is a way to find out which numbers
+   * belong to staff. */
   if (!user) {
-    return {
-      ok: false,
-      step: "unknown_user",
-      error: `No MahekOne account uses ${identifier}. Check the number, or ask your manager to have one created.`,
-    };
+    return { ok: false, step: "bad_password", error: NO_MATCH };
   }
 
   /* 2 — does the password verify? */
@@ -159,13 +176,6 @@ export async function runLoginChecks(input: {
     if (!verified.ok) return { ok: false, step: "bad_otp", error: verified.error };
   } else {
   const password = input.password ?? "";
-  if (password.length < MIN_PASSWORD_LENGTH) {
-    return {
-      ok: false,
-      step: "bad_password",
-      error: `A password is at least ${MIN_PASSWORD_LENGTH} characters. That one is shorter, so it cannot be the right one.`,
-    };
-  }
   // The same count the web sign-in keeps, keyed on the same account: a phone
   // is not a second door with its own fresh allowance of guesses.
   const account = accountKey(user.id, identifier);
@@ -174,11 +184,7 @@ export async function runLoginChecks(input: {
   if (refused) return { ok: false, step: "bad_password", error: refused };
   if (!(await verifyPassword(password, user.passwordHash))) {
     await recordSignInFailure(account, address);
-    return {
-      ok: false,
-      step: "bad_password",
-      error: "That password is not right. Try again, or use Forgot password on the web app to set a new one.",
-    };
+    return { ok: false, step: "bad_password", error: NO_MATCH };
   }
   await clearSignInFailures(account);
   }
@@ -190,7 +196,7 @@ export async function runLoginChecks(input: {
     return {
       ok: false,
       step: "inactive",
-      error: `${user.name}'s MahekOne account has been closed. Your manager or the Admin Console team can reopen it — nothing on this handset is lost in the meantime.`,
+      error: `${user.name}'s MahekOne account has been closed. Ask your manager to reopen it — nothing on this handset is lost in the meantime.`,
     };
   }
 
@@ -206,7 +212,7 @@ export async function runLoginChecks(input: {
     return {
       ok: false,
       step: "no_app_access",
-      error: `${user.name} has a MahekOne account but has not been given the field app, so there is no territory to load. Ask your manager to grant it.`,
+      error: `${user.name} has a MahekOne account but has not been given Mahek MBOS. Ask your manager to grant it.`,
     };
   }
 
@@ -292,11 +298,23 @@ export async function checkDeviceBinding(
   const onePerPerson = (await getConfig())["mbos.devices.onePerPerson"];
 
   const conflicting = otherActive.filter((d) => d.deviceId !== deviceId);
-  if (onePerPerson && conflicting.length && !existingForDevice) {
+  /*
+   * ONLY HIS OWN ACTIVE HANDSET IS EXEMPT.
+   *
+   * The exemption was "any handset that already has a row", which takes in a
+   * phone an admin RELEASED and another employee's old phone — so the rule
+   * was bypassed by signing in on any handset that had ever been bound to
+   * anybody, and the upsert below reactivated it beside the one he already
+   * held. Re-signing in on the phone he is actively bound to is the only case
+   * that is not a second handset.
+   */
+  const alreadyHisActive =
+    !!existingForDevice && existingForDevice.active && existingForDevice.userId === userId;
+  if (onePerPerson && conflicting.length && !alreadyHisActive) {
     return {
       ok: false,
       error:
-        "You are already signed in on another handset. One device per person — ask an admin to release the old one, or have them allow more than one handset in the Sales Dashboard settings.",
+        "You are already signed in on another phone. Ask your manager to release the old one, then sign in here.",
     };
   }
 
@@ -326,7 +344,7 @@ export async function authenticate(
       status: 503,
       code: "not_configured",
       error:
-        "MBOS_JWT_SECRET is not set on this deployment, so the field app cannot be signed in to.",
+        "Mahek MBOS sign-in is not switched on yet. Tell your manager — the office has to finish setting it up.",
     };
   }
 
@@ -432,7 +450,7 @@ export async function loadPrincipal(
       ok: false,
       status: 403,
       code: "no_app_access",
-      error: "The field app is no longer granted to this account, so there is no territory to load.",
+      error: "Mahek MBOS has been taken off this account. Ask your manager.",
     };
   }
 
@@ -447,7 +465,7 @@ export async function loadPrincipal(
       status: 403,
       code: "device_released",
       error:
-        "This handset is no longer bound to your account. Sign in again — an admin may have released it.",
+        "This phone has been released from your account. Sign in again.",
     };
   }
 
