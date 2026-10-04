@@ -924,12 +924,38 @@ export async function pendingApprovals(): Promise<PendingApproval[]> {
            u.name as "requestedByName",
 
            case ap.type
+             -- A CLAIM IS RAISED ON THE DAY NOW, not on one expense: since
+             -- the expense submit flow, subject_type is 'mbos_expense_days'
+             -- and subject_id a day id, so the old lookup by expense id
+             -- matched nothing and every claim read "cannot find". Both
+             -- shapes are read, because approvals raised before still exist.
              when 'expense_claim' then
                coalesce(
-                 (select e.category || ' — ' || to_char(e.amount_paise / 100.0, 'FM99,99,999') ||
-                         ' on ' || to_char(e.expense_date, 'DD Mon')
-                    from mbos_expenses e where e.id = ap.subject_id),
+                 case when ap.subject_type = 'mbos_expense_days' then
+                   (select 'Expenses for ' || to_char(d.day, 'DD Mon') ||
+                           coalesce(' — ' || nullif(
+                             (select count(*) from mbos_expenses e
+                               where e.expense_day_id = d.id
+                                 and e.superseded_by_id is null), 0)::text || ' claimed', '') ||
+                           coalesce(', ' || d.destination_city, '')
+                      from mbos_expense_days d where d.id = ap.subject_id)
+                 else
+                   (select e.category || ' — ' || to_char(e.amount_paise / 100.0, 'FM99,99,999') ||
+                           ' on ' || to_char(e.expense_date, 'DD Mon')
+                      from mbos_expenses e where e.id = ap.subject_id)
+                 end,
                  'An expense claim the office cannot find')
+             when 'tour' then
+               coalesce(
+                 (select 'Tour to ' || coalesce((select string_agg(x, ', ')
+                                     from jsonb_array_elements_text(t.cities) x), 'somewhere unnamed') ||
+                         ', ' || to_char(t.start_date, 'DD Mon') ||
+                         case when t.end_date > t.start_date
+                              then ' to ' || to_char(t.end_date, 'DD Mon') else '' end ||
+                         coalesce(' — ' || t.purpose, '')
+                    from mbos_tours t where t.id = ap.subject_id),
+                 'A tour the office cannot find')
+             when 'distributor_appointment' then 'Appointing a distributor'
              when 'leave' then
                coalesce(
                  (select l.leave_type::text || ' leave, ' ||
@@ -972,7 +998,17 @@ export async function pendingApprovals(): Promise<PendingApproval[]> {
 
            case ap.type
              when 'expense_claim' then
-               (select e.amount_paise from mbos_expenses e where e.id = ap.subject_id)
+               case when ap.subject_type = 'mbos_expense_days' then
+                 coalesce(
+                   (select d.submitted_claimed_paise from mbos_expense_days d
+                     where d.id = ap.subject_id),
+                   (select sum(e.amount_paise) from mbos_expenses e
+                     where e.expense_day_id = ap.subject_id and e.superseded_by_id is null))
+               else
+                 (select e.amount_paise from mbos_expenses e where e.id = ap.subject_id)
+               end
+             when 'tour' then
+               (select t.estimated_cost_paise from mbos_tours t where t.id = ap.subject_id)
              when 'order' then
                (select o.total_amount from orders o where o.id = ap.subject_id)
              else null
@@ -1121,6 +1157,18 @@ export async function tasksList(day: string): Promise<TaskRow[]> {
   `) as unknown as TaskRow[];
 }
 
+export type VisitCompetitor = {
+  competitorName: string;
+  productName: string | null;
+  pricePaise: number | null;
+  rateNote: string | null;
+  creditTerms: string | null;
+  creditDays: number | null;
+  deliveryNote: string | null;
+  strengths: string | null;
+  weaknesses: string | null;
+};
+
 export type VisitRow = {
   id: string;
   salesmanId: string;
@@ -1151,6 +1199,23 @@ export type VisitRow = {
   photos: number;
   notes: string | null;
   transcript: string | null;
+  /**
+   * WHAT THE HANDSET BROUGHT BACK FROM THE SHOP, which this screen used to
+   * reduce to a count. The two photographs and the voice note are attachment
+   * ids, read through `/api/attachments/[id]`; the competitors are the
+   * `mbos_competitor_records` the salesman filed on this visit, which no web
+   * screen read at all.
+   */
+  shopPhotoId: string | null;
+  custPhotoId: string | null;
+  voiceNoteId: string | null;
+  transcriptIsAi: boolean | null;
+  nextFollowUpDate: string | null;
+  checkOutAt: Date | null;
+  tookPayment: boolean;
+  raisedComplaint: boolean;
+  gaveSample: boolean;
+  competitors: VisitCompetitor[];
   orderValuePaise: number;
   /** Where the check-in and check-out actually landed — for a manager who
    * wants to see the point itself rather than read the mismatch sentence. */
@@ -1186,7 +1251,7 @@ export async function visitsList(day: string): Promise<VisitRow[]> {
   const scope = await managerScope();
   return db.execute<VisitRow>(sql`
     select v.id, v.salesman_id as "salesmanId", u.name as "salesmanName", u.initials,
-           c.name as "customerName",
+           c.id as "customerId", c.name as "customerName",
            v.check_in_at as "checkInAt", v.duration_seconds as "durationSeconds",
            v.outcome::text as outcome, v.verified,
            v.location_mismatch as "locationMismatch",
@@ -1205,7 +1270,29 @@ export async function visitsList(day: string): Promise<VisitRow[]> {
            v.check_out_accuracy_m as "checkOutAccuracyM",
            v.check_in_override_reason as "checkInOverrideReason",
            v.pin_correction::text as "pinCorrection",
-           v.pin_correction_decided_at as "pinCorrectionDecidedAt"
+           v.pin_correction_decided_at as "pinCorrectionDecidedAt",
+           v.shop_photo_id as "shopPhotoId", v.cust_photo_id as "custPhotoId",
+           v.voice_note_id as "voiceNoteId", v.transcript_is_ai as "transcriptIsAi",
+           v.next_follow_up_date::text as "nextFollowUpDate",
+           v.check_out_at as "checkOutAt",
+           (v.linked_payment_id is not null) as "tookPayment",
+           (v.linked_complaint_id is not null) as "raisedComplaint",
+           (v.linked_sample_id is not null) as "gaveSample",
+           coalesce((
+             select jsonb_agg(jsonb_build_object(
+                      'competitorName', cr.competitor_name,
+                      'productName', cr.product_name,
+                      'pricePaise', cr.price_paise,
+                      'rateNote', cr.rate_note,
+                      'creditTerms', cr.credit_terms,
+                      'creditDays', cr.credit_days,
+                      'deliveryNote', cr.delivery_note,
+                      'strengths', cr.strengths,
+                      'weaknesses', cr.weaknesses
+                    ) order by cr.competitor_name)
+               from mbos_competitor_records cr
+              where cr.visit_id = v.id
+           ), '[]'::jsonb) as "competitors"
       from mbos_visits v
       join users u on u.id = v.salesman_id
       join customers c on c.id = v.customer_id
@@ -2475,6 +2562,23 @@ export type FieldOrder = {
   cans: number;
   /** Hours since it was captured. What "waiting" is measured in. */
   waitingHours: number;
+  /**
+   * WHAT WAS ORDERED, and what happened to it after — the half of a field
+   * order this screen used to reduce to "3 lines". The lines are the handset's
+   * own `orders.line_items`, product named as text. The confirmations are the
+   * shop's word, written by the handset's order-progress update and read by
+   * no web screen until now: a goods-short report from a shop is the one thing
+   * about an order a manager most needs to see.
+   */
+  lineItems: { product: string; quantity: number; unitPrice: number; amount: number }[];
+  deliveryShopName: string | null;
+  expectedDispatch: string | null;
+  creditDays: number | null;
+  declineReason: string | null;
+  customerConfirmedAt: Date | null;
+  customerConfirmedNote: string | null;
+  deliveryConfirmedAt: Date | null;
+  deliveryDiscrepancy: string | null;
 };
 
 /**
@@ -2594,9 +2698,19 @@ export async function fieldOrders(
            coalesce((select sum((x->>'quantity')::int)
                        from jsonb_array_elements(coalesce(o.line_items, '[]'::jsonb)) x), 0)::int
              as "cans",
-           floor(extract(epoch from (now() - o.created_at)) / 3600)::int as "waitingHours"
+           floor(extract(epoch from (now() - o.created_at)) / 3600)::int as "waitingHours",
+           coalesce(o.line_items, '[]'::jsonb) as "lineItems",
+           ds.name as "deliveryShopName",
+           o.expected_dispatch::text as "expectedDispatch",
+           o.credit_days as "creditDays",
+           o.decline_reason as "declineReason",
+           o.customer_confirmed_at as "customerConfirmedAt",
+           o.customer_confirmed_note as "customerConfirmedNote",
+           o.delivery_confirmed_at as "deliveryConfirmedAt",
+           o.delivery_discrepancy as "deliveryDiscrepancy"
       from orders o
       join customers c on c.id = o.customer_id
+      left join customers ds on ds.id = o.delivery_customer_id and ds.id <> o.customer_id
       left join users u on u.id = o.created_by_id
      where o.source = 'mbos' ${only} ${onlyMine(scope, "o.created_by_id")}
      order by o.ordered_at desc
@@ -5384,13 +5498,33 @@ export async function payForPeriod(from: string, to: string): Promise<PayRow[]> 
              where d.user_id = u.id and d.status = 'on_leave'
                and d.day between ${from}::date and ${to}::date) as "daysOnLeave",
 
-           coalesce((select sum(coalesce(ap.approved_amount_paise, ex.amount_paise))
+           /* Two shapes of claim. One approval per EXPENSE is how claims were
+              raised before the day-level submit flow; one per DAY is how they
+              are raised now, decided by its highest step. Reading only the
+              first left every salesman's reimbursement at zero. */
+           (coalesce((select sum(coalesce(ap.approved_amount_paise, ex.amount_paise))
                        from mbos_expenses ex
                        join mbos_approvals ap
                          on ap.subject_id = ex.id and ap.type = 'expense_claim'
+                        and ap.subject_type <> 'mbos_expense_days'
                       where ex.user_id = u.id
                         and ap.state in ('approved', 'partially_approved')
                         and ex.expense_date between ${from}::date and ${to}::date), 0)
+            + coalesce((select sum(coalesce(top.approved_amount_paise,
+                                            d.submitted_eligible_paise,
+                                            d.submitted_claimed_paise, 0))
+                          from mbos_expense_days d
+                          join lateral (
+                            select a.state, a.approved_amount_paise
+                              from mbos_approvals a
+                             where a.subject_type = 'mbos_expense_days'
+                               and a.subject_id = d.id
+                             order by a.step_index desc
+                             limit 1
+                          ) top on true
+                         where d.user_id = u.id
+                           and top.state in ('approved', 'partially_approved')
+                           and d.day between ${from}::date and ${to}::date), 0))::bigint
              as "reimbursedPaise"
 
       from users u
@@ -5816,9 +5950,14 @@ export async function salesmanRecord(
       db.execute(sql`
         select e.id, e.category::text as category, e.amount_paise as "amountPaise",
                e.expense_date::text as "expenseDate", e.remarks,
-               (select ap.state::text from mbos_approvals ap
-                 where ap.subject_id = e.id and ap.type = 'expense_claim'
-                 order by ap.requested_at desc limit 1) as state
+               coalesce(
+                 (select ap.state::text from mbos_approvals ap
+                   where ap.subject_type = 'mbos_expense_days'
+                     and ap.subject_id = e.expense_day_id
+                   order by ap.step_index desc limit 1),
+                 (select ap.state::text from mbos_approvals ap
+                   where ap.subject_id = e.id and ap.type = 'expense_claim'
+                   order by ap.requested_at desc limit 1)) as state
           from mbos_expenses e
          where e.user_id = ${userId}
          order by e.expense_date desc limit ${limit}
