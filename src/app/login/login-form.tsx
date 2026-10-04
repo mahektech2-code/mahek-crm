@@ -33,7 +33,7 @@ export function LoginForm({ codesOffered = false }: { codesOffered?: boolean }) 
                 mode === m ? "bg-brand-soft text-ink" : "text-muted hover:text-body",
               )}
             >
-              {m === "password" ? "Password" : "One-time code"}
+              {m === "password" ? "Password" : "OTP"}
             </button>
           ))}
         </div>
@@ -218,7 +218,7 @@ function CodeForm() {
         {sent ? (
           <label className="mt-4 block">
             <span className="mb-1 block text-xs font-medium tracking-[0.04em] text-muted uppercase">
-              Code you were sent
+              OTP
             </span>
             <span className="relative block">
               <Icon name="lock" size={16} className="pointer-events-none absolute top-3 left-3 text-muted" />
@@ -227,12 +227,12 @@ function CodeForm() {
                 inputMode="numeric"
                 autoComplete="one-time-code"
                 autoFocus
-                placeholder="6-digit code"
+                placeholder="6-digit OTP"
                 className={cx(FIELD, "tracking-[0.2em]", failed ? "border-danger" : "border-line")}
               />
             </span>
             <span className="mt-1.5 flex items-center justify-between text-[13px] text-muted">
-              <span>Sent to {sent} on WhatsApp, or by SMS if WhatsApp does not reach you.</span>
+              <span>OTP sent to {sent}.</span>
               <button type="button" disabled={sending} onClick={send} className="cursor-pointer font-medium text-brand disabled:opacity-60">
                 {sending ? "Sending…" : "Send again"}
               </button>
@@ -270,7 +270,7 @@ function CodeForm() {
               sending || !identifier.trim() ? "cursor-not-allowed opacity-70" : "cursor-pointer hover:border-brand-hover hover:bg-brand-hover",
             )}
           >
-            {sending ? "Sending code" : "Send me a code"}
+            {sending ? "Sending OTP" : "Send OTP"}
           </button>
         )}
       </form>

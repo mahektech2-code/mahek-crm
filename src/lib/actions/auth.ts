@@ -340,7 +340,7 @@ export async function requestSignInCode(
 
 const codeSignIn = z.object({
   identifier: z.string().trim().min(1, "Enter your work number or email address."),
-  code: z.string().trim().min(4, "Enter the code from WhatsApp."),
+  code: z.string().trim().min(4, "Enter the OTP."),
   remember: z.boolean().default(true),
 });
 
@@ -365,7 +365,7 @@ export async function signInWithCode(
 const codeReset = z
   .object({
     identifier: z.string().trim().min(1, "Enter your work number or email address."),
-    code: z.string().trim().min(4, "Enter the code from WhatsApp."),
+    code: z.string().trim().min(4, "Enter the OTP."),
     password: z.string().min(8, "Passwords must be at least 8 characters."),
     confirm: z.string(),
   })

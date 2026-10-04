@@ -95,14 +95,14 @@ export function ChangePasswordDialog({ onClose }: { onClose: () => void }) {
           ) : usesCode ? (
             <div>
               <span className="mb-1 block text-xs font-medium tracking-[0.04em] text-muted uppercase">
-                Code from WhatsApp
+                OTP
               </span>
               <div className="flex gap-2">
                 <input
                   name="code"
                   inputMode="numeric"
                   autoComplete="one-time-code"
-                  placeholder="6-digit code"
+                  placeholder="6-digit OTP"
                   className={cx(FIELD, fieldError("code") ? "border-danger" : "border-line")}
                 />
                 <button
@@ -121,7 +121,7 @@ export function ChangePasswordDialog({ onClose }: { onClose: () => void }) {
                   }}
                   className="h-10 flex-none cursor-pointer rounded-[6px] border border-line-strong bg-surface px-3 text-sm font-medium whitespace-nowrap text-body hover:bg-canvas disabled:cursor-progress disabled:opacity-70"
                 >
-                  {sending ? "Sending…" : codeSent ? "Send again" : "Send code"}
+                  {sending ? "Sending…" : codeSent ? "Send again" : "Send OTP"}
                 </button>
               </div>
               {fieldError("code") || codeError ? (
@@ -129,8 +129,8 @@ export function ChangePasswordDialog({ onClose }: { onClose: () => void }) {
               ) : (
                 <span className="mt-1.5 block text-[13px] text-muted">
                   {codeSent
-                    ? `Sent to ${codeSent} on WhatsApp.`
-                    : "We send a code to the work number on your account."}
+                    ? `OTP sent to ${codeSent}.`
+                    : "We send an OTP to the work number on your account."}
                 </span>
               )}
             </div>
