@@ -1,4 +1,4 @@
-import { APP_LABEL, oemOf, oemWords } from './oem-keepalive';
+import { APP_LABEL, autostartWhere, oemOf, oemWords } from './oem-keepalive';
 import type { BatteryExemption, PermissionState } from './phone-readiness';
 
 /**
@@ -272,7 +272,7 @@ function autostartStep(f: SetupFacts): Step {
     key: 'autostart',
     state: 'todo',
     title: words.label,
-    detail: words.path + (words.also ? ' ' + words.also : ''),
+    detail: autostartWhere(oemOf(f.manufacturer)),
     action: 'autostart',
     button: 'Open the setting',
   };

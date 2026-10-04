@@ -1,5 +1,5 @@
 import { isoDate } from '../lib/format';
-import { oemOf, oemWords } from './oem-keepalive';
+import { autostartWhere, oemOf, oemWords } from './oem-keepalive';
 
 /**
  * Whether this phone can be trusted to record a day before the day is started.
@@ -316,7 +316,7 @@ function autostartItem(i: ReadinessInput): ReadinessItem {
      raw manufacturer string, because the fold is what "Keep tracking on" needs
      on its own to decide which steps to draw. */
   const oem = oemWords(oemOf(i.manufacturer));
-  const where = oem.path + (oem.also ? ' ' + oem.also : '');
+  const where = autostartWhere(oemOf(i.manufacturer));
   const prev = i.previousWorkedDay;
 
   const blocking =
