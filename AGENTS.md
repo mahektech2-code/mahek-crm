@@ -2164,6 +2164,16 @@ to a day and asserts it sees all 55 exactly once; the seven is chosen not to
 divide the page size, because at twenty a day with pages of twenty every page
 ended on a date boundary and the broken cursor passed.
 
+**TOP CUSTOMERS ARE RANKED ACROSS THE COMPANY, then narrowed to the viewer.**
+`/crm/top-customers` takes the top `topCustomers.count` (60) accounts by approved
+order value or order count over the last `topCustomers.months` (3) months, chosen
+across every book first. Only then is `scopedToUsers` applied, the same narrowing
+the Customers list uses. An admin sees all sixty. A telecaller, back office included,
+sees the ones in their own book, and each row keeps its company rank. The other way
+round, the top sixty of a telecaller's own book, would put a small account on a
+list called Top customers, and two screens would use the same words for accounts of
+very different weight.
+
 **A THIRD-PARTY CUSTOMER is a shop we deliver to and do not bill.** A
 distributor buys from us, is invoiced, and sells the goods on; the shop is
 where the drums actually go. Most of what this CRM called a lead is one of

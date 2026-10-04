@@ -85,7 +85,7 @@ export const TAB_ORDER = TABS.map((t) => t.label);
 export const GROUP_ORDER: Record<string, string[]> = {
   "Call queue": ["When a customer is due a call", "Chasing the order", "Suppression", "Size and ordering"],
   Collections: ["Escalation stages", "Behaviour", "Aging and credit"],
-  "Targets & cycles": ["Buying cycle", "Inactivity", "Targets"],
+  "Targets & cycles": ["Buying cycle", "Inactivity", "Targets", "Top customers"],
   Interactions: ["Quick notes"],
   Products: ["Catalogue", "How the order form offers them"],
   WhatsApp: ["Connection", "Limits", "Templates"],
@@ -196,6 +196,8 @@ export const PRESENTATION: Record<string, Presentation> = {
 
   "inactive.cycleMultiplier": { tab: "Targets & cycles", group: "Inactivity", control: "decimal", impact: "inactive" },
   "inactive.decisionAgeWarningDays": { tab: "Targets & cycles", group: "Inactivity", unit: "days" },
+  "topCustomers.count": { tab: "Targets & cycles", group: "Top customers", unit: "customers" },
+  "topCustomers.months": { tab: "Targets & cycles", group: "Top customers", unit: "months" },
 
   "targets.defaultMethod": { tab: "Targets & cycles", group: "Targets", control: "choice" },
   "targets.trailingMonths": { tab: "Targets & cycles", group: "Targets", unit: "months" },

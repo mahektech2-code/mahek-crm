@@ -171,6 +171,7 @@ export const NAV: NavGroup[] = [
     icon: "people",
     items: [
       { href: at("/customers"), label: "Customers", icon: "people" },
+      { href: at("/top-customers"), label: "Top customers", icon: "chart" },
       {
         href: at("/complaints"),
         label: "Complaints",
