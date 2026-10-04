@@ -260,11 +260,10 @@ async function importBillsInner(
      * a spreadsheet cell reduced outstanding, aged the debt and took customers
      * off the collections list with no person behind any of it. `paidAmount`
      * is rebuilt from CONFIRMED receipts and nothing else; whether money
-     * arrived is the ledger desk's to record. So a new bill lands `unstated` —
-     * neither paid nor owed, held out of outstanding and collections until
-     * somebody speaks for it — exactly as the projection inserts one, and an
-     * existing bill keeps the position and paid figure it already has: a bill
-     * somebody has spoken for must not be returned to silence by a re-import.
+     * arrived is the ledger desk's to record. So a new bill lands owed in full
+     * — a bill nobody has spoken for is owed from its due date, Mahek's rule
+     * since October 2026 — and an existing bill keeps the position and paid
+     * figure it already has, so a re-import never undoes a recorded payment.
      * A paid figure in the file is counted and said, not quietly dropped.
      */
     // Rupees in the sheet, paise in the database.
@@ -284,7 +283,7 @@ async function importBillsInner(
       const id = newId("bil");
       await db
         .insert(bills)
-        .values({ ...values, id, billNo: d.billNo, paymentPosition: "unstated" });
+        .values({ ...values, id, billNo: d.billNo, paymentPosition: "stated" });
       byNo.set(d.billNo, id);
       summary.created += 1;
     }

@@ -4429,6 +4429,22 @@ screen. Only the projection writes `unstated`, and only on INSERT — a bill
 somebody has since spoken for must not be returned to silence because a
 scheduled pass re-read the row it came from.
 
+**AND MAHEK OVERRULED IT: a bill nobody has spoken for is OWED.** October
+2026, and a reversal of the paragraph above. Holding unsaid bills out of
+outstanding kept a month of real credit sales — every bill since the last
+receivables report — off Outstanding, aging and the collections list, so a
+customer weeks past a credit-term due date read as owing nothing. The
+projection and the CSV import now insert `stated`, and `0205` flipped every
+`unstated` bill already in the book. The sheet STILL writes no money: the bill
+is open in full because nothing has been recorded against it, which is what
+open means. The one bill still written `unstated` is one the Payment Status tab
+says was Received — `positionFor` in `sheet-projection-service.ts` — because
+that is a record of the money arriving rather than silence, and chasing it
+would be chasing money the office has written down as paid. Everything below
+about `unstated` still holds for those bills; there are simply far fewer of
+them. The consequence to know about: the founder's automated WhatsApp rules
+read stated overdue money, so this widened who they can reach.
+
 **What states a bill is a person.** Recording or confirming a receipt against
 it — every route to confirmed money passes through `applyToLedger`, which is
 where the mark is set, because a decision recorded in three places is a

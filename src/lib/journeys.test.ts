@@ -5853,25 +5853,24 @@ describe("An imported customer reaches the calling queue", () => {
     );
   });
 
-  test("a sales bill is the order, and nobody has said whether it is paid", async () => {
+  test("a sales bill is the order, and owed until somebody says it was paid", async () => {
     // The Order Details tab carries the bill number and the amount on every
-    // line and a payment status on NONE. It used to be read as "paid", on the
-    // reasoning that assuming the opposite invents the entire order book as
-    // debt. Both readings are inventions; this one marked all the customers
-    // and all the bills settled on a spreadsheet's authority.
+    // line and a payment status on NONE. It was read as "paid", then as
+    // "unsaid"; Mahek's rule since October 2026 is that a bill nobody has
+    // spoken for is owed — and the sheet still writes no money to say so.
     await stageSheetRows("Shree Paints", "SO-1001", addDays(TODAY, -40));
     const report = await projectSheet({ assignToUserId: priya.id });
 
     assert.equal(report.bills.skipped, false, "bills are no longer opt-in");
     assert.equal(report.bills.created, 1, "one order is one bill");
-    assert.equal(report.bills.unstated, 1, "and it is waiting on a person");
+    assert.equal(report.bills.unstated, 0, "nothing is held back as unsaid");
     assert.equal(report.bills.payments, 0, "the sheet writes no money, ever");
 
     const [bill] = await db.select().from(bills);
     // Two lines at 1180.00 each — the value is the SUM, never one line's.
     assert.equal(bill.amount, 2360_00);
     assert.equal(bill.paidAmount, 0, "nothing has been received that we know of");
-    assert.equal(bill.paymentPosition, "unstated", "and nobody has said either way");
+    assert.equal(bill.paymentPosition, "stated", "an unspoken-for bill is owed");
     assert.ok(bill.orderId, "the bill records which order it came from");
 
     // Not a receipt anywhere. This is the whole point.
@@ -5881,14 +5880,13 @@ describe("An imported customer reaches the calling queue", () => {
       "the projection wrote a receipt",
     );
 
-    // And it is not debt either: unstated counts as NEITHER, so nobody is
-    // chased for it and the collections list stays empty.
+    // And it IS debt: the whole amount joins outstanding on the projection's
+    // own recompute, so collections sees it the day it lands.
     const [customer] = await db
       .select()
       .from(customers)
       .where(eq(customers.name, "Shree Paints"));
-    assert.equal(customer.outstanding, 0, "an unsaid bill is not outstanding");
-    assert.equal((await db.select().from(followUpStates)).length, 0);
+    assert.equal(customer.outstanding, 2360_00, "the bill is outstanding in full");
   });
 
   test("a second pass never re-states a bill somebody has spoken for", async () => {
@@ -5912,20 +5910,18 @@ describe("An imported customer reaches the calling queue", () => {
     assert.equal(after.paidAmount, bill.amount, "and it moved the money too");
   });
 
-  test("recording a payment in the app is what states a bill", async () => {
-    // The other direction: an unstated bill is invisible to outstanding until
-    // somebody speaks, and recording money against it is speaking.
+  test("recording a payment in the app is what reduces an imported bill", async () => {
     await stageSheetRows("Shree Paints", "SO-1001", addDays(TODAY, -40));
     await projectSheet({ assignToUserId: priya.id });
 
     const [bill] = await db.select().from(bills);
-    assert.equal(bill.paymentPosition, "unstated");
+    assert.equal(bill.paymentPosition, "stated");
 
     const [customer] = await db
       .select()
       .from(customers)
       .where(eq(customers.id, bill.customerId));
-    assert.equal(customer.outstanding, 0, "unstated contributes nothing");
+    assert.equal(customer.outstanding, 2360_00, "owed in full until money is recorded");
 
     // Half of it arrives. Accounts recording it IS the confirmation.
     setTestUser(deepa);
@@ -5945,15 +5941,15 @@ describe("An imported customer reaches the calling queue", () => {
     setTestUser(priya);
 
     const [stated] = await db.select().from(bills).where(eq(bills.id, bill.id));
-    assert.equal(stated.paymentPosition, "stated", "recording money states the bill");
-    assert.ok(stated.paymentDecidedAt, "and marks when it was decided");
+    assert.equal(stated.paymentPosition, "stated");
+    assert.ok(stated.paymentDecidedAt, "and marks when a person decided");
 
-    // Now it counts — and it counts as the REMAINDER, not the whole amount.
+    // Outstanding falls to the REMAINDER.
     const [after] = await db
       .select()
       .from(customers)
       .where(eq(customers.id, bill.customerId));
-    assert.equal(after.outstanding, 1180_00, "the balance joins outstanding once stated");
+    assert.equal(after.outstanding, 1180_00, "only the remainder is still owed");
   });
 
   test("a bill number already taken does not bring the whole import down", async () => {
@@ -6001,7 +5997,7 @@ describe("An imported customer reaches the calling queue", () => {
     const rows = await db.select().from(bills);
     assert.equal(rows.length, 1, "one bill, not two");
     assert.equal(rows[0].paidAmount, 0, "and no money either time");
-    assert.equal(rows[0].paymentPosition, "unstated");
+    assert.equal(rows[0].paymentPosition, "stated");
     assert.equal((await db.select().from(paymentReceipts)).length, 0);
   });
 
@@ -6083,50 +6079,64 @@ describe("An imported customer reaches the calling queue", () => {
     await recomputeAllOutstanding();
   }
 
-  test("the Payment Status tab saying Pending still writes no money", async () => {
-    // This tab genuinely knows something — it is the one place in the workbook
-    // that carries received/not-received. It is still a spreadsheet cell, and
-    // a receipt is the assertion that money reached the bank, so the tab
-    // informs a person rather than writing the ledger itself. The bill is
-    // recorded; what happened to the money is left unsaid.
+  test("the Payment Status tab saying Pending: owed, and still no money written", async () => {
     await stageSheetRows("Shree Paints", "SO-1001", addDays(TODAY, -40));
     await stagePaymentRow("SO-1001", "Shree Paints", "Pending");
 
     const report = await projectSheet({ assignToUserId: priya.id });
     assert.equal(report.bills.created, 1, "the bill is still written");
-    assert.equal(report.bills.unstated, 1, "and its position is unsaid");
+    assert.equal(report.bills.unstated, 0);
 
     const [bill] = await db.select().from(bills);
     assert.equal(bill.paidAmount, 0);
-    assert.equal(bill.paymentPosition, "unstated");
+    assert.equal(bill.paymentPosition, "stated");
     assert.equal(
       (await db.select().from(paymentReceipts)).length,
       0,
       "no receipt was invented in either direction",
     );
 
-    // NOT claimed as debt either, which is the change from before: the tab
-    // saying Pending is evidence for a person to act on, not a person acting.
     const [customer] = await db
       .select()
       .from(customers)
       .where(eq(customers.name, "Shree Paints"));
-    assert.equal(customer.outstanding, 0, "a cell is not somebody vouching for a debt");
+    assert.equal(customer.outstanding, 2360_00, "an unpaid bill is outstanding");
   });
 
-  test("a blank status is unsaid, exactly like every other status", async () => {
-    // "Not yet paid" and "nobody has updated this" wear the same blank. It
-    // used to be read as settled; it is now read as what it is, which is the
-    // same answer the tab's non-blank rows now get.
+  test("the Payment Status tab saying Received holds the bill back from collections", async () => {
+    // The one exception: the office has written down that this money came.
+    // Chasing it would be chasing money we have a record of — but a cell is
+    // still not a receipt, so nothing is written to the ledger either.
     await stageSheetRows("Shree Paints", "SO-1001", addDays(TODAY, -40));
-    await stagePaymentRow("SO-1001", "Shree Paints", "   ");
+    await stagePaymentRow("SO-1001", "Shree Paints", "Received");
 
     const report = await projectSheet({ assignToUserId: priya.id });
     assert.equal(report.bills.unstated, 1);
 
     const [bill] = await db.select().from(bills);
-    assert.equal(bill.paidAmount, 0);
     assert.equal(bill.paymentPosition, "unstated");
+    assert.equal(bill.paidAmount, 0);
+    assert.equal((await db.select().from(paymentReceipts)).length, 0);
+
+    const [customer] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.name, "Shree Paints"));
+    assert.equal(customer.outstanding, 0, "money the tab says arrived is not chased");
+  });
+
+  test("a blank status is owed, like every status that is not Received", async () => {
+    // "Not yet paid" and "nobody has updated this" wear the same blank, and a
+    // bill nobody has spoken for is owed.
+    await stageSheetRows("Shree Paints", "SO-1001", addDays(TODAY, -40));
+    await stagePaymentRow("SO-1001", "Shree Paints", "   ");
+
+    const report = await projectSheet({ assignToUserId: priya.id });
+    assert.equal(report.bills.unstated, 0);
+
+    const [bill] = await db.select().from(bills);
+    assert.equal(bill.paidAmount, 0);
+    assert.equal(bill.paymentPosition, "stated");
   });
 
   test("the revert gives back the outstanding a settled run wrote over", async () => {
