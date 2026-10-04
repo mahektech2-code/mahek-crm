@@ -3051,6 +3051,8 @@ async function customerTargetsFor(userId: string): Promise<Record<string, unknow
       pendingPaise: r.pending,
       isDefault: r.isDefault,
       carriedForward: r.carriedForward,
+      billTarget: r.billTarget,
+      billsAchieved: r.billsAchieved,
       computedAt: computedAt,
     })),
   );

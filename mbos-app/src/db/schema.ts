@@ -2085,6 +2085,17 @@ export const MIGRATIONS: string[][] = [
     `CREATE INDEX IF NOT EXISTS idx_leads_book ON leads(archived, funnelStage);`,
   ],
 
+  /*
+   * A SHOP'S TARGET CAN BE A NUMBER OF BILLS as well as rupees. Null is "no
+   * count asked", never zero — a zero would read as met on a shop nobody set
+   * one for. The table is replaced wholesale on every pull, so an older
+   * phone simply starts receiving the two columns the pull after it updates.
+   */
+  [
+    `ALTER TABLE customer_targets ADD COLUMN billTarget INTEGER;`,
+    `ALTER TABLE customer_targets ADD COLUMN billsAchieved INTEGER NOT NULL DEFAULT 0;`,
+  ],
+
 ];
 
 /**

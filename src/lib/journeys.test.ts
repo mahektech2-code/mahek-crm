@@ -1792,6 +1792,77 @@ describe("who may see a customer's target", () => {
     assert.equal(after.total, 3);
   });
 
+  test("a bill target is counted off the bills ledger, can stand alone, and is behind until both are met", async () => {
+    const manager = await makeUser("Bills Manager", "manager");
+    const telecaller = await makeUser("Bills Telecaller", "associate", manager.id);
+    const month = TODAY.slice(0, 7);
+    const last = addMonths(month, -1);
+
+    const both = await makeCustomer(telecaller.id, { name: "Both Paints" });
+    const billsOnly = await makeCustomer(telecaller.id, { name: "Count Paints" });
+
+    // Both: the rupees are met by an order, the count is not.
+    await db.insert(orders).values({
+      id: id("ord"),
+      customerId: both.id,
+      userId: telecaller.id,
+      orderedAt: new Date(`${TODAY}T09:00:00+05:30`),
+      totalAmount: 2_00_000_00,
+      status: "confirmed",
+    });
+    const bill = (customerId: string, billDate: string) =>
+      db.insert(bills).values({
+        id: id("bil"),
+        customerId,
+        billNo: `MMI/${randomUUID().slice(0, 8)}`,
+        billDate,
+        amount: 10_000_00,
+      });
+    await bill(both.id, `${month}-01`);
+    await bill(both.id, `${month}-01`);
+    await bill(billsOnly.id, `${month}-01`);
+    // Last month's bills are context in the dialog, never this month's count.
+    for (let i = 0; i < 4; i++) await bill(billsOnly.id, `${last}-10`);
+
+    setTestUser(manager);
+    assert.ok((await setTarget(both.id, 1_00_000_00, month, 5)).ok);
+    assert.ok((await setTarget(billsOnly.id, 0, month, 3)).ok, "a count alone is a target");
+    const refused = await setTarget(billsOnly.id, 0, month, null);
+    assert.equal(refused.ok, false, "a target asking for nothing is refused");
+
+    const page = await listTargetsPage(month, {});
+    const byId = new Map(page.rows.map((r) => [r.customerId, r]));
+    assert.equal(page.total, 2, "a bills-only target is on the table");
+    assert.equal(byId.get(both.id)?.billsAchieved, 2);
+    assert.equal(byId.get(both.id)?.billGap, 3);
+    assert.equal(byId.get(both.id)?.gap, 0, "the rupees are met");
+    assert.equal(byId.get(billsOnly.id)?.billsAchieved, 1);
+    assert.equal(page.totals.behind, 2, "behind on bills is behind");
+    assert.equal(page.totals.billTargeted, 2);
+    assert.equal(page.totals.billTarget, 8);
+    assert.equal(page.totals.billsAchieved, 3);
+
+    // A rupee change that does not mention bills keeps the count.
+    assert.ok((await setTarget(both.id, 1_50_000_00, month)).ok);
+    const [kept] = await db
+      .select({ billTarget: monthlyTargets.billTarget })
+      .from(monthlyTargets)
+      .where(eq(monthlyTargets.customerId, both.id));
+    assert.equal(kept.billTarget, 5);
+
+    // Met once both are: two more bills this month for the first shop.
+    await bill(both.id, `${month}-01`);
+    await bill(both.id, `${month}-01`);
+    await bill(both.id, `${month}-01`);
+    const met = await listTargetsPage(month, { progress: "met" });
+    assert.deepEqual(met.rows.map((r) => r.customerId), [both.id]);
+
+    const [ctx] = await targetCandidates({ period: month, customerId: billsOnly.id });
+    assert.equal(ctx.billTarget, 3);
+    assert.equal(ctx.bills, 1);
+    assert.deepEqual(ctx.trailingBills, [4, 0, 0]);
+  });
+
   test("a filter narrows the population and never answers who may see it", async () => {
     // The shortfall takes the Targets tab's own filters now, and the honest
     // way to read five filters is to run the clause the list ran. But

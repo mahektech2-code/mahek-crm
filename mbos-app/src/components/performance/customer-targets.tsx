@@ -8,6 +8,7 @@ import { inrFromPaise, plural } from '../../lib/format';
 import { customerTargetsComputedAt, listCustomerTargets } from '../../data/customer-targets';
 import {
   TARGET_FILTERS,
+  billGap,
   gapPaise,
   lastOrderWords,
   matches,
@@ -143,8 +144,18 @@ export function CustomerTargetsCard({
         ) : null}
         <T s="small" style={{ color: C.body, marginTop: 8 }}>
           {plural(summary.targeted, 'customer')} with a target
-          {summary.openPaise ? ` · ${inrFromPaise(summary.openPaise)} still open` : ' · all met'}
+          {summary.openPaise
+            ? ` · ${inrFromPaise(summary.openPaise)} still open`
+            : summary.counts.open
+              ? ` · ${plural(summary.counts.open, 'shop')} still open`
+              : ' · all met'}
         </T>
+        {summary.billTargeted ? (
+          <T s="small" style={{ color: C.body, marginTop: 4 }}>
+            {summary.billsAchieved} of {plural(summary.billTarget, 'bill')} raised across{' '}
+            {plural(summary.billTargeted, 'customer')} with a bill target
+          </T>
+        ) : null}
         {summary.waitingPaise ? (
           <T s="small" style={{ color: C.warnInk, marginTop: 4 }}>
             {inrFromPaise(summary.waitingPaise)} more taken and not yet accepted — it counts once
@@ -232,8 +243,14 @@ function TargetRow({
 }) {
   const state = stateOf(row);
   const gap = gapPaise(row);
+  const bills = billGap(row);
   const waiting = row.pendingPaise + row.unsentPaise;
-  const pct = row.targetPaise ? (row.achievedPaise / row.targetPaise) * 100 : 0;
+  // A bills-only target is drawn by its count, never as a bar of ₹0.
+  const pct = row.targetPaise
+    ? (row.achievedPaise / row.targetPaise) * 100
+    : row.billTarget
+      ? ((row.billsAchieved ?? 0) / row.billTarget) * 100
+      : 0;
 
   return (
     <Row first={first} onPress={onPress} style={{ alignItems: 'flex-start' }}>
@@ -253,7 +270,7 @@ function TargetRow({
           </T>
         ) : null}
 
-        {row.targetPaise ? (
+        {row.targetPaise || row.billTarget ? (
           <View style={{ marginTop: 6 }}>
             <Bar pct={pct} fill={state === 'met' ? C.success : state === 'not-started' ? C.warn : C.primary} />
           </View>
@@ -264,9 +281,16 @@ function TargetRow({
             ? 'Target met'
             : state === 'untargeted'
               ? 'No target this month'
-              : `${inrFromPaise(gap)} to go`}
+              : [gap ? `${inrFromPaise(gap)} to go` : null, bills ? `${plural(bills, 'bill')} to go` : null]
+                  .filter(Boolean)
+                  .join(' · ')}
           {waiting ? ` · ${inrFromPaise(waiting)} waiting for approval` : ''}
         </T>
+        {row.billTarget ? (
+          <T s="micro" style={[{ marginTop: 2 }, tabular]}>
+            {row.billsAchieved ?? 0} of {plural(row.billTarget, 'bill')} this month
+          </T>
+        ) : null}
         {row.unsentPaise ? (
           <T s="micro">{inrFromPaise(row.unsentPaise)} of it is still on this phone, not yet sent.</T>
         ) : null}

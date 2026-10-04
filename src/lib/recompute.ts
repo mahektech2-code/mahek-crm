@@ -1062,7 +1062,11 @@ export async function seedMonthlyTargets(forMonth?: string): Promise<number> {
   const have = new Set(existing.map((e) => e.customerId));
 
   const priorManual = await db
-    .select({ customerId: monthlyTargets.customerId, targetAmount: monthlyTargets.targetAmount })
+    .select({
+      customerId: monthlyTargets.customerId,
+      targetAmount: monthlyTargets.targetAmount,
+      billTarget: monthlyTargets.billTarget,
+    })
     .from(monthlyTargets)
     .where(
       and(
@@ -1071,7 +1075,10 @@ export async function seedMonthlyTargets(forMonth?: string): Promise<number> {
         eq(monthlyTargets.isDefault, false),
       ),
     );
-  const carryFrom = new Map(priorManual.map((r) => [r.customerId, r.targetAmount]));
+  // The bill count travels with the rupees: both are what somebody asked of
+  // the account last month, and carrying one without the other would quietly
+  // drop half a target on the 1st.
+  const carryFrom = new Map(priorManual.map((r) => [r.customerId, r]));
 
   let created = 0;
   for (const c of active) {
@@ -1084,7 +1091,8 @@ export async function seedMonthlyTargets(forMonth?: string): Promise<number> {
         customerId: c.id,
         year,
         month,
-        targetAmount: carried,
+        targetAmount: carried.targetAmount,
+        billTarget: carried.billTarget,
         isDefault: false,
         carriedForward: true,
       });

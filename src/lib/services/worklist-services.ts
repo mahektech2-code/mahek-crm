@@ -1228,6 +1228,8 @@ export async function customerTargetsCreditedTo(userId: string, key: string) {
       target: sql<number>`coalesce(${monthlyTargets.targetAmount}, 0)::bigint`,
       isDefault: sql<boolean>`coalesce(${monthlyTargets.isDefault}, true)`,
       carriedForward: sql<boolean>`coalesce(${monthlyTargets.carriedForward}, false)`,
+      billTarget: monthlyTargets.billTarget,
+      billsAchieved: billsAchievedSql(key),
       achieved: targetAchievedSql(key),
       pending: sql<number>`coalesce((
         select sum(${orderValueSql("o")}) from ${orders} o
@@ -1252,11 +1254,13 @@ export async function customerTargetsCreditedTo(userId: string, key: string) {
         pending: Number(r.pending ?? 0),
         isDefault: Boolean(r.isDefault),
         carriedForward: Boolean(r.carriedForward),
+        billTarget: r.billTarget ?? null,
+        billsAchieved: Number(r.billsAchieved ?? 0),
       };
     })
     /* A shop with no target, nothing bought and nothing waiting has nothing
        to say on this screen, and on a big book it is most of the rows. */
-    .filter((r) => r.target > 0 || r.achieved > 0 || r.pending > 0);
+    .filter((r) => r.target > 0 || (r.billTarget ?? 0) > 0 || r.achieved > 0 || r.pending > 0);
 }
 
 /**
@@ -1317,7 +1321,13 @@ export async function targetTotals(
 export async function targetFor(
   customerId: string,
   period?: string,
-): Promise<{ amount: number; isDefault: boolean; shareOfBookPercent: number | null } | null> {
+): Promise<{
+  amount: number;
+  isDefault: boolean;
+  shareOfBookPercent: number | null;
+  billTarget: number | null;
+  billsAchieved: number;
+} | null> {
   const { where, joinTarget } = await targetListClause(period, {});
 
   const [row] = await db
@@ -1326,6 +1336,8 @@ export async function targetFor(
       // default, which on this path is always 0. See `targetTotals`.
       amount: sql<number>`coalesce(${monthlyTargets.targetAmount}, 0)::bigint`,
       isDefault: sql<boolean>`coalesce(${monthlyTargets.isDefault}, true)`,
+      billTarget: monthlyTargets.billTarget,
+      billsAchieved: billsAchievedSql(period ?? monthKey(await today())),
     })
     .from(customers)
     .leftJoin(monthlyTargets, joinTarget)
@@ -1343,6 +1355,23 @@ export async function targetFor(
     amount,
     isDefault: Boolean(row.isDefault),
     shareOfBookPercent: bookTarget ? Math.round((amount / bookTarget) * 100) : null,
+    billTarget: row.billTarget ?? null,
+    billsAchieved: Number(row.billsAchieved ?? 0),
+  };
+}
+
+/**
+ * A bill target's three figures, read the one way every list reads them. Null
+ * means nobody asked for a count this month — not a target of zero, which
+ * would read as "met" on a shop nobody set one for.
+ */
+function billFigures(billTarget: number | null | undefined, billsAchieved: unknown) {
+  const target = billTarget && billTarget > 0 ? billTarget : null;
+  const achieved = Number(billsAchieved ?? 0);
+  return {
+    billTarget: target,
+    billsAchieved: achieved,
+    billGap: target ? Math.max(0, target - achieved) : 0,
   };
 }
 
@@ -1401,6 +1430,7 @@ export async function listTargets(
       target: monthlyTargets.targetAmount,
       isDefault: monthlyTargets.isDefault,
       carriedForward: monthlyTargets.carriedForward,
+      billTarget: monthlyTargets.billTarget,
       /*
        * The SAME expression the totals row, the paged list and the shortfall
        * report read. It was a second copy of it written out here, which is how
@@ -1408,6 +1438,7 @@ export async function listTargets(
        * in whatever zone the session happened to be in.
        */
       achieved: targetAchievedSql(key),
+      billsAchieved: billsAchievedSql(key),
       contactsThisMonth: sql<number>`(
         select count(*)::int from calls c
          where c.customer_id = customers.id
@@ -1453,6 +1484,7 @@ export async function listTargets(
       percent: resolved.amount ? Math.round((achieved / resolved.amount) * 100) : 0,
       isDefault: resolved.isDefault,
       carriedForward: resolved.carriedForward,
+      ...billFigures(r.billTarget, r.billsAchieved),
     };
   });
 }
@@ -1509,6 +1541,24 @@ function targetAchievedSql(key: string) {
 }
 
 /**
+ * SALES BILLS RAISED ON THE ACCOUNT IN THE MONTH — what a bill target is
+ * measured against. Counted off the bills ledger by `bill_date`, exactly as
+ * the Top customers report counts them, so "4 bills in August" reads the same
+ * on both tabs. `bill_date` is a DATE, so the window compares dates with dates
+ * and no zone is involved.
+ */
+function billsAchievedSql(key: string) {
+  const start = `${key}-01`;
+  const end = `${addMonths(key, 1)}-01`;
+  return sql<number>`(
+    select count(*)::int from bills bl
+     where bl.customer_id = customers.id
+       and bl.bill_date >= ${start}::date
+       and bl.bill_date < ${end}::date
+  )`;
+}
+
+/**
  * The customer-list filters, and only those — the Targets tab's filter bar
  * is deliberately the same four controls the Customers list offers
  * (status, sales people, sales managers, back office), read the same way,
@@ -1557,6 +1607,10 @@ export type TargetListPage = {
     defaults: number;
     behind: number;
     maxGap: number;
+    /** Accounts carrying a bill target, and the count asked and raised. */
+    billTargeted: number;
+    billTarget: number;
+    billsAchieved: number;
   };
   /**
    * Over every direct customer in scope, BEFORE the filters — the split the
@@ -1620,6 +1674,17 @@ export async function targetFilterClause(
   const gapExpr = sql<number>`greatest(0, ${targetExpr} - ${achievedExpr})`;
   const carriedExpr = sql<boolean>`coalesce(${monthlyTargets.carriedForward}, false)`;
   /*
+   * THE BILL COUNT IS A SECOND TARGET ON THE SAME ROW, not a second list. A
+   * shop asked for five bills and ₹1 lakh is behind until BOTH are met, and a
+   * shop asked only for bills is allocated though its rupee figure is zero —
+   * the count is what somebody asked of it, and leaving it off the table
+   * because no amount sits beside it would hide the one target it has.
+   */
+  const billTargetExpr = sql<number>`coalesce(${monthlyTargets.billTarget}, 0)`;
+  const billsExpr = billsAchievedSql(key);
+  const billGapExpr = sql<number>`greatest(0, ${billTargetExpr} - ${billsExpr})`;
+  const behindExpr = sql<boolean>`(${gapExpr} > 0 or ${billGapExpr} > 0)`;
+  /*
    * ALLOCATED means a stored figure above zero for this month. A direct
    * customer with no row, or with a row of nothing — a default derived from
    * months in which they bought nothing — has not been asked for anything,
@@ -1628,7 +1693,7 @@ export async function targetFilterClause(
    * a number for. They are counted instead (`allocation.unallocated`) and
    * offered for allocation, never silently dropped.
    */
-  const allocatedExpr = sql<boolean>`${targetExpr} > 0`;
+  const allocatedExpr = sql<boolean>`(${targetExpr} > 0 or ${billTargetExpr} > 0)`;
   const sourceExprs: Record<TargetSource, SQL> = {
     hand: sql`(not ${isDefaultExpr} and not ${carriedExpr})`,
     carried: sql`(not ${isDefaultExpr} and ${carriedExpr})`,
@@ -1671,9 +1736,9 @@ export async function targetFilterClause(
       : undefined;
   const progressClause =
     filters.progress === "behind"
-      ? sql`${gapExpr} > 0`
+      ? behindExpr
       : filters.progress === "met"
-        ? sql`${gapExpr} = 0`
+        ? sql`not ${behindExpr}`
         : undefined;
 
   // The table: direct customers with a target allocated this month.
@@ -1698,6 +1763,9 @@ export async function targetFilterClause(
     targetExpr,
     achievedExpr,
     gapExpr,
+    billTargetExpr,
+    billsExpr,
+    behindExpr,
     year,
     month,
     key,
@@ -1744,8 +1812,14 @@ export async function resolveTargetCustomerIds(
  * expressions the tiles above the table are summed from, so a sorted column
  * can never disagree with the totals sitting over it.
  */
-function targetSortColumns(targetExpr: SQL<number>, achievedExpr: SQL<number>, gapExpr: SQL<number>) {
+function targetSortColumns(
+  targetExpr: SQL<number>,
+  achievedExpr: SQL<number>,
+  gapExpr: SQL<number>,
+  billsExpr: SQL<number>,
+) {
   return {
+    bills: billsExpr,
     name: customers.name,
     target: targetExpr,
     achieved: achievedExpr,
@@ -1772,6 +1846,9 @@ export async function listTargetsPage(
     targetExpr,
     achievedExpr,
     gapExpr,
+    billTargetExpr,
+    billsExpr,
+    behindExpr,
     key,
   } = await targetFilterClause(period, filters);
 
@@ -1781,8 +1858,14 @@ export async function listTargetsPage(
       target: sql<number>`coalesce(sum(${targetExpr}), 0)::bigint`,
       achieved: sql<number>`coalesce(sum(${achievedExpr}), 0)::bigint`,
       defaults: sql<number>`count(*) filter (where ${isDefaultExpr})::int`,
-      behind: sql<number>`count(*) filter (where ${gapExpr} > 0)::int`,
+      behind: sql<number>`count(*) filter (where ${behindExpr})::int`,
       maxGap: sql<number>`coalesce(max(${gapExpr}), 0)::bigint`,
+      // Bills are summed over the accounts that were ASKED for a count, so
+      // "38 of 50 bills" compares like with like — a shop with no bill target
+      // adds nothing to either side.
+      billTargeted: sql<number>`count(*) filter (where ${billTargetExpr} > 0)::int`,
+      billTarget: sql<number>`coalesce(sum(${billTargetExpr}), 0)::int`,
+      billsAchieved: sql<number>`coalesce(sum(${billsExpr}) filter (where ${billTargetExpr} > 0), 0)::int`,
     })
     .from(customers)
     .leftJoin(monthlyTargets, joinTarget)
@@ -1831,7 +1914,9 @@ export async function listTargetsPage(
       target: monthlyTargets.targetAmount,
       isDefault: monthlyTargets.isDefault,
       carriedForward: monthlyTargets.carriedForward,
+      billTarget: monthlyTargets.billTarget,
       achieved: achievedExpr,
+      billsAchieved: billsExpr,
       contactsThisMonth: sql<number>`(
         select count(*)::int from calls c
          where c.customer_id = customers.id
@@ -1844,7 +1929,7 @@ export async function listTargetsPage(
     .where(clause)
     .orderBy(
       ...resolveSort(
-        targetSortColumns(targetExpr, achievedExpr, gapExpr),
+        targetSortColumns(targetExpr, achievedExpr, gapExpr, billsExpr),
         filters.sort,
         "name",
         customers.id,
@@ -1890,6 +1975,7 @@ export async function listTargetsPage(
       percent: resolved.amount ? Math.round((achieved / resolved.amount) * 100) : 0,
       isDefault: resolved.isDefault,
       carriedForward: resolved.carriedForward,
+      ...billFigures(r.billTarget, r.billsAchieved),
     };
   });
 
@@ -1907,6 +1993,9 @@ export async function listTargetsPage(
       defaults: Number(agg?.defaults ?? 0),
       behind: Number(agg?.behind ?? 0),
       maxGap: Number(agg?.maxGap ?? 0),
+      billTargeted: Number(agg?.billTargeted ?? 0),
+      billTarget: Number(agg?.billTarget ?? 0),
+      billsAchieved: Number(agg?.billsAchieved ?? 0),
     },
     allocation: {
       allocated: Number(book?.allocated ?? 0),
@@ -1936,6 +2025,12 @@ export type TargetCandidate = {
    * the dialog and the figure on the row are one measurement.
    */
   trailing: number[];
+  /** The stored bill count for the month, null where none is asked. */
+  billTarget: number | null;
+  /** Sales bills raised this month so far. */
+  bills: number;
+  /** Sales bills in each of the same three months, newest first. */
+  trailingBills: number[];
 };
 
 /**
@@ -1976,6 +2071,11 @@ export async function targetCandidates(input: {
       m1: targetAchievedSql(months[0]),
       m2: targetAchievedSql(months[1]),
       m3: targetAchievedSql(months[2]),
+      billTarget: monthlyTargets.billTarget,
+      bills: billsAchievedSql(key),
+      b1: billsAchievedSql(months[0]),
+      b2: billsAchievedSql(months[1]),
+      b3: billsAchievedSql(months[2]),
     })
     .from(customers)
     .leftJoin(monthlyTargets, joinTarget)
@@ -1989,15 +2089,26 @@ export async function targetCandidates(input: {
 
   return rows.map((r) => {
     const target = Number(r.target ?? 0);
+    const billTarget = r.billTarget && r.billTarget > 0 ? r.billTarget : null;
     return {
       customerId: r.id,
       customerName: r.name,
       city: (r.city as string | null) ?? null,
       ownerName: r.ownerName,
       target,
-      source: target > 0 ? (r.isDefault ? "default" : r.carried ? "carried" : "hand") : null,
+      source:
+        target > 0 || billTarget
+          ? r.isDefault
+            ? "default"
+            : r.carried
+              ? "carried"
+              : "hand"
+          : null,
       achieved: Number(r.achieved ?? 0),
       trailing: [r.m1, r.m2, r.m3].map((v) => Number(v ?? 0)),
+      billTarget,
+      bills: Number(r.bills ?? 0),
+      trailingBills: [r.b1, r.b2, r.b3].map((v) => Number(v ?? 0)),
     };
   });
 }
@@ -2011,16 +2122,28 @@ export async function setTarget(
   customerId: string,
   amount: number,
   period?: string,
+  /**
+   * Sales bills asked for in the month. `undefined` leaves whatever is stored
+   * alone — which is what a bulk rupee change wants — and `null` clears it.
+   */
+  billTarget?: number | null,
 ): Promise<Result> {
   const ctx = await requireCapability("target.set");
   const day = await today();
   const key = period ?? monthKey(day);
   const [year, month] = key.split("-").map(Number);
 
-  if (!Number.isInteger(amount) || amount <= 0) {
+  if (!Number.isInteger(amount) || amount < 0) {
     return err("Enter the monthly target in rupees.", "validation", [
-      { field: "amount", message: "Must be a positive amount." },
+      { field: "amount", message: "Must be an amount in rupees." },
     ]);
+  }
+  if (billTarget !== undefined && billTarget !== null) {
+    if (!Number.isInteger(billTarget) || billTarget <= 0 || billTarget > 1000) {
+      return err("Enter the number of bills as a whole number.", "validation", [
+        { field: "bills", message: "Must be a whole number of bills, 1 or more." },
+      ]);
+    }
   }
 
   /*
@@ -2054,6 +2177,30 @@ export async function setTarget(
     );
   }
 
+  // A target has to ask for SOMETHING: rupees, bills or both. The bill count
+  // a save leaves untouched is the one already stored, so it is read back
+  // before deciding that a zero amount leaves the row empty.
+  let effectiveBills = billTarget ?? null;
+  if (billTarget === undefined) {
+    const [stored] = await db
+      .select({ billTarget: monthlyTargets.billTarget })
+      .from(monthlyTargets)
+      .where(
+        and(
+          eq(monthlyTargets.customerId, customerId),
+          eq(monthlyTargets.year, year),
+          eq(monthlyTargets.month, month),
+        ),
+      )
+      .limit(1);
+    effectiveBills = stored?.billTarget ?? null;
+  }
+  if (amount <= 0 && !(effectiveBills && effectiveBills > 0)) {
+    return err("Set a sales target, a bill target, or both.", "validation", [
+      { field: "amount", message: "Enter an amount or a number of bills." },
+    ]);
+  }
+
   await db
     .insert(monthlyTargets)
     .values({
@@ -2062,6 +2209,7 @@ export async function setTarget(
       year,
       month,
       targetAmount: amount,
+      billTarget: billTarget ?? null,
       isDefault: false,
       carriedForward: false,
       setById: ctx.user.id,
@@ -2072,6 +2220,7 @@ export async function setTarget(
       target: [monthlyTargets.customerId, monthlyTargets.year, monthlyTargets.month],
       set: {
         targetAmount: amount,
+        ...(billTarget !== undefined ? { billTarget } : {}),
         isDefault: false,
         // A real save is a decision, even one that reproduces a carried
         // figure verbatim — so a carried target stops being one the moment a

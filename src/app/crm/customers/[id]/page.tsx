@@ -358,6 +358,8 @@ export default async function CustomerRecordPage({
         achieved: Number(stats?.thisMonth ?? 0),
         isDefault: target?.isDefault ?? true,
         shareOfBook: target?.shareOfBookPercent ?? null,
+        billTarget: target?.billTarget ?? null,
+        billsAchieved: target?.billsAchieved ?? 0,
       }}
       openComplaint={
         openComplaint
