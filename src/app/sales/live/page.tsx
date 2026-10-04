@@ -371,6 +371,8 @@ export default async function Page({
           dwellMinMinutes={config["mbos.location.dwellMinMinutes"]}
           tripBreakMinutes={config["mbos.location.tripBreakMinutes"]}
           staleAfterSeconds={config["mbos.location.activityFixMaxAgeSeconds"]}
+          speedMinKmh={config["mbos.location.liveSpeedMinKmh"]}
+          accuracyThresholdM={accuracyThreshold}
           view={view}
           isToday={isToday}
           olaMapsKey={olaMapsKey}

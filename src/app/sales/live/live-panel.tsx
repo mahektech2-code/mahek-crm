@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { dwellStops, type DwellStop } from "@/lib/engines/dwell";
+import { currentSpeedKmh } from "@/lib/engines/live-speed";
 import { trailMetres } from "@/lib/engines/trail-trips";
 import type { ActivityPoint, LastKnown, TrackPoint } from "@/lib/services/sales-service";
 import type { HandsetThresholds } from "@/lib/handset-health";
@@ -73,6 +74,8 @@ export function LivePanel({
   dwellMinMinutes,
   tripBreakMinutes,
   staleAfterSeconds,
+  speedMinKmh,
+  accuracyThresholdM,
   view,
   isToday,
   olaMapsKey,
@@ -93,6 +96,10 @@ export function LivePanel({
   dwellMinMinutes: number;
   tripBreakMinutes: number;
   staleAfterSeconds: number;
+  /** Below this no speed is printed — `mbos.location.liveSpeedMinKmh`. */
+  speedMinKmh: number;
+  /** The same accuracy floor the trail is filtered by on the server. */
+  accuracyThresholdM: number;
   view: "now" | "today";
   isToday: boolean;
   /** What the Live map calls quiet and calls low — both configuration. */
@@ -151,6 +158,23 @@ export function LivePanel({
     }
     return { distanceMetres, dwells };
   }, [frame.tracks, dwellRadiusMetres, dwellMinMinutes]);
+
+  /* HOW FAST, NOW — so only on today, and measured against the panel's own
+     clock so a man whose fixes stopped arriving stops showing a speed within a
+     tick rather than keeping his last one all afternoon. Kept apart from the
+     memo above because it also moves with the clock, and the distance and the
+     dwells must not be recomputed every thirty seconds for nothing. In the
+     "now" view the tracks start empty and fill from the feed, so a speed
+     appears there once the first minute of fixes has arrived. */
+  const speeds = React.useMemo(() => {
+    const out = new Map<string, number>();
+    if (!isToday) return out;
+    for (const [id, points] of frame.tracks) {
+      const kmh = currentSpeedKmh(points, clockMs, { minKmh: speedMinKmh, accuracyThresholdM });
+      if (kmh != null) out.set(id, kmh);
+    }
+    return out;
+  }, [frame.tracks, clockMs, isToday, speedMinKmh, accuracyThresholdM]);
 
   const toggle = React.useCallback((id: string) => {
     setSelectedId((current) => (current === id ? null : id));
@@ -220,6 +244,7 @@ export function LivePanel({
       <TeamList
         rows={frame.rows}
         distanceMetres={view === "today" ? derived.distanceMetres : null}
+        speedKmh={speeds}
         selectedId={selectedId}
         onSelect={toggle}
         thresholds={handsetThresholds}
