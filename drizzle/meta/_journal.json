@@ -1401,6 +1401,13 @@
       "when": 1791062447442,
       "tag": "0201_hrms_screens_merged",
       "breakpoints": true
+    },
+    {
+      "idx": 201,
+      "version": "7",
+      "when": 1791062448442,
+      "tag": "0202_hrms_plain_values",
+      "breakpoints": true
     }
   ]
 }

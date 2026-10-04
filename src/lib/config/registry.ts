@@ -3817,7 +3817,7 @@ export const SETTINGS = [
     category: "hrms",
     label: "Late check-in grace",
     description:
-      "Minutes after the official in-time that still count as on time for the late / early remark. Past it, an ordinary check-in is refused with “Late Punch-in, Today Unpaid Leave. Contact Admin” (spec §6.2).",
+      "Minutes after the official in-time that still count as on time for the late / early remark. Past it, an ordinary check-in is refused as too late, and the day counts as unpaid leave (spec §6.2).",
     default: 30,
     min: 0,
     max: 240,
@@ -3912,7 +3912,7 @@ export const SETTINGS = [
     category: "hrms",
     label: "Shortest overtime",
     description:
-      "Overtime of this many minutes or fewer is refused with “OT not Applicable”.",
+      "Overtime of this many minutes or fewer is refused as not overtime.",
     default: 10,
     min: 0,
     max: 240,
@@ -4115,7 +4115,7 @@ export const SETTINGS = [
     category: "hrms",
     label: "Suggestion: deactivate above",
     description:
-      "Where calls − factor × orders is at or below this, the suggestion is Do FollowUp; above it, Do Deactivate This Customer.",
+      "Where calls − factor × orders is at or below this, the suggestion is “Keep following up”; above it, “Consider deactivating”.",
     default: 7,
     min: 0,
     max: 1000,

@@ -13,6 +13,7 @@ import { computeSalary, salaryBlock, salaryMonth, type PayrollCfg, type SalaryFi
 import { daysIn, monLabel, monthOf, prevMonth } from "../time";
 import { hrmsLink } from "../registry";
 import { personFrom, personOption } from "./attendance";
+import { EXPENSE_CLAIM, EXPENSE_PAID } from "../values";
 
 /* ---------------------------------------------------------------------------
  * Payroll, advances and expenses (spec §10, §11).
@@ -222,9 +223,9 @@ const PAY_COLS: ColSpec[] = [
   { k: "basic", l: "Basic", t: "m" },
   { k: "attCount", l: "Attendance", t: "n" },
   { k: "inHand", l: "In hand", t: "m" },
-  { k: "advDed", l: "Advance", t: "m" },
-  { k: "lateDed", l: "Late ded.", t: "m" },
-  { k: "pt", l: "PT", t: "m" },
+  { k: "advDed", l: "Advance deduction", t: "m" },
+  { k: "lateDed", l: "Late deduction", t: "m" },
+  { k: "pt", l: "Professional tax", t: "m" },
   { k: "inc", l: "Incentive", t: "m" },
   { k: "conv", l: "Conveyance", t: "m" },
   { k: "status", l: "Status", t: "s" },
@@ -259,30 +260,31 @@ function salaryFields(s: HrmsSalary, f: StoredFigures, e: Person | undefined, ch
     { l: "Incentive", v: money(f.incentivePaise) },
     { l: "Conveyance allowance", v: money(f.conveyancePaise), der: true },
     { l: "Special allowance", v: money(f.specialPaise), der: true },
-    { l: "Gross earning", v: money(f.grossPaise), der: true },
+    { l: "Gross earnings", v: money(f.grossPaise), der: true },
     { l: "PF/ESIC applicable", v: f.pfEsic ?? "", der: true },
-    { l: "UAN no. · ESIC no.", v: [f.uanNo, f.esicNo].filter(Boolean).join(" · ") || "—", der: true },
+    { l: "UAN · ESIC number", v: [f.uanNo, f.esicNo].filter(Boolean).join(" · ") || "—", der: true },
     { l: "Professional tax", v: money(f.ptPaise), der: true },
     { l: "Employee PF", v: money(f.pfPaise), der: true },
     { l: "Employee ESIC", v: money(f.esicPaise), der: true },
     { l: "Employer PF", v: money(f.employerPfPaise), der: true },
     { l: "Employer ESIC", v: money(f.employerEsicPaise), der: true },
-    { l: "CTC gross", v: money(f.ctcPaise), der: true },
+    { l: "Cost to company (CTC)", v: money(f.ctcPaise), der: true },
     { l: "Advance deduction", v: money(f.advanceDeductionPaise) },
     {
       l: "Late deduction",
       v: `${money(f.lateDeductionPaise)}${f.lateHalfDays ? ` · ${f.lateHalfDays} late half-day${f.lateHalfDays > 1 ? "s" : ""} for ${f.lateCount} late check-ins` : ""}`,
       der: true,
     },
-    { l: "Gross deduction", v: money(f.grossDeductionPaise), der: true },
+    { l: "Total deductions", v: money(f.grossDeductionPaise), der: true },
     { l: "Other payment", v: `${money(f.otherPaymentPaise)} · paid beside salary in hand, not in it`, der: true },
     { l: "Salary in hand", v: money(f.inHandPaise), der: true },
     { l: "Remark", v: s.remark ?? "" },
     { l: "Bank details", v: f.bank ?? "", der: true },
-    { l: "Payment UTR no.", v: s.utr ?? "" },
+    { l: "Payment UTR number", v: s.utr ?? "" },
     { l: "Payment date", v: s.paidOn ? fdLong(s.paidOn) : "" },
     { l: "Approved by", v: s.approvedByName ?? "" },
-    { l: "Prepared by", v: s.preparedByName ?? "" },
+    /* `preparedByName` is written by Pay, so it names who paid the salary. */
+    { l: "Paid by", v: s.preparedByName ?? "" },
     { l: "Payslip code", v: s.payslipCode ?? "" },
     { l: "Salary ID", v: s.salaryNo },
     { l: "Month", v: monLabel(s.month) },
@@ -296,23 +298,23 @@ function salaryActions(ctx: HrmsContext, s: HrmsSalary, f: StoredFigures, name: 
   const a: ActionSpec[] = [];
   const mon = monLabel(s.month);
   if (wide && s.status === "Prepared") {
-    a.push({ id: "approve", l: "Approve", primary: true, why: has(ctx, "payroll") ? undefined : "Needs the payroll power" });
-    a.push({ id: "edit", l: "Edit", loadsForm: true, why: has(ctx, "payroll") ? undefined : "Needs the payroll power" });
+    a.push({ id: "approve", l: "Approve", primary: true, why: has(ctx, "payroll") ? undefined : "Needs the “Prepare and approve salaries” power" });
+    a.push({ id: "edit", l: "Edit", loadsForm: true, why: has(ctx, "payroll") ? undefined : "Needs the “Prepare and approve salaries” power" });
   }
   if (wide && s.status === "Approved")
     a.push({
       id: "pay",
       l: "Pay",
       primary: true,
-      why: has(ctx, "pay") ? undefined : "Needs the pay power",
+      why: has(ctx, "pay") ? undefined : "Needs the “Pay salaries” power",
       prompt: {
         title: "Pay salary",
         sub: `${name} · ${mon} · ${money(f.inHandPaise)} in hand`,
         submit: "Mark paid",
         init: { paidOn: today() },
         fields: [
-          { k: "utr", l: "Payment UTR No.", t: "text", req: true },
-          { k: "paidOn", l: "Payment Date", t: "date", req: true },
+          { k: "utr", l: "Payment UTR number", t: "text", req: true },
+          { k: "paidOn", l: "Payment date", t: "date", req: true },
         ],
       },
     });
@@ -323,12 +325,16 @@ function salaryActions(ctx: HrmsContext, s: HrmsSalary, f: StoredFigures, name: 
       l: "Remark",
       prompt: { title: "Remark", sub: `${name} · ${mon}`, submit: "Save remark", init: { remark: s.remark ?? "" }, fields: [{ k: "remark", l: "Remark", t: "area", req: true }] },
     });
-  if (wide && has(ctx, "payroll")) a.push({ id: "regenerate", l: "Regenerate payslip", confirm: `Regenerate ${name}’s ${mon} payslip? The old PDF is replaced.` });
+  if (wide && has(ctx, "payroll")) a.push({
+      id: "regenerate",
+      l: "New payslip code",
+      confirm: `Give ${name}’s ${mon} payslip a new payslip code? The figures stay the same; only the code printed on the payslip changes.`,
+    });
   if (wide)
     a.push({
       id: "delete",
       l: "Delete",
-      why: has(ctx, "admin") ? undefined : "Only admin deletes a salary",
+      why: has(ctx, "admin") ? undefined : "Deleting a salary needs the “Administer HRMS” power",
       confirm: `Delete ${name}’s ${mon} salary? Its advance deduction goes back to the outstanding advance. It cannot be undone.`,
     });
   return a;
@@ -425,44 +431,44 @@ async function newSalaryForm(ctx: HrmsContext, people: Person[], salaries: HrmsS
 
 /** Works a salary out and saves it — a new one, or a Prepared one being redone. */
 async function saveSalary(ctx: HrmsContext, h: Values, recordId?: string) {
-  if (!has(ctx, "payroll")) return err("Preparing salaries is not on your account.", "not_permitted");
+  if (!has(ctx, "payroll")) return err("Preparing salaries needs the “Prepare and approve salaries” power.", "not_permitted");
   let employeeId: string;
   let salaryDate: string;
   let existing: HrmsSalary | undefined;
   if (recordId) {
     [existing] = await db.select().from(hrmsSalaries).where(eq(hrmsSalaries.id, recordId));
     if (!existing) return err("That salary no longer exists.", "not_found");
-    if (existing.status !== "Prepared") return err("An approved salary is frozen. Only its remark can change.");
+    if (existing.status !== "Prepared") return err(`This salary is ${existing.status.toLowerCase()}, so its figures are frozen. Only its remark can change.`);
     employeeId = existing.employeeId;
     salaryDate = existing.salaryDate;
   } else {
     const p = personFrom(h.emp, await allPeople());
-    if (!p) return fieldErr("emp", "invalid Name");
-    if (!isActive(p)) return fieldErr("emp", `${p.name} is not active`);
+    if (!p) return fieldErr("emp", "Pick an employee from the list");
+    if (!isActive(p)) return fieldErr("emp", `${p.name} is not an active employee`);
     employeeId = p.id;
     salaryDate = text(h.salaryDate) ?? "";
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(salaryDate)) return fieldErr("salaryDate", "INVALID");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(salaryDate)) return fieldErr("salaryDate", "Enter a valid salary date");
   }
   const month = salaryMonth(salaryDate);
   const e = (await payEmployees([employeeId])).get(employeeId);
-  if (!e) return fieldErr("emp", "invalid Name");
-  if (!e.salaryPaise) return fieldErr("emp", `No salary is set on ${e.name}’s employee record`);
+  if (!e) return fieldErr("emp", "That employee’s record could not be found");
+  if (!e.salaryPaise) return fieldErr("emp", `No salary is set on ${e.name}’s employee record. Add it there first.`);
 
   const compDays = num(h.comp) ?? 0;
-  if (compDays < 0) return fieldErr("comp", "Minus Quantity Not Allowed");
+  if (compDays < 0) return fieldErr("comp", "Compensation days can’t be less than zero");
   const incentivePaise = toPaise(h.inc) ?? 0;
-  if (incentivePaise < 0) return fieldErr("inc", "Minus Quantity Not Allowed");
+  if (incentivePaise < 0) return fieldErr("inc", "The incentive can’t be less than zero");
   const outstanding = Math.max(0, await outstandingAdvance(employeeId, recordId));
   /* Spec §10.1 / A13: the deduction defaults to the whole outstanding advance. */
   const advanceDeductionPaise = toPaise(h.adv) ?? outstanding;
-  if (advanceDeductionPaise < 0) return fieldErr("adv", "Minus Quantity Not Allowed");
-  if (advanceDeductionPaise > outstanding) return fieldErr("adv", `More than the outstanding advance (${money(outstanding)})`);
+  if (advanceDeductionPaise < 0) return fieldErr("adv", "The advance deduction can’t be less than zero");
+  if (advanceDeductionPaise > outstanding) return fieldErr("adv", `Can’t be more than the outstanding advance of ${money(outstanding)}`);
 
   const [cfg, counts] = await Promise.all([payrollCfg(), countsFor([{ employeeId, office: e.office, month }])]);
   const figures = work(e, month, counts.get(`${employeeId}|${month}`)!, { compDays, incentivePaise, advanceDeductionPaise }, cfg);
   const block = salaryBlock(figures);
   if (block) return fieldErr(recordId ? "comp" : "emp", block);
-  if (figures.inHandPaise < 0) return fieldErr("adv", `Deductions come to more than the gross earning (${money(figures.grossPaise)})`);
+  if (figures.inHandPaise < 0) return fieldErr("adv", `Total deductions come to more than the gross earnings of ${money(figures.grossPaise)}. Lower the advance deduction.`);
 
   const values = {
     compDays,
@@ -484,10 +490,10 @@ async function saveSalary(ctx: HrmsContext, h: Values, recordId?: string) {
   const id = hrmsId("hsal");
   const res = await inTx(async (tx: Tx) => {
     const [dupe] = await tx
-      .select({ id: hrmsSalaries.id })
+      .select({ id: hrmsSalaries.id, status: hrmsSalaries.status })
       .from(hrmsSalaries)
       .where(and(eq(hrmsSalaries.employeeId, employeeId), eq(hrmsSalaries.month, month)));
-    if (dupe) return refuse(fieldErr("emp", "This Month Salary Paid"));
+    if (dupe) return refuse(fieldErr("emp", `${e.name} already has a salary for ${monLabel(month)} (${dupe.status.toLowerCase()})`));
     const n = await nextSeries(tx, "salary");
     await tx.insert(hrmsSalaries).values({
       id,
@@ -512,7 +518,7 @@ async function saveSalary(ctx: HrmsContext, h: Values, recordId?: string) {
  * figures that no longer describe the month.
  */
 async function approveOne(ctx: HrmsContext, s: HrmsSalary): Promise<string | null> {
-  if (s.status !== "Prepared") return "Only a prepared salary can be approved";
+  if (s.status !== "Prepared") return `Only a prepared salary can be approved. This one is ${s.status.toLowerCase()}.`;
   const e = (await payEmployees([s.employeeId])).get(s.employeeId);
   const counts = (await countsFor([{ employeeId: s.employeeId, office: e?.office ?? null, month: s.month }])).get(`${s.employeeId}|${s.month}`)!;
   const changes = countChanges(figuresOf(s), counts);
@@ -522,7 +528,7 @@ async function approveOne(ctx: HrmsContext, s: HrmsSalary): Promise<string | nul
     .set({ status: "Approved", approvedByName: ctx.user.name, approvedById: ctx.user.id, approvedAt: new Date(), updatedAt: new Date(), updatedById: ctx.user.id })
     .where(and(eq(hrmsSalaries.id, s.id), eq(hrmsSalaries.status, "Prepared")))
     .returning({ id: hrmsSalaries.id });
-  if (!done.length) return "Somebody else changed this salary first";
+  if (!done.length) return "Someone else changed this salary at the same time. Reload and try again.";
   await hrmsAudit(ctx, "hrms.salary.approve", "hrms_salaries", s.id, { status: "Prepared" }, { status: "Approved" });
   return null;
 }
@@ -530,8 +536,9 @@ async function approveOne(ctx: HrmsContext, s: HrmsSalary): Promise<string | nul
 function checkPayment(v: Values): { field: string; msg: string } | { utr: string; paidOn: string } {
   const utr = text(v.utr);
   const paidOn = text(v.paidOn);
-  if (!utr) return { field: "utr", msg: "Payment UTR No. is required" };
-  if (!paidOn || !/^\d{4}-\d{2}-\d{2}$/.test(paidOn) || paidOn > today()) return { field: "paidOn", msg: "INVALID" };
+  if (!utr) return { field: "utr", msg: "Enter the payment UTR number" };
+  if (!paidOn || !/^\d{4}-\d{2}-\d{2}$/.test(paidOn)) return { field: "paidOn", msg: "Enter a valid payment date" };
+  if (paidOn > today()) return { field: "paidOn", msg: "The payment date can’t be in the future" };
   return { utr, paidOn };
 }
 
@@ -612,7 +619,7 @@ const payroll: HrmsScreenModule = {
                   submit: "Mark paid",
                   init: { paidOn: today() },
                   fields: [
-                    { k: "utr", l: "Batch UTR number", t: "text", req: true },
+                    { k: "utr", l: "Payment UTR number", t: "text", req: true },
                     { k: "paidOn", l: "Payment date", t: "date", req: true },
                   ],
                 },
@@ -636,7 +643,7 @@ const payroll: HrmsScreenModule = {
   },
   actions: {
     async approve(ctx, id) {
-      if (!has(ctx, "payroll")) return err("Needs the payroll power", "not_permitted");
+      if (!has(ctx, "payroll")) return err("Needs the “Prepare and approve salaries” power", "not_permitted");
       const s = await salaryById(id);
       if (!s) return err("That salary no longer exists.", "not_found");
       const why = await approveOne(ctx, s);
@@ -644,18 +651,18 @@ const payroll: HrmsScreenModule = {
       return okVoid(`${monLabel(s.month)} salary approved`);
     },
     async pay(ctx, id, v) {
-      if (!has(ctx, "pay")) return err("Needs the pay power", "not_permitted");
+      if (!has(ctx, "pay")) return err("Needs the “Pay salaries” power", "not_permitted");
       const s = await salaryById(id);
       if (!s) return err("That salary no longer exists.", "not_found");
       if (s.status !== "Approved") return err("Only an approved salary can be paid");
       const c = checkPayment(v);
       if ("field" in c) return fieldErr(c.field, c.msg);
       const paid = await payMany(ctx, [s], c.utr, c.paidOn);
-      if (!paid.length) return err("Somebody else changed this salary first");
+      if (!paid.length) return err("Someone else changed this salary at the same time. Reload and try again.");
       return okVoid("Paid · payslip ready");
     },
     async remark(ctx, id, v) {
-      if (!has(ctx, "payroll")) return err("Needs the payroll power", "not_permitted");
+      if (!has(ctx, "payroll")) return err("Needs the “Prepare and approve salaries” power", "not_permitted");
       const s = await salaryById(id);
       if (!s) return err("That salary no longer exists.", "not_found");
       await db.update(hrmsSalaries).set({ remark: text(v.remark), updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(hrmsSalaries.id, id));
@@ -663,16 +670,16 @@ const payroll: HrmsScreenModule = {
       return okVoid("Remark saved");
     },
     async regenerate(ctx, id) {
-      if (!has(ctx, "payroll")) return err("Needs the payroll power", "not_permitted");
+      if (!has(ctx, "payroll")) return err("Needs the “Prepare and approve salaries” power", "not_permitted");
       const s = await salaryById(id);
       if (!s) return err("That salary no longer exists.", "not_found");
       const code = hrmsId("slip");
       await db.update(hrmsSalaries).set({ payslipCode: code, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(hrmsSalaries.id, id));
       await hrmsAudit(ctx, "hrms.salary.regeneratePayslip", "hrms_salaries", id, { payslipCode: s.payslipCode }, { payslipCode: code });
-      return okVoid("Payslip regenerated");
+      return okVoid("New payslip code issued");
     },
     async delete(ctx, id) {
-      if (!has(ctx, "admin")) return err("Only admin deletes a salary", "not_permitted");
+      if (!has(ctx, "admin")) return err("Deleting a salary needs the “Administer HRMS” power", "not_permitted");
       const s = await salaryById(id);
       if (!s) return err("That salary no longer exists.", "not_found");
       await db.delete(hrmsSalaries).where(eq(hrmsSalaries.id, id));
@@ -682,7 +689,7 @@ const payroll: HrmsScreenModule = {
   },
   bulk: {
     async approve(ctx, ids) {
-      if (!has(ctx, "payroll")) return err("Needs the payroll power", "not_permitted");
+      if (!has(ctx, "payroll")) return err("Needs the “Prepare and approve salaries” power", "not_permitted");
       const list = await db.select().from(hrmsSalaries).where(inArray(hrmsSalaries.id, ids));
       let done = 0;
       const refused: string[] = [];
@@ -694,13 +701,13 @@ const payroll: HrmsScreenModule = {
       }
       const notPrepared = list.filter((s) => s.status !== "Prepared").length;
       const tail = [
-        notPrepared ? `${notPrepared} were not in Prepared` : "",
-        refused.length ? `${refused.length} held back — attendance changed since they were prepared (${refused.join(", ")})` : "",
+        notPrepared ? `${notPrepared} skipped because they were already approved or paid` : "",
+        refused.length ? `${refused.length} held back because attendance changed since they were prepared (${refused.join(", ")})` : "",
       ].filter(Boolean);
       return okVoid(`${done} salar${done === 1 ? "y" : "ies"} approved${tail.length ? ` · ${tail.join(" · ")}` : ""}`);
     },
     async pay(ctx, ids, v) {
-      if (!has(ctx, "pay")) return err("Needs the pay power", "not_permitted");
+      if (!has(ctx, "pay")) return err("Needs the “Pay salaries” power", "not_permitted");
       const c = checkPayment(v);
       if ("field" in c) return fieldErr(c.field, c.msg);
       const list = (await db.select().from(hrmsSalaries).where(inArray(hrmsSalaries.id, ids))).filter((s) => s.status === "Approved");
@@ -754,8 +761,8 @@ const payroll: HrmsScreenModule = {
           show("month", "Pays for"),
           ...salaryInputFields(`Outstanding advance ${money(outstanding)}. Leave blank to recover all of it.`),
           show("att", "Attendance count (last worked out)"),
-          show("gross", "Gross earning (last worked out)"),
-          show("ded", "Gross deduction (last worked out)"),
+          show("gross", "Gross earnings (last worked out)"),
+          show("ded", "Total deductions (last worked out)"),
           show("inHand", "Salary in hand (last worked out)"),
         ],
       };
@@ -800,12 +807,12 @@ function recoveredByAdvance(advances: { id: string; employeeId: string; date: st
 
 async function saveAdvance(ctx: HrmsContext, h: Values, recordId?: string) {
   if (recordId ? !has(ctx, "admin") : !has(ctx, "advance"))
-    return err(recordId ? "Only admin edits an advance" : "Giving advances is not on your account.", "not_permitted");
+    return err(recordId ? "Editing an advance needs the “Administer HRMS” power." : "Giving advances needs the “Give salary advances” power.", "not_permitted");
   const date = text(h.date);
-  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return fieldErr("date", "INVALID");
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return fieldErr("date", "Enter a valid date");
   const amount = toPaise(h.amount);
-  if (amount == null) return fieldErr("amount", "Amount is required");
-  if (amount <= 0) return fieldErr("amount", "Minus Quantity Not Allowed");
+  if (amount == null) return fieldErr("amount", "Enter the amount");
+  if (amount <= 0) return fieldErr("amount", "The amount must be more than zero");
   const remark = text(h.remark);
   if (recordId) {
     const [a] = await db.select().from(hrmsAdvances).where(eq(hrmsAdvances.id, recordId));
@@ -819,7 +826,7 @@ async function saveAdvance(ctx: HrmsContext, h: Values, recordId?: string) {
     return okVoid("Advance saved");
   }
   const p = personFrom(h.emp, await allPeople());
-  if (!p || !isActive(p)) return fieldErr("emp", "invalid Name");
+  if (!p || !isActive(p)) return fieldErr("emp", "Pick an active employee from the list");
   const id = hrmsId("hadv");
   await db.insert(hrmsAdvances).values({ id, employeeId: p.id, date, amountPaise: amount, remark, createdById: ctx.user.id });
   await hrmsAudit(ctx, "hrms.advance.give", "hrms_advances", id, null, { employee: p.code, date, amount });
@@ -867,11 +874,15 @@ const advances: HrmsScreenModule = {
         const empOut = (totals.given.get(a.employeeId) ?? 0) - (totals.deducted.get(a.employeeId) ?? 0);
         const acts: ActionSpec[] = wide
           ? [
-              { id: "edit", l: "Edit", loadsForm: true, why: has(ctx, "admin") ? undefined : "Only admin edits an advance" },
+              { id: "edit", l: "Edit", loadsForm: true, why: has(ctx, "admin") ? undefined : "Editing an advance needs the “Administer HRMS” power" },
               {
                 id: "delete",
                 l: "Delete",
-                why: !has(ctx, "admin") ? "Only admin deletes an advance" : rec > 0 ? "Part of this advance is already recovered from salary" : undefined,
+                why: !has(ctx, "admin")
+                  ? "Deleting an advance needs the “Administer HRMS” power"
+                  : rec > 0
+                    ? "Part of this advance has already been recovered from salary, so it can’t be deleted"
+                    : undefined,
                 confirm: `Delete the ${money(a.amountPaise)} advance to ${e?.name ?? ""}?`,
               },
             ]
@@ -909,11 +920,11 @@ const advances: HrmsScreenModule = {
   },
   actions: {
     async delete(ctx, id) {
-      if (!has(ctx, "admin")) return err("Only admin deletes an advance", "not_permitted");
+      if (!has(ctx, "admin")) return err("Deleting an advance needs the “Administer HRMS” power", "not_permitted");
       const [a] = await db.select().from(hrmsAdvances).where(eq(hrmsAdvances.id, id));
       if (!a) return err("That advance no longer exists.", "not_found");
       const [all, totals] = await Promise.all([db.select().from(hrmsAdvances).where(eq(hrmsAdvances.employeeId, a.employeeId)), advanceTotals([a.employeeId])]);
-      if ((recoveredByAdvance(all, totals.deducted).get(a.id) ?? 0) > 0) return err("Part of this advance is already recovered from salary");
+      if ((recoveredByAdvance(all, totals.deducted).get(a.id) ?? 0) > 0) return err("Part of this advance has already been recovered from salary, so it can’t be deleted");
       await db.delete(hrmsAdvances).where(eq(hrmsAdvances.id, id));
       await hrmsAudit(ctx, "hrms.advance.delete", "hrms_advances", id, a, null);
       return okVoid("Advance deleted");
@@ -942,8 +953,8 @@ const advances: HrmsScreenModule = {
 
 /* ============================================================= expenses */
 
-const CLAIM = "Expense Claim";
-const PAID = "Expense Paid";
+const CLAIM = EXPENSE_CLAIM;
+const PAID = EXPENSE_PAID;
 const expWide = (ctx: HrmsContext) => has(ctx, "hr") || has(ctx, "verifyExp");
 
 /** Verified claims less verified payments, per employee-month and per employee (spec §11). */
@@ -972,7 +983,7 @@ async function expenseForm(ctx: HrmsContext, people: Person[], edit?: { id: stri
     screen: "expenses",
     id: edit ? "edit" : "new",
     title: edit ? "Edit expense" : "Add expense",
-    sub: "A claim is money you spent; paid is money the company gave you.",
+    sub: "A claim is money you spent; a payment is money the company gave you.",
     submit: "Save expense",
     recordId: edit?.id,
     init: edit?.init ?? { emp: mine ? personOption(mine) : "", date: today(), payType: CLAIM },
@@ -997,7 +1008,7 @@ async function saveExpense(ctx: HrmsContext, h: Values, recordId?: string) {
     [existing] = await db.select().from(hrmsExpenses).where(eq(hrmsExpenses.id, recordId));
     if (!existing) return err("That expense no longer exists.", "not_found");
     const own = existing.employeeId === ctx.employee?.id && existing.verify !== "Verified";
-    if (!(wide || own)) return err("A verified expense changes only with HR or the verifier.", "not_permitted");
+    if (!(wide || own)) return err("Only HR or someone who verifies expenses can change a verified expense or another person’s expense.", "not_permitted");
   }
   let employeeId = existing?.employeeId;
   if (!employeeId) {
@@ -1005,20 +1016,22 @@ async function saveExpense(ctx: HrmsContext, h: Values, recordId?: string) {
     const p = wide ? personFrom(h.emp, people) : people.find((x) => x.id === ctx.employee?.id);
     if (!p)
       return wide
-        ? fieldErr("emp", "invalid Name")
+        ? fieldErr("emp", "Pick an employee from the list")
         : err("Your account is not linked to an employee record yet. Ask HR to link it on the Access screen.", "not_permitted");
     if (!isActive(p) || p.dateOfLeaving) return fieldErr("emp", `${p.name} is not an active employee`);
     employeeId = p.id;
   }
   const date = text(h.date);
-  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date) || date > today()) return fieldErr("date", "INVALID");
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return fieldErr("date", "Enter a valid date");
+  if (date > today()) return fieldErr("date", "The date can’t be in the future");
   const payType = h.payType === PAID ? PAID : h.payType === CLAIM ? CLAIM : null;
-  if (!payType) return fieldErr("payType", "Payment type is required");
+  if (!payType) return fieldErr("payType", "Pick a payment type");
   const amountKey = payType === CLAIM ? "claim" : "paid";
   const amount = toPaise(h[amountKey]);
-  if (amount == null) return fieldErr(amountKey, `${payType === CLAIM ? "Claim" : "Paid"} amount is required`);
-  if (amount <= 0) return fieldErr(amountKey, "Minus Quantity Not Allowed");
-  for (const k of ["location", "category", "particular", "reason"] as const) if (!text(h[k])) return fieldErr(k, "Required");
+  if (amount == null) return fieldErr(amountKey, `Enter the ${payType === CLAIM ? "claim" : "paid"} amount`);
+  if (amount <= 0) return fieldErr(amountKey, "The amount must be more than zero");
+  const missing = { location: "Pick a location", category: "Pick a category", particular: "Pick a particular", reason: "Enter the reason" } as const;
+  for (const k of ["location", "category", "particular", "reason"] as const) if (!text(h[k])) return fieldErr(k, missing[k]);
 
   /* Spec §11: what the company paid out is verified as it is written; a
      claim waits for somebody holding the verify power. */
@@ -1086,7 +1099,7 @@ const expenses: HrmsScreenModule = {
           { k: "particular", l: "Particular", t: "t" },
           { k: "claim", l: "Claim", t: "m" },
           { k: "paidAmt", l: "Paid", t: "m" },
-          { k: "verify", l: "Verify", t: "s" },
+          { k: "verify", l: "Verification", t: "s" },
           { k: "monthBal", l: "Month balance", t: "m" },
           { k: "totalBal", l: "Total balance", t: "m" },
         ],
@@ -1109,7 +1122,7 @@ const expenses: HrmsScreenModule = {
         const totalBal = bal.get(x.employeeId) ?? 0;
         const amount = x.payType === CLAIM ? x.claimPaise : x.paidPaise;
         const acts: ActionSpec[] = [];
-        if (x.verify !== "Verified") acts.push({ id: "verify", l: "Verify", primary: true, why: verifier ? undefined : "Only admin verifies expenses" });
+        if (x.verify !== "Verified") acts.push({ id: "verify", l: "Verify", primary: true, why: verifier ? undefined : "Verifying expenses needs the “Verify expenses” power" });
         else if (verifier) acts.push({ id: "unverify", l: "Mark pending" });
         if (wide || (own && x.verify !== "Verified")) acts.push({ id: "edit", l: "Edit", loadsForm: true });
         if (has(ctx, "admin") || has(ctx, "hr") || (own && x.verify !== "Verified"))
@@ -1142,7 +1155,7 @@ const expenses: HrmsScreenModule = {
             { l: "Particular", v: x.particular ?? "" },
             { l: x.payType === CLAIM ? "Claim amount" : "Paid amount", v: money(amount) },
             { l: "Reason", v: x.reason ?? "" },
-            { l: "Verify", v: x.verify },
+            { l: "Verification", v: x.verify },
             { l: "Monthly balance", v: `${money(monthBal)} · verified claims less verified payments in ${monLabel(monthOf(x.date))}`, der: true },
             { l: "Total balance", v: `${money(totalBal)} · verified claims less verified payments, all time`, der: true },
             { l: "Office", v: e?.office ?? "" },
@@ -1155,12 +1168,12 @@ const expenses: HrmsScreenModule = {
   },
   actions: {
     async verify(ctx, id) {
-      if (!has(ctx, "verifyExp")) return err("Only admin verifies expenses", "not_permitted");
+      if (!has(ctx, "verifyExp")) return err("Verifying expenses needs the “Verify expenses” power", "not_permitted");
       const n = await setVerify(ctx, [id], "Verified");
       return n ? okVoid("Verified") : err("Already verified.");
     },
     async unverify(ctx, id) {
-      if (!has(ctx, "verifyExp")) return err("Only admin verifies expenses", "not_permitted");
+      if (!has(ctx, "verifyExp")) return err("Marking an expense pending needs the “Verify expenses” power", "not_permitted");
       const n = await setVerify(ctx, [id], "Pending");
       return n ? okVoid("Marked pending") : err("Already pending.");
     },
@@ -1168,7 +1181,7 @@ const expenses: HrmsScreenModule = {
       const [x] = await db.select().from(hrmsExpenses).where(eq(hrmsExpenses.id, id));
       if (!x) return err("That expense no longer exists.", "not_found");
       const own = x.employeeId === ctx.employee?.id && x.verify !== "Verified";
-      if (!(has(ctx, "admin") || has(ctx, "hr") || own)) return err("A verified expense is deleted only by HR or admin.", "not_permitted");
+      if (!(has(ctx, "admin") || has(ctx, "hr") || own)) return err("Only HR or an HRMS administrator can delete a verified expense or another person’s expense.", "not_permitted");
       await db.delete(hrmsExpenses).where(eq(hrmsExpenses.id, id));
       await hrmsAudit(ctx, "hrms.expense.delete", "hrms_expenses", id, x, null);
       return okVoid(`${x.serial} deleted`);
@@ -1176,7 +1189,7 @@ const expenses: HrmsScreenModule = {
   },
   bulk: {
     async verify(ctx, ids) {
-      if (!has(ctx, "verifyExp")) return err("Only admin verifies expenses", "not_permitted");
+      if (!has(ctx, "verifyExp")) return err("Verifying expenses needs the “Verify expenses” power", "not_permitted");
       const n = await setVerify(ctx, ids, "Verified");
       return okVoid(`${n} expense${n === 1 ? "" : "s"} verified${ids.length > n ? ` · ${ids.length - n} were already verified` : ""}`);
     },

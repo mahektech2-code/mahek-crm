@@ -38,8 +38,8 @@ export type DayFigures = {
   pct: number | null;
   /** Full Day / Half Day once checked out; "" before. */
   workDay: "" | "Full Day" | "Half Day";
-  /** On Working / Present / No check-out. */
-  current: "On Working" | "Present" | "No check-out";
+  /** Working (checked in, not yet out) / Present / No check-out. */
+  current: "Working" | "Present" | "No check-out";
   /** Target − duration. */
   differenceMin: number | null;
 };
@@ -68,7 +68,7 @@ export function dayFigures(r: AttendanceDay, cfg: AttendanceCfg, today: string):
     const full = qr ? (pct ?? 0) > cfg.qrFullDayPercent : (pct ?? 0) >= cfg.fullDayPercent;
     workDay = target ? (full ? "Full Day" : "Half Day") : "Full Day";
   }
-  const current = r.checkOut ? "Present" : r.date === today ? "On Working" : "No check-out";
+  const current = r.checkOut ? "Present" : r.date === today ? "Working" : "No check-out";
   return {
     durationMin,
     workedMin,
@@ -83,15 +83,27 @@ export function dayFigures(r: AttendanceDay, cfg: AttendanceCfg, today: string):
   };
 }
 
-/** The late / early sentence the source put on every day (spec §6.1), in its words. */
+/** "40 minutes", "1 hour 5 minutes" — a duration the way a sentence says it. */
+function minutesWords(min: number): string {
+  const a = Math.abs(Math.round(min));
+  const h = Math.floor(a / 60);
+  const m = a % 60;
+  const part = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
+  return h ? (m ? `${part(h, "hour")} ${part(m, "minute")}` : part(h, "hour")) : part(m, "minute");
+}
+
+/**
+ * The short remark on a day's timing (spec §6.1): how far inside or past the
+ * grace period the check-in was. The source's motivational line is kept as a
+ * feature, said plainly.
+ */
 export function timeRemark(f: DayFigures, name: string, method = "geo"): string {
   if (f.lateOrEarlyMin == null) return "";
-  const d = hms(f.lateOrEarlyMin);
-  if (method === "qr")
-    return f.lateBeyondGrace ? `You are late ${d} This is not good ${name}` : `You are early ${d} You are Great ${name}`;
-  return f.lateBeyondGrace
-    ? `You Are late. ${d} Time Is The Currency Of Productivity. Punctuality Is The Key To Success. Let's Make Every Minute Count. ${name}`
-    : `You Are Early. ${d} That’s Superb 👌 And We Value Your Dedication ! ${name}`;
+  const d = minutesWords(f.lateOrEarlyMin);
+  const who = name.trim().split(/\s+/)[0] ?? "";
+  const to = who ? `, ${who}` : "";
+  if (method === "qr") return f.lateBeyondGrace ? `${d} late today${to}.` : `On time, ${d} early — well done${to}.`;
+  return f.lateBeyondGrace ? `${d} past the grace period today${to}.` : `On time, with ${d} to spare — well done${to}.`;
 }
 
 /* ------------------------------------------------------------ check-in */
@@ -122,28 +134,28 @@ export type CheckInDecision = { ok: true } | { ok: false; reason: CheckInRefusal
  * person is shown to be at the office.
  */
 export function decideCheckIn(x: CheckInInput): CheckInDecision {
-  if (x.alreadyToday) return { ok: false, reason: "already", message: "You Today Already Checked In!", detail: "Check out at the end of the day." };
+  if (x.alreadyToday) return { ok: false, reason: "already", message: "You have already checked in today", detail: "Check out at the end of the day." };
   if (x.distanceM == null)
     return {
       ok: false,
       reason: "denied",
       message: "Location is turned off for this site",
-      detail: "HRMS needs your location to check you in. Allow location in your browser settings, then try again. If you cannot, ask your head to mark you.",
+      detail: "HRMS needs your location to check you in. Allow location in your browser settings, then try again. If you cannot, ask your department head to mark your attendance.",
     };
   if (!x.officeHasPin)
     return {
       ok: false,
       reason: "noPin",
       message: `${x.officeName} has no map pin yet`,
-      detail: "HR sets the office's location on the Offices screen. Until then, ask your head to mark you.",
+      detail: "HR sets the office's location on the Offices screen. Until then, ask your department head to mark your attendance.",
     };
   const range = x.privileged ? x.privilegedRangeM : x.radiusM;
   if (x.distanceM > range)
     return {
       ok: false,
       reason: "outside",
-      message: `You are out of office location ! Please Back To Office ${x.name} Then Try to Check in Again!`,
-      detail: `You are ${x.distanceM >= 1000 ? (x.distanceM / 1000).toFixed(1) + " km" : x.distanceM + " m"} from ${x.officeName}. The office radius is ${range} m.`,
+      message: `${x.name}, you are too far from ${x.officeName} to check in`,
+      detail: `You are ${x.distanceM >= 1000 ? (x.distanceM / 1000).toFixed(1) + " km" : x.distanceM + " m"} from ${x.officeName}. The office radius is ${range} m. Go back to the office and check in again.`,
     };
   const offIn = tmin(x.officialIn);
   const nowM = tmin(x.now);
@@ -151,8 +163,8 @@ export function decideCheckIn(x: CheckInInput): CheckInDecision {
     return {
       ok: false,
       reason: "late",
-      message: "Late Punch-in, Today Unpaid Leave. Contact Admin",
-      detail: `It is more than ${x.graceMinutes} minutes past your ${hhmm(offIn)} start. Raise a help request so admin can decide.`,
+      message: "Too late to check in: today counts as unpaid leave",
+      detail: `It is more than ${x.graceMinutes} minutes past your ${hhmm(offIn)} start. Send an “I am late today” request, and the person who resolves help requests will decide.`,
     };
   return { ok: true };
 }
@@ -160,15 +172,15 @@ export function decideCheckIn(x: CheckInInput): CheckInDecision {
 /** Whether a check-out stands: the same geofence (spec §6.2). */
 export function decideCheckOut(x: Omit<CheckInInput, "alreadyToday" | "officialIn" | "now" | "graceMinutes">): CheckInDecision {
   if (x.distanceM == null)
-    return { ok: false, reason: "denied", message: "Location is turned off for this site", detail: "HRMS needs your location to check you out." };
+    return { ok: false, reason: "denied", message: "Location is turned off for this site", detail: "HRMS needs your location to check you out. Allow location in your browser settings, then try again." };
   if (!x.officeHasPin) return { ok: true };
   const range = x.privileged ? x.privilegedRangeM : x.radiusM;
   if (x.distanceM > range)
     return {
       ok: false,
       reason: "outside",
-      message: `You are out of office location ! Please Back To Office ${x.name} Then Try to Check Out Again!`,
-      detail: `You are ${x.distanceM >= 1000 ? (x.distanceM / 1000).toFixed(1) + " km" : x.distanceM + " m"} from ${x.officeName}. The office radius is ${range} m.`,
+      message: `${x.name}, you are too far from ${x.officeName} to check out`,
+      detail: `You are ${x.distanceM >= 1000 ? (x.distanceM / 1000).toFixed(1) + " km" : x.distanceM + " m"} from ${x.officeName}. The office radius is ${range} m. Go back to the office and check out again.`,
     };
   return { ok: true };
 }

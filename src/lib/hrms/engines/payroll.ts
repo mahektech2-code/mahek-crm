@@ -160,13 +160,24 @@ export function computeSalary(x: SalaryInput, cfg: PayrollCfg): SalaryFigures {
     employerPfPaise,
     employerEsicPaise,
     ctcPaise: grossPaise + employerPfPaise + employerEsicPaise,
-    hint: `Full ${x.fullDays} + half ${x.halfDays} + leave ${x.leaveDays} + holidays ${x.officialHolidays} − holidays inside leave ${x.holidaysInsideLeave} − compensation ${x.compDays} = ${r2(accounted)} of ${days} days`,
+    hint: `Full days ${x.fullDays} + half days ${x.halfDays} + leave days ${x.leaveDays} + holidays ${x.officialHolidays} − holidays inside leave ${x.holidaysInsideLeave} − compensation days ${x.compDays} = ${r2(accounted)} of ${days} days`,
   };
 }
 
-/** Why a salary may not be prepared yet (spec §10.1), in the source's words; null when it may. */
+/** "1 day", "2.5 days". */
+const dayCount = (n: number) => `${n} day${n === 1 ? "" : "s"}`;
+
+/**
+ * Why a salary may not be prepared yet (spec §10.1), in plain words; null when
+ * it may. The same two checks the source made: every check-in has a check-out,
+ * and attendance, leave and holidays add up to exactly the days in the month.
+ */
 export function salaryBlock(f: SalaryFigures): string | null {
-  if (f.pendingCheckouts > 0) return `Your Pending Checkout Count is ${f.pendingCheckouts}`;
-  if (Math.abs(f.missingDays) > 0.001) return `Kindly Check Count Leave/Attendance ${f.missingDays} Days Missing`;
+  if (f.pendingCheckouts > 0)
+    return `${dayCount(f.pendingCheckouts)} this month ${f.pendingCheckouts === 1 ? "has" : "have"} a check-in with no check-out. Add the check-outs before preparing the salary.`;
+  if (f.missingDays > 0.001)
+    return `${dayCount(f.missingDays)} of ${f.daysInMonth} ${f.missingDays === 1 ? "is" : "are"} not covered by attendance, leave or holidays. Check the month's attendance and leave before preparing the salary.`;
+  if (f.missingDays < -0.001)
+    return `Attendance, leave and holidays add up to ${dayCount(-f.missingDays)} more than the ${f.daysInMonth} days in the month. Check for days counted twice before preparing the salary.`;
   return null;
 }

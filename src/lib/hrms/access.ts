@@ -149,13 +149,13 @@ export async function requireHrmsWrite(screen: string, power?: HrmsPower): Promi
   const ctx = await hrmsContext();
   const apps = await listUserApps(ctx.user.id);
   if (!apps.includes("hrms") || !ctx.level) throw new HrmsNotPermitted("HRMS is not on your account.");
-  if (!ctx.screens.has(screen)) throw new HrmsNotPermitted("That screen is not on your account.");
+  if (!ctx.screens.has(screen)) throw new HrmsNotPermitted("That HRMS screen is not on your account.");
   if (power && !ctx.powers.has(power)) throw new HrmsNotPermitted(powerRefusal(power));
   return ctx;
 }
 
 export function powerRefusal(power: HrmsPower): string {
-  return `Not on your account: ${HRMS_POWER_LABEL[power].label.toLowerCase()}.`;
+  return `This needs the “${HRMS_POWER_LABEL[power].label}” power, which is not on your account. An HRMS administrator can grant it on the Access screen.`;
 }
 
 /** The signed-in person's employee record, or a refusal that says what to do. */

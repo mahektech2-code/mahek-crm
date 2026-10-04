@@ -53,3 +53,21 @@ test("the grant migration moves every tab that used to be a screen onto the scre
   assert.deepEqual([...pairs.keys()].sort(), tabs.map((x) => x.tab.key).sort());
   for (const x of tabs) assert.equal(pairs.get(x.tab.key), x.screen.key, `${x.tab.key} must move to ${x.screen.key}`);
 });
+
+test("the plain-words migration renames exactly what values.ts says was renamed", async () => {
+  const { RENAMED } = await import("./values");
+  const sql = readFileSync("drizzle/0202_hrms_plain_values.sql", "utf8");
+  const updates = [...sql.matchAll(/UPDATE "(\w+)" SET "(\w+)" = '([^']+)' WHERE "\w+" = '([^']+)';/g)].map((m) => `${m[1]}.${m[2]}: ${m[4]} → ${m[3]}`);
+  assert.deepEqual(updates.sort(), RENAMED.map((r) => `${r.table}.${r.column}: ${r.from} → ${r.to}`).sort());
+});
+
+test("every renamed value names a table and column that exist", async () => {
+  process.env.DATABASE_URL ??= "postgres://unused@127.0.0.1:1/unused";
+  const { RENAMED } = await import("./values");
+  const schema = await import("@/db/schema");
+  const { getTableConfig, PgTable } = await import("drizzle-orm/pg-core");
+  const { is } = await import("drizzle-orm");
+  const tables = new Map<string, string[]>();
+  for (const v of Object.values(schema)) if (is(v, PgTable)) { const c = getTableConfig(v); tables.set(c.name, c.columns.map((x) => x.name)); }
+  for (const r of RENAMED) assert.ok(tables.get(r.table)?.includes(r.column), `${r.table}.${r.column} does not exist`);
+});
