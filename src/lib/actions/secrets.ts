@@ -136,6 +136,7 @@ const LABELS: Record<SecretName, string> = {
   "openai.apiKey": "The OpenAI key",
   "msg91.authKey": "The MSG91 key",
   "wati.apiToken": "The Wati key",
+  "minimoth.apiKey": "The MiniMoth key",
   "olamaps.apiKey": "The Ola Maps key",
   "olamaps.apiKey2": "The second Ola Maps key",
   "olamaps.apiKey3": "The third Ola Maps key",
@@ -157,6 +158,8 @@ const USED_FROM: Record<SecretName, string> = {
   "msg91.authKey": "Nothing uses it — WhatsApp goes through Wati.",
   "wati.apiToken":
     "WhatsApp sending uses it from the next message — but only while the founder has the service switched on. The webhook address changes with it, so paste the new one into Wati.",
+  "minimoth.apiKey":
+    "Sign-in codes are offered on the web and on the handset within a minute. A test key (mm_test_…) is ignored in production.",
   "olamaps.apiKey":
     "The Live map and Territory's shop map draw their streets from the next time either is opened.",
   /* A spare is INSURANCE and the sentence has to say so, or somebody reads it
