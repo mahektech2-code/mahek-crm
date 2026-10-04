@@ -18,6 +18,9 @@ import { applyPull } from './pull';
 import { flush as flushTrail } from './trail';
 import { runMediaQueue } from './media';
 import { isoDate } from '../lib/format';
+import { buildLabel } from '../native/updates';
+import { needsRebootstrap } from '../engines/rebootstrap';
+import { BOOTSTRAPPED_BUILD_KEY, markBootstrapped, refreshSessionUser } from '../data/session';
 
 /**
  * The sync loop.
@@ -81,6 +84,12 @@ export async function syncNow(opts: { manual?: boolean } = {}): Promise<SyncOutc
       await markSyncing(items.map((i) => i.id));
     }
 
+    /* BEFORE the cursor is read: a snapshot replaces it, and the delta below
+       then picks up from the snapshot rather than from the old build's
+       cursor. Inside the lock, so no delta can land between the two and
+       write an older cursor over the newer one. */
+    await refreshBookIfBuildChanged();
+
     const cursor = (await getKv('pullCursor')) ?? '';
     let response: api.SyncResponse;
 
@@ -133,6 +142,42 @@ export async function syncNow(opts: { manual?: boolean } = {}): Promise<SyncOutc
     /* And the trail last of all. It depends on nothing and nothing depends on
        it, so it takes whatever signal is left after the work has gone up. */
     void flushTrail();
+  }
+}
+
+const REBOOTSTRAP_FAILED_KEY = 'mbos.rebootstrapFailedAt';
+
+/**
+ * AN UPGRADE TAKES THE WHOLE BOOK AGAIN, without anybody signing in.
+ *
+ * Installing a new APK over the old one keeps the session, so the snapshot a
+ * sign-in applies never runs — and a delta only carries what changed, so a
+ * new build's new configuration keys, columns and channels never arrived
+ * until somebody happened to sign out and back in. `engines/rebootstrap.ts`
+ * has the whole of when; this is the doing of it, with the token the phone
+ * already holds.
+ *
+ * It is the same `applyPull` sign-in uses, so it obeys the same rule: it
+ * overwrites reference data and never touches owned data, and nothing in the
+ * outbox is lost to it. A failure is not the sync's failure — the delta goes
+ * ahead on the old cursor exactly as it would have, and the snapshot is
+ * asked for again after a pause.
+ */
+async function refreshBookIfBuildChanged(): Promise<void> {
+  const current = buildLabel();
+  const failed = Number(await getKv(REBOOTSTRAP_FAILED_KEY)) || null;
+  if (!needsRebootstrap({ bootstrappedBuild: await getKv(BOOTSTRAPPED_BUILD_KEY), currentBuild: current, lastFailedAt: failed, now: Date.now() })) {
+    return;
+  }
+  try {
+    const snapshot = (await api.bootstrap()) as api.PullPayload & { user?: api.SessionUser };
+    await applyPull(snapshot);
+    await markBootstrapped(snapshot.cursor);
+    await refreshSessionUser(snapshot.user);
+    await setKv(REBOOTSTRAP_FAILED_KEY, '');
+    await setKv('lastPullAt', String(Date.now()));
+  } catch {
+    await setKv(REBOOTSTRAP_FAILED_KEY, String(Date.now()));
   }
 }
 

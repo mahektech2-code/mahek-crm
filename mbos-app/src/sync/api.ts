@@ -461,8 +461,15 @@ export type PullPayload = {
   deletions?: { entity: string; ids: string[] }[];
 };
 
+/**
+ * The whole book again, on the token the phone already holds — taken by the
+ * sync loop when the installed build differs from the one that last took it
+ * (`engines/rebootstrap.ts`). It runs behind the screen on whatever signal
+ * there is, so it gets far longer than the twenty seconds a request the
+ * salesman is waiting on is allowed; the route itself allows 120.
+ */
 export async function bootstrap(): Promise<PullPayload> {
-  return request('/api/mbos/bootstrap', { method: 'GET' });
+  return request('/api/mbos/bootstrap', { method: 'GET', timeoutMs: 90_000 });
 }
 
 /* ------------------------------------------------------------------- sync */
