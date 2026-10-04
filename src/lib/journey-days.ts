@@ -197,6 +197,49 @@ export function datesBetween(from: string, to: string): string[] {
   return out;
 }
 
+/* ------------------------------------------------------- where the day is */
+
+/**
+ * The cities a day's shops are in, most shops first.
+ *
+ * Pure so the web and the handset rank the same way: a day of four Ambernath
+ * shops and one Ulhasnagar shop is an Ambernath day with a call on the way.
+ */
+export function rankShopCities(cities: ReadonlyArray<string | null | undefined>): string[] {
+  const n = new Map<string, number>();
+  for (const raw of cities) {
+    const c = raw?.trim();
+    if (c) n.set(c, (n.get(c) ?? 0) + 1);
+  }
+  return [...n.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([c]) => c);
+}
+
+/**
+ * WHERE A DAY IS, said once for every screen.
+ *
+ * The office now picks a city before it picks shops, and `saveJourneyPeriod`
+ * stores it. Days arranged before that carry no city — every screen printed
+ * "No city named" above a list of shops plainly in Ambernath — so for those
+ * the city is READ OFF THE SHOPS, and marked as such: a city somebody chose
+ * and a city the shops happen to share are different facts. It is not written
+ * back onto the old plans, because `city` is the chosen city and the handset
+ * hard-filters his own pick list by it.
+ */
+export function dayWhere(plan: {
+  city: string | null;
+  beat?: string | null;
+  shopCities?: ReadonlyArray<string>;
+}): { text: string | null; fromShops: boolean } {
+  if (plan.city?.trim()) return { text: plan.city.trim(), fromShops: false };
+  const cities = plan.shopCities ?? [];
+  if (cities.length) {
+    const shown = cities.slice(0, 2).join(" · ");
+    return { text: cities.length > 2 ? `${shown} +${cities.length - 2}` : shown, fromShops: true };
+  }
+  if (plan.beat?.trim()) return { text: plan.beat.trim(), fromShops: false };
+  return { text: null, fromShops: false };
+}
+
 /* ------------------------------------------------- what he said about areas */
 
 export type AreaAnswer = {

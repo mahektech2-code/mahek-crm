@@ -6,6 +6,7 @@ import { useToast } from "@/components/ui/toast";
 import { ComboBox } from "@/components/ui/combo-box";
 import { splitBook } from "@/lib/city-match";
 import { addDays } from "@/lib/business-date";
+import { dayWhere } from "@/lib/journey-days";
 import { answerRefusal, proposeJourneyDays, saveJourneyPeriod } from "@/lib/actions/sales";
 import type { BookCustomer, JourneyPlan, Salesman } from "@/lib/services/sales-service";
 import { HEALTH_BAND_LABELS } from "@/lib/engines/inactivity";
@@ -191,14 +192,14 @@ export function JourneysScreen({
   }
 
   /** The exception: arranging a day from the office, shops and all. */
-  async function pickFromOffice(date: string, customerIds: string[]) {
+  async function pickFromOffice(date: string, city: string, customerIds: string[]) {
     if (!selected) return;
     setBusy(true);
     setError(null);
     try {
       const result = await saveJourneyPeriod({
         salesmanId: selected.id,
-        days: [{ planDate: date, customerIds }],
+        days: [{ planDate: date, city, customerIds }],
       });
       if (!result.ok) return setError(result.error);
       toast.push(result.message ?? "Saved.");
@@ -356,7 +357,7 @@ export function JourneysScreen({
                   onAnswer={(take, city) =>
                     d.plan && void answer(d.date, d.plan.id, take, city)
                   }
-                  onPickFromOffice={(ids) => void pickFromOffice(d.date, ids)}
+                  onPickFromOffice={(ids) => void pickFromOffice(d.date, d.city.trim(), ids)}
                 />
               ))}
             </div>
@@ -506,7 +507,7 @@ function DayLine({
 
         {state === "planned" ? (
           <span className="min-w-0 flex-1 text-[13px] text-body">
-            {row.plan?.city ?? row.plan?.beat ?? "Arranged"} ·{" "}
+            {(row.plan && dayWhere(row.plan).text) ?? "Arranged"} ·{" "}
             {plural(row.plan?.stops.length ?? 0, "stop")}
           </span>
         ) : (
@@ -582,19 +583,25 @@ function DayLine({
           </span>
         ) : null}
 
+        {/* CITY FIRST, THEN SHOPS. With no city the list was the whole book
+            and the day saved with no city on it, so every screen afterwards —
+            his handset included — said "No city named" above shops plainly in
+            one town. The city in the box beside it is what the list is cut by
+            AND what is saved onto the day with the shops. */}
         {state !== "planned" ? (
           <Button
             size="sm"
             tone="quiet"
-            disabled={busy}
+            disabled={busy || (!open && !proposed)}
+            title={!proposed ? "Choose the city first — the shops listed are that city's." : undefined}
             onClick={() => setOpen((o) => !o)}
           >
-            {open ? "Close" : "Pick the shops yourself"}
+            {open ? "Close" : proposed ? `Pick shops in ${proposed}` : "Choose a city to pick shops"}
           </Button>
         ) : null}
       </div>
 
-      {open ? (
+      {open && proposed ? (
         <div className="mt-2 ml-[132px] border-l border-divider pl-3">
           <p className="mb-2 max-w-[620px] text-[12px] text-pretty text-muted">
             The exception rather than the model. Arranging a day from here skips the
@@ -704,7 +711,7 @@ function DayLine({
                 disabled={busy}
                 onClick={() => onPickFromOffice(picked)}
               >
-                Arrange {plural(picked.length, "stop")} from the office
+                Arrange {plural(picked.length, "stop")} in {proposed} from the office
               </Button>
             </div>
           ) : null}

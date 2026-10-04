@@ -30,6 +30,7 @@ import {
 } from "@/lib/territory-sql";
 import { placeFilterOptions, placeFilterSql, placeNameSql } from "@/lib/services/place-filter-service";
 import type { PlaceFilterOptions, PlaceFilterValues } from "@/lib/place-filters";
+import { rankShopCities } from "@/lib/journey-days";
 import { canonicalState, stateKey, stateVariants } from "@/lib/india-states";
 import { metresBetween } from "@/lib/geo";
 import { dropInaccurateFixes } from "../engines/trail-gaps";
@@ -4871,6 +4872,8 @@ export type JourneyPlan = {
   notes: string | null;
   estimatedTravelMinutes: number | null;
   stops: PlanStop[];
+  /** The stops' cities, most shops first — where a day with no agreed city is. */
+  shopCities: string[];
 };
 
 /** Every plan for a day, with its stops. */
@@ -4897,7 +4900,7 @@ export async function journeyPlansBetween(
   const scope = await managerScope();
   const who = userId ? sql`and p.user_id = ${userId}` : sql``;
 
-  const plans = (await db.execute<Omit<JourneyPlan, "stops">>(sql`
+  const plans = (await db.execute<Omit<JourneyPlan, "stops" | "shopCities">>(sql`
     select p.id, p.user_id as "userId", u.name as "userName",
            p.plan_date::text as "planDate", p.beat, p.area,
            p.status::text as status,
@@ -4913,7 +4916,7 @@ export async function journeyPlansBetween(
      where p.plan_date between ${fromDay}::date and ${toDay}::date ${who}
        ${onlyMine(scope, "p.user_id")}
      order by p.plan_date asc, u.name asc
-  `)) as unknown as Array<Omit<JourneyPlan, "stops">>;
+  `)) as unknown as Array<Omit<JourneyPlan, "stops" | "shopCities">>;
 
   if (!plans.length) return [];
 
@@ -4948,10 +4951,10 @@ export async function journeyPlansBetween(
      order by p.plan_date asc, s.sequence asc
   `)) as unknown as Array<PlanStop & { planId: string }>;
 
-  return plans.map((p) => ({
-    ...p,
-    stops: stops.filter((s) => s.planId === p.id),
-  }));
+  return plans.map((p) => {
+    const own = stops.filter((s) => s.planId === p.id);
+    return { ...p, stops: own, shopCities: rankShopCities(own.map((s) => s.city)) };
+  });
 }
 
 /**

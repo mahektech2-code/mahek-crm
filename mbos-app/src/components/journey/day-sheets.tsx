@@ -6,7 +6,7 @@ import { Badge, PrimaryButton, SecondaryButton, T } from '../ui/primitives';
 import { Icon } from '../ui/Icon';
 import { color as C, radius, weight, tabular } from '../../theme/tokens';
 import { dayLabelRelative, hhmm, inrFromPaise, plural } from '../../lib/format';
-import { dayHistory, pickShops, pickedShops, type PlanDay, type ShopDay } from '../../data/journey';
+import { dayHistory, pickShops, pickedShops, type PlanDay, type ShopDay, whereOf } from '../../data/journey';
 import { useStore } from '../../state/store';
 import { outcomeLabel } from '../../data/fixtures';
 
@@ -78,7 +78,7 @@ export function PastDaySheet({
         <>
           <T s="h2">{dayLabelRelative(day.planDate, today)}</T>
           <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-            {day.city ?? 'No city recorded'}
+            {whereOf(day) ?? 'No city recorded'}
           </T>
 
           {failed ? (
@@ -492,7 +492,7 @@ export function PlannedDaySheet({
             <View style={{ flex: 1, minWidth: 0 }}>
               <T s="h2">{dayLabelRelative(day.planDate, today)}</T>
               <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-                {(day.city ? day.city + ' · ' : '') + plural(shops?.length ?? day.picked, 'shop') + ' picked'}
+                {(whereOf(day) ? whereOf(day) + ' · ' : '') + plural(shops?.length ?? day.picked, 'shop') + ' picked'}
               </T>
             </View>
             {day.syncState === 'queued' ? <Badge tone="amber">Not sent yet</Badge> : <Badge tone="info">Planned</Badge>}

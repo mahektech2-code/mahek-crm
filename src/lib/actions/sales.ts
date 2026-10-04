@@ -528,6 +528,13 @@ export type PlannedDay = {
   /** `YYYY-MM-DD`. */
   planDate: string;
   beat?: string | null;
+  /**
+   * The city the office chose before picking the shops. Saved onto the day so
+   * every screen, the handset included, says where it is — a day arranged with
+   * no city read "No city named" above shops plainly in one town. Absent leaves
+   * whatever city the day already carries.
+   */
+  city?: string | null;
   /** In the order they are to be walked. An empty day CLEARS that day. */
   customerIds: string[];
   startTime?: string;
@@ -683,6 +690,7 @@ export async function saveJourneyPeriod(input: {
             .update(mbosJourneyPlans)
             .set({
               beat: day.beat ?? null,
+              ...(day.city?.trim() ? { city: day.city.trim() } : {}),
               estimatedTravelMinutes: perStop * Math.max(0, day.customerIds.length - 1),
               updatedAt: new Date(),
               updatedById: user.id,
@@ -694,6 +702,7 @@ export async function saveJourneyPeriod(input: {
             userId: input.salesmanId,
             planDate: day.planDate,
             beat: day.beat ?? null,
+            city: day.city?.trim() || null,
             status: "active",
             estimatedTravelMinutes: perStop * Math.max(0, day.customerIds.length - 1),
             createdById: user.id,

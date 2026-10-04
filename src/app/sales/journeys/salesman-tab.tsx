@@ -22,6 +22,7 @@ import {
   DAY_STATE_TONE,
   areaAnswerState,
   dayOwed,
+  dayWhere,
   stopFate,
   sumTallies,
   tallyDay,
@@ -429,9 +430,12 @@ function CalendarGrid({
               ) : null}
             </span>
 
-            {d.plan?.city || d.plan?.beat ? (
-              <span className="block truncate text-[13px] font-medium text-body">
-                {d.plan.city ?? d.plan.beat}
+            {d.plan && dayWhere(d.plan).text ? (
+              <span
+                className="block truncate text-[13px] font-medium text-body"
+                title={dayWhere(d.plan).fromShops ? "No city was proposed — this is where the shops are" : undefined}
+              >
+                {dayWhere(d.plan).text}
                 {d.plan.selfPlanned ? <span className="font-normal text-muted"> · his own</span> : null}
               </span>
             ) : d.holiday ? (
@@ -589,8 +593,11 @@ function DayList({
               </td>
               <td className="max-w-[260px] px-3 py-2">
                 <span className="block truncate text-body">
-                  {d.plan?.city ?? d.plan?.beat ?? (d.holiday ? d.holiday : <span className="text-muted">—</span>)}
+                  {(d.plan && dayWhere(d.plan).text) ?? (d.holiday ? d.holiday : <span className="text-muted">—</span>)}
                 </span>
+                {d.plan && dayWhere(d.plan).fromShops ? (
+                  <span className="block text-[11px] text-muted">from the shops — no city proposed</span>
+                ) : null}
                 {d.plan?.selfPlanned ? <span className="block text-[11px] text-muted">planned it himself</span> : null}
                 {d.plan && d.holiday ? <span className="block text-[11px] text-warn-ink">Holiday — {d.holiday}</span> : null}
                 {d.tours.length ? (
@@ -729,7 +736,7 @@ function DayDrawer({
         <span className="flex flex-wrap items-center gap-2">
           <span className="text-lg font-semibold text-ink">{longDate(day.date)}</span>
           {plan ? <Pill tone={DAY_STATE_TONE[plan.dayState]}>{DAY_STATE_LABEL[plan.dayState]}</Pill> : null}
-          {plan?.city ? <span className="text-[15px] text-body">{plan.city}</span> : null}
+          {plan && dayWhere(plan).text ? <span className="text-[15px] text-body">{dayWhere(plan).text}</span> : null}
         </span>
         <span className={"block text-[13px] " + toneText(day.owed.tone)}>{day.owed.text}</span>
       </DrawerHeader>
@@ -779,7 +786,18 @@ function DayDrawer({
             <dl className="grid grid-cols-[150px_minmax(0,1fr)] gap-x-3 gap-y-1">
               <dt className="text-muted">Where</dt>
               <dd>
-                {plan.city ?? "No city named"}
+                {plan.city ??
+                  (plan.shopCities.length ? (
+                    <>
+                      {plan.shopCities.join(", ")}
+                      <span className="block text-[12px] text-muted">
+                        Read off the {plan.stops.length === 1 ? "shop" : "shops"} on the route — the office picked
+                        shops rather than proposing a city.
+                      </span>
+                    </>
+                  ) : (
+                    "No city named"
+                  ))}
                 {plan.beat ? ` · beat ${plan.beat}` : ""}
                 {plan.area ? ` · ${plan.area}` : ""}
               </dd>

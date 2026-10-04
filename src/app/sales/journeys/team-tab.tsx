@@ -6,6 +6,7 @@ import {
   DAY_STATE_LABEL,
   areaAnswerState,
   datesBetween,
+  dayWhere,
 } from "@/lib/journey-days";
 import { Banner, Empty, MetricRow, RowMenu } from "@/components/console/parts";
 import { plural } from "@/components/console/words";
@@ -234,7 +235,7 @@ export function TeamTab({
                   <td className="px-3 py-2.5">
                     {r.today ? (
                       <>
-                        <span className="block truncate font-medium text-ink">{r.today.city ?? "—"}</span>
+                        <span className="block truncate font-medium text-ink">{dayWhere(r.today).text ?? "—"}</span>
                         <span className="block text-[11px] text-muted">
                           {r.today.dayState === "planned"
                             ? `${r.today.visited}/${r.today.stops} visited${r.today.skipped ? ` · ${r.today.skipped} skipped` : ""}`
@@ -272,7 +273,7 @@ export function TeamTab({
                           >
                             <span className="font-medium">{Number(d.slice(8))}</span>
                             <span className="w-full truncate px-0.5 text-center">
-                              {p?.city ? p.city.slice(0, 4) : leave ? "lv" : off ? "hol" : ""}
+                              {p && dayWhere(p).text ? dayWhere(p).text!.slice(0, 4) : leave ? "lv" : off ? "hol" : ""}
                             </span>
                           </Link>
                         );
@@ -366,7 +367,8 @@ function dayHref(salesmanId: string, date: string) {
 
 function dayTitle(p: TeamPlanDay | undefined, leave: string | null, holiday: string | null): string {
   if (!p) return leave ? `on leave (${leave})` : holiday ? `holiday — ${holiday}` : "nothing planned";
-  const where = p.city ?? "no city";
+  const w = dayWhere(p);
+  const where = w.text ? (w.fromShops ? `${w.text} (from the shops)` : w.text) : "no city";
   if (p.dayState === "planned") return `${where} · ${p.stops} shops, ${p.visited} visited`;
   if (p.dayState === "refused") return `${where} · refused: ${p.refusalReason ?? ""}`;
   return `${where} · ${DAY_STATE_LABEL[p.dayState].toLowerCase()}${p.selfPlanned ? " (his own)" : ""}`;

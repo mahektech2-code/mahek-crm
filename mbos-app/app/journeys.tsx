@@ -15,6 +15,7 @@ import {
   stopsOn,
   type JourneyDay,
   type JourneyStop,
+  whereOf,
 } from '../src/data/journey';
 import {
   acceptAreas,
@@ -56,7 +57,7 @@ const STATE_WORDS: Record<JourneyDay['dayState'], { label: string; tone: BadgeTo
 
 /** What a day comes down to, in one line. */
 function dayLine(d: JourneyDay, today: string): string {
-  const where = d.city ? d.city + (d.beat ? ' · ' + d.beat : '') : 'No city set';
+  const where = whereOf(d) ? whereOf(d) + (d.beat ? ' · ' + d.beat : '') : 'No city set';
   if (d.dayState === 'refused') return where + ' · sent back' + (d.refusalReason ? ' — ' + d.refusalReason : '');
   if (d.dayState === 'proposed') return where + (d.planDate < today ? ' · never answered' : ' · waiting on your answer');
   if (d.dayState === 'agreed') return where + (d.planDate < today ? ' · no shops were picked' : ' · pick your shops');
@@ -554,11 +555,11 @@ function MonthCalendar({
                 {/* THE CITY, not only a dot. A month of coloured dots said
                     how far each day had got and never where it was, which is
                     the thing a salesman planning his week reads first. */}
-                {d?.city ? (
+                {d && whereOf(d) ? (
                   <T
                     numberOfLines={1}
                     style={[{ fontSize: 9, lineHeight: 12, marginTop: 2, maxWidth: '100%', color: dotColour(d, today) }, weight(600)]}>
-                    {d.city}
+                    {whereOf(d)}
                   </T>
                 ) : (
                   <View

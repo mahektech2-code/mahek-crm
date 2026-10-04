@@ -144,7 +144,10 @@ export async function journeyDays(from: string): Promise<JourneyDay[]> {
     `SELECT d.*,
             (SELECT COUNT(*) FROM journey_stops s WHERE s.planDate = d.planDate) AS stops,
             (SELECT COUNT(*) FROM journey_stops s WHERE s.planDate = d.planDate AND s.status = 'visited') AS visited,
-            (SELECT COUNT(*) FROM journey_stops s WHERE s.planDate = d.planDate AND s.status = 'skipped') AS skipped
+            (SELECT COUNT(*) FROM journey_stops s WHERE s.planDate = d.planDate AND s.status = 'skipped') AS skipped,
+            (SELECT c.city FROM journey_stops s JOIN customers c ON c.id = s.customerId
+              WHERE s.planDate = d.planDate AND TRIM(COALESCE(c.city, '')) <> ''
+              GROUP BY c.city ORDER BY COUNT(*) DESC, c.city LIMIT 1) AS shopCity
        FROM journey_days d
       WHERE d.planDate >= ?
       ORDER BY d.planDate ASC`,
@@ -182,7 +185,20 @@ export type PlanDay = {
      `setEntityState`. The card reads it, because "the shops were not accepted"
      with no reason attached sends somebody back to pick the same ones. */
   syncMessage: string | null;
+  /**
+   * Where the day's shops are, most shops first — READ, never stored. A day
+   * the office arranged before it named a city carries none, and "No city"
+   * above shops plainly in Ambernath tells him nothing. Display only: `city`
+   * is the chosen city and the pick list hard-filters by it, so this must
+   * never stand in for it there. `whereOf` is the one reader.
+   */
+  shopCity?: string | null;
 };
+
+/** Where a day is, for a label: the chosen city, else where its shops are. */
+export function whereOf(d: { city: string | null; shopCity?: string | null } | null | undefined): string | null {
+  return d?.city ?? d?.shopCity ?? null;
+}
 
 /**
  * Where the office has asked you to work, and what you have said about it.
@@ -197,7 +213,11 @@ export type PlanDay = {
  */
 export async function planDays(from = today()): Promise<PlanDay[]> {
   return all<PlanDay>(
-    `SELECT * FROM journey_days WHERE planDate >= ? ORDER BY planDate ASC`,
+    `SELECT d.*,
+            (SELECT c.city FROM journey_stops s JOIN customers c ON c.id = s.customerId
+              WHERE s.planDate = d.planDate AND TRIM(COALESCE(c.city, '')) <> ''
+              GROUP BY c.city ORDER BY COUNT(*) DESC, c.city LIMIT 1) AS shopCity
+       FROM journey_days d WHERE d.planDate >= ? ORDER BY d.planDate ASC`,
     [from],
   );
 }
