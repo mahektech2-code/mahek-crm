@@ -35,8 +35,8 @@ async function person(
     .returning();
   for (const g of grants) {
     await db.insert(appAccess).values({ id: id("aca"), userId: u.id, app: g.app, role: "associate" });
-    for (const module of g.modules ?? []) {
-      await db.insert(appModuleAccess).values({ id: id("ama"), userId: u.id, app: g.app, module });
+    for (const key of g.modules ?? []) {
+      await db.insert(appModuleAccess).values({ id: id("ama"), userId: u.id, app: g.app, module: key });
     }
   }
   return u;
