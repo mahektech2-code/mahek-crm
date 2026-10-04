@@ -1,4 +1,4 @@
-import { all, one, run } from '../db';
+import { all, getKv, one, run, setKv } from '../db';
 import { insertAndQueue, stamp } from './write';
 import {
   computeDay,
@@ -1016,6 +1016,32 @@ export async function closeStaleSessions(userId: string, dayBoundaryMs: number):
   );
   for (const leg of open) {
     await closeAbandoned(leg, 'Closed by the app at the end of the day. No punch-out was saved.');
+    /* A METERED day closed with no end reading is paid nothing for its
+       kilometres — nothing else on the day claims them, because every visit
+       leg on such a day is excluded in favour of the meter. That was true and
+       said nowhere: he found out when the claim came back. Home says so the
+       next morning, and names who can put it right. */
+    if (leg.odometerStartKm != null) {
+      await setKv(UNPAID_METER_KEY, JSON.stringify({ day: leg.day, legId: leg.id })).catch(() => {});
+    }
   }
   return open.length;
+}
+
+/** The kv key for the last day closed with no end reading. See `closeStaleSessions`. */
+export const UNPAID_METER_KEY = 'travel.unpaidMeterDay';
+
+/** The day whose vehicle km went unpaid for want of a punch-out, until he has seen it. */
+export async function unpaidMeterDay(): Promise<string | null> {
+  const raw = await getKv(UNPAID_METER_KEY);
+  if (!raw) return null;
+  try {
+    return (JSON.parse(raw) as { day: string }).day ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function dismissUnpaidMeterDay(): Promise<void> {
+  await setKv(UNPAID_METER_KEY, '');
 }

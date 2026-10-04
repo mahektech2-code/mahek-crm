@@ -9,7 +9,7 @@ import { promptsForExpenses } from '../src/lib/travel-leg';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
-import { compactInrFromPaise, hhmm, inrFromPaise, isoDate, plural } from '../src/lib/format';
+import { compactInrFromPaise, dmy, hhmm, inrFromPaise, isoDate, plural } from '../src/lib/format';
 import { DASH_CARDS, DAY_AHEAD } from '../src/data/fixtures';
 import {
   checkIn,
@@ -56,8 +56,10 @@ import { OdometerCamera, type OdometerResult } from '../src/components/ui/odomet
 import { BottomSheet } from '../src/components/ui/overlays';
 import { TravelModeList } from '../src/components/ui/travel-mode-list';
 import {
+  dismissUnpaidMeterDay,
   endSession,
   openSessionLeg,
+  unpaidMeterDay,
   startSession,
   travelModesFor,
   type TravelMode,
@@ -354,6 +356,9 @@ export default function Home() {
    * morning, before the day that will or will not be recorded.
    */
   const [offerSetup, setOfferSetup] = React.useState(false);
+  /* A metered day closed by the app with no punch-out — its km are not paid,
+     and he hears it here rather than from the claim. See `closeStaleSessions`. */
+  const [unpaidMeter, setUnpaidMeter] = React.useState<string | null>(null);
 
   const load = React.useCallback(() => {
     if (!userId) return;
@@ -364,6 +369,9 @@ export default function Home() {
        reconcile here keeps them right through all of it — including a setting
        changed in the office since the morning. It never throws. */
     void syncPunchOutReminders(userId);
+    void unpaidMeterDay()
+      .then(setUnpaidMeter)
+      .catch(() => setUnpaidMeter(null));
 
     /*
      * Its own read, deliberately not in the `Promise.all` below: that one
@@ -1301,6 +1309,25 @@ export default function Home() {
           of that is a prompt he learns to swipe past. It is drawn quietly for
           the same reason — the danger colour belongs to the tracker having
           actually stopped, which is the Sync card's sentence, not this one's. */}
+      {unpaidMeter ? (
+        <Card style={{ marginTop: 12, padding: 14, backgroundColor: C.warnBg }}>
+          <T s="small" style={[{ color: C.ink }, weight(600)]}>
+            {`${dmy(unpaidMeter)}: your vehicle km were not counted`}
+          </T>
+          <T s="caption" style={{ color: C.ink, marginTop: 4 }}>
+            You did not punch out, so the app closed the day with no closing meter reading. Ask your manager to add the km. Your route for that day is saved.
+          </T>
+          <SecondaryButton
+            label="OK"
+            style={{ marginTop: 10 }}
+            onPress={() => {
+              setUnpaidMeter(null);
+              void dismissUnpaidMeterDay().catch(() => {});
+            }}
+          />
+        </Card>
+      ) : null}
+
       {offerSetup ? (
         <PressableScale
           onPress={() => router.push('/tracking-setup?from=home')}
