@@ -5069,6 +5069,18 @@ cities, a This week strip shows seven days by city, the Journeys calendar
 prints the city under each date, and a past day lists the shops visited off
 the route with each shop's account type.
 
+
+**THE OFFICE PICKS A CITY BEFORE IT PICKS SHOPS, and both are saved.**
+"Pick the shops yourself" opened on the whole book with no city chosen, and
+`saveJourneyPeriod` wrote the stops and nothing else — so the day's `city` was
+null and every screen, the handset included, printed "No city named" above
+shops plainly in one town. The button now waits for a city in the row's box,
+the list is that city's shops (anywhere else stays a deliberate extra), and
+`PlannedDay.city` is stored on the plan with them. Days arranged before this
+are labelled from their shops — `dayWhere` on the web, `whereOf` and the
+derived `shopCity` on the handset — and marked as read off the shops. That
+fallback is a LABEL and never written back: `city` is the chosen city and the
+handset hard-filters his own pick list by it.
 **THE HANDSET IS RELEASED BY A WORKFLOW, and never from somebody's laptop.**
 `.github/workflows/mbos-apk.yml` builds it, verifies the signature against the
 committed keystore with `apksigner`, and publishes to R2 under a versioned name

@@ -19,6 +19,7 @@ import {
   todayStops,
   type JourneyStop,
   type PlanDay,
+  whereOf,
 } from '../src/data/journey';
 import { listTours, requestTour, type Tour } from '../src/data/requests';
 import { getCustomer, type Customer } from '../src/data/customers';
@@ -589,9 +590,9 @@ export default function JourneyScreen() {
           ) : null}
           <View style={{ flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12 }}>
             <View style={{ minWidth: 0, flex: 1 }}>
-              {todayDay?.city ? (
+              {whereOf(todayDay) ? (
                 <T s="label" numberOfLines={1} style={{ color: C.primaryDeep, marginBottom: 2 }}>
-                  {'Today · ' + todayDay.city + (todayDay.beat ? ' · ' + todayDay.beat : '')}
+                  {'Today · ' + whereOf(todayDay) + (todayDay?.beat ? ' · ' + todayDay.beat : '')}
                 </T>
               ) : null}
               <T style={type.h1}>
@@ -605,10 +606,10 @@ export default function JourneyScreen() {
               </T>
               <T s="small" style={{ color: C.muted, marginTop: 2 }}>
                 {awaitingRoute
-                  ? (awaitingRoute.city ? awaitingRoute.city + ' · ' : '') +
+                  ? (whereOf(awaitingRoute) ? whereOf(awaitingRoute) + ' · ' : '') +
                     'sent to the office. The stops come when the phone sends next'
                   : !stops.length && todayDay && todayDay.dayState !== 'planned'
-                    ? (todayDay.city ?? 'Today') + ' · ' + TODAY_STATE[todayDay.dayState]
+                    ? (whereOf(todayDay) ?? 'Today') + ' · ' + TODAY_STATE[todayDay.dayState]
                     : routeSubline(stops.length, doneCount, areas)}
               </T>
             </View>
@@ -1310,7 +1311,7 @@ export default function JourneyScreen() {
                       {dayLabelRelative(d.planDate, today)}
                     </T>
                     <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-                      {(d.city ? d.city + ' · ' : '') + plural(d.picked, 'shop') + ' picked'}
+                      {(whereOf(d) ? whereOf(d) + ' · ' : '') + plural(d.picked, 'shop') + ' picked'}
                     </T>
                   </View>
                   <Icon name="forward" size={20} color={C.muted} strokeWidth={1.5} />
@@ -1480,7 +1481,7 @@ export default function JourneyScreen() {
                   <View style={{ flex: 1, minWidth: 0 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
                       <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>{dayLabel(d.planDate)}</T>
-                      <T s="caption" style={{ color: C.muted }}>{d.city ?? ''}</T>
+                      <T s="caption" style={{ color: C.muted }}>{whereOf(d) ?? ''}</T>
                     </View>
                     <T s="small" style={{ color: C.muted, marginTop: 2 }}>
                       {recentSummary(d, pastCounts[d.planDate])}
@@ -1857,7 +1858,7 @@ function WeekStrip({ days, today }: { days: PlanDay[]; today: string }) {
               key={iso}
               accessibilityRole="button"
               accessibilityLabel={
-                dayLabel(iso) + ', ' + (day ? (day.city ?? 'no city') + ', ' + word[day.dayState] : 'nothing planned')
+                dayLabel(iso) + ', ' + (day ? (whereOf(day) ?? 'no city') + ', ' + word[day.dayState] : 'nothing planned')
               }
               onPress={() => router.push('/journeys')}
               style={({ pressed }) => ({
@@ -1872,8 +1873,8 @@ function WeekStrip({ days, today }: { days: PlanDay[]; today: string }) {
               <T s="caption" style={{ color: C.muted }} numberOfLines={1}>
                 {dayLabelRelative(iso, today)}
               </T>
-              <T style={[{ fontSize: 14, color: day?.city ? C.ink : C.faint, marginTop: 2 }, weight(600)]} numberOfLines={1}>
-                {day?.city ?? 'No city'}
+              <T style={[{ fontSize: 14, color: whereOf(day) ? C.ink : C.faint, marginTop: 2 }, weight(600)]} numberOfLines={1}>
+                {whereOf(day) ?? 'No city'}
               </T>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}>
                 <View

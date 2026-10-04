@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import {
   areaAnswerState,
   dayOwed,
+  dayWhere,
+  rankShopCities,
   monthGrid,
   monthParam,
   stopFate,
@@ -100,4 +102,14 @@ test("an acceptance counts only for the allocation he was shown", () => {
   );
   assert.equal(areaAnswerState([], null).key, "none-allocated");
   assert.equal(areaAnswerState(areas, null).key, "unanswered");
+});
+
+test("a day arranged from shops is placed by the shops, most shops first", () => {
+  assert.deepEqual(rankShopCities(["Ulhasnagar", "Ambernath", " Ambernath ", null, ""]), ["Ambernath", "Ulhasnagar"]);
+  assert.deepEqual(dayWhere({ city: null, shopCities: ["Ambernath"] }), { text: "Ambernath", fromShops: true });
+  assert.deepEqual(dayWhere({ city: null, shopCities: ["A", "B", "C", "D"] }), { text: "A · B +2", fromShops: true });
+  // An agreed city is the plan's own word and wins over the shops.
+  assert.deepEqual(dayWhere({ city: "Nagpur", shopCities: ["Wardha"] }), { text: "Nagpur", fromShops: false });
+  assert.deepEqual(dayWhere({ city: null, beat: "East", shopCities: [] }), { text: "East", fromShops: false });
+  assert.deepEqual(dayWhere({ city: null }), { text: null, fromShops: false });
 });

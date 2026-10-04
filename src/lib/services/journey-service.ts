@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { APP_TIMEZONE } from "../business-date";
 import { managerScope, onlyMine } from "./sales-service";
+import { placeNameSql } from "./place-filter-service";
 
 const IST = sql.raw(`at time zone '${APP_TIMEZONE}'`);
 
@@ -177,6 +178,8 @@ export type TeamPlanDay = {
   planDate: string;
   dayState: "proposed" | "refused" | "agreed" | "planned";
   city: string | null;
+  /** The stops' cities, most shops first — see `dayWhere`. */
+  shopCities: string[];
   selfPlanned: boolean;
   refusalReason: string | null;
   counterCity: string | null;
@@ -224,6 +227,15 @@ export async function teamJourneySummary(
              p.day_state::text as "dayState", p.city, p.self_planned as "selfPlanned",
              p.refusal_reason as "refusalReason", p.counter_city as "counterCity",
              p.id as "planId",
+             coalesce((
+               select array_agg(x.city order by x.n desc, x.city)
+                 from (select ${placeNameSql("c", "city", "city")} as city, count(*) as n
+                         from mbos_journey_stops s2
+                         join customers c on c.id = s2.customer_id
+                        where s2.plan_id = p.id
+                        group by 1) x
+                where x.city is not null
+             ), '{}') as "shopCities",
              count(s.id)::int as stops,
              count(s.id) filter (where s.status = 'visited')::int as visited,
              count(s.id) filter (where s.status = 'skipped')::int as skipped
