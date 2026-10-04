@@ -206,7 +206,13 @@ export function leadBookQuery(
   const order = ` ORDER BY ${OWED} IS NULL, ${OWED} ASC, lastActivityDate ASC, name, id`;
   return {
     sql:
-      `SELECT * FROM leads WHERE ${narrow.where}${search.where}${order}` +
+      /* `pendingVisits` is what the outbox still holds for this shop: the
+         card's visit counter used to read the office's figure alone, so a
+         salesman who made his second visit with no signal saw "Visit 1 / 3" on
+         the list while the visit screen, which adds the outbox, demanded the
+         decision. One count, read the same way in both places. */
+      `SELECT leads.*, (SELECT COUNT(*) FROM visits v WHERE v.customerId = leads.id AND v.syncState <> 'synced') AS pendingVisits` +
+      ` FROM leads WHERE ${narrow.where}${search.where}${order}` +
       (page ? ' LIMIT ? OFFSET ?' : ''),
     params: [...narrow.args, ...search.args, ...(page ? [page.limit, page.offset] : [])],
   };

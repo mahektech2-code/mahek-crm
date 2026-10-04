@@ -348,7 +348,7 @@ export default function ValidateLead() {
 
       <Divider style={{ marginTop: 20 }} />
       <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
-        <SecondaryButton label="Cancel" onPress={back.go} style={{ flex: 1, borderRadius: radius.xl }} />
+        <SecondaryButton label="Cancel" onPress={leave} style={{ flex: 1, borderRadius: radius.xl }} />
         <PrimaryButton
           label={saving ? 'Saving…' : 'Save call'}
           onPress={save}

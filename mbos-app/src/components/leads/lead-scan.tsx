@@ -107,10 +107,20 @@ export function LeadScanPanel({
   /* Resized the way every photograph on this phone is, and for the same
      reason: a 12-megapixel card is several megabytes up a village link, and
      the model reads a card perfectly well at the size the office stores. */
-  const shrink = async (uri: string) => {
+  const shrink = async (a: { uri: string; width?: number; height?: number }) => {
     const maxDim = await getConfig<number>('mbos.sync.imageMaxDimensionPx', 1600);
     const qualityPercent = await getConfig<number>('mbos.sync.imageQualityPercent', 70);
-    const r = await ImageManipulator.manipulateAsync(uri, [{ resize: { width: maxDim } }], {
+    /* Only ever DOWN, and by the longer side. Resizing every picture to a
+       fixed width blew a small gallery image UP to 1600 px — a bigger upload
+       carrying no more detail — and left a tall portrait card taller than the
+       ceiling. A picture already inside it is only recompressed. */
+    const w = a.width ?? 0;
+    const h = a.height ?? 0;
+    const resize =
+      w > maxDim || h > maxDim
+        ? [{ resize: w >= h ? { width: maxDim } : { height: maxDim } }]
+        : [];
+    const r = await ImageManipulator.manipulateAsync(a.uri, resize, {
       compress: Math.min(1, Math.max(0.01, qualityPercent / 100)),
       format: ImageManipulator.SaveFormat.JPEG,
     });
@@ -139,7 +149,7 @@ export function LeadScanPanel({
           });
     if (result.canceled || !result.assets?.length) return;
     try {
-      const small = await Promise.all(result.assets.slice(0, room).map((a) => shrink(a.uri)));
+      const small = await Promise.all(result.assets.slice(0, room).map((a) => shrink(a)));
       setPhotos((p) => [...p, ...small].slice(0, maxImages));
     } catch {
       setError('That photo could not be opened. Try taking it again.');

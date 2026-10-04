@@ -20,6 +20,7 @@ import { leadSources } from '../../data/config';
 import { territoryState } from '../../sync/pull';
 import { areaRule, type AreaChoice, type AreaRule } from '../../engines/lead-areas';
 import { takePhoto } from '../../native/capture';
+import { discardQueuedMedia } from '../../sync/media';
 import { LeadScanPanel, useLeadScan, type LeadScanFill } from './lead-scan';
 import {
   CUSTOMER_TYPES,
@@ -32,6 +33,9 @@ import {
   leadAlert,
   leadPriorityLabel,
   viewOfLead,
+  capStageOf,
+  gstinRefusal,
+  normaliseGstin,
   visitCapLabel,
   visitCapState,
   type DuplicateMatch,
@@ -226,9 +230,23 @@ function LeadRow({
    * says the most urgent, in this order: a decision demanded now, the lead
    * going quiet, why it is parked, and the seat nobody holds.
    */
-  const capLine = capCfg ? visitCapLabel(lead.stage, lead.visitCount, capCfg) : null;
-  const deciding = !!capCfg && visitCapState(lead.stage, lead.visitCount, capCfg) === 'decide';
-  const warning = deciding
+  /* `capStageOf` rather than the six-word column, and the outbox counted —
+     see both for the Prospect told to decide again and the counter one visit
+     behind the visit screen. */
+  const capStage = capStageOf(lead);
+  const capVisits = lead.visitCount + (lead.pendingVisits ?? 0);
+  const capLine = capCfg ? visitCapLabel(capStage, capVisits, capCfg) : null;
+  const deciding = !!capCfg && visitCapState(capStage, capVisits, capCfg) === 'decide';
+  /* A LEAD THE OFFICE REFUSED IS NOT A LEAD, and it used to look exactly
+     like one. The commonest refusal is a duplicate — the shop was already on
+     the book — and the row stayed on the list reading like any other, so he
+     went on adding notes and visits to a record the office would never hold.
+     It is said first, above every other warning, because nothing else on the
+     card matters until it is settled on Not accepted. */
+  const refused = lead.syncState === 'rejected' || lead.syncState === 'blocked';
+  const warning = refused
+    ? 'Not accepted by the office. Open Not accepted to see why'
+    : deciding
     ? `${capLine} · decide now`
     : quiet
       ? quiet
@@ -599,6 +617,10 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
       if (shot.reason !== 'cancelled') notify(shot.reason, 'warn');
       return;
     }
+    /* A retake replaces the first picture rather than adding to it: the old
+       one is taken out of the upload queue, or it would go up anyway with no
+       lead ever bound to it. */
+    if (shopPhotoId) void discardQueuedMedia(shopPhotoId);
     setShopPhotoId(shot.mediaId);
   };
 
@@ -671,8 +693,9 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
     if (source === OTHER_SOURCE && !sourceDetail.trim()) {
       return refuse('You chose "Other". Write where this lead came from.');
     }
-    const gst = gstin.toUpperCase().replace(/[^0-9A-Z]/g, '');
-    if (gst && gst.length !== 15) return refuse('A GST number is 15 letters and numbers. Check it, or leave it empty.');
+    const gst = normaliseGstin(gstin);
+    const gstWrong = gstinRefusal(gst);
+    if (gstWrong) return refuse(gstWrong);
 
     saving.current = true;
     try {

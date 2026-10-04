@@ -48,8 +48,11 @@ import { Pop, Stagger, animateLayout } from '../src/components/ui/motion';
 type FieldKind = 'text' | 'number' | 'money' | 'yesno' | 'confirm' | 'date';
 
 const DISTRIBUTOR_FIELDS: Record<string, { field: string; kind: FieldKind; hint?: string }> = {
-  gst_verified: { field: 'gstVerified', kind: 'confirm' },
-  pan_verified: { field: 'panVerified', kind: 'confirm' },
+  /* A tick here is HIS word that he has seen the certificate, and the hint
+     says so — the office checks the number itself before the appointment, so
+     the tick is never mistaken for that check. */
+  gst_verified: { field: 'gstVerified', kind: 'confirm', hint: 'Tick once you have seen their GST certificate. The office checks the number too' },
+  pan_verified: { field: 'panVerified', kind: 'confirm', hint: 'Tick once you have seen their PAN card' },
   address_verified: { field: 'businessAddressVerified', kind: 'confirm' },
   business_type: { field: 'businessType', kind: 'text', hint: 'Owner, partnership, private limited' },
   years_in_business: { field: 'yearsInBusiness', kind: 'number' },
