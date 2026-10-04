@@ -39,7 +39,7 @@ export const HANDSET_COMPLAINT_CATEGORIES = [
   "Other",
 ] as const;
 
-/** The handset's payment-mode chips, by label, for the same reason. */
+/** The handset's fallback payment-mode chips (`engines/payment-modes.ts`), by label. */
 export const HANDSET_PAY_MODES = [
   "Cash",
   "Cheque",

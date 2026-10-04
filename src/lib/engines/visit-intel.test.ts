@@ -477,11 +477,15 @@ test("the outcomes are the handset's seven chips", () => {
   assert.deepEqual(keys, [...VISIT_OUTCOMES]);
 });
 
-test("the payment modes are the handset payment screen's chips", () => {
-  const src = handset("app/pay.tsx");
-  const block = src.slice(src.indexOf("const MODES"));
+/* The payment screen now offers the office's `payments.modes`, so its
+   chips are no longer a literal in pay.tsx. What a reading may propose is the
+   four the handset falls back to — modes every list has carried — which is
+   `FALLBACK_MODES` in the handset's own engine. */
+test("the payment modes are the handset payment screen's fallback chips", () => {
+  const src = handset("src/engines/payment-modes.ts");
+  const line = src.slice(src.indexOf("export const FALLBACK_MODES"));
   const labels = [
-    ...block.slice(0, block.indexOf("];")).matchAll(/label: '([^']+)'/g),
+    ...line.slice(0, line.indexOf("];")).matchAll(/'([^']+)'/g),
   ].map((m) => m[1]);
   assert.deepEqual(labels, [...HANDSET_PAY_MODES]);
 });

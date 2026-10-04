@@ -1018,7 +1018,7 @@ export async function closeStaleSessions(userId: string, dayBoundaryMs: number):
        kilometres — nothing else on the day claims them, because every visit
        leg on such a day is excluded in favour of the meter. That was true and
        said nowhere: he found out when the claim came back. Home says so the
-       next morning, and names who can put it right. */
+       next morning and offers the camera — see `addLateClosingReading`. */
     if (leg.odometerStartKm != null) {
       await setKv(UNPAID_METER_KEY, JSON.stringify({ day: leg.day, legId: leg.id })).catch(() => {});
     }
@@ -1029,15 +1029,85 @@ export async function closeStaleSessions(userId: string, dayBoundaryMs: number):
 /** The kv key for the last day closed with no end reading. See `closeStaleSessions`. */
 export const UNPAID_METER_KEY = 'travel.unpaidMeterDay';
 
-/** The day whose vehicle km went unpaid for want of a punch-out, until he has seen it. */
-export async function unpaidMeterDay(): Promise<string | null> {
+/** What the morning card needs: the day, the leg, and the reading it opened on. */
+export type UnpaidMeter = { day: string; legId: string; startKm: number | null };
+
+/** The day whose vehicle km went unpaid for want of a punch-out, until he has answered it. */
+export async function unpaidMeterDay(): Promise<UnpaidMeter | null> {
   const raw = await getKv(UNPAID_METER_KEY);
   if (!raw) return null;
   try {
-    return (JSON.parse(raw) as { day: string }).day ?? null;
+    const kept = JSON.parse(raw) as { day?: string; legId?: string };
+    if (!kept.day || !kept.legId) return null;
+    const leg = await one<TravelLeg>('SELECT * FROM travel_legs WHERE id = ?', [kept.legId]);
+    /* A leg already given its reading — on this phone, or a day the office
+       corrected — is not asked about twice. */
+    if (!leg || leg.odometerStartKm == null || leg.odometerEndKm !== leg.odometerStartKm) return null;
+    return { day: kept.day, legId: kept.legId, startKm: leg.odometerStartKm };
   } catch {
     return null;
   }
+}
+
+/** Written on the leg, and shown beside its reading in the office. */
+export const LATE_CLOSING_REASON = 'Closing meter reading entered the next morning. Nobody read the meter at punch-out.';
+
+/**
+ * YESTERDAY'S CLOSING READING, given the next morning.
+ *
+ * The day was closed at its opening reading because he never punched out, so
+ * it measured nothing and paid nothing. The meter has not moved since — he has
+ * not set off yet today — so what it reads now IS where yesterday ended, and a
+ * photograph of it is as good evidence as one taken last night. Better than
+ * the manager typing a figure in, which is the only other way the km come
+ * back.
+ *
+ * It is marked as entered late, on the leg itself, so whoever approves the day
+ * can see nobody read the meter at the time. And it may not run past today's
+ * own opening reading: today's ride starts where yesterday's ended, never
+ * before it.
+ */
+export async function addLateClosingReading(args: {
+  legId: string;
+  km: number;
+  photoId: string;
+  todayOpeningKm: number | null;
+}): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const leg = await one<TravelLeg>('SELECT * FROM travel_legs WHERE id = ?', [args.legId]);
+  if (!leg || leg.origin !== 'session' || leg.endedAt == null) {
+    return { ok: false, reason: 'That day is not on this phone any more.' };
+  }
+  if (leg.odometerStartKm == null || leg.odometerEndKm !== leg.odometerStartKm) {
+    return { ok: false, reason: 'That day already has its closing reading.' };
+  }
+  if (args.km < leg.odometerStartKm) {
+    return { ok: false, reason: `The meter cannot read less than the ${leg.odometerStartKm} km that day started on.` };
+  }
+  if (args.todayOpeningKm != null && args.km > args.todayOpeningKm) {
+    return {
+      ok: false,
+      reason: `Today you started on ${args.todayOpeningKm} km. Yesterday cannot have ended after that.`,
+    };
+  }
+  await patchLeg(leg, {
+    odometerEndKm: args.km,
+    odometerEndPhotoId: args.photoId,
+    manualReason: LATE_CLOSING_REASON,
+  });
+  await run('UPDATE media_queue SET parentId = ? WHERE id = ?', [leg.id, args.photoId]);
+  await setKv(UNPAID_METER_KEY, '');
+  return { ok: true };
+}
+
+/** The session he punched in on today, if it opened on a meter reading. */
+export async function todayOpeningKm(userId: string, dayStartMs: number): Promise<number | null> {
+  const row = await one<{ odometerStartKm: number | null }>(
+    `SELECT odometerStartKm FROM travel_legs
+      WHERE userId = ? AND origin = 'session' AND startedAt >= ? AND odometerStartKm IS NOT NULL
+      ORDER BY startedAt ASC LIMIT 1`,
+    [userId, dayStartMs],
+  );
+  return row?.odometerStartKm ?? null;
 }
 
 export async function dismissUnpaidMeterDay(): Promise<void> {
