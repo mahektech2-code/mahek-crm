@@ -536,7 +536,6 @@ const NOT_WANTED: Record<string, string> = {
   "order/create.customerName": "read back by /rejections so a refusal can name the shop",
   "payment/create.customerName": "the same",
   "visit/create.customerName": "the same",
-  "order/create.valueUnavailable": "read back by /rejections so a refused order says the value was never known",
   "payment/create.localReceiptRef": "the TMP- number on the paper slip, generated here and shown here; the office matches on `reference`",
 
   /*

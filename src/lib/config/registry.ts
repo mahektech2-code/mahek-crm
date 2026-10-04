@@ -3476,9 +3476,9 @@ export const SETTINGS = [
     key: "leads.suspectMaxVisits",
     type: "integer",
     category: "mbos-leads",
-    label: "Visits before a Suspect must be decided",
+    label: "Visits before a Suspect must be decided (retired)",
     description:
-      "§4. A salesman gets this many visits to work out whether there is a genuine opportunity, and then the lead turns into a single question: Prospect or not. The specification's normal target is two and its absolute maximum is three. Nothing is refused when the cap is reached - a decision is DEMANDED, which is the opposite gesture, and the lead cannot be quietly left in the drawer instead.",
+      "No longer read. The cap is \"Suspect decision required at\" (mbos.leads.maxSuspectVisits) — there were two settings for one number, the handset's visit screen and the office's sync read one while the lead record and the command centre read this, and a manager who changed either made the two ends disagree about the same lead. Every reader now uses the other key, and the handset is sent its value under this name too. Kept so a stored value still resolves.",
     default: 3,
     min: 1,
     max: 10,

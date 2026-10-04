@@ -34,7 +34,7 @@ import { customerStory } from "./customers";
  * the owner's number and not a second reading of it.
  *
  * A stuck Suspect is `mustDecideSuspect`'s rule said in SQL: still a Suspect,
- * never decided, with at least `leads.suspectMaxVisits` visits on the handset.
+ * never decided, with at least `mbos.leads.maxSuspectVisits` visits on the handset.
  * Samples out are `mbos_samples` with the customer and no verdict yet.
  *
  * "Assign" moves the owner — the owner IS the assignment. A salesman is given
@@ -136,7 +136,7 @@ async function openPage(query: TableQuery, config: Config, today: string): Promi
     q.length >= 2
       ? sql`and (c.name ilike ${like} or c.city ilike ${like} or c.company_name ilike ${like} or c.phone ilike ${like})`
       : sql``;
-  const cap = Number(config["leads.suspectMaxVisits"]);
+  const cap = Number(config["mbos.leads.maxSuspectVisits"]);
   const [counts] = await db.execute<{ total: number; matched: number }>(sql`
     select count(*)::int as total,
            count(*) filter (where true ${search})::int as matched
@@ -257,7 +257,7 @@ async function cohortPage(today: string, config: Config, query: TableQuery): Pro
 
 async function headline(ctx: Ctx, config: Config) {
   const p = ctx.period;
-  const cap = Number(config["leads.suspectMaxVisits"]);
+  const cap = Number(config["mbos.leads.maxSuspectVisits"]);
   const reviewDays = Number(config["mbos.samples.reviewAfterDays"]);
   const [now, before, [stuck], [samples]] = await Promise.all([
     leadsCreatedIn({ from: p.from, to: p.to }, {}),
@@ -349,7 +349,7 @@ const TITLES: Record<string, string> = {
 /* ----------------------------------------------------------------- record */
 
 async function leadRecord(ctx: Ctx, id: string, config: Config): Promise<RecordView> {
-  const cap = Number(config["leads.suspectMaxVisits"]);
+  const cap = Number(config["mbos.leads.maxSuspectVisits"]);
   const [r] = await db.execute<Record<string, unknown>>(sql`
     select c.id, c.name, c.company_name, c.contact_person, c.phone, c.email, c.city, c.region, c.address,
            c.kind::text as kind, c.lead_stage::text as stage, to_char(c.lead_stage_since, 'YYYY-MM-DD') as stage_since,
