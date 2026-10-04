@@ -29,14 +29,14 @@ import {
 } from '../src/lib/travel-leg';
 import { suspectFor, visitCapThresholds } from '../src/data/leads';
 import { visitCapLabel, visitCapState, type VisitCapThresholds } from '../src/engines/leads';
-import { useCustomer, useStore } from '../src/state/store';
+import { restoreVisitDraft, useCustomer, useStore, type VisitForm, type VisitLinked } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { hhmm, isoDate, pretty } from '../src/lib/format';
 import { elapsedLabel, FOLLOW_ON, unansweredQuestions, visitChecks, visitVerdict } from '../src/lib/visit';
 import { COMPLAINT_CATEGORIES, COMPLAINT_PRIORITIES, FOLLOW_UP_MODES, OUTCOMES, outcomeLabel } from '../src/data/fixtures';
 import { getConfig } from '../src/data/config';
 import { previousVisitNote, saveVisit, type PreviousNote } from '../src/data/visits';
-import { checkInAtShop, clearArrival, recordArrival } from '../src/data/arrival';
+import { checkInAtShop, clearArrival, patchArrival, recordArrival } from '../src/data/arrival';
 import { logComplaint, requestSample } from '../src/data/requests';
 import { sampleReasons } from '../src/data/lead-samples';
 import { type CodedOption } from '../src/engines/funnel';
@@ -183,8 +183,16 @@ export default function Visit() {
    * the save so the office can see what was proposed beside what was kept.
    */
   const [heard, setHeard] = React.useState<{ spoken: string; english: string; language: string | null } | null>(null);
-  const [nextDatePicked, setNextDatePicked] = React.useState(false);
-  const [aiDraftId, setAiDraftId] = React.useState<string | null>(null);
+  /* The form's own answers live in the store with the rest of the draft, so
+     a reap does not take them — see `VisitForm`. Read and written through two
+     small helpers rather than eight `useState`s. */
+  const visitForm = useStore((s) => s.visitForm);
+  const setForm2 = (patch: VisitForm) => set({ visitForm: { ...useStore.getState().visitForm, ...patch } });
+  const nextDatePicked = !!visitForm.nextDatePicked;
+  const setNextDatePicked = (v: boolean) => setForm2({ nextDatePicked: v });
+  const aiDraftId = visitForm.aiDraftId ?? null;
+  const setAiDraftId = (v: string | null) => setForm2({ aiDraftId: v });
+  const noFollowUp = !!visitForm.noFollowUp;
   /*
    * §B — is this shop still a Suspect, and is a decision due?
    *
@@ -195,15 +203,20 @@ export default function Visit() {
    */
   const [suspect, setSuspect] = React.useState<{ stage: string; visits: number } | null>(null);
   const [capCfg, setCapCfg] = React.useState<VisitCapThresholds | null>(null);
-  const [decision, setDecision] = React.useState<string | null>(null);
-  const [decisionWhy, setDecisionWhy] = React.useState('');
+  const decision = visitForm.decision ?? null;
+  const setDecision = (v: string | null) => setForm2({ decision: v });
+  const decisionWhy = visitForm.decisionWhy ?? '';
+  const setDecisionWhy = (v: string) => setForm2({ decisionWhy: v });
   const [decisionErr, setDecisionErr] = React.useState<string | null>(null);
   /* §G — the requirement visit. Shown on a lead only: asking a customer of four
      years what they are looking for is a question they have answered by
      ordering, and a field nobody fills teaches people to scroll past the form. */
-  const [reqWhat, setReqWhat] = React.useState('');
-  const [reqLitres, setReqLitres] = React.useState('');
-  const [reqCans, setReqCans] = React.useState('');
+  const reqWhat = visitForm.reqWhat ?? '';
+  const setReqWhat = (v: string) => setForm2({ reqWhat: v });
+  const reqLitres = visitForm.reqLitres ?? '';
+  const setReqLitres = (v: string) => setForm2({ reqLitres: v });
+  const reqCans = visitForm.reqCans ?? '';
+  const setReqCans = (v: string) => setForm2({ reqCans: v });
 
   React.useEffect(() => {
     if (!c?.id) return;
@@ -237,7 +250,7 @@ export default function Visit() {
   const capLabel =
     suspect && capCfg ? visitCapLabel(suspect.stage, suspect.visits + 1, capCfg) : null;
   const linked = useStore((s) => s.visitLinked);
-  const setLinked = (f: (l: { complaintId?: string; sampleId?: string }) => { complaintId?: string; sampleId?: string }) =>
+  const setLinked = (f: (l: VisitLinked) => VisitLinked) =>
     set({ visitLinked: f(useStore.getState().visitLinked) });
   const [products, setProducts] = React.useState<Product[]>([]);
   /* §10's coded list — why a shop wants a trial. Read from the cached
@@ -369,12 +382,41 @@ export default function Visit() {
    * visit unverified and what his manager reads — and losing it between the
    * door and the save is how a flagged visit quietly becomes a clean one.
    */
-  const [overrideReason, setOverrideReason] = React.useState<string | null>(null);
-  const [pinAsk, setPinAsk] = React.useState(false);
-  const [pinRequested, setPinRequested] = React.useState(false);
+  /* Read off the ARRIVAL, which is on disk — see `Arrival.overrideReason`.
+     Held here they went with the screen, and the visit then saved as though
+     nobody had been refused at the door at all. */
+  const ours = arrival && c && arrival.customerId === c.id ? arrival : null;
+  const overrideReason = ours?.overrideReason ?? null;
+  const pinRequested = !!ours?.pinCorrectionRequested;
+  /* Asked once, after the override, and only where there is a pin to be
+     wrong about. An arrival restored after a reap asks again only if it was
+     never answered. */
+  const pinAsk =
+    !!ours && !!ours.overrideReason && !ours.pinAsked && ours.checkedInAt != null &&
+    c?.gpsLat != null && c?.gpsLng != null;
+  const answerPin = async (yes: boolean) => {
+    try {
+      const next = await patchArrival({ pinAsked: true, pinCorrectionRequested: yes });
+      if (next) setArrival(next);
+    } catch {
+      notify('That answer could not be saved on this phone. Try again.', 'error');
+      return;
+    }
+    if (yes) notify('Your manager will be asked to move it. It goes with this visit.');
+  };
   const answerOdometer = React.useRef<((r: OdometerResult) => void) | null>(null);
 
   const [checkingIn, setCheckingIn] = React.useState(false);
+  /*
+   * WHAT A PHOTOGRAPH TAKEN NOW IS A PHOTOGRAPH OF.
+   *
+   * The literal `pending` was what every visit photograph and voice note went
+   * up under, and the media queue sends within a minute — so the file reached
+   * the office parented to a visit called `pending`, the office never re-bound
+   * it, and nobody, the salesman included, could ever open it. The arrival
+   * mints the visit's id at the door; the file names it from the start.
+   */
+  const mediaParent = ours?.visitId ?? 'pending';
 
   const custId = c?.id ?? null;
   const userId = boot.session?.user.id ?? '';
@@ -427,31 +469,31 @@ export default function Visit() {
   React.useEffect(() => {
     if (!custId || visitStart != null) return;
     if (arrival && arrival.customerId === custId && arrival.checkedInAt != null) {
+      /* …and what he had typed, photographed and raised inside it. The clock
+         coming back alone left a running visit with an empty form and records
+         linked to nothing. Restored FIRST, so the clock that follows is the
+         one thing that says the restore is done. */
+      restoreVisitDraft(arrival);
       checkedIntoShop(arrival.checkedInAt);
     }
   }, [custId, visitStart, arrival, checkedIntoShop]);
 
   /*
-   * NO JOURNEY BEHIND THIS VISIT, SO THE CLOCK STARTS WHEN THE FORM OPENS.
+   * NO JOURNEY BEHIND THIS VISIT, AND THE DOOR STILL HAS A GATE.
    *
-   * The arrival and the check-in are the only two things that start the clock,
-   * and both hang off a journey. A visit opened with no journey (the punch-in
-   * session already closed, or a journey that could not be written) never
-   * passed either, so the clock read 0s for the whole visit, the two-minute
-   * minimum could never be met, and Check out stayed grey. That is the visit
-   * form as it was before journeys existed, so it gets that rule back: opening
-   * the form is checking in.
-   *
-   * Not while he is still on the road, and not where an arrival for this shop
-   * exists: that one is either waiting for his check-in tap, or restored by
-   * the effect above.
+   * A visit opened with no trip — the punch-in session already closed, a trip
+   * that could not be written, a shop opened straight from the customers
+   * list — used to check itself in the moment the form opened: no reading, no
+   * radius, and no question for a shop with no pin. Every other visit is
+   * measured at the door, and this was the way round it that nobody had to be
+   * refused by first. So it gets the same door: a check-in card that runs the
+   * same `checkInVerdict`, refuses past the radius with the same way past it,
+   * and records the same arrival — already walked in, because with no trip
+   * there is nothing between arriving and going in.
    */
-  React.useEffect(() => {
-    if (!custId || visitStart != null || !legLoaded) return;
-    if (leg && leg.endedAt == null) return;
-    if (arrival && arrival.customerId === custId) return;
-    checkedIntoShop(Date.now());
-  }, [custId, visitStart, legLoaded, leg, arrival, checkedIntoShop]);
+  const needsDoor =
+    !!c && !!custId && legLoaded && visitStart == null && !(leg && leg.endedAt == null) &&
+    !(arrival && arrival.customerId === custId);
 
   const legMode = leg ? modes.find((m) => m.key === leg.modeKey) ?? null : null;
   /* Not on an own-vehicle DAY: that journey set off with no reading because
@@ -641,11 +683,16 @@ export default function Visit() {
    * shop has no pin and this fix is about to become one.
    */
   const arriveHere = async (override?: string, confirmedHere = false) => {
-    if (!leg || arriving) return;
+    if (arriving) return;
+    /* On the road, this ends a trip and he is still to walk in. With no open
+       trip it is the door itself: the same gate, and he is in. */
+    const travelling = !!leg && leg.endedAt == null;
     setArriving(true);
     try {
       const [threshold, radiusM] = await Promise.all([
-        getConfig<number>('mbos.location.gpsAccuracyThresholdM', 50),
+        /* 100, like every other read of this key. It was 50 here alone, so
+           an unpublished key made the door twice as strict as the save. */
+        getConfig<number>('mbos.location.gpsAccuracyThresholdM', 100),
         getConfig<number>('mbos.location.visitMismatchM', 100),
       ]);
       const result = await getFix({ accuracyThresholdM: threshold, precise: true });
@@ -677,7 +724,7 @@ export default function Visit() {
          Asked before the meter, so "no" costs nothing. The dialog calls back
          in, which takes a fresh reading — the one he confirmed against. */
       if (gate.needsConfirmation && !confirmedHere) {
-        const shopName = leg.toLabel ?? c?.name ?? 'this shop';
+        const shopName = leg?.toLabel ?? c?.name ?? 'this shop';
         askConfirm({
           title: `Are you at ${shopName}?`,
           body: `${shopName} has no saved location yet. Check in only if you are standing at the shop — where you are now is saved as its location, and every check-in after this one is measured against it.`,
@@ -690,7 +737,7 @@ export default function Visit() {
       }
 
       let odometer: { km: number; photoId: string } | null = null;
-      if (needsMeter) {
+      if (travelling && leg && needsMeter) {
         const shot = await askOdometer();
         /* Cancelled. Nothing written, nothing to undo, and no toast: he has
            just pressed a button whose words say what it abandons. */
@@ -718,13 +765,14 @@ export default function Visit() {
       set({ gps: got ? 'locked' : 'off' });
 
       const at = Date.now();
-      await arriveForVisit({
-        legId: leg.id,
-        fix: got ? { lat: got.lat, lng: got.lng } : null,
-        odometer,
-      });
+      if (travelling && leg) {
+        await arriveForVisit({
+          legId: leg.id,
+          fix: got ? { lat: got.lat, lng: got.lng } : null,
+          odometer,
+        });
+      }
 
-      if (override) setOverrideReason(override);
       /*
        * ARRIVED, AND NOT YET IN. The clock does NOT start here any more.
        *
@@ -737,28 +785,31 @@ export default function Visit() {
       /* Off the LEG, not off the screen's customer. The leg is what says which
          shop this journey was to, it cannot be null here, and the record on it
          outlives a customer row the store happens not to have loaded. */
-      setArrival(
-        await recordArrival({
-          customerId: leg.customerId ?? c?.id ?? '',
-          customerName: leg.toLabel ?? c?.name ?? 'this shop',
-          legId: leg.id,
-          arrivedAt: at,
-          checkInFix: got ? { lat: got.lat, lng: got.lng, accuracyM: got.accuracyM } : null,
-        }),
-      );
+      /* The override rides on the arrival, on disk — see `Arrival`. The pin
+         question that follows it is asked AFTER he is in, never before: it is
+         a second question about a different thing — the book, not him — and
+         putting it in front of the arrival would make getting into the shop
+         depend on answering it. `pinAsk` above draws it from this record. */
+      const recorded = await recordArrival({
+        customerId: leg?.customerId ?? c?.id ?? '',
+        customerName: leg?.toLabel ?? c?.name ?? 'this shop',
+        /* The trip that got him here, open or already closed — the save binds
+           it either way. */
+        legId: leg?.id ?? null,
+        arrivedAt: at,
+        checkInFix: got ? { lat: got.lat, lng: got.lng, accuracyM: got.accuracyM } : null,
+        /* Only where it was what let him in: a press from the right spot is
+           accepted on its own reading and needs no excuse. */
+        overrideReason: gate.accepted ? null : override ?? null,
+        checkedInAt: travelling ? null : at,
+      });
+      setArrival(recorded);
+      if (!travelling) checkedIntoShop(at);
       /* The trip is over and on disk. No toast says so — the card changing
          to "Arrived" does — so the buzz is the only thing that says it
          landed for somebody already looking at the shop door. */
       feedback('success');
       loadLeg();
-      /*
-       * ASKED AFTER HE IS IN, never before. It is a second question about a
-       * different thing — the book, not him — and putting it in front of the
-       * arrival would make getting into the shop depend on answering it.
-       * Only where there is a pin to be wrong about: a shop with no pin is
-       * being pinned by this check-in already.
-       */
-      if (override && c?.gpsLat != null && c?.gpsLng != null) setPinAsk(true);
     } catch {
       notify('Your arrival could not be saved on this phone. Nothing is lost. Try again.', 'error');
     } finally {
@@ -817,7 +868,7 @@ export default function Visit() {
     askConfirm({
       title: 'Are you at the shop?',
       body:
-        'Say yes and the visit is saved from here, as not checked. Your reason goes to your manager. Many shop locations in MahekOne are wrong. This is how we find them.',
+        'Say yes and the visit is saved from here, as not checked. Your reason goes to your manager. Some saved shop locations are wrong, and this is how they get fixed.',
       reasonLabel: 'Where you are now · needed',
       confirmLabel: 'I am at the shop',
       run: (reason) => {
@@ -833,8 +884,10 @@ export default function Visit() {
    * worth having either way: it is what the customer actually said, and the
    * words in the box are somebody's reading of it.
    *
-   * `pending` as the parent, exactly as a shop photograph is. The visit does
-   * not exist yet; `saveVisit` claims the media when it does.
+   * Parented to the visit's id, minted at the door — exactly as a shop
+   * photograph is. The visit does not exist yet, but its id does, so the file
+   * reaches the office already naming it. `pending` is only for an arrival
+   * written before ids were minted there, and `saveVisit` claims those.
    */
   const keepVoiceNote = async (uri: string, mode: 'dictate' | 'record') => {
     try {
@@ -842,7 +895,7 @@ export default function Visit() {
          one is queued, so a visit carries the recording it kept and not every
          attempt at it. */
       if (voiceNoteId) await discardQueuedMedia(voiceNoteId);
-      const mediaId = await queueRecording(uri, 'visit', 'pending');
+      const mediaId = await queueRecording(uri, 'visit', mediaParent);
       setVoiceNoteId(mediaId);
       set({ voice: mode === 'dictate' ? 'dictated' : 'queued' });
     } catch {
@@ -856,7 +909,7 @@ export default function Visit() {
   const shoot = async (which: 'shop' | 'cust') => {
     const shot = await takePhoto({
       parentType: 'visit',
-      parentId: 'pending',
+      parentId: mediaParent,
       kind: which === 'shop' ? 'shop_photo' : 'customer_photo',
     });
     if (!shot.ok) {
@@ -890,10 +943,10 @@ export default function Visit() {
         description: draft.what.trim(),
       });
       setLinked((l) => ({ ...l, complaintId: id }));
-      markVisitDone('complaint', draft.cat + ' · with the desk team');
+      markVisitDone('complaint', draft.cat + ' · with the office');
       setForm(null);
       setDraft({});
-      notify('Complaint saved. The desk team will see it today.');
+      notify('Complaint saved. The office will see it today.');
     } catch {
       setFormErr('save');
     } finally {
@@ -1054,12 +1107,32 @@ export default function Visit() {
 
     savingRef.current = true;
     setSaving(true);
-    /* The coordinates only. WHEN comes off the dwell clock below — a visit made
-       where there is no signal is still a visit that happened at a time. */
-    const checkOut: Fix | null = fix ? { ...fix, at: endAt } : null;
+    /*
+     * NO CHECK-OUT POSITION, because none was measured.
+     *
+     * This copied the check-in fix and stamped it with the check-out time, so
+     * the office read a check-out position nobody had taken — always exactly
+     * at the door he walked in by, which is the one reading that can never
+     * show he left early. The time is real and comes off the clock; the place
+     * is left empty rather than invented.
+     */
+    const checkOut: Fix | null = null;
+    /*
+     * THE NEXT CONTACT, where there is one.
+     *
+     * The day was filled from the cycle and could not be emptied, so every
+     * visit raised a follow-up task — a shop found shut included, which then
+     * sat on his list as a visit he had promised nobody. "No follow-up" is an
+     * answer now, and a shut shop or an absent owner sets none unless he picked
+     * the day himself.
+     */
+    const quietOutcome = outcome === 'closed' || outcome === 'closed_now';
+    const followUpDate = noFollowUp || (quietOutcome && !nextDatePicked) ? null : nextDate || null;
+    const savedAs = unverifiedReason != null || !!overrideReason;
     let visitId: string;
     try {
       visitId = await saveVisit({
+        id: ours?.visitId ?? null,
         customerId: c.id,
         customerName: c.name,
         userId: boot.session?.user.id ?? '',
@@ -1090,7 +1163,7 @@ export default function Visit() {
         shopPhotoId: shots.shop ?? null,
         custPhotoId: shots.cust ?? null,
         voiceNoteId,
-        nextFollowUpDate: nextDate || null,
+        nextFollowUpDate: followUpDate,
         nextFollowUpMode: nextMode,
         journeyStopId: stopId,
         wasPlanned: !!stopId,
@@ -1128,6 +1201,9 @@ export default function Visit() {
           (overrideReason ? `Checked in past the ${maxMetres} m radius: ${overrideReason}` : null),
         checkInOverrideReason: overrideReason,
         pinCorrectionRequested: pinRequested,
+        savedAnywayReason: unverifiedReason,
+        linkedOrderIds: linked.orderIds ?? [],
+        linkedPaymentIds: linked.paymentIds ?? [],
         linkedComplaintId: linked.complaintId ?? null,
         linkedSampleId: linked.sampleId ?? null,
         suspectDecision: decision,
@@ -1157,7 +1233,11 @@ export default function Visit() {
 
     /* Spent, whether or not it was used — a reason typed for one shop must
        not attach itself to the next unrelated visit hours later. */
-    set({ visitSpent: spent, offPlanReason: null });
+    set({
+      visitSpent: spent,
+      offPlanReason: null,
+      visitSaved: { id: visitId, unverified: savedAs, followUpDate },
+    });
     /* The journey is spent on this visit, locally, so the record reads
        correctly on this handset without waiting for a pull — and so the
        next visit to this shop does not pick the same leg up again.
@@ -1360,6 +1440,77 @@ export default function Visit() {
   }
 
   /*
+   * ─────────────────────────────────────────── at the door, with no trip
+   *
+   * See `needsDoor`. The same gate the arrival runs, said in the same card
+   * shape, and the same way past a distance refusal. Nothing is written until
+   * it accepts him, and then he is in: with no trip there is nothing between
+   * arriving and going in.
+   */
+  if (needsDoor) {
+    return (
+      <AppFrame
+        title="Check in"
+        activeTab="customers"
+        onBack={() => router.back()}
+        contentStyle={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 24 }}>
+        <Swap id="door">
+          <Card style={{ padding: 16 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <Icon name="shop" size={20} color={C.primaryDeep} strokeWidth={1.8} />
+              <Text style={[type.h2, { flex: 1, minWidth: 0 }]}>{c?.name ?? ''}</Text>
+            </View>
+            <Text style={{ fontSize: 15, lineHeight: 21, color: C.ink, marginTop: 14 }}>
+              Check in when you are inside the shop.
+            </Text>
+            <Text style={[type.caption, { marginTop: 4 }]}>
+              Your location is checked against the shop. This starts your visit time.
+            </Text>
+
+            <Presence show={!!refused}>
+            {refused ? (
+              <View
+                style={{
+                  marginTop: 14,
+                  borderWidth: 1,
+                  borderColor: C.warnEdge,
+                  backgroundColor: C.warnBg,
+                  borderRadius: radius.lg,
+                  paddingVertical: 12,
+                  paddingHorizontal: 14,
+                }}>
+                <Text style={[{ fontSize: 14, lineHeight: 20, color: C.ink }, weight(500)]}>
+                  {refused.sentence}
+                </Text>
+                <Text style={[type.caption, { marginTop: 6 }]}>
+                  {refused.reason === 'too_far'
+                    ? 'Walk to the shop and press again. Nothing is saved yet.'
+                    : 'Nothing is saved yet.'}
+                </Text>
+              </View>
+            ) : null}
+            </Presence>
+
+            <Animated.View style={[{ marginTop: 14 }, refuseShake.style]}>
+              <PrimaryButton
+                label={arriving ? 'One moment…' : refused ? 'Check again' : 'Check in at the shop'}
+                onPress={() => void arriveHere()}
+                disabled={arriving}
+                whyDisabled="Checking where you are."
+              />
+            </Animated.View>
+            <Presence show={refused?.reason === 'too_far'}>
+              <View style={{ marginTop: 10 }}>
+                <SecondaryButton label="I am here. Shop location is wrong" onPress={overrideRefusal} />
+              </View>
+            </Presence>
+          </Card>
+        </Swap>
+      </AppFrame>
+    );
+  }
+
+  /*
    * ─────────────────────────────────────────── still on the road
    *
    * THE VISIT SCREEN IS LOCKED UNTIL HE SAYS HE IS HERE, and that is the point
@@ -1510,12 +1661,14 @@ export default function Visit() {
                     reasonLabel: 'Why · needed',
                     confirmLabel: 'Cancel trip',
                     run: (reason) => {
-                      void abandonLeg(leg.id, reason).then(() => {
-                        setArrival(null);
-                        void clearArrival();
-                        notify('Trip cancelled');
-                        router.replace('/journey');
-                      });
+                      void abandonLeg(leg.id, reason)
+                        .then(() => {
+                          setArrival(null);
+                          void clearArrival();
+                          notify('Trip cancelled');
+                          router.replace('/journey');
+                        })
+                        .catch(() => notify('The trip could not be cancelled on this phone. Try again.', 'error'));
                     },
                   })
                 }
@@ -1652,7 +1805,7 @@ export default function Visit() {
             </View>
             {gps === 'off' ? (
               <Pressable
-                onPress={() => notify('Going on without location. Save the visit as usual. Your manager will see it had no location.', 'warn')}
+                onPress={() => notify('Going on without location. At check-out, choose "Save as not checked" and say why. Your manager will see it had no location.', 'warn')}
                 style={{ height: HIT, paddingHorizontal: 12, borderRadius: radius.sm, borderWidth: 1, borderColor: C.faint, backgroundColor: C.surface, alignItems: 'center', justifyContent: 'center' }}>
                 <Text style={[{ fontSize: 15, color: C.body }, weight(500)]}>Carry on</Text>
               </Pressable>
@@ -1988,7 +2141,7 @@ export default function Visit() {
             })}
           </View>
           <Presence show={!!(shots.shop || shots.cust)}>
-            <Text style={[type.caption, { marginTop: 10 }]}>Compressed and queued — they upload when you have signal.</Text>
+            <Text style={[type.caption, { marginTop: 10 }]}>Saved on this phone. They send when you have signal.</Text>
           </Presence>
         </Card>
 
@@ -1998,6 +2151,17 @@ export default function Visit() {
             raises is named by the answer. */}
         <Card style={{ marginTop: 12 }}>
           <Text style={[type.label, { marginBottom: 10 }]}>Next contact</Text>
+          {/* "NONE" IS AN ANSWER. The day was filled from the cycle and there
+              was no way to empty it, so every visit — a shut shop included —
+              raised a follow-up task he had promised nobody. */}
+          <Choice
+            label="No follow-up needed"
+            selected={noFollowUp}
+            onPress={() => setForm2({ noFollowUp: !noFollowUp })}
+            style={{ alignItems: 'flex-start', paddingHorizontal: 14, marginBottom: noFollowUp ? 0 : 10 }}
+          />
+          {noFollowUp ? null : (
+          <>
           <View style={{ flexDirection: 'row', gap: 8 }}>
             {FOLLOW_UP_MODES.map((m) => {
               const on = nextMode === m.k;
@@ -2038,10 +2202,16 @@ export default function Visit() {
             </Pressable>
           </View>
           <Text style={[type.caption, { marginTop: 8 }]}>
-            {c?.cycleDays
-              ? 'Set from their ' + c.cycleDays + '-day buying pattern. Change it if they said another day.'
-              : 'Change it if they said another day.'}
+            {outcome === 'closed' || outcome === 'closed_now'
+              ? nextDatePicked
+                ? 'A task is set for this day.'
+                : 'No task is set for a shut shop unless you pick a day.'
+              : c?.cycleDays
+                ? 'Set from their ' + c.cycleDays + '-day buying pattern. Change it if they said another day.'
+                : 'Change it if they said another day.'}
           </Text>
+          </>
+          )}
         </Card>
 
         {/* ---- what is missing, and why the rule exists ----
@@ -2091,10 +2261,7 @@ export default function Visit() {
                 body: verdict.overrideBody,
                 reasonLabel: 'Why · needed',
                 confirmLabel: 'Save as not checked',
-                run: (reason) => {
-                  set({ overrodeReason: reason });
-                  saveWhenDecided(reason);
-                },
+                run: (reason) => saveWhenDecided(reason),
               })
             }
             style={{ width: '100%', minHeight: HIT, marginTop: 10, borderWidth: 1, borderStyle: 'dashed', borderColor: C.faint, borderRadius: radius.md, paddingVertical: 8, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center' }}>
@@ -2232,10 +2399,7 @@ export default function Visit() {
                     body: verdict.overrideBody,
                     reasonLabel: 'Why · needed',
                     confirmLabel: 'Save as not checked',
-                    run: (reason) => {
-                      set({ overrodeReason: reason });
-                      saveWhenDecided(reason);
-                    },
+                    run: (reason) => saveWhenDecided(reason),
                   });
                 }}
                 style={{ minHeight: HIT, alignItems: 'center', justifyContent: 'center' }}>
@@ -2248,7 +2412,7 @@ export default function Visit() {
         </View>
       </BottomSheet>
 
-      <BottomSheet open={pinAsk} onClose={() => setPinAsk(false)}>
+      <BottomSheet open={pinAsk} onClose={() => void answerPin(false)}>
         <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 20 }}>
           <Text style={[{ fontSize: 17, lineHeight: 22, color: C.ink }, weight(600)]}>
             Is this shop in the wrong place?
@@ -2259,7 +2423,7 @@ export default function Visit() {
               — leaving the question reading "about ? m", which is the one
               number that makes it answerable. */}
           <Text style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 6 }}>
-            MahekOne has {c?.name ?? 'this shop'} about {metresAway ?? refusedMetres ?? '?'} m from
+            The saved location for {c?.name ?? 'this shop'} is about {metresAway ?? refusedMetres ?? '?'} m from
             where you checked in. If the shop is here and the map is wrong, ask your manager to
             move it. Then no visit here will be stopped again.
           </Text>
@@ -2267,18 +2431,11 @@ export default function Visit() {
           <View style={{ marginTop: 16, gap: 8 }}>
             <PrimaryButton
               label="Yes, ask my manager to move it"
-              onPress={() => {
-                setPinRequested(true);
-                setPinAsk(false);
-                notify('Your manager will be asked to move it. It goes with this visit.');
-              }}
+              onPress={() => void answerPin(true)}
             />
             <SecondaryButton
               label="No, leave it as it is"
-              onPress={() => {
-                setPinRequested(false);
-                setPinAsk(false);
-              }}
+              onPress={() => void answerPin(false)}
             />
           </View>
         </View>
@@ -2287,7 +2444,7 @@ export default function Visit() {
       {/* ---- complaint, logged without leaving the visit ---- */}
       <BottomSheet open={form === 'complaint'} onClose={() => setForm(null)} scroll>
         <Text style={[type.h2, { letterSpacing: -0.285 }]}>Add a complaint</Text>
-        <Text style={[type.small, { color: C.muted, marginTop: 2 }]}>{(c?.name ?? '') + ' · goes to the desk team today'}</Text>
+        <Text style={[type.small, { color: C.muted, marginTop: 2 }]}>{(c?.name ?? '') + ' · goes to the office today'}</Text>
 
         <Text style={[type.label, { marginTop: 16, marginBottom: 8 }]}>What is it about</Text>
         {COMPLAINT_CATEGORIES.map((x) => (
@@ -2322,11 +2479,11 @@ export default function Visit() {
           value={draft.what ?? ''}
           onChangeText={(v) => { setDraft({ ...draft, what: v }); setFormErr(null); }}
           invalid={formErr === 'what'}
-          placeholder="Two drums arrived dented and he refused them"
+          placeholder="Two drums arrived dented and they refused them"
           style={{ minHeight: 90 }}
         />
         {formErr === 'what' ? (
-          <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Write what the customer said.</Text>
+          <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Write what the shop said.</Text>
         ) : null}
 
         {/* Said HERE and not in a toast: this sheet is a Modal and the toast
@@ -2373,7 +2530,7 @@ export default function Visit() {
             style={{ width: '100%', alignItems: 'flex-start', marginBottom: 8, paddingHorizontal: 14 }}
           />
         ))}
-        {formErr === 'sku' ? <Text style={{ fontSize: 13, color: C.danger }}>Pick the product he wants to try.</Text> : null}
+        {formErr === 'sku' ? <Text style={{ fontSize: 13, color: C.danger }}>Pick the product they want to try.</Text> : null}
 
         <Text style={[type.label, { marginTop: 14, marginBottom: 6 }]}>How many cans</Text>
         {/* A REAL FIGURE, because the godown picks stock against it. This was
@@ -2391,7 +2548,7 @@ export default function Visit() {
           <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>How many cans?</Text>
         ) : null}
 
-        <Text style={[type.label, { marginTop: 14, marginBottom: 6 }]}>What he will use it on</Text>
+        <Text style={[type.label, { marginTop: 14, marginBottom: 6 }]}>What they will use it on</Text>
         {/* Prose, so it gets the microphone: this is spoken far better than it
             is typed, one-handed, standing in a shop. It is the sample's own
             "why he wants it" made specific — a trial nobody can judge is a can
@@ -2409,7 +2566,7 @@ export default function Visit() {
           </Text>
         ) : null}
 
-        <Text style={[type.label, { marginTop: 14, marginBottom: 6 }]}>Why he wants a trial</Text>
+        <Text style={[type.label, { marginTop: 14, marginBottom: 6 }]}>Why they want a trial</Text>
         {/* A CODE AND NOT A SENTENCE — the same rule the lost reason and the
             hold reason follow. A sentence cannot be counted, so "how many
             trials did we give away on a price comparison this quarter" is a
@@ -2439,7 +2596,7 @@ export default function Visit() {
         )}
         {formErr === 'reason' ? (
           <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>
-            Say why he wants a trial. Your manager decides on this.
+            Say why they want a trial. Your manager decides on this.
           </Text>
         ) : null}
 

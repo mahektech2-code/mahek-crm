@@ -1,4 +1,4 @@
-import { all, newId, one, run, tx } from '../db';
+import { all, getKv, newId, one, run, tx } from '../db';
 import { enqueue } from '../sync/queue';
 import { insertAndQueue, insertLocal, stamp, updateAndQueue } from './write';
 import { getConfig } from './config';
@@ -6,6 +6,7 @@ import { assessOrder } from '../engines/credit';
 import { canValueOrders, derivedQuantities, lineValuePaise, type PriceSource } from '../engines/order';
 import { applySchemes, type Predicate, type Scheme } from '../engines/schemes';
 import { isoDate } from '../lib/format';
+import { ratesForTag } from './pricing';
 
 /**
  * Punching an order.
@@ -52,9 +53,20 @@ export type OrderAssessment = {
      an order that comfortably fits, and saying so is the whole point. */
   availablePaise: number | null;
   overByPaise: number;
+  /**
+   * The price list the lines were priced against, where they were — sent so
+   * the office can tell a rate that moved since the phone last synced from a
+   * rate the salesman invented. Null where nothing was priced off a list.
+   */
+  priceTag: string | null;
+  /** What the phone believed the biller owed, and as of when — see the payload. */
+  outstandingAsOfPaise: number;
+  outstandingAsOf: number | null;
   lines: {
     line: CartLine;
     cans: number; boxes: number; looseCans: number; litres: number | null;
+    /** The rate this line is worth per can, wherever it came from. */
+    ratePaise: number | null;
     valuePaise: number | null;
     schemeNote: string | null;
   }[];
@@ -114,7 +126,7 @@ export async function assessCart(billingCustomerId: string, lines: CartLine[]): 
   const customer = await one<{
     creditBlocked: number; creditBlockReason: string | null;
     creditLimitPaise: number | null; outstandingPaise: number; submittedNotInvoicedPaise: number;
-    customerType: string | null;
+    customerType: string | null; priceTag: string | null;
   }>('SELECT * FROM customers WHERE id = ?', [billingCustomerId]);
 
   const priceSource = await getConfig<PriceSource>('products.priceSource', 'unset');
@@ -125,15 +137,43 @@ export async function assessCart(billingCustomerId: string, lines: CartLine[]): 
     'SELECT * FROM schemes WHERE active = 1',
   );
 
+  /*
+   * THE BILLER'S OWN PRICE LIST, where that is the source the office chose.
+   *
+   * `lineValuePaise`'s `pricelist` branch takes the figure as typed, because
+   * the engine is ported from MahekOne and looks nothing up — and nothing on
+   * this screen ever typed one, so every order went up valued at ₹0 beside a
+   * real "List value" the same screen had just drawn from the same rates. The
+   * rate is looked up HERE, off the BILLER's tag — a shop served through a
+   * distributor pays what the distributor's list says — and handed to the
+   * engine as the line's figure, which is exactly what the server's half of
+   * the rule expects to be told.
+   */
+  const priceTag = priceSource === 'pricelist' ? customer?.priceTag ?? null : null;
+  const listRates = priceTag ? await ratesForTag(priceTag) : new Map<string, number>();
+
   const priced = lines.map((line) => {
     const q = derivedQuantities(line.cans, line.cansPerBox ?? 1, line.millilitresPerCan ?? 0);
+    const listRate = priceSource === 'pricelist' ? listRates.get(line.productId) ?? null : null;
+    const ratePaise =
+      priceSource === 'pricelist'
+        ? listRate
+        : priceSource === 'product'
+          ? line.sellingPricePaise
+          : priceSource === 'manual'
+            ? line.typedRatePaise ?? null
+            : null;
     const valuePaise = lineValuePaise(
       priceSource,
       line.cans,
       { sellingPricePaise: line.sellingPricePaise },
-      line.typedRatePaise ?? null,
+      priceSource === 'pricelist'
+        ? listRate == null ? null : line.cans * listRate
+        : priceSource === 'manual' && line.typedRatePaise != null
+          ? line.cans * line.typedRatePaise
+          : null,
     );
-    return { line, ...q, valuePaise, schemeNote: null as string | null };
+    return { line, ...q, ratePaise, valuePaise, schemeNote: null as string | null };
   });
 
   /* Only a SKU can be ordered, so the scheme engine keys on `skuId` — the same
@@ -181,6 +221,9 @@ export async function assessCart(billingCustomerId: string, lines: CartLine[]): 
     reason: verdict.reason,
     availablePaise: verdict.availablePaise,
     overByPaise: verdict.overByPaise,
+    priceTag: priced.some((p) => p.ratePaise != null) ? priceTag : null,
+    outstandingAsOfPaise: customer?.outstandingPaise ?? 0,
+    outstandingAsOf: Number((await getKv('lastPullAt')) ?? 0) || null,
     lines: priced,
   };
 }
@@ -243,7 +286,7 @@ export async function saveOrder(args: {
         `INSERT INTO order_lines (id, orderId, productId, productName, cans, boxes, litres, ratePaise, schemeApplied, lineTotalPaise)
          VALUES (?,?,?,?,?,?,?,?,?,?)`,
         [newId('line'), base.id, p.line.productId, p.line.productName, p.cans, p.boxes, p.litres,
-         p.line.sellingPricePaise ?? p.line.typedRatePaise ?? null, p.schemeNote, p.valuePaise],
+         p.ratePaise, p.schemeNote, p.valuePaise],
       );
     }
 
@@ -324,15 +367,24 @@ export async function saveOrder(args: {
       totalAmountPaise: args.assessment.valuePaise ?? 0,
       valueUnavailable: args.assessment.valueUnavailable,
       creditDays: args.paymentTermDays ?? undefined,
+      /* What the phone priced and believed, so the office can say "the rate
+         moved" or "the balance moved under you" rather than a bare refusal —
+         two different conversations with two different people. */
+      priceTag: args.assessment.priceTag ?? undefined,
+      outstandingAsOfPaise: args.assessment.outstandingAsOfPaise,
+      outstandingAsOf: args.assessment.outstandingAsOf ?? undefined,
       lines: args.assessment.lines.map((p) => ({
         productId: p.line.productId,
         quantityCans: p.cans,
-        ratePaise: p.line.sellingPricePaise ?? p.line.typedRatePaise ?? undefined,
+        ratePaise: p.ratePaise ?? undefined,
       })),
       deviceId: base.deviceId,
       clientCreatedAt: base.clientCreatedAt,
     },
-    dependsOn: args.visitId ? [args.visitId] : [],
+    /* NOT behind the visit. The visit's id is minted at the door and the
+       visit itself is saved at check-out — or never, if the trip is called
+       off — so waiting on it held a customer's order in the outbox for the
+       length of the visit at best and for ever at worst. */
   });
 
   return { orderId: base.id, needsApproval };
@@ -344,6 +396,10 @@ export async function saveOrder(args: {
  * `valueUnavailable` is carried rather than folded into a zero: until a price
  * source is confirmed an order is worth what the salesman typed, and a
  * confident ₹0 on the home screen is worse than a blank.
+ *
+ * ONLY ORDERS THAT ARE STILL ORDERS. It counted everything but `cancelled`,
+ * so an order accounts declined and one the office refused at sync both went
+ * on reading as sold today — on the home screen, where he judges his day.
  */
 export async function ordersToday(userId: string, from = startOfToday()): Promise<{
   count: number;
@@ -354,7 +410,9 @@ export async function ordersToday(userId: string, from = startOfToday()): Promis
     `SELECT COUNT(*) AS n, COALESCE(SUM(netTotalPaise), 0) AS total,
             SUM(CASE WHEN valueUnavailable = 1 OR netTotalPaise IS NULL THEN 1 ELSE 0 END) AS unknown
        FROM orders
-      WHERE userId = ? AND orderedAt >= ? AND status <> 'cancelled'`,
+      WHERE userId = ? AND orderedAt >= ?
+        AND status IN ('submitted','pending_approval','approved','dispatched','in_transit','delivered')
+        AND COALESCE(syncState, '') NOT IN ('rejected','blocked')`,
     [userId, from],
   );
   return {
@@ -503,7 +561,7 @@ export async function editOrder(args: {
         `INSERT INTO order_lines (id, orderId, productId, productName, cans, boxes, litres, ratePaise, schemeApplied, lineTotalPaise)
          VALUES (?,?,?,?,?,?,?,?,?,?)`,
         [newId('line'), args.orderId, p.line.productId, p.line.productName, p.cans, p.boxes, p.litres,
-         p.line.sellingPricePaise ?? p.line.typedRatePaise ?? null, p.schemeNote, p.valuePaise],
+         p.ratePaise, p.schemeNote, p.valuePaise],
       );
     }
     await run('UPDATE customers SET submittedNotInvoicedPaise = MAX(0, submittedNotInvoicedPaise + ?) WHERE id = ?', [
@@ -522,7 +580,7 @@ export async function editOrder(args: {
       lines: args.assessment.lines.map((p) => ({
         productId: p.line.productId,
         quantityCans: p.cans,
-        ratePaise: p.line.sellingPricePaise ?? p.line.typedRatePaise ?? undefined,
+        ratePaise: p.ratePaise ?? undefined,
       })),
     },
     dependsOn,
@@ -601,7 +659,7 @@ export async function requestOrderChange(args: {
       lines: args.assessment.lines.map((p) => ({
         productId: p.line.productId,
         quantityCans: p.cans,
-        ratePaise: p.line.sellingPricePaise ?? p.line.typedRatePaise ?? undefined,
+        ratePaise: p.ratePaise ?? undefined,
       })),
     },
     dependsOn: await waitBehindOrder(args.orderId),

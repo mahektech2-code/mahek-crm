@@ -191,6 +191,11 @@ export default function OrderScreen() {
    * the customer is billed for both.
    */
   const [busy, setBusy] = React.useState(false);
+  /* The lock itself. `busy` is read from the closure of the render that drew
+     the button — the render where it was still false — so a second fast tap
+     ran the whole handler again. A ref is set synchronously; `busy` is only
+     what the button is drawn from. */
+  const busyRef = React.useRef(false);
 
   const remember = React.useCallback((rows: Product[]) => {
     setKnown((prev) => {
@@ -439,7 +444,7 @@ export default function OrderScreen() {
     /* `whyDisabled` keeps this button pressable so the handler can refuse in
        words, which means the in-flight lock has to be checked here as well as
        drawn on the button. */
-    if (busy) return notify('Still sending the last order…', 'info');
+    if (busyRef.current) return notify('Still sending the last order…', 'info');
     if (!inCart.length) return notify('Add a product first', 'error');
     if (blank) return notify('Set a quantity on every line', 'error');
     if (!assessment || blocked) return notify(assessment?.blockReason ?? 'You cannot take an order for this customer', 'error');
@@ -454,7 +459,8 @@ export default function OrderScreen() {
 
     if (changingId) {
       if (!changing) return notify('Still reading the order…', 'info');
-      if (changeId && changeNote.trim().length < 3) return notify('Say why it needs to change — accounts decide on that.', 'error');
+      if (changeId && changeNote.trim().length < 3) return notify('Say why it needs to change. Accounts decide on that.', 'error');
+      busyRef.current = true;
       setBusy(true);
       try {
         const r = editId
@@ -468,28 +474,50 @@ export default function OrderScreen() {
             : 'Change sent to accounts · you will see their answer on Your orders',
         );
         back.go();
+      } catch {
+        notify('That could not be saved on this phone. Nothing was sent. Try again.', 'error');
       } finally {
+        busyRef.current = false;
         setBusy(false);
       }
       return;
     }
 
+    /*
+     * THIS VISIT'S ORDER, or somebody else's.
+     *
+     * The + button opens this form from anywhere, and inside a visit it opened
+     * on the visit's shop — but the shop can be changed, and an order for a
+     * different shop was still marking the visit's own "order" as done, which
+     * let the visit check out claiming an order it never produced. Only an
+     * order whose goods or bill are this visit's shop belongs to the visit.
+     */
+    const forVisit =
+      !!inVisit && (c.id === inVisit.customerId || biller.id === inVisit.customerId);
+
+    busyRef.current = true;
     setBusy(true);
     try {
-      const { needsApproval: sentForApproval } = await saveOrder({
+      const { orderId, needsApproval: sentForApproval } = await saveOrder({
         customerId: biller.id,
         customerName: biller.name,
         deliveryCustomerId: deliverTo?.id ?? null,
         deliveryCustomerName: deliverTo?.name ?? null,
         userId: boot.session?.user.id ?? '',
+        /* Named from the moment it is taken — see `Arrival.visitId`. */
+        visitId: forVisit ? inVisit?.visitId ?? null : null,
         lines: inCart,
         assessment,
       });
 
-      markVisitDone(
-        'order',
-        plural(inCart.length, 'line') + (valueUnavailable ? '' : ' · ' + inr(cartTotal)),
-      );
+      if (forVisit) {
+        const linked = useStore.getState().visitLinked;
+        set({ visitLinked: { ...linked, orderIds: [...(linked.orderIds ?? []), orderId] } });
+        markVisitDone(
+          'order',
+          plural(inCart.length, 'line') + (valueUnavailable ? '' : ' · ' + inr(cartTotal)),
+        );
+      }
       set({ cart: {} });
       notify(
         sentForApproval
@@ -499,7 +527,12 @@ export default function OrderScreen() {
             : 'Order saved · will send when you have signal',
       );
       back.go();
+    } catch {
+      /* Said, rather than the button going quiet: a save that threw has
+         written nothing, and he is standing in front of the customer. */
+      notify('The order could not be saved on this phone. Nothing was sent. Try again.', 'error');
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   };

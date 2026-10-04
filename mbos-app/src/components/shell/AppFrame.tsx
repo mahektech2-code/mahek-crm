@@ -518,15 +518,21 @@ export function AppFrame({
         error={confirmErr}
         onCancel={closeConfirm}
         onConfirm={() => {
-          if (!confirm) return;
-          const r = confirmReason.trim();
+          /* Read from the store, not the render: a second tap arrives before
+             the re-render that clears `confirm`, and ran the action twice —
+             two receipts for one payment. Closed BEFORE it runs, so the second
+             tap finds nothing, and an action that opens the next dialog is not
+             closed by this one. */
+          const live = useStore.getState().confirm;
+          if (!live) return;
+          const r = useStore.getState().confirmReason.trim();
           /* A reason that was asked for and not given stops the action, not the dialog. */
-          if (confirm.reasonLabel && !r) {
+          if (live.reasonLabel && !r) {
             feedback('warning');
             return set({ confirmErr: true });
           }
-          confirm.run(r);
           closeConfirm();
+          live.run(r);
         }}
       />
 

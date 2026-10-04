@@ -36,7 +36,18 @@ import { Stagger, animateLayoutFor } from '../src/components/ui/motion';
  * render something nobody has asked to see yet.
  */
 
+/**
+ * The office refused it at sync. Its `status` never moves — it stays at
+ * `submitted` — so the badge read "Sent" and the Edit button stayed live on an
+ * order the office had never accepted, and an edit then queued behind a
+ * create that would never land. The sync state is asked first.
+ */
+function notAccepted(o: PunchedOrder): boolean {
+  return o.syncState === 'rejected' || o.syncState === 'blocked';
+}
+
 function stateOf(o: PunchedOrder): { label: string; tone: BadgeTone } {
+  if (notAccepted(o)) return { label: 'Not accepted', tone: 'danger' };
   switch (o.status) {
     case 'approved': return { label: 'Approved', tone: 'success' };
     case 'rejected': return { label: 'Not approved', tone: 'danger' };
@@ -91,10 +102,10 @@ export default function OrdersScreen() {
 
   /* What is still waiting on somebody. Cancelled and declined orders are not
      "waiting" and counting them here would make the number never fall. */
-  const waiting = (rows ?? []).filter((o) => o.status === 'pending_approval').length;
+  const waiting = (rows ?? []).filter((o) => o.status === 'pending_approval' && !notAccepted(o)).length;
 
   return (
-    <AppFrame title="MBOS" activeTab={null} contentStyle={{ padding: 16, paddingBottom: 24 }}>
+    <AppFrame title="Your orders" activeTab={null} contentStyle={{ padding: 16, paddingBottom: 24 }}>
       <BackLink label={back.label} onPress={back.go} />
       <T s="h1">Your orders</T>
       <T s="small" style={{ color: C.muted, marginTop: 2 }}>
@@ -186,7 +197,12 @@ export default function OrdersScreen() {
 
                   {/* Why it was refused, on the row rather than a screen away.
                       He has to ring the customer about it either way. */}
-                  {o.status === 'rejected' || o.status === 'cancelled' ? (
+                  {notAccepted(o) ? (
+                    <T style={{ fontSize: 13, lineHeight: 19, color: C.danger, marginTop: 4 }}>
+                      {(o.syncMessage ?? 'The office did not accept this order.') +
+                        ' Open Not accepted to take it again.'}
+                    </T>
+                  ) : o.status === 'rejected' || o.status === 'cancelled' ? (
                     <T style={{ fontSize: 13, lineHeight: 19, color: C.danger, marginTop: 4 }}>
                       {o.cancelReason ?? o.syncMessage ?? 'No reason was given.'}
                     </T>
@@ -225,7 +241,13 @@ export default function OrdersScreen() {
                         corrects it himself; once approved it is the office's
                         commitment and a change goes to accounts as a request.
                         Past dispatch neither — that is a phone call. */}
-                    {editableStatus(o.status) ? (
+                    {notAccepted(o) ? (
+                      <SecondaryButton
+                        label="Open Not accepted"
+                        style={{ marginTop: 8 }}
+                        onPress={() => router.push('/rejections?from=orders')}
+                      />
+                    ) : editableStatus(o.status) ? (
                       <SecondaryButton
                         label="Edit this order"
                         style={{ marginTop: 8 }}

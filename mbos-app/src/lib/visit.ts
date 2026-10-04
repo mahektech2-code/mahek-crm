@@ -166,7 +166,9 @@ export function visitChecks(f: VisitFacts): VisitCheck[] {
       line: dwellOk
         ? `In the shop ${mins}m ${secs}s`
         : `Only ${f.dwellSeconds}s so far. A visit needs ${floor}`,
-      why: 'Your manager set two minutes as the least time.',
+      /* The floor is configuration, so the sentence says the configured one —
+         it read "two minutes" whatever the office had set. */
+      why: `The least time in a shop is ${floor}.`,
     },
     /* No photograph check. The shop and owner photos are offered on the form
        and never required: a visit is not refused, or saved unverified, for
