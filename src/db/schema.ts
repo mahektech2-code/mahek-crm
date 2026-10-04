@@ -3219,6 +3219,16 @@ export const orders = pgTable(
     status: orderStatusEnum("status").notNull().default("captured"),
     callId: text("call_id"),
     lineItems: jsonb("line_items").$type<OrderLine[]>(),
+    /*
+     * THE VISIT THIS WAS TAKEN ON, where the handset says so.
+     *
+     * Not a foreign key, on purpose: the handset mints the visit's id at the
+     * shop door and the order often reaches the office BEFORE the visit that
+     * produced it — a key would refuse the order for the crime of arriving
+     * first. `handleVisit` reads this column to fill the visit's own
+     * `linked_*` once it lands, so the link is made whichever arrives first.
+     */
+    visitId: text("visit_id"),
     /**
      * WHICH PRICE LIST PRICED THIS ORDER, resolved for the customer on the day
      * it was taken and written once. The same discipline as
@@ -3443,6 +3453,16 @@ export const paymentReceipts = pgTable(
     mode: text("mode").notNull().default("Bank transfer"),
     /** UTR, cheque number, or whatever names this money in the bank. */
     reference: text("reference"),
+    /*
+     * THE VISIT THIS WAS TAKEN ON, where the handset says so.
+     *
+     * Not a foreign key, on purpose: the handset mints the visit's id at the
+     * shop door and the receipt often reaches the office BEFORE the visit that
+     * produced it — a key would refuse the receipt for the crime of arriving
+     * first. `handleVisit` reads this column to fill the visit's own
+     * `linked_*` once it lands, so the link is made whichever arrives first.
+     */
+    visitId: text("visit_id"),
 
     /**
      * The date written ON the instrument, where the instrument carries one.
