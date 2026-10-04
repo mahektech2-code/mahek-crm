@@ -142,7 +142,7 @@ export default function PerformanceScreen() {
   const collectedBp = current ? collectionShareBp(current) : null;
 
   return (
-    <AppFrame title="MBOS" activeTab={null} contentStyle={{ padding: 16, paddingBottom: 24 }}>
+    <AppFrame title="Performance" activeTab={null} onBack={back.go} contentStyle={{ padding: 16, paddingBottom: 24 }}>
       <BackLink label={back.label} onPress={back.go} />
       <T s="h1">Performance</T>
 

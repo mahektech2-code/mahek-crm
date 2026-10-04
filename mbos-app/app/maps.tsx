@@ -58,6 +58,7 @@ export default function MapsScreen() {
   const notify = useStore((s) => s.notify);
 
   const [listing, setListing] = React.useState<AreaListing | null>(null);
+  const [listFailed, setListFailed] = React.useState(false);
   /*
    * WHEN the listing was read. "Saved 3 days ago" needs a clock and reading
    * one during render is impure — the React Compiler rules this app runs under
@@ -109,12 +110,18 @@ export default function MapsScreen() {
 
   const load = React.useCallback(() => {
     let alive = true;
-    void listAreas().then(async (l) => {
-      if (!alive) return;
-      setListing(l);
-      setReadAt(Date.now());
-      setBlocked(await downloadBlockedBecause(l.settings));
-    });
+    setListFailed(false);
+    /* A read that throws used to leave "Finding places to save…" up for good. */
+    void listAreas()
+      .then(async (l) => {
+        if (!alive) return;
+        setListing(l);
+        setReadAt(Date.now());
+        setBlocked(await downloadBlockedBecause(l.settings));
+      })
+      .catch(() => {
+        if (alive) setListFailed(true);
+      });
     return () => {
       alive = false;
     };
@@ -342,7 +349,9 @@ export default function MapsScreen() {
 
       {listing === null ? (
         <T s="caption" style={{ marginTop: 16, textAlign: 'center' }}>
-          Finding places to save…
+          {listFailed
+            ? 'Your areas could not be read off this phone. Go back and open this screen again.'
+            : 'Finding places to save…'}
         </T>
       ) : null}
 
@@ -350,7 +359,7 @@ export default function MapsScreen() {
         <Card style={{ marginTop: 12 }}>
           <T s="small" style={{ color: C.muted }}>
             {listing.unpinned
-              ? `None of your ${listing.unpinned} shops has a location yet. So there is no map to save. Save a location while you stand in a shop. Its area will show here.`
+              ? `None of your ${listing.unpinned} shops has a location yet. So there is no map to save. Checking in at a shop saves its pin, and its area will show here.`
               : 'There are no shops on this phone yet. Connect to the internet. Your places will show here.'}
           </T>
         </Card>

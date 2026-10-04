@@ -13,8 +13,19 @@ const MONTH_NAMES = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
 
+/**
+ * A NEGATIVE FIGURE KEEPS ITS SIGN.
+ *
+ * `grouped` drops it — a count is never below zero — and `inr` used to hand
+ * money straight to it, so a shop in credit by ₹5,000 read as OWING ₹5,000,
+ * in red on the record head. Advance and credit are exactly the balances a
+ * salesman must not chase, so the sign is the most important character on the
+ * figure. A true minus sign (U+2212), not a hyphen, so it does not wrap away
+ * from its number.
+ */
 export function inr(n: number): string {
-  return '₹' + grouped(n);
+  const negative = Math.round(n) < 0;
+  return (negative ? '\u2212' : '') + '₹' + grouped(n);
 }
 
 /**
@@ -37,6 +48,7 @@ export function grouped(n: number): string {
  * Takes rupees, like `inr`.
  */
 export function compactInr(rupees: number): string {
+  if (Math.round(rupees) < 0) return '\u2212' + compactInr(-rupees);
   const n = Math.round(Math.abs(rupees));
   const trim = (v: number) => String(Math.round(v * 10) / 10);
   if (n >= 10_000_000) return '₹' + trim(n / 10_000_000) + 'Cr';

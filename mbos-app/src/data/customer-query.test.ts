@@ -304,3 +304,33 @@ test("the book's money adds up the office's figures and leaves leads out", () =>
   assert.equal(row.blocked, 1);
   db.close();
 });
+
+/* A number typed the way the shopkeeper says it found nothing, because the
+   book stores it with spaces and a +91. The phone is compared on digits. */
+test('a typed phone number is searched on its digits', async () => {
+  const { phoneNeedle } = await import('./customer-query');
+  assert.equal(phoneNeedle('+91 98220 11002'), '9822011002');
+  assert.equal(phoneNeedle('098220'), '98220');
+  assert.equal(phoneNeedle('Sai 50%'), 'Sai 50\\%');
+});
+
+/* A lead that has ordered is listed under Customers, not frozen under Leads
+   at its last rung — the office's `kind` is the ledger's word on it. */
+test('a lead the office has made a customer is a customer', () => {
+  const db = handset();
+  seed(db, [
+    ['c-lead', 'Still A Lead', null, null],
+    ['c-won', 'Ordered Lead', null, null],
+  ]);
+  db.exec(`UPDATE customers SET kind = 'customer' WHERE id = 'c-won'`);
+  db.exec(`UPDATE customers SET kind = 'lead' WHERE id = 'c-lead'`);
+  for (const id of ['c-lead', 'c-won']) {
+    db.exec(
+      `INSERT INTO leads (id, name, archived, clientCreatedAt, deviceId) VALUES ('${id}', '${id}', 0, 1, 'dev')`,
+    );
+  }
+  const leads = run(db, customerPageQuery({ view: 'leads', limit: 50 })).map((r) => r.id);
+  const customers = run(db, customerPageQuery({ view: 'customers', limit: 50 })).map((r) => r.id);
+  assert.deepEqual(leads, ['c-lead']);
+  assert.deepEqual(customers, ['c-won']);
+});

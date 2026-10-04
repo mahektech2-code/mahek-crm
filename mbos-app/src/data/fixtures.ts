@@ -111,7 +111,7 @@ export const COMPLAINT_PRIORITIES = [
 /** The labels on the day-ahead strip. The three figures beside them are real. */
 export const DAY_AHEAD = [
   { l: 'stops planned' },
-  { l: 'to collect' },
+  { l: 'outstanding' },
   { l: 'follow-ups due' },
 ] as const;
 
@@ -143,8 +143,13 @@ export const DAY_AHEAD = [
 export const DASH_CARDS: { l: string; tone?: 'danger' | 'amber'; route?: string }[] = [
   { l: 'Today’s sales', route: 'orders' },
   { l: 'Visits', route: 'journey' },
-  { l: 'Collection due', tone: 'danger', route: 'customers' },
+  /* OUTSTANDING, not "due": the figure is everything the book owes, bills not
+     yet due included, and it opens the list of who owes rather than the whole
+     book. */
+  { l: 'Outstanding', tone: 'danger', route: 'accounts' },
   { l: 'Cash in hand', tone: 'amber', route: 'collections' },
   { l: 'Tasks', tone: 'amber', route: 'tasks' },
-  { l: 'Follow-ups', route: 'tasks' },
+  /* Opens the shops whose follow-up is due or missed — the same rule the
+     figure counts, so the number can be traced to its rows. */
+  { l: 'Follow-ups', route: 'customers?filter=followUp' },
 ];

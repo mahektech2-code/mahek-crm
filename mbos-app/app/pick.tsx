@@ -121,6 +121,10 @@ export default function PickScreen() {
      and leaves nothing on the screen to press. */
   const [readFailed, setReadFailed] = React.useState(false);
   const [picked, setPicked] = React.useState<string[]>([]);
+  /* What the day held when the screen opened. Emptying a day that HAD shops
+     is a real answer — the day goes back to agreed — so the button stays live
+     for it; on a day with nothing picked yet, nothing is not an answer. */
+  const [hadPicks, setHadPicks] = React.useState(false);
   const [q, setQ] = React.useState('');
   /*
    * WHAT THE READ SEARCHES FOR, a beat behind what he is typing.
@@ -170,7 +174,10 @@ export default function PickScreen() {
         setDay(d);
         /* Whatever was picked before, so reopening the screen is a correction
            rather than starting again. */
-        setPicked(fresh ? [] : await pickedFor(planDayId));
+        const before = await pickedFor(planDayId);
+        if (!live) return;
+        setHadPicks(before.length > 0);
+        setPicked(fresh ? [] : before);
       } catch {
         if (live) setDayFailed(true);
       } finally {
@@ -246,7 +253,11 @@ export default function PickScreen() {
     try {
       const out = await pickShops(planDayId, picked);
       if (!out.ok) return notify(out.message ?? 'Pick at least one shop.', 'error');
-      notify(plural(picked.length, 'shop') + ' picked. Your manager can see the day now.');
+      notify(
+        picked.length
+          ? plural(picked.length, 'shop') + ' picked. Your manager can see the day now.'
+          : 'The day is cleared. Pick shops again when you know where you are going.',
+      );
       router.back();
     } catch {
       notify('The day could not be saved on this phone. Nothing is lost. Try again.', 'error');
@@ -329,10 +340,12 @@ export default function PickScreen() {
                 ? 'Sending…'
                 : picked.length
                   ? 'Plan the day · ' + plural(picked.length, 'shop')
-                  : 'Pick at least one shop'
+                  : hadPicks
+                    ? 'Clear the day'
+                    : 'Pick at least one shop'
             }
             fullWidth
-            disabled={saving || picked.length === 0}
+            disabled={saving || (picked.length === 0 && !hadPicks)}
             onPress={() => void save()}
           />
         </View>
@@ -466,7 +479,9 @@ export default function PickScreen() {
                 ? 'No shop matches that.'
                 : /* The Journey tab, by the name written on it — see the day
                      branch above, which named the same non-existent screen. */
-                  'No shops on this phone yet. Pull down on the Journey tab to get your shops.'}
+                  day.city
+                  ? 'None of your shops on this phone are in ' + day.city + '. A shop elsewhere can be visited from the Customers tab.'
+                  : 'No shops on this phone yet. Pull down on the Journey tab to get your shops.'}
           </T>
         ) : null}
 

@@ -24,6 +24,12 @@ import { listSalary, type SalaryMonth } from '../src/data/salary';
  * is money owed back for something already spent, not earnings — folding the
  * two into one total would answer a question nobody asked with a number that
  * looks like an answer to a different one.
+ *
+ * **The pay is the HR record's, said ONCE.** The office sends the employee
+ * master's current figure against both months, and this drew it under each as
+ * that month's "Net salary" — including the month still being worked, which
+ * nobody has been paid for. It is one figure, the salary as HR holds it today,
+ * and the months below it carry only what is genuinely per month.
  */
 const monthName = (period: string) =>
   new Date(period + 'T00:00:00').toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
@@ -48,7 +54,7 @@ export default function SalaryScreen() {
   const hasFigures = current && (current.netSalaryPaise != null || current.employeeCode != null);
 
   return (
-    <AppFrame title="MBOS" activeTab={null} contentStyle={{ padding: 16, paddingBottom: 24 }}>
+    <AppFrame title="Salary" activeTab={null} onBack={back.go} contentStyle={{ padding: 16, paddingBottom: 24 }}>
       <BackLink label={back.label} onPress={back.go} />
       <T s="h1">Salary</T>
       <T s="small" style={{ color: C.muted, marginTop: 2, marginBottom: 16 }}>
@@ -69,10 +75,10 @@ export default function SalaryScreen() {
       ) : months.length === 0 ? (
         <Card style={{ paddingHorizontal: 16, paddingVertical: 32 }} padded={false}>
           <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>
-            No payslip on this phone yet
+            No salary on this phone yet
           </T>
           <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 4 }}>
-            It will come after the office sends this month’s salary.
+            It comes with the next update from the office.
           </T>
         </Card>
       ) : !hasFigures ? (
@@ -86,20 +92,23 @@ export default function SalaryScreen() {
           </T>
         </Card>
       ) : (
-        months.map((m, i) => (
-          <Stagger key={m.period} index={i}>
-            <SalaryCard m={m} />
-          </Stagger>
-        ))
+        <>
+          <PayCard m={current!} />
+          {months.map((m, i) => (
+            <Stagger key={m.period} index={i}>
+              <MonthCard m={m} />
+            </Stagger>
+          ))}
+        </>
       )}
     </AppFrame>
   );
 }
 
-function SalaryCard({ m }: { m: SalaryMonth }) {
+function PayCard({ m }: { m: SalaryMonth }) {
   return (
     <Card style={{ marginBottom: 10 }}>
-      <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>{monthName(m.period)}</T>
+      <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>Your salary, as HR holds it</T>
       {m.employeeCode ? (
         <T s="caption" style={{ marginTop: 2 }}>
           {m.employeeCode}
@@ -108,11 +117,10 @@ function SalaryCard({ m }: { m: SalaryMonth }) {
       ) : null}
 
       <View style={{ marginTop: 14, flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' }}>
-        <T s="small" style={{ color: C.muted }}>Net salary</T>
-        {/* Not from zero: a payslip is a statement, not a reveal, and a salary
-            running up from ₹0 is theatre on the one screen that must read as
-            plain fact. It counts only if a later sync corrects the figure, which
-            is the one time movement is the news. */}
+        <T s="small" style={{ color: C.muted }}>Net salary a month</T>
+        {/* Not from zero: a salary is a statement, not a reveal. It counts only
+            if a later sync corrects the figure, which is the one time movement
+            is the news. */}
         {m.netSalaryPaise != null ? (
           <CountUp
             value={m.netSalaryPaise}
@@ -128,24 +136,25 @@ function SalaryCard({ m }: { m: SalaryMonth }) {
         {m.conveyancePaise != null ? <Row label="Conveyance" value={inrFromPaise(m.conveyancePaise)} /> : null}
         {m.otherSalaryPaise != null ? <Row label="Other" value={inrFromPaise(m.otherSalaryPaise)} /> : null}
       </View>
+      <T s="caption" style={{ marginTop: 10 }}>
+        This is the figure on your HR record, not a payslip for a month.
+      </T>
+    </Card>
+  );
+}
 
-      <View
-        style={{
-          marginTop: 12,
-          paddingTop: 12,
-          borderTopWidth: 1,
-          borderTopColor: C.hairline,
-          gap: 6,
-        }}>
-        <Row
-          label="Days worked"
-          value={m.daysWorked != null ? plural(m.daysWorked, 'day') : '—'}
-        />
-        {/* Beside the pay, never added to it — money owed back is not earnings. */}
-        {m.reimbursedPaise ? (
-          <Row label="Paid back to you separately" value={inrFromPaise(m.reimbursedPaise)} tone={C.success} />
-        ) : null}
-      </View>
+function MonthCard({ m }: { m: SalaryMonth }) {
+  return (
+    <Card style={{ marginBottom: 10, gap: 6 }}>
+      <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>{monthName(m.period)}</T>
+      <Row label="Days worked" value={m.daysWorked != null ? plural(m.daysWorked, 'day') : '—'} />
+      {m.daysOnLeave ? <Row label="Days on leave" value={plural(m.daysOnLeave, 'day')} /> : null}
+      {/* Beside the pay, never added to it — money owed back is not earnings.
+          And APPROVED is all the office can say: approved to pay back is not
+          the same as already in his account. */}
+      {m.reimbursedPaise ? (
+        <Row label="Expenses approved to pay back" value={inrFromPaise(m.reimbursedPaise)} tone={C.success} />
+      ) : null}
     </Card>
   );
 }

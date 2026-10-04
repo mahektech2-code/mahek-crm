@@ -62,8 +62,11 @@ export default function KnowledgeScreen() {
         <ListCard style={{ marginTop: 12 }}>
           {courses.map((k, i) => {
             const done = k.completedAt != null;
+            /* No amber "Due": a course cannot be opened or finished on the
+               phone yet, so a badge demanding one is a demand he has no way to
+               meet. Required is said plainly instead. */
             const isDue = !done && k.mandatory === 1;
-            const tone: BadgeTone = done ? 'success' : isDue ? 'amber' : 'neutral';
+            const tone: BadgeTone = done ? 'success' : 'neutral';
             return (
               <Stagger key={k.id} index={i}>
                 <Pressable
@@ -99,7 +102,7 @@ export default function KnowledgeScreen() {
                         .join(' · ') || 'Course'}
                     </T>
                   </View>
-                  <Badge tone={tone}>{done ? 'Done' : isDue ? 'Due' : 'Not started'}</Badge>
+                  <Badge tone={tone}>{done ? 'Done' : isDue ? 'Required' : 'Not started'}</Badge>
                 </Pressable>
               </Stagger>
             );

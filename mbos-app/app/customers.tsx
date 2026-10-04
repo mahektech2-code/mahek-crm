@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, Pressable, TextInput, FlatList, RefreshControl, ScrollView, Platform, type ListRenderItemInfo } from 'react-native';
 import { isOnline } from '../src/sync/engine';
-import { router, useFocusEffect } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { color as C, radius, type, weight } from '../src/theme/tokens';
 import { Icon } from '../src/components/ui/Icon';
 import { Badge, Card, HealthPill, PrimaryButton, SecondaryButton } from '../src/components/ui/primitives';
@@ -316,7 +316,19 @@ export default function Customers() {
     };
   }, []);
 
-  const [today] = React.useState(() => isoDate(new Date()));
+  /* RE-READ ON EVERY RETURN TO THE TAB. A tab stays mounted, so a date
+     frozen at first render went on calling yesterday "today" after midnight —
+     Reorder due, Visit due and Visited today all a day out — and the origin
+     for "Nearest first" stayed wherever he stood when he first opened it. */
+  const [today, setToday] = React.useState(() => isoDate(new Date()));
+  const [focusTick, setFocusTick] = React.useState(0);
+  useFocusEffect(
+    React.useCallback(() => {
+      const now = isoDate(new Date());
+      setToday((t) => (t === now ? t : now));
+      setFocusTick((n) => n + 1);
+    }, []),
+  );
 
   /* ------------------------------------- a shop that is not on the book yet
    *
@@ -372,6 +384,13 @@ export default function Customers() {
   const [leadsMatching, setLeadsMatching] = React.useState(0);
 
   const [filter, setFilter] = React.useState<CustomerFilter>('all');
+  /* A figure on Home that opens this list opens it ON the rows it counted —
+     "Follow-ups 4" landing on the whole book is a number nobody can trace. */
+  const params = useLocalSearchParams<{ filter?: string }>();
+  React.useEffect(() => {
+    const wanted = CUSTOMER_FILTERS.find((f) => f.value === params.filter);
+    if (wanted) setFilter(wanted.value);
+  }, [params.filter]);
   const [asMap, setAsMap] = React.useState(false);
   const [rowMore, setRowMore] = React.useState<Customer | null>(null);
 
@@ -439,7 +458,8 @@ export default function Customers() {
     return () => {
       live = false;
     };
-  }, [sortMode, town, cities]);
+    /* `focusTick`: a walk between two visits to this tab is a new origin. */
+  }, [sortMode, town, cities, focusTick]);
 
   const sort = sqlSort(sortMode);
   const pageArgs = React.useMemo(

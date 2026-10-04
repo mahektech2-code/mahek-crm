@@ -186,7 +186,7 @@ export function fromPhone(
   today: string,
   parseLines: (b: PhoneBill) => AccountBill['lines'],
 ): AccountView {
-  const statement = buildStatement(bills, receipts);
+  const statement = buildStatement(bills, receipts, undefined, c.outstandingPaise ?? null);
   /* `buildStatement` hands entries back newest first, for reading. The view
      keeps them oldest first, as the office sends them. */
   const entries: AccountEntry[] = [...statement.entries].reverse().map((e) =>

@@ -1,4 +1,4 @@
-import { all, newId, one } from '../db';
+import { all, newId, one, run } from '../db';
 import {
   CUSTOMER_PAGE,
   cityOriginsQuery,
@@ -187,6 +187,7 @@ export async function customerFilterCounts(args: {
   return {
     all: n('all'),
     owing: n('owing'),
+    followUp: n('followUp'),
     reorder: n('reorder'),
     visitDue: n('visitDue'),
     neverVisited: n('neverVisited'),
@@ -447,6 +448,30 @@ export async function customersWithoutGps(): Promise<{ rows: Customer[]; total: 
 }
 
 /**
+ * FOLLOW-UPS OWED, counted by SHOP and from the latest visit only.
+ *
+ * The Home figure counted visits with a date of today or later — so a promise
+ * one day late dropped out of it, which is the opposite of what a reminder is
+ * for, and two visits to one shop counted twice. It also opened Tasks, which
+ * does not list visit follow-ups at all, so the number could not be traced.
+ * This counts shops whose latest visit set a date that is due or missed, and
+ * the tile opens the Customers list on exactly that filter.
+ */
+export async function followUpsOwed(today: string): Promise<{ owed: number; missed: number; dueToday: number }> {
+  const row = await one<{ owed: number; missed: number; dueToday: number }>(
+    `SELECT COUNT(*) AS owed,
+            COALESCE(SUM(CASE WHEN d < ? THEN 1 ELSE 0 END), 0) AS missed,
+            COALESCE(SUM(CASE WHEN d = ? THEN 1 ELSE 0 END), 0) AS dueToday
+       FROM (SELECT (SELECT v.nextFollowUpDate FROM visits v WHERE v.customerId = c.id
+                      ORDER BY v.checkInAt DESC LIMIT 1) AS d
+               FROM customers c)
+      WHERE d IS NOT NULL AND d <= ?`,
+    [today, today, today],
+  );
+  return { owed: row?.owed ?? 0, missed: row?.missed ?? 0, dueToday: row?.dueToday ?? 0 };
+}
+
+/**
  * What the book owes, in one figure and one count.
  *
  * The number on Home and the number on the collections list have to be the
@@ -546,9 +571,9 @@ export async function searchProducts(query: string, limit = 20) {
   return all<{ id: string; name: string; sku: string | null; packSize: string | null; cansPerBox: number | null; millilitresPerCan: number | null; sellingPricePaise: number | null; formulation: string | null; brand: string | null }>(
     `SELECT * FROM products
       WHERE active = 1 AND (lower(name) LIKE ? OR lower(COALESCE(formulation,'')) LIKE ? OR lower(COALESCE(brand,'')) LIKE ?
-                            OR lower(COALESCE(sku,'')) LIKE ?)
+                            OR lower(COALESCE(sku,'')) LIKE ? OR lower(COALESCE(packSize,'')) LIKE ?)
       ORDER BY lower(COALESCE(sku,'')) = ? DESC, name LIMIT ?`,
-    [like, like, like, like, code, limit],
+    [like, like, like, like, like, code, limit],
   );
 }
 
@@ -667,15 +692,25 @@ export async function billingChoicesFor(customer: Customer): Promise<BillingChoi
  * bill cannot be the one billed for another. Same rule the console's picker
  * enforces and the server checks again on the way in.
  */
+/*
+ * AND NOT A LEAD. A lead has never ordered and cannot hold anybody's invoice —
+ * the server refuses a biller that is not `kind = 'customer'` — so offering
+ * one here let a salesman pick it, take the order, and have both the shop and
+ * the order refused hours later.
+ */
+const BILLABLE = `thirdParty = 0 AND COALESCE(kind, 'customer') = 'customer'
+  AND NOT EXISTS (SELECT 1 FROM leads l WHERE l.id = customers.id AND l.archived = 0
+    AND COALESCE(l.funnelStage, '') <> 'won' AND COALESCE(l.stage, '') <> 'Converted')`;
+
 export async function billableCustomers(q?: string): Promise<Customer[]> {
   const term = (q ?? '').trim();
   if (!term) {
-    return all<Customer>('SELECT * FROM customers WHERE thirdParty = 0 ORDER BY name LIMIT 50');
+    return all<Customer>(`SELECT * FROM customers WHERE ${BILLABLE} ORDER BY name LIMIT 50`);
   }
   const like = `%${term}%`;
   return all<Customer>(
     `SELECT * FROM customers
-      WHERE thirdParty = 0 AND (name LIKE ? OR city LIKE ? OR phone LIKE ?)
+      WHERE ${BILLABLE} AND (name LIKE ? OR city LIKE ? OR phone LIKE ?)
       ORDER BY name LIMIT 50`,
     [like, like, like],
   );
@@ -740,7 +775,9 @@ export async function addFieldShop(args: {
   const row = {
     id: customerId,
     name,
-    contactPerson: args.contactPerson?.trim() || name,
+    /* Nobody named is nobody named. Filling the shop's own name in made every
+       such row read "Sai Paints · Sai Paints · Nashik". */
+    contactPerson: args.contactPerson?.trim() || null,
     phone,
     city,
     /* Marked and arranged in the same breath. A shop flagged as one we do not
@@ -775,4 +812,67 @@ export async function addFieldShop(args: {
   });
 
   return { ok: true, customerId };
+}
+
+/* ------------------------------------------------------- correcting a shop */
+
+export type ShopEdit = {
+  contactPerson?: string;
+  phone?: string;
+  /** Only for a shop with NO pin — see `editShop`. */
+  pin?: { lat: number; lng: number; accuracyM: number };
+};
+
+/**
+ * WHAT HE KNOWS BETTER THAN THE BOOK: who runs the shop, the number that
+ * answers, and — where the shop has never been pinned — where it is.
+ *
+ * The office has accepted these on the wire all along (`handleCustomerEdit`);
+ * nothing on the phone ever sent one, while two screens told him to "save a
+ * location" he had no way to save.
+ *
+ * A PIN IS SET, NEVER MOVED, from here. A pinned shop's pin decides the
+ * check-in radius, and letting the salesman move it from wherever he stands
+ * would be the override AGENTS.md refuses — one edit and the radius never
+ * refuses him there again. Moving a wrong pin is the request a refused
+ * check-in already offers, answered by a manager. An unpinned shop is pinned
+ * by the first check-in anyway; this is the same act without a visit.
+ */
+export async function editShop(customerId: string, edit: ShopEdit): Promise<{ ok: true } | { ok: false; message: string }> {
+  const current = await one<{ gpsLat: number | null; gpsLng: number | null }>(
+    'SELECT gpsLat, gpsLng FROM customers WHERE id = ?',
+    [customerId],
+  );
+  if (!current) return { ok: false, message: 'That shop is not on this phone.' };
+
+  const payload: Record<string, unknown> = { customerId };
+  const local: [string, unknown][] = [];
+  if (edit.contactPerson !== undefined) {
+    const v = edit.contactPerson.trim();
+    payload.contactPerson = v;
+    local.push(['contactPerson', v || null]);
+  }
+  if (edit.phone !== undefined) {
+    const v = edit.phone.trim();
+    if (v && v.replace(/\D/g, '').length < 6) return { ok: false, message: 'That phone number is too short.' };
+    payload.phone = v;
+    local.push(['phone', v || null]);
+  }
+  if (edit.pin) {
+    if (current.gpsLat != null && current.gpsLng != null) {
+      return { ok: false, message: 'This shop already has a pin. If it is wrong, say so when you check in.' };
+    }
+    payload.gpsLat = edit.pin.lat;
+    payload.gpsLng = edit.pin.lng;
+    payload.gpsAccuracyM = Math.round(edit.pin.accuracyM);
+    local.push(['gpsLat', edit.pin.lat], ['gpsLng', edit.pin.lng], ['gpsAccuracyM', Math.round(edit.pin.accuracyM)]);
+  }
+  if (!local.length) return { ok: false, message: 'Nothing has changed.' };
+
+  await run(
+    `UPDATE customers SET ${local.map(([c]) => c + ' = ?').join(', ')} WHERE id = ?`,
+    [...local.map(([, v]) => v as string | number | null), customerId],
+  );
+  await enqueue({ entityType: 'customer', entityId: customerId, op: 'update', payload });
+  return { ok: true };
 }

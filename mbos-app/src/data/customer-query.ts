@@ -51,7 +51,19 @@ export type Origin = { lat: number; lng: number } | null;
  */
 export type BookView = 'all' | 'customers' | 'leads';
 
-const IS_LEAD = `EXISTS (SELECT 1 FROM leads l WHERE l.id = customers.id AND l.archived = 0)`;
+/*
+ * AND A LEAD THAT HAS ORDERED IS NOT ONE ANY MORE. The ladder keeps its
+ * `first_order`, `second_order` and `customer` rungs after the office flips
+ * `kind` to `customer`, and a lead the office moved to won stops arriving and
+ * stays frozen here at its last rung. Reading the EXISTS alone listed a billed
+ * customer only under Leads — missing from Customers, its chips and its counts
+ * — with an Account tab saying "nothing billed to a lead". The office's `kind`
+ * is the ledger's statement about the account, so it wins; a null `kind` (an
+ * older payload) keeps the old reading.
+ */
+const IS_LEAD = `(EXISTS (SELECT 1 FROM leads l WHERE l.id = customers.id AND l.archived = 0
+      AND COALESCE(l.funnelStage, '') <> 'won' AND COALESCE(l.stage, '') <> 'Converted')
+    AND COALESCE(customers.kind, 'lead') <> 'customer')`;
 
 /**
  * WHAT THE CARD NEEDS TO SAY WHAT A ROW IS, added to the projection of both
@@ -117,13 +129,33 @@ export type Query = { sql: string; params: (string | number)[] };
 
 /* Name, contact, city, phone, GST and dealer code — because a salesman looking
    somebody up mid-conversation has whichever of those the customer just said. */
-const SEARCH = `lower(name) LIKE ? OR lower(COALESCE(contactPerson,'')) LIKE ?
-     OR lower(COALESCE(city,'')) LIKE ? OR COALESCE(phone,'') LIKE ?
-     OR lower(COALESCE(gstin,'')) LIKE ? OR lower(COALESCE(dealerCode,'')) LIKE ?`;
+/*
+ * `%` and `_` typed into the box are LITERALS, escaped, so "50%" does not
+ * match every row. The phone is compared on its DIGITS: the book holds
+ * `+91 98220 11002` and `09822011002` side by side, and a number typed with
+ * spaces or a +91 found neither.
+ */
+const SEARCH = `lower(name) LIKE ? ESCAPE '\\' OR lower(COALESCE(contactPerson,'')) LIKE ? ESCAPE '\\'
+     OR lower(COALESCE(city,'')) LIKE ? ESCAPE '\\'
+     OR replace(replace(replace(replace(COALESCE(phone,''),' ',''),'-',''),'+',''),'(','') LIKE ?
+     OR lower(COALESCE(gstin,'')) LIKE ? ESCAPE '\\' OR lower(COALESCE(dealerCode,'')) LIKE ? ESCAPE '\\'`;
+
+function escapeLike(q: string): string {
+  return q.replace(/[\\%_]/g, (ch) => '\\' + ch);
+}
+
+/** The last ten digits of a typed number, or the text itself if it is not one. */
+export function phoneNeedle(q: string): string {
+  const digits = q.replace(/\D/g, '');
+  if (digits.length >= 5 && digits.length >= q.replace(/\s/g, '').length - 1) {
+    return digits.length > 10 ? digits.slice(-10) : digits.replace(/^0+/, '');
+  }
+  return escapeLike(q);
+}
 
 function searchParams(q: string): string[] {
-  const like = `%${q}%`;
-  return [like, like, like, like, like, like];
+  const like = `%${escapeLike(q)}%`;
+  return [like, like, like, `%${phoneNeedle(q)}%`, like, like];
 }
 
 function normalise(query: string | undefined): string {
@@ -152,11 +184,12 @@ function normalise(query: string | undefined): string {
  * difference is a whole number of days with no zone in it — `today` is the
  * caller's business date, resolved once on the handset.
  */
-export type CustomerFilter = 'all' | 'owing' | 'reorder' | 'visitDue' | 'neverVisited' | 'unpinned';
+export type CustomerFilter = 'all' | 'owing' | 'followUp' | 'reorder' | 'visitDue' | 'neverVisited' | 'unpinned';
 
 export const CUSTOMER_FILTERS: { value: CustomerFilter; label: string }[] = [
   { value: 'all', label: 'All' },
   { value: 'owing', label: 'Owes money' },
+  { value: 'followUp', label: 'Follow-up due' },
   { value: 'reorder', label: 'Reorder due' },
   { value: 'visitDue', label: 'Visit due' },
   { value: 'neverVisited', label: 'Never visited' },
@@ -165,6 +198,14 @@ export const CUSTOMER_FILTERS: { value: CustomerFilter; label: string }[] = [
 
 const FILTER_SQL: Record<Exclude<CustomerFilter, 'all'>, { sql: string; usesToday: boolean }> = {
   owing: { sql: 'COALESCE(outstandingPaise, 0) > 0', usesToday: false },
+  /* The date he set on his LATEST visit to the shop, due today or already
+     missed. Missed is the half that matters: a promise one day late is the
+     one most worth keeping, and the Home figure used to drop it. */
+  followUp: {
+    sql: `((SELECT v.nextFollowUpDate FROM visits v WHERE v.customerId = customers.id
+             ORDER BY v.checkInAt DESC LIMIT 1) <= ?)`,
+    usesToday: true,
+  },
   reorder: {
     sql: `(lastOrderDate IS NOT NULL AND COALESCE(cycleDays, 0) > 0
            AND julianday(?) - julianday(lastOrderDate) >= cycleDays)`,

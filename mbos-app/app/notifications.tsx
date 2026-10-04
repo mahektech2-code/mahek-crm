@@ -4,17 +4,34 @@ import { router, useFocusEffect } from 'expo-router';
 import { AppFrame, BackLink, StubCard, useCameFrom } from '../src/components/shell/AppFrame';
 import { ListCard, SectionLabel, T } from '../src/components/ui/primitives';
 import { color as C, type, weight } from '../src/theme/tokens';
-import { dmy, isoDate, plural } from '../src/lib/format';
+import { dmy, plural } from '../src/lib/format';
 import { listNotifications, markAllRead, markRead, type Notification } from '../src/data/notifications';
 import { DUR, EASE, Stagger, animateLayoutFor, useReduceMotion } from '../src/components/ui/motion';
 
 /**
  * The bell.
  *
- * Every row goes somewhere — a notification that only announces is a
- * notification nobody reads twice — and opening one marks it read, because
- * having read it is exactly what tapping it means.
+ * Opening a row marks it read, because having read it is exactly what tapping
+ * it means. A row that names a screen on this phone opens it; one that names
+ * none — or names an office screen, which does not exist here — is read where
+ * it is, and says everything it has to say in its body.
  */
+
+/* The screens a row may open. The office stores its own web links on the
+   same rows, and pushing `/crm/performance` here lands on the router's
+   "Unmatched Route" page — so anything not on this list is not followed. */
+const SCREENS = new Set([
+  'home', 'customers', 'customer', 'account', 'accounts', 'journey', 'pick', 'tasks', 'leads', 'lead',
+  'samples', 'sample', 'orders', 'collections', 'expenses', 'travel', 'leave', 'attendance', 'performance',
+  'salary', 'docs', 'sync', 'rejections', 'notifications', 'nearby', 'maps', 'eod', 'profile', 'policy',
+  'reports', 'more', 'validate',
+]);
+
+function phoneRoute(href: string | null): string | null {
+  if (!href || !href.startsWith('/')) return null;
+  const first = href.slice(1).split(/[/?]/)[0];
+  return SCREENS.has(first) ? href : null;
+}
 
 const TONE: Record<Notification['kind'], { bg: string; fg: string }> = {
   danger: { bg: C.dangerBg, fg: C.danger },
@@ -33,8 +50,6 @@ const WHENS: ('Today' | 'Yesterday' | 'Earlier')[] = ['Today', 'Yesterday', 'Ear
  * and "Open" names nothing.
  */
 const CTA: Record<string, string> = {
-  '/customers': 'Call the customer',
-  '/customer': 'Call the customer',
   '/tasks': 'Open tasks',
   '/journey': 'See the route',
   '/expenses': 'Open expenses',
@@ -45,18 +60,26 @@ const CTA: Record<string, string> = {
 };
 
 function bucketOf(createdAt: number, today: string, yesterday: string): 'Today' | 'Yesterday' | 'Earlier' {
-  const day = isoDate(new Date(createdAt));
+  if (!Number.isFinite(createdAt)) return 'Earlier';
+  const day = istDay(createdAt);
   return day === today ? 'Today' : day === yesterday ? 'Yesterday' : 'Earlier';
 }
 
-/** 8:40 am for the last two days; the date itself for anything older. */
+/* India's clock by name, like every other screen that turns a stored instant
+   into a time — the phone's own zone is whatever it happens to be set to. And
+   the same 24-hour form as the rest of the app. */
+const IST_TIME = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' });
+const IST_DAY = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'Asia/Kolkata' });
+
+function istDay(ms: number): string {
+  return IST_DAY.format(new Date(ms));
+}
+
+/** 08:40 for the last two days; the date itself for anything older. */
 function stamp(createdAt: number, bucket: string): string {
-  const d = new Date(createdAt);
-  if (bucket === 'Earlier') return dmy(isoDate(d));
-  const h = d.getHours();
-  const suffix = h < 12 ? 'am' : 'pm';
-  const hour = h % 12 === 0 ? 12 : h % 12;
-  return hour + ':' + String(d.getMinutes()).padStart(2, '0') + ' ' + suffix;
+  if (!Number.isFinite(createdAt)) return '';
+  if (bucket === 'Earlier') return dmy(istDay(createdAt));
+  return IST_TIME.format(new Date(createdAt));
 }
 
 /**
@@ -103,8 +126,8 @@ export default function NotificationsScreen() {
   const back = useCameFrom('home');
   const [rows, setRows] = React.useState<Notification[]>([]);
   const [days] = React.useState(() => ({
-    today: isoDate(new Date()),
-    yesterday: isoDate(new Date(Date.now() - 86_400_000)),
+    today: istDay(Date.now()),
+    yesterday: istDay(Date.now() - 86_400_000),
   }));
 
   /* Whether the read has answered yet, kept apart from what it answered. Drawn
@@ -208,7 +231,8 @@ export default function NotificationsScreen() {
               {items.map((n, i) => {
                 const isUnread = n.readAt == null;
                 const tone = TONE[n.kind] ?? TONE.neutral;
-                const cta = n.href ? CTA[n.href.split('?')[0]] : undefined;
+                const href = phoneRoute(n.href);
+                const cta = href ? CTA[href.split('?')[0]] : undefined;
                 return (
                   <Stagger key={n.id} index={rows.indexOf(n)}>
                     <Pressable
@@ -218,7 +242,7 @@ export default function NotificationsScreen() {
                         /* Reading is not acknowledging — a priority notification
                            is cleared by the screen that fixes the problem, never
                            by this one. */
-                        if (n.href) router.push(`${n.href}${n.href.includes('?') ? '&' : '?'}from=notifications`);
+                        if (href) router.push(`${href}${href.includes('?') ? '&' : '?'}from=notifications`);
                       }}
                       accessibilityRole="button"
                       style={{

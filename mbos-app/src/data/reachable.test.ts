@@ -58,6 +58,10 @@ const PARKED: Record<string, string> = {
   configAge:
     'How stale the pulled configuration is. Worth a line on the Sync screen the ' +
     'day somebody is caught out by a setting that changed in the office an hour ago.',
+  followUpCounts:
+    'Replaced on Home by followUpsOwed in data/customers.ts, which counts by shop, ' +
+    'keeps missed follow-ups and matches the Customers filter the tile opens. Left ' +
+    'for the owner of data/visits.ts to delete.',
   listCustomers:
     'Superseded by the paged reads the Customers tab uses — the whole book at once ' +
     'is what froze that screen on a handset holding 1,076 shops. Kept because a ' +
@@ -71,14 +75,6 @@ const PARKED: Record<string, string> = {
     "The funnel module's per-customer read. The customer record's Samples tab still " +
     'reads `customerSamples` from `data/requests.ts` over the same table; one of ' +
     'the two should go, and picking which is a decision about that screen.',
-  acknowledge:
-    'A priority notification is meant to be cleared by ACTING on it rather than by ' +
-    'reading it — `notify({ priority: 1 })` is written for a bounced cheque today. ' +
-    'Nothing calls this, so a priority notification currently behaves like any ' +
-    'other. Harmless, and not what the column was for.',
-  unacknowledgedPriority:
-    'The other half of the same unbuilt thing: the repeating banner that keeps a ' +
-    'priority notification in front of somebody until it is dealt with.',
   recentVisits:
     "This shop's last twenty visits. The customer record shows the shared timeline " +
     'instead, which carries the CRM\'s calls beside the salesman\'s visits — a ' +

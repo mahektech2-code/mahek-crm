@@ -1,10 +1,18 @@
 import React from 'react';
-import { View, Pressable, Linking } from 'react-native';
+import { View, Pressable } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Card, ListCard, T } from '../src/components/ui/primitives';
 import { color as C, type, weight } from '../src/theme/tokens';
-import { listDocuments, type DocumentRow } from '../src/data/library';
+import {
+  downloadDocument,
+  forgetDocumentFile,
+  heldFile,
+  listDocuments,
+  openDocumentFile,
+  type DocumentRow,
+} from '../src/data/library';
+import { dmy } from '../src/lib/format';
 import { useStore } from '../src/state/store';
 import { Stagger } from '../src/components/ui/motion';
 
@@ -23,49 +31,50 @@ export default function DocsScreen() {
   const notify = useStore((s) => s.notify);
   const [docs, setDocs] = React.useState<DocumentRow[] | null>(null);
 
-  useFocusEffect(
-    React.useCallback(() => {
-      void listDocuments().then(setDocs);
-    }, []),
-  );
+  const [busy, setBusy] = React.useState<string | null>(null);
+
+  const reload = React.useCallback(() => {
+    void listDocuments()
+      .then(setDocs)
+      .catch(() => setDocs([]));
+  }, []);
+
+  useFocusEffect(reload);
 
   /**
-   * A TAP HAS TO REACH THE PAPER, or say why it cannot.
+   * A TAP REACHES THE PAPER: open it if it is here, fetch it if it is not.
    *
-   * Every row here used to raise one of two toasts and do nothing else —
-   * "already on this phone" or "needs signal to download" — chosen off
-   * `availableOffline`, which is a CLAIM. The file itself is `localUri`, and
-   * nothing in the app has ever read it: no viewer, no `openURL`, and no
-   * download path either. So the first toast asserted a paper was here that he
-   * could not reach, and the second named an action that does not exist. He
-   * taps the price list standing in front of a customer and gets a grey pill.
-   *
-   * The file is now the only thing that decides, at both ends: the row says
-   * what is actually openable and the tap opens it. There is still no way to
-   * FETCH one — the bytes live behind `/api/attachments/[id]`, which takes a
-   * browser session and not this handset's device token — so the other half
-   * says so in words rather than promising a download nothing can start.
+   * Every row used to end in a toast — no file on any phone, and no way to
+   * fetch one, because the bytes sat behind a route that takes a browser
+   * session. `/api/mbos/documents/[id]` takes this handset's token, so the
+   * first tap downloads and opens, and every later one opens without signal.
    */
   const open = React.useCallback(
     (d: DocumentRow) => {
-      const uri = d.localUri?.trim();
-      if (!uri) {
-        notify(d.title + ' is not on this phone. Ask the office to send it.', 'error');
-        return;
-      }
+      if (busy) return;
       void (async () => {
+        const held = heldFile(d);
+        if (held) {
+          const r = await openDocumentFile(held);
+          if (r.ok) return;
+          await forgetDocumentFile(d.id);
+          reload();
+          notify(r.reason, 'error');
+          return;
+        }
+        setBusy(d.id);
         try {
-          if (!(await Linking.canOpenURL(uri))) {
-            notify('This phone has no app to open ' + d.title + '.', 'error');
-            return;
-          }
-          await Linking.openURL(uri);
-        } catch {
-          notify(d.title + ' could not be opened.', 'error');
+          const got = await downloadDocument(d);
+          if (!got.ok) return notify(got.reason, 'error');
+          reload();
+          const r = await openDocumentFile(got.uri);
+          if (!r.ok) notify(r.reason, 'error');
+        } finally {
+          setBusy(null);
         }
       })();
     },
-    [notify],
+    [busy, notify, reload],
   );
 
   return (
@@ -74,7 +83,7 @@ export default function DocsScreen() {
 
       <T style={type.h1}>Documents</T>
       <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-        Downloaded files open without signal.
+        Tap once with signal to download. After that it opens without signal.
       </T>
 
       {/* Three states, and they are three different sentences: still reading,
@@ -97,7 +106,7 @@ export default function DocsScreen() {
             /* The FILE, not `availableOffline`. The flag is what the row claims
                and the uri is what can actually be opened, and where those two
                disagree the flag is the one that reads as a lie. */
-            const onPhone = !!d.localUri?.trim();
+            const onPhone = heldFile(d) !== null;
             return (
               <Stagger key={d.id} index={i}>
                 <Pressable
@@ -123,11 +132,13 @@ export default function DocsScreen() {
                       { fontSize: 13, color: d.expiresOn ? C.warn : C.muted },
                       weight(d.expiresOn ? 500 : 400),
                     ]}>
-                    {d.expiresOn
-                      ? 'Expires ' + d.expiresOn
-                      : onPhone
-                        ? 'Offline'
-                        : 'Not downloaded'}
+                    {busy === d.id
+                      ? 'Downloading…'
+                      : d.expiresOn
+                        ? 'Expires ' + dmy(d.expiresOn)
+                        : onPhone
+                          ? 'On this phone'
+                          : 'Tap to download'}
                   </T>
                 </Pressable>
               </Stagger>

@@ -95,7 +95,7 @@ export default function AccountsScreen() {
     router.push(`/account?id=${encodeURIComponent(c.id)}&from=accounts`);
 
   return (
-    <AppFrame title="MBOS" activeTab={null} contentStyle={{ padding: 16, paddingBottom: 32 }}>
+    <AppFrame title="Customer accounts" activeTab={null} onBack={back.go} contentStyle={{ padding: 16, paddingBottom: 32 }}>
       <BackLink label={back.label} onPress={back.go} />
       <T s="h1">Customer accounts</T>
       <T s="small" style={{ color: C.muted, marginTop: 2 }}>

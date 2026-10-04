@@ -347,10 +347,18 @@ export function shortfalls(month: PerformanceMonth): string[] {
     );
   }
   for (const c of month.categories) {
-    if (c.status !== 'below-minimum') continue;
-    lines.push(
-      `${c.name} is at ${(c.actualBp / 100).toFixed(1)}%. The minimum is ${(c.minimumBp / 100).toFixed(0)}%.`,
-    );
+    if (c.status === 'below-minimum') {
+      lines.push(
+        `${c.name} is at ${(c.actualBp / 100).toFixed(1)}%. The minimum is ${(c.minimumBp / 100).toFixed(0)}%.`,
+      );
+    } else if (c.status === 'below-target') {
+      /* Above the floor and still short of what was asked. Left out, the Home
+         card said "You have reached every target set for you" to somebody
+         whose mix was under target — praise on the one line he reads. */
+      lines.push(
+        `${c.name} is at ${(c.actualBp / 100).toFixed(1)}%. The target is ${(c.targetBp / 100).toFixed(0)}%.`,
+      );
+    }
   }
   return lines;
 }

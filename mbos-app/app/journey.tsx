@@ -834,9 +834,13 @@ export default function JourneyScreen() {
                   Next stop
                 </T>
                 <View style={{ flex: 1 }} />
-                <T style={[{ fontSize: 13, color: late ? C.warn : C.success }, weight(500)]}>
-                  {late ? 'Running late' : 'On time'}
-                </T>
+                {/* Only where there is a time to be late against. With no
+                    planned time "On time" was a verdict about nothing. */}
+                {next.plannedAt ? (
+                  <T style={[{ fontSize: 13, color: late ? C.warn : C.success }, weight(500)]}>
+                    {late ? 'Running late' : 'On time'}
+                  </T>
+                ) : null}
               </View>
               <T style={[{ fontSize: 20, lineHeight: 26, letterSpacing: -0.3, color: C.ink, marginTop: 10 }, weight(600)]}>
                 {next.customerName}
@@ -861,7 +865,7 @@ export default function JourneyScreen() {
                   lat={next.gpsLat}
                   lng={next.gpsLng}
                   name={next.customerName}
-                  city={next.area}
+                  city={next.area ?? next.city}
                   style={{ flex: 1 }}
                 />
                 <PrimaryButton
@@ -972,7 +976,9 @@ export default function JourneyScreen() {
                           <T s="caption" style={{ marginTop: 1 }}>
                             {[
                               x.area,
-                              done
+                              x.status === 'skipped'
+                                ? 'skipped' + (x.skipReason ? ': ' + x.skipReason : '')
+                                : done
                                 ? 'arrived ' + (x.actualAt ? hhmm(x.actualAt) : '—')
                                 : x.plannedAt
                                   ? 'planned ' + x.plannedAt
@@ -989,7 +995,7 @@ export default function JourneyScreen() {
                         ) : null}
                         <Icon name="forward" size={18} color={C.muted} strokeWidth={1.5} />
                       </Pressable>
-                      <StopMapButton lat={x.gpsLat} lng={x.gpsLng} name={x.customerName} city={x.area} />
+                      <StopMapButton lat={x.gpsLat} lng={x.gpsLng} name={x.customerName} city={x.area ?? x.city} />
                       </>
                       )}
                     </PressCard>

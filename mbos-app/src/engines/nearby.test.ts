@@ -132,3 +132,9 @@ test('Next Best Visit is the head of the same list, not a second sum', () => {
 test('nothing worth stopping at answers null rather than the closest thing', () => {
   assert.equal(nextBestVisit(HERE, [shop('quiet', 50)], OPTS), null);
 });
+
+/* The handset stores the wire's word, capitalised. */
+test('an open lead counts whatever case its stage arrives in', () => {
+  assert.equal(nearby(HERE, [shop('live', 100, { leadStage: 'Negotiation' })], OPTS).length, 1);
+  assert.equal(nearby(HERE, [shop('won', 100, { leadStage: 'Converted' })], OPTS).length, 0);
+});
