@@ -16,6 +16,7 @@ import type { ExpenseKind } from '../src/engines/generated/expense-policy';
 import { pickDocuments, pickPhotos, takePhoto, type Picked } from '../src/native/capture';
 import { discardQueuedMedia } from '../src/sync/media';
 import { dmy, inrFromPaise, isoDate } from '../src/lib/format';
+import { checkFare } from '../src/lib/travel-leg';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { color as C, radius, weight, tabular, type BadgeTone } from '../src/theme/tokens';
@@ -168,7 +169,11 @@ export default function ExpensesScreen() {
 
   const kinds = CLAIM_KINDS;
   const kind = ex.kind || kinds[0]!.key;
-  const exAmtPaise = (parseInt(ex.amt.replace(/[^0-9]/g, ''), 10) || 0) * 100;
+  /* RUPEES AND PAISE, read by the same parser the bus fare uses. Digits only
+     made ₹12.50 impossible to claim, and reopening a refused ₹40.50 rounded it
+     to ₹41 on the way back in. */
+  const fare = ex.amt.trim() ? checkFare(ex.amt) : null;
+  const exAmtPaise = fare && fare.ok ? fare.paise : 0;
 
   /* The clock is read ONCE, in a state initialiser rather than during render —
      and it is what the sheet falls back to before he has picked a day. */
@@ -291,7 +296,7 @@ export default function ExpensesScreen() {
     setWhenWhy(refuse(x.spentOn));
     setEx({
       kind: was.key,
-      amt: String(Math.round(x.amountPaise / 100)),
+      amt: x.amountPaise % 100 === 0 ? String(x.amountPaise / 100) : (x.amountPaise / 100).toFixed(2),
       note: x.remarks ?? '',
       when: dmy(x.spentOn),
       whenIso: x.spentOn,
@@ -544,14 +549,19 @@ export default function ExpensesScreen() {
             <T style={[{ fontSize: 18, color: C.muted }, weight(600)]}>₹</T>
             <TextInput
               value={ex.amt}
-              onChangeText={(v) => patch({ amt: v.replace(/[^0-9]/g, '') })}
-              keyboardType="number-pad"
+              onChangeText={(v) => patch({ amt: v.replace(/[^0-9.]/g, '') })}
+              keyboardType="decimal-pad"
+              maxLength={9}
               placeholder="0"
               placeholderTextColor={C.faint}
               style={[{ flex: 1, minWidth: 0, alignSelf: 'stretch', fontSize: 18, color: C.ink, padding: 0 }, weight(600), tabular]}
             />
           </View>
-          {bad('amt') ? <T style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Enter what you spent.</T> : null}
+          {bad('amt') ? (
+            <T style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>
+              {fare && !fare.ok && fare.why.startsWith('Type the rupees') ? fare.why : 'Enter what you spent.'}
+            </T>
+          ) : null}
           <T style={{ fontSize: 14, lineHeight: 20, marginTop: 6, color: exOver ? C.warnInk : C.muted }}>{capLine}</T>
         </View>
 
