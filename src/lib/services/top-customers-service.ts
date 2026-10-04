@@ -173,25 +173,37 @@ type Raw = {
   back_office_am_name: string | null;
 };
 
-export async function topCustomersReport(
-  span: TopCustomerSpan,
-  metric: TopCustomerMetric,
-): Promise<TopCustomersReport> {
+/**
+ * This month's stored report for a span, generating it first if it is due and
+ * missing. Both tabs that read the report — Top customers and Focus customers
+ * — come through here, so they always describe the same months.
+ */
+export async function currentTopCustomerReport(span: TopCustomerSpan): Promise<{
+  month: string;
+  report: { id: string; total_paise: string; generated_at: string } | undefined;
+}> {
   const month = currentReportMonth(Date.now(), APP_TIMEZONE);
   // The screen is the last of the three callers, so it is never empty because
   // a cron line is missing from a crontab.
   await generateTopCustomerReports(month);
-
-  const [ctx, config] = await Promise.all([resolveScope(), getConfig()]);
-  const ids = scopedUserIds(ctx.scope);
-  const limit = config["topCustomers.count"];
-
   const [report] = (await db.execute(sql`
     select id, total_paise::text as total_paise,
            to_char(generated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as generated_at
       from top_customer_reports
      where month = ${month} and span_months = ${span}::int
   `)) as unknown as { id: string; total_paise: string; generated_at: string }[];
+  return { month, report };
+}
+
+export async function topCustomersReport(
+  span: TopCustomerSpan,
+  metric: TopCustomerMetric,
+): Promise<TopCustomersReport> {
+  const { month, report } = await currentTopCustomerReport(span);
+
+  const [ctx, config] = await Promise.all([resolveScope(), getConfig()]);
+  const ids = scopedUserIds(ctx.scope);
+  const limit = config["topCustomers.count"];
 
   // A tiebreaker in every ordering, or a rank could change between two loads.
   const order =

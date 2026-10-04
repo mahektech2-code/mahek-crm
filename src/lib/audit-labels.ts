@@ -424,6 +424,8 @@ const DESCRIBE: Record<string, Describer> = {
   /* ---- customers & leads */
   "customer.update": (c) => ["edited the details of", c.subject()],
   "customer.deactivate": (c) => ({ says: ["deactivated", c.subject()], changes: false }),
+  "customer.focus.add": (c) => ({ says: ["added", c.subject(), "to focus customers"], changes: false }),
+  "customer.focus.remove": (c) => ({ says: ["took", c.subject(), "off focus customers"], changes: false }),
   "customer.deactivation_rejected": (c) => ({ says: ["turned down a request to deactivate", c.subject()], changes: false }),
   "customer.reactivate": (c) => ({ says: ["reactivated", c.subject()], changes: false }),
   "customer.reactivation_rejected": (c) => ({ says: ["turned down a request to reactivate", c.subject()], changes: false }),

@@ -224,7 +224,7 @@ export function MonthlyTargetsScreen({
   /** The names each of the three seat filters can offer — `listAmFilterOptions`. */
   amOptions: { sales: string[]; salesManager: string[]; backOffice: string[] };
   /** Which tab is open — `?view=top` in the URL, so the report can be linked to. */
-  view?: "targets" | "top";
+  view?: "targets" | "top" | "focus";
   /**
    * The Top customers report, rendered on the server and handed in whole. It
    * shares this screen's header and nothing else: it is not cut by the target
@@ -396,10 +396,12 @@ export function MonthlyTargetsScreen({
         subtitle={
           view === "top"
             ? `${scopeLabel} · The company's biggest customers over whole months, generated on the 1st.`
+            : view === "focus"
+              ? `${scopeLabel} · Customers marked as needing attention to grow into top customers.`
             : `${periodLabel(period)} · ${scopeLabel} · Direct customers with a target for the month. Sales are counted net of GST.`
         }
         actions={
-          view === "top" ? null : (
+          view !== "targets" ? null : (
           <>
             <Select
               value={period}
@@ -462,15 +464,16 @@ export function MonthlyTargetsScreen({
 
       <Tabs
         value={view}
-        onChange={(v) => router.push(v === "top" ? `${basePath}?view=top` : basePath)}
+        onChange={(v) => router.push(v === "targets" ? basePath : `${basePath}?view=${v}`)}
         className="mb-4"
         tabs={[
           { key: "targets", label: "Targets" },
           { key: "top", label: "Top customers" },
+          { key: "focus", label: "Focus customers" },
         ]}
       />
 
-      {view === "top" ? (
+      {view !== "targets" ? (
         topContent
       ) : (
       <>
