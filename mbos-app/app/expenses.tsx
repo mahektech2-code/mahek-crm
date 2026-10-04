@@ -102,6 +102,7 @@ export default function ExpensesScreen() {
   const [ex, setEx] = React.useState<Draft>(EMPTY);
   /* EVERY failing field, not the first one. See `send`. */
   const [err, setErr] = React.useState<FieldKey[]>([]);
+  const [sendFail, setSendFail] = React.useState<string | null>(null);
   /* The day's own refusal, which is NOT a missing field and must not be folded
      into `err` — "Still needed: the day" with a day plainly on the button is
      the sort of message that sends somebody to fix what is not broken. */
@@ -157,6 +158,7 @@ export default function ExpensesScreen() {
   const patch = (p: Partial<Draft>) => {
     setEx((d) => ({ ...d, ...p }));
     setErr([]);
+    setSendFail(null);
     /* Only a change of DAY answers the day's refusal. Clearing it on a
        keystroke in the note would hide a real one. */
     if (p.whenIso !== undefined) setWhenWhy(null);
@@ -239,6 +241,7 @@ export default function ExpensesScreen() {
     setFixing(false);
     setFixingId(null);
     setErr([]);
+    setSendFail(null);
     setWhenWhy(null);
     const today = new Date();
     setEx({ ...EMPTY, kind: kinds[0]!.key, when: dmy(isoDate(today)), whenIso: isoDate(today) });
@@ -284,6 +287,7 @@ export default function ExpensesScreen() {
     setFixing(true);
     setFixingId(x.id);
     setErr([]);
+    setSendFail(null);
     setWhenWhy(refuse(x.spentOn));
     setEx({
       kind: was.key,
@@ -303,6 +307,7 @@ export default function ExpensesScreen() {
     setOpen(false);
     setEx(EMPTY);
     setErr([]);
+    setSendFail(null);
     setWhenWhy(null);
     setFixing(false);
     setFixingId(null);
@@ -318,6 +323,7 @@ export default function ExpensesScreen() {
     animateLayout();
     setEx((d) => ({ ...d, files: [...d.files, ...picked.map((p) => ({ ...p, fresh: true }))] }));
     setErr([]);
+    setSendFail(null);
   };
   const attach = async (how: 'camera' | 'gallery' | 'pdf') => {
     if (!room) return notify(`A claim can have ${maxFiles} files. Remove one to add another.`, 'error');
@@ -388,6 +394,7 @@ export default function ExpensesScreen() {
     if (dayRefusal) return setWhenWhy(dayRefusal);
 
     setSending(true);
+    setSendFail(null);
     try {
       await claimExpense({
         userId: boot.session?.user.id ?? '',
@@ -420,6 +427,11 @@ export default function ExpensesScreen() {
           : 'Claimed ' + inrFromPaise(exAmtPaise) + ' · sent to your manager',
         exOver ? 'warn' : 'success',
       );
+    } catch (e) {
+      /* Said ON THE SHEET — a toast from here is drawn under it and nobody
+         sees it — and the claim stays as typed so pressing again is all it
+         takes. It used to fail in silence. */
+      setSendFail(e instanceof Error && e.message ? `Not saved: ${e.message}` : 'Not saved. Press Send claim again.');
     } finally {
       setSending(false);
     }
@@ -683,6 +695,9 @@ export default function ExpensesScreen() {
             {'Still needed: ' + err.map((k) => MISSING_WORDS[k]).join(', ') + '.'}
           </T>
         </Presence>
+        {sendFail ? (
+          <T style={{ fontSize: 13, lineHeight: 19, color: C.danger, marginTop: 16 }}>{sendFail}</T>
+        ) : null}
 
         <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
           <SecondaryButton label="Cancel" onPress={() => close()} style={{ flex: 1 }} />

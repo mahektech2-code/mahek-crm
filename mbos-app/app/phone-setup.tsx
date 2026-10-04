@@ -12,6 +12,8 @@ import { color as C, radius, weight, type BadgeTone } from '../src/theme/tokens'
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { acknowledgePhoneSetup } from '../src/data/day-gate';
+import { getKv, setKv } from '../src/db';
+import { isoDate } from '../src/lib/format';
 import { readReadiness } from '../src/data/phone-readiness';
 import { RESTART_ANSWER } from '../src/engines/oem-keepalive';
 import type { ItemState, Readiness, ReadinessItem } from '../src/engines/phone-readiness';
@@ -94,6 +96,8 @@ function buttonLabel(action: NonNullable<ReadinessItem['action']>): string {
   }
 }
 
+const SENT_KEY = 'phoneSetup.autostartSentOn';
+
 export default function PhoneSetupScreen() {
   const back = useCameFrom('home');
   const notify = useStore((s) => s.notify);
@@ -110,17 +114,36 @@ export default function PhoneSetupScreen() {
    * setting never gets touched. So the ordering lives here, where the screen
    * can watch him come back.
    */
-  const [sent, setSent] = React.useState(false);
+  const [sent, setSentState] = React.useState(false);
+  const [readFailed, setReadFailed] = React.useState(false);
+
+  /*
+   * KEPT FOR THE DAY, not for the life of the screen. The trip to the OEM's
+   * autostart menu is exactly when Funtouch and MIUI reap the app, and a flag
+   * held in memory came back false — so he was sent to Settings a second time
+   * before "I turned it on" would appear.
+   */
+  const setSent = React.useCallback((v: boolean) => {
+    setSentState(v);
+    if (v) void setKv(SENT_KEY, isoDate(new Date())).catch(() => {});
+  }, []);
 
   const load = React.useCallback(() => {
     let alive = true;
-    void readReadiness(userId).then((r) => {
-      if (!alive) return;
-      /* A row done on the trip to Settings loses its button on the way back;
-         the list closes the gap rather than jumping under his thumb. */
-      animateLayout();
-      setReadiness(r);
-    });
+    setReadFailed(false);
+    void getKv(SENT_KEY)
+      .then((day) => alive && day === isoDate(new Date()) && setSentState(true))
+      .catch(() => {});
+    void readReadiness(userId)
+      .then((r) => {
+        if (!alive) return;
+        /* A row done on the trip to Settings loses its button on the way back;
+           the list closes the gap rather than jumping under his thumb. */
+        animateLayout();
+        setReadiness(r);
+      })
+      /* "Checking your phone…" that never resolves reads as a hung app. */
+      .catch(() => alive && setReadFailed(true));
     return () => {
       alive = false;
     };
@@ -246,9 +269,18 @@ export default function PhoneSetupScreen() {
       </Card>
 
       {readiness === null ? (
-        <T s="caption" style={{ marginTop: 16, textAlign: 'center' }}>
-          Checking your phone…
-        </T>
+        readFailed ? (
+          <View style={{ marginTop: 16, gap: 10 }}>
+            <T s="caption" style={{ textAlign: 'center', color: C.danger }}>
+              Could not check your phone. Try again.
+            </T>
+            <SecondaryButton label="Check again" onPress={load} />
+          </View>
+        ) : (
+          <T s="caption" style={{ marginTop: 16, textAlign: 'center' }}>
+            Checking your phone…
+          </T>
+        )
       ) : null}
 
       {readiness?.deadEnd ? (

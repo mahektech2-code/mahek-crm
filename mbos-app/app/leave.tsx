@@ -176,10 +176,12 @@ export default function LeaveScreen() {
       body: l.kind + ' · ' + whenOf(l),
       confirmLabel: 'Withdraw',
       run: () => {
-        void withdrawLeave(l.id).then(() => {
-          load();
-          notify('Request withdrawn');
-        });
+        void withdrawLeave(l.id)
+          .then(() => {
+            load();
+            notify('Request withdrawn');
+          })
+          .catch(() => notify('Could not withdraw it. Try again.', 'error'));
       },
     });
 
