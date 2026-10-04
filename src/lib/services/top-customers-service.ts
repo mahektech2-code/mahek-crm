@@ -93,24 +93,47 @@ export async function generateTopCustomerReports(month: string): Promise<{ gener
             from ${windowed}
            group by 1, 2
         ),
+        /*
+         * SALES BILLS, from the bills ledger, counted beside the orders rather
+         * than inferred from them: most orders here carry one bill, but an
+         * order not yet billed and a bill the Payment Status tab raised are
+         * both ordinary, and the column says bills. bill_date is a date, so
+         * the window compares dates with dates and no zone is involved.
+         * Only customers who bought in the window get a row — the report is
+         * a ranking of sales, and a bill with no counting order behind it
+         * does not put a customer on it.
+         */
+        b as (
+          select bl.customer_id,
+                 to_char(bl.bill_date, 'YYYY-MM') as month,
+                 count(*)::int as n
+            from bills bl
+           where bl.bill_date >= ${`${fromMonth}-01`}::date
+             and bl.bill_date <  ${`${month}-01`}::date
+             and bl.customer_id in (select customer_id from per)
+           group by 1, 2
+        ),
         m as (
           select to_char(gs, 'YYYY-MM') as month
             from generate_series(${`${fromMonth}-01`}::date,
                                  ${`${toMonth}-01`}::date,
                                  interval '1 month') gs
         )
-        insert into top_customer_report_rows (id, report_id, customer_id, orders, value_paise, months)
+        insert into top_customer_report_rows (id, report_id, customer_id, orders, value_paise, bills, months)
         select 'tcrr_' || substr(md5(${id} || per.customer_id), 1, 16),
                ${id},
                per.customer_id,
                sum(per.n)::int,
                sum(per.v)::bigint,
+               coalesce((select sum(b.n) from b where b.customer_id = per.customer_id), 0)::int,
                (select jsonb_agg(jsonb_build_object(
                          'month', m.month,
                          'valuePaise', coalesce(p2.v, 0),
-                         'orders', coalesce(p2.n, 0)) order by m.month)
+                         'orders', coalesce(p2.n, 0),
+                         'bills', coalesce(b2.n, 0)) order by m.month)
                   from m
-                  left join per p2 on p2.customer_id = per.customer_id and p2.month = m.month)
+                  left join per p2 on p2.customer_id = per.customer_id and p2.month = m.month
+                  left join b b2 on b2.customer_id = per.customer_id and b2.month = m.month)
           from per
          group by per.customer_id
       `);
@@ -137,6 +160,8 @@ export type TopCustomerRow = {
   backOfficeAmName: string | null;
   orders: number;
   valuePaise: number;
+  /** Sales bills dated in the window. */
+  bills: number;
   months: { month: string; valuePaise: number; orders: number }[];
 };
 
@@ -163,6 +188,7 @@ type Raw = {
   rank: number;
   orders: number;
   value_paise: string;
+  bills: number;
   months: { month: string; valuePaise: number | string; orders: number }[];
   id: string;
   name: string;
@@ -222,6 +248,7 @@ export async function topCustomersReport(
         select top.rank,
                top.orders,
                top.value_paise::text as value_paise,
+               top.bills,
                top.months,
                customers.id,
                customers.name,
@@ -270,6 +297,7 @@ export async function topCustomersReport(
       backOfficeAmName: r.back_office_am_name,
       orders: Number(r.orders),
       valuePaise: Number(r.value_paise),
+      bills: Number(r.bills),
       months: r.months.map((m) => ({
         month: m.month,
         valuePaise: Number(m.valuePaise),

@@ -9644,8 +9644,12 @@ export const topCustomerReportRows = pgTable(
       .references(() => customers.id, { onDelete: "cascade" }),
     orders: integer("orders").notNull(),
     valuePaise: bigint("value_paise", { mode: "number" }).notNull(),
+    /** Sales bills dated in the window — from the bills ledger, not the orders. */
+    bills: integer("bills").notNull().default(0),
     /** One entry per month of the window, in order, zeros included. */
-    months: jsonb("months").$type<{ month: string; valuePaise: number; orders: number }[]>().notNull(),
+    months: jsonb("months")
+      .$type<{ month: string; valuePaise: number; orders: number; bills?: number }[]>()
+      .notNull(),
   },
   (t) => [
     uniqueIndex("top_customer_report_rows_key").on(t.reportId, t.customerId),
