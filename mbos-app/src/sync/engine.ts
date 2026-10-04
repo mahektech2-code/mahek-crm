@@ -7,17 +7,19 @@ import {
   markRejected,
   markSynced,
   markSyncing,
+  markUnsent,
   readyItems,
   recoverInterrupted,
+  pruneSynced,
+  batchLimit,
   type QueueItem,
   autoRetryStuck,
   anythingDue,
   whenQueued,
 } from './queue';
-import { applyPull } from './pull';
+import { applyPull, missingCustomerIds } from './pull';
 import { flush as flushTrail } from './trail';
 import { runMediaQueue } from './media';
-import { isoDate } from '../lib/format';
 
 /**
  * The sync loop.
@@ -63,68 +65,21 @@ export async function syncNow(opts: { manual?: boolean } = {}): Promise<SyncOutc
   void checkLeftShopFromLastKnown();
 
   if (running) return { ...empty, reason: 'Already sending. Please wait.' };
+  if (!(await signedIn())) return { ...empty, reason: 'Nobody is signed in.' };
   if (!(await isOnline())) return { ...empty, reason: 'No signal. Everything waits to send.' };
 
   running = true;
   try {
-    await recoverInterrupted();
-    /* Refused and exhausted records go back in the queue on their own, every
-       few hours — see `autoRetryStuck`. Never allowed to stop the sync. */
-    await autoRetryStuck().catch(() => 0);
-
-    const items = await readyItems();
-    let accepted = 0;
-    let rejected = 0;
-    let failed = 0;
-
-    if (items.length) {
-      await markSyncing(items.map((i) => i.id));
-    }
-
-    const cursor = (await getKv('pullCursor')) ?? '';
-    let response: api.SyncResponse;
-
-    try {
-      response = await api.postSync({
-        cursor,
-        items: items.map(toWireItem),
-      });
-    } catch (e) {
-      /* The whole request failed — the tower dropped, the token expired, the
-         server is down. Every item goes back to the queue with its backoff
-         advanced; none of them is lost and none is assumed delivered. */
-      const reason = e instanceof Error ? e.message : 'Could not reach MahekOne';
-      for (const item of items) await markFailure(item, reason);
-      return { ...empty, ran: true, pushed: items.length, failed: items.length, reason };
-    }
-
-    const byId = new Map(items.map((i) => [i.id, i]));
-    for (const result of response.results) {
-      const item = byId.get(result.queueId);
-      if (!item) continue;
-
-      if (result.status === 'accepted') {
-        await markSynced(item, result.serverReceivedAt ?? null);
-        if (result.serverNumber) await stampServerNumber(item, result.serverNumber);
-        accepted += 1;
-      } else if (result.status === 'rejected') {
-        await markRejected(item, result.code ?? 'validation', result.message ?? 'The office did not accept this.');
-        await onRejection(item, result.code ?? 'validation', result.message ?? '');
-        rejected += 1;
-      } else {
-        await markFailure(item, result.message ?? 'The office could not take this yet. It will try again.');
-        failed += 1;
-      }
-    }
-
-    let pulled = 0;
-    if (response.pull) {
-      pulled = await applyPull(response.pull);
-      if (response.pull.cursor) await setKv('pullCursor', response.pull.cursor);
-      await setKv('lastPullAt', String(Date.now()));
-    }
-
-    return { ran: true, pushed: items.length, accepted, rejected, failed, pulled };
+    return await onePass(empty, opts);
+  } catch (e) {
+    /*
+     * A PASS THAT THROWS SAYS SO. Nothing caught here before, so a pull that
+     * would not apply rejected `syncNow`, the Sync screen's "Send now" showed
+     * no toast at all, and the background tick failed in silence every minute
+     * — the phone simply stopped updating with nothing anywhere saying why.
+     */
+    const why = e instanceof Error && e.message ? e.message : 'Something went wrong on this phone';
+    return { ...empty, ran: true, reason: `Your book did not refresh: ${why}` };
   } finally {
     running = false;
     /* Media goes after records, always. The parent has to exist on the server
@@ -134,6 +89,132 @@ export async function syncNow(opts: { manual?: boolean } = {}): Promise<SyncOutc
        it, so it takes whatever signal is left after the work has gone up. */
     void flushTrail();
   }
+}
+
+async function onePass(empty: SyncOutcome, _opts: { manual?: boolean }): Promise<SyncOutcome> {
+  /* Media is NOT reset here — only on a cold start. See `recoverInterrupted`. */
+  await recoverInterrupted(Date.now(), { media: false });
+  /* Refused and exhausted records go back in the queue on their own, every
+     few hours — see `autoRetryStuck`. Never allowed to stop the sync. */
+  await autoRetryStuck().catch(() => 0);
+  await pruneSynced().catch(() => undefined);
+
+  const items = await readyItems(Date.now(), await batchLimit());
+  let accepted = 0;
+  let rejected = 0;
+  let failed = 0;
+
+  if (items.length) {
+    await markSyncing(items.map((i) => i.id));
+  }
+
+  const cursor = (await getKv('pullCursor')) ?? '';
+  let response: api.SyncResponse;
+
+  /* Shops the office says are his and this phone was never sent — see
+     `rememberMissing`. A variable rather than a literal so the extra field
+     rides through `postSync`'s spread without that function's own type
+     having to learn it; the server reads it as optional. */
+  const body = { cursor, items: items.map(toWireItem), missingIds: await missingCustomerIds() };
+
+  try {
+    response = await api.postSync(body);
+  } catch (e) {
+    /*
+     * NOBODY IS SIGNED IN ANY MORE, which is not the item's fault.
+     *
+     * A lapsed refresh, a released handset, a closed account: every item in
+     * the batch used to burn an attempt on it, and after six the day's
+     * orders were `failed` and everything behind them blocked — for a
+     * reason none of them had anything to do with. They wait, uncounted,
+     * and the pass stops; the banner that sends him back to sign in is
+     * raised where the refusal is recognised.
+     */
+    if (authLost(e)) {
+      const reason = e instanceof Error ? e.message : 'Sign in again to send this.';
+      for (const item of items) await markUnsent(item, reason);
+      return { ...empty, ran: true, pushed: 0, reason };
+    }
+    /* The whole request failed — the tower dropped, the server is down.
+       Every item goes back to the queue with its backoff advanced; none of
+       them is lost and none is assumed delivered. */
+    const reason = e instanceof Error ? e.message : 'Could not reach MahekOne';
+    for (const item of items) await markFailure(item, reason);
+    return { ...empty, ran: true, pushed: items.length, failed: items.length, reason };
+  }
+
+  const byId = new Map(items.map((i) => [i.id, i]));
+  for (const result of response.results) {
+    const item = byId.get(result.queueId);
+    if (!item) continue;
+
+    if (result.status === 'accepted' || result.status === 'conflict') {
+      /* A CONFLICT IS AN ACCEPTANCE. The server applied the write and says
+         somebody else had changed the record first; it used to fall to
+         `markFailure`, fail six times and then be resent every three hours
+         for ever, for a write that had landed on the first attempt. */
+      await markSynced(item, result.serverReceivedAt ?? null);
+      if (result.serverNumber) await stampServerNumber(item, result.serverNumber);
+      accepted += 1;
+    } else if (result.status === 'rejected' && isOwnDuplicate(item, result.code)) {
+      /*
+       * "ALREADY RECORDED" ABOUT OUR OWN ID MEANS IT LANDED.
+       *
+       * An order or a receipt is keyed on an id this phone minted, so the
+       * office finding that id already written can only mean an earlier
+       * send of this very record got there — a batch that outlived the
+       * phone's patience, then resent. Read as a refusal it raised "Order
+       * not accepted", a ring-back task and a blocked payment behind it, all
+       * about an order the office had.
+       */
+      await markSynced(item, result.serverReceivedAt ?? null);
+      if (result.serverNumber) await stampServerNumber(item, result.serverNumber);
+      accepted += 1;
+    } else if (result.status === 'rejected') {
+      await markRejected(item, result.code ?? 'validation', result.message ?? 'The office did not accept this.');
+      await onRejection(item, result.code ?? 'validation', result.message ?? '');
+      rejected += 1;
+    } else {
+      await markFailure(item, result.message ?? 'The office could not take this yet. It will try again.');
+      failed += 1;
+    }
+  }
+
+  let pulled = 0;
+  if (response.pull) {
+    pulled = await applyPull(response.pull);
+    if (response.pull.cursor) await setKv('pullCursor', response.pull.cursor);
+    await setKv('lastPullAt', String(Date.now()));
+  }
+
+  return { ran: true, pushed: items.length, accepted, rejected, failed, pulled };
+}
+
+/** Order and payment creates are keyed on our own id — see `syncNow`. */
+export function isOwnDuplicate(item: Pick<QueueItem, 'entityType' | 'op'>, code: string | undefined): boolean {
+  return code === 'duplicate' && item.op === 'create' && (item.entityType === 'order' || item.entityType === 'payment');
+}
+
+/*
+ * THE TWO QUESTIONS ASKED OF THE SIGN-IN, asked defensively.
+ *
+ * `sessionOpen` and `isAuthLost` arrive with the sign-in work (data/session.ts
+ * and sync/api.ts). Read by name so this file compiles whichever lands first:
+ * absent, a session is assumed and nothing is treated as a lost sign-in, which
+ * is exactly how this behaved before either existed.
+ */
+async function signedIn(): Promise<boolean> {
+  try {
+    const session = (await import('../data/session')) as { sessionOpen?: () => boolean | Promise<boolean> };
+    return session.sessionOpen ? Boolean(await session.sessionOpen()) : true;
+  } catch {
+    return true;
+  }
+}
+
+function authLost(e: unknown): boolean {
+  const check = (api as unknown as { isAuthLost?: (e: unknown) => boolean }).isAuthLost;
+  return check ? check(e) : false;
 }
 
 function toWireItem(item: QueueItem): api.WireItem {
@@ -170,24 +251,34 @@ async function stampServerNumber(item: QueueItem, serverNumber: string): Promise
 }
 
 /**
- * What a refusal costs the salesman, and what he is owed in return.
+ * What a refusal costs the salesman: one bell, ONCE.
  *
- * A notification alone is not enough for an order: he stood in the shop and
- * told the customer it was placed. So a rejected order also raises a task
- * against that customer — a bell can be missed, a task on the list cannot.
+ * It used to raise a bell AND a local "Call the customer" task on every
+ * refusal — and `autoRetryStuck` resends refused records every three hours, so
+ * an order that was still wrong added a new High task and a new bell to his
+ * list every three hours the app was open. Each local task was also queued up
+ * to the office as a task of its own. The office already raises the ring-back
+ * task for a refused order itself, once, so the phone's copy was a second task
+ * about one refusal from the very first time. It is gone; the bell is raised
+ * the first time a record is refused for a reason, and not again for the same
+ * one.
  */
 async function onRejection(item: QueueItem, code: string, message: string): Promise<void> {
-  const { notify } = await import('../data/notifications');
-  const payload = JSON.parse(item.payload) as { customerId?: string; customerName?: string };
-  const who = payload.customerName ? ` · ${payload.customerName}` : '';
-
-  await notify({
-    title: item.entityType === 'order' ? 'Order not accepted' : 'Not accepted by the office',
-    body: message + who,
-    kind: 'danger',
-    href: '/rejections',
-    priority: 1,
-  });
+  const key = `rejectionNotified:${item.id}`;
+  const told = await getKv(key);
+  if (told !== code) {
+    await setKv(key, code);
+    const { notify } = await import('../data/notifications');
+    const payload = safeParse(item.payload) as { customerName?: string } | undefined;
+    const who = payload?.customerName ? ` · ${payload.customerName}` : '';
+    await notify({
+      title: item.entityType === 'order' ? 'Order not accepted' : 'Not accepted by the office',
+      body: message + who,
+      kind: 'danger',
+      href: '/rejections',
+      priority: 1,
+    });
+  }
 
   /*
    * A pick the office refused has to give the day back.
@@ -205,17 +296,6 @@ async function onRejection(item: QueueItem, code: string, message: string): Prom
       `UPDATE journey_days SET dayState = 'agreed', picked = 0 WHERE id = ? AND dayState = 'planned'`,
       [item.entityId],
     );
-  }
-
-  if (item.entityType === 'order' && payload.customerId) {
-    const { createTask } = await import('../data/tasks');
-    await createTask({
-      title: `Call ${payload.customerName ?? 'the customer'}. The order was not accepted`,
-      description: `${message} (${code})`,
-      customerId: payload.customerId,
-      priority: 'High',
-      dueDate: isoDate(new Date()),
-    });
   }
 }
 
@@ -272,6 +352,8 @@ export function startBackgroundSync(intervalMs = 60_000) {
 
   if (!listenerAttached) {
     listenerAttached = true;
+    /* The listener outlives a sign-out — it is attached once per process — so
+       `syncNow` asks whether anybody is signed in before it does anything. */
     NetInfo.addEventListener((state) => {
       if (state.isConnected && state.isInternetReachable !== false) void syncNow();
     });
