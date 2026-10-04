@@ -140,17 +140,18 @@ export default function PickScreen() {
      a record — and that difference lives in this caller rather than in the map. */
   const [asMap, setAsMap] = React.useState(false);
   const [today] = React.useState(() => isoDate(new Date()));
-  /* The freshest fix already known, which costs no battery and no wait —
-     `whereNow` never asks the radio. Null is ordinary and handled: see
-     `pickOrigin`, which then measures from the city instead. */
+  /* A fix no older than the office calls fresh — `measureFrom` refuses
+     yesterday's last shop rather than sorting today around it. Null is
+     ordinary and handled: see `pickOrigin`, which then measures from the city
+     instead. */
   const [fix, setFix] = React.useState<{ lat: number; lng: number } | null>(null);
 
   React.useEffect(() => {
     let live = true;
     void import('../src/native/where')
-      .then((m) => m.whereNow())
+      .then((m) => m.measureFrom())
       .then((w) => {
-        if (live && w?.lat != null && w?.lng != null) setFix({ lat: w.lat, lng: w.lng });
+        if (live && !('reason' in w)) setFix({ lat: w.lat, lng: w.lng });
       })
       .catch(() => {});
     return () => {
