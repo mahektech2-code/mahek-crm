@@ -26,6 +26,7 @@ import { AreaField, AreaPickerPage } from './area-picker';
 import { rememberPickedArea } from '../../data/lead-areas';
 import { LeadVoicePanel, useLeadVoice } from './lead-voice';
 import type { LeadVoiceFill } from '../../engines/lead-voice';
+import { answeredDetails, detailsSummary, fillTouchesDetails } from '../../engines/lead-form';
 import {
   CUSTOMER_TYPES,
   daysBetween,
@@ -480,6 +481,9 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
   /* Asked at the qualify step whatever happens here, and optional on the
      form — but a card usually prints it, and a scan can read it. */
   const [gstin, setGstin] = React.useState('');
+  /* Whether "What you found in the shop" is open. A fill that lands there
+     opens it, and a refusal about one of its fields opens it too. */
+  const [detailsOpen, setDetailsOpen] = React.useState(false);
   const scanCfg = useLeadScan();
   const [scanning, setScanning] = React.useState(false);
   /* Bumped on every fresh scan, so the panel starts blank rather than with
@@ -601,6 +605,7 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
     setCompetitor('');
     setShopPhotoId(null);
     setGstin('');
+    setDetailsOpen(false);
     setScanning(false);
     setVoicing(false);
     setErr(null);
@@ -662,6 +667,7 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
     if (fill.litres) setLitres(fill.litres);
     if (fill.decisionMaker) setDecisionMaker(fill.decisionMaker);
     if (fill.competitor) setCompetitor(fill.competitor);
+    if (fillTouchesDetails(fill)) setDetailsOpen(true);
     let outside: string | null = null;
     const loc = fill.location;
     if (loc?.kind === 'area') {
@@ -698,6 +704,18 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
     refusal.shake();
   };
 
+  const detailsCount = answeredDetails({
+    gstin,
+    potential,
+    followUp,
+    address,
+    custType,
+    litres,
+    decisionMaker,
+    competitor,
+    shopPhotoId,
+  });
+
   const save = async () => {
     /* One lead per press. `createLead` awaits a duplicate check, a GPS fix and
        a write, and a second tap inside that window is the ordinary way a shop
@@ -730,7 +748,10 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
     }
     const gst = normaliseGstin(gstin);
     const gstWrong = gstinRefusal(gst);
-    if (gstWrong) return refuse(gstWrong);
+    if (gstWrong) {
+      setDetailsOpen(true);
+      return refuse(gstWrong);
+    }
 
     saving.current = true;
     try {
@@ -1166,19 +1187,6 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
         </View>
 
         <View style={{ marginTop: 12 }}>
-          <SectionLabel style={{ marginBottom: 6 }}>GST number</SectionLabel>
-          <Input
-            value={gstin}
-            onChangeText={(v) => { setGstin(v.toUpperCase()); setErr(null); }}
-            placeholder="27AAPFU0939F1ZV"
-            autoCapitalize="characters"
-            autoCorrect={false}
-            maxLength={20}
-          />
-          <T s="caption" style={{ marginTop: 6 }}>If they have one. It is needed later to qualify the lead.</T>
-        </View>
-
-        <View style={{ marginTop: 12 }}>
           {areas.kind === 'none' ? (
             <T style={{ color: C.warnInk }}>
               No area is set for you yet. You can add leads only in your own area. Ask the office to set one.
@@ -1205,6 +1213,11 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
               )}
             </>
           )}
+        </View>
+
+        <View style={{ marginTop: 12 }}>
+          <SectionLabel style={{ marginBottom: 6 }}>What they want</SectionLabel>
+          <Input value={requirement} onChangeText={setRequirement} placeholder="Thinner for a spray booth" />
         </View>
 
         <View style={{ marginTop: 12 }}>
@@ -1242,95 +1255,125 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
           </View>
         ) : null}
 
-        <View style={{ marginTop: 12 }}>
-          <SectionLabel style={{ marginBottom: 6 }}>How much they can buy a month</SectionLabel>
-          <Input
-            value={potential}
-            onChangeText={setPotential}
-            placeholder="40000"
-            keyboardType="number-pad"
-          />
-          <T s="caption" style={{ marginTop: 6 }}>In rupees, about. Leave it empty if you do not know.</T>
-        </View>
-
-        <View style={{ marginTop: 12 }}>
-          <SectionLabel style={{ marginBottom: 6 }}>Next follow-up on</SectionLabel>
-          <Pressable
-            onPress={() => setCal(true)}
-            accessibilityRole="button"
-            style={{
-              minHeight: 52,
-              borderWidth: 1,
-              borderColor: C.border,
-              borderRadius: radius.lg,
-              backgroundColor: C.surface,
-              justifyContent: 'center',
-              paddingHorizontal: 14,
-            }}>
-            <T style={{ fontSize: 16, color: followUp ? C.ink : C.faint }}>
-              {followUp ? dmy(followUp) : 'Choose a day'}
-            </T>
-          </Pressable>
-        </View>
-
+        {/*
+          * WHAT YOU FOUND IN THE SHOP, behind one tap. The first screen is what
+          * he can say at the door; this is what he saw inside. Closed, it says
+          * how many answers it is holding, so nothing filled is ever out of
+          * sight without a word about it — see `engines/lead-form.ts`.
+          */}
         <Divider style={{ marginTop: 20, marginBottom: 4 }} />
-        <SectionLabel style={{ marginTop: 12 }}>What you found in the shop</SectionLabel>
-        <T s="caption" style={{ marginTop: 4 }}>
-          All optional. Save what you have. Add the rest later.
-        </T>
-
-        <View style={{ marginTop: 12 }}>
-          <SectionLabel style={{ marginBottom: 6 }}>Where the shop is</SectionLabel>
-          <Input value={address} onChangeText={setAddress} placeholder="Shop 4, Itwari Market, near the bus stand" />
-        </View>
-
-        <View style={{ marginTop: 12 }}>
-          <SectionLabel style={{ marginBottom: 6 }}>What kind of business</SectionLabel>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-            {CUSTOMER_TYPES.map((t) => (
-              <Choice
-                key={t.value}
-                label={t.label}
-                selected={custType === t.value}
-                onPress={() => setCustType(custType === t.value ? null : t.value)}
-                style={{ paddingHorizontal: 14 }}
-              />
-            ))}
+        <Pressable
+          onPress={() => setDetailsOpen((o) => !o)}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: detailsOpen }}
+          style={{ marginTop: 8, minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <View style={{ flex: 1 }}>
+            <SectionLabel>What you found in the shop</SectionLabel>
+            <T s="caption" style={{ marginTop: 4 }}>
+              {detailsOpen ? 'All optional. Save what you have. Add the rest later.' : detailsSummary(detailsCount)}
+            </T>
           </View>
-        </View>
+          <View style={{ transform: [{ rotate: detailsOpen ? '90deg' : '0deg' }] }}>
+            <Icon name="forward" size={18} color={C.muted} />
+          </View>
+        </Pressable>
 
-        <View style={{ marginTop: 12 }}>
-          <SectionLabel style={{ marginBottom: 6 }}>What they want</SectionLabel>
-          <Input value={requirement} onChangeText={setRequirement} placeholder="Thinner for a spray booth" />
-        </View>
+        {detailsOpen ? (
+          <>
+            <View style={{ marginTop: 12 }}>
+              <SectionLabel style={{ marginBottom: 6 }}>GST number</SectionLabel>
+              <Input
+                value={gstin}
+                onChangeText={(v) => { setGstin(v.toUpperCase()); setErr(null); }}
+                placeholder="27AAPFU0939F1ZV"
+                autoCapitalize="characters"
+                autoCorrect={false}
+                maxLength={20}
+              />
+              <T s="caption" style={{ marginTop: 6 }}>If they have one. It is needed later to qualify the lead.</T>
+            </View>
 
-        <View style={{ marginTop: 12 }}>
-          <SectionLabel style={{ marginBottom: 6 }}>How much a month</SectionLabel>
-          <Input value={litres} onChangeText={setLitres} placeholder="200" keyboardType="number-pad" />
-          {/* LITRES, not cans. There is no pack size agreed yet — a shop says
-              "about two hundred litres" long before anybody knows what they
-              will buy it as. */}
-          <T s="caption" style={{ marginTop: 6 }}>In litres, as they say it.</T>
-        </View>
+            <View style={{ marginTop: 12 }}>
+              <SectionLabel style={{ marginBottom: 6 }}>How much they can buy a month</SectionLabel>
+              <Input
+                value={potential}
+                onChangeText={setPotential}
+                placeholder="40000"
+                keyboardType="number-pad"
+              />
+              <T s="caption" style={{ marginTop: 6 }}>In rupees, about. Leave it empty if you do not know.</T>
+            </View>
 
-        <View style={{ marginTop: 12 }}>
-          <SectionLabel style={{ marginBottom: 6 }}>Who decides</SectionLabel>
-          <Input value={decisionMaker} onChangeText={setDecisionMaker} placeholder="The owner, Mr Patil" />
-          <T s="caption" style={{ marginTop: 6 }}>If that is not the person you spoke to.</T>
-        </View>
+            <View style={{ marginTop: 12 }}>
+              <SectionLabel style={{ marginBottom: 6 }}>Next follow-up on</SectionLabel>
+              <Pressable
+                onPress={() => setCal(true)}
+                accessibilityRole="button"
+                style={{
+                  minHeight: 52,
+                  borderWidth: 1,
+                  borderColor: C.border,
+                  borderRadius: radius.lg,
+                  backgroundColor: C.surface,
+                  justifyContent: 'center',
+                  paddingHorizontal: 14,
+                }}>
+                <T style={{ fontSize: 16, color: followUp ? C.ink : C.faint }}>
+                  {followUp ? dmy(followUp) : 'Choose a day'}
+                </T>
+              </Pressable>
+            </View>
 
-        <View style={{ marginTop: 12 }}>
-          <SectionLabel style={{ marginBottom: 6 }}>Who they buy from now</SectionLabel>
-          <Input value={competitor} onChangeText={setCompetitor} placeholder="Asian Paints" />
-        </View>
+            <View style={{ marginTop: 12 }}>
+              <SectionLabel style={{ marginBottom: 6 }}>Where the shop is</SectionLabel>
+              <Input value={address} onChangeText={setAddress} placeholder="Shop 4, Itwari Market, near the bus stand" />
+            </View>
 
-        <View style={{ marginTop: 12 }}>
-          <SectionLabel style={{ marginBottom: 6 }}>Shop photo</SectionLabel>
-          <DashedButton
-            label={shopPhotoId ? 'Photo taken \u2713 \u00b7 retake' : 'Take a photo'}
-            onPress={shootShop}
-          />
-        </View>
+            <View style={{ marginTop: 12 }}>
+              <SectionLabel style={{ marginBottom: 6 }}>What kind of business</SectionLabel>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                {CUSTOMER_TYPES.map((t) => (
+                  <Choice
+                    key={t.value}
+                    label={t.label}
+                    selected={custType === t.value}
+                    onPress={() => setCustType(custType === t.value ? null : t.value)}
+                    style={{ paddingHorizontal: 14 }}
+                  />
+                ))}
+              </View>
+            </View>
+
+            <View style={{ marginTop: 12 }}>
+              <SectionLabel style={{ marginBottom: 6 }}>How much a month</SectionLabel>
+              <Input value={litres} onChangeText={setLitres} placeholder="200" keyboardType="number-pad" />
+              {/* LITRES, not cans. There is no pack size agreed yet — a shop says
+                  "about two hundred litres" long before anybody knows what they
+                  will buy it as. */}
+              <T s="caption" style={{ marginTop: 6 }}>In litres, as they say it.</T>
+            </View>
+
+            <View style={{ marginTop: 12 }}>
+              <SectionLabel style={{ marginBottom: 6 }}>Who decides</SectionLabel>
+              <Input value={decisionMaker} onChangeText={setDecisionMaker} placeholder="The owner, Mr Patil" />
+              <T s="caption" style={{ marginTop: 6 }}>If that is not the person you spoke to.</T>
+            </View>
+
+            <View style={{ marginTop: 12 }}>
+              <SectionLabel style={{ marginBottom: 6 }}>Who they buy from now</SectionLabel>
+              <Input value={competitor} onChangeText={setCompetitor} placeholder="Asian Paints" />
+            </View>
+
+            <View style={{ marginTop: 12 }}>
+              <SectionLabel style={{ marginBottom: 6 }}>Shop photo</SectionLabel>
+              <DashedButton
+                label={shopPhotoId ? 'Photo taken \u2713 \u00b7 retake' : 'Take a photo'}
+                onPress={shootShop}
+              />
+            </View>
+
+          </>
+        ) : null}
 
         <Presence show={!!err}>
           <Animated.View

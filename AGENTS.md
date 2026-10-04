@@ -6179,6 +6179,31 @@ a day. Autostart is confirmed by the salesman because no API can read it, and
 the mark lives in the handset's own store, which a reinstall wipes exactly
 when the switch resets.
 
+**AND IT IS THE ONLY LIST, on all three screens that set a phone up.** The
+walkthrough, the start-of-day gate (`/phone-setup`) and Keep tracking on
+(`/tracking-setup`) explained the same switches with three sets of titles,
+three copies of "open the autostart screen" and two separate records of "he
+says it is on". A salesman sent from the gate to Keep tracking on read a second
+list about the same phone, and the question he rang back with was which one was
+right. `engines/setup-steps.ts` lays each screen over `setupSteps` and
+`components/setup/SetupSteps.tsx` draws the rows and runs the buttons; each
+screen keeps its own route, header and purpose. The gate's RULE did not move —
+`phone-readiness.ts` still decides which steps hold the day — it is laid over
+the shared rows, which then say "Needed before you punch in" under the same
+title every other screen gives them. One "I turned it on" now writes both the
+walkthrough's mark and the gate's acknowledgement, so a phone confirmed on one
+screen is not asked again on the next. `keepAliveSteps` is gone;
+`autostartWhere` is the one sentence for where the switch is.
+
+**THE NEW LEAD FORM ASKS AT THE DOOR AND KEEPS THE SHOP BEHIND ONE TAP.** It
+was seventeen fields in one sheet. The first screen is now what the save
+requires and what can be said with the owner waiting — the kind of sale, who,
+the shop, the mobile, the area, how he found them and what they want — and
+"What you found in the shop" holds the rest. Nothing filled is hidden without a
+word: closed, it reads "3 more answered — show"; a voice or card fill landing
+there opens it; a GST refusal opens it. `engines/lead-form.ts` is the rule.
+Only the layout changed — every field is still on the form and still sent.
+
 **"NO FIX TODAY" WAS FOUR DIFFERENT PROBLEMS WEARING ONE SENTENCE.** The
 background permission set to "while using the app", location switched off on
 the phone itself, no signal since breakfast, and a flat battery — four causes,
