@@ -20,7 +20,7 @@ export const dynamic = "force-dynamic";
 /* Three photographs going up a 2G link, then one vision call. */
 export const maxDuration = 120;
 
-/* A handset photograph is resized to 1600px and JPEG-compressed before it is
+/* A handset photograph is resized to 2048px and JPEG-compressed before it is
    sent, which lands well under a megabyte; this is the ceiling for one that
    somehow was not, not a size anybody should approach. */
 const MAX_BYTES = 8 * 1024 * 1024;

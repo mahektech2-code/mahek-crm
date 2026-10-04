@@ -74,6 +74,29 @@ export function tidy(value: string | null | undefined, max = 300): string | null
   return s.slice(0, max);
 }
 
+/* Devanagari through Malayalam (Hindi, Marathi, Bengali, Gurmukhi, Gujarati,
+   Odia, Tamil, Telugu, Kannada, Malayalam) and the Arabic block Urdu is
+   written in. A field carrying any of it is one the office cannot read. */
+const INDIAN_SCRIPT = /[\u0900-\u0DFF\u0600-\u06FF]/;
+
+/* Where each script's digit zero sits. A phone number or PIN printed ०२२ or
+   ೦೮೦ is digits the ASCII-only `\D` would strip, so it is converted first. */
+const DIGIT_ZEROS = [0x0660, 0x06f0, 0x0966, 0x09e6, 0x0a66, 0x0ae6, 0x0b66, 0x0be6, 0x0c66, 0x0ce6, 0x0d66];
+
+/** Indian-script digits as 0-9; everything else untouched. */
+function asciiDigits(value: string): string {
+  return value.replace(/[\u0660-\u0669\u06F0-\u06F9\u0966-\u096F\u09E6-\u09EF\u0A66-\u0A6F\u0AE6-\u0AEF\u0B66-\u0B6F\u0BE6-\u0BEF\u0C66-\u0C6F\u0CE6-\u0CEF\u0D66-\u0D6F]/g, (ch) => {
+    const code = ch.charCodeAt(0);
+    const zero = DIGIT_ZEROS.find((z) => code >= z && code <= z + 9)!;
+    return String(code - zero);
+  });
+}
+
+/** Whether a value still carries an Indian script, and so is not yet English. */
+export function hasIndianScript(value: string | null | undefined): boolean {
+  return value != null && INDIAN_SCRIPT.test(value);
+}
+
 /* ----------------------------------------------------------------- phones */
 
 /**
@@ -82,7 +105,7 @@ export function tidy(value: string | null | undefined, max = 300): string | null
  * whatever their length — whether it is a MOBILE is `isMobile`'s question.
  */
 function nationalDigits(raw: string): string {
-  let d = raw.replace(/\D/g, "");
+  let d = asciiDigits(raw).replace(/\D/g, "");
   if (d.length === 12 && d.startsWith("91")) d = d.slice(2);
   else if (d.length === 13 && d.startsWith("091")) d = d.slice(3);
   else if (d.length === 11 && d.startsWith("0")) d = d.slice(1);
@@ -166,7 +189,7 @@ const TO_LETTER: Record<string, string> = { "0": "O", "1": "I", "2": "Z", "5": "
  * its checksum. Null when there is nothing fifteen characters long to judge.
  */
 export function checkGstin(raw: string | null | undefined): { gstin: string; check: GstinCheck } | null {
-  const s = tidy(raw, 40)?.toUpperCase().replace(/[^0-9A-Z]/g, "") ?? "";
+  const s = asciiDigits(tidy(raw, 40) ?? "").toUpperCase().replace(/[^0-9A-Z]/g, "");
   if (s.length !== 15) return s ? { gstin: s, check: "invalid" } : null;
   if (isValidGstin(s)) return { gstin: s, check: "valid" };
 
@@ -186,6 +209,28 @@ export function checkGstin(raw: string | null | undefined): { gstin: string; che
     if (isValidGstin(second)) return { gstin: second, check: "corrected" };
   }
   return { gstin: s, check: "invalid" };
+}
+
+const GSTIN_RANK: Record<GstinCheck, number> = { valid: 3, corrected: 2, invalid: 1 };
+
+/** Whether a reading is good enough that a second look could not improve it. */
+export function gstinSettled(raw: string | null | undefined): boolean {
+  const c = checkGstin(raw)?.check;
+  return c === "valid" || c === "corrected";
+}
+
+/**
+ * Of two raw readings of one GSTIN — the whole-card read and the second look
+ * at the number alone — the one the checksum likes better. A tie keeps the
+ * FIRST, so a second look that is no better changes nothing; and a second look
+ * that found nothing never removes what the first one did.
+ */
+export function preferGstin(first: string | null, second: string | null): string | null {
+  const rank = (raw: string | null) => {
+    const c = checkGstin(raw)?.check;
+    return c ? GSTIN_RANK[c] : 0;
+  };
+  return rank(second) > rank(first) ? second : first;
 }
 
 /** The GST state codes — the first two digits of every GSTIN. */
@@ -247,7 +292,7 @@ export function cleanScan(reading: LeadScanReading): LeadScanResult {
   const registeredIn = gst && gst.check !== "invalid" ? gstState(gst.gstin) : null;
 
   const address = tidy(reading.address, 500);
-  const pincode = tidy(reading.pincode, 10)?.replace(/\D/g, "") ?? "";
+  const pincode = asciiDigits(tidy(reading.pincode, 10) ?? "").replace(/\D/g, "");
   const withPin =
     address && /^\d{6}$/.test(pincode) && !address.includes(pincode) ? `${address} ${pincode}` : address;
 

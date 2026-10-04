@@ -104,12 +104,15 @@ export function LeadScanPanel({
 
   const room = maxImages - photos.length;
 
-  /* Resized the way every photograph on this phone is, and for the same
-     reason: a 12-megapixel card is several megabytes up a village link, and
-     the model reads a card perfectly well at the size the office stores. */
+  /* Resized, because a 12-megapixel card is several megabytes up a village
+     link — but NOT to the size every other photograph is. That setting is for
+     a shop front a manager looks at; this one is read character by character,
+     and a GSTIN in a card's smallest type does not survive 1600px at 70%
+     JPEG. A floor of 2048px at 85% keeps a card well under a megabyte and the
+     small print legible, and the general setting still wins if it is higher. */
   const shrink = async (uri: string) => {
-    const maxDim = await getConfig<number>('mbos.sync.imageMaxDimensionPx', 1600);
-    const qualityPercent = await getConfig<number>('mbos.sync.imageQualityPercent', 70);
+    const maxDim = Math.max(2048, await getConfig<number>('mbos.sync.imageMaxDimensionPx', 1600));
+    const qualityPercent = Math.max(85, await getConfig<number>('mbos.sync.imageQualityPercent', 70));
     const r = await ImageManipulator.manipulateAsync(uri, [{ resize: { width: maxDim } }], {
       compress: Math.min(1, Math.max(0.01, qualityPercent / 100)),
       format: ImageManipulator.SaveFormat.JPEG,
