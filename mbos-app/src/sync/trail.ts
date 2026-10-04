@@ -1463,24 +1463,11 @@ export async function flush(): Promise<number> {
     }
 
     let sent = 0;
-    /*
-     * HOW MANY HELD ROWS THIS PASS HAS ALREADY STEPPED OVER.
-     *
-     * The page is read oldest first, and a batch the server could not file —
-     * fixes from a day it closed early, a refused check-in, a clock that was
-     * wrong — used to end the whole flush. So that one old page stood at the
-     * head of the queue for up to a week, and every fix taken after it, today's
-     * included, waited behind it: the Live map froze on a phone that was
-     * recording perfectly. Held rows are now stepped over, not waited on, and
-     * the next pass starts at the oldest again, so they are still offered every
-     * time.
-     */
-    let skip = 0;
 
     for (let pass = 0; pass < MAX_PASSES; pass++) {
       const rows = await all<Row>(
-        'SELECT id, at, lat, lng, accuracyM FROM positions ORDER BY at ASC LIMIT ? OFFSET ?',
-        [BATCH, skip],
+        'SELECT id, at, lat, lng, accuracyM FROM positions ORDER BY at ASC LIMIT ?',
+        [BATCH],
       );
       if (!rows.length) return sent;
 
@@ -1513,18 +1500,12 @@ export async function flush(): Promise<number> {
          check-in is ever coming goes, so this cannot become a queue that only
          grows. */
       if (decision.effect === 'age-out') {
-        const cutoff = Date.now() - (await retentionMs());
-        await run('DELETE FROM positions WHERE at < ?', [cutoff]);
-        if (rows.length < BATCH) return sent;
-        skip += rows.filter((r) => r.at >= cutoff).length;
-        continue;
+        await run('DELETE FROM positions WHERE at < ?', [Date.now() - (await retentionMs())]);
+        return sent;
       }
 
       await removeIds(decision.remove);
       sent += decision.sent;
-      /* What a partial answer left behind is held too, and stepped over for
-         the same reason. */
-      skip += Math.max(0, rows.length - decision.remove.length);
 
       /*
        * A PARTIAL ANSWER LEAVES ROWS BEHIND AND STILL GOES ROUND, which is the
@@ -1534,10 +1515,7 @@ export async function flush(): Promise<number> {
        * partial the batch was full and the loop must still be allowed to end
        * where nothing moved.
        */
-      /* A full page the server would file none of is stepped over rather than
-         ended on — `skip` has moved past it, so the next read is new rows and
-         not the same five hundred again. */
-      if (!decision.carryOn && !(decision.remove.length === 0 && rows.length === BATCH)) return sent;
+      if (!decision.carryOn) return sent;
 
       /* A short read is the last of them. Asking again would cost a round trip
          to be told the same thing. */
