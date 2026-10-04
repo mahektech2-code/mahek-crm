@@ -833,7 +833,35 @@ async function patchLeg(leg: TravelLeg, patch: Record<string, string | number | 
     entityType: 'travel_leg',
     entityId: row.id,
     op: 'update',
-    payload: legPayload(row),
+    payload: {
+      expenseDayId: row.expenseDayId,
+      day: row.day,
+      modeKey: row.modeKey,
+      fromLabel: row.fromLabel,
+      toLabel: row.toLabel,
+      fromLat: row.fromLat,
+      fromLng: row.fromLng,
+      toLat: row.toLat,
+      toLng: row.toLng,
+      startedAt: row.startedAt,
+      endedAt: row.endedAt,
+      purpose: row.purpose,
+      customerId: row.customerId,
+      visitId: row.visitId,
+      manualMetres: row.manualMetres,
+      manualReason: row.manualReason ?? null,
+      odometerStartKm: row.odometerStartKm,
+      odometerEndKm: row.odometerEndKm,
+      odometerPhotoId: row.odometerPhotoId,
+      odometerEndPhotoId: row.odometerEndPhotoId,
+      ticketAmountPaise: row.ticketAmountPaise,
+      ticketPhotoId: row.ticketPhotoId,
+      ticketReference: row.ticketReference,
+      note: row.note,
+      origin: row.origin,
+      claimExcluded: row.claimExcluded === 1 || (row.claimExcluded as unknown) === true,
+      claimExcludedReason: row.claimExcludedReason,
+    },
   });
 }
 
@@ -852,37 +880,7 @@ type LegRow = TravelLeg & { manualReason?: string | null };
  * too, so an update also wrote the journey's ends away. Every column `addLeg`
  * sends is here, read off the row as it now stands.
  */
-function legPayload(row: LegRow): Record<string, unknown> {
-  return {
-    expenseDayId: row.expenseDayId,
-    day: row.day,
-    modeKey: row.modeKey,
-    fromLabel: row.fromLabel,
-    toLabel: row.toLabel,
-    fromLat: row.fromLat,
-    fromLng: row.fromLng,
-    toLat: row.toLat,
-    toLng: row.toLng,
-    startedAt: row.startedAt,
-    endedAt: row.endedAt,
-    purpose: row.purpose,
-    customerId: row.customerId,
-    visitId: row.visitId,
-    manualMetres: row.manualMetres,
-    manualReason: row.manualReason ?? null,
-    odometerStartKm: row.odometerStartKm,
-    odometerEndKm: row.odometerEndKm,
-    odometerPhotoId: row.odometerPhotoId,
-    odometerEndPhotoId: row.odometerEndPhotoId,
-    ticketAmountPaise: row.ticketAmountPaise,
-    ticketPhotoId: row.ticketPhotoId,
-    ticketReference: row.ticketReference,
-    note: row.note,
-    origin: row.origin,
-    claimExcluded: row.claimExcluded === 1 || (row.claimExcluded as unknown) === true,
-    claimExcludedReason: row.claimExcludedReason,
-  };
-}
+/* The literal lives in `patchLeg` above, where the payload-contract test can read it field by field. */
 
 /* ═══════════════════════════════════ the session he punched in on */
 
