@@ -429,6 +429,42 @@ build that was installed" means the embedded bundle; anything else names the
 update. Without that, "the fix is not on my phone" and "the fix does not work"
 look identical from the office.
 
+## Protecting main
+
+Every push to `main` deploys to the app the accounts team is using, so `main`
+only moves through a pull request whose CI is green. That is a repository
+ruleset, and its whole definition is `.github/rulesets/main.json`:
+
+- **No direct pushes, no force-pushes, no deleting the branch.**
+- **A pull request is the only way in**, merged as a merge commit or a squash.
+  It needs no approving review — this is a one-account repository and GitHub
+  does not let anybody approve their own PR — but every review thread has to be
+  resolved first.
+- **All five CI jobs must pass**: `ci`, `image`, `stack`, `bootstrap-packages`
+  and `links`, reported by GitHub Actions. The branch does not have to be up to
+  date with `main` first: with many branches open at once that is a rebase per
+  merge, and the deploy runs the checks again on the merged commit anyway.
+- **A repository admin may bypass it through a pull request only** — the way
+  out on the day a check is broken for a reason that is not the change, never a
+  way to push straight to `main`.
+
+Apply it, or re-apply it after changing the file, with `gh` signed in as an
+admin:
+
+```bash
+scripts/apply-branch-ruleset.sh
+```
+
+It creates the ruleset the first time and updates it in place after that. On
+the web it is Settings → Rules → Rulesets → New ruleset → Import a ruleset,
+with the same file. Edit the FILE, not the settings page — a change made only
+in the browser is overwritten the next time somebody runs the script.
+
+**Renaming or adding a CI job means editing the ruleset in the same PR.** A
+required check is matched by job id, and one that never reports leaves every
+pull request waiting for it with nothing saying why. `branch-ruleset.test.ts`
+fails the build when the two files disagree.
+
 ## Day to day
 
 ```bash
