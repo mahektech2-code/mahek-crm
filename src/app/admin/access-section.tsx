@@ -269,13 +269,18 @@ export function AccessSection({
                                 {g.appName}
                               </span>
                               <span className="text-muted">
-                                {g.whole
+                                {g.grantedCount >= g.totalCount
                                   ? g.totalCount === 1
                                     ? "its one screen"
                                     : `all ${g.totalCount} screens`
                                   : `${g.grantedCount} of ${g.totalCount} screens`}
                               </span>
-                              {g.whole ? null : <Badge tone="warn">Narrowed</Badge>}
+                              {g.grantedCount < g.totalCount ? <Badge tone="warn">Narrowed</Badge> : null}
+                              {g.readOnly.map((label) => (
+                                <Badge key={label} tone="warn">
+                                  {label} read only
+                                </Badge>
+                              ))}
                             </span>
                           ))}
                         </span>
@@ -1435,13 +1440,27 @@ function AppBlock({
 }) {
   const all = ALL_OF(app);
   const always = ALWAYS_OF(app);
-  const groups = moduleGroupsForApp(app);
+  /* A write level is not a screen: it is drawn as Read / Write on the row of
+     the screen it belongs to, and counted nowhere a screen is counted. */
+  const writeOf = new Map(modulesForApp(app).filter((m) => m.writeOf).map((m) => [m.writeOf!, m.key]));
+  const isWrite = new Set(writeOf.values());
+  const groups = moduleGroupsForApp(app).map((g) => ({ ...g, modules: g.modules.filter((m) => !isWrite.has(m.key)) }));
+  const screens = all.filter((k) => !isWrite.has(k));
+  const tickedScreens = ticked.filter((k) => !isWrite.has(k));
+  const readOnly = [...writeOf].filter(([screen, write]) => ticked.includes(screen) && !ticked.includes(write));
   const on = ticked.length > 0;
   const whole = ticked.length >= all.length;
   /* A screen changed by hand never drops the always-open ones: they are held
      whatever is ticked, and a draft that left them out would describe a grant
-     narrower than the one the app actually enforces. */
-  const change = (next: string[]) => onChange([...new Set([...always, ...next])]);
+     narrower than the one the app actually enforces. A write level never
+     outlives its screen — the server drops one that does, and so does this. */
+  const change = (next: string[]) =>
+    onChange(
+      [...new Set([...always, ...next])].filter((k) => {
+        const screen = [...writeOf].find(([, w]) => w === k)?.[0];
+        return !screen || next.includes(screen);
+      }),
+    );
   /* What the chosen level lets them DO, read off the capability matrix the
      server enforces — never a sentence typed here. See `capability-labels`. */
   const carries = on ? levelCarries(app, role) : [];
@@ -1504,15 +1523,18 @@ function AppBlock({
         ) : null}
         {on && !whole ? (
           <span className="rounded-[3px] bg-warn-soft px-1.5 text-[11px] font-medium text-warn-ink">
-            {ticked.length}/{all.length}
+            {tickedScreens.length < screens.length
+              ? `${tickedScreens.length}/${screens.length}`
+              : `all ${screens.length}`}
+            {readOnly.length ? " · read only" : ""}
           </span>
         ) : (
           <span className="text-[11px] whitespace-nowrap text-muted">
             {!on
-              ? `${all.length} screen${all.length === 1 ? "" : "s"}`
-              : all.length === 1
+              ? `${screens.length} screen${screens.length === 1 ? "" : "s"}`
+              : screens.length === 1
                 ? "granted"
-                : `all ${all.length}`}
+                : `all ${screens.length}`}
           </span>
         )}
         {on && !whole ? (
@@ -1579,6 +1601,41 @@ function AppBlock({
                         className="min-w-0 cursor-default py-[1px]"
                         label={<span className="truncate text-[13px] text-muted">{m.label} · always</span>}
                       />
+                    </span>
+                  ) : writeOf.has(m.key) ? (
+                    /* A SCREEN WITH TWO LEVELS. Ticking it grants both, which
+                       is what holding it has always meant; the select is the
+                       only way to read-only, so it is a choice somebody made. */
+                    <span key={m.key} className="flex min-w-0 items-center gap-1.5">
+                      <Checkbox
+                        checked={ticked.includes(m.key)}
+                        title={m.note}
+                        onChange={() =>
+                          change(
+                            ticked.includes(m.key)
+                              ? ticked.filter((k) => k !== m.key)
+                              : [...ticked, m.key, writeOf.get(m.key)!],
+                          )
+                        }
+                        className="min-w-0 py-[1px]"
+                        label={<span className="truncate text-[13px] text-body">{m.label}</span>}
+                      />
+                      {ticked.includes(m.key) ? (
+                        <select
+                          value={ticked.includes(writeOf.get(m.key)!) ? "write" : "read"}
+                          aria-label={`${m.label} access`}
+                          title="Read: the chats and the message log. Write: also reply, send, runs, templates and groups."
+                          onChange={(e) => {
+                            const w = writeOf.get(m.key)!;
+                            const rest = ticked.filter((k) => k !== w);
+                            change(e.target.value === "write" ? [...rest, w] : rest);
+                          }}
+                          className="h-5 flex-none cursor-pointer rounded-[3px] border border-line bg-surface px-0.5 text-[11px] text-body"
+                        >
+                          <option value="read">Read</option>
+                          <option value="write">Write</option>
+                        </select>
+                      ) : null}
                     </span>
                   ) : (
                     <Checkbox
@@ -1762,13 +1819,19 @@ function ReviewStep({
   }));
   const conflicts = conflictsFor(heldHats);
   const scope = (id: AppId) => {
-    const n = (draft[id] ?? []).length;
-    const total = ALL_OF(id).length;
-    return n >= total
-      ? total === 1
-        ? "its one screen"
-        : `all ${total} screens`
-      : `${n} of ${total} screens`;
+    /* Screens only: a write level is said in words after them, never counted
+       as a screen, or "WhatsApp read only" would read as one screen fewer. */
+    const mods = modulesForApp(id);
+    const held = draft[id] ?? [];
+    const screens = mods.filter((m) => !m.writeOf);
+    const n = screens.filter((m) => held.includes(m.key)).length;
+    const total = screens.length;
+    const readOnly = mods
+      .filter((m) => m.writeOf && held.includes(m.writeOf) && !held.includes(m.key))
+      .map((m) => `${modulesForApp(id).find((x) => x.key === m.writeOf)?.label} read only`);
+    const base =
+      n >= total ? (total === 1 ? "its one screen" : `all ${total} screens`) : `${n} of ${total} screens`;
+    return readOnly.length ? `${base}, ${readOnly.join(", ")}` : base;
   };
 
   const rows: Array<{

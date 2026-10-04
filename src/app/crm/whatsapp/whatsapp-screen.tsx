@@ -184,6 +184,14 @@ type Tab = "send" | "run" | "templates" | "log" | "replies";
 const IGNORE_COUNT = () => {};
 
 export function WhatsappScreen(props: {
+  /** Which app is drawing it — decides where "Open record" goes. */
+  app: "crm" | "accounts";
+  /**
+   * The Write level, in this app. Without it the screen is the chats and the
+   * message log, and nothing on it can reply, send, run or edit — the actions
+   * refuse as well, so this is the courtesy half.
+   */
+  canWrite: boolean;
   scopeLabel: string;
   isManager: boolean;
   /** `automatic` = the founder has switched API sending on and a key exists. */
@@ -217,6 +225,8 @@ export function WhatsappScreen(props: {
   initialChat: string | null;
 }) {
   const {
+    app,
+    canWrite,
     scopeLabel,
     isManager,
     mode,
@@ -276,9 +286,13 @@ export function WhatsappScreen(props: {
   return (
     <>
       <ChatTab
+        canWrite={canWrite}
+        recordHref={(id) => (app === "accounts" ? `/accounts/ledger?customer=${id}` : `/crm/customers/${id}`)}
         initial={props.chats}
         initialKey={props.initialChat}
-        initialTool={props.initialTab === "replies" ? null : props.initialTab}
+        initialTool={
+          props.initialTab === "replies" || (!canWrite && props.initialTab !== "log") ? null : props.initialTab
+        }
         today={props.today}
         now={props.now}
         scopeLabel={scopeLabel}
@@ -308,7 +322,7 @@ export function WhatsappScreen(props: {
             ) : null}
             {/* A copy waiting on confirmation — easy to send the message and
                 walk away from the step that records it. */}
-            {unconfirmed.length ? (
+            {unconfirmed.length && canWrite ? (
               <div className="flex flex-none items-center gap-2 border-b border-warn-line bg-warn-soft px-4 py-2 text-[12.5px] text-warn-ink">
                 <span
                   className="min-w-0 flex-1 truncate font-medium"
@@ -339,7 +353,7 @@ export function WhatsappScreen(props: {
           </>
         }
         renderTool={(tool, customerId) =>
-          tool === "send" ? (
+          !canWrite && tool !== "log" ? null : tool === "send" ? (
             <SendTab
               key={customerId ?? "any"}
               {...props}

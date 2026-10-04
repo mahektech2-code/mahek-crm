@@ -10,9 +10,11 @@ import {
 } from "@/db/schema";
 import { APPS, webApps, type AppDefinition, type AppId } from "./apps";
 import {
+  WHATSAPP_MODULES,
   getModule,
   moduleAllowed,
   modulesForApp,
+  writeModuleOf,
   type AppModule,
 } from "./modules";
 // The business day, not the calendar day — a 4am sign-in belongs to the shift
@@ -139,6 +141,32 @@ export async function canOpenModule(userId: string, key: string): Promise<boolea
      app nobody holds is not a permission. */
   if (!(await canOpen(userId, mod.app))) return false;
   return (await listUserModules(userId, mod.app)).some((m) => m.key === key);
+}
+
+/**
+ * HOW FAR INTO WHATSAPP THIS PERSON MAY GO, across every app that draws it.
+ *
+ * `read` opens the chats and nothing else; `write` adds replying, sending,
+ * runs, templates and groups. It is the UNION over apps, like every other
+ * thing somebody may DO — read-only in Accounts beside the whole of it in the
+ * CRM is somebody who can reply, from either screen, because a server action
+ * does not know which screen it was pressed on any better than that.
+ *
+ * `none` is somebody who holds the screen nowhere. That is NOT the same as
+ * read-only and the actions treat it differently: the payment panel and the
+ * command centre send reminders without the WhatsApp screen and always have,
+ * so only somebody NARROWED to read is refused there — never somebody who was
+ * simply never given the chats.
+ */
+export async function whatsappLevel(userId: string): Promise<"none" | "read" | "write"> {
+  let read = false;
+  for (const key of WHATSAPP_MODULES) {
+    if (!(await canOpenModule(userId, key))) continue;
+    read = true;
+    const write = writeModuleOf(key);
+    if (write && (await canOpenModule(userId, write.key))) return "write";
+  }
+  return read ? "read" : "none";
 }
 
 export async function canOpen(userId: string, app: AppId): Promise<boolean> {

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { getCurrentUser } from "@/lib/auth";
-import { canOpenModule } from "@/lib/access";
+import { whatsappLevel } from "@/lib/access";
 import { resolveScope, scopedToUsers, scopedUserIds } from "@/lib/access-control";
 import { threadKeyOf, waBus, type WaLiveEvent } from "@/lib/wa-live";
 
@@ -34,7 +34,7 @@ const PING_MS = 20_000;
 export async function GET(request: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "signed out" }, { status: 401, ...NO_STORE });
-  if (!(await canOpenModule(user.id, "crm.whatsapp"))) {
+  if ((await whatsappLevel(user.id)) === "none") {
     return NextResponse.json({ error: "not yours" }, { status: 403, ...NO_STORE });
   }
 

@@ -181,6 +181,7 @@ export function AccountsShell({
         { href: "/accounts/payment-history", label: "Payment history", icon: "clock" },
         { href: "/accounts/outstanding", label: "Outstanding", icon: "wallet" },
         { href: "/accounts/bills", label: "Bills", icon: "bill" },
+        { href: "/accounts/whatsapp", label: "WhatsApp", icon: "chat" },
         { href: "/accounts/ledger", label: "Customer account", icon: "ledger" },
         { href: "/accounts/on-account", label: "On account", icon: "onaccount" },
       ],

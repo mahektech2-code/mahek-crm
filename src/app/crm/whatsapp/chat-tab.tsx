@@ -73,6 +73,8 @@ const WA = {
 };
 
 export function ChatTab({
+  canWrite,
+  recordHref,
   initial,
   initialKey,
   initialTool,
@@ -85,6 +87,10 @@ export function ChatTab({
   notices,
   renderTool,
 }: {
+  /** False for the Read level: the chats and the log, and no way to answer. */
+  canWrite: boolean;
+  /** Where "Open record" goes — the CRM record, or the Accounts ledger. */
+  recordHref: (customerId: string) => string;
   initial: List;
   /** The conversation named in the URL (`?chat=`), opened on arrival. */
   initialKey: string | null;
@@ -291,18 +297,24 @@ export function ChatTab({
             <div className="text-[15px] font-medium text-[#111b21]">WhatsApp</div>
             <div className="truncate">{headerExtra}</div>
           </div>
-          <IconButton title="New message from a template" onClick={() => openTool("send")}>
-            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor" aria-hidden>
-              <path d="M19.005 3.175H4.674C3.642 3.175 3 3.789 3 4.821V21.02l3.544-3.514h12.461c1.033 0 2.064-1.06 2.064-2.093V4.821c-.001-1.032-1.032-1.646-2.064-1.646zm-4.989 9.869H7.041V11.1h6.975v1.944zm3-4H7.041V7.1h9.975v1.944z" />
-            </svg>
-          </IconButton>
+          {canWrite ? (
+            <IconButton title="New message from a template" onClick={() => openTool("send")}>
+              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor" aria-hidden>
+                <path d="M19.005 3.175H4.674C3.642 3.175 3 3.789 3 4.821V21.02l3.544-3.514h12.461c1.033 0 2.064-1.06 2.064-2.093V4.821c-.001-1.032-1.032-1.646-2.064-1.646zm-4.989 9.869H7.041V11.1h6.975v1.944zm3-4H7.041V7.1h9.975v1.944z" />
+              </svg>
+            </IconButton>
+          ) : null}
           <RowMenu
-            items={[
-              { label: "New message", onSelect: () => openTool("send") },
-              { label: "Send run", onSelect: () => openTool("run") },
-              { label: "Templates", onSelect: () => openTool("templates") },
-              { label: "Message log", onSelect: () => openTool("log") },
-            ]}
+            items={
+              canWrite
+                ? [
+                    { label: "New message", onSelect: () => openTool("send") },
+                    { label: "Send run", onSelect: () => openTool("run") },
+                    { label: "Templates", onSelect: () => openTool("templates") },
+                    { label: "Message log", onSelect: () => openTool("log") },
+                  ]
+                : [{ label: "Message log", onSelect: () => openTool("log") }]
+            }
           />
         </div>
 
@@ -415,6 +427,8 @@ export function ChatTab({
             today={businessDay}
             now={clockMs}
             showAssignee={showAssignee}
+            canWrite={canWrite}
+            recordHref={recordHref}
             onTemplate={(customerId) => openTool("send", customerId)}
             onChanged={() => {
               void loadThread(openKey);
@@ -426,7 +440,7 @@ export function ChatTab({
             <span className="rounded-lg bg-white/80 px-3 py-1.5 text-[13px] text-[#54656f] shadow-sm">Opening the chat…</span>
           </div>
         ) : (
-          <Welcome onNew={() => openTool("send")} />
+          <Welcome onNew={canWrite ? () => openTool("send") : null} />
         )}
       </section>
     </div>
@@ -434,21 +448,30 @@ export function ChatTab({
 }
 
 /** What the right pane shows with nothing open — WhatsApp Web's own resting screen. */
-function Welcome({ onNew }: { onNew: () => void }) {
+function Welcome({ onNew }: { onNew: (() => void) | null }) {
   return (
     <div className={cx("flex flex-1 flex-col items-center justify-center border-b-[6px] border-[#25d366] px-10 text-center", WA.panel)}>
       <div className={cx("flex h-20 w-20 items-center justify-center rounded-full text-3xl font-semibold text-white", WA.accent)}>M</div>
       <h2 className="mt-6 text-[28px] font-light text-[#41525d]">MahekOne for WhatsApp</h2>
-      <p className="mt-3 max-w-[460px] text-[14px] leading-6 text-[#667781]">
-        Send and receive from the business number. Pick a chat on the left, or start one from an
-        approved template.
-      </p>
-      <button
-        onClick={onNew}
-        className={cx("mt-6 h-10 cursor-pointer rounded-full px-6 text-[14px] font-medium text-white hover:opacity-90", WA.accent)}
-      >
-        New message
-      </button>
+      {onNew ? (
+        <>
+          <p className="mt-3 max-w-[460px] text-[14px] leading-6 text-[#667781]">
+            Send and receive from the business number. Pick a chat on the left, or start one from an
+            approved template.
+          </p>
+          <button
+            onClick={onNew}
+            className={cx("mt-6 h-10 cursor-pointer rounded-full px-6 text-[14px] font-medium text-white hover:opacity-90", WA.accent)}
+          >
+            New message
+          </button>
+        </>
+      ) : (
+        <p className="mt-3 max-w-[460px] text-[14px] leading-6 text-[#667781]">
+          Pick a chat on the left to read it. Your access is read only, so replying and sending are not
+          part of it.
+        </p>
+      )}
       <p className="mt-10 text-[12px] text-[#8696a0]">Every message is logged against the customer record, whichever way it is sent.</p>
     </div>
   );
@@ -566,6 +589,8 @@ function ThreadPane({
   today: businessDay,
   now,
   showAssignee,
+  canWrite,
+  recordHref,
   onTemplate,
   onChanged,
 }: {
@@ -573,6 +598,8 @@ function ThreadPane({
   today: string;
   now: number;
   showAssignee: boolean;
+  canWrite: boolean;
+  recordHref: (customerId: string) => string;
   /** Opens New message with this customer picked — the way past a closed window. */
   onTemplate: (customerId: string) => void;
   onChanged: () => void;
@@ -657,19 +684,21 @@ function ThreadPane({
           <div className="truncate text-[16px] text-[#111b21]">{t.name}</div>
           <div className="truncate text-[13px] text-[#667781]">{subline}</div>
         </div>
-        <button
-          onClick={async () => {
-            const r = await act(markThreadHandled(t.key, t.unanswered > 0));
-            if (r.ok) onChanged();
-          }}
-          className="h-8 cursor-pointer rounded-full px-3 text-[13px] text-[#54656f] hover:bg-black/5"
-          title={t.unanswered > 0 ? "Nothing more is owed here" : "Put it back on Needs reply"}
-        >
-          {t.unanswered > 0 ? `✓ Mark handled (${t.unanswered})` : "Mark as needing a reply"}
-        </button>
+        {canWrite ? (
+          <button
+            onClick={async () => {
+              const r = await act(markThreadHandled(t.key, t.unanswered > 0));
+              if (r.ok) onChanged();
+            }}
+            className="h-8 cursor-pointer rounded-full px-3 text-[13px] text-[#54656f] hover:bg-black/5"
+            title={t.unanswered > 0 ? "Nothing more is owed here" : "Put it back on Needs reply"}
+          >
+            {t.unanswered > 0 ? `✓ Mark handled (${t.unanswered})` : "Mark as needing a reply"}
+          </button>
+        ) : null}
         {t.customerId ? (
           <Link
-            href={`/crm/customers/${t.customerId}`}
+            href={recordHref(t.customerId)}
             className="h-8 rounded-full px-3 text-[13px] leading-8 text-[#54656f] no-underline hover:bg-black/5"
           >
             Open record
@@ -754,7 +783,13 @@ function ThreadPane({
 
       {/* The message bar. */}
       <footer className={cx("flex-none px-4 py-2.5", WA.panel)}>
-        {t.blockedWhy ? (
+        {!canWrite ? (
+          /* Said rather than left as a missing box: an absent composer reads
+             as a broken screen, and this is a decision somebody made. */
+          <p className="py-2 text-center text-[13px] text-[#54656f]">
+            Your access to WhatsApp is read only — you can read this conversation but not reply.
+          </p>
+        ) : t.blockedWhy ? (
           <p className="py-2 text-center text-[13px] text-[#54656f]">{t.blockedWhy}</p>
         ) : !windowOpen ? (
           <div className="flex items-center justify-center gap-3 py-1.5 text-center text-[13px] text-[#54656f]">

@@ -190,7 +190,16 @@ function cleanModules(app: AppId, keys: string[]): { ok: string[]; bad: string[]
     if (getModule(k)?.app === app) good.push(k);
     else bad.push(k);
   }
-  return { ok: good, bad };
+  /* A write level without its screen is dropped, not refused: it would open
+     nothing (`moduleAllowed` says so too), and a row that grants nothing is a
+     row somebody later reads as a grant. */
+  return {
+    ok: good.filter((k) => {
+      const screen = getModule(k)?.writeOf;
+      return !screen || good.includes(screen);
+    }),
+    bad,
+  };
 }
 
 /**

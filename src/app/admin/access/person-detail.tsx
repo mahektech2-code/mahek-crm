@@ -211,7 +211,7 @@ export function PersonDetail({
                     <span className="text-[13px] text-body">
                       {a.id === "admin" && g.role === "admin" ? "Platform administrator" : LEVEL_LABELS[g.role]}
                     </span>
-                    {g.whole ? (
+                    {g.grantedCount >= g.totalCount ? (
                       <span className="text-[13px] text-muted">
                         {g.totalCount === 1 ? "its one screen" : `all ${g.totalCount} screens`}
                       </span>
@@ -220,6 +220,11 @@ export function PersonDetail({
                         Narrowed · {g.grantedCount}/{g.totalCount}
                       </Badge>
                     )}
+                    {g.readOnly.map((label) => (
+                      <Badge key={label} tone="warn" title="Reads the chats; cannot reply or send">
+                        {label} read only
+                      </Badge>
+                    ))}
                   </span>
                 ) : (
                   <span className="text-[13px] text-muted">—</span>
