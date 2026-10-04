@@ -507,22 +507,12 @@ export const SETTINGS = [
     category: "targets",
     label: "How many top customers",
     description:
-      "The length of the Top customers list, ranked across the WHOLE company. A telecaller sees the ones of these that are in their own book, never a top list of their own book - so a name on it means the same thing on every screen it appears on.",
+      "The length of the Top customers list, ranked across the WHOLE company. A telecaller sees the ones of these that are in their own book, never a top list of their own book - so a name on it means the same thing on every screen it appears on. The report itself is generated on the 1st of every month at 10:00 IST for 3, 6 and 12 whole months; this only decides how many of it are listed.",
     default: 60,
     min: 5,
     max: 500,
   },
-  {
-    key: "topCustomers.months",
-    type: "integer",
-    category: "targets",
-    label: "Top customers look back",
-    description:
-      "How many months of approved orders the Top customers list is ranked over, ending today. Pending and declined orders never count - the same rule every money figure in the CRM follows.",
-    default: 3,
-    min: 1,
-    max: 24,
-  },
+
 
   /* ------------------------------------------------------------ escalation */
   {
@@ -5394,7 +5384,6 @@ export type Config = {
   "products.frequentRanking": "orders" | "recency";
   "products.starterListCount": number;
   "topCustomers.count": number;
-  "topCustomers.months": number;
   "products.priceSource": "unset" | "manual" | "product" | "pricelist";
   "products.searchOnOrderForms": boolean;
   "products.searchMinChars": number;

@@ -243,6 +243,7 @@ The host clock is **UTC**, so the crontab is written in UTC.
 | `:22` hourly | — | `sheet-sync.sh hourly` — the salesman score, the MBOS sweeps and escalations |
 | `20:13` | 01:43 | `sheet-sync.sh nightly` — reconcile, project, then the recomputes |
 | `20:45` | 02:15 | `backup.sh` — dump to R2, after the nightly has settled |
+| `04:30` on the 1st | 10:00 on the 1st | `sheet-sync.sh monthly` — the Top customers report for the month just finished |
 
 The hourly row is newer than the other two and a deployment installed before it
 **will not have it** — check with `crontab -l` and add it if it is missing:
@@ -251,7 +252,14 @@ The hourly row is newer than the other two and a deployment installed before it
 22 * * * * /usr/bin/env bash /opt/mahekone/sheet-sync.sh hourly >> /var/log/mahekone-sync.log 2>&1
 ```
 
-It had no caller at all until then: `runHourly` shipped with the MBOS module,
+The monthly row is newer still. Without it the hourly pass generates the
+report at 10:52 instead of 10:00, so a missing line is late rather than lost:
+
+```
+30 4 1 * * /usr/bin/env bash /opt/mahekone/sheet-sync.sh monthly >> /var/log/mahekone-sync.log 2>&1
+```
+
+The hourly row had no caller at all until then: `runHourly` shipped with the MBOS module,
 the crontab knew `cycle` and `nightly`, and nothing asked for what sits between
 them. The visible cost was a handset showing yesterday's score — it reads the
 cache rather than deriving anything — and an attendance selfie retention window
