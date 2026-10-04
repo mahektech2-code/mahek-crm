@@ -10,7 +10,7 @@ import { has, type HrmsContext, type Scope } from "../access";
 import { err, fieldErr, first, hrmsAudit, hrmsId, inTx, nextSeries, now, okVoid, stampLine, text, today, type HrmsScreenModule, type ScreenQuery } from "../server";
 import { allPeople, byId, isActive, isSales, offices, type Person } from "../services/people";
 import { bindHrmsFiles } from "../attachments";
-import { HRMS_SCREENS, hrmsLink, hrmsScreen } from "../registry";
+import { HRMS_TABS, hrmsLink, hrmsListLabel } from "../registry";
 import { fdShort, tmin } from "../time";
 import { personFrom, personOption } from "./attendance";
 
@@ -616,8 +616,10 @@ const documents: HrmsScreenModule = {
 
 const writeNotes = (ctx: HrmsContext) => has(ctx, "hr") || has(ctx, "admin");
 /** Screens a notification may open: every screen the registry knows except settings, offered by label. */
-const LANDINGS = HRMS_SCREENS.filter((s) => s.key !== "settings");
-const landingLabel = (key: string | null) => (key ? (hrmsScreen(key)?.label ?? key) : "");
+/* Every list somebody can be sent to, by its full name ("Leave & holidays ·
+   To decide"), never the settings: a notice is not a way into the rules. */
+const LANDINGS = HRMS_TABS.filter((x) => x.screen.key !== "settings").map((x) => ({ key: x.tab.key, label: hrmsListLabel(x.tab.key) }));
+const landingLabel = (key: string | null) => (key ? hrmsListLabel(key) : "");
 
 type NoteRow = typeof hrmsNotifications.$inferSelect;
 
@@ -656,7 +658,7 @@ const notifications: HrmsScreenModule = {
               title: "Write a notification",
               sub: "It arrives in the MahekOne bell and opens the screen you choose.",
               submit: "Send notification",
-              init: { landing: hrmsScreen("home")?.label ?? "" },
+              init: { landing: hrmsListLabel("home") },
               header: [
                 { k: "to", l: "To", t: "select", req: true, opts: ["All employees", ...people.filter(isActive).map(personOption)] },
                 { k: "text", l: "Message", t: "area", req: true, mic: true },

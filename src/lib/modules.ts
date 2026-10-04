@@ -5,10 +5,14 @@ import { HRMS_ALWAYS_OPEN, HRMS_GROUPS, hrmsHref } from "./hrms/registry";
 /** What withholding an HRMS screen means, where it is not obvious. */
 const HRMS_NOTES: Record<string, string> = {
   org: "Who reports to whom, and the only screen that can change it. Withholding it leaves the chart readable nowhere rather than read-only — there is no other view of it.",
-  employees: "Salaries, home addresses and identity numbers.",
-  payroll: "Everyone's salaries for payroll holders; everyone else sees only their own paid payslips.",
+  employees: "The directory, ID cards and working hours. Salaries and identity numbers stay behind their own powers.",
+  payroll: "Salaries, advances and expenses. Payroll holders see everyone's; everyone else sees only their own.",
   home: "Checking in. Everybody who holds HRMS reaches it whatever else they were narrowed to.",
 };
+
+/** A screen's tabs, said on the Access screen so a grant names what it opens. */
+const hrmsTabsNote = (sc: (typeof HRMS_GROUPS)[number]["screens"][number]) =>
+  sc.views && sc.views.length > 1 ? `Tabs: ${sc.views.map((v) => v.label).join(", ")}.` : "";
 
 /* ---------------------------------------------------------------------------
  * What a person can open INSIDE an app.
@@ -786,7 +790,7 @@ export const APP_MODULES: AppModule[] = [
         group: `HRMS · ${g.label}`,
         href: hrmsHref(sc),
         exact: sc.slug === "",
-        ...(HRMS_NOTES[sc.key] ? { note: HRMS_NOTES[sc.key] } : {}),
+        ...(HRMS_NOTES[sc.key] || hrmsTabsNote(sc) ? { note: [HRMS_NOTES[sc.key], hrmsTabsNote(sc)].filter(Boolean).join(" ") } : {}),
       }),
     ),
   ),

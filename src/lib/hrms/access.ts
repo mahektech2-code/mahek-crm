@@ -95,7 +95,15 @@ export const hrmsContext = cache(async function hrmsContext(): Promise<HrmsConte
   const flags = { ot: config["hrms.ot.enabled"], qr: config["hrms.attendance.qrEnabled"] };
   const held = new Set<string>(modules.map((m) => m.key.replace(/^hrms\./, "")));
   if (level) HRMS_ALWAYS_OPEN.forEach((k) => held.add(k));
-  const screens = new Set<string>(HRMS_SCREENS.filter((sc) => held.has(sc.key) && (!sc.flag || flags[sc.flag])).map((sc) => sc.key));
+  /* Holding a screen opens every tab of it, so every check that names a tab's
+     key — an action's screen, a badge, a home-page item — keeps working. A
+     tab behind a setting that is off is not opened by anything. */
+  const screens = new Set<string>();
+  for (const sc of HRMS_SCREENS) {
+    if (!held.has(sc.key)) continue;
+    screens.add(sc.key);
+    for (const tab of sc.views ?? []) if (!tab.flag || flags[tab.flag]) screens.add(tab.key);
+  }
 
   return { user, level, administrator, powers, screens, employee, isHead, flags };
 });

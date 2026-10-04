@@ -4,7 +4,7 @@ import { initialsOf } from "@/lib/format";
 import { hatForHeader } from "@/lib/hat-for-header";
 import { listNotifications } from "@/lib/queries";
 import { requireHrmsApp } from "@/lib/hrms/access";
-import { HRMS_GROUPS, hrmsHref } from "@/lib/hrms/registry";
+import { HRMS_GROUPS, hrmsHref, hrmsKeysOf } from "@/lib/hrms/registry";
 import { hrmsNavCounts } from "@/lib/hrms/counts";
 import { HrmsShell, type NavGroup } from "./_ui/hrms-shell";
 
@@ -32,7 +32,17 @@ export default async function HrmsLayout({ children }: { children: React.ReactNo
     icon: g.icon,
     screens: g.screens
       .filter((s) => ctx.screens.has(s.key))
-      .map((s) => ({ key: s.key, label: s.label, href: hrmsHref(s), count: counts[s.key] ?? 0, bottom: s.bottom })),
+      .map((s) => ({
+        key: s.key,
+        label: s.label,
+        nav: s.nav,
+        short: s.short,
+        icon: s.icon,
+        href: hrmsHref(s),
+        /* A screen's badge is what is waiting on all of its tabs. */
+        count: hrmsKeysOf(s).reduce((n, k) => n + (ctx.screens.has(k) ? (counts[k] ?? 0) : 0), 0),
+        bottom: s.bottom,
+      })),
   })).filter((g) => g.screens.length > 0);
 
   return (

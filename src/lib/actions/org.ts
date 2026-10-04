@@ -28,7 +28,7 @@ const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
 function refresh() {
   revalidatePath("/hrms/org");
-  revalidatePath("/hrms/employees");
+  revalidatePath("/hrms/people");
 }
 
 async function requireHrms() {

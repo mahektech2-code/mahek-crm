@@ -32,7 +32,46 @@ import { useKit } from "./kit";
 const MAX_TABS = 7;
 
 /** A tab of a screen with several lists (`views` in the registry): a link, because each tab is its own server read. */
-export type ListTab = { key: string; label: string; href: string; active: boolean };
+export type ListTab = {
+  key: string;
+  label: string;
+  href: string;
+  active: boolean;
+  /** Work waiting on this tab for the person looking — the sidebar badge, per tab. */
+  count?: number;
+};
+
+/**
+ * A screen's tabs. Exported because a screen can have a tab that is not a
+ * list (HRMS Settings' rules), and that page draws the same strip so moving
+ * between the two does not change the furniture under somebody's thumb.
+ */
+export function ListTabs({ label, tabs, toggle }: { label: string; tabs: ListTab[]; toggle?: { label: string; href: string } | null }) {
+  return (
+    <nav aria-label={`${label} lists`} className="mb-4 flex items-center overflow-x-auto border-b border-line">
+      {tabs.map((t) => (
+        <Link
+          key={t.key}
+          href={t.href}
+          aria-current={t.active ? "page" : undefined}
+          className={cx(
+            "-mb-px flex items-center gap-1.5 border-b-2 px-4 py-2.5 text-sm whitespace-nowrap",
+            t.active ? "border-brand font-medium text-ink" : "border-transparent text-muted hover:text-body",
+          )}
+        >
+          {t.label}
+          {t.count ? <span className="rounded-full bg-warn px-1.5 text-[11px] leading-[18px] font-medium text-white">{t.count}</span> : null}
+        </Link>
+      ))}
+      <span className="flex-1" />
+      {toggle ? (
+        <Link href={toggle.href} className="px-2 py-2.5 text-[13px] font-medium text-[#5223E0] hover:underline">
+          {toggle.label}
+        </Link>
+      ) : null}
+    </nav>
+  );
+}
 
 /** The coloured edge a flagged row carries, in the CRM's tokens. */
 const EDGE: Partial<Record<Tone, string>> = {
@@ -257,29 +296,7 @@ export function ListScreen({
         }
       />
 
-      {tabs && tabs.length > 1 ? (
-        <nav aria-label={`${label} lists`} className="mb-4 flex flex-wrap items-center border-b border-line">
-          {tabs.map((t) => (
-            <Link
-              key={t.key}
-              href={t.href}
-              aria-current={t.active ? "page" : undefined}
-              className={cx(
-                "-mb-px border-b-2 px-4 py-2.5 text-sm whitespace-nowrap",
-                t.active ? "border-brand font-medium text-ink" : "border-transparent text-muted hover:text-body",
-              )}
-            >
-              {t.label}
-            </Link>
-          ))}
-          <span className="flex-1" />
-          {toggle ? (
-            <Link href={toggle.href} className="px-2 py-2.5 text-[13px] font-medium text-[#5223E0] hover:underline">
-              {toggle.label}
-            </Link>
-          ) : null}
-        </nav>
-      ) : null}
+      {tabs && tabs.length > 1 ? <ListTabs label={label} tabs={tabs} toggle={toggle} /> : null}
 
       {above}
       {metrics ? <MetricStrip metrics={metrics} /> : null}
