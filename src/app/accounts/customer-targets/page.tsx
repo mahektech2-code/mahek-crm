@@ -2,7 +2,7 @@ import { canFor, requireCapability } from "@/lib/access-control";
 import { getScope, scopeLabel } from "@/lib/scope";
 import { requireUser } from "@/lib/auth";
 import { currentPeriod, listAmFilterOptions } from "@/lib/queries";
-import { listTargetsPage, shortfallAnalysis } from "@/lib/services/worklist-services";
+import { listTargetsPage } from "@/lib/services/worklist-services";
 import { MonthlyTargetsScreen } from "@/components/customers/monthly-targets-screen";
 
 export const metadata = { title: "Customer targets — Accounts — MahekOne" };
@@ -11,7 +11,7 @@ export const metadata = { title: "Customer targets — Accounts — MahekOne" };
  * Monthly targets, on the Accounts side.
  *
  * The SAME reads and the SAME actions the CRM's own targets screen uses —
- * `listTargets`, `setTarget`, `setTargetsBulk`, `shortfallAnalysis` — because
+ * `listTargets`, `setTarget` and `setTargetsBulk` — because
  * this is not a second target system, it is `/crm/targets` reached from a
  * second door. Accounts hold `apps: ["accounts"]` and are redirected out of
  * the CRM before they reach it, the same way `src/app/crm/layout.tsx`
@@ -64,20 +64,6 @@ export default async function Page({
     }),
     listAmFilterOptions(),
   ]);
-  const shortfall = await canFor(user, "target.shortfall")
-    ? await shortfallAnalysis(activePeriod, {
-        // The SAME four answers the table above is narrowed by, and the same
-        // search box. Read from the URL once and handed to both, so the tab a
-        // manager switches to cannot be describing a different set of people
-        // from the one they were just looking at.
-        query: one("q"),
-        status: one("status"),
-        salesAm: one("sales"),
-        salesManager: one("salesmanager"),
-        backOfficeAm: one("backoffice"),
-      })
-    : null;
-
   return (
     <MonthlyTargetsScreen
       app="accounts"
@@ -87,7 +73,6 @@ export default async function Page({
       canSet={canSet}
       period={activePeriod}
       rows={page.rows}
-      shortfall={shortfall}
       filters={{
         query: one("q") ?? "",
         status: one("status") ?? "",
