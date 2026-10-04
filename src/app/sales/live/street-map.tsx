@@ -2103,12 +2103,11 @@ export function StreetMap({
 /**
  * One shape for the map and the state that replaces it.
  *
- * **Fullscreen is a HEIGHT here and a layout in `live-panel.tsx`.** The panel
- * is what takes the window; this only has to stop imposing a height on itself,
- * because the fixed `calc(100vh-280px)` is subtracting a header, a banner and a
- * paragraph that are not on the screen any more. `min-h` goes with it — a
- * minimum taller than the window is a map you have to scroll to see the bottom
- * of, which is the opposite of what the button was pressed for.
+ * **The height is the PANEL's, in and out of fullscreen.** This used to set
+ * its own `calc(100vh-280px)`, guessing at the height of a header, banners and
+ * a footnote it could not see — wrong whenever the banners changed, and the
+ * reason the map came out short. `page.tsx` makes the page the height of the
+ * window and `live-panel.tsx` hands the map what is left; this fills it.
  */
 function Frame({
   children,
@@ -2122,15 +2121,12 @@ function Frame({
   return (
     <div
       className={
-        "relative overflow-hidden border border-line bg-surface " +
-        (fullscreen ? "h-full rounded-none" : "rounded-[6px]")
+        "relative h-full min-h-0 overflow-hidden border border-line bg-surface " +
+        (fullscreen ? "rounded-none" : "rounded-[6px]")
       }
     >
       <div
-        className={
-          "relative bg-[#F0F2F6] " +
-          (fullscreen ? "h-full" : "h-[calc(100vh-280px)] min-h-[480px]")
-        }
+        className="relative h-full bg-[#F0F2F6]"
       >
         {children}
         {/* BOTTOM-RIGHT, on its own. The style switcher and the legend are one
