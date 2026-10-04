@@ -4345,6 +4345,14 @@ export const notifications = pgTable(
     body: text("body").notNull(),
     kind: text("kind").notNull().default("info"),
     href: text("href"),
+    /**
+     * Where the same notification goes on the HANDSET — an MBOS route, which
+     * is a different set of screens from `href`. It used to travel on the push
+     * alone, so the bell list on the phone was handed the web route and a tap
+     * on `/crm/performance` landed on the router's "Unmatched Route" page.
+     * Null means "no particular screen", and the phone opens nothing.
+     */
+    mbosHref: text("mbos_href"),
     read: boolean("read").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -7772,6 +7780,8 @@ export const mbosAttendanceDays = pgTable(
           outAt: number | null;
           inSelfieId?: string | null;
           outSelfieId?: string | null;
+          /** Closed by `markMissedCheckouts`, not by somebody punching out. */
+          autoClosed?: boolean;
         }[]
       >()
       .notNull()

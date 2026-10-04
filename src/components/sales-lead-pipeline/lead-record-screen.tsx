@@ -512,7 +512,7 @@ function OverviewTab({ lead, proto = false }: { lead: Lead; proto?: boolean }) {
   );
 }
 
-/** Up to `leads.suspectMaxVisits` visit chips, a cap-reached warning, and the conversion decision. */
+/** Up to `mbos.leads.maxSuspectVisits` visit chips, a cap-reached warning, and the conversion decision. */
 export function SuspectVisitTracker({ lead }: { lead: Lead }) {
   const { openModal, links } = useLeadPipeline();
   const cap = lead.suspectCap;

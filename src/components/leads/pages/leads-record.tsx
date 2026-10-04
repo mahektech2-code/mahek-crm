@@ -251,7 +251,7 @@ export async function Body({
    * sub-states a parcel is in decides who is being waited on, and what the
    * customer thought of it is the GATE's question, asked one file over.
    */
-  const mustDecide = mustDecideSuspect(gateInput, config["leads.suspectMaxVisits"]);
+  const mustDecide = mustDecideSuspect(gateInput, config["mbos.leads.maxSuspectVisits"]);
   const gateFacts: LeadGateActionFacts = {
     stage: record.stage,
     salesType: record.salesType,

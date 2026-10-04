@@ -306,7 +306,7 @@ export type Lead = {
   creditDaysWanted?: number;
   buyer?: string;
   visits: number;
-  /** `leads.suspectMaxVisits` — the visits a Suspect gets before an answer is demanded. */
+  /** `mbos.leads.maxSuspectVisits` — the visits a Suspect gets before an answer is demanded. */
   suspectCap: number;
   /** §4 — the window has run out and Prospect-or-not is being DEMANDED. */
   mustDecide: boolean;

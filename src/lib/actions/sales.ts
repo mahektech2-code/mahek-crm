@@ -249,11 +249,37 @@ function refresh() {
  * the href points at MBOS's own approvals screen rather than at a MahekOne
  * route he cannot open.
  */
-async function tell(userId: string, title: string, body: string) {
+async function tell(userId: string, title: string, body: string, mbosHref: string | null) {
   /* The row and the push are one act, and `notifyUsers` is where that act
      lives now — this function used to do its own device lookup, which is
-     exactly the copy fourteen other callers never made. */
-  await notifyUsers([{ userId, title, body, mbosHref: "/rejections" }]).catch(() => {});
+     exactly the copy fourteen other callers never made.
+
+     WHERE A TAP LANDS IS THE CALLER'S TO SAY. This used to hard-code
+     `/rejections` for every caller, so "a task was assigned to you" and "your
+     route for Tuesday" both opened the handset's list of records the office
+     REFUSED — a screen that by construction cannot contain either. Null is the
+     honest default and falls through to `/notifications`. */
+  await notifyUsers([{ userId, title, body, mbosHref }]).catch(() => {});
+}
+
+/** The handset screen an approval's decision is about. */
+function approvalHref(type: string): string | null {
+  switch (type) {
+    case "leave":
+      return "/leave";
+    case "expense_claim":
+      return "/expenses";
+    case "sample":
+      return "/samples";
+    case "order":
+      return "/orders";
+    case "tour":
+      return "/journeys";
+    case "attendance_regularisation":
+      return "/attendance";
+    default:
+      return null;
+  }
 }
 
 /* ══════════════════════════════════════════════════════════ the decisions */
@@ -475,6 +501,7 @@ export async function decideApproval(input: {
       approval.requestedByUserId,
       `Your ${approval.type.replace(/_/g, " ")} request was ${words}`,
       note || `${user.name} ${words} it.`,
+      approvalHref(approval.type),
     );
 
     refresh();
@@ -637,6 +664,11 @@ export async function saveJourneyPeriod(input: {
             skipped.push(day.planDate);
             continue;
           }
+          const gone = await tx
+            .delete(mbosJourneyStops)
+            .where(eq(mbosJourneyStops.planId, existing.id))
+            .returning({ id: mbosJourneyStops.id });
+          await tombstoneStops(tx, gone, input.salesmanId);
           await tx.delete(mbosJourneyPlans).where(eq(mbosJourneyPlans.id, existing.id));
           cleared += 1;
           continue;
@@ -668,14 +700,16 @@ export async function saveJourneyPeriod(input: {
           });
         }
 
-        await tx
+        const replaced = await tx
           .delete(mbosJourneyStops)
           .where(
             and(
               eq(mbosJourneyStops.planId, planId),
               sql`${mbosJourneyStops.status} = 'planned'`,
             ),
-          );
+          )
+          .returning({ id: mbosJourneyStops.id });
+        await tombstoneStops(tx, replaced, input.salesmanId);
 
         const fresh = day.customerIds.filter((id) => !untouchable.has(id));
         if (fresh.length) {
@@ -727,6 +761,7 @@ export async function saveJourneyPeriod(input: {
       `${user.name} planned ${saved === 1 ? "a day" : `${saved} days`}${
         cleared ? ` and cleared ${cleared}` : ""
       }. It will be on your handset at the next sync.`,
+      "/journey",
     );
 
     refresh();
@@ -864,6 +899,7 @@ export async function proposeJourneyDays(input: {
         input.salesmanId,
         `${plural(proposed, "day")} proposed for you`,
         `${user.name} has proposed where you work. Open your plan to agree, or say why a day will not work and what you want instead.`,
+        "/journey",
       );
     }
 
@@ -965,6 +1001,7 @@ export async function answerRefusal(input: {
       input.take === "counter"
         ? `${user.name} took your suggestion. Pick the shops when you are ready.`
         : `${user.name} has proposed ${city} instead. Agree, or say why it will not work.`,
+      "/journey",
     );
 
     refresh();
@@ -1565,6 +1602,7 @@ export async function setSalesmanTerritories(input: {
       wanted.length
         ? `Your handset now shows your customers in ${wanted.map((t) => t.value).join(", ")}. Everything else is still yours — it is just not on this list.`
         : "No area is set for you, so your customer list will be empty until the office sets one. Nothing of yours is lost.",
+      "/customers",
     );
 
     revalidatePath("/sales/people");
@@ -1683,6 +1721,7 @@ export async function setManagerTerritories(input: {
       wanted.length
         ? `${user.name} set your regions to ${wanted.join(", ")}. Your console shows those and nothing else.`
         : `${user.name} removed your regional limits. Your console shows the whole country.`,
+      null,
     );
 
     refresh();
@@ -1871,12 +1910,14 @@ export async function reassignLead(input: {
       input.salesmanId,
       `${leadLabel(lead)} is now yours`,
       `${user.name} assigned you this lead${lead.city ? ` in ${lead.city}` : ""}. It is on your handset at the next sync.`,
+      `/lead?id=${encodeURIComponent(input.leadId)}`,
     );
     if (previousOwner) {
       await tell(
         previousOwner.id,
         `${leadLabel(lead)} was moved`,
         `${user.name} reassigned it to ${salesman.name}.`,
+        null,
       );
     }
 
@@ -2047,6 +2088,7 @@ export async function chaseLeadOwner(input: {
       lead.ownerId,
       `Chase — ${leadLabel(lead)}`,
       note || `${user.name} asked you to follow up on ${leadLabel(lead)}.`,
+      `/lead?id=${encodeURIComponent(lead.id)}`,
     );
 
     refresh();
@@ -2105,6 +2147,7 @@ export async function archiveLead(input: { leadId: string; reason: string }): Pr
         lead.ownerId,
         `${leadLabel(lead)} was archived`,
         `${user.name} filed it away — ${reason}`,
+        null,
       );
     }
 
@@ -2326,6 +2369,7 @@ export async function bulkReassignLeads(input: {
         input.salesmanId,
         `${plural(moving.length, "lead")} ${moving.length === 1 ? "is" : "are"} now yours`,
         `${user.name} assigned them to you. They are on your handset at the next sync.`,
+        "/leads",
       );
 
       /* One message per person who lost work, not one per lead. */
@@ -2338,6 +2382,7 @@ export async function bulkReassignLeads(input: {
           ownerId,
           `${plural(n, "lead")} moved`,
           `${user.name} reassigned ${n === 1 ? "it" : "them"} to ${salesman.name}.`,
+          null,
         );
       }
     }
@@ -2403,6 +2448,7 @@ export async function bulkArchiveLeads(input: {
           ownerId,
           `${plural(n, "lead")} archived`,
           `${user.name} filed ${n === 1 ? "it" : "them"} away — ${reason}`,
+          null,
         );
       }
     }
@@ -2503,6 +2549,7 @@ export async function bulkChaseLeadOwners(input: {
         ownerId,
         `Chase — ${plural(held.length, "lead")}`,
         note || `${user.name} asked you to follow up on ${names}${more}.`,
+        "/leads",
       );
       done += held.length;
     }
@@ -2738,7 +2785,7 @@ export async function askAboutVisit(input: {
       afterState: { question } as never,
     });
 
-    await tell(visit.salesmanId, "A question about a visit", `${user.name} asked: ${question}`);
+    await tell(visit.salesmanId, "A question about a visit", `${user.name} asked: ${question}`, null);
 
     refresh();
     return okVoid("Asked. It reaches their handset on the next sync.");
@@ -2836,6 +2883,31 @@ function clockOn(isoDate: string, minutes: number): Date {
  * row has no `updated_at` for a delta to notice, so without one a withdrawn
  * price list stays openable on every phone that already had it.
  * ------------------------------------------------------------------------- */
+
+/**
+ * Stops the office replaced or cleared, said to the handset that holds them.
+ *
+ * A replan deletes the planned stops and writes new ones under new ids, and a
+ * pull only carries rows that EXIST — so without a tombstone each old stop sat
+ * on the phone beside its replacement for ever: the day's list doubled, shops
+ * somebody had taken off it stayed on it, and "x of N done" counted both.
+ */
+async function tombstoneStops(
+  tx: Pick<typeof db, "insert">,
+  stops: { id: string }[],
+  salesmanId: string,
+): Promise<void> {
+  if (!stops.length) return;
+  await tx.insert(mbosDeletions).values(
+    stops.map((s) => ({
+      id: gen("del"),
+      entity: "journey_stops",
+      entityId: s.id,
+      userId: salesmanId,
+      reason: "replanned",
+    })),
+  );
+}
 
 /**
  * The tombstone.
@@ -3252,6 +3324,7 @@ export async function createTask(input: {
       input.assignedToUserId,
       "A task was assigned to you",
       `${user.name}: ${title} — due ${input.dueDate}`,
+      "/tasks",
     );
 
     refresh();
@@ -3345,6 +3418,7 @@ export async function bulkAssignTask(input: {
         assigneeId,
         count === 1 ? "A task was assigned to you" : `${count} tasks were assigned to you`,
         `${user.name}: "${title}" — due ${input.dueDate}`,
+        "/tasks",
       );
     }
 

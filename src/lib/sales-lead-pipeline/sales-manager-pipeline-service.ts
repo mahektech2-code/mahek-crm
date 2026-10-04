@@ -1068,7 +1068,7 @@ export async function pipelineLead(
 
   const freshDays = config["leads.figuresFreshDays"];
   const input = gateInputFor(record, freshDays);
-  const mustDecide = mustDecideSuspect(input, config["leads.suspectMaxVisits"]);
+  const mustDecide = mustDecideSuspect(input, config["mbos.leads.maxSuspectVisits"]);
   const deskRequest =
     ["awaiting", "followup"].includes(extra?.prospectRequestState ?? "") &&
     ["new", "suspect", "contacted"].includes(record.stage);
@@ -1152,7 +1152,7 @@ export async function pipelineLead(
     creditDaysWanted: record.creditDaysWanted ?? undefined,
     buyer: clean(record.buyer),
     visits: record.suspectVisitCount,
-    suspectCap: config["leads.suspectMaxVisits"],
+    suspectCap: config["mbos.leads.maxSuspectVisits"],
     mustDecide,
     conversionReason: conversion?.reasonCode ?? undefined,
     verification,

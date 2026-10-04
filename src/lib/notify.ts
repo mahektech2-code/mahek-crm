@@ -66,6 +66,9 @@ export async function notifyUsers(entries: readonly NotifyEntry[]): Promise<void
     body: e.body,
     kind: e.kind ?? "info",
     href: e.href ?? null,
+    /* Stored, not only pushed: the handset's bell list reads this row on the
+       next pull, and without it the phone was handed the WEB route. */
+    mbosHref: e.mbosHref ?? null,
   }));
 
   await db.insert(notifications).values(rows);

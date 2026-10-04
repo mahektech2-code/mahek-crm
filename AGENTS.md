@@ -366,6 +366,14 @@ work. What changed is that the other side of the trade turned out to cost more:
 an unallocated salesman carried the WHOLE book, which on this book is 2,587
 shops on one phone, and nothing anywhere said he should not have them.
 
+**A SHOP HE CREATED STAYS IN HIS BOOK.** A field-created shop arrived with
+whatever town he typed and no state, so under a state or city allocation it
+matched nothing, fell out of `bookIds`, and the handset's reconcile deleted it
+thirty seconds after he made it — orders still pointing at it.
+`handleCustomerCreate` files it under a state the way `placeNewLead` files a
+lead, and `customerIdsInScope` keeps the creator's own `mbos` shops in his book
+whatever their address: a narrowing, never a permission, so no sight widens.
+
 So `territoryClause` answers a FALSE condition where nothing is allocated,
 never `undefined` — an absent clause and a false one look alike in a type
 signature and are opposite answers to "what may this person see", and the
@@ -693,6 +701,16 @@ phone may still be showing an order accounts turned down ten minutes ago —
 rejections reach it on the next pull — and marking that delivered would
 resurrect a refused sale into every figure `PURCHASE_STATUSES` feeds.
 
+**THE SAME ORDER FROM THE SAME SALESMAN IS A RESEND, NOT A DUPLICATE.** The id
+is minted on his handset, so a row carrying it that he took is his first
+attempt — written, with the answer lost on the way back, which is the ordinary
+shape of a batch slower than the handset's patience. `handleOrder` and
+`handlePayment` answer it `accepted` with the stored number; refusing it put an
+order sitting in accounts' queue on his Not accepted list, with a bell and a
+ring-back task to match. Only somebody ELSE's row under that id is a duplicate.
+An order the handset could not value says so (`valueUnavailable`) and does not
+overwrite `last_order_value` with its zero.
+
 **THE REORDER DUE IS DERIVED ON THE PHONE, from the customer's own cycle.**
 There is no reorder channel on the pull and no connection in a market lane, so
 `reorderState` reads `lastOrderDate` and `cycleDays`, which every customer row
@@ -801,11 +819,27 @@ Hold, for the same reason: the next sample goes out exactly the same otherwise.
 Enforced in the handler and stated on the screen before the button is pressed,
 because being refused after the fact loses the sentence somebody had in mind.
 
+**AND THE HANDSET SAYS WHY IN ITS FEEDBACK, which the handler did not read.**
+The phone demands one of three boxes before it saves a "No" — what else they
+said, the price, the comparison — and sends them as `feedback`, never as
+`rejectionReason`. The check read only the second, so every rejection a
+salesman recorded was refused as "no reason" while his screen said Saved, and
+the trial stayed pending in the office. `handleSampleUpdate` now derives the
+reason from those three boxes, in that order, and stores it.
+
 **AN APPROVED SAMPLE OPENS NEGOTIATION, and that is what unlocks the order.**
 §L follows §K deliberately: the sample review is what authorises a commercial
 conversation, not the salesman deciding he is ready for one. `afterSampleVerdict`
 moves the lead to `negotiation`, which is the stage `handleOrder` requires — so
 the gate and the thing that opens it are one mechanism rather than two.
+
+**ON EVERY LADDER, THROUGH THE GATE.** The move used to fire only for a lead
+on the legacy `qualified` rung, so a funnel lead at `sample_review` was told
+"Negotiation is open", handed a negotiation visit, and stayed where it was.
+`openNegotiation` moves a funnel lead with `evaluateLeadStageMove` and
+`applyLeadStageMove` — the same gate and the same transition row a press of the
+button writes — and where the gate refuses, the notification says what is still
+missing instead of promising a conversation the ladder will not allow.
 
 **QUALIFYING A LEAD IS WHAT STARTS THE WORKFLOW.** `qualifyLead` fills the Lead
 Manager seat from the ORG CHART — the same `managerNameByEmployeeName` that
@@ -1137,6 +1171,17 @@ this one has a visit already made and would be throwing that away. What §B
 actually wants is that nobody keeps visiting a shop nobody has decided about,
 and that is bought by demanding an ANSWER.
 
+**AND THE OFFICE NO LONGER REFUSES THE VISIT EITHER.** `handleVisit` used to
+reject a visit past the cap that arrived without a decision. The handset asks
+only when IT can see the cap — its own count, a lead row it holds — and the
+office counts every visit anybody made, so where the two disagreed the phone
+never asked and the whole visit went to Not accepted, with the order and the
+payment behind it. The visit lands now and the missing answer goes to the
+manager. ONE CAP, too: `leads.suspectMaxVisits` is retired, every reader uses
+`mbos.leads.maxSuspectVisits`, and the handset is sent that value under both
+names — two settings for one number let the record page and the visit screen
+disagree about the same lead.
+
 So there are three states and none of them blocks the visit being made:
 `mbos.leads.visitsBeforeDecision` starts the warning, `mbos.leads.maxSuspectVisits`
 makes the Prospect-or-not answer mandatory before the visit can be CLOSED, and
@@ -1198,6 +1243,14 @@ and nothing did: the attachment kept the literal string `pending` for ever, so
 `canRead` looked for a record with that id and refused the file to everybody.
 It is called after the record is safe and cannot fail the write — a lead is
 never lost to a photograph.
+
+**EVERY HANDLER THAT NAMES A FILE BINDS IT, not just the lead's.** For a long
+time only leads and expenses did, so a visit's shop photo and voice note, a
+cheque, a sample's delivery proof, a task's completion photo, an odometer
+reading and every attendance selfie that went up before its record existed sat
+under `pending` for ever — readable by nobody, the salesman included. Each
+handler now binds what its payload names, and `storeMbosMedia` re-parents a
+`pending` row when the same file is sent again naming its real record.
 
 **A LEAD HAS TWO SEATS, and only one of them is the book.** The office asks that
 the sales manager over a salesman picks up a lead once it is qualified, while
@@ -2149,6 +2202,16 @@ does that literally, because a lead's entire definition is an account that has
 never ordered, and a real customer's order history would make the label false
 the moment it was applied.
 
+**"CONVERT TO CUSTOMER" ON THE HANDSET IS REFUSED, and that is a reversal.**
+It promoted a lead to `kind = 'customer'` on one tap — a Suspect included, no
+§28 gate — cleared `third_party` and moved the sales seat to whoever pressed it.
+It also could not work: the handset created a customer under its own id and
+the office promoted the LEAD's row instead, so every order taken against the
+phone's copy was refused as "not on MahekOne". A lead becomes a customer at its
+first order (`promotesToCustomerAt`) and an order can be taken against a lead,
+so `handleCustomerCreate` refuses a `fromLeadId` in words that say so, and
+`convertedCustomerId` on a lead update converts nothing.
+
 **`customer.classify` is held by managers AND by accounts.** Manager-only from
 the day it shipped, on the reasoning that marking a shop decides who gets
 CALLED, which is a manager's team's work — and that reasoning did not go away,
@@ -2830,6 +2893,23 @@ invisible. It is a `jsonb` column now, stored as the handset reports it and
 NOT a cache: rebuilding it from the two marks is precisely the loss it exists
 to prevent. It is also the only place N photographs can live, since a day with
 two breaks carries six.
+
+**A DAY THE NIGHTLY CLOSES IS CLOSED IN ITS SESSIONS TOO.**
+`markMissedCheckouts` set `check_out_at` and left the last session at
+`outAt: null`, so `workedSecondsOf` read the day as still running, the verdict
+job skipped it as unjudged every night for ever, and a nine-hour day read
+Absent with no hours on the record pay is read against. The open session is
+closed at the same instant and marked `autoClosed`. And that instant is the
+last thing he DID — an activity filed, a visit closed — with a raw position
+used only for a day with neither: a position is evidence the phone was on, and
+a forgotten punch-out left the tracker recording through the evening at home,
+so the day used to close at 23:58.
+
+**A regularisation request is something somebody asked for.** The handset sends
+`regularisationRequested: true` on every punch-in outside the radius, reason or
+none; with a company-wide base location that filed a "request" for every
+salesman starting from home. It counts only where a reason came with it —
+`withinGeofence` still records the distance.
 
 **A DAY'S VERDICT IS DERIVED, AND FOR A LONG TIME NOTHING DERIVED IT.**
 `mbos_attendance_days.status` and `worked_seconds` are caches — the column
@@ -3547,6 +3627,16 @@ never will be, and the tap would land on a screen that does not contain it. A
 null falls through to `/notifications`, which carries the reason in the body —
 the honest default `notify.ts` names, and better than a deep link that is
 confidently pointed at nothing.
+
+**A NOTIFICATION CARRIES TWO ADDRESSES, AND BOTH ARE STORED.** `href` is the
+web route and `mbos_href` the handset's. The second used to ride on the push
+alone, so the phone's bell list — filled from this table on every pull — was
+handed `/crm/performance` and `/field/tasks`, routes its router has never heard
+of, and a tap landed on "Unmatched Route". The pull sends `mbos_href` as the
+handset's `href`; null opens nothing. The Sales Dashboard's `tell()` likewise
+takes the screen from its caller: it used to send every push — a task, a route,
+a lead — to `/rejections`, the list of records the office REFUSED, which by
+construction contains none of them.
 
 **Whose number it is, is `orders.userId` — never whoever owns the account
 today.** The person who has to ring back is the one who made the promise, and a
@@ -4902,6 +4992,13 @@ for ever — and the salesman walks to a shop that is not his any more with
 nothing anywhere looking wrong. It is reference data only: nothing he authored
 is ever deleted by a sync, not a rejected order and not a visit that lost a
 conflict. `user_id` null means everybody, which is what a withdrawn product is.
+
+**A REPLAN IS A DELETE, so it tombstones.** Both the handset's own pick and
+the office's replan delete the planned stops and write new ones under new ids.
+Without a `journey_stops` tombstone for each, the phone kept every old stop
+beside its replacement: the day doubled, unpicked shops stayed on it, and
+"x of N done" counted both. A shop already visited or skipped keeps its stop
+and is not added again when re-picked.
 
 **The price list is replaced wholesale, and everything else is upserted.** A
 rate that was withdrawn has to disappear, and a per-row upsert leaves it behind

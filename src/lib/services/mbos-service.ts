@@ -548,6 +548,9 @@ export async function mbosConfigPayload(): Promise<Record<string, unknown>> {
      */
     if (key.startsWith("mbos.") || key.startsWith("leads.")) out[key] = value;
   }
+  /* ONE CAP, under both names — `leads.suspectMaxVisits` is retired and the
+     handset's lead record still reads it by that name. */
+  out["leads.suspectMaxVisits"] = config["mbos.leads.maxSuspectVisits"];
   out["products.priceSource"] = config["products.priceSource"];
   /* The upload ceiling, so a PDF too large to accept is refused at the moment
      it is picked — with the salesman looking — rather than failing in the
@@ -818,7 +821,23 @@ export async function customerIdsInScope(
   const territories = await territoriesFor(principal.user.id);
   if (!exempt && !territories.length) return [];
 
-  const territory = territories.length ? territoryClause(territories) : undefined;
+  /*
+   * HIS OWN FIELD-CREATED SHOPS STAY IN HIS BOOK whatever their address says.
+   *
+   * A shop added from the handset arrives with whatever town he typed and, on
+   * older builds, no state at all — so under a state-or-city allocation it
+   * matched nothing, the pull's `bookIds` left it out, and the handset's
+   * reconcile deleted the shop he had created thirty seconds earlier, with his
+   * orders still pointing at it. The territory is a narrowing and never a
+   * permission (see above), so letting the creator keep the row he created
+   * widens nobody's sight beyond what `visible` already allows.
+   */
+  const territory = territories.length
+    ? or(
+        territoryClause(territories),
+        and(eq(customers.leadSource, "mbos"), eq(customers.ownerId, principal.user.id)),
+      )
+    : undefined;
 
   // A lead in the trash is in nobody's book — on top of both clauses above,
   // because the "named by" arm can admit what the scope arm leaves out.
@@ -2886,7 +2905,8 @@ async function unreadNotifications(userId: string) {
       title: notifications.title,
       body: notifications.body,
       kind: notifications.kind,
-      href: notifications.href,
+      /* The HANDSET route, never the web one — see `notifications.mbosHref`. */
+      href: notifications.mbosHref,
       createdAt: notifications.createdAt,
     })
     .from(notifications)
@@ -3220,7 +3240,8 @@ export async function buildPull(
           title: notifications.title,
           body: notifications.body,
           kind: notifications.kind,
-          href: notifications.href,
+          /* The HANDSET route, never the web one — see `notifications.mbosHref`. */
+          href: notifications.mbosHref,
           createdAt: notifications.createdAt,
         })
         .from(notifications)
