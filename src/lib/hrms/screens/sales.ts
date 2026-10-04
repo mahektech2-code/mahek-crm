@@ -1,13 +1,12 @@
 import "server-only";
 import { and, count, desc, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { customers, hrmsActivities, hrmsCalling, hrmsJourneys, hrmsUserPowers } from "@/db/schema";
+import { customers, hrmsActivities, hrmsCalling, hrmsJourneys } from "@/db/schema";
 import { getConfig } from "@/lib/config/store";
-import { notifyUsers } from "@/lib/notify";
 import { recomputeInactivity } from "@/lib/recompute";
 import { HRMS_EVENT, writeTimelineEvent, writeTimelineEvents } from "@/lib/timeline";
 import type { ActionSpec, ColSpec, Contact, FieldSpec, FormSpec, ListRow, RowField } from "@/lib/erp/ui";
-import { has, type HrmsContext } from "../access";
+import { has, scopeOf, type HrmsContext } from "../access";
 import {
   err,
   fieldErr,
@@ -41,6 +40,7 @@ import {
 import { addDaysISO, fdShort, monthOf } from "../time";
 import { hrmsLink } from "../registry";
 import { personFrom, personOption, scopeFor } from "./attendance";
+import { powerHolderUserIds, tell } from "../services/notify";
 
 /* ---------------------------------------------------------------------------
  * The Sales desk (spec §14): customers, the back-office calling list, sales
@@ -314,10 +314,8 @@ function nameScope(ctx: HrmsContext, ids: Set<string> | null, people: Person[]):
 }
 
 /** Holders of the power to decide deactivations — told when one is asked for. */
-async function deciders(): Promise<string[]> {
-  const rows = await db.select({ userId: hrmsUserPowers.userId }).from(hrmsUserPowers).where(eq(hrmsUserPowers.power, "custStatus"));
-  return [...new Set(rows.map((r) => r.userId))];
-}
+/* Who decides deactivations: holders of the power and HRMS administrators, active accounts only. */
+const deciders = () => powerHolderUserIds("custStatus");
 
 async function editCustomerForm(c: Cust): Promise<FormSpec> {
   const [segments, people] = await Promise.all([refList("Customer segmentation"), allPeople()]);
@@ -348,6 +346,18 @@ const NOT_LINKED = "Your account is not linked to an employee record yet. Ask HR
 
 /** Rows sent per page of the customers list. */
 const CUSTOMER_PAGE = 300;
+
+/** The header search's customers: the ones this person's Sales desk would list, by name. */
+export async function searchCustomers(ctx: HrmsContext, needle: string, limit: number): Promise<Cust[]> {
+  const people = await allPeople();
+  const inScope = nameScope(ctx, visibleIds(ctx, scopeOf(ctx, "salesAll"), people), people);
+  const decide = has(ctx, "custStatus");
+  const n = needle.trim().toLowerCase();
+  return (await loadCustomers())
+    .filter((c) => (!inScope || inScope(c)) && (decide || statusOf(c) !== "Deactivated") && String(c.name ?? "").toLowerCase().includes(n))
+    .sort((x, y) => String(x.name ?? "").localeCompare(String(y.name ?? "")))
+    .slice(0, limit);
+}
 
 const customersScreen: HrmsScreenModule = {
   key: "customers",
@@ -473,7 +483,7 @@ const customersScreen: HrmsScreenModule = {
         .where(eq(customers.id, id));
       await hrmsAudit(ctx, "hrms.customer.deactivationRequest", "customer", id, { deactivationRequested: false }, { deactivationRequested: true, reason });
       const to = (await deciders()).filter((u) => u !== ctx.user.id);
-      await notifyUsers(
+      await tell(
         to.map((userId) => ({
           userId,
           title: "Deactivation requested",
@@ -528,7 +538,7 @@ const customersScreen: HrmsScreenModule = {
       await hrmsAudit(ctx, "hrms.customer.deactivate", "customer", id, { status: c.status }, { status: "deactivated", reason });
       await recomputeInactivity(id);
       if (c.deactivationRequestedById && c.deactivationRequestedById !== ctx.user.id)
-        await notifyUsers([{ userId: c.deactivationRequestedById, title: "Deactivation accepted", body: `${c.name} is deactivated.`, href: hrmsLink("customers", { open: id }) }]);
+        await tell([{ userId: c.deactivationRequestedById, title: "Deactivation accepted", body: `${c.name} is deactivated.`, href: hrmsLink("customers", { open: id }) }]);
       return okVoid(`${c.name} deactivated`);
     },
     async rejectDeactivation(ctx, id, v) {
@@ -544,7 +554,7 @@ const customersScreen: HrmsScreenModule = {
         .where(eq(customers.id, id));
       await hrmsAudit(ctx, "hrms.customer.deactivationReject", "customer", id, { reason: c.deactivationReason }, { remark });
       if (c.deactivationRequestedById && c.deactivationRequestedById !== ctx.user.id)
-        await notifyUsers([
+        await tell([
           { userId: c.deactivationRequestedById, title: "Deactivation rejected", body: `${c.name} stays active: ${remark}`, kind: "warn", href: hrmsLink("customers", { open: id }) },
         ]);
       return okVoid("Kept active");

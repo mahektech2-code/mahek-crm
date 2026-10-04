@@ -1,8 +1,7 @@
 import "server-only";
-import { and, desc, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "@/db";
-import { appAccess, attachments, hrmsAttendance, hrmsDocuments, hrmsGrievances, hrmsHelp, hrmsNotifications, hrmsRefLists, hrmsUserPowers, users } from "@/db/schema";
-import { notifyUsers, type NotifyEntry } from "@/lib/notify";
+import { attachments, hrmsAttendance, hrmsDocuments, hrmsGrievances, hrmsHelp, hrmsNotifications, hrmsRefLists, users } from "@/db/schema";
 import { submitFeedback } from "@/lib/actions/feedback";
 import { bindAttachments } from "@/lib/services/attachment-service";
 import type { ActionSpec, Contact, FormSpec, ListRow, RowField } from "@/lib/erp/ui";
@@ -14,6 +13,7 @@ import { HRMS_TABS, hrmsLink, hrmsListLabel } from "../registry";
 import { fdShort, tmin } from "../time";
 import { personFrom, personOption } from "./attendance";
 import { GRIEVANCE_ANSWERED, HELP } from "../values";
+import { hrmsUserIds, powerHolderUserIds, tell, usersOfEmployees } from "../services/notify";
 
 /* ---------------------------------------------------------------------------
  * Help & grievance (spec §16), Documents and Notifications (§17), and the
@@ -28,46 +28,10 @@ function privateScope(q: ScreenQuery, wide: boolean): { scope: Scope; options: S
   return { scope: q.scope === "mine" ? "mine" : "all", options: ["mine", "all"] };
 }
 
-/** MahekOne accounts for employees — the bell is a user's, the HRMS row an employee's. */
-async function userIdsFor(employeeIds: (string | null | undefined)[]): Promise<string[]> {
-  const ids = [...new Set(employeeIds.filter((x): x is string => !!x))];
-  if (!ids.length) return [];
-  const rows = await db
-    .select({ id: users.id })
-    .from(users)
-    .where(and(inArray(users.employeeId, ids), eq(users.active, true)));
-  return rows.map((r) => r.id);
-}
-
-/** Who answers help and grievances: holders of `resolve`, and HRMS administrators (spec §18.5). */
-async function resolverUserIds(): Promise<string[]> {
-  const rows = await db
-    .selectDistinct({ id: users.id })
-    .from(users)
-    .innerJoin(appAccess, and(eq(appAccess.userId, users.id), eq(appAccess.app, "hrms")))
-    .leftJoin(hrmsUserPowers, and(eq(hrmsUserPowers.userId, users.id), eq(hrmsUserPowers.power, "resolve")))
-    .where(and(eq(users.active, true), or(isNotNull(hrmsUserPowers.userId), eq(appAccess.role, "admin"), eq(users.role, "admin"))));
-  return rows.map((r) => r.id);
-}
-
-/** Every active account holding HRMS — "All employees" on a notification. */
-async function hrmsUserIds(): Promise<string[]> {
-  const rows = await db
-    .selectDistinct({ id: users.id })
-    .from(users)
-    .innerJoin(appAccess, and(eq(appAccess.userId, users.id), eq(appAccess.app, "hrms")))
-    .where(eq(users.active, true));
-  return rows.map((r) => r.id);
-}
-
-/** A bell must never fail the write it announces. */
-async function tell(entries: NotifyEntry[]): Promise<void> {
-  try {
-    await notifyUsers(entries);
-  } catch {
-    /* the record is saved; the bell is a courtesy */
-  }
-}
+/* Who is told, and the telling, are `../services/notify`: one definition of
+   a resolver for help, grievances and the late-check-in request alike. */
+const userIdsFor = usersOfEmployees;
+const resolverUserIds = () => powerHolderUserIds("resolve");
 
 async function namesOf(userIds: (string | null | undefined)[]): Promise<Map<string, string>> {
   const ids = [...new Set(userIds.filter((x): x is string => !!x))];
@@ -111,6 +75,9 @@ function helpForm(): FormSpec {
 
 type HelpRow = typeof hrmsHelp.$inferSelect;
 
+/** Whether approving this request can write its times onto the day: an attendance request with a time, approved by somebody who edits attendance. */
+const correctsDay = (ctx: HrmsContext, r: HelpRow) => ATTENDANCE_TYPES.includes(r.type) && !!(r.inTime || r.outTime) && has(ctx, "editAtt");
+
 function helpActions(ctx: HrmsContext, r: HelpRow, attendanceId: string | undefined): ActionSpec[] {
   const resolver = has(ctx, "resolve");
   const late = r.type === HELP.runningLate;
@@ -125,8 +92,13 @@ function helpActions(ctx: HrmsContext, r: HelpRow, attendanceId: string | undefi
         title: "Approve help request",
         sub: r.type,
         submit: "Approve",
-        init: { remark: r.adminRemark ?? "" },
-        fields: [{ k: "remark", l: "Reviewer’s remark", t: "area", req: late, hint: late ? "Say what was agreed about the late start." : undefined }],
+        init: { remark: r.adminRemark ?? "", apply: correctsDay(ctx, r) ? "Yes" : "" },
+        fields: [
+          { k: "remark", l: "Reviewer’s remark", t: "area", req: late, hint: late ? "Say what was agreed about the late start." : undefined },
+          ...(correctsDay(ctx, r)
+            ? [{ k: "apply", l: `Write ${[r.inTime && `check-in ${r.inTime}`, r.outTime && `check-out ${r.outTime}`].filter(Boolean).join(" and ")} on ${fdShort(r.date)}`, t: "select" as const, opts: ["Yes", "No"], req: true }]
+            : []),
+        ],
       },
     });
   if (resolver)
@@ -249,7 +221,12 @@ const help: HrmsScreenModule = {
       await hrmsAudit(ctx, "hrms.help.approve", "hrms_help", id, { status: r.status }, { status: "Approved", remark });
       const to = await userIdsFor([r.employeeId]);
       await tell(to.map((userId) => ({ userId, title: "Help request approved", body: `${r.type}${remark ? ` · ${remark}` : ""}`, href: hrmsLink("help", { open: id }) })));
-      return okVoid(ATTENDANCE_TYPES.includes(r.type) ? "Approved · set the check-in time on the attendance day" : "Approved");
+      if (!ATTENDANCE_TYPES.includes(r.type)) return okVoid("Approved");
+      if (correctsDay(ctx, r) && v.apply === "Yes") {
+        const { correctDayFromHelp } = await import("./attendance");
+        return okVoid(`Approved · ${await correctDayFromHelp(ctx, { employeeId: r.employeeId, date: r.date, inTime: r.inTime, outTime: r.outTime, type: r.type })}`);
+      }
+      return okVoid(has(ctx, "editAtt") ? "Approved · attendance was not changed" : "Approved · someone who can edit attendance sets the times on that day");
     },
     async remark(ctx, id, v) {
       if (!has(ctx, "resolve")) return err("Writing the reviewer’s remark needs the “Resolve help requests and grievances” power", "not_permitted");
@@ -508,6 +485,19 @@ function docFor(d: DocRow, me: HrmsContext["employee"]): boolean {
   if (d.taggedEmployeeIds.includes(me.id)) return true;
   if (d.tagged === "Field staff") return isSales({ positionType: me.positionType } as Person);
   return !!me.office && d.tagged === me.office;
+}
+
+/** Whether this person may open a document's file: the screen's own rule. */
+export async function mayReadDocument(ctx: HrmsContext, id: string): Promise<boolean> {
+  const [d] = await db.select().from(hrmsDocuments).where(eq(hrmsDocuments.id, id)).limit(1);
+  return !!d && (manageDocs(ctx) || docFor(d, ctx.employee));
+}
+
+/** The header search's documents: the ones this person's Documents screen would list. */
+export async function searchDocuments(ctx: HrmsContext, needle: string, limit: number): Promise<DocRow[]> {
+  const n = needle.trim().toLowerCase();
+  const all = await db.select().from(hrmsDocuments).orderBy(desc(hrmsDocuments.date));
+  return all.filter((d) => (manageDocs(ctx) || docFor(d, ctx.employee)) && d.title.toLowerCase().includes(n)).slice(0, limit);
 }
 
 const docHref = (d: DocRow) => (d.type === "Link" ? (d.url ?? "") : d.fileAttachmentId ? `/api/attachments/${d.fileAttachmentId}` : "");

@@ -1,11 +1,11 @@
 import "server-only";
 import { and, eq, gte, inArray, lte } from "drizzle-orm";
 import { db } from "@/db";
-import { hrmsAttendance, hrmsHolidays, hrmsLeaveCredits, hrmsLeaveRequests, type HrmsAttendance } from "@/db/schema";
+import { hrmsAttendance, hrmsHolidays, hrmsLeaveRequests, type HrmsAttendance } from "@/db/schema";
 import { getConfig } from "@/lib/config/store";
 import { dayFigures, type AttendanceCfg, type DayFigures } from "../engines/attendance";
-import { balances, holidayApplies, holidaysInside, type Balances, type HolidayRef } from "../engines/leave";
-import { datesBetween, datesOfMonth, monthOf } from "../time";
+import { holidayApplies, holidaysInside, type HolidayRef } from "../engines/leave";
+import { datesBetween, monthOf } from "../time";
 import { today } from "../server";
 
 /* ---------------------------------------------------------------------------
@@ -70,18 +70,6 @@ export async function approvedLeave(employeeIds?: string[]) {
   return db.select().from(hrmsLeaveRequests).where(and(...conds));
 }
 
-/** Available paid leave (month) and unpaid leave (year) for one employee. */
-export async function leaveBalances(employeeId: string, month: string, yearlyMax: number | null): Promise<Balances> {
-  const [credits, approved] = await Promise.all([
-    db.select({ month: hrmsLeaveCredits.month, days: hrmsLeaveCredits.days }).from(hrmsLeaveCredits).where(eq(hrmsLeaveCredits.employeeId, employeeId)),
-    db
-      .select({ startDate: hrmsLeaveRequests.startDate, paid: hrmsLeaveRequests.paid, unpaid: hrmsLeaveRequests.unpaid })
-      .from(hrmsLeaveRequests)
-      .where(and(eq(hrmsLeaveRequests.employeeId, employeeId), eq(hrmsLeaveRequests.status, "Approved"))),
-  ]);
-  return balances({ month, credits, approved, yearlyMax });
-}
-
 /** The leave dates of a set of approved requests that fall in a month. */
 export function leaveDatesIn(requests: { startDate: string; endDate: string }[], month: string): string[] {
   const set = new Set<string>();
@@ -113,5 +101,3 @@ export function monthCounts(x: {
   return { fullDays: full, halfDays: half, pendingCheckouts: pending, lateCount: late, paidLeave, unpaidLeave, leaveDays, holidaysInsideLeave: inside, officialHolidays: official };
 }
 
-/** Every date in a month, for callers that walk a calendar. */
-export const monthDates = datesOfMonth;

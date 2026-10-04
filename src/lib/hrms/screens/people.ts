@@ -1,7 +1,7 @@
 import "server-only";
 import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { employees, hrmsAssetAssignments, hrmsAssetStock, hrmsOffices, hrmsStaffTimings, sessions, users } from "@/db/schema";
+import { attachments, employees, hrmsAssetAssignments, hrmsAssetStock, hrmsOffices, hrmsStaffTimings, sessions, users } from "@/db/schema";
 import { getConfig } from "@/lib/config/store";
 import { inr, type ActionSpec, type Contact, type FieldSpec, type FormSpec, type ListRow, type RowField, type ToolSpec } from "@/lib/erp/ui";
 import { syncEmployeesAction } from "@/lib/actions/hrms";
@@ -34,6 +34,7 @@ import { availability, dutyDuration, officeDuration } from "../calcs/people";
 import { personFrom, personOption, scopeFor } from "./attendance";
 import { ADMIN } from "@/lib/admin-routes";
 import { ASSET_CATEGORIES, ASSET_EQUIPMENT, OFFICE_ALL_HOURS, OFFICE_TIMINGS } from "../values";
+import { tellPowerHolders } from "../services/notify";
 
 /* ---------------------------------------------------------------------------
  * People (spec §4, §5, §15): the employee directory and its sign-up form, ID
@@ -114,6 +115,35 @@ function pick(k: string, l: string, opts: string[], extra: Partial<FieldSpec> = 
 }
 
 /** How many related rows each employee has, one query for the whole directory. */
+/** Everything that is a record of what somebody did, by table — what deleting a person would erase. */
+const HISTORY: { k: string; table: string; col: string; one: string; many?: string }[] = [
+  { k: "att", table: "hrms_attendance", col: "employee_id", one: "attendance day" },
+  { k: "leave", table: "hrms_leave_requests", col: "employee_id", one: "leave request" },
+  { k: "sal", table: "hrms_salaries", col: "employee_id", one: "salary", many: "salaries" },
+  { k: "adv", table: "hrms_advances", col: "employee_id", one: "advance" },
+  { k: "exp", table: "hrms_expenses", col: "employee_id", one: "expense" },
+  { k: "asset", table: "hrms_asset_assignments", col: "employee_id", one: "asset assignment" },
+  { k: "help", table: "hrms_help", col: "employee_id", one: "help request" },
+  { k: "ot", table: "hrms_overtime", col: "employee_id", one: "overtime record" },
+  { k: "cl", table: "hrms_checklist", col: "employee_id", one: "checklist item" },
+  { k: "td", table: "hrms_todos", col: "to_employee_id", one: "to-do" },
+  { k: "bd", table: "hrms_buddy_tasks", col: "to_employee_id", one: "buddy task" },
+  { k: "bdf", table: "hrms_buddy_tasks", col: "from_employee_id", one: "buddy task shared" },
+  { k: "kpi", table: "hrms_kpi", col: "employee_id", one: "sales entry", many: "sales entries" },
+  { k: "call", table: "hrms_calling", col: "employee_id", one: "call" },
+  { k: "act", table: "hrms_activities", col: "employee_id", one: "sales activity", many: "sales activities" },
+  { k: "jr", table: "hrms_journeys", col: "employee_id", one: "journey plan" },
+  { k: "rev", table: "hrms_reviews", col: "employee_id", one: "performance review" },
+  { k: "grv", table: "hrms_grievances", col: "by_employee_id", one: "grievance" },
+  { k: "mr", table: "hrms_monthly_remarks", col: "employee_id", one: "monthly report remark" },
+];
+
+async function historyCounts(id: string): Promise<Record<string, number>> {
+  const parts = HISTORY.map((h) => sql`select ${h.k} as k, count(*)::int as n from ${sql.raw(`"${h.table}"`)} where ${sql.raw(`"${h.col}"`)} = ${id}`);
+  const rows = (await db.execute(sql.join(parts, sql` union all `))) as unknown as { k: string; n: number | string }[];
+  return Object.fromEntries(rows.map((r) => [r.k, Number(r.n)]));
+}
+
 async function relatedCounts(ids?: string[]): Promise<Map<string, Record<string, number>>> {
   const only = ids ? sql` where employee_id in ${ids.length ? ids : ["-"]}` : sql``;
   const rows = (await db.execute(sql`
@@ -227,7 +257,10 @@ function employeeRow(ctx: HrmsContext, e: Employee, counts: Record<string, numbe
       why: !hr ? "Deactivating an employee needs the HR power" : own ? "You cannot deactivate your own record" : undefined,
     });
   if (e.status !== "active") actions.push({ id: "activate", l: "Activate", why: hr ? undefined : "Activating an employee needs the HR power" });
-  if (has(ctx, "admin")) actions.push({ id: "access", l: "Manage access", href: ADMIN.access });
+  /* The Access screen is the Admin Console's and opens only for a platform
+     administrator; an HRMS administrator was shown a link to a page that
+     refused them. */
+  if (ctx.platformAdmin) actions.push({ id: "access", l: "Manage access", href: ADMIN.access });
   if (own || hr)
     actions.push({
       id: "photo",
@@ -721,11 +754,32 @@ const employeesScreen: HrmsScreenModule = {
         child1Birthday: text(h.child1),
         child2Birthday: text(h.child2),
       };
+      /*
+       * A SELF-EDIT DOES NOT TAKE THE ROW FROM THE SHEET. It used to stamp
+       * hrmsDecidedAt, which tells the sync to leave the WHOLE row alone — so
+       * one phone number corrected by the person froze their salary, status
+       * and everything else HR keeps in the sheet, for good, as a side effect.
+       * On a row the sheet still owns, the change is saved and HR is told to
+       * carry it into the sheet; the next pull would otherwise put the old
+       * value back.
+       */
+      const e = await employeeById(recordId);
+      if (!e) return err("Your employee record could not be found.", "not_found");
+      const sheetOwns = e.source !== "hrms" && !e.hrmsDecidedAt;
       await db
         .update(employees)
-        .set({ ...cols, hrmsDecidedAt: new Date(), updatedAt: new Date() })
+        .set({ ...cols, updatedAt: new Date() })
         .where(eq(employees.id, recordId));
       await hrmsAudit(ctx, "hrms.employee.editSelf", "employees", recordId, null, cols);
+      if (sheetOwns) {
+        await tellPowerHolders(ctx.user.id, "hr", {
+          title: `${e.name} changed their details`,
+          body: "Update the employee sheet too, or the next pull puts the old details back.",
+          kind: "warn",
+          href: hrmsLink("employees", { open: recordId, scope: "all" }),
+        });
+        return okVoid("Your details are saved. HR has been asked to update the employee sheet as well.");
+      }
       return okVoid("Your details are saved");
     },
   },
@@ -753,15 +807,13 @@ const employeesScreen: HrmsScreenModule = {
       if (!has(ctx, "admin")) return err("Deleting an employee needs the HRMS administration power", "not_permitted");
       const e = await employeeById(id);
       if (!e) return err("That employee no longer exists.", "not_found");
-      const c = (await relatedCounts([id])).get(id) ?? {};
-      const history = [
-        c.att && plural(c.att, "attendance day"),
-        c.leave && plural(c.leave, "leave request"),
-        c.sal && plural(c.sal, "salary", "salaries"),
-        c.adv && plural(c.adv, "advance"),
-        c.exp && plural(c.exp, "expense"),
-        c.asset && plural(c.asset, "asset assignment"),
-      ].filter(Boolean);
+      /* Every HRMS table cascades from the employee, so EVERY kind of history
+         has to be counted here — the check used to look at six of them and a
+         delete took the person's help requests, checklists, sales entries,
+         calls, reviews and grievances with it. Configuration (working hours,
+         task templates, leave credits, reporting lines) goes with the person. */
+      const c = await historyCounts(id);
+      const history = HISTORY.filter((h) => c[h.k]).map((h) => plural(c[h.k], h.one, h.many));
       // A49: history outlives the person. Deactivating keeps it; deleting would cascade it away.
       if (history.length) return err(`${e.name} has ${history.join(", ")}. Deactivate instead — deleting would erase that history.`, "rule_violation");
       if (e.source !== "hrms" && e.sheetStatus === "present")
@@ -867,8 +919,16 @@ const idCards: HrmsScreenModule = {
     },
     async remove(ctx, id) {
       if (!has(ctx, "admin")) return err("Removing an ID card needs the HRMS administration power", "not_permitted");
-      await db.update(employees).set({ idCardAttachmentId: null, updatedAt: new Date() }).where(eq(employees.id, id));
-      await hrmsAudit(ctx, "hrms.employee.idCardRemove", "employees", id, null, null);
+      const [e] = await db.select({ card: employees.idCardAttachmentId }).from(employees).where(eq(employees.id, id)).limit(1);
+      if (!e?.card) return err("There is no ID card to remove.", "not_found");
+      await inTx(async (tx) => {
+        await tx.update(employees).set({ idCardAttachmentId: null, updatedAt: new Date() }).where(eq(employees.id, id));
+        /* Removing is a status, never a delete (the attachment rule): the
+           file stops being this person's card and retention decides the bytes. */
+        await tx.update(attachments).set({ status: "removed", parentType: null, parentId: null, removedAt: new Date(), updatedAt: new Date() }).where(eq(attachments.id, e.card!));
+        return okVoid("");
+      });
+      await hrmsAudit(ctx, "hrms.employee.idCardRemove", "employees", id, { idCard: e.card }, null);
       return okVoid("ID card removed");
     },
   },
@@ -1096,6 +1156,13 @@ const officesScreen: HrmsScreenModule = {
       if (!o) return err("That office no longer exists.", "not_found");
       const n = (await allPeople()).filter((p) => isActive(p) && p.office === o.name).length;
       if (n) return err(`${staffCount(n, ["works", "work"])} at ${o.name}. Move them to another office first.`, "rule_violation");
+      /* Assets and documents are filed under the office's NAME, so deleting it
+         would leave stock nobody can find by office and documents meant for
+         an office that no longer exists. */
+      const [stock] = (await db.execute(sql`select count(*)::int as n from hrms_asset_stock where office_name = ${o.name}`)) as unknown as { n: number }[];
+      if (Number(stock?.n)) return err(`${plural(Number(stock.n), "asset stock lot")} ${Number(stock.n) === 1 ? "is" : "are"} filed under ${o.name}. Move them first.`, "rule_violation");
+      const [docs] = (await db.execute(sql`select count(*)::int as n from hrms_documents where tagged = ${o.name}`)) as unknown as { n: number }[];
+      if (Number(docs?.n)) return err(`${plural(Number(docs.n), "document")} ${Number(docs.n) === 1 ? "is" : "are"} meant for ${o.name}. Change who ${Number(docs.n) === 1 ? "it is" : "they are"} for first.`, "rule_violation");
       await db.delete(hrmsOffices).where(eq(hrmsOffices.id, id));
       await hrmsAudit(ctx, "hrms.office.delete", "hrms_offices", id, o, null);
       return okVoid(`${o.name} deleted`);
@@ -1413,7 +1480,10 @@ const assetStock: HrmsScreenModule = {
         if (s.imageAttachmentId) contacts.push({ l: "Asset image", href: attHref(s.imageAttachmentId) });
         const actions: ActionSpec[] = [
           { id: "edit", l: "Edit", primary: true, loadsForm: true, why: hr ? undefined : "Managing the asset stock needs the HR power" },
-          { id: "assignments", l: "View assignments", href: hrmsLink("assignments", { scope: "all" }) },
+          /* This lot's assignments, not the whole register. */
+          ...(n
+            ? [{ id: "assignments", l: "View assignments", href: hrmsLink("assignments", { scope: "all", f: assigned.filter((a) => a.stockId === s.id).map((a) => a.id).join(","), fl: `${s.name} · ${s.code}` }) }]
+            : []),
         ];
         if (hr) actions.push({ id: "delete", l: "Delete", confirm: `Delete ${s.code}?`, why: n ? `${n === 1 ? "1 assignment uses" : `${n} assignments use`} this lot` : undefined });
         return {
@@ -1559,11 +1629,11 @@ const assignments: HrmsScreenModule = {
               title: "Record a return",
               sub: `${s?.name ?? ""} · ${p?.name ?? ""}`,
               submit: "Record return",
-              init: { date: today(), by: ctx.employee?.name ?? ctx.user.name, qty: String(a.qty) },
+              init: { date: today(), by: ctx.employee?.name ?? ctx.user.name, qty: String(a.qty - (a.restoredQty ?? 0)) },
               fields: [
                 { k: "date", l: "Restored date", t: "date", req: true },
                 { k: "by", l: "Restored by", t: "text", req: true },
-                { k: "qty", l: "Restored quantity", t: "num", req: true, min: 1, max: a.qty },
+                { k: "qty", l: "Restored quantity", t: "num", req: true, min: 1, max: a.qty - (a.restoredQty ?? 0), hint: a.restoredQty ? `${a.restoredQty} of ${a.qty} already back` : undefined },
                 { k: "remark", l: "Restored remark", t: "area", req: true },
                 { k: "photo", l: "Photo at return", t: "photo", req: true },
               ],
@@ -1659,7 +1729,14 @@ const assignments: HrmsScreenModule = {
       if (!by) return fieldErr("by", "Required");
       const qty = int(v.qty);
       if (qty == null) return fieldErr("qty", "Required");
-      if (qty < 1 || qty > a.qty) return fieldErr("qty", `The restored quantity must be between 1 and ${a.qty}`);
+      /* A part return used to close the assignment for good, with the rest
+         stuck "in use" and no way to record it coming back. Returns now add
+         up, and the assignment is restored once everything is back. */
+      const before = a.restoredQty ?? 0;
+      const left = a.qty - before;
+      if (qty < 1 || qty > left) return fieldErr("qty", `The restored quantity must be between 1 and ${left}`);
+      const total = before + qty;
+      const done = total >= a.qty;
       const remark = text(v.remark);
       if (!remark) return fieldErr("remark", "Required");
       const photo = text(v.photo);
@@ -1667,12 +1744,22 @@ const assignments: HrmsScreenModule = {
       const res = await inTx(async (tx) => {
         await tx
           .update(hrmsAssetAssignments)
-          .set({ status: "Restored", restoredOn: date, restoredBy: by, restoredQty: qty, restoredRemark: remark, restoredPhotoId: photo, updatedAt: new Date(), updatedById: ctx.user.id })
+          .set({
+            status: done ? "Restored" : "Assigned",
+            restoredOn: date,
+            restoredBy: by,
+            restoredQty: total,
+            /* Each return's words are kept; only the latest photo is the row's, and the earlier ones stay bound to it. */
+            restoredRemark: a.restoredRemark ? `${a.restoredRemark}\n${fdShort(date)} · ${qty}: ${remark}` : before ? `${fdShort(date)} · ${qty}: ${remark}` : remark,
+            restoredPhotoId: photo,
+            updatedAt: new Date(),
+            updatedById: ctx.user.id,
+          })
           .where(eq(hrmsAssetAssignments.id, id));
         await bindHrmsFiles(tx, [photo], "hrms_asset", id, ctx.user.id);
-        return okVoid(`${qty} back in stock`);
+        return okVoid(done ? `${qty} back in stock · all returned` : `${qty} back in stock · ${a.qty - total} still with them`);
       });
-      if (res.ok) await hrmsAudit(ctx, "hrms.asset.restore", "hrms_asset_assignments", id, { status: a.status }, { status: "Restored", qty, date });
+      if (res.ok) await hrmsAudit(ctx, "hrms.asset.restore", "hrms_asset_assignments", id, { status: a.status, restoredQty: before }, { status: done ? "Restored" : "Assigned", restoredQty: total, qty, date });
       return res;
     },
     async delete(ctx, id) {

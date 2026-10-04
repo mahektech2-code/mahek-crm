@@ -1,9 +1,8 @@
 import "server-only";
 import { and, asc, desc, eq, gte, inArray, isNotNull, lte, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
-import { hrmsBuddyTasks, hrmsChecklist, hrmsTaskTemplates, hrmsTodos, users } from "@/db/schema";
+import { hrmsBuddyTasks, hrmsChecklist, hrmsTaskTemplates, hrmsTodos } from "@/db/schema";
 import { getConfig } from "@/lib/config/store";
-import { notifyUsers } from "@/lib/notify";
 import type { ActionSpec, ColSpec, FieldSpec, FormSpec, ListRow, RowField, ToolResult, ToolSpec } from "@/lib/erp/ui";
 import type { Err } from "@/lib/result";
 import { has, type HrmsContext } from "../access";
@@ -36,6 +35,7 @@ import {
 import { addDaysISO, fdShort, hm, monthOf, weekdayOf, WEEKDAYS } from "../time";
 import { hrmsLink } from "../registry";
 import { BUDDY_DONE, CHECKLIST_NA } from "../values";
+import { tell, usersOfEmployees } from "../services/notify";
 
 /* ---------------------------------------------------------------------------
  * Tasks (spec §13): templates, the daily checklist they are copied into, the
@@ -72,12 +72,7 @@ const when = (at: Date | null) => (at ? stampLine(null, at).replace(/^Created\s*
 async function notifyEmployees(employeeIds: string[], title: string, body: string, href: string): Promise<void> {
   const ids = [...new Set(employeeIds.filter(Boolean))];
   if (!ids.length) return;
-  try {
-    const us = await db.select({ id: users.id }).from(users).where(and(inArray(users.employeeId, ids), eq(users.active, true)));
-    await notifyUsers(us.map((u) => ({ userId: u.id, title, body, href })));
-  } catch (e) {
-    console.error("hrms tasks: notification failed", e);
-  }
+  await tell((await usersOfEmployees(ids)).map((userId) => ({ userId, title, body, href })));
 }
 
 /** Serialises Take my task / Take monthly task per person, so a double click cannot copy twice. */
