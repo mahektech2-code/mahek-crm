@@ -959,6 +959,17 @@ closing meter is asked at every punch-out for the same reason, and only where
 the session carries an opening reading — opening a camera on a bus day would be
 the app asking about a vehicle he told it this morning he was not on.
 
+**A FORGOTTEN PUNCH-OUT CAN BE READ THE NEXT MORNING, and says that it was.**
+`closeStaleSessions` closes the day at its OPENING reading, so it measures
+nothing and pays nothing. The meter has not moved overnight unless he rode it,
+so what it reads before today's ride IS where yesterday ended — Home offers
+the camera for exactly that, once, and `addLateClosingReading` writes it onto
+yesterday's session leg with `manual_reason` saying nobody read the meter at
+the time. The policy engine prices it as any other reading; the Travel ledger
+draws "Added later" beside it, because whoever approves the day should know.
+It may not exceed TODAY's opening reading, which is the one bound the phone
+can prove, and "Leave it at 0 km" keeps the closure exactly as it was.
+
 **Nothing written until every capture is in.** Selfie, then vehicle, then meter,
 then the mark — the order `startDay` already followed for the photograph,
 extended. Backing out of any of the three leaves no half-started session, and
@@ -1234,6 +1245,16 @@ qualifies today without retyping. NOT NULL on `customers.gstin` would refuse the
 entire imported book: 5,292 shops came from the EMP 2.0 master with no GSTIN
 between them. The constraint belongs on the moment somebody asserts this is a
 business we can bill, not on the record.
+
+**A VISIT IS LINKED TO ITS ORDER AND RECEIPT WHICHEVER ARRIVES FIRST.** The
+handset mints the visit id at the shop door and stamps it on what is taken
+inside, and those records usually reach the office before the visit, which is
+saved on the way out. `orders.visit_id` and `payment_receipts.visit_id` keep
+it — plain text, not a key, or the order would be refused for arriving first —
+and `handleVisit` back-fills `linked_order_id`/`linked_payment_id` from them.
+Both sides only fill an EMPTY link, so the earliest wins and a retry cannot
+move it. It is matched on the salesman, not the customer: an order at a
+third-party shop is billed to its distributor.
 
 **A PHOTOGRAPH IS BOUND WHEN ITS PARENT IS WRITTEN, by `bindMbosMedia`.** Media
 syncs AFTER its parent — that is the whole point of a separate queue — so the
@@ -3868,6 +3889,14 @@ cheque date would have had to be got right three times.
 `components/crm/payment-mode-fields.tsx` is the one answer, and it reads
 `payments.modes`. A list of modes typed into a screen is the same mistake as a
 product list typed into a screen.
+
+**The handset reads the same list, minus the desk's two.** `payments.modes`,
+`payments.datedModes` and `payments.referenceRequiredModes` ride the MBOS
+config payload, and `engines/payment-modes.ts` drops `Adjustment` and
+`Credit note` from what the field form offers: both are accounts' decisions
+against the ledger, and one typed at a counter would put money in a
+salesman's cash-in-hand that no bank will ever show. An older server that
+sends no list gets the four the form always had.
 
 **A validation message goes under the field it names.** These dialogs pinned
 whatever the server said to the amount box, so "a cheque needs the date written

@@ -56,6 +56,9 @@ export type LegRow = {
   gpsCoveragePct: number | null;
   gpsReason: string | null;
   manualMetres: number | null;
+  /** Why a figure on this leg was supplied after the fact — a distance typed by
+      hand, or a closing meter read the morning after a missed punch-out. */
+  manualReason: string | null;
   odometerStartKm: number | null;
   odometerEndKm: number | null;
   odometerMetres: number | null;
@@ -153,7 +156,7 @@ export async function legsForDay(dayId: string): Promise<LegRow[]> {
            l.visit_id as "visitId",
            l.gps_metres as "gpsMetres", l.gps_method as "gpsMethod",
            l.gps_coverage_pct as "gpsCoveragePct", l.gps_reason as "gpsReason",
-           l.manual_metres as "manualMetres",
+           l.manual_metres as "manualMetres", l.manual_reason as "manualReason",
            l.odometer_start_km as "odometerStartKm", l.odometer_end_km as "odometerEndKm",
            l.odometer_metres as "odometerMetres", l.odometer_photo_id as "odometerPhotoId",
            l.chosen_metres as "chosenMetres", l.chosen_source as "chosenSource",
@@ -437,7 +440,7 @@ export async function travelLedger(from: string, to: string, userId?: string): P
            l.visit_id as "visitId",
            l.gps_metres as "gpsMetres", l.gps_method as "gpsMethod",
            l.gps_coverage_pct as "gpsCoveragePct", l.gps_reason as "gpsReason",
-           l.manual_metres as "manualMetres",
+           l.manual_metres as "manualMetres", l.manual_reason as "manualReason",
            l.odometer_start_km as "odometerStartKm", l.odometer_end_km as "odometerEndKm",
            l.odometer_metres as "odometerMetres", l.odometer_photo_id as "odometerPhotoId",
            l.chosen_metres as "chosenMetres", l.chosen_source as "chosenSource",

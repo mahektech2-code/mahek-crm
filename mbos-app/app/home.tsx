@@ -56,13 +56,16 @@ import { OdometerCamera, type OdometerResult } from '../src/components/ui/odomet
 import { BottomSheet } from '../src/components/ui/overlays';
 import { TravelModeList } from '../src/components/ui/travel-mode-list';
 import {
+  addLateClosingReading,
   dismissUnpaidMeterDay,
   endSession,
   openSessionLeg,
+  todayOpeningKm,
   unpaidMeterDay,
   startSession,
   travelModesFor,
   type TravelMode,
+  type UnpaidMeter,
 } from '../src/data/travel';
 
 /**
@@ -360,7 +363,8 @@ export default function Home() {
   const [offerSetup, setOfferSetup] = React.useState(false);
   /* A metered day closed by the app with no punch-out — its km are not paid,
      and he hears it here rather than from the claim. See `closeStaleSessions`. */
-  const [unpaidMeter, setUnpaidMeter] = React.useState<string | null>(null);
+  const [unpaidMeter, setUnpaidMeter] = React.useState<UnpaidMeter | null>(null);
+  const [savingLateMeter, setSavingLateMeter] = React.useState(false);
   useFocusEffect(
     React.useCallback(() => {
       let live = true;
@@ -1328,14 +1332,59 @@ export default function Home() {
       {unpaidMeter ? (
         <Card style={{ marginTop: 12, padding: 14, backgroundColor: C.warnBg }}>
           <T s="small" style={[{ color: C.ink }, weight(600)]}>
-            {`${dmy(unpaidMeter)}: your vehicle km were not counted`}
+            {`${dmy(unpaidMeter.day)}: your vehicle km were not counted`}
           </T>
           <T s="caption" style={{ color: C.ink, marginTop: 4 }}>
-            You did not punch out, so the app closed the day with no closing meter reading. Ask your manager to add the km. Your route for that day is saved.
+            You did not punch out, so the app closed the day at its opening reading. If the vehicle has not moved since, photograph the meter now and that day’s km are counted. Your manager will see it was added this morning.
           </T>
-          <SecondaryButton
-            label="OK"
+          <PrimaryButton
+            label={savingLateMeter ? 'Saving…' : 'Add the closing reading'}
+            disabled={savingLateMeter}
             style={{ marginTop: 10 }}
+            onPress={() => {
+              /* The ride today starts where yesterday ended, so a reading
+                 taken after setting off is not yesterday's. Today's opening
+                 reading, where there is one, is the ceiling. */
+              void (async () => {
+                if (!userId) return;
+                setSavingLateMeter(true);
+                try {
+                  const startOfToday = new Date();
+                  startOfToday.setHours(0, 0, 0, 0);
+                  const ceiling = await todayOpeningKm(userId, startOfToday.getTime());
+                  const shot = await askMeter(
+                    {
+                      title: `Meter for ${dmy(unpaidMeter.day)}`,
+                      subtitle: 'Before you ride today. This becomes that day’s closing reading.',
+                      cancelLabel: 'Not now',
+                    },
+                    unpaidMeter.startKm,
+                  );
+                  if (!shot) return;
+                  const photoId = await queueOdometerPhoto(shot.uri, unpaidMeter.legId);
+                  const saved = await addLateClosingReading({
+                    legId: unpaidMeter.legId,
+                    km: shot.km,
+                    photoId,
+                    todayOpeningKm: ceiling,
+                  });
+                  if (!saved.ok) {
+                    notify(saved.reason, 'error');
+                    return;
+                  }
+                  setUnpaidMeter(null);
+                  notify(`Reading saved. ${dmy(unpaidMeter.day)} will be paid on it.`);
+                } catch {
+                  notify('The reading was not saved. Try again.', 'error');
+                } finally {
+                  setSavingLateMeter(false);
+                }
+              })();
+            }}
+          />
+          <SecondaryButton
+            label="Leave it at 0 km"
+            style={{ marginTop: 8 }}
             onPress={() => {
               setUnpaidMeter(null);
               void dismissUnpaidMeterDay().catch(() => {});

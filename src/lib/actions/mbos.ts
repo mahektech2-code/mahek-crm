@@ -1430,6 +1430,38 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
       })
       .onConflictDoNothing({ target: mbosVisits.id });
 
+    /*
+     * THE ORDER AND THE RECEIPT OFTEN GOT HERE FIRST.
+     *
+     * The handset mints this visit's id at the shop door and stamps it on
+     * whatever is taken inside, and those records leave the outbox as soon as
+     * they are saved — usually before the visit, which is only saved on the way
+     * out. `handleOrder` and `handlePayment` fill `linked_*` when the visit is
+     * already here; this fills them when it was not. The earliest of each wins,
+     * the same rule as that side's `is null`, so a retry or a second order
+     * cannot move a link once it is made — and every later order still names
+     * this visit in its own `visit_id`. Matched on the SALESMAN, not the
+     * customer: an order taken at a third-party shop is billed to its
+     * distributor, so its customer is not the shop he was standing in.
+     */
+    await tx.execute(sql`
+      update mbos_visits v
+         set linked_order_id = coalesce(v.linked_order_id, (
+               select o.id from orders o
+                where o.visit_id = v.id and o.user_id = v.salesman_id
+                order by o.created_at asc, o.id asc
+                limit 1
+             )),
+             linked_payment_id = coalesce(v.linked_payment_id, (
+               select r.id from payment_receipts r
+                where r.visit_id = v.id and r.reported_by_id = v.salesman_id
+                order by r.created_at asc, r.id asc
+                limit 1
+             ))
+       where v.id = ${item.entityId}
+         and (v.linked_order_id is null or v.linked_payment_id is null)
+    `);
+
     await writeTimeline(tx, {
       customerId: customer.id,
       eventType: MBOS_EVENT.visit,
@@ -2409,6 +2441,7 @@ async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Ha
       creditDays: p.creditDays ?? null,
       expectedDispatch: p.expectedDispatch ?? null,
       lineItems: lines,
+      visitId: p.visitId ?? null,
       createdById: principal.user.id,
       updatedById: principal.user.id,
     });
@@ -2507,7 +2540,7 @@ async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Ha
     if (p.visitId) {
       await tx.execute(sql`
         update mbos_visits set linked_order_id = ${item.entityId}, updated_at = now()
-         where id = ${p.visitId}
+         where id = ${p.visitId} and linked_order_id is null
       `);
     }
   });
@@ -2759,6 +2792,7 @@ async function handlePayment(principal: MbosPrincipal, item: SyncItem): Promise<
       mode: p.mode ?? "Cash",
       reference: p.reference ?? null,
       instrumentDate: p.instrumentDate ?? null,
+      visitId: p.visitId ?? null,
       receiptNo: serverNumber,
       // The note is the salesman's own sentence and nothing else. The receipt
       // number used to be prefixed onto it for want of a column; it has one.
@@ -2821,7 +2855,7 @@ async function handlePayment(principal: MbosPrincipal, item: SyncItem): Promise<
     if (p.visitId) {
       await tx.execute(sql`
         update mbos_visits set linked_payment_id = ${item.entityId}, updated_at = now()
-         where id = ${p.visitId}
+         where id = ${p.visitId} and linked_payment_id is null
       `);
     }
   });
