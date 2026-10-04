@@ -16,11 +16,9 @@ import { captureMode } from '../src/sync/trail';
 import { canRestart, restartApp } from '../src/native/updates';
 import {
   markAsked,
-  openAutostartSettings,
-  requestBatteryExemption,
   thisOem,
 } from '../src/native/keepalive';
-import { batteryExemption } from '../src/native/phone-setup';
+import { batteryExemption, openAutostartSettings, requestBatteryExemption } from '../src/native/phone-setup';
 import type { BatteryExemption } from '../src/engines/phone-readiness';
 import { useStore } from '../src/state/store';
 import { color as C, radius, weight } from '../src/theme/tokens';
@@ -118,8 +116,13 @@ export default function TrackingSetupScreen() {
   }, [reread]);
 
   const run = async (step: KeepAliveStep) => {
+    /* One wrapper for the three setup screens. The battery dialog's answer is
+       read back by `reread` on return; only a screen that never opened is a
+       failure worth saying. */
     const ok =
-      step.key === 'battery' ? await requestBatteryExemption() : await openAutostartSettings();
+      step.key === 'battery'
+        ? (await requestBatteryExemption(), true)
+        : (await openAutostartSettings()) !== 'failed';
     setOpened((o) => ({ ...o, [step.key]: true }));
     if (!ok) {
       /* Every rung of the ladder failed, which on a real handset means the

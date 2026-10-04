@@ -359,6 +359,17 @@ export default function Home() {
   /* A metered day closed by the app with no punch-out — its km are not paid,
      and he hears it here rather than from the claim. See `closeStaleSessions`. */
   const [unpaidMeter, setUnpaidMeter] = React.useState<string | null>(null);
+  useFocusEffect(
+    React.useCallback(() => {
+      let live = true;
+      void unpaidMeterDay()
+        .then((d) => live && setUnpaidMeter(d))
+        .catch(() => {});
+      return () => {
+        live = false;
+      };
+    }, [setUnpaidMeter]),
+  );
 
   const load = React.useCallback(() => {
     if (!userId) return;
@@ -369,9 +380,6 @@ export default function Home() {
        reconcile here keeps them right through all of it — including a setting
        changed in the office since the morning. It never throws. */
     void syncPunchOutReminders(userId);
-    void unpaidMeterDay()
-      .then(setUnpaidMeter)
-      .catch(() => setUnpaidMeter(null));
 
     /*
      * Its own read, deliberately not in the `Promise.all` below: that one

@@ -66,6 +66,18 @@ const MISSING_WORDS: Record<FieldKey, string> = {
   note: 'what it was for',
 };
 
+/** What was typed, in paise — zero for nothing or nonsense. */
+function amountPaise(typed: string): number {
+  const v = typed.trim() ? checkFare(typed) : null;
+  return v && v.ok ? v.paise : 0;
+}
+
+/** Why a typed amount cannot be read, where the answer is more than "type one". */
+function amountWhy(typed: string): string | null {
+  const v = typed.trim() ? checkFare(typed) : null;
+  return v && !v.ok && v.why.startsWith('Type the rupees') ? v.why : null;
+}
+
 export default function ExpensesScreen() {
   const back = useCameFrom('more');
   const notify = useStore((s) => s.notify);
@@ -172,8 +184,8 @@ export default function ExpensesScreen() {
   /* RUPEES AND PAISE, read by the same parser the bus fare uses. Digits only
      made ₹12.50 impossible to claim, and reopening a refused ₹40.50 rounded it
      to ₹41 on the way back in. */
-  const fare = ex.amt.trim() ? checkFare(ex.amt) : null;
-  const exAmtPaise = fare && fare.ok ? fare.paise : 0;
+  const exAmtPaise = amountPaise(ex.amt);
+  const amtWhy = amountWhy(ex.amt);
 
   /* The clock is read ONCE, in a state initialiser rather than during render —
      and it is what the sheet falls back to before he has picked a day. */
@@ -559,7 +571,7 @@ export default function ExpensesScreen() {
           </View>
           {bad('amt') ? (
             <T style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>
-              {fare && !fare.ok && fare.why.startsWith('Type the rupees') ? fare.why : 'Enter what you spent.'}
+              {amtWhy ?? 'Enter what you spent.'}
             </T>
           ) : null}
           <T style={{ fontSize: 14, lineHeight: 20, marginTop: 6, color: exOver ? C.warnInk : C.muted }}>{capLine}</T>

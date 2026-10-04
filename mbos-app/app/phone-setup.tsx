@@ -218,7 +218,7 @@ export default function PhoneSetupScreen() {
       }
       load();
     },
-    [load, notify, readiness],
+    [load, notify, readiness, setSent],
   );
 
   /*
