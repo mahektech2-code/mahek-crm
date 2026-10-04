@@ -5,6 +5,7 @@ import * as api from '../sync/api';
 import { ApiError } from '../sync/api';
 import { applyPull } from '../sync/pull';
 import { cancelPunchOutReminders } from '../native/punch-out-reminder';
+import { buildLabel } from '../native/updates';
 
 /**
  * Signing in.
@@ -19,6 +20,41 @@ import { cancelPunchOutReminders } from '../native/punch-out-reminder';
 const SESSION_KEY = 'mbos.session';
 const OFFLINE_HASH_KEY = 'mbos.offlineHash';
 const LAST_ONLINE_KEY = 'mbos.lastOnlineAuthAt';
+/**
+ * The build that last applied a full snapshot — read by the sync loop, which
+ * takes the snapshot again when the installed build differs. See
+ * `engines/rebootstrap.ts`.
+ */
+export const BOOTSTRAPPED_BUILD_KEY = 'mbos.bootstrappedBuild';
+
+/**
+ * What a snapshot leaves behind besides its rows, written in ONE place for
+ * both doors that apply one — signing in, and the sync loop after an upgrade.
+ *
+ * THE CURSOR IS THE SNAPSHOT'S OWN. Sign-in used to apply the book and leave
+ * `pullCursor` alone, so the first pass after it sent whatever cursor was
+ * already there: empty on a first install, which the server answers with
+ * nothing and a fresh "now" — losing every change made between the snapshot
+ * and that first pass — and on a phone handed from one salesman to another,
+ * the LAST person's cursor, so the new one's deltas started from a moment
+ * that had nothing to do with his book.
+ */
+export async function markBootstrapped(cursor: string | undefined): Promise<void> {
+  if (cursor) await setKv('pullCursor', cursor);
+  await setKv(BOOTSTRAPPED_BUILD_KEY, buildLabel());
+}
+
+/**
+ * The person as the office now describes him — a name corrected, a manager
+ * changed, a role widened — written over the stored session after a snapshot.
+ * Only ever the SAME person: a token cannot change hands, and a snapshot that
+ * somehow named somebody else is not one to sign the phone over to.
+ */
+export async function refreshSessionUser(user: api.SessionUser | undefined): Promise<void> {
+  const session = await currentSession();
+  if (!session || !user || user.id !== session.user.id) return;
+  await persist({ ...session, user });
+}
 
 export type Session = {
   user: api.SessionUser;
@@ -119,6 +155,7 @@ export async function signIn(args: {
      * could not save the day did not.
      */
     await persist(session);
+    await markBootstrapped(out.bootstrap.cursor);
 
     /* What makes the NEXT sign-in possible without signal. Only the hash is
        kept, and only after the server has actually accepted the password —
