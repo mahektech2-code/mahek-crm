@@ -5044,6 +5044,31 @@ mirrored byte for byte on the handset and pinned by a test), so it stops
 counting the moment somebody changes his areas and the Team screen says
 "accepted an earlier allocation" rather than vouching for cities he never saw.
 
+**JOURNEYS AND VISITS ARE ONE SCREEN, because a visit is read against the route
+it belonged to.** `/sales/journeys` is Team · Today · One salesman · Visit log.
+Team is every salesman before anybody picks a name: his areas and whether he
+accepted them, today's city, the fortnight ahead day by day, who owes whom an
+answer, and thirty days of shops allocated against shops visited. One salesman
+is a month as a calendar or a list, and a day opens into the negotiation and
+its history, each allocated stop against the visit that answered it, every
+shop he walked into in order with its account type and outcome, and his
+punch-in, leave and holiday. Proposing a run of days is its third view. The
+Visit log is the old Visits screen, and `/sales/visits` forwards to it;
+`0213_sales_visits_into_journeys` moved every `sales.visits` grant onto
+`sales.journeys`, and the visit actions are gated on that module now.
+`lib/journey-days.ts` is the one statement of what a day came to — a stop
+still `planned` on a day that has gone is MISSED, never "planned" — and
+`journey-service.ts` reads what surrounds it. A plan row holds only the latest
+answer, so the handset's agree/refuse now writes `mbos.journey.answered` to the
+audit log, which is where a day's history is read from.
+
+**And the handset names the city.** Its Today tab counted stops and named
+areas, so a salesman with a route had no line saying which city he was meant to
+be in; the Journey tab now heads with it, the "days to agree" banner names the
+cities, a This week strip shows seven days by city, the Journeys calendar
+prints the city under each date, and a past day lists the shops visited off
+the route with each shop's account type.
+
 **THE HANDSET IS RELEASED BY A WORKFLOW, and never from somebody's laptop.**
 `.github/workflows/mbos-apk.yml` builds it, verifies the signature against the
 committed keystore with `apksigner`, and publishes to R2 under a versioned name

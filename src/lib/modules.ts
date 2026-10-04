@@ -557,13 +557,16 @@ export const APP_MODULES: AppModule[] = [
   ),
 
   sales("tasks", "Tasks", "Field work", "What each salesman has been asked to do, and what is overdue."),
+  /* Visits used to be a module of its own. It is a tab of this one now —
+     the plan and the visits it produced are one story, allocated against
+     visited — and `0213_sales_visits_into_journeys` moved every grant that
+     named it here. */
   sales(
     "journeys",
-    "Journey planning",
+    "Journeys & visits",
     "Field work",
-    "Where each salesman walks. Withholding it leaves the handset's route screen empty, because nothing else writes a plan.",
+    "Where each salesman walks and what came of it: proposed, agreed and walked days, the shops allocated against the shops visited, and every visit logged with which could not be verified. Withholding it leaves the handset's route screen empty, because nothing else writes a plan.",
   ),
-  sales("visits", "Visits", "Field work", "Every visit logged, and which of them could not be verified."),
   sales(
     "field-reports",
     "Field reports",

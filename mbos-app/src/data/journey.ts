@@ -1,5 +1,6 @@
 import { all, newId, one, run } from '../db';
 import { isoDate } from '../lib/format';
+import { accountType } from '../lib/account-label';
 import { enqueue } from '../sync/queue';
 import { pickOrigin } from '../engines/route';
 import { haversineMetres } from '../engines/geo';
@@ -676,6 +677,25 @@ export type ShopDay = {
   payments: { id: string; amountPaise: number; mode: string | null; at: number | null }[];
   /** Everything else the timeline holds for this shop on this day. */
   other: { id: string; summary: string; at: number }[];
+  /** Customer, Lead or Third party — null where the row cannot say. */
+  accountType: string | null;
+  /** A shop he walked into that was on no route that day. */
+  offRoute: boolean;
+};
+
+/* What kind of account a row is, read the way the Customers tab reads it. */
+const SHOP_FACTS = `c.name, c.area, c.city, c.kind, c.thirdParty,
+            (EXISTS (SELECT 1 FROM leads l WHERE l.id = c.id AND l.archived = 0
+              AND COALESCE(l.funnelStage, '') <> 'won' AND COALESCE(l.stage, '') <> 'Converted')
+             AND COALESCE(c.kind, 'lead') <> 'customer') AS isLead`;
+
+type ShopFacts = {
+  name: string | null;
+  area: string | null;
+  city: string | null;
+  kind: string | null;
+  thirdParty: number | null;
+  isLead: number | null;
 };
 
 /**
@@ -694,35 +714,57 @@ export type ShopDay = {
  * UTC and files a 2am order on the day before.
  */
 export async function dayHistory(planDate: string): Promise<ShopDay[]> {
-  const stops = await all<{
-    id: string;
-    customerId: string;
-    seq: number;
-    status: string;
-    plannedAt: string | null;
-    actualAt: number | null;
-    skipReason: string | null;
-    name: string | null;
-    area: string | null;
-    city: string | null;
-  }>(
+  const stops = await all<
+    {
+      id: string;
+      customerId: string;
+      seq: number;
+      status: string;
+      plannedAt: string | null;
+      actualAt: number | null;
+      skipReason: string | null;
+    } & ShopFacts
+  >(
     `SELECT s.id, s.customerId, s.seq, s.status, s.plannedAt, s.actualAt, s.skipReason,
-            c.name, c.area, c.city
+            ${SHOP_FACTS}
        FROM journey_stops s
        LEFT JOIN customers c ON c.id = s.customerId
       WHERE s.planDate = ?
       ORDER BY s.seq`,
     [planDate],
   );
-  if (!stops.length) return [];
 
-  const ids = stops.map((s) => s.customerId);
-  const marks = ids.map(() => '?').join(',');
   /* A window a day wider at each end, narrowed to the date in JS — the SQL
      never has to know what zone the phone is in. */
   const from = new Date(`${planDate}T00:00:00`).getTime() - 86_400_000;
   const to = from + 3 * 86_400_000;
   const onDay = (ms: number | null) => ms != null && isoDate(new Date(ms)) === planDate;
+
+  /*
+   * THE SHOPS HE WALKED INTO THAT NO ROUTE NAMED.
+   *
+   * This read the route and nothing else, so a visit to a shop off it — a
+   * customer who rang, a door on the way past — never appeared when he looked
+   * back at the day, and a day with no route at all read "no shops were
+   * picked" over a day of visits. They are listed after the route, marked.
+   */
+  const routed = new Set(stops.map((s) => s.customerId));
+  const loose = (
+    await all<{ customerId: string; checkInAt: number | null } & ShopFacts>(
+      `SELECT v.customerId, v.checkInAt, ${SHOP_FACTS}
+         FROM visits v
+         LEFT JOIN customers c ON c.id = v.customerId
+        WHERE v.checkInAt BETWEEN ? AND ?
+        ORDER BY v.checkInAt`,
+      [from, to],
+    )
+  ).filter((v) => onDay(v.checkInAt) && !routed.has(v.customerId));
+  const extra = [...new Map(loose.map((v) => [v.customerId, v])).values()];
+
+  if (!stops.length && !extra.length) return [];
+
+  const ids = [...stops.map((s) => s.customerId), ...extra.map((v) => v.customerId)];
+  const marks = ids.map(() => '?').join(',');
 
   const [visits, ownOrders, officeOrders, ownPayments, officePayments, timeline] = await Promise.all([
     all<{ customerId: string; checkInAt: number | null; checkOutAt: number | null; durationSeconds: number | null; outcome: string | null; notes: string | null }>(
@@ -767,7 +809,27 @@ export async function dayHistory(planDate: string): Promise<ShopDay[]> {
   const itemsOf = (orderId: string) =>
     lineRows.filter((l) => l.orderId === orderId).map((l) => ({ name: l.productName, cans: l.cans }));
 
-  return stops.map((s) => {
+  const rows = [
+    ...stops.map((s) => ({ ...s, offRoute: false })),
+    ...extra.map((v, i) => ({
+      id: 'visit:' + v.customerId,
+      customerId: v.customerId,
+      seq: stops.length + i + 1,
+      status: 'visited',
+      plannedAt: null,
+      actualAt: v.checkInAt,
+      skipReason: null,
+      name: v.name,
+      area: v.area,
+      city: v.city,
+      kind: v.kind,
+      thirdParty: v.thirdParty,
+      isLead: v.isLead,
+      offRoute: true,
+    })),
+  ];
+
+  return rows.map((s) => {
     const visit = visits.find((v) => v.customerId === s.customerId && onDay(v.checkInAt)) ?? null;
     const orders = new Map<string, ShopDay['orders'][number]>();
     for (const o of ownOrders) {
@@ -813,6 +875,8 @@ export async function dayHistory(planDate: string): Promise<ShopDay[]> {
       orders: [...orders.values()],
       payments: [...payments.values()],
       other,
+      accountType: accountType({ kind: s.kind, thirdParty: Number(s.thirdParty ?? 0), isLead: Number(s.isLead ?? 0) }),
+      offRoute: s.offRoute,
     };
   });
 }

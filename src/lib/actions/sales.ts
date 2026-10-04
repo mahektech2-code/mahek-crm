@@ -234,7 +234,6 @@ function refresh() {
     revalidatePath("/sales/knowledge");
     revalidatePath("/sales/tasks");
     revalidatePath("/sales/leads");
-    revalidatePath("/sales/visits");
     revalidatePath("/sales/catalogue");
     revalidatePath("/sales/notify");
     revalidatePath("/apps");
@@ -2596,7 +2595,7 @@ export async function bulkChaseLeadOwners(input: {
  */
 export async function acceptVisit(input: { visitId: string }): Promise<Result> {
   try {
-    const user = await requireSalesAccess(SALES_MANAGER("sales.visits"));
+    const user = await requireSalesAccess(SALES_MANAGER("sales.journeys"));
 
     const [visit] = await db
       .select({
@@ -2669,7 +2668,7 @@ export async function decidePinCorrection(input: {
   accept: boolean;
 }): Promise<Result> {
   try {
-    const user = await requireSalesAccess(SALES_MANAGER("sales.visits"));
+    const user = await requireSalesAccess(SALES_MANAGER("sales.journeys"));
 
     const [visit] = await db
       .select({
@@ -2780,7 +2779,7 @@ export async function askAboutVisit(input: {
   question: string;
 }): Promise<Result> {
   try {
-    const user = await requireSalesAccess(SALES_MANAGER("sales.visits"));
+    const user = await requireSalesAccess(SALES_MANAGER("sales.journeys"));
 
     const question = input.question.trim();
     if (!question) {
