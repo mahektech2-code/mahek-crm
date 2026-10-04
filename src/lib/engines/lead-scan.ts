@@ -84,7 +84,7 @@ const INDIAN_SCRIPT = /[\u0900-\u0DFF\u0600-\u06FF]/;
 const DIGIT_ZEROS = [0x0660, 0x06f0, 0x0966, 0x09e6, 0x0a66, 0x0ae6, 0x0b66, 0x0be6, 0x0c66, 0x0ce6, 0x0d66];
 
 /** Indian-script digits as 0-9; everything else untouched. */
-export function asciiDigits(value: string): string {
+function asciiDigits(value: string): string {
   return value.replace(/[\u0660-\u0669\u06F0-\u06F9\u0966-\u096F\u09E6-\u09EF\u0A66-\u0A6F\u0AE6-\u0AEF\u0B66-\u0B6F\u0BE6-\u0BEF\u0C66-\u0C6F\u0CE6-\u0CEF\u0D66-\u0D6F]/g, (ch) => {
     const code = ch.charCodeAt(0);
     const zero = DIGIT_ZEROS.find((z) => code >= z && code <= z + 9)!;

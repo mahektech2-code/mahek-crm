@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { asciiDigits, cleanScan, foundAnything, gstinSettled, hasIndianScript, preferGstin, tidy, type LeadScanReading } from "./lead-scan";
+import { cleanScan, foundAnything, gstinSettled, hasIndianScript, preferGstin, tidy, type LeadScanReading } from "./lead-scan";
 
 /* Everything goes through `cleanScan`, the one function the service calls —
    the helpers behind it are private, so a rule tested here is a rule the
@@ -141,15 +141,13 @@ test("second GSTIN look: never loses what the first reading found", () => {
   assert.equal(preferGstin("27AAPFU0939F1ZX", "27AAPFU0939F1Z"), "27AAPFU0939F1ZX");
 });
 
-test("Indian-script text is caught, and Indian-script digits become 0-9", () => {
+test("Indian-script text is caught", () => {
   assert.equal(hasIndianScript("ಶ್ರೀ ಗಣೇಶ ಪೇಂಟ್ಸ್"), true);
   assert.equal(hasIndianScript("హైదరాబాద్"), true);
   assert.equal(hasIndianScript("রহিম হার্ডওয়্যার"), true);
   assert.equal(hasIndianScript("श्याम ट्रेडर्स"), true);
   assert.equal(hasIndianScript("Shri Ganesh Paints"), false);
   assert.equal(hasIndianScript(null), false);
-  assert.equal(asciiDigits("९८२२० ११००१"), "98220 11001");
-  assert.equal(asciiDigits("೫೬೦೦೦೧"), "560001");
 });
 
 test("a mobile and a PIN printed in Indian digits still arrive", () => {
