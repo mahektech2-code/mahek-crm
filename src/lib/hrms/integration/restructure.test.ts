@@ -13,7 +13,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { appAccess, appModuleAccess, employeeReporting, employees, hrmsAssetAssignments, hrmsAssetStock, hrmsAttendance, hrmsHelp, hrmsLeaveRequests, hrmsNotifications, hrmsUserPowers, mbosDeletions, mbosDocuments, notifications, users } from "@/db/schema";
+import { appAccess, appModuleAccess, employeeReporting, employees, hrmsHolidays, mbosApprovals, mbosAttendanceDays, mbosHolidays, mbosLeaveRequests, hrmsAssetAssignments, hrmsAssetStock, hrmsAttendance, hrmsHelp, hrmsLeaveRequests, hrmsNotifications, hrmsUserPowers, mbosDeletions, mbosDocuments, notifications, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { hrmsContext, requireHrmsWrite, HrmsNotPermitted } from "@/lib/hrms/access";
 import { hrmsScreenModule } from "@/lib/hrms/screens";
@@ -90,7 +90,7 @@ let hr: typeof users.$inferSelect;
 let narrowed: typeof users.$inferSelect;
 
 before(async () => {
-  await db.execute(sql`truncate users, employees, employee_reporting, hrms_attendance, hrms_help, hrms_leave_requests, hrms_user_powers, hrms_asset_stock, hrms_asset_assignments, hrms_notifications, mbos_documents, mbos_deletions, notifications, audit_log restart identity cascade`);
+  await db.execute(sql`truncate users, employees, employee_reporting, hrms_attendance, hrms_help, hrms_leave_requests, hrms_user_powers, hrms_asset_stock, hrms_asset_assignments, hrms_notifications, hrms_holidays, mbos_documents, mbos_deletions, mbos_holidays, mbos_attendance_days, mbos_leave_requests, mbos_approvals, notifications, audit_log restart identity cascade`);
   headEmp = await person("Ravi Head", { office: "Andheri", position: "Sales Head", type: "Sales" });
   teamEmp = await person("Tara Team", { office: "Pune", position: "Salesman", type: "Sales", reportsTo: "Sales Head" });
   officeEmp = await person("Omkar Office", { office: "Andheri", position: "Field Boy", type: "Field" });
@@ -304,5 +304,80 @@ describe("one announcement sender", () => {
     assert.equal(read.read, true);
     await mod("notifications").actions!.delete(await as(hr), n.id, {});
     assert.equal((await db.select().from(notifications).where(eq(notifications.id, n.bellIds[0]))).length, 0);
+  });
+});
+
+describe("one record across HRMS and the field app", () => {
+  test("a handset day is a register row, read-only, and payroll counts it", async () => {
+    const date = addDaysISO(today(), -4);
+    await db.insert(mbosAttendanceDays).values({
+      id: id("mad"),
+      userId: staff.id,
+      day: date,
+      checkInAt: new Date(`${date}T09:05:00+05:30`),
+      checkOutAt: new Date(`${date}T18:35:00+05:30`),
+      workedSeconds: (9 * 60 + 30 - 45) * 60,
+      status: "present",
+    });
+    const { attendanceRows, approvedLeave } = await import("@/lib/hrms/services/attendance");
+    const [d] = await attendanceRows({ employeeIds: [strangerEmp.id], from: date, to: date });
+    assert.equal(d.method, "field");
+    assert.equal(d.checkIn, "09:05", "a stored instant becomes a wall clock in the business's zone");
+    assert.equal(d.checkOut, "18:35");
+    assert.equal(d.stoppageMin, 45, "breaks between sessions are the day's stoppage");
+    const ctx = await as(hr);
+    const { rows } = await mod("attendance").load(ctx, { scope: "all", from: date });
+    const row = rows.find((r) => r.id === d.id);
+    assert.ok(row, "the register lists it");
+    assert.deepEqual(row!.actions, [], "corrected on the field app, not here");
+    assert.ok(Array.isArray(await approvedLeave([strangerEmp.id])));
+  });
+
+  test("checking in on the web is refused when the handset already holds the day", async () => {
+    await db.insert(mbosAttendanceDays).values({ id: id("mad"), userId: staff.id, day: today(), checkInAt: new Date(), status: "present" });
+    await as(staff);
+    const { hrmsCheckIn } = await import("@/lib/actions/hrms-checkin");
+    const r = await hrmsCheckIn({ lat: 19.07, lng: 72.87 });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.equal(r.ok && (r.data as { refusal?: string }).refusal, "already");
+  });
+
+  test("approved field leave is leave in HRMS: listed read-only, and not an absence", async () => {
+    const date = addDaysISO(today(), -9);
+    const lid = id("mlr");
+    await db.insert(mbosLeaveRequests).values({ id: lid, userId: staff.id, leaveType: "sick", fromDate: date, toDate: date, days: 1, reason: "Fever" });
+    await db.insert(mbosApprovals).values({ id: id("map"), type: "leave", requestedByUserId: staff.id, subjectType: "leave", subjectId: lid, state: "approved" });
+    const { approvedLeave } = await import("@/lib/hrms/services/attendance");
+    const leave = await approvedLeave([strangerEmp.id]);
+    const f = leave.find((x) => x.source === "field");
+    assert.ok(f && f.paid === 1 && f.unpaid === 0, "sick leave is paid");
+    const list = await mod("leave").load(await as(hr), { scope: "all" });
+    const row = list.rows.find((r) => r.id === `mbos:${lid}`);
+    assert.ok(row && (row.actions ?? []).length === 0);
+    const absent = await mod("absentees").load(await as(hr), { date, scope: "all" });
+    assert.ok(!absent.rows.some((r) => r.v.emp === "Sana Stranger"), "away, not absent");
+  });
+
+  test("a holiday for everybody is on both calendars, and removing it removes both and tombstones the handsets", async () => {
+    const ctx = await as(hr);
+    const date = addDaysISO(today(), 20);
+    const r = await mod("holidays").forms!.add(ctx, { tagged: "All employees" }, [{ date, category: "Festival", name: "Diwali" }]);
+    assert.equal(r.ok, true, JSON.stringify(r));
+    const [h] = await db.select().from(hrmsHolidays).where(eq(hrmsHolidays.date, date));
+    const [m] = await db.select().from(mbosHolidays).where(eq(mbosHolidays.id, h.id));
+    assert.equal(m?.name, "Diwali");
+    const admin = await account("Ajay Admin", null, "admin");
+    const d = await mod("holidays").actions!.delete(await as(admin), h.id, {});
+    assert.equal(d.ok, true, JSON.stringify(d));
+    assert.equal((await db.select().from(mbosHolidays).where(eq(mbosHolidays.id, h.id))).length, 0);
+    assert.equal((await db.select().from(mbosDeletions).where(eq(mbosDeletions.entityId, h.id))).length, 1);
+  });
+
+  test("a day entered on the Sales Dashboard is on HRMS's calendar too", async () => {
+    const { mirrorToHrms } = await import("@/lib/services/holiday-calendar");
+    const date = addDaysISO(today(), 30);
+    await db.transaction((tx) => mirrorToHrms(tx, { id: "mbos_hol_x", onDate: date, name: "Ganesh Chaturthi", scope: null }, hr));
+    const [h] = await db.select().from(hrmsHolidays).where(eq(hrmsHolidays.id, "mbos_hol_x"));
+    assert.equal(h?.tagged, "All employees");
   });
 });

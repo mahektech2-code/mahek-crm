@@ -11676,7 +11676,7 @@ export const hrmsHolidays = pgTable(
   {
     id: text("id").primaryKey(),
     date: date("date").notNull(),
-    /** Festival · Weekly · National · Nature. */
+    /** Festival · Weekly · National · Weather (src/lib/hrms/values.ts). */
     category: text("category").notNull(),
     name: text("name").notNull(),
     /** "All employees", or an office name. */

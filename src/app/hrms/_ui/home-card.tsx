@@ -43,6 +43,8 @@ export type HomeState = {
     fullDayPercent: number;
     distance: string;
     worked: string;
+    /** Checked in on the field app: checked out there too. */
+    field?: boolean;
   } | null;
 };
 
@@ -275,6 +277,8 @@ export function HomeCard({ state, wait, canHelp }: { state: HomeState; wait: Wai
                 <div className="text-[13px] text-body">
                   Day: <span className="font-semibold">{t.workDay}</span>
                 </div>
+              ) : t.field ? (
+                <div className="text-[13px] text-body">You checked in on the field app today, so you check out there too.</div>
               ) : outConfirm ? (
                 <div className="rounded-[6px] border border-line bg-canvas p-3">
                   <div className="text-[13px] text-body">Check out now? Your location is read once and compared with the office radius.</div>

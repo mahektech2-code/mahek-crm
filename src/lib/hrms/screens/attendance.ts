@@ -7,7 +7,7 @@ import type { ActionSpec, ColSpec, Contact, FormSpec, ListRow, RowField, ToolSpe
 import { has, scopeOf, type HrmsContext, type Scope } from "../access";
 import { hrmsAudit, hrmsId, inTx, refuse, stampLine, text, today, fieldErr, okVoid, err, ok, type HrmsScreenModule, type ScreenQuery } from "../server";
 import { allPeople, byId, isActive, markableStaff, staffInReach, timingMap, visibleIds, type Person } from "../services/people";
-import { attendanceCfg, attendanceRows, holidays, type DayRow } from "../services/attendance";
+import { attendanceCfg, attendanceRows, fieldLeave, holidays, isFieldDay, type DayRow } from "../services/attendance";
 import { minutesBetween, timeRemark } from "../engines/attendance";
 import { holidayApplies } from "../engines/leave";
 import { addDaysISO, distanceLabel, hm, tmin, weekdayOf, fdShort, datesBetween } from "../time";
@@ -53,10 +53,14 @@ function flagsOf(r: DayRow, t: string): string[] {
   if (r.fig.workDay === "Half Day") f.push("halfDay");
   if (r.method === "qr") f.push("qr");
   if (r.method === "officer") f.push("marked");
+  if (r.method === "field") f.push("fieldApp");
   return f;
 }
 
 function actionsFor(ctx: HrmsContext, r: DayRow, t: string): ActionSpec[] {
+  /* A handset day is the field app's record: corrected there, by the person or
+     on the Sales Dashboard's attendance screen, never written over from here. */
+  if (isFieldDay(r)) return [];
   const own = r.employeeId === ctx.employee?.id;
   const a: ActionSpec[] = [];
   if (!r.checkOut && own) {
@@ -131,15 +135,26 @@ export function attendanceRow(ctx: HrmsContext, r: DayRow, p: Person | undefined
     { l: "Remark", v: r.remark ?? "" },
     {
       l: "How it was recorded",
-      v: r.method === "officer" ? `Marked by ${r.markedByName ?? "a department head"}` : r.method === "qr" ? `QR code ${r.checkInCode ?? ""}` : r.method === "import" ? "Imported" : "Location check",
+      v:
+        r.method === "officer"
+          ? `Marked by ${r.markedByName ?? "a department head"}`
+          : r.method === "qr"
+            ? `QR code ${r.checkInCode ?? ""}`
+            : r.method === "import"
+              ? "Imported"
+              : r.method === "field"
+                ? "On the field app — corrected there, or on the Sales Dashboard’s attendance screen"
+                : "Location check",
     },
     { l: "Check-in photo", v: r.inPhotoId ? "Attached" : "None" },
     { l: "Check-out photo", v: r.outPhotoId ? "Attached" : "None" },
   ];
   const contacts: Contact[] = [];
   if (r.lat != null && r.lng != null) contacts.push({ l: "Check-in location", href: `https://maps.google.com/?q=${r.lat},${r.lng}` });
-  if (r.inPhotoId) contacts.push({ l: "Check-in photo", href: `/api/attachments/${r.inPhotoId}` });
-  if (r.outPhotoId) contacts.push({ l: "Check-out photo", href: `/api/attachments/${r.outPhotoId}` });
+  /* A handset selfie is opened on the Sales Dashboard, under its own rule and
+     its own 72-hour clock — not from here. */
+  if (r.inPhotoId && !isFieldDay(r)) contacts.push({ l: "Check-in photo", href: `/api/attachments/${r.inPhotoId}` });
+  if (r.outPhotoId && !isFieldDay(r)) contacts.push({ l: "Check-out photo", href: `/api/attachments/${r.outPhotoId}` });
   return {
     id: r.id,
     v: {
@@ -556,7 +571,10 @@ const absentees: HrmsScreenModule = {
     ]);
     const present = new Set(day.map((d) => d.employeeId));
     /* Spec §6.6 / A52: any leave request covering the date excuses the day, whatever its status. */
-    const onLeave = new Set(leave.filter((l) => l.startDate <= date && l.endDate >= date).map((l) => l.employeeId));
+    /* The field app's leave too, asked for or granted: a salesman whose leave
+       is on the handset is away, not absent. A refused one does not excuse. */
+    const field = await fieldLeave({ states: ["pending", "approved"], from: date, to: date });
+    const onLeave = new Set([...leave, ...field].filter((l) => l.startDate <= date && l.endDate >= date).map((l) => l.employeeId));
     const ids = visibleIds(ctx, scope);
     if (ids && scope === "team" && has(ctx, "markStaff")) for (const id of staffInReach(ctx, people, "markStaff") ?? []) ids.add(id);
     const out = people.filter((p) => (!ids || ids.has(p.id)) && isActive(p) && !present.has(p.id) && !onLeave.has(p.id) && !hol.some((h) => holidayApplies(h, p.id, p.office)));
