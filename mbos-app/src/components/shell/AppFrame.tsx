@@ -1,10 +1,12 @@
 import React from 'react';
 import { View, Text, Pressable, Platform, RefreshControl, ScrollView, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { router, useLocalSearchParams, usePathname } from 'expo-router';
+import { router, useGlobalSearchParams, useLocalSearchParams, useNavigation, usePathname } from 'expo-router';
 import { color as C, HIT, type, weight } from '../../theme/tokens';
 import { Header, StatusStrip, TabBar, TabBarAction, type StripTone, type TabKey } from './Chrome';
-import { ActionSheet, ConfirmSheet, Toast } from '../ui/overlays';
+import { ActionSheet, ConfirmSheet, StoreToast } from '../ui/overlays';
+import { useTopSheet } from '../ui/sheet-stack';
+import { backTarget, fromQuery, isTabRoot, screenOf } from './routes';
 import { Icon } from '../ui/Icon';
 import { useKeyboardHeight, useRevealFocusedField } from '../ui/keyboard';
 import { useTicker } from '../ui/use-ticker';
@@ -21,6 +23,8 @@ import { gpsVerdict, type GpsHealth } from '../../engines/gps-health';
 import { gpsSignal } from '../../native/where';
 import { hasPermission } from '../../native/location';
 import { getConfig } from '../../data/config';
+import { noteScreen } from '../../native/reload-guard';
+import { noteCrashScreen } from '../../native/crash-log';
 
 /**
  * The GPS light, from the radio rather than from a flag.
@@ -118,16 +122,55 @@ export const FROM_LABEL: Record<string, string> = {
   nearby: 'Near me',
   accounts: 'Customer accounts',
   account: 'Account',
+  profile: 'Profile',
+  policy: 'Allowances',
+  eod: 'Close the day',
+  collections: 'Collections',
+  orders: 'Orders',
+  travel: 'Today’s travel',
+  rejections: 'Not accepted',
+  validate: 'Check call',
+  'tracking-setup': 'Keep tracking on',
+  'phone-setup': 'Phone setup',
 };
 
-/** Reads the recorded entry route, so the label and the destination agree. */
+/**
+ * Reads the recorded entry route, so the label and the destination agree.
+ *
+ * THREE THINGS IT GOT WRONG, and each was a way back that was not one:
+ *
+ * - It went to the screen's NAME, `/lead`, with none of what the screen was
+ *   showing — so back from the bell, opened on a lead, said "This lead is not
+ *   on this phone". The full address now rides as `back` (see `routes.ts`).
+ * - It went to whatever word it was given. Two screens fall back to `day`,
+ *   and there is no `day` screen; that is now refused for one that exists.
+ * - It always REPLACED, so More → Tasks → "‹ More" left the stack holding
+ *   More twice, and Android's own Back walked through a copy of every screen
+ *   he had come back from. Where the screen underneath IS the one being gone
+ *   back to, it is popped instead — which also keeps its scroll and its
+ *   filters — and a tab root is returned to rather than stacked again.
+ *
+ * `from` is still the bare screen name, because several screens ask it "did I
+ * come from a visit?".
+ */
 export function useCameFrom(fallback = 'more') {
-  const params = useLocalSearchParams<{ from?: string }>();
-  const from = params.from || fallback;
+  const params = useLocalSearchParams<{ from?: string; back?: string }>();
+  const navigation = useNavigation();
+  const target = backTarget(params, fallback);
+  const from = screenOf(target) ?? 'home';
   return {
     from,
     label: FROM_LABEL[from] ?? from.charAt(0).toUpperCase() + from.slice(1),
-    go: () => router.replace(`/${from === 'home' ? 'home' : from}`),
+    go: () => {
+      const state = navigation.getState?.();
+      const below = state && state.index > 0 ? state.routes[state.index - 1] : null;
+      if (below && below.name === from && router.canGoBack()) {
+        router.back();
+        return;
+      }
+      if (isTabRoot(target) && !target.includes('?')) router.dismissTo(target as never);
+      else router.replace(target as never);
+    },
   };
 }
 
@@ -192,7 +235,20 @@ export function AppFrame({
    */
   const pathname = usePathname();
   const here = (pathname ?? '').replace(/^\/+/, '').split('/')[0] || 'home';
-  const fromHere = `?from=${here}`;
+  /* The NAME of this screen, and — where it is showing one record — the
+     address of that record, so coming back lands on it. See `routes.ts`. */
+  const searchParams = useGlobalSearchParams();
+  const fromHere = fromQuery(pathname ?? '/home', searchParams);
+  /* An update may reload only on a screen where nothing can be half done —
+     see `reload-guard.ts`. Every screen draws this frame, so it is the one
+     place that always knows where he is. */
+  React.useEffect(() => {
+    noteScreen(pathname ?? null);
+    /* And so an error can say which screen it happened on. */
+    noteCrashScreen(pathname ?? null);
+  }, [pathname]);
+  /* A sheet draws its own toast while it is open — see `sheet-stack.ts`. */
+  const topSheet = useTopSheet();
   const keyboardHeight = useKeyboardHeight();
   const reveal = useRevealFocusedField(keyboardHeight);
   const [footerHeight, setFooterHeight] = React.useState(0);
@@ -206,9 +262,6 @@ export function AppFrame({
   /* From the radio, not from `store.gps` — see `useGpsHealth` above, and
      `engines/gps-health.ts` for why that field cannot answer this question. */
   const gps = useGpsHealth();
-  const toast = useStore((s) => s.toast);
-  const toastTone = useStore((s) => s.toastTone);
-  const clearToast = useStore((s) => s.clearToast);
   const sheet = useStore((s) => s.sheet);
   const set = useStore((s) => s.set);
   const askTravel = useStore((s) => s.askTravel);
@@ -383,7 +436,11 @@ export function AppFrame({
     <View style={{ flex: 1, backgroundColor: C.canvas, paddingTop: insets.top }}>
       <View style={s.chrome}>
         <Header
-          title={title}
+          /* Twelve screens passed "MBOS" as their title, so the bar said the
+             app's name on Profile, Salary, Orders and the rest and never where
+             you were. Those screens get their own name from the one table the
+             back links already read. */
+          title={title === 'MBOS' && FROM_LABEL[here] ? FROM_LABEL[here] : title}
           onBack={onBack}
           unread={unread}
           unreadLoaded={unreadOrNull !== null}
@@ -483,7 +540,11 @@ export function AppFrame({
           <TabBar
             active={activeTab}
             bottomInset={insets.bottom}
-            onTab={(k) => router.replace(`/${k}`)}
+            /* BACK to a tab rather than another copy of it on top. `dismissTo`
+               pops to it where it is already in the stack and replaces this
+               screen with it where it is not — so the stack never holds Home
+               twice, and Android's Back from a tab leaves the app. */
+            onTab={(k) => router.dismissTo(`/${k}`)}
             /* The office proposes a day and waits on the answer to plan a week.
                The Journey screen has always listed those days at the top; what
                it could not do was say so from anywhere else in the app, so being
@@ -516,15 +577,21 @@ export function AppFrame({
         error={confirmErr}
         onCancel={closeConfirm}
         onConfirm={() => {
-          if (!confirm) return;
-          const r = confirmReason.trim();
+          /* Read from the store, not the render: a second tap arrives before
+             the re-render that clears `confirm`, and ran the action twice —
+             two receipts for one payment. Closed BEFORE it runs, so the second
+             tap finds nothing, and an action that opens the next dialog is not
+             closed by this one. */
+          const live = useStore.getState().confirm;
+          if (!live) return;
+          const r = useStore.getState().confirmReason.trim();
           /* A reason that was asked for and not given stops the action, not the dialog. */
-          if (confirm.reasonLabel && !r) {
+          if (live.reasonLabel && !r) {
             feedback('warning');
             return set({ confirmErr: true });
           }
-          confirm.run(r);
           closeConfirm();
+          live.run(r);
         }}
       />
 
@@ -533,7 +600,7 @@ export function AppFrame({
           would be four gates, and three of them would be right. */}
       <TravelGate />
 
-      <Toast message={toast} tone={toastTone} onDone={clearToast} lift={footerHeight} />
+      {topSheet == null ? <StoreToast lift={footerHeight} /> : null}
     </View>
   );
 }

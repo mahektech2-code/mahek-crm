@@ -5,9 +5,8 @@ import { AppFrame } from '../src/components/shell/AppFrame';
 import { SectionLabel, T } from '../src/components/ui/primitives';
 import { Icon } from '../src/components/ui/Icon';
 import { color as C, weight } from '../src/theme/tokens';
-import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
-import { signOut as signOutReal } from '../src/data/session';
+import { useSignOut } from '../src/state/sign-out';
 import { bucketOf, listOpenTasks } from '../src/data/tasks';
 import { listExpenses, listSamples } from '../src/data/requests';
 import { priceDay } from '../src/data/travel';
@@ -136,7 +135,10 @@ function groupsFor(n: Counts): { label: string; items: Item[] }[] {
       items: [
         { label: 'Product catalogue', badge: '', route: 'catalogue' },
         { label: 'Documents', badge: '', route: 'docs' },
-        { label: 'Knowledge centre', badge: '', route: 'knowledge' },
+        /* The Knowledge centre is not listed. Its modules cannot be opened or
+           finished on the phone yet — every tap raised an error — and a row
+           that leads only to "not yet" is a row that should not be drawn. It
+           comes back when a course can actually be taken here. */
         /* The badge counts what is ON THE PHONE, not how many places could be
            saved. "3 saved" is a fact; "9 available" would be an advertisement
            for a several-hundred-megabyte download in a menu. */
@@ -154,10 +156,9 @@ function groupsFor(n: Counts): { label: string; items: Item[] }[] {
     {
       label: 'Settings',
       items: [
-        { label: 'Profile', badge: '', route: 'profile' },
-        /* The Preferences card lives on the profile screen — this used to toast
-         rather than open the thing it names. */
-      { label: 'App preferences', badge: '', route: 'profile' },
+        /* Profile carries the preferences too, so "App preferences" — a second
+           row opening the same screen — is gone. */
+        { label: 'Profile and preferences', badge: '', route: 'profile' },
         { label: 'Send to office', badge: n.toSend ? n.toSend + ' to send' : '', route: 'sync' },
         /* The walkthrough opens on its own once per build; this is the way back
            to it for somebody who pressed "Do this later". */
@@ -165,11 +166,8 @@ function groupsFor(n: Counts): { label: string; items: Item[] }[] {
         /* A refusal has its own row: it is not something waiting to go out, it
            is something the office has already said no to. */
         { label: 'Not accepted', badge: n.rejected ? String(n.rejected) : '', route: 'rejections' },
-        /* `attendance` IS the sign-in log — one row per person per day, which is
-         exactly what this asks for. MahekOne is careful that it is NOT a record
-         of hours worked, so the destination is named for the day rather than
-         for the login. */
-      { label: 'Your days', badge: '', route: 'attendance' },
+        /* "Your days" opened Attendance, which is already listed under Me. One
+           screen, one row. */
         { label: 'Sign out', badge: '' },
       ],
     },
@@ -177,9 +175,8 @@ function groupsFor(n: Counts): { label: string; items: Item[] }[] {
 }
 
 export default function MoreScreen() {
-  const notify = useStore((s) => s.notify);
-  const signOut = useStore((s) => s.signOut);
   const boot = useBoot();
+  const askSignOut = useSignOut();
 
   const [counts, setCounts] = React.useState<Counts>(EMPTY);
 
@@ -208,23 +205,28 @@ export default function MoreScreen() {
         cashInHand(userId),
         overdueSamples(today),
         bookMoney().catch(() => null),
-      ]).then(([tasks, openLeads, expenses, samples, toSend, queue, today_, maps, cash, late, money]) => {
-        if (!live) return;
-        setCounts({
-          savedMaps: maps.length,
-          toBank: cash.carried.length,
-          lateSamples: late.length,
-          overdueTasks: tasks.filter((t) => bucketOf(t.dueDate, today) === 'Overdue').length,
-          openLeads,
-          pendingExpenses: expenses.filter((e) => e.state === 'Pending').length,
-          openSamples: samples.filter((s) => s.state !== 'Converted' && s.state !== 'Rejected').length,
-          toSend,
-          rejected: queue.rejected ?? 0,
-          daySent: today_.day?.lockedAt != null,
-          legsToday: today_.legs.length,
-          owing: money?.owing ?? 0,
-        });
-      });
+      ])
+        .then(([tasks, openLeads, expenses, samples, toSend, queue, today_, maps, cash, late, money]) => {
+          if (!live) return;
+          setCounts({
+            savedMaps: maps.length,
+            toBank: cash.carried.length,
+            lateSamples: late.length,
+            overdueTasks: tasks.filter((t) => bucketOf(t.dueDate, today) === 'Overdue').length,
+            openLeads,
+            pendingExpenses: expenses.filter((e) => e.state === 'Pending').length,
+            openSamples: samples.filter((s) => s.state !== 'Converted' && s.state !== 'Rejected').length,
+            toSend,
+            rejected: queue.rejected ?? 0,
+            daySent: today_.day?.lockedAt != null,
+            legsToday: today_.legs.length,
+            owing: money?.owing ?? 0,
+          });
+        })
+        /* One read failing used to leave every badge blank and an unhandled
+           rejection behind. The rows still work; only the counts are missing,
+           and the next visit to this screen asks again. */
+        .catch(() => undefined);
       return () => {
         live = false;
       };
@@ -235,17 +237,9 @@ export default function MoreScreen() {
 
   const open = (i: Item) => {
     if (i.route) return router.push(`/${i.route}?from=more`);
-    if (i.label === 'Sign out') {
-      /* The outbox survives it — signing out clears the session and the
-         tokens, never the work this phone has not sent yet. */
-      void signOutReal().then(() => {
-        signOut();
-        boot.setSession(null);
-        router.replace('/');
-      });
-      return;
-    }
-    notify(i.label + ' is not ready yet.', 'error');
+    /* The only row with no route. It asks first, like Profile does — see
+       `useSignOut`. */
+    askSignOut();
   };
 
   return (

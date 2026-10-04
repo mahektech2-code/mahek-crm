@@ -373,7 +373,7 @@ export function trackingVerdict(i: {
       tone: 'good',
       title: 'Your route is being saved',
       detail:
-        'It keeps going with the phone in your pocket. It stops when you check out. ' +
+        'It keeps going with the phone in your pocket. It stops when you punch out. ' +
         'Nothing else to do.',
       action: null,
     };
@@ -391,11 +391,11 @@ export function trackingVerdict(i: {
       title: 'Route saved only when the app is open',
       detail:
         (i.exemption === 'optimised'
-          ? 'Your phone still stops MahekOne when the app is closed. Do the battery step above first. '
-          : 'Your phone stopped MahekOne earlier today when the app was closed. ') +
+          ? 'Your phone still stops Mahek MBOS when the app is closed. Do the battery step above first. '
+          : 'Your phone stopped Mahek MBOS earlier today when the app was closed. ') +
         (i.canRestart
-          ? 'Restart MahekOne and it will try again. You will not lose anything saved on this phone.'
-          : 'Close MahekOne completely and open it again. It will try again. You will not lose ' +
+          ? 'Restart Mahek MBOS and it will try again. You will not lose anything saved on this phone.'
+          : 'Close Mahek MBOS completely and open it again. It will try again. You will not lose ' +
             'anything saved on this phone.'),
       action: i.canRestart ? 'restart_app' : null,
     };
@@ -413,10 +413,10 @@ export function trackingVerdict(i: {
     title: 'Nothing to save yet',
     detail:
       (i.exemption === 'optimised'
-        ? 'Battery saver is still on for MahekOne. Do the step above, or your route will ' +
+        ? 'Battery saver is still on for Mahek MBOS. Do the step above, or your route will ' +
           'have gaps. '
         : '') +
-      'Your route is saved from when you start your day until you check out.',
+      'Your route is saved from when you start your day until you punch out.',
     action: 'recheck',
   };
 }

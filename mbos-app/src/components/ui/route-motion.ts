@@ -73,6 +73,11 @@ export const ROUTE_MOTION: Record<string, ScreenMotion> = {
      hands over to. */
   index: 'result',
   setup: 'result',
+
+  /* An address this build has no screen for. It is never navigated to on
+     purpose — it only catches what slipped past `isMbosRoute` — and it hands
+     straight on to Home, so it should not be seen moving. */
+  '+not-found': 'none',
 };
 
 export type NativeAnimation =

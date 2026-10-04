@@ -1111,18 +1111,34 @@ describe("The pull delta runs — with a cursor, which is every pull after sign-
     /*
      * And on the delta, which is every pull after sign-in.
      *
-     * ORDERS COME EVERY TIME and the two money channels do NOT, and the
-     * difference is worth asserting rather than assuming. Orders are capped at
-     * ten a customer, so an eleventh does not change a row — it displaces one,
-     * and nothing carries an `updated_at` that says so. Bills and receipts are
-     * a WINDOW with no cap, so a row inside it is either already on the phone
-     * or has a moved `updated_at`; sending a salesman's share of thirteen
-     * months on every pull all day is what this stops.
+     * ALL THREE CHANNELS ARE SINCE-GATED NOW, orders included. Orders used to
+     * come every time — ten a customer for the whole book, about 26,000 rows a
+     * minute on a big beat — and the phone now keeps its own newest ten per
+     * shop, so only a shop whose orders moved is sent again.
+     *
+     * The cursor deliberately looks back two minutes (`CURSOR_OVERLAP_MS`), so
+     * an office write committed just before it is not lost. The rows this file
+     * just wrote fall inside that overlap, so they are stepped back out of it
+     * first: what is being asserted is "unchanged rows are not resent", and a
+     * row written four seconds ago is, correctly, resent.
      */
+    await db.execute(sql`
+      update payment_receipts set updated_at = now() - interval '10 minutes'
+       where customer_id = ${shop.id}
+    `);
+    await db.execute(sql`
+      update bills set updated_at = now() - interval '10 minutes'
+       where customer_id = ${shop.id}
+    `);
+    await db.execute(sql`
+      update orders set updated_at = now() - interval '10 minutes'
+       where customer_id = ${shop.id}
+    `);
     const delta = await buildPull(principal, boot.cursor);
-    assert.ok(
-      (delta.customerOrders as unknown[]).length > 0,
-      "the delta carried no order history",
+    assert.equal(
+      (delta.customerOrders as unknown[]).length,
+      0,
+      "nothing changed since the cursor, so the order history must not be resent",
     );
     assert.equal(
       (delta.customerPayments as unknown[]).length,
@@ -1868,7 +1884,7 @@ describe("How many handsets one person may hold", () => {
     assert.equal(outcome.ok, false);
     assert.match(
       outcome.ok === false ? outcome.error : "",
-      /already signed in on another handset/i,
+      /already signed in on another (phone|handset)/i,
       "the refusal does not say what is wrong",
     );
   });

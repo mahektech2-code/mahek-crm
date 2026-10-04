@@ -43,7 +43,7 @@ const PURPOSES: Record<string, string> = {
 const km = (metres: number | null) => (metres == null ? '—' : `${(metres / 1000).toFixed(1)} km`);
 
 export default function TravelScreen() {
-  const back = useCameFrom('day');
+  const back = useCameFrom('more');
   const boot = useBoot();
   const userId = boot.session?.user.id ?? '';
   const day = isoDate(new Date());
@@ -51,13 +51,20 @@ export default function TravelScreen() {
   const [priced, setPriced] = React.useState<Awaited<ReturnType<typeof priceDay>> | null>(null);
   const [modes, setModes] = React.useState<TravelMode[]>([]);
 
+  const [readFailed, setReadFailed] = React.useState(false);
+
   const load = React.useCallback(() => {
     let live = true;
-    void Promise.all([priceDay(userId, day), travelModes()]).then(([p, m]) => {
-      if (!live) return;
-      setPriced(p);
-      setModes(m);
-    });
+    setReadFailed(false);
+    void Promise.all([priceDay(userId, day), travelModes()])
+      .then(([p, m]) => {
+        if (!live) return;
+        setPriced(p);
+        setModes(m);
+      })
+      /* A read that failed used to leave the screen blank for good, which
+         reads as no travel at all rather than as a read that went wrong. */
+      .catch(() => live && setReadFailed(true));
     return () => {
       live = false;
     };
@@ -77,6 +84,12 @@ export default function TravelScreen() {
         Filled in from your punch-in, your punch-out and your visits. You do not work out the money.
         It comes from the office policy.
       </T>
+
+      {readFailed ? (
+        <Card style={{ marginBottom: 12, backgroundColor: C.warnBg }}>
+          <T s="small" style={{ color: C.ink }}>Could not read today&apos;s travel on this phone. Go back and open it again.</T>
+        </Card>
+      ) : null}
 
       {priced?.reason ? (
         <Card style={{ marginBottom: 12, backgroundColor: C.warnBg }}>
@@ -196,7 +209,7 @@ export default function TravelScreen() {
         </Card>
       )}
 
-      <SecondaryButton label="Close the day" style={{ marginTop: 14 }} onPress={() => router.push('/eod')} />
+      <SecondaryButton label="Close the day" style={{ marginTop: 14 }} onPress={() => router.push('/eod?from=travel')} />
     </AppFrame>
   );
 }

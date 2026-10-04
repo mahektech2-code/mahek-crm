@@ -1,5 +1,6 @@
 import { getKv } from '../db';
 import { getConfig } from '../data/config';
+import * as Location from 'expo-location';
 import { getFix, type Fix } from './location';
 
 /**
@@ -154,4 +155,46 @@ async function topUp(): Promise<void> {
   } finally {
     topping = false;
   }
+}
+
+/**
+ * WHERE TO MEASURE FROM, for the screens that sort or filter by distance —
+ * Near me, "Nearest first" on Customers, and today's shop picker.
+ *
+ * NOT `whereNow()`, for three reasons that each broke one of those screens.
+ * That function returns `undefined` when the office switches activity
+ * locations off — a privacy switch about what is STORED against an order —
+ * and so silently turned off the Nearest sort and Near me with it. It only
+ * ever said `unavailable`, so a refused permission was told to "step outside
+ * for a minute". And it answered with the last fix of any age, so before the
+ * punch-in the distances were measured from yesterday's last shop and shown
+ * as current.
+ *
+ * So this is never gated on that switch, says which of the three it is, and
+ * refuses a reading older than `mbos.location.activityFixMaxAgeSeconds` —
+ * the setting that already decides what the screens call stale — asking the
+ * radio for a fresh one instead. These screens are not a save: waiting a few
+ * seconds for a fix costs nothing, and measuring from the wrong place costs
+ * the whole list.
+ */
+export type Origin =
+  | { lat: number; lng: number; ageSeconds: number }
+  | { reason: 'denied' | 'off' | 'unavailable' };
+
+export async function measureFrom(): Promise<Origin> {
+  const maxAge = await getConfig<number>('mbos.location.activityFixMaxAgeSeconds', 900).catch(() => 900);
+  const known = await lastFix();
+  if (known) {
+    const ageSeconds = Math.max(0, Math.round((Date.now() - known.at) / 1000));
+    if (ageSeconds <= Math.max(60, maxAge)) return { lat: known.lat, lng: known.lng, ageSeconds };
+  }
+
+  const servicesOn = await Location.hasServicesEnabledAsync().catch(() => true);
+  if (!servicesOn) return { reason: 'off' };
+
+  const result = await getFix({ accuracyThresholdM: 200, timeoutMs: 8_000 }).catch(() => null);
+  if (result && (result.status === 'ok' || result.status === 'coarse')) {
+    return { lat: result.fix.lat, lng: result.fix.lng, ageSeconds: 0 };
+  }
+  return { reason: result?.status === 'denied' ? 'denied' : 'unavailable' };
 }

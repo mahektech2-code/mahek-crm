@@ -95,7 +95,7 @@ export default function AccountsScreen() {
     router.push(`/account?id=${encodeURIComponent(c.id)}&from=accounts`);
 
   return (
-    <AppFrame title="MBOS" activeTab={null} contentStyle={{ padding: 16, paddingBottom: 32 }}>
+    <AppFrame title="Customer accounts" activeTab={null} onBack={back.go} contentStyle={{ padding: 16, paddingBottom: 32 }}>
       <BackLink label={back.label} onPress={back.go} />
       <T s="h1">Customer accounts</T>
       <T s="small" style={{ color: C.muted, marginTop: 2 }}>
@@ -228,7 +228,7 @@ export default function AccountsScreen() {
             {query
               ? 'Try part of the shop name, the owner, the phone number or the GST number.'
               : filter === 'all'
-                ? 'Your customers come from the office. If you have shops and see none, open Send to office and sync.'
+                ? 'Your customers come from the office. If you have shops and see none, open More, then Send to office, and tap Send now.'
                 : 'None of your customers fall under this filter.'}
           </T>
         </Card>

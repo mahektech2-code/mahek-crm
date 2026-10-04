@@ -3,9 +3,14 @@ import { getConfig } from './config';
 import { raiseApproval } from './requests';
 import { insertAndQueue, stamp, updateAndQueue } from './write';
 import { isoDate } from '../lib/format';
+import { rejectionReasonFrom, sampleAsk } from '../engines/leads';
+import { getLead } from './leads';
+import { leadGateInput } from './lead-funnel';
+import { stageOf } from '../lib/wire';
 import { chaseSchedule, type ChaseCount, type ChaseSchedule } from '../lib/sample-chase';
 import {
   FEEDBACK_FIELDS,
+  gateTo,
   REASON_CODE_NEEDING_REMARKS,
   SAMPLE_CANCEL_REASONS,
   type CodedOption,
@@ -252,7 +257,7 @@ export function whatIsOwed(s: FunnelSample): string | null {
       return s.trialStartedAt
         ? 'They have started the trial. Ask how it is going'
         : 'They have it. Ask if they have tried it yet';
-    case 'Tried': return 'They have tried it. Write down what they said';
+    case 'Tried': return 'They have tried it. Get their answer: yes, no or try again';
     case 'Rejected': return null;
     /* A reviewed sample is finished EXCEPT on the third verdict: "they want to
        try it again on a different substrate" is a live trial with a next step,
@@ -359,12 +364,13 @@ export function chaseFor(s: FunnelSample, chaseDays: readonly number[], today: s
 /**
  * §9 §10 — ask for a sample, with the reason as a code.
  *
- * The gate that decides whether this may be asked for at all is not here: it
- * is `gateTo(input, 'sample_trial')` on the record page, which draws the
- * button disabled with the twelve conditions listed under it. This is what
- * happens once it is open. Asking twice — on the screen and again here —
- * would be two readings of one rule, and it is the screen's that a salesman
- * would be looking at when they disagreed.
+ * THE GATE IS ASKED HERE, and it used to be asked only on the record page.
+ * The Samples screen's own "+ Request a sample" reached this function for any
+ * shop in the book, a Suspect included, and drew "Requested" until the office
+ * refused it — so the rule lives where every door passes, through `sampleAsk`,
+ * and the record page reads the same answer. A shop that is a lead is sent
+ * with `leadId`, whichever screen it was picked on, because the office reads
+ * the lead's ladder from it.
  */
 export async function requestLeadSample(args: {
   customerId: string;
@@ -386,6 +392,16 @@ export async function requestLeadSample(args: {
   }
   if (!args.reasonCode) return { ok: false, message: 'Say why they want a trial.' };
 
+  const lead = await getLead(args.customerId);
+  if (lead) {
+    const input = await leadGateInput(lead);
+    const asked = sampleAsk({ salesType: lead.salesType, stage: stageOf(lead) }, () =>
+      gateTo(input, 'sample_trial'),
+    );
+    if (!asked.ok) return { ok: false, message: asked.message };
+  }
+  const leadId = args.leadId ?? (lead ? lead.id : null);
+
   const base = await stamp('sample');
   /* A week out unless somebody says otherwise — the review chase ladder is
      day 2, 4 and 6 from delivery and belongs to the office; this is the
@@ -398,7 +414,7 @@ export async function requestLeadSample(args: {
     row: {
       ...base,
       customerId: args.customerId,
-      leadId: args.leadId ?? null,
+      leadId,
       productId: args.productId,
       productName: args.productName.trim(),
       cans: args.cans,
@@ -419,7 +435,7 @@ export async function requestLeadSample(args: {
       feedbackNotes: args.application.trim(),
       reasonCode: args.reasonCode,
       application: args.application.trim(),
-      leadId: args.leadId ?? undefined,
+      leadId: leadId ?? undefined,
     },
   });
 
@@ -638,10 +654,9 @@ export async function recordFeedback(
    * The next sample then goes out exactly the same, which is the whole reason
    * the rule exists.
    *
-   * The SAME three fields the office checks, because the office DERIVES the
-   * stored rejection reason from precisely these — a check that passed on a
-   * field the derivation ignores would demand an answer and still store
-   * nothing. It is not a refusal for want of signal, which this app never
+   * The SAME three fields `rejectionReasonFrom` builds the stored reason
+   * from — a check that passed on a field the reason ignores would demand an
+   * answer and still send nothing. It is not a refusal for want of signal, which this app never
    * makes; it is a refusal for want of an ANSWER, which is a different thing
    * and legitimate on a sofa or in a market lane alike.
    */
@@ -687,17 +702,35 @@ export async function recordFeedback(
     }),
   );
 
-  /* The sample itself carries the verdict, because that is what the gate in
-     front of Negotiation reads — a review recorded with the trial still
-     `pending` leaves the rung shut, and rightly. */
+  /*
+   * The sample itself carries the verdict, because that is what the gate in
+   * front of Negotiation reads — a review recorded with the trial still
+   * `pending` leaves the rung shut, and rightly.
+   *
+   * **"NOT DECIDED" IS NOT A REVIEW, and it used to end the sample.** It was
+   * stamped `Reviewed` like the other three, and a reviewed sample owes
+   * nothing: it dropped off "Needs follow-up", out of the chase and out of the
+   * overdue check, with the shop's answer still to come — the quietest way a
+   * trial dies. The answers are kept and the sample stays `Tried`, which is
+   * what it is: used, talked about, and still waiting for a yes or a no.
+   */
+  const decided = args.trialOutcome !== 'pending';
   await moveSample(
     sampleId,
     args.customerId,
-    { state: 'Reviewed', reviewedAt: at, trialOutcome: args.trialOutcome },
+    decided
+      ? { state: 'Reviewed', reviewedAt: at, trialOutcome: args.trialOutcome }
+      : { state: 'Tried', trialCompletedAt: at, trialOutcome: 'pending' },
     {
-      state: 'reviewed',
-      reviewedAt: at,
+      ...(decided
+        ? { state: 'reviewed', reviewedAt: at }
+        : { state: 'trial_done', trialCompletedAt: at }),
       trialOutcome: args.trialOutcome,
+      /* See `rejectionReasonFrom`: the office refuses a rejected trial without
+         this field, and derives nothing from the three boxes itself. */
+      ...(args.trialOutcome === 'rejected'
+        ? { rejectionReason: rejectionReasonFrom(args.fields) }
+        : {}),
       feedback: {
         quality: row.quality,
         performance: row.performance,

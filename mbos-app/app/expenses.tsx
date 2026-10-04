@@ -16,6 +16,7 @@ import type { ExpenseKind } from '../src/engines/generated/expense-policy';
 import { pickDocuments, pickPhotos, takePhoto, type Picked } from '../src/native/capture';
 import { discardQueuedMedia } from '../src/sync/media';
 import { dmy, inrFromPaise, isoDate } from '../src/lib/format';
+import { checkFare } from '../src/lib/travel-leg';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { color as C, radius, weight, tabular, type BadgeTone } from '../src/theme/tokens';
@@ -65,6 +66,18 @@ const MISSING_WORDS: Record<FieldKey, string> = {
   note: 'what it was for',
 };
 
+/** What was typed, in paise — zero for nothing or nonsense. */
+function amountPaise(typed: string): number {
+  const v = typed.trim() ? checkFare(typed) : null;
+  return v && v.ok ? v.paise : 0;
+}
+
+/** Why a typed amount cannot be read, where the answer is more than "type one". */
+function amountWhy(typed: string): string | null {
+  const v = typed.trim() ? checkFare(typed) : null;
+  return v && !v.ok && v.why.startsWith('Type the rupees') ? v.why : null;
+}
+
 export default function ExpensesScreen() {
   const back = useCameFrom('more');
   const notify = useStore((s) => s.notify);
@@ -102,6 +115,7 @@ export default function ExpensesScreen() {
   const [ex, setEx] = React.useState<Draft>(EMPTY);
   /* EVERY failing field, not the first one. See `send`. */
   const [err, setErr] = React.useState<FieldKey[]>([]);
+  const [sendFail, setSendFail] = React.useState<string | null>(null);
   /* The day's own refusal, which is NOT a missing field and must not be folded
      into `err` — "Still needed: the day" with a day plainly on the button is
      the sort of message that sends somebody to fix what is not broken. */
@@ -157,6 +171,7 @@ export default function ExpensesScreen() {
   const patch = (p: Partial<Draft>) => {
     setEx((d) => ({ ...d, ...p }));
     setErr([]);
+    setSendFail(null);
     /* Only a change of DAY answers the day's refusal. Clearing it on a
        keystroke in the note would hide a real one. */
     if (p.whenIso !== undefined) setWhenWhy(null);
@@ -166,7 +181,11 @@ export default function ExpensesScreen() {
 
   const kinds = CLAIM_KINDS;
   const kind = ex.kind || kinds[0]!.key;
-  const exAmtPaise = (parseInt(ex.amt.replace(/[^0-9]/g, ''), 10) || 0) * 100;
+  /* RUPEES AND PAISE, read by the same parser the bus fare uses. Digits only
+     made ₹12.50 impossible to claim, and reopening a refused ₹40.50 rounded it
+     to ₹41 on the way back in. */
+  const exAmtPaise = amountPaise(ex.amt);
+  const amtWhy = amountWhy(ex.amt);
 
   /* The clock is read ONCE, in a state initialiser rather than during render —
      and it is what the sheet falls back to before he has picked a day. */
@@ -239,6 +258,7 @@ export default function ExpensesScreen() {
     setFixing(false);
     setFixingId(null);
     setErr([]);
+    setSendFail(null);
     setWhenWhy(null);
     const today = new Date();
     setEx({ ...EMPTY, kind: kinds[0]!.key, when: dmy(isoDate(today)), whenIso: isoDate(today) });
@@ -284,10 +304,11 @@ export default function ExpensesScreen() {
     setFixing(true);
     setFixingId(x.id);
     setErr([]);
+    setSendFail(null);
     setWhenWhy(refuse(x.spentOn));
     setEx({
       kind: was.key,
-      amt: String(Math.round(x.amountPaise / 100)),
+      amt: x.amountPaise % 100 === 0 ? String(x.amountPaise / 100) : (x.amountPaise / 100).toFixed(2),
       note: x.remarks ?? '',
       when: dmy(x.spentOn),
       whenIso: x.spentOn,
@@ -303,6 +324,7 @@ export default function ExpensesScreen() {
     setOpen(false);
     setEx(EMPTY);
     setErr([]);
+    setSendFail(null);
     setWhenWhy(null);
     setFixing(false);
     setFixingId(null);
@@ -318,6 +340,7 @@ export default function ExpensesScreen() {
     animateLayout();
     setEx((d) => ({ ...d, files: [...d.files, ...picked.map((p) => ({ ...p, fresh: true }))] }));
     setErr([]);
+    setSendFail(null);
   };
   const attach = async (how: 'camera' | 'gallery' | 'pdf') => {
     if (!room) return notify(`A claim can have ${maxFiles} files. Remove one to add another.`, 'error');
@@ -388,6 +411,7 @@ export default function ExpensesScreen() {
     if (dayRefusal) return setWhenWhy(dayRefusal);
 
     setSending(true);
+    setSendFail(null);
     try {
       await claimExpense({
         userId: boot.session?.user.id ?? '',
@@ -420,6 +444,11 @@ export default function ExpensesScreen() {
           : 'Claimed ' + inrFromPaise(exAmtPaise) + ' · sent to your manager',
         exOver ? 'warn' : 'success',
       );
+    } catch (e) {
+      /* Said ON THE SHEET — a toast from here is drawn under it and nobody
+         sees it — and the claim stays as typed so pressing again is all it
+         takes. It used to fail in silence. */
+      setSendFail(e instanceof Error && e.message ? `Not saved: ${e.message}` : 'Not saved. Press Send claim again.');
     } finally {
       setSending(false);
     }
@@ -532,14 +561,19 @@ export default function ExpensesScreen() {
             <T style={[{ fontSize: 18, color: C.muted }, weight(600)]}>₹</T>
             <TextInput
               value={ex.amt}
-              onChangeText={(v) => patch({ amt: v.replace(/[^0-9]/g, '') })}
-              keyboardType="number-pad"
+              onChangeText={(v) => patch({ amt: v.replace(/[^0-9.]/g, '') })}
+              keyboardType="decimal-pad"
+              maxLength={9}
               placeholder="0"
               placeholderTextColor={C.faint}
               style={[{ flex: 1, minWidth: 0, alignSelf: 'stretch', fontSize: 18, color: C.ink, padding: 0 }, weight(600), tabular]}
             />
           </View>
-          {bad('amt') ? <T style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Enter what you spent.</T> : null}
+          {bad('amt') ? (
+            <T style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>
+              {amtWhy ?? 'Enter what you spent.'}
+            </T>
+          ) : null}
           <T style={{ fontSize: 14, lineHeight: 20, marginTop: 6, color: exOver ? C.warnInk : C.muted }}>{capLine}</T>
         </View>
 
@@ -683,6 +717,9 @@ export default function ExpensesScreen() {
             {'Still needed: ' + err.map((k) => MISSING_WORDS[k]).join(', ') + '.'}
           </T>
         </Presence>
+        {sendFail ? (
+          <T style={{ fontSize: 13, lineHeight: 19, color: C.danger, marginTop: 16 }}>{sendFail}</T>
+        ) : null}
 
         <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
           <SecondaryButton label="Cancel" onPress={() => close()} style={{ flex: 1 }} />

@@ -119,3 +119,35 @@ test('an empty batch is harmless in every branch', () => {
     [],
   );
 });
+
+test('a held FULL batch is kept and stepped past, so newer fixes still go', () => {
+  /* The head-of-line bug: five hundred fixes no session will ever claim held
+     every newer fix for a week. They are kept — nothing is deleted — and the
+     next read starts behind them. */
+  const d = decideFlush({ ok: true, stored: 0, tracking: 'no-session-yet' }, SENT, {
+    fullBatch: true,
+    heldSkipsSoFar: 0,
+  });
+  assert.equal(d.effect, 'age-out');
+  assert.deepEqual(d.remove, []);
+  assert.equal(d.carryOn, true);
+  assert.equal(d.skip, SENT.length);
+});
+
+test('stepping past held batches is bounded', () => {
+  /* The ordinary reason for the word is a check-in still in the outbox, and
+     then every batch is held — trying all of them is round trips for nothing. */
+  const d = decideFlush({ ok: true, stored: 0, tracking: 'no-session-yet' }, SENT, {
+    fullBatch: true,
+    heldSkipsSoFar: 2,
+  });
+  assert.equal(d.carryOn, false);
+  assert.equal(d.skip, 0);
+});
+
+test('a short held batch is the end of the queue and is not stepped past', () => {
+  const d = decideFlush({ ok: true, stored: 0, tracking: 'no-session-yet' }, SENT, {
+    fullBatch: false,
+  });
+  assert.equal(d.carryOn, false);
+});

@@ -108,7 +108,7 @@ export default function AccountScreen() {
 
   if (!view) {
     return (
-      <AppFrame title="MBOS" activeTab={null} contentStyle={{ padding: 16 }}>
+      <AppFrame title="Account" activeTab={null} onBack={back.go} contentStyle={{ padding: 16 }}>
         <BackLink label={back.label} onPress={back.go} />
         <Card style={{ marginTop: 8, paddingVertical: 28 }}>
           <T style={{ fontSize: 15, color: C.ink, textAlign: 'center' }}>
@@ -134,7 +134,7 @@ export default function AccountScreen() {
   ];
 
   return (
-    <AppFrame title="MBOS" activeTab={null} contentStyle={{ padding: 16, paddingBottom: 40 }}>
+    <AppFrame title="Account" activeTab={null} onBack={back.go} contentStyle={{ padding: 16, paddingBottom: 40 }}>
       <BackLink label={back.label} onPress={back.go} />
 
       {/* ---- who ---- */}

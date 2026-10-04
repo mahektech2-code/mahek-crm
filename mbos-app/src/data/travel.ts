@@ -1,4 +1,4 @@
-import { all, one, run } from '../db';
+import { all, getKv, one, run, setKv } from '../db';
 import { insertAndQueue, stamp } from './write';
 import {
   computeDay,
@@ -825,10 +825,7 @@ async function patchLeg(leg: TravelLeg, patch: Record<string, string | number | 
     [...cols.map((c) => patch[c]), leg.id],
   );
 
-  const row = await one<TravelLeg & { odometerEndPhotoId: string | null; origin: string }>(
-    'SELECT * FROM travel_legs WHERE id = ?',
-    [leg.id],
-  );
+  const row = await one<LegRow>('SELECT * FROM travel_legs WHERE id = ?', [leg.id]);
   if (!row) return;
 
   const { enqueue } = await import('../sync/queue');
@@ -842,12 +839,17 @@ async function patchLeg(leg: TravelLeg, patch: Record<string, string | number | 
       modeKey: row.modeKey,
       fromLabel: row.fromLabel,
       toLabel: row.toLabel,
+      fromLat: row.fromLat,
+      fromLng: row.fromLng,
+      toLat: row.toLat,
+      toLng: row.toLng,
       startedAt: row.startedAt,
       endedAt: row.endedAt,
       purpose: row.purpose,
       customerId: row.customerId,
       visitId: row.visitId,
       manualMetres: row.manualMetres,
+      manualReason: row.manualReason ?? null,
       odometerStartKm: row.odometerStartKm,
       odometerEndKm: row.odometerEndKm,
       odometerPhotoId: row.odometerPhotoId,
@@ -857,9 +859,28 @@ async function patchLeg(leg: TravelLeg, patch: Record<string, string | number | 
       ticketReference: row.ticketReference,
       note: row.note,
       origin: row.origin,
+      claimExcluded: row.claimExcluded === 1 || (row.claimExcluded as unknown) === true,
+      claimExcludedReason: row.claimExcludedReason,
     },
   });
 }
+
+type LegRow = TravelLeg & { manualReason?: string | null };
+
+/**
+ * A LEG AS THE WIRE CARRIES IT — the one statement of it, for every update.
+ *
+ * `addLeg` sends the row it inserts, whole. This hand-typed list beside it had
+ * drifted: it left out `claimExcluded`, `claimExcludedReason` and
+ * `manualReason`, and the server's upsert writes every column it is given —
+ * so the arrival at a shop reset a leg the departure had excluded. On a bus
+ * day that turned a leg nobody claims into a claim line; on a bike day the
+ * server re-excluded it with "this journey carried no meter reading", accusing
+ * him of a reading the design never asked for. The coordinates were missing
+ * too, so an update also wrote the journey's ends away. Every column `addLeg`
+ * sends is here, read off the row as it now stands.
+ */
+/* The literal lives in `patchLeg` above, where the payload-contract test can read it field by field. */
 
 /* ═══════════════════════════════════ the session he punched in on */
 
@@ -993,6 +1014,32 @@ export async function closeStaleSessions(userId: string, dayBoundaryMs: number):
   );
   for (const leg of open) {
     await closeAbandoned(leg, 'Closed by the app at the end of the day. No punch-out was saved.');
+    /* A METERED day closed with no end reading is paid nothing for its
+       kilometres — nothing else on the day claims them, because every visit
+       leg on such a day is excluded in favour of the meter. That was true and
+       said nowhere: he found out when the claim came back. Home says so the
+       next morning, and names who can put it right. */
+    if (leg.odometerStartKm != null) {
+      await setKv(UNPAID_METER_KEY, JSON.stringify({ day: leg.day, legId: leg.id })).catch(() => {});
+    }
   }
   return open.length;
+}
+
+/** The kv key for the last day closed with no end reading. See `closeStaleSessions`. */
+export const UNPAID_METER_KEY = 'travel.unpaidMeterDay';
+
+/** The day whose vehicle km went unpaid for want of a punch-out, until he has seen it. */
+export async function unpaidMeterDay(): Promise<string | null> {
+  const raw = await getKv(UNPAID_METER_KEY);
+  if (!raw) return null;
+  try {
+    return (JSON.parse(raw) as { day: string }).day ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function dismissUnpaidMeterDay(): Promise<void> {
+  await setKv(UNPAID_METER_KEY, '');
 }

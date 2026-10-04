@@ -4,7 +4,8 @@ import { router, useFocusEffect } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Card, T, PrimaryButton, SecondaryButton, Badge } from '../src/components/ui/primitives';
 import { color as C, radius, type, weight } from '../src/theme/tokens';
-import { listRejections, retryItem, type QueueItem } from '../src/sync/queue';
+import { discardRefused, listRejections, retryItem, type QueueItem } from '../src/sync/queue';
+import { entityLabel, readPayload as parsePayload } from '../src/sync/labels';
 import { syncNow } from '../src/sync/engine';
 import { useStore } from '../src/state/store';
 import { inrFromPaise } from '../src/lib/format';
@@ -23,22 +24,33 @@ import { Stagger, animateLayoutFor } from '../src/components/ui/motion';
  * again once it has been corrected. Nothing on this screen deletes anything.
  */
 
-/** The machine codes from the protocol, in words the salesman can act on. */
+/**
+ * The machine codes from the protocol, in words the salesman can act on.
+ *
+ * Several used to end "fix it and send again" — and this screen had no way to
+ * fix anything: "Send again" replays the very entry that was refused. They now
+ * say what he can actually do here, which is take it again or let it go.
+ */
 const WHAT_TO_DO: Record<string, string> = {
-  credit_blocked: 'Accounts have stopped this customer. Call accounts before you promise anything more.',
-  credit_exceeded: 'This customer is over their credit limit. Collect old bills first, or ask your manager to approve.',
-  product_inactive: 'This product is not sold any more. Pick the new product and send again.',
-  price_changed: 'The rate changed after you wrote this. Tell the customer the new rate.',
-  bill_settled: 'The office already got this payment. You do not need to do anything. Check with them if unsure.',
-  outstanding_stale: 'The balance changed while you had no signal. Open the customer and check before you send again.',
-  duplicate: 'This was already recorded. Nothing to send again.',
+  credit_blocked: 'Accounts have stopped this shop. Call accounts before you promise anything more.',
+  credit_exceeded: 'This account is over its credit limit. Collect old bills first, or ask your manager to approve.',
+  product_inactive: 'A product on this is not sold any more. Take the order again with the new product, then remove this one.',
+  price_changed: 'The rate changed after you wrote this. Tell the shop the new rate, take the order again, then remove this one.',
+  /* NOT "the office already got this payment". The office refused to apply
+     the money to a bill somebody else had settled, and wrote NOTHING — so the
+     cash was still "on you" and the office had no receipt, while this line
+     told him there was nothing to do. */
+  bill_settled:
+    'The bill you picked was already paid, so this money was NOT recorded. Collect it again against an open bill or as advance, then remove this one.',
+  outstanding_stale: 'The balance changed while you had no signal. Open the shop and check, then send again.',
+  duplicate: 'This was already recorded. Nothing to send again — you can remove it.',
   /* Deliberately NOT the `validation` sentence below: there is nothing here for
      him to correct. The document he named has been taken out of the library
      since he pulled it, so the ways forward are a different document or the
      office publishing that one again — and "correct it and send it again" would
      send him looking for a mistake in an entry that was right when he made it. */
   not_found: 'This item is not in MahekOne any more. Pick another one, or ask the office to add it back.',
-  validation: 'Something in this entry is wrong. Fix it and send again.',
+  validation: 'Something in this entry is wrong. Take it again with the right details, then remove this one.',
   not_permitted: 'You are not allowed to enter this. Ask your manager who does it.',
 };
 
@@ -56,25 +68,18 @@ type RefusedPayload = {
 };
 
 /**
- * The payload, read where a throw cannot take the screen with it.
- *
- * `JSON.parse(row.payload)` ran inline in the map — during the render pass —
- * and again on every press, so one malformed or truncated row took the whole
- * list down rather than degrading to a card that says less. A refusal he
- * cannot SEE is worse than one he cannot understand.
+ * The payload, read where a throw cannot take the screen with it — one
+ * malformed row degrades to a card that says less rather than taking the list
+ * down. The parse itself is shared with the Sync screen.
  */
 function readPayload(raw: string): RefusedPayload {
-  try {
-    const p: unknown = JSON.parse(raw);
-    return p && typeof p === 'object' ? (p as RefusedPayload) : {};
-  } catch {
-    return {};
-  }
+  return parsePayload<RefusedPayload>(raw);
 }
 
 export default function Rejections() {
   const back = useCameFrom('sync');
   const notify = useStore((s) => s.notify);
+  const askConfirm = useStore((s) => s.askConfirm);
   /** Null until the read lands — "everything went through" is a definite claim
    *  and it was being made while the outbox was still being read. */
   const [rows, setRows] = React.useState<QueueItem[] | null>(null);
@@ -110,7 +115,7 @@ export default function Rejections() {
       <BackLink label={back.label} onPress={back.go} />
       <T s="h1">Not accepted</T>
       <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-        The office did not accept these. Nothing is lost. Fix what is wrong and send again.
+        The office did not accept these. Each one says what to do. Nothing goes until you choose.
       </T>
 
       {rows === null ? (
@@ -183,14 +188,61 @@ export default function Rejections() {
 
                 {guidance ? <Text style={[type.caption, { marginTop: 10 }]}>{guidance}</Text> : null}
 
-                <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
+                {/* TAKE IT AGAIN, for the two entries a salesman most needs
+                    to: an order and a payment. Sending the refused one again
+                    replays exactly what was refused; this opens the form for
+                    the same shop and lets the refused entry go, so it is not
+                    counted twice on his phone. */}
+                {retake(row) ? (
+                  <PrimaryButton
+                    label={retake(row)!.label}
+                    onPress={() =>
+                      askConfirm({
+                        title: retake(row)!.label + '?',
+                        body: retake(row)!.body,
+                        confirmLabel: 'Yes, ' + retake(row)!.label.toLowerCase(),
+                        run: () => {
+                          void (async () => {
+                            await discardRefused(row.id);
+                            if (payload.customerId) useStore.getState().set({ custId: payload.customerId });
+                            load(true);
+                            router.push(retake(row)!.route);
+                          })();
+                        },
+                      })
+                    }
+                    style={{ marginTop: 14 }}
+                  />
+                ) : null}
+
+                <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
                   <SecondaryButton
-                    label="Open the customer"
+                    label="Open the shop"
                     onPress={() => {
-                      if (!payload.customerId) return notify('This entry has no customer on it.', 'error');
+                      if (!payload.customerId) return notify('This entry is not for a shop.', 'error');
                       useStore.getState().set({ custId: payload.customerId });
                       router.push('/customer');
                     }}
+                    style={{ flex: 1 }}
+                  />
+                  <SecondaryButton
+                    label="Remove"
+                    onPress={() =>
+                      askConfirm({
+                        title: 'Remove this from your phone?',
+                        body:
+                          row.op === 'create'
+                            ? 'The office never got it, and it will be gone from this phone too. Take it again first if it still matters.'
+                            : 'The office keeps what it already has. Your change that it refused is let go.',
+                        confirmLabel: 'Yes, remove it',
+                        run: () => {
+                          void discardRefused(row.id).then(() => {
+                            load(true);
+                            notify('Removed from this phone', 'info');
+                          });
+                        },
+                      })
+                    }
                     style={{ flex: 1 }}
                   />
                   {/* Duplicates cannot be usefully resent — the office already has it. */}
@@ -230,16 +282,25 @@ export default function Rejections() {
 }
 
 function label(entityType: string): string {
-  const map: Record<string, string> = {
-    order: 'Order',
-    payment: 'Payment',
-    visit: 'Visit',
-    expense: 'Expense claim',
-    leave: 'Leave request',
-    sample: 'Sample request',
-    complaint: 'Complaint',
-    task: 'Task',
-    attendance: 'Attendance',
-  };
-  return map[entityType] ?? entityType;
+  return entityLabel(entityType);
+}
+
+/** Where taking a refused entry again leads, where there is somewhere. */
+function retake(row: QueueItem): { label: string; body: string; route: string } | null {
+  if (row.op !== 'create') return null;
+  if (row.entityType === 'payment') {
+    return {
+      label: 'Collect it again',
+      body: 'Opens a new payment for the same shop. This refused one is removed from your phone.',
+      route: '/pay?from=rejections',
+    };
+  }
+  if (row.entityType === 'order') {
+    return {
+      label: 'Take the order again',
+      body: 'Opens a new order for the same shop. This refused one is removed from your phone.',
+      route: '/order?from=rejections',
+    };
+  }
+  return null;
 }

@@ -27,6 +27,9 @@ export type JourneyStop = {
   /* Joined from the customer, because a stop with no name is not a stop. */
   customerName: string;
   area: string | null;
+  /** The town, for Navigate on an unpinned shop: `area` is empty on most of
+      an imported book, and a maps search on the bare name lands anywhere. */
+  city: string | null;
   gpsLat: number | null;
   gpsLng: number | null;
   outstandingPaise: number;
@@ -38,7 +41,7 @@ export function today(): string {
 
 export async function todayStops(planDate = today()): Promise<JourneyStop[]> {
   return all<JourneyStop>(
-    `SELECT j.*, COALESCE(c.name, 'Unknown customer') AS customerName, c.area,
+    `SELECT j.*, COALESCE(c.name, 'Unknown customer') AS customerName, c.area, c.city,
             c.gpsLat, c.gpsLng, COALESCE(c.outstandingPaise, 0) AS outstandingPaise
        FROM journey_stops j LEFT JOIN customers c ON c.id = j.customerId
       WHERE j.planDate = ?
@@ -54,15 +57,41 @@ export async function nextStop(planDate = today()): Promise<JourneyStop | null> 
 }
 
 /**
- * Write a new walking order.
+ * Write a new walking order — HERE AND AT THE OFFICE.
  *
  * The sequence is rewritten from the array's own order, so a reorder that
  * dropped or duplicated a stop could not silently produce two stop 3s.
+ *
+ * It used to stop there. Nothing was queued, so the manager never saw the new
+ * order, the planned times stayed attached to the old one, and the first
+ * office change to any single stop came back with its ORIGINAL `seq` — two
+ * stops numbered 3 and a scrambled list. The day's shops now go up as the same
+ * `plan_stops` answer picking sends, in the new order: the office re-sequences
+ * what is still planned and works the times out again, and keeps what has
+ * already been visited.
  */
 export async function saveStopOrder(orderedIds: string[]): Promise<void> {
   for (let i = 0; i < orderedIds.length; i++) {
     await run('UPDATE journey_stops SET seq = ? WHERE id = ?', [i + 1, orderedIds[i]]);
   }
+  if (!orderedIds.length) return;
+  const head = await one<{ planDate: string }>('SELECT planDate FROM journey_stops WHERE id = ?', [orderedIds[0]]);
+  if (!head) return;
+  const day = await one<{ id: string }>('SELECT id FROM journey_days WHERE planDate = ? LIMIT 1', [head.planDate]);
+  if (!day) return;
+  const stops = await all<{ customerId: string; status: string }>(
+    `SELECT customerId, status FROM journey_stops WHERE planDate = ? ORDER BY seq`,
+    [head.planDate],
+  );
+  const customerIds = stops.filter((x) => x.status === 'planned').map((x) => x.customerId);
+  if (!customerIds.length) return;
+  await enqueue({
+    entityType: 'plan_stops',
+    entityId: day.id,
+    op: 'update',
+    location: false,
+    payload: { id: day.id, customerIds },
+  });
 }
 
 export async function stopCounts(planDate = today()): Promise<{ total: number; done: number }> {
@@ -442,11 +471,22 @@ export async function pickCandidates(
   const q = query.trim().toLowerCase();
   const here = (city ?? '').trim().toLowerCase();
 
+  /*
+   * IN THE TOWN, not spelled exactly as the town. `customers.city` holds
+   * whatever the sheet typed, and much of it is a whole postal address —
+   * "06, Mahadev Towers, LBS Marg, Thane, Maharashtra, 400602" — so an exact
+   * match left those shops out of a Thane day. The town as one of the
+   * address's comma-separated parts, or as the shop's area, counts too.
+   */
+  const inTown = `(lower(trim(COALESCE(city,''))) = ? OR lower(trim(COALESCE(area,''))) = ?
+       OR (',' || replace(lower(COALESCE(city,'')), ', ', ',') || ',') LIKE ?)`;
+  const townArgs = here ? [here, here, `%,${here},%`] : [];
+
   const clauses: string[] = [];
   const args: (string | number)[] = [];
   if (here) {
-    clauses.push(`lower(trim(COALESCE(city,''))) = ?`);
-    args.push(here);
+    clauses.push(inTown);
+    args.push(...townArgs);
   }
   if (q) {
     clauses.push(`(lower(name) LIKE ? OR lower(COALESCE(area,'')) LIKE ?)`);
@@ -463,8 +503,8 @@ export async function pickCandidates(
     `SELECT AVG(gpsLat) AS lat, AVG(gpsLng) AS lng
        FROM customers
       WHERE gpsLat IS NOT NULL AND gpsLng IS NOT NULL
-            ${here ? `AND lower(trim(COALESCE(city,''))) = ?` : ''}`,
-    here ? [here] : [],
+            ${here ? `AND ${inTown}` : ''}`,
+    townArgs,
   );
 
   const origin = pickOrigin({
@@ -796,18 +836,14 @@ export async function pickShops(
   planDayId: string,
   customerIds: string[],
 ): Promise<{ ok: boolean; message?: string }> {
-  if (!customerIds.length) {
-    return {
-      ok: false,
-      message: 'Pick at least one shop for the day.',
-    };
-  }
-
+  /* AN EMPTY PICK CLEARS THE DAY. The office takes it — the day goes back to
+     agreed — and the picker used to refuse it, so a day planned by mistake
+     could not be emptied from the phone at all. */
   await run(
     `UPDATE journey_days
-        SET dayState = 'planned', picked = ?, pickedIds = ?, syncState = 'queued'
+        SET dayState = ?, picked = ?, pickedIds = ?, syncState = 'queued'
       WHERE id = ?`,
-    [customerIds.length, JSON.stringify(customerIds), planDayId],
+    [customerIds.length ? 'planned' : 'agreed', customerIds.length, JSON.stringify(customerIds), planDayId],
   );
 
   await enqueue({

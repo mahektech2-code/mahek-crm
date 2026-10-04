@@ -118,7 +118,7 @@ export function deriveStatus(inputs: AttendanceInputs): AttendanceResult {
       ...base,
       status: 'Present',
       sentence: needsRegularization
-        ? `${describe(workedMinutes)} worked. One check-in was not closed. Please regularize it.`
+        ? `${describe(workedMinutes)} worked. You did not punch out once. Ask your manager to fix this day.`
         : `${describe(workedMinutes)} worked.`,
     };
   }
@@ -128,7 +128,7 @@ export function deriveStatus(inputs: AttendanceInputs): AttendanceResult {
       ...base,
       status: 'Half Day',
       sentence: needsRegularization
-        ? `${describe(workedMinutes)} worked. One check-in was not closed. Please regularize it.`
+        ? `${describe(workedMinutes)} worked. You did not punch out once. Ask your manager to fix this day.`
         : `${describe(workedMinutes)} worked. Less than a full day.`,
     };
   }
@@ -137,7 +137,7 @@ export function deriveStatus(inputs: AttendanceInputs): AttendanceResult {
     ...base,
     status: 'Absent',
     sentence: needsRegularization
-      ? 'A check-in was never closed, so nothing counts yet. Regularize it and the day will be worked out again.'
+      ? 'You did not punch out, so nothing counts yet. Ask your manager to fix this day and it will be worked out again.'
       : workedMinutes > 0
         ? `Only ${describe(workedMinutes)} worked.`
         : 'No punch-in saved.',

@@ -1,5 +1,6 @@
 import { all, getKv, one, run, setKv, tx } from '../db';
 import { deviceId, type PullPayload, type TerritoryState } from './api';
+import { isoDate } from '../lib/format';
 
 /** Where `storeTerritory` files it, and where `territoryState` reads it back. */
 export const TERRITORY_KEY = 'territory';
@@ -21,61 +22,174 @@ export const TERRITORY_KEY = 'territory';
 export async function applyPull(pull: PullPayload): Promise<number> {
   const now = Date.now();
   let touched = 0;
+  problems.length = 0;
 
+  /*
+   * ONE ROW THAT WILL NOT APPLY MUST NOT FREEZE THE BOOK.
+   *
+   * This was one transaction with nothing caught inside it, so a single row
+   * this build could not hold — an office task with no due date against a
+   * column that demands one was the live example — threw, rolled back every
+   * table in the pull, and left the cursor where it was. The next pass asked
+   * for the same rows, got the same row, and threw again: every sync on that
+   * phone failed for ever, and a fresh sign-in failed at the "payload" step,
+   * so the person could not get in at all.
+   *
+   * Each channel runs under `channel()`, and every row inside the generic
+   * `upsert` and the hand-rolled loops under `eachRow()`, so a bad row costs
+   * that row and is written down — `pullProblems`, which the Sync screen
+   * reads — rather than costing everything. SQLite fails the one statement
+   * and leaves the transaction standing, which is what makes catching inside
+   * it safe.
+   *
+   * It also removes the other half of the damage: anything else written on
+   * this connection while the pull's transaction was open used to roll back
+   * with it, on a screen that had already said "saved". A pull that cannot
+   * throw cannot take a save with it.
+   */
   await tx(async () => {
-    touched += await upsertCustomers(pull.customers, now);
-    touched += await upsertProducts(pull.products, now);
-    touched += await upsertPriceList(pull.priceList);
-    touched += await upsertSchemes(pull.schemes);
-    touched += await upsertTimeline(pull.timeline);
-    touched += await upsertCustomerOrders(pull.customerOrders, now);
-    touched += await upsertCustomerPayments(pull.customerPayments, now, pull.statementFrom);
-    touched += await upsertCustomerBills(pull.customerBills, now, pull.statementFrom);
-    touched += await upsertStops(pull.journeyStops, now);
-    touched += await upsertPlanDays(pull.planDays, now);
-    touched += await upsertConfig(pull.config, now);
-    touched += await storeTerritory(pull.territory);
-    touched += await upsertNotifications(pull.notifications);
-    touched += await upsertLeaveBalances(pull.leaveBalances, now);
-    touched += await upsertHolidays(pull.holidays, now);
-    touched += await upsertDocuments(pull.documents, now);
-    touched += await upsertCourses(pull.courses, now);
-    touched += await upsertPerformance(pull.performance, now);
-    touched += await replaceCustomerTargets(pull.customerTargets, now);
-    touched += await upsertTasks(pull.tasks, now);
-    touched += await upsertLeads(pull.leads, now);
+    const c = async (name: string, fn: () => Promise<number>) => {
+      touched += await channel(name, fn);
+    };
+    await c('customers', () => upsertCustomers(pull.customers, now));
+    await c('products', () => upsertProducts(pull.products, now));
+    await c('priceList', () => upsertPriceList(pull.priceList));
+    await c('schemes', () => upsertSchemes(pull.schemes));
+    await c('timeline', () => upsertTimeline(pull.timeline));
+    await c('customerOrders', () => upsertCustomerOrders(pull.customerOrders, now));
+    await c('customerPayments', () => upsertCustomerPayments(pull.customerPayments, now, pull.statementFrom));
+    await c('customerBills', () => upsertCustomerBills(pull.customerBills, now, pull.statementFrom));
+    await c('journeyStops', () => upsertStops(pull.journeyStops, now));
+    await c('planDays', () => upsertPlanDays(pull.planDays, now));
+    await c('config', () => upsertConfig(pull.config, now));
+    await c('territory', () => storeTerritory(pull.territory));
+    await c('notifications', () => upsertNotifications(pull.notifications));
+    await c('leaveBalances', () => upsertLeaveBalances(pull.leaveBalances, now));
+    await c('holidays', () => upsertHolidays(pull.holidays, now));
+    await c('documents', () => upsertDocuments(pull.documents, now));
+    await c('courses', () => upsertCourses(pull.courses, now));
+    await c('performance', () => upsertPerformance(pull.performance, now));
+    await c('customerTargets', () => replaceCustomerTargets(pull.customerTargets, now));
+    await c('tasks', () => upsertTasks(pull.tasks, now));
+    await c('leads', () => upsertLeads(pull.leads, now));
     /* AFTER the leads, so the record can never draw a check or a call against
        a lead this pull was about to introduce. Same reason the tombstones run
        where they do. */
-    touched += await upsertLeadValidations(pull.leadValidations);
-    touched += await upsertLeadFieldChecks(pull.leadFieldChecks);
-    touched += await upsertSamples(pull.samples, now);
-    touched += await upsertSalary(pull.salary, now);
-    touched += await upsertTravelModes(pull.travelModes, now);
-    touched += await replaceExpensePolicy(pull.expensePolicy, now);
-    touched += await applyApprovals(pull.approvals);
+    await c('leadValidations', () => upsertLeadValidations(pull.leadValidations));
+    await c('leadFieldChecks', () => upsertLeadFieldChecks(pull.leadFieldChecks));
+    await c('samples', () => upsertSamples(pull.samples, now));
+    await c('salary', () => upsertSalary(pull.salary, now));
+    await c('travelModes', () => upsertTravelModes(pull.travelModes, now));
+    await c('expensePolicy', () => replaceExpensePolicy(pull.expensePolicy, now));
+    /* His own history, for a phone that has none — a reinstall, a new handset.
+       BEFORE the approvals, so an approval arriving in the same pull finds the
+       request it decides. Insert-only: see `fillOwnHistory`. */
+    await c('ownHistory', () => fillOwnHistory(pull as FullPull));
+    await c('approvals', () => applyApprovals(pull.approvals));
     /* AFTER the approvals: an order's own row is the office's word on it, and
        a manager approval nobody can decide must not read it back to pending. */
-    touched += await applyMyOrders(pull.myOrders);
-    touched += await applyOrderChanges(pull.orderChanges);
-    touched += await applyTerritoryRequests(pull.territoryRequests);
-    touched += await restoreAttendance(pull.attendanceToday);
-    touched += await applyDeletions(pull.deletions);
+    await c('myOrders', () => applyMyOrders(pull.myOrders));
+    await c('orderChanges', () => applyOrderChanges(pull.orderChanges));
+    await c('territoryRequests', () => applyTerritoryRequests(pull.territoryRequests));
+    await c('attendanceToday', () => restoreAttendance(pull.attendanceToday));
+    await c('deletions', () => applyDeletions(pull.deletions));
     /* AFTER the customer and lead upserts, so a mark set in the office today
        is seen, and BEFORE the book reconcile, which keeps any shop that still
        has a lead row. */
-    touched += await releaseThirdPartyLeads();
+    await c('thirdPartyLeads', () => releaseThirdPartyLeads());
     /* AFTER the tombstones and after the customer upsert, because it is the
        backstop for everything neither of them covered. */
-    touched += await reconcileBook(pull.bookIds);
+    await c('book', () => reconcileBook(pull.bookIds));
+    await c('customerOrdersPrune', () => pruneCustomerOrders());
   });
 
   /* Outside the transaction, because confirming a transcript deletes the audio
      file from the filesystem — which is not a thing a database transaction can
      roll back, and not a thing to hold one open across. */
-  touched += await applyTranscripts(pull.transcripts);
+  touched += await channel('transcripts', () => applyTranscripts(pull.transcripts));
 
+  await recordProblems();
   return touched;
+}
+
+/* ------------------------------------------------------ what would not land */
+
+type Problem = { channel: string; id: string | null; message: string };
+
+/** Filled by one `applyPull` and written out at its end. */
+const problems: Problem[] = [];
+
+/** The kv key the Sync screen reads. */
+export const PULL_PROBLEMS_KEY = 'pullProblems';
+
+export type PullProblems = { at: number; count: number; samples: Problem[] };
+
+function noteProblem(channel: string, id: string | null, e: unknown): void {
+  problems.push({
+    channel,
+    id,
+    message: e instanceof Error ? e.message : String(e),
+  });
+}
+
+/**
+ * Run one channel and never let it throw. What failed is noted, and the rest
+ * of the pull carries on — see the header of `applyPull`.
+ */
+async function channel(name: string, fn: () => Promise<number>): Promise<number> {
+  try {
+    return await fn();
+  } catch (e) {
+    noteProblem(name, null, e);
+    return 0;
+  }
+}
+
+/**
+ * Apply each row by itself, so one bad row costs that row. The `channel`
+ * name is what the Sync screen says the row was.
+ */
+async function eachRow<T>(name: string, rows: T[], fn: (row: T) => Promise<void>): Promise<number> {
+  let n = 0;
+  for (const row of rows) {
+    try {
+      await fn(row);
+      n += 1;
+    } catch (e) {
+      const id = (row as { id?: unknown })?.id;
+      noteProblem(name, typeof id === 'string' ? id : null, e);
+    }
+  }
+  return n;
+}
+
+/**
+ * Written once per pull, and CLEARED by a clean one — a problem that has gone
+ * away must stop being reported, or the screen teaches him to ignore it.
+ * Twenty samples is enough to name the fault; the count is the whole of it.
+ */
+async function recordProblems(): Promise<void> {
+  try {
+    if (!problems.length) {
+      await run('DELETE FROM kv WHERE key = ?', [PULL_PROBLEMS_KEY]);
+      return;
+    }
+    const value: PullProblems = { at: Date.now(), count: problems.length, samples: problems.slice(0, 20) };
+    await setKv(PULL_PROBLEMS_KEY, JSON.stringify(value));
+  } catch {
+    /* The record of a problem must not become a problem. */
+  }
+}
+
+/** What the last pull could not save, for the Sync screen. Null when clean. */
+export async function pullProblems(): Promise<PullProblems | null> {
+  const raw = await getKv(PULL_PROBLEMS_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as PullProblems;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -197,7 +311,7 @@ async function knownColumns(table: string): Promise<Set<string>> {
  * it costs a field the screens never read, and refusing it costs the book.
  *
  * `guard` is what lets an OWNED table come through here rather than being
- * hand-rolled. `leads` and `samples` both carry `WHERE syncState = 'synced'` on
+ * hand-rolled. `leads` and `samples` both carry `WHERE ${noPending(...)}` on
  * their conflict clause — a queued row is one this handset has said something
  * about and the office has not heard yet, so the local answer is the newer fact
  * and it stands until it is sent — and both pay for it by typing their column
@@ -214,10 +328,10 @@ async function upsert(
 ): Promise<number> {
   if (!rows?.length) return 0;
   const known = await knownColumns(table);
-  for (const raw of rows) {
+  await eachRow(table, rows, async (raw) => {
     const row = { ...(raw as Row), ...extra };
     const cols = Object.keys(row).filter((c) => known.has(c));
-    if (!cols.includes(key)) continue;
+    if (!cols.includes(key)) return;
     const marks = cols.map(() => '?').join(',');
     const sets = cols.filter((c) => c !== key).map((c) => `${c} = excluded.${c}`).join(', ');
     await run(
@@ -225,7 +339,7 @@ async function upsert(
        ON CONFLICT(${key}) DO UPDATE SET ${sets}${guard ? ` WHERE ${guard}` : ''}`,
       cols.map((c) => normalise(row[c])),
     );
-  }
+  });
   return rows.length;
 }
 
@@ -236,6 +350,26 @@ function normalise(v: unknown): string | number | null {
   if (typeof v === 'object') return JSON.stringify(v);
   if (typeof v === 'number') return v;
   return String(v);
+}
+
+/**
+ * NOTHING OF HIS IS STILL ON ITS WAY for this record — the guard every table
+ * with an office end writes under.
+ *
+ * It was `syncState = 'synced'`, and that is a different question. A record
+ * whose UPDATE the office refused carries `rejected` on its own row for ever,
+ * so the office's next word on it — the approval of the very order he had
+ * tried to edit, a lead the manager moved on — never landed, and the phone
+ * went on showing a record the office had long since changed. What the guard
+ * exists to protect is an edit the office has NOT HEARD YET; a refused one it
+ * has heard and answered, and its answer is the newer fact. So the question is
+ * asked of the outbox directly: anything queued, in flight, exhausted or
+ * blocked is still his to send, and only then does the local row stand.
+ */
+export const PENDING_STATES = "('queued','syncing','failed','blocked')";
+
+function noPending(table: string): string {
+  return `NOT EXISTS (SELECT 1 FROM sync_queue q WHERE q.entityId = ${table}.id AND q.state IN ${PENDING_STATES})`;
 }
 
 /* ---------------------------------------------------------------- tables */
@@ -416,7 +550,7 @@ function upsertLeadValidations(rows: unknown[] | undefined) {
     'id',
     rows,
     { syncState: 'synced' },
-    "lead_validations.syncState = 'synced'",
+    noPending('lead_validations'),
   );
 }
 
@@ -512,7 +646,7 @@ async function upsertConfig(config: Record<string, unknown> | undefined, now: nu
  * salesman raises them in the field — and they also have an office end, which
  * is why a plain reference upsert is wrong for both: it would overwrite an
  * edit sitting in the outbox with the older row the server still believes.
- * `WHERE syncState = 'synced'` is what keeps that from happening. A queued row
+ * `noPending` on the conflict clause is what keeps that from happening. A queued row
  * is one this handset has said something about and the office has not heard
  * yet, so the local answer is the newer fact and it stands until it is sent.
  *
@@ -534,7 +668,7 @@ async function upsertConfig(config: Record<string, unknown> | undefined, now: nu
 async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<number> {
   if (!rows?.length) return 0;
   const { localNotes, legacyStageFor, localSalesType } = await import('../lib/wire');
-  for (const raw of rows) {
+  await eachRow('leads', rows, async (raw) => {
     const l = raw as {
       id: string;
       name: string;
@@ -769,8 +903,8 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
          -- Kept on conflict as well as inserted. A lead is on this phone long
          -- before anybody asks how old it is, so a value written once and
          -- never restated is one that stays null on every row already here.
-         createdAt = excluded.createdAt
-       WHERE leads.syncState = 'synced'`,
+         createdAt = excluded.createdAt, syncState = 'synced'
+       WHERE ${noPending('leads')}`,
       [
         l.id,
         l.name,
@@ -907,14 +1041,14 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
         l.createdAt ? Date.parse(l.createdAt) : null,
       ],
     );
-  }
+  });
   return rows.length;
 }
 
 async function upsertSamples(rows: unknown[] | undefined, now: number): Promise<number> {
   if (!rows?.length) return 0;
   const { localInstant, localSampleState } = await import('../lib/wire');
-  for (const raw of rows) {
+  await eachRow('samples', rows, async (raw) => {
     const s = raw as {
       id: string;
       customerId: string;
@@ -980,8 +1114,8 @@ async function upsertSamples(rows: unknown[] | undefined, now: number): Promise<
          additionalRequirement = excluded.additionalRequirement,
          rejectionReason = excluded.rejectionReason,
          reviewChaseCount = excluded.reviewChaseCount,
-         lastReviewChaseAt = excluded.lastReviewChaseAt
-       WHERE samples.syncState = 'synced'`,
+         lastReviewChaseAt = excluded.lastReviewChaseAt, syncState = 'synced'
+       WHERE ${noPending('samples')}`,
       [
         s.id,
         s.customerId,
@@ -1019,14 +1153,14 @@ async function upsertSamples(rows: unknown[] | undefined, now: number): Promise<
         now,
       ],
     );
-  }
+  });
   return rows.length;
 }
 
 async function upsertTasks(rows: unknown[] | undefined, now: number): Promise<number> {
   if (!rows?.length) return 0;
   const { localPriority } = await import('../lib/wire');
-  for (const raw of rows) {
+  await eachRow('tasks', rows, async (raw) => {
     const t = raw as {
       id: string;
       title: string;
@@ -1034,7 +1168,11 @@ async function upsertTasks(rows: unknown[] | undefined, now: number): Promise<nu
       assignedToUserId: string;
       assignedByUserId?: string | null;
       priority: string;
-      dueDate: string;
+      /* NULLABLE AT THE OFFICE — `mbos_tasks.due_date` has no NOT NULL, and
+         `tasksSince` orders it `nulls last` — while this table's column is
+         `TEXT NOT NULL`. One undated office task threw inside the pull's
+         transaction and froze every sync on the phone. */
+      dueDate: string | null;
       customerId?: string | null;
       status: string;
       completionNote?: string | null;
@@ -1062,7 +1200,8 @@ async function upsertTasks(rows: unknown[] | undefined, now: number): Promise<nu
          status = excluded.status, completionNote = excluded.completionNote,
          completionPhotoId = excluded.completionPhotoId, escalated = excluded.escalated,
          sourceType = excluded.sourceType, sourceId = excluded.sourceId,
-         syncState = 'synced'`,
+         syncState = 'synced'
+       WHERE ${noPending('tasks')}`,
       [
         t.id,
         t.title,
@@ -1070,7 +1209,9 @@ async function upsertTasks(rows: unknown[] | undefined, now: number): Promise<nu
         t.assignedToUserId,
         t.assignedByUserId ?? null,
         localPriority(t.priority),
-        t.dueDate,
+        /* An undated task is something to do, so it lands on today's list
+           rather than nowhere. */
+        t.dueDate ?? isoDate(new Date()),
         t.customerId ?? null,
         status,
         t.completionNote ?? null,
@@ -1082,7 +1223,7 @@ async function upsertTasks(rows: unknown[] | undefined, now: number): Promise<nu
         now,
       ],
     );
-  }
+  });
   return rows.length;
 }
 
@@ -1117,18 +1258,24 @@ const ORDER_STATUS: Record<string, string> = {
 async function applyMyOrders(rows: unknown[] | undefined): Promise<number> {
   if (!rows?.length) return 0;
   let n = 0;
-  for (const raw of rows) {
+  await eachRow('myOrders', rows, async (raw) => {
     const o = raw as {
       id: string; status: string; declineReason?: string | null; orderNo?: string | null;
       totalAmountPaise?: number | null;
       lineItems?: { product: string; productId?: string; quantity: number; unitPrice?: number; amount?: number }[] | null;
     };
     const status = ORDER_STATUS[o.status] ?? o.status;
-    const local = await one<{ syncState: string }>('SELECT syncState FROM orders WHERE id = ?', [o.id]);
-    if (!local || local.syncState !== 'synced') continue;
+    const local = await one<{ id: string }>('SELECT id FROM orders WHERE id = ?', [o.id]);
+    if (!local) return;
+    const pending = await one<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM sync_queue WHERE entityId = ? AND state IN ${PENDING_STATES}`,
+      [o.id],
+    );
+    if ((pending?.n ?? 0) > 0) return;
     await run(
       `UPDATE orders SET status = ?, cancelReason = COALESCE(?, cancelReason),
-              orderNumber = COALESCE(orderNumber, ?), netTotalPaise = COALESCE(?, netTotalPaise)
+              orderNumber = COALESCE(orderNumber, ?), netTotalPaise = COALESCE(?, netTotalPaise),
+              syncState = 'synced'
         WHERE id = ?`,
       [status, o.declineReason ?? null, o.orderNo ?? null, o.totalAmountPaise ?? null, o.id],
     );
@@ -1154,14 +1301,14 @@ async function applyMyOrders(rows: unknown[] | undefined): Promise<number> {
       }
     }
     n += 1;
-  }
+  });
   return n;
 }
 
 /** The changes he asked for, as accounts answered them. */
 async function applyOrderChanges(rows: unknown[] | undefined): Promise<number> {
   if (!rows?.length) return 0;
-  for (const raw of rows) {
+  await eachRow('orderChanges', rows, async (raw) => {
     const r = raw as {
       id: string; orderId: string; status: string; note?: string | null; decisionNote?: string | null;
       totalAmountPaise?: number | null; lineItems?: unknown; requestedAt?: number | null; decidedAt?: number | null;
@@ -1171,23 +1318,23 @@ async function applyOrderChanges(rows: unknown[] | undefined): Promise<number> {
                                           requestedAt, decidedAt, deviceId, syncState)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'server', 'synced')
        ON CONFLICT(id) DO UPDATE SET status = excluded.status, decisionNote = excluded.decisionNote,
-         decidedAt = excluded.decidedAt, totalAmountPaise = excluded.totalAmountPaise
-       WHERE order_change_requests.syncState = 'synced'`,
+         decidedAt = excluded.decidedAt, totalAmountPaise = excluded.totalAmountPaise, syncState = 'synced'
+       WHERE ${noPending('order_change_requests')}`,
       [r.id, r.orderId, r.status, r.note ?? null, r.decisionNote ?? null, r.totalAmountPaise ?? null,
        r.lineItems ? JSON.stringify(r.lineItems) : null, r.requestedAt ?? null, r.decidedAt ?? null],
     );
-  }
+  });
   return rows.length;
 }
 
 /**
- * What he said about his areas, as the office holds it. Written only under
- * `syncState = 'synced'`: a row still in the outbox is newer than anything
+ * What he said about his areas, as the office holds it. Written only where
+ * nothing is pending for it (`noPending`): a row still in the outbox is newer than anything
  * the office can say about it.
  */
 async function applyTerritoryRequests(rows: unknown[] | undefined): Promise<number> {
   if (!rows?.length) return 0;
-  for (const raw of rows) {
+  await eachRow('territoryRequests', rows, async (raw) => {
     const r = raw as {
       id: string; kind: string; currentPlaces?: unknown; requestedPlaces?: unknown;
       reason?: string | null; signature?: string | null; state?: string | null;
@@ -1199,19 +1346,19 @@ async function applyTerritoryRequests(rows: unknown[] | undefined): Promise<numb
                                        decisionNote, decidedAt, clientCreatedAt, serverCreatedAt, deviceId, syncState)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'server', 'synced')
        ON CONFLICT(id) DO UPDATE SET state = excluded.state, decisionNote = excluded.decisionNote,
-         decidedAt = excluded.decidedAt, serverCreatedAt = excluded.serverCreatedAt
-       WHERE territory_requests.syncState = 'synced'`,
+         decidedAt = excluded.decidedAt, serverCreatedAt = excluded.serverCreatedAt, syncState = 'synced'
+       WHERE ${noPending('territory_requests')}`,
       [r.id, r.kind, JSON.stringify(r.currentPlaces ?? []), JSON.stringify(r.requestedPlaces ?? []),
        r.reason ?? null, r.signature ?? '', r.state ?? 'pending', r.decisionNote ?? null, r.decidedAt ?? null,
        r.clientCreatedAt ?? r.serverCreatedAt ?? 0, r.serverCreatedAt ?? null],
     );
-  }
+  });
   return rows.length;
 }
 
 async function applyApprovals(rows: unknown[] | undefined): Promise<number> {
   if (!rows?.length) return 0;
-  for (const raw of rows) {
+  await eachRow('approvals', rows, async (raw) => {
     const a = raw as {
       id: string; subjectType: string; subjectId: string; state: string;
       decidedAt?: number; decisionNote?: string; approvedAmountPaise?: number; approverName?: string;
@@ -1222,7 +1369,8 @@ async function applyApprovals(rows: unknown[] | undefined): Promise<number> {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 'server', 'synced')
        ON CONFLICT(id) DO UPDATE SET state = excluded.state, decidedAt = excluded.decidedAt,
          decisionNote = excluded.decisionNote, approvedAmountPaise = excluded.approvedAmountPaise,
-         approverName = excluded.approverName, syncState = 'synced'`,
+         approverName = excluded.approverName, syncState = 'synced'
+       WHERE ${noPending('approvals')}`,
       [a.id, a.subjectType, a.subjectType, a.subjectId, a.state, a.decidedAt ?? null, a.decisionNote ?? null,
        a.approvedAmountPaise ?? null, a.approverName ?? null],
     );
@@ -1245,7 +1393,7 @@ async function applyApprovals(rows: unknown[] | undefined): Promise<number> {
       const state = a.state === 'approved' ? 'Approved' : a.state === 'rejected' ? 'Rejected' : 'Pending';
       await run('UPDATE tours SET state = ?, decisionNote = ? WHERE id = ?', [state, a.decisionNote ?? null, a.subjectId]);
     }
-  }
+  });
   return rows.length;
 }
 
@@ -1303,11 +1451,23 @@ async function reconcileBook(bookIds: string[] | undefined): Promise<number> {
    * view, which asks an EXISTS against this very table, while leaving it on
    * the Leads one: the same shop present on one screen and gone from another.
    * It is also his own work, and this is a sync. */
+  /* A SHOP HE ADDED HIMSELF STAYS TOO, until the office has it.
+   *
+   * A shop created on this phone is in no `bookIds` until its create has been
+   * accepted — and for a while after, because a shop created with no region
+   * falls outside a state or city allocation. The reconcile deleted it on the
+   * very pull that answered the create, so his orders were left pointing at a
+   * shop that was gone from his own phone. Anything with a create still in
+   * the outbox, refused or not, is his work; it is kept. */
   const local = await all<{ id: string }>(
-    'SELECT id FROM customers WHERE id NOT IN (SELECT id FROM leads)',
+    `SELECT id FROM customers
+      WHERE id NOT IN (SELECT id FROM leads)
+        AND NOT EXISTS (SELECT 1 FROM sync_queue q
+                         WHERE q.entityId = customers.id AND q.state <> 'synced')`,
   );
-  if (!local.length) return 0;
   const keep = new Set(bookIds);
+  await rememberMissing(bookIds);
+  if (!local.length) return 0;
   const gone = local.map((r) => r.id).filter((id) => !keep.has(id));
   if (!gone.length) return 0;
 
@@ -1326,6 +1486,48 @@ async function reconcileBook(bookIds: string[] | undefined): Promise<number> {
     await run(`DELETE FROM customers WHERE id IN (${marks})`, batch);
   }
   return gone.length;
+}
+
+/** The kv key the next sync reads its `missingIds` from. */
+export const MISSING_KEY = 'missingCustomerIds';
+
+/** At most this many asked for in one pull, so the reply stays small on 2G. */
+export const MISSING_PER_PULL = 300;
+
+/**
+ * SHOPS IN HIS BOOK THAT THIS PHONE HAS NEVER BEEN SENT.
+ *
+ * A delta sends customers whose row CHANGED. A shop that is newly HIS — a
+ * territory allocated this morning, an account moved to him — has not changed,
+ * so it arrived on no pass and his phone stayed empty until he signed out and
+ * in. That is the rollout path itself, now that no territory means no book.
+ *
+ * The book's ids come down on every pass, so the difference is known here:
+ * whatever the office says is his and this phone does not hold. It is asked
+ * for by id on the next sync, a page at a time, and the office sends those
+ * shops whole, with their history.
+ */
+async function rememberMissing(bookIds: string[]): Promise<void> {
+  if (!bookIds.length) {
+    await run('DELETE FROM kv WHERE key = ?', [MISSING_KEY]);
+    return;
+  }
+  const held = new Set((await all<{ id: string }>('SELECT id FROM customers')).map((r) => r.id));
+  const missing = bookIds.filter((id) => !held.has(id)).slice(0, MISSING_PER_PULL);
+  if (missing.length) await setKv(MISSING_KEY, JSON.stringify(missing));
+  else await run('DELETE FROM kv WHERE key = ?', [MISSING_KEY]);
+}
+
+/** What the next sync should ask for by id. Empty when nothing is missing. */
+export async function missingCustomerIds(): Promise<string[]> {
+  const raw = await getKv(MISSING_KEY);
+  if (!raw) return [];
+  try {
+    const ids = JSON.parse(raw) as unknown;
+    return Array.isArray(ids) ? ids.filter((i): i is string => typeof i === 'string') : [];
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -1349,13 +1551,13 @@ async function reconcileBook(bookIds: string[] | undefined): Promise<number> {
 async function releaseThirdPartyLeads(): Promise<number> {
   const rows = await all<{ id: string }>(
     `SELECT id FROM leads
-      WHERE syncState = 'synced'
+      WHERE ${noPending('leads')}
         AND (thirdParty = 1 OR id IN (SELECT id FROM customers WHERE thirdParty = 1))`,
   );
   if (!rows.length) return 0;
   await run(
     `DELETE FROM leads
-      WHERE syncState = 'synced'
+      WHERE ${noPending('leads')}
         AND (thirdParty = 1 OR id IN (SELECT id FROM customers WHERE thirdParty = 1))`,
   );
   return rows.length;
@@ -1366,25 +1568,110 @@ async function applyDeletions(deletions: { entity: string; ids: string[] }[] | u
   let n = 0;
   for (const d of deletions) {
     if (!d.ids.length) continue;
-    const marks = d.ids.map(() => '?').join(',');
-    /*
-     * A LEAD MOVED TO THE OFFICE'S TRASH is ARCHIVED here, never deleted. A
-     * lead is something the salesman works and may still have changes queued
-     * in the outbox for, and nothing he authored is deleted by a sync. Every
-     * Leads screen reads `archived = 0`, so it leaves them all; if an
-     * administrator restores it, the next pull sends it back and `upsertLeads`
-     * writes `archived = 0` over it.
-     */
-    if (d.entity === 'leads') {
-      await run(`UPDATE leads SET archived = 1 WHERE id IN (${marks})`, d.ids);
-      n += d.ids.length;
-      continue;
+    /* Chunked like `reconcileBook`: a reassignment can tombstone two thousand
+       shops at once, and an IN list that long is past SQLite's ceiling on
+       bound variables — which threw, and took the whole pull with it. */
+    for (let i = 0; i < d.ids.length; i += 400) {
+      n += await applyDeletionChunk(d.entity, d.ids.slice(i, i + 400));
     }
-    if (!DELETABLE.has(d.entity)) continue;
-    await run(`DELETE FROM ${d.entity} WHERE id IN (${marks})`, d.ids);
-    n += d.ids.length;
   }
   return n;
+}
+
+async function applyDeletionChunk(entity: string, ids: string[]): Promise<number> {
+  const marks = ids.map(() => '?').join(',');
+  /*
+   * A LEAD MOVED TO THE OFFICE'S TRASH is ARCHIVED here, never deleted. A
+   * lead is something the salesman works and may still have changes queued
+   * in the outbox for, and nothing he authored is deleted by a sync. Every
+   * Leads screen reads `archived = 0`, so it leaves them all; if an
+   * administrator restores it, the next pull sends it back and `upsertLeads`
+   * writes `archived = 0` over it.
+   */
+  if (entity === 'leads') {
+    await run(`UPDATE leads SET archived = 1 WHERE id IN (${marks})`, ids);
+    return ids.length;
+  }
+  if (!DELETABLE.has(entity)) return 0;
+  await run(`DELETE FROM ${entity} WHERE id IN (${marks})`, ids);
+  return ids.length;
+}
+
+/* ------------------------------------------------------- his own history */
+
+/**
+ * What the bootstrap adds beyond `PullPayload`: his own requests, for a phone
+ * that holds none of them. Optional, so an older server changes nothing.
+ */
+export type FullPull = PullPayload & {
+  myLeaveRequests?: unknown[];
+  myExpenses?: unknown[];
+  myTours?: unknown[];
+  myApprovals?: unknown[];
+};
+
+/**
+ * HIS LEAVE, CLAIMS, TOURS AND THE APPROVALS BEHIND THEM, for a phone that
+ * has none — a reinstall, or a new handset.
+ *
+ * These are OWNED tables and were never pulled, by the rule that a sync must
+ * not write over what somebody authored offline. So a salesman who changed
+ * phones saw no leave he had asked for, no claim he had made and no tour he had
+ * been approved — and `applyApprovals` UPDATEs local rows, so a decision on a
+ * request the phone did not hold landed on nothing.
+ *
+ * INSERT OR IGNORE, and only that. A row already here — including one saved a
+ * minute ago with no signal — is never touched; this only fills gaps, which is
+ * the same exception `restoreAttendance` makes and for the same reason.
+ */
+async function fillOwnHistory(pull: FullPull): Promise<number> {
+  let n = 0;
+  n += await fillGaps('leave_requests', pull.myLeaveRequests);
+  n += await fillGaps('expenses', pull.myExpenses);
+  n += await fillGaps('tours', pull.myTours);
+  n += await fillGaps('approvals', pull.myApprovals);
+  return n;
+}
+
+async function fillGaps(table: string, rows: unknown[] | undefined): Promise<number> {
+  if (!rows?.length) return 0;
+  const known = await knownColumns(table);
+  const device = await deviceId();
+  return eachRow(table, rows, async (raw) => {
+    const row: Row = { deviceId: device, syncState: 'synced', ...(raw as Row) };
+    const cols = Object.keys(row).filter((c) => known.has(c));
+    if (!cols.includes('id')) return;
+    await run(
+      `INSERT OR IGNORE INTO ${table} (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`,
+      cols.map((c) => normalise(row[c])),
+    );
+  });
+}
+
+/**
+ * THE NEWEST TEN PER SHOP, and nothing older.
+ *
+ * The office sends each shop's last ten orders, and an eleventh does not change
+ * a row there — it displaces one, and nothing tells the phone which. So the
+ * displaced order sat here for ever and the table only grew. The count is the
+ * server's own (`HISTORY_PER_CUSTOMER`), restated as the one number both ends
+ * keep.
+ */
+export const ORDERS_PER_SHOP = 10;
+
+async function pruneCustomerOrders(): Promise<number> {
+  await run(
+    `DELETE FROM customer_orders WHERE id IN (
+       SELECT id FROM (
+         SELECT id, ROW_NUMBER() OVER (
+                  PARTITION BY customerId ORDER BY orderedAt DESC, id DESC
+                ) AS rn
+           FROM customer_orders
+       ) WHERE rn > ?
+     )`,
+    [ORDERS_PER_SHOP],
+  );
+  return 0;
 }
 
 /* ------------------------------------------------- travel and the policy */
@@ -1399,7 +1686,7 @@ async function applyDeletions(deletions: { entity: string; ids: string[] }[] | u
  */
 async function upsertTravelModes(rows: unknown[] | undefined, now: number): Promise<number> {
   if (!rows?.length) return 0;
-  for (const raw of rows) {
+  await eachRow('travelModes', rows, async (raw) => {
     const m = raw as {
       key: string;
       label: string;
@@ -1438,7 +1725,7 @@ async function upsertTravelModes(rows: unknown[] | undefined, now: number): Prom
         now,
       ],
     );
-  }
+  });
   return rows.length;
 }
 
@@ -1456,6 +1743,10 @@ async function upsertTravelModes(rows: unknown[] | undefined, now: number): Prom
  * against every claim.
  */
 async function replaceExpensePolicy(policy: unknown, now: number): Promise<number> {
+  /* ABSENT is not null. The reply to a phone with no cursor sends no policy at
+     all, and reading that as "none covers today" deleted the one the
+     bootstrap had delivered a second earlier. */
+  if (policy === undefined) return 0;
   await run(`DELETE FROM expense_policy`);
   if (!policy) return 0;
   const p = policy as {

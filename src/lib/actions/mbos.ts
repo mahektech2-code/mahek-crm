@@ -24,6 +24,7 @@ import {
   mbosTravelModes,
   mbosActivityLocations,
   mbosJourneyPlans,
+  mbosDeletions,
   mbosJourneyStops,
   mbosCompetitorRecords,
   mbosDocuments,
@@ -177,8 +178,10 @@ export async function mbosLogin(input: {
       ok: false,
       status: 503,
       step: "not_configured",
+      /* The variable's name is for whoever reads the server log, not for a
+         salesman standing in a shop. */
       error:
-        "MBOS_JWT_SECRET is not set on this deployment, so no handset can be signed in. An admin has to set it.",
+        "Mahek MBOS sign-in is not switched on yet. Tell your manager — the office has to finish setting it up.",
     };
   }
 
@@ -257,13 +260,15 @@ export async function mbosLogin(input: {
   try {
     bootstrap = await buildBootstrap(principal.principal);
   } catch (e) {
+    /* The cause goes to the log. It used to be put into the sentence the
+       salesman reads, which on a query that threw was "Failed query: select
+       …" — a page of SQL on a phone, and the schema with it. */
+    console.error("[mbos] bootstrap failed at sign-in", e);
     return {
       ok: false,
       status: 503,
       step: "bootstrap_failed",
-      error: `Signed in, but your book could not be loaded: ${
-        e instanceof Error ? e.message : "the server did not answer"
-      }. Try again in a moment.`,
+      error: "Signed in, but your book could not be loaded. Try again in a moment. If it keeps happening, tell your manager.",
     };
   }
 
@@ -310,6 +315,7 @@ export type RefreshOutcome =
       accessExpiresAt: number;
       refreshToken: string;
       refreshExpiresAt: number;
+      user: { id: string; name: string; email: string | null; phone: string | null; role: string; initials: string };
     }
   | { ok: false; status: number; code: string; error: string };
 
@@ -351,7 +357,16 @@ export async function mbosRefresh(refreshToken: string): Promise<RefreshOutcome>
     .set({ lastSeenAt: new Date() })
     .where(eq(mbosDevices.deviceId, verified.claims.did));
 
-  return { ok: true, ...(await issueTokenPair(verified.claims.sub, verified.claims.did)) };
+  /* The person as the office has them NOW, with every refresh. The handset
+     wrote its session once at sign-in and never again, and a session never
+     expires — so a new area or a new manager reached the phone only if he
+     signed out. An older handset ignores the field. */
+  const u = principal.principal.user;
+  return {
+    ok: true,
+    ...(await issueTokenPair(verified.claims.sub, verified.claims.did)),
+    user: { id: u.id, name: u.name, email: u.email, phone: u.phone, role: principal.principal.role, initials: u.initials },
+  };
 }
 
 /* ══════════════════════════════════════════════════════════════ the ingest */
@@ -1052,6 +1067,17 @@ const visitSchema = z.object({
   checkInOverrideReason: z.string().max(500).nullish(),
   pinCorrectionRequested: wireBoolean.nullish(),
   /*
+   * "SAVE AS NOT CHECKED", and the sentence he typed to do it.
+   *
+   * The handset runs its own checks at the save — the dwell, the note, the
+   * fix — and where one fails it offers to save the visit unverified with a
+   * reason "your manager sees". That reason never left the phone: it was in
+   * the local row and on no payload, and this handler then wrote its OWN
+   * reason, which for a visit past the radius said "no reason was given" —
+   * the opposite of what had happened.
+   */
+  fieldUnverifiedReason: z.string().max(500).nullish(),
+  /*
    * THE SUSPECT DECISION, answered on the visit that demanded it.
    *
    * `suspectDecision` is what the salesman chose — moving the lead on, or
@@ -1180,6 +1206,7 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
      visit is activity, so it has to move that date whichever way the decision
      went. Read once here rather than inside the transaction. */
   const day = await today();
+  let suspectAnswerMissing: string | null = null;
   if (!customer.thirdParty && isUndecidedSuspect(customer.leadStage)) {
     const [seen] = await db
       .select({ n: sql<number>`count(*)::int` })
@@ -1189,26 +1216,25 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
     const thisVisit = Number(seen?.n ?? 0) + 1;
     const decideAt = config["mbos.leads.maxSuspectVisits"];
 
+    /*
+     * THE CAP ASKS; IT DOES NOT REFUSE — and this end used to refuse.
+     *
+     * The handset asks for the decision only when IT can see the cap reached:
+     * its own count, a lead row it holds and has not archived. The office
+     * counts every visit anybody made. Where those disagree — another
+     * salesman's visit not yet pulled, a stale or archived lead on the phone —
+     * the phone never asked, this refused, and the whole visit went to Not
+     * accepted with "Send again" unable to add the answer. The order and the
+     * payment taken in that shop then waited behind it for ever.
+     *
+     * AGENTS.md is explicit that a salesman whose visit is refused stops
+     * recording visits. So the visit lands, and the missing answer becomes
+     * the manager's to chase — the same person §B already sends past the cap.
+     */
     if (thisVisit >= decideAt && !p.suspectDecision) {
-      return {
-        kind: "rejected",
-        value: reject(
-          "validation",
-          `This is visit ${thisVisit} to ${customer.name} and they are still a Suspect. Say which way it goes before closing the visit — a prospect, on hold, or lost. The visit itself is recorded either way.`,
-        ),
-      };
-    }
-    if (
-      p.suspectDecision === "still_suspect" &&
-      !p.suspectReason?.trim()
-    ) {
-      return {
-        kind: "rejected",
-        value: reject(
-          "validation",
-          `Keeping ${customer.name} as a Suspect after ${thisVisit} visits needs a reason. Somebody will ask why we are still going.`,
-        ),
-      };
+      suspectAnswerMissing = `${principal.user.name} visited ${customer.name} (visit ${thisVisit}) and it is still a Suspect, but no decision came with the visit — the handset did not ask. Decide it on the lead, or ask him to.`;
+    } else if (p.suspectDecision === "still_suspect" && !p.suspectReason?.trim()) {
+      suspectAnswerMissing = `${principal.user.name} kept ${customer.name} a Suspect after ${thisVisit} visits without saying why.`;
     }
   }
 
@@ -1250,6 +1276,7 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
   const accuracyThresholdM = config["mbos.location.gpsAccuracyThresholdM"];
   const accuracy = p.checkInAccuracyM ?? null;
   const override = p.checkInOverrideReason?.trim() || null;
+  const fieldReason = p.fieldUnverifiedReason?.trim() || null;
 
   if (p.checkInLat == null || p.checkInLng == null) {
     unverifiedReason = "No location was captured with this check-in.";
@@ -1281,10 +1308,12 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
       locationMismatch = true;
       unverifiedReason = override
         ? `The check-in was ${Math.round(distance)} m from ${customer.name}'s own pin. ${principal.user.name} said: ${override}`
-        : /* No override, and past the radius. Either an un-updated handset or
-             a payload that did not come from one — the sentence says what is
-             known and accuses nobody of the difference. */
-          `The check-in was ${Math.round(distance)} m from ${customer.name}'s own pin, and no reason was given for it.`;
+        : fieldReason
+          ? `The check-in was ${Math.round(distance)} m from ${customer.name}'s own pin. ${principal.user.name} said: ${fieldReason}`
+          : /* No reason of either kind, and past the radius. Either an
+               un-updated handset or a payload that did not come from one — the
+               sentence says what is known and accuses nobody of the difference. */
+            `The check-in was ${Math.round(distance)} m from ${customer.name}'s own pin, and no reason was given for it.`;
     } else if (override) {
       /* Refused, overridden, and then inside the radius after all — the fix
          moved between the gate and the save. It is still not a clean visit:
@@ -1293,6 +1322,21 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
       unverifiedReason = `The check-in was allowed past the ${radiusM} m radius. ${principal.user.name} said: ${override}`;
     } else {
       verified = true;
+    }
+  }
+
+  /*
+   * The handset's own checks failed and he saved it unverified on purpose.
+   * The server's GPS verdict cannot see a dwell or a note, so a visit it would
+   * have passed is still marked as he marked it — and whichever reason the
+   * server wrote, his sentence is kept beside it rather than lost.
+   */
+  if (fieldReason) {
+    if (verified) {
+      verified = false;
+      unverifiedReason = `Saved as not checked on the handset. ${principal.user.name} said: ${fieldReason}`;
+    } else if (unverifiedReason && !unverifiedReason.includes(fieldReason)) {
+      unverifiedReason = `${unverifiedReason} ${principal.user.name} said: ${fieldReason}`;
     }
   }
 
@@ -1546,6 +1590,21 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
    * salesmen learn not to rely on. */
   if (p.suspectDecision === "qualified") {
     await qualifyLead(customer.id, principal.user.id, customer.name).catch(() => {});
+  }
+
+  /* The photographs and the voice note went up naming `pending` — the camera
+     closed before the visit existed. Without this nobody, the salesman
+     included, could ever open them: `canRead` looked for a visit called
+     `pending`. Bound on a resend too, because a resend is how a file that
+     arrived late gets filed. */
+  for (const media of [p.shopPhotoId, p.custPhotoId, p.voiceNoteId]) {
+    await bindMbosMedia(media, "mbos_visit", item.entityId, principal.user.id);
+  }
+
+  if (suspectAnswerMissing) {
+    await notifyManagers(principal.user.id, "A Suspect decision is missing", suspectAnswerMissing).catch(
+      () => {},
+    );
   }
 
   if (!customer.thirdParty && isUndecidedSuspect(customer.leadStage)) {
@@ -2077,6 +2136,14 @@ const orderSchema = z.object({
    * it has always meant: the billing party received them.
    */
   deliveryCustomerId: z.string().nullish(),
+  /**
+   * The handset could not put a value on this order — no rate for some line,
+   * because `products.priceSource` is not one the phone can price from. Then
+   * `totalAmountPaise` is 0 by construction and is NOT a figure: it must not
+   * overwrite the customer's `last_order_value` or be written into a timeline
+   * line as "₹0", both of which read as a real order worth nothing.
+   */
+  valueUnavailable: wireBoolean.nullish(),
 });
 
 async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
@@ -2155,11 +2222,27 @@ async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Ha
    * handset changed and resent, not a retry. Accepting it would put a second
    * order in the book under one id. */
   const existing = await db
-    .select({ id: orders.id, orderNo: orders.orderNo })
+    .select({ id: orders.id, orderNo: orders.orderNo, userId: orders.userId })
     .from(orders)
     .where(eq(orders.id, item.entityId))
     .limit(1);
   if (existing.length) {
+    /*
+     * THE SAME ORDER FROM THE SAME SALESMAN IS A RESEND, NOT A DUPLICATE.
+     *
+     * The id is minted on his handset, so a row carrying it that he took is
+     * this order's own first attempt — written, with the answer lost on the
+     * way back. A batch slower than the handset's patience is the ordinary way
+     * that happens, and refusing the resend put an order that is sitting in
+     * accounts' approval queue on his Not accepted list, with a bell and a
+     * "ring the customer back" task to match.
+     */
+    if (existing[0].userId === principal.user.id) {
+      return {
+        kind: "accepted",
+        value: { serverId: item.entityId, serverNumber: existing[0].orderNo ?? undefined },
+      };
+    }
     return {
       kind: "rejected",
       value: reject(
@@ -2296,6 +2379,8 @@ async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Ha
     amount: (l.ratePaise ?? 0) * l.quantityCans,
   }));
 
+  const unvalued = Boolean(p.valueUnavailable) || p.totalAmountPaise === 0;
+
   let serverNumber = "";
   await db.transaction(async (tx) => {
     serverNumber = await allocateNumber(tx, prefix, fy, "orders");
@@ -2372,13 +2457,16 @@ async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Ha
     // `lastOrderDate` moves on CAPTURE, not on approval: it is the signal that
     // stops the queue chasing somebody who ordered this morning, and a
     // telecaller must not ring them because approval is slow.
+    /* `last_order_value` only where the order HAS one. An unvalued order's
+       zero is the absence of a figure, and writing it here replaced the
+       customer's real last order value with nothing on every field order. */
     await tx.execute(sql`
       update customers
          set last_order_date = greatest(
                coalesce(last_order_date, date '1900-01-01'),
                (${orderedAtIso}::timestamptz at time zone 'Asia/Kolkata')::date
              ),
-             last_order_value = ${p.totalAmountPaise},
+             last_order_value = case when ${unvalued}::boolean then last_order_value else ${p.totalAmountPaise}::bigint end,
              updated_at = now()
        where id = ${customer.id}
     `);
@@ -2411,7 +2499,9 @@ async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Ha
       sourceRecordId: item.entityId,
       occurredAt: orderedAt,
       actorUserId: principal.user.id,
-      summary: `Order ${serverNumber} taken in the field — ${rupees(p.totalAmountPaise)}, awaiting approval`,
+      summary: `Order ${serverNumber} taken in the field — ${
+        unvalued ? "value not known yet" : rupees(p.totalAmountPaise)
+      }, awaiting approval`,
     });
 
     if (p.visitId) {
@@ -2437,6 +2527,20 @@ const paymentSchema = z.object({
   /** Named bills, or nothing — in which case the money goes oldest first. */
   billIds: z.array(z.string()).nullish(),
   visitId: z.string().nullish(),
+  /**
+   * The date written ON a cheque, `YYYY-MM-DD`. It went into `note` as prose
+   * ("dated 2026-10-20"), so `instrument_date` stayed null and the post-dated
+   * cheque quiet window AGENTS.md describes never applied to anything a
+   * salesman collected — the customer was chased for a cheque sitting in our
+   * own drawer.
+   */
+  instrumentDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .nullish(),
+  /** The cheque photographed at the counter. Bound to the receipt below — see
+      `bindMbosMedia`. Absent from builds that do not send it. */
+  chequePhotoId: z.string().nullish(),
 });
 
 const paymentUpdateSchema = z.object({
@@ -2547,11 +2651,34 @@ async function handlePayment(principal: MbosPrincipal, item: SyncItem): Promise<
   const customer = found.customer;
 
   const already = await db
-    .select({ id: paymentReceipts.id })
+    .select({
+      id: paymentReceipts.id,
+      receiptNo: paymentReceipts.receiptNo,
+      reportedById: paymentReceipts.reportedById,
+    })
     .from(paymentReceipts)
     .where(eq(paymentReceipts.id, item.entityId))
     .limit(1);
   if (already.length) {
+    /*
+     * THE SAME RECEIPT FROM THE SAME PERSON IS A RESEND, NOT A DUPLICATE.
+     *
+     * The id is minted on the handset that collected the money, so a row
+     * carrying it that this person reported is the first attempt of THIS
+     * collection — which landed, while the answer did not. That is the
+     * ordinary shape of a slow batch: the handset gives up waiting, sends
+     * again, and the second pass finds the first already written before its
+     * sync receipt was stored. Refusing it as a duplicate put a payment that
+     * is sitting safely in the ledger on Not accepted, and raised a bell
+     * saying it had been refused.
+     */
+    if (already[0].reportedById === principal.user.id) {
+      await bindMbosMedia(p.chequePhotoId, "payment_receipt", item.entityId, principal.user.id);
+      return {
+        kind: "accepted",
+        value: { serverId: item.entityId, serverNumber: already[0].receiptNo ?? undefined },
+      };
+    }
     return {
       kind: "rejected",
       value: reject(
@@ -2631,6 +2758,7 @@ async function handlePayment(principal: MbosPrincipal, item: SyncItem): Promise<
       receivedAt,
       mode: p.mode ?? "Cash",
       reference: p.reference ?? null,
+      instrumentDate: p.instrumentDate ?? null,
       receiptNo: serverNumber,
       // The note is the salesman's own sentence and nothing else. The receipt
       // number used to be prefixed onto it for want of a column; it has one.
@@ -2697,6 +2825,10 @@ async function handlePayment(principal: MbosPrincipal, item: SyncItem): Promise<
       `);
     }
   });
+
+  /* After the receipt exists — the cheque photograph went up naming
+     `pending`, because the camera closed before the receipt was written. */
+  await bindMbosMedia(p.chequePhotoId, "payment_receipt", item.entityId, principal.user.id);
 
   // A large collection is something a manager is told about rather than
   // something they have to go looking for.
@@ -3072,6 +3204,28 @@ async function handleSampleUpdate(
    * rejection reason for one would be asking why about something nobody
    * rejected.
    */
+  /*
+   * THE HANDSET SAYS WHY IN ITS FEEDBACK, NOT IN THIS FIELD — and every
+   * rejection it sent was refused for it.
+   *
+   * The phone demands one of three boxes before it will save a "No" — what
+   * else they said, what they said about the price, how it compared — and
+   * sends them as `feedback`. It has never sent `rejectionReason`, so this
+   * check read nothing, refused every field rejection as "no reason", and the
+   * trial stayed pending in the office while the salesman's screen said
+   * Saved. Those three boxes ARE the reason; it is derived from them here, in
+   * that order, and stored, so the office's own column reads what he said.
+   */
+  const derivedRejectionReason =
+    p.trialOutcome === "rejected" && !p.rejectionReason?.trim() && p.feedback
+      ? [p.feedback.otherComments, p.feedback.priceFeedback, p.feedback.competitorComparison]
+          .map((x) => x?.trim())
+          .filter(Boolean)
+          .join(" · ")
+          .slice(0, 500) || null
+      : null;
+  if (derivedRejectionReason) p.rejectionReason = derivedRejectionReason;
+
   if (
     p.trialOutcome === "rejected" &&
     !(p.rejectionReason ?? existing.rejectionReason)?.trim()
@@ -3165,6 +3319,7 @@ async function handleSampleUpdate(
   }
 
   await db.update(mbosSamples).set(changed).where(eq(mbosSamples.id, item.entityId));
+  await bindMbosMedia(p.deliveryPhotoId, "mbos_sample", item.entityId, principal.user.id);
 
   /* §16 — one review per sample. A second opinion is a second sample, which is
      what the unique index says, so a re-sent item updates rather than duplicates. */
@@ -3379,6 +3534,7 @@ async function afterSampleDispatched(
       title: "A sample is on its way",
       body: `${customerName} is expecting a sample${carrier ? ` (${carrier})` : ""}. If they have not confirmed it by ${due}, chase it.`,
       kind: "info",
+      mbosHref: "/samples",
     })
     .catch(() => {});
 }
@@ -3470,6 +3626,7 @@ async function afterSampleReceived(
       title: "A sample reached the customer",
       body: `${customerName} has the sample. A review call is on your list for ${due}.`,
       kind: "info",
+      mbosHref: "/samples",
     })
     .catch(() => {});
 }
@@ -3482,6 +3639,58 @@ async function afterSampleReceived(
  * shop. Notifying only one of them is how a salesman turns up to a shop that
  * turned us down last week.
  */
+/**
+ * Move a lead to `negotiation` because its sample came through — or say why
+ * it cannot move yet. See `afterSampleVerdict`.
+ *
+ * The legacy ladder has no gates and no sample rungs, so a legacy lead at
+ * `qualified` moves straight up as it always did. A funnel lead goes through
+ * `evaluateLeadStageMove` exactly as a press of the button would, and only a
+ * lead standing BELOW negotiation on a ladder that has it is touched at all —
+ * a lead already past it, or a distributor with no such rung, is left alone
+ * and nothing is promised.
+ */
+async function openNegotiation(
+  customerId: string,
+  salesmanId: string,
+): Promise<{ opened: boolean; missing: string | null }> {
+  const [row, gate] = await Promise.all([leadRow(customerId), leadGateInput(customerId)]);
+  if (!row || row.kind !== "lead") return { opened: false, missing: null };
+
+  const salesType = row.leadSalesType as LeadSalesType | null;
+  const ladder = ladderFor(salesType);
+  const here = ladder.indexOf(row.leadStage as LeadStage);
+  const there = ladder.indexOf("negotiation");
+  if (there < 0 || here < 0 || here >= there) return { opened: false, missing: null };
+
+  if (!salesType) {
+    await db
+      .update(customers)
+      .set({ leadStage: "negotiation", updatedAt: new Date() })
+      .where(and(eq(customers.id, customerId), eq(customers.leadStage, "qualified")));
+    return { opened: row.leadStage === "qualified", missing: null };
+  }
+
+  if (!gate) return { opened: false, missing: null };
+  const decision = await evaluateLeadStageMove({
+    lead: row,
+    gate,
+    to: "negotiation",
+    override: null,
+    canOverride: false,
+  });
+  if (!decision.ok) {
+    return { opened: false, missing: decision.missing.map((c) => c.says).join("; ") || null };
+  }
+  await applyLeadStageMove({ userId: salesmanId, hat: null, sourceApp: "mbos" }, row, "negotiation", {
+    decision,
+    note: "The sample came through.",
+    nextAction: null,
+    day: await today(),
+  });
+  return { opened: true, missing: null };
+}
+
 async function afterSampleVerdict(
   sampleId: string,
   customerId: string,
@@ -3497,6 +3706,24 @@ async function afterSampleVerdict(
     .limit(1);
 
   const approved = outcome === "approved";
+
+  /*
+   * §L — AN APPROVED SAMPLE OPENS NEGOTIATION, ON EVERY LADDER.
+   *
+   * This used to move the lead only where it stood on the LEGACY `qualified`
+   * rung — so a funnel lead at `sample_trial`, `sample_received` or
+   * `sample_review` was told "Negotiation is open" and handed a negotiation
+   * visit, and stayed exactly where it was, with the "Move up to Negotiation"
+   * button still asking for the review he had just recorded.
+   *
+   * A funnel lead is moved through the SAME gate a person pressing the button
+   * would meet, by `applyLeadStageMove`, so the transition row and the audit
+   * are the ones every other move writes. Where the gate refuses, nothing is
+   * announced as open: the sentence below says what is still missing instead
+   * of promising a conversation the ladder will not allow.
+   */
+  let negotiation: { opened: boolean; missing: string | null } = { opened: false, missing: null };
+  if (approved) negotiation = await openNegotiation(customerId, salesmanId);
   /*
    * THREE VERDICTS, because §15 gave the outcome a third value.
    *
@@ -3513,7 +3740,11 @@ async function afterSampleVerdict(
       ? "A sample needs more testing"
       : "A sample was rejected";
   const body = approved
-    ? `${customerName} is happy with the trial. Negotiation is open — price, discount, credit and delivery are on the table now.`
+    ? negotiation.opened
+      ? `${customerName} is happy with the trial. Negotiation is open — price, discount, credit and delivery are on the table now.`
+      : `${customerName} is happy with the trial.${
+          negotiation.missing ? ` Before negotiation opens: ${negotiation.missing}.` : ""
+        }`
     : moreTesting
       ? `${customerName} tried it and wants to test it again${reason ? `: ${reason}` : ""}. The sample is not settled either way yet.`
       : `${customerName} turned the sample down: ${reason ?? "no reason recorded"}.`;
@@ -3531,6 +3762,7 @@ async function afterSampleVerdict(
           title,
           body,
           kind: "info",
+          mbosHref: "/samples",
         })),
       )
       .catch(() => {});
@@ -3541,12 +3773,7 @@ async function afterSampleVerdict(
    * gate in `handleOrder`. It is the sample review that authorises a commercial
    * conversation, not the salesman deciding he is ready for one.
    */
-  if (approved) {
-    await db
-      .update(customers)
-      .set({ leadStage: "negotiation", updatedAt: new Date() })
-      .where(and(eq(customers.id, customerId), eq(customers.leadStage, "qualified")));
-
+  if (approved && negotiation.opened) {
     await writeTimeline(db, {
       customerId,
       eventType: MBOS_EVENT.negotiation,
@@ -3690,7 +3917,7 @@ async function handleSample(principal: MbosPrincipal, item: SyncItem): Promise<H
       sourceRecordId: item.entityId,
       occurredAt: new Date(item.clientCreatedAt),
       actorUserId: principal.user.id,
-      summary: `Sample handed to ${customer.name}${p.quantityCans ? ` — ${p.quantityCans} cans` : ""}`,
+      summary: `Sample requested for ${customer.name}${p.quantityCans ? ` — ${p.quantityCans} cans` : ""}`,
     });
 
     if (p.visitId) {
@@ -3700,6 +3927,10 @@ async function handleSample(principal: MbosPrincipal, item: SyncItem): Promise<H
       `);
     }
   });
+
+  /* The delivery proof went up naming `pending` when the camera closed before
+     the sample existed — filed here, or nobody could open it. */
+  await bindMbosMedia(p.deliveryPhotoId, "mbos_sample", item.entityId, principal.user.id);
 
   return { kind: "accepted", value: { serverId: item.entityId } };
 }
@@ -3779,9 +4010,8 @@ const leadSchema = z.object({
        * `on_hold` is on the WIRE and not on any ladder, which is why it sits
        * here and not in `LeadStage`. It is a legacy-ladder answer — a lead
        * somebody has parked with a reason — and the funnel has no rung for it;
-       * the branch below stands it aside from the gate exactly as
-       * `convertedCustomerId` is stood aside, because asking a ladder about a
-       * stage that is not on it can only ever refuse.
+       * the branch below stands it aside from the gate, because asking a
+       * ladder about a stage that is not on it can only ever refuse.
        */
       "on_hold",
       "won",
@@ -4026,7 +4256,14 @@ async function handleLeadUpdate(
 ): Promise<Handled> {
   const parsed = leadSchema.partial().safeParse(item.payload);
   if (!parsed.success) return validationRejection(parsed.error);
-  const p = parsed.data;
+  /* An older handset's "Convert to customer" sends `won` beside
+     `convertedCustomerId`. Conversion is no longer a thing a button does (see
+     below), so that `won` is dropped with it rather than parking a lead that
+     never ordered on a rung that says it did. */
+  const p =
+    parsed.data.convertedCustomerId != null && parsed.data.stage === "won"
+      ? { ...parsed.data, stage: undefined }
+      : parsed.data;
 
   const existing = await leadRow(item.entityId);
   /*
@@ -4054,6 +4291,53 @@ async function handleLeadUpdate(
       message:
         "That lead has not reached the office yet, so there is nothing to change. It will be tried again once it has.",
     };
+  }
+
+  /*
+   * §23 — WHO BILLS THIS SHOP IS CHECKED BEFORE ANYTHING IS WRITTEN.
+   *
+   * A distributor is an account we invoice: a real customer, not a lead and
+   * not itself a third-party shop. The handset's picker offered the whole
+   * book, and a bad pick used to be DROPPED here while `thirdParty: true` was
+   * written anyway — a shop marked "billed by somebody else" with nobody
+   * billing it, which is the one state AGENTS.md says must not exist. Refused
+   * in words instead, before the mark lands, so the salesman picks again.
+   *
+   * And the mark alone, with no distributor named now or before, is refused
+   * for the same reason.
+   */
+  let billerToLink: { id: string; name: string } | null = null;
+  if (p.distributorCustomerId) {
+    const [biller] = await db
+      .select({ id: customers.id, name: customers.name, kind: customers.kind, thirdParty: customers.thirdParty })
+      .from(customers)
+      .where(and(eq(customers.id, p.distributorCustomerId), isNull(customers.deletedAt)))
+      .limit(1);
+    if (!biller || biller.kind !== "customer" || biller.thirdParty) {
+      return {
+        kind: "rejected",
+        value: reject(
+          "validation",
+          `${biller?.name ?? "That account"} cannot bill ${existing.name}: only an account we invoice ourselves can be a distributor, not a lead or another third-party shop. Pick again under "Who bills this shop".`,
+        ),
+      };
+    }
+    billerToLink = { id: biller.id, name: biller.name };
+  } else if (p.thirdParty === true && !existing.thirdParty) {
+    const [linked] = await db
+      .select({ id: customerDistributors.id })
+      .from(customerDistributors)
+      .where(eq(customerDistributors.customerId, item.entityId))
+      .limit(1);
+    if (!linked) {
+      return {
+        kind: "rejected",
+        value: reject(
+          "validation",
+          `${existing.name} was marked as billed by a distributor without naming one. Say who bills it under "Who bills this shop".`,
+        ),
+      };
+    }
   }
 
   /*
@@ -4113,22 +4397,12 @@ async function handleLeadUpdate(
    */
   const salesType = (p.salesType ?? existing.leadSalesType) as LeadSalesType | null;
   const onTheFunnel = Boolean(salesType);
-  /*
-   * `convertedCustomerId` is the ONE LEAD promotion path and it takes
-   * precedence over the ladder. It is what an older build sends to say "this
-   * lead is won", and the branch below moves `kind` and parks the stage at
-   * `won` — which is off every real ladder. Asking the gate about a rung after
-   * that has happened would refuse the item as off-ladder and report a
-   * conversion that in fact landed, so the funnel stands aside for it.
-   */
   const movingStage =
     p.stage != null &&
     p.stage !== existing.leadStage &&
-    p.convertedCustomerId == null &&
-    /* And `on_hold` stands aside from the gate for the same reason a
-       conversion does: it is on the wire and on no ladder, so asking a rung
-       engine about it can only ever answer "off ladder" and refuse a park the
-       salesman is entitled to. */
+    /* `on_hold` stands aside from the gate: it is on the wire and on no
+       ladder, so asking a rung engine about it can only ever answer "off
+       ladder" and refuse a park the salesman is entitled to. */
     p.stage !== "on_hold";
 
   /*
@@ -4387,17 +4661,12 @@ async function handleLeadUpdate(
     changed.gpsCapturedAt = new Date();
   }
   /*
-   * ONE LEAD, so winning one is this row becoming a customer rather than a
-   * second row being written and pointed at. The handset still sends
-   * `convertedCustomerId` — its payload shape is unchanged — and what that now
-   * means is "this is won": `kind` moves, and the calls, timeline and GPS fix
-   * come with it because they never moved.
+   * `convertedCustomerId` no longer CONVERTS. This set `kind`, `won` and the converted mark on
+   * the say-so of a button that asked no gate; a lead now becomes a customer at
+   * its first order and nowhere else (`promotesToCustomerAt`). An older handset
+   * still sends the field — it is read as nothing, and the rest of the update
+   * (a note, a stage, a fix) lands as it would have.
    */
-  if (p.convertedCustomerId != null) {
-    changed.kind = "customer";
-    changed.leadStage = "won";
-    changed.leadConvertedAt = new Date();
-  }
 
   /* §R — an internal note is a fact about the account and belongs in its
      history. The BODY is not repeated here: `mbos_internal_notes` carries a
@@ -4558,25 +4827,50 @@ async function handleLeadUpdate(
   }
 
   /*
-   * §23 — who invoices this shop, recorded from the first visit.
+   * §23 — who invoices this shop, recorded from the first visit. Checked above,
+   * before the mark was written.
    *
-   * Checked rather than trusted, on exactly the rule the console's own picker
-   * enforces and `handleCustomerCreate` already repeats: a distributor is an
-   * account we invoice, so it must be a real customer and not itself a third
-   * party. A shop pointed at another shop is an arrangement nobody can act on.
-   * A bad id is dropped rather than refusing the whole item — the lead's own
-   * answers are good and the salesman is long gone from the shop.
+   * A CHANGE of distributor is a change, not a no-op. The insert used to
+   * `onConflictDoNothing` against the one-primary index, so naming a second
+   * distributor silently kept the first as primary and the new one nowhere.
+   * The named one is the one that serves it usually now; the old link is kept
+   * and demoted, because who used to bill a shop is a fact about it.
    */
-  if (p.distributorCustomerId) {
-    const [biller] = await db
-      .select({ id: customers.id, kind: customers.kind, thirdParty: customers.thirdParty })
-      .from(customers)
-      .where(eq(customers.id, p.distributorCustomerId))
-      .limit(1);
-    if (biller && biller.kind === "customer" && !biller.thirdParty) {
-      await db
-        .insert(customerDistributors)
-        .values({
+  if (billerToLink) {
+    const biller = billerToLink;
+    await db.transaction(async (tx) => {
+      const [already] = await tx
+        .select({ id: customerDistributors.id })
+        .from(customerDistributors)
+        .where(
+          and(
+            eq(customerDistributors.customerId, item.entityId),
+            eq(customerDistributors.distributorCustomerId, biller.id),
+          ),
+        )
+        .limit(1);
+      await tx
+        .update(customerDistributors)
+        .set({ isPrimary: false, updatedAt: new Date(), updatedById: principal.user.id })
+        .where(
+          and(
+            eq(customerDistributors.customerId, item.entityId),
+            eq(customerDistributors.isPrimary, true),
+            sql`${customerDistributors.distributorCustomerId} <> ${biller.id}`,
+          ),
+        );
+      if (already) {
+        await tx
+          .update(customerDistributors)
+          .set({
+            isPrimary: true,
+            ...(p.distributorSalesmanId != null ? { distributorSalesmanId: p.distributorSalesmanId } : {}),
+            updatedAt: new Date(),
+            updatedById: principal.user.id,
+          })
+          .where(eq(customerDistributors.id, already.id));
+      } else {
+        await tx.insert(customerDistributors).values({
           id: `cd_${randomUUID().slice(0, 12)}`,
           customerId: item.entityId,
           distributorCustomerId: biller.id,
@@ -4585,9 +4879,9 @@ async function handleLeadUpdate(
           note: "Named on the lead in the field",
           createdById: principal.user.id,
           updatedById: principal.user.id,
-        })
-        .onConflictDoNothing();
-    }
+        });
+      }
+    });
   }
 
   /*
@@ -4768,19 +5062,39 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
   }
 
   /* The duplicate check runs on the mobile, which is what a business card
-   * carries. A second row for one shop is two salesmen working it. */
+   * carries. A second row for one shop is two salesmen working it.
+   *
+   * On the LAST TEN DIGITS, as the shop-create path and the handset's own
+   * check already compare. An exact string match let "+91 98220 11001" on the
+   * book and "9822011001" from the phone through as two different numbers —
+   * the exact duplicate this exists to stop. `[^0-9]` rather than `\D`: see
+   * the note in `handleCustomerCreate`. And the sentence names what the clash
+   * IS, because "already on MahekOne as the lead" about a billed customer
+   * sends him looking for a lead that does not exist. */
   if (item.op === "create") {
-    const clash = await db
-      .select({ id: customers.id, name: customers.name })
-      .from(customers)
-      .where(and(eq(customers.phone, p.mobile), eq(customers.leadArchived, false), isNull(customers.deletedAt)))
-      .limit(1);
+    const digits = p.mobile.replace(/\D/g, "").slice(-10);
+    const clash =
+      digits.length === 10
+        ? await db
+            .select({ id: customers.id, name: customers.name, kind: customers.kind })
+            .from(customers)
+            .where(
+              and(
+                sql`right(regexp_replace(${customers.phone}, '[^0-9]', '', 'g'), 10) = ${digits}`,
+                eq(customers.leadArchived, false),
+                isNull(customers.deletedAt),
+              ),
+            )
+            .limit(1)
+        : [];
     if (clash.length && clash[0].id !== item.entityId) {
       return {
         kind: "rejected",
         value: reject(
           "duplicate",
-          `${p.mobile} is already on MahekOne as the lead "${clash[0].name}". Work that one rather than raising a second — ask your manager if it is somebody else's.`,
+          clash[0].kind === "lead"
+            ? `${p.mobile} is already on MahekOne as the lead "${clash[0].name}". Work that one rather than raising a second — ask your manager if it is somebody else's.`
+            : `${p.mobile} is already on MahekOne as the customer "${clash[0].name}". Open it from Customers rather than raising a lead — ask your manager if it is somebody else's.`,
         ),
       };
     }
@@ -5644,6 +5958,7 @@ async function afterValidationVerdict(
               : "A Prospect was not qualified",
           body: `${customerName}: ${reason ?? "no reason recorded"}.`,
           kind: "info",
+          mbosHref: `/lead?id=${encodeURIComponent(customerId)}`,
         })
         .catch(() => {});
     }
@@ -5778,6 +6093,7 @@ async function handleTaskUpdate(
   }
 
   await db.update(mbosTasks).set(changed).where(eq(mbosTasks.id, item.entityId));
+  await bindMbosMedia(p.completionPhotoId, "mbos_task", item.entityId, principal.user.id);
 
   return { kind: "accepted", value: { serverId: item.entityId } };
 }
@@ -6255,7 +6571,29 @@ async function handleTravelLeg(principal: MbosPrincipal, item: SyncItem): Promis
    * refusing that close left the day open on the server for ever. A second
    * photograph of a distance of zero proves nothing a first one did not.
    */
-  const excludedVisit = p.origin === "visit" && p.claimExcluded === true;
+  /*
+   * AN UPDATE THAT DOES NOT MENTION THE EXCLUSION KEEPS IT.
+   *
+   * The handset opens a visit leg excluded — "counted in the meter readings",
+   * or "on a bus day, claim fares in Expenses" — and then sends the arrival,
+   * the binding to the visit and the abandon as updates that carry none of
+   * those three columns. Upserting every column then reset them: a bus-day leg
+   * became a claim line, and a bike-day leg was re-excluded with a reason
+   * accusing him of a missing reading the design never asked for. Absent is
+   * "unchanged", never "false".
+   */
+  const [priorLeg] = await db
+    .select({
+      claimExcluded: mbosTravelLegs.claimExcluded,
+      claimExcludedReason: mbosTravelLegs.claimExcludedReason,
+      manualReason: mbosTravelLegs.manualReason,
+    })
+    .from(mbosTravelLegs)
+    .where(and(eq(mbosTravelLegs.id, item.entityId), eq(mbosTravelLegs.userId, principal.user.id)))
+    .limit(1);
+  const wantExcluded = p.claimExcluded ?? priorLeg?.claimExcluded ?? false;
+  const wantExcludedReason = p.claimExcludedReason ?? priorLeg?.claimExcludedReason ?? null;
+  const excludedVisit = p.origin === "visit" && wantExcluded === true;
   const closedAtOwnReading =
     p.endedAt != null && p.odometerStartKm != null && p.odometerEndKm === p.odometerStartKm;
 
@@ -6312,7 +6650,7 @@ async function handleTravelLeg(principal: MbosPrincipal, item: SyncItem): Promis
     customerId: p.customerId ?? null,
     visitId: p.visitId ?? null,
     manualMetres: p.manualMetres ?? null,
-    manualReason: p.manualReason ?? null,
+    manualReason: p.manualReason ?? priorLeg?.manualReason ?? null,
     odometerStartKm: p.odometerStartKm ?? null,
     odometerEndKm: p.odometerEndKm ?? null,
     odometerPhotoId: p.odometerPhotoId ?? null,
@@ -6325,8 +6663,10 @@ async function handleTravelLeg(principal: MbosPrincipal, item: SyncItem): Promis
     /* Movement, recorded, and not a second claim — see the column's own note.
        Defaulted false, so a handset one build behind goes on sending legs that
        are claimed exactly as they always were. */
-    claimExcluded: unevidenced != null || (p.claimExcluded ?? false),
-    claimExcludedReason: unevidenced ?? p.claimExcludedReason ?? null,
+    claimExcluded: unevidenced != null || wantExcluded,
+    /* An exclusion the design made keeps the design's own reason; only a leg
+       that was meant to be claimed is told its evidence is missing. */
+    claimExcludedReason: wantExcluded ? (wantExcludedReason ?? unevidenced) : (unevidenced ?? wantExcludedReason),
     updatedAt: new Date(),
     updatedById: principal.user.id,
   };
@@ -6342,6 +6682,12 @@ async function handleTravelLeg(principal: MbosPrincipal, item: SyncItem): Promis
       ...values,
     })
     .onConflictDoUpdate({ target: mbosTravelLegs.id, set: values });
+
+  /* The meter and the ticket, filed under the leg they evidence — the camera
+     may have closed before the leg reached the office. */
+  for (const media of [p.odometerPhotoId, p.odometerEndPhotoId, p.ticketPhotoId]) {
+    await bindMbosMedia(media, "mbos_travel_leg", item.entityId, principal.user.id);
+  }
 
   return { kind: "accepted", value: { serverId: item.entityId } };
 }
@@ -6554,6 +6900,17 @@ async function handleAttendance(
      `outAt: null`, never a missing key. `undefined` in jsonb is how a row
      comes back with a field that reads as absent rather than as "still
      running", and `openSession` on the handset keys on exactly that. */
+  /*
+   * A REQUEST IS SOMETHING SOMEBODY ASKED FOR. The handset sends
+   * `regularisationRequested: true` on every punch-in outside the radius,
+   * reason or none — and with a company-wide base location that is every
+   * field salesman who starts his day from home, each one filing a "request"
+   * he never made and burying the real ones. It counts here only where a
+   * reason came with it; the distance itself is still recorded in
+   * `withinGeofence`, which is the fact.
+   */
+  const asksToRegularise = Boolean(p.regularisationRequested && p.regularisationReason?.trim());
+
   const sessions = p.sessions?.map((x) => ({
     inAt: x.inAt,
     outAt: x.outAt ?? null,
@@ -6580,7 +6937,7 @@ async function handleAttendance(
       sessions: sessions ?? [],
       withinGeofence: p.withinGeofence ?? null,
       geofenceDistanceM: round(p.geofenceDistanceM),
-      regularisationRequested: p.regularisationRequested ?? false,
+      regularisationRequested: asksToRegularise,
       regularisationReason: p.regularisationReason ?? null,
       setupReady: p.setupReady ?? null,
       setupAcknowledgedAt: p.setupAcknowledgedAt ? new Date(p.setupAcknowledgedAt) : null,
@@ -6673,9 +7030,11 @@ async function handleAttendance(
          * its own write because the day starts when the button is pressed:
          * asking why first, and losing the check-in if nobody answers, is the
          * block this whole module exists to avoid. */
-        ...(p.regularisationRequested != null
-          ? { regularisationRequested: p.regularisationRequested }
-          : {}),
+        ...(p.regularisationRequested === false
+          ? { regularisationRequested: false }
+          : asksToRegularise
+            ? { regularisationRequested: true }
+            : {}),
         ...(p.regularisationReason != null
           ? { regularisationReason: p.regularisationReason }
           : {}),
@@ -6700,6 +7059,17 @@ async function handleAttendance(
         updatedById: principal.user.id,
       },
     });
+
+  /* Every selfie the day names, filed under the day. A punch-in photograph is
+     taken before the day row exists, so it goes up naming `pending`; this is
+     what makes it something a manager — or the salesman — can open. */
+  for (const media of new Set([
+    p.selfieId,
+    p.checkOutSelfieId,
+    ...(p.sessions ?? []).flatMap((x) => [x.inSelfieId, x.outSelfieId]),
+  ])) {
+    await bindMbosMedia(media, "mbos_attendance", rowId, principal.user.id);
+  }
 
   return { kind: "accepted", value: { serverId: rowId } };
 }
@@ -7532,22 +7902,44 @@ async function handlePlanStops(principal: MbosPrincipal, item: SyncItem): Promis
   await db.transaction(async (tx) => {
     /* Anything already walked stays. The rest is replaced, because the payload
      * is the whole answer and a shorter list is how something is unpicked. */
-    await tx
+    const removed = await tx
       .delete(mbosJourneyStops)
       .where(
         and(
           eq(mbosJourneyStops.planId, plan.id),
           eq(mbosJourneyStops.status, "planned"),
         ),
+      )
+      .returning({ id: mbosJourneyStops.id });
+
+    /* A pull says what exists; only a tombstone says what stopped. The stops
+       above are deleted and the new ones carry new ids, so without these the
+       handset kept every old stop beside its replacement — duplicated shops,
+       shops he had unpicked, and a "3 of 14 done" counting both. */
+    if (removed.length) {
+      await tx.insert(mbosDeletions).values(
+        removed.map((r) => ({
+          id: gen("del"),
+          entity: "journey_stops",
+          entityId: r.id,
+          userId: principal.user.id,
+          reason: "replanned",
+        })),
       );
+    }
 
     const kept = await tx
-      .select({ n: sql<number>`count(*)::int` })
+      .select({ customerId: mbosJourneyStops.customerId })
       .from(mbosJourneyStops)
       .where(eq(mbosJourneyStops.planId, plan.id));
-    let sequence = Number(kept[0]?.n ?? 0);
+    let sequence = kept.length;
+    /* A shop already visited or skipped today keeps its stop; picking it again
+       must not add a second, planned one beside it. The office's own replan
+       has always left these alone. */
+    const walked = new Set(kept.map((k) => k.customerId));
 
     for (const customerId of allowed) {
+      if (walked.has(customerId)) continue;
       sequence += 1;
       await tx.insert(mbosJourneyStops).values({
         id: `mbos_stop_${randomUUID()}`,
@@ -7590,7 +7982,7 @@ async function handlePlanStops(principal: MbosPrincipal, item: SyncItem): Promis
         userId: principal.user.id,
         title: `${plan.planDate}: ${refused.length} ${refused.length === 1 ? "shop" : "shops"} left out`,
         body: `${allowed.length} of ${allowed.length + refused.length} picked. The rest are not in your book any more — ask your manager if one of them should be.`,
-        kind: "warning",
+        kind: "warn",
         href: "/journey",
         mbosHref: "/journey",
       },
@@ -7968,66 +8360,61 @@ async function handleCustomerCreate(
    * tables was meant to end.
    */
   if (p.fromLeadId) {
+    /*
+     * "CONVERT TO CUSTOMER" IS NOT HOW A LEAD BECOMES ONE, and this branch
+     * used to make it so.
+     *
+     * Older handsets offer the button on every live lead, a Suspect included.
+     * Pressing it promoted the lead here — `kind`, `won`, the converted mark —
+     * with no §28 gate asked at all, wiped a third-party mark somebody had set
+     * (`thirdParty: Boolean(p.thirdParty)` is false whenever the form did not
+     * ask) and moved the sales seat to whoever pressed it, which is a
+     * reassignment outside `customer.reassign`. And it returned the LEAD's id
+     * as `serverId`, which no handset reads: the phone went on holding a
+     * customer under its own id that existed nowhere here, so every order and
+     * visit taken against it was refused as "not on MahekOne".
+     *
+     * A lead becomes a customer when its first order is taken
+     * (`promotesToCustomerAt`), and an order can be taken against a lead. So
+     * the conversion is REFUSED in words that say exactly that — and because
+     * the refusal is a rejection of the create, the order queued behind it is
+     * held as blocked with this sentence beside it, rather than refused later
+     * against a shop that never existed. Nothing is written.
+     */
     const [lead] = await db
-      .select({ id: customers.id, kind: customers.kind })
+      .select({ id: customers.id, kind: customers.kind, name: customers.name })
       .from(customers)
       .where(eq(customers.id, p.fromLeadId))
       .limit(1);
-
-    if (lead && lead.kind === "lead") {
-      await db
-        .update(customers)
-        .set({
-          kind: "customer",
-          name: p.name,
-          contactPerson: p.contactPerson || p.name,
-          phone: p.phone,
-          city,
-          address: p.address ?? null,
-          salesAmId: principal.user.id,
-          thirdParty: Boolean(p.thirdParty),
-          gpsLat: p.gpsLat ?? null,
-          gpsLng: p.gpsLng ?? null,
-          leadStage: "won",
-          leadConvertedAt: new Date(),
-          leadArchived: false,
-          updatedAt: new Date(),
-        })
-        .where(eq(customers.id, lead.id));
-
-      if (distributor) {
-        await db
-          .insert(customerDistributors)
-          .values({
-            id: `cd_${randomUUID().slice(0, 12)}`,
-            customerId: lead.id,
-            distributorCustomerId: distributor.id,
-            isPrimary: true,
-            note: "Opened in the field",
-            createdById: principal.user.id,
-            updatedById: principal.user.id,
-          })
-          .onConflictDoNothing();
-      }
-
-      await writeTimeline(db, {
-        customerId: lead.id,
-        eventType: MBOS_EVENT.leadConverted,
-        sourceRecordId: `${lead.id}:converted`,
-        occurredAt: new Date(),
-        actorUserId: principal.user.id,
-        summary: `Became a customer — opened in the field${distributor ? `, billed through ${distributor.name}` : ""}`,
-      }).catch(() => {});
-
-      await notifyManagers(
-        principal.user.id,
-        "A new account was opened in the field",
-        `${principal.user.name} converted ${p.name} in ${p.city} from a lead. It has no credit limit or terms yet — accounts decide those.`,
-      );
-
-      return { kind: "accepted", value: { serverId: lead.id } };
-    }
+    return {
+      kind: "rejected",
+      value: reject(
+        "validation",
+        lead && lead.kind !== "lead"
+          ? `${lead.name} is already a customer — its first order made it one. Open it from Customers and take the order there; nothing needs converting.`
+          : `${lead?.name ?? p.name} becomes a customer when its first order is taken. Open the lead and take the order there — converting it by hand is no longer how it works.`,
+      ),
+    };
   }
+
+  /* Filed under a STATE, as a lead raised on the handset is (see
+     `placeNewLead`). With none, the shop matched no state-level allocation and
+     fell out of its own creator's book on the very next pull. Never refused
+     here: the order is in his hand and the shop is real. */
+  const [bookState] = await db.execute<{ state: string | null }>(sql`
+    select ${sql.raw(TERRITORY_REGION_SQL)} as state
+      from customers
+     where lower(trim(customers.city)) = ${city.trim().toLowerCase()}
+       and ${sql.raw(TERRITORY_REGION_SQL)} is not null
+     group by 1
+     order by count(*) desc
+     limit 1`);
+  const placement = placeNewLead(
+    await territoriesFor(principal.user.id),
+    { city, state: null, bookState: bookState?.state ?? null },
+    true,
+  );
+  const territoryRegion = placement.ok ? placement.state : (bookState?.state ?? null);
 
   await db.transaction(async (tx) => {
     await tx.insert(customers).values({
@@ -8037,6 +8424,7 @@ async function handleCustomerCreate(
       phone: p.phone,
       city,
       address: p.address ?? null,
+      territoryRegion,
       kind: "customer",
       leadSource: "mbos",
       ownerId: principal.user.id,
@@ -8191,7 +8579,8 @@ async function handleCustomerEdit(
           userId: before.updatedById,
           title: "Your edit was overwritten",
           body: `${principal.user.name} changed ${customer.name} from the field after you did. Both versions are kept — open the conflict log to compare.`,
-          kind: "warning",
+          /* `warn` is the kind the bell colours; `warning` drew as ordinary. */
+          kind: "warn",
           href: `/crm/customers/${customer.id}`,
         },
       ]);
@@ -8257,7 +8646,7 @@ export async function raiseRejectionTask(
       userId: principal.user.id,
       title: "An order was refused",
       body: rejection.message,
-      kind: "warning",
+      kind: "warn",
       href: "/field",
       mbosHref: "/rejections",
     },
@@ -8640,6 +9029,7 @@ export async function storeMbosMedia(
       id: attachments.id,
       status: attachments.status,
       uploadedById: attachments.uploadedById,
+      parentId: attachments.parentId,
     })
     .from(attachments)
     .where(eq(attachments.id, input.clientId))
@@ -8660,6 +9050,27 @@ export async function storeMbosMedia(
     };
   }
   if (existing.length && existing[0].status === "available") {
+    /*
+     * THE BYTES ARE HERE; THE PARENT MAY NOT BE. A file first sent while its
+     * record did not exist yet was filed under the literal `pending`, and a
+     * later upload of the same file naming the REAL record used to return
+     * here without looking — so it stayed under `pending`, which `canRead`
+     * resolves to nothing and refuses to everybody. Re-parent it, under the
+     * same check any first upload gets.
+     */
+    const named = input.parentType ? (MBOS_PARENTS[input.parentType] ?? null) : null;
+    if (
+      named &&
+      input.parentId &&
+      input.parentId !== "pending" &&
+      (existing[0].parentId == null || existing[0].parentId === "pending") &&
+      (await mayParentMedia(principal, named, input.parentId))
+    ) {
+      await db
+        .update(attachments)
+        .set({ parentType: named, parentId: input.parentId, updatedAt: new Date() })
+        .where(eq(attachments.id, existing[0].id));
+    }
     return { ok: true, attachmentId: existing[0].id, deduped: true };
   }
 

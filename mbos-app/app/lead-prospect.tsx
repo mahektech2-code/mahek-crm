@@ -26,6 +26,7 @@ import { searchProducts } from '../src/data/customers';
 import { currentSession } from '../src/data/session';
 import { PROSPECT_CONDITIONS, labelOf, stageLabel } from '../src/engines/funnel';
 import { pretty } from '../src/lib/format';
+import { CUSTOMER_TYPES, gstinRefusal, normaliseGstin } from '../src/engines/leads';
 import { useStore } from '../src/state/store';
 import { Swap } from '../src/components/ui/motion';
 import { skuLines } from '../src/lib/sku-lines';
@@ -99,12 +100,8 @@ const CHECKED_LABELS: Record<string, string> = Object.fromEntries(
  * the whole lead update would be refused on it — so the code is what is
  * stored and the label is only what a salesman reads.
  */
-const CUSTOMER_TYPES: readonly { code: string; label: string; hint: string }[] = [
-  { code: 'retailer', label: 'Shop', hint: 'Sells over a counter' },
-  { code: 'dealer', label: 'Dealer', hint: 'Sells to other shops, in bulk' },
-  { code: 'manufacturer', label: 'Manufacturer', hint: 'Uses it in what they make' },
-  { code: 'distributor', label: 'Distributor', hint: 'Keeps stock, supplies other shops' },
-];
+/* `CUSTOMER_TYPES` is the engine's list — the same one the New lead form
+   draws, so a code never reads as two different words on two screens. */
 
 /**
  * The schema's own ceiling on `fieldChecks`, restated here because this is the
@@ -298,6 +295,10 @@ export default function ProspectForm() {
        the press to us, so this is where the refusal is actually spoken — the
        same shape `collect()` in pay.tsx uses. */
     if (refusal) return notify(refusal, 'warn');
+    /* Checked before anything is saved, so the number he is reading off the
+       certificate is still in front of him when the phone says it is wrong. */
+    const gstWrong = gstinRefusal(gstin);
+    if (gstWrong) return notify(gstWrong, 'warn');
     saving.current = true;
     try {
       /*
@@ -331,7 +332,7 @@ export default function ProspectForm() {
         decisionMaker: decisionMakerNow || null,
         creditDaysWanted: creditDays.trim() ? Number(creditDays.replace(/[^\d]/g, '')) : null,
         application: application.trim() || null,
-        gstin: gstin.trim() || null,
+        gstin: normaliseGstin(gstin) || null,
         prospectReasonCode: reasonCode ?? lead.prospectReasonCode ?? null,
       }, [...backlog, ...rows]);
       if (!r.ok) return notify(r.message, 'warn');
@@ -473,11 +474,11 @@ export default function ProspectForm() {
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
           {CUSTOMER_TYPES.map((t) => (
             <Choice
-              key={t.code}
+              key={t.value}
               label={t.label}
               sub={t.hint}
-              selected={customerType === t.code}
-              onPress={() => setCustomerType(t.code)}
+              selected={customerType === t.value}
+              onPress={() => setCustomerType(t.value)}
               style={{ paddingHorizontal: 14 }}
             />
           ))}
@@ -665,7 +666,7 @@ export default function ProspectForm() {
       ) : (
         <View style={{ marginTop: 16 }}>
           <T style={[{ fontSize: 15, lineHeight: 21, color: C.success }, weight(500)]}>
-            All 8 answered. Save, then move it up on the lead page.
+            All answered. Save, then move it up on the lead page.
           </T>
         </View>
       )}

@@ -3,6 +3,7 @@ import { router } from 'expo-router';
 import * as Notifications from 'expo-notifications';
 
 import { routeForNotification } from '../native/push';
+import { isTabRoot, safeHref } from '../components/shell/routes';
 import { readArrival } from '../data/arrival';
 import { useBoot } from './boot';
 import { useStore } from './store';
@@ -21,7 +22,7 @@ export async function openFrom(data: unknown): Promise<void> {
     useStore.setState({ arrival });
     if (!arrival || arrival.customerId !== d.customerId || arrival.checkedInAt == null) {
       /* Already checked out, or the day moved on — nothing left to close. */
-      router.push('/home');
+      router.dismissTo('/home');
       return;
     }
     useStore.getState().set({ custId: d.customerId });
@@ -32,7 +33,25 @@ export async function openFrom(data: unknown): Promise<void> {
     router.replace('/home?punchOut=1');
     return;
   }
-  router.push(routeForNotification(data));
+  /*
+   * ONLY A SCREEN THIS PHONE HAS. The office has sent its own web route in
+   * `href` — `/crm/performance`, `/field/tasks` — and pushing that opened
+   * expo-router's developer "Unmatched Route" page. Anything that is not one
+   * of this build's screens opens the notification list instead, where the
+   * message itself is.
+   *
+   * And a TAB ROOT is gone back to rather than stacked: the server's
+   * punch-out reminder names `/home?punchOut=1` with no `kind`, and a Journey
+   * push names `/journey` — pushed, each laid a second copy of a tab over the
+   * first. One that carries a question (`?punchOut=1`) REPLACES, as the
+   * `punch-out` kind always has, so the screen is handed the question fresh;
+   * a bare tab is popped back to.
+   */
+  const href = safeHref(routeForNotification(data));
+  if (isTabRoot(href)) {
+    if (href.includes('?')) router.replace(href as never);
+    else router.dismissTo(href as never);
+  } else router.push(href as never);
 }
 
 /**

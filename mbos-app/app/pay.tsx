@@ -8,7 +8,8 @@ import { Icon, type IconName } from '../src/components/ui/Icon';
 import { Presence, animateLayout, animateLayoutFor } from '../src/components/ui/motion';
 import { feedback } from '../src/components/ui/feedback';
 import { color as C, radius, shadow, tabular, weight } from '../src/theme/tokens';
-import { dmy, inr, inrFromPaise, isoDate, plural, pretty } from '../src/lib/format';
+import { dmy, inrFromPaise, isoDate, plural, pretty } from '../src/lib/format';
+import { cleanAmount, paiseFromTyped, typedFromPaise } from '../src/lib/money-input';
 import { cashInHand, collectPayment, type PaymentMode } from '../src/data/payments';
 import {
   customersOwing,
@@ -65,6 +66,9 @@ const MODES: { label: PaymentMode; glyph: IconName }[] = [
 ];
 
 const CHEQUE_PHOTO_LINE = 'Take a photo of the cheque before you give it back.';
+
+/** Modes whose money arrives with a transaction id the bank statement shows. */
+const TRANSFER_MODES: PaymentMode[] = ['UPI', 'Bank transfer'];
 
 /**
  * How many bills are drawn before the rest are folded away.
@@ -192,6 +196,12 @@ export default function PayScreen() {
    * transfer, credited twice, found weeks later by accounts.
    */
   const [busy, setBusy] = React.useState(false);
+  /* The lock itself — `busy` above is only what the button is drawn from.
+     The confirm's "Yes, take it" calls `write` from a closure drawn before
+     `busy` moved, so a double tap there wrote two receipts. */
+  const busyRef = React.useRef(false);
+  /** The UTR on a transfer — what accounts find the money by in the statement. */
+  const [utr, setUtr] = React.useState('');
   /* Null until this customer's bills have been read — "none" is a fact only once they have. */
   const [bills, setBills] = React.useState<CustomerBill[] | null>(null);
   /* He said this money is not against any particular bill — advance, or
@@ -233,8 +243,12 @@ export default function PayScreen() {
     }, [userId, customerId]),
   );
 
-  const amt = parseInt(payAmt || '0', 10);
+  /* PAISE, from the box. It was `parseInt` of a digits-only box, so a bill
+     owing ₹10,450.60 could only be collected as 10,451 — forty paise put "on
+     account" as an advance nobody paid. See `lib/money-input.ts`. */
+  const amtPaise = paiseFromTyped(payAmt);
   const needsCheque = payMode === 'Cheque';
+  const isTransfer = !!payMode && TRANSFER_MODES.includes(payMode as PaymentMode);
 
   /*
    * The ticks that still match a bill on the list.
@@ -294,15 +308,16 @@ export default function PayScreen() {
     setPicked(next);
     setNoBill(false);
     const owed = openBills.filter((x) => next.has(x.id)).reduce((n, x) => n + (x.balancePaise ?? 0), 0);
-    set({ payAmt: owed > 0 ? String(Math.round(owed / 100)) : '' });
+    /* To the paisa. Rounded to the rupee, the difference went on account. */
+    set({ payAmt: typedFromPaise(owed) });
   };
-  const onAccountPaise = Math.max(0, amt * 100 - namedPaise);
+  const onAccountPaise = Math.max(0, amtPaise - namedPaise);
   /* A cheque with no number, no date and no photograph is a promise, not an
      instrument — all three are required before this one saves. The DATE is the
      one nobody was asked for: see `CHEQUE_DATE_LINE`. */
   const payOk =
     !!payMode &&
-    amt > 0 &&
+    amtPaise > 0 &&
     (!needsCheque || (payChq.trim().length > 0 && !!chequeDate && !!chequePhotoId));
 
   const photographCheque = async () => {
@@ -332,19 +347,19 @@ export default function PayScreen() {
     /* `whyDisabled` keeps this button pressable so the handler can refuse in
        words, which means the in-flight lock has to be checked here as well as
        drawn on the button. */
-    if (busy) return notify('Still saving the last payment…', 'info');
+    if (busyRef.current) return notify('Still saving the last payment…', 'info');
     if (!payMode) return notify('Pick how they are paying', 'error');
-    if (!amt) return notify('Enter the amount', 'error');
+    if (!amtPaise) return notify('Enter the amount', 'error');
     if (needsCheque && !payChq.trim()) return notify('Cheque number is needed', 'error');
     if (needsCheque && !chequeDate) return notify(CHEQUE_DATE_LINE, 'error');
     if (needsCheque && !chequePhotoId) return notify(CHEQUE_PHOTO_LINE, 'error');
     const c = current;
-    if (!c) return notify('Pick the customer first', 'error');
+    if (!c) return notify('Pick the shop first', 'error');
 
     askConfirm({
-      title: 'Take ' + inr(amt) + '?',
+      title: 'Take ' + inrFromPaise(amtPaise) + '?',
       body:
-        `${inr(amt)} from ${c.name}, by ${payMode.toLowerCase()}` +
+        `${inrFromPaise(amtPaise)} from ${c.name}, by ${payMode.toLowerCase()}` +
         (needsCheque ? ` — cheque ${payChq.trim()}, dated ${dmy(chequeDate)}` : '') +
         '. The receipt is made when you say yes. You cannot change it later on this phone.',
       confirmLabel: 'Yes, take it',
@@ -360,16 +375,28 @@ export default function PayScreen() {
    * lock — see the state it is declared beside.
    */
   const write = async (mode: PaymentMode, cust: Customer) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
+    const amtNow = amtPaise;
+    /* This visit's money, where it is — named on the receipt from the moment
+       it is taken. See `Arrival.visitId`. */
+    const visitNow = lockedToVisit ? useStore.getState().arrival : null;
+    const visitId = visitNow && visitNow.customerId === cust.id ? visitNow.visitId ?? null : null;
     let receiptRef: string;
+    let paymentId: string;
     try {
-      ({ receiptRef } = await collectPayment({
+      ({ receiptRef, paymentId } = await collectPayment({
         customerId: cust.id,
         customerName: cust.name,
         userId: boot.session?.user.id ?? '',
-        amountPaise: amt * 100,
+        visitId,
+        amountPaise: amtNow,
         mode,
         chequeNumber: needsCheque ? payChq.trim() : null,
+        reference: isTransfer ? utr.trim() || null : null,
+        /* "Not against a particular bill" is what an advance is. */
+        isAdvance: noBill && chosen.length === 0,
         /* The day written ACROSS the cheque, which is the only thing that says
            whether accounts can bank it this morning. `collectPayment` has taken
            it since it was written and no screen ever filled it. */
@@ -379,13 +406,24 @@ export default function PayScreen() {
            first, exactly as it always has. */
         billRefs: chosen.length ? chosen.map((b) => b.id) : undefined,
       }));
-    } finally {
+    } catch {
+      busyRef.current = false;
       setBusy(false);
+      notify('The payment could not be saved on this phone. Nothing was recorded. Try again.', 'error');
+      return;
     }
+    busyRef.current = false;
+    setBusy(false);
 
     /* Only a visit's own payment marks the visit. Money taken for another shop
        from the + button is not something the visit in progress did. */
-    if (lockedToVisit) markVisitDone('payment', mode + ' · ' + inr(amt));
+    if (lockedToVisit) {
+      markVisitDone('payment', mode + ' · ' + inrFromPaise(amtNow));
+      if (visitId) {
+        const linked = useStore.getState().visitLinked;
+        set({ visitLinked: { ...linked, paymentIds: [...(linked.paymentIds ?? []), paymentId] } });
+      }
+    }
 
     /*
      * The receipt is written HERE, on the handset, so it can be shown and sent
@@ -398,7 +436,7 @@ export default function PayScreen() {
      */
     const slip = receiptMessage({
       customerName: cust.name,
-      amountRupees: inr(amt),
+      amountRupees: inrFromPaise(amtNow),
       mode,
       reference: receiptRef,
       confirmed: false,
@@ -413,14 +451,15 @@ export default function PayScreen() {
     setChequeDate('');
     setPickingDate(false);
     setPicked(new Set());
+    setUtr('');
 
     /* Offered, never sent. Nothing goes out on the company's behalf, and the
        payment is not recorded as receipted until a human presses send. */
     askConfirm({
       title: 'Send the receipt?',
       body: phone
-        ? `${inr(amt)} saved for ${cust.name}. WhatsApp will open with the receipt ready. You press send.`
-        : `${inr(amt)} saved for ${cust.name}. This customer has no number, so you can only copy the receipt.`,
+        ? `${inrFromPaise(amtNow)} saved for ${cust.name}. WhatsApp will open with the receipt ready. You press send.`
+        : `${inrFromPaise(amtNow)} saved for ${cust.name}. This shop has no number saved, so you can only copy the receipt.`,
       confirmLabel: phone ? 'Open WhatsApp' : 'Copy the receipt',
       run: async () => {
         const out = phone ? await openWhatsApp(phone, slip) : await copyToClipboard(slip);
@@ -436,7 +475,7 @@ export default function PayScreen() {
       <BackLink label={back.label} onPress={back.go} />
 
       {/* ------------------------------------------------ 1 · the customer */}
-      <StepHead n={1} title="Customer" done={!!current} />
+      <StepHead n={1} title="Shop" done={!!current} />
       {custId ? (
         <Card>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
@@ -468,7 +507,7 @@ export default function PayScreen() {
         <View>
           <Input value={typed} onChangeText={setTyped} placeholder="Search name, phone or city" />
           <T s="caption" style={{ marginTop: 10, marginBottom: 8 }}>
-            {asked ? 'Matching “' + asked + '”' : 'Customers who owe money, most first'}
+            {asked ? 'Matching “' + asked + '”' : 'Shops that owe money, most first'}
           </T>
           <View style={{ gap: 8 }}>
             {(results ?? []).map((r) => (
@@ -500,7 +539,7 @@ export default function PayScreen() {
             ))}
             {results !== null && results.length === 0 ? (
               <T style={{ fontSize: 15, color: C.muted, paddingVertical: 8 }}>
-                {asked ? 'No customer on your book matches that.' : 'Nobody on your book owes anything. Search for the customer by name.'}
+                {asked ? 'No shop on your book matches that.' : 'Nobody on your book owes anything. Search for the shop by name.'}
               </T>
             ) : null}
           </View>
@@ -616,7 +655,7 @@ export default function PayScreen() {
           <T style={{ fontSize: 13, lineHeight: 18, color: C.muted, marginTop: 10 }}>
             {chosen.length === 0
               ? 'Pick the bill they are paying.'
-              : onAccountPaise > 0 && amt > 0
+              : onAccountPaise > 0 && amtPaise > 0
                 ? `${chosen.length} picked · ${inrFromPaise(onAccountPaise)} extra. It is kept as advance on the account.`
                 : `${chosen.length} picked.`}
           </T>
@@ -701,9 +740,9 @@ export default function PayScreen() {
             <SectionLabel style={{ marginBottom: 6 }}>Amount</SectionLabel>
             <Input
               value={payAmt}
-              onChangeText={(v) => set({ payAmt: v.replace(/[^0-9]/g, '') })}
+              onChangeText={(v) => set({ payAmt: cleanAmount(v) })}
               placeholder="42500"
-              keyboardType="number-pad"
+              keyboardType="decimal-pad"
               style={[{ borderRadius: radius.md, fontSize: 18 }, weight(600), tabular]}
             />
             {/* The digits read back as money, as he types them. An ungrouped string
@@ -712,12 +751,31 @@ export default function PayScreen() {
                 alike here. */}
             <T
               style={[
-                { fontSize: 15, lineHeight: 20, marginTop: 8, color: amt > 0 ? C.ink : C.muted },
-                weight(amt > 0 ? 600 : 400),
+                { fontSize: 15, lineHeight: 20, marginTop: 8, color: amtPaise > 0 ? C.ink : C.muted },
+                weight(amtPaise > 0 ? 600 : 400),
                 tabular,
               ]}>
-              {amt > 0 ? inr(amt) : 'Type what they handed over.'}
+              {amtPaise > 0 ? inrFromPaise(amtPaise) : 'Type what they handed over.'}
             </T>
+            {/* THE UTR, asked and never demanded. It is the string accounts
+                match against the bank statement, and a transfer recorded
+                without it is money somebody has to go looking for — but he
+                rarely has it, and refusing the save over it would lose the
+                receipt rather than improve it. */}
+            <Presence show={isTransfer}>
+            {isTransfer ? (
+              <View style={{ marginTop: 16 }}>
+                <SectionLabel style={{ marginBottom: 6 }}>Transaction ID (UTR) · if they have it</SectionLabel>
+                <Input
+                  value={utr}
+                  onChangeText={setUtr}
+                  placeholder="From their payment message"
+                  autoCapitalize="characters"
+                  style={{ borderRadius: radius.md, fontSize: 15 }}
+                />
+              </View>
+            ) : null}
+            </Presence>
             {/* A cheque needs three more answers, and they open under the
                 amount when Cheque is picked — and fold away if he changes his
                 mind — rather than the form jumping by three fields. */}

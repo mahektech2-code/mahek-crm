@@ -45,5 +45,6 @@ export async function POST(request: Request) {
     accessExpiresAt: result.accessExpiresAt,
     refreshToken: result.refreshToken,
     refreshExpiresAt: result.refreshExpiresAt,
+    user: result.user,
   });
 }

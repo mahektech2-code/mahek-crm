@@ -197,7 +197,7 @@ export function HealthPill({
       {band ? (
         <View
           style={{
-            height: large ? 32 : 28,
+            minHeight: large ? 32 : 28,
             paddingHorizontal: 10,
             borderRadius: 14,
             backgroundColor: tone!.bg,
@@ -210,7 +210,10 @@ export function HealthPill({
         </View>
       ) : null}
       {value !== null ? (
-        <Text style={[{ fontSize: large ? 14 : 13, color: scoreFg }, weight(600), tabular]}>
+        /* "Black circle 72" was what a screen reader made of the dot. */
+        <Text
+          accessibilityLabel={'Health score ' + value}
+          style={[{ fontSize: large ? 14 : 13, color: scoreFg }, weight(600), tabular]}>
           {'● ' + value}
         </Text>
       ) : null}
@@ -436,6 +439,16 @@ export function Choice({
 
 /* ----------------------------------------------------------------- input */
 
+/**
+ * The label a `Field` draws, handed to the `Input` inside it.
+ *
+ * The label is a separate Text above the box, so a screen reader landing on the
+ * box heard "edit box" and nothing about what to type. Every form in the app is
+ * built from `Field` around `Input`, so passing it down here names all of them
+ * at once; an `accessibilityLabel` given to the Input itself still wins.
+ */
+const FieldLabel = React.createContext<string | undefined>(undefined);
+
 export function Field({
   label,
   hint,
@@ -450,7 +463,7 @@ export function Field({
   return (
     <View>
       {label ? <SectionLabel style={{ marginBottom: 6 }}>{label}</SectionLabel> : null}
-      {children}
+      <FieldLabel.Provider value={label}>{children}</FieldLabel.Provider>
       {/* The error drops in under the field rather than shoving the form down a
           line in one frame — which is exactly when the thumb is on its way to
           the button below it. */}
@@ -474,8 +487,10 @@ export function Input({
   ...rest
 }: React.ComponentProps<typeof TextInput> & { invalid?: boolean }) {
   const [focused, setFocused] = React.useState(false);
+  const fieldLabel = React.useContext(FieldLabel);
   return (
     <TextInput
+      accessibilityLabel={fieldLabel ?? placeholder}
       value={value}
       onChangeText={onChangeText}
       placeholder={placeholder}
@@ -517,10 +532,13 @@ export function Toggle({
   on,
   onPress,
   size = 'lg',
+  label,
 }: {
   on: boolean;
   onPress?: () => void;
   size?: 'lg' | 'sm';
+  /** What the switch turns on. Without it TalkBack reads "switch, on" and nothing else. */
+  label?: string;
 }) {
   const w = size === 'lg' ? 52 : 48;
   const h = size === 'lg' ? 32 : 28;
@@ -556,7 +574,8 @@ export function Toggle({
           : undefined
       }
       accessibilityRole="switch"
-      accessibilityState={{ checked: on }}
+      accessibilityLabel={label}
+      accessibilityState={{ checked: on, disabled: !onPress }}
       style={{ width: Math.max(w, HIT), height: HIT, justifyContent: 'center' }}>
       <Animated.View
         style={{
@@ -626,7 +645,10 @@ export function Row({
   );
   if (!onPress) return body;
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => (pressed ? { backgroundColor: C.wash } : null)}>
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      style={({ pressed }) => (pressed ? { backgroundColor: C.wash } : null)}>
       {body}
     </Pressable>
   );

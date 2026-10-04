@@ -109,7 +109,7 @@ export type VisitFacts = {
  * him giving them, and a visit without them tells the office nothing. So an
  * unverified save waives the first kind and never the second.
  */
-export const ANSWER_KEYS: ReadonlyArray<VisitCheck['key']> = ['outcome', 'followon', 'note'];
+export const ANSWER_KEYS: readonly VisitCheck['key'][] = ['outcome', 'followon', 'note'];
 
 /** The answers still owed, in the order the check-out sheet asks them. */
 export function unansweredQuestions(checks: VisitCheck[]): VisitCheck[] {
@@ -166,7 +166,9 @@ export function visitChecks(f: VisitFacts): VisitCheck[] {
       line: dwellOk
         ? `In the shop ${mins}m ${secs}s`
         : `Only ${f.dwellSeconds}s so far. A visit needs ${floor}`,
-      why: 'Your manager set two minutes as the least time.',
+      /* The floor is configuration, so the sentence says the configured one —
+         it read "two minutes" whatever the office had set. */
+      why: `The least time in a shop is ${floor}.`,
     },
     /* No photograph check. The shop and owner photos are offered on the form
        and never required: a visit is not refused, or saved unverified, for

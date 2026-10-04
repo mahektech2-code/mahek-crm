@@ -224,7 +224,7 @@ export default function SamplesScreen() {
         <Card style={{ marginTop: 16, paddingVertical: 32 }}>
           <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>No samples out</T>
           <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 4 }}>
-            You can ask for a sample after all 12 lead questions are answered.
+            Ask for one from a shop&apos;s record, or with Request a sample above. A lead gets one once its questions are answered.
           </T>
         </Card>
       ) : shown.length === 0 ? (
@@ -404,6 +404,8 @@ function RequestSheet({
   const [reasonCode, setReasonCode] = React.useState<string | null>(null);
   const [err, setErr] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
+  /* A ref, not the state, guards the write — see `submit`. */
+  const savingRef = React.useRef(false);
 
   React.useEffect(() => {
     let live = true;
@@ -446,13 +448,15 @@ function RequestSheet({
   const submit = async () => {
     /* The sheet closes only once the write returns, so a second tap on a slow
        phone raised a second sample request — and a second approval behind it —
-       for one trial. Only one of the two would ever be chased. */
-    if (saving) return;
+       for one trial. Only one of the two would ever be chased. A ref and not
+       the `saving` state, which is a render behind a fast second tap. */
+    if (savingRef.current) return;
     if (!shop) return refuse('Which shop is the trial for?');
     if (!product) return refuse('Which product is the sample for?');
     if (!(Number(cans) > 0)) return refuse('How many cans?');
     if (!application.trim()) return refuse('What will they use it on? This is needed.');
     if (!reasonCode) return refuse('Say why they want a trial.');
+    savingRef.current = true;
     setSaving(true);
     try {
       await onSubmit({
@@ -463,6 +467,7 @@ function RequestSheet({
         reasonCode,
       });
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };

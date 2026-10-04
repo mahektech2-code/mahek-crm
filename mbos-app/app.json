@@ -8,7 +8,10 @@
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "in.mahek.mbos"
+      "bundleIdentifier": "in.mahek.mbos",
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "MahekOne lets you attach a bill or a receipt you already photographed to an expense claim. It only sees the photo you pick."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -45,8 +48,8 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "MahekOne records where a visit, an order or a payment was taken, and follows your route only while your day is open. It stops when you check out.",
-          "locationAlwaysAndWhenInUsePermission": "MahekOne follows your route while your day is open, including with the screen off — a call between two shops should not leave a gap in the map. It stops the moment you check out.",
+          "locationWhenInUsePermission": "MahekOne records where a visit, an order or a payment was taken, and follows your route only while your day is open. It stops when you punch out.",
+          "locationAlwaysAndWhenInUsePermission": "MahekOne follows your route while your day is open, including with the screen off — a call between two shops should not leave a gap in the map. It stops the moment you punch out.",
           "isIosBackgroundLocationEnabled": true,
           "isAndroidBackgroundLocationEnabled": true,
           "isAndroidForegroundServiceEnabled": true
@@ -57,7 +60,7 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "MahekOne takes a photo of you when you start your day, so the office can see the check-in was yours. It is used for nothing else, and the day starts whether or not you take one.",
+          "cameraPermission": "MahekOne takes a photo of you each time you punch in or out, so the office can see the day was yours, and photographs what a visit needs: the shop, a cheque, a bill, a sample, your vehicle's meter. Nothing is taken without you pressing the button.",
           "recordAudioAndroid": false
         }
       ],
@@ -81,6 +84,7 @@
       "./plugins/withLeanAndroid.js",
       "./plugins/withKeptNotificationSounds.js",
       "./plugins/withCredentialBackupRules.js",
+      "./plugins/withNoForceDark.js",
       "@maplibre/maplibre-react-native",
       "expo-status-bar"
     ],

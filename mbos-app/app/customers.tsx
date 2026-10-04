@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, Pressable, TextInput, FlatList, RefreshControl, ScrollView, Platform, type ListRenderItemInfo } from 'react-native';
 import { isOnline } from '../src/sync/engine';
-import { router, useFocusEffect } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { color as C, radius, type, weight } from '../src/theme/tokens';
 import { Icon } from '../src/components/ui/Icon';
 import { Badge, Card, HealthPill, PrimaryButton, SecondaryButton } from '../src/components/ui/primitives';
@@ -37,7 +37,7 @@ import {
 import { ShopMap } from '../src/components/ui/shop-map';
 import { territoryState } from '../src/sync/pull';
 import type { TerritoryState } from '../src/sync/api';
-import { whereNow } from '../src/native/where';
+import { measureFrom } from '../src/native/where';
 import { LeadsBook } from '../src/components/leads/leads-book';
 import { countLeads, openLeadCount } from '../src/data/leads';
 import { Appear, DUR, Stagger, animateLayoutFor } from '../src/components/ui/motion';
@@ -132,7 +132,7 @@ function dueWords(x: Customer, today: string): { text: string; tone: 'late' | 'd
   if (state) {
     const since = daysBetween(x.lastOrderDate, today) ?? 0;
     return {
-      text: `${state === 'overdue' ? 'Reorder late' : 'Reorder due'} · ${since}d/${x.cycleDays}d`,
+      text: `${state === 'overdue' ? 'Reorder late' : 'Reorder due'} · ${since} days, buys every ${x.cycleDays}`,
       tone: state === 'overdue' ? 'late' : 'due',
     };
   }
@@ -316,7 +316,19 @@ export default function Customers() {
     };
   }, []);
 
-  const [today] = React.useState(() => isoDate(new Date()));
+  /* RE-READ ON EVERY RETURN TO THE TAB. A tab stays mounted, so a date
+     frozen at first render went on calling yesterday "today" after midnight —
+     Reorder due, Visit due and Visited today all a day out — and the origin
+     for "Nearest first" stayed wherever he stood when he first opened it. */
+  const [today, setToday] = React.useState(() => isoDate(new Date()));
+  const [focusTick, setFocusTick] = React.useState(0);
+  useFocusEffect(
+    React.useCallback(() => {
+      const now = isoDate(new Date());
+      setToday((t) => (t === now ? t : now));
+      setFocusTick((n) => n + 1);
+    }, []),
+  );
 
   /* ------------------------------------- a shop that is not on the book yet
    *
@@ -372,6 +384,13 @@ export default function Customers() {
   const [leadsMatching, setLeadsMatching] = React.useState(0);
 
   const [filter, setFilter] = React.useState<CustomerFilter>('all');
+  /* A figure on Home that opens this list opens it ON the rows it counted —
+     "Follow-ups 4" landing on the whole book is a number nobody can trace. */
+  const params = useLocalSearchParams<{ filter?: string }>();
+  React.useEffect(() => {
+    const wanted = CUSTOMER_FILTERS.find((f) => f.value === params.filter);
+    if (wanted) setFilter(wanted.value);
+  }, [params.filter]);
   const [asMap, setAsMap] = React.useState(false);
   const [rowMore, setRowMore] = React.useState<Customer | null>(null);
 
@@ -387,7 +406,7 @@ export default function Customers() {
   const [cities, setCities] = React.useState<{ city: string; lat: number; lng: number; n: number }[]>([]);
   const [pickingCity, setPickingCity] = React.useState(false);
   const [cityQ, setCityQ] = React.useState('');
-  const [noFix, setNoFix] = React.useState(false);
+  const [noFix, setNoFix] = React.useState<'denied' | 'off' | 'unavailable' | null>(null);
 
   /*
    * WHAT HE HAS TYPED, AND WHAT HAS BEEN ASKED, are two different things. Every
@@ -410,17 +429,16 @@ export default function Customers() {
     let live = true;
     setOriginReady(false);
     if (sortMode === 'me') {
-      void whereNow()
+      void measureFrom()
         .then((w) => {
           if (!live) return;
-          const has = typeof w?.lat === 'number' && typeof w?.lng === 'number';
-          setOrigin(has ? { lat: w!.lat!, lng: w!.lng! } : null);
-          setNoFix(!has);
+          setOrigin('reason' in w ? null : { lat: w.lat, lng: w.lng });
+          setNoFix('reason' in w ? w.reason : null);
         })
         .catch(() => {
           if (!live) return;
           setOrigin(null);
-          setNoFix(true);
+          setNoFix('unavailable');
         })
         .finally(() => {
           if (live) setOriginReady(true);
@@ -435,12 +453,13 @@ export default function Customers() {
     } else {
       setOrigin(null);
     }
-    setNoFix(false);
+    setNoFix(null);
     setOriginReady(true);
     return () => {
       live = false;
     };
-  }, [sortMode, town, cities]);
+    /* `focusTick`: a walk between two visits to this tab is a new origin. */
+  }, [sortMode, town, cities, focusTick]);
 
   const sort = sqlSort(sortMode);
   const pageArgs = React.useMemo(
@@ -859,7 +878,11 @@ export default function Customers() {
               ) : null}
               {noFix && sortMode === 'me' ? (
                 <Text style={[type.caption, { marginTop: -6, color: C.muted }]}>
-                  No GPS yet, so the list is A–Z. Punch in, or pick a town to sort from.
+                  {noFix === 'denied'
+                    ? 'Location is not allowed for Mahek MBOS, so the list is A–Z. Allow it in phone settings, or pick a town.'
+                    : noFix === 'off'
+                      ? 'Location is switched off on this phone, so the list is A–Z. Turn it on, or pick a town.'
+                      : 'No GPS yet, so the list is A–Z. Step outside for a minute, or pick a town to sort from.'}
                 </Text>
               ) : null}
             </View>

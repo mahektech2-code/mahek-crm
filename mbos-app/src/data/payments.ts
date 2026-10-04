@@ -20,23 +20,14 @@ import { isoDate } from '../lib/format';
 export type PaymentMode = 'Cash' | 'Cheque' | 'UPI' | 'Bank transfer';
 
 /**
- * The cheque's bank and date, and whether this was money in advance, said in
- * the one sentence the receipt has room for.
- *
- * MahekOne's receipt carries an amount, a mode, a reference and a note. It has
- * no column for the bank a cheque is drawn on or the date written across it,
- * and inventing one from this end is not this app's decision to take — so they
- * go where a person will read them rather than nowhere at all. A cheque dated
- * next month is the difference between money accounts can bank this morning
- * and money they cannot.
+ * Whether this was money in advance, said in the one sentence the receipt has
+ * room for. The cheque's DATE used to ride here too, as prose — so the
+ * receipt's `instrument_date` stayed empty and a post-dated cheque reached the
+ * office looking bankable today. It has its own field now; the note still
+ * carries it, because a person reading the receipt reads the note.
  */
-function collectionNote(args: {
-  bank?: string | null;
-  chequeDate?: string | null;
-  isAdvance?: boolean;
-}): string | undefined {
+function collectionNote(args: { chequeDate?: string | null; isAdvance?: boolean }): string | undefined {
   const parts: string[] = [];
-  if (args.bank) parts.push(args.bank);
   if (args.chequeDate) parts.push(`dated ${args.chequeDate}`);
   if (args.isAdvance) parts.push('taken in advance');
   return parts.length ? parts.join(' · ') : undefined;
@@ -50,7 +41,9 @@ export async function collectPayment(args: {
   amountPaise: number;
   mode: PaymentMode;
   chequeNumber?: string | null;
-  bank?: string | null;
+  /** The UTR or transaction id, for a transfer. What accounts match the bank
+      statement against — asked, never demanded. */
+  reference?: string | null;
   chequeDate?: string | null;
   chequePhotoId?: string | null;
   isAdvance?: boolean;
@@ -76,14 +69,17 @@ export async function collectPayment(args: {
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'queued')`,
       [
         base.id, args.customerId, args.userId, args.visitId ?? null, args.amountPaise, args.mode,
-        args.chequeNumber ?? null, args.bank ?? null, args.chequeDate ?? null, args.chequePhotoId ?? null,
+        args.chequeNumber ?? args.reference ?? null, null, args.chequeDate ?? null, args.chequePhotoId ?? null,
         Date.now(), receiptRef, args.isAdvance ? 1 : 0, JSON.stringify(args.billRefs ?? []),
         depositSlaDueAt, base.clientCreatedAt, base.deviceId,
       ],
     );
 
+    /* The photograph was taken before the receipt existed. Claimed while it
+       is still in the queue; one that already went up under `pending` is the
+       office's to bind, from `chequePhotoId` on the payload below. */
     if (args.chequePhotoId) {
-      await run('UPDATE media_queue SET parentId = ? WHERE id = ?', [base.id, args.chequePhotoId]);
+      await run(`UPDATE media_queue SET parentId = ? WHERE id = ? AND state <> 'synced'`, [base.id, args.chequePhotoId]);
     }
 
     await insertLocal('timeline_events', {
@@ -116,8 +112,12 @@ export async function collectPayment(args: {
       mode: args.mode,
       /* What identifies this money to whoever holds the statement: the cheque
          number where there is one, the transfer reference otherwise. */
-      reference: args.chequeNumber || undefined,
+      reference: args.chequeNumber?.trim() || args.reference?.trim() || undefined,
       note: collectionNote(args),
+      /* The date written across a cheque, in its own field — it is what
+         decides whether accounts can bank it this morning. */
+      instrumentDate: args.chequeDate ?? undefined,
+      chequePhotoId: args.chequePhotoId ?? undefined,
       billIds: args.billRefs ?? undefined,
       receivedAt: isoDate(new Date()),
       visitId: args.visitId ?? undefined,
@@ -125,7 +125,7 @@ export async function collectPayment(args: {
       deviceId: base.deviceId,
       clientCreatedAt: base.clientCreatedAt,
     },
-    dependsOn: args.visitId ? [args.visitId] : [],
+    /* Not behind the visit — see the same note in `saveOrder`. */
   });
 
   if (notifyThreshold > 0 && args.amountPaise >= notifyThreshold) {
@@ -171,6 +171,7 @@ export async function cashInHand(userId: string, now = Date.now()) {
             p.depositSlaDueAt, p.depositedAt, p.mode
        FROM payments p LEFT JOIN customers c ON c.id = p.customerId
       WHERE p.userId = ? AND p.deposited = 0 AND p.bounced = 0
+        AND COALESCE(p.syncState, '') NOT IN ('rejected','blocked')
       ORDER BY p.collectedAt ASC`,
     [userId],
   );
@@ -197,24 +198,38 @@ export async function cashInHand(userId: string, now = Date.now()) {
  * eventually has to reconcile by memory.
  */
 export async function markDeposited(paymentIds: string[], proofMediaId: string | null): Promise<void> {
-  for (const id of paymentIds) {
-    await run('UPDATE payments SET deposited = 1, depositedAt = ?, depositProofId = ? WHERE id = ?', [Date.now(), proofMediaId, id]);
-    await enqueue({
-      entityType: 'payment',
-      entityId: id,
-      op: 'update',
-      payload: { id, deposited: true, depositedAt: Date.now(), depositProofId: proofMediaId },
-    });
-  }
+  /*
+   * ONE SLIP, ONE TRANSACTION. A day's cash goes into the bank on one slip,
+   * and this is the write that says so for all of it — so either every row
+   * reads banked and is queued, or none does. A loop of separate writes left
+   * half a deposit recorded when the app was reaped part-way through.
+   */
+  const at = Date.now();
+  await tx(async () => {
+    for (const id of paymentIds) {
+      await run('UPDATE payments SET deposited = 1, depositedAt = ?, depositProofId = ? WHERE id = ?', [at, proofMediaId, id]);
+      await enqueue({
+        entityType: 'payment',
+        entityId: id,
+        op: 'update',
+        payload: { id, deposited: true, depositedAt: at, depositProofId: proofMediaId },
+      });
+    }
+  });
 }
 
 /**
  * A bounced cheque, in one transaction.
  *
- * It reverses the collection's effect, reopens what it was against, flags the
- * record, tells both people involved and creates the follow-up — because the
- * customer now owes money he believes he has already paid, and somebody has to
- * ring him about it.
+ * It flags the record, tells the office and creates the follow-up — because
+ * the customer believes he has paid, and somebody has to ring him about it.
+ *
+ * IT DOES NOT TOUCH WHAT THEY OWE. A receipt collected in the field never
+ * reduced outstanding in the first place: it is `reported` until accounts find
+ * the money in the bank, and outstanding is the office's figure. Adding the
+ * amount back here doubled the customer's debt on this phone until the next
+ * pull — and where accounts HAD confirmed the cheque, reversing it is their
+ * decision, taken on their screen, not a sum done on a handset.
  */
 export async function markBounced(paymentId: string, reason?: string): Promise<void> {
   const payment = await one<{
@@ -226,12 +241,10 @@ export async function markBounced(paymentId: string, reason?: string): Promise<v
   if (!payment) return;
 
   /*
-   * Already bounced, so there is nothing to do and doing it anyway would be
-   * wrong rather than merely wasteful: this function ADDS the amount back to
-   * the customer's outstanding, so a second pass bills them twice for one
-   * bounce. A double tap on a phone with a slow write is the ordinary way that
-   * happens, and the second task and the second notification would arrive to
-   * confirm it. Read-then-act, in one place, before anything is written.
+   * Already bounced, so there is nothing to do: a second pass would raise a
+   * second task to ring the customer and a second notification about one
+   * cheque. A double tap on a phone with a slow write is the ordinary way that
+   * happens. Read-then-act, in one place, before anything is written.
    */
   if (payment.bounced) return;
 
@@ -240,7 +253,6 @@ export async function markBounced(paymentId: string, reason?: string): Promise<v
 
   await tx(async () => {
     await run('UPDATE payments SET bounced = 1, bouncedAt = ? WHERE id = ?', [Date.now(), paymentId]);
-    await run('UPDATE customers SET outstandingPaise = outstandingPaise + ? WHERE id = ?', [payment.amountPaise, payment.customerId]);
     await insertLocal('timeline_events', {
       id: newId('tl'),
       customerId: payment.customerId,
@@ -279,7 +291,7 @@ export async function markBounced(paymentId: string, reason?: string): Promise<v
 
   await notify({
     title: 'Cheque bounced',
-    body: `${name} · the amount is pending on their account again.`,
+    body: `${name} · the office is told. If accounts had already counted it, they will take it back off.`,
     kind: 'danger',
     priority: 1,
   });
@@ -311,6 +323,8 @@ export type CollectedPayment = {
   bounced: number;
   bouncedAt: number | null;
   syncState: string;
+  /** Why the office would not take it, where it would not. */
+  syncMessage: string | null;
 };
 
 /**
@@ -329,7 +343,7 @@ export async function listPayments(customerId?: string): Promise<CollectedPaymen
   const select = `SELECT p.id, p.customerId, c.name AS customerName, p.amountPaise, p.mode,
                          p.chequeNumber, p.chequeDate, p.collectedAt, p.localReceiptRef,
                          p.deposited, p.depositedAt, p.depositSlaDueAt,
-                         p.bounced, p.bouncedAt, p.syncState
+                         p.bounced, p.bouncedAt, p.syncState, p.syncMessage
                     FROM payments p LEFT JOIN customers c ON c.id = p.customerId`;
   return customerId
     ? all<CollectedPayment>(

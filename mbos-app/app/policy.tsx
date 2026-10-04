@@ -42,11 +42,15 @@ export default function PolicyScreen() {
   );
 
   return (
-    <AppFrame title="MBOS" activeTab={null} contentStyle={{ padding: 16, paddingBottom: 32 }}>
+    <AppFrame title="Expense policy" activeTab={null} onBack={back.go} contentStyle={{ padding: 16, paddingBottom: 32 }}>
       <BackLink label={back.label} onPress={back.go} />
       <T s="h1">What you are allowed</T>
 
-      {policy === undefined ? null : policy === null ? (
+      {policy === undefined ? (
+        <Card style={{ marginTop: 14, paddingVertical: 28 }}>
+          <T s="small" style={{ color: C.muted, textAlign: 'center' }}>Loading…</T>
+        </Card>
+      ) : policy === null ? (
         <Card style={{ marginTop: 14, paddingVertical: 28 }}>
           <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>
             No policy on this phone yet

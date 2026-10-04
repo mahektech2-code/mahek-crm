@@ -250,17 +250,6 @@ export async function prepareMicrophone(): Promise<
   return { ok: true };
 }
 
-/**
- * The recorder hook the visit screen uses.
- *
- * `expo-audio` owns the recorder object; this only wraps the queueing, so
- * stopping a recording writes it to the media queue and hands back an id the
- * visit can hold on to.
- */
-export function useVoiceRecorder() {
-  return useAudioRecorder(DICTATION);
-}
-
 export async function queueRecording(uri: string, parentType: string, parentId: string): Promise<string> {
   return queueAudio({ uri, parentType, parentId });
 }

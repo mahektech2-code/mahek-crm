@@ -1,4 +1,5 @@
 import React from 'react';
+import { holdReload } from '../native/reload-guard';
 
 /**
  * Whether the app can draw its OWN banner for a push that arrives while it is
@@ -66,8 +67,12 @@ export function useModalOpen(open: boolean): void {
   React.useEffect(() => {
     if (!open) return;
     modals += 1;
+    /* The same window is also what an update must not reload under — a sheet
+       half filled in, a camera mid-shot. See `reload-guard.ts`. */
+    const release = holdReload();
     return () => {
       modals = Math.max(0, modals - 1);
+      release();
     };
   }, [open]);
 }

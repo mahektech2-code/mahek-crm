@@ -13,7 +13,9 @@ import { trackerNotice, type StartFailure } from '../src/engines/tracker-notice'
 import type { BatteryExemption } from '../src/engines/phone-readiness';
 import { color as C, radius, weight, type BadgeTone } from '../src/theme/tokens';
 import { isoDate, plural, pretty } from '../src/lib/format';
-import { conflictCount, listQueue, queueCounts, queueDepth, retryItem, type QueueItem } from '../src/sync/queue';
+import { listQueue, queueCounts, queueDepth, retryItem, type QueueItem } from '../src/sync/queue';
+import { describePayload, entityLabel } from '../src/sync/labels';
+import { pullProblems, type PullProblems } from '../src/sync/pull';
 import { mediaCounts, retryFailedMedia } from '../src/sync/media';
 import { syncNow } from '../src/sync/engine';
 import { useStore } from '../src/state/store';
@@ -79,26 +81,28 @@ function stateTone(s: string): BadgeTone {
   return s === 'failed' || s === 'rejected' ? 'danger' : s === 'syncing' ? 'info' : 'amber';
 }
 
-/** What a queued record is, in the words the salesman would use for it. */
-const KIND: Record<string, string> = {
-  visit: 'Visit',
-  order: 'Order',
-  payment: 'Payment',
-  attendance: 'Attendance',
-  task: 'Task',
-  sample: 'Sample',
-  complaint: 'Complaint',
-  expense: 'Expense',
-  leave: 'Leave',
-  lead: 'Lead',
-  approval: 'Approval',
-  order_change_request: 'Order change request',
-  competitor: 'Other brand note',
-};
-
 function describe(item: QueueItem): string {
-  const p = JSON.parse(item.payload) as { customerName?: string; title?: string; reason?: string };
-  return p.customerName ?? p.title ?? p.reason ?? item.entityId.slice(-6).toUpperCase();
+  return describePayload(item.payload, item.entityId);
+}
+
+/**
+ * WHAT A HELD ROW IS WAITING ON. "Try again" on it did nothing — the record it
+ * depends on is still refused, so the next pass blocked it again at once. It
+ * names that record instead, which is the one he can actually do something
+ * about.
+ */
+function heldBehind(q: QueueItem, all: QueueItem[]): string | null {
+  if (q.state !== 'blocked') return null;
+  let deps: string[] = [];
+  try {
+    deps = JSON.parse(q.dependsOn) as string[];
+  } catch {
+    return null;
+  }
+  const parent = all.find((r) => deps.includes(r.entityId) && r.state !== 'blocked');
+  return parent
+    ? `Waiting on the ${entityLabel(parent.entityType).toLowerCase()} for ${describe(parent)}. Sort that one out first.`
+    : null;
 }
 
 /**
@@ -146,7 +150,8 @@ export default function SyncScreen() {
      so being told is the only way a handset ever finds out — see
      `engines/app-update.ts`. */
   const [update, setUpdate] = React.useState<UpdateVerdict>({ kind: 'current' });
-  const [conflicts, setConflicts] = React.useState(0);
+  /* What the last pull could not save on this phone. See `applyPull`. */
+  const [problems, setProblems] = React.useState<PullProblems | null>(null);
   /* A pass is in flight. The button used to stay live throughout, so he could
      fire it six times and be told six times that everything was sending. */
   const [sending, setSending] = React.useState(false);
@@ -165,7 +170,7 @@ export default function SyncScreen() {
       listQueue(),
       queueCounts(),
       mediaCounts(),
-      conflictCount(),
+      pullProblems().catch(() => null),
       queueDepth(),
       trackerStalledAt(),
       /* Read fresh on every focus rather than once: the whole shape of this
@@ -182,7 +187,7 @@ export default function SyncScreen() {
       setRows(q);
       setCounts(c);
       setMedia(m);
-      setConflicts(k);
+      setProblems(k);
       setDepth(d);
       setStalled(s);
       setExemption(x);
@@ -225,19 +230,40 @@ export default function SyncScreen() {
   const sendNow = React.useCallback(async () => {
     setSending(true);
     try {
-      const outcome = await syncNow({ manual: true });
+      const outcome = await syncNow({ manual: true }).catch((e: unknown) => ({
+        ran: false,
+        pushed: 0,
+        accepted: 0,
+        rejected: 0,
+        failed: 0,
+        pulled: 0,
+        reason: e instanceof Error ? e.message : 'Could not send now. Try again in a minute.',
+      }));
       load();
       notify(
         !outcome.ran
           ? (outcome.reason ?? 'Could not send now. Try again in a minute.')
-          : outcome.pushed === 0
-            ? 'Nothing was waiting to send'
+          : outcome.reason && outcome.accepted === 0
+            ? /* A pass that ran and failed — signed out, no answer, a book that
+                 would not save — says so. It used to read "Nothing was waiting
+                 to send" whenever nothing had been pushed, whatever went wrong. */
+              outcome.reason
+            : outcome.pushed === 0
+              ? 'Nothing was waiting to send. Your book is up to date.'
             : outcome.accepted > 0
-              ? plural(outcome.accepted, 'entry', 'entries') + ' sent to office'
+              ? plural(outcome.accepted, 'entry', 'entries') + ' sent to the office'
               : outcome.rejected > 0
                 ? plural(outcome.rejected, 'entry', 'entries') + ' not accepted by the office'
                 : (outcome.reason ?? 'Nothing was sent. Your work is still safe on this phone.'),
-        !outcome.ran ? 'error' : outcome.pushed === 0 ? 'info' : outcome.accepted > 0 ? 'success' : outcome.rejected > 0 ? 'error' : 'warn',
+        !outcome.ran || (outcome.reason && outcome.accepted === 0)
+          ? 'error'
+          : outcome.pushed === 0
+            ? 'info'
+            : outcome.accepted > 0
+              ? 'success'
+              : outcome.rejected > 0
+                ? 'error'
+                : 'warn',
       );
     } finally {
       setSending(false);
@@ -268,7 +294,7 @@ export default function SyncScreen() {
         <Pulse active={sending} style={{ alignSelf: 'flex-start' }}>
           <Pop trigger={waiting} from={0.9}>
             <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>
-              {waiting ? plural(waiting, 'thing') + ' waiting to send' : 'All sent to office'}
+              {waiting ? plural(waiting, 'thing') + ' waiting to send' : 'All sent to the office'}
             </T>
           </Pop>
         </Pulse>
@@ -382,18 +408,18 @@ export default function SyncScreen() {
               borderTopColor: C.wash,
             }}>
             <View style={{ flex: 1, minWidth: 0 }}>
-              <T style={{ fontSize: 15, color: C.ink }}>{KIND[q.entityType] ?? q.entityType}</T>
+              <T style={{ fontSize: 15, color: C.ink }}>{entityLabel(q.entityType)}</T>
               <T s="caption">{describe(q) + ' · ' + when(q.createdAt, today)}</T>
               {/* Coloured to match the badge beside it — an item still
                   retrying is amber, not red. */}
-              {whyStuck(q) ? (
+              {heldBehind(q, rows) ?? whyStuck(q) ? (
                 <T s="caption" style={{ color: stateTone(q.state) === 'danger' ? C.danger : C.warnInk, marginTop: 2 }}>
-                  {whyStuck(q)}
+                  {heldBehind(q, rows) ?? whyStuck(q)}
                 </T>
               ) : null}
             </View>
             <Badge tone={stateTone(q.state)}>{stateLabel(q)}</Badge>
-            {q.state === 'failed' || q.state === 'blocked' ? (
+            {q.state === 'failed' || (q.state === 'blocked' && !heldBehind(q, rows)) ? (
               <Pressable
                 onPress={async () => {
                   await retryItem(q.id);
@@ -505,7 +531,10 @@ export default function SyncScreen() {
         </Pressable>
       ) : null}
 
-      {conflicts > 0 ? (
+      {/* WHAT THE OFFICE SENT AND THIS PHONE COULD NOT SAVE. One bad row
+          used to stop every update; now it costs that row, and this is where
+          that is said rather than the book quietly missing something. */}
+      {problems ? (
         <View
           style={{
             borderWidth: 1,
@@ -515,15 +544,11 @@ export default function SyncScreen() {
             padding: 16,
             marginTop: 12,
           }}>
-          <T
-            style={[
-              { fontSize: 12, lineHeight: 16, letterSpacing: 0.48, textTransform: 'uppercase', color: C.warnInk },
-              weight(500),
-            ]}>
-            Someone changed your entry
+          <T style={[{ fontSize: 15, color: C.warnInk }, weight(600)]}>
+            {plural(problems.count, 'update', 'updates') + ' from the office could not be saved'}
           </T>
           <T s="small" style={{ color: C.ink, marginTop: 6 }}>
-            The office team made a newer change to your entry. Your manager can see both.
+            Everything else came through. Tell your manager if this stays here after the next send.
           </T>
         </View>
       ) : null}

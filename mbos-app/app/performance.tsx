@@ -142,7 +142,7 @@ export default function PerformanceScreen() {
   const collectedBp = current ? collectionShareBp(current) : null;
 
   return (
-    <AppFrame title="MBOS" activeTab={null} contentStyle={{ padding: 16, paddingBottom: 24 }}>
+    <AppFrame title="Performance" activeTab={null} onBack={back.go} contentStyle={{ padding: 16, paddingBottom: 24 }}>
       <BackLink label={back.label} onPress={back.go} />
       <T s="h1">Performance</T>
 
@@ -623,7 +623,7 @@ function RangeSheet({
           iso > today
             ? 'There are no figures for days that have not happened.'
             : end === 'to' && from && iso < from
-              ? 'The end comes after the start.'
+              ? 'Pick an end date after the start.'
               : null
         }
         onPick={(iso) => {

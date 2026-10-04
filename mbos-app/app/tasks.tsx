@@ -3,9 +3,14 @@ import { View, Pressable } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Card, Choice, DashedButton, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../src/components/ui/primitives';
-import { BottomSheet } from '../src/components/ui/overlays';
+import { BottomSheet, Calendar } from '../src/components/ui/overlays';
+import { VoiceField } from '../src/components/ui/dictate';
+import { takePhoto } from '../src/native/capture';
+import { discardQueuedMedia } from '../src/sync/media';
+import { getConfig } from '../src/data/config';
+import { useBoot } from '../src/state/boot';
 import { color as C, radius, shadow, weight } from '../src/theme/tokens';
-import { bucketOf, completeTask, createTask, listOpenTasks, snoozeTask, type Task } from '../src/data/tasks';
+import { bucketOf, completeTask, createTask, listOpenTasks, snoozeTarget, snoozeTask, type Task } from '../src/data/tasks';
 import { customerNames, daysSince, listCustomersPage, type Customer } from '../src/data/customers';
 import { dmy, isoDate, plural } from '../src/lib/format';
 import { useStore } from '../src/state/store';
@@ -48,7 +53,6 @@ export default function TasksScreen() {
   const set = useStore((st) => st.set);
   const back = useCameFrom('more');
   const notify = useStore((s) => s.notify);
-  const askConfirm = useStore((s) => s.askConfirm);
 
   const [tasks, setTasks] = React.useState<Task[]>([]);
   /* THE PICKER IS A PAGE, NOT THE BOOK. This rendered a Choice per customer
@@ -76,6 +80,29 @@ export default function TasksScreen() {
   const [when, setWhen] = React.useState<(typeof WHENS)[number]>('Today');
   const [pri, setPri] = React.useState<(typeof PRIS)[number]>('Normal');
   const [titleErr, setTitleErr] = React.useState(false);
+
+  /* DONE ASKS HOW. See `completeTask` — the office refuses a closed task with
+     nothing said about it, so the note is asked here, at the one moment the
+     salesman still remembers what he did. */
+  const boot = useBoot();
+  const me = boot.session?.user.id ?? null;
+  const [closing, setClosing] = React.useState<Task | null>(null);
+  const [doneNote, setDoneNote] = React.useState('');
+  const [donePhoto, setDonePhoto] = React.useState<string | null>(null);
+  const [doneErr, setDoneErr] = React.useState<string | null>(null);
+  const [doneBusy, setDoneBusy] = React.useState(false);
+  const doneLock = React.useRef(false);
+  const [noteRequired, setNoteRequired] = React.useState(true);
+  React.useEffect(() => {
+    void getConfig<boolean>('mbos.tasks.requireCompletionNote', true)
+      .then((v) => setNoteRequired(v !== false))
+      .catch(() => setNoteRequired(true));
+  }, []);
+
+  const [snoozing, setSnoozing] = React.useState<Task | null>(null);
+  const [snoozeTo, setSnoozeTo] = React.useState('');
+  const [snoozeWhy, setSnoozeWhy] = React.useState('');
+  const [snoozeErr, setSnoozeErr] = React.useState<string | null>(null);
 
   /* `animate` is asked for by the two acts that move a row — done and snooze —
      and not by focus: a screen opening on its list is not that list changing. */
@@ -131,38 +158,82 @@ export default function TasksScreen() {
     notify('Task added · ' + t);
   };
 
-  /* The row leaves in the same tick as the tap or the swipe rather than when
-     the re-read answers, and the list closes the gap instead of jumping. It is
-     a local SQLite write, so taking the row off first delays nothing; if the
-     write throws, the re-read puts it back. The toast carries the buzz —
-     nothing here adds a second one. */
-  const markDone = async (t: Task) => {
-    animateLayoutFor(tasks.length);
-    setTasks((cur) => cur.filter((x) => x.id !== t.id));
+  const openDone = (t: Task) => {
+    setClosing(t);
+    setDoneNote('');
+    setDonePhoto(null);
+    setDoneErr(null);
+  };
+
+  const closeDone = () => {
+    /* A photograph taken for a task that was then not closed belongs to
+       nothing — drop it rather than let it upload as an orphan. */
+    if (donePhoto) void discardQueuedMedia(donePhoto).catch(() => undefined);
+    setClosing(null);
+  };
+
+  const addDonePhoto = async () => {
+    if (!closing) return;
+    const shot = await takePhoto({ parentType: 'task', parentId: closing.id, kind: 'task_proof' });
+    if (!shot.ok) {
+      if (shot.reason !== 'cancelled') setDoneErr(shot.reason);
+      return;
+    }
+    if (donePhoto) void discardQueuedMedia(donePhoto).catch(() => undefined);
+    setDonePhoto(shot.mediaId);
+    setDoneErr(null);
+  };
+
+  /* The row leaves once the write has landed, not before: a local SQLite
+     write is instant, and a row that vanished on a write that then threw
+     would come back with nothing on the screen saying why. */
+  const markDone = async () => {
+    const t = closing;
+    if (!t || doneLock.current) return;
+    if (noteRequired && !doneNote.trim()) {
+      setDoneErr('Say what you did. Your manager reads this.');
+      return;
+    }
+    doneLock.current = true;
+    setDoneBusy(true);
     try {
-      await completeTask(t.id, null);
+      await completeTask(t.id, { note: doneNote, photoId: donePhoto });
+      animateLayoutFor(tasks.length);
+      setClosing(null);
       notify('Done · ' + t.title);
+    } catch (e) {
+      setDoneErr(e instanceof Error && e.message ? e.message : 'Could not save. Try again.');
     } finally {
+      doneLock.current = false;
+      setDoneBusy(false);
       load();
     }
   };
 
-  const snooze = (t: Task) =>
-    askConfirm({
-      title: 'Move this to another day?',
-      body: t.title + ' · ' + nameOf(t.customerId),
-      reasonLabel: 'Why · needed',
-      confirmLabel: 'Move it',
-      run: (reason) => {
-        /* Both halves are kept: the new day and the reason for it, appended
-           rather than replaced, because three snoozes is the story. */
-        const to = isoDate(new Date(Date.now() + 86_400_000));
-        void snoozeTask(t.id, to, reason).then(() => {
-          load(true);
-          notify('Moved to tomorrow · ' + reason);
-        });
-      },
-    });
+  const openSnooze = (t: Task) => {
+    setSnoozing(t);
+    setSnoozeTo(snoozeTarget(t.dueDate, today, 1));
+    setSnoozeWhy('');
+    setSnoozeErr(null);
+  };
+
+  const saveSnooze = async () => {
+    const t = snoozing;
+    if (!t) return;
+    const why = snoozeWhy.trim();
+    if (!why) return setSnoozeErr('Say why it is moving. Three moves is a story your manager needs.');
+    if (!snoozeTo) return setSnoozeErr('Pick the day it moves to.');
+    try {
+      /* Both halves are kept: the new day and the reason for it, appended
+         rather than replaced, because three snoozes is the story. */
+      await snoozeTask(t.id, snoozeTo, why);
+      setSnoozing(null);
+      load(true);
+      notify('Moved to ' + dmy(snoozeTo));
+    } catch (e) {
+      setSnoozeErr(e instanceof Error && e.message ? e.message : 'Could not save. Try again.');
+    }
+  };
 
   return (
     <AppFrame title="Tasks" activeTab={null} onBack={back.go} contentStyle={{ padding: 16, paddingBottom: 24 }}>
@@ -194,14 +265,13 @@ export default function TasksScreen() {
                 const edge =
                   t.priority === 'High' ? C.danger : g === 'Overdue' ? C.danger : g === 'Today' ? C.warn : C.border;
                 /* Swiping left is a SHORTCUT to the Done button on the row,
-                   which stays — completing here is one direct write with no
-                   note or photograph to ask for, so the gesture can run it. */
+                   and opens the same sheet: a closed task has to say how. */
                 return (
                   <Stagger key={t.id} index={before + i}>
                     <SwipeRow
                       /* The "Done" toast already buzzes. */
                       buzz={false}
-                      right={{ label: 'Done', color: C.success, run: () => void markDone(t) }}
+                      right={{ label: 'Done', color: C.success, run: () => openDone(t) }}
                       style={{ borderRadius: radius.xl, overflow: 'hidden' }}>
                       <View
                         style={{
@@ -237,7 +307,22 @@ export default function TasksScreen() {
                             </View>
                           ) : null}
                         </View>
-                        <T s="caption" style={{ marginTop: 2 }}>{nameOf(t.customerId)}</T>
+                        {/* The shop, or — for a task that belongs to none — who
+                            set it, so the caption line is never left blank. */}
+                        <T s="caption" style={{ marginTop: 2 }}>
+                          {[
+                            nameOf(t.customerId) || (t.customerId ? '' : 'No shop'),
+                            t.assignerId && me && t.assignerId !== me ? 'From the office' : '',
+                          ]
+                            .filter(Boolean)
+                            .join(' · ')}
+                        </T>
+                        {/* What the office wrote is the half of the task that says
+                            what to do — a refusal's reason, a manager's
+                            instruction. It was stored and never drawn. */}
+                        {t.description ? (
+                          <T s="small" style={{ color: C.body, marginTop: 6 }}>{t.description}</T>
+                        ) : null}
 
                         {/* A task that ASKS for something specific opens the screen
                             that answers it. Without this the office raises a
@@ -283,7 +368,7 @@ export default function TasksScreen() {
                           </T>
                           <View style={{ flexDirection: 'row', gap: 8 }}>
                             <Pressable
-                              onPress={() => snooze(t)}
+                              onPress={() => openSnooze(t)}
                               accessibilityRole="button"
                               style={{
                                 height: 48,
@@ -298,7 +383,7 @@ export default function TasksScreen() {
                               <T style={{ fontSize: 15, color: C.body }}>Snooze</T>
                             </Pressable>
                             <Pressable
-                              onPress={() => markDone(t)}
+                              onPress={() => openDone(t)}
                               accessibilityRole="button"
                               style={{
                                 height: 48,
@@ -402,6 +487,93 @@ export default function TasksScreen() {
         <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
           <SecondaryButton label="Cancel" onPress={() => setFormOpen(false)} style={{ flex: 1, borderRadius: radius.xl }} />
           <PrimaryButton label="Add task" onPress={save} style={{ flex: 1, borderRadius: radius.xl }} />
+        </View>
+      </BottomSheet>
+
+      <BottomSheet open={closing !== null} onClose={closeDone} scroll>
+        <T style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.285, color: C.ink }, weight(600)]}>
+          Mark as done
+        </T>
+        {closing ? <T s="small" style={{ color: C.muted, marginTop: 4 }}>{closing.title}</T> : null}
+        <View style={{ marginTop: 14 }}>
+          <SectionLabel style={{ marginBottom: 6 }}>{noteRequired ? 'What you did · needed' : 'What you did'}</SectionLabel>
+          <VoiceField
+            value={doneNote}
+            onChangeText={(v) => {
+              setDoneNote(v);
+              setDoneErr(null);
+            }}
+            placeholder="Gave them the new rate list. They will order next week."
+            multiline
+            maxLength={2000}
+          />
+        </View>
+        <View style={{ marginTop: 12 }}>
+          <SecondaryButton label={donePhoto ? 'Photo added. Take it again' : 'Add a photo (optional)'} onPress={() => void addDonePhoto()} />
+        </View>
+        {doneErr ? <T style={{ fontSize: 13, color: C.danger, marginTop: 10 }}>{doneErr}</T> : null}
+        <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
+          <SecondaryButton label="Cancel" onPress={closeDone} style={{ flex: 1, borderRadius: radius.xl }} />
+          <PrimaryButton
+            label={doneBusy ? 'Saving…' : 'Done'}
+            onPress={() => void markDone()}
+            disabled={doneBusy}
+            style={{ flex: 1, borderRadius: radius.xl }}
+          />
+        </View>
+      </BottomSheet>
+
+      <BottomSheet open={snoozing !== null} onClose={() => setSnoozing(null)} scroll>
+        <T style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.285, color: C.ink }, weight(600)]}>
+          Move to another day
+        </T>
+        {snoozing ? <T s="small" style={{ color: C.muted, marginTop: 4 }}>{snoozing.title}</T> : null}
+        {snoozing ? (
+          <View style={{ flexDirection: 'row', gap: 8, marginTop: 14 }}>
+            <Choice
+              label="Next day"
+              selected={snoozeTo === snoozeTarget(snoozing.dueDate, today, 1)}
+              onPress={() => setSnoozeTo(snoozeTarget(snoozing.dueDate, today, 1))}
+              style={{ flex: 1 }}
+            />
+            <Choice
+              label="A week later"
+              selected={snoozeTo === snoozeTarget(snoozing.dueDate, today, 7)}
+              onPress={() => setSnoozeTo(snoozeTarget(snoozing.dueDate, today, 7))}
+              style={{ flex: 1 }}
+            />
+          </View>
+        ) : null}
+        <View style={{ marginTop: 12 }}>
+          <Calendar
+            selected={snoozeTo}
+            onPick={(d) => {
+              setSnoozeTo(d);
+              setSnoozeErr(null);
+            }}
+            disabledReason={(d) =>
+              snoozing && d <= (snoozing.dueDate > today ? snoozing.dueDate : today)
+                ? 'Pick a day after ' + dmy(snoozing.dueDate > today ? snoozing.dueDate : today) + '.'
+                : null
+            }
+          />
+        </View>
+        <T s="small" style={{ color: C.body, marginTop: 8 }}>{snoozeTo ? 'Moves to ' + dmy(snoozeTo) : ''}</T>
+        <View style={{ marginTop: 12 }}>
+          <SectionLabel style={{ marginBottom: 6 }}>Why · needed</SectionLabel>
+          <Input
+            value={snoozeWhy}
+            onChangeText={(v) => {
+              setSnoozeWhy(v);
+              setSnoozeErr(null);
+            }}
+            placeholder="Shop was closed today"
+          />
+        </View>
+        {snoozeErr ? <T style={{ fontSize: 13, color: C.danger, marginTop: 10 }}>{snoozeErr}</T> : null}
+        <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
+          <SecondaryButton label="Cancel" onPress={() => setSnoozing(null)} style={{ flex: 1, borderRadius: radius.xl }} />
+          <PrimaryButton label="Move it" onPress={() => void saveSnooze()} style={{ flex: 1, borderRadius: radius.xl }} />
         </View>
       </BottomSheet>
     </AppFrame>

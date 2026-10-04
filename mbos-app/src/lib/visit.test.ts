@@ -103,3 +103,10 @@ test('the photographs are never asked for — no check names one', () => {
   assert.ok(checks.every((c) => !/photo/i.test(c.line)));
   assert.equal(visitVerdict(checks).verified, true);
 });
+
+test('the dwell refusal names the floor the office set, not a fixed two minutes', () => {
+  const dwell = visitChecks({ ...facts, minimumDwellSeconds: 300, dwellSeconds: 30 }).find((c) => c.key === 'dwell');
+  assert.ok(dwell && !dwell.ok);
+  assert.match(dwell.why, /5 minutes/);
+  assert.doesNotMatch(dwell.why, /two minutes/);
+});
