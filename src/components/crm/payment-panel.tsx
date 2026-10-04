@@ -31,6 +31,7 @@ import type { ReminderPreview } from "@/lib/services/whatsapp-service";
 import type { RuleOutlook, TrackerRow } from "@/lib/services/whatsapp-tracker-service";
 import { MessageTimeline, RuleOutlookList } from "@/components/whatsapp/message-timeline";
 import type { PayOutcomeDefinition } from "@/lib/services/payment-followup-service";
+import { BodyPortal } from "@/components/ui/body-portal";
 
 /* ---------------------------------------------------------------------------
  * The payment follow-up panel.
@@ -334,282 +335,284 @@ function PanelBody({
   const bill = panel?.bills.find((b) => b.id === payingBill) ?? null;
 
   return (
-    <div
-      onClick={close}
-      className="animate-fade-in fixed inset-0 z-[60] flex items-center justify-center bg-[rgba(26,30,40,0.45)] p-6"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Payment follow-up"
-    >
+    <BodyPortal>
       <div
-        onClick={(e) => e.stopPropagation()}
-        className="flex h-[760px] max-h-[calc(100vh-48px)] w-[1160px] max-w-[calc(100vw-48px)] flex-col overflow-hidden rounded-[6px] bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
+        onClick={close}
+        className="animate-fade-in fixed inset-0 z-[60] flex items-center justify-center bg-[rgba(26,30,40,0.45)] p-6"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Payment follow-up"
       >
-        {/* ------------------------------------------------------- header */}
-        <div className="flex-none">
-          <div className="flex items-start justify-between gap-3 px-6 pt-5 pb-3.5">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2.5">
-                <span className="text-[22px] leading-7 font-semibold text-ink">
-                  {panel?.name ?? "Loading…"}
-                </span>
-                {panel ? (
-                  <>
-                    <Badge
-                      tone={
-                        panel.stage === 3 ? "danger" : panel.stage === 2 ? "warn" : "neutral"
-                      }
-                    >
-                      Stage {panel.stage}
-                    </Badge>
-                    {panel.slowPayer ? <SlowPayerBadge /> : null}
-                    {panel.floorReason ? (
-                      <span title={panel.floorReason}>
-                        <Badge tone="warn">Held at this stage</Badge>
-                      </span>
-                    ) : null}
-                  </>
-                ) : null}
-              </div>
-              {panel ? (
-                <div className="mt-1 flex items-center gap-2 text-sm text-muted">
-                  <span>{panel.contactPerson}</span>
-                  <span>·</span>
-                  <span className="font-medium text-ink">{panel.phone}</span>
-                  <button
-                    type="button"
-                    title="Copy number"
-                    onClick={() => {
-                      void navigator.clipboard.writeText(panel.phone);
-                      push("Phone number copied");
-                    }}
-                    className="inline-flex h-[22px] w-[22px] flex-none cursor-pointer items-center justify-center rounded-[4px] border border-line bg-surface text-muted hover:bg-canvas hover:text-body"
-                  >
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                      <rect x="9" y="9" width="12" height="12" rx="2" />
-                      <path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" />
-                    </svg>
-                  </button>
-                  <span>·</span>
-                  <span>{panel.city}</span>
-                  <span>·</span>
-                  <span>{panel.ownerName ?? "Unassigned"}</span>
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="flex h-[760px] max-h-[calc(100vh-48px)] w-[1160px] max-w-[calc(100vw-48px)] flex-col overflow-hidden rounded-[6px] bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
+        >
+          {/* ------------------------------------------------------- header */}
+          <div className="flex-none">
+            <div className="flex items-start justify-between gap-3 px-6 pt-5 pb-3.5">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <span className="text-[22px] leading-7 font-semibold text-ink">
+                    {panel?.name ?? "Loading…"}
+                  </span>
+                  {panel ? (
+                    <>
+                      <Badge
+                        tone={
+                          panel.stage === 3 ? "danger" : panel.stage === 2 ? "warn" : "neutral"
+                        }
+                      >
+                        Stage {panel.stage}
+                      </Badge>
+                      {panel.slowPayer ? <SlowPayerBadge /> : null}
+                      {panel.floorReason ? (
+                        <span title={panel.floorReason}>
+                          <Badge tone="warn">Held at this stage</Badge>
+                        </span>
+                      ) : null}
+                    </>
+                  ) : null}
                 </div>
-              ) : null}
-            </div>
-            <button
-              type="button"
-              onClick={close}
-              aria-label="Close"
-              className="h-7 w-7 flex-none cursor-pointer rounded-[4px] border-none bg-transparent text-muted hover:bg-canvas hover:text-body"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-                <path d="M6 6l12 12M18 6 6 18" />
-              </svg>
-            </button>
-          </div>
-
-          {/* ------------------------------------------------ context bar */}
-          <div className="flex items-center gap-5 border-y border-line bg-canvas px-6 py-2.5">
-            <Stat label="Outstanding" tone={panel?.stage === 3 ? "danger" : undefined}>
-              {money(panel?.totalOverdue ?? 0)}
-            </Stat>
-            <Rule />
-            <Stat
-              label="Oldest bill"
-              tone={
-                (panel?.oldestOverdueDays ?? 0) > 45
-                  ? "danger"
-                  : (panel?.oldestOverdueDays ?? 0) > 15
-                    ? "warn"
-                    : undefined
-              }
-            >
-              {panel ? (panel.oldestOverdueDays ? ageLabel(panel.oldestOverdueDays) : "Not due") : "-"}
-            </Stat>
-            <Rule />
-            <Stat label="Bills overdue">{panel?.overdueBillCount ?? 0}</Stat>
-            <Rule />
-            <Stat label="Last follow-up">
-              {panel?.lastFollowUpAt ? stamp(panel.lastFollowUpAt) : "Never"}
-            </Stat>
-            <span className="flex-1" />
-            <div className="text-right">
-              <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                Prescribed now
-              </div>
-              <div className="text-sm font-semibold text-brand-hover">
-                {panel?.nextAction ?? "-"}
-              </div>
-            </div>
-          </div>
-
-          {/* ----------------------------------------------------- tabs */}
-          <div className="flex items-center border-b border-line px-6">
-            {(
-              [
-                ["account", "Account"],
-                ["log", "Log follow-up"],
-                ["msg", message?.mode === "automatic" ? "Send message" : "Prepare message"],
-              ] as Array<[Tab, string]>
-            ).map(([key, label]) => (
-              <button
-                key={key}
-                type="button"
-                onClick={() => setTab(key)}
-                className={cx(
-                  "mr-5 h-9 cursor-pointer border-none bg-transparent px-1 text-sm",
-                  tab === key
-                    ? "border-b-2 border-brand font-medium text-brand-hover"
-                    : "border-b-2 border-transparent text-muted",
-                )}
-              >
-                {label}
-                {key === "log" && dirty ? (
-                  <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-brand align-middle" />
+                {panel ? (
+                  <div className="mt-1 flex items-center gap-2 text-sm text-muted">
+                    <span>{panel.contactPerson}</span>
+                    <span>·</span>
+                    <span className="font-medium text-ink">{panel.phone}</span>
+                    <button
+                      type="button"
+                      title="Copy number"
+                      onClick={() => {
+                        void navigator.clipboard.writeText(panel.phone);
+                        push("Phone number copied");
+                      }}
+                      className="inline-flex h-[22px] w-[22px] flex-none cursor-pointer items-center justify-center rounded-[4px] border border-line bg-surface text-muted hover:bg-canvas hover:text-body"
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="9" y="9" width="12" height="12" rx="2" />
+                        <path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" />
+                      </svg>
+                    </button>
+                    <span>·</span>
+                    <span>{panel.city}</span>
+                    <span>·</span>
+                    <span>{panel.ownerName ?? "Unassigned"}</span>
+                  </div>
                 ) : null}
+              </div>
+              <button
+                type="button"
+                onClick={close}
+                aria-label="Close"
+                className="h-7 w-7 flex-none cursor-pointer rounded-[4px] border-none bg-transparent text-muted hover:bg-canvas hover:text-body"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                  <path d="M6 6l12 12M18 6 6 18" />
+                </svg>
               </button>
-            ))}
-          </div>
-        </div>
+            </div>
 
-        {/* --------------------------------------------------------- body */}
-        {loading ? (
-          <div className="flex-1 px-6 py-10 text-sm text-muted">Loading the account…</div>
-        ) : !panel ? (
-          <div className="flex-1 px-6 py-10 text-sm text-muted">
-            This customer is no longer on the follow-up list - their bills may have been
-            paid, or they are outside your book.
-          </div>
-        ) : tab === "account" ? (
-          <AccountTab panel={panel} onRecordPayment={setPayingBill} />
-        ) : tab === "log" ? (
-          <LogTab
-            outcomes={outcomes}
-            def={def}
-            onPick={(key) => {
-              setOutcome(key);
-              setAmount("");
-              setDate("");
-              setChips([]);
-              setTyped("");
-              setErrors({});
-            }}
-            onBack={() => guard(() => { setOutcome(null); setChips([]); setTyped(""); setAmount(""); setDate(""); })}
-            amount={amount}
-            setAmount={setAmount}
-            date={date}
-            setDate={setDate}
-            chips={chips}
-            toggleChip={toggleChip}
-            notes={notes}
-            setTyped={setTyped}
-            errors={errors}
-            outstanding={panel.totalOverdue}
-            stage={panel.stage}
-            name={panel.name}
-          />
-        ) : (
-          <MessageTab
-            wa={wa}
-            message={message}
-            copied={Boolean(copiedId)}
-            onCopy={copyMessage}
-            phone={panel.phone}
-          />
-        )}
+            {/* ------------------------------------------------ context bar */}
+            <div className="flex items-center gap-5 border-y border-line bg-canvas px-6 py-2.5">
+              <Stat label="Outstanding" tone={panel?.stage === 3 ? "danger" : undefined}>
+                {money(panel?.totalOverdue ?? 0)}
+              </Stat>
+              <Rule />
+              <Stat
+                label="Oldest bill"
+                tone={
+                  (panel?.oldestOverdueDays ?? 0) > 45
+                    ? "danger"
+                    : (panel?.oldestOverdueDays ?? 0) > 15
+                      ? "warn"
+                      : undefined
+                }
+              >
+                {panel ? (panel.oldestOverdueDays ? ageLabel(panel.oldestOverdueDays) : "Not due") : "-"}
+              </Stat>
+              <Rule />
+              <Stat label="Bills overdue">{panel?.overdueBillCount ?? 0}</Stat>
+              <Rule />
+              <Stat label="Last follow-up">
+                {panel?.lastFollowUpAt ? stamp(panel.lastFollowUpAt) : "Never"}
+              </Stat>
+              <span className="flex-1" />
+              <div className="text-right">
+                <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                  Prescribed now
+                </div>
+                <div className="text-sm font-semibold text-brand-hover">
+                  {panel?.nextAction ?? "-"}
+                </div>
+              </div>
+            </div>
 
-        {/* ------------------------------------------------------- footer */}
-        <div className="flex flex-none items-center gap-2.5 border-t border-line bg-surface px-6 py-3">
-          {target.total > 1 ? (
-            <span className="flex items-center gap-1.5">
-              <span className="text-[13px] text-muted">
-                Customer {target.index + 1} of {target.total}
+            {/* ----------------------------------------------------- tabs */}
+            <div className="flex items-center border-b border-line px-6">
+              {(
+                [
+                  ["account", "Account"],
+                  ["log", "Log follow-up"],
+                  ["msg", message?.mode === "automatic" ? "Send message" : "Prepare message"],
+                ] as Array<[Tab, string]>
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setTab(key)}
+                  className={cx(
+                    "mr-5 h-9 cursor-pointer border-none bg-transparent px-1 text-sm",
+                    tab === key
+                      ? "border-b-2 border-brand font-medium text-brand-hover"
+                      : "border-b-2 border-transparent text-muted",
+                  )}
+                >
+                  {label}
+                  {key === "log" && dirty ? (
+                    <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-brand align-middle" />
+                  ) : null}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* --------------------------------------------------------- body */}
+          {loading ? (
+            <div className="flex-1 px-6 py-10 text-sm text-muted">Loading the account…</div>
+          ) : !panel ? (
+            <div className="flex-1 px-6 py-10 text-sm text-muted">
+              This customer is no longer on the follow-up list - their bills may have been
+              paid, or they are outside your book.
+            </div>
+          ) : tab === "account" ? (
+            <AccountTab panel={panel} onRecordPayment={setPayingBill} />
+          ) : tab === "log" ? (
+            <LogTab
+              outcomes={outcomes}
+              def={def}
+              onPick={(key) => {
+                setOutcome(key);
+                setAmount("");
+                setDate("");
+                setChips([]);
+                setTyped("");
+                setErrors({});
+              }}
+              onBack={() => guard(() => { setOutcome(null); setChips([]); setTyped(""); setAmount(""); setDate(""); })}
+              amount={amount}
+              setAmount={setAmount}
+              date={date}
+              setDate={setDate}
+              chips={chips}
+              toggleChip={toggleChip}
+              notes={notes}
+              setTyped={setTyped}
+              errors={errors}
+              outstanding={panel.totalOverdue}
+              stage={panel.stage}
+              name={panel.name}
+            />
+          ) : (
+            <MessageTab
+              wa={wa}
+              message={message}
+              copied={Boolean(copiedId)}
+              onCopy={copyMessage}
+              phone={panel.phone}
+            />
+          )}
+
+          {/* ------------------------------------------------------- footer */}
+          <div className="flex flex-none items-center gap-2.5 border-t border-line bg-surface px-6 py-3">
+            {target.total > 1 ? (
+              <span className="flex items-center gap-1.5">
+                <span className="text-[13px] text-muted">
+                  Customer {target.index + 1} of {target.total}
+                </span>
+                <button
+                  type="button"
+                  disabled={target.index <= 0}
+                  onClick={() => guard(() => onMove(-1))}
+                  className="inline-flex h-8 cursor-pointer items-center gap-1.5 border-none bg-transparent px-2.5 text-[13px] text-muted disabled:cursor-not-allowed disabled:text-line-strong"
+                >
+                  ◀ Previous
+                </button>
+                <span className="text-line">|</span>
+                <button
+                  type="button"
+                  disabled={target.index >= target.total - 1}
+                  onClick={() => guard(() => onMove(1))}
+                  className="inline-flex h-8 cursor-pointer items-center gap-1.5 border-none bg-transparent px-2.5 text-[13px] text-muted disabled:cursor-not-allowed disabled:text-line-strong"
+                >
+                  Next ▶
+                </button>
               </span>
-              <button
-                type="button"
-                disabled={target.index <= 0}
-                onClick={() => guard(() => onMove(-1))}
-                className="inline-flex h-8 cursor-pointer items-center gap-1.5 border-none bg-transparent px-2.5 text-[13px] text-muted disabled:cursor-not-allowed disabled:text-line-strong"
-              >
-                ◀ Previous
-              </button>
-              <span className="text-line">|</span>
-              <button
-                type="button"
-                disabled={target.index >= target.total - 1}
-                onClick={() => guard(() => onMove(1))}
-                className="inline-flex h-8 cursor-pointer items-center gap-1.5 border-none bg-transparent px-2.5 text-[13px] text-muted disabled:cursor-not-allowed disabled:text-line-strong"
-              >
-                Next ▶
-              </button>
-            </span>
-          ) : null}
-          <span className="flex-1" />
-          <Button variant="secondary" onClick={close}>
-            {tab === "log" && def ? "Cancel" : "Close"}
-          </Button>
-          {tab === "account" ? (
-            <Button onClick={() => setTab("log")}>Log the follow-up ▸</Button>
-          ) : null}
-          {tab === "log" && def ? (
-            <>
-              <Button
-                variant="secondary"
-                disabled={blocked || busy}
-                title={blocked ? blockedTitle(def) : undefined}
-                onClick={() => save(false)}
-              >
-                Save log
-              </Button>
-              <Button
-                disabled={blocked || busy}
-                title={blocked ? blockedTitle(def) : undefined}
-                onClick={() => save(true)}
-              >
-                Save &amp; next ▸
-              </Button>
-            </>
-          ) : null}
-          {tab === "msg" ? (
-            <Button
-              disabled={Boolean(message?.blocked) || confirming}
-              title={message?.blocked ? "Fill the missing merge fields first" : undefined}
-              onClick={() =>
-                message?.mode === "automatic" ? sendNow() : copiedId ? markSent() : copyMessage()
-              }
-            >
-              {message?.mode === "automatic"
-                ? confirming
-                  ? "Sending…"
-                  : "Send on WhatsApp"
-                : copiedId
-                  ? "Mark as sent"
-                  : "Copy message first"}
+            ) : null}
+            <span className="flex-1" />
+            <Button variant="secondary" onClick={close}>
+              {tab === "log" && def ? "Cancel" : "Close"}
             </Button>
-          ) : null}
+            {tab === "account" ? (
+              <Button onClick={() => setTab("log")}>Log the follow-up ▸</Button>
+            ) : null}
+            {tab === "log" && def ? (
+              <>
+                <Button
+                  variant="secondary"
+                  disabled={blocked || busy}
+                  title={blocked ? blockedTitle(def) : undefined}
+                  onClick={() => save(false)}
+                >
+                  Save log
+                </Button>
+                <Button
+                  disabled={blocked || busy}
+                  title={blocked ? blockedTitle(def) : undefined}
+                  onClick={() => save(true)}
+                >
+                  Save &amp; next ▸
+                </Button>
+              </>
+            ) : null}
+            {tab === "msg" ? (
+              <Button
+                disabled={Boolean(message?.blocked) || confirming}
+                title={message?.blocked ? "Fill the missing merge fields first" : undefined}
+                onClick={() =>
+                  message?.mode === "automatic" ? sendNow() : copiedId ? markSent() : copyMessage()
+                }
+              >
+                {message?.mode === "automatic"
+                  ? confirming
+                    ? "Sending…"
+                    : "Send on WhatsApp"
+                  : copiedId
+                    ? "Mark as sent"
+                    : "Copy message first"}
+              </Button>
+            ) : null}
+          </div>
         </div>
-      </div>
 
-      {bill ? (
-        <RecordPaymentForm
-          key={bill.id}
-          modes={modes}
-          datedModes={datedModes}
-          today={businessDay}
-          bill={bill}
-          customerName={panel?.name ?? ""}
-          onClose={() => setPayingBill(null)}
-          onDone={async () => {
-            setPayingBill(null);
-            // The bills are the truth, so the panel re-reads them rather than
-            // adjusting a number it is holding.
-            await load();
-            onRefresh();
-          }}
-        />
-      ) : null}
-    </div>
+        {bill ? (
+          <RecordPaymentForm
+            key={bill.id}
+            modes={modes}
+            datedModes={datedModes}
+            today={businessDay}
+            bill={bill}
+            customerName={panel?.name ?? ""}
+            onClose={() => setPayingBill(null)}
+            onDone={async () => {
+              setPayingBill(null);
+              // The bills are the truth, so the panel re-reads them rather than
+              // adjusting a number it is holding.
+              await load();
+              onRefresh();
+            }}
+          />
+        ) : null}
+      </div>
+    </BodyPortal>
   );
 }
 
@@ -660,170 +663,172 @@ function RecordPaymentForm({
   const leftOpen = bill.balance - entered;
 
   return (
-    <div
-      onClick={onClose}
-      className="animate-fade-in fixed inset-0 z-[80] flex items-center justify-center bg-[rgba(22,22,22,0.35)] p-6"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Record payment"
-    >
+    <BodyPortal>
       <div
-        onClick={(e) => e.stopPropagation()}
-        className="w-[620px] max-w-[calc(100vw-48px)] overflow-hidden rounded-[6px] bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
+        onClick={onClose}
+        className="animate-fade-in fixed inset-0 z-[80] flex items-center justify-center bg-[rgba(22,22,22,0.35)] p-6"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Record payment"
       >
-        {/* ------------------------------------------------------- header */}
-        <div className="flex items-start justify-between gap-3 px-6 pt-5 pb-3.5">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2.5">
-              <span className="text-[22px] leading-7 font-semibold text-ink">
-                Record payment
-              </span>
-              <Badge tone="neutral">{bill.billNo}</Badge>
-              {bill.disputed ? <Badge tone="warn">Disputed</Badge> : null}
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="w-[620px] max-w-[calc(100vw-48px)] overflow-hidden rounded-[6px] bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
+        >
+          {/* ------------------------------------------------------- header */}
+          <div className="flex items-start justify-between gap-3 px-6 pt-5 pb-3.5">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2.5">
+                <span className="text-[22px] leading-7 font-semibold text-ink">
+                  Record payment
+                </span>
+                <Badge tone="neutral">{bill.billNo}</Badge>
+                {bill.disputed ? <Badge tone="warn">Disputed</Badge> : null}
+              </div>
+              <div className="mt-1 flex items-center gap-2 text-sm text-muted">
+                <span className="font-medium text-ink">{customerName}</span>
+                <span>·</span>
+                <span>due {shortDate(bill.dueDate)}</span>
+              </div>
             </div>
-            <div className="mt-1 flex items-center gap-2 text-sm text-muted">
-              <span className="font-medium text-ink">{customerName}</span>
-              <span>·</span>
-              <span>due {shortDate(bill.dueDate)}</span>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="h-7 w-7 flex-none cursor-pointer rounded-[4px] border-none bg-transparent text-muted hover:bg-canvas hover:text-body"
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-              <path d="M6 6l12 12M18 6 6 18" />
-            </svg>
-          </button>
-        </div>
-
-        {/* -------------------------------------------------- context bar */}
-        <div className="flex items-center gap-5 border-y border-line bg-canvas px-6 py-2.5">
-          <Stat label="Bill amount">{money(bill.amount)}</Stat>
-          <Rule />
-          <Stat label="Already paid">{money(bill.paid)}</Stat>
-          <Rule />
-          <Stat label="Open now" tone={bill.overdueDays > 45 ? "danger" : undefined}>
-            {money(bill.balance)}
-          </Stat>
-          <Rule />
-          <Stat
-            label="Overdue"
-            tone={
-              bill.overdueDays > 45 ? "danger" : bill.overdueDays > 15 ? "warn" : undefined
-            }
-          >
-            {bill.overdueDays > 0 ? ageLabel(bill.overdueDays) : "Not due"}
-          </Stat>
-          <span className="flex-1" />
-          <div className="text-right">
-            <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-              Leaves open
-            </div>
-            <div
-              className={cx(
-                "text-sm font-semibold",
-                leftOpen < 0 ? "text-danger" : "text-brand-hover",
-              )}
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              className="h-7 w-7 flex-none cursor-pointer rounded-[4px] border-none bg-transparent text-muted hover:bg-canvas hover:text-body"
             >
-              {leftOpen < 0 ? `${money(-leftOpen)} over` : money(leftOpen)}
-            </div>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                <path d="M6 6l12 12M18 6 6 18" />
+              </svg>
+            </button>
           </div>
-        </div>
 
-        {/* --------------------------------------------------------- body */}
-        <div className="px-6 py-4">
-          <div className="grid grid-cols-2 gap-3">
-            <Field
-              label="Amount received"
-              error={
-                error && error.field !== "instrumentDate" && error.field !== "reference"
-                  ? error.message
-                  : undefined
+          {/* -------------------------------------------------- context bar */}
+          <div className="flex items-center gap-5 border-y border-line bg-canvas px-6 py-2.5">
+            <Stat label="Bill amount">{money(bill.amount)}</Stat>
+            <Rule />
+            <Stat label="Already paid">{money(bill.paid)}</Stat>
+            <Rule />
+            <Stat label="Open now" tone={bill.overdueDays > 45 ? "danger" : undefined}>
+              {money(bill.balance)}
+            </Stat>
+            <Rule />
+            <Stat
+              label="Overdue"
+              tone={
+                bill.overdueDays > 45 ? "danger" : bill.overdueDays > 15 ? "warn" : undefined
               }
-              hint={error ? undefined : `Up to ${money(bill.balance)} on this bill`}
             >
-              <MoneyInput
-                invalid={Boolean(error) || leftOpen < 0}
-                value={amount}
-                onChange={(e) => {
-                  setAmount(e.target.value.replace(/[^0-9]/g, ""));
-                  setError(null);
-                }}
-              />
-            </Field>
-            <Field label="Received on">
-              <Input
-                type="date"
-                value={receivedOn}
-                onChange={(e) => setReceivedOn(e.target.value)}
-              />
-            </Field>
-            <PaymentModeFields
-              modes={modes}
-              datedModes={datedModes}
-              today={businessDay}
-              mode={mode}
-              onMode={setMode}
-              reference={reference}
-              onReference={setReference}
-              instrumentDate={instrumentDate}
-              onInstrumentDate={setInstrumentDate}
-              error={error?.field === "instrumentDate" ? error.message : undefined}
-              referenceError={error?.field === "reference" ? error.message : undefined}
-            />
+              {bill.overdueDays > 0 ? ageLabel(bill.overdueDays) : "Not due"}
+            </Stat>
+            <span className="flex-1" />
+            <div className="text-right">
+              <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                Leaves open
+              </div>
+              <div
+                className={cx(
+                  "text-sm font-semibold",
+                  leftOpen < 0 ? "text-danger" : "text-brand-hover",
+                )}
+              >
+                {leftOpen < 0 ? `${money(-leftOpen)} over` : money(leftOpen)}
+              </div>
+            </div>
           </div>
 
-          {leftOpen < 0 ? (
-            <div className="mt-3 rounded-[4px] border border-warn-line bg-warn-soft px-2.5 py-2 text-[13px] text-warn-ink">
-              That is {money(-leftOpen)} more than {bill.billNo} has open. Record what
-              landed against this bill, and the rest against the next one.
+          {/* --------------------------------------------------------- body */}
+          <div className="px-6 py-4">
+            <div className="grid grid-cols-2 gap-3">
+              <Field
+                label="Amount received"
+                error={
+                  error && error.field !== "instrumentDate" && error.field !== "reference"
+                    ? error.message
+                    : undefined
+                }
+                hint={error ? undefined : `Up to ${money(bill.balance)} on this bill`}
+              >
+                <MoneyInput
+                  invalid={Boolean(error) || leftOpen < 0}
+                  value={amount}
+                  onChange={(e) => {
+                    setAmount(e.target.value.replace(/[^0-9]/g, ""));
+                    setError(null);
+                  }}
+                />
+              </Field>
+              <Field label="Received on">
+                <Input
+                  type="date"
+                  value={receivedOn}
+                  onChange={(e) => setReceivedOn(e.target.value)}
+                />
+              </Field>
+              <PaymentModeFields
+                modes={modes}
+                datedModes={datedModes}
+                today={businessDay}
+                mode={mode}
+                onMode={setMode}
+                reference={reference}
+                onReference={setReference}
+                instrumentDate={instrumentDate}
+                onInstrumentDate={setInstrumentDate}
+                error={error?.field === "instrumentDate" ? error.message : undefined}
+                referenceError={error?.field === "reference" ? error.message : undefined}
+              />
             </div>
-          ) : null}
-        </div>
 
-        {/* ------------------------------------------------------- footer */}
-        <div className="flex items-center gap-2.5 border-t border-line bg-surface px-6 py-3">
-          <span className="text-[13px] text-muted">
-            Outstanding is rebuilt from the bills after this.
-          </span>
-          <span className="flex-1" />
-          <Button variant="secondary" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            disabled={busy}
-            onClick={async () => {
-              setBusy(true);
-              try {
-                const result = await run(
-                  recordPayment({
-                    billId: bill.id,
-                    amount,
-                    mode,
-                    reference: reference || undefined,
-                    instrumentDate: instrumentDate || undefined,
-                    receivedOn,
-                  }),
-                );
-                if (result.ok) await onDone();
-                else
-                  setError({
-                    field: result.fieldErrors?.[0]?.field ?? null,
-                    message: result.fieldErrors?.[0]?.message ?? result.error,
-                  });
-              } finally {
-                setBusy(false);
-              }
-            }}
-          >
-            Record payment
-          </Button>
+            {leftOpen < 0 ? (
+              <div className="mt-3 rounded-[4px] border border-warn-line bg-warn-soft px-2.5 py-2 text-[13px] text-warn-ink">
+                That is {money(-leftOpen)} more than {bill.billNo} has open. Record what
+                landed against this bill, and the rest against the next one.
+              </div>
+            ) : null}
+          </div>
+
+          {/* ------------------------------------------------------- footer */}
+          <div className="flex items-center gap-2.5 border-t border-line bg-surface px-6 py-3">
+            <span className="text-[13px] text-muted">
+              Outstanding is rebuilt from the bills after this.
+            </span>
+            <span className="flex-1" />
+            <Button variant="secondary" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  const result = await run(
+                    recordPayment({
+                      billId: bill.id,
+                      amount,
+                      mode,
+                      reference: reference || undefined,
+                      instrumentDate: instrumentDate || undefined,
+                      receivedOn,
+                    }),
+                  );
+                  if (result.ok) await onDone();
+                  else
+                    setError({
+                      field: result.fieldErrors?.[0]?.field ?? null,
+                      message: result.fieldErrors?.[0]?.message ?? result.error,
+                    });
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              Record payment
+            </Button>
+          </div>
         </div>
       </div>
-    </div>
+    </BodyPortal>
   );
 }
 
