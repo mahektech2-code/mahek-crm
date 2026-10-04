@@ -5735,8 +5735,8 @@ beside the one about reporting a payment and then confirming it.
 
 **A person's target and a customer's are two different grains, and they stay
 two different screens.** `/accounts/customer-targets` reaches the CRM's own
-Monthly Targets — `listTargets`, `setTarget`, `setTargetsBulk`,
-`shortfallAnalysis` in `lib/services/worklist-services.ts` — the same way
+Monthly Targets — `listTargets`, `setTarget` and `setTargetsBulk` in
+`lib/services/worklist-services.ts` — the same way
 `/accounts/targets` reaches the Sales Dashboard's: one door added for
 accounts, nothing rebuilt. `MonthlyTargetsScreen` moved to
 `src/components/customers/`, the same shared home `CustomersScreen` already

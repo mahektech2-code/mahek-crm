@@ -23,7 +23,7 @@ import {
   cx,
   type Tone,
 } from "@/components/ui/primitives";
-import { Modal, RowMenu, Tabs } from "@/components/ui/overlays";
+import { Modal, RowMenu } from "@/components/ui/overlays";
 import { MultiSelect } from "@/components/ui/multi-select";
 import { Icon } from "@/components/shell/icons";
 import { useToast } from "@/components/ui/toast";
@@ -34,7 +34,6 @@ import { money, moneyShort, pct, periodLabel } from "@/lib/format";
 import { UNASSIGNED_FILTER_VALUE } from "@/lib/am-filters";
 import { useRestoreSort, rememberSort } from "@/components/ui/use-remembered-sort";
 import { parseSort, nextSort, formatSort } from "@/lib/sort-param";
-import { CardGrid } from "@/components/ui/card-grid";
 
 const PER_PAGE = [25, 50, 100] as const;
 
@@ -77,8 +76,8 @@ const SEAT_TONE: Record<Row["creditedSeat"], Tone> = {
  *
  * SHARED between the CRM (`/crm/targets`) and Accounts
  * (`/accounts/customer-targets`), the same way `CustomersScreen` is: one read
- * (`listTargets`), one write (`setTarget`/`setTargetsBulk`), one shortfall
- * engine, rendered from one component so the two doors can never disagree
+ * (`listTargets`), and one write (`setTarget`/`setTargetsBulk`),
+ * rendered from one component so the two doors can never disagree
  * about what a customer's target is. `basePath` and `customerHrefTemplate`
  * are the only things that differ between the two apps — everything else,
  * including the business rules, is identical.
@@ -108,25 +107,6 @@ type Row = {
   contactsThisMonth: number;
 };
 
-type Classified = {
-  customerId: string;
-  name: string;
-  gap: number;
-  cycleDays: number;
-  contactsThisMonth: number;
-  expectedContacts: number;
-};
-
-type Shortfall = {
-  coverageGap: Classified[];
-  customerGap: Classified[];
-  coverageGapValue: number;
-  customerGapValue: number;
-  totalShortfall: number;
-} | null;
-
-type Tab = "targets" | "shortfall";
-
 export function MonthlyTargetsScreen({
   app,
   basePath,
@@ -135,7 +115,6 @@ export function MonthlyTargetsScreen({
   canSet,
   period,
   rows,
-  shortfall,
   filters,
   pageInfo,
   totals,
@@ -148,12 +127,11 @@ export function MonthlyTargetsScreen({
   /** Where a customer's name and "Open customer record" lead, e.g. `/crm/customers/{id}`. */
   customerHrefTemplate: string;
   scopeLabel: string;
-  /** Whether THIS person holds `target.set`/`target.shortfall` — a manager or accounts, never a telecaller. */
+  /** Whether THIS person holds `target.set` — a manager or accounts, never a telecaller. */
   canSet: boolean;
   period: string;
   /** Already filtered, counted and sliced by Postgres — this is one page. */
   rows: Row[];
-  shortfall: Shortfall;
   /** The same four filters the Customers list offers, read the same way. */
   filters: {
     query: string;
@@ -186,7 +164,6 @@ export function MonthlyTargetsScreen({
     [customerHrefTemplate],
   );
 
-  const [tab, setTab] = React.useState<Tab>("targets");
   const [editing, setEditing] = React.useState<Row | null>(null);
   const [bulkOpen, setBulkOpen] = React.useState(false);
 
@@ -304,63 +281,15 @@ export function MonthlyTargetsScreen({
     });
   }
 
-  // The engine classifies the shortfall — the screen only lays it out. The
-  // distinction is the point of the tab: a coverage gap is the telecaller's to
-  // fix, a customer gap is a price, stock or terms conversation. Unfiltered
-  // and unpaginated on purpose — it reads the whole scoped book, independent
-  // of whatever the Targets tab's filters are currently set to.
   const behind = totals.behind;
-  const groups: Array<{
-    title: string;
-    accent: string;
-    blurb: string;
-    rows: Classified[];
-    value: number;
-  }> = [
-    {
-      title: "Coverage gap",
-      accent: "#B3261E",
-      blurb:
-        "Behind target and contacted less often than their own buying cycle implies. Call these before anything else.",
-      rows: shortfall?.coverageGap ?? [],
-      value: shortfall?.coverageGapValue ?? 0,
-    },
-    {
-      title: "Customer gap",
-      accent: "#B77B08",
-      blurb:
-        "Contacted often enough and the number still is not moving. Look at price, stock or terms.",
-      rows: shortfall?.customerGap ?? [],
-      value: shortfall?.customerGapValue ?? 0,
-    },
-  ];
 
-  /*
-   * THE FILTERS BELONG TO THE SCREEN, NOT TO THE TARGETS TAB.
-   *
-   * They lived inside the Targets branch, so switching to Where the shortfall
-   * is took the bar off the screen — and the shortfall behind it was drawn
-   * over the whole scoped book while the table a manager had just narrowed to
-   * one salesperson sat behind the other tab. Two figures, one screen, two
-   * populations, and nothing anywhere saying so.
-   *
-   * The filter STATE was never the tab's either: it lives in the URL, so it
-   * survived the switch perfectly well. Only the rendering did not.
-   *
-   * `attached` is the single difference between the two. On Targets the bar is
-   * welded to the table beneath it and squares off its bottom edge; on
-   * Shortfall there is a grid of cards below rather than rows, so it closes
-   * itself.
-   */
-  const filterBar = (attached: boolean) => (
+  /* The filters sit directly on the table beneath them. */
+  const filterBar = () => (
     <>
         <Card
         className={cx(
           "mb-0 flex flex-wrap items-center gap-2.5 px-4 py-3",
-          // Welded to the table on the Targets tab; a card in its own right on
-          // the Shortfall tab, which has a grid under it rather than rows.
-          // One control, two surroundings.
-          attached ? "rounded-b-none border-b-0" : "mb-4",
+          "rounded-b-none border-b-0",
         )}
       >
           <div className="relative w-[260px]">
@@ -436,7 +365,6 @@ export function MonthlyTargetsScreen({
           <div
           className={cx(
             "flex flex-wrap items-center gap-1.5 border-r border-b border-l border-line bg-surface px-4 py-2.5",
-            attached ? "" : "mb-4 rounded-b-[6px]",
           )}
         >
             {chips.map((c) => (
@@ -558,106 +486,8 @@ export function MonthlyTargetsScreen({
         ]}
       />
 
-      <Tabs
-        value={tab}
-        onChange={setTab}
-        className="mb-4"
-        tabs={[
-          { key: "targets", label: "Targets", count: total },
-          { key: "shortfall", label: "Where the shortfall is", count: behind },
-        ]}
-      />
+      {filterBar()}
 
-      {filterBar(tab === "targets")}
-
-      {tab === "shortfall" && !shortfall ? (
-        /*
-         * A PERMISSION IS NOT A NUMBER, and this is the one thing this tab may
-         * not do. `shortfall` is null where the reader does not hold
-         * `target.shortfall`, and every figure below falls back through `?? 0`
-         * — so a withheld breakdown drew two groups reading 0 customers, ₹0
-         * and "Nobody in this group", beside its own tab saying how many were
-         * behind. Both numbers true, one of them fabricated, and the sentence
-         * a reader takes away is that there is nothing to work.
-         *
-         * Nearly unreachable now that anybody working a book holds the read —
-         * which is exactly why it is worth saying rather than deleting: the
-         * fallbacks are still there, and the next role that cannot see this
-         * must not be told there is no shortfall.
-         */
-        <Card className="px-5 py-6 text-[13px] text-muted">
-          This breakdown is not part of your access. The count beside the tab is
-          real — {behind} of these customers are behind — but which of them are a
-          coverage gap and which are a customer gap is withheld, so nothing here
-          is a statement about your book.
-        </Card>
-      ) : tab === "shortfall" ? (
-        <CardGrid min={420} className="items-start">
-          {groups.map((g) => (
-            <Card key={g.title}>
-              <div
-                className="border-b border-divider border-l-[3px] px-5 py-4"
-                style={{ borderLeftColor: g.accent }}
-              >
-                <div className="text-lg font-semibold text-ink">{g.title}</div>
-                <div className="mt-1 text-[13px] text-muted">{g.blurb}</div>
-                <div className="mt-3 flex gap-6">
-                  <span>
-                    <SectionLabel>Customers</SectionLabel>
-                    <span className="text-[22px] font-semibold text-ink">
-                      {g.rows.length}
-                    </span>
-                  </span>
-                  <span>
-                    <SectionLabel>Value shortfall</SectionLabel>
-                    <span className="text-[22px] font-semibold text-danger">
-                      {money(g.value)}
-                    </span>
-                  </span>
-                </div>
-              </div>
-              <table>
-                <thead>
-                  <tr>
-                    <Th>Customer</Th>
-                    <Th align="right">Shortfall</Th>
-                    <Th align="right">Contacts</Th>
-                    <Th align="right">Cycle</Th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {g.rows.slice(0, 12).map((r) => (
-                    <Tr key={r.customerId} className="hover:bg-canvas">
-                      <Td className="font-medium text-ink">
-                        <Link
-                          href={customerHref(r.customerId)}
-                          className="no-underline"
-                        >
-                          {r.name}
-                        </Link>
-                      </Td>
-                      <Td align="right" className="font-medium text-danger">
-                        {money(r.gap)}
-                      </Td>
-                      <Td align="right">
-                        {r.contactsThisMonth} of {r.expectedContacts}
-                      </Td>
-                      <Td align="right">{r.cycleDays} days</Td>
-                    </Tr>
-                  ))}
-                  {!g.rows.length ? (
-                    <Tr>
-                      <Td colSpan={4} className="py-8 text-center text-muted">
-                        Nobody in this group.
-                      </Td>
-                    </Tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </Card>
-          ))}
-        </CardGrid>
-      ) : (
         <>
           <Card className={cx("overflow-auto", chips.length ? "rounded-t-none" : "mt-0 rounded-t-none border-t-0")}>
             {rows.length ? (
@@ -866,7 +696,6 @@ export function MonthlyTargetsScreen({
             </div>
           ) : null}
         </>
-      )}
 
       <SetTargetModal
         row={editing}

@@ -2,7 +2,7 @@ import { requireUser } from "@/lib/auth";
 import { canFor } from "@/lib/access-control";
 import { getScope, scopeLabel } from "@/lib/scope";
 import { currentPeriod, listAmFilterOptions } from "@/lib/queries";
-import { listTargetsPage, shortfallAnalysis } from "@/lib/services/worklist-services";
+import { listTargetsPage } from "@/lib/services/worklist-services";
 import { MonthlyTargetsScreen } from "@/components/customers/monthly-targets-screen";
 
 export const metadata = { title: "Monthly targets - MahekOne CRM" };
@@ -45,25 +45,6 @@ export default async function TargetsPage({
     // the sheet actually fills, most of whom have no MahekOne account.
     listAmFilterOptions(),
   ]);
-  // Coverage gap or customer gap. Held by anybody who works a book — it is
-  // the read that tells a telecaller which half of a bad month is hers to
-  // fix — and narrowed to her own customers by `targetVisibilityClause`, one
-  // layer down. Null only where somebody genuinely does not hold it, and the
-  // screen then says so rather than drawing two empty groups.
-  const shortfall = await canFor(user, "target.shortfall")
-    ? await shortfallAnalysis(activePeriod, {
-        // The SAME four answers the table above is narrowed by, and the same
-        // search box. Read from the URL once and handed to both, so the tab a
-        // manager switches to cannot be describing a different set of people
-        // from the one they were just looking at.
-        query: one("q"),
-        status: one("status"),
-        salesAm: one("sales"),
-        salesManager: one("salesmanager"),
-        backOfficeAm: one("backoffice"),
-      })
-    : null;
-
   return (
     <MonthlyTargetsScreen
       app="crm"
@@ -73,7 +54,6 @@ export default async function TargetsPage({
       canSet={canSet}
       period={activePeriod}
       rows={page.rows}
-      shortfall={shortfall}
       filters={{
         query: one("q") ?? "",
         status: one("status") ?? "",

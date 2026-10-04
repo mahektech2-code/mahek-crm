@@ -30,7 +30,7 @@ import {
   COMPLAINT_PRIORITIES,
   priorityLabel,
 } from "../complaint-labels";
-import { classifyShortfall, resolveTarget } from "../engines/targets";
+import { resolveTarget } from "../engines/targets";
 import { watchAge } from "../engines/inactivity";
 import {
   closureNoteFor,
@@ -1908,61 +1908,6 @@ export async function setTargetsBulk(
     }
   }
   return ok({ updated }, `Targets set for ${updated} customers`);
-}
-
-/**
- * The view a manager opens before a coaching conversation.
- *
- * It is a worklist rather than a table, so it is narrowed by the same filters
- * and then read WHOLE — see `listTargetsPage`. What it does not need is the
- * four seat names every list row carries, each of them a correlated subquery
- * against `users` on every customer in scope, because `classifyShortfall` asks
- * only about a customer's own contacts against their own cycle. So this reads
- * the six columns it classifies on and nothing else, off the SAME clause the
- * list runs — the population has to be identical or a manager would be
- * coaching against a different book to the one on the screen above it.
- */
-export async function shortfallAnalysis(
-  period?: string,
-  filters: TargetListFilters = {},
-) {
-  await requireCapability("target.shortfall");
-  const day = await today();
-  const { where, joinTarget, key } = await targetListClause(period, filters);
-
-  const rows = await db
-    .select({
-      customerId: customers.id,
-      name: customers.name,
-      cycleDays: customers.cycleDays,
-      // The stored figure, or the default — which on the missing-row path is
-      // always 0. See `targetTotals` for why that is an identity rather than
-      // an approximation.
-      target: sql<number>`coalesce(${monthlyTargets.targetAmount}, 0)::bigint`,
-      achieved: targetAchievedSql(key),
-      contactsThisMonth: sql<number>`(
-        select count(*)::int from calls c
-         where c.customer_id = customers.id
-           and c.started_at >= ${monthWindow(key).start}
-           and c.started_at < ${monthWindow(key).end}
-      )`,
-    })
-    .from(customers)
-    .leftJoin(monthlyTargets, joinTarget)
-    .where(where)
-    .orderBy(asc(customers.name));
-
-  return classifyShortfall(
-    rows.map((r) => ({
-      customerId: r.customerId,
-      name: r.name,
-      target: Number(r.target ?? 0),
-      achieved: Number(r.achieved ?? 0),
-      contactsThisMonth: Number(r.contactsThisMonth ?? 0),
-      cycleDays: r.cycleDays,
-    })),
-    day,
-  );
 }
 
 export { addMonths, desc };
