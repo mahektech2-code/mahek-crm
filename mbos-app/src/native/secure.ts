@@ -54,6 +54,3 @@ export async function deleteSecret(key: string): Promise<void> {
   }
   if (typeof localStorage !== 'undefined') localStorage.removeItem(key);
 }
-
-/** True where secrets are actually protected. The preview surface is not. */
-export const secretsAreSecure = canUseKeychain;

@@ -4,7 +4,7 @@ import { router, useFocusEffect } from 'expo-router';
 import { AppFrame, BackLink, StubCard, useCameFrom } from '../src/components/shell/AppFrame';
 import { ListCard, SectionLabel, T } from '../src/components/ui/primitives';
 import { color as C, type, weight } from '../src/theme/tokens';
-import { dmy, isoDate, plural } from '../src/lib/format';
+import { dmy, hhmm, isoDate, plural } from '../src/lib/format';
 import { listNotifications, markAllRead, markRead, type Notification } from '../src/data/notifications';
 import { DUR, EASE, Stagger, animateLayoutFor, useReduceMotion } from '../src/components/ui/motion';
 
@@ -49,14 +49,11 @@ function bucketOf(createdAt: number, today: string, yesterday: string): 'Today' 
   return day === today ? 'Today' : day === yesterday ? 'Yesterday' : 'Earlier';
 }
 
-/** 8:40 am for the last two days; the date itself for anything older. */
+/** The time for the last two days, on the same 24-hour clock as every other
+    screen; the date itself for anything older. */
 function stamp(createdAt: number, bucket: string): string {
-  const d = new Date(createdAt);
-  if (bucket === 'Earlier') return dmy(isoDate(d));
-  const h = d.getHours();
-  const suffix = h < 12 ? 'am' : 'pm';
-  const hour = h % 12 === 0 ? 12 : h % 12;
-  return hour + ':' + String(d.getMinutes()).padStart(2, '0') + ' ' + suffix;
+  if (bucket === 'Earlier') return dmy(isoDate(new Date(createdAt)));
+  return hhmm(createdAt);
 }
 
 /**

@@ -22,8 +22,10 @@ export function Chip({ label, on, onPress, count }: { label: string; on: boolean
       }}
       accessibilityRole="button"
       accessibilityState={{ selected: on }}
+      /* 34 drawn, 48 to the thumb. */
+      hitSlop={{ top: 7, bottom: 7 }}
       style={{
-        height: 34,
+        minHeight: 34,
         paddingHorizontal: 14,
         borderRadius: radius.pill,
         borderWidth: 1,

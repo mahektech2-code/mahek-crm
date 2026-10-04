@@ -293,7 +293,7 @@ export function visitCapLabel(
 /** A follow-up in the past is a follow-up nobody will be reminded about. */
 export function followUpRefusal(iso: string | null | undefined, today: string): string | null {
   if (!iso) return null;
-  return iso < today ? 'That day has gone. Pick today or later.' : null;
+  return iso < today ? 'That day has passed. Pick today or later.' : null;
 }
 
 export type LeadTiming = {

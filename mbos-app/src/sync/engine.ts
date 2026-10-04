@@ -16,6 +16,7 @@ import {
 } from './queue';
 import { applyPull } from './pull';
 import { flush as flushTrail } from './trail';
+import { flushErrors } from '../native/crash-log';
 import { runMediaQueue } from './media';
 import { isoDate } from '../lib/format';
 
@@ -133,6 +134,8 @@ export async function syncNow(opts: { manual?: boolean } = {}): Promise<SyncOutc
     /* And the trail last of all. It depends on nothing and nothing depends on
        it, so it takes whatever signal is left after the work has gone up. */
     void flushTrail();
+    /* What went wrong on this phone since the last pass — see `crash-log.ts`. */
+    void flushErrors();
   }
 }
 

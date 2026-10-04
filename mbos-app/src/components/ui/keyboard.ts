@@ -44,11 +44,6 @@ export function useKeyboardHeight(): number {
   return height;
 }
 
-/** Whether the keyboard is up. For hiding chrome that would sit behind it. */
-export function useKeyboardOpen(): boolean {
-  return useKeyboardHeight() > 0;
-}
-
 /** Breathing room between the bottom of the field and the top of the keys. */
 const FIELD_GAP = 24;
 

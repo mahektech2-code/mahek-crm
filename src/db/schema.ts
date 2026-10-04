@@ -6364,6 +6364,46 @@ export const mbosDevices = pgTable(
   ],
 );
 
+/**
+ * WHAT WENT WRONG ON A HANDSET, sent up by the handset itself.
+ *
+ * MBOS recorded no error anywhere. A screen that crashed drew its message on
+ * the phone and kept it there; a fatal error outside a render, or one in a
+ * background task, left no trace at all. The only report path was a salesman
+ * photographing his screen for his manager — which is to say most were never
+ * reported, and the ones that were arrived without a build, a screen or a
+ * stack. The handset keeps a short list of what it caught and sends it on the
+ * next sync; this is where it lands.
+ *
+ * Append-only, and deliberately not an `mbos*` synced record: nothing goes
+ * back down to a phone, and a row is never edited. `client_id` is minted on
+ * the handset, so a list sent twice — the request timed out after the insert —
+ * is stored once.
+ */
+export const mbosClientErrors = pgTable(
+  "mbos_client_errors",
+  {
+    id: text("id").primaryKey(),
+    clientId: text("client_id").notNull(),
+    userId: text("user_id").references(() => users.id, { onDelete: "set null" }),
+    deviceId: text("device_id").notNull(),
+    appVersion: text("app_version"),
+    /** `render` (caught by the error boundary), `fatal` or `error` (the global handler). */
+    kind: text("kind").notNull(),
+    message: text("message").notNull(),
+    stack: text("stack"),
+    /** The screen on top when it happened, as the phone's router named it. */
+    screen: text("screen"),
+    /** The phone's clock. Believed for display only, like every client time. */
+    occurredAt: timestamp("occurred_at", { withTimezone: true }),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("mbos_client_errors_client_key").on(t.deviceId, t.clientId),
+    index("mbos_client_errors_received_idx").on(t.receivedAt),
+  ],
+);
+
 /* --------------------------------------------------------- journey planner */
 
 export const mbosJourneyPlanStatusEnum = pgEnum("mbos_journey_plan_status", [

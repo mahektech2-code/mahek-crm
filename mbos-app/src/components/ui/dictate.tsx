@@ -8,6 +8,7 @@ import { BottomSheet } from './overlays';
 import { Input } from './primitives';
 import { getConfig } from '../../data/config';
 import { prepareMicrophone, useDictationRecorder } from '../../native/capture';
+import { restoreUiAudioMode } from './feedback';
 import * as api from '../../sync/api';
 
 /* ---------------------------------------------------------------------------
@@ -360,7 +361,7 @@ function DictationBody({
       if (!ready.ok) {
         setError(
           ready.reason === 'permission'
-            ? 'MahekOne does not have microphone permission. Turn it on in your phone Settings, then try again.'
+            ? 'Mahek MBOS does not have microphone permission. Turn it on in your phone Settings, then try again.'
             : 'The microphone did not open. Type the note instead.',
         );
         setPhase('failed');
@@ -403,6 +404,8 @@ function DictationBody({
       } catch {
         /* Released — which is the ordinary case, and already stopped. */
       }
+      /* The microphone is closed; give the app's own sounds back their mix. */
+      void restoreUiAudioMode();
     };
     /* Once, on mount. `recorder` is stable for the life of this component and
        putting it in the deps would restart the recording on every render. */

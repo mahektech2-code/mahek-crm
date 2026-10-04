@@ -12,6 +12,7 @@ import { BootProvider, useBoot } from '../src/state/boot';
 import { AppLock } from '../src/components/shell/AppLock';
 import { PushTaps } from '../src/state/push-taps';
 import { UpdatePrompt } from '../src/components/shell/UpdatePrompt';
+import { installCrashHandler, recordError } from '../src/native/crash-log';
 import { PushBanner } from '../src/components/shell/PushBanner';
 import { animationFor, durationFor, ROUTE_MOTION, useReduceMotion } from '../src/components/ui/motion';
 /* Side-effect only: registers the trail's background task. The OS can launch
@@ -26,6 +27,9 @@ import '../src/sync/background-sync-task';
 /* Called in global scope and deliberately not awaited — that is what its own
    documentation asks for, and awaiting it inside a hook races the first paint. */
 SplashScreen.preventAutoHideAsync();
+/* Before anything can throw: a fatal error outside a render is otherwise
+   recorded nowhere at all. See `native/crash-log.ts`. */
+installCrashHandler();
 
 export const unstable_settings = { anchor: 'index' };
 
@@ -43,12 +47,18 @@ export const unstable_settings = { anchor: 'index' };
  * of the bug report otherwise.
  */
 export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
+  /* Kept for the office, which used to hear of a crash only if somebody
+     photographed this screen. Sent with the next sync. */
+  React.useEffect(() => {
+    void recordError('render', error);
+  }, [error]);
   return (
     <View style={{ flex: 1, justifyContent: 'center', padding: 24, backgroundColor: color.canvas }}>
       <Text style={{ fontSize: 20, fontWeight: '600', color: color.ink }}>Something went wrong on this screen</Text>
       <Text style={{ fontSize: 15, lineHeight: 21, color: color.body, marginTop: 10 }}>
-        Anything you already saved is safe on the phone. Tap below to carry on. If it keeps
-        happening, send your manager a photo of this screen.
+        Anything you already saved is safe on the phone. Tap below to carry on. The office is
+        sent a note of this the next time the phone syncs. If it keeps happening, tell your
+        manager.
       </Text>
       <Text selectable style={{ fontSize: 13, color: color.muted, marginTop: 14 }}>
         {error?.message || String(error)}

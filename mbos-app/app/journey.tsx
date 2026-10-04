@@ -1576,7 +1576,7 @@ export default function JourneyScreen() {
              nothing. Every past day was selectable and the form then took the
              city, the date and a press of "Plan it" before saying the day had
              gone — refused after doing the work rather than before it. */
-          disabledReason={(iso) => (iso < today ? 'That day has gone' : null)}
+          disabledReason={(iso) => (iso < today ? 'That day has passed.' : null)}
           onPick={(iso) => {
             setOwn((d) => ({ ...d, date: iso }));
             setOwnErr(null);

@@ -582,10 +582,6 @@ function usePolledCountOrNull(read: () => Promise<number>, everyMs = 10_000): nu
   return n;
 }
 
-export function useUnreadCount(): number {
-  return usePolledCount(unreadCount);
-}
-
 /** `null` until read — see `usePolledCountOrNull`. For the bell. */
 export function useUnreadCountOrNull(): number | null {
   return usePolledCountOrNull(unreadCount, 5_000);

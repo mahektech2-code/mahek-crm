@@ -1,6 +1,6 @@
 import { Platform } from 'react-native';
 import { requireOptionalNativeModule } from 'expo';
-import { createAudioPlayer, type AudioPlayer } from 'expo-audio';
+import { createAudioPlayer, setAudioModeAsync, type AudioPlayer } from 'expo-audio';
 import { plan, shouldFire, type FeedbackKind, type SoundName } from '../../engines/feedback';
 import { feedbackPrefs } from '../../data/feedback-prefs';
 import { ringerMode } from '../../native/phone-setup';
@@ -113,10 +113,12 @@ const SOURCES: Record<SoundName, number> = {
  * stops reading as caused by it. Four tiny players held for the life of the
  * process cost nothing.
  *
- * Nothing here calls `setAudioModeAsync`. The dictation recorder owns the audio
- * mode while it runs, and a UI chime changing it from under a recording would
- * be a far worse bug than a chime that ducks somebody's music for a quarter of
- * a second.
+ * A chime never changes the audio mode from under a recording — the
+ * dictation recorder owns it while it runs. What it does do is say, once at
+ * start and again whenever a recording ends (`restoreUiAudioMode`), that these
+ * sounds MIX with whatever else is playing. The default asks Android for audio
+ * focus, which pauses the map app's voice guidance for every save chime — the
+ * one thing a salesman on a bike is actually listening to.
  */
 const players = new Map<SoundName, AudioPlayer>();
 
@@ -150,8 +152,32 @@ async function chime(name: SoundName): Promise<void> {
  * lands on time. Only when sounds are switched on: a decoder kept warm for a
  * sound nobody will hear is waste.
  */
+/**
+ * The audio mode the app's own sounds want, put back after a recording.
+ *
+ * The recorder sets `allowsRecording` and `duckOthers` while the microphone is
+ * open, and nothing ever set them back — so after one dictated note, every
+ * later chime ducked the music and, on iOS, could route to the earpiece. Only
+ * called where no recording can be running: at start, and as a dictation sheet
+ * closes.
+ */
+export async function restoreUiAudioMode(): Promise<void> {
+  try {
+    await setAudioModeAsync({
+      allowsRecording: false,
+      playsInSilentMode: false,
+      shouldRouteThroughEarpiece: false,
+      interruptionMode: 'mixWithOthers',
+    });
+  } catch {
+    /* A phone that will not take it plays the chime with its default focus,
+       which is what every build before this did. */
+  }
+}
+
 export function primeSounds(): void {
   void loadHaptics();
+  void restoreUiAudioMode();
   if (!feedbackPrefs().sounds) return;
   (Object.keys(SOURCES) as SoundName[]).forEach((n) => player(n));
 }

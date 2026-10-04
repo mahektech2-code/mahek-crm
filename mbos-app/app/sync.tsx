@@ -233,7 +233,7 @@ export default function SyncScreen() {
           : outcome.pushed === 0
             ? 'Nothing was waiting to send'
             : outcome.accepted > 0
-              ? plural(outcome.accepted, 'entry', 'entries') + ' sent to office'
+              ? plural(outcome.accepted, 'entry', 'entries') + ' sent to the office'
               : outcome.rejected > 0
                 ? plural(outcome.rejected, 'entry', 'entries') + ' not accepted by the office'
                 : (outcome.reason ?? 'Nothing was sent. Your work is still safe on this phone.'),
@@ -268,7 +268,7 @@ export default function SyncScreen() {
         <Pulse active={sending} style={{ alignSelf: 'flex-start' }}>
           <Pop trigger={waiting} from={0.9}>
             <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>
-              {waiting ? plural(waiting, 'thing') + ' waiting to send' : 'All sent to office'}
+              {waiting ? plural(waiting, 'thing') + ' waiting to send' : 'All sent to the office'}
             </T>
           </Pop>
         </Pulse>

@@ -1229,7 +1229,7 @@ export default function LeadRecord() {
         <Calendar
           key={cal ? 'open' : 'shut'}
           selected={lead.nextFollowUpDate ?? ''}
-          disabledReason={(iso) => (iso < today ? 'That day has gone.' : null)}
+          disabledReason={(iso) => (iso < today ? 'That day has passed.' : null)}
           onPick={(iso) => {
             setCal(false);
             void setFollowUp(lead.id, iso, today).then((r) => {

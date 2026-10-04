@@ -1,6 +1,7 @@
 import React from 'react';
 import { Animated, View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { color as C, HIT, shadow, weight } from '../../theme/tokens';
+import { BADGE_FONT_CAP, BAR_FONT_CAP } from '../ui/font-scale';
 import { Icon } from '../ui/Icon';
 import { EASE, Pop, usePressScale, useReduceMotion, useShake } from '../ui/motion';
 import { feedback } from '../ui/feedback';
@@ -42,16 +43,21 @@ export function Header({
   return (
     <View style={{ height: 52, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16 }}>
       {onBack ? (
-        <Pressable onPress={onBack} accessibilityLabel="Back" style={[s.iconBtn, { marginLeft: -12 }]}>
+        <Pressable onPress={onBack} accessibilityRole="button" accessibilityLabel="Back" style={[s.iconBtn, { marginLeft: -12 }]}>
           <Icon name="back" size={24} color={C.body} strokeWidth={1.5} />
         </Pressable>
       ) : null}
-      <Text numberOfLines={1} style={[{ flex: 1, fontSize: 14, lineHeight: 20, color: C.ink }, weight(600)]}>
+      <Text
+        numberOfLines={1}
+        maxFontSizeMultiplier={BAR_FONT_CAP}
+        accessibilityRole="header"
+        style={[{ flex: 1, fontSize: 14, lineHeight: 20, color: C.ink }, weight(600)]}>
         {title}
       </Text>
       {onRefresh ? (
         <Pressable
           onPress={refreshing ? undefined : onRefresh}
+          accessibilityRole="button"
           accessibilityLabel="Refresh"
           accessibilityHint="Sends your work, gets the latest from the office, and checks for a new version"
           accessibilityState={{ busy: refreshing }}
@@ -111,7 +117,7 @@ function Bell({ onPress, unread, loaded }: { onPress: () => void; unread: number
   const rose = loaded && unread > seenAtMount;
 
   return (
-    <Pressable onPress={onPress} accessibilityLabel={unread > 0 ? `Notifications, ${unread} unread` : 'Notifications'} style={s.iconBtn}>
+    <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={unread > 0 ? `Notifications, ${unread} unread` : 'Notifications'} style={s.iconBtn}>
       <Animated.View
         style={{
           transform: [
@@ -123,7 +129,11 @@ function Bell({ onPress, unread, loaded }: { onPress: () => void; unread: number
       </Animated.View>
       {unread > 0 ? (
         <Pop trigger={unread} popOnMount={rose} style={s.bellBadge}>
-          <Text style={[{ color: '#fff', fontSize: 12, lineHeight: 18, textAlign: 'center' }, weight(500)]}>{unread}</Text>
+          <Text
+            maxFontSizeMultiplier={BADGE_FONT_CAP}
+            style={[{ color: '#fff', fontSize: 12, lineHeight: 18, textAlign: 'center' }, weight(500)]}>
+            {unread}
+          </Text>
         </Pop>
       ) : null}
     </Pressable>
@@ -158,6 +168,8 @@ export function StatusStrip({
              the three cells are adjacent, and horizontal slop would make each
              one steal its neighbour's edge. */
           hitSlop={{ top: 10, bottom: 10 }}
+          accessibilityRole="button"
+          accessibilityLabel={it.label}
           style={[s.stripCell, i > 0 && { borderLeftWidth: 1, borderLeftColor: C.border }]}>
           {/* The light pops when it CHANGES — "GPS locked" arriving, the last
               thing sent — so a state the salesman was waiting on is seen to
@@ -173,7 +185,7 @@ export function StatusStrip({
             }}>
             {null}
           </Pop>
-          <Text numberOfLines={1} style={[{ fontSize: 12, color: C.body }, weight(500)]}>
+          <Text numberOfLines={1} maxFontSizeMultiplier={BAR_FONT_CAP} style={[{ fontSize: 12, color: C.body }, weight(500)]}>
             {it.label}
           </Text>
         </Pressable>
@@ -319,6 +331,7 @@ export function TabBarAction({ onPress, bottomInset }: { onPress: () => void; bo
         onPress={onPress}
         onPressIn={press.onPressIn}
         onPressOut={press.onPressOut}
+        accessibilityRole="button"
         accessibilityLabel="What are you doing?"
         style={{ width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center' }}>
         <Text style={{ color: C.lime, fontSize: 26, lineHeight: 30 }}>+</Text>
@@ -354,13 +367,20 @@ function Tab({
         <Icon name={tab.ic} size={22} color={on ? C.primary : C.muted} />
         {count > 0 ? (
           <Pop trigger={count} style={s.tabBadge}>
-            <Text style={[{ color: '#fff', fontSize: 11, lineHeight: 16, textAlign: 'center' }, weight(500)]}>
+            <Text
+              maxFontSizeMultiplier={BADGE_FONT_CAP}
+              style={[{ color: '#fff', fontSize: 11, lineHeight: 16, textAlign: 'center' }, weight(500)]}>
               {count > 9 ? '9+' : count}
             </Text>
           </Pop>
         ) : null}
       </View>
-      <Text style={[{ fontSize: 12, color: on ? C.primary : C.muted }, weight(on ? 500 : 400)]}>{tab.label}</Text>
+      <Text
+        numberOfLines={1}
+        maxFontSizeMultiplier={BAR_FONT_CAP}
+        style={[{ fontSize: 12, color: on ? C.primary : C.muted }, weight(on ? 500 : 400)]}>
+        {tab.label}
+      </Text>
     </Pressable>
   );
 }
@@ -390,8 +410,10 @@ const s = StyleSheet.create({
     borderRadius: 9,
     backgroundColor: C.danger,
   },
+  /* `minHeight`, not `height`: at a large font size the line grows past 28
+     and a fixed bar cut it in half. The cap on the Text keeps that rare. */
   strip: {
-    height: 28,
+    minHeight: 28,
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 4,
@@ -402,7 +424,7 @@ const s = StyleSheet.create({
   stripCell: {
     flex: 1,
     minWidth: 0,
-    height: 28,
+    minHeight: 28,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',

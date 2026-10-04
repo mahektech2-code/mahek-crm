@@ -440,7 +440,7 @@ export default function ProfileScreen() {
             body: waiting
               ? plural(waiting, 'entry', 'entries') +
                 ' not sent yet. They stay on this phone. They will send when you sign in again.'
-              : 'Everything you saved is already sent to office.',
+              : 'Everything you saved is already sent to the office.',
             confirmLabel: 'Sign out',
             run: () => {
               /* The outbox is kept. Clearing it here would make the sentence

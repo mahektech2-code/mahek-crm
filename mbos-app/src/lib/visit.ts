@@ -109,7 +109,7 @@ export type VisitFacts = {
  * him giving them, and a visit without them tells the office nothing. So an
  * unverified save waives the first kind and never the second.
  */
-export const ANSWER_KEYS: ReadonlyArray<VisitCheck['key']> = ['outcome', 'followon', 'note'];
+export const ANSWER_KEYS: readonly VisitCheck['key'][] = ['outcome', 'followon', 'note'];
 
 /** The answers still owed, in the order the check-out sheet asks them. */
 export function unansweredQuestions(checks: VisitCheck[]): VisitCheck[] {

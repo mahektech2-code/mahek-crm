@@ -59,7 +59,7 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/sync/*.test.ts src/engines/*.test.ts src/db/*.test.ts src/data/*.test.ts src/components/ui/*.test.ts src/lib/*.test.ts",
+    "test": "tsx --test src/sync/*.test.ts src/engines/*.test.ts src/db/*.test.ts src/data/*.test.ts src/components/ui/*.test.ts src/components/shell/*.test.ts src/native/*.test.ts src/lib/*.test.ts",
     "lint": "eslint app src"
   },
   "private": true

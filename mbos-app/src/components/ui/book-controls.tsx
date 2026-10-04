@@ -45,8 +45,9 @@ export function SearchBox({
         placeholderTextColor={C.faint}
         returnKeyType="search"
         autoCorrect={false}
+        accessibilityLabel={placeholder}
         style={{
-          height: 46,
+          minHeight: 46,
           paddingLeft: 38,
           paddingRight: value ? 44 : 12,
           borderWidth: 1,
@@ -153,12 +154,13 @@ export function ChipRow<K extends string>({
             accessibilityRole="radio"
             accessibilityState={{ selected: on }}
             accessibilityLabel={n != null ? `${c.label}, ${n}` : c.label}
-            hitSlop={{ top: 4, bottom: 4 }}
+            /* 36 drawn, 48 to the thumb. */
+            hitSlop={{ top: 6, bottom: 6 }}
             style={{
               flexDirection: 'row',
               alignItems: 'center',
               gap: 6,
-              height: 36,
+              minHeight: 36,
               paddingHorizontal: 12,
               borderRadius: radius.pill,
               borderWidth: 1,
