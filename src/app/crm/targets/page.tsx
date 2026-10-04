@@ -38,6 +38,8 @@ export default async function TargetsPage({
       salesAm: one("sales"),
       salesManager: one("salesmanager"),
       backOfficeAm: one("backoffice"),
+      source: one("source"),
+      progress: one("progress"),
       sort: one("sort"),
       page: Number(one("page") ?? 1) || 1,
       perPage: [25, 50, 100].includes(perPage) ? perPage : 25,
@@ -64,6 +66,8 @@ export default async function TargetsPage({
         salesAm: one("sales") ?? "",
         salesManager: one("salesmanager") ?? "",
         backOfficeAm: one("backoffice") ?? "",
+        source: one("source") ?? "",
+        progress: one("progress") ?? "",
         sort: one("sort") ?? "",
         perPage: [25, 50, 100].includes(perPage) ? perPage : 25,
       }}
@@ -74,6 +78,7 @@ export default async function TargetsPage({
         bookTotal: page.bookTotal,
       }}
       totals={page.totals}
+      allocation={page.allocation}
       amOptions={amOptions}
     />
   );
