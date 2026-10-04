@@ -241,7 +241,7 @@ describe('and then what', () => {
   it('drops the button and keeps the instruction where it cannot restart', () => {
     const v = trackingVerdict({ capture: 'floor', exemption: 'exempt', canRestart: false });
     assert.equal(v.action, null);
-    assert.match(v.detail, /[Cc]lose MahekOne completely/);
+    assert.match(v.detail, /[Cc]lose Mahek MBOS completely/);
   });
 
   /* The battery step is the readable half, so it is named where it is still

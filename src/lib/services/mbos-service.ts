@@ -572,6 +572,10 @@ export async function mbosConfigPayload(): Promise<Record<string, unknown>> {
      handset's lead record still reads it by that name. */
   out["leads.suspectMaxVisits"] = config["mbos.leads.maxSuspectVisits"];
   out["products.priceSource"] = config["products.priceSource"];
+  /* The working week, so the leave form counts the days the balance is
+     debited by. Without it the phone counted calendar days: Friday to Monday
+     read as four there and was debited as two here. */
+  out["workingDay.workingDays"] = config["workingDay.workingDays"];
   /* The upload ceiling, so a PDF too large to accept is refused at the moment
      it is picked — with the salesman looking — rather than failing in the
      media queue hours later where nobody will ever see why. */

@@ -8,7 +8,8 @@ import { VoiceField } from '../src/components/ui/dictate';
 import { BottomSheet, Calendar } from '../src/components/ui/overlays';
 import { Stagger, animateLayout, animateLayoutFor } from '../src/components/ui/motion';
 import { feedback } from '../src/components/ui/feedback';
-import { applyForLeave, listLeave, withdrawLeave, type LeaveRequest } from '../src/data/requests';
+import { applyForLeave, leaveCalendar, listLeave, withdrawLeave, type LeaveRequest } from '../src/data/requests';
+import { leaveDays, type LeaveCalendar } from '../src/engines/leave';
 import { dmy, isoDate, plural } from '../src/lib/format';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
@@ -84,9 +85,16 @@ export default function LeaveScreen() {
   /* One request per press: the overlap guard reads the table before the first
      insert commits, so it does not catch a double tap. */
   const [sending, setSending] = React.useState(false);
+  /* The office's working week and holidays, so the count on the form is the
+     count the balance is debited by. Null until read, and the form then falls
+     back to calendar days rather than showing nothing. */
+  const [calendar, setCalendar] = React.useState<LeaveCalendar | null>(null);
 
   const load = React.useCallback(() => {
     let live = true;
+    void leaveCalendar()
+      .then((c) => live && setCalendar(c))
+      .catch(() => {});
     void listLeave()
       .then((l) => {
         if (!live) return;
@@ -108,15 +116,18 @@ export default function LeaveScreen() {
     setErr(null);
   };
 
-  const dayCount = (() => {
-    if (!lv.from) return 0;
-    if (lv.span === 'half') return 0.5;
-    if (lv.span === 'one') return 1;
-    if (!lv.to) return 0;
-    const d1 = new Date(lv.from);
-    const d2 = new Date(lv.to);
-    return Math.max(0, Math.round((d2.getTime() - d1.getTime()) / 86400000) + 1);
-  })();
+  /* WORKING DAYS, the way the office counts them — Friday to Monday is two,
+     not four, and the Sunday in the middle is not leave. */
+  const counted =
+    lv.from && lv.span === 'many' && lv.to
+      ? leaveDays({ span: 'range', from: lv.from, to: lv.to, half: null }, calendar ?? undefined)
+      : lv.from && lv.span !== 'many'
+        ? leaveDays(
+            { span: 'single', from: lv.from, to: lv.from, half: lv.span === 'half' ? 'first_half' : null },
+            calendar ?? undefined,
+          )
+        : null;
+  const dayCount = counted?.days ?? 0;
 
   /* A range cannot end before it starts; the calendar refuses it. */
   const refuseTo = (iso: string) =>
@@ -127,7 +138,7 @@ export default function LeaveScreen() {
        the button pressable for exactly this. */
     if (sending) return notify('Sending this request. Please wait.', 'info');
     /* Refused, with the reason under the field it names. */
-    if (!lv.from || (lv.span === 'many' && (!lv.to || dayCount < 1))) {
+    if (!lv.from || (lv.span === 'many' && !lv.to) || dayCount <= 0) {
       feedback('warning');
       return setErr('dates');
     }
@@ -165,10 +176,12 @@ export default function LeaveScreen() {
       body: l.kind + ' · ' + whenOf(l),
       confirmLabel: 'Withdraw',
       run: () => {
-        void withdrawLeave(l.id).then(() => {
-          load();
-          notify('Request withdrawn');
-        });
+        void withdrawLeave(l.id)
+          .then(() => {
+            load();
+            notify('Request withdrawn');
+          })
+          .catch(() => notify('Could not withdraw it. Try again.', 'error'));
       },
     });
 
@@ -307,11 +320,17 @@ export default function LeaveScreen() {
         </View>
         {err === 'dates' ? (
           <T style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>
-            {lv.span === 'many' ? 'Pick both dates.' : 'Pick the date.'}
+            {counted && counted.days === 0
+              ? counted.sentence
+              : lv.span === 'many'
+                ? 'Pick both dates.'
+                : 'Pick the date.'}
           </T>
-        ) : dayCount > 0 && lv.span === 'many' ? (
-          <T s="caption" style={{ marginTop: 6 }}>
-            {lengthOf(dayCount)}
+        ) : counted && (lv.span === 'many' || counted.days === 0) ? (
+          <T s="caption" style={{ marginTop: 6, color: counted.days === 0 ? C.danger : undefined }}>
+            {counted.days === 0
+              ? counted.sentence
+              : lengthOf(dayCount) + (counted.note ? ` · ${counted.note}` : '')}
           </T>
         ) : null}
 

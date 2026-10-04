@@ -37,7 +37,7 @@ import {
 import { ShopMap } from '../src/components/ui/shop-map';
 import { territoryState } from '../src/sync/pull';
 import type { TerritoryState } from '../src/sync/api';
-import { whereNow } from '../src/native/where';
+import { measureFrom } from '../src/native/where';
 import { LeadsBook } from '../src/components/leads/leads-book';
 import { countLeads, openLeadCount } from '../src/data/leads';
 import { Appear, DUR, Stagger, animateLayoutFor } from '../src/components/ui/motion';
@@ -387,7 +387,7 @@ export default function Customers() {
   const [cities, setCities] = React.useState<{ city: string; lat: number; lng: number; n: number }[]>([]);
   const [pickingCity, setPickingCity] = React.useState(false);
   const [cityQ, setCityQ] = React.useState('');
-  const [noFix, setNoFix] = React.useState(false);
+  const [noFix, setNoFix] = React.useState<'denied' | 'off' | 'unavailable' | null>(null);
 
   /*
    * WHAT HE HAS TYPED, AND WHAT HAS BEEN ASKED, are two different things. Every
@@ -410,17 +410,16 @@ export default function Customers() {
     let live = true;
     setOriginReady(false);
     if (sortMode === 'me') {
-      void whereNow()
+      void measureFrom()
         .then((w) => {
           if (!live) return;
-          const has = typeof w?.lat === 'number' && typeof w?.lng === 'number';
-          setOrigin(has ? { lat: w!.lat!, lng: w!.lng! } : null);
-          setNoFix(!has);
+          setOrigin('reason' in w ? null : { lat: w.lat, lng: w.lng });
+          setNoFix('reason' in w ? w.reason : null);
         })
         .catch(() => {
           if (!live) return;
           setOrigin(null);
-          setNoFix(true);
+          setNoFix('unavailable');
         })
         .finally(() => {
           if (live) setOriginReady(true);
@@ -435,7 +434,7 @@ export default function Customers() {
     } else {
       setOrigin(null);
     }
-    setNoFix(false);
+    setNoFix(null);
     setOriginReady(true);
     return () => {
       live = false;
@@ -859,7 +858,11 @@ export default function Customers() {
               ) : null}
               {noFix && sortMode === 'me' ? (
                 <Text style={[type.caption, { marginTop: -6, color: C.muted }]}>
-                  No GPS yet, so the list is A–Z. Punch in, or pick a town to sort from.
+                  {noFix === 'denied'
+                    ? 'Location is not allowed for Mahek MBOS, so the list is A–Z. Allow it in phone settings, or pick a town.'
+                    : noFix === 'off'
+                      ? 'Location is switched off on this phone, so the list is A–Z. Turn it on, or pick a town.'
+                      : 'No GPS yet, so the list is A–Z. Step outside for a minute, or pick a town to sort from.'}
                 </Text>
               ) : null}
             </View>

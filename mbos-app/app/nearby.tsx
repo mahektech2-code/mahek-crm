@@ -124,8 +124,10 @@ export default function Nearby() {
           </T>
           <T s="caption" style={{ marginTop: 4 }}>
             {answer?.reason === 'denied'
-              ? 'Turn it on for MBOS in phone settings. Then come back.'
-              : 'Step outside for a minute so GPS can find you.'}
+              ? 'Allow location for Mahek MBOS in your phone settings. Then come back.'
+              : answer?.reason === 'off'
+                ? 'Turn on Location from the top of your phone screen. Then come back.'
+                : 'Step outside for a minute so GPS can find you.'}
           </T>
         </Card>
       ) : (

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { phoneReadiness, type ItemKey, type ReadinessInput, type Readiness } from './phone-readiness';
+import { hadTrailSince, phoneReadiness, type ItemKey, type ReadinessInput, type Readiness } from './phone-readiness';
 import { APP_LABEL } from './oem-keepalive';
 
 /**
@@ -351,4 +351,17 @@ test('every row carries words, and a button only where there is one to press', (
       if (i.state === 'todo') assert.notEqual(i.action, null);
     }
   }
+});
+
+test('a day recorded by our own service is not a silent day', () => {
+  /* The expo task's mark is still yesterday morning's — the service took
+     capture over and never touches it — and the shared mark moved at four in
+     the afternoon. This is the read that blocked every Android punch-in. */
+  const checkInAt = 1_000_000;
+  assert.equal(hadTrailSince(checkInAt, [checkInAt - 86_400_000, checkInAt + 7 * 3_600_000]), true);
+});
+
+test('no mark on or after the check-in is still silence', () => {
+  assert.equal(hadTrailSince(500, [100, null]), false);
+  assert.equal(hadTrailSince(500, [null, null]), false);
 });

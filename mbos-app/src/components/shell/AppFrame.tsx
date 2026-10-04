@@ -118,6 +118,8 @@ export const FROM_LABEL: Record<string, string> = {
   nearby: 'Near me',
   accounts: 'Customer accounts',
   account: 'Account',
+  travel: 'Today’s travel',
+  eod: 'Close the day',
 };
 
 /** Reads the recorded entry route, so the label and the destination agree. */

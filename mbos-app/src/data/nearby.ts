@@ -2,7 +2,7 @@ import { all } from '../db';
 import { getConfig } from './config';
 import { isoDate } from '../lib/format';
 import { nearby, nextBestVisit, type NearbyInput, type NearbyResult } from '../engines/nearby';
-import { whereNow } from '../native/where';
+import { measureFrom } from '../native/where';
 
 /**
  * §E, §F and §G of the mapping brief — without the map.
@@ -40,17 +40,17 @@ export async function whatIsNearby(radiusMetres?: number): Promise<NearbyAnswer>
   const [options, perKm, fix] = await Promise.all([
     nearbyRadii(),
     getConfig<number>('mbos.location.nearbyPerKilometreCost'),
-    whereNow().catch(() => undefined),
+    measureFrom().catch(() => ({ reason: 'unavailable' as const })),
   ]);
   const radius = radiusMetres ?? options[1] ?? options[0] ?? 3000;
 
-  if (fix?.lat == null || fix?.lng == null) {
+  if ('reason' in fix) {
     /* No fix is a recorded fact, not an empty list. The screen says which of
        the three it is — refused, unavailable, or off — rather than showing
        "nothing nearby", which would read as a book with no shops in it. */
     return {
       from: null,
-      reason: fix?.reason ?? 'unavailable',
+      reason: fix.reason,
       radiusMetres: radius,
       options,
       shops: [],

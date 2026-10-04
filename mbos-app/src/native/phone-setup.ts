@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import { PhoneSetup } from '../../modules/phone-setup';
+import { intentAppSettings, intentAutostartSettings, intentBatteryExemption } from './keepalive';
 
 /**
  * The phone's own settings, read and repaired.
@@ -99,7 +100,12 @@ export async function batteryExemption(): Promise<BatteryExemption> {
  * neither of which is an error.
  */
 export async function requestBatteryExemption(): Promise<BatteryExemption> {
-  if (!native) return 'unknown';
+  /* No native half: the intent ladder can open the dialog but cannot read
+     the answer back, so the honest result is still 'unknown'. */
+  if (!native) {
+    await intentBatteryExemption();
+    return 'unknown';
+  }
   try {
     return asExemption(await native.requestBatteryExemption());
   } catch {
@@ -117,7 +123,7 @@ export async function requestBatteryExemption(): Promise<BatteryExemption> {
  * sentences on the screen.
  */
 export async function openAutostartSettings(): Promise<OpenResult> {
-  if (!native) return 'failed';
+  if (!native) return (await intentAutostartSettings()) ? 'opened_oem' : 'failed';
   try {
     return asOpenResult(await native.openAutostartSettings());
   } catch {
@@ -127,7 +133,7 @@ export async function openAutostartSettings(): Promise<OpenResult> {
 
 /** Android's own app details page — permissions, storage, battery. */
 export async function openAppSettings(): Promise<boolean> {
-  if (!native) return false;
+  if (!native) return intentAppSettings();
   try {
     return (await native.openAppSettings()) === true;
   } catch {

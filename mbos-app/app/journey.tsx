@@ -801,7 +801,7 @@ export default function JourneyScreen() {
               </T>
               <PrimaryButton
                 label="Close the day"
-                onPress={() => router.push('/eod')}
+                onPress={() => router.push('/eod?from=journey')}
                 style={{ marginTop: 12 }}
               />
             </Card>

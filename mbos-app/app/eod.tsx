@@ -3,7 +3,7 @@ import { View } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
-import { Badge, Card, Divider, Input, Field, PrimaryButton, T } from '../src/components/ui/primitives';
+import { Badge, Card, Divider, Input, Field, PrimaryButton, SecondaryButton, T } from '../src/components/ui/primitives';
 import { ConfirmSheet } from '../src/components/ui/overlays';
 import { useBoot } from '../src/state/boot';
 import { useStore } from '../src/state/store';
@@ -11,7 +11,6 @@ import { inrFromPaise, isoDate } from '../src/lib/format';
 import { CountUp, Stagger, Swap } from '../src/components/ui/motion';
 import { color as C, weight, tabular, type as typeScale } from '../src/theme/tokens';
 import { priceDay, submitDay } from '../src/data/travel';
-import { dayState } from '../src/data/attendance';
 
 /**
  * Closing the day.
@@ -29,10 +28,9 @@ import { dayState } from '../src/data/attendance';
  * never going to be paid has been let down by this screen, not by the policy.
  */
 export default function EodScreen() {
-  const back = useCameFrom('day');
+  const back = useCameFrom('journey');
   const boot = useBoot();
   const notify = useStore((s) => s.notify);
-  const askConfirm = useStore((s) => s.askConfirm);
   const userId = boot.session?.user.id ?? '';
   /* ONE reading of the clock for the life of the screen. Read in the component
      body it re-derived on every render, so a day that rolled over while the
@@ -97,30 +95,6 @@ export default function EodScreen() {
       if (!r.ok) return notify(r.reason ?? 'Not sent. Try again.', 'error');
       notify('Sent to the office.');
       load();
-      /*
-       * SENDING THE DAY IN FEELS LIKE THE END OF IT, AND IT IS NOT. This is
-       * the last thing he does in the evening, and the punch-out that decides
-       * his hours was a button on a different screen — so he sent the claim,
-       * put the phone away, and the day was closed overnight by the system
-       * with no closing photo. Asked here, at the moment he already feels
-       * done. Only while a session is open; the answer goes through Home's own
-       * punch-out, so there is one way to close a day and it asks for the
-       * same photograph wherever it starts.
-       */
-      try {
-        const state = await dayState(userId);
-        if (state.running) {
-          askConfirm({
-            title: 'Punch out too?',
-            body: 'Your day is sent, but you are still punched in. Punch out now so today’s hours stop here.',
-            confirmLabel: 'Punch out · photo',
-            run: () => router.replace('/home?punchOut=1'),
-          });
-        }
-      } catch {
-        /* The claim is sent; a prompt that could not be worked out is not a
-           failure of anything he did. Home still has the button. */
-      }
     } finally {
       sending.current = false;
       setBusy(false);
@@ -282,11 +256,23 @@ export default function EodScreen() {
                 disabled={busy || noReturn}
                 whyDisabled={
                   noReturn
-                    ? 'First add the time you got back. Your food allowance is worked out from it.'
+                    ? 'Punch out first. Your food allowance is worked out from the time you punch out.'
                     : undefined
                 }
                 onPress={() => setConfirming(true)}
               />
+              {/* THE ONLY THING THAT WRITES THE TIME HE GOT BACK IS THE
+                  PUNCH-OUT, so the way past the disabled button is the
+                  punch-out itself — through Home's, which asks for the same
+                  photograph wherever it starts. This screen used to ask him to
+                  "add the time you got back" with nothing on it that could. */}
+              {noReturn ? (
+                <SecondaryButton
+                  label="Punch out · photo"
+                  style={{ marginTop: 10 }}
+                  onPress={() => router.replace('/home?punchOut=1')}
+                />
+              ) : null}
             </>
           )}
           </Swap>

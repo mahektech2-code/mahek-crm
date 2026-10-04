@@ -9,7 +9,7 @@ import { promptsForExpenses } from '../src/lib/travel-leg';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
-import { compactInrFromPaise, hhmm, inrFromPaise, isoDate, plural } from '../src/lib/format';
+import { compactInrFromPaise, dmy, hhmm, inrFromPaise, isoDate, plural } from '../src/lib/format';
 import { DASH_CARDS, DAY_AHEAD } from '../src/data/fixtures';
 import {
   checkIn,
@@ -46,17 +46,20 @@ import { stalledAt } from '../src/sync/trail';
 import { lastAskedAt } from '../src/native/keepalive';
 import { shouldOfferSetup } from '../src/engines/oem-keepalive';
 import { withinGeofence } from '../src/engines/geo';
-import { fixOf, getFix } from '../src/native/location';
+import { fixOf, getFix, type Fix } from '../src/native/location';
 import { ensureLocationPermission } from '../src/native/permissions';
 import { walkthroughDue } from '../src/data/setup-walkthrough';
 import { queueOdometerPhoto, queueSelfie } from '../src/native/capture';
+import { discardQueuedMedia } from '../src/sync/media';
 import { SelfieCamera, type SelfieResult } from '../src/components/ui/selfie-camera';
 import { OdometerCamera, type OdometerResult } from '../src/components/ui/odometer-camera';
 import { BottomSheet } from '../src/components/ui/overlays';
 import { TravelModeList } from '../src/components/ui/travel-mode-list';
 import {
+  dismissUnpaidMeterDay,
   endSession,
   openSessionLeg,
+  unpaidMeterDay,
   startSession,
   travelModesFor,
   type TravelMode,
@@ -353,6 +356,20 @@ export default function Home() {
    * morning, before the day that will or will not be recorded.
    */
   const [offerSetup, setOfferSetup] = React.useState(false);
+  /* A metered day closed by the app with no punch-out — its km are not paid,
+     and he hears it here rather than from the claim. See `closeStaleSessions`. */
+  const [unpaidMeter, setUnpaidMeter] = React.useState<string | null>(null);
+  useFocusEffect(
+    React.useCallback(() => {
+      let live = true;
+      void unpaidMeterDay()
+        .then((d) => live && setUnpaidMeter(d))
+        .catch(() => {});
+      return () => {
+        live = false;
+      };
+    }, [setUnpaidMeter]),
+  );
 
   const load = React.useCallback(() => {
     if (!userId) return;
@@ -710,6 +727,48 @@ export default function Home() {
   };
 
   /**
+   * LET GO OF PHOTOGRAPHS FOR A PUNCH THAT DID NOT HAPPEN.
+   *
+   * The selfie and the meter are queued the moment the camera closes, against
+   * `'pending'`, because the row they belong to does not exist yet. Backing out
+   * at the vehicle question or the meter left them in the queue all the same,
+   * and they went up with no parent: a photograph of an employee held for a
+   * punch nobody made, until the orphan sweep found it a day later.
+   */
+  const dropShots = (...ids: (string | null | undefined)[]) => {
+    for (const id of ids) if (id) void discardQueuedMedia(id).catch(() => {});
+  };
+
+  /**
+   * Away from base: the day is open either way, and the reason is asked after.
+   * One function for both doors — the afternoon's punch-in used to pass no base
+   * at all, so a session opened anywhere was never asked about.
+   */
+  const askWhyAwayFromBase = (
+    dayId: string,
+    fix: Fix | null,
+    base: { lat: number; lng: number } | null,
+    radiusM: number,
+    okWords: string,
+  ) => {
+    const geo = base && fix ? withinGeofence(fix, base, radiusM) : null;
+    if (geo && !geo.inside) {
+      askConfirm({
+        title: 'You are not at base',
+        body: 'Your day has started. Your manager will see your reason.',
+        reasonLabel: 'Why · needed',
+        confirmLabel: 'Send reason',
+        run: (reason) => {
+          void setOverrideReason(dayId, reason);
+          notify('Sent to your manager');
+        },
+      });
+      return;
+    }
+    notify(okWords + (fix ? ' · GPS found' : ' · saved without location'), fix ? 'success' : 'warn');
+  };
+
+  /**
    * Starting the day: GPS, then attendance with a selfie, then the timer.
    *
    * Check-in is never blocked BY A LOCATION, which is not the same sentence it
@@ -780,14 +839,20 @@ export default function Home() {
        * the whole of the day's mileage.
        */
       const answer = await askMode();
-      if (!answer.ok) return;
+      if (!answer.ok) {
+        dropShots(selfie.id);
+        return;
+      }
       const mode = answer.mode;
       const meter = mode ? await meterFor(mode, {
         title: 'Photograph the meter',
         subtitle: 'Before you start. Today’s km are counted from this reading.',
         cancelLabel: 'Cancel the punch-in',
       }, null) : null;
-      if (meter === false) return;
+      if (meter === false) {
+        dropShots(selfie.id);
+        return;
+      }
 
       const fix = fixOf(await fixing);
 
@@ -804,26 +869,21 @@ export default function Home() {
          at a day id or open a second one. It cannot fail the punch-in — the
          mark is the thing a salesman is paid on, and losing it over a travel
          leg would be the wrong way round. */
+      /* Already running — a second tap that raced the first. Nothing new was
+         opened, so the photographs taken for it belong to nothing. */
+      if (row.alreadyRunning) {
+        dropShots(selfie.id, meter ? meter.photoId : null);
+        load();
+        notify('You are already punched in.', 'info');
+        return;
+      }
+
       if (mode) await openSessionFor(mode, fix, meter);
 
       set({ gps: fix ? 'locked' : 'off' });
       load();
 
-      const geo = base && fix ? withinGeofence(fix, base, radius) : null;
-      if (geo && !geo.inside) {
-        askConfirm({
-          title: 'You are not at base',
-          body: 'Your day has started. Your manager will see your reason.',
-          reasonLabel: 'Why · needed',
-          confirmLabel: 'Send reason',
-          run: (reason) => {
-            void setOverrideReason(row.id, reason);
-            notify('Sent to your manager');
-          },
-        });
-      } else {
-        notify('Day started' + (fix ? ' · GPS found' : ' · saved without location'), fix ? 'success' : 'warn');
-      }
+      askWhyAwayFromBase(row.id, fix, base, radius, 'Day started');
     } finally {
       setStarting(false);
     }
@@ -884,13 +944,21 @@ export default function Home() {
               session.odometerStartKm,
             )
           : null;
-      if (closing === false) return;
+      if (closing === false) {
+        dropShots(selfie.id);
+        return;
+      }
 
       const fix = fixOf(await fixing);
       const out = await checkOut(userId, fix, selfie.id);
+      /* NOTHING WAS CLOSED, so nothing else may be. The travel session used
+         to be ended here whatever the punch-out said — so a punch-out refused
+         after midnight still closed the day's meter at the closing reading,
+         and the photographs went up for a mark that was never written. */
+      if (!out.ok) dropShots(selfie.id, closing ? closing.photoId : null);
       /* After the mark, and unable to undo it. Same order, same reason as the
          punch-in: the session is a journey belonging to a day. */
-      if (session) {
+      if (session && out.ok) {
         try {
           await endSession({
             legId: session.id,
@@ -973,24 +1041,38 @@ export default function Home() {
        * the whole of the day's mileage.
        */
       const answer = await askMode();
-      if (!answer.ok) return;
+      if (!answer.ok) {
+        dropShots(selfie.id);
+        return;
+      }
       const mode = answer.mode;
       const meter = mode ? await meterFor(mode, {
         title: 'Photograph the meter',
         subtitle: 'Before you start. Today’s km are counted from this reading.',
         cancelLabel: 'Cancel the punch-in',
       }, null) : null;
-      if (meter === false) return;
+      if (meter === false) {
+        dropShots(selfie.id);
+        return;
+      }
 
+      const radius = await getConfig<number>('mbos.attendance.geofenceRadiusM', 200);
+      const base = await getConfig<{ lat: number; lng: number } | null>('mbos.attendance.baseLocation', null);
       const fix = fixOf(await fixing);
-      await checkIn({ userId, fix, selfieMediaId: selfie.id, mayOpen: gate.gate, homeLocation: null });
+      const row = await checkIn({ userId, fix, selfieMediaId: selfie.id, mayOpen: gate.gate, homeLocation: base });
+      if (row.alreadyRunning) {
+        dropShots(selfie.id, meter ? meter.photoId : null);
+        load();
+        notify('You are already punched in.', 'info');
+        return;
+      }
       /* ASKED AGAIN, and that is deliberate: he can bike in the morning and
          take the bus after lunch, and a session that inherited the morning's
          vehicle would quietly claim per-km on a day he spent on buses. */
       if (mode) await openSessionFor(mode, fix, meter);
       set({ gps: fix ? 'locked' : 'off' });
       load();
-      notify('Punched back in');
+      askWhyAwayFromBase(row.id, fix, base, radius, 'Punched back in');
     } finally {
       setStarting(false);
     }
@@ -1235,6 +1317,25 @@ export default function Home() {
           of that is a prompt he learns to swipe past. It is drawn quietly for
           the same reason — the danger colour belongs to the tracker having
           actually stopped, which is the Sync card's sentence, not this one's. */}
+      {unpaidMeter ? (
+        <Card style={{ marginTop: 12, padding: 14, backgroundColor: C.warnBg }}>
+          <T s="small" style={[{ color: C.ink }, weight(600)]}>
+            {`${dmy(unpaidMeter)}: your vehicle km were not counted`}
+          </T>
+          <T s="caption" style={{ color: C.ink, marginTop: 4 }}>
+            You did not punch out, so the app closed the day with no closing meter reading. Ask your manager to add the km. Your route for that day is saved.
+          </T>
+          <SecondaryButton
+            label="OK"
+            style={{ marginTop: 10 }}
+            onPress={() => {
+              setUnpaidMeter(null);
+              void dismissUnpaidMeterDay().catch(() => {});
+            }}
+          />
+        </Card>
+      ) : null}
+
       {offerSetup ? (
         <PressableScale
           onPress={() => router.push('/tracking-setup?from=home')}
@@ -1674,6 +1775,8 @@ export default function Home() {
         cancelLabel={meterWords.cancelLabel}
         previousKm={meterFrom}
         maxLegKilometres={maxLegKm}
+        /* Home only ever reads the meter at the two ends of the day. */
+        span="day"
         onDone={(result) => {
           setMetering(false);
           answerMeter.current?.(result);

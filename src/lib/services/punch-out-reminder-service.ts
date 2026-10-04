@@ -63,7 +63,7 @@ export async function sendPunchOutReminders(): Promise<{ recordsAffected: number
       body:
         due === 1
           ? "Done for the day? Punch out so your hours stop here. Tap to take the photo."
-          : "If you are done, punch out now. Otherwise the system closes your day tonight and your manager has to fix it.",
+          : "If you are done, punch out now. Otherwise the system closes your day tonight, today’s vehicle km are not paid, and your manager has to fix it.",
       /* Through Home's own punch-out, so the photo and the meter reading are
          asked for exactly as they are from the button. */
       mbosHref: "/home?punchOut=1",
