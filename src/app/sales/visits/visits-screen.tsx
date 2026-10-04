@@ -54,6 +54,16 @@ export function VisitsScreen({
   const [question, setQuestion] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  /* Which visits are opened out. A set, so a manager comparing two visits to
+     one shop can have both open at once. */
+  const [open, setOpen] = React.useState<Set<string>>(() => new Set());
+  const toggle = (id: string) =>
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   const unverified = all.filter((v) => !v.verified);
   const offPlan = all.filter((v) => !v.wasPlanned);
@@ -154,7 +164,7 @@ export function VisitsScreen({
     <div className="p-6">
       <ScreenHeader
         title="Visits"
-        subtitle="Every visit logged, how long they stayed and whether the phone agreed they were at the shop. An unverified visit still counts as work — it needs a word from you, not a red mark."
+        subtitle="Every visit logged, how long they stayed and whether the phone agreed they were at the shop. Click a visit to read the notes, see the photographs and hear the voice note. An unverified visit still counts as work — it needs a word from you, not a red mark."
         actions={
           <div className="flex items-center gap-1 text-[13px]">
             <Link
@@ -239,8 +249,9 @@ export function VisitsScreen({
           }
         >
           {sorted.map((v, i) => (
-            <Row key={v.id} striped={i % 2 === 1}>
-              <Cell truncate={170}>
+            <React.Fragment key={v.id}>
+            <Row striped={i % 2 === 1} selected={open.has(v.id)} onClick={() => toggle(v.id)}>
+              <Cell truncate={170} onClick={(e) => e.stopPropagation()}>
                 <Link
                   href={`/sales/people/${v.salesmanId}`}
                   className="no-underline"
@@ -248,7 +259,7 @@ export function VisitsScreen({
                   {v.salesmanName}
                 </Link>
               </Cell>
-              <Cell truncate={200}>
+              <Cell truncate={200} onClick={(e) => e.stopPropagation()}>
                 <CustomerName id={v.customerId} name={v.customerName} />
               </Cell>
               <Cell>{v.checkInAt ? clock(v.checkInAt) : <span className="text-muted">—</span>}</Cell>
@@ -275,8 +286,16 @@ export function VisitsScreen({
                 {v.distanceFromShopM != null ? `${v.distanceFromShopM} m` : <span className="text-muted">—</span>}
               </Cell>
               <Cell>{label(VISIT_OUTCOME_LABEL, v.outcome)}</Cell>
-              <Cell align="right">
-                {v.photos || <span className="text-muted">—</span>}
+              <Cell align="right" onClick={(e) => e.stopPropagation()}>
+                {v.shopPhotoId || v.custPhotoId ? (
+                  <span className="inline-flex gap-1">
+                    {[v.shopPhotoId, v.custPhotoId].filter(Boolean).map((id) => (
+                      <Thumb key={id} id={id!} alt={`${v.customerName}, visit photograph`} size={28} />
+                    ))}
+                  </span>
+                ) : (
+                  <span className="text-muted">—</span>
+                )}
               </Cell>
               <Cell align="right">
                 {Number(v.orderValuePaise) ? (
@@ -428,6 +447,14 @@ export function VisitsScreen({
                 />
               </Cell>
             </Row>
+            {open.has(v.id) ? (
+              <tr className="border-b border-divider bg-canvas">
+                <td colSpan={10} className="px-4 py-3">
+                  <VisitDetail v={v} />
+                </td>
+              </tr>
+            ) : null}
+            </React.Fragment>
           ))}
         </Table>
       )}
@@ -448,6 +475,119 @@ export function VisitsScreen({
         onConfirm={() => void submitAsk()}
       />
     </div>
+  );
+}
+
+/**
+ * EVERYTHING THE HANDSET BROUGHT BACK FROM ONE SHOP.
+ *
+ * The row above is the verdict — where, how long, verified or not. This is the
+ * visit itself: what the salesman wrote or said, the two photographs, the voice
+ * note, what he learned about the competition and what else the visit
+ * produced. None of it was on this screen before; the photographs were a
+ * number in a column and the competitor notes were on no screen at all.
+ */
+function VisitDetail({ v }: { v: VisitRow }) {
+  const words = v.notes?.trim() || null;
+  const heard = v.transcript?.trim() || null;
+  const produced = [
+    Number(v.orderValuePaise) ? `an order of ${money(v.orderValuePaise)}` : null,
+    v.tookPayment ? "a payment" : null,
+    v.raisedComplaint ? "a complaint" : null,
+    v.gaveSample ? "a sample" : null,
+  ].filter(Boolean);
+
+  return (
+    <div className="grid gap-4 text-[13px] text-body md:grid-cols-[minmax(0,1fr)_auto]">
+      <div className="min-w-0 space-y-3">
+        <section>
+          <h4 className="text-[12px] font-medium uppercase tracking-wide text-muted">Notes</h4>
+          {words ? (
+            <p className="mt-1 whitespace-pre-wrap">{words}</p>
+          ) : (
+            <p className="mt-1 text-muted">He wrote nothing on this visit.</p>
+          )}
+          {heard && heard !== words ? (
+            <p className="mt-2 whitespace-pre-wrap text-muted">
+              <span className="font-medium text-body">
+                {v.transcriptIsAi ? "Voice note, as transcribed: " : "Voice note: "}
+              </span>
+              {heard}
+            </p>
+          ) : null}
+        </section>
+
+        {v.voiceNoteId ? (
+          <section>
+            <h4 className="text-[12px] font-medium uppercase tracking-wide text-muted">Voice note</h4>
+            <audio controls preload="none" src={`/api/attachments/${v.voiceNoteId}`} className="mt-1 h-8 w-full max-w-[360px]">
+              <a href={`/api/attachments/${v.voiceNoteId}`}>Download the voice note</a>
+            </audio>
+          </section>
+        ) : null}
+
+        {v.competitors.length ? (
+          <section>
+            <h4 className="text-[12px] font-medium uppercase tracking-wide text-muted">
+              Competition he found here
+            </h4>
+            <ul className="mt-1 space-y-1.5">
+              {v.competitors.map((c, i) => (
+                <li key={i}>
+                  <span className="font-medium text-ink">{c.competitorName}</span>
+                  {c.productName ? ` · ${c.productName}` : ""}
+                  {c.pricePaise != null ? ` · ${money(c.pricePaise)}` : ""}
+                  {c.rateNote ? ` (${c.rateNote})` : ""}
+                  {c.creditDays != null ? ` · ${c.creditDays} days credit` : c.creditTerms ? ` · ${c.creditTerms}` : ""}
+                  {c.deliveryNote ? <span className="block text-muted">Delivery: {c.deliveryNote}</span> : null}
+                  {c.strengths ? <span className="block text-muted">Strong on: {c.strengths}</span> : null}
+                  {c.weaknesses ? <span className="block text-muted">Weak on: {c.weaknesses}</span> : null}
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
+
+        <section className="flex flex-wrap gap-x-6 gap-y-1 text-muted">
+          <span>
+            {v.checkInAt ? `In ${clock(v.checkInAt)}` : "No check-in time"}
+            {v.checkOutAt ? ` · out ${clock(v.checkOutAt)}` : " · never checked out"}
+          </span>
+          <span>{produced.length ? `Came away with ${produced.join(", ")}` : "Nothing taken on this visit"}</span>
+          {v.nextFollowUpDate ? <span>Follow up on {v.nextFollowUpDate}</span> : null}
+        </section>
+      </div>
+
+      <div className="flex gap-2">
+        {v.shopPhotoId ? <Thumb id={v.shopPhotoId} alt={`${v.customerName}, the shop`} size={140} caption="Shop" /> : null}
+        {v.custPhotoId ? <Thumb id={v.custPhotoId} alt={`${v.customerName}, the customer`} size={140} caption="Customer" /> : null}
+        {!v.shopPhotoId && !v.custPhotoId ? <span className="text-muted">No photographs on this visit.</span> : null}
+      </div>
+    </div>
+  );
+}
+
+/** A photograph off the handset, opening full size in a new tab. Access is
+ * checked by `/api/attachments/[id]` on every read. */
+function Thumb({ id, alt, size, caption }: { id: string; alt: string; size: number; caption?: string }) {
+  return (
+    <a
+      href={`/api/attachments/${id}`}
+      target="_blank"
+      rel="noreferrer"
+      title="Open the full photograph"
+      className="block text-center text-[12px] text-muted no-underline"
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={`/api/attachments/${id}`}
+        alt={alt}
+        loading="lazy"
+        style={{ width: size, height: size }}
+        className="rounded-[4px] border border-line object-cover hover:border-brand"
+      />
+      {caption ? <span className="mt-0.5 block">{caption}</span> : null}
+    </a>
   );
 }
 

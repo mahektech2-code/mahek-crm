@@ -12,7 +12,10 @@ import {
   mbosCourses,
   mbosDocuments,
   mbosExpenses,
+  mbosSamples,
+  mbosTasks,
   mbosTravelLegs,
+  mbosVisits,
   paymentReceipts,
 } from "@/db/schema";
 import { resolveScope, assertCustomerInScope, canFor } from "../access-control";
@@ -428,6 +431,54 @@ export async function canRead(attachmentId: string): Promise<boolean> {
     return canReadExpenseAttachment(row.parentId);
   }
 
+  /*
+   * A VISIT'S PHOTOGRAPHS AND VOICE NOTE, A SAMPLE'S PROOF, A TASK'S PHOTO —
+   * and every one of them was a 404, to everybody.
+   *
+   * The same fall-through the attendance selfie and the odometer photograph
+   * were rescued from, three parent types over: `customerBehind` looked an
+   * `mbos_visits` id up among `calls`, found nothing, and refused. The handset
+   * has uploaded a shop photo, a customer photo and a voice note on visits
+   * since it shipped, and no manager could ever open one — which is why the
+   * Visits screen could only print how many there were.
+   *
+   * Read as field evidence: the salesman who took it, and whoever holds a
+   * Sales Dashboard screen that shows it with him in scope. Then, failing
+   * that, the customer's own scope for a visit or a sample — a shop photo is
+   * also a fact about the shop, and a CRM user who may open the account may
+   * see what it looks like. A task names no customer, so it stops at the first.
+   */
+  if (row.parentType === "mbos_visit") {
+    const [visit] = await db
+      .select({ salesmanId: mbosVisits.salesmanId, customerId: mbosVisits.customerId })
+      .from(mbosVisits)
+      .where(eq(mbosVisits.id, row.parentId));
+    if (!visit) return false;
+    if (await canReadSalesmansOwnEvidence(visit.salesmanId, ["sales.visits", "sales.people"])) {
+      return true;
+    }
+    return customerInScope(visit.customerId);
+  }
+  if (row.parentType === "mbos_sample") {
+    const [sample] = await db
+      .select({ salesmanId: mbosSamples.salesmanId, customerId: mbosSamples.customerId })
+      .from(mbosSamples)
+      .where(eq(mbosSamples.id, row.parentId));
+    if (!sample) return false;
+    if (await canReadSalesmansOwnEvidence(sample.salesmanId, ["sales.samples", "sales.leads"])) {
+      return true;
+    }
+    return customerInScope(sample.customerId);
+  }
+  if (row.parentType === "mbos_task") {
+    const [task] = await db
+      .select({ userId: mbosTasks.assignedToUserId })
+      .from(mbosTasks)
+      .where(eq(mbosTasks.id, row.parentId));
+    if (!task) return false;
+    return canReadSalesmansOwnEvidence(task.userId, ["sales.tasks"]);
+  }
+
   const customerId = await customerBehind(row.parentType, row.parentId);
   if (!customerId) return false;
 
@@ -651,6 +702,27 @@ async function canReadSalesmansOwnEvidence(
   /* See `scopeCovers`: a national manager covers everybody, an associate only
      himself, and the CRM Sales Manager seat's null covers nobody. */
   return scopeCovers(await managerScope(), ownerId);
+}
+
+/** Whether the signed-in person may see this customer — the scope the
+ * customer-parented files below are read under, asked for a field record that
+ * names a shop. */
+async function customerInScope(customerId: string): Promise<boolean> {
+  const [customer] = await db
+    .select({
+      kind: customers.kind,
+      ownerId: customers.ownerId,
+      salesAmId: customers.salesAmId,
+    })
+    .from(customers)
+    .where(eq(customers.id, customerId));
+  if (!customer) return false;
+  try {
+    await assertCustomerInScope(customer);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function customerBehind(

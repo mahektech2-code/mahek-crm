@@ -44,8 +44,12 @@ export default async function Page({
 }) {
   const params = await searchParams;
 
+  /* EVERYTHING BY DEFAULT. This opened on "Waiting", which on a day accounts
+     had cleared the queue drew "Nothing waiting" over a book of field orders —
+     read by a manager as the handset not sending any. The waiting count is in
+     the banner and on its chip; the screen's first answer is what was taken. */
   const show = (
-    ["all", "waiting", "overlimit"].includes(params.show ?? "") ? params.show! : "waiting"
+    ["all", "waiting", "overlimit"].includes(params.show ?? "") ? params.show! : "all"
   ) as "all" | "waiting" | "overlimit";
 
   /* THE FIGURES COME FROM SQL AND THE TABLE IS A PAGE.
@@ -89,7 +93,7 @@ export default async function Page({
     <div className="p-6">
       <ScreenHeader
         title="Orders"
-        subtitle="Nothing above a customer's credit limit dispatches until somebody decides. Declining sends the salesman back to the customer with the reason, so it is never left unsaid."
+        subtitle="Every order taken on a handset — what was ordered, what accounts decided and what the shop said when the goods arrived. Nothing above a customer's credit limit dispatches until somebody decides."
       />
 
       {waiting ? (
@@ -124,9 +128,9 @@ export default async function Page({
       <FilterChips
         current={show}
                 options={[
+          { key: "all", href: `/sales/orders?show=all`, label: "Everything", count: summary.total },
           { key: "waiting", href: `/sales/orders?show=waiting`, label: "Waiting", count: waiting },
           { key: "overlimit", href: `/sales/orders?show=overlimit`, label: "Over the limit", count: overLimit },
-          { key: "all", href: `/sales/orders?show=all`, label: "Everything", count: summary.total },
         ]}
       />
 
@@ -150,12 +154,13 @@ export default async function Page({
             </p>
           ) : null}
         <Table
-          minWidth={1240}
+          minWidth={1560}
           head={
             <>
               {head("order", "Order", 170)}
               {head("salesman", "Salesman", 160)}
               {head("customer", "Customer", 210)}
+              <HeadCell width={320}>What was ordered</HeadCell>
               {head("value", "Value", 140, "right")}
               {head("limit", "Their limit", 150, "right")}
               {head("cans", "Cans", 100, "right")}
@@ -200,6 +205,33 @@ export default async function Page({
                 <Cell truncate={210}>
                   <CustomerName id={o.customerId} name={o.customerName} />
                 </Cell>
+                <Cell className="whitespace-normal">
+                  {o.lineItems.length ? (
+                    <ul className="space-y-0.5 text-[13px]">
+                      {o.lineItems.map((l, k) => (
+                        <li key={k} className="leading-snug">
+                          {l.product}
+                          <span className="text-muted">
+                            {" "}× {l.quantity}
+                            {Number(l.amount) ? ` · ${money(l.amount)}` : ""}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <span className="text-muted">No lines recorded</span>
+                  )}
+                  {o.deliveryShopName ? (
+                    <span className="mt-0.5 block text-[12px] text-muted">
+                      Deliver to {o.deliveryShopName}
+                    </span>
+                  ) : null}
+                  {o.expectedDispatch ? (
+                    <span className="block text-[12px] text-muted">
+                      Dispatch expected {shortDate(o.expectedDispatch)}
+                    </span>
+                  ) : null}
+                </Cell>
                 <Cell align="right">{money(o.totalAmountPaise)}</Cell>
                 <Cell align="right">
                   {o.creditLimitPaise != null ? (
@@ -238,6 +270,28 @@ export default async function Page({
                       {o.status.replace(/_/g, " ")}
                     </Pill>
                   )}
+                  {/* The decision's reason and the shop's own word on the
+                      order — written by the handset, read nowhere until now. */}
+                  {o.declineReason && o.status === "declined" ? (
+                    <span className="mt-0.5 block whitespace-normal text-[12px] text-muted">
+                      {o.declineReason}
+                    </span>
+                  ) : null}
+                  {o.deliveryDiscrepancy ? (
+                    <span className="mt-0.5 block whitespace-normal text-[12px] font-medium text-danger">
+                      Shop reports: {o.deliveryDiscrepancy}
+                    </span>
+                  ) : o.deliveryConfirmedAt ? (
+                    <span className="mt-0.5 block text-[12px] text-muted">
+                      Shop confirmed delivery {shortDate(o.deliveryConfirmedAt)}
+                    </span>
+                  ) : null}
+                  {o.customerConfirmedAt ? (
+                    <span className="mt-0.5 block whitespace-normal text-[12px] text-muted">
+                      Shop agreed the order {shortDate(o.customerConfirmedAt)}
+                      {o.customerConfirmedNote ? ` — ${o.customerConfirmedNote}` : ""}
+                    </span>
+                  ) : null}
                 </Cell>
               </Row>
             );
