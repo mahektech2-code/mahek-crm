@@ -74,7 +74,7 @@ import {
   recomputeSalesPeople,
   recomputeSalesManagers,
 } from "@/lib/recompute";
-import { addDays } from "@/lib/business-date";
+import { addDays, addMonths } from "@/lib/business-date";
 import { updateAccountManagers } from "@/lib/actions/account-manager";
 import { assignSalesManager } from "@/lib/actions/sales-manager";
 import { projectParties } from "@/lib/services/party-projection-service";
@@ -183,6 +183,9 @@ import {
   listReminders,
   listTargets,
   listTargetsPage,
+  resolveTargetCustomerIds,
+  setTargetsBulk,
+  targetCandidates,
   recordWatchOutcome,
   setTarget,
 } from "@/lib/services/worklist-services";
@@ -1679,18 +1682,36 @@ describe("who may see a customer's target", () => {
       "nor does a shop somebody else bills",
     );
 
-    // The paged read is a second query over the same rule, and the two
-    // disagreeing is exactly what pagination must not introduce.
-    const page = await listTargetsPage(undefined, {});
-    const pagedIds = page.rows.map((r) => r.customerId);
-    assert.ok(pagedIds.includes(direct.id));
-    assert.equal(pagedIds.includes(lead.id), false);
-    assert.equal(pagedIds.includes(shop.id), false);
+    // The paged read is the TABLE, and the table is the allocated targets:
+    // a direct customer with nothing allocated is counted, not listed.
+    const before = await listTargetsPage(undefined, {});
     assert.equal(
-      page.bookTotal,
+      before.rows.some((r) => r.customerId === direct.id),
+      false,
+      "a direct customer with no target is not on the table",
+    );
+    assert.equal(before.allocation.unallocated, 1, "it is counted as waiting for one");
+    assert.equal(
+      before.bookTotal,
       1,
       "and the book total counts the book this screen shows",
     );
+
+    // The allocate dialog offers the direct customer and nobody else.
+    const candidates = await targetCandidates({});
+    const candidateIds = candidates.map((c) => c.customerId);
+    assert.deepEqual(candidateIds, [direct.id], "only a direct customer can be given a target");
+
+    const allocated = await setTarget(direct.id, 500000);
+    assert.ok(allocated.ok, allocated.ok ? "" : allocated.error);
+    const page = await listTargetsPage(undefined, {});
+    const pagedIds = page.rows.map((r) => r.customerId);
+    assert.ok(pagedIds.includes(direct.id), "once allocated it is on the table");
+    assert.equal(pagedIds.includes(lead.id), false);
+    assert.equal(pagedIds.includes(shop.id), false);
+    assert.equal(page.allocation.allocated, 1);
+    assert.equal(page.allocation.hand, 1, "and it reads as set by hand");
+    assert.equal(page.allocation.unallocated, 0);
 
     // A server action is a URL, so the rule is checked there too rather than
     // only by what the list draws.
@@ -1698,6 +1719,77 @@ describe("who may see a customer's target", () => {
     assert.equal(refusedLead.ok, false, "a target cannot be set on a lead");
     const refusedShop = await setTarget(shop.id, 500000);
     assert.equal(refusedShop.ok, false, "nor on a third-party shop");
+  });
+
+  test("the table splits by Behind and Met, and a bulk uplift gives the unallocated a target from what they bought", async () => {
+    const manager = await makeUser("Targets Manager", "manager");
+    const telecaller = await makeUser("Their Telecaller", "associate", manager.id);
+    const month = TODAY.slice(0, 7);
+
+    const met = await makeCustomer(telecaller.id, { name: "Met Paints" });
+    const behind = await makeCustomer(telecaller.id, { name: "Behind Paints" });
+    const waiting = await makeCustomer(telecaller.id, { name: "Waiting Paints" });
+
+    // Met: ordered more than its target this month.
+    await db.insert(orders).values({
+      id: id("ord"),
+      customerId: met.id,
+      userId: telecaller.id,
+      orderedAt: new Date(`${TODAY}T09:00:00+05:30`),
+      totalAmount: 1_20_000_00,
+      status: "confirmed",
+    });
+    // Waiting: bought last month, nothing allocated this one.
+    await db.insert(orders).values({
+      id: id("ord"),
+      customerId: waiting.id,
+      userId: telecaller.id,
+      orderedAt: new Date(`${addMonths(month, -1)}-15T09:00:00+05:30`),
+      totalAmount: 90_000_00,
+      status: "confirmed",
+    });
+
+    setTestUser(manager);
+    assert.ok((await setTarget(met.id, 1_00_000_00, month)).ok);
+    assert.ok((await setTarget(behind.id, 1_00_000_00, month)).ok);
+
+    const all = await listTargetsPage(month, {});
+    assert.deepEqual(
+      all.rows.map((r) => r.customerId).sort(),
+      [behind.id, met.id].sort(),
+      "the table is the two allocated targets",
+    );
+    assert.equal(all.totals.customers, 2);
+    assert.equal(all.totals.behind, 1);
+    assert.equal(all.allocation.unallocated, 1);
+
+    const onlyBehind = await listTargetsPage(month, { progress: "behind" });
+    assert.deepEqual(onlyBehind.rows.map((r) => r.customerId), [behind.id]);
+    assert.equal(onlyBehind.total, 1);
+    assert.equal(onlyBehind.totals.customers, 2, "the summary does not move with the tab");
+    const onlyMet = await listTargetsPage(month, { progress: "met" });
+    assert.deepEqual(onlyMet.rows.map((r) => r.customerId), [met.id]);
+    const defaults = await listTargetsPage(month, { source: "default" });
+    assert.equal(defaults.total, 0, "nothing here is an auto default");
+
+    // The unallocated are reached by the same filters, and an uplift on
+    // "nothing" starts from their own average month rather than from zero.
+    const ids = await resolveTargetCustomerIds(month, {}, "unallocated");
+    assert.deepEqual(ids, [waiting.id]);
+    const bulk = await setTargetsBulk(ids, "uplift", 10, month);
+    assert.ok(bulk.ok && bulk.data.updated === 1, "the waiting customer was given a target");
+
+    const n = Math.max(1, (await getConfig())["targets.trailingMonths"]);
+    const [row] = await db
+      .select({ amount: monthlyTargets.targetAmount, isDefault: monthlyTargets.isDefault })
+      .from(monthlyTargets)
+      .where(eq(monthlyTargets.customerId, waiting.id));
+    assert.equal(row.amount, Math.round(Math.round(90_000_00 / n) * 1.1));
+    assert.equal(row.isDefault, false, "a bulk allocation is somebody's decision");
+
+    const after = await listTargetsPage(month, {});
+    assert.equal(after.allocation.unallocated, 0);
+    assert.equal(after.total, 3);
   });
 
   test("a filter narrows the population and never answers who may see it", async () => {

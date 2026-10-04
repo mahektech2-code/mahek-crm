@@ -55,6 +55,8 @@ import {
   setTarget as setTargetService,
   setTargetsBulk as setTargetsBulkService,
   resolveTargetCustomerIds,
+  targetCandidates as targetCandidatesService,
+  type TargetCandidate,
   type TargetListFilters,
 } from "@/lib/services/worklist-services";
 import {
@@ -1415,7 +1417,12 @@ export async function setTargetsBulk(input: {
    * of one page of it. See `targetFilterClause`.
    */
   filters: TargetListFilters;
-  onlyDefault: boolean;
+  /**
+   * Which of the customers those filters reach: the rows on the table, only
+   * the listed ones still on the auto-applied default, or the direct
+   * customers the table does not show because nothing is allocated yet.
+   */
+  population: "listed" | "defaults" | "unallocated";
   mode: "amount" | "uplift";
   value: string;
   period?: string;
@@ -1431,7 +1438,7 @@ export async function setTargetsBulk(input: {
     const customerIds = await resolveTargetCustomerIds(
       input.period,
       input.filters,
-      input.onlyDefault,
+      input.population,
     );
     const r = await setTargetsBulkService(
       customerIds,
@@ -1441,6 +1448,23 @@ export async function setTargetsBulk(input: {
     );
     refreshAll();
     return r.ok ? okVoid(r.message) : r;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * The direct customers a target can be allocated to, with what each bought
+ * lately — read for the allocate dialog's search, and with `customerId` for
+ * the context the edit dialog shows. `target.set` is checked in the service.
+ */
+export async function findTargetCandidates(input: {
+  period?: string;
+  query?: string;
+  customerId?: string;
+}): Promise<Result<TargetCandidate[]>> {
+  try {
+    return ok(await targetCandidatesService(input));
   } catch (e) {
     return fromThrown(e);
   }
