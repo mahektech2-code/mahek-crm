@@ -3,13 +3,30 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Badge, Button, Card, EmptyState, Field, Input, Td, Th, cx } from "@/components/ui/primitives";
-import { Modal, RowMenu } from "@/components/ui/overlays";
+import {
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  Field,
+  Input,
+  MetricStrip,
+  Td,
+  Th,
+  Tr,
+  cx,
+} from "@/components/ui/primitives";
+import { FilterPills, Modal, RowMenu } from "@/components/ui/overlays";
 import { VoiceTextarea } from "@/components/ui/dictate";
 import { useToast } from "@/components/ui/toast";
 import { Icon } from "@/components/shell/icons";
 import { money, shortDateWithYear, stampDate } from "@/lib/format";
-import { SPAN_LABEL, TOP_CUSTOMER_SPANS, monthHeading } from "@/lib/top-customers-period";
+import {
+  SPAN_LABEL,
+  TOP_CUSTOMER_SPANS,
+  monthHeading,
+  type TopCustomerSpan,
+} from "@/lib/top-customers-period";
 import { addFocusCustomer, removeFocusCustomer } from "@/lib/actions/focus-customers";
 import type { FocusCustomers } from "@/lib/services/focus-customers-service";
 
@@ -21,6 +38,9 @@ import type { FocusCustomers } from "@/lib/services/focus-customers-service";
  * report: where each stands in the company, what it bought month by month,
  * and how far it is from the cutoff. The figures come from the stored report;
  * this screen only adds who is being watched and why.
+ *
+ * Drawn with the design system's own pieces — `FilterPills`, `MetricStrip`, a
+ * plain table, `Badge` — like every other list in the app.
  * ------------------------------------------------------------------------- */
 
 type Hit = { id: string; name: string; city: string; phone: string };
@@ -44,27 +64,38 @@ export function FocusCustomersPanel({
   const crossesYear = months[0].slice(0, 4) !== months[months.length - 1].slice(0, 4);
   const already = React.useMemo(() => new Set(rows.map((r) => r.id)), [rows]);
 
-  const pill = (active: boolean) =>
-    cx(
-      "inline-flex h-8 items-center rounded-[4px] border px-3 text-sm no-underline",
-      active
-        ? "border-brand bg-brand text-white"
-        : "border-line-strong bg-surface text-body hover:bg-canvas",
-    );
+  const inside = rows.filter((r) => r.rank != null && r.gapPaise == null).length;
 
   return (
     <>
-      <Card className="mb-0 flex flex-wrap items-center gap-2 rounded-b-none border-b-0 px-4 py-3">
-        <span className="text-sm text-muted">Period</span>
-        {TOP_CUSTOMER_SPANS.map((s) => (
-          <Link
-            key={s}
-            href={`${basePath}?view=focus${s === 3 ? "" : `&span=${s}`}`}
-            className={pill(s === span)}
-          >
-            {SPAN_LABEL[s]}
-          </Link>
-        ))}
+      <MetricStrip
+        metrics={[
+          { label: "Focus customers", value: String(rows.length) },
+          {
+            label: `Top ${limit} cutoff`,
+            value: data.cutoffPaise != null ? money(data.cutoffPaise) : "Any order",
+            sub:
+              data.cutoffPaise != null
+                ? `the ${limit}th customer's sales in the period`
+                : `fewer than ${limit} customers ordered`,
+          },
+          {
+            label: `Already in the top ${limit}`,
+            value: String(inside),
+            tone: inside ? "success" : "ink",
+          },
+        ]}
+      />
+
+      <Card className="mb-0 flex flex-wrap items-center gap-x-5 gap-y-2.5 rounded-b-none border-b-0 px-4 py-3">
+        <FilterPills
+          options={TOP_CUSTOMER_SPANS.map((s) => ({ key: String(s), label: SPAN_LABEL[s] }))}
+          value={String(span)}
+          onChange={(k) => {
+            const s = Number(k) as TopCustomerSpan;
+            router.push(`${basePath}?view=focus${s === 3 ? "" : `&span=${s}`}`, { scroll: false });
+          }}
+        />
         <span className="flex-1" />
         <span className="text-[13px] text-muted">
           {`${monthHeading(months[0], true)} – ${monthHeading(months[months.length - 1], true)} · the Top customers report's figures`}
@@ -74,17 +105,11 @@ export function FocusCustomersPanel({
         </Button>
       </Card>
 
-      <div className="border border-b-0 border-line bg-surface px-4 py-2.5 text-[13px] text-body">
-        {data.cutoffPaise != null
-          ? `To be in the top ${limit} for this period a customer needed ${money(data.cutoffPaise)} of approved orders. Each row says how far it is from that.`
-          : `Fewer than ${limit} customers ordered in this period, so any approved order puts a customer on the Top customers list.`}
-      </div>
-
       <Card className="max-h-[calc(100vh-300px)] overflow-auto rounded-t-none">
         {rows.length ? (
-          <table className="text-[13px]">
+          <table>
             <thead>
-              <tr className="[&>th]:bg-brand-soft">
+              <tr>
                 <Th>Party name</Th>
                 <Th>Location</Th>
                 <Th>Why it is here</Th>
@@ -105,7 +130,7 @@ export function FocusCustomersPanel({
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.entryId} className="border-b border-divider hover:bg-canvas">
+                <Tr key={r.entryId} className="hover:bg-canvas">
                   <Td className="min-w-[200px]">
                     <Link
                       href={customerHrefTemplate.replace("{id}", r.id)}
@@ -118,7 +143,7 @@ export function FocusCustomersPanel({
                         Third party
                       </Badge>
                     ) : null}
-                    <div className="text-[12px] text-muted">
+                    <div className="text-xs text-muted">
                       Sales {r.salesAmName ?? "unassigned"} · Back office{" "}
                       {r.backOfficeAmName ?? "unassigned"}
                     </div>
@@ -126,27 +151,27 @@ export function FocusCustomersPanel({
                   <Td>{r.location}</Td>
                   <Td className="min-w-[240px] max-w-[320px] whitespace-normal">
                     {r.note ? <div className="text-body">{r.note}</div> : null}
-                    <div className="text-[12px] text-muted">
+                    <div className="text-xs text-muted">
                       Added by {r.addedByName ?? "someone who has left"}, {stampDate(r.addedAt)}
                     </div>
                   </Td>
-                  <Td align="right" className="tabular-nums">
+                  <Td align="right">
                     {r.rank != null ? `#${r.rank} of ${data.rankedCount}` : "—"}
                   </Td>
-                  <Td align="right" className="font-semibold text-ink tabular-nums">
+                  <Td align="right" className="font-medium text-ink">
                     {money(r.valuePaise)}
                   </Td>
                   {r.months.map((m) => (
                     <Td
                       key={m.month}
                       align="right"
-                      className={cx("tabular-nums", m.valuePaise > 0 ? "text-body" : "text-muted")}
+                      className={m.valuePaise > 0 ? undefined : "text-muted"}
                       title={`${m.orders} order${m.orders === 1 ? "" : "s"}`}
                     >
                       {m.valuePaise > 0 ? money(m.valuePaise) : "—"}
                     </Td>
                   ))}
-                  <Td align="right" className="tabular-nums">
+                  <Td align="right">
                     {r.gapPaise == null ? (
                       r.rank != null ? (
                         <Badge tone="success">In the top {limit}</Badge>
@@ -154,11 +179,11 @@ export function FocusCustomersPanel({
                         <span className="text-muted">Any order</span>
                       )
                     ) : (
-                      <span className="font-medium text-danger">{money(r.gapPaise)} more</span>
+                      <span className="text-danger">{money(r.gapPaise)} more</span>
                     )}
                   </Td>
                   <Td>{r.lastOrderDate ? shortDateWithYear(r.lastOrderDate, today) : "Never"}</Td>
-                  <Td align="right" className="tabular-nums">
+                  <Td align="right">
                     {money(r.outstandingPaise)}
                   </Td>
                   <Td align="right">
@@ -179,7 +204,7 @@ export function FocusCustomersPanel({
                       ]}
                     />
                   </Td>
-                </tr>
+                </Tr>
               ))}
             </tbody>
           </table>
@@ -333,7 +358,7 @@ function AddFocusCustomerModal({
                       <span className="font-medium text-ink">{h.name}</span>
                       <span className="ml-2 text-[13px] text-muted">{h.city}</span>
                     </span>
-                    {on ? <span className="text-[12px]">Already on the list</span> : null}
+                    {on ? <span className="text-xs">Already on the list</span> : null}
                   </button>
                 );
               })
