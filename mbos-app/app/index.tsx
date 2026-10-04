@@ -8,7 +8,9 @@ import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { openPasswordReset, signIn as signInReal, type LoginStep } from '../src/data/session';
 import { useKeyboardHeight } from '../src/components/ui/keyboard';
+import * as Clipboard from 'expo-clipboard';
 import { otpAvailable, requestOtp, ApiError } from '../src/sync/api';
+import { otpFromClipboard } from '../src/engines/otp-clipboard';
 import { Appear, Pop, Pulse, useShake } from '../src/components/ui/motion';
 import { feedback } from '../src/components/ui/feedback';
 import type { FeedbackKind } from '../src/engines/feedback';
@@ -135,6 +137,47 @@ export default function Login() {
      leaves the salesman with nothing to do about it. */
   const [serverMessage, setServerMessage] = React.useState<string | null>(null);
 
+  /*
+   * THE OTP IS CAUGHT OFF THE CLIPBOARD, because it cannot be caught anywhere
+   * else. MiniMoth sends it on WhatsApp first, and no app may read another
+   * app's WhatsApp messages — the only way in is Android's notification
+   * access, which would hand MBOS every notification on the phone. So the
+   * salesman taps "Copy code" in WhatsApp (or long-presses the message), comes
+   * back, and the screen fills the OTP in and signs him in: two taps and no
+   * typing. A code arriving by SMS is still offered by the keyboard through
+   * `autoComplete="sms-otp"` below.
+   *
+   * Read only on the way BACK to the app, only once an OTP has been sent, and
+   * only while the form is waiting for one — never as a habit, because on
+   * Android 12 and later every read shows a "pasted from clipboard" notice.
+   * `hasStringAsync` asks without reading, so an empty clipboard costs nothing.
+   * A code is submitted at most once: the same copied code coming back after a
+   * refusal must not spend a second try.
+   */
+  const triedCodes = React.useRef<Set<string>>(new Set());
+  const submitRef = React.useRef<(override?: string) => Promise<void>>(async () => {});
+  React.useEffect(() => { submitRef.current = submit; });
+  React.useEffect(() => {
+    if (method !== 'code' || !codeSentTo || stage !== 'form') return;
+    let live = true;
+    const catchCode = async () => {
+      try {
+        if (!(await Clipboard.hasStringAsync())) return;
+        const found = otpFromClipboard(await Clipboard.getStringAsync(), triedCodes.current);
+        if (!found || !live) return;
+        triedCodes.current.add(found);
+        setCode(found);
+        setErr(null);
+        setServerMessage(null);
+        void submitRef.current(found);
+      } catch {
+        /* The clipboard is a convenience; typing the OTP still works. */
+      }
+    };
+    const sub = AppState.addEventListener('change', (st) => { if (st === 'active') void catchCode(); });
+    return () => { live = false; sub.remove(); };
+  }, [method, codeSentTo, stage]);
+
   const boot = useBoot();
   const keyboardHeight = useKeyboardHeight();
   const cancelled = React.useRef(false);
@@ -175,7 +218,8 @@ export default function Login() {
     mobile: 0, credential: 0, status: 0, territory: 0, network: 0, payload: 1,
   };
 
-  async function submit() {
+  async function submit(override?: string) {
+    const typed = (override ?? code).replace(/\D/g, '');
     /* One at a time. Two overlapping sign-ins are two `setTokens`, two
        persists and two bootstraps writing into the same database. */
     if (stage === 'verifying') return;
@@ -187,7 +231,7 @@ export default function Login() {
       refuse();
       return setErr('pw');
     }
-    if (method === 'code' && code.replace(/\D/g, '').length < 4) {
+    if (method === 'code' && typed.length < 4) {
       setServerMessage(codeSentTo ? 'Enter the OTP.' : 'Send yourself an OTP first.');
       refuse();
       return setErr('pw');
@@ -203,7 +247,7 @@ export default function Login() {
 
     const outcome = await signInReal({
       mobile: mob.trim(),
-      ...(method === 'code' ? { otp: code.replace(/\D/g, '') } : { password: pw }),
+      ...(method === 'code' ? { otp: typed } : { password: pw }),
       remember,
       onStep: (s) => { if (live()) setStep(STEP_INDEX[s]); },
       /* Cancel now stops the attempt WRITING, not only the screen reacting:
