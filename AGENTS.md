@@ -2201,6 +2201,17 @@ included, sees the ones in their own book with their company rank. The other
 way round, the top sixty of a telecaller's own book, would put a small account
 on a list called Top customers.
 
+**FOCUS CUSTOMERS ARE A SHARED LIST, read through the Top customers report.**
+The third tab of Monthly targets (`?view=focus`) lists the customers somebody
+has said need attention to grow into top customers. Any customer in the reader's
+book can be added, a new account as readily as one just outside the sixty.
+`focus_customers` holds one row per customer, not a list per person, so a
+salesperson and a back office telecaller on one account see one entry. Who sees
+an entry is the customer's scope. Taking one off is the person who added it, or
+a manager. Every figure on the tab (rank, monthly sales, the gap to the cutoff)
+is looked up in the same stored report the Top customers tab draws, through
+`currentTopCustomerReport`, so the two tabs cannot disagree about one shop.
+
 **A THIRD-PARTY CUSTOMER is a shop we deliver to and do not bill.** A
 distributor buys from us, is invoiced, and sells the goods on; the shop is
 where the drums actually go. Most of what this CRM called a lead is one of

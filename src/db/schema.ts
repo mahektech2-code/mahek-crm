@@ -9653,6 +9653,31 @@ export const topCustomerReportRows = pgTable(
   ],
 );
 
+/**
+ * Customers somebody has said need attention to grow into top customers —
+ * the Focus customers tab of Monthly targets.
+ *
+ * ONE ROW PER CUSTOMER, shared rather than a list per person: a shop worked by
+ * a salesperson and a back office telecaller is one account, and two private
+ * lists would let each assume the other was on it. Who sees an entry is the
+ * customer's own scope, decided when it is read. Removing one deletes the row;
+ * the audit log is where "who took it off, and when" is kept.
+ */
+export const focusCustomers = pgTable(
+  "focus_customers",
+  {
+    id: text("id").primaryKey(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    addedById: text("added_by_id").references(() => users.id, { onDelete: "set null" }),
+    /** Why it needs attention, in the words of whoever added it. Optional. */
+    note: text("note"),
+    addedAt: timestamp("added_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("focus_customers_customer_key").on(t.customerId)],
+);
+
 /* ------------------------------------------------------- §3.32 website enquiry */
 
 /**
