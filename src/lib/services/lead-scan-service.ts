@@ -3,7 +3,15 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { generateText, Output } from "ai";
 import { z } from "zod";
 import { getConfig } from "@/lib/config/store";
-import { cleanScan, foundAnything, gstinSettled, preferGstin, type LeadScanResult } from "@/lib/engines/lead-scan";
+import {
+  cleanScan,
+  foundAnything,
+  gstinSettled,
+  hasIndianScript,
+  preferGstin,
+  type LeadScanReading,
+  type LeadScanResult,
+} from "@/lib/engines/lead-scan";
 import { leadScanReadingSchema } from "@/lib/lead-scan-schema";
 import { err, ok, type Result } from "@/lib/result";
 import { readSecret } from "@/lib/secrets";
@@ -37,7 +45,13 @@ export type LeadScanImage = { bytes: Uint8Array; mediaType: string };
 
 const SYSTEM = `You read photographs a field salesman in India has taken of a business he wants to sell paint and thinner to: a visiting card (front or back), a shop board, a poster, a bill head, a letterhead or a GST certificate. All the photographs are of ONE business.
 
-Read only what is printed or written. Never guess, complete or invent a value: if a field is not visible, it is null. Text may be in English, Hindi, Marathi, Gujarati or another Indian language — give names and addresses in English letters (transliterate, do not translate a shop's name).
+Read only what is printed or written. Never guess, complete or invent a value: if a field is not visible, it is null.
+
+EVERY VALUE YOU RETURN IS IN ENGLISH, IN ENGLISH (LATIN) LETTERS ONLY — never Devanagari, Kannada, Telugu, Tamil, Malayalam, Bengali, Gujarati, Gurmukhi, Odia, Urdu or any other script, even when the card is printed only in that script. The office reads these in English.
+- A shop's or person's NAME is transliterated, not translated: "ಶ್ರೀ ಗಣೇಶ ಪೇಂಟ್ಸ್" is "Shri Ganesh Paints", "রহিম হার্ডওয়্যার" is "Rahim Hardware", "श्याम ट्रेडर्स" is "Shyam Traders".
+- A TOWN or STATE is its usual English spelling: "ಬೆಂಗಳೂರು" is "Bengaluru", "హైదరాబాద్" is "Hyderabad", "कोलकाता" is "Kolkata".
+- An ADDRESS keeps its place names transliterated and puts its ordinary words into English: road, main road, cross, near, opposite, market, bazaar, nagar, colony, shop no., first floor.
+- Digits printed in an Indian script (०१२, ೦೧೨, ౦౧౨, ০১২) are written as 0-9.
 
 Brands the shop STOCKS (Asian Paints, Berger, Nerolac, Dulux and so on, often printed as logos) are not the business name.
 
@@ -122,6 +136,25 @@ export async function scanLeadImages(images: LeadScanImage[]): Promise<Result<Le
       reading.gstin = preferGstin(reading.gstin, second);
     }
 
+    /* ENGLISH, CHECKED RATHER THAN HOPED FOR. The prompt asks for English
+       letters, and a card printed only in Kannada still sometimes comes back
+       in Kannada — which the salesman then has to retype on a phone keyboard
+       that may not even have it. Where any field still carries an Indian
+       script, a short text-only pass rewrites those fields alone. No photo
+       goes back up, so it costs a second or two; and if it fails, the reading
+       stands as it was, because a field in Kannada he can fix beats an empty
+       one he cannot. */
+    if (needsEnglish(reading)) {
+      const remaining = SCAN_BUDGET_MS - (Date.now() - startedAt);
+      if (remaining >= 4_000) {
+        const english = await toEnglish(model, reading, remaining).catch((e) => {
+          console.error("Lead scan: English pass failed:", e instanceof Error ? e.message : e);
+          return null;
+        });
+        if (english) Object.assign(reading, english);
+      }
+    }
+
     const cleaned = cleanScan(reading);
     if (!foundAnything(cleaned)) {
       return err(
@@ -161,4 +194,49 @@ async function rereadGstin(
     abortSignal: AbortSignal.timeout(timeoutMs),
   });
   return r.output.gstin;
+}
+
+/* The fields a person reads. The GSTIN and the phone numbers are characters
+   and digits, cleaned on their own path, and are never sent through this. */
+const ENGLISH_FIELDS = ["businessName", "contactPerson", "city", "state", "address", "pincode", "note"] as const;
+
+function needsEnglish(r: LeadScanReading): boolean {
+  return ENGLISH_FIELDS.some((f) => hasIndianScript(r[f]));
+}
+
+const ENGLISH_SYSTEM = `You convert the details of an Indian shop, read off its visiting card or board, into English in English (Latin) letters. Names of shops and people are transliterated, not translated ("ಶ್ರೀ ಗಣೇಶ ಪೇಂಟ್ಸ್" is "Shri Ganesh Paints"). Towns and states take their usual English spelling ("ಬೆಂಗಳೂರು" is "Bengaluru"). In an address, place names are transliterated and ordinary words become English (road, near, opposite, market, nagar, colony). Indian-script digits become 0-9. A value already in English is returned unchanged; null stays null. Add nothing and drop nothing.`;
+
+const englishSchema = z.object({
+  businessName: z.string().nullable(),
+  contactPerson: z.string().nullable(),
+  city: z.string().nullable(),
+  state: z.string().nullable(),
+  address: z.string().nullable(),
+  pincode: z.string().nullable(),
+  note: z.string().nullable(),
+});
+
+async function toEnglish(
+  model: Parameters<typeof generateText>[0]["model"],
+  reading: LeadScanReading,
+  timeoutMs: number,
+): Promise<Partial<LeadScanReading> | null> {
+  const input = Object.fromEntries(ENGLISH_FIELDS.map((f) => [f, reading[f]]));
+  const r = await generateText({
+    model,
+    system: ENGLISH_SYSTEM,
+    prompt: JSON.stringify(input),
+    output: Output.object({ schema: englishSchema }),
+    providerOptions: { openai: { reasoningEffort: "low" } },
+    maxRetries: 0,
+    abortSignal: AbortSignal.timeout(Math.min(timeoutMs, 20_000)),
+  });
+  /* Only a field that came back free of Indian script replaces what was read
+     — a second answer still in Kannada is no better than the first. */
+  const out: Partial<LeadScanReading> = {};
+  for (const f of ENGLISH_FIELDS) {
+    const v = r.output[f];
+    if (reading[f] != null && v != null && !hasIndianScript(v)) out[f] = v;
+  }
+  return out;
 }

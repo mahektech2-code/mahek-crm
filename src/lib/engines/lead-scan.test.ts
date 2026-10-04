@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cleanScan, foundAnything, gstinSettled, preferGstin, tidy, type LeadScanReading } from "./lead-scan";
+import { asciiDigits, cleanScan, foundAnything, gstinSettled, hasIndianScript, preferGstin, tidy, type LeadScanReading } from "./lead-scan";
 
 /* Everything goes through `cleanScan`, the one function the service calls —
    the helpers behind it are private, so a rule tested here is a rule the
@@ -139,4 +139,26 @@ test("second GSTIN look: replaces a missing or failing reading with one the chec
 test("second GSTIN look: never loses what the first reading found", () => {
   assert.equal(preferGstin("27AAPFU0939F1ZX", null), "27AAPFU0939F1ZX");
   assert.equal(preferGstin("27AAPFU0939F1ZX", "27AAPFU0939F1Z"), "27AAPFU0939F1ZX");
+});
+
+test("Indian-script text is caught, and Indian-script digits become 0-9", () => {
+  assert.equal(hasIndianScript("ಶ್ರೀ ಗಣೇಶ ಪೇಂಟ್ಸ್"), true);
+  assert.equal(hasIndianScript("హైదరాబాద్"), true);
+  assert.equal(hasIndianScript("রহিম হার্ডওয়্যার"), true);
+  assert.equal(hasIndianScript("श्याम ट्रेडर्स"), true);
+  assert.equal(hasIndianScript("Shri Ganesh Paints"), false);
+  assert.equal(hasIndianScript(null), false);
+  assert.equal(asciiDigits("९८२२० ११००१"), "98220 11001");
+  assert.equal(asciiDigits("೫೬೦೦೦೧"), "560001");
+});
+
+test("a mobile and a PIN printed in Indian digits still arrive", () => {
+  const r = cleanScan({
+    ...blank,
+    phones: [{ number: "+९१ ९८२२० ११००१", kind: "mobile" }],
+    address: "MG Road, Bengaluru",
+    pincode: "೫೬೦೦೦೧",
+  });
+  assert.equal(r.mobile, "9822011001");
+  assert.equal(r.address, "MG Road, Bengaluru 560001");
 });
