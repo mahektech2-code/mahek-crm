@@ -1,15 +1,13 @@
 import React from 'react';
 import { Pressable, View } from 'react-native';
-import { router } from 'expo-router';
 
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Card, ListCard, SecondaryButton, T, Toggle } from '../src/components/ui/primitives';
 import { feedback, primeSounds } from '../src/components/ui/feedback';
 import { setFeedbackPref, useFeedbackPrefs } from '../src/data/feedback-prefs';
-import { openPasswordReset, signOut as signOutReal } from '../src/data/session';
-import { pendingCount } from '../src/sync/queue';
-import { plural } from '../src/lib/format';
+import { openPasswordReset } from '../src/data/session';
 import { useStore } from '../src/state/store';
+import { useSignOut } from '../src/state/sign-out';
 import { useBoot } from '../src/state/boot';
 import { color as C, radius, weight } from '../src/theme/tokens';
 import { canOffer, isOn as lockIsOn, setOn as rememberLockChoice } from '../src/data/app-lock';
@@ -37,65 +35,22 @@ import { pushStatus, registerForPush, type PushReadiness } from '../src/native/p
  */
 
 /**
- * TWO SWITCHES THAT MOVE AND CHANGE NOTHING, AND ONE THAT NOW DOES.
+ * THE SWITCHES HERE ALL DO SOMETHING.
  *
- * `pfPrefs` is written by these toggles and read by NOTHING — not the sync, not
- * the push registration. It is not even persisted, so a switch somebody set
- * went back the next time the app started. Settings that looked like settings.
- *
- * Push is the one that was reported, and it is the one that cannot simply be
- * wired up: `registerForPush` needs an EAS project id in `app.json`
- * (`extra.eas.projectId`) to ask Expo's service for a token, `extra` is empty,
- * and so nine handsets have registered zero tokens between them. No token means
- * nothing to push TO, which is why a test push arrived nowhere. That needs an
- * Expo account and `eas init`, not a code change.
- *
- * A switch that cannot do anything is worse than no switch: it is where
- * somebody goes to fix the problem, and it tells them they already have. So
- * each one says whether it works, and the ones that do not are shown off and
- * unpressable with the reason underneath.
- *
- * THE FINGERPRINT IS NO LONGER ONE OF THEM. It sat here reading "Not built —
- * sign in with your password", which was true of the dead toggle it described
- * and is now false: it is a real app lock, with its own row beneath this list,
- * because it has state a static entry cannot carry — whether the phone has a
- * sensor, whether a finger is enrolled on it, and whether this handset has the
- * lock switched on. Leaving it here as "not built" would be the same lie in the
- * other direction.
+ * "Send on Wi-Fi only" was drawn off and unpressable with "Not ready yet"
+ * under it — a switch for a feature that does not exist, which is where
+ * somebody goes to save data and is told nothing they can use. It is gone
+ * until the sync can honour it. Push, the app lock, vibration and sounds are
+ * each real, and each says whether it is working on THIS phone.
  */
-type Pref = { k: 'wifi'; l: string; s: string; blocked?: string };
-
-const PREFS: Pref[] = [
-  {
-    k: 'wifi',
-    l: 'Send on Wi-Fi only',
-    s: 'Saves mobile data',
-    blocked: 'Not ready yet. The app sends on any connection.',
-  },
-];
 
 export default function ProfileScreen() {
   const back = useCameFrom('more');
   const notify = useStore((s) => s.notify);
-  const askConfirm = useStore((s) => s.askConfirm);
-  const signOut = useStore((s) => s.signOut);
-  const pfPrefs = useStore((s) => s.pfPrefs);
-  const set = useStore((s) => s.set);
+  const askSignOut = useSignOut();
 
   const boot = useBoot();
   const me = boot.session?.user ?? null;
-
-  const [waiting, setWaiting] = React.useState(0);
-
-  React.useEffect(() => {
-    let live = true;
-    void pendingCount().then((n) => {
-      if (live) setWaiting(n);
-    });
-    return () => {
-      live = false;
-    };
-  }, []);
 
   /*
    * The app lock, which is a property of THIS HANDSET rather than of the
@@ -165,16 +120,14 @@ export default function ProfileScreen() {
     }
   };
 
-  /* Four facts about him, READ from the session the office issued. The
-     emergency contact and the address are not on the wire at all, so they are
-     drawn as "Not set" rather than left blank — the office holding no
-     emergency contact for him is the fact worth knowing, and an empty row
-     says nothing at all. */
+  /* What the office holds for him, READ from the session it issued.
+     "Emergency contact" and "Address" were drawn here as well, always reading
+     "Not set" — not because the office has none, but because neither is sent
+     to the phone at all. A row that claims the office holds nothing, when HR
+     may hold both, is worse than no row. */
   const PF_FIELDS: { k: string; label: string; value: string; hint?: string }[] = [
     { k: 'mobile', label: 'Mobile', value: me?.phone ?? '', hint: 'You sign in with this' },
     { k: 'email', label: 'Email', value: me?.email ?? '' },
-    { k: 'emg', label: 'Emergency contact', value: '' },
-    { k: 'addr', label: 'Address', value: '' },
   ];
 
   const PF_WORK = [
@@ -184,7 +137,7 @@ export default function ProfileScreen() {
   ].filter((w) => w.v);
 
   return (
-    <AppFrame title="MBOS" activeTab={null} contentStyle={{ padding: 16, paddingBottom: 24 }}>
+    <AppFrame title="Profile" activeTab={null} contentStyle={{ padding: 16, paddingBottom: 24 }}>
       <BackLink label={back.label} onPress={back.go} />
 
       <Card style={{ marginTop: 4, flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 20 }}>
@@ -266,37 +219,6 @@ export default function ProfileScreen() {
         Preferences
       </T>
       <ListCard>
-        {PREFS.map((p, i) => (
-          <View
-            key={p.k}
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 16,
-              paddingHorizontal: 16,
-              paddingVertical: 14,
-              borderTopWidth: i ? 1 : 0,
-              borderTopColor: C.wash,
-            }}>
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <T style={{ fontSize: 16, lineHeight: 22, color: C.ink, opacity: p.blocked ? 0.5 : 1 }}>{p.l}</T>
-              <T s="caption" style={{ marginTop: 1 }}>
-                {p.blocked ?? p.s}
-              </T>
-            </View>
-            {p.blocked ? (
-              /* Off and unpressable, rather than absent: the setting is a real
-                 thing somebody expects to find, and a switch that has quietly
-                 disappeared reads as a bug of its own. */
-              <View style={{ opacity: 0.35 }}>
-                <Toggle size="sm" on={false} onPress={() => {}} />
-              </View>
-            ) : (
-              <Toggle size="sm" on={pfPrefs[p.k]} onPress={() => set({ pfPrefs: { ...pfPrefs, [p.k]: !pfPrefs[p.k] } })} />
-            )}
-          </View>
-        ))}
-
         {/*
           Push, and whether it can actually reach this phone.
 
@@ -313,8 +235,6 @@ export default function ProfileScreen() {
             gap: 16,
             paddingHorizontal: 16,
             paddingVertical: 14,
-            borderTopWidth: 1,
-            borderTopColor: C.wash,
           }}>
           <View style={{ flex: 1, minWidth: 0 }}>
             <T style={{ fontSize: 16, lineHeight: 22, color: C.ink, opacity: push?.ok ? 1 : 0.5 }}>
@@ -418,15 +338,18 @@ export default function ProfileScreen() {
         />
       </ListCard>
 
+      {/* It opens MahekOne's reset page, so it is named for what that page
+          does. "Change password" promised a form here that asks for the old
+          one, and there is none. */}
       <SecondaryButton
-        label="Change password"
+        label="Reset your password"
         style={{ marginTop: 16 }}
         onPress={async () => {
           const opened = await openPasswordReset();
           notify(
             opened
-              ? 'Opening the reset page. It sends a link to your work email.'
-              : 'Could not open the browser. Ask your manager to send you a reset link.',
+              ? 'Opening the reset page. Use your work email, or a WhatsApp code if it offers one.'
+              : 'Could not open the browser. Ask your manager to reset your password.',
             opened ? 'info' : 'error',
           );
         }}
@@ -434,25 +357,7 @@ export default function ProfileScreen() {
 
       <Pressable
         accessibilityRole="button"
-        onPress={() =>
-          askConfirm({
-            title: 'Sign out?',
-            body: waiting
-              ? plural(waiting, 'entry', 'entries') +
-                ' not sent yet. They stay on this phone. They will send when you sign in again.'
-              : 'Everything you saved is already sent to office.',
-            confirmLabel: 'Sign out',
-            run: () => {
-              /* The outbox is kept. Clearing it here would make the sentence
-                 above a lie, and the work is genuinely unrecoverable. */
-              void signOutReal().then(() => {
-                signOut();
-                boot.setSession(null);
-                router.replace('/');
-              });
-            },
-          })
-        }
+        onPress={askSignOut}
         style={{
           width: '100%',
           minHeight: 52,

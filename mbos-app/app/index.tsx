@@ -1,5 +1,5 @@
 import React from 'react';
-import { Animated, View, Text, Pressable, ScrollView, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
+import { Animated, AppState, View, Text, Pressable, ScrollView, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { color as C, HIT, radius, type, weight } from '../src/theme/tokens';
@@ -16,10 +16,10 @@ import type { FeedbackKind } from '../src/engines/feedback';
 /**
  * Sign in.
  *
- * The five checks the design shows running are not decoration. An account can
- * be refused for being inactive or for having no territory, and each has a
- * different answer for the person holding the phone — so the ladder names the
- * step it is on rather than showing one spinner and one eventual failure.
+ * An account can be refused for being closed, for not holding the field app,
+ * or because the handset belongs to somebody else, and each has a different
+ * answer for the person holding the phone — so a refusal lands on the part of
+ * the screen it is about rather than as one red line under the number.
  */
 
 type Stage = 'form' | 'verifying';
@@ -61,7 +61,7 @@ export default function Login() {
 
   const [stage, setStage] = React.useState<Stage>('form');
   const [step, setStep] = React.useState(0);
-  const [err, setErr] = React.useState<'mob' | 'pw' | 'inactive' | 'payload' | null>(null);
+  const [err, setErr] = React.useState<'mob' | 'pw' | 'inactive' | 'payload' | 'network' | null>(null);
   const [pwShow, setPwShow] = React.useState(false);
   /* Password, or a code on WhatsApp — the second offered only once the
      server says it can send one (`/api/mbos/auth/otp`). */
@@ -90,13 +90,28 @@ export default function Login() {
     shake();
   };
 
+  /* Asked again whenever the app comes back to the front: opened in a lane
+     with no signal, the first answer is "no", and the WhatsApp option used to
+     stay hidden until the app was restarted. */
   React.useEffect(() => {
     let live = true;
-    otpAvailable().then((v) => { if (live) setCodeOffered(v); }).catch(() => {});
-    return () => { live = false; };
+    const ask = () => otpAvailable().then((v) => { if (live) setCodeOffered(v); }).catch(() => {});
+    void ask();
+    const sub = AppState.addEventListener('change', (st) => { if (st === 'active') void ask(); });
+    return () => { live = false; sub.remove(); };
   }, []);
 
+  /* The wait the server asked for after too many codes, counted down on the
+     button rather than refused again on every press. */
+  const [codeWait, setCodeWait] = React.useState(0);
+  React.useEffect(() => {
+    if (codeWait <= 0) return;
+    const t = setTimeout(() => setCodeWait((n) => n - 1), 1000);
+    return () => clearTimeout(t);
+  }, [codeWait]);
+
   async function sendCode() {
+    if (sendingCode || codeWait > 0) return;
     if (mob.length !== MOBILE_DIGITS) {
       refuse();
       return setErr('mob');
@@ -110,6 +125,7 @@ export default function Login() {
     } catch (e) {
       setErr('pw');
       setServerMessage(e instanceof ApiError && e.message ? e.message : 'Code not sent. Check your signal, or use your password.');
+      if (e instanceof ApiError && e.retryInSeconds) setCodeWait(Math.ceil(e.retryInSeconds));
       refuse('error');
     } finally {
       setSendingCode(false);
@@ -146,14 +162,17 @@ export default function Login() {
   }, [boot.ready, boot.session]);
 
   /**
-   * The five steps are real checks happening on the server, not a timer.
+   * TWO STEPS, because there are only two things the phone can see.
    *
-   * Each one has a different answer for the person holding the phone — an
-   * inactive account and a wrong password are not the same problem — so the
-   * ladder names the step it reached and the failure lands on that step.
+   * It used to draw five — mobile, password, status, area, day — and claim
+   * they were real checks rather than a timer. They were neither: the server
+   * runs all five and answers once, so "Checking mobile" pulsed for the whole
+   * wait and the other four flashed green together at the end. What the phone
+   * actually knows is whether MahekOne has answered, and whether the book it
+   * sent has been saved here.
    */
   const STEP_INDEX: Record<LoginStep, number> = {
-    mobile: 0, credential: 1, status: 2, territory: 3, payload: 4,
+    mobile: 0, credential: 0, status: 0, territory: 0, network: 0, payload: 1,
   };
 
   async function submit() {
@@ -187,6 +206,9 @@ export default function Login() {
       ...(method === 'code' ? { otp: code.replace(/\D/g, '') } : { password: pw }),
       remember,
       onStep: (s) => { if (live()) setStep(STEP_INDEX[s]); },
+      /* Cancel now stops the attempt WRITING, not only the screen reacting:
+         an answer that arrives after Cancel is not stored. */
+      cancelled: () => !live(),
     });
 
     if (!live()) return;
@@ -207,16 +229,18 @@ export default function Login() {
       setErr(
         outcome.step === 'payload'
           ? 'payload'
-          : outcome.step === 'status' || outcome.step === 'territory'
-            ? 'inactive'
-            : outcome.step === 'credential'
-              ? 'pw'
-              : 'mob',
+          : outcome.step === 'network'
+            ? 'network'
+            : outcome.step === 'status' || outcome.step === 'territory'
+              ? 'inactive'
+              : outcome.step === 'credential'
+                ? 'pw'
+                : 'mob',
       );
       setServerMessage(outcome.message);
       /* A wrong password or an account switched off is a refusal; a book
          that would not save on this phone is a failure. */
-      refuse(outcome.step === 'payload' ? 'error' : 'warning');
+      refuse(outcome.step === 'payload' || outcome.step === 'network' ? 'error' : 'warning');
       return;
     }
 
@@ -226,13 +250,7 @@ export default function Login() {
     router.replace('/home');
   }
 
-  const steps = [
-    'Checking mobile',
-    'Checking password',
-    'Checking employee status',
-    'Checking your area',
-    'Loading your day',
-  ];
+  const steps = ['Checking your sign-in with MahekOne', 'Saving your day on this phone'];
 
   /* The splash stays up until the database has been opened and the stored
      session read. Drawn before that, the whole form appears on every cold
@@ -268,12 +286,12 @@ export default function Login() {
           <View style={{ width: 28, height: 28, backgroundColor: C.primary, borderRadius: 8, alignItems: 'center', justifyContent: 'center' }}>
             <View style={{ width: 10, height: 10, backgroundColor: C.lime, borderRadius: 3 }} />
           </View>
-          <Text style={[{ fontSize: 18, color: C.ink, letterSpacing: -0.18 }, weight(600)]}>MBOS</Text>
+          <Text style={[{ fontSize: 18, color: C.ink, letterSpacing: -0.18 }, weight(600)]}>Mahek MBOS</Text>
         </View>
 
         <Text style={[type.h2, { marginTop: 28 }]}>Sign in</Text>
         <Text style={[type.body, { color: C.muted, marginTop: 6 }]}>
-          Mahek field sales. Your accounts team makes your account. There is no sign-up.
+          Mahek field sales. Your manager has your account made for you. There is no sign-up.
         </Text>
 
         {/* One wrapper for both stages: it carries the refusal shake (see
@@ -323,13 +341,15 @@ export default function Login() {
         {/* ---- the form ---- */}
         {stage === 'form' ? (
           <View style={{ marginTop: 24 }}>
-            {err === 'inactive' || err === 'payload' ? (
+            {err === 'inactive' || err === 'payload' || err === 'network' ? (
               <View style={{ backgroundColor: C.dangerBg, borderLeftWidth: 3, borderLeftColor: C.danger, borderRadius: 8, paddingVertical: 12, paddingHorizontal: 14, marginBottom: 16 }}>
                 <Text style={{ fontSize: 14, lineHeight: 20, color: C.ink }}>
                   {err === 'payload'
                     ? (serverMessage ?? "Signed in, but today's data was not saved on this phone.") +
                       ' Try again. If it keeps happening, tell your manager.'
-                    : (serverMessage ?? 'This account is off. Ask your sales manager to turn it on.')}
+                    : err === 'network'
+                      ? (serverMessage ?? 'No internet. Could not reach MahekOne.')
+                      : (serverMessage ?? 'This account cannot be used right now. Ask your manager.')}
                 </Text>
               </View>
             ) : null}
@@ -357,7 +377,15 @@ export default function Login() {
                   /* Digits only, and never more than ten. An Indian mobile is
                      ten digits; letting an eleventh be typed only produces a
                      refusal later, after the password has been entered too. */
-                  set({ mob: v.replace(/[^0-9]/g, '').slice(0, MOBILE_DIGITS) });
+                  const next = v.replace(/[^0-9]/g, '').slice(0, MOBILE_DIGITS);
+                  /* A code was sent to the OLD number. Keeping "Sent to …" and
+                     the typed code beside a different number is how somebody
+                     signs in with a code that can only ever be refused. */
+                  if (next !== mob) {
+                    setCodeSentTo(null);
+                    setCode('');
+                  }
+                  set({ mob: next });
                   setErr(null);
                   setServerMessage(null);
                 }}
@@ -479,14 +507,28 @@ export default function Login() {
                         />
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 }}>
                           <Text style={{ fontSize: 14, color: C.muted }}>Sent to {codeSentTo} on WhatsApp</Text>
-                          <Pressable onPress={() => void sendCode()} disabled={sendingCode}>
-                            <Text style={[{ fontSize: 14, color: C.primary }, weight(500)]}>{sendingCode ? 'Sending…' : 'Send again'}</Text>
+                          <Pressable
+                            onPress={() => void sendCode()}
+                            disabled={sendingCode || codeWait > 0}
+                            hitSlop={12}
+                            accessibilityRole="button">
+                            <Text style={[{ fontSize: 14, color: codeWait > 0 ? C.muted : C.primary }, weight(500)]}>
+                              {sendingCode ? 'Sending…' : codeWait > 0 ? `Send again in ${codeWait}s` : 'Send again'}
+                            </Text>
                           </Pressable>
                         </View>
                       </>
                     ) : (
                       <PrimaryButton
-                        label={sendingCode ? 'Sending…' : 'Send me a code on WhatsApp'}
+                        label={
+                          sendingCode
+                            ? 'Sending…'
+                            : codeWait > 0
+                              ? `Wait ${codeWait}s to send another code`
+                              : 'Send me a code on WhatsApp'
+                        }
+                        disabled={sendingCode || codeWait > 0}
+                        whyDisabled={sendingCode ? 'Sending the code now.' : 'MahekOne asked us to wait before sending another code.'}
                         onPress={() => void sendCode()}
                       />
                     )}
@@ -508,8 +550,8 @@ export default function Login() {
                     const opened = await openPasswordReset();
                     notify(
                       opened
-                        ? 'Opening the reset page. It sends a link to your work email.'
-                        : 'Could not open the browser. Ask your manager to send you a reset link.',
+                        ? 'Opening the reset page. Use your work email, or a WhatsApp code if it offers one.'
+                        : 'Could not open the browser. Ask your manager to reset your password.',
                       opened ? 'info' : 'error',
                     );
                   }}

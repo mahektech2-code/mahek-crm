@@ -79,9 +79,6 @@ const PARKED: Record<string, string> = {
   unacknowledgedPriority:
     'The other half of the same unbuilt thing: the repeating banner that keeps a ' +
     'priority notification in front of somebody until it is dealt with.',
-  isSignedIn:
-    'A boolean over the session. Every caller wants the session itself and reads ' +
-    '`currentSession`, which answers both questions at once.',
   recentVisits:
     "This shop's last twenty visits. The customer record shows the shared timeline " +
     'instead, which carries the CRM\'s calls beside the salesman\'s visits — a ' +
