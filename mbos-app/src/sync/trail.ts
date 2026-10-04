@@ -1388,11 +1388,15 @@ export async function flush(): Promise<number> {
     }
 
     let sent = 0;
+    /* Rows stepped past because the server could file none of them — see
+       `MAX_HELD_SKIPS`. Kept, never deleted; only read past. */
+    let offset = 0;
+    let heldSkips = 0;
 
     for (let pass = 0; pass < MAX_PASSES; pass++) {
       const rows = await all<Row>(
-        'SELECT id, at, lat, lng, accuracyM FROM positions ORDER BY at ASC LIMIT ?',
-        [BATCH],
+        'SELECT id, at, lat, lng, accuracyM FROM positions ORDER BY at ASC LIMIT ? OFFSET ?',
+        [BATCH, offset],
       );
       if (!rows.length) return sent;
 
@@ -1408,7 +1412,10 @@ export async function flush(): Promise<number> {
          is pure and tested — two production data-loss bugs have now been in
          this loop, and nothing in this file can be exercised without a device.
          What is left here is the doing. */
-      const decision = decideFlush(answer, rows.map((r) => r.id));
+      const decision = decideFlush(answer, rows.map((r) => r.id), {
+        fullBatch: rows.length === BATCH,
+        heldSkipsSoFar: heldSkips,
+      });
 
       /* The office turned it off. Stop taking fixes and drop what is held —
          keeping them would be storing something nobody asked for. */
@@ -1426,7 +1433,10 @@ export async function flush(): Promise<number> {
          grows. */
       if (decision.effect === 'age-out') {
         await run('DELETE FROM positions WHERE at < ?', [Date.now() - (await retentionMs())]);
-        return sent;
+        if (!decision.carryOn) return sent;
+        offset += decision.skip;
+        heldSkips += 1;
+        continue;
       }
 
       await removeIds(decision.remove);

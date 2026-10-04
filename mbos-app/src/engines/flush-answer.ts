@@ -61,6 +61,14 @@ export type FlushDecision = {
   /** How many of them to count as sent, for the caller's own return value. */
   sent: number;
   /**
+   * How many rows the caller should STEP PAST before reading the next batch.
+   *
+   * Zero on everything but `no-session-yet`. There it is the size of the held
+   * batch: those fixes are kept, and the next read starts behind them rather
+   * than re-reading the identical five hundred. See `MAX_HELD_SKIPS`.
+   */
+  skip: number;
+  /**
    * Work only the caller can do, because it touches more than this batch.
    *
    * `stop-tracking` is the office switching it off: stop taking fixes and drop
@@ -90,17 +98,49 @@ function landed(filed: unknown, sentIds: readonly string[]): string[] {
   return [...out];
 }
 
-export function decideFlush(answer: PositionsAnswer | null, sentIds: readonly string[]): FlushDecision {
+/**
+ * HOW MANY HELD BATCHES ONE FLUSH WILL STEP PAST before it gives up for the
+ * pass.
+ *
+ * `no-session-yet` used to end the pass outright, and the queue is drained
+ * oldest-first — so five hundred fixes no session will ever claim (a day
+ * `markMissedCheckouts` closed early, a refused check-in, a clock that was
+ * wrong) sat at the head of it and held every newer fix behind them until
+ * `queueRetentionDays` aged them out. A week of a frozen Live map for a
+ * salesman who was working perfectly well that morning.
+ *
+ * So a held batch is stepped past and the next one tried. Bounded, because the
+ * ORDINARY reason for the word is a check-in still in the outbox, and then
+ * every newer batch is held too — trying all of them would be fifty round trips
+ * to be told the same thing. Two is enough to get past one stale tail.
+ */
+export const MAX_HELD_SKIPS = 2;
+
+export function decideFlush(
+  answer: PositionsAnswer | null,
+  sentIds: readonly string[],
+  opts: { heldSkipsSoFar?: number; fullBatch?: boolean } = {},
+): FlushDecision {
   /* Not an answer at all — a refusal, a torn connection, a body that would not
      parse. Nothing is deleted and the pass ends. */
-  if (!answer?.ok) return { remove: [], carryOn: false, sent: 0, effect: 'none' };
+  if (!answer?.ok) return { remove: [], carryOn: false, sent: 0, effect: 'none', skip: 0 };
 
   if (answer.tracking === 'off') {
-    return { remove: [], carryOn: false, sent: 0, effect: 'stop-tracking' };
+    return { remove: [], carryOn: false, sent: 0, effect: 'stop-tracking', skip: 0 };
   }
 
   if (answer.tracking === 'no-session-yet') {
-    return { remove: [], carryOn: false, sent: 0, effect: 'age-out' };
+    /* KEPT, every one of them — and stepped past, so they stop holding up the
+       fixes behind them. Only where the batch was full: a short batch is the
+       end of the queue and there is nothing behind it to reach. */
+    const mayStep = Boolean(opts.fullBatch) && (opts.heldSkipsSoFar ?? 0) < MAX_HELD_SKIPS;
+    return {
+      remove: [],
+      carryOn: mayStep,
+      sent: 0,
+      effect: 'age-out',
+      skip: mayStep ? sentIds.length : 0,
+    };
   }
 
   if (answer.tracking === 'partial') {
@@ -122,6 +162,7 @@ export function decideFlush(answer: PositionsAnswer | null, sentIds: readonly st
       carryOn: remove.length > 0,
       sent: remove.length,
       effect: 'none',
+      skip: 0,
     };
   }
 
@@ -131,5 +172,5 @@ export function decideFlush(answer: PositionsAnswer | null, sentIds: readonly st
    * The second half of that sentence is deliberate and is what makes a server
    * deploy safe ahead of an APK. See the header.
    */
-  return { remove: [...sentIds], carryOn: true, sent: sentIds.length, effect: 'none' };
+  return { remove: [...sentIds], carryOn: true, sent: sentIds.length, effect: 'none', skip: 0 };
 }

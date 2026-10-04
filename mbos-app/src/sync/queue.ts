@@ -83,12 +83,38 @@ export async function enqueue(args: {
 }): Promise<string> {
   const now = args.now ?? Date.now();
   const hash = await payloadHash(args.payload);
-  const key = `${args.entityId}:${args.op}:${hash}`;
+  const base = `${args.entityId}:${args.op}:${hash}`;
 
-  /* The same edit enqueued twice is one item. This is the client half of
-     idempotence — the server half is the receipts ledger. */
-  const existing = await one<{ id: string }>('SELECT id FROM sync_queue WHERE idempotencyKey = ?', [key]);
-  if (existing) return existing.id;
+  /* The same edit enqueued twice is one item — while the first is still
+     WAITING. This is the client half of idempotence; the server half is the
+     receipts ledger. */
+  const waiting = await one<{ id: string }>(
+    `SELECT id FROM sync_queue WHERE idempotencyKey = ? AND state <> 'synced'`,
+    [base],
+  );
+  if (waiting) return waiting.id;
+
+  /*
+   * AN EDIT THAT MATCHES ONE ALREADY SENT IS A NEW EDIT, not the old one.
+   *
+   * The key was matched against every row ever written, so archive, unarchive,
+   * archive on one lead — or a follow-up moved to X, then Y, then back to X —
+   * made the third enqueue return the FIRST item's id, long since synced. It
+   * was never sent: the office kept the middle value and the phone showed the
+   * last. Re-using the old key would not help either, because the server's
+   * receipts ledger would replay the first answer without applying anything.
+   * So an update repeated after the original landed gets a key of its own,
+   * numbered by how many times it has gone before. A create keeps the bare
+   * key, because a create sent twice is exactly the duplicate this guards.
+   */
+  let key = base;
+  if (args.op === 'update') {
+    const sent = await one<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM sync_queue WHERE idempotencyKey = ? OR idempotencyKey LIKE ?`,
+      [base, `${base}#%`],
+    );
+    if ((sent?.n ?? 0) > 0) key = `${base}#${sent!.n}`;
+  }
 
   /* Composed before the insert and never awaited on the radio — see
      `native/where.ts`. A failure here is a queue item with no location, which
@@ -159,6 +185,19 @@ export async function anythingDue(now = Date.now()): Promise<boolean> {
  * delay its dependents — it blocks them, because a payment for an order the
  * server refused must not arrive looking like a payment against nothing.
  */
+/**
+ * How many go in one request. The server's own ceiling is configuration
+ * (`mbos.sync.maxItemsPerRequest`, 1 to 500) and this used to be a literal 50 —
+ * so a manager who set the ceiling to 20 made every sync from every phone a
+ * 413: no push, no pull, and every item exhausting its retries. Whichever is
+ * smaller wins.
+ */
+export async function batchLimit(): Promise<number> {
+  const { getConfig } = await import('../data/config');
+  const ceiling = Number(await getConfig<number>('mbos.sync.maxItemsPerRequest', 50));
+  return Number.isFinite(ceiling) && ceiling >= 1 ? Math.min(50, Math.floor(ceiling)) : 50;
+}
+
 export async function readyItems(now = Date.now(), limit = 50): Promise<QueueItem[]> {
   const queued = await all<QueueItem>(
     `SELECT * FROM sync_queue
@@ -170,11 +209,31 @@ export async function readyItems(now = Date.now(), limit = 50): Promise<QueueIte
 
   /* What has already landed, and what has gone wrong. Both are needed: one
      decides eligibility, the other decides blocking. */
-  const settled = await all<{ entityId: string; state: string }>(
-    `SELECT entityId, state FROM sync_queue WHERE state IN ('synced','rejected','failed','blocked')`,
+  const settled = await all<{ entityId: string; state: string; op: string }>(
+    `SELECT entityId, state, op FROM sync_queue WHERE state IN ('synced','rejected','failed','blocked')`,
   );
   const syncedIds = new Set(settled.filter((r) => r.state === 'synced').map((r) => r.entityId));
-  const deadIds = new Set(settled.filter((r) => r.state !== 'synced').map((r) => r.entityId));
+  /* DEAD MEANS ITS CREATE NEVER LANDED. A refused EDIT does not unmake a
+     record the office already holds: an order accounts approved while the
+     phone was stale, whose edit was then refused, is still an order — and the
+     change request the office told him to send instead depends on it. Reading
+     any refusal as death blocked that request for ever. */
+  const deadIds = new Set(
+    settled.filter((r) => r.state !== 'synced' && r.op === 'create').map((r) => r.entityId),
+  );
+
+  /* A dependency with NO row waiting anywhere in the outbox has landed: its
+     create went up and has since been pruned (`pruneSynced`), or it is a record
+     the office made. Without this, pruning sent rows would leave anything
+     depending on a fortnight-old record waiting for ever. */
+  const waitingIds = new Set(queued.map((q) => q.entityId));
+  const inFlight = await all<{ entityId: string }>(`SELECT entityId FROM sync_queue WHERE state = 'syncing'`);
+  for (const r of inFlight) waitingIds.add(r.entityId);
+  for (const q of queued) {
+    for (const d of JSON.parse(q.dependsOn) as string[]) {
+      if (!waitingIds.has(d) && !deadIds.has(d)) syncedIds.add(d);
+    }
+  }
 
   /* The decision itself is pure and lives in `ordering.ts`, so the rule that
      keeps a payment behind its order is covered by tests that need neither a
@@ -218,7 +277,8 @@ export async function markSynced(item: QueueItem, serverAt: number | null): Prom
 export async function markRejected(item: QueueItem, code: string, message: string): Promise<void> {
   await run(`UPDATE sync_queue SET state = 'rejected', failureCode = ?, failureReason = ? WHERE id = ?`, [code, message, item.id]);
   await setEntityState(item.entityType, item.entityId, 'rejected', message, null);
-  await blockDependents(item.entityId);
+  /* Only a refused CREATE leaves dependents with nothing to attach to. */
+  if (item.op === 'create') await blockDependents(item.entityId);
 }
 
 export async function markFailure(item: QueueItem, reason: string, now = Date.now()): Promise<void> {
@@ -226,13 +286,23 @@ export async function markFailure(item: QueueItem, reason: string, now = Date.no
   if (attempts >= MAX_ATTEMPTS) {
     await run(`UPDATE sync_queue SET state = 'failed', attempts = ?, failureReason = ? WHERE id = ?`, [attempts, reason, item.id]);
     await setEntityState(item.entityType, item.entityId, 'failed', reason, null);
-    await blockDependents(item.entityId);
+    if (item.op === 'create') await blockDependents(item.entityId);
     return;
   }
   await run(
     `UPDATE sync_queue SET state = 'queued', attempts = ?, nextAttemptAt = ?, failureReason = ? WHERE id = ?`,
     [attempts, backoffFor(attempts, now), reason, item.id],
   );
+}
+
+/**
+ * Back in the queue with NOTHING counted against it. For a pass that failed
+ * because nobody is signed in any more: the item did nothing wrong, and burning
+ * its six attempts on a lapsed sign-in is how a day's orders end up `failed`
+ * and blocked for a reason that has nothing to do with them.
+ */
+export async function markUnsent(item: QueueItem, reason: string): Promise<void> {
+  await run(`UPDATE sync_queue SET state = 'queued', failureReason = ? WHERE id = ?`, [reason, item.id]);
 }
 
 async function blockItem(id: string, reason: string): Promise<void> {
@@ -405,15 +475,34 @@ export async function listQueue(limit = QUEUE_PAGE): Promise<QueueItem[]> {
 }
 
 /**
- * Edits of ours that lost a merge.
+ * LET A REFUSED ENTRY GO, which the Not accepted screen could not do.
  *
- * Nothing is discarded silently — both versions are in `conflict_log` — so the
- * outbox says plainly that something changed under him rather than leaving him
- * to notice his own edit had gone.
+ * Nothing on it removed anything, so a refusal that could never be put right
+ * — a product taken off the list, a bill somebody else settled — sat there for
+ * ever, and `autoRetryStuck` sent it again every three hours to be refused
+ * again. This is always a person's decision, made on that screen with the
+ * consequence said first; nothing calls it on its own.
+ *
+ * A refused CREATE never reached the office, so the local record goes with it —
+ * the salesman is about to take it again, and two copies on his phone of one
+ * order would be counted twice in his day. A refused EDIT leaves the record:
+ * the office holds it, and the next pull writes the office's version back over
+ * the edit it did not accept.
  */
-export async function conflictCount(): Promise<number> {
-  const row = await one<{ n: number }>('SELECT COUNT(*) AS n FROM conflict_log WHERE reviewed = 0');
-  return row?.n ?? 0;
+const OWNED_CHILDREN: Record<string, { table: string; key: string }[]> = {
+  order: [{ table: 'order_lines', key: 'orderId' }],
+};
+
+export async function discardRefused(id: string): Promise<void> {
+  const item = await one<QueueItem>('SELECT * FROM sync_queue WHERE id = ?', [id]);
+  if (!item || (item.state !== 'rejected' && item.state !== 'failed')) return;
+  await run('DELETE FROM sync_queue WHERE id = ?', [id]);
+  if (item.op !== 'create') return;
+  for (const child of OWNED_CHILDREN[item.entityType] ?? []) {
+    await run(`DELETE FROM ${child.table} WHERE ${child.key} = ?`, [item.entityId]);
+  }
+  const table = ENTITY_TABLE[item.entityType];
+  if (table) await run(`DELETE FROM ${table} WHERE id = ?`, [item.entityId]);
 }
 
 /** The rejection review screen reads this. */
@@ -426,13 +515,39 @@ export async function listRejections(): Promise<QueueItem[]> {
  * or may not have reached the server; the idempotency key makes finding out by
  * re-sending it safe.
  */
-export async function recoverInterrupted(now = Date.now()): Promise<number> {
+export async function recoverInterrupted(
+  now = Date.now(),
+  opts: { media?: boolean } = {},
+): Promise<number> {
   const stuck = await all<{ id: string }>(`SELECT id FROM sync_queue WHERE state = 'syncing'`);
   if (stuck.length) {
     await run(`UPDATE sync_queue SET state = 'queued', nextAttemptAt = ? WHERE state = 'syncing'`, [now]);
   }
-  await run(`UPDATE media_queue SET state = 'queued', nextAttemptAt = ? WHERE state = 'syncing'`, [now]);
+  /* MEDIA ONLY ON A COLD START. This ran at the top of every sync pass, and a
+     photo upload on 2G outlasts the three-second push tick — so a file still
+     going up was reset to `queued` and picked up again by the next pass: two
+     uploads of the same file at once, double the data on the worst
+     connection, and a voice note transcribed twice. After a cold start
+     nothing can be in flight, and that is the only time it is true. */
+  if (opts.media !== false) {
+    await run(`UPDATE media_queue SET state = 'queued', nextAttemptAt = ? WHERE state = 'syncing'`, [now]);
+  }
   return stuck.length;
+}
+
+/**
+ * Sent rows are kept a fortnight, then let go.
+ *
+ * They were never pruned, and `readyItems` reads every settled row whenever
+ * anything is due — every three seconds while the app is open. A year of a
+ * busy salesman's outbox is tens of thousands of rows read to decide whether
+ * one visit may go. A fortnight is long past any dependency or retry that could
+ * still ask about one.
+ */
+export const SYNCED_KEEP_MS = 14 * 24 * 60 * 60 * 1000;
+
+export async function pruneSynced(now = Date.now()): Promise<void> {
+  await run(`DELETE FROM sync_queue WHERE state = 'synced' AND createdAt < ?`, [now - SYNCED_KEEP_MS]);
 }
 
 /**
