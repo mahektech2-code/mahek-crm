@@ -90,6 +90,33 @@ export default async function IntegrationsPage() {
         </Card>
       </Section>
 
+      <Section
+        id="sign-in-codes"
+        title="Sign-in codes"
+        hint="The key MiniMoth sends one-time sign-in codes with — for the MahekOne web sign-in, the MBOS handset, and password resets. Setting it is what switches codes on."
+      >
+        <Card>
+          <div className="divide-y divide-divider">
+            {secrets
+              .filter((s) => s.name === "minimoth.apiKey")
+              .map((s) => (
+                <SecretCredentialRow
+                  key={s.name}
+                  row={row(s)}
+                  canWrite={canWrite}
+                  meta={{
+                    label: "MiniMoth API key",
+                    env: "MINIMOTH_API_KEY",
+                    what: "Sends a code to the work number on the account, on WhatsApp first and by SMS when WhatsApp does not deliver. No DLT registration of ours is involved.",
+                    where: "app.minimoth.dev → your project → API keys. Use the live key (mm_live_…) here; a test key sends nothing and is ignored in production.",
+                    removalConsequence: "Sign-in codes stop being offered on the web and on the handset. Everybody signs in with their password.",
+                  }}
+                />
+              ))}
+          </div>
+        </Card>
+      </Section>
+
       <Section id="maps" title="Maps" hint={"The key the Live map and Territory's shop map call Ola Maps with — for the streets under both, and for laying a salesman's trail onto the road he actually walked."}>
         <MapsSection
           data={{

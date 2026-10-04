@@ -48,7 +48,7 @@ export function CodeResetForm() {
 
   return (
     <form action={formAction} className="rounded-[6px] border border-line bg-surface p-6">
-      <div className="text-sm font-semibold text-ink">Reset with a WhatsApp code</div>
+      <div className="text-sm font-semibold text-ink">Reset with a one-time code</div>
       <p className="mt-1 text-[13px] text-muted">We send a code to the work number on your account.</p>
       {error ? (
         <div role="alert" className="mt-3 rounded-[4px] border border-danger-soft bg-danger-soft px-3 py-2 text-sm text-ink">
@@ -69,7 +69,7 @@ export function CodeResetForm() {
       {sent ? (
         <>
           <label className="mt-3 block">
-            <span className="mb-1 block text-xs font-medium tracking-[0.04em] text-muted uppercase">Code from WhatsApp</span>
+            <span className="mb-1 block text-xs font-medium tracking-[0.04em] text-muted uppercase">Code you were sent</span>
             <input name="code" inputMode="numeric" autoComplete="one-time-code" autoFocus placeholder="6-digit code" className={cx(FIELD, "border-line tracking-[0.2em]")} />
             <span className="mt-1 flex justify-between text-[12px] text-muted">
               <span>Sent to {sent}.</span>

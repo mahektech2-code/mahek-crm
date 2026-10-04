@@ -666,6 +666,7 @@ const SECRET_LABEL: Record<string, string> = {
   "sarvam.apiKey": "Sarvam",
   "anthropic.apiKey": "Anthropic",
   "olamaps.apiKey": "Ola Maps",
+  "minimoth.apiKey": "sign-in codes (MiniMoth)",
   "wati.apiKey": "WhatsApp (Wati)",
   "resend.apiKey": "email (Resend)",
 };

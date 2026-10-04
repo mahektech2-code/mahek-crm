@@ -69,6 +69,14 @@ export const SECRET_NAMES = {
    * switched the service on as well.
    */
   "wati.apiToken": "WATI_API_TOKEN",
+  /**
+   * Sign-in codes — MiniMoth sends a one-time code to the work number,
+   * WhatsApp first and SMS when that fails, under its own DLT registration.
+   * Holding it is what switches codes on (see `otp-service.ts`). A test key
+   * (`mm_test_…`) sends nothing and accepts 000000, so it is honoured only
+   * outside production.
+   */
+  "minimoth.apiKey": "MINIMOTH_API_KEY",
   /*
    * FIVE OLA ACCOUNTS' KEYS, SPENT IN THIS ORDER, and four of them empty on
    * every deployment that has not needed them.
