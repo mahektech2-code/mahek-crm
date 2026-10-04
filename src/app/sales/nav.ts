@@ -115,6 +115,7 @@ export const SALES_NAV: NavGroup[] = [
       { href: "/sales/tasks", label: "Tasks", icon: "task" },
       { href: "/sales/journeys", label: "Journey planning", icon: "route" },
       { href: "/sales/visits", label: "Visits", icon: "visit" },
+      { href: "/sales/field-reports", label: "Field reports", icon: "doc" },
       { href: "/sales/travel", label: "Travel ledger", icon: "route" },
       { href: "/sales/activity-history", label: "Activity history", icon: "clock" },
     ],

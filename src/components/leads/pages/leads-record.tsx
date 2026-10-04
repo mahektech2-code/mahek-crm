@@ -30,6 +30,7 @@ import {
   leadPanelCounts,
   leadSamplesFor,
   leadTimelinePage,
+  leadPhotoIds,
   leadVisitsFor,
   parkedFrom,
 } from "@/lib/services/lead-record-service";
@@ -129,6 +130,7 @@ export async function Body({
     park,
     config,
     leadManagers,
+    photoIds,
   ] = await Promise.all([
     leadTransitions(id),
     managerCalls(id),
@@ -153,6 +155,7 @@ export async function Body({
     isParked(record.stage) ? parkedFrom(id) : Promise.resolve(null),
     getConfig(),
     leadManagerCandidatesFor(id),
+    leadPhotoIds(id),
   ]);
 
   /*
@@ -267,6 +270,7 @@ export async function Body({
   return (
     <LeadRecordScreen workspace={workspace}
       record={record}
+      photoIds={photoIds}
       tab={single(query.tab)}
       ladder={ladder}
       /* -1 for a lead standing off its own ladder, which is what a parked one

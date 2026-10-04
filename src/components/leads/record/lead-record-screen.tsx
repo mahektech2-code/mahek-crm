@@ -303,9 +303,12 @@ export function LeadRecordScreen({
   actionFacts,
   gateFacts,
   nowMs,
+  photoIds = [],
 }: {
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
   workspace: LeadWorkspace;
+  /** The shop front photographed on the handset when the lead was raised. */
+  photoIds?: string[];
   record: LeadRecord;
   /** Raw off the URL. Resolved below, because a URL is not a promise. */
   tab: string | null;
@@ -525,6 +528,22 @@ export function LeadRecordScreen({
           </>
         }
       />
+      {photoIds.length ? (
+        <div className="-mt-2 mb-4 flex items-center gap-2 text-[12px] text-muted">
+          <span>From the shop:</span>
+          {photoIds.map((pid) => (
+            <a key={pid} href={`/api/attachments/${pid}`} target="_blank" rel="noreferrer" title="Open the full photograph">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={`/api/attachments/${pid}`}
+                alt={`${record.name}, photographed in the field`}
+                loading="lazy"
+                className="h-14 w-14 rounded-[4px] border border-line object-cover hover:border-brand"
+              />
+            </a>
+          ))}
+        </div>
+      ) : null}
 
       {/* ---------------------------------------------------------- header */}
 
