@@ -17,8 +17,8 @@ import type {
 } from "@/lib/services/top-customers-service";
 
 /* ---------------------------------------------------------------------------
- * The Top customers report: party, location, then sales and sales bills each
- * AVERAGED PER MONTH, a column per month and the share of the
+ * The Top customers report: party, location, the average order value per
+ * bill, then sales and sales bills each AVERAGED PER MONTH, a column per month and the share of the
  * company's sales. Per month rather than totals so a 3-month list and a
  * 1-year list read on the same scale; the totals are in the strip above. Read from the report generated on the 1st,
  * never from live figures — see `top-customers-service.ts`.
@@ -148,6 +148,13 @@ export function TopCustomersTable({
                 </Th>
                 <Th>Party name</Th>
                 <Th>Location</Th>
+                <Th
+                  align="right"
+                  className={WRAP}
+                  title="Sales in the period divided by the sales bills raised in it"
+                >
+                  Average order value per bill
+                </Th>
                 <Th align="right" className={WRAP} title="Sales in the period, divided by the months in it">
                   Average sales per month
                 </Th>
@@ -188,6 +195,13 @@ export function TopCustomersTable({
                     </div>
                   </Td>
                   <Td>{r.location}</Td>
+                  <Td
+                    align="right"
+                    title={`${money(r.valuePaise)} over ${r.bills} bill${r.bills === 1 ? "" : "s"}`}
+                  >
+                    {/* No bill in the period is "—", not a value divided by zero. */}
+                    {r.bills > 0 ? money(Math.round(r.valuePaise / r.bills)) : "—"}
+                  </Td>
                   <Td
                     align="right"
                     className="font-medium text-ink"
