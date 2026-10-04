@@ -193,7 +193,7 @@ export function AreaPickerPage({
           value={query}
           onChange={setQuery}
           onClear={() => setQuery('')}
-          placeholder="Type a town or beat"
+          placeholder="Type the place name"
           autoFocus={loaded != null && suggested.length === 0}
         />
       </View>
@@ -265,7 +265,17 @@ function AreaRow({
   /* What kind of place it is, in words: a state asks for the town next, and
      saying so here saves the surprise of a second question after the tap. */
   const sub = [
-    choice.area ? (parent ? `Beat in ${parent}` : 'Beat') : choice.city ? (parent ?? 'Town') : 'Whole state · you type the town',
+    /* Plain words, not the office's: "beat" is what the territory screen
+       calls a part of a town, and a salesman reading it on a phone does not. */
+    choice.area
+      ? parent
+        ? `Part of ${parent}`
+        : 'Part of a town'
+      : choice.city
+        ? parent
+          ? `Town in ${parent}`
+          : 'Town'
+        : 'Whole state · you will type the town next',
     shops ? `${grouped(shops)} of your shops` : null,
   ]
     .filter(Boolean)
