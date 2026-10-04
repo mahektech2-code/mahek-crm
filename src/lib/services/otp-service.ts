@@ -7,6 +7,7 @@ import { hashPassword } from "../password";
 import { getConfig } from "../config/store";
 import { isApproved, listWatiTemplates, sendWatiTemplate, watiConfig } from "../wati";
 import { waNumber } from "../whatsapp-delivery";
+import { isTestKey, minimothKey, sendMiniMothOtp, verifyMiniMothOtp } from "../minimoth";
 
 /* ---------------------------------------------------------------------------
  * One-time codes on WhatsApp — for signing in (web and MBOS handset), for
@@ -27,6 +28,16 @@ import { waNumber } from "../whatsapp-delivery";
  * Limits are configuration (`auth.otp.*`): digits, lifetime, wrong guesses per
  * code, the resend cooldown, and how many codes an account may be sent in a
  * window — the last is what stops a number being used to run up a bill.
+ *
+ * TWO WAYS TO SEND, and MiniMoth is asked first. A MiniMoth key
+ * (`minimoth.apiKey`, set under Admin Console → Integrations) is all it needs:
+ * no template to get approved, WhatsApp first with an SMS fallback, under
+ * MiniMoth's DLT registration rather than ours. MiniMoth makes and checks the
+ * code itself, so its rows store `minimoth:<otp id>` where a Wati row stores a
+ * hash — the digits never reach MahekOne. Every limit above still applies to
+ * both: the cooldown, the window cap and wrong guesses are counted here,
+ * whoever sent the code. `auth.otp.codeLength` and `ttlMinutes` do not apply
+ * to MiniMoth's codes, which are six digits and live ten minutes.
  * ------------------------------------------------------------------------- */
 
 export type OtpPurpose = "login" | "password_change" | "password_reset";
@@ -39,7 +50,12 @@ export function maskNumber(wa: string): string {
   return `+${d.slice(0, 2)} ${d.slice(2, 4)}•••••${d.slice(-3)}`;
 }
 
-export type OtpAvailability = { available: true; template: string; param: string } | { available: false; why: string };
+export type OtpAvailability =
+  | { available: true; provider: "minimoth"; key: string }
+  | { available: true; provider: "wati"; template: string; param: string }
+  | { available: false; why: string };
+
+const MINIMOTH_PREFIX = "minimoth:";
 
 let availabilityCache: { at: number; value: OtpAvailability } | null = null;
 
@@ -51,6 +67,13 @@ export async function otpAvailability(): Promise<OtpAvailability> {
   // migrated, a Wati outage) must cost the WhatsApp option, never the sign-in
   // screen. The password form stands on its own.
   const value = await (async (): Promise<OtpAvailability> => {
+    const mm = await minimothKey();
+    /* A TEST KEY IS REFUSED IN PRODUCTION: it sends nothing and accepts
+       000000 for every number, so on a real deployment it would let anybody
+       who knows a colleague's work number sign in as them. */
+    if (mm && !(isTestKey(mm) && process.env.NODE_ENV === "production")) {
+      return { available: true, provider: "minimoth", key: mm };
+    }
     const config = await getConfig();
     const name = String(config["auth.otp.whatsappTemplateName"] ?? "").trim();
     if (!name) return { available: false, why: "No WhatsApp code template is named in the settings." };
@@ -62,7 +85,7 @@ export async function otpAvailability(): Promise<OtpAvailability> {
     if (!isApproved(t)) return { available: false, why: `"${name}" is ${t.status.toLowerCase()} in Wati.` };
     // An authentication template carries exactly one variable, the code.
     // Whatever Wati calls it ("1", "otp", …) is what the send must name.
-    return { available: true, template: name, param: t.params[0] ?? "1" };
+    return { available: true, provider: "wati", template: name, param: t.params[0] ?? "1" };
   })().catch((e): OtpAvailability => ({
     available: false,
     why: `Could not check: ${e instanceof Error ? e.message : "unknown error"}`,
@@ -104,7 +127,7 @@ export type SendResult =
  */
 export async function sendOtp(userId: string, purpose: OtpPurpose): Promise<SendResult> {
   const avail = await otpAvailability();
-  if (!avail.available) return { ok: false, error: "Sign-in codes on WhatsApp are not set up yet. Use your password." };
+  if (!avail.available) return { ok: false, error: "Sign-in codes are not set up yet. Use your password." };
 
   const [user] = await db.select().from(users).where(eq(users.id, userId));
   if (!user || !user.active) return { ok: false, error: "That account is not open. Ask your manager." };
@@ -139,6 +162,37 @@ export async function sendOtp(userId: string, purpose: OtpPurpose): Promise<Send
   }
 
   const id = `otp_${randomUUID().slice(0, 12)}`;
+
+  if (avail.provider === "minimoth") {
+    const sent = await sendMiniMothOtp(avail.key, to);
+    if (!sent.ok) {
+      /* Recorded so the failure is visible, and so it still counts towards
+         the window cap — a number that keeps failing must not be retried
+         without limit. `sent_at` stays null, so the row can never verify. */
+      await db.insert(authOtps).values({
+        id,
+        userId,
+        purpose,
+        destination: to,
+        codeHash: MINIMOTH_PREFIX,
+        expiresAt: new Date(),
+        failureReason: `${sent.code}: ${sent.error}`,
+      });
+      return { ok: false, error: "The code could not be sent just now. Use your password, or try again in a minute." };
+    }
+    await db.insert(authOtps).values({
+      id,
+      userId,
+      purpose,
+      destination: to,
+      codeHash: `${MINIMOTH_PREFIX}${sent.otpId}`,
+      expiresAt: sent.expiresAt,
+      sentAt: new Date(),
+    });
+    const minutes = Math.max(1, Math.round((sent.expiresAt.getTime() - Date.now()) / 60_000));
+    return { ok: true, sentTo: maskNumber(to), expiresInMinutes: minutes };
+  }
+
   const code = String(randomInt(0, 10 ** digits)).padStart(digits, "0");
   await db.insert(authOtps).values({
     id,
@@ -173,7 +227,7 @@ export type VerifyResult = { ok: true } | { ok: false; error: string };
  */
 export async function verifyOtp(userId: string, purpose: OtpPurpose, code: string): Promise<VerifyResult> {
   const typed = code.replace(/\D/g, "");
-  if (!typed) return { ok: false, error: "Enter the code from WhatsApp." };
+  if (!typed) return { ok: false, error: "Enter the code you were sent." };
   const config = await getConfig();
   const maxAttempts = Number(config["auth.otp.maxVerifyAttempts"]);
 
@@ -187,9 +241,20 @@ export async function verifyOtp(userId: string, purpose: OtpPurpose, code: strin
   if (row.expiresAt.getTime() < Date.now()) return { ok: false, error: "That code has expired. Ask for a new one." };
   if (row.attempts >= maxAttempts) return { ok: false, error: "Too many wrong tries for that code. Ask for a new one." };
 
-  const a = Buffer.from(hashOf(row.id, typed));
-  const b = Buffer.from(row.codeHash);
-  const match = a.length === b.length && timingSafeEqual(a, b);
+  let match: boolean;
+  if (row.codeHash.startsWith(MINIMOTH_PREFIX)) {
+    /* MiniMoth holds the code, so MiniMoth is asked. A failure to REACH it is
+       not a wrong guess and is not counted as one. */
+    const key = await minimothKey();
+    if (!key) return { ok: false, error: "Sign-in codes are not set up any more. Use your password." };
+    const checked = await verifyMiniMothOtp(key, row.destination, typed);
+    if (!checked.ok) return { ok: false, error: "The code could not be checked just now. Try again in a minute, or use your password." };
+    match = checked.valid;
+  } else {
+    const a = Buffer.from(hashOf(row.id, typed));
+    const b = Buffer.from(row.codeHash);
+    match = a.length === b.length && timingSafeEqual(a, b);
+  }
   if (!match) {
     await db.update(authOtps).set({ attempts: sql`${authOtps.attempts} + 1` }).where(eq(authOtps.id, row.id));
     const left = maxAttempts - row.attempts - 1;

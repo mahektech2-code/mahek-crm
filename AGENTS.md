@@ -2195,8 +2195,9 @@ review. It is a snapshot, not a cache. Three callers share one idempotent
 generator: the `monthly` cron line, the hourly pass as a net under it, and the
 screen itself. Every customer who bought in the window is stored, so ranking by
 sales or by order count, and the `topCustomers.count` length (60), are decided
-when it is read. The table shows orders, sales and SALES BILLS each averaged
-per month, so the three spans read on one scale. Bills are counted from the
+when it is read. The table shows sales and SALES BILLS each averaged per month,
+so the three spans read on one scale; order counts stay in the report for
+ranking by number of orders and for the strip above the table. Bills are counted from the
 bills ledger beside the orders, not inferred from them: an order not yet billed
 and a bill the Payment Status tab raised are both ordinary. So is who sees which row: `scopedToUsers`, the same narrowing
 the Customers list uses. An admin sees all sixty. A telecaller, back office

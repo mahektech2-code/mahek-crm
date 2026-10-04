@@ -17,8 +17,8 @@ import type {
 } from "@/lib/services/top-customers-service";
 
 /* ---------------------------------------------------------------------------
- * The Top customers report: party, location, then orders, sales and sales
- * bills each AVERAGED PER MONTH, a column per month and the share of the
+ * The Top customers report: party, location, then sales and sales bills each
+ * AVERAGED PER MONTH, a column per month and the share of the
  * company's sales. Per month rather than totals so a 3-month list and a
  * 1-year list read on the same scale; the totals are in the strip above. Read from the report generated on the 1st,
  * never from live figures — see `top-customers-service.ts`.
@@ -148,9 +148,6 @@ export function TopCustomersTable({
                 </Th>
                 <Th>Party name</Th>
                 <Th>Location</Th>
-                <Th align="right" className={WRAP} title="Approved orders in the period, divided by the months in it">
-                  Average orders per month
-                </Th>
                 <Th align="right" className={WRAP} title="Sales in the period, divided by the months in it">
                   Average sales per month
                 </Th>
@@ -191,9 +188,6 @@ export function TopCustomersTable({
                     </div>
                   </Td>
                   <Td>{r.location}</Td>
-                  <Td align="right" title={`${r.orders} orders in ${months.length} months`}>
-                    {perMonth(r.orders, months.length)}
-                  </Td>
                   <Td
                     align="right"
                     className="font-medium text-ink"
