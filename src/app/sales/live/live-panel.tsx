@@ -191,8 +191,8 @@ export function LivePanel({
     <div
       className={
         fullscreen
-          ? "fixed inset-0 z-50 grid grid-cols-1 gap-3 bg-canvas p-3 lg:grid-cols-[minmax(0,1fr)_clamp(280px,30%,360px)]"
-          : "grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_clamp(280px,30%,360px)]"
+          ? "fixed inset-0 z-50 grid grid-cols-[minmax(0,1fr)_clamp(300px,24%,380px)] grid-rows-[minmax(0,1fr)] gap-3 bg-canvas p-3"
+          : "grid h-full grid-cols-[minmax(0,1fr)_clamp(300px,24%,380px)] grid-rows-[minmax(0,1fr)] gap-3"
       }
     >
       <StreetMap
@@ -212,22 +212,21 @@ export function LivePanel({
         apiKey={olaMapsKey}
         keysSpent={olaKeysSpent}
       />
-      {/* The list scrolls WITHIN the window in fullscreen rather than pushing
-          the page down: the panel is fixed to the viewport, so anything taller
-          than it would simply be unreachable. `min-h-0` is what lets a grid
-          child shrink enough to scroll at all. */}
-      <div className={"flex flex-col gap-2 " + (fullscreen ? "min-h-0 overflow-y-auto" : "")}>
-        {isToday ? <FeedMode mode={mode} pollSeconds={pollSeconds} /> : null}
-        <TeamList
-          rows={frame.rows}
-          distanceMetres={view === "today" ? derived.distanceMetres : null}
-          selectedId={selectedId}
-          onSelect={toggle}
-          thresholds={handsetThresholds}
-          nowMs={clockMs}
-          isToday={isToday}
-        />
-      </div>
+      {/* THE TEAM IS A RAIL THE HEIGHT OF THE MAP, and scrolls inside itself —
+          in and out of fullscreen alike. It used to grow the page instead, so
+          at twenty salesmen the list was a second screen below the map and the
+          map was a picture you scrolled past to reach it. `min-h-0` is what
+          lets a grid child shrink enough to scroll at all. */}
+      <TeamList
+        rows={frame.rows}
+        distanceMetres={view === "today" ? derived.distanceMetres : null}
+        selectedId={selectedId}
+        onSelect={toggle}
+        thresholds={handsetThresholds}
+        nowMs={clockMs}
+        isToday={isToday}
+        feed={isToday ? <FeedMode mode={mode} pollSeconds={pollSeconds} /> : null}
+      />
     </div>
   );
 }
@@ -247,19 +246,24 @@ function FeedMode({ mode, pollSeconds }: { mode: LiveMode; pollSeconds: number }
   if (mode === "settled") return null;
   if (mode === "live") {
     return (
-      <p className="flex items-center gap-1.5 px-1 text-[12px] text-muted">
-        <span className="block size-1.5 flex-none rounded-full bg-[#1D7A45]" />
-        Live — positions arrive as the handsets send them.
+      <p
+        className="flex items-center gap-1.5 text-[12px] text-muted"
+        title="Positions arrive as the handsets send them."
+      >
+        <span className="block size-1.5 flex-none animate-pulse rounded-full bg-[#1D7A45]" />
+        Live
       </p>
     );
   }
   if (mode === "connecting") {
-    return <p className="px-1 text-[12px] text-muted">Connecting to the live feed…</p>;
+    return <p className="text-[12px] text-muted">Connecting…</p>;
   }
   return (
-    <p className="px-1 text-[12px] text-[#8A5A00]">
-      The live connection could not be held open here, so this screen is asking every{" "}
-      {pollSeconds} seconds instead. Everything below is still current to within that.
+    <p
+      className="text-[12px] text-[#8A5A00]"
+      title={`The live connection could not be held open here, so this screen is asking every ${pollSeconds} seconds instead. Everything is still current to within that.`}
+    >
+      Every {pollSeconds}s
     </p>
   );
 }
