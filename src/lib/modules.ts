@@ -104,6 +104,25 @@ export type AppModule = {
    * prevent.
    */
   explicitOnly?: boolean;
+  /**
+   * NOT A DESTINATION: THE WRITE HALF OF THE MODULE NAMED HERE.
+   *
+   * Some screens are worth handing out to read alone. WhatsApp is the first —
+   * somebody in accounts reading what a customer wrote about a payment is one
+   * job, answering them from the business number is another — so the module
+   * that opens the screen is the READ grant, and this companion is the WRITE
+   * grant beside it: replying, sending, runs, templates, groups.
+   *
+   * It is stored, diffed, audited and defaulted exactly like any other module,
+   * which is the point of making it one: "no rows means every module" makes a
+   * whole-app grant read AND write, so nothing anybody already held moved, and
+   * read-only is a grant somebody narrowed on purpose. It has no route of its
+   * own — `moduleForPath` never answers with it and the sidebar never draws it
+   * (its href is its parent's, so it adds nothing to the set the sidebar
+   * filters by) — and the Access screen draws it as Read / Write on the
+   * parent's row rather than as a checkbox of its own.
+   */
+  writeOf?: string;
 };
 
 const crm = (
@@ -216,7 +235,15 @@ export const APP_MODULES: AppModule[] = [
    * to them, so it lives with the chasing. The key never moves — a grant
    * points at `crm.whatsapp` — only the heading it is drawn under.
    */
-  crm("whatsapp", "WhatsApp", "Collections"),
+  crm("whatsapp", "WhatsApp", "Collections", "Reading the chats. Replying and sending is the Write level beside it."),
+  {
+    key: "crm.whatsapp-reply",
+    app: "crm",
+    label: "WhatsApp — reply and send",
+    group: "Collections",
+    href: "/crm/whatsapp",
+    writeOf: "crm.whatsapp",
+  },
   crm(
     "outstanding",
     "Outstanding",
@@ -510,6 +537,26 @@ export const APP_MODULES: AppModule[] = [
     "What each customer still owes, and the bills behind it.",
   ),
   accounts("bills", "Bills", "Money"),
+  /*
+   * The CRM's WhatsApp screen, opened from the ledger desk. It reads the same
+   * conversations through the Accounts scope, which is every book — a
+   * customer answering a payment reminder is accounts' business whoever's
+   * customer they are.
+   */
+  accounts(
+    "whatsapp",
+    "WhatsApp",
+    "Money",
+    "Every customer's chats. Replying and sending is the Write level beside it.",
+  ),
+  {
+    key: "accounts.whatsapp-reply",
+    app: "accounts",
+    label: "WhatsApp — reply and send",
+    group: "Money",
+    href: "/accounts/whatsapp",
+    writeOf: "accounts.whatsapp",
+  },
   accounts("ledger", "Customer account", "Money"),
   accounts("on-account", "On account", "Money"),
   accounts("import", "Sheet import", "System", "Runs the projection against the live database."),
@@ -1030,6 +1077,7 @@ export function moduleGroupsForApp(app: AppId): Array<{ group: string; modules: 
 export function moduleForPath(path: string): AppModule | undefined {
   let best: AppModule | undefined;
   for (const m of APP_MODULES) {
+    if (m.writeOf) continue;
     const hit = m.exact ? path === m.href : path === m.href || path.startsWith(m.href + "/");
     if (!hit) continue;
     if (!best || m.href.length > best.href.length) best = m;
@@ -1065,9 +1113,21 @@ export function moduleAllowed(
      nothing but its own row, not to "no rows means everything" and not to the
      administrator bypass either. */
   if (getModule(key)?.explicitOnly) return forApp.includes(key);
+  /* A write level is a narrowing of its screen, never a way onto it: a row
+     for the companion beside no row for the screen opens nothing. */
+  const parent = getModule(key)?.writeOf;
+  if (parent && !moduleAllowed(parent, granted, app, administrator)) return false;
   if (administrator && getModule(key)?.offByDefault) return true;
   return forApp.length === 0 || forApp.includes(key);
 }
+
+/** The write companion of a module, where it has one. */
+export function writeModuleOf(key: string): AppModule | undefined {
+  return APP_MODULES.find((m) => m.writeOf === key);
+}
+
+/** The modules that open the WhatsApp screen, one per app that draws it. */
+export const WHATSAPP_MODULES = ["crm.whatsapp", "accounts.whatsapp"] as const;
 
 /** Apps a grant can be made against, in registry order. */
 export function grantableApps() {

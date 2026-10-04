@@ -1485,6 +1485,13 @@
       "when": 1791062813442,
       "tag": "0213_sales_visits_into_journeys",
       "breakpoints": true
+    },
+    {
+      "idx": 213,
+      "version": "7",
+      "when": 1791149213442,
+      "tag": "0214_whatsapp_read_write",
+      "breakpoints": true
     }
   ]
 }

@@ -195,6 +195,9 @@ const files = [
   // account is one payroll row: the two bugs behind a Cost and return screen
   // that concatenated salaries and listed one salesman twice.
   "src/lib/numbers-from-sql.test.ts",
+  // WhatsApp's Read level is refused by the actions, from either app, and a
+  // grant made before the level existed is still Write.
+  "src/lib/whatsapp-read-write.test.ts",
 ];
 
 let failed = 0;

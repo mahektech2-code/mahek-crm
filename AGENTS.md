@@ -165,6 +165,29 @@ from a terminal has to open whole rather than open empty. A grant with every
 module ticked stores no rows at all, so a fifteenth CRM screen reaches everybody
 holding the whole app and nobody who was deliberately narrowed.
 
+**A module can have a WRITE LEVEL, and WhatsApp is the first that does.**
+`crm.whatsapp` and `accounts.whatsapp` open the screen — the Read level: the
+chats and the message log. `crm.whatsapp-reply` and `accounts.whatsapp-reply`
+beside them are the Write level: replying, marking handled, sending, runs,
+templates and groups. A write level is an ordinary module row marked `writeOf`
+in `lib/modules.ts`, so it is stored, diffed and audited by the machinery that
+already existed, and "no rows means every module" makes a whole-app grant
+Write — nothing anybody held moved, and `0214` gave every NARROWED grant that
+held the screen its write row for the same reason. It is not a destination:
+`moduleForPath` never answers with one, and the Access screen draws it as a
+Read / Write select on its screen's row rather than as a box of its own.
+
+**Read is refused in the ACTIONS.** `whatsappLevel` is the union over both
+apps, like every capability. Thread actions demand Write; the reminder and
+template actions refuse only somebody NARROWED to Read, because the payment
+panel and the command centre send reminders for people who were never given
+the chats and always could. The screen draws what the grant in THIS app says.
+
+**Accounts opens the same WhatsApp screen**, `app/crm/whatsapp/whatsapp-page.tsx`
+rendered at `/accounts/whatsapp`, read through the Accounts scope — every
+customer. "Open record" goes to the ledger there, since Accounts has no record
+page.
+
 **Revoking an app takes its module rows with it.** Left behind, they would
 silently narrow the app the day somebody granted it back — four screens of
 fourteen, with nothing on any screen saying why.

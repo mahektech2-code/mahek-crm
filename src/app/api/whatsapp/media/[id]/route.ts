@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
-import { canOpenModule } from "@/lib/access";
+import { whatsappLevel } from "@/lib/access";
 import { getReplyMedia } from "@/lib/services/whatsapp-chat-service";
 import { fetchWatiMedia } from "@/lib/wati";
 
@@ -18,7 +18,7 @@ export const dynamic = "force-dynamic";
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getCurrentUser();
   if (!user) return new NextResponse(null, { status: 401 });
-  if (!(await canOpenModule(user.id, "crm.whatsapp"))) return new NextResponse(null, { status: 404 });
+  if ((await whatsappLevel(user.id)) === "none") return new NextResponse(null, { status: 404 });
 
   const { id } = await params;
   let media;

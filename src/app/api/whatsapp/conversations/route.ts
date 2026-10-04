@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
-import { canOpenModule } from "@/lib/access";
+import { whatsappLevel } from "@/lib/access";
 import { listConversations, type ChatShow } from "@/lib/services/whatsapp-chat-service";
 
 export const dynamic = "force-dynamic";
@@ -10,7 +10,7 @@ const NO_STORE = { headers: { "Cache-Control": "no-store" } };
 export async function GET(request: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "signed out" }, { status: 401, ...NO_STORE });
-  if (!(await canOpenModule(user.id, "crm.whatsapp"))) {
+  if ((await whatsappLevel(user.id)) === "none") {
     return NextResponse.json({ error: "not yours" }, { status: 403, ...NO_STORE });
   }
   const params = new URL(request.url).searchParams;

@@ -50,8 +50,11 @@ export type AppGrant = {
   role: Role;
   /** Every module of the app, ticked or not — the review table renders this. */
   modules: ModuleGrant[];
+  /** Screens, not modules: a write level is not a screen and is not counted. */
   grantedCount: number;
   totalCount: number;
+  /** The screens held at the Read level only — WhatsApp, today. */
+  readOnly: string[];
   /** True where nothing has ever been unticked, so the grant is the whole app. */
   whole: boolean;
 };
@@ -196,13 +199,19 @@ function buildGrants(
          shown as held rather than as a withheld box that withholds nothing. */
       granted: isAlwaysOpen(m.key) || moduleAllowed(m.key, stored, a.id, administrator),
     }));
+    const isWrite = new Set(all.filter((m) => m.writeOf).map((m) => m.key));
+    const screens = modules.filter((m) => !isWrite.has(m.key));
+    const held = new Set(modules.filter((m) => m.granted).map((m) => m.key));
     return {
       app: a.id,
       appName: a.name,
       role,
       modules,
-      grantedCount: modules.filter((m) => m.granted).length,
-      totalCount: modules.length,
+      grantedCount: screens.filter((m) => m.granted).length,
+      totalCount: screens.length,
+      readOnly: all
+        .filter((m) => m.writeOf && held.has(m.writeOf) && !held.has(m.key))
+        .map((m) => all.find((x) => x.key === m.writeOf)?.label ?? m.writeOf!),
       whole,
     };
   });

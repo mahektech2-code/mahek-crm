@@ -25,7 +25,8 @@ export type AccountsIconName =
   | "signout"
   | "close"
   | "clock"
-  | "check";
+  | "check"
+  | "chat";
 
 const PATHS: Record<AccountsIconName, React.ReactNode> = {
   today: (
@@ -50,6 +51,7 @@ const PATHS: Record<AccountsIconName, React.ReactNode> = {
     </>
   ),
   plus: <path d="M12 5v14M5 12h14" />,
+  chat: <path d="M21 11.5a8.4 8.4 0 0 1-12.3 7.5L3 20.5l1.6-5.4A8.4 8.4 0 1 1 21 11.5z" />,
   bill: (
     <>
       <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />

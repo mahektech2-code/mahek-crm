@@ -9,7 +9,7 @@ import {
   moduleGroupsForApp,
   modulesForApp,
 } from "./modules";
-import { grantableApps } from "./modules";
+import { WHATSAPP_MODULES, getModule, grantableApps, writeModuleOf } from "./modules";
 import { NAV, PINNED, navHrefs as crmNavHrefs } from "@/components/shell/nav";
 import { NOT_IN_SIDEBAR, SALES_NAV, SALES_PINNED, navHrefs } from "@/app/sales/nav";
 
@@ -342,6 +342,52 @@ describe("the registry and the navigation agree", () => {
     // uniqueness on (user, module) enough.
     for (const m of APP_MODULES) {
       assert.equal(m.key.split(".")[0], m.app, `${m.key} does not belong to ${m.app}`);
+    }
+  });
+});
+
+describe("WhatsApp has a Read and a Write level", () => {
+  const CRM_READ = "crm.whatsapp";
+  const CRM_WRITE = "crm.whatsapp-reply";
+
+  it("both apps that draw the screen carry a write level beside it", () => {
+    for (const key of WHATSAPP_MODULES) {
+      const write = writeModuleOf(key);
+      assert.ok(write, `${key} has no write level`);
+      assert.equal(write.app, getModule(key)?.app);
+      assert.equal(write.href, getModule(key)?.href, "a write level points where its screen does");
+    }
+  });
+
+  it("a whole-app grant is read AND write, so nothing anybody held moved", () => {
+    assert.equal(moduleAllowed(CRM_READ, [], "crm"), true);
+    assert.equal(moduleAllowed(CRM_WRITE, [], "crm"), true);
+  });
+
+  it("the screen without its write level is read only", () => {
+    assert.equal(moduleAllowed(CRM_READ, [CRM_READ, "crm.payments"], "crm"), true);
+    assert.equal(moduleAllowed(CRM_WRITE, [CRM_READ, "crm.payments"], "crm"), false);
+  });
+
+  it("a write level without its screen opens nothing", () => {
+    assert.equal(moduleAllowed(CRM_WRITE, [CRM_WRITE, "crm.payments"], "crm"), false);
+    assert.equal(moduleAllowed(CRM_READ, [CRM_WRITE, "crm.payments"], "crm"), false);
+  });
+
+  it("no path resolves to a write level — it is not a destination", () => {
+    assert.equal(moduleForPath("/crm/whatsapp")?.key, CRM_READ);
+    assert.equal(moduleForPath("/accounts/whatsapp")?.key, "accounts.whatsapp");
+    for (const m of APP_MODULES.filter((x) => x.writeOf)) {
+      assert.notEqual(moduleForPath(m.href)?.key, m.key);
+    }
+  });
+
+  it("every write level names a real screen of its own app", () => {
+    for (const m of APP_MODULES.filter((x) => x.writeOf)) {
+      const screen = getModule(m.writeOf!);
+      assert.ok(screen, `${m.key} names ${m.writeOf}, which is not a module`);
+      assert.equal(screen.app, m.app);
+      assert.equal(screen.writeOf, undefined, "a write level of a write level means nothing");
     }
   });
 });

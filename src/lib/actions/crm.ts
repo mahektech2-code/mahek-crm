@@ -26,6 +26,8 @@ import {
   scopedUserIds,
 } from "@/lib/access-control";
 import { SCOPE_COOKIE_NAME } from "@/lib/scope";
+import { requireUser } from "@/lib/auth";
+import { whatsappLevel } from "@/lib/access";
 import {
   updateSetting,
   updateSettings,
@@ -1491,6 +1493,28 @@ export async function findTargetCandidates(input: {
 /* --------------------------------------------------------------- whatsapp */
 
 /**
+ * READ-ONLY IS CHECKED HERE, not by hiding the composer. A server action is a
+ * URL, and a box that is not drawn is a statement to the browser.
+ *
+ * `chat` is for what only the WhatsApp screen offers — replying in a thread,
+ * marking it handled — and asks for Write outright. `send` is for what other
+ * screens offer too: the payment panel and the command centre send reminders
+ * to people who were never given the chats, and they always could, so it
+ * refuses only somebody deliberately narrowed to Read. See `whatsappLevel`.
+ */
+async function whatsappRefusal(kind: "chat" | "send"): Promise<Result<never> | null> {
+  const user = await requireUser();
+  const level = await whatsappLevel(user.id);
+  if (level === "write" || (kind === "send" && level === "none")) return null;
+  return err(
+    level === "read"
+      ? "Your WhatsApp access is read only — you can read the chats but not reply or send. Ask for Write on the Access screen."
+      : "You do not have the WhatsApp screen.",
+    "not_permitted",
+  );
+}
+
+/**
  * Prepare and send one payment reminder or template message through Wati, in
  * one press. Refuses — sending nothing — whenever the message cannot go that
  * way, and the refusal says why, so the screen can fall back to copy-paste.
@@ -1500,6 +1524,8 @@ export async function sendWhatsAppNow(input: {
   templateId: string;
 }): Promise<Result<{ messageId: string }>> {
   try {
+    const refused = await whatsappRefusal("send");
+    if (refused) return refused;
     const r = await sendNow({ ...input, idempotencyKey: randomUUID() });
     refreshAll();
     return r;
@@ -1526,6 +1552,8 @@ export async function sendRunThroughApi(
   runId: string,
 ): Promise<Result<{ sent: number; left: number; problems: string[] }>> {
   try {
+    const refused = await whatsappRefusal("send");
+    if (refused) return refused;
     const r = await sendRunViaApi(runId);
     refreshAll();
     return r;
@@ -1540,6 +1568,8 @@ export async function setCustomerGroup(
   dest?: "personal" | "group" | "both",
 ): Promise<Result> {
   try {
+    const refused = await whatsappRefusal("send");
+    if (refused) return refused;
     const ctx = await resolveScope();
     /* The customer has to be one this caller may work. It took an id and
        wrote, so anybody signed in could redirect another book's reminders to
@@ -1585,6 +1615,8 @@ export async function queueMessage(input: {
   }>
 > {
   try {
+    const refused = await whatsappRefusal("send");
+    if (refused) return refused;
     if (!input.templateId) return err("Pick a template.", "validation");
     const prepared = await prepareLegs({
       customerId: input.customerId,
@@ -1624,6 +1656,8 @@ export async function queueMessage(input: {
 /** The copy step of a run: records it without claiming the message was sent. */
 export async function markMessageCopied(messageId: string): Promise<Result> {
   try {
+    const refused = await whatsappRefusal("send");
+    if (refused) return refused;
     const r = await markCopied(messageId);
     refreshAll();
     return r;
@@ -1634,6 +1668,8 @@ export async function markMessageCopied(messageId: string): Promise<Result> {
 
 export async function confirmMessageSent(messageId: string): Promise<Result> {
   try {
+    const refused = await whatsappRefusal("send");
+    if (refused) return refused;
     const r = await confirmSent(messageId);
     refreshAll();
     return r;
@@ -1644,6 +1680,8 @@ export async function confirmMessageSent(messageId: string): Promise<Result> {
 
 export async function sendMessageAutomatic(messageId: string): Promise<Result> {
   try {
+    const refused = await whatsappRefusal("send");
+    if (refused) return refused;
     const r = await sendAutomatic(messageId);
     refreshAll();
     return r;
@@ -1654,6 +1692,8 @@ export async function sendMessageAutomatic(messageId: string): Promise<Result> {
 
 export async function cancelMessage(messageId: string): Promise<Result> {
   try {
+    const refused = await whatsappRefusal("send");
+    if (refused) return refused;
     const r = await cancelMessageService(messageId);
     refreshAll();
     return r;
@@ -1668,6 +1708,8 @@ export async function sendChatMessage(input: {
   idempotencyKey: string;
 }): Promise<Result> {
   try {
+    const refused = await whatsappRefusal("chat");
+    if (refused) return refused;
     return await sendChatMessageService({
       key: String(input?.key ?? ""),
       text: String(input?.text ?? ""),
@@ -1680,6 +1722,8 @@ export async function sendChatMessage(input: {
 
 export async function markThreadHandled(key: string, handled = true): Promise<Result> {
   try {
+    const refused = await whatsappRefusal("chat");
+    if (refused) return refused;
     return await markThreadHandledService(String(key ?? ""), handled === true);
   } catch (e) {
     return fromThrown(e);
@@ -1688,6 +1732,8 @@ export async function markThreadHandled(key: string, handled = true): Promise<Re
 
 export async function actionReply(replyId: string, handled = true): Promise<Result> {
   try {
+    const refused = await whatsappRefusal("chat");
+    if (refused) return refused;
     const r = await actionReplyService(replyId, handled === true);
     refreshAll();
     return r;
@@ -1704,6 +1750,8 @@ export async function saveTemplate(input: {
   appliesTo: "personal" | "group" | "both";
 }): Promise<Result> {
   try {
+    const refused = await whatsappRefusal("send");
+    if (refused) return refused;
     const r = await saveTemplateService({
       id: input.id,
       name: input.name,
@@ -1723,6 +1771,8 @@ export async function archiveTemplate(
   archived: boolean,
 ): Promise<Result> {
   try {
+    const refused = await whatsappRefusal("send");
+    if (refused) return refused;
     await requireCapability("whatsapp.template.write");
     await db.execute(
       sql`update wa_templates set active = ${!archived}, updated_at = now() where id = ${templateId}`,
@@ -1740,6 +1790,8 @@ export async function startRun(input: {
   filterKey: string;
 }): Promise<Result<{ runId: string }>> {
   try {
+    const refused = await whatsappRefusal("send");
+    if (refused) return refused;
     const r = await createRun(input);
     refreshAll();
     return r.ok ? ok({ runId: r.data.runId }, r.message) : r;
@@ -1754,6 +1806,8 @@ export async function advanceRun(
   outcome: "sent" | "skipped",
 ): Promise<Result> {
   try {
+    const refused = await whatsappRefusal("send");
+    if (refused) return refused;
     const r = await advanceRunService(runId, messageId, outcome);
     refreshAll();
     return r;
@@ -1767,6 +1821,8 @@ export async function pauseRun(
   paused: boolean,
 ): Promise<Result> {
   try {
+    const refused = await whatsappRefusal("send");
+    if (refused) return refused;
     const r = await setRunStatus(runId, paused ? "paused" : "active");
     refreshAll();
     return r;
@@ -1777,6 +1833,8 @@ export async function pauseRun(
 
 export async function clearRun(runId: string): Promise<Result> {
   try {
+    const refused = await whatsappRefusal("send");
+    if (refused) return refused;
     const r = await setRunStatus(runId, "completed");
     refreshAll();
     return r;
