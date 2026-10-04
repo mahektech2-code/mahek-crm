@@ -18,6 +18,8 @@ export type Task = {
    *  `rejected_order` — so the list can open the screen that answers it. */
   sourceType: string | null;
   sourceId: string | null;
+  assigneeId: string | null;
+  assignerId: string | null;
   syncState: string;
 };
 
@@ -67,13 +69,40 @@ export function bucketOf(dueDate: string, today: string): 'Overdue' | 'Today' | 
   return days <= 7 ? 'This week' : 'Later';
 }
 
-export async function completeTask(id: string, note: string | null): Promise<void> {
+/**
+ * Closing a task SAYS HOW, because the office refuses one that does not.
+ *
+ * `mbos.tasks.requireCompletionNote` is on by default, and this used to send
+ * `completionNote: null` on every Done — the row left the list, the toast said
+ * "Done", and the office refused it: the task landed in Not accepted, came
+ * back as open on the next pull and was resent every three hours with a fresh
+ * bell each time. The note and the photograph were on the wire all along; no
+ * screen asked for either.
+ */
+export async function completeTask(
+  id: string,
+  args: { note: string | null; photoId?: string | null },
+): Promise<void> {
+  const note = args.note?.trim() || null;
   await updateAndQueue({
     table: 'tasks',
     entityType: 'task',
     id,
-    patch: { status: 'done', completionNote: note },
+    patch: { status: 'done', completionNote: note, completionPhotoId: args.photoId ?? null },
   });
+}
+
+/**
+ * Where a snooze may land: never before the day the task is already due.
+ *
+ * "Snooze" moved every task to tomorrow, so snoozing one due on the 20th
+ * dragged it FORWARD to tomorrow — the opposite of what the button says.
+ */
+export function snoozeTarget(dueDate: string, today: string, days: number): string {
+  const from = dueDate > today ? dueDate : today;
+  const d = new Date(from + 'T00:00:00');
+  d.setDate(d.getDate() + days);
+  return isoDate(d);
 }
 
 /** A snooze needs a new date and a reason; both are kept, appended not replaced. */

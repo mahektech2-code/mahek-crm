@@ -72,8 +72,19 @@ const TABS = ['Overview', 'Timeline', 'Orders', 'Account', 'Samples', 'Complaint
 const TL_FILTERS = ['All', 'Visits', 'Orders', 'Payments', 'Calls', 'Complaints'];
 
 /** The stream's own event types, in the words the design puts on the badge. */
+/*
+ * EVERY KIND THE OFFICE WRITES, and a neutral word for one it adds later.
+ *
+ * This named eight, and the fallback was "Visit" — so a lead created, a
+ * sample dispatched, a validation call, an internal note and a change of
+ * owner all wore a teal Visit badge, and a shop's history read as a salesman
+ * who had been there twenty times. The vocabulary is `CRM_EVENT` and
+ * `MBOS_EVENT` in MahekOne's `lib/timeline.ts`; anything not listed reads as
+ * an update rather than as a visit nobody made.
+ */
 const KIND_LABEL: Record<string, string> = {
   visit: 'Visit',
+  gps: 'Visit',
   order: 'Order',
   payment: 'Payment',
   payment_bounced: 'Payment',
@@ -81,7 +92,27 @@ const KIND_LABEL: Record<string, string> = {
   whatsapp: 'WhatsApp',
   call: 'Telecaller',
   telecaller_call: 'Telecaller',
+  hrms_call: 'Call',
+  hrms_call_planned: 'Call',
+  validation_call: 'Call',
+  sample: 'Sample',
+  sample_dispatched: 'Sample',
+  sample_received: 'Sample',
+  sample_review: 'Sample',
+  lead_created: 'Lead',
+  lead_assigned: 'Lead',
+  lead_converted: 'Lead',
+  lead_stage: 'Lead',
+  requirement: 'Lead',
+  negotiation: 'Lead',
+  sales_opportunity: 'Lead',
+  competitor: 'Other brand',
+  delivery: 'Delivery',
+  owner_change: 'Change',
+  relationship_handover: 'Change',
+  internal_note: 'Note',
 };
+const KIND_FALLBACK = 'Update';
 
 const TONES: Record<string, BadgeTone> = {
   Visit: 'teal',
@@ -90,6 +121,10 @@ const TONES: Record<string, BadgeTone> = {
   Complaint: 'danger',
   WhatsApp: 'success',
   Telecaller: 'amber',
+  Call: 'amber',
+  Sample: 'info',
+  Lead: 'teal',
+  Delivery: 'info',
 };
 
 /**
@@ -266,16 +301,22 @@ export default function CustomerRecord() {
     if (!comp.name.trim()) return notify('Write the brand name first.', 'error');
     setCompBusy(true);
     const rateRupees = Number(comp.rate.replace(/[^\d]/g, ''));
-    await recordCompetitor({
-      customerId: id,
-      competitorName: comp.name.trim(),
-      ratePaise: rateRupees > 0 ? rateRupees * 100 : null,
-      rateNote: comp.note.trim() || null,
-      creditTerms: comp.credit.trim() || null,
-      delivery: comp.delivery.trim() || null,
-      strengths: comp.strengths.trim() || null,
-      weaknesses: comp.weaknesses.trim() || null,
-    });
+    try {
+      await recordCompetitor({
+        customerId: id,
+        competitorName: comp.name.trim(),
+        ratePaise: rateRupees > 0 ? rateRupees * 100 : null,
+        rateNote: comp.note.trim() || null,
+        creditTerms: comp.credit.trim() || null,
+        delivery: comp.delivery.trim() || null,
+        strengths: comp.strengths.trim() || null,
+        weaknesses: comp.weaknesses.trim() || null,
+      });
+    } catch (e) {
+      /* A failed save used to leave the button saying "Saving…" for good. */
+      setCompBusy(false);
+      return notify(e instanceof Error && e.message ? e.message : 'Could not save. Try again.', 'error');
+    }
     setCompBusy(false);
     setComp({ name: '', rate: '', note: '', credit: '', delivery: '', strengths: '', weaknesses: '' });
     setCompForm(false);
@@ -286,13 +327,17 @@ export default function CustomerRecord() {
   React.useEffect(() => {
     let live = true;
     if (!c?.id) return;
+    /* A lead that has ordered is the office's customer, whatever rung the
+       ladder still carries — see `IS_LEAD` in `data/customer-query.ts`. */
+    const onTheBook = c.kind === 'customer';
     void getLead(c.id).then((row) => {
-      if (live) setLead(row && !row.archived ? row : null);
+      const won = row?.funnelStage === 'won' || row?.stage === 'Converted';
+      if (live) setLead(row && !row.archived && !won && !onTheBook ? row : null);
     });
     return () => {
       live = false;
     };
-  }, [c?.id]);
+  }, [c?.id, c?.kind]);
 
   /* A record that has not arrived on this handset yet is said plainly rather
      than rendered as somebody else's figures under a blank name. */
@@ -322,7 +367,7 @@ export default function CustomerRecord() {
      a copy that can be stale by exactly one render — on a screen showing money
      to a customer. */
   const window = periodRange(period, isoDate(new Date(nowMs)));
-  const statement = buildStatement(bills, receipts, window);
+  const statement = buildStatement(bills, receipts, window, c.outstandingPaise);
   const billsInWindow = statement.entries.filter((e) => e.kind === 'bill').length;
 
   /*
@@ -546,9 +591,6 @@ export default function CustomerRecord() {
               ))}
             </Card>
 
-            {/* The last six bills, as the office scored them. Nothing is derived
-                here — payment behaviour is the server's to compute. */}
-            <PayBehaviour raw={c.payBehaviour} />
 
             {/* ---- a private note for the office ----
 
@@ -661,7 +703,7 @@ export default function CustomerRecord() {
 
             {events.map((e, i) => {
               const last = i === events.length - 1;
-              const kind = KIND_LABEL[e.eventType] ?? 'Visit';
+              const kind = KIND_LABEL[e.eventType] ?? KIND_FALLBACK;
               return (
                 <Stagger key={e.id} index={i}>
                   <View
@@ -687,9 +729,9 @@ export default function CustomerRecord() {
                       }}
                     />
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                      <Badge tone={TONES[kind] ?? 'teal'}>{kind}</Badge>
+                      <Badge tone={TONES[kind] ?? 'neutral'}>{kind}</Badge>
                       <Text style={{ fontSize: 12, color: C.muted }}>
-                        {pretty(isoDate(new Date(e.occurredAt))) + ' · ' + (e.actor ?? '')}
+                        {[pretty(isoDate(new Date(e.occurredAt))), e.actor].filter(Boolean).join(' · ')}
                       </Text>
                     </View>
                     <Text style={[type.small, { color: C.ink, marginTop: 4 }]}>{e.summary}</Text>
@@ -728,7 +770,7 @@ export default function CustomerRecord() {
             {orders.length === 0 ? (
               nothingYet(
                 'No orders on this phone',
-                "Orders come from the office every day. If this shop has ordered and you see nothing, sign out and sign in once.",
+                "Orders come from the office every day. If this shop has ordered and you see nothing, open More, then Send to office, and press Send now.",
               )
             ) : (
               <>
@@ -779,7 +821,7 @@ export default function CustomerRecord() {
                 head="Nothing billed to a lead"
                 body="A lead has never ordered from us. When the first order is billed, it will show here."
               />
-            ) : accountKind === 'Third party' ? (
+            ) : accountKind === 'Third party' && bills.length === 0 ? (
               <Empty
                 head="We deliver here but bill the distributor"
                 body="The bill goes to the distributor, so this shop has no bills. See what it took under Orders."
@@ -873,7 +915,7 @@ export default function CustomerRecord() {
                       : 'No bills on this phone',
                     bills.length || receipts.length
                       ? 'No bill or payment in these dates. Pick a longer time.'
-                      : "Bills and payments come from the office every day. If this shop has a bill and you see nothing, sign out and sign in once.",
+                      : "Bills and payments come from the office every day. If this shop has a bill and you see nothing, open More, then Send to office, and press Send now.",
                   )
                 ) : (
                   statement.entries.map((e) =>
@@ -939,7 +981,7 @@ export default function CustomerRecord() {
                     <Text style={type.caption}>
                       {[
                         sm.cans ? sm.cans + (sm.cans === 1 ? ' can' : ' cans') : null,
-                        'given ' + pretty(isoDate(new Date(sm.requestedAt))),
+                        'asked for ' + pretty(isoDate(new Date(sm.requestedAt))),
                         sm.trialOutcome && sm.trialOutcome !== 'pending' ? 'result: ' + sm.trialOutcome : null,
                       ]
                         .filter(Boolean)
@@ -1096,12 +1138,22 @@ export default function CustomerRecord() {
                       {k.ratePaise != null ? inrFromPaise(k.ratePaise) : (k.rateNote ?? '')}
                     </Text>
                   </View>
-                  <Text style={[type.caption, { marginTop: 2 }]}>
-                    {[k.creditTerms, k.delivery].filter(Boolean).join(' · ')}
-                  </Text>
-                  <Text style={[type.caption, { color: C.body, marginTop: 8 }]}>{k.strengths ?? k.weaknesses ?? ''}</Text>
+                  {k.creditTerms || k.delivery ? (
+                    <Text style={[type.caption, { marginTop: 2 }]}>
+                      {[k.creditTerms, k.delivery].filter(Boolean).join(' · ')}
+                    </Text>
+                  ) : null}
+                  {/* Both, when both were said: the half that used to be
+                      dropped was the weakness — the one a salesman sells
+                      against. */}
+                  {k.strengths ? (
+                    <Text style={[type.caption, { color: C.body, marginTop: 8 }]}>{'Good at: ' + k.strengths}</Text>
+                  ) : null}
+                  {k.weaknesses ? (
+                    <Text style={[type.caption, { color: C.body, marginTop: 4 }]}>{'Weak on: ' + k.weaknesses}</Text>
+                  ) : null}
                   <Text style={{ fontSize: 12, color: C.muted, marginTop: 8 }}>
-                    {'Heard on visit, ' + pretty(isoDate(new Date(k.capturedAt)))}
+                    {'Noted ' + pretty(isoDate(new Date(k.capturedAt)))}
                   </Text>
                 </Card>
               ))}
@@ -1110,65 +1162,6 @@ export default function CustomerRecord() {
         ) : null}
       </Appear>
     </AppFrame>
-  );
-}
-
-/**
- * Six bills, oldest left. The height IS the verdict — a short red bar reads as
- * trouble before the legend is read.
- *
- * `payBehaviour` is the server's own scoring, carried as JSON. A row that has
- * never been scored shows nothing rather than six green bars nobody earned.
- */
-function PayBehaviour({ raw }: { raw: string | null }) {
-  const pay = React.useMemo<number[]>(() => {
-    if (!raw) return [];
-    try {
-      const parsed: unknown = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed.map((v) => Number(v) || 0).slice(-6) : [];
-    } catch {
-      return [];
-    }
-  }, [raw]);
-
-  if (pay.length === 0) return null;
-  const lateCount = pay.filter((v) => v > 0).length;
-
-  return (
-    <Card>
-      <Text style={type.label}>How they pay</Text>
-      <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 6, height: 48, marginTop: 12 }}>
-        {pay.map((v, i) => (
-          <View
-            key={i}
-            accessibilityLabel={['On time', 'Late', 'Very late'][v] ?? 'On time'}
-            style={{
-              flex: 1,
-              height: v === 0 ? 44 : v === 1 ? 30 : 18,
-              borderRadius: 3,
-              backgroundColor: v === 0 ? C.success : v === 1 ? C.warn : C.danger,
-            }}
-          />
-        ))}
-      </View>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16, marginTop: 10, flexWrap: 'wrap' }}>
-        {[
-          ['On time', C.success],
-          ['Late', C.warn],
-          ['Very late', C.danger],
-        ].map(([l, col]) => (
-          <View key={l} style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <View style={{ width: 10, height: 10, borderRadius: 2, backgroundColor: col }} />
-            <Text style={{ fontSize: 13, color: C.muted }}>{l}</Text>
-          </View>
-        ))}
-      </View>
-      <Text style={[type.caption, { color: C.body, marginTop: 10 }]}>
-        {lateCount === 0
-          ? 'Paid all of the last six bills on time.'
-          : lateCount + ' of the last six bills were paid late.'}
-      </Text>
-    </Card>
   );
 }
 

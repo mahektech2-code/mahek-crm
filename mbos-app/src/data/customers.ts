@@ -546,9 +546,9 @@ export async function searchProducts(query: string, limit = 20) {
   return all<{ id: string; name: string; sku: string | null; packSize: string | null; cansPerBox: number | null; millilitresPerCan: number | null; sellingPricePaise: number | null; formulation: string | null; brand: string | null }>(
     `SELECT * FROM products
       WHERE active = 1 AND (lower(name) LIKE ? OR lower(COALESCE(formulation,'')) LIKE ? OR lower(COALESCE(brand,'')) LIKE ?
-                            OR lower(COALESCE(sku,'')) LIKE ?)
+                            OR lower(COALESCE(sku,'')) LIKE ? OR lower(COALESCE(packSize,'')) LIKE ?)
       ORDER BY lower(COALESCE(sku,'')) = ? DESC, name LIMIT ?`,
-    [like, like, like, like, code, limit],
+    [like, like, like, like, like, code, limit],
   );
 }
 
@@ -667,15 +667,25 @@ export async function billingChoicesFor(customer: Customer): Promise<BillingChoi
  * bill cannot be the one billed for another. Same rule the console's picker
  * enforces and the server checks again on the way in.
  */
+/*
+ * AND NOT A LEAD. A lead has never ordered and cannot hold anybody's invoice —
+ * the server refuses a biller that is not `kind = 'customer'` — so offering
+ * one here let a salesman pick it, take the order, and have both the shop and
+ * the order refused hours later.
+ */
+const BILLABLE = `thirdParty = 0 AND COALESCE(kind, 'customer') = 'customer'
+  AND NOT EXISTS (SELECT 1 FROM leads l WHERE l.id = customers.id AND l.archived = 0
+    AND COALESCE(l.funnelStage, '') <> 'won' AND COALESCE(l.stage, '') <> 'Converted')`;
+
 export async function billableCustomers(q?: string): Promise<Customer[]> {
   const term = (q ?? '').trim();
   if (!term) {
-    return all<Customer>('SELECT * FROM customers WHERE thirdParty = 0 ORDER BY name LIMIT 50');
+    return all<Customer>(`SELECT * FROM customers WHERE ${BILLABLE} ORDER BY name LIMIT 50`);
   }
   const like = `%${term}%`;
   return all<Customer>(
     `SELECT * FROM customers
-      WHERE thirdParty = 0 AND (name LIKE ? OR city LIKE ? OR phone LIKE ?)
+      WHERE ${BILLABLE} AND (name LIKE ? OR city LIKE ? OR phone LIKE ?)
       ORDER BY name LIMIT 50`,
     [like, like, like],
   );
@@ -740,7 +750,9 @@ export async function addFieldShop(args: {
   const row = {
     id: customerId,
     name,
-    contactPerson: args.contactPerson?.trim() || name,
+    /* Nobody named is nobody named. Filling the shop's own name in made every
+       such row read "Sai Paints · Sai Paints · Nashik". */
+    contactPerson: args.contactPerson?.trim() || null,
     phone,
     city,
     /* Marked and arranged in the same breath. A shop flagged as one we do not
