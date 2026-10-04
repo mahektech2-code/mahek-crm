@@ -1,10 +1,11 @@
 import React from 'react';
 import { useModalOpen } from '../../state/push-banner';
 import { Image, Modal, Pressable, View } from 'react-native';
-import { CameraView, useCameraPermissions } from 'expo-camera';
+import { CameraView } from 'expo-camera';
+import { CameraRefusal, shutterWhy, useCameraAccess } from './camera-access';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { color as C, HIT, radius, weight } from '../../theme/tokens';
+import { HIT, radius, weight } from '../../theme/tokens';
 import { Icon } from './Icon';
 import { PrimaryButton, SecondaryButton, T } from './primitives';
 import { Appear, DUR } from './motion';
@@ -92,7 +93,7 @@ export function SelfieCamera({
   onDone: (result: SelfieResult) => void;
 }) {
   const insets = useSafeAreaInsets();
-  const [permission, requestPermission] = useCameraPermissions();
+  const { access, ask } = useCameraAccess(open);
   const camera = React.useRef<CameraView>(null);
   const [ready, setReady] = React.useState(false);
   const [shooting, setShooting] = React.useState(false);
@@ -125,13 +126,6 @@ export function SelfieCamera({
     }
   }, [open]);
 
-  /* Asked when the sheet opens rather than on the first launch: unlike
-     location, there is no work riding on this being answered early, and a
-     camera dialog on the very first open — before anybody has seen a screen —
-     is a dialog people dismiss. */
-  React.useEffect(() => {
-    if (open && permission && !permission.granted && permission.canAskAgain) void requestPermission();
-  }, [open, permission, requestPermission]);
 
   const take = async () => {
     if (!ready || shooting) return;
@@ -152,8 +146,6 @@ export function SelfieCamera({
       setShooting(false);
     }
   };
-
-  const denied = permission != null && !permission.granted && !permission.canAskAgain;
 
   /* Its own window over the app — see `useModalOpen`. */
   useModalOpen(open);
@@ -194,11 +186,7 @@ export function SelfieCamera({
             <Appear distance={0} duration={DUR.quick} style={{ flex: 1 }}>
               <Image source={{ uri: shot }} style={{ flex: 1 }} resizeMode="cover" />
             </Appear>
-          ) : denied ? (
-            <Refusal
-              body="Camera permission is off for MBOS. Attendance needs a selfie. Turn on the camera in your phone Settings, then try again. If you cannot, tell your manager."
-            />
-          ) : permission?.granted ? (
+          ) : access === 'granted' ? (
             <CameraView
               ref={camera}
               style={{ flex: 1 }}
@@ -209,7 +197,7 @@ export function SelfieCamera({
               onCameraReady={() => setReady(true)}
             />
           ) : (
-            <Refusal body="Asking for the camera…" />
+            <CameraRefusal access={access} needs="Attendance needs a selfie." onAsk={ask} />
           )}
         </View>
 
@@ -247,12 +235,8 @@ export function SelfieCamera({
               <PrimaryButton
                 label={shooting ? 'Taking…' : 'Take photo'}
                 onPress={() => void take()}
-                disabled={!permission?.granted || !ready || shooting}
-                whyDisabled={
-                  denied
-                    ? 'Camera permission is off for MBOS.'
-                    : 'Wait. The camera is still starting.'
-                }
+                disabled={access !== 'granted' || !ready || shooting}
+                whyDisabled={shutterWhy(access)}
               />
               {/*
                 This was "Start the day without a photo" — see the note at the
@@ -278,13 +262,3 @@ export function SelfieCamera({
   );
 }
 
-function Refusal({ body }: { body: string }) {
-  return (
-    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, backgroundColor: C.ink }}>
-      <Icon name="camera" size={32} color="rgba(255,255,255,0.5)" strokeWidth={1.5} />
-      <T style={{ fontSize: 15, lineHeight: 22, color: 'rgba(255,255,255,0.8)', textAlign: 'center', marginTop: 12 }}>
-        {body}
-      </T>
-    </View>
-  );
-}

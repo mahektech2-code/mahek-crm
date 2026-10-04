@@ -1,7 +1,8 @@
 import React from 'react';
 import { useModalOpen } from '../../state/push-banner';
 import { Animated, Image, Modal, Pressable, TextInput, View } from 'react-native';
-import { CameraView, useCameraPermissions } from 'expo-camera';
+import { CameraView } from 'expo-camera';
+import { CameraRefusal, shutterWhy, useCameraAccess } from './camera-access';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { color as C, HIT, radius, weight } from '../../theme/tokens';
@@ -68,7 +69,7 @@ export function OdometerCamera({
 }) {
   const insets = useSafeAreaInsets();
   const keyboardHeight = useKeyboardHeight();
-  const [permission, requestPermission] = useCameraPermissions();
+  const { access, ask } = useCameraAccess(open);
   const camera = React.useRef<CameraView>(null);
   const [ready, setReady] = React.useState(false);
   const [shooting, setShooting] = React.useState(false);
@@ -92,9 +93,6 @@ export function OdometerCamera({
     }
   }, [open]);
 
-  React.useEffect(() => {
-    if (open && permission && !permission.granted && permission.canAskAgain) void requestPermission();
-  }, [open, permission, requestPermission]);
 
   const take = async () => {
     if (!ready || shooting) return;
@@ -125,8 +123,6 @@ export function OdometerCamera({
     }
     onDone({ uri: shot, km: verdict.km });
   };
-
-  const denied = permission != null && !permission.granted && !permission.canAskAgain;
 
   /* Live, so the distance appears as he types rather than after he presses —
      it is the number he can sanity-check against the road he just rode, and
@@ -177,15 +173,13 @@ export function OdometerCamera({
             <Appear distance={0} duration={DUR.quick} style={{ flex: 1 }}>
               <Image source={{ uri: shot }} style={{ flex: 1 }} resizeMode="contain" />
             </Appear>
-          ) : denied ? (
-            <Refusal body="Camera permission is off for MBOS. You must take a photo of the meter. Turn on the camera in your phone Settings, then try again. If you cannot, tell your manager." />
-          ) : permission?.granted ? (
+          ) : access === 'granted' ? (
             /* Rear-facing, unmirrored. A mirrored odometer is a mirrored
                NUMBER, which is the one thing on this photograph anybody will
                ever want to read. */
             <CameraView ref={camera} style={{ flex: 1 }} facing="back" onCameraReady={() => setReady(true)} />
           ) : (
-            <Refusal body="Asking for the camera…" />
+            <CameraRefusal access={access} needs="You must take a photo of the meter." onAsk={ask} />
           )}
         </View>
 
@@ -243,10 +237,8 @@ export function OdometerCamera({
               <PrimaryButton
                 label={shooting ? 'Taking…' : 'Take meter photo'}
                 onPress={() => void take()}
-                disabled={!permission?.granted || !ready || shooting}
-                whyDisabled={
-                  denied ? 'Camera permission is off for MBOS.' : 'Wait. The camera is still starting.'
-                }
+                disabled={access !== 'granted' || !ready || shooting}
+                whyDisabled={shutterWhy(access)}
               />
               {/*
                 A CANCEL, and it says what it abandons. There is no "record it
@@ -270,13 +262,3 @@ export function OdometerCamera({
   );
 }
 
-function Refusal({ body }: { body: string }) {
-  return (
-    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, backgroundColor: C.ink }}>
-      <Icon name="camera" size={32} color="rgba(255,255,255,0.5)" strokeWidth={1.5} />
-      <T style={{ fontSize: 15, lineHeight: 22, color: 'rgba(255,255,255,0.8)', textAlign: 'center', marginTop: 12 }}>
-        {body}
-      </T>
-    </View>
-  );
-}
