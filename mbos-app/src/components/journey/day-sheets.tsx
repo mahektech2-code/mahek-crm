@@ -54,7 +54,7 @@ export function PastDaySheet({
     };
   }, [day]);
 
-  const visited = shops?.filter((s) => s.status === 'visited').length ?? 0;
+  const visited = shops?.filter((s) => s.status === 'visited' && !s.offRoute).length ?? 0;
   const ordersPaise = shops?.reduce((t, s) => t + s.orders.reduce((u, o) => u + (o.valuePaise ?? 0), 0), 0) ?? 0;
   const orderCount = shops?.reduce((t, s) => t + s.orders.length, 0) ?? 0;
   const collectedPaise = shops?.reduce((t, s) => t + s.payments.reduce((u, p) => u + p.amountPaise, 0), 0) ?? 0;
@@ -111,7 +111,10 @@ export function PastDaySheet({
                   borderRadius: radius.lg,
                   overflow: 'hidden',
                 }}>
-                <Stat value={visited + ' of ' + shops.length} label="visited" />
+                <Stat
+                  value={visited + ' of ' + shops.filter((x) => !x.offRoute).length}
+                  label={shops.some((x) => x.offRoute) ? 'visited · +' + shops.filter((x) => x.offRoute).length + ' off route' : 'visited'}
+                />
                 <Stat value={orderCount ? inrFromPaise(ordersPaise) : '—'} label={orderCount ? plural(orderCount, 'order') : 'no orders'} divider />
                 <Stat value={collectedPaise ? inrFromPaise(collectedPaise) : '—'} label="collected" divider />
               </View>
@@ -195,13 +198,26 @@ function PastShop({ s, onPress }: { s: ShopDay; onPress: () => void }) {
         {s.status === 'visited' ? (
           <Icon name="tick" size={14} color={C.success} strokeWidth={2.2} />
         ) : (
-          <T style={[{ fontSize: 12, color: s.status === 'skipped' ? C.danger : C.warnInk }, weight(600)]}>{s.seq}</T>
+          <T style={[{ fontSize: 12, color: s.status === 'skipped' ? C.danger : C.warnInk }, weight(600)]}>{s.offRoute ? '+' : s.seq}</T>
         )}
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
         <T numberOfLines={1} style={[{ fontSize: 15, color: C.ink }, weight(600)]}>
           {s.name}
         </T>
+        {/* WHAT KIND OF ACCOUNT, and whether it was on the route. A visit to a
+            lead and a visit to a customer we invoice are different mornings,
+            and a shop off the route is ordinary but worth seeing as one. */}
+        {s.accountType || s.offRoute ? (
+          <View style={{ flexDirection: 'row', gap: 6, marginTop: 3 }}>
+            {s.accountType ? (
+              <Badge tone={s.accountType === 'Lead' ? 'amber' : s.accountType === 'Third party' ? 'info' : 'teal'}>
+                {s.accountType}
+              </Badge>
+            ) : null}
+            {s.offRoute ? <Badge tone="neutral">Off route</Badge> : null}
+          </View>
+        ) : null}
         {s.area ? (
           <T s="caption" numberOfLines={1}>
             {s.area}
@@ -344,7 +360,7 @@ function ShopDayView({
       </Pressable>
       <T s="h2">{s.name}</T>
       <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-        {[s.area, dayLabel].filter(Boolean).join(' · ')}
+        {[s.accountType, s.offRoute ? 'off your route' : null, s.area, dayLabel].filter(Boolean).join(' · ')}
       </T>
 
       <View style={{ marginTop: 16 }}>

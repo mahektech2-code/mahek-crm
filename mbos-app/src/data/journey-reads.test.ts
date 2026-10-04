@@ -29,6 +29,10 @@ const STOPS_FOR_DAY = `SELECT s.customerId FROM journey_stops s
        JOIN journey_days d ON d.planDate = s.planDate
       WHERE d.id = ? ORDER BY s.seq`;
 const PICKED_IDS = 'SELECT pickedIds FROM journey_days WHERE id = ?';
+const SHOP_FACTS = `c.name, c.area, c.city, c.kind, c.thirdParty,
+            (EXISTS (SELECT 1 FROM leads l WHERE l.id = c.id AND l.archived = 0
+              AND COALESCE(l.funnelStage, '') <> 'won' AND COALESCE(l.stage, '') <> 'Converted')
+             AND COALESCE(c.kind, 'lead') <> 'customer') AS isLead`;
 
 /* The same three steps `pickedFor` takes, in its order. */
 function pickedFor(db: DatabaseSync, id: string): string[] {
@@ -81,11 +85,16 @@ test('every read behind a past day and a planned day prepares against the handse
   const statements = [
     `SELECT id, name, area, city, outstandingPaise FROM customers WHERE id IN (${one})`,
     `SELECT s.id, s.customerId, s.seq, s.status, s.plannedAt, s.actualAt, s.skipReason,
-            c.name, c.area, c.city
+            ${SHOP_FACTS}
        FROM journey_stops s
        LEFT JOIN customers c ON c.id = s.customerId
       WHERE s.planDate = ?
       ORDER BY s.seq`,
+    `SELECT v.customerId, v.checkInAt, ${SHOP_FACTS}
+         FROM visits v
+         LEFT JOIN customers c ON c.id = v.customerId
+        WHERE v.checkInAt BETWEEN ? AND ?
+        ORDER BY v.checkInAt`,
     `SELECT customerId, checkInAt, checkOutAt, durationSeconds, outcome, notes FROM visits
         WHERE customerId IN (${one}) AND checkInAt BETWEEN ? AND ? ORDER BY checkInAt`,
     `SELECT id, customerId, orderedAt, netTotalPaise, orderNumber FROM orders

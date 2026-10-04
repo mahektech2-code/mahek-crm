@@ -520,6 +520,11 @@ const DESCRIBE: Record<string, Describer> = {
 
   /* ---- field */
   "mbos.journey.propose": (c) => ({ says: ["proposed a journey plan to", c.user(c.e.entityId, str(c.a.salesman) ?? "a salesman"), journeyDates(c)], changes: false }),
+  "mbos.journey.answered": (c) => ({
+    says: [c.a.answer === "refused" ? "refused the day proposed for" : "agreed the day proposed for", strong(str(c.a.planDate) ?? "a day")],
+    note: str(c.a.reason),
+    changes: false,
+  }),
   "mbos.journey.period": (c) => ({ says: ["planned the journey of", c.user(c.e.entityId, str(c.a.salesman) ?? "a salesman"), journeyDates(c)], changes: false }),
   "mbos.salesman.territories": (c) => ["changed the area", c.user(c.e.entityId, "a salesman"), "works"],
   "mbos.manager.territories": (c) => ["changed the regions", c.user(c.e.entityId, "a manager"), "manages"],
