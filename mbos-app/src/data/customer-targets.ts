@@ -31,9 +31,12 @@ export async function listCustomerTargets(period: string): Promise<CustomerTarge
     pendingPaise: number;
     isDefault: number;
     carriedForward: number;
+    billTarget: number | null;
+    billsAchieved: number | null;
   }>(
     `SELECT t.customerId, c.name, c.city, c.lastOrderDate,
-            t.targetPaise, t.achievedPaise, t.pendingPaise, t.isDefault, t.carriedForward
+            t.targetPaise, t.achievedPaise, t.pendingPaise, t.isDefault, t.carriedForward,
+            t.billTarget, t.billsAchieved
        FROM customer_targets t
        LEFT JOIN customers c ON c.id = t.customerId
       WHERE t.period = ?`,
@@ -56,6 +59,8 @@ export async function listCustomerTargets(period: string): Promise<CustomerTarge
     isDefault: Boolean(r.isDefault),
     carriedForward: Boolean(r.carriedForward),
     lastOrderDate: r.lastOrderDate,
+    billTarget: r.billTarget && r.billTarget > 0 ? r.billTarget : null,
+    billsAchieved: r.billsAchieved ?? 0,
   }));
 }
 
