@@ -17,9 +17,10 @@ import type {
 } from "@/lib/services/top-customers-service";
 
 /* ---------------------------------------------------------------------------
- * The Top customers report: party, location, orders, total, average, a column
- * per month and the share of the company's sales — the columns the office's
- * own "Top 1 to 50" sheet asks for. Read from the report generated on the 1st,
+ * The Top customers report: party, location, then orders, sales and sales
+ * bills each AVERAGED PER MONTH, a column per month and the share of the
+ * company's sales. Per month rather than totals so a 3-month list and a
+ * 1-year list read on the same scale; the totals are in the strip above. Read from the report generated on the 1st,
  * never from live figures — see `top-customers-service.ts`.
  *
  * DRAWN WITH THE DESIGN SYSTEM, NOT THE SHEET. The sheet decides which
@@ -29,12 +30,26 @@ import type {
  * ------------------------------------------------------------------------- */
 
 const METRIC_LABEL: Record<TopCustomerMetric, string> = {
-  value: "Total sales",
-  orders: "No. of orders",
+  value: "sales",
+  orders: "number of orders",
 };
 
 const pct = (part: number, whole: number) =>
   whole > 0 ? `${((part / whole) * 100).toFixed(1)}%` : "—";
+
+/** A count averaged over the months — "2.3", or "2" when it is whole. */
+const perMonth = (count: number, months: number) => {
+  const v = count / months;
+  return Number.isInteger(v) ? String(v) : v.toFixed(1);
+};
+
+/*
+ * THE HEADINGS ARE WRITTEN OUT IN FULL. They are read by people deciding who
+ * to ring, not by people who built the report, so "Average sales bills per
+ * month" beats any abbreviation of it. They wrap onto two lines rather than
+ * stretch the table.
+ */
+const WRAP = "min-w-[110px] !whitespace-normal";
 
 export function TopCustomersTable({
   report,
@@ -72,7 +87,7 @@ export function TopCustomersTable({
                 {
                   label: "Top customers",
                   value: String(report.companyCount),
-                  sub: `by ${METRIC_LABEL[metric].toLowerCase()}`,
+                  sub: `ranked by ${METRIC_LABEL[metric]}`,
                 },
                 { label: "Their sales", value: money(report.companyTopValuePaise) },
                 { label: "Their orders", value: shownOrders.toLocaleString("en-IN") },
@@ -108,7 +123,7 @@ export function TopCustomersTable({
         <FilterPills
           options={(["value", "orders"] as const).map((m) => ({
             key: m,
-            label: `By ${METRIC_LABEL[m].toLowerCase()}`,
+            label: `Rank by ${METRIC_LABEL[m]}`,
           }))}
           value={metric}
           onChange={(k) => go({ by: k })}
@@ -128,21 +143,27 @@ export function TopCustomersTable({
           <table>
             <thead>
               <tr>
-                <Th align="right">#</Th>
+                <Th align="right" className={WRAP} title="The customer's place across the whole company, not only this list">
+                  Company rank
+                </Th>
                 <Th>Party name</Th>
                 <Th>Location</Th>
-                <Th align="right">No. of orders</Th>
-                <Th align="right">Total sales</Th>
-                <Th align="right" title="Total sales divided by the months in the period">
-                  Average
+                <Th align="right" className={WRAP} title="Approved orders in the period, divided by the months in it">
+                  Average orders per month
+                </Th>
+                <Th align="right" className={WRAP} title="Sales in the period, divided by the months in it">
+                  Average sales per month
+                </Th>
+                <Th align="right" className={WRAP} title="Sales bills raised in the period, divided by the months in it">
+                  Average sales bills per month
                 </Th>
                 {months.map((m) => (
                   <Th key={m} align="right">
                     {monthHeading(m, crossesYear)}
                   </Th>
                 ))}
-                <Th align="right" title="Share of every approved order in the period, company-wide">
-                  Contribution
+                <Th align="right" className={WRAP} title="This customer's sales as a share of every approved order in the period, company-wide">
+                  Share of company sales
                 </Th>
               </tr>
             </thead>
@@ -170,11 +191,19 @@ export function TopCustomersTable({
                     </div>
                   </Td>
                   <Td>{r.location}</Td>
-                  <Td align="right">{r.orders}</Td>
-                  <Td align="right" className="font-medium text-ink">
-                    {money(r.valuePaise)}
+                  <Td align="right" title={`${r.orders} orders in ${months.length} months`}>
+                    {perMonth(r.orders, months.length)}
                   </Td>
-                  <Td align="right">{money(Math.round(r.valuePaise / months.length))}</Td>
+                  <Td
+                    align="right"
+                    className="font-medium text-ink"
+                    title={`${money(r.valuePaise)} in ${months.length} months`}
+                  >
+                    {money(Math.round(r.valuePaise / months.length))}
+                  </Td>
+                  <Td align="right" title={`${r.bills} bills in ${months.length} months`}>
+                    {perMonth(r.bills, months.length)}
+                  </Td>
                   {r.months.map((m) => (
                     <Td
                       key={m.month}
