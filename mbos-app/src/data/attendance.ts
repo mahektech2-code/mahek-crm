@@ -183,6 +183,31 @@ export async function todayRow(userId: string): Promise<AttendanceDay | null> {
 }
 
 /**
+ * THE ROW THE RUNNING SESSION IS ON, which is not always today's.
+ *
+ * Evening calls from eight to half past twelve are one session on yesterday's
+ * row. Asking only for today's row made that session vanish at midnight: Home
+ * drew "Punch in" where it should have drawn "Punch out", and a punch-out
+ * pressed at 00:01 was refused with "the day has not been started yet" while
+ * the tracker kept running. So the newest row is asked first, and its open
+ * session counts while it is inside the same ceiling the tracker keeps —
+ * `mbos.location.serviceMaxDayHours` — so a session forgotten open on Friday
+ * is not still "running" on Monday. Anything else falls back to today's row.
+ */
+export async function currentRow(userId: string): Promise<AttendanceDay | null> {
+  const newest = await one<AttendanceDay>(
+    'SELECT * FROM attendance_days WHERE userId = ? ORDER BY day DESC LIMIT 1',
+    [userId],
+  );
+  const open = openSession(sessionsOf(newest));
+  if (newest && open && newest.day !== today()) {
+    const hours = await getConfig<number>('mbos.location.serviceMaxDayHours', 16);
+    if (Date.now() - open.inAt < Math.max(1, hours) * 3_600_000) return newest;
+  }
+  return todayRow(userId);
+}
+
+/**
  * Start the day: three effects in order, each confirming separately so a
  * failure in one is visible rather than swallowed by the other two.
  */
@@ -224,7 +249,7 @@ export async function checkIn(args: {
   mayOpen: DayMayOpen;
   homeLocation?: { lat: number; lng: number } | null;
   overrideReason?: string | null;
-}): Promise<{ id: string; withinRadius: boolean | null; needsOverride: boolean }> {
+}): Promise<{ id: string; withinRadius: boolean | null; alreadyRunning: boolean }> {
   const radius = await getConfig<number>('mbos.attendance.geofenceRadiusM', 200);
   const day = today();
 
@@ -264,8 +289,10 @@ export async function checkIn(args: {
        turned 9-to-1 plus 2-to-6 into nine hours instead of eight. */
     const sessions = sessionsOf(existing);
     if (openSession(sessions)) {
-      /* Already running. Checking in twice is a slip, not a second day. */
-      return { id: existing.id, withinRadius, needsOverride: false };
+      /* Already running. Checking in twice is a slip, not a second day — and
+         the caller is told, so the photographs it took for this tap can be let
+         go rather than uploaded with nothing to belong to. */
+      return { id: existing.id, withinRadius, alreadyRunning: true };
     }
     sessions.push({ inAt: Date.now(), outAt: null, inSelfieId: args.selfieMediaId });
     await run('UPDATE attendance_days SET sessions = ?, checkOutAt = NULL WHERE id = ?', [
@@ -305,11 +332,10 @@ export async function checkIn(args: {
        reads as an afternoon nobody worked. */
     void trail.start('check-in');
     await stampClock(args.userId, day, 'in', sessions[sessions.length - 1].inAt);
-    return { id: existing.id, withinRadius, needsOverride: false };
+    return { id: existing.id, withinRadius, alreadyRunning: false };
   }
 
   const base = await stamp('att');
-  const needsOverride = withinRadius === false && !args.overrideReason;
 
   const opened: Session[] = [{ inAt: Date.now(), outAt: null, inSelfieId: args.selfieMediaId }];
 
@@ -348,7 +374,12 @@ export async function checkIn(args: {
          and the mark is the whole point of having asked. */
       withinGeofence: withinRadius ?? undefined,
       ...setup,
-      regularisationRequested: withinRadius === false,
+      /* A REQUEST IS SOMETHING HE MADE. Being outside the radius used to file
+         one on its own — so with a company-wide base, every man who starts
+         from home "asked" for a correction every morning and buried the real
+         ones. `withinGeofence` already carries the fact; a request travels
+         only with a reason, here or from `setOverrideReason` after. */
+      regularisationRequested: args.overrideReason ? true : undefined,
       regularisationReason: args.overrideReason ?? undefined,
       deviceId: base.deviceId,
     },
@@ -360,7 +391,7 @@ export async function checkIn(args: {
   void trail.start('check-in');
   await stampClock(args.userId, day, 'in', opened[0].inAt);
 
-  return { id: base.id, withinRadius, needsOverride };
+  return { id: base.id, withinRadius, alreadyRunning: false };
 }
 
 /**
@@ -406,7 +437,7 @@ export async function checkOut(
    */
   selfieMediaId: string,
 ): Promise<{ ok: boolean; workedMinutes: number; reason?: string }> {
-  const row = await todayRow(userId);
+  const row = await currentRow(userId);
   if (!row) return { ok: false, workedMinutes: 0, reason: 'The day has not been started yet.' };
 
   const sessions = sessionsOf(row);
@@ -531,7 +562,7 @@ export async function dayState(userId: string): Promise<{
    */
   sessions: Session[];
 }> {
-  const row = await todayRow(userId);
+  const row = await currentRow(userId);
   const sessions = sessionsOf(row);
   return {
     started: sessions.length > 0,
