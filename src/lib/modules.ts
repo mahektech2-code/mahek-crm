@@ -565,6 +565,12 @@ export const APP_MODULES: AppModule[] = [
   ),
   sales("visits", "Visits", "Field work", "Every visit logged, and which of them could not be verified."),
   sales(
+    "field-reports",
+    "Field reports",
+    "Field work",
+    "Complaints, competitor intelligence, internal notes, tours and order changes salesmen file from the shops.",
+  ),
+  sales(
     "activity-history",
     "Activity history",
     "Field work",

@@ -502,6 +502,36 @@ export async function canRead(attachmentId: string): Promise<boolean> {
     await assertCustomerInScope(customer);
     return true;
   } catch {
+    /* A FIELD COLLECTION OR A FIELD COMPLAINT IS ALSO THE SALESMAN'S EVIDENCE.
+       The customer's scope answers for the CRM; a sales manager is scoped by
+       the salesman, not the book, and the Payments and Field reports screens
+       show these photographs to exactly that person. Asked only after the
+       customer's scope has said no, so it can widen and never narrow. */
+    if (row.parentType === "payment_receipt") {
+      const [receipt] = await db
+        .select({ by: paymentReceipts.reportedById })
+        .from(paymentReceipts)
+        .where(eq(paymentReceipts.id, row.parentId));
+      if (receipt?.by && (await canReadSalesmansOwnEvidence(receipt.by, ["sales.payments"]))) {
+        return true;
+      }
+    }
+    if (
+      row.parentType === "mbos_lead" &&
+      row.uploadedById &&
+      (await canReadSalesmansOwnEvidence(row.uploadedById, ["sales.leads"]))
+    ) {
+      return true;
+    }
+    if (row.parentType === "complaint") {
+      const [complaint] = await db
+        .select({ by: complaints.loggedByUserId })
+        .from(complaints)
+        .where(eq(complaints.id, row.parentId));
+      if (complaint?.by && (await canReadSalesmansOwnEvidence(complaint.by, ["sales.field-reports"]))) {
+        return true;
+      }
+    }
     /* A complaint is also the ERP's "customer request". Whoever may open the
        ERP's complaints screen decides complaints and may open their
        photographs and credit notes, whether or not that customer is in a CRM

@@ -247,7 +247,7 @@ export default async function Page({
             />
           ) : (
         <Table
-          minWidth={1180}
+          minWidth={1320}
           head={
             <>
               {head("salesman", "Salesman", 160)}
@@ -259,6 +259,7 @@ export default async function Page({
                   issued them, which answers nothing. */}
               <HeadCell width={180}>Reference</HeadCell>
               {head("on", "On", 130)}
+              <HeadCell width={140}>Photos</HeadCell>
               {head("state", "State")}
             </>
           }
@@ -291,8 +292,36 @@ export default async function Page({
                       none given
                     </span>
                   )}
+                  {r.note ? (
+                    <span className="block truncate text-[12px] text-muted">{r.note}</span>
+                  ) : null}
                 </Cell>
                 <Cell>{shortDate(r.receivedAt)}</Cell>
+                <Cell>
+                  {r.photoIds.length ? (
+                    <span className="inline-flex gap-1">
+                      {r.photoIds.slice(0, 3).map((id) => (
+                        <a
+                          key={id}
+                          href={`/api/attachments/${id}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          title={id === r.depositProofId ? "The deposit slip" : "The cheque or proof of payment"}
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={`/api/attachments/${id}`}
+                            alt={id === r.depositProofId ? "Deposit slip" : "Payment proof"}
+                            loading="lazy"
+                            className="h-9 w-9 rounded-[3px] border border-line object-cover hover:border-brand"
+                          />
+                        </a>
+                      ))}
+                    </span>
+                  ) : (
+                    <span className="text-muted">—</span>
+                  )}
+                </Cell>
                 <Cell>
                   <Pill
                     tone={

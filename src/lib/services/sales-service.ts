@@ -2744,6 +2744,9 @@ export type FieldReceipt = {
   note: string | null;
   /** Days since it was collected. The deposit window is counted in these. */
   heldDays: number;
+  /** Photographs filed under the receipt — the cheque, and the deposit slip. */
+  photoIds: string[];
+  depositProofId: string | null;
 };
 
 /**
@@ -2791,7 +2794,15 @@ const RECEIPT_COLUMNS = sql`
            r.status::text as status,
            r.deposited_at as "depositedAt",
            r.note,
-           (current_date - r.received_at)::int as "heldDays"
+           (current_date - r.received_at)::int as "heldDays",
+           -- The cheque and the deposit slip, which the handset uploads under
+           -- the receipt. Only Accounts' review drawer ever drew them.
+           coalesce((select array_agg(f.id order by f.uploaded_at)
+                       from attachments f
+                      where f.status = 'available'
+                        and (   (f.parent_type = 'payment_receipt' and f.parent_id = r.id)
+                             or f.id = r.deposit_proof_id)), '{}') as "photoIds",
+           r.deposit_proof_id as "depositProofId"
       from payment_receipts r
       join customers c on c.id = r.customer_id
       left join users u on u.id = r.reported_by_id
