@@ -113,6 +113,8 @@ export type JobName =
   | "auto-eod"
   /** Tell anybody still punched in at the end of the day. Half-hourly. */
   | "punch-out-reminders"
+  /** The monthly Top customers report — the 1st at 10:00 IST, and caught up hourly. */
+  | "top-customers-report"
   | "roll-reminders"
   | "sweep-orphan-attachments"
   | "sheet-append"
@@ -600,6 +602,17 @@ async function erpInboxStep() {
   return { recordsAffected: r.drafted, detail: r.skipped ? `skipped: ${r.skipped}` : `${r.screened} screened · ${r.drafted} drafted` };
 }
 
+async function topCustomersReportStep() {
+  const { ensureCurrentTopCustomerReports } = await import("./services/top-customers-service");
+  const { generated } = await ensureCurrentTopCustomerReports();
+  return {
+    recordsAffected: generated.length,
+    detail: generated.length
+      ? `generated the ${generated.join(", ")}-month reports`
+      : "this month's reports already exist",
+  };
+}
+
 export async function runHourly(triggeredById?: string): Promise<JobResult[]> {
   const results: JobResult[] = [];
 
@@ -607,6 +620,12 @@ export async function runHourly(triggeredById?: string): Promise<JobResult[]> {
   results.push(await run("erp-inbox", erpInboxStep, triggeredById));
 
   results.push(await run("mbos-hourly", mbosHourly, triggeredById));
+
+  // The Top customers report has its own 10:00 IST cron line on the 1st. This
+  // is the net under it: a droplet whose crontab predates that line still
+  // gets the month's report within the hour, and on every other hour it is
+  // one indexed lookup that finds the report already there.
+  results.push(await run("top-customers-report", topCustomersReportStep, triggeredById));
 
   // The founder's WhatsApp rules. The pass checks the sending window itself
   // (10 am–1 pm IST unless the founder changed it) and returns at once
@@ -803,6 +822,8 @@ export async function runJob(
       return runHourly(triggeredById);
     case "day-boundary":
       return runDayBoundary(triggeredById);
+    case "top-customers-report":
+      return [await run("top-customers-report", topCustomersReportStep, triggeredById)];
     case "punch-out-reminders":
       /* Its own mode rather than a step of `hourly`: that one runs at :52 IST
          on the droplet's clock, which would land a six o'clock reminder at

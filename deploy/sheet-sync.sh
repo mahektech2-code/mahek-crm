@@ -21,6 +21,7 @@
 #   bash sheet-sync.sh cycle     the half-hourly read modes, then publish
 #   bash sheet-sync.sh hourly    the salesman score and the MBOS sweeps
 #   bash sheet-sync.sh nightly   the daily full compare, then the recomputes
+#   bash sheet-sync.sh monthly   the Top customers report, 10:00 IST on the 1st
 #
 # All three are safe to run twice: the route answers 409 when a sync of that source
 # is already running, and this treats that as ordinary rather than as failure.
@@ -112,8 +113,13 @@ case "${1:-cycle}" in
     sync "project&owner=${OWNER}"
     sync nightly
     ;;
+  monthly)
+    # The Top customers report for the month just finished. The hourly pass
+    # generates it too if this line is missing; this is what makes it 10:00.
+    sync top-customers
+    ;;
   *)
-    echo "usage: sheet-sync.sh [cycle|hourly|nightly]" >&2
+    echo "usage: sheet-sync.sh [cycle|hourly|nightly|monthly]" >&2
     exit 2
     ;;
 esac

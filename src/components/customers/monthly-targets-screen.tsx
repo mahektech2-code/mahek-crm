@@ -23,7 +23,7 @@ import {
   cx,
   type Tone,
 } from "@/components/ui/primitives";
-import { Modal, RowMenu } from "@/components/ui/overlays";
+import { Modal, RowMenu, Tabs } from "@/components/ui/overlays";
 import { MultiSelect } from "@/components/ui/multi-select";
 import { Icon } from "@/components/shell/icons";
 import { useToast } from "@/components/ui/toast";
@@ -119,6 +119,8 @@ export function MonthlyTargetsScreen({
   pageInfo,
   totals,
   amOptions,
+  view = "targets",
+  topContent,
 }: {
   /** Only changes which extra row-menu link is offered — CRM has its own bills screen, Accounts folds everything into the customer's ledger. */
   app: "crm" | "accounts";
@@ -155,6 +157,15 @@ export function MonthlyTargetsScreen({
   };
   /** The names each of the three seat filters can offer — `listAmFilterOptions`. */
   amOptions: { sales: string[]; salesManager: string[]; backOffice: string[] };
+  /** Which tab is open — `?view=top` in the URL, so the report can be linked to. */
+  view?: "targets" | "top";
+  /**
+   * The Top customers report, rendered on the server and handed in whole. It
+   * shares this screen's header and nothing else: it is not cut by the target
+   * month or by these filters, because it is the company's list for its own
+   * period and a filtered copy of it would no longer be the top anything.
+   */
+  topContent?: React.ReactNode;
 }) {
   const router = useRouter();
   const search = useSearchParams();
@@ -386,8 +397,13 @@ export function MonthlyTargetsScreen({
     <div className="px-6 pt-6 pb-10">
       <PageHeader
         title="Monthly targets"
-        subtitle={`${periodLabel(period)} · ${scopeLabel} · Per customer, per month. Where no target was set, a default is applied and marked.`}
+        subtitle={
+          view === "top"
+            ? `${scopeLabel} · The company's biggest customers over whole months, generated on the 1st.`
+            : `${periodLabel(period)} · ${scopeLabel} · Per customer, per month. Where no target was set, a default is applied and marked.`
+        }
         actions={
+          view === "top" ? null : (
           <>
             <Select
               value={period}
@@ -432,8 +448,24 @@ export function MonthlyTargetsScreen({
               Set targets in bulk
             </Button>
           </>
+          )
         }
       />
+
+      <Tabs
+        value={view}
+        onChange={(v) => router.push(v === "top" ? `${basePath}?view=top` : basePath)}
+        className="mb-4"
+        tabs={[
+          { key: "targets", label: "Targets" },
+          { key: "top", label: "Top customers" },
+        ]}
+      />
+
+      {view === "top" ? (
+        topContent
+      ) : (
+      <>
 
       <Card className="mb-4 flex items-center gap-8 px-5 py-4">
         <span>
@@ -696,6 +728,8 @@ export function MonthlyTargetsScreen({
             </div>
           ) : null}
         </>
+      </>
+      )}
 
       <SetTargetModal
         row={editing}

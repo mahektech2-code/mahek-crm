@@ -197,7 +197,6 @@ export const PRESENTATION: Record<string, Presentation> = {
   "inactive.cycleMultiplier": { tab: "Targets & cycles", group: "Inactivity", control: "decimal", impact: "inactive" },
   "inactive.decisionAgeWarningDays": { tab: "Targets & cycles", group: "Inactivity", unit: "days" },
   "topCustomers.count": { tab: "Targets & cycles", group: "Top customers", unit: "customers" },
-  "topCustomers.months": { tab: "Targets & cycles", group: "Top customers", unit: "months" },
 
   "targets.defaultMethod": { tab: "Targets & cycles", group: "Targets", control: "choice" },
   "targets.trailingMonths": { tab: "Targets & cycles", group: "Targets", unit: "months" },

@@ -31,6 +31,10 @@ import { SyncAlreadyRunningError } from "@/lib/services/sheet-sync-core";
  *                     the MBOS sweeps and escalations, the complaint SLA.
  *                     Read by the handset rather than derived there, so an
  *                     hour is the most a phone is ever behind the ledger.
+ *   ?mode=top-customers
+ *                     the monthly Top customers report, from its own cron line
+ *                     at 10:00 IST on the 1st. Idempotent — a month already
+ *                     generated is left alone.
  *   ?mode=punch-out-reminders
  *                     a notification to anybody still punched in from
  *                     `mbos.attendance.punchOutPromptHour`, and a second
@@ -113,6 +117,7 @@ const JOBS: Record<string, JobName> = {
      minutes past rather than at ten to seven. Cheap outside the evening: it
      answers from the clock before it reads a row. */
   "punch-out-reminders": "punch-out-reminders",
+  "top-customers": "top-customers-report",
 };
 
 export async function GET(request: Request) {

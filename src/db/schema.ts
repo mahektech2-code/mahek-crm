@@ -9593,6 +9593,66 @@ export const customerHealthSnapshots = pgTable(
   ],
 );
 
+/* --------------------------------------------------------- top customers */
+
+/**
+ * The Top customers report, as it was generated on the 1st of a month.
+ *
+ * One row per (month, span): on 1 October at 10:00 IST the 3-month report
+ * covers July to September, the 6-month April to September and the 1-year
+ * October to September — whole calendar months, ending with the last one
+ * that has finished. It is GENERATED rather than read live because it is a
+ * report somebody works from for a month: a sheet reconcile editing an old
+ * order must not move a figure that was read out in a review last week.
+ *
+ * A SNAPSHOT, NOT A CACHE, like `customer_health_snapshots`: nothing rebuilds
+ * a past month. Who may SEE a row is still decided at read time, from the
+ * seats as they stand today — the report freezes the figures, not the book.
+ */
+export const topCustomerReports = pgTable(
+  "top_customer_reports",
+  {
+    id: text("id").primaryKey(),
+    /** `YYYY-MM` — the month the report was generated in, not one it covers. */
+    month: text("month").notNull(),
+    /** 3, 6 or 12. */
+    spanMonths: integer("span_months").notNull(),
+    /** First and last month covered, `YYYY-MM`, inclusive. */
+    fromMonth: text("from_month").notNull(),
+    toMonth: text("to_month").notNull(),
+    /** Every approved order in the window, the denominator of "contribution". */
+    totalPaise: bigint("total_paise", { mode: "number" }).notNull(),
+    generatedAt: timestamp("generated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("top_customer_reports_key").on(t.month, t.spanMonths)],
+);
+
+/**
+ * Every customer who bought anything in a report's window — not only the
+ * top sixty — so the list can be ranked by sales or by order count, and its
+ * length changed in settings, without regenerating anything.
+ */
+export const topCustomerReportRows = pgTable(
+  "top_customer_report_rows",
+  {
+    id: text("id").primaryKey(),
+    reportId: text("report_id")
+      .notNull()
+      .references(() => topCustomerReports.id, { onDelete: "cascade" }),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    orders: integer("orders").notNull(),
+    valuePaise: bigint("value_paise", { mode: "number" }).notNull(),
+    /** One entry per month of the window, in order, zeros included. */
+    months: jsonb("months").$type<{ month: string; valuePaise: number; orders: number }[]>().notNull(),
+  },
+  (t) => [
+    uniqueIndex("top_customer_report_rows_key").on(t.reportId, t.customerId),
+    index("top_customer_report_rows_value_idx").on(t.reportId, t.valuePaise),
+  ],
+);
+
 /* ------------------------------------------------------- §3.32 website enquiry */
 
 /**

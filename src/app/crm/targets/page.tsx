@@ -4,6 +4,7 @@ import { getScope, scopeLabel } from "@/lib/scope";
 import { currentPeriod, listAmFilterOptions } from "@/lib/queries";
 import { listTargetsPage } from "@/lib/services/worklist-services";
 import { MonthlyTargetsScreen } from "@/components/customers/monthly-targets-screen";
+import { readTopCustomersTab } from "@/components/customers/top-customers-tab";
 
 export const metadata = { title: "Monthly targets - MahekOne CRM" };
 
@@ -45,8 +46,11 @@ export default async function TargetsPage({
     // the sheet actually fills, most of whom have no MahekOne account.
     listAmFilterOptions(),
   ]);
+  const top = await readTopCustomersTab(one, "/crm/targets", "/crm/customers/{id}");
   return (
     <MonthlyTargetsScreen
+      view={top.view}
+      topContent={top.topContent}
       app="crm"
       basePath="/crm/targets"
       customerHrefTemplate="/crm/customers/{id}"
