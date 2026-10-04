@@ -4,6 +4,7 @@ import { requireUser } from "@/lib/auth";
 import { currentPeriod, listAmFilterOptions } from "@/lib/queries";
 import { listTargetsPage } from "@/lib/services/worklist-services";
 import { MonthlyTargetsScreen } from "@/components/customers/monthly-targets-screen";
+import { readTopCustomersTab } from "@/components/customers/top-customers-tab";
 
 export const metadata = { title: "Customer targets — Accounts — MahekOne" };
 
@@ -64,8 +65,11 @@ export default async function Page({
     }),
     listAmFilterOptions(),
   ]);
+  const top = await readTopCustomersTab(one, "/accounts/customer-targets", "/accounts/ledger?customer={id}");
   return (
     <MonthlyTargetsScreen
+      view={top.view}
+      topContent={top.topContent}
       app="accounts"
       basePath="/accounts/customer-targets"
       customerHrefTemplate="/accounts/ledger?customer={id}"

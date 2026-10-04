@@ -225,12 +225,6 @@ export const APP_MODULES: AppModule[] = [
   ),
   crm("bills", "Sales Bills", "Collections"),
   crm("customers", "Customers", "Customer records", "The customer list and every customer record behind it."),
-  crm(
-    "top-customers",
-    "Top customers",
-    "Customer records",
-    "The company's biggest accounts over the last few months. Ranked across every book; each person sees the ones that are in theirs.",
-  ),
   crm("complaints", "Complaints", "Customer records"),
   crm(
     "price-lists",
