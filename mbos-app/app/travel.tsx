@@ -43,7 +43,7 @@ const PURPOSES: Record<string, string> = {
 const km = (metres: number | null) => (metres == null ? '—' : `${(metres / 1000).toFixed(1)} km`);
 
 export default function TravelScreen() {
-  const back = useCameFrom('day');
+  const back = useCameFrom('more');
   const boot = useBoot();
   const userId = boot.session?.user.id ?? '';
   const day = isoDate(new Date());
@@ -196,7 +196,7 @@ export default function TravelScreen() {
         </Card>
       )}
 
-      <SecondaryButton label="Close the day" style={{ marginTop: 14 }} onPress={() => router.push('/eod')} />
+      <SecondaryButton label="Close the day" style={{ marginTop: 14 }} onPress={() => router.push('/eod?from=travel')} />
     </AppFrame>
   );
 }
