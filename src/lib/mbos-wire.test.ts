@@ -212,10 +212,14 @@ function payloadColumns(source: string, fn: string): string[] {
  * itself on the way in — part of the same INSERT, so part of the same
  * contract.
  */
-const WIRE: { fn: string; table: string; extra?: string[] }[] = [
+const WIRE: { fn: string; table: string; extra?: string[]; strip?: string[] }[] = [
   { fn: "customersForDevice", table: "customers", extra: ["lastSyncedAt"] },
   { fn: "catalogueRows", table: "products", extra: ["lastSyncedAt"] },
   { fn: "recentTimeline", table: "timeline_events" },
+  /* The delta's timeline, once an inline second spelling that sent
+     `occurredAt` as a timestamp string. `createdAt` is its order and its
+     cursor clamp, taken off the row before it is sent. */
+  { fn: "timelineSince", table: "timeline_events", strip: ["createdAt"] },
   { fn: "recentOrders", table: "customer_orders", extra: ["lastSyncedAt"] },
   { fn: "recentPayments", table: "customer_payments", extra: ["lastSyncedAt"] },
   /*
@@ -267,11 +271,13 @@ test("every column MBOS sends has a column on the handset to land in", () => {
   const service = readFileSync(SERVICE, "utf8");
   const faults: string[] = [];
 
-  for (const { fn, table, extra } of WIRE) {
+  for (const { fn, table, extra, strip } of WIRE) {
     const local = tables.get(table);
     assert.ok(local, `the handset has no \`${table}\` table for ${fn} to fill`);
 
-    const sent = [...new Set([...payloadColumns(service, fn), ...(extra ?? [])])];
+    const sent = [...new Set([...payloadColumns(service, fn), ...(extra ?? [])])].filter(
+      (c) => !(strip ?? []).includes(c),
+    );
     const missing = sent.filter((c) => !local.has(c));
     if (missing.length) {
       faults.push(`${table} (${fn}): ${missing.join(", ")}`);
@@ -300,10 +306,9 @@ test("every column MBOS sends has a column on the handset to land in", () => {
  * loudly rather than quietly stop being checked.
  */
 const DELTA: { anchor: string; table: string }[] = [
-  { anchor: 'select t.id, t.customer_id as "customerId"', table: "timeline_events" },
   { anchor: "select s.id,", table: "journey_stops" },
   /*
-   * FOUR ENTRIES HAVE LEFT THIS LIST, all for the same reason: the delta now
+   * FIVE ENTRIES HAVE LEFT THIS LIST, all for the same reason: the delta now
    * calls the same function the bootstrap does, so there is no second spelling
    * left to check and the WIRE entry above covers each once. That is the state
    * every remaining entry is waiting to reach.
@@ -1296,7 +1301,7 @@ test("the delta reads customers through the same function the bootstrap does", (
     src.indexOf("async function customersForDevice"),
   );
   assert.ok(
-    /return customersForDevice\(/.test(helper),
+    /rows: await customersForDevice\(|return customersForDevice\(/.test(helper),
     "changedCustomersForDevice must hand its ids to customersForDevice so there is one column list",
   );
 });
@@ -2207,8 +2212,11 @@ test("the office's verification call and every check on a finding reach the hand
      too, so a call sitting in the outbox is a fact the office has not heard
      yet and nothing arriving may write over it. `leads` and `samples` carry
      the same clause for the same reason. */
+  /* The guard asks the OUTBOX now — anything still pending for the id —
+     rather than the row's own syncState, which a refused edit left reading
+     `rejected` for ever and so froze the record against the office's word. */
   assert.ok(
-    /lead_validations\.syncState = 'synced'/.test(pull),
+    /noPending\('lead_validations'\)/.test(pull),
     "the lead_validations upsert has lost its `syncState = 'synced'` guard, so " +
       "a pull can write the office's answer over a call still waiting in the outbox",
   );

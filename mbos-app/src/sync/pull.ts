@@ -311,7 +311,7 @@ async function knownColumns(table: string): Promise<Set<string>> {
  * it costs a field the screens never read, and refusing it costs the book.
  *
  * `guard` is what lets an OWNED table come through here rather than being
- * hand-rolled. `leads` and `samples` both carry `WHERE syncState = 'synced'` on
+ * hand-rolled. `leads` and `samples` both carry `WHERE ${noPending(...)}` on
  * their conflict clause — a queued row is one this handset has said something
  * about and the office has not heard yet, so the local answer is the newer fact
  * and it stands until it is sent — and both pay for it by typing their column
@@ -646,7 +646,7 @@ async function upsertConfig(config: Record<string, unknown> | undefined, now: nu
  * salesman raises them in the field — and they also have an office end, which
  * is why a plain reference upsert is wrong for both: it would overwrite an
  * edit sitting in the outbox with the older row the server still believes.
- * `WHERE syncState = 'synced'` is what keeps that from happening. A queued row
+ * `noPending` on the conflict clause is what keeps that from happening. A queued row
  * is one this handset has said something about and the office has not heard
  * yet, so the local answer is the newer fact and it stands until it is sent.
  *
@@ -1328,8 +1328,8 @@ async function applyOrderChanges(rows: unknown[] | undefined): Promise<number> {
 }
 
 /**
- * What he said about his areas, as the office holds it. Written only under
- * `syncState = 'synced'`: a row still in the outbox is newer than anything
+ * What he said about his areas, as the office holds it. Written only where
+ * nothing is pending for it (`noPending`): a row still in the outbox is newer than anything
  * the office can say about it.
  */
 async function applyTerritoryRequests(rows: unknown[] | undefined): Promise<number> {
@@ -1743,6 +1743,10 @@ async function upsertTravelModes(rows: unknown[] | undefined, now: number): Prom
  * against every claim.
  */
 async function replaceExpensePolicy(policy: unknown, now: number): Promise<number> {
+  /* ABSENT is not null. The reply to a phone with no cursor sends no policy at
+     all, and reading that as "none covers today" deleted the one the
+     bootstrap had delivered a second earlier. */
+  if (policy === undefined) return 0;
   await run(`DELETE FROM expense_policy`);
   if (!policy) return 0;
   const p = policy as {

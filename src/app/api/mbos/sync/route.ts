@@ -151,9 +151,16 @@ export async function POST(request: Request) {
   }
 
   const results = [...refusals, ...(await ingestSyncBatch(auth.principal, items))];
+  /* Shops in his book the handset says it was never sent — see `buildPull`.
+     Bounded and re-checked against his scope there; anything else is
+     ignored rather than refused, because an older handset sends nothing. */
+  const missingIds = Array.isArray(body.missingIds)
+    ? body.missingIds.filter((id): id is string => typeof id === "string").slice(0, 300)
+    : [];
   const pull = await buildPull(
     auth.principal,
     typeof body.cursor === "string" ? body.cursor : null,
+    { missingIds },
   );
 
   return NextResponse.json({ results, pull });

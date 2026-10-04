@@ -59,6 +59,7 @@ import {
    eight money queries read it and a status list typed into a query is the half
    that drifts. */
 import { orderCountsSql, orderDeliveredSql } from "../order-status";
+import { nextPullCursorAt } from "../mbos/pull-cursor";
 /* §3.4 — a commitment is a day AND a size, in one place. */
 import { confirmedCommitmentSql } from "../lead-commitment";
 
@@ -1033,6 +1034,14 @@ export type BootstrapPayload = {
     /** In English, for the "what am I allowed" screen. */
     sentences: string[];
   } | null;
+  /**
+   * His own leave, claims, tours and the approvals behind them — see
+   * `ownHistory`. The handset only ever fills gaps with these.
+   */
+  myLeaveRequests: unknown[];
+  myExpenses: unknown[];
+  myTours: unknown[];
+  myApprovals: unknown[];
   config: Record<string, unknown>;
 };
 
@@ -1157,10 +1166,13 @@ export async function buildBootstrap(
     salaryFor(principal.user.id),
     mbosConfigPayload(),
   ]);
+  const own = await ownHistory(principal.user.id);
 
   return {
     serverTime: now.getTime(),
-    cursor: encodeCursor(now),
+    /* Stepped back like every delta cursor, so an office write that was
+       still committing while this was built arrives on the first sync. */
+    cursor: encodeCursor(nextPullCursorAt(now, [])),
     territory: mbosTerritoryState(principal, territories),
     user: {
       id: principal.user.id,
@@ -1194,7 +1206,7 @@ export async function buildBootstrap(
     holidays: holidayRows,
     documents: documentRows,
     courses: courseRows,
-    notifications: notificationRows,
+    notifications: notificationsForWire(notificationRows),
     performance: performanceRows,
     customerTargets: await customerTargetsFor(principal.user.id),
     salary: salaryRows,
@@ -1203,6 +1215,10 @@ export async function buildBootstrap(
     orderChanges: await myOrderChanges(principal.user.id),
     territoryRequests: await myTerritoryRequests(principal.user.id),
     expensePolicy: await expensePolicyFor(principal.user.id, await today()),
+    myLeaveRequests: own.myLeaveRequests,
+    myExpenses: own.myExpenses,
+    myTours: own.myTours,
+    myApprovals: own.myApprovals,
     config,
   };
 }
@@ -1271,17 +1287,25 @@ export async function buildBootstrap(
  * `customersForDevice` then returns them in does not matter, because the
  * handset upserts them.
  */
+const CUSTOMERS_PER_PULL = 2000;
+
 async function changedCustomersForDevice(ids: string[], sinceIso: string) {
-  if (!ids.length) return [];
+  if (!ids.length) return { rows: [] as Record<string, unknown>[], lastAt: null as Date | null };
   const idList = sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`;
-  const changed = await db.execute<{ id: string }>(sql`
-    select c.id
+  const changed = await db.execute<{ id: string; updatedAt: Date | string }>(sql`
+    select c.id, c.updated_at as "updatedAt"
       from customers c
      where c.id in ${idList} and c.updated_at > ${sinceIso}
      order by c.updated_at asc
-     limit 2000
+     limit ${CUSTOMERS_PER_PULL}
   `);
-  return customersForDevice(changed.map((r) => r.id));
+  /* A FULL PAGE HOLDS THE CURSOR — see `nextPullCursorAt`. The comment above
+     says the cap takes the oldest changes first "or the ones it drops are never
+     asked for again"; with the cursor moving to now they were never asked for
+     again anyway. */
+  const lastAt =
+    changed.length === CUSTOMERS_PER_PULL ? asDate(changed[changed.length - 1].updatedAt) : null;
+  return { rows: await customersForDevice(changed.map((r) => r.id)), lastAt };
 }
 
 async function customersForDevice(ids: string[]) {
@@ -2269,8 +2293,21 @@ async function leadFieldChecks(userId: string, since?: string | null) {
  * the catalogue to value a line — `products.priceSource` is still unset, and a
  * confident wrong figure on a customer's record is worse than no figure.
  */
-async function recentOrders(ids: string[], perCustomer: number) {
+async function recentOrders(ids: string[], perCustomer: number, changedSince?: string) {
   if (!ids.length) return [];
+  const idList = sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`;
+  /* ONLY THE SHOPS WHOSE ORDERS MOVED, on a delta. It sent every shop's ten
+     on every pull — twenty-six thousand rows a minute for a book of 2,587 —
+     because an eleventh order displaces a row rather than changing one. The
+     answer to that is to send the CURRENT ten for any shop with an order that
+     moved since the cursor, and let the handset prune to ten; a shop with no
+     order touched has nothing new to say. */
+  const onlyChanged = changedSince
+    ? sql`and o.customer_id in (
+              select oc.customer_id from orders oc
+               where oc.customer_id in ${idList} and oc.updated_at > ${changedSince}
+            )`
+    : sql``;
   return db.execute<Record<string, unknown>>(sql`
     select id, "customerId", "orderedAt", status, "valuePaise", lines, "orderNo"
       from (
@@ -2284,7 +2321,8 @@ async function recentOrders(ids: string[], perCustomer: number) {
                  partition by o.customer_id order by o.ordered_at desc, o.id desc
                ) as rn
           from orders o
-         where o.customer_id in ${sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`}
+         where o.customer_id in ${idList}
+           ${onlyChanged}
       ) ranked
      where rn <= ${perCustomer}
      order by "customerId" asc, "orderedAt" desc
@@ -2576,6 +2614,145 @@ async function recentTimeline(ids: string[], perCustomer: number) {
      where rn <= ${perCustomer}
      order by "customerId" asc, "occurredAt" desc
   `);
+}
+
+const TIMELINE_PER_PULL = 2000;
+
+/**
+ * THE TIMELINE ON A DELTA, in the bootstrap's shape.
+ *
+ * It was a second spelling inside `buildPull` that sent `occurred_at` as a
+ * timestamp — the very string `recentTimeline` above explains SQLite stores as
+ * TEXT in an INTEGER column, so every event after sign-in rendered as a date
+ * of NaN and sorted after every event the phone wrote. Same columns as
+ * `recentTimeline`, same epoch milliseconds, and the WIRE test covers it.
+ *
+ * `createdAt` is the order and the cursor's clamp, and is taken off before the
+ * row is sent — see `buildPull`.
+ */
+async function timelineSince(ids: string[], sinceIso: string) {
+  if (!ids.length) return { rows: [] as Record<string, unknown>[], lastAt: null as Date | null };
+  const rows = await db.execute<Record<string, unknown> & { createdAt: Date | string }>(sql`
+    select t.id, t.customer_id as "customerId", t.event_type as "eventType",
+           t.source_app as "sourceApp", t.source_record_id as "sourceRecordId",
+           (extract(epoch from t.occurred_at) * 1000)::double precision as "occurredAt",
+           t.actor_user_id as actor,
+           t.summary,
+           t.created_at as "createdAt"
+      from timeline_events t
+     where t.customer_id in ${sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`}
+       and t.created_at > ${sinceIso}
+     order by t.created_at asc
+     limit ${TIMELINE_PER_PULL}
+  `);
+  const lastAt = rows.length === TIMELINE_PER_PULL ? asDate(rows[rows.length - 1].createdAt) : null;
+  return { rows: rows.map((r) => without(r, "createdAt")), lastAt };
+}
+
+/**
+ * HIS OWN REQUESTS, for a phone that holds none of them — a reinstall, a new
+ * handset.
+ *
+ * Leave, expense claims, tours and the approvals behind them are OWNED and were
+ * never sent down at all, by the rule that a sync must not write over what
+ * somebody authored offline. So a salesman who changed phones saw nothing he
+ * had asked for, and an approval decided afterwards landed on no row. The
+ * handset only ever fills a GAP with these (`fillOwnHistory`), so a request
+ * saved a minute ago without signal still wins.
+ *
+ * In the HANDSET'S column names — a pulled row is a local row — and with the
+ * state those screens read, derived from the request's latest approval
+ * exactly as `applyApprovals` derives it on the way down.
+ */
+const OWN_HISTORY_DAYS = 180;
+
+async function ownHistory(userId: string) {
+  const verdict = (subject: string, idCol: SQL) => sql`(
+    select case ap.state::text
+             when 'approved' then 'Approved'
+             when 'partially_approved' then 'Approved'
+             when 'rejected' then 'Rejected'
+             else 'Pending' end
+      from mbos_approvals ap
+     where ap.subject_type = ${subject} and ap.subject_id = ${idCol}
+     order by ap.updated_at desc
+     limit 1
+  )`;
+
+  const [leave, expenses, tours, approvals] = await Promise.all([
+    db.execute<Record<string, unknown>>(sql`
+      select l.id, l.user_id as "userId", l.leave_type::text as kind,
+             l.from_date::text as "fromDate", l.to_date::text as "toDate",
+             l.days, coalesce(l.reason, '') as reason,
+             case when l.cancelled_at is not null then 'Withdrawn'
+                  else coalesce(${verdict("leave", sql`l.id`)}, 'Pending') end as state,
+             (extract(epoch from coalesce(l.client_created_at, l.server_created_at)) * 1000)::double precision as "clientCreatedAt",
+             (extract(epoch from l.server_created_at) * 1000)::double precision as "serverCreatedAt"
+        from mbos_leave_requests l
+       where l.user_id = ${userId}
+         and l.to_date >= (now() at time zone ${APP_TIMEZONE})::date - ${OWN_HISTORY_DAYS}::int
+    `),
+    db.execute<Record<string, unknown>>(sql`
+      select e.id, e.user_id as "userId", e.expense_date::text as "spentOn",
+             e.category::text as category, e.amount_paise as "amountPaise",
+             e.remarks, e.kind,
+             coalesce(${verdict("expense", sql`e.id`)}, 'Pending') as state,
+             (extract(epoch from coalesce(e.client_created_at, e.server_created_at)) * 1000)::double precision as "clientCreatedAt",
+             (extract(epoch from e.server_created_at) * 1000)::double precision as "serverCreatedAt"
+        from mbos_expenses e
+       where e.user_id = ${userId}
+         and e.expense_date >= (now() at time zone ${APP_TIMEZONE})::date - ${OWN_HISTORY_DAYS}::int
+    `),
+    db.execute<Record<string, unknown>>(sql`
+      select t.id, t.user_id as "userId", t.start_date::text as "startDate",
+             t.end_date::text as "endDate", t.cities, t.purpose,
+             t.estimated_cost_paise as "estimatedCostPaise", t.notes,
+             coalesce(${verdict("tour", sql`t.id`)}, 'Pending') as state,
+             (extract(epoch from coalesce(t.client_created_at, t.server_created_at)) * 1000)::double precision as "clientCreatedAt",
+             (extract(epoch from t.server_created_at) * 1000)::double precision as "serverCreatedAt"
+        from mbos_tours t
+       where t.user_id = ${userId}
+         and t.end_date >= (now() at time zone ${APP_TIMEZONE})::date - ${OWN_HISTORY_DAYS}::int
+    `),
+    db.execute<Record<string, unknown>>(sql`
+      select ap.id, ap.type::text as type, ap.subject_type as "subjectType",
+             ap.subject_id as "subjectId", ap.reason,
+             (extract(epoch from ap.requested_at) * 1000)::double precision as "requestedAt",
+             d.name as "approverName", ap.state::text as state,
+             (extract(epoch from ap.decided_at) * 1000)::double precision as "decidedAt",
+             ap.decision_note as "decisionNote",
+             ap.approved_amount_paise as "approvedAmountPaise",
+             (extract(epoch from coalesce(ap.client_created_at, ap.requested_at)) * 1000)::double precision as "clientCreatedAt"
+        from mbos_approvals ap
+        left join users d on d.id = ap.approver_user_id
+       where ap.requested_by_user_id = ${userId}
+         and ap.requested_at >= now() - (${OWN_HISTORY_DAYS}::int * interval '1 day')
+    `),
+  ]);
+
+  return { myLeaveRequests: leave, myExpenses: expenses, myTours: tours, myApprovals: approvals };
+}
+
+/** A row with one key taken off — what a channel ordered or clamped on but
+    the handset has no column for. */
+function without<T extends Record<string, unknown>>(row: T, key: string): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...row };
+  delete out[key];
+  return out;
+}
+
+/**
+ * NOTIFICATIONS SEND THEIR TIME AS EPOCH MILLISECONDS — the handset's column is
+ * `INTEGER NOT NULL` and its own rows are written with `Date.now()`. Sent as a
+ * Date they became ISO strings stored as TEXT beside integers, and SQLite sorts
+ * all text above all integers: every office notification sat above every one
+ * the phone raised, whatever their times, and a fresh "Order not accepted"
+ * could fall past the hundred-row limit.
+ */
+function notificationsForWire<T extends { createdAt?: unknown }>(rows: T[]): T[] {
+  return rows.map((n) =>
+    n.createdAt == null ? n : { ...n, createdAt: asDate(n.createdAt)?.getTime() ?? Date.now() },
+  );
 }
 
 /**
@@ -3088,13 +3265,20 @@ async function performanceFor(
   `);
 }
 
+const NOTIFICATIONS_PER_PULL = 200;
+const APPROVALS_PER_PULL = 500;
+
+/** At most this many shops sent whole because the handset asked for them. */
+const MISSING_PER_PULL = 300;
+
 export async function buildPull(
   principal: MbosPrincipal,
   cursor: string | null | undefined,
+  opts: { missingIds?: string[] } = {},
 ): Promise<PullDelta> {
   const now = new Date();
   const since = decodeCursor(cursor);
-  const nextCursor = encodeCursor(now);
+  const nextCursor = encodeCursor(nextPullCursorAt(now, []));
 
   if (!since) {
     return {
@@ -3122,7 +3306,10 @@ export async function buildPull(
       courses: [],
       salary: [],
       travelModes: [],
-      expensePolicy: null,
+      /* ABSENT, not null. The handset reads null as "no policy covers today"
+         and deletes the one the bootstrap delivered a second earlier; this
+         reply sends no rows of anything, and says nothing about policy. */
+      expensePolicy: undefined,
       leads: [],
       leadValidations: [],
       leadFieldChecks: [],
@@ -3156,9 +3343,24 @@ export async function buildPull(
   const sinceIso = since.toISOString();
 
   const ids = await customerIdsInScope(principal);
-  const idList = ids.length
-    ? sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`
-    : null;
+
+  /*
+   * SHOPS THAT ARE NEWLY HIS, asked for by id.
+   *
+   * Everything below sends what CHANGED since the cursor. A shop that became
+   * his this morning — a territory allocated, an account moved — has not
+   * changed, so it reached his phone on no pass at all: under "no territory
+   * means no book" that is every newly allocated salesman, starting empty and
+   * staying empty until he signed out. The handset knows the difference
+   * between the book's ids (sent on every pass) and what it holds, and asks for
+   * the gap; this sends those shops whole, with the history the bootstrap
+   * would have sent. Only ids inside his scope — a request is not a
+   * permission.
+   */
+  const inScope = new Set(ids);
+  const missing = [...new Set(opts.missingIds ?? [])]
+    .filter((id) => typeof id === "string" && inScope.has(id))
+    .slice(0, MISSING_PER_PULL);
   /* The same window the bootstrap used. It MOVES with the day, which is the
      half worth stating: a bill inside it yesterday and outside it today simply
      stops being sent, and the handset prunes by the same date rather than
@@ -3202,18 +3404,7 @@ export async function buildPull(
   ] = await Promise.all([
       changedCustomersForDevice(ids, sinceIso),
       catalogueRows(sinceIso),
-      idList
-        ? db.execute<Record<string, unknown>>(sql`
-            select t.id, t.customer_id as "customerId", t.event_type as "eventType",
-                   t.source_app as "sourceApp", t.source_record_id as "sourceRecordId",
-                   t.occurred_at as "occurredAt", t.actor_user_id as actor,
-                   t.summary
-              from timeline_events t
-             where t.customer_id in ${idList} and t.created_at > ${sinceIso}
-             order by t.created_at asc
-             limit 2000
-          `)
-        : Promise.resolve([]),
+      timelineSince(ids, sinceIso),
       db
         .select({
           id: notifications.id,
@@ -3231,7 +3422,7 @@ export async function buildPull(
           ),
         )
         .orderBy(sql`${notifications.createdAt} asc`)
-        .limit(200),
+        .limit(NOTIFICATIONS_PER_PULL),
 
       /* What the voice note said.
        *
@@ -3292,13 +3483,14 @@ export async function buildPull(
                (extract(epoch from ap.decided_at) * 1000)::double precision as "decidedAt",
                ap.decision_note as "decisionNote",
                ap.approved_amount_paise as "approvedAmountPaise",
-               d.name as "approverName"
+               d.name as "approverName",
+               ap.updated_at as "updatedAt"
           from mbos_approvals ap
           left join users d on d.id = ap.approver_user_id
          where ap.requested_by_user_id = ${principal.user.id}
            and ap.updated_at > ${sinceIso}
          order by ap.updated_at asc
-         limit 500
+         limit ${APPROVALS_PER_PULL}
       `),
 
       /* The days themselves, and how far each has got in being agreed.
@@ -3367,12 +3559,10 @@ export async function buildPull(
 
       openSamples(principal.user.id, ids, sinceIso),
 
-      /* Not `since`-gated. Orders are capped at ten a customer and the cap is
-         what a delta would have to re-derive anyway: an eleventh order does
-         not CHANGE a row, it displaces one, and no `updated_at` on any row
-         says so. Sending the current ten is both correct and smaller than the
-         query that would work out which ten changed. */
-      recentOrders(ids, HISTORY_PER_CUSTOMER),
+      /* The current ten for every shop with an order that moved, and only
+         those — see `recentOrders`. The handset prunes to ten, which is what
+         lets a displaced order leave. */
+      recentOrders(ids, HISTORY_PER_CUSTOMER, sinceIso),
 
       /* THE OTHER TWO ARE `since`-GATED NOW, and dropping the cap is what
          made that honest.
@@ -3390,21 +3580,51 @@ export async function buildPull(
       customerBills(principal, ids, { from: statementStart, updatedSince: since ?? undefined }),
     ]);
 
+  /* The newly-his shops, whole — see the top of this function. The same
+     functions the bootstrap calls, so a shop arriving this way looks exactly
+     like one that came at sign-in. */
+  const [missingCustomers, missingTimeline, missingOrders, missingPayments, missingBills] = missing.length
+    ? await Promise.all([
+        customersForDevice(missing),
+        recentTimeline(missing, TIMELINE_PER_CUSTOMER),
+        recentOrders(missing, HISTORY_PER_CUSTOMER),
+        recentPayments(missing, { from: statementStart }),
+        customerBills(principal, missing, { from: statementStart }),
+      ])
+    : [[], [], [], [], []];
+
+  const notificationLastAt =
+    freshNotifications.length === NOTIFICATIONS_PER_PULL
+      ? asDate(freshNotifications[freshNotifications.length - 1].createdAt)
+      : null;
+  const approvalLastAt =
+    approvalRows.length === APPROVALS_PER_PULL
+      ? asDate((approvalRows[approvalRows.length - 1] as { updatedAt?: unknown }).updatedAt)
+      : null;
+
   return {
-    /* CLAMPED where a full page of tombstones was cut short — see
-       `deletionsSince`. Everything else is re-sent from that instant and is
-       idempotent; a tombstone that fell behind the cursor is a shop nobody can
-       get off the phone. */
-    cursor: deletionRows.lastAt ? encodeCursor(deletionRows.lastAt) : nextCursor,
+    /* CLAMPED wherever a capped page came back full, and stepped back a
+       little always — see `nextPullCursorAt`. Everything is re-sent from that
+       instant and is idempotent; a row that fell behind the cursor is a row
+       nobody can get onto the phone. */
+    cursor: encodeCursor(
+      nextPullCursorAt(now, [
+        deletionRows.lastAt,
+        changedCustomers.lastAt,
+        newTimeline.lastAt,
+        notificationLastAt,
+        approvalLastAt,
+      ]),
+    ),
     territory: await territoryStateFor(principal),
-    customers: changedCustomers as unknown[],
+    customers: [...changedCustomers.rows, ...missingCustomers] as unknown[],
     products: changedProducts as unknown[],
-    timeline: newTimeline as unknown[],
+    timeline: [...newTimeline.rows, ...missingTimeline] as unknown[],
     config: await mbosConfigPayload(),
-    notifications: freshNotifications as unknown[],
+    notifications: notificationsForWire(freshNotifications) as unknown[],
     transcripts: newTranscripts as unknown[],
     journeyStops: journeyRows as unknown[],
-    approvals: approvalRows as unknown[],
+    approvals: approvalRows.map((r) => without(r, "updatedAt")) as unknown[],
     planDays: planDayRows as unknown[],
     leaveBalances: leaveBalanceRows as unknown[],
     holidays: holidayRows as unknown[],
@@ -3434,9 +3654,9 @@ export async function buildPull(
     leadValidations: validationChanges as unknown[],
     leadFieldChecks: fieldCheckChanges as unknown[],
     samples: sampleChanges as unknown[],
-    customerOrders: orderHistoryChanges as unknown[],
-    customerPayments: paymentHistoryChanges as unknown[],
-    customerBills: billChanges as unknown[],
+    customerOrders: [...orderHistoryChanges, ...missingOrders] as unknown[],
+    customerPayments: [...paymentHistoryChanges, ...missingPayments] as unknown[],
+    customerBills: [...billChanges, ...missingBills] as unknown[],
     statementFrom: statementStart,
     /* The same list every channel above was built from — including the empty
        one an unallocated salesman gets, which is exactly the answer his
