@@ -1740,6 +1740,8 @@ export default function Home() {
         cancelLabel={meterWords.cancelLabel}
         previousKm={meterFrom}
         maxLegKilometres={maxLegKm}
+        /* Home only ever reads the meter at the two ends of the day. */
+        span="day"
         onDone={(result) => {
           setMetering(false);
           answerMeter.current?.(result);

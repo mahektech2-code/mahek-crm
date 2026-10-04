@@ -272,3 +272,11 @@ describe('the punch-out prompt for expenses', () => {
     assert.equal(promptsForExpenses(null), true);
   });
 });
+
+test('a punch-out reading is refused in the words of a day, not a trip', () => {
+  const v = checkOdometer({ typed: '41700', previousKm: 41208, maxLegKilometres: 400, span: 'day' });
+  assert.equal(v.ok, false);
+  assert.match(v.ok ? '' : v.why, /one day/);
+  const t = checkOdometer({ typed: '41700', previousKm: 41208, maxLegKilometres: 400 });
+  assert.match(t.ok ? '' : t.why, /one trip/);
+});

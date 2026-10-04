@@ -47,6 +47,12 @@ export function checkOdometer(args: {
   typed: string;
   previousKm: number | null;
   maxLegKilometres: number;
+  /**
+   * What the two readings bracket. The punch-out reading covers the whole
+   * day's riding, and "one trip can be at most 400 km" read to a man closing
+   * his day described something he had not done.
+   */
+  span?: 'trip' | 'day';
 }): OdometerVerdict {
   const raw = args.typed.trim();
   if (!raw) return { ok: false, why: 'Type what the meter reads.' };
@@ -74,7 +80,10 @@ export function checkOdometer(args: {
   if (distanceKm > args.maxLegKilometres) {
     return {
       ok: false,
-      why: `That is ${distanceKm.toLocaleString('en-IN')} km for one trip. One trip can be at most ${args.maxLegKilometres.toLocaleString('en-IN')} km. Check the reading.`,
+      why:
+        args.span === 'day'
+          ? `That is ${distanceKm.toLocaleString('en-IN')} km for one day. One day can be at most ${args.maxLegKilometres.toLocaleString('en-IN')} km. Check the reading.`
+          : `That is ${distanceKm.toLocaleString('en-IN')} km for one trip. One trip can be at most ${args.maxLegKilometres.toLocaleString('en-IN')} km. Check the reading.`,
     };
   }
 

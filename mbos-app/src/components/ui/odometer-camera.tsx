@@ -57,6 +57,7 @@ export function OdometerCamera({
   /** The departure reading when this is an arrival; null when it is the departure. */
   previousKm,
   maxLegKilometres,
+  span = 'trip',
   onDone,
 }: {
   open: boolean;
@@ -65,6 +66,8 @@ export function OdometerCamera({
   cancelLabel: string;
   previousKm: number | null;
   maxLegKilometres: number;
+  /** Whether the readings bracket one trip or the whole day — see `checkOdometer`. */
+  span?: 'trip' | 'day';
   onDone: (result: OdometerResult) => void;
 }) {
   const insets = useSafeAreaInsets();
@@ -115,7 +118,7 @@ export function OdometerCamera({
 
   const confirm = () => {
     if (!shot) return;
-    const verdict = checkOdometer({ typed, previousKm, maxLegKilometres });
+    const verdict = checkOdometer({ typed, previousKm, maxLegKilometres, span });
     if (!verdict.ok) {
       setErr(verdict.why);
       refuse.shake();
