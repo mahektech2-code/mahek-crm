@@ -454,7 +454,7 @@ export async function canRead(attachmentId: string): Promise<boolean> {
       .from(mbosVisits)
       .where(eq(mbosVisits.id, row.parentId));
     if (!visit) return false;
-    if (await canReadSalesmansOwnEvidence(visit.salesmanId, ["sales.visits", "sales.people"])) {
+    if (await canReadSalesmansOwnEvidence(visit.salesmanId, ["sales.journeys", "sales.people"])) {
       return true;
     }
     return customerInScope(visit.customerId);
