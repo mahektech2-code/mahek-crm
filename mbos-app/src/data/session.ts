@@ -399,7 +399,9 @@ api.onUserRefreshed((user) => {
   void (async () => {
     const s = await currentSession();
     if (!s || s.user.id !== user.id) return;
-    await persist({ ...s, user });
+    /* Merged, not replaced: the refresh carries the fields the office can
+       change from a desk, and the sign-in may have carried more. */
+    await persist({ ...s, user: { ...s.user, ...user } });
   })().catch(() => undefined);
 });
 

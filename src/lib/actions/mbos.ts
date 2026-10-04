@@ -177,8 +177,10 @@ export async function mbosLogin(input: {
       ok: false,
       status: 503,
       step: "not_configured",
+      /* The variable's name is for whoever reads the server log, not for a
+         salesman standing in a shop. */
       error:
-        "MBOS_JWT_SECRET is not set on this deployment, so no handset can be signed in. An admin has to set it.",
+        "Mahek MBOS sign-in is not switched on yet. Tell your manager — the office has to finish setting it up.",
     };
   }
 
@@ -257,13 +259,15 @@ export async function mbosLogin(input: {
   try {
     bootstrap = await buildBootstrap(principal.principal);
   } catch (e) {
+    /* The cause goes to the log. It used to be put into the sentence the
+       salesman reads, which on a query that threw was "Failed query: select
+       …" — a page of SQL on a phone, and the schema with it. */
+    console.error("[mbos] bootstrap failed at sign-in", e);
     return {
       ok: false,
       status: 503,
       step: "bootstrap_failed",
-      error: `Signed in, but your book could not be loaded: ${
-        e instanceof Error ? e.message : "the server did not answer"
-      }. Try again in a moment.`,
+      error: "Signed in, but your book could not be loaded. Try again in a moment. If it keeps happening, tell your manager.",
     };
   }
 
@@ -310,6 +314,7 @@ export type RefreshOutcome =
       accessExpiresAt: number;
       refreshToken: string;
       refreshExpiresAt: number;
+      user: { id: string; name: string; email: string | null; phone: string | null; role: string; initials: string };
     }
   | { ok: false; status: number; code: string; error: string };
 
@@ -351,7 +356,16 @@ export async function mbosRefresh(refreshToken: string): Promise<RefreshOutcome>
     .set({ lastSeenAt: new Date() })
     .where(eq(mbosDevices.deviceId, verified.claims.did));
 
-  return { ok: true, ...(await issueTokenPair(verified.claims.sub, verified.claims.did)) };
+  /* The person as the office has them NOW, with every refresh. The handset
+     wrote its session once at sign-in and never again, and a session never
+     expires — so a new area or a new manager reached the phone only if he
+     signed out. An older handset ignores the field. */
+  const u = principal.principal.user;
+  return {
+    ok: true,
+    ...(await issueTokenPair(verified.claims.sub, verified.claims.did)),
+    user: { id: u.id, name: u.name, email: u.email, phone: u.phone, role: principal.principal.role, initials: u.initials },
+  };
 }
 
 /* ══════════════════════════════════════════════════════════════ the ingest */
