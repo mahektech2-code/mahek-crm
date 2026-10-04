@@ -2466,6 +2466,17 @@ export const SETTINGS = [
     max: 120,
   },
   {
+    key: "mbos.location.liveSpeedMinKmh",
+    type: "integer",
+    category: "mbos-location",
+    label: "Slowest speed the Live map prints",
+    description:
+      "km/h. The Live map prints how fast a salesman is moving beside his name, worked out from his last minute of positions \u2014 and prints nothing below this. Walking pace and standing still are where GPS noise lives: a man at a counter drifts tens of metres between fixes, and a figure of 3 km/h about him would be the noise, not the man. Above it the figure is real; below it the row says nothing rather than something false.",
+    default: 5,
+    min: 1,
+    max: 60,
+  },
+  {
     key: "mbos.location.liveTeamSeconds",
     type: "integer",
     category: "mbos-location",
@@ -5549,6 +5560,7 @@ export type Config = {
   "mbos.location.noTrailMinutes": number;
   "mbos.location.lowBatteryPercent": number;
   "mbos.location.livePushSeconds": number;
+  "mbos.location.liveSpeedMinKmh": number;
   "mbos.location.liveTeamSeconds": number;
   "mbos.location.liveStreamMinutes": number;
   "mbos.location.livePollSeconds": number;

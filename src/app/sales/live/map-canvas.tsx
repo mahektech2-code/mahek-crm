@@ -41,6 +41,7 @@ import type { LastKnown } from "@/lib/services/sales-service";
 export function TeamList({
   rows,
   distanceMetres,
+  speedKmh,
   selectedId,
   onSelect,
   thresholds,
@@ -51,6 +52,8 @@ export function TeamList({
   rows: LastKnown[];
   /** Null outside the "today" view — there is no trail to measure yet. */
   distanceMetres: Map<string, number> | null;
+  /** Only the people moving faster than the configured floor are in it. */
+  speedKmh?: Map<string, number>;
   selectedId: string | null;
   onSelect: (id: string) => void;
   thresholds: HandsetThresholds;
@@ -157,6 +160,7 @@ export function TeamList({
           const hasFix = r.lat != null && r.lng != null;
           const selected = selectedId === r.salesmanId;
           const distance = distanceMetres ? distanceMetres.get(r.salesmanId) ?? 0 : null;
+          const speed = r.checkOutAt ? undefined : speedKmh?.get(r.salesmanId);
           return (
             <button
               key={r.salesmanId}
@@ -181,6 +185,14 @@ export function TeamList({
               <span className="min-w-0 flex-1">
                 <span className="flex items-baseline justify-between gap-2">
                   <span className="truncate text-sm font-medium text-ink">{r.salesmanName}</span>
+                  {speed != null ? (
+                    <span
+                      className="ml-auto flex-none text-[12px] font-medium text-ink tabular-nums"
+                      title="How fast he has moved over his last minute of positions"
+                    >
+                      {speed} km/h
+                    </span>
+                  ) : null}
                   {distance != null ? (
                     <span className="flex-none text-[12px] text-muted tabular-nums">
                       {formatDistance(distance)}
