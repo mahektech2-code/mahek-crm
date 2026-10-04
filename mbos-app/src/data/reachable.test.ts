@@ -74,6 +74,10 @@ const PARKED: Record<string, string> = {
     "The funnel module's per-customer read. The customer record's Samples tab still " +
     'reads `customerSamples` from `data/requests.ts` over the same table; one of ' +
     'the two should go, and picking which is a decision about that screen.',
+  productLines:
+    'The handset copy of the office rule for which order lines are product rows. ' +
+    'No screen calls it yet, but `product-lines-mirror.test.ts` holds it to the ' +
+    'office copy line for line, so deleting it would delete that guard too.',
   wireStage:
     'The legacy-stage word the lead card once wrote back. Its only caller, ' +
     '`setStage`, went with the dead lead code; it stays, with its tests, until ' +
