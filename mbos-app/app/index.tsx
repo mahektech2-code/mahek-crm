@@ -188,7 +188,7 @@ export default function Login() {
       return setErr('pw');
     }
     if (method === 'code' && code.replace(/\D/g, '').length < 4) {
-      setServerMessage(codeSentTo ? 'Enter the code from WhatsApp.' : 'Send yourself a code first.');
+      setServerMessage(codeSentTo ? 'Enter the OTP.' : 'Send yourself an OTP first.');
       refuse();
       return setErr('pw');
     }
@@ -426,7 +426,7 @@ export default function Login() {
                     onPress={() => { setMethod(m); setErr(null); setServerMessage(null); }}
                     style={{ flex: 1, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: radius.md - 2, backgroundColor: method === m ? C.primaryTint : 'transparent' }}>
                     <Text style={[{ fontSize: 15, color: method === m ? C.ink : C.muted }, weight(method === m ? 600 : 400)]}>
-                      {m === 'password' ? 'Password' : 'WhatsApp code'}
+                      {m === 'password' ? 'Password' : 'OTP'}
                     </Text>
                   </Pressable>
                 ))}
@@ -489,13 +489,13 @@ export default function Login() {
                 ) : null}
                 </>) : (
                   <View>
-                    <Text style={[type.label, { marginTop: 16, marginBottom: 6 }]}>Code from WhatsApp</Text>
+                    <Text style={[type.label, { marginTop: 16, marginBottom: 6 }]}>OTP</Text>
                     {codeSentTo ? (
                       <>
                         <TextInput
                           value={code}
                           onChangeText={(v) => { setCode(v.replace(/\D/g, '').slice(0, 8)); setErr(null); setServerMessage(null); }}
-                          placeholder="6-digit code"
+                          placeholder="6-digit OTP"
                           placeholderTextColor={C.faint}
                           keyboardType="number-pad"
                           textContentType="oneTimeCode"
@@ -506,7 +506,7 @@ export default function Login() {
                           }}
                         />
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 }}>
-                          <Text style={{ fontSize: 14, color: C.muted }}>Sent to {codeSentTo} on WhatsApp</Text>
+                          <Text style={{ fontSize: 14, color: C.muted }}>OTP sent to {codeSentTo}</Text>
                           <Pressable
                             onPress={() => void sendCode()}
                             disabled={sendingCode || codeWait > 0}
@@ -524,11 +524,11 @@ export default function Login() {
                           sendingCode
                             ? 'Sending…'
                             : codeWait > 0
-                              ? `Wait ${codeWait}s to send another code`
-                              : 'Send me a code on WhatsApp'
+                              ? `Wait ${codeWait}s to send another OTP`
+                              : 'Send OTP'
                         }
                         disabled={sendingCode || codeWait > 0}
-                        whyDisabled={sendingCode ? 'Sending the code now.' : 'MahekOne asked us to wait before sending another code.'}
+                        whyDisabled={sendingCode ? 'Sending the OTP now.' : 'MahekOne asked us to wait before sending another OTP.'}
                         onPress={() => void sendCode()}
                       />
                     )}
@@ -550,7 +550,7 @@ export default function Login() {
                     const opened = await openPasswordReset();
                     notify(
                       opened
-                        ? 'Opening the reset page. Use your work email, or a WhatsApp code if it offers one.'
+                        ? 'Opening the reset page. Use your work email, or an OTP if it offers one.'
                         : 'Could not open the browser. Ask your manager to reset your password.',
                       opened ? 'info' : 'error',
                     );

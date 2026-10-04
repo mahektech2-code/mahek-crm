@@ -127,13 +127,13 @@ export type SendResult =
  */
 export async function sendOtp(userId: string, purpose: OtpPurpose): Promise<SendResult> {
   const avail = await otpAvailability();
-  if (!avail.available) return { ok: false, error: "Sign-in codes are not set up yet. Use your password." };
+  if (!avail.available) return { ok: false, error: "OTP sign-in is not set up yet. Use your password." };
 
   const [user] = await db.select().from(users).where(eq(users.id, userId));
   if (!user || !user.active) return { ok: false, error: "That account is not open. Ask your manager." };
   const to = waNumber(user.phone);
   if (!to) {
-    return { ok: false, error: "There is no mobile number on this account to send a code to. Use your password, or ask your manager to add your number." };
+    return { ok: false, error: "There is no mobile number on this account to send an OTP to. Use your password, or ask your manager to add your number." };
   }
 
   const config = await getConfig();
@@ -151,14 +151,14 @@ export async function sendOtp(userId: string, purpose: OtpPurpose): Promise<Send
     .limit(1);
   if (last) {
     const wait = Math.ceil(cooldown - (Date.now() - last.createdAt.getTime()) / 1000);
-    if (wait > 0) return { ok: false, error: `A code was just sent. You can ask for another in ${wait} seconds.`, retryInSeconds: wait };
+    if (wait > 0) return { ok: false, error: `An OTP was just sent. You can ask for another in ${wait} seconds.`, retryInSeconds: wait };
   }
   const [recent] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(authOtps)
     .where(and(eq(authOtps.userId, userId), gt(authOtps.createdAt, new Date(Date.now() - windowMin * 60_000))));
   if (Number(recent?.n ?? 0) >= cap) {
-    return { ok: false, error: `Too many codes asked for in the last ${windowMin} minutes. Use your password, or try again later.` };
+    return { ok: false, error: `Too many OTPs asked for in the last ${windowMin} minutes. Use your password, or try again later.` };
   }
 
   const id = `otp_${randomUUID().slice(0, 12)}`;
@@ -178,7 +178,7 @@ export async function sendOtp(userId: string, purpose: OtpPurpose): Promise<Send
         expiresAt: new Date(),
         failureReason: `${sent.code}: ${sent.error}`,
       });
-      return { ok: false, error: "The code could not be sent just now. Use your password, or try again in a minute." };
+      return { ok: false, error: "The OTP could not be sent just now. Use your password, or try again in a minute." };
     }
     await db.insert(authOtps).values({
       id,
@@ -212,7 +212,7 @@ export async function sendOtp(userId: string, purpose: OtpPurpose): Promise<Send
   });
   if (!sent.ok) {
     await db.update(authOtps).set({ failureReason: sent.error }).where(eq(authOtps.id, id));
-    return { ok: false, error: "The code could not be sent on WhatsApp just now. Use your password, or try again in a minute." };
+    return { ok: false, error: "The OTP could not be sent just now. Use your password, or try again in a minute." };
   }
   await db.update(authOtps).set({ sentAt: new Date() }).where(eq(authOtps.id, id));
   return { ok: true, sentTo: maskNumber(to), expiresInMinutes: ttl };
@@ -227,7 +227,7 @@ export type VerifyResult = { ok: true } | { ok: false; error: string };
  */
 export async function verifyOtp(userId: string, purpose: OtpPurpose, code: string): Promise<VerifyResult> {
   const typed = code.replace(/\D/g, "");
-  if (!typed) return { ok: false, error: "Enter the code you were sent." };
+  if (!typed) return { ok: false, error: "Enter the OTP." };
   const config = await getConfig();
   const maxAttempts = Number(config["auth.otp.maxVerifyAttempts"]);
 
@@ -237,18 +237,18 @@ export async function verifyOtp(userId: string, purpose: OtpPurpose, code: strin
     .where(and(eq(authOtps.userId, userId), eq(authOtps.purpose, purpose), isNull(authOtps.consumedAt)))
     .orderBy(desc(authOtps.createdAt))
     .limit(1);
-  if (!row || !row.sentAt) return { ok: false, error: "No code is waiting for this account. Ask for one first." };
-  if (row.expiresAt.getTime() < Date.now()) return { ok: false, error: "That code has expired. Ask for a new one." };
-  if (row.attempts >= maxAttempts) return { ok: false, error: "Too many wrong tries for that code. Ask for a new one." };
+  if (!row || !row.sentAt) return { ok: false, error: "No OTP is waiting for this account. Ask for one first." };
+  if (row.expiresAt.getTime() < Date.now()) return { ok: false, error: "That OTP has expired. Ask for a new one." };
+  if (row.attempts >= maxAttempts) return { ok: false, error: "Too many wrong tries for that OTP. Ask for a new one." };
 
   let match: boolean;
   if (row.codeHash.startsWith(MINIMOTH_PREFIX)) {
     /* MiniMoth holds the code, so MiniMoth is asked. A failure to REACH it is
        not a wrong guess and is not counted as one. */
     const key = await minimothKey();
-    if (!key) return { ok: false, error: "Sign-in codes are not set up any more. Use your password." };
+    if (!key) return { ok: false, error: "OTP sign-in is not set up any more. Use your password." };
     const checked = await verifyMiniMothOtp(key, row.destination, typed);
-    if (!checked.ok) return { ok: false, error: "The code could not be checked just now. Try again in a minute, or use your password." };
+    if (!checked.ok) return { ok: false, error: "The OTP could not be checked just now. Try again in a minute, or use your password." };
     match = checked.valid;
   } else {
     const a = Buffer.from(hashOf(row.id, typed));
@@ -258,7 +258,7 @@ export async function verifyOtp(userId: string, purpose: OtpPurpose, code: strin
   if (!match) {
     await db.update(authOtps).set({ attempts: sql`${authOtps.attempts} + 1` }).where(eq(authOtps.id, row.id));
     const left = maxAttempts - row.attempts - 1;
-    return { ok: false, error: left > 0 ? `That code is not right. ${left} ${left === 1 ? "try" : "tries"} left.` : "That code is not right, and it has now stopped working. Ask for a new one." };
+    return { ok: false, error: left > 0 ? `That OTP is not right. ${left} ${left === 1 ? "try" : "tries"} left.` : "That OTP is not right, and it has now stopped working. Ask for a new one." };
   }
   // Consumed atomically: two submissions of one right code sign in once.
   const used = await db
@@ -266,7 +266,7 @@ export async function verifyOtp(userId: string, purpose: OtpPurpose, code: strin
     .set({ consumedAt: new Date() })
     .where(and(eq(authOtps.id, row.id), isNull(authOtps.consumedAt)))
     .returning({ id: authOtps.id });
-  if (!used.length) return { ok: false, error: "That code has already been used. Ask for a new one." };
+  if (!used.length) return { ok: false, error: "That OTP has already been used. Ask for a new one." };
   return { ok: true };
 }
 
