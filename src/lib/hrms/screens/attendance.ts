@@ -24,7 +24,7 @@ import type { HrmsExtras } from "../extras";
 /** Who a list shows for this person, and the scopes they may switch between. */
 export function scopeFor(ctx: HrmsContext, q: ScreenQuery, ...widening: Parameters<typeof scopeOf>[1][]): { scope: Scope; options: Scope[] } {
   const widest = scopeOf(ctx, ...widening);
-  const options: Scope[] = widest === "all" ? (ctx.isHead ? ["mine", "team", "all"] : ["mine", "all"]) : widest === "team" ? ["mine", "team"] : ["mine"];
+  const options: Scope[] = widest === "all" ? (ctx.isHead || ctx.team.size ? ["mine", "team", "all"] : ["mine", "all"]) : widest === "team" ? ["mine", "team"] : ["mine"];
   const want = q.scope as Scope | undefined;
   return { scope: want && options.includes(want) ? want : widest, options };
 }
@@ -244,7 +244,7 @@ const attendance: HrmsScreenModule = {
     const t = today();
     const people = await allPeople();
     const { scope, options } = scopeFor(ctx, q, "hr", "editAtt");
-    const visible = visibleIds(ctx, scope, people);
+    const visible = visibleIds(ctx, scope);
     /* One person's days, from the chart or the absentee list — only someone
        this person may see; anybody else is the ordinary list. */
     const one = q.emp && (!visible || visible.has(q.emp)) ? people.find((p) => p.id === q.emp) : undefined;
@@ -510,7 +510,7 @@ const pendingOut: HrmsScreenModule = {
     const t = today();
     const people = await allPeople();
     const { scope, options } = scopeFor(ctx, q, "hr", "editAtt", "checkoutStaff");
-    const ids = visibleIds(ctx, scope, people);
+    const ids = visibleIds(ctx, scope);
     /* A head checks out the staff of their office as well as their team. */
     if (ids && scope === "team" && has(ctx, "checkoutStaff")) for (const id of staffInReach(ctx, people, "checkoutStaff") ?? []) ids.add(id);
     const rows = (await attendanceRows({ employeeIds: ids ? [...ids] : null })).filter((r) => !r.checkOut);
@@ -557,7 +557,7 @@ const absentees: HrmsScreenModule = {
     const present = new Set(day.map((d) => d.employeeId));
     /* Spec §6.6 / A52: any leave request covering the date excuses the day, whatever its status. */
     const onLeave = new Set(leave.filter((l) => l.startDate <= date && l.endDate >= date).map((l) => l.employeeId));
-    const ids = visibleIds(ctx, scope, people);
+    const ids = visibleIds(ctx, scope);
     if (ids && scope === "team" && has(ctx, "markStaff")) for (const id of staffInReach(ctx, people, "markStaff") ?? []) ids.add(id);
     const out = people.filter((p) => (!ids || ids.has(p.id)) && isActive(p) && !present.has(p.id) && !onLeave.has(p.id) && !hol.some((h) => holidayApplies(h, p.id, p.office)));
     const weekDates = datesBetween(addDaysISO(date, -6), date);
@@ -600,7 +600,7 @@ const attChart: HrmsScreenModule = {
     const t = today();
     const from = addDaysISO(t, -29);
     const people = await allPeople();
-    const ids = visibleIds(ctx, scopeOf(ctx, "hr", "editAtt"), people);
+    const ids = visibleIds(ctx, scopeOf(ctx, "hr", "editAtt"));
     const rows = await attendanceRows({ employeeIds: ids ? [...ids] : null, from, to: t });
     const pb = byId(people);
     const series = datesBetween(from, t).map((d) => ({ d, v: new Set(rows.filter((r) => r.date === d).map((r) => r.employeeId)).size }));

@@ -8574,6 +8574,25 @@ export const mbosDocuments = pgTable(
     }),
     visibleToRoles: jsonb("visible_to_roles").$type<string[]>().notNull().default([]),
     active: boolean("active").notNull().default(true),
+    /**
+     * ONE LIBRARY FOR THE COMPANY. HRMS kept its own documents table beside
+     * this one — two places for the leave policy to live, and the field team
+     * reading one while the office updated the other. HR's documents are rows
+     * here now (drizzle/0203), and these five columns are what HR's needed
+     * that the field library did not have.
+     *
+     * `audience` is who in HRMS a document is for: "All employees", "Field
+     * staff" or an office's name. Null means it was published to the field
+     * team only, from the Sales Dashboard, and HRMS does not list it.
+     */
+    audience: text("audience"),
+    /** Named people, from Mahek EMP 2.0's tagging; read, never written now. */
+    audienceEmployeeIds: jsonb("audience_employee_ids").$type<string[]>().notNull().default([]),
+    /** PDF & audio · Image · Video · Link — how HRMS opens it. */
+    media: text("media"),
+    /** A Link document's address. A link has no attachment, so it never reaches a handset. */
+    linkUrl: text("link_url"),
+    description: text("description"),
   },
   (t) => [
     index("mbos_documents_category_idx").on(t.category, t.active),
@@ -12098,22 +12117,6 @@ export const hrmsGrievances = pgTable(
   (t) => [uniqueIndex("hrms_grievances_no_key").on(t.no)],
 );
 
-/** A company document (spec §17.1). */
-export const hrmsDocuments = pgTable("hrms_documents", {
-  id: text("id").primaryKey(),
-  title: text("title").notNull(),
-  /** PDF & audio · Image · Video · Link. */
-  type: text("type").notNull(),
-  fileAttachmentId: text("file_attachment_id"),
-  url: text("url"),
-  description: text("description"),
-  date: date("date").notNull(),
-  /** "All employees", "Field staff", or an office name. */
-  tagged: text("tagged").notNull().default("All employees"),
-  taggedEmployeeIds: jsonb("tagged_employee_ids").$type<string[]>().notNull().default([]),
-  ...hrmsStamps(),
-});
-
 /** A notification written in HRMS (spec §17.2); delivery is MahekOne's bell. */
 export const hrmsNotifications = pgTable("hrms_notifications", {
   id: text("id").primaryKey(),
@@ -12125,7 +12128,16 @@ export const hrmsNotifications = pgTable("hrms_notifications", {
   text: text("text").notNull(),
   /** The HRMS screen key the bell opens. */
   landing: text("landing"),
+  /** Read by nothing since drizzle/0203: whether it was seen is the bell's own read mark. */
   seenAt: timestamp("seen_at", { withTimezone: true }),
+  /** The `notifications` rows this announcement wrote, so an edit or a delete reaches what people were sent. */
+  bellIds: jsonb("bell_ids").$type<string[]>().notNull().default([]),
+  /** Exactly who was sent it. Empty on rows from before drizzle/0203, which are read by `toEmployeeId`. */
+  recipientUserIds: jsonb("recipient_user_ids").$type<string[]>().notNull().default([]),
+  /** Which screen sent it: `hrms` (Announcements) or `sales` (the Sales Dashboard's Send a notification). */
+  source: text("source").notNull().default("hrms"),
+  /** The bell's title. HRMS titles a bell with the sender; the Sales Dashboard asks for one. */
+  title: text("title"),
   ...hrmsStamps(),
 });
 

@@ -56,8 +56,9 @@ export type NotifyEntry = {
   mbosHref?: string | null;
 };
 
-export async function notifyUsers(entries: readonly NotifyEntry[]): Promise<void> {
-  if (!entries.length) return;
+/** Writes the bell rows and pushes them; answers the ids written, in the order given. */
+export async function notifyUsers(entries: readonly NotifyEntry[]): Promise<string[]> {
+  if (!entries.length) return [];
 
   const rows = entries.map((e) => ({
     id: id("ntf"),
@@ -85,9 +86,10 @@ export async function notifyUsers(entries: readonly NotifyEntry[]): Promise<void
       kind: rows[i].kind,
     })),
   );
+  return rows.map((r) => r.id);
 }
 
 /** One person, which is most callers. */
 export async function notifyUser(entry: NotifyEntry): Promise<void> {
-  return notifyUsers([entry]);
+  await notifyUsers([entry]);
 }

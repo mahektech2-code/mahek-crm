@@ -350,7 +350,7 @@ const CUSTOMER_PAGE = 300;
 /** The header search's customers: the ones this person's Sales desk would list, by name. */
 export async function searchCustomers(ctx: HrmsContext, needle: string, limit: number): Promise<Cust[]> {
   const people = await allPeople();
-  const inScope = nameScope(ctx, visibleIds(ctx, scopeOf(ctx, "salesAll"), people), people);
+  const inScope = nameScope(ctx, visibleIds(ctx, scopeOf(ctx, "salesAll")), people);
   const decide = has(ctx, "custStatus");
   const n = needle.trim().toLowerCase();
   return (await loadCustomers())
@@ -364,7 +364,7 @@ const customersScreen: HrmsScreenModule = {
   async load(ctx, q) {
     const [people, cfg] = await Promise.all([allPeople(), salesCfg()]);
     const { scope, options } = scopeFor(ctx, q, "salesAll");
-    const inScope = nameScope(ctx, visibleIds(ctx, scope, people), people);
+    const inScope = nameScope(ctx, visibleIds(ctx, scope), people);
     const decide = has(ctx, "custStatus");
     const [all, stats, called] = await Promise.all([loadCustomers(), customerStats(), callingToday()]);
     /* Deactivated customers are a decider's tab in the source (admin's
@@ -653,7 +653,7 @@ const callingScreen: HrmsScreenModule = {
     const t = today();
     const people = await allPeople();
     const { scope, options } = scopeFor(ctx, q, "salesAll");
-    const ids = visibleIds(ctx, scope, people);
+    const ids = visibleIds(ctx, scope);
     const rows = !ids
       ? await db.select().from(hrmsCalling)
       : ids.size
@@ -866,7 +866,7 @@ const activityScreen: HrmsScreenModule = {
   async load(ctx, q) {
     const people = await allPeople();
     const { scope, options } = scopeFor(ctx, q, "salesAll");
-    const ids = visibleIds(ctx, scope, people);
+    const ids = visibleIds(ctx, scope);
     const from = await activityFrom(q);
     const rows =
       ids && !ids.size
@@ -1009,7 +1009,20 @@ const activityScreen: HrmsScreenModule = {
         return okVoid(`Activity saved for ${c.name}`);
       }
       const id = hrmsId("hact");
-      await db.insert(hrmsActivities).values({ id, ...values, createdById: ctx.user.id });
+      await inTx(async (tx) => {
+        await tx.insert(hrmsActivities).values({ id, ...values, createdById: ctx.user.id });
+        await writeTimelineEvent(tx, {
+          customerId: c.id,
+          eventType: HRMS_EVENT.activity,
+          sourceApp: "hrms",
+          sourceRecordId: id,
+          /* A date only: noon in the business day, so it sorts on its own day whatever the zone. */
+          occurredAt: new Date(`${date}T12:00:00+05:30`),
+          actorUserId: ctx.user.id,
+          summary: [`${values.meetType ?? "Meeting"} with ${emp.name}`, `${minutes} min`, values.mood, note].filter(Boolean).join(" · "),
+        });
+        return okVoid("");
+      });
       await hrmsAudit(ctx, "hrms.activity.log", "hrms_activities", id, null, values);
       return okVoid(`Activity logged for ${c.name}`);
     },
@@ -1082,7 +1095,7 @@ const journeyScreen: HrmsScreenModule = {
   async load(ctx, q) {
     const people = await allPeople();
     const { scope, options } = scopeFor(ctx, q, "salesAll");
-    const ids = visibleIds(ctx, scope, people);
+    const ids = visibleIds(ctx, scope);
     const rows = !ids
       ? await db.select().from(hrmsJourneys)
       : ids.size

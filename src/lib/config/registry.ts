@@ -4042,19 +4042,10 @@ export const SETTINGS = [
     key: "hrms.performance.financialYearStart",
     type: "text",
     category: "hrms",
-    label: "Financial year start (daily score)",
+    label: "Financial year start",
     description:
-      "The date the daily score's total sale and payment days are counted from (the source used 2023-04-01).",
+      "The date sales and payment days are counted from, for the daily sales score and for period review points alike. The source kept two dates for one question (2023-04-01 for the score, 2024-04-01 for the points); there is one now.",
     default: "2023-04-01",
-  },
-  {
-    key: "hrms.performance.pointsFinancialDate",
-    type: "text",
-    category: "hrms",
-    label: "Financial date (performance points)",
-    description:
-      "The date performance points count outstanding from (the source defaulted to 2024-04-01).",
-    default: "2024-04-01",
   },
   {
     key: "hrms.performance.gstPercent",
@@ -5417,7 +5408,6 @@ export type Config = {
   "hrms.performance.periodDivisor": number;
   "hrms.performance.standardHours": number;
   "hrms.performance.financialYearStart": string;
-  "hrms.performance.pointsFinancialDate": string;
   "hrms.performance.gstPercent": number;
   "hrms.performance.employeeOfMonthPercent": number;
   "hrms.tasks.eodWhatsappNumber": string;

@@ -4726,6 +4726,49 @@ any number on three or more shops — two is an ordinary proprietor with two
 counters — because the next export will use a different placeholder and a
 number written into the code would silently stop catching it.
 
+**THE HRMS IS FOURTEEN SCREENS, AND ITS OLD SCREENS ARE TABS.** The first
+build copied Mahek EMP 2.0 one AppSheet view at a time — 41 screens, the same
+list drawn three ways under three grants. A tab (`views` in
+`lib/hrms/registry.ts`) keeps its key, its server module, its actions and its
+forms, and is opened by holding its screen, exactly as the ERP's are; every
+stored link naming `approvals` or `pendingOut` resolves through `hrmsPlace`.
+Org chart stays a screen of its own because moving a reporting line moves CRM
+sales-manager seats, which is a different grant from the directory.
+
+**NOTHING THE FIRST BUILD DID MAY GO MISSING, AND A TEST SAYS SO.**
+`lib/hrms/feature-ledger.ts` froze the 169 handlers the first build had and
+pins every non-handler feature to the file and line that does it. A handler
+that disappears without a recorded destination, or a new one nobody wrote
+down, fails `feature-ledger.test.ts`. Change the ledger in the same commit as
+the thing it records.
+
+**A STORED HRMS WORD IS SPELLED ONCE, in `lib/hrms/values.ts`.** "Solve",
+"Requesting", "24*7" and the AppSheet help types were renamed in the data
+(`0202`); compare against the constants, and read anything arriving from an old
+file through `fromOld`.
+
+**A POWER HELD BY POSITION DOES NOT WIDEN A LIST.** A department head marks and
+checks out staff because of their job title; `HrmsContext.granted` is the
+powers somebody actually granted, and only those make `scopeOf` answer "all".
+What a head may act on is `staffInReach` — their team and their office — and
+it is checked in the handler, not by which rows are drawn.
+
+**"MY TEAM" IS THE ORG CHART.** `HrmsContext.team` is the people the chart
+names this person as manager of, plus — for anybody the chart has not placed
+at all — those whose sheet Report To is this person's job title. It used to be
+the job title alone while the CRM read the chart, so one reorganisation moved
+accounts and not attendance.
+
+**HRMS USES THE SHARED RECORD WHERE ONE EXISTS.** HR's documents are rows of
+the company library (`mbos_documents.audience` says who in HRMS one is for; a
+link or an office-only document is kept off the handsets), withdrawn and
+tombstoned rather than deleted. Announcements — HRMS's and the Sales
+Dashboard's "Send a notification" alike — go through
+`services/announcement-service.ts`, which remembers the bell rows it wrote:
+seen is the bell's read mark, an edit rewrites the bell, a delete leaves it.
+The Sales desk stays in HRMS (see `docs/hrms/04-HRMS-RESTRUCTURE.md` for why),
+but its calls and its activities reach the customer's shared timeline.
+
 **The employee master is a mirror, and mirrors do not get edited.** HRMS reads
 the workbook's `Employee Details` tab and nothing on its screens can be
 changed, because HR maintains that sheet and a field edited here would be

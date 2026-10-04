@@ -13,7 +13,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { appAccess, appModuleAccess, employees, hrmsAssetAssignments, hrmsAssetStock, hrmsAttendance, hrmsHelp, hrmsLeaveRequests, hrmsUserPowers, users } from "@/db/schema";
+import { appAccess, appModuleAccess, employeeReporting, employees, hrmsAssetAssignments, hrmsAssetStock, hrmsAttendance, hrmsHelp, hrmsLeaveRequests, hrmsNotifications, hrmsUserPowers, mbosDeletions, mbosDocuments, notifications, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { hrmsContext, requireHrmsWrite, HrmsNotPermitted } from "@/lib/hrms/access";
 import { hrmsScreenModule } from "@/lib/hrms/screens";
@@ -90,7 +90,7 @@ let hr: typeof users.$inferSelect;
 let narrowed: typeof users.$inferSelect;
 
 before(async () => {
-  await db.execute(sql`truncate users, employees, employee_reporting, hrms_attendance, hrms_help, hrms_leave_requests, hrms_user_powers, hrms_asset_stock, hrms_asset_assignments, notifications, audit_log restart identity cascade`);
+  await db.execute(sql`truncate users, employees, employee_reporting, hrms_attendance, hrms_help, hrms_leave_requests, hrms_user_powers, hrms_asset_stock, hrms_asset_assignments, hrms_notifications, mbos_documents, mbos_deletions, notifications, audit_log restart identity cascade`);
   headEmp = await person("Ravi Head", { office: "Andheri", position: "Sales Head", type: "Sales" });
   teamEmp = await person("Tara Team", { office: "Pune", position: "Salesman", type: "Sales", reportsTo: "Sales Head" });
   officeEmp = await person("Omkar Office", { office: "Andheri", position: "Field Boy", type: "Field" });
@@ -254,5 +254,55 @@ describe("org chart", () => {
     const r = await setManager(teamEmp.id, headEmp.id);
     assert.equal(r.ok, false);
     assert.match(!r.ok ? r.error : "", /Org chart/);
+  });
+});
+
+describe("my team is the org chart, with the job title as the fallback", () => {
+  test("placing somebody on the chart under another manager takes them out of the head's team", async () => {
+    const other = await person("Mira Manager", { office: "Pune", position: "Area Manager", type: "Sales" });
+    await db.insert(employeeReporting).values({ id: id("rep"), employeeId: teamEmp.id, managerId: other.id });
+    await db.insert(employeeReporting).values({ id: id("rep"), employeeId: strangerEmp.id, managerId: headEmp.id });
+    const ctx = await as(head);
+    assert.ok(!ctx.team.has(teamEmp.id), "the chart says Tara reports to Mira");
+    assert.ok(ctx.team.has(strangerEmp.id), "the chart says Sana reports to Ravi");
+    await db.delete(employeeReporting);
+  });
+});
+
+describe("one document library", () => {
+  test("HR's document is a row of the company library, and withdrawing it tombstones the handsets", async () => {
+    const ctx = await as(hr);
+    const r = await mod("documents").forms!.new(ctx, { title: "Leave policy", type: "Link", url: "https://example.com/policy", tagged: "All employees" }, []);
+    assert.equal(r.ok, true, JSON.stringify(r));
+    const [d] = await db.select().from(mbosDocuments).where(eq(mbosDocuments.title, "Leave policy"));
+    assert.equal(d.audience, "All employees");
+    assert.deepEqual(d.visibleToRoles, ["hrms"], "a link never reaches a handset");
+    const staffView = await mod("documents").load(await as(staff), {});
+    assert.ok(staffView.rows.some((x) => x.v.title === "Leave policy"));
+    const w = await mod("documents").actions!.delete(await as(hr), d.id, {});
+    assert.equal(w.ok, true, JSON.stringify(w));
+    const [after] = await db.select().from(mbosDocuments).where(eq(mbosDocuments.id, d.id));
+    assert.equal(after.active, false, "withdrawn, not deleted");
+    const tomb = await db.select().from(mbosDeletions).where(eq(mbosDeletions.entityId, d.id));
+    assert.equal(tomb.length, 1);
+  });
+});
+
+describe("one announcement sender", () => {
+  test("an edit reaches the bell, seen is the bell's read mark, and a delete leaves the bell", async () => {
+    const ctx = await as(hr);
+    const r = await mod("notifications").forms!.new(ctx, { to: `${strangerEmp.name} · ${strangerEmp.employeeCode}`, text: "Bring your PAN card", landing: "home" }, []);
+    assert.equal(r.ok, true, JSON.stringify(r));
+    const [n] = await db.select().from(hrmsNotifications);
+    assert.equal(n.bellIds.length, 1);
+    await mod("notifications").actions!.edit(ctx, n.id, { text: "Bring your PAN card on Monday" });
+    const [bell] = await db.select().from(notifications).where(eq(notifications.id, n.bellIds[0]));
+    assert.equal(bell.body, "Bring your PAN card on Monday");
+    const seen = await mod("notifications").actions!.seen(await as(staff), n.id, {});
+    assert.equal(seen.ok, true, JSON.stringify(seen));
+    const [read] = await db.select().from(notifications).where(eq(notifications.id, n.bellIds[0]));
+    assert.equal(read.read, true);
+    await mod("notifications").actions!.delete(await as(hr), n.id, {});
+    assert.equal((await db.select().from(notifications).where(eq(notifications.id, n.bellIds[0]))).length, 0);
   });
 });

@@ -59,16 +59,14 @@ export function byId(people: Person[]): Map<string, Person> {
 
 /**
  * Which employees a list shows for this person: the ids, or null for all.
- * `team` is the employees whose Report To is my position, plus me.
+ * `team` is my reports (`HrmsContext.team`: the org chart, with the Report To
+ * job title for anybody the chart has not placed), plus me.
  */
-export function visibleIds(ctx: HrmsContext, scope: Scope, people: Person[]): Set<string> | null {
+export function visibleIds(ctx: HrmsContext, scope: Scope): Set<string> | null {
   if (scope === "all") return null;
   const me = ctx.employee?.id;
   const ids = new Set<string>(me ? [me] : []);
-  if (scope === "team" && ctx.employee?.position) {
-    const pos = ctx.employee.position.trim().toLowerCase();
-    for (const p of people) if ((p.reportsTo ?? "").trim().toLowerCase() === pos) ids.add(p.id);
-  }
+  if (scope === "team") for (const id of ctx.team) ids.add(id);
   return ids;
 }
 
@@ -89,7 +87,7 @@ export function markableStaff(ctx: HrmsContext, people: Person[], wide: boolean)
  */
 export function staffInReach(ctx: HrmsContext, people: Person[], power: "checkoutStaff" | "markStaff"): Set<string> | null {
   if (ctx.administrator || ctx.granted.has(power) || ctx.granted.has("hr") || ctx.granted.has("editAtt")) return null;
-  const ids = visibleIds(ctx, "team", people) ?? new Set<string>();
+  const ids = visibleIds(ctx, "team") ?? new Set<string>();
   for (const p of markableStaff(ctx, people, false)) ids.add(p.id);
   return ids;
 }
