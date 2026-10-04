@@ -576,6 +576,18 @@ export async function mbosConfigPayload(): Promise<Record<string, unknown>> {
      debited by. Without it the phone counted calendar days: Friday to Monday
      read as four there and was debited as two here. */
   out["workingDay.workingDays"] = config["workingDay.workingDays"];
+  /* How money is received, so the collection form offers the office's list
+     rather than four literals typed into a screen — a mode accounts add is one
+     a salesman can record the same day. Which modes carry a date written on
+     the instrument rides with it, so the form asks for a date exactly where
+     accounts will want one. Which modes demand a reference goes too, for the
+     form to say so — never to refuse, since that rule is for whoever asserts
+     the money ARRIVED, and a salesman is repeating what a customer said (see
+     `payments.referenceRequiredModes`). The phone drops the two desk-only modes
+     itself (`DESK_ONLY_MODES`), because the list is the office's whole one. */
+  out["payments.modes"] = config["payments.modes"];
+  out["payments.datedModes"] = config["payments.datedModes"];
+  out["payments.referenceRequiredModes"] = config["payments.referenceRequiredModes"];
   /* The upload ceiling, so a PDF too large to accept is refused at the moment
      it is picked — with the salesman looking — rather than failing in the
      media queue hours later where nobody will ever see why. */

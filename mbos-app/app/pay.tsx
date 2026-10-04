@@ -11,6 +11,8 @@ import { color as C, radius, shadow, tabular, weight } from '../src/theme/tokens
 import { dmy, inrFromPaise, isoDate, plural, pretty } from '../src/lib/format';
 import { cleanAmount, paiseFromTyped, typedFromPaise } from '../src/lib/money-input';
 import { cashInHand, collectPayment, type PaymentMode } from '../src/data/payments';
+import { FALLBACK_MODES, fieldModes } from '../src/engines/payment-modes';
+import { getConfig } from '../src/data/config';
 import {
   customersOwing,
   getCustomer,
@@ -58,12 +60,26 @@ import { useBoot } from '../src/state/boot';
 /* `IconName` rather than `string`: a glyph that is not in the map falls back to
    the three-dot "more" symbol without complaining, which is exactly how the
    ticked bill below came to draw an ellipsis. */
-const MODES: { label: PaymentMode; glyph: IconName }[] = [
-  { label: 'Cash', glyph: 'money' },
-  { label: 'Cheque', glyph: 'note' },
-  { label: 'UPI', glyph: 'spark' },
-  { label: 'Bank transfer', glyph: 'route' },
-];
+const GLYPHS: Record<string, IconName> = {
+  Cash: 'money',
+  Cheque: 'note',
+  UPI: 'spark',
+  'Bank transfer': 'route',
+};
+
+/**
+ * THE MODES ARE THE OFFICE'S, read from `payments.modes` on the pull.
+ *
+ * They were four literals typed into this screen while accounts kept their own
+ * list in configuration, so the two could only ever agree by accident — and a
+ * mode accounts added was one no salesman could record. `fieldModes` drops
+ * the two that are not money arriving (see `DESK_ONLY_MODES`) and falls back
+ * to the old four when an older server sends nothing. A mode this screen has
+ * no glyph for gets the cash one rather than the "more" ellipsis.
+ */
+function tilesFor(modes: string[]): { label: PaymentMode; glyph: IconName }[] {
+  return modes.map((label) => ({ label, glyph: GLYPHS[label] ?? 'money' }));
+}
 
 const CHEQUE_PHOTO_LINE = 'Take a photo of the cheque before you give it back.';
 
@@ -196,6 +212,26 @@ export default function PayScreen() {
    * transfer, credited twice, found weeks later by accounts.
    */
   const [busy, setBusy] = React.useState(false);
+  /* The office's modes and which of them carry a date written on the
+     instrument — both configuration, both read once per visit to the form. */
+  const [modes, setModes] = React.useState<{ label: PaymentMode; glyph: IconName }[]>(() => tilesFor([...FALLBACK_MODES]));
+  const [datedModes, setDatedModes] = React.useState<string[]>(['Cheque']);
+  React.useEffect(() => {
+    let live = true;
+    void Promise.all([
+      getConfig<unknown>('payments.modes', null),
+      getConfig<unknown>('payments.datedModes', ['Cheque']),
+    ])
+      .then(([m, d]) => {
+        if (!live) return;
+        setModes(tilesFor(fieldModes(m)));
+        if (Array.isArray(d)) setDatedModes(d.filter((x): x is string => typeof x === 'string'));
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, []);
   /* The lock itself — `busy` above is only what the button is drawn from.
      The confirm's "Yes, take it" calls `write` from a closure drawn before
      `busy` moved, so a double tap there wrote two receipts. */
@@ -247,7 +283,10 @@ export default function PayScreen() {
      owing ₹10,450.60 could only be collected as 10,451 — forty paise put "on
      account" as an advance nobody paid. See `lib/money-input.ts`. */
   const amtPaise = paiseFromTyped(payAmt);
-  const needsCheque = payMode === 'Cheque';
+  /* A dated mode is an INSTRUMENT — a cheque, or whatever accounts add beside
+     it (`payments.datedModes`): it has a number, a date written across it
+     and a face worth photographing, and all three are asked for together. */
+  const needsCheque = !!payMode && datedModes.includes(payMode);
   const isTransfer = !!payMode && TRANSFER_MODES.includes(payMode as PaymentMode);
 
   /*
@@ -696,7 +735,7 @@ export default function PayScreen() {
           <View style={{ marginTop: 16 }}>
             <SectionLabel style={{ marginBottom: 10 }}>How are they paying</SectionLabel>
             <View style={{ gap: 12 }}>
-              {[MODES.slice(0, 2), MODES.slice(2)].map((row, ri) => (
+              {[modes.slice(0, 2), modes.slice(2, 4), modes.slice(4, 6), modes.slice(6)].filter((row) => row.length).map((row, ri) => (
                 <View key={ri} style={{ flexDirection: 'row', gap: 12 }}>
                   {row.map((m) => {
                     const on = payMode === m.label;

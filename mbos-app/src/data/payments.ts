@@ -17,7 +17,19 @@ import { isoDate } from '../lib/format';
  * the amount into cash-in-hand with a deadline attached.
  */
 
-export type PaymentMode = 'Cash' | 'Cheque' | 'UPI' | 'Bank transfer';
+/**
+ * How the money came, in the office's own words.
+ *
+ * A STRING, not the four literals it used to be. The list is the office's
+ * `payments.modes` and reaches this phone on the pull, so a mode accounts
+ * add — a demand draft, say — is offered here without an APK. The server has
+ * always taken any string up to sixty characters; the four that used to be
+ * written here survive as the list a phone falls back to when an older server
+ * sends none.
+ */
+export type PaymentMode = string;
+
+/* What is offered, and which two are left out, is `engines/payment-modes.ts`. */
 
 /**
  * Whether this was money in advance, said in the one sentence the receipt has
