@@ -8,7 +8,7 @@ import { AppFrame } from '../src/components/shell/AppFrame';
 import { useCustomer, useStore } from '../src/state/store';
 import { plural, pretty } from '../src/lib/format';
 import { FOLLOW_UP_MODES, OUTCOMES } from '../src/data/fixtures';
-import { pendingCount } from '../src/sync/queue';
+import { visitSendState } from '../src/data/visits';
 import { nextStop } from '../src/data/journey';
 
 /**
@@ -30,6 +30,7 @@ export default function Saved() {
   const nextDate = useStore((s) => s.nextDate);
   const nextMode = useStore((s) => s.nextMode);
   const visitSpent = useStore((s) => s.visitSpent);
+  const saved = useStore((s) => s.visitSaved);
 
   const picked = OUTCOMES.find((o) => o.k === outcome) ?? OUTCOMES[0];
   const shotCount = (shots.shop ? 1 : 0) + (shots.cust ? 1 : 0);
@@ -77,13 +78,19 @@ export default function Saved() {
     };
   }, []);
 
-  const [queued, setQueued] = React.useState(true);
+  /* THIS visit's outbox row, not the whole outbox — see `visitSendState`.
+     "Your manager is told" went green the moment the queue was empty, so a
+     visit the office REFUSED read as told, and one sitting behind somebody's
+     photograph read as unsent. */
+  const [sent, setSent] = React.useState<'sent' | 'waiting' | 'refused'>('waiting');
+  const visitId = saved?.id ?? null;
   React.useEffect(() => {
     let live = true;
+    if (!visitId) return;
     const tick = () => {
-      void pendingCount()
-        .then((n) => {
-          if (live) setQueued(n > 0);
+      void visitSendState(visitId)
+        .then((v) => {
+          if (live) setSent(v);
         })
         .catch(() => undefined);
     };
@@ -93,7 +100,7 @@ export default function Saved() {
       live = false;
       clearInterval(t);
     };
-  }, []);
+  }, [visitId]);
 
   const items = [
     gps === 'locked'
@@ -108,10 +115,23 @@ export default function Saved() {
       : voice === 'queued'
         ? { l: 'Voice note kept. The office will type it out when you are online', ok: false }
         : null,
-    { l: (FOLLOW_UP_MODES.find((m) => m.k === nextMode)?.label ?? 'Visit') + ' set for ' + pretty(nextDate), ok: true },
-    queued
-      ? { l: 'Your manager will see it when this phone sends', ok: false }
-      : { l: 'Your manager is told', ok: true },
+    /* The day the save actually set — none, where he said no follow-up or the
+       shop was shut. It printed the form's date whether or not a task was
+       raised. */
+    saved && saved.followUpDate == null
+      ? { l: 'No follow-up set', ok: true }
+      : {
+          l: (FOLLOW_UP_MODES.find((m) => m.k === nextMode)?.label ?? 'Visit') + ' set for ' + pretty(saved?.followUpDate ?? nextDate),
+          ok: true,
+        },
+    saved?.unverified
+      ? { l: 'Saved as not checked. Your manager will read your reason', ok: false }
+      : null,
+    sent === 'refused'
+      ? { l: 'The office did not accept it. Open Not accepted', ok: false }
+      : sent === 'sent'
+        ? { l: 'Your manager is told', ok: true }
+        : { l: 'Your manager will see it when this phone sends', ok: false },
   ].filter((x): x is { l: string; ok: boolean } => x !== null);
 
   return (
