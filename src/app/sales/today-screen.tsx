@@ -61,7 +61,7 @@ export function TodayScreen({
     { n: waiting.find((w) => w.href === "/sales/expenses")?.count ?? 0, label: "expense claims", tone: "amber", href: "/sales/expenses" },
     { n: waiting.find((w) => w.href === "/sales/samples")?.count ?? 0, label: "samples with no feedback", tone: "amber", href: "/sales/samples" },
     { n: waiting.find((w) => w.href === "/sales/leave")?.count ?? 0, label: "leave requests", tone: "neutral", href: "/sales/leave" },
-    { n: unverified, label: "visits that could not be verified", tone: "amber", href: "/sales/visits" },
+    { n: unverified, label: "visits that could not be verified", tone: "amber", href: "/sales/journeys?tab=visits&show=unverified" },
   ].filter((x) => x.n > 0);
 
   const totalWaiting = waiting.reduce((n, w) => n + w.count, 0);

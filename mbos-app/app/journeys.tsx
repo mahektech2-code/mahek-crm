@@ -535,7 +535,7 @@ function MonthCalendar({
                 accessibilityRole={d ? 'button' : undefined}
                 accessibilityLabel={d && iso ? dayLabel(iso) + ', ' + dayLine(d, today) : undefined}
                 onPress={() => d && onPick(d)}
-                style={{ flex: 1, alignItems: 'center', paddingVertical: 6 }}>
+                style={{ flex: 1, alignItems: 'center', paddingVertical: 6, paddingHorizontal: 1 }}>
                 <View
                   style={{
                     width: 34,
@@ -551,15 +551,26 @@ function MonthCalendar({
                     {iso ? String(Number(iso.slice(8))) : ''}
                   </T>
                 </View>
-                <View
-                  style={{
-                    width: 6,
-                    height: 6,
-                    borderRadius: 3,
-                    marginTop: 3,
-                    backgroundColor: d ? dotColour(d, today) : 'transparent',
-                  }}
-                />
+                {/* THE CITY, not only a dot. A month of coloured dots said
+                    how far each day had got and never where it was, which is
+                    the thing a salesman planning his week reads first. */}
+                {d?.city ? (
+                  <T
+                    numberOfLines={1}
+                    style={[{ fontSize: 9, lineHeight: 12, marginTop: 2, maxWidth: '100%', color: dotColour(d, today) }, weight(600)]}>
+                    {d.city}
+                  </T>
+                ) : (
+                  <View
+                    style={{
+                      width: 6,
+                      height: 6,
+                      borderRadius: 3,
+                      marginTop: 3,
+                      backgroundColor: d ? dotColour(d, today) : 'transparent',
+                    }}
+                  />
+                )}
               </Pressable>
             );
           })}

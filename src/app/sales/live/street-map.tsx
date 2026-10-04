@@ -713,6 +713,10 @@ export function StreetMap({
      reason the book is: `drawOverlays` runs again on every Map/Satellite
      switch and reads it imperatively. */
   const [showVisits, setShowVisits] = React.useState(true);
+  /* Whether the legend card is open. It folds to one button so a manager
+     reading a dense street can take it off the map without losing the
+     switches inside it. */
+  const [legendOpen, setLegendOpen] = React.useState(true);
   const showVisitsRef = React.useRef(true);
   /* Which shop's record is open. The same drawer Territory's map opens. */
   const [selectedShopId, setSelectedShopId] = React.useState<string | null>(null);
@@ -2033,63 +2037,83 @@ export function StreetMap({
         </div>
       ) : null}
       <OlaMapsStyleSwitcher mode={styleMode} onChange={setStyleMode} />
-      {/* The catchment's own legend, stacked under the style switcher rather
-          than beside it — both anchored top-left read as one cluster of map
-          controls, and MapLibre's zoom sits top-right. Drawn only once there
-          is something to say: an empty legend beside an empty map is
-          furniture.
+      {/* THE LEGEND IS A CARD IN THE BOTTOM-LEFT CORNER, one entry per line.
+          It used to be a bar under the style switcher that wrapped across the
+          whole width of the map, ran under MapLibre's zoom control and covered
+          the top of every street — the part of a wide map with the most on it.
+          A narrow stacked card reads as a key rather than a banner, and it
+          folds away to one button. Drawn only once there is something to say:
+          an empty legend beside an empty map is furniture.
+
+          THE VISITS FIRST, because they are the day and the shops are the
+          ground it is read against. The count is what is PINNED: a visit made
+          where the handset could get no fix is on no map, and a legend
+          claiming otherwise would have somebody counting dots against the
+          Visits screen and finding one missing.
 
           IT NAMES THE RADIUS, because a count on its own invites the wrong
           reading. "412 shops" beside a map reads as the book; "within 10 km
-          of the team" says what it actually is, which is the half somebody
-          would otherwise have to be told. */}
+          of the team" says what it actually is. */}
       {book.length || visits.length ? (
-        <div className="absolute top-11 left-2 z-10 flex max-w-[calc(100%-1rem)] flex-wrap items-center gap-x-3 gap-y-1.5 rounded-[6px] border border-line bg-surface/95 px-3 py-2 text-[12px] text-ink shadow-[0_1px_4px_rgba(22,22,22,0.15)]">
-          {/* THE VISITS FIRST, because they are the day and the shops are the
-              ground it is read against. The count is what is PINNED: a visit
-              made where the handset could get no fix is on no map, and a legend
-              claiming otherwise would have somebody counting dots against the
-              Visits screen and finding one missing. */}
-          {visits.length ? (
-            <label className="flex cursor-pointer items-center gap-1.5">
-              <input
-                type="checkbox"
-                checked={showVisits}
-                onChange={(e) => setShowVisits(e.target.checked)}
-              />
-              <span
-                className="inline-flex h-4 w-4 flex-none items-center justify-center rounded-full text-[9px] font-semibold text-white"
-                style={{ background: "#5223E0" }}
-                aria-hidden
-              >
-                1
-              </span>
-              Visits pinned ({visits.length})
-            </label>
+        <div className="absolute bottom-8 left-2 z-10 w-[232px] overflow-hidden rounded-[6px] border border-line bg-surface/95 text-[12px] text-ink shadow-[0_1px_4px_rgba(22,22,22,0.15)] backdrop-blur-sm">
+          <button
+            type="button"
+            onClick={() => setLegendOpen((on) => !on)}
+            aria-expanded={legendOpen}
+            className="flex w-full items-center justify-between px-3 py-1.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase hover:bg-canvas"
+          >
+            On the map
+            <span aria-hidden>{legendOpen ? "\u25BE" : "\u25B4"}</span>
+          </button>
+          {legendOpen ? (
+            <div className="flex flex-col gap-1.5 border-t border-divider px-3 py-2">
+              {visits.length ? (
+                <label className="flex cursor-pointer items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={showVisits}
+                    onChange={(e) => setShowVisits(e.target.checked)}
+                  />
+                  <span
+                    className="inline-flex h-4 w-4 flex-none items-center justify-center rounded-full text-[9px] font-semibold text-white"
+                    style={{ background: "#5223E0" }}
+                    aria-hidden
+                  >
+                    1
+                  </span>
+                  <span className="min-w-0 flex-1">Visits pinned</span>
+                  <span className="text-muted tabular-nums">{visits.length}</span>
+                </label>
+              ) : null}
+              {book.length ? (
+                <label className="flex cursor-pointer items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={showBook}
+                    onChange={(e) => setShowBook(e.target.checked)}
+                  />
+                  <span className="min-w-0 flex-1">
+                    {radiusKm ? `Shops within ${radiusKm} km` : "Nearby shops"}
+                  </span>
+                  <span className="text-muted tabular-nums">{book.length}</span>
+                </label>
+              ) : null}
+              {book.length && showBook
+                ? (["customer", "lead", "third", "closed"] as BookPinTone[])
+                    .filter((tone) => bookCounts[tone] > 0)
+                    .map((tone) => (
+                      <span key={tone} className="flex items-center gap-2 pl-[22px] text-muted">
+                        <span
+                          className="inline-block h-2.5 w-2.5 flex-none rounded-full"
+                          style={{ background: BOOK_PIN_COLOUR[tone] }}
+                        />
+                        <span className="min-w-0 flex-1 truncate">{BOOK_PIN_LABEL[tone]}</span>
+                        <span className="tabular-nums">{bookCounts[tone]}</span>
+                      </span>
+                    ))
+                : null}
+            </div>
           ) : null}
-          {book.length ? (
-          <label className="flex cursor-pointer items-center gap-1.5">
-            <input
-              type="checkbox"
-              checked={showBook}
-              onChange={(e) => setShowBook(e.target.checked)}
-            />
-            {radiusKm
-              ? `Within ${radiusKm} km of the team (${book.length})`
-              : `Nearby shops (${book.length})`}
-          </label>
-          ) : null}
-          {(["customer", "lead", "third", "closed"] as BookPinTone[])
-            .filter((tone) => bookCounts[tone] > 0)
-            .map((tone) => (
-              <span key={tone} className="flex items-center gap-1.5 text-muted">
-                <span
-                  className="inline-block h-2.5 w-2.5 rounded-full"
-                  style={{ background: BOOK_PIN_COLOUR[tone] }}
-                />
-                {BOOK_PIN_LABEL[tone]} ({bookCounts[tone]})
-              </span>
-            ))}
         </div>
       ) : null}
       {/* The same drawer Territory's map opens, from the same two reads the

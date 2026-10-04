@@ -31,7 +31,9 @@ export function TodayTab({
   plans,
   visits,
   tracks,
+  today,
 }: {
+  today: string;
   team: Salesman[];
   plans: JourneyPlan[];
   visits: VisitRow[];
@@ -168,8 +170,10 @@ export function TodayTab({
               <Cell align="right">
                 <RowMenu
                   items={[
-                    { label: "See the route on a map", href: "/sales/live" },
-                    { label: "This person's plan", href: `/sales/journeys?tab=plan&salesman=${r.id}` },
+                    { label: "See the route on a map", href: "/sales/live?view=today" },
+                    { label: "Today, stop by stop", href: `/sales/journeys?tab=salesman&salesman=${r.id}&open=${today}` },
+                    { label: "Today's visits", href: `/sales/journeys?tab=visits&salesman=${r.id}` },
+                    { label: "His month", href: `/sales/journeys?tab=salesman&salesman=${r.id}` },
                     { label: "Assign a task", href: "/sales/tasks" },
                   ]}
                 />

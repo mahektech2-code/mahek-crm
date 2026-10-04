@@ -1,5 +1,5 @@
 import React from 'react';
-import { Animated, View, Pressable, type StyleProp, type ViewStyle } from 'react-native';
+import { Animated, ScrollView, View, Pressable, type StyleProp, type ViewStyle } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { abandonLeg, openLegOf, travelModes, type TravelLeg } from '../src/data/travel';
@@ -401,6 +401,12 @@ export default function JourneyScreen() {
      its count narrow on it instead of asserting past it. */
   const awaitingRoute = stops.length === 0 ? todayPlanned : undefined;
 
+  /* TODAY'S DAY IN ANY STATE, for its city. The heading counts stops and the
+     subline names areas, so a salesman with a route had no line anywhere on
+     this tab saying which city he was meant to be in — and one with a day
+     only proposed or agreed read "No route today" with the city nowhere. */
+  const todayDay = days.find((d) => d.planDate === today);
+
   /* Which of the card's states is showing — the key `Swap` animates on. */
   const journeyMoment = leg
     ? 'leg:' + leg.id
@@ -566,13 +572,28 @@ export default function JourneyScreen() {
               })}>
               <Icon name="cal" size={18} color={C.primaryDeep} strokeWidth={1.8} />
               <T style={[{ flex: 1, minWidth: 0, fontSize: 14, color: C.primaryDeep }, weight(600)]}>
-                {(asking.length === 1 ? 'A day' : plural(asking.length, 'day')) + ' to agree with the office'}
+                {/* WHICH CITIES, not only how many: "a day to agree" sent him
+                    to another tab to find out where he was being asked to go. */}
+                {asking.length === 1
+                  ? (asking[0].city ?? 'A day') + ' on ' + dayLabelRelative(asking[0].planDate, today) + ' — agree or send back'
+                  : plural(asking.length, 'day') +
+                    ' to agree: ' +
+                    asking
+                      .slice(0, 3)
+                      .map((d) => (d.city ?? '?') + ' (' + dayLabelRelative(d.planDate, today) + ')')
+                      .join(', ') +
+                    (asking.length > 3 ? '…' : '')}
               </T>
               <Icon name="forward" size={16} color={C.primaryDeep} strokeWidth={1.8} />
             </Pressable>
           ) : null}
           <View style={{ flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12 }}>
             <View style={{ minWidth: 0, flex: 1 }}>
+              {todayDay?.city ? (
+                <T s="label" numberOfLines={1} style={{ color: C.primaryDeep, marginBottom: 2 }}>
+                  {'Today · ' + todayDay.city + (todayDay.beat ? ' · ' + todayDay.beat : '')}
+                </T>
+              ) : null}
               <T style={type.h1}>
                 {awaitingRoute
                   ? plural(awaitingRoute.picked, 'shop') + ' picked'
@@ -586,7 +607,9 @@ export default function JourneyScreen() {
                 {awaitingRoute
                   ? (awaitingRoute.city ? awaitingRoute.city + ' · ' : '') +
                     'sent to the office. The stops come when the phone sends next'
-                  : routeSubline(stops.length, doneCount, areas)}
+                  : !stops.length && todayDay && todayDay.dayState !== 'planned'
+                    ? (todayDay.city ?? 'Today') + ' · ' + TODAY_STATE[todayDay.dayState]
+                    : routeSubline(stops.length, doneCount, areas)}
               </T>
             </View>
             {/* `Icon name="dots"`, not the character `⋯`.
@@ -609,6 +632,8 @@ export default function JourneyScreen() {
               <Icon name="dots" size={22} color={C.body} strokeWidth={1.5} />
             </Pressable>
           </View>
+
+          <WeekStrip days={days} today={today} />
 
           {/* Drawn only where there is a day to draw. At zero stops this was an
               empty 6pt row plus its margin — twenty points of nothing between the
@@ -1782,6 +1807,90 @@ function saidAsList(items: string[]): string {
  * The stop count is the fact that is always true, so it answers first. The
  * areas are the detail, appended only when there are any.
  */
+const TODAY_STATE: Record<PlanDay['dayState'], string> = {
+  proposed: 'proposed by the office — agree it under Coming up',
+  refused: 'you sent it back — waiting on the office',
+  agreed: 'agreed — pick your shops',
+  planned: 'planned',
+};
+
+/**
+ * THE WEEK AHEAD, by city.
+ *
+ * He plans a week, not a morning, and the only place the cities of the coming
+ * days could be read was a tab of lists or a calendar of dots. Seven tiles,
+ * today first: the day, the city, and what state it is in. A day with nothing
+ * says so rather than being left out, because a gap is what he needs to see.
+ */
+function WeekStrip({ days, today }: { days: PlanDay[]; today: string }) {
+  const [y, m, d] = today.split('-').map(Number);
+  const week = Array.from({ length: 7 }, (_, i) => isoDate(new Date(y, m - 1, d + i)));
+  const tone: Record<PlanDay['dayState'], string> = {
+    proposed: C.warn,
+    refused: C.danger,
+    agreed: C.info,
+    planned: C.primary,
+  };
+  const word: Record<PlanDay['dayState'], string> = {
+    proposed: 'To agree',
+    refused: 'Sent back',
+    agreed: 'Pick shops',
+    planned: 'Planned',
+  };
+  return (
+    <View style={{ marginTop: 14 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+        <T s="label" style={{ color: C.muted, flex: 1 }}>
+          This week
+        </T>
+        <Pressable accessibilityRole="button" hitSlop={HIT} onPress={() => router.push('/journeys')}>
+          <T s="small" style={{ color: C.primaryDeep }}>
+            Calendar
+          </T>
+        </Pressable>
+      </View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+        {week.map((iso) => {
+          const day = days.find((x) => x.planDate === iso);
+          return (
+            <Pressable
+              key={iso}
+              accessibilityRole="button"
+              accessibilityLabel={
+                dayLabel(iso) + ', ' + (day ? (day.city ?? 'no city') + ', ' + word[day.dayState] : 'nothing planned')
+              }
+              onPress={() => router.push('/journeys')}
+              style={({ pressed }) => ({
+                width: 104,
+                padding: 10,
+                borderRadius: radius.card,
+                backgroundColor: pressed ? C.wash : C.surface,
+                borderWidth: iso === today ? 1.5 : 0,
+                borderColor: C.primary,
+                boxShadow: shadow.card,
+              })}>
+              <T s="caption" style={{ color: C.muted }} numberOfLines={1}>
+                {dayLabelRelative(iso, today)}
+              </T>
+              <T style={[{ fontSize: 14, color: day?.city ? C.ink : C.faint, marginTop: 2 }, weight(600)]} numberOfLines={1}>
+                {day?.city ?? 'No city'}
+              </T>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}>
+                <View
+                  style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: day ? tone[day.dayState] : C.faint }}
+                />
+                <T s="caption" style={{ color: C.muted }} numberOfLines={1}>
+                  {day ? word[day.dayState] : 'Nothing yet'}
+                </T>
+              </View>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+    </View>
+  );
+}
+
 function routeSubline(total: number, done: number, areas: string[]): string {
   if (total === 0) return 'Nothing planned for today';
   if (done >= total) return 'All ' + plural(total, 'stop') + ' done';

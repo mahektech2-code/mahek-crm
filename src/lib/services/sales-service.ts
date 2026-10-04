@@ -1172,6 +1172,10 @@ export type VisitCompetitor = {
 export type VisitRow = {
   id: string;
   salesmanId: string;
+  /** The business day it was made on, in Asia/Kolkata. */
+  day: string | null;
+  /** The planned stop it answered. Null on an off-plan visit. */
+  journeyPlanStopId: string | null;
   salesmanName: string;
   initials: string;
   /**
@@ -1184,6 +1188,11 @@ export type VisitRow = {
    */
   customerId: string;
   customerName: string;
+  /** `customer` or `lead`, and the third-party mark beside it — what kind of door it was. */
+  customerKind: string;
+  customerThirdParty: boolean;
+  /** Where the shop is, from the place tree where it has one. */
+  customerCity: string | null;
   checkInAt: Date | null;
   durationSeconds: number | null;
   outcome: string;
@@ -1248,10 +1257,31 @@ export type VisitRow = {
  * column a manager actually reads.
  */
 export async function visitsList(day: string): Promise<VisitRow[]> {
+  return visitsBetween({ from: day, to: day });
+}
+
+/**
+ * Every visit in a window, optionally one salesman's — the same columns as a
+ * day's list, so the Visits tab and a salesman's calendar read one row shape.
+ *
+ * The cap is per call: a day for the team is 400, a month for one salesman
+ * rarely comes near it, and `limit` lets the calendar ask for more.
+ */
+export async function visitsBetween(filter: {
+  from: string;
+  to: string;
+  salesmanId?: string;
+  limit?: number;
+}): Promise<VisitRow[]> {
   const scope = await managerScope();
+  const who = filter.salesmanId ? sql`and v.salesman_id = ${filter.salesmanId}` : sql``;
   return db.execute<VisitRow>(sql`
-    select v.id, v.salesman_id as "salesmanId", u.name as "salesmanName", u.initials,
+    select v.id, v.salesman_id as "salesmanId",
+           (v.check_in_at ${IST_DAY})::date::text as "day",
+           v.journey_plan_stop_id as "journeyPlanStopId", u.name as "salesmanName", u.initials,
            c.id as "customerId", c.name as "customerName",
+           c.kind::text as "customerKind", c.third_party as "customerThirdParty",
+           ${placeNameSql("c", "city", "city")} as "customerCity",
            v.check_in_at as "checkInAt", v.duration_seconds as "durationSeconds",
            v.outcome::text as outcome, v.verified,
            v.location_mismatch as "locationMismatch",
@@ -1296,10 +1326,11 @@ export async function visitsList(day: string): Promise<VisitRow[]> {
       from mbos_visits v
       join users u on u.id = v.salesman_id
       join customers c on c.id = v.customer_id
-     where (v.check_in_at ${IST_DAY})::date = ${day}::date
+     where (v.check_in_at ${IST_DAY})::date between ${filter.from}::date and ${filter.to}::date
+       ${who}
        ${onlyMine(scope, "u.id")}
      order by v.check_in_at desc nulls last
-     limit 400
+     limit ${filter.limit ?? 400}
   `) as unknown as VisitRow[];
 }
 
@@ -4797,6 +4828,23 @@ export type PlanStop = {
   gpsLng: number | null;
   outstandingPaise: number;
   lastVisitDate: string | null;
+  /** Where the shop is, for a day drawer listing a route. */
+  city: string | null;
+  kind: string;
+  thirdParty: boolean;
+  /**
+   * THE VISIT THAT ANSWERED THIS STOP, where one did.
+   *
+   * `mbos_visits.journey_plan_stop_id` is the link, and the newest visit wins
+   * where a shop was walked into twice. Null on a stop nobody visited — which
+   * is the whole of "allocated against visited", read off one row.
+   */
+  visitId: string | null;
+  visitCheckInAt: Date | null;
+  visitOutcome: string | null;
+  visitDurationSeconds: number | null;
+  visitVerified: boolean | null;
+  visitOrderValuePaise: number;
 };
 
 export type JourneyPlan = {
@@ -4816,6 +4864,12 @@ export type JourneyPlan = {
   counterCity: string | null;
   proposedAt: Date | null;
   respondedAt: Date | null;
+  /** True where he started the day himself rather than answering the office. */
+  selfPlanned: boolean;
+  /** Who in the office proposed it. Null on a self-planned day. */
+  proposedByName: string | null;
+  notes: string | null;
+  estimatedTravelMinutes: number | null;
   stops: PlanStop[];
 };
 
@@ -4850,9 +4904,12 @@ export async function journeyPlansBetween(
            p.started_at as "startedAt", p.completed_at as "completedAt",
            p.day_state::text as "dayState", p.city,
            p.refusal_reason as "refusalReason", p.counter_city as "counterCity",
-           p.proposed_at as "proposedAt", p.responded_at as "respondedAt"
+           p.proposed_at as "proposedAt", p.responded_at as "respondedAt",
+           p.self_planned as "selfPlanned", pb.name as "proposedByName",
+           p.notes, p.estimated_travel_minutes as "estimatedTravelMinutes"
       from mbos_journey_plans p
       join users u on u.id = p.user_id
+      left join users pb on pb.id = p.proposed_by_id
      where p.plan_date between ${fromDay}::date and ${toDay}::date ${who}
        ${onlyMine(scope, "p.user_id")}
      order by p.plan_date asc, u.name asc
@@ -4868,10 +4925,24 @@ export async function journeyPlansBetween(
            (c.gps_lat is not null and c.gps_lng is not null) as "hasGps",
            c.gps_lat as "gpsLat", c.gps_lng as "gpsLng",
            coalesce(c.outstanding, 0) as "outstandingPaise",
-           c.last_visit_date::text as "lastVisitDate"
+           c.last_visit_date::text as "lastVisitDate",
+           ${placeNameSql("c", "city", "city")} as city,
+           c.kind::text as kind, c.third_party as "thirdParty",
+           v.id as "visitId", v.check_in_at as "visitCheckInAt",
+           v.outcome::text as "visitOutcome",
+           v.duration_seconds as "visitDurationSeconds",
+           v.verified as "visitVerified",
+           coalesce((select o.total_amount from orders o where o.id = v.linked_order_id), 0)
+             as "visitOrderValuePaise"
       from mbos_journey_stops s
       join mbos_journey_plans p on p.id = s.plan_id
       join customers c on c.id = s.customer_id
+      left join lateral (
+        select v.* from mbos_visits v
+         where v.journey_plan_stop_id = s.id
+         order by v.check_in_at desc nulls last
+         limit 1
+      ) v on true
      where p.plan_date between ${fromDay}::date and ${toDay}::date ${who}
        ${onlyMine(scope, "p.user_id")}
      order by p.plan_date asc, s.sequence asc

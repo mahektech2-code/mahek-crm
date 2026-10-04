@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { BodyPortal } from "@/components/ui/body-portal";
 import { askTeam } from "@/lib/actions/ask-team";
 import { SalesIcon } from "@/components/console/icons";
 
@@ -63,7 +64,13 @@ export function AskPanel() {
         Ask about the team
       </button>
 
-      {open ? <Drawer onClose={() => setOpen(false)} /> : null}
+      {/* On <body>: the header is `relative z-2`, which trapped this drawer
+          under the Live map's controls — see body-portal.tsx. */}
+      {open ? (
+        <BodyPortal>
+          <Drawer onClose={() => setOpen(false)} />
+        </BodyPortal>
+      ) : null}
     </>
   );
 }

@@ -6,6 +6,7 @@ import { db } from "@/db";
 import {
   attachmentParentEnum,
   attachments,
+  auditLog,
   bills,
   callAiDrafts,
   complaints,
@@ -7846,6 +7847,28 @@ async function handlePlanDay(principal: MbosPrincipal, item: SyncItem): Promise<
       updatedById: principal.user.id,
     })
     .where(eq(mbosJourneyPlans.id, item.entityId));
+
+  /* HIS ANSWER IS WRITTEN DOWN, not only stored on the row. The row holds the
+   * latest answer and a fresh proposal clears it, so without this a day that
+   * was refused twice reads on Journeys & visits as having been asked once.
+   * Never allowed to cost the answer: it has already landed. */
+  await db
+    .insert(auditLog)
+    .values({
+      id: gen("aud"),
+      actorId: principal.user.id,
+      action: "mbos.journey.answered",
+      entityType: "mbos_journey_plan",
+      entityId: item.entityId,
+      beforeState: { city: plan.city, dayState: plan.dayState } as never,
+      afterState: {
+        answer: p.answer,
+        reason: p.answer === "refused" ? (p.reason ?? "").trim() : null,
+        counterCity: p.answer === "refused" ? (p.counterCity?.trim() || null) : null,
+        planDate: plan.planDate,
+      } as never,
+    })
+    .catch(() => undefined);
 
   /* The manager is the other half of this conversation and has no reason to
    * be looking at the screen when the answer arrives. */
