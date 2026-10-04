@@ -62,6 +62,7 @@ import {
   unbackedBy,
   wantsDate,
 } from "@/lib/call-reasons";
+import { BodyPortal } from "@/components/ui/body-portal";
 
 /**
  * The dates customers actually ask for, as one tap each. Anything else still
@@ -1774,1994 +1775,1996 @@ function CallPanelForm({
         : [];
 
   return (
-    <div
-      onClick={onClose}
-      role="dialog"
-      aria-modal="true"
-      aria-label={`Log interaction · ${target.name}`}
-      className="animate-fade-in fixed inset-0 z-[70] flex items-center justify-center bg-[rgba(26,30,40,0.45)] p-6"
-    >
+    <BodyPortal>
       <div
-        onClick={(e) => e.stopPropagation()}
-        className="flex h-[760px] max-h-[calc(100vh-48px)] w-[1160px] max-w-[calc(100vw-48px)] flex-col overflow-hidden rounded-[6px] bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
+        onClick={onClose}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Log interaction · ${target.name}`}
+        className="animate-fade-in fixed inset-0 z-[70] flex items-center justify-center bg-[rgba(26,30,40,0.45)] p-6"
       >
-        {/* ------------------------------------------------------- header */}
-        <div className="flex items-start gap-4 border-b border-divider px-6 py-4">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2.5">
-              <span className="text-[22px] leading-7 font-semibold text-ink">
-                {target.name}
-              </span>
-              {isLead ? <Badge tone="brand">Lead</Badge> : null}
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="flex h-[760px] max-h-[calc(100vh-48px)] w-[1160px] max-w-[calc(100vw-48px)] flex-col overflow-hidden rounded-[6px] bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
+        >
+          {/* ------------------------------------------------------- header */}
+          <div className="flex items-start gap-4 border-b border-divider px-6 py-4">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2.5">
+                <span className="text-[22px] leading-7 font-semibold text-ink">
+                  {target.name}
+                </span>
+                {isLead ? <Badge tone="brand">Lead</Badge> : null}
+              </div>
+              <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted">
+                <span>{target.contactPerson}</span>
+                <span>·</span>
+                <a
+                  href={`tel:${target.phone}`}
+                  className="font-medium text-ink no-underline"
+                >
+                  {phoneDisplay(target.phone)}
+                </a>
+                <button
+                  title="Copy number"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(target.phone);
+                      push("Number copied");
+                    } catch {
+                      push("The browser blocked the clipboard.", "error");
+                    }
+                  }}
+                  className="inline-flex h-5.5 w-5.5 cursor-pointer items-center justify-center rounded-[4px] border border-line text-muted hover:bg-canvas hover:text-body"
+                >
+                  <Icon name="copy" size={12} strokeWidth={1.8} />
+                </button>
+                <span>·</span>
+                <span>{target.city}</span>
+              </div>
             </div>
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted">
-              <span>{target.contactPerson}</span>
-              <span>·</span>
-              <a
-                href={`tel:${target.phone}`}
-                className="font-medium text-ink no-underline"
-              >
-                {phoneDisplay(target.phone)}
-              </a>
-              <button
-                title="Copy number"
-                onClick={async () => {
-                  try {
-                    await navigator.clipboard.writeText(target.phone);
-                    push("Number copied");
-                  } catch {
-                    push("The browser blocked the clipboard.", "error");
-                  }
-                }}
-                className="inline-flex h-5.5 w-5.5 cursor-pointer items-center justify-center rounded-[4px] border border-line text-muted hover:bg-canvas hover:text-body"
-              >
-                <Icon name="copy" size={12} strokeWidth={1.8} />
-              </button>
-              <span>·</span>
-              <span>{target.city}</span>
-            </div>
+            <button
+              onClick={onClose}
+              title="Close"
+              className="inline-flex h-7 w-7 flex-none cursor-pointer items-center justify-center rounded-[4px] text-muted hover:bg-canvas hover:text-body"
+            >
+              <Icon name="close" size={14} strokeWidth={1.8} />
+            </button>
           </div>
-          <button
-            onClick={onClose}
-            title="Close"
-            className="inline-flex h-7 w-7 flex-none cursor-pointer items-center justify-center rounded-[4px] text-muted hover:bg-canvas hover:text-body"
-          >
-            <Icon name="close" size={14} strokeWidth={1.8} />
-          </button>
-        </div>
 
-        {/* What a telecaller needs before they speak.
-            A row with dividers rather than a grid, because the figures are not
-            all present: an empty "Open complaint - None" column takes space to
-            say nothing, and reads as a thing to check when it is not. Each
-            figure appears only when it has something to report. */}
-        <div className="flex items-center gap-5 overflow-hidden border-y border-divider bg-canvas px-6 py-2.5">
-          {/* A lead and a customer are different conversations, so the strip
-              carries different facts. Outstanding and target gap on a record
-              that has never ordered would both read zero, which looks like a
-              customer doing badly rather than one who has not started. */}
-          {isLead ? (
-            <>
-              <Stat label="Lead owner">
-                {info?.lead?.ownerName ?? "Unassigned"}
-              </Stat>
-              <StatDivider />
-              <Stat label="Added">
-                {info?.lead ? shortDate(info.lead.addedDate) : "-"}
-              </Stat>
-              <StatDivider />
-              <Stat label="Source">{info?.lead?.source ?? "Not recorded"}</Stat>
-            </>
+          {/* What a telecaller needs before they speak.
+              A row with dividers rather than a grid, because the figures are not
+              all present: an empty "Open complaint - None" column takes space to
+              say nothing, and reads as a thing to check when it is not. Each
+              figure appears only when it has something to report. */}
+          <div className="flex items-center gap-5 overflow-hidden border-y border-divider bg-canvas px-6 py-2.5">
+            {/* A lead and a customer are different conversations, so the strip
+                carries different facts. Outstanding and target gap on a record
+                that has never ordered would both read zero, which looks like a
+                customer doing badly rather than one who has not started. */}
+            {isLead ? (
+              <>
+                <Stat label="Lead owner">
+                  {info?.lead?.ownerName ?? "Unassigned"}
+                </Stat>
+                <StatDivider />
+                <Stat label="Added">
+                  {info?.lead ? shortDate(info.lead.addedDate) : "-"}
+                </Stat>
+                <StatDivider />
+                <Stat label="Source">{info?.lead?.source ?? "Not recorded"}</Stat>
+              </>
+            ) : (
+              <>
+                <Stat label="Account manager · sales">
+                  {info?.accountManagers?.sales ??
+                    target.ownerName ??
+                    "Unassigned"}
+                </Stat>
+                <StatDivider />
+                {/* Unassigned back office is worth flagging: dispatch and billing
+                    questions on this call have nobody to go to. */}
+                <Stat
+                  label="Account manager · back office"
+                  tone={
+                    info && !info.accountManagers?.backOffice ? "warn" : undefined
+                  }
+                >
+                  {info?.accountManagers?.backOffice ?? "Unassigned"}
+                </Stat>
+                <StatDivider />
+                <Stat
+                  label="Outstanding"
+                  tone={target.outstanding > 0 ? "danger" : undefined}
+                >
+                  {money(target.outstanding)}
+                </Stat>
+                <StatDivider />
+                <Stat label="Target gap">{money(target.targetGap)}</Stat>
+              </>
+            )}
+            {target.openComplaint ? (
+              <>
+                <StatDivider />
+                {/* Clickable: the complaint is the thing to raise first, so it
+                    jumps to it rather than only announcing that it exists. */}
+                <button
+                  onClick={() => setTab("information")}
+                  title={target.openComplaint}
+                  className="shrink-0 cursor-pointer border-none bg-transparent p-0 text-sm font-medium whitespace-nowrap text-danger"
+                >
+                  Open complaint
+                </button>
+              </>
+            ) : null}
+            <span className="flex-1" />
+          </div>
+
+          {/* Every reason this customer is in front of you, in the queue's own
+              words, strongest first — and NOTHING cut short. A reason a
+              telecaller cannot finish reading is a call that gets made about
+              half of what it was for. */}
+          {reasons.length ? (
+            <div className="flex items-start gap-3 border-b border-divider px-6 py-2.5">
+              <span className="mt-[5px] shrink-0 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                {/* Counted, because "why am I calling" and "is that all of it"
+                    are two questions and the second one is the one that was
+                    going unanswered. */}
+                {reasons.length === 1 ? "Reason" : `Reasons · ${reasons.length}`}
+              </span>
+              <div className="flex min-w-0 flex-1 flex-wrap items-start gap-1.5">
+                {reasons.map((r, i) => (
+                  <Badge
+                    // Two overdue reminders are two reasons of the same kind,
+                    // each naming its own note, so the kind alone is not a key.
+                    key={`${r.kind}:${i}`}
+                    tone={REASON_TONE[r.kind] ?? "neutral"}
+                    // WRAPS. A Badge is `h-5` and `whitespace-nowrap` by
+                    // default, which is right for a table row and wrong here:
+                    // the label carries whatever note somebody typed, and this
+                    // is the one place it has to be read in full.
+                    className="h-auto max-w-full items-start py-[3px] text-[12px] leading-[1.45] whitespace-normal"
+                  >
+                    <span className="font-semibold">
+                      {REASON_BADGE[r.kind] ?? r.kind}
+                    </span>
+                    {/* The kind is the heading and the label is the detail; on
+                        most kinds the label restates the heading, so it is only
+                        drawn where it adds something. */}
+                    {r.label && r.label !== REASON_BADGE[r.kind] ? (
+                      <span className="font-normal opacity-90"> · {r.label}</span>
+                    ) : null}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {/*
+           * This customer is ALREADY in the state the post-save dialog's hold
+           * action exists for — a pending reminder standing behind an earlier
+           * reason — read live rather than waiting for a new call to surface
+           * it. The same offer, the same action, just a second place it can
+           * be taken from: a telecaller opening this record has not yet
+           * logged anything and should not have to, just to resolve it.
+           */}
+          {info?.pendingHold ? (
+            <PendingHoldBanner hold={info.pendingHold} />
+          ) : null}
+
+          {/* --------------------------------------- information | the form */}
+          {queueComplete ? (
+            // The last row has been worked. The design ends the run here rather
+            // than dropping the telecaller back onto an empty list.
+            <div className="flex flex-1 items-center justify-center p-6">
+              <div className="max-w-[420px] text-center">
+                <div className="text-[22px] leading-7 font-semibold text-ink">
+                  Queue complete
+                </div>
+                <p className="mt-1.5 text-[15px] text-muted">
+                  {queueTotal
+                    ? `${queueTotal} of ${queueTotal} customers worked today.`
+                    : "Every customer due today has been worked."}
+                </p>
+                <div className="mt-4 flex justify-center gap-2">
+                  <Button variant="secondary" onClick={onClose}>
+                    Close
+                  </Button>
+                  <a
+                    href="/crm/payments"
+                    className="inline-flex h-9 items-center rounded-[4px] border border-brand bg-brand px-4 text-sm font-medium text-white no-underline hover:bg-brand-hover hover:no-underline"
+                  >
+                    Go to payment follow-up ▸
+                  </a>
+                </div>
+              </div>
+            </div>
           ) : (
             <>
-              <Stat label="Account manager · sales">
-                {info?.accountManagers?.sales ??
-                  target.ownerName ??
-                  "Unassigned"}
-              </Stat>
-              <StatDivider />
-              {/* Unassigned back office is worth flagging: dispatch and billing
-                  questions on this call have nobody to go to. */}
-              <Stat
-                label="Account manager · back office"
-                tone={
-                  info && !info.accountManagers?.backOffice ? "warn" : undefined
-                }
-              >
-                {info?.accountManagers?.backOffice ?? "Unassigned"}
-              </Stat>
-              <StatDivider />
-              <Stat
-                label="Outstanding"
-                tone={target.outstanding > 0 ? "danger" : undefined}
-              >
-                {money(target.outstanding)}
-              </Stat>
-              <StatDivider />
-              <Stat label="Target gap">{money(target.targetGap)}</Stat>
-            </>
-          )}
-          {target.openComplaint ? (
-            <>
-              <StatDivider />
-              {/* Clickable: the complaint is the thing to raise first, so it
-                  jumps to it rather than only announcing that it exists. */}
-              <button
-                onClick={() => setTab("information")}
-                title={target.openComplaint}
-                className="shrink-0 cursor-pointer border-none bg-transparent p-0 text-sm font-medium whitespace-nowrap text-danger"
-              >
-                Open complaint
-              </button>
-            </>
-          ) : null}
-          <span className="flex-1" />
-        </div>
-
-        {/* Every reason this customer is in front of you, in the queue's own
-            words, strongest first — and NOTHING cut short. A reason a
-            telecaller cannot finish reading is a call that gets made about
-            half of what it was for. */}
-        {reasons.length ? (
-          <div className="flex items-start gap-3 border-b border-divider px-6 py-2.5">
-            <span className="mt-[5px] shrink-0 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-              {/* Counted, because "why am I calling" and "is that all of it"
-                  are two questions and the second one is the one that was
-                  going unanswered. */}
-              {reasons.length === 1 ? "Reason" : `Reasons · ${reasons.length}`}
-            </span>
-            <div className="flex min-w-0 flex-1 flex-wrap items-start gap-1.5">
-              {reasons.map((r, i) => (
-                <Badge
-                  // Two overdue reminders are two reasons of the same kind,
-                  // each naming its own note, so the kind alone is not a key.
-                  key={`${r.kind}:${i}`}
-                  tone={REASON_TONE[r.kind] ?? "neutral"}
-                  // WRAPS. A Badge is `h-5` and `whitespace-nowrap` by
-                  // default, which is right for a table row and wrong here:
-                  // the label carries whatever note somebody typed, and this
-                  // is the one place it has to be read in full.
-                  className="h-auto max-w-full items-start py-[3px] text-[12px] leading-[1.45] whitespace-normal"
-                >
-                  <span className="font-semibold">
-                    {REASON_BADGE[r.kind] ?? r.kind}
-                  </span>
-                  {/* The kind is the heading and the label is the detail; on
-                      most kinds the label restates the heading, so it is only
-                      drawn where it adds something. */}
-                  {r.label && r.label !== REASON_BADGE[r.kind] ? (
-                    <span className="font-normal opacity-90"> · {r.label}</span>
-                  ) : null}
-                </Badge>
-              ))}
-            </div>
-          </div>
-        ) : null}
-
-        {/*
-         * This customer is ALREADY in the state the post-save dialog's hold
-         * action exists for — a pending reminder standing behind an earlier
-         * reason — read live rather than waiting for a new call to surface
-         * it. The same offer, the same action, just a second place it can
-         * be taken from: a telecaller opening this record has not yet
-         * logged anything and should not have to, just to resolve it.
-         */}
-        {info?.pendingHold ? (
-          <PendingHoldBanner hold={info.pendingHold} />
-        ) : null}
-
-        {/* --------------------------------------- information | the form */}
-        {queueComplete ? (
-          // The last row has been worked. The design ends the run here rather
-          // than dropping the telecaller back onto an empty list.
-          <div className="flex flex-1 items-center justify-center p-6">
-            <div className="max-w-[420px] text-center">
-              <div className="text-[22px] leading-7 font-semibold text-ink">
-                Queue complete
+              {/* ---------------------------------------------------- the tabs */}
+              <div className="flex items-center gap-1 border-b border-divider px-6">
+                {[
+                  { key: "information" as const, label: "Information" },
+                  { key: "log" as const, label: "Call log" },
+                  { key: "script" as const, label: "Script" },
+                ].map((t) => (
+                  <button
+                    key={t.key}
+                    onClick={() => setTab(t.key)}
+                    className={cx(
+                      "cursor-pointer border-b-2 px-3 py-2.5 text-sm",
+                      tab === t.key
+                        ? "border-brand font-medium text-ink"
+                        : "border-transparent text-muted hover:text-body",
+                    )}
+                  >
+                    {t.label}
+                    {/* The dot marks the tab still holding unfinished work. */}
+                    {t.key === "log" && chosen && !saved ? (
+                      <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-brand align-middle" />
+                    ) : null}
+                  </button>
+                ))}
               </div>
-              <p className="mt-1.5 text-[15px] text-muted">
-                {queueTotal
-                  ? `${queueTotal} of ${queueTotal} customers worked today.`
-                  : "Every customer due today has been worked."}
-              </p>
-              <div className="mt-4 flex justify-center gap-2">
-                <Button variant="secondary" onClick={onClose}>
-                  Close
-                </Button>
-                <a
-                  href="/crm/payments"
-                  className="inline-flex h-9 items-center rounded-[4px] border border-brand bg-brand px-4 text-sm font-medium text-white no-underline hover:bg-brand-hover hover:no-underline"
-                >
-                  Go to payment follow-up ▸
-                </a>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <>
-            {/* ---------------------------------------------------- the tabs */}
-            <div className="flex items-center gap-1 border-b border-divider px-6">
-              {[
-                { key: "information" as const, label: "Information" },
-                { key: "log" as const, label: "Call log" },
-                { key: "script" as const, label: "Script" },
-              ].map((t) => (
-                <button
-                  key={t.key}
-                  onClick={() => setTab(t.key)}
+
+              <div className="min-h-0 flex-1">
+                <div
                   className={cx(
-                    "cursor-pointer border-b-2 px-3 py-2.5 text-sm",
-                    tab === t.key
-                      ? "border-brand font-medium text-ink"
-                      : "border-transparent text-muted hover:text-body",
+                    // No padding here — the Information sections are full-bleed and
+                    // separated by rules, so they carry their own.
+                    "h-full min-h-0 overflow-y-auto",
+                    tab === "information" ? "block" : "hidden",
                   )}
                 >
-                  {t.label}
-                  {/* The dot marks the tab still holding unfinished work. */}
-                  {t.key === "log" && chosen && !saved ? (
-                    <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-brand align-middle" />
-                  ) : null}
-                </button>
-              ))}
-            </div>
-
-            <div className="min-h-0 flex-1">
-              <div
-                className={cx(
-                  // No padding here — the Information sections are full-bleed and
-                  // separated by rules, so they carry their own.
-                  "h-full min-h-0 overflow-y-auto",
-                  tab === "information" ? "block" : "hidden",
-                )}
-              >
-                {loading ? (
-                  // Only this pane waits — the tabs and the form stay put, so
-                  // stepping to the next customer does not blank the modal.
-                  <div className="p-6">
-                    {[0, 1, 2, 3, 4, 5].map((i) => (
-                      <div
-                        key={i}
-                        className="mb-3 flex items-center gap-3 last:mb-0"
-                      >
-                        <span className="block h-2.5 w-[180px] rounded-[2px] bg-divider" />
-                        <span className="block h-2.5 w-[120px] rounded-[2px] bg-divider" />
-                        <span className="flex-1" />
-                        <span className="block h-2.5 w-[90px] rounded-[2px] bg-divider" />
-                      </div>
-                    ))}
-                  </div>
-                ) : info ? (
-                  <>
-                    {info.lead ? (
-                      <div className="border-b border-divider px-6 py-4">
-                        <p className="rounded-[4px] border border-brand-softer bg-brand-soft px-3.5 py-3 text-sm leading-[21px] text-ink">
-                          This is a lead - nobody here has ordered yet. There is
-                          no buying cycle, outstanding or monthly target to work
-                          from, so the call is about finding out what they use
-                          and what it would take to win the first order.
-                          {info.lead.source
-                            ? ` Came in through ${info.lead.source}.`
-                            : ""}
-                        </p>
-                      </div>
-                    ) : null}
-
-                    {/* Three columns, not four: the design folds the next expected
-                  order into the purchase cycle as its sub-line, because the
-                  cycle is what predicts the date and reading them apart makes
-                  the reader do the arithmetic. */}
-                    {info.purchase && info.monthly ? (
-                      <>
-                        <InfoSection label="Purchase summary">
-                          <Figure
-                            label="Last order"
-                            value={
-                              info.purchase.lastOrderDate
-                                ? shortDate(info.purchase.lastOrderDate)
-                                : "Never"
-                            }
-                            sub={
-                              info.purchase.lastOrderDaysAgo === null
-                                ? "No order recorded"
-                                : daysAgoLabel(info.purchase.lastOrderDaysAgo)
-                            }
-                          />
-                          <Figure
-                            label="Purchase cycle"
-                            value={`${info.purchase.cycleDays} days`}
-                            sub={
-                              info.purchase.nextOrderDate
-                                ? `Next order: ${shortDate(info.purchase.nextOrderDate)}`
-                                : info.purchase.cycleIsDefault
-                                  ? "Default - too little history"
-                                  : "No order to count from"
-                            }
-                            subTone="brand"
-                          />
-                          <Figure
-                            label="Last call"
-                            value={
-                              info.purchase.lastCallDate
-                                ? shortDate(info.purchase.lastCallDate)
-                                : "Never"
-                            }
-                            sub={
-                              info.purchase.lastCallDaysAgo === null
-                                ? "Never spoken to"
-                                : daysAgoLabel(info.purchase.lastCallDaysAgo)
-                            }
-                          />
-                        </InfoSection>
-
-                        <InfoSection label="Monthly performance">
-                          {/* The percentage leads and the rupees explain it. A target of
-                    ₹2,47,079 tells you nothing on its own; 0% does. */}
-                          <Figure
-                            label="Monthly target"
-                            value={`${info.monthly.achievementPercent}%`}
-                            sub={`${money(info.monthly.achieved)} achieved`}
-                          />
-                          <Figure
-                            label="Target gap this month"
-                            value={money(info.monthly.gap)}
-                            sub={`${info.monthly.workingDaysRemaining} working days left`}
-                          />
-                          {/* Boxed, and tinted when behind — this is the one figure on
-                    the tab that says do something differently today. */}
-                          <div
-                            className={cx(
-                              "rounded-[4px] border px-2.5 py-2",
-                              info.monthly.shortfallPerDay > 0
-                                ? "border-danger-soft bg-danger-soft"
-                                : "border-line bg-canvas",
-                            )}
-                          >
-                            <span className="block text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                              Run rate
-                            </span>
-                            <span
-                              className={cx(
-                                "mt-0.5 block text-lg leading-6 font-semibold",
-                                info.monthly.shortfallPerDay > 0
-                                  ? "text-warn-ink"
-                                  : "text-ink",
-                              )}
-                            >
-                              {info.monthly.shortfallPerDay > 0
-                                ? `Short by ${money(info.monthly.shortfallPerDay)}/day`
-                                : "On track"}
-                            </span>
-                            <span className="block text-[13px] text-body">
-                              Need {money(info.monthly.requiredPerDay)}/day
-                            </span>
-                          </div>
-                        </InfoSection>
-                      </>
-                    ) : null}
-
-                    {/* No heading in the design — two figures that need no naming as
-                  a group, and a heading would only add a line. */}
-                    <InfoSection>
-                      <Figure
-                        label="Outstanding"
-                        value={money(info.outstanding)}
-                        tone={info.outstanding > 0 ? "danger" : undefined}
-                      />
-                      <Figure
-                        label="Credit days"
-                        value={`${info.creditDays} days`}
-                      />
-                    </InfoSection>
-
-                    <InfoSection label="Last 3 calls" plain>
-                      {info.recentCalls.length ? (
-                        info.recentCalls.map((c) => (
-                          <div
-                            key={c.id}
-                            className="flex gap-3 border-t border-canvas py-2 first:border-0"
-                          >
-                            <span className="w-[58px] flex-none text-[13px] font-medium text-ink">
-                              {shortDate(c.at.slice(0, 10))}
-                            </span>
-                            <span className="min-w-0 flex-1">
-                              <Badge tone={outcomeTone(c.outcome)}>
-                                {c.outcome
-                                  ? (OUTCOME_LABEL[c.outcome] ?? c.outcome)
-                                  : "Logged"}
-                              </Badge>
-                              {c.notes ? (
-                                <span
-                                  title={c.notes}
-                                  className="mt-[3px] block truncate text-[13px] text-muted"
-                                >
-                                  {c.notes}
-                                </span>
-                              ) : null}
-                            </span>
-                          </div>
-                        ))
-                      ) : (
-                        <p className="py-4 text-sm text-muted">
-                          No calls logged against this customer yet. The first
-                          one you save appears here.
-                        </p>
-                      )}
-                    </InfoSection>
-
-                    <div className="px-6 py-4">
-                      <div className="mb-2 flex items-center gap-2">
-                        <span className="text-xs font-medium tracking-[0.04em] text-muted uppercase">
-                          Order status
-                        </span>
-                        {/* The design's chip says "From ERP · read-only". Ours says
-                      where the rows actually came from, because the ERP is not
-                      connected and a chip claiming otherwise would be a lie
-                      about the freshness of the numbers underneath it. */}
-                        <span className="inline-flex h-5 items-center rounded-[4px] border border-line bg-canvas px-1.5 text-[11px] font-medium text-muted">
-                          {info.productHistorySource === "external"
-                            ? "From ERP · read-only"
-                            : "From CRM orders · ERP not connected"}
-                        </span>
-                      </div>
-                      {info.productHistory.length ? (
-                        <div className="overflow-hidden rounded-[4px] border border-line">
-                          {info.productHistory.map((p) => (
-                            <div
-                              key={p.productName}
-                              className="flex items-center gap-3 border-b border-divider px-3 py-2 last:border-0"
-                            >
-                              <span
-                                className="min-w-0 flex-1 truncate text-sm text-ink"
-                                title={p.productName}
-                              >
-                                {p.productName}
-                              </span>
-                              <span className="flex-none text-[13px] text-muted">
-                                {p.lastPurchaseDate
-                                  ? shortDate(p.lastPurchaseDate)
-                                  : "-"}
-                              </span>
-                              <span className="w-[78px] flex-none text-right text-[13px] font-medium text-ink">
-                                {p.totalOrderCount}
-                                {p.totalOrderCount === 1 ? " order" : " orders"}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="rounded-[4px] border border-line px-3 py-5 text-center text-sm text-muted">
-                          No order history for this customer yet. It appears
-                          once an order is captured against them.
-                        </p>
-                      )}
-                    </div>
-                  </>
-                ) : (
-                  <p className="p-6 text-[13px] text-muted">
-                    Nothing recorded against this customer yet.
-                  </p>
-                )}
-              </div>
-
-              <div
-                className={cx(
-                  "h-full min-h-0 overflow-y-auto p-5",
-                  tab === "script" ? "block" : "hidden",
-                )}
-              >
-                {scripts.length ? (
-                  <div className="-mx-5 -mt-5 mb-4 border-b border-divider px-5 py-3.5">
-                    <div className="flex flex-wrap gap-1.5">
-                      {scripts.map((x) => (
-                        <button
-                          key={x.id}
-                          onClick={() => setScriptId(x.id)}
-                          className={cx(
-                            "cursor-pointer rounded-full border px-2.5 py-1 text-[13px]",
-                            script?.id === x.id
-                              ? "border-brand bg-brand-soft font-medium text-[#5223E0]"
-                              : "border-line bg-surface text-body hover:border-brand",
-                          )}
+                  {loading ? (
+                    // Only this pane waits — the tabs and the form stay put, so
+                    // stepping to the next customer does not blank the modal.
+                    <div className="p-6">
+                      {[0, 1, 2, 3, 4, 5].map((i) => (
+                        <div
+                          key={i}
+                          className="mb-3 flex items-center gap-3 last:mb-0"
                         >
-                          {x.title}
-                        </button>
+                          <span className="block h-2.5 w-[180px] rounded-[2px] bg-divider" />
+                          <span className="block h-2.5 w-[120px] rounded-[2px] bg-divider" />
+                          <span className="flex-1" />
+                          <span className="block h-2.5 w-[90px] rounded-[2px] bg-divider" />
+                        </div>
                       ))}
                     </div>
-                    {script?.guidance ? (
-                      <p className="mt-2 text-[13px] text-muted">
-                        {script.guidance.split(/\n+/)[0]}
-                      </p>
-                    ) : null}
-                    {scriptMissing ? (
-                      <div className="mt-2.5 rounded-[4px] border border-warn-line bg-warn-soft px-2.5 py-2 text-[13px] text-warn-ink">
-                        Nothing is written for{" "}
-                        {OUTCOME_LABEL[outcome!] ?? "this outcome"} yet - this
-                        is the closest script we have.
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-
-                {script ? (
-                  <div className="max-w-[420px]">
-                    {scriptBlocks(script, scriptFill).map((b, bi) => (
-                      <div key={bi} className="mb-4">
-                        <span className="mb-1.5 block text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                          {b.label}
-                        </span>
-                        {b.parsed.map((line, li) => (
-                          <div
-                            key={li}
-                            className="mb-1.5 text-base leading-7 text-ink"
-                            style={{ textWrap: "pretty" }}
-                          >
-                            {line.map((part, pi) => (
-                              <span
-                                key={pi}
-                                title={
-                                  part.placeholder && !part.resolved
-                                    ? "MahekOne does not know this one — say it in your own words"
-                                    : undefined
-                                }
-                                className={
-                                  !part.placeholder
-                                    ? undefined
-                                    : part.resolved
-                                      ? "rounded-[3px] bg-brand-soft px-1 font-medium text-[#5223E0]"
-                                      : "rounded-[3px] border border-dashed border-line px-1 font-medium text-muted"
-                                }
-                              >
-                                {part.text}
-                              </span>
-                            ))}
-                          </div>
-                        ))}
-                      </div>
-                    ))}
-                    <a
-                      href="/crm/help"
-                      className="text-sm font-medium text-brand"
-                    >
-                      More scripts and procedures →
-                    </a>
-                  </div>
-                ) : (
-                  <div className="px-6 py-10 text-center">
-                    <p className="text-[15px] text-muted">
-                      No script has been written for this situation yet.
-                    </p>
-                    <a
-                      href="/crm/help"
-                      className="mt-3.5 inline-flex h-8.5 items-center rounded-[4px] border border-line-strong bg-surface px-3.5 text-sm font-medium text-body no-underline hover:bg-canvas hover:no-underline"
-                    >
-                      Open the Help Center
-                    </a>
-                  </div>
-                )}
-              </div>
-
-              <div
-                className={cx(
-                  "h-full min-h-0 overflow-y-auto px-6 py-5",
-                  tab === "log" ? "block" : "hidden",
-                )}
-              >
-                <div className="mx-auto max-w-[720px]">
-                  {!saved && target ? (
-                    <CallAssistant
-                      key={target.customerId}
-                      customerId={target.customerId}
-                      customerName={target.name}
-                      customerPhone={target.phone}
-                      interactionType={type}
-                      notes={notes}
-                      onNotes={setNotes}
-                      onApply={applyAssistant}
-                      onEnabled={setAssistantOn}
-                      complaintCategories={complaintCategories}
-                      maxComplaintImages={maxComplaintImages}
-                    />
-                  ) : null}
-                  {/* THE CALL'S ONE NOTES BOX. It used to appear twice — a
-                      textarea in the assistant card and this field at the foot
-                      of the form — over the same `notes` state, and the foot
-                      one only existed once an outcome was picked. Here it is
-                      under the assistant from the first screen: speak, read the
-                      note it wrote, correct it, or just type. "Read what I
-                      typed" reads this box. */}
-                  {!saved ? (
-                    <div className="mb-4">
-                      <Field
-                        label="Notes"
-                        hint="Speak above or type here. Quick notes add to this - you can still edit or type your own."
-                        error={errors.notes ?? null}
-                      >
-                        <VoiceTextarea
-                          value={notes}
-                          onChange={(e) => setNotes(e.target.value)}
-                          onDictate={setNotes}
-                          hideMic={!micOnNotes}
-                          className="h-24"
-                          placeholder="What was said, in your own words — or type it: “Payment 50 hazar after 15 days, also wants a sample of PU sealer”"
-                        />
-                      </Field>
-                      <div id="call-log-form-start" />
-                    </div>
-                  ) : null}
-                  {saved ? (
-                    <div className="rounded-[6px] border border-line bg-surface p-5 text-center">
-                      <div className="text-lg font-semibold text-ink">
-                        Log saved
-                      </div>
-                      <div className="mt-1 text-sm text-muted">{saved}</div>
-                      <div className="mt-4 flex flex-wrap justify-center gap-2">
-                        {hasNext ? (
-                          <Button
-                            variant="primary"
-                            onClick={() => onSaved?.(true)}
-                          >
-                            Next customer
-                          </Button>
-                        ) : null}
-                        <Button variant="secondary" onClick={reset}>
-                          Log another interaction
-                        </Button>
-                        <Button variant="secondary" onClick={onClose}>
-                          Close
-                        </Button>
-                      </div>
-                    </div>
-                  ) : !type ? (
+                  ) : info ? (
                     <>
-                      <div className="text-[15px] font-semibold text-ink">
-                        How did this interaction happen?
-                      </div>
-                      {aiFilled.length ? (
-                        <p className="mt-1 mb-3.5 rounded-[4px] border border-brand-softer bg-brand-soft px-3 py-2 text-[13px] text-body">
-                          The assistant has the form ready ({aiFilled.join(" · ")}).
-                          It could not tell from what was said who rang whom — pick
-                          one and the form opens filled in.
-                        </p>
-                      ) : (
-                        <p className="mt-1 mb-3.5 text-[13px] text-muted">
-                          Pick one to start. Everything after this depends on it.
-                        </p>
-                      )}
-                      <div className="flex flex-col gap-2">
-                        {TYPES.map((t) => (
-                          <button
-                            key={t.key}
-                            onClick={() => {
-                              setType(t.key);
-                              /* The direction was the one thing the assistant
-                                 was waiting for; now the rest can go in. */
-                              if (aiPending && t.key !== "order_received") {
-                                applyAssistant({ ...aiPending, direction: t.key });
-                              }
-                            }}
-                            className="flex cursor-pointer items-center gap-3 rounded-[4px] border border-line bg-surface px-3 py-2.5 text-left hover:border-brand"
-                          >
-                            <span className="flex h-8 w-8 flex-none items-center justify-center rounded-[4px] bg-brand-soft text-[#5223E0]">
-                              <Icon name={t.icon} size={18} />
-                            </span>
-                            <span>
-                              <span className="block text-sm font-medium text-ink">
-                                {t.label}
-                              </span>
-                              <span className="block text-[13px] text-muted">
-                                {t.sub}
-                              </span>
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    </>
-                  ) : !chosen ? (
-                    <>
-                      <button
-                        onClick={() => setType(null)}
-                        className="mb-3 cursor-pointer text-[13px] text-brand"
-                      >
-                        ← {TYPES.find((t) => t.key === type)?.label}
-                      </button>
-                      {script ? (
-                        <div className="mb-3 rounded-[4px] border border-line bg-canvas px-3 py-2">
-                          <div className="flex items-baseline gap-2">
-                            <button
-                              onClick={() => setStripOpen((o) => !o)}
-                              className="flex cursor-pointer items-center gap-1.5"
-                            >
-                              <Icon
-                                name="chevron"
-                                size={12}
-                                className={cx(
-                                  "text-muted transition-transform",
-                                  stripOpen && "rotate-90",
-                                )}
-                              />
-                              <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                                {script.title}
-                              </span>
-                            </button>
-                            <span className="flex-1" />
-                            <button
-                              onClick={() => setTab("script")}
-                              className="cursor-pointer text-[13px] text-brand"
-                            >
-                              Read full script →
-                            </button>
-                          </div>
-                          {stripOpen ? (
-                            <div className="mt-1.5">
-                              {scriptBlocks(script, scriptFill)
-                                .slice(0, 1)
-                                .map((b, bi) => (
-                                  <div key={bi}>
-                                    {b.parsed.map((line, li) => (
-                                      <div
-                                        key={li}
-                                        className="text-[13px] leading-5 text-body"
-                                      >
-                                        {line.map((part, pi) => (
-                                          <span
-                                            key={pi}
-                                            className={
-                                              !part.placeholder
-                                                ? undefined
-                                                : part.resolved
-                                                  ? "font-medium text-[#5223E0]"
-                                                  : "font-medium text-muted"
-                                            }
-                                          >
-                                            {part.text}
-                                          </span>
-                                        ))}
-                                      </div>
-                                    ))}
-                                  </div>
-                                ))}
-                            </div>
-                          ) : null}
+                      {info.lead ? (
+                        <div className="border-b border-divider px-6 py-4">
+                          <p className="rounded-[4px] border border-brand-softer bg-brand-soft px-3.5 py-3 text-sm leading-[21px] text-ink">
+                            This is a lead - nobody here has ordered yet. There is
+                            no buying cycle, outstanding or monthly target to work
+                            from, so the call is about finding out what they use
+                            and what it would take to win the first order.
+                            {info.lead.source
+                              ? ` Came in through ${info.lead.source}.`
+                              : ""}
+                          </p>
                         </div>
                       ) : null}
 
-                      {/* ------------------------------------ who rang
-                          Asked FIRST, and only inbound. A price question from
-                          the owner and the same question from a store boy are
-                          different calls, and only one is worth a salesman's
-                          morning. There is no contact master to read this from
-                          — `contact_person` is one field holding whoever last
-                          answered — so it is asked, and the name box beside it
-                          is what a contact master gets built out of. */}
-                      {isInbound ? (
+                      {/* Three columns, not four: the design folds the next expected
+                    order into the purchase cycle as its sub-line, because the
+                    cycle is what predicts the date and reading them apart makes
+                    the reader do the arithmetic. */}
+                      {info.purchase && info.monthly ? (
                         <>
-                          <div className="text-[15px] font-semibold text-ink">
-                            Who called?
-                          </div>
-                          <div className="mt-2.5 flex flex-wrap gap-1.5">
-                            {CALLER_ROLES.map((r) => (
-                              <button
-                                key={r.code}
-                                onClick={() => setCallerRole(r.code)}
-                                aria-pressed={callerRole === r.code}
-                                className={cx(
-                                  "h-8 cursor-pointer rounded-[4px] border px-2.5 text-[13px]",
-                                  callerRole === r.code
-                                    ? "border-brand bg-brand-soft font-medium text-brand-hover"
-                                    : "border-line bg-surface text-body hover:border-brand",
-                                )}
-                              >
-                                {r.label}
-                              </button>
-                            ))}
-                          </div>
-                          {/* Optional, deliberately. A telecaller who did not
-                              catch the name must still be able to save the
-                              call — the role is the part that changes what the
-                              call is worth. */}
-                          <div className="mt-2">
-                            <Input
-                              value={callerName}
-                              onChange={(e) => setCallerName(e.target.value)}
-                              placeholder="Their name, if you caught it (optional)"
+                          <InfoSection label="Purchase summary">
+                            <Figure
+                              label="Last order"
+                              value={
+                                info.purchase.lastOrderDate
+                                  ? shortDate(info.purchase.lastOrderDate)
+                                  : "Never"
+                              }
+                              sub={
+                                info.purchase.lastOrderDaysAgo === null
+                                  ? "No order recorded"
+                                  : daysAgoLabel(info.purchase.lastOrderDaysAgo)
+                              }
                             />
-                          </div>
-                          {target.contactPerson ? (
-                            <p className="mt-1 text-[11px] text-muted">
-                              On record for this account: {target.contactPerson}
-                            </p>
-                          ) : null}
+                            <Figure
+                              label="Purchase cycle"
+                              value={`${info.purchase.cycleDays} days`}
+                              sub={
+                                info.purchase.nextOrderDate
+                                  ? `Next order: ${shortDate(info.purchase.nextOrderDate)}`
+                                  : info.purchase.cycleIsDefault
+                                    ? "Default - too little history"
+                                    : "No order to count from"
+                              }
+                              subTone="brand"
+                            />
+                            <Figure
+                              label="Last call"
+                              value={
+                                info.purchase.lastCallDate
+                                  ? shortDate(info.purchase.lastCallDate)
+                                  : "Never"
+                              }
+                              sub={
+                                info.purchase.lastCallDaysAgo === null
+                                  ? "Never spoken to"
+                                  : daysAgoLabel(info.purchase.lastCallDaysAgo)
+                              }
+                            />
+                          </InfoSection>
 
-                          {/* ------------------------------ why they rang
-                              THE MAIN CLASSIFICATION. What the customer wanted
-                              when they picked up the phone — which is not what
-                              the call ended as, and was not being recorded at
-                              all. */}
-                          <div className="mt-5 text-[15px] font-semibold text-ink">
-                            Why did they call?
-                          </div>
-                          <div className="mt-2.5 grid grid-cols-2 gap-1.5">
-                            {CALL_REASONS.map((r) => (
-                              <button
-                                key={r.code}
-                                onClick={() => {
-                                  setCallReason(r.code);
-                                  /* Changing the reason changes the questions,
-                                     so the old answers go with it — carrying a
-                                     price enquiry's packaging onto a delivery
-                                     chase would store an answer to a question
-                                     this call never asked. */
-                                  setReasonDetail({});
-                                  setNextActions([]);
-                                  setNextActionDate("");
-                                }}
-                                aria-pressed={callReason === r.code}
+                          <InfoSection label="Monthly performance">
+                            {/* The percentage leads and the rupees explain it. A target of
+                      ₹2,47,079 tells you nothing on its own; 0% does. */}
+                            <Figure
+                              label="Monthly target"
+                              value={`${info.monthly.achievementPercent}%`}
+                              sub={`${money(info.monthly.achieved)} achieved`}
+                            />
+                            <Figure
+                              label="Target gap this month"
+                              value={money(info.monthly.gap)}
+                              sub={`${info.monthly.workingDaysRemaining} working days left`}
+                            />
+                            {/* Boxed, and tinted when behind — this is the one figure on
+                      the tab that says do something differently today. */}
+                            <div
+                              className={cx(
+                                "rounded-[4px] border px-2.5 py-2",
+                                info.monthly.shortfallPerDay > 0
+                                  ? "border-danger-soft bg-danger-soft"
+                                  : "border-line bg-canvas",
+                              )}
+                            >
+                              <span className="block text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                                Run rate
+                              </span>
+                              <span
                                 className={cx(
-                                  "cursor-pointer rounded-[4px] border px-2.5 py-2 text-left text-[13px]",
-                                  callReason === r.code
-                                    ? "border-brand bg-brand-soft font-medium text-brand-hover"
-                                    : "border-line bg-surface text-body hover:border-brand",
+                                  "mt-0.5 block text-lg leading-6 font-semibold",
+                                  info.monthly.shortfallPerDay > 0
+                                    ? "text-warn-ink"
+                                    : "text-ink",
                                 )}
                               >
-                                {r.label}
-                              </button>
-                            ))}
-                          </div>
+                                {info.monthly.shortfallPerDay > 0
+                                  ? `Short by ${money(info.monthly.shortfallPerDay)}/day`
+                                  : "On track"}
+                              </span>
+                              <span className="block text-[13px] text-body">
+                                Need {money(info.monthly.requiredPerDay)}/day
+                              </span>
+                            </div>
+                          </InfoSection>
                         </>
                       ) : null}
 
-                      <div
-                        className={cx(
-                          "text-[15px] font-semibold text-ink",
-                          isInbound && "mt-5",
+                      {/* No heading in the design — two figures that need no naming as
+                    a group, and a heading would only add a line. */}
+                      <InfoSection>
+                        <Figure
+                          label="Outstanding"
+                          value={money(info.outstanding)}
+                          tone={info.outstanding > 0 ? "danger" : undefined}
+                        />
+                        <Figure
+                          label="Credit days"
+                          value={`${info.creditDays} days`}
+                        />
+                      </InfoSection>
+
+                      <InfoSection label="Last 3 calls" plain>
+                        {info.recentCalls.length ? (
+                          info.recentCalls.map((c) => (
+                            <div
+                              key={c.id}
+                              className="flex gap-3 border-t border-canvas py-2 first:border-0"
+                            >
+                              <span className="w-[58px] flex-none text-[13px] font-medium text-ink">
+                                {shortDate(c.at.slice(0, 10))}
+                              </span>
+                              <span className="min-w-0 flex-1">
+                                <Badge tone={outcomeTone(c.outcome)}>
+                                  {c.outcome
+                                    ? (OUTCOME_LABEL[c.outcome] ?? c.outcome)
+                                    : "Logged"}
+                                </Badge>
+                                {c.notes ? (
+                                  <span
+                                    title={c.notes}
+                                    className="mt-[3px] block truncate text-[13px] text-muted"
+                                  >
+                                    {c.notes}
+                                  </span>
+                                ) : null}
+                              </span>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="py-4 text-sm text-muted">
+                            No calls logged against this customer yet. The first
+                            one you save appears here.
+                          </p>
                         )}
-                      >
-                        What was the outcome?
-                      </div>
-                      {/* The outcome is how the call ENDED, and it is held back
-                          until the classification is answered — not disabled
-                          and clickable-looking, which teaches people the screen
-                          is broken, but said in words. */}
-                      {isInbound && !classified ? (
-                        <p className="mt-1.5 text-[13px] text-muted">
-                          Answer who called and why first — they are what the
-                          call was about; this is how it ended.
-                        </p>
-                      ) : null}
-                      <div className="mt-3 flex flex-col gap-2">
-                        {OUTCOMES[
-                          type as Exclude<InteractionType, "order_received">
-                        ].map((o) => (
-                          <button
-                            key={o}
-                            disabled={!classified}
-                            title={
-                              classified
-                                ? undefined
-                                : "Answer who called and why first"
-                            }
-                            onClick={() => pickOutcome(o)}
-                            className="cursor-pointer rounded-[4px] border border-line bg-surface px-3 py-2.5 text-left text-sm font-medium text-ink hover:border-brand disabled:cursor-not-allowed disabled:border-line disabled:bg-canvas disabled:text-muted disabled:hover:border-line"
-                          >
-                            {OUTCOME_LABEL[o]}
-                          </button>
-                        ))}
+                      </InfoSection>
+
+                      <div className="px-6 py-4">
+                        <div className="mb-2 flex items-center gap-2">
+                          <span className="text-xs font-medium tracking-[0.04em] text-muted uppercase">
+                            Order status
+                          </span>
+                          {/* The design's chip says "From ERP · read-only". Ours says
+                        where the rows actually came from, because the ERP is not
+                        connected and a chip claiming otherwise would be a lie
+                        about the freshness of the numbers underneath it. */}
+                          <span className="inline-flex h-5 items-center rounded-[4px] border border-line bg-canvas px-1.5 text-[11px] font-medium text-muted">
+                            {info.productHistorySource === "external"
+                              ? "From ERP · read-only"
+                              : "From CRM orders · ERP not connected"}
+                          </span>
+                        </div>
+                        {info.productHistory.length ? (
+                          <div className="overflow-hidden rounded-[4px] border border-line">
+                            {info.productHistory.map((p) => (
+                              <div
+                                key={p.productName}
+                                className="flex items-center gap-3 border-b border-divider px-3 py-2 last:border-0"
+                              >
+                                <span
+                                  className="min-w-0 flex-1 truncate text-sm text-ink"
+                                  title={p.productName}
+                                >
+                                  {p.productName}
+                                </span>
+                                <span className="flex-none text-[13px] text-muted">
+                                  {p.lastPurchaseDate
+                                    ? shortDate(p.lastPurchaseDate)
+                                    : "-"}
+                                </span>
+                                <span className="w-[78px] flex-none text-right text-[13px] font-medium text-ink">
+                                  {p.totalOrderCount}
+                                  {p.totalOrderCount === 1 ? " order" : " orders"}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="rounded-[4px] border border-line px-3 py-5 text-center text-sm text-muted">
+                            No order history for this customer yet. It appears
+                            once an order is captured against them.
+                          </p>
+                        )}
                       </div>
                     </>
                   ) : (
-                    <>
-                      <button
-                        onClick={() =>
-                          isOrderReceived ? setType(null) : pickOutcome(null)
-                        }
-                        className="mb-3 cursor-pointer text-[13px] text-brand"
-                      >
-                        ← {TYPES.find((t) => t.key === type)?.label}
-                        {/* The reason belongs in this line: it is what the call
-                            was about, and the outcome alone reads as the whole
-                            classification when it is half of it. */}
-                        {callReason ? ` · ${CALL_REASON_LABEL[callReason]}` : ""}
-                        {outcome ? ` · ${OUTCOME_LABEL[outcome]}` : ""}
-                      </button>
+                    <p className="p-6 text-[13px] text-muted">
+                      Nothing recorded against this customer yet.
+                    </p>
+                  )}
+                </div>
 
-                      {aiFilled.length ? (
-                        <p className="mb-3.5 rounded-[4px] border border-brand-softer bg-brand-soft px-3 py-2 text-[13px] text-body">
-                          <span className="font-medium text-ink">Filled from what you said: </span>
-                          {aiFilled.join(" · ")}. Check each one before you save —
-                          nothing is saved until you press Save.
+                <div
+                  className={cx(
+                    "h-full min-h-0 overflow-y-auto p-5",
+                    tab === "script" ? "block" : "hidden",
+                  )}
+                >
+                  {scripts.length ? (
+                    <div className="-mx-5 -mt-5 mb-4 border-b border-divider px-5 py-3.5">
+                      <div className="flex flex-wrap gap-1.5">
+                        {scripts.map((x) => (
+                          <button
+                            key={x.id}
+                            onClick={() => setScriptId(x.id)}
+                            className={cx(
+                              "cursor-pointer rounded-full border px-2.5 py-1 text-[13px]",
+                              script?.id === x.id
+                                ? "border-brand bg-brand-soft font-medium text-[#5223E0]"
+                                : "border-line bg-surface text-body hover:border-brand",
+                            )}
+                          >
+                            {x.title}
+                          </button>
+                        ))}
+                      </div>
+                      {script?.guidance ? (
+                        <p className="mt-2 text-[13px] text-muted">
+                          {script.guidance.split(/\n+/)[0]}
                         </p>
                       ) : null}
-
-                      {/* --------------------------------- the ledger, read back
-                          Not a figure the telecaller has to go and find: the
-                          outstanding total and the open bills are already on
-                          this panel, fetched for the script's placeholders, and
-                          a money conversation held without them on screen is one
-                          where we ask the customer what they owe. */}
-                      {isInbound && showsLedger(callReason) ? (
-                        <div className="mb-3.5 rounded-[4px] border border-line bg-canvas p-3">
-                          <div className="flex items-baseline justify-between gap-3">
-                            <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                              What they owe
-                            </span>
-                            <span
-                              className={cx(
-                                "text-[15px] font-semibold",
-                                target.outstanding > 0 ? "text-danger" : "text-ink",
-                              )}
-                            >
-                              {money(target.outstanding)}
-                            </span>
-                          </div>
-                          {openBills.length ? (
-                            <div className="mt-2 flex flex-col gap-1">
-                              {openBills.slice(0, 5).map((b) => {
-                                const late = Boolean(b.dueDate && b.dueDate < todayIso);
-                                return (
-                                  <div
-                                    key={b.billNo}
-                                    className="flex items-baseline justify-between gap-3 text-[13px]"
-                                  >
-                                    <span className="min-w-0 truncate text-body">
-                                      {b.billNo}
-                                      <span
-                                        className={cx(
-                                          "ml-1.5",
-                                          late ? "text-danger" : "text-muted",
-                                        )}
-                                      >
-                                        {b.dueDate
-                                          ? late
-                                            ? `overdue since ${shortDate(b.dueDate)}`
-                                            : `due ${shortDate(b.dueDate)}`
-                                          : "no due date"}
-                                      </span>
-                                    </span>
-                                    <span className="flex-none font-medium text-ink">
-                                      {money(b.balance)}
-                                    </span>
-                                  </div>
-                                );
-                              })}
-                              {openBills.length > 5 ? (
-                                <span className="text-[11px] text-muted">
-                                  and {openBills.length - 5} more — the full list is
-                                  on their account.
-                                </span>
-                              ) : null}
-                            </div>
-                          ) : (
-                            <p className="mt-1.5 text-[13px] text-muted">
-                              No open bills on this account.
-                            </p>
-                          )}
+                      {scriptMissing ? (
+                        <div className="mt-2.5 rounded-[4px] border border-warn-line bg-warn-soft px-2.5 py-2 text-[13px] text-warn-ink">
+                          Nothing is written for{" "}
+                          {OUTCOME_LABEL[outcome!] ?? "this outcome"} yet - this
+                          is the closest script we have.
                         </div>
                       ) : null}
+                    </div>
+                  ) : null}
 
-                      {/* ------------------------- what the reason asks for
-                          Rendered from `reasonFieldsFor`, which is also what
-                          the server validates against — one list, so a box that
-                          is mandatory on the screen is mandatory in the rule. */}
-                      {reasonFields.length ? (
-                        <AnswerBlock
-                          heading={CALL_REASON_LABEL[callReason]}
-                          fields={reasonFields}
-                          answers={reasonDetail}
-                          onChange={(k, v) =>
-                            setReasonDetail((d) => ({ ...d, [k]: v }))
-                          }
-                          errors={errors}
-                          errorPrefix="reasonDetail"
-                          name="reason"
-                        />
-                      ) : null}
+                  {script ? (
+                    <div className="max-w-[420px]">
+                      {scriptBlocks(script, scriptFill).map((b, bi) => (
+                        <div key={bi} className="mb-4">
+                          <span className="mb-1.5 block text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                            {b.label}
+                          </span>
+                          {b.parsed.map((line, li) => (
+                            <div
+                              key={li}
+                              className="mb-1.5 text-base leading-7 text-ink"
+                              style={{ textWrap: "pretty" }}
+                            >
+                              {line.map((part, pi) => (
+                                <span
+                                  key={pi}
+                                  title={
+                                    part.placeholder && !part.resolved
+                                      ? "MahekOne does not know this one — say it in your own words"
+                                      : undefined
+                                  }
+                                  className={
+                                    !part.placeholder
+                                      ? undefined
+                                      : part.resolved
+                                        ? "rounded-[3px] bg-brand-soft px-1 font-medium text-[#5223E0]"
+                                        : "rounded-[3px] border border-dashed border-line px-1 font-medium text-muted"
+                                  }
+                                >
+                                  {part.text}
+                                </span>
+                              ))}
+                            </div>
+                          ))}
+                        </div>
+                      ))}
+                      <a
+                        href="/crm/help"
+                        className="text-sm font-medium text-brand"
+                      >
+                        More scripts and procedures →
+                      </a>
+                    </div>
+                  ) : (
+                    <div className="px-6 py-10 text-center">
+                      <p className="text-[15px] text-muted">
+                        No script has been written for this situation yet.
+                      </p>
+                      <a
+                        href="/crm/help"
+                        className="mt-3.5 inline-flex h-8.5 items-center rounded-[4px] border border-line-strong bg-surface px-3.5 text-sm font-medium text-body no-underline hover:bg-canvas hover:no-underline"
+                      >
+                        Open the Help Center
+                      </a>
+                    </div>
+                  )}
+                </div>
 
-                      {/* ------------------------- what the OUTCOME asks for
-                          The same renderer, because they are the same kind of
-                          question — a coded answer with one value — and two
-                          copies of a form renderer is two sets of bugs and one
-                          of them always renders `required` differently. */}
-                      {outcomeFields.length ? (
-                        <AnswerBlock
-                          heading={OUTCOME_LABEL[outcome!] ?? ""}
-                          fields={outcomeFields}
-                          answers={outcomeDetail}
-                          onChange={(k, v) =>
-                            setOutcomeDetail((d) => ({ ...d, [k]: v }))
-                          }
-                          required={(f) => outcomeFieldRequired(f, outcomeDetail)}
-                          errors={errors}
-                          errorPrefix="outcomeDetail"
-                          name="outcome"
-                          /* THE ONE ANSWER ON THIS FORM THAT SILENCES THE
-                             CUSTOMER FOR GOOD. `do_not_contact` outranks every
-                             reason the queue can produce, including a reminder,
-                             so it is said in words before it is saved rather
-                             than discovered later by somebody wondering why an
-                             account went quiet. */
-                          warnOn={{
-                            key: "futureOpportunity",
-                            value: "never",
-                            text: "This marks the customer do-not-contact. No call and no reminder message will go to them again until somebody lifts it on their record.",
-                          }}
-                        />
-                      ) : null}
-
-                      {/* WHICH ATTEMPT THIS IS, read off the queue's own ladder
-                          rather than counted here. Nobody spoke to anybody, so
-                          this and the reason above it are the whole form — a
-                          telecaller working down a list of forty fills a long
-                          one in at speed and stops reading it. */}
-                      {outcome === "no_answer" && attemptLabel ? (
-                        <p className="mb-3.5 rounded-[4px] border border-line bg-canvas px-3 py-2 text-[13px] text-body">
-                          {attemptLabel}
-                        </p>
-                      ) : null}
-
-                      {/* WHERE NOTHING BACKS IT, SAY SO.
-                          There is no quotation record and no stock system, and
-                          a screen that implied otherwise would have somebody
-                          telling a customer stock is confirmed on the strength
-                          of a dropdown. Naming the gap is what turns it into
-                          something somebody can fix. */}
-                      {unbacked ? (
-                        <p className="mb-3.5 rounded-[4px] border border-warn-line bg-warn-soft px-3 py-2 text-[13px] text-warn-ink">
-                          {unbacked}
-                        </p>
-                      ) : null}
-
-                      {isOrderReceived ? (
+                <div
+                  className={cx(
+                    "h-full min-h-0 overflow-y-auto px-6 py-5",
+                    tab === "log" ? "block" : "hidden",
+                  )}
+                >
+                  <div className="mx-auto max-w-[720px]">
+                    {!saved && target ? (
+                      <CallAssistant
+                        key={target.customerId}
+                        customerId={target.customerId}
+                        customerName={target.name}
+                        customerPhone={target.phone}
+                        interactionType={type}
+                        notes={notes}
+                        onNotes={setNotes}
+                        onApply={applyAssistant}
+                        onEnabled={setAssistantOn}
+                        complaintCategories={complaintCategories}
+                        maxComplaintImages={maxComplaintImages}
+                      />
+                    ) : null}
+                    {/* THE CALL'S ONE NOTES BOX. It used to appear twice — a
+                        textarea in the assistant card and this field at the foot
+                        of the form — over the same `notes` state, and the foot
+                        one only existed once an outcome was picked. Here it is
+                        under the assistant from the first screen: speak, read the
+                        note it wrote, correct it, or just type. "Read what I
+                        typed" reads this box. */}
+                    {!saved ? (
+                      <div className="mb-4">
                         <Field
-                          label="Order date"
-                          hint="Choose the date the order came in."
-                          error={errors.orderDate ?? null}
+                          label="Notes"
+                          hint="Speak above or type here. Quick notes add to this - you can still edit or type your own."
+                          error={errors.notes ?? null}
                         >
-                          <Input
-                            type="date"
-                            value={orderDate}
-                            max={today()}
-                            onChange={(e) => setOrderDate(e.target.value)}
+                          <VoiceTextarea
+                            value={notes}
+                            onChange={(e) => setNotes(e.target.value)}
+                            onDictate={setNotes}
+                            hideMic={!micOnNotes}
+                            className="h-24"
+                            placeholder="What was said, in your own words — or type it: “Payment 50 hazar after 15 days, also wants a sample of PU sealer”"
                           />
                         </Field>
-                      ) : null}
-
-                      {needsFollowUp ? (
-                        <Field
-                          label="Follow-up date"
-                          hint="Pick the follow-up date - it becomes a reminder you will see on the day."
-                          error={errors.followUpDate ?? null}
-                        >
-                          {/* "Call me tomorrow" and "call me after three days" are what
-                    customers actually say, and both were three taps through a
-                    date picker. The chips write the same date into the same
-                    field, so the picker still wins for anything unusual. */}
-                          <div className="mb-1.5 flex flex-wrap gap-1.5">
-                            {FOLLOW_UP_PRESETS.map((preset) => {
-                              const date = addDays(today(), preset.days);
-                              return (
-                                <button
-                                  key={preset.label}
-                                  type="button"
-                                  onClick={() => setFollowUpDate(date)}
-                                  className={cx(
-                                    "h-7 cursor-pointer rounded-[4px] border px-2.5 text-[13px]",
-                                    followUpDate === date
-                                      ? "border-brand bg-brand-soft font-medium text-brand-hover"
-                                      : "border-line bg-surface text-body hover:bg-canvas",
-                                  )}
-                                >
-                                  {preset.label}
-                                </button>
-                              );
-                            })}
-                          </div>
-                          <Input
-                            type="date"
-                            value={followUpDate}
-                            min={today()}
-                            onChange={(e) => setFollowUpDate(e.target.value)}
-                          />
-                        </Field>
-                      ) : null}
-
-                      {needsNextCall ? (
-                        <Field
-                          label="When do we call back"
-                          hint="Ask before ringing off. A date they give becomes a reminder and beats the usual wait, so the call lands on the day they named."
-                          error={errors.noOrderNextCallDate ?? null}
-                        >
-                          <div className="mb-1.5 flex flex-wrap gap-1.5">
-                            {FOLLOW_UP_PRESETS.map((preset) => {
-                              const date = addDays(today(), preset.days);
-                              return (
-                                <button
-                                  key={preset.label}
-                                  type="button"
-                                  onClick={() => {
-                                    setNoOrderNextCallDate(date);
-                                    setNoOrderNoCommitment(false);
-                                  }}
-                                  className={cx(
-                                    "h-7 cursor-pointer rounded-[4px] border px-2.5 text-[13px]",
-                                    !noOrderNoCommitment && noOrderNextCallDate === date
-                                      ? "border-brand bg-brand-soft font-medium text-brand-hover"
-                                      : "border-line bg-surface text-body hover:bg-canvas",
-                                  )}
-                                >
-                                  {preset.label}
-                                </button>
-                              );
-                            })}
-                          </div>
-                          <Input
-                            type="date"
-                            value={noOrderNoCommitment ? "" : noOrderNextCallDate}
-                            min={today()}
-                            disabled={noOrderNoCommitment}
-                            onChange={(e) => setNoOrderNextCallDate(e.target.value)}
-                          />
-                          {/*
-                            The escape hatch, and it has to be deliberate. Plenty
-                            of customers will not name a day, and the telecaller
-                            must be able to say so — but by saying it, not by
-                            leaving the box empty, which is indistinguishable
-                            from having forgotten to ask.
-                          */}
-                          <label className="mt-2 flex cursor-pointer items-start gap-2 text-[13px] text-body">
-                            <input
-                              type="checkbox"
-                              checked={noOrderNoCommitment}
-                              onChange={(e) => {
-                                setNoOrderNoCommitment(e.target.checked);
-                                if (e.target.checked) setNoOrderNextCallDate("");
+                        <div id="call-log-form-start" />
+                      </div>
+                    ) : null}
+                    {saved ? (
+                      <div className="rounded-[6px] border border-line bg-surface p-5 text-center">
+                        <div className="text-lg font-semibold text-ink">
+                          Log saved
+                        </div>
+                        <div className="mt-1 text-sm text-muted">{saved}</div>
+                        <div className="mt-4 flex flex-wrap justify-center gap-2">
+                          {hasNext ? (
+                            <Button
+                              variant="primary"
+                              onClick={() => onSaved?.(true)}
+                            >
+                              Next customer
+                            </Button>
+                          ) : null}
+                          <Button variant="secondary" onClick={reset}>
+                            Log another interaction
+                          </Button>
+                          <Button variant="secondary" onClick={onClose}>
+                            Close
+                          </Button>
+                        </div>
+                      </div>
+                    ) : !type ? (
+                      <>
+                        <div className="text-[15px] font-semibold text-ink">
+                          How did this interaction happen?
+                        </div>
+                        {aiFilled.length ? (
+                          <p className="mt-1 mb-3.5 rounded-[4px] border border-brand-softer bg-brand-soft px-3 py-2 text-[13px] text-body">
+                            The assistant has the form ready ({aiFilled.join(" · ")}).
+                            It could not tell from what was said who rang whom — pick
+                            one and the form opens filled in.
+                          </p>
+                        ) : (
+                          <p className="mt-1 mb-3.5 text-[13px] text-muted">
+                            Pick one to start. Everything after this depends on it.
+                          </p>
+                        )}
+                        <div className="flex flex-col gap-2">
+                          {TYPES.map((t) => (
+                            <button
+                              key={t.key}
+                              onClick={() => {
+                                setType(t.key);
+                                /* The direction was the one thing the assistant
+                                   was waiting for; now the rest can go in. */
+                                if (aiPending && t.key !== "order_received") {
+                                  applyAssistant({ ...aiPending, direction: t.key });
+                                }
                               }}
-                              className="mt-0.5 h-4 w-4 cursor-pointer"
-                            />
-                            <span>
-                              They would not commit to a date
-                              <span className="block text-[11px] text-muted">
-                                We will ask again after the usual wait.
+                              className="flex cursor-pointer items-center gap-3 rounded-[4px] border border-line bg-surface px-3 py-2.5 text-left hover:border-brand"
+                            >
+                              <span className="flex h-8 w-8 flex-none items-center justify-center rounded-[4px] bg-brand-soft text-[#5223E0]">
+                                <Icon name={t.icon} size={18} />
                               </span>
-                            </span>
-                          </label>
-                        </Field>
-                      ) : null}
-
-                      {showPayDate ? (
-                        <Field
-                          label={
-                            needsPayDate
-                              ? "Payment date"
-                              : "Payment date (optional)"
-                          }
-                          hint="Enter the date they committed to."
-                          error={errors.paymentPromiseDate ?? null}
+                              <span>
+                                <span className="block text-sm font-medium text-ink">
+                                  {t.label}
+                                </span>
+                                <span className="block text-[13px] text-muted">
+                                  {t.sub}
+                                </span>
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    ) : !chosen ? (
+                      <>
+                        <button
+                          onClick={() => setType(null)}
+                          className="mb-3 cursor-pointer text-[13px] text-brand"
                         >
-                          {/* THE FLOOR WAS THE HALF THAT WAS MISSING. Both other
-                              date fields on this form reject the past and this
-                              one did not, so a mistyped year produced a payment
-                              reminder already overdue — which puts the customer
-                              at `reminderOverdue`, the strongest tier in the
-                              queue, the next morning, for a promise they had
-                              just made. */}
-                          <Input
-                            type="date"
-                            value={payDate}
-                            min={today()}
-                            onChange={(e) => setPayDate(e.target.value)}
-                          />
-                        </Field>
-                      ) : null}
+                          ← {TYPES.find((t) => t.key === type)?.label}
+                        </button>
+                        {script ? (
+                          <div className="mb-3 rounded-[4px] border border-line bg-canvas px-3 py-2">
+                            <div className="flex items-baseline gap-2">
+                              <button
+                                onClick={() => setStripOpen((o) => !o)}
+                                className="flex cursor-pointer items-center gap-1.5"
+                              >
+                                <Icon
+                                  name="chevron"
+                                  size={12}
+                                  className={cx(
+                                    "text-muted transition-transform",
+                                    stripOpen && "rotate-90",
+                                  )}
+                                />
+                                <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                                  {script.title}
+                                </span>
+                              </button>
+                              <span className="flex-1" />
+                              <button
+                                onClick={() => setTab("script")}
+                                className="cursor-pointer text-[13px] text-brand"
+                              >
+                                Read full script →
+                              </button>
+                            </div>
+                            {stripOpen ? (
+                              <div className="mt-1.5">
+                                {scriptBlocks(script, scriptFill)
+                                  .slice(0, 1)
+                                  .map((b, bi) => (
+                                    <div key={bi}>
+                                      {b.parsed.map((line, li) => (
+                                        <div
+                                          key={li}
+                                          className="text-[13px] leading-5 text-body"
+                                        >
+                                          {line.map((part, pi) => (
+                                            <span
+                                              key={pi}
+                                              className={
+                                                !part.placeholder
+                                                  ? undefined
+                                                  : part.resolved
+                                                    ? "font-medium text-[#5223E0]"
+                                                    : "font-medium text-muted"
+                                              }
+                                            >
+                                              {part.text}
+                                            </span>
+                                          ))}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ))}
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
 
-                      {needsCategory ? (
-                        <Field
-                          label="Complaint category"
-                          error={errors.complaintCategory ?? null}
-                        >
-                          <Select
-                            value={category}
-                            onChange={(e) => setCategory(e.target.value)}
-                          >
-                            {complaintCategories.map((c) => (
-                              <option key={c.value} value={c.value}>
-                                {c.label}
-                              </option>
-                            ))}
-                          </Select>
-                        </Field>
-                      ) : null}
-
-                      {needsCategory ? (
-                        <>
-                          <Field
-                            label="Complaint description"
-                            error={errors.complaintDescription ?? null}
-                          >
-                            <VoiceTextarea
-                              value={complaintDescription}
-                              onChange={(e) => {
-                                setComplaintDescription(e.target.value);
-                              }}
-                              onDictate={setComplaintDescription}
-                              className="h-20"
-                              placeholder="Describe the complaint in detail."
-                            />
-                          </Field>
-
-                          <ImagePicker
-                            files={complaintImages}
-                            onChange={setComplaintImages}
-                            max={maxComplaintImages}
-                          />
-
-                          <Field
-                            label="Request CN"
-                            hint={
-                              requestCn
-                                ? "Accounts take it from here - they pick up the bill and the amount."
-                                : undefined
-                            }
-                          >
-                            <div className="flex items-center gap-4">
-                              <Radio
-                                name="callRequestCn"
-                                label="No"
-                                checked={!requestCn}
-                                onChange={() => setRequestCn(false)}
-                              />
-                              <Radio
-                                name="callRequestCn"
-                                label="Yes"
-                                checked={requestCn}
-                                onChange={() => setRequestCn(true)}
+                        {/* ------------------------------------ who rang
+                            Asked FIRST, and only inbound. A price question from
+                            the owner and the same question from a store boy are
+                            different calls, and only one is worth a salesman's
+                            morning. There is no contact master to read this from
+                            — `contact_person` is one field holding whoever last
+                            answered — so it is asked, and the name box beside it
+                            is what a contact master gets built out of. */}
+                        {isInbound ? (
+                          <>
+                            <div className="text-[15px] font-semibold text-ink">
+                              Who called?
+                            </div>
+                            <div className="mt-2.5 flex flex-wrap gap-1.5">
+                              {CALLER_ROLES.map((r) => (
+                                <button
+                                  key={r.code}
+                                  onClick={() => setCallerRole(r.code)}
+                                  aria-pressed={callerRole === r.code}
+                                  className={cx(
+                                    "h-8 cursor-pointer rounded-[4px] border px-2.5 text-[13px]",
+                                    callerRole === r.code
+                                      ? "border-brand bg-brand-soft font-medium text-brand-hover"
+                                      : "border-line bg-surface text-body hover:border-brand",
+                                  )}
+                                >
+                                  {r.label}
+                                </button>
+                              ))}
+                            </div>
+                            {/* Optional, deliberately. A telecaller who did not
+                                catch the name must still be able to save the
+                                call — the role is the part that changes what the
+                                call is worth. */}
+                            <div className="mt-2">
+                              <Input
+                                value={callerName}
+                                onChange={(e) => setCallerName(e.target.value)}
+                                placeholder="Their name, if you caught it (optional)"
                               />
                             </div>
-                          </Field>
-                        </>
-                      ) : null}
+                            {target.contactPerson ? (
+                              <p className="mt-1 text-[11px] text-muted">
+                                On record for this account: {target.contactPerson}
+                              </p>
+                            ) : null}
 
-                      {needsProducts ? (
-                        <div className="mb-3.5">
-                          {/* The label row carries the running total, so what is
-                              on the order is legible without reading the list. */}
-                          <div className="mb-1.5 flex items-baseline justify-between gap-3">
-                            <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                              Products and quantity
-                            </span>
-                            <span
-                              className={cx(
-                                "text-[13px]",
-                                onThisOrder.length ? "font-medium text-ink" : "text-muted",
-                              )}
+                            {/* ------------------------------ why they rang
+                                THE MAIN CLASSIFICATION. What the customer wanted
+                                when they picked up the phone — which is not what
+                                the call ended as, and was not being recorded at
+                                all. */}
+                            <div className="mt-5 text-[15px] font-semibold text-ink">
+                              Why did they call?
+                            </div>
+                            <div className="mt-2.5 grid grid-cols-2 gap-1.5">
+                              {CALL_REASONS.map((r) => (
+                                <button
+                                  key={r.code}
+                                  onClick={() => {
+                                    setCallReason(r.code);
+                                    /* Changing the reason changes the questions,
+                                       so the old answers go with it — carrying a
+                                       price enquiry's packaging onto a delivery
+                                       chase would store an answer to a question
+                                       this call never asked. */
+                                    setReasonDetail({});
+                                    setNextActions([]);
+                                    setNextActionDate("");
+                                  }}
+                                  aria-pressed={callReason === r.code}
+                                  className={cx(
+                                    "cursor-pointer rounded-[4px] border px-2.5 py-2 text-left text-[13px]",
+                                    callReason === r.code
+                                      ? "border-brand bg-brand-soft font-medium text-brand-hover"
+                                      : "border-line bg-surface text-body hover:border-brand",
+                                  )}
+                                >
+                                  {r.label}
+                                </button>
+                              ))}
+                            </div>
+                          </>
+                        ) : null}
+
+                        <div
+                          className={cx(
+                            "text-[15px] font-semibold text-ink",
+                            isInbound && "mt-5",
+                          )}
+                        >
+                          What was the outcome?
+                        </div>
+                        {/* The outcome is how the call ENDED, and it is held back
+                            until the classification is answered — not disabled
+                            and clickable-looking, which teaches people the screen
+                            is broken, but said in words. */}
+                        {isInbound && !classified ? (
+                          <p className="mt-1.5 text-[13px] text-muted">
+                            Answer who called and why first — they are what the
+                            call was about; this is how it ended.
+                          </p>
+                        ) : null}
+                        <div className="mt-3 flex flex-col gap-2">
+                          {OUTCOMES[
+                            type as Exclude<InteractionType, "order_received">
+                          ].map((o) => (
+                            <button
+                              key={o}
+                              disabled={!classified}
+                              title={
+                                classified
+                                  ? undefined
+                                  : "Answer who called and why first"
+                              }
+                              onClick={() => pickOutcome(o)}
+                              className="cursor-pointer rounded-[4px] border border-line bg-surface px-3 py-2.5 text-left text-sm font-medium text-ink hover:border-brand disabled:cursor-not-allowed disabled:border-line disabled:bg-canvas disabled:text-muted disabled:hover:border-line"
                             >
-                              {orderSummary}
-                            </span>
-                          </div>
+                              {OUTCOME_LABEL[o]}
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() =>
+                            isOrderReceived ? setType(null) : pickOutcome(null)
+                          }
+                          className="mb-3 cursor-pointer text-[13px] text-brand"
+                        >
+                          ← {TYPES.find((t) => t.key === type)?.label}
+                          {/* The reason belongs in this line: it is what the call
+                              was about, and the outcome alone reads as the whole
+                              classification when it is half of it. */}
+                          {callReason ? ` · ${CALL_REASON_LABEL[callReason]}` : ""}
+                          {outcome ? ` · ${OUTCOME_LABEL[outcome]}` : ""}
+                        </button>
 
-                          {/* What they usually buy, as pickable cards with their
-                              own quantity box — the common order is taken here
-                              without touching the search at all. */}
-                          {frequent.length ? (
-                            <div className="mb-2.5 rounded-[4px] border border-line p-3">
-                              <div className="mb-2.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                                Frequently purchased
-                              </div>
-                              <CardGrid min={200} gap="gap-2.5">
-                                {visibleFrequent.map((p) => {
-                                  const raw = quantities[p.id];
-                                  // Chosen means a real quantity. A box holding
-                                  // "0" or left blank is not a product on the
-                                  // order, and must not look like one.
-                                  const chosen = Number(raw) > 0;
-                                  const touched = raw !== undefined;
+                        {aiFilled.length ? (
+                          <p className="mb-3.5 rounded-[4px] border border-brand-softer bg-brand-soft px-3 py-2 text-[13px] text-body">
+                            <span className="font-medium text-ink">Filled from what you said: </span>
+                            {aiFilled.join(" · ")}. Check each one before you save —
+                            nothing is saved until you press Save.
+                          </p>
+                        ) : null}
+
+                        {/* --------------------------------- the ledger, read back
+                            Not a figure the telecaller has to go and find: the
+                            outstanding total and the open bills are already on
+                            this panel, fetched for the script's placeholders, and
+                            a money conversation held without them on screen is one
+                            where we ask the customer what they owe. */}
+                        {isInbound && showsLedger(callReason) ? (
+                          <div className="mb-3.5 rounded-[4px] border border-line bg-canvas p-3">
+                            <div className="flex items-baseline justify-between gap-3">
+                              <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                                What they owe
+                              </span>
+                              <span
+                                className={cx(
+                                  "text-[15px] font-semibold",
+                                  target.outstanding > 0 ? "text-danger" : "text-ink",
+                                )}
+                              >
+                                {money(target.outstanding)}
+                              </span>
+                            </div>
+                            {openBills.length ? (
+                              <div className="mt-2 flex flex-col gap-1">
+                                {openBills.slice(0, 5).map((b) => {
+                                  const late = Boolean(b.dueDate && b.dueDate < todayIso);
                                   return (
                                     <div
-                                      key={p.id}
-                                      className={cx(
-                                        "rounded-[4px] border p-2.5",
-                                        chosen
-                                          ? "border-brand bg-brand-soft"
-                                          : "border-line bg-surface",
-                                      )}
+                                      key={b.billNo}
+                                      className="flex items-baseline justify-between gap-3 text-[13px]"
                                     >
-                                      <span className="flex items-start gap-1.5">
+                                      <span className="min-w-0 truncate text-body">
+                                        {b.billNo}
                                         <span
-                                          className="block min-w-0 flex-1 truncate text-sm font-medium text-ink"
-                                          title={productLabel(p)}
+                                          className={cx(
+                                            "ml-1.5",
+                                            late ? "text-danger" : "text-muted",
+                                          )}
                                         >
-                                          {productRow(p).lead}
+                                          {b.dueDate
+                                            ? late
+                                              ? `overdue since ${shortDate(b.dueDate)}`
+                                              : `due ${shortDate(b.dueDate)}`
+                                            : "no due date"}
                                         </span>
-                                        {touched ? (
-                                          <button
-                                            onClick={() => removeLine(p.id)}
-                                            title={`Take ${p.name} off this order`}
-                                            aria-label={`Take ${p.name} off this order`}
-                                            className="flex h-5 w-5 flex-none cursor-pointer items-center justify-center rounded-[4px] border-none bg-transparent text-muted hover:bg-danger-soft hover:text-danger"
-                                          >
-                                            <Icon name="close" size={12} />
-                                          </button>
-                                        ) : null}
                                       </span>
-                                      <span className="mt-2 flex items-center justify-between gap-2">
-                                        <span
-                                          className="min-w-0 truncate text-xs text-muted"
-                                          title={productLabel(p)}
-                                        >
-                                          {productRow(p).detail ?? ""}
-                                        </span>
-                                        <input
-                                          type="number"
-                                          min={0}
-                                          inputMode="numeric"
-                                          value={raw ?? ""}
-                                          onChange={(e) => setQuantity(p, e.target.value)}
-                                          placeholder="Qty"
-                                          aria-label={`Cans of ${p.name}`}
-                                          className="h-8 w-[64px] flex-none rounded-[4px] border border-line bg-surface px-2 text-right text-sm"
-                                        />
+                                      <span className="flex-none font-medium text-ink">
+                                        {money(b.balance)}
                                       </span>
                                     </div>
                                   );
                                 })}
-                              </CardGrid>
-                              {frequent.length > FREQUENT_PREVIEW ? (
-                                <button
-                                  onClick={() => setShowAllFrequent((v) => !v)}
-                                  className="mt-2.5 cursor-pointer border-none bg-none p-0 text-[13px] font-medium text-brand"
-                                >
-                                  {showAllFrequent
-                                    ? "Show fewer"
-                                    : `Show all ${frequent.length}`}
-                                </button>
-                              ) : null}
-                            </div>
-                          ) : info ? (
-                            <div className="mb-2 text-[13px] text-muted">
-                              No previous orders for this customer.
-                            </div>
-                          ) : null}
+                                {openBills.length > 5 ? (
+                                  <span className="text-[11px] text-muted">
+                                    and {openBills.length - 5} more — the full list is
+                                    on their account.
+                                  </span>
+                                ) : null}
+                              </div>
+                            ) : (
+                              <p className="mt-1.5 text-[13px] text-muted">
+                                No open bills on this account.
+                              </p>
+                            )}
+                          </div>
+                        ) : null}
 
-                          {searchEnabled ? (
-                            <div className="relative mb-2">
-                              <span className="pointer-events-none absolute top-[10px] left-2.5 text-muted">
-                                <Icon name="search" size={16} />
-                              </span>
-                              <input
-                                value={productQuery}
-                                onChange={(e) => setProductQuery(e.target.value)}
-                                placeholder="Search product to add…"
-                                aria-label="Search the catalogue"
-                                className="h-9 w-full rounded-[4px] border border-line bg-surface pr-8 pl-8 text-sm text-ink outline-none focus:border-brand"
-                              />
-                              {productQuery ? (
-                                <button
-                                  onClick={() => setProductQuery("")}
-                                  title="Clear the search"
-                                  className="absolute top-[7px] right-1.5 h-[22px] w-[22px] cursor-pointer border-none bg-transparent p-0 text-muted hover:text-body"
-                                >
-                                  ×
-                                </button>
-                              ) : null}
-                            </div>
-                          ) : null}
+                        {/* ------------------------- what the reason asks for
+                            Rendered from `reasonFieldsFor`, which is also what
+                            the server validates against — one list, so a box that
+                            is mandatory on the screen is mandatory in the rule. */}
+                        {reasonFields.length ? (
+                          <AnswerBlock
+                            heading={CALL_REASON_LABEL[callReason]}
+                            fields={reasonFields}
+                            answers={reasonDetail}
+                            onChange={(k, v) =>
+                              setReasonDetail((d) => ({ ...d, [k]: v }))
+                            }
+                            errors={errors}
+                            errorPrefix="reasonDetail"
+                            name="reason"
+                          />
+                        ) : null}
 
-                          {/* Results are a list of things to ADD, not a list with
-                              quantity boxes: choosing the product and saying how
-                              much of it are two decisions, and merging them is
-                              how a stray keystroke becomes an order line. */}
-                          {productQuery.trim() ? (
-                            <div className="mb-2.5 overflow-hidden rounded-[4px] border border-line shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
-                              {visibleProducts.map((p) => {
-                                const added = quantities[p.id] !== undefined;
+                        {/* ------------------------- what the OUTCOME asks for
+                            The same renderer, because they are the same kind of
+                            question — a coded answer with one value — and two
+                            copies of a form renderer is two sets of bugs and one
+                            of them always renders `required` differently. */}
+                        {outcomeFields.length ? (
+                          <AnswerBlock
+                            heading={OUTCOME_LABEL[outcome!] ?? ""}
+                            fields={outcomeFields}
+                            answers={outcomeDetail}
+                            onChange={(k, v) =>
+                              setOutcomeDetail((d) => ({ ...d, [k]: v }))
+                            }
+                            required={(f) => outcomeFieldRequired(f, outcomeDetail)}
+                            errors={errors}
+                            errorPrefix="outcomeDetail"
+                            name="outcome"
+                            /* THE ONE ANSWER ON THIS FORM THAT SILENCES THE
+                               CUSTOMER FOR GOOD. `do_not_contact` outranks every
+                               reason the queue can produce, including a reminder,
+                               so it is said in words before it is saved rather
+                               than discovered later by somebody wondering why an
+                               account went quiet. */
+                            warnOn={{
+                              key: "futureOpportunity",
+                              value: "never",
+                              text: "This marks the customer do-not-contact. No call and no reminder message will go to them again until somebody lifts it on their record.",
+                            }}
+                          />
+                        ) : null}
+
+                        {/* WHICH ATTEMPT THIS IS, read off the queue's own ladder
+                            rather than counted here. Nobody spoke to anybody, so
+                            this and the reason above it are the whole form — a
+                            telecaller working down a list of forty fills a long
+                            one in at speed and stops reading it. */}
+                        {outcome === "no_answer" && attemptLabel ? (
+                          <p className="mb-3.5 rounded-[4px] border border-line bg-canvas px-3 py-2 text-[13px] text-body">
+                            {attemptLabel}
+                          </p>
+                        ) : null}
+
+                        {/* WHERE NOTHING BACKS IT, SAY SO.
+                            There is no quotation record and no stock system, and
+                            a screen that implied otherwise would have somebody
+                            telling a customer stock is confirmed on the strength
+                            of a dropdown. Naming the gap is what turns it into
+                            something somebody can fix. */}
+                        {unbacked ? (
+                          <p className="mb-3.5 rounded-[4px] border border-warn-line bg-warn-soft px-3 py-2 text-[13px] text-warn-ink">
+                            {unbacked}
+                          </p>
+                        ) : null}
+
+                        {isOrderReceived ? (
+                          <Field
+                            label="Order date"
+                            hint="Choose the date the order came in."
+                            error={errors.orderDate ?? null}
+                          >
+                            <Input
+                              type="date"
+                              value={orderDate}
+                              max={today()}
+                              onChange={(e) => setOrderDate(e.target.value)}
+                            />
+                          </Field>
+                        ) : null}
+
+                        {needsFollowUp ? (
+                          <Field
+                            label="Follow-up date"
+                            hint="Pick the follow-up date - it becomes a reminder you will see on the day."
+                            error={errors.followUpDate ?? null}
+                          >
+                            {/* "Call me tomorrow" and "call me after three days" are what
+                      customers actually say, and both were three taps through a
+                      date picker. The chips write the same date into the same
+                      field, so the picker still wins for anything unusual. */}
+                            <div className="mb-1.5 flex flex-wrap gap-1.5">
+                              {FOLLOW_UP_PRESETS.map((preset) => {
+                                const date = addDays(today(), preset.days);
                                 return (
                                   <button
-                                    key={p.id}
-                                    onClick={() =>
-                                      setQuantities((q) => ({ ...q, [p.id]: q[p.id] ?? "1" }))
-                                    }
-                                    disabled={added}
+                                    key={preset.label}
+                                    type="button"
+                                    onClick={() => setFollowUpDate(date)}
                                     className={cx(
-                                      "flex w-full items-center gap-3 border-b border-divider px-2.5 py-2 text-left last:border-0",
-                                      added ? "bg-canvas" : "cursor-pointer bg-surface hover:bg-canvas",
+                                      "h-7 cursor-pointer rounded-[4px] border px-2.5 text-[13px]",
+                                      followUpDate === date
+                                        ? "border-brand bg-brand-soft font-medium text-brand-hover"
+                                        : "border-line bg-surface text-body hover:bg-canvas",
                                     )}
                                   >
-                                    <span className="min-w-0 flex-1">
-                                      <span className="block truncate text-sm text-ink">
-                                        {productRow(p).lead}
+                                    {preset.label}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            <Input
+                              type="date"
+                              value={followUpDate}
+                              min={today()}
+                              onChange={(e) => setFollowUpDate(e.target.value)}
+                            />
+                          </Field>
+                        ) : null}
+
+                        {needsNextCall ? (
+                          <Field
+                            label="When do we call back"
+                            hint="Ask before ringing off. A date they give becomes a reminder and beats the usual wait, so the call lands on the day they named."
+                            error={errors.noOrderNextCallDate ?? null}
+                          >
+                            <div className="mb-1.5 flex flex-wrap gap-1.5">
+                              {FOLLOW_UP_PRESETS.map((preset) => {
+                                const date = addDays(today(), preset.days);
+                                return (
+                                  <button
+                                    key={preset.label}
+                                    type="button"
+                                    onClick={() => {
+                                      setNoOrderNextCallDate(date);
+                                      setNoOrderNoCommitment(false);
+                                    }}
+                                    className={cx(
+                                      "h-7 cursor-pointer rounded-[4px] border px-2.5 text-[13px]",
+                                      !noOrderNoCommitment && noOrderNextCallDate === date
+                                        ? "border-brand bg-brand-soft font-medium text-brand-hover"
+                                        : "border-line bg-surface text-body hover:bg-canvas",
+                                    )}
+                                  >
+                                    {preset.label}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            <Input
+                              type="date"
+                              value={noOrderNoCommitment ? "" : noOrderNextCallDate}
+                              min={today()}
+                              disabled={noOrderNoCommitment}
+                              onChange={(e) => setNoOrderNextCallDate(e.target.value)}
+                            />
+                            {/*
+                              The escape hatch, and it has to be deliberate. Plenty
+                              of customers will not name a day, and the telecaller
+                              must be able to say so — but by saying it, not by
+                              leaving the box empty, which is indistinguishable
+                              from having forgotten to ask.
+                            */}
+                            <label className="mt-2 flex cursor-pointer items-start gap-2 text-[13px] text-body">
+                              <input
+                                type="checkbox"
+                                checked={noOrderNoCommitment}
+                                onChange={(e) => {
+                                  setNoOrderNoCommitment(e.target.checked);
+                                  if (e.target.checked) setNoOrderNextCallDate("");
+                                }}
+                                className="mt-0.5 h-4 w-4 cursor-pointer"
+                              />
+                              <span>
+                                They would not commit to a date
+                                <span className="block text-[11px] text-muted">
+                                  We will ask again after the usual wait.
+                                </span>
+                              </span>
+                            </label>
+                          </Field>
+                        ) : null}
+
+                        {showPayDate ? (
+                          <Field
+                            label={
+                              needsPayDate
+                                ? "Payment date"
+                                : "Payment date (optional)"
+                            }
+                            hint="Enter the date they committed to."
+                            error={errors.paymentPromiseDate ?? null}
+                          >
+                            {/* THE FLOOR WAS THE HALF THAT WAS MISSING. Both other
+                                date fields on this form reject the past and this
+                                one did not, so a mistyped year produced a payment
+                                reminder already overdue — which puts the customer
+                                at `reminderOverdue`, the strongest tier in the
+                                queue, the next morning, for a promise they had
+                                just made. */}
+                            <Input
+                              type="date"
+                              value={payDate}
+                              min={today()}
+                              onChange={(e) => setPayDate(e.target.value)}
+                            />
+                          </Field>
+                        ) : null}
+
+                        {needsCategory ? (
+                          <Field
+                            label="Complaint category"
+                            error={errors.complaintCategory ?? null}
+                          >
+                            <Select
+                              value={category}
+                              onChange={(e) => setCategory(e.target.value)}
+                            >
+                              {complaintCategories.map((c) => (
+                                <option key={c.value} value={c.value}>
+                                  {c.label}
+                                </option>
+                              ))}
+                            </Select>
+                          </Field>
+                        ) : null}
+
+                        {needsCategory ? (
+                          <>
+                            <Field
+                              label="Complaint description"
+                              error={errors.complaintDescription ?? null}
+                            >
+                              <VoiceTextarea
+                                value={complaintDescription}
+                                onChange={(e) => {
+                                  setComplaintDescription(e.target.value);
+                                }}
+                                onDictate={setComplaintDescription}
+                                className="h-20"
+                                placeholder="Describe the complaint in detail."
+                              />
+                            </Field>
+
+                            <ImagePicker
+                              files={complaintImages}
+                              onChange={setComplaintImages}
+                              max={maxComplaintImages}
+                            />
+
+                            <Field
+                              label="Request CN"
+                              hint={
+                                requestCn
+                                  ? "Accounts take it from here - they pick up the bill and the amount."
+                                  : undefined
+                              }
+                            >
+                              <div className="flex items-center gap-4">
+                                <Radio
+                                  name="callRequestCn"
+                                  label="No"
+                                  checked={!requestCn}
+                                  onChange={() => setRequestCn(false)}
+                                />
+                                <Radio
+                                  name="callRequestCn"
+                                  label="Yes"
+                                  checked={requestCn}
+                                  onChange={() => setRequestCn(true)}
+                                />
+                              </div>
+                            </Field>
+                          </>
+                        ) : null}
+
+                        {needsProducts ? (
+                          <div className="mb-3.5">
+                            {/* The label row carries the running total, so what is
+                                on the order is legible without reading the list. */}
+                            <div className="mb-1.5 flex items-baseline justify-between gap-3">
+                              <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                                Products and quantity
+                              </span>
+                              <span
+                                className={cx(
+                                  "text-[13px]",
+                                  onThisOrder.length ? "font-medium text-ink" : "text-muted",
+                                )}
+                              >
+                                {orderSummary}
+                              </span>
+                            </div>
+
+                            {/* What they usually buy, as pickable cards with their
+                                own quantity box — the common order is taken here
+                                without touching the search at all. */}
+                            {frequent.length ? (
+                              <div className="mb-2.5 rounded-[4px] border border-line p-3">
+                                <div className="mb-2.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                                  Frequently purchased
+                                </div>
+                                <CardGrid min={200} gap="gap-2.5">
+                                  {visibleFrequent.map((p) => {
+                                    const raw = quantities[p.id];
+                                    // Chosen means a real quantity. A box holding
+                                    // "0" or left blank is not a product on the
+                                    // order, and must not look like one.
+                                    const chosen = Number(raw) > 0;
+                                    const touched = raw !== undefined;
+                                    return (
+                                      <div
+                                        key={p.id}
+                                        className={cx(
+                                          "rounded-[4px] border p-2.5",
+                                          chosen
+                                            ? "border-brand bg-brand-soft"
+                                            : "border-line bg-surface",
+                                        )}
+                                      >
+                                        <span className="flex items-start gap-1.5">
+                                          <span
+                                            className="block min-w-0 flex-1 truncate text-sm font-medium text-ink"
+                                            title={productLabel(p)}
+                                          >
+                                            {productRow(p).lead}
+                                          </span>
+                                          {touched ? (
+                                            <button
+                                              onClick={() => removeLine(p.id)}
+                                              title={`Take ${p.name} off this order`}
+                                              aria-label={`Take ${p.name} off this order`}
+                                              className="flex h-5 w-5 flex-none cursor-pointer items-center justify-center rounded-[4px] border-none bg-transparent text-muted hover:bg-danger-soft hover:text-danger"
+                                            >
+                                              <Icon name="close" size={12} />
+                                            </button>
+                                          ) : null}
+                                        </span>
+                                        <span className="mt-2 flex items-center justify-between gap-2">
+                                          <span
+                                            className="min-w-0 truncate text-xs text-muted"
+                                            title={productLabel(p)}
+                                          >
+                                            {productRow(p).detail ?? ""}
+                                          </span>
+                                          <input
+                                            type="number"
+                                            min={0}
+                                            inputMode="numeric"
+                                            value={raw ?? ""}
+                                            onChange={(e) => setQuantity(p, e.target.value)}
+                                            placeholder="Qty"
+                                            aria-label={`Cans of ${p.name}`}
+                                            className="h-8 w-[64px] flex-none rounded-[4px] border border-line bg-surface px-2 text-right text-sm"
+                                          />
+                                        </span>
+                                      </div>
+                                    );
+                                  })}
+                                </CardGrid>
+                                {frequent.length > FREQUENT_PREVIEW ? (
+                                  <button
+                                    onClick={() => setShowAllFrequent((v) => !v)}
+                                    className="mt-2.5 cursor-pointer border-none bg-none p-0 text-[13px] font-medium text-brand"
+                                  >
+                                    {showAllFrequent
+                                      ? "Show fewer"
+                                      : `Show all ${frequent.length}`}
+                                  </button>
+                                ) : null}
+                              </div>
+                            ) : info ? (
+                              <div className="mb-2 text-[13px] text-muted">
+                                No previous orders for this customer.
+                              </div>
+                            ) : null}
+
+                            {searchEnabled ? (
+                              <div className="relative mb-2">
+                                <span className="pointer-events-none absolute top-[10px] left-2.5 text-muted">
+                                  <Icon name="search" size={16} />
+                                </span>
+                                <input
+                                  value={productQuery}
+                                  onChange={(e) => setProductQuery(e.target.value)}
+                                  placeholder="Search product to add…"
+                                  aria-label="Search the catalogue"
+                                  className="h-9 w-full rounded-[4px] border border-line bg-surface pr-8 pl-8 text-sm text-ink outline-none focus:border-brand"
+                                />
+                                {productQuery ? (
+                                  <button
+                                    onClick={() => setProductQuery("")}
+                                    title="Clear the search"
+                                    className="absolute top-[7px] right-1.5 h-[22px] w-[22px] cursor-pointer border-none bg-transparent p-0 text-muted hover:text-body"
+                                  >
+                                    ×
+                                  </button>
+                                ) : null}
+                              </div>
+                            ) : null}
+
+                            {/* Results are a list of things to ADD, not a list with
+                                quantity boxes: choosing the product and saying how
+                                much of it are two decisions, and merging them is
+                                how a stray keystroke becomes an order line. */}
+                            {productQuery.trim() ? (
+                              <div className="mb-2.5 overflow-hidden rounded-[4px] border border-line shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
+                                {visibleProducts.map((p) => {
+                                  const added = quantities[p.id] !== undefined;
+                                  return (
+                                    <button
+                                      key={p.id}
+                                      onClick={() =>
+                                        setQuantities((q) => ({ ...q, [p.id]: q[p.id] ?? "1" }))
+                                      }
+                                      disabled={added}
+                                      className={cx(
+                                        "flex w-full items-center gap-3 border-b border-divider px-2.5 py-2 text-left last:border-0",
+                                        added ? "bg-canvas" : "cursor-pointer bg-surface hover:bg-canvas",
+                                      )}
+                                    >
+                                      <span className="min-w-0 flex-1">
+                                        <span className="block truncate text-sm text-ink">
+                                          {productRow(p).lead}
+                                        </span>
+                                        {/* The SKU and the pack, which is what
+                                            separates two rows now headlining one
+                                            liquid — so this line is no longer
+                                            optional where a formulation is filed.
+                                            The match reason rides with it exactly
+                                            as before. */}
+                                        {productRow(p).detail || p.matchedOn ? (
+                                          <span
+                                            className="block truncate text-[11px] text-muted"
+                                            title={productLabel(p)}
+                                          >
+                                            {productRow(p).detail}
+                                            {productRow(p).detail && p.matchedOn ? " · " : ""}
+                                            {p.matchedOn ? `matched ${p.matchedOn}` : ""}
+                                          </span>
+                                        ) : null}
                                       </span>
-                                      {/* The SKU and the pack, which is what
-                                          separates two rows now headlining one
-                                          liquid — so this line is no longer
-                                          optional where a formulation is filed.
-                                          The match reason rides with it exactly
-                                          as before. */}
-                                      {productRow(p).detail || p.matchedOn ? (
+                                      <span
+                                        className={cx(
+                                          "flex-none rounded-[4px] border px-2 py-1 text-[13px] font-medium",
+                                          added
+                                            ? "border-transparent text-muted"
+                                            : "border-line text-brand",
+                                        )}
+                                      >
+                                        {added ? "Added" : "Add"}
+                                      </span>
+                                    </button>
+                                  );
+                                })}
+                                {hasMoreProducts ? (
+                                  <button
+                                    onClick={() => setShowAllProducts(true)}
+                                    className="w-full cursor-pointer border-t border-canvas bg-canvas px-2.5 py-2 text-left text-[13px] text-muted"
+                                  >
+                                    Show all {matches.length} matches
+                                  </button>
+                                ) : null}
+                                {matches.length === 0 ? (
+                                  <div className="px-2.5 py-5 text-center text-sm text-muted">
+                                    {belowMinChars
+                                      ? "Keep typing to search the catalogue."
+                                      : searching
+                                        ? "Looking…"
+                                        : "No product matches that. Try the formulation, like “M5x4” or “epoxy”, or the pack size."}
+                                  </div>
+                                ) : null}
+                              </div>
+                            ) : null}
+
+                            {/* Everything on the order, editable in place. A line
+                                can be re-counted or taken off without hunting for
+                                it back in the search results. */}
+                            {onThisOrder.length ? (
+                              <div className="overflow-hidden rounded-[4px] border border-line">
+                                <div className="bg-canvas px-2.5 py-[7px] text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                                  Added products
+                                </div>
+                                {onThisOrder.map((l) => {
+                                  const rate = rates[l.product.id];
+                                  const worth =
+                                    rate && rate.offered && counts(l)
+                                      ? priceLine({
+                                          rateExGstPaise: rate.rateExGstPaise,
+                                          cans: l.qty,
+                                          discountBp: discountBpOf(l.product.id),
+                                          gstBp: rate.gstBp ?? gstBp ?? 0,
+                                        })
+                                      : null;
+                                  return (
+                                  <div
+                                    key={l.product.id}
+                                    className="flex items-center gap-3 border-t border-divider bg-surface px-2.5 py-2"
+                                  >
+                                    <span className="min-w-0 flex-1">
+                                      <span className="block truncate text-sm font-medium text-ink">
+                                        {productRow(l.product).lead}
+                                      </span>
+                                      {/* THE SKU IS DRAWN ON A LINE OF ITS OWN
+                                          HERE, not folded into the quantity line
+                                          beneath it. This is the list a telecaller
+                                          reads back to a customer before saving,
+                                          and with the formulation leading, two
+                                          lines of an order can now headline the
+                                          same word — so which pack each one is has
+                                          to be its own statement rather than a
+                                          fragment sharing a row with "6 cans". */}
+                                      {productRow(l.product).detail ? (
                                         <span
                                           className="block truncate text-[11px] text-muted"
-                                          title={productLabel(p)}
+                                          title={productLabel(l.product)}
                                         >
-                                          {productRow(p).detail}
-                                          {productRow(p).detail && p.matchedOn ? " · " : ""}
-                                          {p.matchedOn ? `matched ${p.matchedOn}` : ""}
+                                          {productRow(l.product).detail}
+                                        </span>
+                                      ) : null}
+                                      {l.raw.trim() !== "" && l.qty > 0 ? (
+                                        <span className="block truncate text-[11px] text-muted">
+                                          {describeQuantity(l.qty, {
+                                            millilitresPerCan: l.product.millilitresPerCan ?? null,
+                                            cansPerBox: l.product.cansPerBox ?? 1,
+                                          })}
+                                        </span>
+                                      ) : (
+                                        <span className="block truncate text-[11px] text-warn-ink">
+                                          How many cans?
+                                        </span>
+                                      )}
+                                      {/* The rate, and which list said so. A price
+                                          a telecaller cannot attribute is one the
+                                          customer argues with. */}
+                                      {rate && rate.offered ? (
+                                        <span className="block truncate text-[11px] text-muted">
+                                          {money(rate.rateInclGstPaise)} / can ·{" "}
+                                          {rate.listName}
+                                        </span>
+                                      ) : null}
+                                      {errors[`lineDiscount.${l.product.id}`] ? (
+                                        <span className="block text-[11px] text-danger">
+                                          {errors[`lineDiscount.${l.product.id}`]}
                                         </span>
                                       ) : null}
                                     </span>
-                                    <span
-                                      className={cx(
-                                        "flex-none rounded-[4px] border px-2 py-1 text-[13px] font-medium",
-                                        added
-                                          ? "border-transparent text-muted"
-                                          : "border-line text-brand",
-                                      )}
+                                    {mayDiscount && rate && rate.offered ? (
+                                      <span className="flex flex-none items-center gap-1">
+                                        <input
+                                          type="number"
+                                          min={0}
+                                          inputMode="decimal"
+                                          value={lineDiscounts[l.product.id] ?? ""}
+                                          onChange={(e) =>
+                                            setLineDiscounts((d) => ({
+                                              ...d,
+                                              [l.product.id]: e.target.value,
+                                            }))
+                                          }
+                                          placeholder="0"
+                                          aria-label={`Discount percent on ${l.product.name}`}
+                                          className={cx(
+                                            "h-8 w-[56px] rounded-[4px] border px-2 text-right text-sm",
+                                            errors[`lineDiscount.${l.product.id}`]
+                                              ? "border-danger"
+                                              : "border-line",
+                                          )}
+                                        />
+                                        <span className="text-[11px] text-muted">%</span>
+                                      </span>
+                                    ) : null}
+                                    {useListForOrderValue && worth ? (
+                                      <span className="w-[92px] flex-none text-right text-[13px] tabular-nums text-ink">
+                                        {money(worth.totalPaise)}
+                                      </span>
+                                    ) : null}
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      inputMode="numeric"
+                                      value={quantities[l.product.id] ?? ""}
+                                      onChange={(e) => setQuantity(l.product, e.target.value)}
+                                      placeholder="Qty"
+                                      aria-label={`Cans of ${l.product.name}`}
+                                      className="h-8 w-[70px] flex-none rounded-[4px] border border-line px-2 text-right text-sm"
+                                    />
+                                    <button
+                                      onClick={() => removeLine(l.product.id)}
+                                      title="Remove from this order"
+                                      aria-label={`Remove ${l.product.name} from this order`}
+                                      className="flex h-6 w-6 flex-none cursor-pointer items-center justify-center rounded-[4px] border-none bg-transparent text-muted hover:bg-danger-soft hover:text-danger"
                                     >
-                                      {added ? "Added" : "Add"}
-                                    </span>
+                                      <Icon name="close" size={14} />
+                                    </button>
+                                  </div>
+                                  );
+                                })}
+
+                                {/* WHAT THE ORDER COMES TO, where the list is what
+                                    values one. Off, the rates above are reference
+                                    and nothing is totalled — see the prop. */}
+                                {orderTotals ? (
+                                  <div className="border-t border-line bg-canvas px-2.5 py-2 text-[13px]">
+                                    <div className="flex justify-between gap-3">
+                                      <span className="text-muted">Ex-GST</span>
+                                      <span className="tabular-nums text-ink">
+                                        {money(orderTotals.netExPaise)}
+                                      </span>
+                                    </div>
+                                    <div className="flex justify-between gap-3">
+                                      <span className="text-muted">GST</span>
+                                      <span className="tabular-nums text-ink">
+                                        {money(orderTotals.gstPaise)}
+                                      </span>
+                                    </div>
+                                    <div className="mt-1 flex justify-between gap-3 border-t border-divider pt-1 font-medium">
+                                      <span className="text-ink">Total</span>
+                                      <span className="tabular-nums text-ink">
+                                        {money(orderTotals.totalPaise)}
+                                      </span>
+                                    </div>
+                                    {orderTotals.unpriced ? (
+                                      <p className="mt-1 text-[11px] text-warn-ink">
+                                        {orderTotals.unpriced}{" "}
+                                        {orderTotals.unpriced === 1 ? "line is" : "lines are"}{" "}
+                                        not on this shop&rsquo;s list, so the total is short
+                                        by {orderTotals.unpriced === 1 ? "it" : "them"}.
+                                      </p>
+                                    ) : null}
+                                  </div>
+                                ) : listName && countedLines.length ? (
+                                  <div className="border-t border-line bg-canvas px-2.5 py-2 text-[11px] text-muted">
+                                    Rates are from {listName}, shown for reference — an
+                                    order is still worth what accounts bill for it.
+                                  </div>
+                                ) : null}
+                              </div>
+                            ) : null}
+
+                            {needsProducts && !countedLines.length ? (
+                              <div className="mt-2 rounded-[4px] border border-dashed border-warn-line bg-warn-soft px-3 py-5 text-center text-sm text-warn-ink">
+                                At least one product is needed to log this as an
+                                order.{" "}
+                                {searchEnabled
+                                  ? "Search above, or tap one this customer usually buys."
+                                  : "Tap one this customer usually buys."}
+                              </div>
+                            ) : null}
+
+                            {errors.productQuantities ? (
+                              <p className="mt-1 text-[13px] text-danger">
+                                {errors.productQuantities}
+                              </p>
+                            ) : null}
+                          </div>
+                        ) : null}
+
+                        {chips.length ? (
+                          <div className="mb-3.5">
+                            <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                              Quick notes
+                            </span>
+                            <div className="mt-1.5 flex flex-wrap gap-2">
+                              {chips.map((c) => {
+                                const on = picked.includes(c.id);
+                                return (
+                                  <button
+                                    key={c.id}
+                                    onClick={() => applyChip(c)}
+                                    // A chip is a toggle, so it reports as one —
+                                    // and says what a second tap will do, because
+                                    // nothing about a filled pill tells you it
+                                    // can be taken back off.
+                                    aria-pressed={on}
+                                    title={
+                                      on
+                                        ? `Tap again to remove "${c.label}" from the note`
+                                        : undefined
+                                    }
+                                    className={cx(
+                                      "cursor-pointer rounded-full border px-2.5 py-1 text-[13px]",
+                                      on
+                                        ? "border-brand bg-brand-soft font-medium text-[#5223E0] hover:border-danger hover:text-danger"
+                                        : "border-line bg-surface text-body hover:border-brand",
+                                    )}
+                                  >
+                                    {c.label}
                                   </button>
                                 );
                               })}
-                              {hasMoreProducts ? (
-                                <button
-                                  onClick={() => setShowAllProducts(true)}
-                                  className="w-full cursor-pointer border-t border-canvas bg-canvas px-2.5 py-2 text-left text-[13px] text-muted"
-                                >
-                                  Show all {matches.length} matches
-                                </button>
-                              ) : null}
-                              {matches.length === 0 ? (
-                                <div className="px-2.5 py-5 text-center text-sm text-muted">
-                                  {belowMinChars
-                                    ? "Keep typing to search the catalogue."
-                                    : searching
-                                      ? "Looking…"
-                                      : "No product matches that. Try the formulation, like “M5x4” or “epoxy”, or the pack size."}
-                                </div>
-                              ) : null}
                             </div>
-                          ) : null}
+                          </div>
+                        ) : null}
 
-                          {/* Everything on the order, editable in place. A line
-                              can be re-counted or taken off without hunting for
-                              it back in the search results. */}
-                          {onThisOrder.length ? (
-                            <div className="overflow-hidden rounded-[4px] border border-line">
-                              <div className="bg-canvas px-2.5 py-[7px] text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                                Added products
-                              </div>
-                              {onThisOrder.map((l) => {
-                                const rate = rates[l.product.id];
-                                const worth =
-                                  rate && rate.offered && counts(l)
-                                    ? priceLine({
-                                        rateExGstPaise: rate.rateExGstPaise,
-                                        cans: l.qty,
-                                        discountBp: discountBpOf(l.product.id),
-                                        gstBp: rate.gstBp ?? gstBp ?? 0,
-                                      })
-                                    : null;
+                        {/* --------------------------------- what happens next
+                            Codes from THIS reason's own list — "Arrange stock"
+                            against a price enquiry is an answer to a question
+                            nobody asked, and a dropdown offering it teaches people
+                            to stop reading the dropdown.
+
+                            Several, not one: "send the price and have the salesman
+                            call in" is one sentence a customer says and two things
+                            that have to happen. */}
+                        {actionOptions.length ? (
+                          <div className="mb-3.5">
+                            <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                              Next action
+                            </span>
+                            <div className="mt-1.5 flex flex-wrap gap-1.5">
+                              {actionOptions.map((a) => {
+                                const on = activeActions.includes(a.code);
                                 return (
-                                <div
-                                  key={l.product.id}
-                                  className="flex items-center gap-3 border-t border-divider bg-surface px-2.5 py-2"
-                                >
-                                  <span className="min-w-0 flex-1">
-                                    <span className="block truncate text-sm font-medium text-ink">
-                                      {productRow(l.product).lead}
-                                    </span>
-                                    {/* THE SKU IS DRAWN ON A LINE OF ITS OWN
-                                        HERE, not folded into the quantity line
-                                        beneath it. This is the list a telecaller
-                                        reads back to a customer before saving,
-                                        and with the formulation leading, two
-                                        lines of an order can now headline the
-                                        same word — so which pack each one is has
-                                        to be its own statement rather than a
-                                        fragment sharing a row with "6 cans". */}
-                                    {productRow(l.product).detail ? (
-                                      <span
-                                        className="block truncate text-[11px] text-muted"
-                                        title={productLabel(l.product)}
-                                      >
-                                        {productRow(l.product).detail}
-                                      </span>
-                                    ) : null}
-                                    {l.raw.trim() !== "" && l.qty > 0 ? (
-                                      <span className="block truncate text-[11px] text-muted">
-                                        {describeQuantity(l.qty, {
-                                          millilitresPerCan: l.product.millilitresPerCan ?? null,
-                                          cansPerBox: l.product.cansPerBox ?? 1,
-                                        })}
-                                      </span>
-                                    ) : (
-                                      <span className="block truncate text-[11px] text-warn-ink">
-                                        How many cans?
-                                      </span>
-                                    )}
-                                    {/* The rate, and which list said so. A price
-                                        a telecaller cannot attribute is one the
-                                        customer argues with. */}
-                                    {rate && rate.offered ? (
-                                      <span className="block truncate text-[11px] text-muted">
-                                        {money(rate.rateInclGstPaise)} / can ·{" "}
-                                        {rate.listName}
-                                      </span>
-                                    ) : null}
-                                    {errors[`lineDiscount.${l.product.id}`] ? (
-                                      <span className="block text-[11px] text-danger">
-                                        {errors[`lineDiscount.${l.product.id}`]}
-                                      </span>
-                                    ) : null}
-                                  </span>
-                                  {mayDiscount && rate && rate.offered ? (
-                                    <span className="flex flex-none items-center gap-1">
-                                      <input
-                                        type="number"
-                                        min={0}
-                                        inputMode="decimal"
-                                        value={lineDiscounts[l.product.id] ?? ""}
-                                        onChange={(e) =>
-                                          setLineDiscounts((d) => ({
-                                            ...d,
-                                            [l.product.id]: e.target.value,
-                                          }))
+                                  <button
+                                    key={a.code}
+                                    type="button"
+                                    aria-pressed={on}
+                                    title={on ? `Tap again to remove "${a.label}"` : undefined}
+                                    onClick={() => {
+                                      /* Built from what is actually offered, so
+                                         a stale code left by an earlier outcome
+                                         is dropped on the next tap. */
+                                      setAiNextNote(null);
+                                      setNextActions((raw) => {
+                                        const list = raw.filter((c) =>
+                                          actionOptions.some((o) => o.code === c),
+                                        );
+                                        if (on) return list.filter((x) => x !== a.code);
+                                        /* "Nothing further is needed, and also
+                                           chase the payment" is not a sentence.
+                                           Picking one clears the other rather
+                                           than saving a contradiction nobody can
+                                           read back — and the date box that goes
+                                           with it goes too. */
+                                        if (a.code === EXCLUSIVE_ACTION) {
+                                          setNextActionDate("");
+                                          return [a.code];
                                         }
-                                        placeholder="0"
-                                        aria-label={`Discount percent on ${l.product.name}`}
-                                        className={cx(
-                                          "h-8 w-[56px] rounded-[4px] border px-2 text-right text-sm",
-                                          errors[`lineDiscount.${l.product.id}`]
-                                            ? "border-danger"
-                                            : "border-line",
-                                        )}
-                                      />
-                                      <span className="text-[11px] text-muted">%</span>
-                                    </span>
-                                  ) : null}
-                                  {useListForOrderValue && worth ? (
-                                    <span className="w-[92px] flex-none text-right text-[13px] tabular-nums text-ink">
-                                      {money(worth.totalPaise)}
-                                    </span>
-                                  ) : null}
-                                  <input
+                                        return [
+                                          ...list.filter((x) => x !== EXCLUSIVE_ACTION),
+                                          a.code,
+                                        ];
+                                      });
+                                    }}
+                                    className={cx(
+                                      "cursor-pointer rounded-full border px-2.5 py-1 text-[13px]",
+                                      on
+                                        ? "border-brand bg-brand-soft font-medium text-[#5223E0] hover:border-danger hover:text-danger"
+                                        : "border-line bg-surface text-body hover:border-brand",
+                                    )}
+                                  >
+                                    {a.label}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            {aiNextNote ? (
+                              <p className="mt-1.5 text-[13px] text-warn-ink">
+                                {aiNextNote}
+                              </p>
+                            ) : null}
+
+                            {/* A DATE IS DEMANDED WHERE THE ACTION MEANS ONE, and
+                                absent where it does not. "Send the quotation" with
+                                no day against it is the definition of how a call
+                                gets forgotten; "Payment already made" is a
+                                statement about the past, and a date box beside it
+                                is a question nobody can answer. A date given makes
+                                a reminder, which already outranks every cooldown
+                                in the queue. */}
+                            {needsActionDate ? (
+                              <div className="mt-2.5">
+                                <Field
+                                  label="By when"
+                                  hint="This becomes a reminder you will see on the day."
+                                  error={errors.nextActionDate ?? null}
+                                >
+                                  <div className="mb-1.5 flex flex-wrap gap-1.5">
+                                    {FOLLOW_UP_PRESETS.map((preset) => {
+                                      const date = addDays(today(), preset.days);
+                                      return (
+                                        <button
+                                          key={preset.label}
+                                          type="button"
+                                          onClick={() => setNextActionDate(date)}
+                                          className={cx(
+                                            "h-7 cursor-pointer rounded-[4px] border px-2.5 text-[13px]",
+                                            nextActionDate === date
+                                              ? "border-brand bg-brand-soft font-medium text-brand-hover"
+                                              : "border-line bg-surface text-body hover:bg-canvas",
+                                          )}
+                                        >
+                                          {preset.label}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                  <Input
+                                    type="date"
+                                    value={nextActionDate}
+                                    min={today()}
+                                    onChange={(e) => setNextActionDate(e.target.value)}
+                                  />
+                                </Field>
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
+
+                        {/* ----------------------------------- the opportunity
+                            Asked on every inbound call, because the whole reason
+                            somebody rings is that they want something — and a
+                            call that turned up a real chance and ended as a note
+                            is the most expensive thing this screen can produce.
+
+                            A record, not a lead: a lead here is an account that
+                            has never ordered, and about thirty readers of
+                            `customers.kind` are built on exactly that. */}
+                        {offersOpportunity ? (
+                          <div className="mb-3.5 rounded-[4px] border border-line p-3">
+                            <Field label="Did this call turn up a sales opportunity?">
+                              <div className="flex items-center gap-4">
+                                <Radio
+                                  name="callOpportunity"
+                                  label="No"
+                                  checked={hasOpportunity === false}
+                                  onChange={() => setHasOpportunity(false)}
+                                />
+                                <Radio
+                                  name="callOpportunity"
+                                  label="Yes"
+                                  checked={hasOpportunity === true}
+                                  onChange={() => setHasOpportunity(true)}
+                                />
+                              </div>
+                            </Field>
+
+                            {hasOpportunity ? (
+                              <div className="mt-3 flex flex-col gap-3">
+                                <Field
+                                  label="Product"
+                                  hint="In their words. Nothing here has to match the catalogue."
+                                  error={errors["opportunity.product"] ?? null}
+                                >
+                                  <Input
+                                    value={oppProduct}
+                                    onChange={(e) => setOppProduct(e.target.value)}
+                                    placeholder="What they might buy"
+                                  />
+                                </Field>
+                                <Field label="Estimated quantity (optional)">
+                                  <Input
+                                    value={oppQuantity}
+                                    onChange={(e) => setOppQuantity(e.target.value)}
+                                    placeholder="About 20 cans a month"
+                                  />
+                                </Field>
+                                {/* Typed, never derived. The product master holds
+                                    no prices — `canValueOrders()` still answers
+                                    no — so a figure computed here would be an
+                                    invention. Blank is a real answer and is not
+                                    zero: nobody put a number on it. */}
+                                <Field
+                                  label="Estimated value (optional)"
+                                  hint="Whole rupees, as they described it. Leave blank if nobody put a figure on it."
+                                  error={errors["opportunity.estimatedValueRupees"] ?? null}
+                                >
+                                  <Input
                                     type="number"
                                     min={0}
-                                    inputMode="numeric"
-                                    value={quantities[l.product.id] ?? ""}
-                                    onChange={(e) => setQuantity(l.product, e.target.value)}
-                                    placeholder="Qty"
-                                    aria-label={`Cans of ${l.product.name}`}
-                                    className="h-8 w-[70px] flex-none rounded-[4px] border border-line px-2 text-right text-sm"
+                                    value={oppValue}
+                                    onChange={(e) => setOppValue(e.target.value)}
+                                    placeholder="₹"
                                   />
-                                  <button
-                                    onClick={() => removeLine(l.product.id)}
-                                    title="Remove from this order"
-                                    aria-label={`Remove ${l.product.name} from this order`}
-                                    className="flex h-6 w-6 flex-none cursor-pointer items-center justify-center rounded-[4px] border-none bg-transparent text-muted hover:bg-danger-soft hover:text-danger"
-                                  >
-                                    <Icon name="close" size={14} />
-                                  </button>
-                                </div>
-                                );
-                              })}
-
-                              {/* WHAT THE ORDER COMES TO, where the list is what
-                                  values one. Off, the rates above are reference
-                                  and nothing is totalled — see the prop. */}
-                              {orderTotals ? (
-                                <div className="border-t border-line bg-canvas px-2.5 py-2 text-[13px]">
-                                  <div className="flex justify-between gap-3">
-                                    <span className="text-muted">Ex-GST</span>
-                                    <span className="tabular-nums text-ink">
-                                      {money(orderTotals.netExPaise)}
-                                    </span>
-                                  </div>
-                                  <div className="flex justify-between gap-3">
-                                    <span className="text-muted">GST</span>
-                                    <span className="tabular-nums text-ink">
-                                      {money(orderTotals.gstPaise)}
-                                    </span>
-                                  </div>
-                                  <div className="mt-1 flex justify-between gap-3 border-t border-divider pt-1 font-medium">
-                                    <span className="text-ink">Total</span>
-                                    <span className="tabular-nums text-ink">
-                                      {money(orderTotals.totalPaise)}
-                                    </span>
-                                  </div>
-                                  {orderTotals.unpriced ? (
-                                    <p className="mt-1 text-[11px] text-warn-ink">
-                                      {orderTotals.unpriced}{" "}
-                                      {orderTotals.unpriced === 1 ? "line is" : "lines are"}{" "}
-                                      not on this shop&rsquo;s list, so the total is short
-                                      by {orderTotals.unpriced === 1 ? "it" : "them"}.
-                                    </p>
-                                  ) : null}
-                                </div>
-                              ) : listName && countedLines.length ? (
-                                <div className="border-t border-line bg-canvas px-2.5 py-2 text-[11px] text-muted">
-                                  Rates are from {listName}, shown for reference — an
-                                  order is still worth what accounts bill for it.
-                                </div>
-                              ) : null}
-                            </div>
-                          ) : null}
-
-                          {needsProducts && !countedLines.length ? (
-                            <div className="mt-2 rounded-[4px] border border-dashed border-warn-line bg-warn-soft px-3 py-5 text-center text-sm text-warn-ink">
-                              At least one product is needed to log this as an
-                              order.{" "}
-                              {searchEnabled
-                                ? "Search above, or tap one this customer usually buys."
-                                : "Tap one this customer usually buys."}
-                            </div>
-                          ) : null}
-
-                          {errors.productQuantities ? (
-                            <p className="mt-1 text-[13px] text-danger">
-                              {errors.productQuantities}
-                            </p>
-                          ) : null}
-                        </div>
-                      ) : null}
-
-                      {chips.length ? (
-                        <div className="mb-3.5">
-                          <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                            Quick notes
-                          </span>
-                          <div className="mt-1.5 flex flex-wrap gap-2">
-                            {chips.map((c) => {
-                              const on = picked.includes(c.id);
-                              return (
-                                <button
-                                  key={c.id}
-                                  onClick={() => applyChip(c)}
-                                  // A chip is a toggle, so it reports as one —
-                                  // and says what a second tap will do, because
-                                  // nothing about a filled pill tells you it
-                                  // can be taken back off.
-                                  aria-pressed={on}
-                                  title={
-                                    on
-                                      ? `Tap again to remove "${c.label}" from the note`
-                                      : undefined
-                                  }
-                                  className={cx(
-                                    "cursor-pointer rounded-full border px-2.5 py-1 text-[13px]",
-                                    on
-                                      ? "border-brand bg-brand-soft font-medium text-[#5223E0] hover:border-danger hover:text-danger"
-                                      : "border-line bg-surface text-body hover:border-brand",
-                                  )}
+                                </Field>
+                                <Field
+                                  label="Expected order date (optional)"
+                                  error={errors["opportunity.expectedOrderDate"] ?? null}
                                 >
-                                  {c.label}
-                                </button>
-                              );
-                            })}
+                                  <Input
+                                    type="date"
+                                    value={oppDate}
+                                    min={today()}
+                                    onChange={(e) => setOppDate(e.target.value)}
+                                  />
+                                </Field>
+                                <p className="text-[11px] text-muted">
+                                  This is recorded against the customer and appears
+                                  on their record. It does not create a lead — they
+                                  are already a customer.
+                                </p>
+                              </div>
+                            ) : null}
                           </div>
-                        </div>
-                      ) : null}
+                        ) : null}
 
-                      {/* --------------------------------- what happens next
-                          Codes from THIS reason's own list — "Arrange stock"
-                          against a price enquiry is an answer to a question
-                          nobody asked, and a dropdown offering it teaches people
-                          to stop reading the dropdown.
-
-                          Several, not one: "send the price and have the salesman
-                          call in" is one sentence a customer says and two things
-                          that have to happen. */}
-                      {actionOptions.length ? (
-                        <div className="mb-3.5">
-                          <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                            Next action
-                          </span>
-                          <div className="mt-1.5 flex flex-wrap gap-1.5">
-                            {actionOptions.map((a) => {
-                              const on = activeActions.includes(a.code);
-                              return (
-                                <button
-                                  key={a.code}
-                                  type="button"
-                                  aria-pressed={on}
-                                  title={on ? `Tap again to remove "${a.label}"` : undefined}
-                                  onClick={() => {
-                                    /* Built from what is actually offered, so
-                                       a stale code left by an earlier outcome
-                                       is dropped on the next tap. */
-                                    setAiNextNote(null);
-                                    setNextActions((raw) => {
-                                      const list = raw.filter((c) =>
-                                        actionOptions.some((o) => o.code === c),
-                                      );
-                                      if (on) return list.filter((x) => x !== a.code);
-                                      /* "Nothing further is needed, and also
-                                         chase the payment" is not a sentence.
-                                         Picking one clears the other rather
-                                         than saving a contradiction nobody can
-                                         read back — and the date box that goes
-                                         with it goes too. */
-                                      if (a.code === EXCLUSIVE_ACTION) {
-                                        setNextActionDate("");
-                                        return [a.code];
-                                      }
-                                      return [
-                                        ...list.filter((x) => x !== EXCLUSIVE_ACTION),
-                                        a.code,
-                                      ];
-                                    });
-                                  }}
-                                  className={cx(
-                                    "cursor-pointer rounded-full border px-2.5 py-1 text-[13px]",
-                                    on
-                                      ? "border-brand bg-brand-soft font-medium text-[#5223E0] hover:border-danger hover:text-danger"
-                                      : "border-line bg-surface text-body hover:border-brand",
-                                  )}
-                                >
-                                  {a.label}
-                                </button>
-                              );
-                            })}
-                          </div>
-                          {aiNextNote ? (
-                            <p className="mt-1.5 text-[13px] text-warn-ink">
-                              {aiNextNote}
-                            </p>
-                          ) : null}
-
-                          {/* A DATE IS DEMANDED WHERE THE ACTION MEANS ONE, and
-                              absent where it does not. "Send the quotation" with
-                              no day against it is the definition of how a call
-                              gets forgotten; "Payment already made" is a
-                              statement about the past, and a date box beside it
-                              is a question nobody can answer. A date given makes
-                              a reminder, which already outranks every cooldown
-                              in the queue. */}
-                          {needsActionDate ? (
-                            <div className="mt-2.5">
-                              <Field
-                                label="By when"
-                                hint="This becomes a reminder you will see on the day."
-                                error={errors.nextActionDate ?? null}
-                              >
-                                <div className="mb-1.5 flex flex-wrap gap-1.5">
-                                  {FOLLOW_UP_PRESETS.map((preset) => {
-                                    const date = addDays(today(), preset.days);
-                                    return (
-                                      <button
-                                        key={preset.label}
-                                        type="button"
-                                        onClick={() => setNextActionDate(date)}
-                                        className={cx(
-                                          "h-7 cursor-pointer rounded-[4px] border px-2.5 text-[13px]",
-                                          nextActionDate === date
-                                            ? "border-brand bg-brand-soft font-medium text-brand-hover"
-                                            : "border-line bg-surface text-body hover:bg-canvas",
-                                        )}
-                                      >
-                                        {preset.label}
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                                <Input
-                                  type="date"
-                                  value={nextActionDate}
-                                  min={today()}
-                                  onChange={(e) => setNextActionDate(e.target.value)}
-                                />
-                              </Field>
-                            </div>
-                          ) : null}
-                        </div>
-                      ) : null}
-
-                      {/* ----------------------------------- the opportunity
-                          Asked on every inbound call, because the whole reason
-                          somebody rings is that they want something — and a
-                          call that turned up a real chance and ended as a note
-                          is the most expensive thing this screen can produce.
-
-                          A record, not a lead: a lead here is an account that
-                          has never ordered, and about thirty readers of
-                          `customers.kind` are built on exactly that. */}
-                      {offersOpportunity ? (
-                        <div className="mb-3.5 rounded-[4px] border border-line p-3">
-                          <Field label="Did this call turn up a sales opportunity?">
-                            <div className="flex items-center gap-4">
-                              <Radio
-                                name="callOpportunity"
-                                label="No"
-                                checked={hasOpportunity === false}
-                                onChange={() => setHasOpportunity(false)}
-                              />
-                              <Radio
-                                name="callOpportunity"
-                                label="Yes"
-                                checked={hasOpportunity === true}
-                                onChange={() => setHasOpportunity(true)}
-                              />
-                            </div>
-                          </Field>
-
-                          {hasOpportunity ? (
-                            <div className="mt-3 flex flex-col gap-3">
-                              <Field
-                                label="Product"
-                                hint="In their words. Nothing here has to match the catalogue."
-                                error={errors["opportunity.product"] ?? null}
-                              >
-                                <Input
-                                  value={oppProduct}
-                                  onChange={(e) => setOppProduct(e.target.value)}
-                                  placeholder="What they might buy"
-                                />
-                              </Field>
-                              <Field label="Estimated quantity (optional)">
-                                <Input
-                                  value={oppQuantity}
-                                  onChange={(e) => setOppQuantity(e.target.value)}
-                                  placeholder="About 20 cans a month"
-                                />
-                              </Field>
-                              {/* Typed, never derived. The product master holds
-                                  no prices — `canValueOrders()` still answers
-                                  no — so a figure computed here would be an
-                                  invention. Blank is a real answer and is not
-                                  zero: nobody put a number on it. */}
-                              <Field
-                                label="Estimated value (optional)"
-                                hint="Whole rupees, as they described it. Leave blank if nobody put a figure on it."
-                                error={errors["opportunity.estimatedValueRupees"] ?? null}
-                              >
-                                <Input
-                                  type="number"
-                                  min={0}
-                                  value={oppValue}
-                                  onChange={(e) => setOppValue(e.target.value)}
-                                  placeholder="₹"
-                                />
-                              </Field>
-                              <Field
-                                label="Expected order date (optional)"
-                                error={errors["opportunity.expectedOrderDate"] ?? null}
-                              >
-                                <Input
-                                  type="date"
-                                  value={oppDate}
-                                  min={today()}
-                                  onChange={(e) => setOppDate(e.target.value)}
-                                />
-                              </Field>
-                              <p className="text-[11px] text-muted">
-                                This is recorded against the customer and appears
-                                on their record. It does not create a lead — they
-                                are already a customer.
-                              </p>
-                            </div>
-                          ) : null}
-                        </div>
-                      ) : null}
-
-                      {/* Notes live once, under the assistant at the top of
-                          this tab — see the box above. */}
-                    </>
-                  )}
+                        {/* Notes live once, under the assistant at the top of
+                            this tab — see the box above. */}
+                      </>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
-          </>
-        )}
+            </>
+          )}
 
-        {/* ------------------------------------------------------- footer */}
-        <div className="flex items-center gap-2.5 border-t border-divider px-6 py-3">
-          {/* Position first, then the steppers around a divider — the design's
-              order, and it reads as one control rather than three. */}
-          {position ? (
-            <span className="flex items-center gap-1.5">
-              <span className="text-[13px] text-muted">{position}</span>
-              <button
-                disabled={!hasPrevious}
-                title={
-                  hasPrevious ? "Previous customer" : "This is the first row"
-                }
-                onClick={() => onPrevious?.()}
-                className="h-8 cursor-pointer rounded-[4px] px-2 text-[13px] text-body hover:bg-canvas disabled:cursor-not-allowed disabled:text-line-strong"
-              >
-                ◀ Previous
-              </button>
-              <span className="text-line">|</span>
-              <button
-                disabled={!hasNext}
-                title={hasNext ? "Next customer" : "This is the last row"}
-                onClick={() => onNext?.()}
-                className="h-8 cursor-pointer rounded-[4px] px-2 text-[13px] text-body hover:bg-canvas disabled:cursor-not-allowed disabled:text-line-strong"
-              >
-                Next ▶
-              </button>
-            </span>
-          ) : null}
-
-          {chosen && !saved ? (
-            <button
-              onClick={() =>
-                isOrderReceived ? setType(null) : pickOutcome(null)
-              }
-              className="inline-flex h-8 cursor-pointer items-center gap-1.5 px-2.5 text-[13px] text-muted hover:text-body"
-            >
-              ◀ {isOrderReceived ? "Change type" : "Change outcome"}
-            </button>
-          ) : null}
-
-          <span className="flex-1" />
-
-          {saved ? (
-            <span className="animate-fade-in text-sm font-medium text-success">
-              Saved
-            </span>
-          ) : null}
-
-          <Button variant="secondary" onClick={onClose}>
-            {saved ? "Done" : "Close"}
-          </Button>
-
-          {tab !== "log" ? (
-            <Button variant="primary" onClick={() => setTab("log")}>
-              Log this call ▸
-            </Button>
-          ) : chosen && !saved ? (
-            <>
-              <Button
-                variant="primary"
-                disabled={busy}
-                onClick={() => save(false)}
-              >
-                Save log
-              </Button>
-              {hasNext ? (
-                <Button
-                  variant="secondary"
-                  disabled={busy}
-                  onClick={() => save(true)}
+          {/* ------------------------------------------------------- footer */}
+          <div className="flex items-center gap-2.5 border-t border-divider px-6 py-3">
+            {/* Position first, then the steppers around a divider — the design's
+                order, and it reads as one control rather than three. */}
+            {position ? (
+              <span className="flex items-center gap-1.5">
+                <span className="text-[13px] text-muted">{position}</span>
+                <button
+                  disabled={!hasPrevious}
+                  title={
+                    hasPrevious ? "Previous customer" : "This is the first row"
+                  }
+                  onClick={() => onPrevious?.()}
+                  className="h-8 cursor-pointer rounded-[4px] px-2 text-[13px] text-body hover:bg-canvas disabled:cursor-not-allowed disabled:text-line-strong"
                 >
-                  Save &amp; next ▸
-                </Button>
-              ) : null}
-            </>
-          ) : null}
-        </div>
-      </div>
-
-      {/* A typed zero on a line that had a count. Keyed on the product so
-          reopening it for a different one starts fresh rather than showing the
-          last product's name for a frame. */}
-      <ConfirmDialog
-        key={removing?.id ?? "none"}
-        open={Boolean(removing)}
-        title="Take this off the order?"
-        destructive
-        confirmLabel="Take it off"
-        cancelLabel="Keep it"
-        body={
-          removing ? (
-            <>
-              <span className="block font-medium text-ink">{productLabel(removing)}</span>
-              <span className="mt-1 block">
-                It is down for{" "}
-                {describeQuantity(Number(quantities[removing.id]), {
-                  millilitresPerCan: removing.millilitresPerCan ?? null,
-                  cansPerBox: removing.cansPerBox ?? 1,
-                })}
-                . Zero is not a quantity, so this takes the line off the order
-                altogether. Nothing else about the call changes, and you can add
-                it back from the search.
+                  ◀ Previous
+                </button>
+                <span className="text-line">|</span>
+                <button
+                  disabled={!hasNext}
+                  title={hasNext ? "Next customer" : "This is the last row"}
+                  onClick={() => onNext?.()}
+                  className="h-8 cursor-pointer rounded-[4px] px-2 text-[13px] text-body hover:bg-canvas disabled:cursor-not-allowed disabled:text-line-strong"
+                >
+                  Next ▶
+                </button>
               </span>
-            </>
-          ) : null
-        }
-        onConfirm={() => {
-          if (removing) removeLine(removing.id);
-        }}
-        onClose={() => setRemoving(null)}
-      />
-    </div>
+            ) : null}
+
+            {chosen && !saved ? (
+              <button
+                onClick={() =>
+                  isOrderReceived ? setType(null) : pickOutcome(null)
+                }
+                className="inline-flex h-8 cursor-pointer items-center gap-1.5 px-2.5 text-[13px] text-muted hover:text-body"
+              >
+                ◀ {isOrderReceived ? "Change type" : "Change outcome"}
+              </button>
+            ) : null}
+
+            <span className="flex-1" />
+
+            {saved ? (
+              <span className="animate-fade-in text-sm font-medium text-success">
+                Saved
+              </span>
+            ) : null}
+
+            <Button variant="secondary" onClick={onClose}>
+              {saved ? "Done" : "Close"}
+            </Button>
+
+            {tab !== "log" ? (
+              <Button variant="primary" onClick={() => setTab("log")}>
+                Log this call ▸
+              </Button>
+            ) : chosen && !saved ? (
+              <>
+                <Button
+                  variant="primary"
+                  disabled={busy}
+                  onClick={() => save(false)}
+                >
+                  Save log
+                </Button>
+                {hasNext ? (
+                  <Button
+                    variant="secondary"
+                    disabled={busy}
+                    onClick={() => save(true)}
+                  >
+                    Save &amp; next ▸
+                  </Button>
+                ) : null}
+              </>
+            ) : null}
+          </div>
+        </div>
+
+        {/* A typed zero on a line that had a count. Keyed on the product so
+            reopening it for a different one starts fresh rather than showing the
+            last product's name for a frame. */}
+        <ConfirmDialog
+          key={removing?.id ?? "none"}
+          open={Boolean(removing)}
+          title="Take this off the order?"
+          destructive
+          confirmLabel="Take it off"
+          cancelLabel="Keep it"
+          body={
+            removing ? (
+              <>
+                <span className="block font-medium text-ink">{productLabel(removing)}</span>
+                <span className="mt-1 block">
+                  It is down for{" "}
+                  {describeQuantity(Number(quantities[removing.id]), {
+                    millilitresPerCan: removing.millilitresPerCan ?? null,
+                    cansPerBox: removing.cansPerBox ?? 1,
+                  })}
+                  . Zero is not a quantity, so this takes the line off the order
+                  altogether. Nothing else about the call changes, and you can add
+                  it back from the search.
+                </span>
+              </>
+            ) : null
+          }
+          onConfirm={() => {
+            if (removing) removeLine(removing.id);
+          }}
+          onClose={() => setRemoving(null)}
+        />
+      </div>
+    </BodyPortal>
   );
 }
 
