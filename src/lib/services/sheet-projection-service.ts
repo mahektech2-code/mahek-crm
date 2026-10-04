@@ -756,6 +756,38 @@ export async function unpaidPerPaymentTab(): Promise<Set<string>> {
 
 
 /**
+ * The orders the Payment Status tab says were RECEIVED — the one case a newly
+ * imported bill is not counted as owed. See `positionFor`.
+ */
+export async function receivedPerPaymentTab(): Promise<Set<string>> {
+  const rows = await db
+    .select({
+      orderNumber: sheetPaymentRows.orderNumber,
+      paymentStatus: sheetPaymentRows.paymentStatus,
+    })
+    .from(sheetPaymentRows)
+    .where(eq(sheetPaymentRows.status, "present"));
+  return new Set(rows.filter((r) => isReceived(r.paymentStatus)).map((r) => r.orderNumber));
+}
+
+/**
+ * WHERE NOBODY HAS SAID, A BILL PAST ITS DUE DATE IS OWED. Mahek's decision,
+ * October 2026, and a reversal: a sheet bill used to land `unstated` and count
+ * as neither paid nor owed until a person spoke, which kept a month of real
+ * credit sales off Outstanding and off every collections screen. Now it lands
+ * `stated` with its whole amount open, ages from its credit-term due date like
+ * any other bill, and a receipt is what reduces it.
+ *
+ * The one exception is the Payment Status tab saying Received. That is not
+ * silence — the office has written down that the money came — so the bill is
+ * held `unstated` rather than chased for money we have a record of receiving.
+ * The tab still writes no receipt: confirming it is accounts' job.
+ */
+function positionFor(received: boolean): "stated" | "unstated" {
+  return received ? "unstated" : "stated";
+}
+
+/**
  * Bills from the ORDER history, one per order, every one marked paid.
  *
  * A sales bill in this business IS the order — the Order Details tab carries a
@@ -780,18 +812,17 @@ export async function unpaidPerPaymentTab(): Promise<Set<string>> {
  * August receivables report marked 395 bills owed and a scheduled pass settled
  * 348 of them again, Rs 1.18 crore, fourteen hours later.
  *
- * So the third answer is the true one: nobody has said. A bill lands
- * `payment_position = 'unstated'` and counts as NEITHER paid nor owed — held
- * out of outstanding, aging, the collections worklist and the slow-payer flag
- * until the app or the Tally receivables report speaks. Nothing chases a debt
- * nobody has vouched for, and nothing is written off either.
+ * That was followed by a third answer — `unstated`, neither paid nor owed —
+ * and Mahek has since overruled it: a bill nobody has spoken for is OWED, from
+ * its credit-term due date, unless the Payment Status tab says Received. See
+ * `positionFor`. What survives from all of this is the rule below.
  *
  * THE SHEET NEVER WRITES MONEY. Not a receipt, not `paid_amount`, not
  * `status`, not `outstanding`. Those are the app's, and only the app's. What
  * this function writes is what the tab actually knows: which bill exists,
- * against which order and customer, for how much, on what date. `unstated` is
- * written on INSERT and never on UPDATE, because a bill somebody has since
- * spoken for must not be returned to silence by the next scheduled pass.
+ * against which order and customer, for how much, on what date. The payment
+ * position is written on INSERT and never on UPDATE, because a bill somebody
+ * has since spoken for must not have that undone by the next scheduled pass.
  */
 /**
  * What the sheet states about a bill, as stored.
@@ -880,6 +911,8 @@ export async function projectBillsFromOrders(
    * the read is gone with it. `unpaidPerPaymentTab()` remains, because the
    * revert that undoes the receipts this path once wrote still needs it.
    */
+
+  const received = await receivedPerPaymentTab();
 
   const refs = [...grouped.keys()].map((n) => `SHEET-${n}`);
   const orderRows = refs.length
@@ -1025,15 +1058,12 @@ export async function projectBillsFromOrders(
       }
     } else {
       billId = newId("bil");
-      /*
-       * Nobody has said what this bill's payment position is, and this tab
-       * cannot say: it records what was billed and never what was received.
-       * So it is written down as unsaid rather than assumed either way, and
-       * counts as neither paid nor owed until somebody speaks.
-       */
-      await db.insert(bills).values({ id: billId, ...values, paymentPosition: "unstated" });
+      // This tab records what was billed and never what was received, so the
+      // bill is owed unless the Payment Status tab says otherwise.
+      const position = positionFor(received.has(orderNumber));
+      await db.insert(bills).values({ id: billId, ...values, paymentPosition: position });
       created++;
-      unstated++;
+      if (position === "unstated") unstated++;
     }
     // So the next order in this same pass sees the number as taken. A bill
     // this pass just wrote carries no decision — the projection never makes
@@ -1205,25 +1235,12 @@ export async function projectBills(
         updated++;
       }
     } else {
-      /*
-       * `unstated` even here, where the tab DOES carry a received flag.
-       *
-       * This is the harder call of the two, because this tab genuinely knows
-       * something — 8,277 of its rows say received or not received, and that
-       * is real evidence rather than the order tab's silence. It is still a
-       * spreadsheet cell, and a receipt is the assertion that money reached
-       * the bank. Writing one from a cell puts a confirmed receipt in the
-       * ledger with no person behind it, which is the thing we are removing,
-       * and it does not become acceptable because this cell is better
-       * informed than that one.
-       *
-       * The evidence is not thrown away: the tab is read every pass and
-       * `paidWithoutDate` and `blankStatus` still count what it says, so
-       * accounts can act on it. What changes is that a person does the acting.
-       */
-      await db.insert(bills).values({ id: newId("bil"), ...values, paymentPosition: "unstated" });
+      // Owed unless this row says Received. Even then no receipt is written —
+      // a cell is not somebody confirming money reached the bank.
+      const position = positionFor(received);
+      await db.insert(bills).values({ id: newId("bil"), ...values, paymentPosition: position });
       created++;
-      unstated++;
+      if (position === "unstated") unstated++;
     }
   }
 
@@ -1304,8 +1321,8 @@ export async function projectSheet(
      * records or confirms something, which is now the only way they change.
      *
      * Outstanding IS still rebuilt, because bills arriving changes it: a new
-     * `unstated` bill contributes nothing, but a bill whose AMOUNT the sheet
-     * corrected changes what a stated bill is worth. The follow-up stage and
+     * bill is owed from the day it lands, and a bill whose AMOUNT the sheet
+     * corrected changes what it is worth. The follow-up stage and
      * the slow-payer flag follow outstanding, so they come after it, in that
      * order.
      */

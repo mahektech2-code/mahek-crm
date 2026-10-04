@@ -85,6 +85,19 @@ export async function gpsSignal(): Promise<{ ageSeconds: number; accuracyM: numb
 }
 
 /**
+ * Where he is, if the phone knows recently enough to say — for ORDERING a
+ * list, never for recording anything. The lead form's area picker puts the
+ * areas near him first; a fix older than `maxAgeSeconds` would put the
+ * morning's beat first in the afternoon, so it answers null instead and the
+ * picker falls back to his recent picks. Asks the radio for nothing.
+ */
+export async function recentFix(maxAgeSeconds = 1800): Promise<{ lat: number; lng: number } | null> {
+  const fix = await lastFix();
+  if (!fix || (Date.now() - fix.at) / 1000 > maxAgeSeconds) return null;
+  return { lat: fix.lat, lng: fix.lng };
+}
+
+/**
  * The answer, immediately.
  *
  * `undefined` rather than a reason where the office has switched this off — no

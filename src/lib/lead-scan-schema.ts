@@ -18,11 +18,11 @@ export const leadScanReadingSchema = z.object({
   businessName: z
     .string()
     .nullable()
-    .describe("The shop, firm or business name as printed — the largest name on a board or card. Not a brand they stock."),
+    .describe("The shop, firm or business name — the largest name on a board or card — in English letters, transliterated if printed in an Indian script. Not a brand they stock."),
   contactPerson: z
     .string()
     .nullable()
-    .describe("A person's name, if one is printed (proprietor, owner, partner). Null if only a business name is shown."),
+    .describe("A person's name, if one is printed (proprietor, owner, partner), in English letters. Null if only a business name is shown."),
   phones: z
     .array(
       z.object({
@@ -33,12 +33,12 @@ export const leadScanReadingSchema = z.object({
       }),
     )
     .describe("Every phone number visible, in the order printed. Empty if none."),
-  city: z.string().nullable().describe("The town or city of the shop's address."),
-  state: z.string().nullable().describe("The Indian state of the shop's address, if printed."),
+  city: z.string().nullable().describe("The town or city of the shop's address, in its usual English spelling."),
+  state: z.string().nullable().describe("The Indian state of the shop's address, if printed, in English."),
   address: z
     .string()
     .nullable()
-    .describe("The street address on one line — shop number, building, road, area, landmark. Without the phone numbers or GSTIN."),
+    .describe("The street address on one line, in English letters — shop number, building, road, area, landmark. Without the phone numbers or GSTIN."),
   pincode: z.string().nullable().describe("The six-digit PIN code, if printed."),
   gstin: z
     .string()
@@ -47,7 +47,7 @@ export const leadScanReadingSchema = z.object({
   note: z
     .string()
     .nullable()
-    .describe("One short sentence only if something needs the salesman's attention — two different businesses in the photos, a number partly cut off. Otherwise null."),
+    .describe("One short sentence in English only if something needs the salesman's attention — two different businesses in the photos, a number partly cut off. Otherwise null."),
 });
 
 export type LeadScanReadingParsed = z.infer<typeof leadScanReadingSchema>;
