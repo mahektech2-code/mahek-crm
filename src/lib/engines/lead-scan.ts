@@ -188,6 +188,28 @@ export function checkGstin(raw: string | null | undefined): { gstin: string; che
   return { gstin: s, check: "invalid" };
 }
 
+const GSTIN_RANK: Record<GstinCheck, number> = { valid: 3, corrected: 2, invalid: 1 };
+
+/** Whether a reading is good enough that a second look could not improve it. */
+export function gstinSettled(raw: string | null | undefined): boolean {
+  const c = checkGstin(raw)?.check;
+  return c === "valid" || c === "corrected";
+}
+
+/**
+ * Of two raw readings of one GSTIN — the whole-card read and the second look
+ * at the number alone — the one the checksum likes better. A tie keeps the
+ * FIRST, so a second look that is no better changes nothing; and a second look
+ * that found nothing never removes what the first one did.
+ */
+export function preferGstin(first: string | null, second: string | null): string | null {
+  const rank = (raw: string | null) => {
+    const c = checkGstin(raw)?.check;
+    return c ? GSTIN_RANK[c] : 0;
+  };
+  return rank(second) > rank(first) ? second : first;
+}
+
 /** The GST state codes — the first two digits of every GSTIN. */
 const GST_STATE_CODES: Record<string, string> = {
   "01": "Jammu and Kashmir",

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cleanScan, foundAnything, tidy, type LeadScanReading } from "./lead-scan";
+import { cleanScan, foundAnything, gstinSettled, preferGstin, tidy, type LeadScanReading } from "./lead-scan";
 
 /* Everything goes through `cleanScan`, the one function the service calls —
    the helpers behind it are private, so a rule tested here is a rule the
@@ -121,4 +121,22 @@ test("a contact person who is only the shop's name again is no person", () => {
   const r = cleanScan({ ...blank, businessName: "Patil Paints", contactPerson: "PATIL PAINTS" });
   assert.equal(r.businessName, "Patil Paints");
   assert.equal(r.contactPerson, null);
+});
+
+test("second GSTIN look: is not asked for when the first reading passes or was repaired", () => {
+  assert.equal(gstinSettled("27AAPFU0939F1ZV"), true);
+  assert.equal(gstinSettled("27AAPFUO939F1ZV"), true);
+  assert.equal(gstinSettled(null), false);
+  assert.equal(gstinSettled("27AAPFU0939F1Z"), false);
+  assert.equal(gstinSettled("27AAPFU0939F1ZX"), false);
+});
+
+test("second GSTIN look: replaces a missing or failing reading with one the checksum accepts", () => {
+  assert.equal(preferGstin(null, "27AAPFU0939F1ZV"), "27AAPFU0939F1ZV");
+  assert.equal(preferGstin("27AAPFU0939F1ZX", "27AAPFU0939F1ZV"), "27AAPFU0939F1ZV");
+});
+
+test("second GSTIN look: never loses what the first reading found", () => {
+  assert.equal(preferGstin("27AAPFU0939F1ZX", null), "27AAPFU0939F1ZX");
+  assert.equal(preferGstin("27AAPFU0939F1ZX", "27AAPFU0939F1Z"), "27AAPFU0939F1ZX");
 });
