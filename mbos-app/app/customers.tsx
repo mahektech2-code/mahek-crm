@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, Pressable, TextInput, FlatList, RefreshControl, ScrollView, Platform, type ListRenderItemInfo } from 'react-native';
 import { isOnline } from '../src/sync/engine';
-import { router, useFocusEffect } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { color as C, radius, type, weight } from '../src/theme/tokens';
 import { Icon } from '../src/components/ui/Icon';
 import { Badge, Card, HealthPill, PrimaryButton, SecondaryButton } from '../src/components/ui/primitives';
@@ -372,6 +372,13 @@ export default function Customers() {
   const [leadsMatching, setLeadsMatching] = React.useState(0);
 
   const [filter, setFilter] = React.useState<CustomerFilter>('all');
+  /* A figure on Home that opens this list opens it ON the rows it counted —
+     "Follow-ups 4" landing on the whole book is a number nobody can trace. */
+  const params = useLocalSearchParams<{ filter?: string }>();
+  React.useEffect(() => {
+    const wanted = CUSTOMER_FILTERS.find((f) => f.value === params.filter);
+    if (wanted) setFilter(wanted.value);
+  }, [params.filter]);
   const [asMap, setAsMap] = React.useState(false);
   const [rowMore, setRowMore] = React.useState<Customer | null>(null);
 

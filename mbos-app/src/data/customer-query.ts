@@ -184,11 +184,12 @@ function normalise(query: string | undefined): string {
  * difference is a whole number of days with no zone in it — `today` is the
  * caller's business date, resolved once on the handset.
  */
-export type CustomerFilter = 'all' | 'owing' | 'reorder' | 'visitDue' | 'neverVisited' | 'unpinned';
+export type CustomerFilter = 'all' | 'owing' | 'followUp' | 'reorder' | 'visitDue' | 'neverVisited' | 'unpinned';
 
 export const CUSTOMER_FILTERS: { value: CustomerFilter; label: string }[] = [
   { value: 'all', label: 'All' },
   { value: 'owing', label: 'Owes money' },
+  { value: 'followUp', label: 'Follow-up due' },
   { value: 'reorder', label: 'Reorder due' },
   { value: 'visitDue', label: 'Visit due' },
   { value: 'neverVisited', label: 'Never visited' },
@@ -197,6 +198,14 @@ export const CUSTOMER_FILTERS: { value: CustomerFilter; label: string }[] = [
 
 const FILTER_SQL: Record<Exclude<CustomerFilter, 'all'>, { sql: string; usesToday: boolean }> = {
   owing: { sql: 'COALESCE(outstandingPaise, 0) > 0', usesToday: false },
+  /* The date he set on his LATEST visit to the shop, due today or already
+     missed. Missed is the half that matters: a promise one day late is the
+     one most worth keeping, and the Home figure used to drop it. */
+  followUp: {
+    sql: `((SELECT v.nextFollowUpDate FROM visits v WHERE v.customerId = customers.id
+             ORDER BY v.checkInAt DESC LIMIT 1) <= ?)`,
+    usesToday: true,
+  },
   reorder: {
     sql: `(lastOrderDate IS NOT NULL AND COALESCE(cycleDays, 0) > 0
            AND julianday(?) - julianday(lastOrderDate) >= cycleDays)`,

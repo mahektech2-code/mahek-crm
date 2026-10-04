@@ -187,6 +187,7 @@ export async function customerFilterCounts(args: {
   return {
     all: n('all'),
     owing: n('owing'),
+    followUp: n('followUp'),
     reorder: n('reorder'),
     visitDue: n('visitDue'),
     neverVisited: n('neverVisited'),
@@ -444,6 +445,30 @@ export async function customersWithoutGps(): Promise<{ rows: Customer[]; total: 
       ORDER BY name LIMIT ${CUSTOMER_PAGE}`,
   );
   return { rows, total: counted?.n ?? rows.length };
+}
+
+/**
+ * FOLLOW-UPS OWED, counted by SHOP and from the latest visit only.
+ *
+ * The Home figure counted visits with a date of today or later — so a promise
+ * one day late dropped out of it, which is the opposite of what a reminder is
+ * for, and two visits to one shop counted twice. It also opened Tasks, which
+ * does not list visit follow-ups at all, so the number could not be traced.
+ * This counts shops whose latest visit set a date that is due or missed, and
+ * the tile opens the Customers list on exactly that filter.
+ */
+export async function followUpsOwed(today: string): Promise<{ owed: number; missed: number; dueToday: number }> {
+  const row = await one<{ owed: number; missed: number; dueToday: number }>(
+    `SELECT COUNT(*) AS owed,
+            COALESCE(SUM(CASE WHEN d < ? THEN 1 ELSE 0 END), 0) AS missed,
+            COALESCE(SUM(CASE WHEN d = ? THEN 1 ELSE 0 END), 0) AS dueToday
+       FROM (SELECT (SELECT v.nextFollowUpDate FROM visits v WHERE v.customerId = c.id
+                      ORDER BY v.checkInAt DESC LIMIT 1) AS d
+               FROM customers c)
+      WHERE d IS NOT NULL AND d <= ?`,
+    [today, today, today],
+  );
+  return { owed: row?.owed ?? 0, missed: row?.missed ?? 0, dueToday: row?.dueToday ?? 0 };
 }
 
 /**

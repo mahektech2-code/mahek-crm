@@ -23,7 +23,7 @@ import {
   type Session,
 } from '../src/data/attendance';
 import { useTicker } from '../src/components/ui/use-ticker';
-import { collectionDue } from '../src/data/customers';
+import { collectionDue, followUpsOwed } from '../src/data/customers';
 import { listPerformance, shortfalls, type SyncedMonth } from '../src/data/performance';
 import { getConfig } from '../src/data/config';
 import { mayOpenDay } from '../src/data/day-gate';
@@ -39,7 +39,7 @@ import {
   rowsFor,
   type LeadActionCounts,
 } from '../src/engines/lead-worklist';
-import { followUpCounts, visitsToday } from '../src/data/visits';
+import { visitsToday } from '../src/data/visits';
 import { stopCounts } from '../src/data/journey';
 import { lastPullAt } from '../src/sync/api';
 import { stalledAt } from '../src/sync/trail';
@@ -136,6 +136,7 @@ type Day = {
   collectCustomers: number;
   followUps: number;
   followUpsToday: number;
+  followUpsMissed: number;
   orders: number;
   orderValuePaise: number;
   orderValueUnknown: boolean;
@@ -160,6 +161,7 @@ const EMPTY: Day = {
   collectCustomers: 0,
   followUps: 0,
   followUpsToday: 0,
+  followUpsMissed: 0,
   orders: 0,
   orderValuePaise: 0,
   orderValueUnknown: false,
@@ -388,7 +390,7 @@ export default function Home() {
     void Promise.all([
       stopCounts(),
       collectionDue(),
-      followUpCounts(userId, iso),
+      followUpsOwed(iso),
       ordersToday(userId),
       visitsToday(userId),
       cashInHand(userId),
@@ -424,8 +426,9 @@ export default function Home() {
         stopsDone: stops.done,
         collectPaise: due.totalPaise,
         collectCustomers: due.customers,
-        followUps: follow.open,
+        followUps: follow.owed,
         followUpsToday: follow.dueToday,
+        followUpsMissed: follow.missed,
         orders: orders.count,
         orderValuePaise: orders.valuePaise,
         orderValueUnknown: orders.valueUnavailable,
@@ -527,7 +530,12 @@ export default function Home() {
     { v: inrFromPaise(day.cashPaise), s: day.cashSentence || 'Nothing to deposit', n: day.cashPaise, fmt: rupees },
     /* "overdue" is not a noun, so it does not take an s: "49 overdue". */
     { v: String(day.tasks), s: day.tasksOverdue ? day.tasksOverdue + ' overdue' : 'None overdue', n: day.tasks, fmt: whole },
-    { v: String(day.followUps), s: `${day.followUpsToday} today`, n: day.followUps, fmt: whole },
+    {
+      v: String(day.followUps),
+      s: day.followUpsMissed ? day.followUpsMissed + ' missed' : day.followUpsToday ? day.followUpsToday + ' today' : 'None due',
+      n: day.followUps,
+      fmt: whole,
+    },
   ];
 
   /* Same rule, on the strip under the Start day button: a dash where there is
@@ -1276,7 +1284,7 @@ export default function Home() {
                      number and the grid cannot jump. */
                   /* A tile's tone belongs to its FIGURE. Left on, the em-dash
                      standing in for a figure nobody has yet read drew in red
-                     under "Collection due" — an alarm about a number that does
+                     under "Outstanding" — an alarm about a number that does
                      not exist. */
                   {
                     fontSize: dashValues[i].small ? 15 : 20,
@@ -1298,7 +1306,7 @@ export default function Home() {
             <PressableScale
               key={d.l}
               disabled={!d.route}
-              onPress={() => d.route && router.push(`/${d.route}?from=home`)}
+              onPress={() => d.route && router.push(`/${d.route}${d.route.includes('?') ? '&' : '?'}from=home`)}
               outerStyle={{ width: '50%' }}
               style={{
                 padding: 14,

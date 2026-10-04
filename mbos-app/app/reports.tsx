@@ -50,10 +50,14 @@ export default function ReportsScreen() {
       <BackLink label={back.label} onPress={back.go} />
       <T s="h1">Reports</T>
       <T s="small" style={{ color: C.muted, marginTop: 2, marginBottom: 16 }}>
-        What you did, as saved on this phone. This is not what you will be paid.
+        What you did this month and last, as saved on this phone.
       </T>
 
-      {!current ? null : (
+      {!current ? (
+        <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 24 }}>
+          {boot.session ? 'Loading…' : 'Sign in to see your reports.'}
+        </T>
+      ) : (
         <>
           <Stagger index={0}>
             <ReportCard title={monthName(current.from) + ' · so far'} r={current} />
