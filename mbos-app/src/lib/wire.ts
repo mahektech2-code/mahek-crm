@@ -191,10 +191,8 @@ export function localStage(stage: string | undefined): string {
  * where it was, which is the smaller of the two wrong answers — the same rule
  * `wireStage` follows above.
  *
- * TODO(integration): `leadSchema.stage` in `src/lib/actions/mbos.ts` is still
- * the six legacy values, so every rung below outside those six is currently
- * rejected by zod. Workstream A widens it to `LeadStage` — the column
- * `customers.lead_stage` is already `mbos_lead_stage` and holds all of them.
+ * `leadSchema.stage` in `src/lib/actions/mbos.ts` takes every rung below, and
+ * `on_hold` beside them — the list here and that enum are the same list.
  */
 const FUNNEL_STAGES = new Set<string>([
   'new', 'contacted', 'qualified', 'negotiation', 'won', 'lost', 'on_hold',

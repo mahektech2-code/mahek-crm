@@ -409,7 +409,9 @@ export default function SampleRecord() {
             </>
           ) : null}
 
-          {s.state === 'Tried' ? (
+          {/* A Tried sample that already carries answers is a "Not decided"
+              one, and the card below is where it is changed. */}
+          {s.state === 'Tried' && !review ? (
             <PrimaryButton label="Write their feedback" onPress={() => setReviewOpen(true)} />
           ) : null}
 
@@ -424,6 +426,16 @@ export default function SampleRecord() {
         </View>
         </Swap>
       )}
+
+      {/* REVIEWED, AND NOTHING ON THIS PHONE TO SHOW FOR IT. A review taken at
+          the office, or before a reinstall, never comes down the wire — so the
+          "Change it" card below has nothing to hang on and the actions above
+          are gone with `finished`. Without this the sample offered no way to
+          write the review at all, and the Negotiation rung that waits on it
+          could not be opened from the phone. */}
+      {s.state === 'Reviewed' && !review ? (
+        <PrimaryButton label="Write their feedback" onPress={() => setReviewOpen(true)} style={{ marginTop: 16 }} />
+      ) : null}
 
       {/* ------------------------------------------- §16 the chase ladder */}
       {awaiting ? <ChasePanel chase={chase} /> : null}
@@ -465,7 +477,7 @@ export default function SampleRecord() {
               {verdictSentence(review.trialOutcome)}
             </T>
             {review.photoId ? (
-              <T s="caption" style={{ marginTop: 6 }}>Photo taken. It is waiting to send.</T>
+              <T s="caption" style={{ marginTop: 6 }}>A photo is attached.</T>
             ) : null}
             <SecondaryButton label="Change it" onPress={() => setReviewOpen(true)} style={{ marginTop: 12 }} />
           </Card>
@@ -706,6 +718,10 @@ function DispatchSheet({
   const [cal, setCal] = React.useState(false);
   const [err, setErr] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
+  /* The guard is a ref: `saving` is read from the render that drew the button,
+     so a second tap landing before the re-render saw `false` and wrote the
+     mark twice. The state stays for the label. */
+  const savingRef = React.useRef(false);
   /* The box below the fields shakes when it refuses, and buzzes `warning`. */
   const refusal = useShake('warning');
   const refuse = (message: string) => {
@@ -756,16 +772,18 @@ function DispatchSheet({
           label={saving ? 'Saving…' : 'Sent'}
           disabled={saving}
           onPress={async () => {
-            if (saving) return;
+            if (savingRef.current) return;
             if (!courier.trim()) return refuse('Who is taking it? Write the courier.');
             if (!docket.trim()) return refuse('Write the docket number. It is needed to track it.');
             if (!date) return refuse('Choose the day it should reach.');
             /* The sheet closes only after the write returns; a second tap
                before that queued a second dispatch mark for one parcel. */
+            savingRef.current = true;
             setSaving(true);
             try {
               await onSave({ courierName: courier.trim(), courierDocket: docket.trim(), expectedDeliveryDate: date });
             } finally {
+              savingRef.current = false;
               setSaving(false);
             }
           }}
@@ -813,6 +831,10 @@ function ReviewSheet({
   const [photo, setPhoto] = React.useState<{ mediaId: string; uri: string } | null>(null);
   const [err, setErr] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
+  /* The guard is a ref: `saving` is read from the render that drew the button,
+     so a second tap landing before the re-render saw `false` and wrote the
+     mark twice. The state stays for the label. */
+  const savingRef = React.useRef(false);
   /* No buzz of its own: with a missing reason the button is disabled-with-a-
      reason and shakes and buzzes itself, and the empty-review refusal below
      buzzes by hand — one buzz per refusal, whichever path it came by. */
@@ -922,16 +944,18 @@ function ReviewSheet({
           disabled={saving || Boolean(owedWhy)}
           whyDisabled={owedWhy ?? undefined}
           onPress={async () => {
-            if (saving) return;
+            if (savingRef.current) return;
             const any = FEEDBACK_FIELDS.some((f) => (fields[f.id] ?? '').trim());
             if (!any) return refuse('Write at least one thing they said.');
             if (owedWhy) return refuse(owedWhy);
             /* The sheet only closes once the write returns, so without this a
                second tap on a slow phone saved the review twice. */
+            savingRef.current = true;
             setSaving(true);
             try {
               await onSave(fields, outcome, photo?.mediaId ?? null);
             } finally {
+              savingRef.current = false;
               setSaving(false);
             }
           }}

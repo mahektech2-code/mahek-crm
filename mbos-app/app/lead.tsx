@@ -13,10 +13,8 @@ import { RelationshipChain } from '../src/components/leads/relationship-chain';
 import { ReasonSheet } from '../src/components/leads/reason-sheet';
 import { color as C, radius, weight, type BadgeTone } from '../src/theme/tokens';
 import {
-  convertToCustomer,
   leadThresholds,
   setArchived,
-  setFollowUp,
   touchLead,
   type Lead,
 } from '../src/data/leads';
@@ -47,8 +45,9 @@ import {
   type LeadFunnelView,
 } from '../src/data/lead-funnel';
 import { currentSession } from '../src/data/session';
-import { leadAlert, type LeadThresholds } from '../src/engines/leads';
+import { gateAsRun, leadAlert, type LeadThresholds } from '../src/engines/leads';
 import {
+  bandOf,
   findingLabel,
   gateTo,
   isParked,
@@ -56,6 +55,7 @@ import {
   labelOf,
   ladderFor,
   offeredSalesTypes,
+  PROSPECT_CONDITIONS,
   REASON_CODE_NEEDING_REMARKS,
   salesTypeLabel,
   stageLabel,
@@ -89,14 +89,26 @@ import { feedback } from '../src/components/ui/feedback';
  * app helping him avoid the decision.
  */
 
-const STAGE_TONE: Record<string, BadgeTone> = {
-  New: 'info',
-  Contacted: 'teal',
-  Qualified: 'amber',
-  Negotiation: 'amber',
-  Converted: 'success',
-  Lost: 'danger',
-};
+/*
+ * The badge's colour comes off the SAME rung its words do. It was keyed on the
+ * six-word column while the text came from the funnel stage, so a lead at
+ * Sample/Trial — stored there as `Qualified` — and one at First order —
+ * stored as `Negotiation` — could read one rung and wear another's colour.
+ * The four funnel bands decide it, and the three places a lead leaves the
+ * funnel are named rather than guessed.
+ */
+function stageTone(stage: LeadStage): BadgeTone {
+  if (stage === 'won' || stage === 'customer' || stage === 'active_distributor') return 'success';
+  if (stage === 'lost') return 'danger';
+  if (isParked(stage)) return 'neutral';
+  switch (bandOf(stage)) {
+    case 'new': return 'info';
+    case 'contacted': return 'teal';
+    case 'qualified':
+    case 'negotiation': return 'amber';
+    default: return 'neutral';
+  }
+}
 
 /**
  * §4.1 — the manager's three, in a colour and a word.
@@ -130,7 +142,6 @@ export default function LeadRecord() {
   const id = params.id ?? '';
   const back = useCameFrom('leads');
   const notify = useStore((s) => s.notify);
-  const askConfirm = useStore((s) => s.askConfirm);
   const set = useStore((s) => s.set);
 
   const [view, setView] = React.useState<LeadFunnelView | null>(null);
@@ -144,7 +155,6 @@ export default function LeadRecord() {
 
   /* the drawers — each keyed so it remounts fresh rather than being reset in
      an effect, which the React Compiler rules forbid */
-  const [cal, setCal] = React.useState(false);
   const [lost, setLost] = React.useState(false);
   const [suspect, setSuspect] = React.useState<'prospect' | 'not' | null>(null);
   const [nextOpen, setNextOpen] = React.useState(false);
@@ -329,6 +339,27 @@ export default function LeadRecord() {
     learned.push({ label: findingLabel(field), value: valueFromChecks(rows) ?? '—', finding: field });
   }
 
+  /*
+   * §6 — THE YES IS GATED BEFORE THE SHEET OPENS, not after the reason is
+   * typed. A Prospect is eight answers the office checks, and past the cap
+   * this screen hides every other control — so a shut gate is said here, with
+   * what it wants, and he is taken straight to the screen that asks for it.
+   * The reason he is about to pick counts as given; it is the ninth answer.
+   */
+  const askProspect = () => {
+    const verdict = gateAsRun(
+      gateTo({ ...input, prospectReasonRecorded: true }, 'prospect'),
+      input,
+      config,
+    );
+    if (!verdict.open) {
+      notify('Answer these first: ' + verdict.missing.map((c) => c.says).join('. ') + '.', 'warn');
+      router.push(`/lead-prospect?id=${lead.id}&from=lead`);
+      return;
+    }
+    setSuspect('prospect');
+  };
+
   /* --------------------------------------------------------- §4 the window
    *
    * Past the cap this is the entire screen. Not a banner over the record and
@@ -360,7 +391,7 @@ export default function LeadRecord() {
 
           <PrimaryButton
             label="Yes, make it a Prospect"
-            onPress={() => setSuspect('prospect')}
+            onPress={askProspect}
             style={{ marginTop: 16 }}
           />
           <SecondaryButton
@@ -396,21 +427,6 @@ export default function LeadRecord() {
     notify('Noted');
   };
 
-  const convert = () =>
-    askConfirm({
-      title: 'Make them a customer?',
-      body: title + ' becomes a customer. You can take orders from them. The lead stays linked to it. You cannot undo this.',
-      confirmLabel: 'Convert',
-      run: () => {
-        void convertToCustomer(lead, today).then((r) => {
-          if (!r.ok) return notify(r.message, 'warn');
-          notify('Customer added · ' + title);
-          set({ custId: r.value, pTab: 0 });
-          router.push('/customer');
-        });
-      },
-    });
-
   /* §9 §10 — the sample is gated on the twelve, same as everything else. */
   const sampleGate = gateTo(input, 'sample_trial');
   const alert = cfg ? leadAlert(lead, today, cfg) : null;
@@ -419,6 +435,25 @@ export default function LeadRecord() {
   return (
     <AppFrame title="Lead" activeTab={null} onBack={back.go} contentStyle={{ padding: 16, paddingBottom: 24 }}>
       <BackLink label={back.label} onPress={back.go} />
+
+      {/* Refused by the office — most often because the shop was already on
+          the book. Said at the top, because a note or a visit added below a
+          record the office never took goes nowhere. */}
+      {lead.syncState === 'rejected' || lead.syncState === 'blocked' ? (
+        <Card style={{ marginBottom: 12, borderColor: C.warnInk }}>
+          <T style={[{ fontSize: 15, lineHeight: 21, color: C.warnInk }, weight(600)]}>
+            The office did not accept this lead
+          </T>
+          <T style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 4 }}>
+            Anything you add here will not reach them. See why on Not accepted.
+          </T>
+          <SecondaryButton
+            label="Open Not accepted"
+            onPress={() => router.push('/rejections?from=leads')}
+            style={{ marginTop: 10 }}
+          />
+        </Card>
+      ) : null}
 
       {/* ---------------------------------------------------------- who */}
       <Card>
@@ -430,7 +465,7 @@ export default function LeadRecord() {
             </T>
           </View>
           <View style={{ alignItems: 'flex-end', gap: 6 }}>
-            <Badge tone={STAGE_TONE[lead.stage] ?? 'neutral'}>{stageLabel(stage)}</Badge>
+            <Badge tone={stageTone(stage)}>{stageLabel(stage)}</Badge>
             {/* §4.1 — HOW HARD TO PUSH, and it is READ-ONLY on this phone.
                 It is the manager's judgement about the WORK — which of forty
                 leads to get to first — as against the potential below, which is
@@ -929,7 +964,7 @@ export default function LeadRecord() {
           ) : null}
 
           <SecondaryButton
-            label="Prospect details (8 questions)"
+            label={'Prospect details (' + plural(PROSPECT_CONDITIONS.length, 'question') + ')'}
             onPress={() => router.push(`/lead-prospect?id=${lead.id}&from=lead`)}
           />
           <SecondaryButton
@@ -941,6 +976,11 @@ export default function LeadRecord() {
               outstanding. A sample given to a shop whose application nobody
               understands cannot be reviewed, because nobody knows what a good
               result would look like. */}
+          {/* A distributor's ladder has no sample rung, so there is no button
+              to draw — a disabled one would wait for a condition that can never
+              be met. `sampleAsk` refuses the same case wherever it is asked. */}
+          {ladder.includes('sample_trial') ? (
+          <>
           <PrimaryButton
             label="Request a sample"
             disabled={!sampleGate.open}
@@ -961,6 +1001,8 @@ export default function LeadRecord() {
               {plural(sampleGate.missing.length, 'thing') + ' to answer before a sample can go.'}
             </T>
           )}
+          </>
+          ) : null}
 
           <SecondaryButton
             label={
@@ -1012,28 +1054,11 @@ export default function LeadRecord() {
         />
       )}
 
-      {/* --------------------------------------------------- follow-up */}
-      {settled ? null : (
-        <View style={{ marginTop: 20 }}>
-          <SectionLabel style={{ marginBottom: 10 }}>Next follow-up on</SectionLabel>
-          <Pressable
-            onPress={() => setCal(true)}
-            accessibilityRole="button"
-            style={{
-              minHeight: 52,
-              borderWidth: 1,
-              borderColor: C.border,
-              borderRadius: radius.lg,
-              backgroundColor: C.surface,
-              justifyContent: 'center',
-              paddingHorizontal: 14,
-            }}>
-            <T style={{ fontSize: 16, color: lead.nextFollowUpDate ? C.ink : C.faint }}>
-              {lead.nextFollowUpDate ? dmy(lead.nextFollowUpDate) : 'Choose a day'}
-            </T>
-          </Pressable>
-        </View>
-      )}
+      {/* The separate "Next follow-up on" picker that was here is gone.
+          `setNextAction` already makes the next action's day the follow-up
+          day, so the two were the same date set from two controls — and the
+          picker set one without the other, which is how they came apart. One
+          question, asked once, on the card above. */}
 
       {/* ---------------------------------------------- §E validation calls --
 
@@ -1197,7 +1222,6 @@ export default function LeadRecord() {
       <View style={{ marginTop: 24, gap: 10 }}>
         {settled ? null : (
           <>
-            <PrimaryButton label="Convert to customer" onPress={convert} />
             {/* ON HOLD SITS BESIDE LOST, AND THAT PLACEMENT IS THE POINT.
                 This is the moment a salesman is standing in front of the two
                 answers — the plant is shut for two months, or they are never
@@ -1225,22 +1249,6 @@ export default function LeadRecord() {
       </View>
 
       {/* ---------------------------------------------------------- sheets */}
-      <BottomSheet open={cal} onClose={() => setCal(false)}>
-        <Calendar
-          key={cal ? 'open' : 'shut'}
-          selected={lead.nextFollowUpDate ?? ''}
-          disabledReason={(iso) => (iso < today ? 'That day has gone.' : null)}
-          onPick={(iso) => {
-            setCal(false);
-            void setFollowUp(lead.id, iso, today).then((r) => {
-              if (!r.ok) return notify(r.message, 'warn');
-              load();
-              notify('Back to them on ' + dmy(iso));
-            });
-          }}
-        />
-        <SecondaryButton label="Close" onPress={() => setCal(false)} style={{ minHeight: 48, height: 48, marginTop: 10 }} />
-      </BottomSheet>
 
       {/* §26 — ten reasons, and a sentence beside whichever one it was. */}
       <ReasonSheet
@@ -1371,6 +1379,11 @@ export default function LeadRecord() {
         onClose={() => setNextOpen(false)}
         meId={me?.id ?? ''}
         meName={me?.name ?? 'You'}
+        /* The lead manager can be named as the owner here too, as the hold
+           flow already allowed — "the manager rings them on Friday" is an
+           ordinary next action, not only a parked one. */
+        managerId={lead.leadManagerId}
+        managerName={lead.leadManagerName}
         current={{ action: lead.nextAction, date: lead.nextActionDate, ownerId: lead.nextActionOwnerId }}
         onSave={(n) => {
           setNextOpen(false);
@@ -1478,7 +1491,12 @@ export default function LeadRecord() {
           const wanted = asking === 'prospect';
           setSuspect(null);
           void decideSuspect(view.lead.id, { prospect: wanted, reasonCode: code, note: said }).then((r) => {
-            if (!r.ok) return notify(r.message, 'warn');
+            if (!r.ok) {
+              notify(r.message, 'warn');
+              /* A shut gate is answered on Prospect details, not here. */
+              if (r.missing?.length) router.push(`/lead-prospect?id=${view.lead.id}&from=lead`);
+              return;
+            }
             load();
             notify(wanted ? 'Now a Prospect' : 'Closed');
           });
@@ -1685,13 +1703,6 @@ function PartiesSheet({
 }
 
 /**
- * The stored verdict, in words somebody would say.
- *
- * `not_qualified` on a badge is the database talking. Anything unrecognised
- * falls through to "Waiting" rather than being printed raw — a verdict added
- * at a desk should read as pending on an older handset, not as an enum.
- */
-/**
  * §8 — WHAT THE SHOP TOLD THE OFFICE, beside what it told him.
  *
  * The four `confirmed*` figures are never written over the lead's own columns,
@@ -1795,6 +1806,13 @@ function alsoSaid(
   });
 }
 
+/**
+ * The stored verdict, in words somebody would say.
+ *
+ * `not_qualified` on a badge is the database talking. Anything unrecognised
+ * falls through to "Waiting" rather than being printed raw — a verdict added
+ * at a desk should read as pending on an older handset, not as an enum.
+ */
 function verdictWord(v: string): string {
   switch (v) {
     case 'confirmed': return 'Confirmed';
