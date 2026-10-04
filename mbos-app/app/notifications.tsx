@@ -4,7 +4,7 @@ import { router, useFocusEffect } from 'expo-router';
 import { AppFrame, BackLink, StubCard, useCameFrom } from '../src/components/shell/AppFrame';
 import { ListCard, SectionLabel, T } from '../src/components/ui/primitives';
 import { color as C, type, weight } from '../src/theme/tokens';
-import { dmy, isoDate, plural } from '../src/lib/format';
+import { dmy, plural } from '../src/lib/format';
 import { listNotifications, markAllRead, markRead, type Notification } from '../src/data/notifications';
 import { DUR, EASE, Stagger, animateLayoutFor, useReduceMotion } from '../src/components/ui/motion';
 

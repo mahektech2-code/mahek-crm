@@ -14,6 +14,9 @@ import { STAGGER_CAP } from '../src/components/ui/route-motion';
 
 type Row = Awaited<ReturnType<typeof searchProducts>>[number];
 
+/** How many rows the screen draws; past this the count says it is a slice. */
+const CAP = 200;
+
 /**
  * The rate card, searchable.
  *
@@ -45,6 +48,7 @@ export default function CatalogueScreen() {
   const set = useStore((s) => s.set);
 
   const [rows, setRows] = React.useState<Row[]>([]);
+  const [more, setMore] = React.useState(false);
   /*
    * READING, COULD NOT READ, AND NOTHING THERE are three different facts, and
    * this screen drew the third for all three. `rows` starts empty, so a
@@ -77,10 +81,12 @@ export default function CatalogueScreen() {
   useFocusEffect(
     React.useCallback(() => {
       let live = true;
-      void searchProducts(catQ || '', 200)
+      /* One past the cap, so the count can say when it is a slice. */
+      void searchProducts(catQ || '', CAP + 1)
         .then((r) => {
           if (!live) return;
-          setRows(r);
+          setMore(r.length > CAP);
+          setRows(r.slice(0, CAP));
           setFailed(false);
           setLoaded(true);
         })
@@ -179,7 +185,11 @@ export default function CatalogueScreen() {
           answered, because "0 products" about a query still running is the
           same false verdict in a shorter sentence. */}
       <T s="caption" style={{ marginTop: 8 }}>
-        {loaded && !failed ? plural(rows.length, 'product') : ' '}
+        {loaded && !failed
+          ? more
+            ? 'Showing the first ' + CAP + '. Search to find the rest.'
+            : plural(rows.length, 'product')
+          : ' '}
       </T>
 
       {rows.length === 0 ? (

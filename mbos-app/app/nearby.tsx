@@ -8,7 +8,7 @@ import { color as C, radius, weight } from '../src/theme/tokens';
 import { whatIsNearby, type NearbyAnswer } from '../src/data/nearby';
 /* No `navigateTo` here either — both buttons on this screen are
    `NavigateButton`, so one failure message cannot drift from the other. */
-import { inrFromPaise } from '../src/lib/format';
+import { inrFromPaise, plural, shopName } from '../src/lib/format';
 import { useStore } from '../src/state/store';
 import { Appear, Stagger } from '../src/components/ui/motion';
 
@@ -74,9 +74,14 @@ export default function Nearby() {
 
   React.useEffect(() => load(), [load]);
 
-  const open = (id: string) => {
-    set({ custId: id, pTab: 0 });
-    router.push('/customer');
+  /* A lead opens `/lead`, where its ladder and gates are — the same rule the
+     Customers list follows. This opened the customer record for every shop,
+     which for a lead is a page of empty ledgers. */
+  const open = (shop: { id: string; leadStage: string | null }) => {
+    set({ custId: shop.id, pTab: 0 });
+    const stage = shop.leadStage?.toLowerCase() ?? '';
+    if (stage && stage !== 'converted' && stage !== 'won') router.push(`/lead?id=${shop.id}&from=nearby`);
+    else router.push('/customer');
   };
 
   return (
@@ -138,7 +143,7 @@ export default function Nearby() {
               <Card style={{ marginTop: 16, borderLeftWidth: 3, borderLeftColor: C.primary }}>
                 <SectionLabel>Next best visit</SectionLabel>
                 <T style={[{ fontSize: 17, lineHeight: 23, color: C.ink, marginTop: 4 }, weight(600)]}>
-                  {answer.best.shop.name}
+                  {shopName(answer.best.shop.name)}
                 </T>
                 <T s="caption" style={{ marginTop: 2 }}>
                   {metresLabel(answer.best.metres) + ' · ' + answer.best.reasons.join(' · ')}
@@ -162,7 +167,7 @@ export default function Nearby() {
                   />
                   <PrimaryButton
                     label="Open shop"
-                    onPress={() => open(answer.best!.shop.id)}
+                    onPress={() => open(answer.best!.shop)}
                     style={{ flex: 1, borderRadius: radius.xl }}
                   />
                 </View>
@@ -172,7 +177,7 @@ export default function Nearby() {
 
           <T s="caption" style={{ marginTop: 16 }}>
             {answer.shops.length
-              ? answer.shops.length + ' shops to visit within ' + metresLabel(answer.radiusMetres)
+              ? plural(answer.shops.length, 'shop') + ' to visit within ' + metresLabel(answer.radiusMetres)
               : /* The advice only where there IS a wider circle. On the widest
                    the sentence named the one action that does not exist, which
                    is an empty state whose only instruction is a dead end. */
@@ -191,7 +196,7 @@ export default function Nearby() {
                   <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
                     <View style={{ flex: 1, minWidth: 0 }}>
                       <T numberOfLines={1} style={[{ fontSize: 15, color: C.ink }, weight(500)]}>
-                        {r.shop.name}
+                        {shopName(r.shop.name)}
                       </T>
                       {/* Why it is on the list. A ranking nobody can get behind is
                           one they stop believing the first time it surprises them. */}
@@ -214,7 +219,7 @@ export default function Nearby() {
                       variant="button"
                       style={{ flex: 1 }}
                     />
-                    <DashedButton label="Open" onPress={() => open(r.shop.id)} style={{ flex: 1 }} />
+                    <DashedButton label="Open" onPress={() => open(r.shop)} style={{ flex: 1 }} />
                   </View>
                 </Card>
               </Stagger>

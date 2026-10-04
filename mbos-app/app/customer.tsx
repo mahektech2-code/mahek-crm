@@ -3,7 +3,9 @@ import { View, Text, Pressable, ScrollView } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { color as C, HIT, radius, type, weight, tabular, type BadgeTone } from '../src/theme/tokens';
 import { Icon } from '../src/components/ui/Icon';
-import { Badge, Card, HealthPill, Input, PrimaryButton } from '../src/components/ui/primitives';
+import { Badge, Card, HealthPill, Input, PrimaryButton, SecondaryButton } from '../src/components/ui/primitives';
+import { BottomSheet } from '../src/components/ui/overlays';
+import { getFix } from '../src/native/location';
 import { SkuChip } from '../src/components/ui/sku';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { useCustomer, useStore } from '../src/state/store';
@@ -19,6 +21,7 @@ import {
   customerOrders,
   customerPayments,
   customerTimeline,
+  editShop,
   OUTSTANDING_ALERT_PAISE,
   recordCompetitor,
   statementReach,
@@ -189,6 +192,11 @@ export default function CustomerRecord() {
   const [compForm, setCompForm] = React.useState(false);
   const [comp, setComp] = React.useState({ name: '', rate: '', note: '', credit: '', delivery: '', strengths: '', weaknesses: '' });
   const [compBusy, setCompBusy] = React.useState(false);
+  /* The shop correction sheet, and what it saved — drawn over the record at
+     once, since the record itself is re-read only when the screen is next
+     opened. */
+  const [editing, setEditing] = React.useState(false);
+  const [fixed, setFixed] = React.useState<{ contactPerson?: string; phone?: string; pinned?: boolean } | null>(null);
   /*
    * WHETHER THE SIX READS HAVE ANSWERED YET.
    *
@@ -567,8 +575,12 @@ export default function CustomerRecord() {
                   label: 'Outstanding',
                   value: c.outstandingPaise ? inrFromPaise(c.outstandingPaise) : 'Nothing outstanding',
                 },
-                { label: 'Contact', value: c.contactPerson ?? '—' },
-                { label: 'Phone', value: c.phone ?? '—' },
+                { label: 'Contact', value: (fixed?.contactPerson ?? c.contactPerson) || '—' },
+                { label: 'Phone', value: (fixed?.phone ?? c.phone) || '—' },
+                {
+                  label: 'Map pin',
+                  value: fixed?.pinned || (c.gpsLat != null && c.gpsLng != null) ? 'Saved' : 'Not pinned yet',
+                },
                 { label: 'Where', value: [c.area, c.city].filter(Boolean).join(', ') || '—' },
                 { label: 'Beat', value: c.beat ?? '—' },
                 { label: 'GST', value: c.gstin ?? '—' },
@@ -589,6 +601,11 @@ export default function CustomerRecord() {
                   <Text style={{ fontSize: 15, color: C.ink, textAlign: 'right', flexShrink: 1 }}>{b.value}</Text>
                 </View>
               ))}
+              <SecondaryButton
+                label="Correct contact, phone or pin"
+                onPress={() => setEditing(true)}
+                style={{ marginTop: 10 }}
+              />
             </Card>
 
 
@@ -1161,7 +1178,120 @@ export default function CustomerRecord() {
           </View>
         ) : null}
       </Appear>
+
+      <EditShopSheet
+        key={editing ? 'open' : 'shut'}
+        open={editing}
+        onClose={() => setEditing(false)}
+        customerId={c.id}
+        contactPerson={(fixed?.contactPerson ?? c.contactPerson) || ''}
+        phone={(fixed?.phone ?? c.phone) || ''}
+        pinned={fixed?.pinned || (c.gpsLat != null && c.gpsLng != null)}
+        onSaved={(f) => {
+          setFixed((cur) => ({ ...(cur ?? {}), ...f }));
+          setEditing(false);
+          notify('Saved · the office will see it on the next send');
+        }}
+      />
     </AppFrame>
+  );
+}
+
+/**
+ * Correcting a shop: who runs it, the number that answers, and — only where
+ * the shop has never been pinned — a pin where he stands. See `editShop` for
+ * why an existing pin is never moved from here.
+ */
+function EditShopSheet(props: {
+  open: boolean;
+  onClose: () => void;
+  customerId: string;
+  contactPerson: string;
+  phone: string;
+  pinned: boolean;
+  onSaved: (fixed: { contactPerson?: string; phone?: string; pinned?: boolean }) => void;
+}) {
+  const [contact, setContact] = React.useState(props.contactPerson);
+  const [phone, setPhone] = React.useState(props.phone);
+  const [pin, setPin] = React.useState<{ lat: number; lng: number; accuracyM: number } | null>(null);
+  const [finding, setFinding] = React.useState(false);
+  const [err, setErr] = React.useState<string | null>(null);
+  const [busy, setBusy] = React.useState(false);
+
+  const findMe = async () => {
+    if (finding) return;
+    setFinding(true);
+    setErr(null);
+    try {
+      const threshold = await getConfig<number>('mbos.location.gpsAccuracyThresholdM', 100);
+      /* The careful reading, as the check-in takes: a city-block fix dropped
+         as a pin would refuse every honest check-in afterwards. */
+      const r = await getFix({ accuracyThresholdM: threshold, precise: true });
+      if (r.status === 'ok') {
+        setPin({ lat: r.fix.lat, lng: r.fix.lng, accuracyM: r.fix.accuracyM });
+        return;
+      }
+      setErr(r.status === 'coarse' ? 'The reading is not close enough yet. Step outside and try again.' : r.reason);
+    } finally {
+      setFinding(false);
+    }
+  };
+
+  const save = async () => {
+    if (busy) return;
+    const edit: { contactPerson?: string; phone?: string; pin?: { lat: number; lng: number; accuracyM: number } } = {};
+    if (contact.trim() !== props.contactPerson.trim()) edit.contactPerson = contact;
+    if (phone.trim() !== props.phone.trim()) edit.phone = phone;
+    if (pin) edit.pin = pin;
+    setBusy(true);
+    try {
+      const r = await editShop(props.customerId, edit);
+      if (!r.ok) return setErr(r.message);
+      props.onSaved({
+        contactPerson: edit.contactPerson?.trim(),
+        phone: edit.phone?.trim(),
+        pinned: pin ? true : undefined,
+      });
+    } catch (e) {
+      setErr(e instanceof Error && e.message ? e.message : 'Could not save. Try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <BottomSheet open={props.open} onClose={props.onClose} scroll>
+      <Text style={[{ fontSize: 17, color: C.ink }, weight(600)]}>Correct this shop</Text>
+      <Text style={[type.caption, { marginTop: 4, marginBottom: 12 }]}>
+        What you change here goes to the office.
+      </Text>
+      <Text style={[type.label, { marginBottom: 6 }]}>Who runs it</Text>
+      <Input value={contact} onChangeText={setContact} placeholder="Name of the owner or manager" />
+      <Text style={[type.label, { marginTop: 12, marginBottom: 6 }]}>Phone</Text>
+      <Input value={phone} onChangeText={setPhone} placeholder="10 digits" keyboardType="phone-pad" />
+      <Text style={[type.label, { marginTop: 12, marginBottom: 6 }]}>Map pin</Text>
+      {props.pinned ? (
+        <Text style={type.caption}>
+          This shop already has a pin. If it is in the wrong place, say so when you check in here, and your manager
+          will move it.
+        </Text>
+      ) : (
+        <>
+          <Text style={[type.caption, { marginBottom: 8 }]}>
+            Only press this while you are standing in the shop.
+          </Text>
+          <SecondaryButton
+            label={finding ? 'Finding where you are…' : pin ? 'Pinned here · ±' + Math.round(pin.accuracyM) + ' m' : 'Pin it where I am standing'}
+            onPress={() => void findMe()}
+          />
+        </>
+      )}
+      {err ? <Text style={{ fontSize: 13, color: C.danger, marginTop: 10 }}>{err}</Text> : null}
+      <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
+        <SecondaryButton label="Cancel" onPress={props.onClose} style={{ flex: 1 }} />
+        <PrimaryButton label={busy ? 'Saving…' : 'Save'} onPress={() => void save()} disabled={busy} style={{ flex: 1 }} />
+      </View>
+    </BottomSheet>
   );
 }
 

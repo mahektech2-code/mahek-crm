@@ -316,7 +316,19 @@ export default function Customers() {
     };
   }, []);
 
-  const [today] = React.useState(() => isoDate(new Date()));
+  /* RE-READ ON EVERY RETURN TO THE TAB. A tab stays mounted, so a date
+     frozen at first render went on calling yesterday "today" after midnight —
+     Reorder due, Visit due and Visited today all a day out — and the origin
+     for "Nearest first" stayed wherever he stood when he first opened it. */
+  const [today, setToday] = React.useState(() => isoDate(new Date()));
+  const [focusTick, setFocusTick] = React.useState(0);
+  useFocusEffect(
+    React.useCallback(() => {
+      const now = isoDate(new Date());
+      setToday((t) => (t === now ? t : now));
+      setFocusTick((n) => n + 1);
+    }, []),
+  );
 
   /* ------------------------------------- a shop that is not on the book yet
    *
@@ -447,7 +459,8 @@ export default function Customers() {
     return () => {
       live = false;
     };
-  }, [sortMode, town, cities]);
+    /* `focusTick`: a walk between two visits to this tab is a new origin. */
+  }, [sortMode, town, cities, focusTick]);
 
   const sort = sqlSort(sortMode);
   const pageArgs = React.useMemo(

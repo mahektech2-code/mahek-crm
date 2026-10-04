@@ -1,4 +1,4 @@
-import { all, newId, one } from '../db';
+import { all, newId, one, run } from '../db';
 import {
   CUSTOMER_PAGE,
   cityOriginsQuery,
@@ -812,4 +812,67 @@ export async function addFieldShop(args: {
   });
 
   return { ok: true, customerId };
+}
+
+/* ------------------------------------------------------- correcting a shop */
+
+export type ShopEdit = {
+  contactPerson?: string;
+  phone?: string;
+  /** Only for a shop with NO pin — see `editShop`. */
+  pin?: { lat: number; lng: number; accuracyM: number };
+};
+
+/**
+ * WHAT HE KNOWS BETTER THAN THE BOOK: who runs the shop, the number that
+ * answers, and — where the shop has never been pinned — where it is.
+ *
+ * The office has accepted these on the wire all along (`handleCustomerEdit`);
+ * nothing on the phone ever sent one, while two screens told him to "save a
+ * location" he had no way to save.
+ *
+ * A PIN IS SET, NEVER MOVED, from here. A pinned shop's pin decides the
+ * check-in radius, and letting the salesman move it from wherever he stands
+ * would be the override AGENTS.md refuses — one edit and the radius never
+ * refuses him there again. Moving a wrong pin is the request a refused
+ * check-in already offers, answered by a manager. An unpinned shop is pinned
+ * by the first check-in anyway; this is the same act without a visit.
+ */
+export async function editShop(customerId: string, edit: ShopEdit): Promise<{ ok: true } | { ok: false; message: string }> {
+  const current = await one<{ gpsLat: number | null; gpsLng: number | null }>(
+    'SELECT gpsLat, gpsLng FROM customers WHERE id = ?',
+    [customerId],
+  );
+  if (!current) return { ok: false, message: 'That shop is not on this phone.' };
+
+  const payload: Record<string, unknown> = { customerId };
+  const local: [string, unknown][] = [];
+  if (edit.contactPerson !== undefined) {
+    const v = edit.contactPerson.trim();
+    payload.contactPerson = v;
+    local.push(['contactPerson', v || null]);
+  }
+  if (edit.phone !== undefined) {
+    const v = edit.phone.trim();
+    if (v && v.replace(/\D/g, '').length < 6) return { ok: false, message: 'That phone number is too short.' };
+    payload.phone = v;
+    local.push(['phone', v || null]);
+  }
+  if (edit.pin) {
+    if (current.gpsLat != null && current.gpsLng != null) {
+      return { ok: false, message: 'This shop already has a pin. If it is wrong, say so when you check in.' };
+    }
+    payload.gpsLat = edit.pin.lat;
+    payload.gpsLng = edit.pin.lng;
+    payload.gpsAccuracyM = Math.round(edit.pin.accuracyM);
+    local.push(['gpsLat', edit.pin.lat], ['gpsLng', edit.pin.lng], ['gpsAccuracyM', Math.round(edit.pin.accuracyM)]);
+  }
+  if (!local.length) return { ok: false, message: 'Nothing has changed.' };
+
+  await run(
+    `UPDATE customers SET ${local.map(([c]) => c + ' = ?').join(', ')} WHERE id = ?`,
+    [...local.map(([, v]) => v as string | number | null), customerId],
+  );
+  await enqueue({ entityType: 'customer', entityId: customerId, op: 'update', payload });
+  return { ok: true };
 }
