@@ -623,7 +623,7 @@ function RangeSheet({
           iso > today
             ? 'There are no figures for days that have not happened.'
             : end === 'to' && from && iso < from
-              ? 'The end comes after the start.'
+              ? 'Pick an end date after the start.'
               : null
         }
         onPick={(iso) => {

@@ -132,7 +132,7 @@ function dueWords(x: Customer, today: string): { text: string; tone: 'late' | 'd
   if (state) {
     const since = daysBetween(x.lastOrderDate, today) ?? 0;
     return {
-      text: `${state === 'overdue' ? 'Reorder late' : 'Reorder due'} · ${since}d/${x.cycleDays}d`,
+      text: `${state === 'overdue' ? 'Reorder late' : 'Reorder due'} · ${since} days, buys every ${x.cycleDays}`,
       tone: state === 'overdue' ? 'late' : 'due',
     };
   }

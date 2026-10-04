@@ -1203,3 +1203,13 @@ export async function reportLocationPermission(backgroundGranted: boolean): Prom
     body: JSON.stringify({ backgroundGranted, ...state }),
   });
 }
+
+/**
+ * What went wrong on this phone, for the office. See `native/crash-log.ts`.
+ * Answers with the ids the server has, which are the ones safe to forget.
+ */
+export async function postClientErrors(
+  errors: { id: string; kind: string; message: string; stack: string | null; screen: string | null; at: number }[],
+): Promise<{ ok: boolean; received: string[] }> {
+  return request('/api/mbos/errors', { method: 'POST', body: JSON.stringify({ errors }) });
+}

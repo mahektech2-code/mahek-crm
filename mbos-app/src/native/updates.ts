@@ -1,4 +1,5 @@
 import * as Updates from 'expo-updates';
+import { reloadIsSafe } from './reload-guard';
 import * as Application from 'expo-application';
 
 /**
@@ -73,8 +74,10 @@ export async function fetchUpdateInBackground(): Promise<'none' | 'ready' | 'app
        under somebody mid-visit, with a half-filled order form on screen, would
        lose work to deliver the change. It is already downloaded; the next time
        he opens the app it is what runs. Every saved record is in SQLite, so a
-       reload inside the window loses nothing. */
-    if (Date.now() - LOADED_AT <= APPLY_WINDOW_MS) {
+       reload inside the window loses nothing — and `reloadIsSafe` is what
+       makes that true rather than assumed: an open camera or sheet, or any
+       screen past Home, holds it off. See `reload-guard.ts`. */
+    if (Date.now() - LOADED_AT <= APPLY_WINDOW_MS && reloadIsSafe()) {
       await Updates.reloadAsync();
       return 'applied';
     }

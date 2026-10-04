@@ -287,15 +287,6 @@ export function shopName(name: string | null | undefined): string {
   });
 }
 
-export function initialsOf(name: string): string {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((p) => p[0]!.toUpperCase())
-    .join('');
-}
-
 /**
  * 09:41 — a time of day, in the handset's own zone.
  *

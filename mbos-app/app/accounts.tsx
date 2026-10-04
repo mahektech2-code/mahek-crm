@@ -228,7 +228,7 @@ export default function AccountsScreen() {
             {query
               ? 'Try part of the shop name, the owner, the phone number or the GST number.'
               : filter === 'all'
-                ? 'Your customers come from the office. If you have shops and see none, open Send to office and sync.'
+                ? 'Your customers come from the office. If you have shops and see none, open More, then Send to office, and tap Send now.'
                 : 'None of your customers fall under this filter.'}
           </T>
         </Card>

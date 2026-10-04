@@ -7,10 +7,14 @@ import { isoDate, monthName } from '../../lib/format';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { TAB_BAR_HEIGHT } from '../shell/Chrome';
 import { useKeyboardHeight, useRevealFocusedField } from './keyboard';
-import { useReduceMotion, EASE } from './motion';
+import { useReduceMotion, EASE, Presence } from './motion';
 import { feedback } from './feedback';
 import { useModalOpen } from '../../state/push-banner';
+import { useStore } from '../../state/store';
 import type { FeedbackKind } from '../../engines/feedback';
+import { useSheetTicket, useTopSheet } from './sheet-stack';
+import { makeFeltOnce, toastDwellMs } from './toast-timing';
+import { BAR_FONT_CAP } from './font-scale';
 
 /**
  * Everything that floats above a screen. All of it goes through `Modal` so it
@@ -99,6 +103,9 @@ function SheetModal({
   /* A Modal is its own window over the app, so a push banner drawn under it
      would never be seen — while one is up, the system shows pushes instead. */
   useModalOpen(shown);
+  /* The toast is drawn by whichever window is on top — see `sheet-stack.ts`. */
+  const ticket = useSheetTicket(shown);
+  const top = useTopSheet();
 
   React.useEffect(() => {
     if (!shown) return;
@@ -153,6 +160,7 @@ function SheetModal({
             style={{ position: 'absolute', top: 0, left: '50%', marginLeft: -80, width: 160, height: 32 }}
           />
         </Animated.View>
+        {ticket != null && ticket === top ? <StoreToast placement="top" /> : null}
       </View>
     </Modal>
   );
@@ -217,22 +225,43 @@ const TONE: Record<
   error: { accent: C.danger, tint: C.dangerBg, icon: 'alert', label: 'Not done', feel: 'error' },
 };
 
-/* Every notice leaves after three seconds, whatever its tone, and the ×
-   closes it sooner. One number, so no tone lingers over the screen. */
-const DWELL_MS = 3000;
+/* How long each notice stays is `toastDwellMs` — a refusal is held long
+   enough to be read, a "Saved" is not. The × closes any of them sooner. */
+const feltOnce = makeFeltOnce(1500);
+
+/**
+ * The toast as the store has it, for the window on top. `AppFrame` draws one
+ * for the screen while no sheet is open; the top sheet draws this one.
+ */
+export function StoreToast({ lift = 0, placement = 'bottom' }: { lift?: number; placement?: 'bottom' | 'top' }) {
+  const toast = useStore((s) => s.toast);
+  const toastTone = useStore((s) => s.toastTone);
+  const clearToast = useStore((s) => s.clearToast);
+  return <Toast message={toast} tone={toastTone} onDone={clearToast} lift={lift} placement={placement} />;
+}
 
 export function Toast({
   message,
   onDone,
   lift = 0,
   tone = 'success',
+  placement = 'bottom',
 }: {
   message: string | null;
   onDone: () => void;
   lift?: number;
   tone?: ToastTone;
+  /**
+   * `top` inside a sheet: the bottom of the window is the sheet itself, and a
+   * notice about the form must not cover the form's own buttons.
+   */
+  placement?: 'bottom' | 'top';
 }) {
   const insets = useSafeAreaInsets();
+  /* Over the keyboard rather than behind it. Android runs edge-to-edge and
+     does not resize for the keyboard, so a refusal raised while typing — "set
+     a quantity on every line" — was drawn under the keys. */
+  const keyboardHeight = useKeyboardHeight();
   const reduce = useReduceMotion();
   const progress = React.useRef(new Animated.Value(0)).current;
   const [showing, setShowing] = React.useState<{ message: string; tone: ToastTone } | null>(null);
@@ -275,7 +304,7 @@ export function Toast({
   React.useEffect(() => {
     if (!message) return;
     const feel = (TONE[tone] ?? TONE.info).feel;
-    if (feel) feedback(feel);
+    if (feel && feltOnce(message, Date.now())) feedback(feel);
   }, [message, tone]);
 
   /* Swiped sideways, it goes — the way every notification on the phone does. */
@@ -321,7 +350,7 @@ export function Toast({
 
   React.useEffect(() => {
     if (!message) return;
-    const dwell = DWELL_MS;
+    const dwell = toastDwellMs(tone, message);
 
     if (reduce) {
       progress.setValue(1);
@@ -361,12 +390,22 @@ export function Toast({
       accessibilityLiveRegion={look === TONE.error ? 'assertive' : 'polite'}
       style={[
         st.toast,
+        placement === 'top'
+          ? { top: insets.top + 12 }
+          : keyboardHeight > 0
+            ? /* The tab bar hides while typing, so the keyboard is the floor. */
+              { bottom: keyboardHeight + 12 }
+            : /* 28 clears the raised + button, which sits 20 above the bar. */
+              { bottom: TAB_BAR_HEIGHT + insets.bottom + 28 + lift },
         {
-          /* 28 clears the raised + button, which sits 20 above the bar. */
-          bottom: TAB_BAR_HEIGHT + insets.bottom + 28 + lift,
           opacity: progress,
           transform: [
-            { translateY: progress.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) },
+            {
+              translateY: progress.interpolate({
+                inputRange: [0, 1],
+                outputRange: [placement === 'top' ? -16 : 16, 0],
+              }),
+            },
             { translateX: swipe },
           ],
         },
@@ -428,7 +467,17 @@ export function BottomSheet({
    * behind the keyboard is the form being unusable, not merely awkward.
    */
   const available = Math.max(200, screenHeight - keyboardHeight - 80);
-  const pad = { padding: 20, paddingBottom: 24 };
+  /*
+   * CLEAR OF THE NAVIGATION BAR. The modal is drawn edge-to-edge
+   * (`navigationBarTranslucent`), so on a phone with the three-button bar —
+   * most of the budget handsets this runs on — the last 48 points of every
+   * sheet sat under Back, Home and Recents: Cancel and Confirm half-covered,
+   * and a thumb aimed at Confirm landing on Home. While the keyboard is up it
+   * is the floor instead, and the inset is not added twice.
+   */
+  const insets = useSafeAreaInsets();
+  const bottomInset = keyboardHeight > 0 ? 0 : insets.bottom;
+  const pad = { padding: 20, paddingBottom: 24 + bottomInset };
 
   return (
     <SheetModal open={open} onClose={onClose}>
@@ -483,11 +532,16 @@ export function ActionSheet({
   onClose: () => void;
 }) {
   const keyboardHeight = useKeyboardHeight();
+  /* Clear of the navigation bar — see `BottomSheet`. */
+  const insets = useSafeAreaInsets();
+  const bottomInset = keyboardHeight > 0 ? 0 : insets.bottom;
   return (
     <SheetModal open={open} onClose={onClose}>
-      <View style={[st.sheet, keyboardHeight > 0 && { marginBottom: keyboardHeight }, { borderTopLeftRadius: radius.card, borderTopRightRadius: radius.card, paddingTop: 8, paddingBottom: 24, boxShadow: shadow.sheet }]}>
+      <View style={[st.sheet, keyboardHeight > 0 && { marginBottom: keyboardHeight }, { borderTopLeftRadius: radius.card, borderTopRightRadius: radius.card, paddingTop: 8, paddingBottom: 24 + bottomInset, boxShadow: shadow.sheet }]}>
         <View style={st.grabber} />
-        <Text style={[{ fontSize: 15, color: C.ink, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 }, weight(600)]}>
+        <Text
+          accessibilityRole="header"
+          style={[{ fontSize: 15, color: C.ink, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 }, weight(600)]}>
           {title}
         </Text>
         {items.map((i) => (
@@ -497,13 +551,19 @@ export function ActionSheet({
               onClose();
               i.run();
             }}
+            accessibilityRole="button"
+            accessibilityLabel={i.label + '. ' + i.sub}
             style={({ pressed }) => [st.sheetRow, pressed && { backgroundColor: C.wash }]}>
             <View style={st.sheetGlyph}>
               <Icon name={i.glyph} size={18} color={C.body} />
             </View>
             <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={[{ fontSize: 15, color: C.ink }, weight(500)]}>{i.label}</Text>
-              <Text style={type.caption}>{i.sub}</Text>
+              <Text maxFontSizeMultiplier={BAR_FONT_CAP} style={[{ fontSize: 15, color: C.ink }, weight(500)]}>
+                {i.label}
+              </Text>
+              <Text maxFontSizeMultiplier={BAR_FONT_CAP} style={type.caption}>
+                {i.sub}
+              </Text>
             </View>
           </Pressable>
         ))}
@@ -587,6 +647,11 @@ export type CalendarProps = {
 };
 
 export function Calendar({ selected, onPick, rangeFrom, rangeTo, disabledReason, fixedWeeks = true }: CalendarProps) {
+  /* THE PHONE'S OWN ZONE, deliberately. A calendar is a picture of the days on
+     the wall where he is standing, and every handset this ships to is set to
+     India time; `isoDate` reads the same zone, so a cell and the ISO day it
+     hands back can never disagree. Anything stored against a business day is
+     converted by the caller, which is where `Asia/Kolkata` is named. */
   const today = React.useMemo(() => {
     const d = new Date();
     d.setHours(0, 0, 0, 0);
@@ -594,6 +659,18 @@ export function Calendar({ selected, onPick, rangeFrom, rangeTo, disabledReason,
   }, []);
   const [offset, setOffset] = React.useState(0);
   const shown = new Date(today.getFullYear(), today.getMonth() + offset, 1);
+  /*
+   * WHY A DAY CANNOT BE PICKED, said where the tap was.
+   *
+   * Callers have always passed a sentence for each refused day — "Last day
+   * cannot be before the first day", "That day has passed." — and the grid used
+   * it only as a yes/no: the cell went grey and a tap on it did nothing. Nine
+   * screens wrote reasons nobody ever saw, and a dead tap reads as a frozen
+   * phone. The sentence is shown under the grid instead — not as a toast,
+   * because this grid lives in a sheet and a sheet is exactly where a toast
+   * used to go unseen.
+   */
+  const [refused, setRefused] = React.useState<string | null>(null);
 
   /* A month change SLIDES the way it went — next month comes in from the
      right, the previous from the left — so it reads as paging through time
@@ -602,6 +679,7 @@ export function Calendar({ selected, onPick, rangeFrom, rangeTo, disabledReason,
   const slide = React.useRef(new Animated.Value(0)).current;
   const page = (by: number) => {
     feedback('select');
+    setRefused(null);
     setOffset(offset + by);
     if (reduce) return;
     slide.setValue(by * 24);
@@ -629,13 +707,13 @@ export function Calendar({ selected, onPick, rangeFrom, rangeTo, disabledReason,
   return (
     <View>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-        <Pressable onPress={() => page(-1)} accessibilityLabel="Previous month" style={st.calNav}>
+        <Pressable onPress={() => page(-1)} accessibilityRole="button" accessibilityLabel="Previous month" style={st.calNav}>
           <Text style={{ fontSize: 20, color: C.body }}>‹</Text>
         </Pressable>
         <Text style={[{ flex: 1, textAlign: 'center', fontSize: 16, color: C.ink }, weight(600)]}>
           {monthName(shown.getMonth()) + ' ' + shown.getFullYear()}
         </Text>
-        <Pressable onPress={() => page(1)} accessibilityLabel="Next month" style={st.calNav}>
+        <Pressable onPress={() => page(1)} accessibilityRole="button" accessibilityLabel="Next month" style={st.calNav}>
           <Text style={{ fontSize: 20, color: C.body }}>›</Text>
         </Pressable>
       </View>
@@ -668,12 +746,18 @@ export function Calendar({ selected, onPick, rangeFrom, rangeTo, disabledReason,
             <Pressable
               key={i}
               onPress={() => {
-                if (off) return;
+                if (off) {
+                  feedback('warning');
+                  setRefused(refusal);
+                  return;
+                }
+                setRefused(null);
                 if (!picked) feedback('select');
                 onPick(key);
               }}
-              disabled={off}
               accessibilityRole="button"
+              accessibilityLabel={d.getDate() + ' ' + monthName(d.getMonth())}
+              accessibilityHint={refusal ?? undefined}
               accessibilityState={{ selected: picked, disabled: off }}
               style={{
                 width: `${100 / 7}%`,
@@ -708,6 +792,11 @@ export function Calendar({ selected, onPick, rangeFrom, rangeTo, disabledReason,
           );
         })}
       </Animated.View>
+      <Presence show={!!refused}>
+        <Text accessibilityLiveRegion="polite" style={{ fontSize: 13, lineHeight: 18, color: C.danger, marginTop: 8, textAlign: 'center' }}>
+          {refused}
+        </Text>
+      </Presence>
     </View>
   );
 }
@@ -731,7 +820,10 @@ const st = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
-    height: 60,
+    /* At least 60, and taller when a large font wraps the sub-line rather
+       than cutting it off. */
+    minHeight: 60,
+    paddingVertical: 6,
     paddingHorizontal: 16,
   },
   sheetGlyph: {
