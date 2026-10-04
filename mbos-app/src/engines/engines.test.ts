@@ -13,7 +13,7 @@ import { healthScore, type HealthInputs, type HealthThresholds, type HealthWeigh
 import { applySchemes, matches, type Scheme } from './schemes';
 import { cashPosition, collectionMode, type Collection } from './cash';
 import { deriveStatus, workedLabel } from './attendance';
-import { balanceAfter, leaveDays, overlaps } from './leave';
+import { balanceAfter, leaveDays, overlaps, workingDaysIn } from './leave';
 import { canValueOrders, derivedQuantities, lineValuePaise } from './order';
 
 /**
@@ -623,6 +623,18 @@ test('leave days count inclusively, and a half day is half', () => {
   const noted = leaveDays({ span: 'range', from: '2026-08-11', to: '2026-08-13', half: 'first_half' });
   assert.equal(noted.days, 3);
   assert.ok(noted.note, 'a half day on a range is dropped, and the form is told');
+});
+
+test('with the office calendar, leave counts working days the way the office debits them', () => {
+  // Monday to Saturday worked; 2026-08-15 (a Saturday) is a holiday.
+  const calendar = { workingDays: [1, 2, 3, 4, 5, 6], holidays: new Set(['2026-08-15']) };
+  // Friday 14th to Monday 17th: Fri worked, Sat holiday, Sun off, Mon worked.
+  const span = leaveDays({ span: 'range', from: '2026-08-14', to: '2026-08-17', half: null }, calendar);
+  assert.equal(span.days, 2);
+  assert.ok(span.note, 'the days not counted are said');
+  // A Sunday alone is no leave at all, as the office refuses it.
+  assert.equal(leaveDays({ span: 'single', from: '2026-08-16', to: '2026-08-16', half: null }, calendar).days, 0);
+  assert.equal(workingDaysIn('2026-08-16', '2026-08-15', calendar), 0);
 });
 
 test('the balance says in words how much of this goes unpaid', () => {

@@ -1,6 +1,6 @@
 import { all, newId, one, run } from '../db';
 import { insertAndQueue, stamp, updateAndQueue } from './write';
-import { leaveDays, overlaps, balanceAfter } from '../engines/leave';
+import { leaveDays, overlaps, balanceAfter, type LeaveCalendar } from '../engines/leave';
 import { isoDate } from '../lib/format';
 import { wireComplaintCategory } from '../lib/wire';
 import type { ClaimedLine } from './travel';
@@ -296,6 +296,25 @@ export async function leaveBalances() {
 }
 
 /**
+ * THE OFFICE'S WORKING WEEK AND ITS HOLIDAYS, for counting leave the way the
+ * office debits it.
+ *
+ * Every holiday counts here, scoped or universal — the same reading
+ * `leaveCalendarFor` takes on the server, because a day the office is shut is
+ * a day nobody was going to work. `workingDay.workingDays` rides down on the
+ * pull; Monday to Saturday is the company default if it has not arrived yet.
+ */
+export async function leaveCalendar(): Promise<LeaveCalendar> {
+  const { getConfig } = await import('./config');
+  const workingDays = await getConfig<number[]>('workingDay.workingDays', [1, 2, 3, 4, 5, 6]);
+  const rows = await all<{ onDate: string }>('SELECT onDate FROM holidays');
+  return {
+    workingDays: Array.isArray(workingDays) && workingDays.length ? workingDays : [1, 2, 3, 4, 5, 6],
+    holidays: new Set(rows.map((r) => r.onDate)),
+  };
+}
+
+/**
  * Applying for leave.
  *
  * Overlapping requests are BLOCKED, and checked against both pending and
@@ -322,7 +341,11 @@ export async function applyForLeave(args: {
     half: args.half ? (args.half === 'Morning' ? ('first_half' as const) : ('second_half' as const)) : null,
   };
 
-  const { days } = leaveDays(span);
+  const counted = leaveDays(span, await leaveCalendar());
+  /* NOTHING TO TAKE is refused here, in the office's own words, rather than
+     queued for the office to refuse an hour later. */
+  if (counted.days <= 0) return { ok: false, message: `${counted.sentence} Nothing was saved.` };
+  const { days } = counted;
 
   /* Pending counts as well as approved — two requests for the same week sit in
      the same inbox and get approved separately by somebody reading them one at
