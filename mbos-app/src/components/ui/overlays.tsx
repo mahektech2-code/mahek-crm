@@ -1,5 +1,5 @@
 import React from 'react';
-import { Animated, Easing, View, Text, Pressable, Modal, PanResponder, ScrollView, StyleSheet, useWindowDimensions } from 'react-native';
+import { Animated, Easing, View, Text, Pressable, Modal, PanResponder, ScrollView, StyleSheet, useWindowDimensions, type NativeSyntheticEvent, type NativeScrollEvent } from 'react-native';
 import { color as C, HIT, radius, shadow, type, weight, tabular } from '../../theme/tokens';
 import { Icon } from './Icon';
 import { Input, PrimaryButton, SecondaryButton } from './primitives';
@@ -400,15 +400,43 @@ export function BottomSheet({
   onClose,
   children,
   scroll = false,
+  page,
 }: {
   open: boolean;
   onClose: () => void;
   children: React.ReactNode;
   scroll?: boolean;
+  /**
+   * Which of several views the sheet is showing, where one sheet swaps its
+   * content for another — the lead form and its area picker. Each page keeps
+   * its own scroll position: a new page opens at its top rather than wherever
+   * the last one was scrolled to, and going back lands where he left off.
+   */
+  page?: string;
 }) {
   const keyboardHeight = useKeyboardHeight();
   const { height: screenHeight } = useWindowDimensions();
   const reveal = useRevealFocusedField(keyboardHeight);
+  const scrollY = React.useRef(0);
+  const pageOffsets = React.useRef<Record<string, number>>({});
+  const shownPage = React.useRef(page);
+  React.useEffect(() => {
+    if (page === shownPage.current) return;
+    pageOffsets.current[shownPage.current ?? ''] = scrollY.current;
+    shownPage.current = page;
+    const y = pageOffsets.current[page ?? ''] ?? 0;
+    /* A frame later, so the new page has been laid out and is tall enough to
+       scroll to where it was. */
+    const frame = requestAnimationFrame(() => reveal.ref.current?.scrollTo({ y, animated: false }));
+    return () => cancelAnimationFrame(frame);
+  }, [page, reveal.ref]);
+  const onScroll = React.useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      scrollY.current = e.nativeEvent.contentOffset.y;
+      reveal.onScroll(e);
+    },
+    [reveal],
+  );
 
   /**
    * The sheet sits ON the keyboard, on BOTH platforms.
@@ -438,7 +466,7 @@ export function BottomSheet({
         {scroll ? (
           <ScrollView
             ref={reveal.ref}
-            onScroll={reveal.onScroll}
+            onScroll={onScroll}
             scrollEventThrottle={16}
             style={{ maxHeight: available }}
             keyboardShouldPersistTaps="handled"
@@ -449,7 +477,7 @@ export function BottomSheet({
         ) : (
           <ScrollView
             ref={reveal.ref}
-            onScroll={reveal.onScroll}
+            onScroll={onScroll}
             scrollEventThrottle={16}
             style={{ maxHeight: available }}
             keyboardShouldPersistTaps="handled"

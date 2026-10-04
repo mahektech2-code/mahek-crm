@@ -21,6 +21,8 @@ import { territoryState } from '../../sync/pull';
 import { areaRule, type AreaChoice, type AreaRule } from '../../engines/lead-areas';
 import { takePhoto } from '../../native/capture';
 import { LeadScanPanel, useLeadScan, type LeadScanFill } from './lead-scan';
+import { AreaField, AreaPickerPage } from './area-picker';
+import { rememberPickedArea } from '../../data/lead-areas';
 import { LeadVoicePanel, useLeadVoice } from './lead-voice';
 import type { LeadVoiceFill } from '../../engines/lead-voice';
 import {
@@ -410,6 +412,8 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
      last said about his area — see `engines/lead-areas.ts`. */
   const [areas, setAreas] = React.useState<AreaRule>({ kind: 'free' });
   const [pickedArea, setPickedArea] = React.useState<AreaChoice | null>(null);
+  /* The area picker is a page of the form's own sheet — see `area-picker.tsx`. */
+  const [choosingArea, setChoosingArea] = React.useState(false);
   /**
    * THE CODE, NOT THE WORD, and the list is the office's.
    *
@@ -565,6 +569,7 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
     setMobile('');
     setCity('');
     setPickedArea(null);
+    setChoosingArea(false);
     setSource(null);
     setSourceDetail('');
     setSalesType(null);
@@ -746,6 +751,9 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
         return;
       }
 
+      /* What a man works this week, he works tomorrow: the area goes to the
+         top of the picker's "recently" — only for a lead actually saved. */
+      if (pickedArea) void rememberPickedArea(pickedArea.key).catch(() => undefined);
       setFormOpen(false);
       /* One of the two places anything is thrown away — this one and Cancel. The
          next "+ Add lead" is a different shop; this one is on the list behind
@@ -960,7 +968,27 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
       />
 
       {/* ------------------------------------------------------------ form */}
-      <BottomSheet open={formOpen} onClose={() => setFormOpen(false)} scroll>
+      <BottomSheet
+        open={formOpen}
+        onClose={() => {
+          setChoosingArea(false);
+          setFormOpen(false);
+        }}
+        page={choosingArea && areas.kind === 'pick' ? 'area' : 'form'}
+        scroll>
+        {choosingArea && areas.kind === 'pick' ? (
+          <AreaPickerPage
+            choices={areas.choices}
+            pickedKey={pickedArea?.key ?? null}
+            onPick={(a) => {
+              setPickedArea(a);
+              setErr(null);
+              setChoosingArea(false);
+            }}
+            onBack={() => setChoosingArea(false)}
+          />
+        ) : (
+        <>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
           <View style={{ flex: 1 }}>
             <T style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.285, color: C.ink }, weight(600)]}>New lead</T>
@@ -1135,23 +1163,15 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
           ) : (
             <>
               {areas.kind === 'pick' ? (
-                <>
-                  <SectionLabel style={{ marginBottom: 6 }}>Area</SectionLabel>
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
-                    {areas.choices.map((a) => (
-                      <Choice
-                        key={a.key}
-                        label={a.label}
-                        selected={pickedArea?.key === a.key}
-                        onPress={() => {
-                          setPickedArea(a);
-                          setErr(null);
-                        }}
-                        style={{ paddingHorizontal: 14 }}
-                      />
-                    ))}
-                  </View>
-                </>
+                <AreaField
+                  choices={areas.choices}
+                  picked={pickedArea}
+                  onPick={(a) => {
+                    setPickedArea(a);
+                    setErr(null);
+                  }}
+                  onOpen={() => setChoosingArea(true)}
+                />
               ) : null}
               {/* A town picks itself; a state, or no rule at all, asks for one. */}
               {pickedArea?.city ? null : (
@@ -1320,6 +1340,8 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
           />
           <PrimaryButton label="Add lead" onPress={save} style={{ flex: 1, borderRadius: radius.xl }} />
         </View>
+        </>
+        )}
       </BottomSheet>
 
       {/* -------------------------------------------------------- when owed */}

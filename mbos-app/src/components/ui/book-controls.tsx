@@ -27,11 +27,13 @@ export function SearchBox({
   onChange,
   onClear,
   placeholder,
+  autoFocus = false,
 }: {
   value: string;
   onChange: (v: string) => void;
   onClear: () => void;
   placeholder: string;
+  autoFocus?: boolean;
 }) {
   return (
     <View style={{ flex: 1, minWidth: 0, position: 'relative', justifyContent: 'center' }}>
@@ -45,6 +47,7 @@ export function SearchBox({
         placeholderTextColor={C.faint}
         returnKeyType="search"
         autoCorrect={false}
+        autoFocus={autoFocus}
         style={{
           height: 46,
           paddingLeft: 38,
