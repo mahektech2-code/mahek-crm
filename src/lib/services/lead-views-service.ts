@@ -6,6 +6,8 @@ import { db } from "@/db";
 import {
   dueTodayWindow,
   overdueWindow,
+  convertedOff,
+  notConverted,
   STILL_WORKING,
   unworkedWindow,
 } from "../lead-action-window";
@@ -236,6 +238,7 @@ export async function leadWorklistCounts(day: string): Promise<{
         from customers c
        where c.lead_stage is not null
          and c.lead_archived = false
+         ${convertedOff(view)}
          ${scopeNarrowing(scope, view)}
          and (${await leadViewClause(view, day)})
     `);
@@ -321,6 +324,7 @@ export async function leadTileCounts(
       from customers c
      where c.lead_stage is not null
        and c.lead_archived = ${archived}
+       and ${notConverted()}
        ${leadsVisible(scope)}
        ${leadFilterClause(filters, day, health)}
   `);

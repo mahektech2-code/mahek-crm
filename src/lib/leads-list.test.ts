@@ -383,3 +383,36 @@ describe("the filters", () => {
     }
   });
 });
+
+describe("a lead that has become a customer", () => {
+  test("is off the Leads list, its tiles and its filters, and still on Handovers", async () => {
+    /* Mahek's rule: a converted shop is worked as a customer from then on.
+       Three ways to stop being a lead, and the list must drop all three. */
+    const working = await makeLead({ name: "Still working", leadStage: "negotiation" });
+    const byOrder = await makeLead({
+      name: "Won by its orders",
+      kind: "customer",
+      leadStage: "won",
+      leadConvertedAt: new Date(`${TODAY}T05:00:00Z`),
+    });
+    const onLadder = await makeLead({ name: "Distributor appointed", leadStage: "active_distributor" });
+    const marked = await makeLead({ name: "Billed by a distributor", thirdParty: true });
+
+    const page = await leadsPage(TODAY);
+    const names = page.rows.map((r) => r.name);
+    assert.ok(names.includes(working.name), "a lead still being worked stays");
+    for (const gone of [byOrder, onLadder, marked]) {
+      assert.ok(!names.includes(gone.name), `${gone.name} is a customer, not a lead`);
+    }
+
+    const options = await leadFilterOptions();
+    assert.ok(
+      !options.stages.some((s) => s.value === "won" || s.value === "active_distributor"),
+      "the stage dropdown offers no rung only converted leads stand on",
+    );
+
+    /* The one view that exists for converted leads keeps them. */
+    const handover = await leadsPage(TODAY, { view: "handover" });
+    assert.deepEqual(handover.rows.map((r) => r.name), [byOrder.name]);
+  });
+});

@@ -1,4 +1,5 @@
 import "server-only";
+import { notConverted } from "../lead-action-window";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { getConfig } from "../config/store";
@@ -252,7 +253,7 @@ const ROW_JOINS = sql`
  */
 export async function callingDesk(day: string, view: DeskView): Promise<CallingDesk> {
   const own = scopedToUsers(scopedUserIds((await resolveScope()).scope));
-  const where = sql`customers.lead_stage is not null and customers.lead_archived = false ${
+  const where = sql`customers.lead_stage is not null and customers.lead_archived = false and ${notConverted("customers")} ${
     own ? sql`and ${own}` : sql``
   }`;
 

@@ -53,6 +53,46 @@ export const STILL_WORKING: SQL = sql`
 `;
 
 /**
+ * A LEAD THAT HAS BECOME A CUSTOMER IS NO LONGER ON A LEADS LIST.
+ *
+ * Mahek's own rule, and a reversal: the lists used to show anything that had
+ * ever been a lead, on the reasoning that the won band is the one a manager
+ * most wants to see. The office's answer is that a converted shop is worked
+ * as a customer from then on, and a Leads list still carrying it — badge or
+ * no badge — is a list of work that is not lead work. The FUNNEL and the
+ * reports still count it, which is where "how were leads won" is asked; the
+ * Handovers view still lists it, because a handover exists only once a lead
+ * has converted.
+ *
+ * Converted is any of three facts, because there are three ways to stop being
+ * a lead: a conversion stamped by an order (`lead_converted_at`), a ladder
+ * that ended on a winning rung (every terminal one except `lost`, from the
+ * engine rather than typed out), and a shop marked as one somebody else bills
+ * — a third-party shop is a customer, which is also why the handset's leads
+ * channel stopped sending them.
+ *
+ * A FUNCTION OF THE ALIAS, because the calling desk reads `customers` bare.
+ * Parenthesised, because it is spliced after an `and`.
+ */
+export function notConverted(alias = "c"): SQL {
+  const t = sql.raw(alias);
+  return sql`(${t}.lead_converted_at is null
+    and not ${t}.third_party
+    and ${t}.lead_stage::text not in (${sql.join(
+      TERMINAL_STAGES.filter((s) => s !== "lost").map((s) => sql`${s}`),
+      sql`, `,
+    )}))`;
+}
+
+/**
+ * The same, for a list read through a VIEW: the one view that exists to show
+ * converted leads is Handovers, and it keeps them.
+ */
+export function convertedOff(view: string | undefined): SQL {
+  return view === "handover" ? sql`` : sql`and ${notConverted()}`;
+}
+
+/**
  * A park read back — the other half of "owed", and the reason neither window
  * is one column.
  *
