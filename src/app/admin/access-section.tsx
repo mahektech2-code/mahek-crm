@@ -18,7 +18,18 @@ import {
 } from "@/components/ui/primitives";
 import { FilterPills, Modal, RowMenu } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
-import { grantableApps, isAlwaysOpen, moduleGroupsForApp, modulesForApp } from "@/lib/modules";
+import { getModule, grantableApps, isAlwaysOpen, moduleGroupsForApp, modulesForApp } from "@/lib/modules";
+import {
+  describeDiff,
+  designationShape,
+  diffFromDesignation,
+  draftFor,
+  heldShape,
+  isEmptyDiff,
+  type DesignationDiff,
+  type ErpDesignationDef,
+  type ErpLevel,
+} from "@/lib/erp/designations";
 import { levelCarries } from "@/lib/capability-labels";
 import { LEVEL_LABELS } from "@/lib/hat-labels";
 import { getApp, type AppId } from "@/lib/apps";
@@ -124,14 +135,41 @@ const ALL_OF = (app: AppId) => modulesForApp(app).map((m) => m.key);
 /** What ticking an app (or starting a new grant) selects: every module except the ones that are handed out deliberately. */
 const DEFAULT_OF = (app: AppId) => modulesForApp(app).filter((m) => !m.offByDefault).map((m) => m.key);
 
+/** A designation's difference from somebody, in the words a row can carry. */
+function diffLines(diff: DesignationDiff): string[] {
+  return describeDiff(
+    diff,
+    (k) => getModule(k)?.label ?? k,
+    (p) => ERP_POWER_LABEL[p as keyof typeof ERP_POWER_LABEL]?.label ?? p,
+  );
+}
+
+/**
+ * How a draft stands against a designation — computed live while the boxes
+ * move, from the same arithmetic the server applies an edit by, so "matches"
+ * here is exactly what decides whether the next edit to the designation
+ * reaches this person.
+ */
+function standingOf(d: ErpDesignationDef, modules: string[], level: RoleId, powers: string[]): { matches: boolean; lines: string[] } {
+  const all = ALL_OF("erp");
+  const diff = diffFromDesignation(heldShape({ level: level as ErpLevel, moduleRows: modules, powers }, all), designationShape(d, all), all);
+  return { matches: isEmptyDiff(diff), lines: diffLines(diff) };
+}
+
 export function AccessSection({
   rows: allRows,
+  designations,
+  onlyDesignation,
   isPlatformAdmin,
   enabling,
   onEnablingDone,
   onlyApp,
 }: {
   rows: AccessRow[];
+  /** The ERP's designations, offered on the ERP's block of the dialog. */
+  designations: ErpDesignationDef[];
+  /** Arrived narrowed to one designation's holders. */
+  onlyDesignation: string | null;
   /**
    * Whether the viewer is a PLATFORM ADMINISTRATOR — Admin on the Admin
    * Console. Every action this screen offers refuses anybody else on the
@@ -149,7 +187,19 @@ export function AccessSection({
   const router = useRouter();
   const { push } = useToast();
   const onOpenUser = (id: string) => router.push(ADMIN.person(id));
-  const rows = onlyApp ? allRows.filter((r) => r.grants.some((g) => g.app === onlyApp)) : allRows;
+  /* BY DESIGNATION, because "who are our quality testers" is asked of this
+     screen as often as "who holds the ERP" — and the answer has to include
+     the customised ones, which a designation's own page counts separately. */
+  const [byDesignation, setByDesignation] = React.useState<string>(onlyDesignation ?? "");
+  const rows = allRows
+    .filter((r) => !onlyApp || r.grants.some((g) => g.app === onlyApp))
+    .filter((r) =>
+      !byDesignation
+        ? true
+        : byDesignation === "none"
+          ? r.grants.some((g) => g.app === "erp") && !r.erpDesignation
+          : r.erpDesignation?.id === byDesignation,
+    );
   const [view, setView] = React.useState<View>("Everyone with access");
   /** Managing somebody already on the list skips the picker. */
   const [managing, setManaging] = React.useState<AccessRow | null>(null);
@@ -202,6 +252,22 @@ export function AccessSection({
           value={view}
           onChange={setView}
         />
+        {designations.length ? (
+          <select
+            value={byDesignation}
+            aria-label="Filter by ERP designation"
+            onChange={(e) => setByDesignation(e.target.value)}
+            className="h-8 cursor-pointer rounded-[4px] border border-line bg-surface px-2 text-[13px] text-body"
+          >
+            <option value="">Any ERP designation</option>
+            {designations.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name}
+              </option>
+            ))}
+            <option value="none">ERP, no designation</option>
+          </select>
+        ) : null}
         <span className="flex-1" />
         <span className="text-[13px] whitespace-nowrap text-muted">
           {withAccess} with access · {narrowed} narrowed
@@ -275,7 +341,21 @@ export function AccessSection({
                                     : `all ${g.totalCount} screens`
                                   : `${g.grantedCount} of ${g.totalCount} screens`}
                               </span>
-                              {g.grantedCount < g.totalCount ? <Badge tone="warn">Narrowed</Badge> : null}
+                              {g.app === "erp" && r.erpDesignation ? (
+                                <Badge
+                                  tone={r.erpDesignation.matches ? "brand" : "warn"}
+                                  title={
+                                    r.erpDesignation.matches
+                                      ? `Holds exactly what ${r.erpDesignation.name} holds — an edit to it moves them too.`
+                                      : `Customised from ${r.erpDesignation.name}: ${diffLines(r.erpDesignation.diff).join("; ")}. An edit to the designation leaves them alone.`
+                                  }
+                                >
+                                  {r.erpDesignation.name}
+                                  {r.erpDesignation.matches ? "" : " · customised"}
+                                </Badge>
+                              ) : g.grantedCount < g.totalCount ? (
+                                <Badge tone="warn">Narrowed</Badge>
+                              ) : null}
                               {g.readOnly.map((label) => (
                                 <Badge key={label} tone="warn">
                                   {label} read only
@@ -335,6 +415,7 @@ export function AccessSection({
       {enabling && isPlatformAdmin ? (
         <AccessDialog
           rows={allRows}
+          designations={designations}
           onClose={onEnablingDone}
           onDone={(r) => {
             say(r);
@@ -480,6 +561,7 @@ export function AccessSection({
         <AccessDialog
           key={managing.userId}
           rows={allRows}
+          designations={designations}
           person={managing}
           onClose={() => setManaging(null)}
           onDone={(r) => {
@@ -684,6 +766,7 @@ function levelsOf(row: AccessRow | null): Record<string, RoleId> {
 function AccessDialog({
   person,
   rows,
+  designations,
   onClose,
   onDone,
   onSaved,
@@ -701,6 +784,7 @@ function AccessDialog({
    * would have written exactly that.
    */
   rows: AccessRow[];
+  designations: ErpDesignationDef[];
   onClose: () => void;
   onDone: (r: { ok: boolean; message?: string; error?: string }) => void;
   /** Saved, but not finished with — the dialog is still open behind the toast. */
@@ -743,6 +827,12 @@ function AccessDialog({
      payroll. Unticking HRMS takes them with it. */
   const hrmsPowersBefore = React.useMemo(() => basis?.hrmsPowers ?? [], [basis]);
   const [hrmsPowers, setHrmsPowers] = React.useState<string[]>(hrmsPowersBefore);
+  /* THE ERP DESIGNATION — the name on their ERP access, and the link an edit
+     to it follows. Picking one sets the screens, level and powers below;
+     changing any of those afterwards leaves the name and marks them
+     customised. */
+  const designationBefore = basis?.erpDesignation?.id ?? null;
+  const [designationId, setDesignationId] = React.useState<string | null>(designationBefore);
   /*
    * WHICH LEVEL EACH APP IS HELD UNDER, beside the screens it opens.
    *
@@ -775,6 +865,7 @@ function AccessDialog({
     setRoleDraft(levelsOf(existing));
     setPowers(existing?.erpPowers ?? []);
     setHrmsPowers(existing?.hrmsPowers ?? []);
+    setDesignationId(existing?.erpDesignation?.id ?? null);
     setFieldError({});
     setStep("access");
   };
@@ -803,6 +894,7 @@ function AccessDialog({
       })),
       erpPowers: draft.erp ? powers : [],
       hrmsPowers: draft.hrms ? hrmsPowers : [],
+      erpDesignationId: draft.erp ? designationId : null,
       /* No level on the account. It is DERIVED from the per-app levels by the
          action, and the select that used to sit here could make a platform
          administrator out of somebody given nothing but associate grants. */
@@ -840,7 +932,12 @@ function AccessDialog({
   const hrmsPowersAfter = draft.hrms ? hrmsPowers : [];
   const hrmsPowersChanged =
     hrmsPowersAfter.length !== hrmsPowersBefore.length || hrmsPowersAfter.some((p) => !hrmsPowersBefore.includes(p));
-  const changes = { ...moduleChanges, any: moduleChanges.any || powersChanged || hrmsPowersChanged };
+  const designationAfter = draft.erp ? designationId : null;
+  const designationChanged = designationAfter !== designationBefore;
+  const designationName = (id: string | null) => (id ? (designations.find((d) => d.id === id)?.name ?? "a removed designation") : null);
+  const designationNow = designationAfter ? (designations.find((d) => d.id === designationAfter) ?? null) : null;
+  const standingAfter = designationNow ? standingOf(designationNow, draft.erp ?? [], levelOf("erp"), powers) : null;
+  const changes = { ...moduleChanges, any: moduleChanges.any || powersChanged || hrmsPowersChanged || designationChanged };
 
   return (
     <Modal
@@ -913,6 +1010,9 @@ function AccessDialog({
           onPowers={setPowers}
           hrmsPowers={hrmsPowers}
           onHrmsPowers={setHrmsPowers}
+          designations={designations}
+          designationId={designationId}
+          onDesignation={setDesignationId}
         />
       ) : step === "review" ? (
         <ReviewStep
@@ -925,6 +1025,11 @@ function AccessDialog({
           levels={levelsAfter}
           powerChange={powersChanged ? { before: powersBefore, after: powersAfter } : null}
           hrmsPowerChange={hrmsPowersChanged ? { before: hrmsPowersBefore, after: hrmsPowersAfter } : null}
+          designationChange={
+            designationChanged || (designationNow && standingAfter && !standingAfter.matches)
+              ? { before: designationName(designationBefore), after: designationName(designationAfter), standing: standingAfter }
+              : null
+          }
         />
       ) : (
         <CredentialStep
@@ -1248,6 +1353,9 @@ function AccessStep({
   onPowers,
   hrmsPowers,
   onHrmsPowers,
+  designations,
+  designationId,
+  onDesignation,
 }: {
   needsAccount: boolean;
   name: string;
@@ -1269,7 +1377,25 @@ function AccessStep({
   /** HRMS's special powers, drawn under HRMS while it is ticked. */
   hrmsPowers: string[];
   onHrmsPowers: (next: string[]) => void;
+  designations: ErpDesignationDef[];
+  designationId: string | null;
+  onDesignation: (id: string | null) => void;
 }) {
+  /* PICKING A DESIGNATION WRITES WHAT IT HOLDS — screens, level and powers in
+     one move, through the same `draftFor` the server's own reading of
+     "matches" is built from, so what is picked here is what then matches. */
+  const pickDesignation = (id: string | null) => {
+    onDesignation(id);
+    const d = id ? designations.find((x) => x.id === id) : null;
+    if (!d) return;
+    const f = draftFor(d, ALL_OF("erp"));
+    onDraft({ ...draft, erp: f.modules });
+    onRoleDraft({ ...roleDraft, erp: f.level as RoleId });
+    onPowers(f.powers);
+  };
+  const current = designationId ? (designations.find((d) => d.id === designationId) ?? null) : null;
+  const erpStanding = current && draft.erp ? standingOf(current, draft.erp, roleDraft.erp ?? "associate", powers) : null;
+
   const setApp = (app: AppId, modules: string[]) => {
     const next = { ...draft };
     if (modules.length) next[app] = modules;
@@ -1382,6 +1508,16 @@ function AccessStep({
               }
             }}
             onChange={(modules) => setApp(app.id, modules)}
+            designation={
+              app.id === "erp"
+                ? {
+                    list: designations,
+                    value: designationId,
+                    onPick: pickDesignation,
+                    standing: erpStanding,
+                  }
+                : undefined
+            }
             powers={
               app.id === "erp"
                 ? { held: powers, onChange: onPowers, error: fieldError.erpPowers, list: ERP_POWERS, labels: ERP_POWER_LABEL, adminLine: "An ERP administrator holds every power." }
@@ -1416,6 +1552,7 @@ function AppBlock({
   onRole,
   onChange,
   powers,
+  designation,
 }: {
   app: AppId;
   name: string;
@@ -1436,6 +1573,13 @@ function AppBlock({
     list: readonly string[];
     labels: Record<string, { label: string; source: string }>;
     adminLine: string;
+  };
+  /** The ERP's designation picker, drawn first under the app once it is ticked. */
+  designation?: {
+    list: ErpDesignationDef[];
+    value: string | null;
+    onPick: (id: string | null) => void;
+    standing: { matches: boolean; lines: string[] } | null;
   };
 }) {
   const all = ALL_OF(app);
@@ -1549,6 +1693,56 @@ function AppBlock({
           <span className="w-[18px]" />
         )}
       </div>
+
+      {/* THE DESIGNATION, FIRST, because it answers every question below it at
+          once: picking Quality tester sets the level, the screens and the
+          powers. What follows it is then either confirmation or exception —
+          and an exception is said in words, with the way back beside it. */}
+      {on && designation ? (
+        <div className="flex items-start gap-2 border-t border-divider bg-surface px-2.5 py-1.5">
+          <span className="w-[132px] flex-none pt-[5px] text-[10px] leading-[14px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase">
+            Designation
+          </span>
+          <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+            <select
+              value={designation.value ?? ""}
+              aria-label="ERP designation"
+              onChange={(e) => designation.onPick(e.target.value || null)}
+              className="h-7 cursor-pointer rounded-[4px] border border-line bg-surface px-1.5 text-[13px] text-ink"
+            >
+              <option value="">No designation — set by hand</option>
+              {designation.list.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+            {designation.value && designation.standing ? (
+              designation.standing.matches ? (
+                <span className="text-[12px] text-muted">
+                  Matches it exactly — an edit to the designation moves them too.
+                </span>
+              ) : (
+                <>
+                  <Badge tone="warn">Customised</Badge>
+                  <span className="text-[12px] text-body">{designation.standing.lines.join(" · ")}</span>
+                  <button
+                    type="button"
+                    onClick={() => designation.onPick(designation.value)}
+                    className="cursor-pointer border-0 bg-transparent p-0 text-[12px] font-medium text-brand-hover hover:text-brand"
+                  >
+                    Reset to {designation.list.find((d) => d.id === designation.value)?.name}
+                  </button>
+                </>
+              )
+            ) : !designation.value ? (
+              <span className="text-[12px] text-muted">
+                Pick one to set the level, screens and powers in one go.
+              </span>
+            ) : null}
+          </span>
+        </div>
+      ) : null}
 
       {/* WHAT THE LEVEL CARRIES, under the line that chooses it. Short lines,
           in the order the matrix lists them, so "Approve and decline orders"
@@ -1773,6 +1967,7 @@ function ReviewStep({
   levels,
   powerChange,
   hrmsPowerChange,
+  designationChange,
 }: {
   name: string;
   creating: boolean;
@@ -1786,6 +1981,12 @@ function ReviewStep({
   powerChange: { before: string[]; after: string[] } | null;
   /** The HRMS powers before and after, where they change. */
   hrmsPowerChange: { before: string[]; after: string[] } | null;
+  /** The ERP designation, where it changes or where the result is customised from it. */
+  designationChange: {
+    before: string | null;
+    after: string | null;
+    standing: { matches: boolean; lines: string[] } | null;
+  } | null;
 }) {
   const appName = (id: AppId) => APPS.find((a) => a.id === id)?.name ?? id;
   /* "Manager in Accounts", because a level on its own no longer names a hat
@@ -1911,6 +2112,27 @@ function ReviewStep({
             detail: powerChange.after.length
               ? `${powerChange.after.map((p) => ERP_POWER_LABEL[p as keyof typeof ERP_POWER_LABEL]?.label ?? p).join(", ")}.`
               : "no ERP powers.",
+          },
+        ]
+      : []),
+    ...(designationChange
+      ? [
+          {
+            key: "designation",
+            tone: (designationChange.after && designationChange.standing?.matches !== false ? "success" : "warn") as "warn" | "success",
+            tag: "Role",
+            what: designationChange.after
+              ? designationChange.before && designationChange.before !== designationChange.after
+                ? `ERP: ${designationChange.before} → ${designationChange.after}.`
+                : `ERP: ${designationChange.after}.`
+              : `ERP: no designation.`,
+            detail: !designationChange.after
+              ? designationChange.before
+                ? `no longer ${designationChange.before} — their access stays as it is, and edits to that designation stop reaching them.`
+                : ""
+              : designationChange.standing && !designationChange.standing.matches
+                ? `customised from it: ${designationChange.standing.lines.join("; ")}. An edit to ${designationChange.after} will not change them.`
+                : `an edit to ${designationChange.after} will change their access too.`,
           },
         ]
       : []),

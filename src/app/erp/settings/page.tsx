@@ -27,7 +27,10 @@ export default async function ErpSettings() {
           </div>
         </Card>
         <Card>
-          <CardHeader title={ctx.user.name} hint={`${hat.label} · access is set in the MahekOne Admin Console`} />
+          <CardHeader
+            title={ctx.viewingAs?.kind === "designation" ? ctx.viewingAs.label : ctx.user.name}
+            hint={`${ctx.designation ?? hat.label} · access is set in the MahekOne Admin Console`}
+          />
           <div className="px-5 py-1">
             {ERP_POWERS.map((p) => (
               <div key={p} className="flex items-center justify-between gap-3 border-b border-divider py-2.5 text-sm last:border-0">
