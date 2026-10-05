@@ -2,7 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/db";
-import { erpUserSettings } from "@/db/schema";
+import { inArray } from "drizzle-orm";
+import { erpGodowns, erpUserSettings } from "@/db/schema";
+import { getConfig } from "@/lib/config/store";
+import { godownAt, type FenceVerdict } from "@/lib/erp/engines/godown-fence";
 import { err, fromThrown, okVoid, ok, type Result } from "@/lib/result";
 import { ErpNotPermitted, erpContext, requireErpWrite } from "@/lib/erp/access";
 import { screenModule } from "@/lib/erp/screens";
@@ -108,6 +111,52 @@ export async function erpSetWorkingGodown(godownId: string): Promise<Result<unde
     await erpAudit(ctx, "erp.workingGodown", "user", ctx.user.id, null, { godown: g.name });
     revalidatePath("/erp", "layout");
     return okVoid(`Working location is ${g.name} · forms now pre-fill it`);
+  } catch (e) {
+    return refused(e);
+  }
+}
+
+export type ErpLocateResult =
+  | { status: "off" }
+  | { status: "switched" | "already"; godown: string; metres: number }
+  | Exclude<FenceVerdict, { kind: "inside" }>;
+
+/**
+ * The working location found from where somebody is standing. The browser
+ * sends a fix; the fence is measured HERE, against the godowns this person is
+ * assigned to, so a crafted fix can only ever pick something the header's own
+ * menu would have offered. The coordinates are not stored — the audit row
+ * records which godown and how far from its pin, which is what anybody asking
+ * "why did my location change" needs, and nothing about where they live.
+ */
+export async function erpLocateWorkingGodown(fix: { lat: number; lng: number; accuracyM: number | null }): Promise<Result<ErpLocateResult>> {
+  try {
+    const ctx = await erpContext();
+    if (!ctx.level) return err("The ERP is not on your account.", "not_permitted");
+    const config = await getConfig();
+    if (!config["erp.location.autoDetect"]) return ok({ status: "off" });
+    if (![fix.lat, fix.lng].every(Number.isFinite) || Math.abs(fix.lat) > 90 || Math.abs(fix.lng) > 180) {
+      return err("That location could not be read.", "validation");
+    }
+    const ids = ctx.assignedGodowns.map((g) => g.id);
+    const pins = ids.length
+      ? await db.select({ id: erpGodowns.id, name: erpGodowns.name, lat: erpGodowns.lat, lng: erpGodowns.lng }).from(erpGodowns).where(inArray(erpGodowns.id, ids))
+      : [];
+    const accuracyM = fix.accuracyM != null && Number.isFinite(fix.accuracyM) ? fix.accuracyM : null;
+    const v = godownAt(pins, { lat: fix.lat, lng: fix.lng, accuracyM }, config["erp.location.godownRadiusM"]);
+    if (v.kind !== "inside") return ok(v);
+    if (ctx.workingGodown?.id === v.godown.id) return ok({ status: "already", godown: v.godown.name, metres: v.metres });
+    await db
+      .insert(erpUserSettings)
+      .values({ userId: ctx.user.id, workingGodownId: v.godown.id })
+      .onConflictDoUpdate({ target: erpUserSettings.userId, set: { workingGodownId: v.godown.id, updatedAt: new Date() } });
+    await erpAudit(ctx, "erp.workingGodown", "user", ctx.user.id, ctx.workingGodown ? { godown: ctx.workingGodown.name } : null, {
+      godown: v.godown.name,
+      by: "location",
+      metresFromPin: v.metres,
+    });
+    revalidatePath("/erp", "layout");
+    return ok({ status: "switched", godown: v.godown.name, metres: v.metres });
   } catch (e) {
     return refused(e);
   }

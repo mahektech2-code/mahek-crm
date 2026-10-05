@@ -13,7 +13,7 @@ import { NotificationBell } from "@/components/shell/notification-bell";
 import { cx } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/overlays";
 import { ToastProvider, useToast } from "@/components/ui/toast";
-import { erpAsk, erpSearch, erpSetWorkingGodown, type ErpSearchHit } from "@/lib/actions/erp";
+import { erpAsk, erpLocateWorkingGodown, erpSearch, erpSetWorkingGodown, type ErpLocateResult, type ErpSearchHit } from "@/lib/actions/erp";
 import type { Notification } from "@/db/schema";
 import type { AppDefinition } from "@/lib/apps";
 import { GodownPicker } from "./godown-picker";
@@ -132,6 +132,7 @@ export function ErpShell({
   apps,
   voice = false,
   ask = false,
+  locate = false,
   children,
 }: {
   nav: NavGroup[];
@@ -146,6 +147,8 @@ export function ErpShell({
   apps: AppDefinition[];
   voice?: boolean;
   ask?: boolean;
+  /** `erp.location.autoDetect` — find the working godown from where somebody stands. */
+  locate?: boolean;
   children: React.ReactNode;
 }) {
   const [collapsed, setCollapsed] = useState(false);
@@ -208,7 +211,7 @@ export function ErpShell({
               <div className="flex-1" />
 
               <div className="flex items-center gap-2">
-                <WorkingAt godowns={godowns} working={working} />
+                <WorkingAt godowns={godowns} working={working} locate={locate} />
                 <FeedbackButton />
                 <button
                   onClick={() => setShortcutsOpen(true)}
@@ -266,10 +269,124 @@ export function ErpShell({
   );
 }
 
+/*
+ * THE WORKING GODOWN CAN BE FOUND RATHER THAN PICKED. Once per tab, where the
+ * browser already holds location permission, the shell takes a fix and asks
+ * the server which assigned godown's fence it falls inside; the server
+ * measures and switches, so a crafted fix can only pick what this menu offers.
+ * It never puts up the browser's permission prompt on its own — a dialog on
+ * every page load is how people learn to press Block — so where permission has
+ * not been given the locate button beside the chip is the way to give it.
+ * A godown chosen by hand stays chosen for the rest of the tab: the person
+ * walking between two sheds knows where they are working better than a fix.
+ */
+const LOCATED_KEY = "erp.workingGodown.located";
+
+function remembered(): boolean {
+  try {
+    return sessionStorage.getItem(LOCATED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+function remember() {
+  try {
+    sessionStorage.setItem(LOCATED_KEY, "1");
+  } catch {
+    /* private window — the worst case is one more check next page */
+  }
+}
+
+/** A pressed button wants a fresh fix; the automatic check may reuse one a minute old. */
+function readFix(fresh: boolean): Promise<{ lat: number; lng: number; accuracyM: number | null } | { error: string }> {
+  return new Promise((resolve) => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      resolve({ error: "This browser cannot share a location." });
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude, accuracyM: Number.isFinite(p.coords.accuracy) ? p.coords.accuracy : null }),
+      (e) =>
+        resolve({
+          error:
+            e.code === e.PERMISSION_DENIED
+              ? "Location is blocked for MahekOne in this browser — allow it in the address bar to find your godown."
+              : "Could not get a location fix just now.",
+        }),
+      { enableHighAccuracy: true, timeout: 15_000, maximumAge: fresh ? 0 : 60_000 },
+    );
+  });
+}
+
+/** What the result says, in words — null where there is nothing worth a toast. */
+function locateLine(r: ErpLocateResult, asked: boolean): { text: string; tone?: "error" } | null {
+  if ("status" in r) {
+    if (r.status === "switched") return { text: `You are at ${r.godown} (${r.metres} m from its pin) · working location switched` };
+    if (r.status === "already") return asked ? { text: `You are at ${r.godown} — already your working location` } : null;
+    return asked ? { text: "Finding the godown by location is switched off in ERP settings", tone: "error" } : null;
+  }
+  if (!asked) return null;
+  if (r.kind === "unpinned") return { text: "None of your godowns has a map pin yet — set one under Masters → Godowns", tone: "error" };
+  if (r.kind === "imprecise") return { text: `Location is only good to ${r.accuracyM} m here — too vague to tell which godown. Pick it from the list.`, tone: "error" };
+  return {
+    text: r.nearest ? `Not inside any of your godowns — nearest is ${r.nearest.name}, ${r.nearest.metres >= 1000 ? `${(r.nearest.metres / 1000).toFixed(1)} km` : `${r.nearest.metres} m`} away` : "Not inside any of your godowns",
+    tone: "error",
+  };
+}
+
 /** Where this person is working — the CRM's Viewing switch, holding a godown. */
-function WorkingAt({ godowns, working }: { godowns: { id: string; name: string }[]; working: { id: string; name: string } | null }) {
+function WorkingAt({
+  godowns,
+  working,
+  locate,
+}: {
+  godowns: { id: string; name: string }[];
+  working: { id: string; name: string } | null;
+  locate: boolean;
+}) {
   const router = useRouter();
   const { push } = useToast();
+  const [finding, setFinding] = useState(false);
+
+  const find = (asked: boolean) => {
+    setFinding(true);
+    remember();
+    void readFix(asked).then(async (fix) => {
+      if ("error" in fix) {
+        setFinding(false);
+        if (asked) push(fix.error, "error");
+        return;
+      }
+      const res = await erpLocateWorkingGodown(fix);
+      setFinding(false);
+      if (!res.ok) {
+        if (asked) push(res.error, "error");
+        return;
+      }
+      const line = locateLine(res.data, asked);
+      if (line) push(line.text, line.tone);
+      if ("status" in res.data && res.data.status === "switched") router.refresh();
+    });
+  };
+
+  const multiple = godowns.length > 1;
+  useEffect(() => {
+    if (!locate || !multiple || remembered()) return;
+    if (typeof navigator === "undefined" || !navigator.permissions?.query) return;
+    let live = true;
+    navigator.permissions
+      .query({ name: "geolocation" as PermissionName })
+      .then((p) => {
+        if (live && p.state === "granted") find(false);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+    // Once per mount; `find` closes over nothing that changes the answer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locate, multiple]);
+
   if (!godowns.length) {
     return (
       <span
@@ -291,6 +408,7 @@ function WorkingAt({ godowns, working }: { godowns: { id: string; name: string }
         placeholder={`Search ${godowns.length} godowns you are assigned to`}
         onPick={(id) => {
           if (!id) return;
+          remember();
           void erpSetWorkingGodown(id).then((res) => {
             if (res.ok) {
               push(res.message ?? "Working location changed");
@@ -299,6 +417,21 @@ function WorkingAt({ godowns, working }: { godowns: { id: string; name: string }
           });
         }}
       />
+      {locate && multiple ? (
+        <button
+          type="button"
+          onClick={() => find(true)}
+          disabled={finding}
+          title="Find my godown from where I am standing"
+          aria-label="Find my godown from where I am standing"
+          className={cx(
+            "inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded-[4px] text-muted hover:bg-canvas hover:text-[#5223E0] disabled:cursor-wait",
+            finding && "animate-pulse text-[#5223E0]",
+          )}
+        >
+          <Icon n="locate" s={14} />
+        </button>
+      ) : null}
     </div>
   );
 }
