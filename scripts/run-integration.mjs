@@ -160,6 +160,7 @@ const files = [
   "src/lib/telecaller-qualification.test.ts",
   // Intake: what they want, in words or from the catalogue — and never the Calling Desk Product answer.
   "src/lib/lead-intake-product.test.ts",
+  "src/lib/lead-source-scope.test.ts",
   // A fresh CRM/Sales grant made through the CLI, the provisioning endpoint
   // or the back-office bulk provision must not carry an offByDefault module
   // (the calling desk, the Sales Manager seat) along for free — and an
