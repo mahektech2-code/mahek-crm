@@ -2,7 +2,8 @@ import { listUserApps } from "@/lib/access";
 import { webApps } from "@/lib/apps";
 import { initialsOf } from "@/lib/format";
 import { hatForHeader } from "@/lib/hat-for-header";
-import { requireErpApp } from "@/lib/erp/access";
+import { isErpAdministrator, requireErpApp } from "@/lib/erp/access";
+import { erpPreviewTargets } from "@/lib/services/erp-designation-service";
 import { ERP_GROUPS, erpHref, erpKeysOf } from "@/lib/erp/registry";
 import { erpNavCounts } from "@/lib/erp/counts";
 import { getConfig } from "@/lib/config/store";
@@ -20,14 +21,21 @@ import { ErpShell, type NavGroup } from "./_ui/erp-shell";
  */
 export default async function ErpLayout({ children }: { children: React.ReactNode }) {
   const ctx = await requireErpApp();
-  const [apps, hat, counts, config, askState, notifications] = await Promise.all([
-    listUserApps(ctx.user.id),
-    hatForHeader(ctx.user, "erp"),
+  /* The header, the switcher and the bell are always the person SIGNED IN —
+     a preview changes whose ERP is drawn, never who is looking at it. */
+  const [apps, ownHat, counts, config, askState, notifications, canPreview] = await Promise.all([
+    listUserApps(ctx.actor.id),
+    hatForHeader(ctx.actor, "erp"),
     erpNavCounts(ctx),
     getConfig(),
     featureState("ask", true),
-    listNotifications(ctx.user.id),
+    listNotifications(ctx.actor.id),
+    ctx.viewingAs ? Promise.resolve(true) : isErpAdministrator(ctx.actor),
   ]);
+  /* THE DESIGNATION IS THE JOB, so it is what the header says under the name —
+     "Owner / CEO", as the design draws it — wherever somebody holds one. */
+  const hat = ctx.designation && !ctx.viewingAs ? { ...ownHat, label: ctx.designation } : ownHat;
+  const previewTargets = canPreview ? await erpPreviewTargets() : null;
 
   const nav: NavGroup[] = ERP_GROUPS.map((g) => {
     const screens = g.screens
@@ -52,13 +60,18 @@ export default async function ErpLayout({ children }: { children: React.ReactNod
   return (
     <ErpShell
       nav={nav}
-      user={{ name: ctx.user.name, email: ctx.user.email, phone: ctx.user.phone, initials: initialsOf(ctx.user.name), role: ctx.user.role }}
+      user={{ name: ctx.actor.name, email: ctx.actor.email, phone: ctx.actor.phone, initials: initialsOf(ctx.actor.name), role: ctx.actor.role }}
       hat={hat}
       godowns={ctx.assignedGodowns.map((g) => ({ id: g.id, name: g.name }))}
       working={ctx.workingGodown ? { id: ctx.workingGodown.id, name: ctx.workingGodown.name } : null}
       notifications={notifications}
       voice={config["erp.ai.voice.enabled"]}
-      locate={config["erp.location.autoDetect"]}
+      locate={config["erp.location.autoDetect"] && !ctx.viewingAs}
+      preview={
+        previewTargets
+          ? { targets: previewTargets, current: ctx.viewingAs, self: { id: ctx.actor.id, name: ctx.actor.name } }
+          : null
+      }
       ask={askState.on}
       apps={webApps(apps)}
     >

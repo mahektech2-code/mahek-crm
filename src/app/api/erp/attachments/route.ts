@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { erpContext } from "@/lib/erp/access";
+import { erpContext, previewRefusal } from "@/lib/erp/access";
 import { createAttachment } from "@/lib/services/attachment-service";
 
 /**
@@ -11,6 +11,7 @@ import { createAttachment } from "@/lib/services/attachment-service";
 export async function POST(request: Request) {
   const ctx = await erpContext();
   if (!ctx.level) return NextResponse.json({ error: "The ERP is not on your account." }, { status: 403 });
+  if (ctx.viewingAs) return NextResponse.json({ error: previewRefusal(ctx.viewingAs) }, { status: 403 });
   const form = await request.formData();
   const file = form.get("file");
   if (!(file instanceof File)) return NextResponse.json({ error: "No file was sent." }, { status: 400 });

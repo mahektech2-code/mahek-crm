@@ -91,6 +91,10 @@ export const ADMIN = {
   /** Access, narrowed to the people who hold one app. */
   accessFor: (app: string) => `/admin/access?app=${app}`,
   person: (userId: string, tab?: TabsOf<"person">) => withTab(`/admin/access/${userId}`, tab),
+  /** The ERP's designations — named, linked shapes of ERP access. */
+  designations: "/admin/designations",
+  /** Access, narrowed to the holders of one ERP designation. */
+  accessForDesignation: (id: string) => `/admin/access?designation=${id}`,
   signIns: (tab?: TabsOf<"signIns">) => withTab("/admin/sign-ins", tab),
   settings: "/admin/settings",
   /** One app's settings. The page id comes from `SETTINGS_PAGES`. */
@@ -142,6 +146,7 @@ export const ADMIN_GROUPS: AdminNavGroup[] = [
     icon: "people",
     items: [
       { href: ADMIN.access, label: "Access", icon: "people", platform: true },
+      { href: ADMIN.designations, label: "ERP designations", icon: "book", platform: true },
       { href: ADMIN.signIns(), label: "Sign-ins", icon: "lock", platform: true },
     ],
   },

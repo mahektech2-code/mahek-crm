@@ -1,4 +1,5 @@
 import "server-only";
+import { designationStandings, type DesignationStanding } from "./erp-designation-service";
 import {
   conflictsFor,
   type Role,
@@ -105,6 +106,12 @@ export type AccessRow = {
    */
   erpPowers: string[];
   hrmsPowers: string[];
+  /**
+   * The ERP designation this person holds, and whether their access is still
+   * exactly it. `matches: false` is CUSTOMISED: an edit to the designation
+   * leaves them where they are. Null where they hold none.
+   */
+  erpDesignation: DesignationStanding | null;
 };
 
 /**
@@ -219,7 +226,7 @@ function buildGrants(
 
 /** Every account, with what it opens and how far into each app it reaches. */
 export async function listAccess(): Promise<AccessRow[]> {
-  const [accounts, access, moduleRows, staff, powerRows, hrmsPowerRows] = await Promise.all([
+  const [accounts, access, moduleRows, staff, powerRows, hrmsPowerRows, standings] = await Promise.all([
     db
       .select({
         id: users.id,
@@ -246,6 +253,7 @@ export async function listAccess(): Promise<AccessRow[]> {
     employeeRows(),
     db.select({ userId: erpUserPowers.userId, power: erpUserPowers.power }).from(erpUserPowers),
     db.select({ userId: hrmsUserPowers.userId, power: hrmsUserPowers.power }).from(hrmsUserPowers),
+    designationStandings(),
   ]);
   const hrmsPowersByUser = new Map<string, string[]>();
   for (const p of hrmsPowerRows) hrmsPowersByUser.set(p.userId, [...(hrmsPowersByUser.get(p.userId) ?? []), p.power]);
@@ -333,6 +341,7 @@ export async function listAccess(): Promise<AccessRow[]> {
       conflicts: conflictsFor(heldHats),
       erpPowers: powersByUser.get(u.id) ?? [],
       hrmsPowers: hrmsPowersByUser.get(u.id) ?? [],
+      erpDesignation: standings.get(u.id) ?? null,
     };
   });
 }

@@ -13,7 +13,9 @@ import { NotificationBell } from "@/components/shell/notification-bell";
 import { cx } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/overlays";
 import { ToastProvider, useToast } from "@/components/ui/toast";
-import { erpAsk, erpLocateWorkingGodown, erpSearch, erpSetWorkingGodown, type ErpLocateResult, type ErpSearchHit } from "@/lib/actions/erp";
+import { erpAsk, erpLocateWorkingGodown, erpSearch, erpSetWorkingGodown, erpStartViewAs, erpStopViewAs, type ErpLocateResult, type ErpSearchHit } from "@/lib/actions/erp";
+import type { ErpViewingAs } from "@/lib/erp/access";
+import type { PreviewTargets } from "@/lib/services/erp-designation-service";
 import type { Notification } from "@/db/schema";
 import type { AppDefinition } from "@/lib/apps";
 import { GodownPicker } from "./godown-picker";
@@ -133,6 +135,7 @@ export function ErpShell({
   voice = false,
   ask = false,
   locate = false,
+  preview = null,
   children,
 }: {
   nav: NavGroup[];
@@ -149,6 +152,8 @@ export function ErpShell({
   ask?: boolean;
   /** `erp.location.autoDetect` — find the working godown from where somebody stands. */
   locate?: boolean;
+  /** Drawn only for an ERP administrator: who the ERP can be previewed as, and who it is being. */
+  preview?: { targets: PreviewTargets; current: ErpViewingAs | null; self: { id: string; name: string } } | null;
   children: React.ReactNode;
 }) {
   const [collapsed, setCollapsed] = useState(false);
@@ -245,12 +250,14 @@ export function ErpShell({
                    open alert is something the ERP could not explain. */
                 badgeToneFor={(item) => (item.href === "/erp/alerts" ? "danger" : "warn")}
               />
+              {preview && !collapsed ? <PreviewAs preview={preview} /> : null}
               <div className="flex flex-none items-center border-t border-divider px-2 py-2">
                 <AccountMenu user={user} hat={hat} variant="sidebar" collapsed={collapsed} />
               </div>
             </aside>
           }
         >
+          {preview?.current ? <PreviewBanner current={preview.current} /> : null}
           {children}
         </AppFrame>
 
@@ -266,6 +273,99 @@ export function ErpShell({
         </Modal>
       </ErpUiProvider>
     </ToastProvider>
+  );
+}
+
+/*
+ * PREVIEW ACCESS AS — the design's control, at the foot of the sidebar where
+ * the design puts it. It was a prototype's way of showing every role on one
+ * page; here it is an administrator checking what a Quality tester actually
+ * gets before handing the designation out, or why somebody says a screen is
+ * missing. Read-only on the server, whatever this control says.
+ */
+function PreviewAs({ preview }: { preview: { targets: PreviewTargets; current: ErpViewingAs | null; self: { id: string; name: string } } }) {
+  const router = useRouter();
+  const { push } = useToast();
+  const value = preview.current ? `${preview.current.kind}:${preview.current.id}` : "";
+  const pick = (v: string) => {
+    const [kind, ...rest] = v.split(":");
+    const id = rest.join(":");
+    const done = (r: { ok: boolean; message?: string; error?: string }) => {
+      if (!r.ok) return push(r.error ?? "That did not work.", "error");
+      push(r.message ?? "Done");
+      /* The dashboard, because the screen in view may be one this preview does not hold. */
+      router.push("/erp");
+      router.refresh();
+    };
+    if (!v) void erpStopViewAs().then(done);
+    else void erpStartViewAs({ kind: kind as "designation" | "user", id }).then(done);
+  };
+  return (
+    <div className="flex-none border-t border-divider px-3 pt-2.5 pb-2">
+      <div className="mb-1.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">Preview access as</div>
+      <select
+        value={value}
+        onChange={(e) => pick(e.target.value)}
+        aria-label="Preview access as"
+        className={cx(
+          "h-8.5 w-full cursor-pointer rounded-[4px] border bg-surface px-2 text-[13px]",
+          preview.current ? "border-brand text-brand-hover" : "border-line text-body",
+        )}
+      >
+        <option value="">Myself — {preview.self.name}</option>
+        {preview.targets.designations.length ? (
+          <optgroup label="Designations">
+            {preview.targets.designations.map((d) => (
+              <option key={d.id} value={`designation:${d.id}`}>
+                {d.name}
+              </option>
+            ))}
+          </optgroup>
+        ) : null}
+        {preview.targets.people.filter((p) => p.id !== preview.self.id).length ? (
+          <optgroup label="People">
+            {preview.targets.people
+              .filter((p) => p.id !== preview.self.id)
+              .map((p) => (
+                <option key={p.id} value={`user:${p.id}`}>
+                  {p.name}
+                  {p.designation ? ` — ${p.designation}` : ""}
+                </option>
+              ))}
+          </optgroup>
+        ) : null}
+      </select>
+    </div>
+  );
+}
+
+/** Said across the top of every screen while previewing, with the way out beside it. */
+function PreviewBanner({ current }: { current: ErpViewingAs }) {
+  const router = useRouter();
+  const { push } = useToast();
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-brand bg-brand-soft px-6 py-2 text-[13px] text-ink">
+      <Icon n="lock" s={14} />
+      <span>
+        Previewing the ERP as <span className="font-medium">{current.label}</span>
+        {current.kind === "designation" ? " (designation)" : ""} — read-only. Nothing you do here is saved
+        {current.kind === "designation" ? ", and lists that belong to a person show yours" : ""}.
+      </span>
+      <span className="flex-1" />
+      <button
+        type="button"
+        onClick={() =>
+          void erpStopViewAs().then((r) => {
+            if (!r.ok) return push(r.error, "error");
+            push(r.message ?? "Back to your own ERP");
+            router.refresh();
+          })
+        }
+        className="cursor-pointer rounded-[4px] border border-brand bg-surface px-2.5 py-1 text-[13px] font-medium text-brand-hover hover:bg-canvas"
+      >
+        Back to my ERP
+      </button>
+    </div>
   );
 }
 
