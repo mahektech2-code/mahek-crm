@@ -1,4 +1,5 @@
 import "server-only";
+import { convertedOff, notConverted } from "../lead-action-window";
 import { bandFor, type HealthBand } from "../engines/inactivity";
 import {
   LEGACY_SALES_TYPE,
@@ -1698,12 +1699,13 @@ export type LeadRow = {
 /*
  * ONE LEAD, so this reads `customers`.
  *
- * The screen shows anything that has ever been a lead — `lead_stage is not
- * null` — rather than `kind = 'lead'`. Winning one now moves `kind` to
- * `customer` on the SAME row, and filtering on the kind would drop it out of
- * the funnel at the moment it succeeded, which is the one band a manager most
- * wants to see. The stage survives the conversion; `lead_converted_at` is what
- * says it happened.
+ * The screen reads `lead_stage is not null` rather than `kind = 'lead'`, and
+ * leaves out what has CONVERTED through `notConverted` — Mahek's rule is that
+ * a lead that became a customer is no longer on a Leads list. Not `kind`
+ * either way: `kind` flips at an order, while a ladder can end on a winning
+ * rung or a shop be marked third-party without one. The funnel and the
+ * Handovers view still read converted leads; `lead_converted_at` is what says
+ * it happened.
  *
  * The customer-health columns used to come from a join to the converted
  * record. There is no second record now, so they are this row's own, shown
@@ -1858,6 +1860,7 @@ export async function leadsList(day: string): Promise<LeadRow[]> {
       left join products rp on rp.id = c.lead_required_product_id
      where c.lead_stage is not null
        and c.lead_archived = false
+       and ${notConverted()}
        ${onlyMine(scope, "c.owner_id")}
      ${LEADS_ORDER_SQL}
      limit 400
@@ -2258,6 +2261,7 @@ export async function leadsPage(
   const where = sql`
      where c.lead_stage is not null
        and c.lead_archived = ${archived}
+       ${convertedOff(options.view)}
        ${scopeNarrowing(scope, options.view)}
        ${await viewNarrowing(options.view, day)}`;
   const narrowed = leadFilterClause(filters, day, {
@@ -2399,6 +2403,7 @@ export async function leadIdsMatching(
       from customers c
      where c.lead_stage is not null
        and c.lead_archived = ${archived}
+       ${convertedOff(options.view)}
        ${scopeNarrowing(scope, options.view)}
        ${await viewNarrowing(options.view, day)}
        ${leadFilterClause(options.filters ?? {}, day, {
@@ -2473,6 +2478,7 @@ export async function leadFilterOptions(
   const where = sql`
      where c.lead_stage is not null
        and c.lead_archived = ${archived}
+       and ${notConverted()}
        ${leadsVisible(scope)}`;
 
   const [owners, sources, stages] = await Promise.all([
@@ -5780,7 +5786,7 @@ export async function leadPlaceOptions(
   return placeFilterOptions({
     from: sql`customers c`,
     alias: "c",
-    where: sql`c.lead_stage is not null and c.lead_archived = ${archived} ${leadsVisible(scope)}`,
+    where: sql`c.lead_stage is not null and c.lead_archived = ${archived} and ${notConverted()} ${leadsVisible(scope)}`,
     picks,
   });
 }
@@ -6069,6 +6075,7 @@ export async function salesmanRecord(
           from customers c
          where c.owner_id = ${userId} and c.lead_stage is not null
            and c.lead_archived = false
+           and ${notConverted()}
          order by c.lead_last_activity_date desc nulls last limit ${limit}
       `),
       db.execute(sql`

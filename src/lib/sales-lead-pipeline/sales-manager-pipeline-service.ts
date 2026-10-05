@@ -1,4 +1,5 @@
 import "server-only";
+import { notConverted } from "@/lib/lead-action-window";
 
 import { sql } from "drizzle-orm";
 
@@ -502,6 +503,7 @@ export async function pipelineSidebar(day: string): Promise<SidebarCounts> {
         from customers c
        where c.lead_stage is not null
          and c.lead_archived = false
+         and ${notConverted()}
          ${leadsVisible(scope)}
     `),
   ]);
