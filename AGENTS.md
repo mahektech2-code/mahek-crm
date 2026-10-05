@@ -123,6 +123,16 @@ pair amounts to, not a value stored anywhere.
 a work number *or* an email, because telecallers know their phone and office
 staff know their email.
 
+**Every OTP goes to the employee's PERSONAL MOBILE in HRMS** — sign-in, password
+change and password reset, on the web and on the MBOS handset alike — read
+through `users.employee_id` and nothing looser. It used to go to the work
+number on the account. An account with no HRMS link, or a linked employee with
+no personal mobile, is offered no code and told why; the password still works.
+The same number signs in: `findAccount` (the one lookup every sign-in uses)
+takes an email, a work number, or the HRMS personal mobile — the work number
+wins where one number is both, and a personal mobile on two linked accounts
+signs in nobody.
+
 Where you land depends on what you can open:
 
 - **one app** → straight into it, no launcher (a single option is not a choice)

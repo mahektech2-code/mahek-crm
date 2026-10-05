@@ -130,7 +130,7 @@ export function ChangePasswordDialog({ onClose }: { onClose: () => void }) {
                 <span className="mt-1.5 block text-[13px] text-muted">
                   {codeSent
                     ? `OTP sent to ${codeSent}.`
-                    : "We send an OTP to the work number on your account."}
+                    : "We send an OTP to your personal mobile, as HR has it."}
                 </span>
               )}
             </div>

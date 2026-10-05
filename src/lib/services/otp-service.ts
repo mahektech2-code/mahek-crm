@@ -2,7 +2,7 @@ import "server-only";
 import { createHash, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
 import { and, desc, eq, gt, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { authOtps, passwordResets, sessions, users } from "@/db/schema";
+import { authOtps, employees, passwordResets, sessions, users } from "@/db/schema";
 import { hashPassword } from "../password";
 import { getConfig } from "../config/store";
 import { isApproved, listWatiTemplates, sendWatiTemplate, watiConfig } from "../wati";
@@ -13,10 +13,16 @@ import { isTestKey, minimothKey, sendMiniMothOtp, verifyMiniMothOtp } from "../m
  * One-time codes on WhatsApp — for signing in (web and MBOS handset), for
  * changing a password, and for resetting a forgotten one.
  *
- * THE CODE GOES TO THE WORK NUMBER ON THE ACCOUNT, never to a number typed at
- * the screen. Somebody can only ever receive a code for an account whose
- * number is their own phone, which is the whole of what makes this a second
- * factor rather than a way round the first.
+ * THE CODE GOES TO THE PERSONAL MOBILE IN HRMS, for every purpose — signing
+ * in, changing a password, resetting one — and never to a number typed at the
+ * screen. It used to go to the work number on the account; Mahek asked for the
+ * employee's own phone instead, as HR keeps it, so one number is somebody's
+ * way in on the web and on the MBOS handset alike. It is read through
+ * `users.employee_id` and nothing looser: the email/company-mobile guess the
+ * pay screens fall back on is wrong on this book (two Pritesh rows share one
+ * company mobile), and a guess here would send a sign-in code to the wrong
+ * person. An account with no link, or a linked employee with no personal
+ * mobile, gets no code and is told why — the password still works.
  *
  * IT IS OFFERED ONLY WHEN IT CAN WORK: a Wati key, and an APPROVED
  * authentication template named in `auth.otp.whatsappTemplateName`. Until
@@ -99,7 +105,18 @@ export function forgetOtpAvailability() {
   availabilityCache = null;
 }
 
-/** An account by work number or email — the same lookup the password sign-in uses. */
+const last10Of = (col: unknown) => sql`right(regexp_replace(coalesce(${col}, ''), '[^0-9]', '', 'g'), 10)`;
+
+/**
+ * An account by email, work number or HRMS personal mobile — the one lookup
+ * every sign-in uses: password and code, web and handset.
+ *
+ * The personal mobile is asked LAST and only through the explicit employee
+ * link, and it must name exactly one account. A number that is one person's
+ * work number and another's personal mobile goes on meaning the work number,
+ * so nobody's existing sign-in moves; one that names two accounts names
+ * nobody, rather than signing somebody in as whichever came first.
+ */
 export async function findAccount(identifier: string) {
   const id = identifier.trim();
   const digits = id.replace(/\D/g, "");
@@ -109,11 +126,47 @@ export async function findAccount(identifier: string) {
     .from(users)
     .where(
       last10
-        ? sql`lower(${users.email}) = lower(${id}) or right(regexp_replace(coalesce(${users.phone}, ''), '[^0-9]', '', 'g'), 10) = ${last10}`
+        ? sql`lower(${users.email}) = lower(${id}) or ${last10Of(users.phone)} = ${last10}`
         : sql`lower(${users.email}) = lower(${id})`,
     )
     .limit(1);
-  return user ?? null;
+  if (user || !last10) return user ?? null;
+  const viaHr = await db
+    .select({ user: users })
+    .from(users)
+    .innerJoin(employees, eq(employees.id, users.employeeId))
+    .where(sql`${last10Of(employees.personalMobile)} = ${last10}`)
+    .limit(2);
+  return viaHr.length === 1 ? viaHr[0].user : null;
+}
+
+/**
+ * Where this account's codes go: the personal mobile of the HRMS employee it
+ * is linked to. A refusal, in words, where there is none — the person is at a
+ * login screen with nobody to ask.
+ */
+export async function otpDestination(
+  userId: string,
+): Promise<{ ok: true; to: string } | { ok: false; error: string }> {
+  const [row] = await db
+    .select({ employeeId: users.employeeId, personalMobile: employees.personalMobile })
+    .from(users)
+    .leftJoin(employees, eq(employees.id, users.employeeId))
+    .where(eq(users.id, userId));
+  if (!row?.employeeId) {
+    return {
+      ok: false,
+      error: "OTPs go to your personal mobile in HRMS, and your account is not linked to an HRMS record yet. Use your password, or ask an administrator to link it.",
+    };
+  }
+  const to = waNumber(row.personalMobile);
+  if (!to) {
+    return {
+      ok: false,
+      error: "OTPs go to your personal mobile in HRMS, and there is none on your HRMS record. Use your password, or ask HR to add it.",
+    };
+  }
+  return { ok: true, to };
 }
 
 export type SendResult =
@@ -121,7 +174,7 @@ export type SendResult =
   | { ok: false; error: string; retryInSeconds?: number };
 
 /**
- * Sends a fresh code for one purpose to the account's own work number.
+ * Sends a fresh code for one purpose to the personal mobile in HRMS.
  * Every refusal says what to do instead, because the person is standing at a
  * login screen with nobody to ask.
  */
@@ -131,10 +184,9 @@ export async function sendOtp(userId: string, purpose: OtpPurpose): Promise<Send
 
   const [user] = await db.select().from(users).where(eq(users.id, userId));
   if (!user || !user.active) return { ok: false, error: "That account is not open. Ask your manager." };
-  const to = waNumber(user.phone);
-  if (!to) {
-    return { ok: false, error: "There is no mobile number on this account to send an OTP to. Use your password, or ask your manager to add your number." };
-  }
+  const dest = await otpDestination(user.id);
+  if (!dest.ok) return { ok: false, error: dest.error };
+  const to = dest.to;
 
   const config = await getConfig();
   const cooldown = Number(config["auth.otp.resendCooldownSeconds"]);

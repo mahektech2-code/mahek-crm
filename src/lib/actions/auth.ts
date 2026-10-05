@@ -1,7 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { and, eq, isNull, or } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import { passwordResets, sessions, users } from "@/db/schema";
@@ -73,19 +73,10 @@ const credentials = z.object({
   identifier: z
     .string()
     .trim()
-    .min(1, "Enter your work number or email address."),
+    .min(1, "Enter your mobile number or email address."),
   password: z.string().min(1, "Enter your password."),
   remember: z.boolean().default(true),
 });
-
-/** Telecallers know their phone number; office staff know their email. */
-function normalise(identifier: string) {
-  const digits = identifier.replace(/\D/g, "");
-  return {
-    email: identifier.toLowerCase(),
-    phone: digits.length >= 10 ? digits.slice(-10) : null,
-  };
-}
 
 export async function signIn(
   _prev: ActionResult | null,
@@ -100,13 +91,10 @@ export async function signIn(
     return fail(parsed.error.issues[0].message);
   }
 
-  const { email, phone } = normalise(parsed.data.identifier);
-
-  const [user] = await db
-    .select()
-    .from(users)
-    .where(phone ? or(eq(users.email, email), eq(users.phone, phone)) : eq(users.email, email))
-    .limit(1);
+  /* The one lookup every sign-in uses — email, work number, or the personal
+     mobile in HRMS. A second copy here is how the web and the handset came
+     to accept different numbers for the same person. */
+  const user = await findAccount(parsed.data.identifier);
 
   // Counted before the password is checked, so a paused account answers the
   // same whether or not this guess was right. See `services/sign-in-throttle`.
@@ -323,8 +311,7 @@ export async function codesOffered(): Promise<boolean> {
 }
 
 /**
- * Step one of signing in with a code: send it to the work number on the
- * account. The screen shows the masked number so the person knows where to look.
+ * Step one of signing in with a code: send it to the personal mobile in HRMS. The screen shows the masked number so the person knows where to look.
  */
 export async function requestSignInCode(
   identifier: string,
@@ -339,7 +326,7 @@ export async function requestSignInCode(
 }
 
 const codeSignIn = z.object({
-  identifier: z.string().trim().min(1, "Enter your work number or email address."),
+  identifier: z.string().trim().min(1, "Enter your mobile number or email address."),
   code: z.string().trim().min(4, "Enter the OTP."),
   remember: z.boolean().default(true),
 });
@@ -364,7 +351,7 @@ export async function signInWithCode(
 
 const codeReset = z
   .object({
-    identifier: z.string().trim().min(1, "Enter your work number or email address."),
+    identifier: z.string().trim().min(1, "Enter your mobile number or email address."),
     code: z.string().trim().min(4, "Enter the OTP."),
     password: z.string().min(8, "Passwords must be at least 8 characters."),
     confirm: z.string(),

@@ -78,11 +78,12 @@ function PasswordForm() {
               autoComplete="username"
               autoFocus
               /* BOTH, and the placeholder has to show both. This field has
-                 always taken either — `signIn` matches the last ten digits
-                 against `users.phone` as well as the whole string against the
-                 email — but it advertised one, so the telecallers and field
-                 staff who know their work number and not their office email
-                 had no way to find that out from the screen. */
+                 always taken either — `findAccount` matches the last ten
+                 digits against the work number and the HRMS personal mobile
+                 as well as the whole string against the email — but it
+                 advertised one, so the telecallers and field staff who know
+                 their number and not their office email had no way to find
+                 that out from the screen. */
               placeholder="9820011001 or priya@mahek.in"
               className={cx(FIELD, failed ? "border-danger" : "border-line")}
             />

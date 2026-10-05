@@ -49,14 +49,14 @@ export function CodeResetForm() {
   return (
     <form action={formAction} className="rounded-[6px] border border-line bg-surface p-6">
       <div className="text-sm font-semibold text-ink">Reset with an OTP</div>
-      <p className="mt-1 text-[13px] text-muted">We send an OTP to the work number on your account.</p>
+      <p className="mt-1 text-[13px] text-muted">We send an OTP to your personal mobile, as HR has it.</p>
       {error ? (
         <div role="alert" className="mt-3 rounded-[4px] border border-danger-soft bg-danger-soft px-3 py-2 text-sm text-ink">
           {error}
         </div>
       ) : null}
       <label className="mt-3 block">
-        <span className="mb-1 block text-xs font-medium tracking-[0.04em] text-muted uppercase">Work number or email</span>
+        <span className="mb-1 block text-xs font-medium tracking-[0.04em] text-muted uppercase">Mobile number or email</span>
         <input
           name="identifier"
           value={identifier}

@@ -107,7 +107,7 @@ export default async function IntegrationsPage() {
                   meta={{
                     label: "MiniMoth API key",
                     env: "MINIMOTH_API_KEY",
-                    what: "Sends a code to the work number on the account, on WhatsApp first and by SMS when WhatsApp does not deliver. No DLT registration of ours is involved.",
+                    what: "Sends every OTP to the personal mobile in HRMS (through the account's HRMS link), on WhatsApp first and by SMS when WhatsApp does not deliver. No DLT registration of ours is involved.",
                     where: "app.minimoth.dev → your project → API keys. Use the live key (mm_live_…) here; a test key sends nothing and is ignored in production.",
                     removalConsequence: "Sign-in codes stop being offered on the web and on the handset. Everybody signs in with their password.",
                   }}

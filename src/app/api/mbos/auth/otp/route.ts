@@ -28,7 +28,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "The request was not readable JSON." }, { status: 400 });
   }
   const mobile = typeof body.mobile === "string" ? body.mobile.trim() : "";
-  if (!mobile) return NextResponse.json({ ok: false, error: "Enter your work number." }, { status: 400 });
+  if (!mobile) return NextResponse.json({ ok: false, error: "Enter your mobile number." }, { status: 400 });
 
   const user = await findAccount(mobile);
   /*
