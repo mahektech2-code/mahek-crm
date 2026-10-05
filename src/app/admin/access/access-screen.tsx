@@ -4,16 +4,22 @@ import * as React from "react";
 import { Button } from "@/components/ui/primitives";
 import type { AppId } from "@/lib/apps";
 import type { AccessRow } from "@/lib/services/access-service";
+import type { ErpDesignationDef } from "@/lib/erp/designations";
 import { AdminPage } from "../_shell/admin-page";
 import { AccessSection } from "../access-section";
 
 /** The Access page: its title, its one action, and the screen that action opens into. */
 export function AccessScreen({
   rows,
+  designations,
+  onlyDesignation,
   isPlatformAdmin,
   onlyApp,
 }: {
   rows: AccessRow[];
+  designations: ErpDesignationDef[];
+  /** Narrowed to the holders of one ERP designation — the Designations page links here. */
+  onlyDesignation: string | null;
   /** Admin on the Admin Console — the only person whose saves the server accepts. */
   isPlatformAdmin: boolean;
   onlyApp: AppId | null;
@@ -33,6 +39,8 @@ export function AccessScreen({
     >
       <AccessSection
         rows={rows}
+        designations={designations}
+        onlyDesignation={onlyDesignation}
         isPlatformAdmin={isPlatformAdmin}
         enabling={enabling}
         onEnablingDone={() => setEnabling(false)}

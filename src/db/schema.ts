@@ -10708,6 +10708,78 @@ export const erpUserPowers = pgTable(
 );
 
 /**
+ * A DESIGNATION IS A NAMED SHAPE OF ERP ACCESS — Quality tester, Godown /
+ * dispatch, Order desk — and it is LINKED, not stamped. It holds a level, the
+ * screens and the powers that job needs; a person given one holds exactly
+ * that, and editing the designation moves everybody who still matches it. A
+ * person changed by hand afterwards is CUSTOMISED, which is derived (their
+ * access no longer equals the designation's) and never stored, so an edit
+ * leaves them alone rather than overwriting the exception somebody made on
+ * purpose. See `lib/erp/designations.ts`.
+ */
+export const erpDesignations = pgTable(
+  "erp_designations",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    description: text("description"),
+    /** The level on the `erp` grant: `associate` | `manager` | `admin`. */
+    level: text("level").notNull().default("associate"),
+    /**
+     * Every screen, including ones built after today — the "no module rows is
+     * the whole app" rule, said once for the designation. Its module rows are
+     * then ignored.
+     */
+    allScreens: boolean("all_screens").notNull().default(false),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedById: text("updated_by_id").references(() => users.id, { onDelete: "set null" }),
+  },
+  (t) => [
+    uniqueIndex("erp_designations_name_key").on(t.name),
+    check("erp_designations_level_check", sql`${t.level} in ('associate', 'manager', 'admin')`),
+  ],
+);
+
+/** The screens a designation opens, as `erp.<key>` module keys. Dashboard and settings are always open and never stored. */
+export const erpDesignationModules = pgTable(
+  "erp_designation_modules",
+  {
+    designationId: text("designation_id")
+      .notNull()
+      .references(() => erpDesignations.id, { onDelete: "cascade" }),
+    module: text("module").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.designationId, t.module] })],
+);
+
+/** The ERP powers a designation carries (`lib/erp/powers.ts`). */
+export const erpDesignationPowers = pgTable(
+  "erp_designation_powers",
+  {
+    designationId: text("designation_id")
+      .notNull()
+      .references(() => erpDesignations.id, { onDelete: "cascade" }),
+    power: text("power").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.designationId, t.power] })],
+);
+
+/** Who holds which designation — at most one each, and only while they hold the ERP. */
+export const erpUserDesignations = pgTable("erp_user_designations", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  /** Restrict: a designation somebody holds cannot be deleted out from under them. */
+  designationId: text("designation_id")
+    .notNull()
+    .references(() => erpDesignations.id, { onDelete: "restrict" }),
+  assignedById: text("assigned_by_id").references(() => users.id, { onDelete: "set null" }),
+  assignedAt: timestamp("assigned_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
  * The editable value lists every ERP form picks from (spec §3): material
  * types, areas, transporters, complaint types and the rest. A list is keyed
  * by `list_key`; a retired value is deactivated, never deleted, because

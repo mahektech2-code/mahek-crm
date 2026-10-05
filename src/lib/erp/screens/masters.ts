@@ -501,7 +501,7 @@ const productsScreen: ScreenModule = {
       { k: "pid", l: "Product id", t: "mono" },
       { k: "sfg", l: "SFG (liquid)", t: "t" },
       { k: "fg", l: "FG product", t: "b" },
-      { k: "pack", l: "Packing item", t: "t" },
+      { k: "pack", l: "Can use", t: "t" },
       { k: "lpc", l: "L per can", t: "n" },
       { k: "sku", l: "Description of goods (SKU)", t: "t", w: 260 },
       { k: "cpb", l: "Cans per box", t: "n" },
@@ -547,6 +547,12 @@ const productsScreen: ScreenModule = {
           flags: [],
           title: r.sku,
           header: loose ? "Loose SKU · sold as cans from FG stock" : "Boxed SKU · sold as boxes from packing stock",
+          fields: [
+            {
+              l: "Can use",
+              v: (r.canUseId ? packNames.get(r.canUseId) : null) ?? "Not set — Edit packing to choose the can or drum this SKU is filled into",
+            },
+          ],
           actions: [{ id: "packing", l: "Edit packing", primary: true, loadsForm: true }],
         };
       }),

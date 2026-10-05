@@ -47,6 +47,7 @@ const files = [
   "src/lib/order-change.test.ts",
   // The ERP: access, powers, working location and the masters.
   "src/lib/erp/erp-foundation.test.ts",
+  "src/lib/erp/erp-designations.test.ts",
   "src/lib/erp/erp-purchase.test.ts",
   "src/lib/erp/erp-production.test.ts",
   "src/lib/erp/erp-sales.test.ts",
