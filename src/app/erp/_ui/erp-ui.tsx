@@ -370,6 +370,17 @@ function FormDrawer({
   const [topError, setTopError] = useState("");
   const data = spec.data ?? {};
 
+  /* A line's `fillBy` fields, refreshed after `changed` moved — header or line. */
+  const fillLine = (l: Record<string, string>, hdr: Record<string, string>, changed: string) => {
+    let out = l;
+    for (const f of spec.line ?? []) {
+      if (!f.fillBy || !f.fillBy.by.includes(changed)) continue;
+      const v = f.fillBy.map[f.fillBy.by.map((k) => ({ ...hdr, ...out })[k] ?? "").join("|")];
+      if (v != null) out = { ...out, [f.k]: v };
+    }
+    return out;
+  };
+
   const visible = (f: FieldSpec, l: Record<string, string> = {}) => whenHolds(f.when, { ...h, ...l }, data);
   const resolved = (f: FieldSpec, l: Record<string, string> = {}) => resolveField(f, { ...h, ...l }, data);
 
@@ -438,7 +449,9 @@ function FormDrawer({
                   setH((s) => ({ ...s, [target]: v }));
                 }}
                 onChange={(v) => {
-                  setH((s) => ({ ...s, [f.k]: v }));
+                  const nh = { ...h, [f.k]: v };
+                  setH(nh);
+                  if (spec.line?.some((x) => x.fillBy?.by.includes(f.k))) setLines((s) => s.map((x) => fillLine(x, nh, f.k)));
                   setErrs((s) => ({ ...s, [`h.${f.k}`]: "" }));
                 }}
               />
@@ -464,7 +477,7 @@ function FormDrawer({
                       options={optsFor(f, { ...h, ...l })}
                       derived={f.t === "derived" ? runCalc(f.calc, { h, l, lines, i, data }) : undefined}
                       onChange={(v) => {
-                        setLines((s) => s.map((x, j) => (j === i ? { ...x, [f.k]: v } : x)));
+                        setLines((s) => s.map((x, j) => (j === i ? fillLine({ ...x, [f.k]: v }, h, f.k) : x)));
                         setErrs((s) => ({ ...s, [`l${i}.${f.k}`]: "" }));
                       }}
                     />

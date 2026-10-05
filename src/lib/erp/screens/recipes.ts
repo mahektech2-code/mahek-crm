@@ -43,6 +43,12 @@ export async function recipeMap(): Promise<Map<string, number>> {
   return new Map(rows.map((r) => [`${r.formulationId}|${r.rawMaterialId}`, Number(r.qtyPerBatch)]));
 }
 
+/** Litres per batch keyed `product name|raw material name` — what a new SFG batch line fills its quantity from. */
+export async function recipeQtyByName(): Promise<Record<string, string>> {
+  const rows = await recipeRows();
+  return Object.fromEntries(rows.map((r) => [`${r.product}|${r.item}`, String(Number(r.r.qtyPerBatch))]));
+}
+
 const mayWrite = (ctx: { administrator: boolean; level: string | null }) => ctx.administrator || ctx.level === "manager";
 
 export const recipesScreen: ScreenModule = {
