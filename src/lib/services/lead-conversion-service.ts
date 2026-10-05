@@ -1,7 +1,7 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { and, eq, ne, sql } from "drizzle-orm";
-import { auditLog, customers, orders } from "@/db/schema";
+import { auditLog, customers, mbosDeletions, orders } from "@/db/schema";
 import { assignedUserId } from "@/lib/access-control";
 import { orderCountsSql } from "@/lib/order-status";
 import { MBOS_EVENT, writeTimelineEvent } from "@/lib/timeline";
@@ -161,6 +161,31 @@ export async function recordConversion(
     occurredAt: new Date(),
     actorUserId: actorId,
     summary: `Became a customer — ${how}`,
+  });
+
+  /*
+   * AND EVERY HANDSET HOLDING THE LEAD IS TOLD IT STOPPED BEING ONE.
+   *
+   * The handset keeps a lead in two tables — the shop in `customers`, the
+   * funnel in `leads` — and asks "is this a lead" of the second. The leads
+   * channel stops sending a lead the moment it is `won`, and a pull only says
+   * what exists: so the lead row stayed on the phone at its last rung for the
+   * life of the installation, listed under Leads and opening the funnel for a
+   * shop the office was already billing. Only a tombstone says what stopped.
+   *
+   * `leads` alone, never `customers`: the shop is still his, and its customer
+   * row arrives on the same pull with `kind` moved. The handset ARCHIVES a
+   * tombstoned lead rather than deleting it (see `applyDeletionChunk`), so
+   * anything he still has queued against it reaches the office. `user_id` null
+   * because the owner and the lead manager may both hold it, and a phone that
+   * never did archives nothing.
+   */
+  await tx.insert(mbosDeletions).values({
+    id: `del_${randomUUID().slice(0, 12)}`,
+    entity: "leads",
+    entityId: lead.id,
+    userId: null,
+    reason: "lead_converted",
   });
 }
 
