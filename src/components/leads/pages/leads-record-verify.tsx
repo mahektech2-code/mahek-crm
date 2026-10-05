@@ -1,3 +1,4 @@
+import { holdsLeadSeatById } from "@/lib/services/lead-verifier";
 import { type LeadWorkspace } from "@/lib/lead-workspace";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
@@ -64,7 +65,7 @@ export async function Body({
   const failureReasons = config["leads.verificationFailureReasons"];
   /* A calling-desk request this verification would settle, if there is one. */
   const request = await prospectRequestFor(id);
-  const canVerify = await canLead(user, "lead.verify");
+  const canVerify = (await canLead(user, "lead.verify")) || (await holdsLeadSeatById(user, id));
 
   /*
    * A finding with nothing recorded against it is still LISTED. "He did not

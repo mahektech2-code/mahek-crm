@@ -336,14 +336,26 @@ describe("W — a lead that is drawn can be acted on, and one that is not cannot
     assert.equal((await row(theirs.id)).leadStage, "prospect", "nothing moved");
   });
 
-  test("the module does not grant the capability: an ASSOCIATE hat still cannot verify (reported, not changed)", async () => {
-    /* `lead.verify` is a manager capability and this change adds no capability
-       of its own. The screen draws what the level allows — the flag the record
-       reports is the one the action checks — so an associate Sales Manager sees
-       the control disabled rather than pressing it and being refused. */
+  test("an ASSOCIATE Sales Manager verifies a prospect under HER seat (and no other), without becoming a manager", async () => {
+    /* This test used to pin the opposite ("reported, not changed"): the module
+       granted no capability, so an associate Sales Manager saw the control
+       disabled on her own lead. Verification now follows `sales_manager_id`
+       (lead-verifier.ts): the seat plus the module is enough, and nothing else
+       is granted — the same hat still cannot verify a lead under another seat. */
     const mine = await makeLead({ leadStage: "prospect", ownerId: salesman.id, salesManagerId: smA.id, ...prospectFields() });
+    const other = await makeLead({ leadStage: "prospect", ownerId: salesman.id, salesManagerId: smB.id, ...prospectFields() });
     const rec = (await pipelineLead(mine.id, DAY))!.lead;
-    assert.equal(rec.caps.canVerify, false);
+    assert.equal(rec.caps.canVerify, true, "the screen reflects the same rule the action enforces");
+    assert.equal((await pipelineLead(other.id, DAY)) === null || (await pipelineLead(other.id, DAY))!.lead.caps.canVerify === false, true);
+
+    const refused = await verifyProspect({
+      customerId: other.id,
+      outcome: "verified",
+      answers: { visited: "Yes", explained: "Yes", genuine_interest: "Yes", ready_for_trial: "Yes" },
+      corrections: [],
+    });
+    assert.equal(refused.ok, false);
+    assert.equal((await row(other.id)).leadStage, "prospect", "another Sales Manager's lead did not move");
 
     const r = await verifyProspect({
       customerId: mine.id,
@@ -351,8 +363,10 @@ describe("W — a lead that is drawn can be acted on, and one that is not cannot
       answers: { visited: "Yes", explained: "Yes", genuine_interest: "Yes", ready_for_trial: "Yes" },
       corrections: [],
     });
-    assert.equal(r.ok, false);
-    assert.equal((await row(mine.id)).leadStage, "prospect");
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    const after = await row(mine.id);
+    assert.equal(after.leadVerifiedById, smA.id);
+    assert.equal(after.leadStage, "qualification", "Qualification opens as before");
   });
 });
 
@@ -540,11 +554,22 @@ describe("D — the desk reads the same book, by salesman", () => {
     assert.deepEqual(searched.flatMap((g) => g.rows.map((r) => r.id)), [mineA.id], "the search reads the salesman's name too");
   });
 
-  test("a manager without lead.verify is told, in words, that Verify is off — and the grants are untouched", async () => {
+  test("the Verify-is-off sentence is for somebody with neither the capability nor the seat — and the grants are untouched", async () => {
     const prospect = await makeLead({ name: "A prospect", salesManagerId: smA.id, ownerId: salesman.id, leadStage: "prospect" });
     const asAssociate = (await pipelineLead(prospect.id, DAY))!.lead;
-    assert.equal(asAssociate.caps.canVerify, false, "the production shape: an associate Sales Manager");
-    const reasons = disabledReasons(asAssociate.caps, {
+    assert.equal(asAssociate.caps.canVerify, true, "the production shape: an associate Sales Manager under her own seat can verify");
+    assert.ok(
+      !disabledReasons(asAssociate.caps, {
+        stage: asAssociate.stage,
+        lost: Boolean(asAssociate.lost),
+        deskRequest: Boolean(asAssociate.deskRequest),
+        verified: asAssociate.verification.done,
+        sampleState: asAssociate.sample?.state ?? null,
+        gateKind: asAssociate.gate.kind,
+      }).some((r) => /lead.verify/.test(r)),
+    );
+    const stripped = { ...asAssociate.caps, canVerify: false };
+    const reasons = disabledReasons(stripped, {
       stage: asAssociate.stage,
       lost: Boolean(asAssociate.lost),
       deskRequest: Boolean(asAssociate.deskRequest),

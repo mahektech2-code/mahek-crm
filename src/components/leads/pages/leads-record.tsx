@@ -1,3 +1,4 @@
+import { holdsLeadSeatById } from "@/lib/services/lead-verifier";
 import { type LeadWorkspace } from "@/lib/lead-workspace";
 import { qualificationAccess } from "@/lib/lead-qualification-access";
 import { canOpenModule } from "@/lib/access";
@@ -309,7 +310,7 @@ export async function Body({
       holdReasons={config["leads.holdReasons"]}
       discountThresholdPercent={config["leads.distributorDiscountApprovalPercent"]}
       creditLimitThresholdPaise={config["leads.distributorCreditLimitApprovalPaise"]}
-      canVerify={await canLead(user, "lead.verify")}
+      canVerify={(await canLead(user, "lead.verify")) || (await holdsLeadSeatById(user, id))}
       canWork={await canLead(user, "lead.work")}
       canTrash={await canFor(user, "lead.trash")}
       /* §22 — naming who RUNS the relationship, which moves no revenue and no

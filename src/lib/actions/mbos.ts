@@ -85,7 +85,7 @@ import type { LeadSalesType, LeadStage } from "../lead-labels";
 import { getConfig } from "../config/store";
 import { financialYearOf } from "../financial-year";
 import { metresBetween } from "../geo";
-import { today, recomputeOutstanding, recomputeLastContact } from "../recompute";
+import { today, recomputeOutstanding, recomputeLastContact, salesManagerForOwner } from "../recompute";
 import { allocate, type AllocatableBill } from "../engines/allocation";
 import { computeHealth, type HealthFacts } from "../engines/health";
 import { fileStorage } from "../storage";
@@ -5291,6 +5291,11 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
     leadSuspectDecidedAt: p.suspectDecidedAt ? new Date(p.suspectDecidedAt) : null,
   } as const;
 
+  /* The Sales Manager this lead is under, from the org chart, AT CREATION — the same
+     relationship the nightly pass applies, so verification does not wait a night.
+     A fill, not a decision: `sales_manager_decided_at` stays null. */
+  const smSeat = await salesManagerForOwner(principal.user.id);
+
   await db
     .insert(customers)
     .values({
@@ -5312,6 +5317,7 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
        * handset AND in the scoped lists the office reads — `ASSIGNED_TO_SQL`
        * resolves a lead through `owner_id`. One column, three screens. */
       ownerId: principal.user.id,
+      ...(smSeat ? { salesManagerId: smSeat.id, salesManagerPersonName: smSeat.personName } : {}),
       leadStage: plantedStage,
       /* The rung it is standing on, dated — the console ages every list by this
          and a null would read as a lead that has been there since the epoch. */
