@@ -12,7 +12,7 @@ cus_00687ef5-6bc,Maharashtra,Gondia,Gondia,Rail Toly,Confirmed (pin + address ag
 cus_0075092e-3c1,Maharashtra,Nagpur,Wanadongri,Wanadongri ct,Confirmed (pin + address agree)
 cus_00778f23-a71,Madhya Pradesh,Indore,Indore,Nagin Nagar,Confirmed (pin + address agree)
 cus_008a66af-21f,Madhya Pradesh,Dewas,Dewas,,From sheet text only
-cus_00ade75d-14b,Maharashtra,Pune,Pune,Wagholi,Check: pin and address disagree
+cus_00ade75d-14b,Madhya Pradesh,Bhopal,Bhopal,,Corrected 2026-10-05: GSTIN / sheet city
 cus_00b49fe9-fa6,Rajasthan,Tonk,Tonk,Subhash Bazar,Confirmed (pin + address agree)
 cus_00b63395-5c1,Kerala,Palakkad,Koppam,,From sheet text only
 cus_00eddbd9-c81,Maharashtra,Palghar,Mira-Bhayandar,,Confirmed (pin + address agree)
@@ -41,7 +41,7 @@ cus_0170dcf9-772,Maharashtra,Thane,Ambernath,Matoshree Nagar,From address only (
 cus_018d9e2f-6ef,Madhya Pradesh,Jabalpur,Jabalpur,Ganjipura,From address only (no pin)
 cus_01ac69a6-eaa,Madhya Pradesh,Indore,Indore,Pragati Vihar,Confirmed (pin + address agree)
 cus_01ae687a-43d,Kerala,Kozhikode,Thrissur,Thiruvambady,From sheet text only
-cus_01b06b9c-b72,Madhya Pradesh,West Nimar,Khargone,Jawahar Nagar,Confirmed (pin + address agree)
+cus_01b06b9c-b72,Maharashtra,Thane,Kalyan,,Corrected 2026-10-05: GSTIN / sheet city
 cus_01c22411-ac9,Rajasthan,Jaipur,Jaipur,Vidyadhar Nagar,Confirmed (pin + address agree)
 cus_01c6f305-b3b,Maharashtra,Pune,Pune,Wagholi,From address only (no pin)
 cus_01c9f9dc-f58,Rajasthan,Nagaur,Merta,,Confirmed (pin + address agree)
@@ -128,14 +128,14 @@ cus_04d8cc15-a23,Rajasthan,Bhilwara,Bhilwara,Bhopal Ganj,Confirmed (pin + addres
 cus_04e0f6c6-13f,Maharashtra,Palghar,Vasai,,From pin only
 cus_04f6845d-2de,Madhya Pradesh,Vidisha,Vidisha,Uday Nagar Colony,Confirmed (pin + address agree)
 cus_050a5bee-e79,Maharashtra,Kolhapur,Kolhapur,Tarabai Park,From address only (no pin)
-cus_0515c865-5c7,Odisha,Nabarangapur,Nabarangapur,Nabarangapur PS,Confirmed (pin + address agree)
+cus_0515c865-5c7,Maharashtra,Pune,Pune,,Corrected 2026-10-05: GSTIN / sheet city
 cus_051dba1c-9b1,Maharashtra,Nagpur,Nagpur,Ayodhya nagar,Confirmed (pin + address agree)
 cus_0525c415-be1,Maharashtra,Palghar,Virar,Virar East,Confirmed (pin + address agree)
 cus_0535c474-913,Maharashtra,Thane,Badlapur,,From sheet text only
 cus_053712a0-465,Madhya Pradesh,Indore,Indore,Sukhlia,Confirmed (pin + address agree)
 cus_05415b6c-3f1,Maharashtra,Thane,Ambernath,Kher,From address only (no pin)
 cus_05527add-fd3,Kerala,Thrissur,Thrissur,Veliyannur,Check: pin and address disagree
-cus_05542163-979,Maharashtra,Mumbai,Mumbai,Kandivali East,Confirmed (pin + address agree)
+cus_05542163-979,Gujarat,Rajkot,Rajkot,,Corrected 2026-10-05: GSTIN / sheet city
 cus_055c5696-82b,Maharashtra,Palghar,Mira-Bhayandar,,Confirmed (pin + address agree)
 cus_0563b3f5-cf1,Maharashtra,Raigad,Khopoli,Niphan,From pin only
 cus_0580a7c0-e37,Rajasthan,Jaipur,Jaipur,Shyam Nagar,Confirmed (pin + address agree)
@@ -217,7 +217,7 @@ cus_086026c8-ef3,Maharashtra,Thane,Ulhasnagar,,From address only (no pin)
 cus_086dcabd-300,Madhya Pradesh,Indore,Indore,Siyaganj,Confirmed (pin + address agree)
 cus_0871e371-6f9,Rajasthan,Jaipur,Jaipur,Malviya Nagar,Confirmed (pin + address agree)
 cus_0878765e-467,Rajasthan,Jaipur,Jaipur,Sindhi Camp,Confirmed (pin + address agree)
-cus_0879a2da-2de,Madhya Pradesh,Katni,Majholi,,Confirmed (pin + address agree)
+cus_0879a2da-2de,Maharashtra,Raigad,Khopoli,,Corrected 2026-10-05: GSTIN / sheet city
 cus_087efa62-d4e,Gujarat,Rajkot,Rajkot,,From sheet text only
 cus_088c3e4c-f1a,Maharashtra,Nagpur,Nagpur,Rameshwari,Confirmed (pin + address agree)
 cus_089e8735-9e4,Rajasthan,Jodhpur,Jodhpur,Lawaran,Confirmed (pin + address agree)
@@ -424,7 +424,7 @@ cus_11bd0462-15e,Maharashtra,Mumbai,Mumbai,Jogeshwari West,From sheet text only
 cus_11ca133a-daf,Maharashtra,Solapur,Solapur,Rangraj Nagar,Confirmed (pin + address agree)
 cus_11caf917-bd3,Madhya Pradesh,Indore,Indore,,Confirmed (pin + address agree)
 cus_11ce43d8-391,Maharashtra,Palghar,Nala Sopara,Nalasopara East,From pin only
-cus_11d99da9-0e8,Madhya Pradesh,Indore,Indore,Sirpur,Confirmed (pin + address agree)
+cus_11d99da9-0e8,Maharashtra,Palghar,Palghar,,Corrected 2026-10-05: GSTIN / sheet city
 cus_11ffd32d-739,Maharashtra,Yavatmal,Yavatmal,Pangari,Confirmed (pin + address agree)
 cus_1215ed99-230,Maharashtra,Thane,Bhiwandi,Avachit Pada,Confirmed (pin + address agree)
 cus_121dcea6-d22,Madhya Pradesh,Indore,Indore,Siyaganj,Confirmed (pin + address agree)
@@ -462,7 +462,7 @@ cus_137d4e0c-132,Rajasthan,Tonk,Deoli,,Confirmed (pin + address agree)
 cus_137ef96a-e65,Maharashtra,Thane,Bhiwandi,Dapode,Confirmed (pin + address agree)
 cus_1382c97a-1b5,Kerala,Kozhikode,Kozhikode,Chevayoor,From address only (no pin)
 cus_1387a41a-2cb,Madhya Pradesh,Katni,Katni,,From sheet text only
-cus_13882bed-36f,Tamil Nadu,Kanyakumari,Parassala,,Confirmed (pin + address agree)
+cus_13882bed-36f,Kerala,Thiruvananthapuram,Parassala,,Corrected 2026-10-05: GSTIN / sheet city
 cus_138b54a0-85a,Maharashtra,Thane,Ulhasnagar,Vitthalwadi,From address only (no pin)
 cus_138fea4d-5dc,Rajasthan,Jaipur,Jaipur,Gokulpura,Confirmed (pin + address agree)
 cus_139229ce-801,Maharashtra,Raigad,Raigad,Panvel,Check: pin and address disagree
@@ -506,7 +506,7 @@ cus_150b59b8-0c2,Maharashtra,Nagpur,Nagpur,Bajaria,Confirmed (pin + address agre
 cus_15117a50-0ae,Maharashtra,Nagpur,Nagpur,Pili Nadi,Confirmed (pin + address agree)
 cus_15149875-e96,Maharashtra,Thane,Bhiwandi,Anjurphata,Confirmed (pin + address agree)
 cus_1534b4cb-a20,Maharashtra,Palghar,Nala Sopara,,From pin only
-cus_153c8239-02e,Maharashtra,Thane,Kalyan,Rambaug,Check: pin and address disagree
+cus_153c8239-02e,Karnataka,Belagavi,Raibag,,Corrected 2026-10-05: GSTIN / sheet city
 cus_15490023-a16,Maharashtra,Thane,Ambernath,,From sheet text only
 cus_154bbde6-d12,Maharashtra,Thane,Ulhasnagar,Press Bazar,Confirmed (pin + address agree)
 cus_155373a7-d31,Madhya Pradesh,Bhopal,Bhopal,,From sheet text only
@@ -517,14 +517,14 @@ cus_15944d3b-24b,Madhya Pradesh,Jabalpur,Jabalpur,South Civil Lines,Confirmed (p
 cus_1598e729-2c0,Kerala,Kozhikode,Valayam,,Check: pin and address disagree
 cus_15a94e46-2e6,Madhya Pradesh,Indore,Indore,Nandanvan Colony,Confirmed (pin + address agree)
 cus_15b1a65c-55e,Maharashtra,Gondia,Kudwa,Ramnagar,Confirmed (pin + address agree)
-cus_15c0e6b4-327,Dadra and Nagar Haveli and Daman and Diu,Daman,Vapi,Imran Nagar,Confirmed (pin + address agree)
+cus_15c0e6b4-327,Gujarat,Valsad,Vapi,,Corrected 2026-10-05: GSTIN / sheet city
 cus_15c0ea3d-9d4,Maharashtra,Palghar,Vasai,Vasai East,Confirmed (pin + address agree)
 cus_15c6a696-818,Maharashtra,Thane,Ulhasnagar,Press Bazar,Confirmed (pin + address agree)
 cus_15d41596-320,Maharashtra,Kolhapur,Kolhapur,Laxmipuri,Confirmed (pin + address agree)
 cus_15ffb0f5-542,Odisha,Khorda,Bhubaneswar,Khandagiri,Confirmed (pin + address agree)
 cus_16006f6f-a86,Rajasthan,Jaipur,Jaipur,Shankar Nagar,Check: pin and address disagree
 cus_1601647a-9ec,Maharashtra,Palghar,Nala Sopara,,From sheet text only
-cus_16057271-24b,Kerala,Thiruvananthapuram,Navaikulam,Vettiyara P. O,Confirmed (pin + address agree)
+cus_16057271-24b,Maharashtra,Palghar,Nala Sopara,,Corrected 2026-10-05: GSTIN / sheet city
 cus_1610f2f8-d9c,Kerala,Kannur,Kannur,Katalayi,Confirmed (pin + address agree)
 cus_161aa20c-3ac,Odisha,Khorda,Bhubaneswar,BJB Nagar,From address only (no pin)
 cus_1637187d-257,Rajasthan,Ajmer,Beawar,Neharu Nagar,Confirmed (pin + address agree)
@@ -627,7 +627,7 @@ cus_1aa93022-4f9,Rajasthan,Pali,Jaitaran,Nimaaj,From pin only
 cus_1aaad026-8cf,Madhya Pradesh,Bhopal,Bhopal,Peer Gate Area,Confirmed (pin + address agree)
 cus_1aae256f-24a,Rajasthan,Jaipur,Jaipur,Modikhana,Confirmed (pin + address agree)
 cus_1ac0619b-c91,Madhya Pradesh,Bhopal,Bhopal,,From sheet text only
-cus_1ad99d3c-930,Madhya Pradesh,Indore,Indore,,Check: pin and address disagree
+cus_1ad99d3c-930,Maharashtra,Latur,Latur,,Corrected 2026-10-05: GSTIN / sheet city
 cus_1adac69c-6be,Kerala,Kozhikode,Vatakara,Veerancheri,From address only (no pin)
 cus_1ae2f8ae-6aa,Rajasthan,Jaipur,Jaipur,Vidyadhar Nagar,Confirmed (pin + address agree)
 cus_1ae55d59-86b,Madhya Pradesh,Indore,Indore,Shukh Shanti Nagar,Confirmed (pin + address agree)
@@ -647,7 +647,7 @@ cus_1b97cb8a-817,Madhya Pradesh,Dewas,Dewas,Gomti Nagar,Confirmed (pin + address
 cus_1b99ccc7-f66,Madhya Pradesh,Indore,Indore,Navlakha,Confirmed (pin + address agree)
 cus_1ba7ec0a-12e,Maharashtra,Nagpur,Nagpur,Badil Kheda,Confirmed (pin + address agree)
 cus_1bb21f8e-27d,Maharashtra,Palghar,Mira-Bhayandar,,Confirmed (pin + address agree)
-cus_1bb92556-bad,Maharashtra,Nagpur,Bhopal,,Check: pin and address disagree
+cus_1bb92556-bad,Madhya Pradesh,Bhopal,Bhopal,,Corrected 2026-10-05: GSTIN / sheet city
 cus_1bc30ea3-860,Rajasthan,Ajmer,Ajmer,Shreenagar,From pin only
 cus_1bcb7692-bb1,Maharashtra,Latur,Latur,Narayan Nagar,Check: pin and address disagree
 cus_1bd55264-c4c,Maharashtra,Thane,Ulhasnagar,Vitthalwadi,Confirmed (pin + address agree)
@@ -672,7 +672,7 @@ cus_1c97cafd-c77,Maharashtra,Palghar,Vasai,Vasai East,Confirmed (pin + address a
 cus_1c9b37b5-faa,Kerala,Kozhikode,Katameri,Ayanchery,From pin only
 cus_1cbb38e1-158,Maharashtra,Mumbai,Mumbai,Dahisar East,Confirmed (pin + address agree)
 cus_1cbd850e-38c,Maharashtra,Thane,Shahapur,Kalambhe,From pin only
-cus_1ccda13d-443,Maharashtra,Nagpur,Nagpur,Bapu Nagar,Check: pin and address disagree
+cus_1ccda13d-443,Madhya Pradesh,Dewas,Dewas,,Corrected 2026-10-05: GSTIN / sheet city
 cus_1cd13884-2b5,Maharashtra,Nagpur,Nagpur,Besa,From address only (no pin)
 cus_1cd31146-470,Madhya Pradesh,Indore,Indore,,From sheet text only
 cus_1cd77cd6-e7b,Madhya Pradesh,Indore,Indore,Badi Bhamori,Confirmed (pin + address agree)
@@ -680,7 +680,7 @@ cus_1cdcc418-850,Kerala,Kottayam,Kottayam,Market,Confirmed (pin + address agree)
 cus_1ceb118b-2a2,Maharashtra,Palghar,Palghar,Vishnu Nagar,From address only (no pin)
 cus_1cfcd6a3-a41,Maharashtra,Palghar,Virar,Virar East,Confirmed (pin + address agree)
 cus_1d05f3c0-695,Madhya Pradesh,Indore,Indore,South Tukoganj,Confirmed (pin + address agree)
-cus_1d117601-8a0,Rajasthan,Jaipur,Jaipur,Jhotwara,Check: pin and address disagree
+cus_1d117601-8a0,Odisha,Bargarh,Bargarh,,Corrected 2026-10-05: GSTIN / sheet city
 cus_1d4048a5-4f3,Maharashtra,Thane,Ulhasnagar,Krishna Nagar,Confirmed (pin + address agree)
 cus_1d5229a3-daa,Madhya Pradesh,Raisen,Manpur,,Confirmed (pin + address agree)
 cus_1d556bb2-510,Madhya Pradesh,Chhatarpur,Chhatarpur,Vishwanath Colony,Confirmed (pin + address agree)
@@ -709,7 +709,7 @@ cus_1de985cd-627,Maharashtra,Thane,Dombivli,Dombivli East,Confirmed (pin + addre
 cus_1def85b0-c2f,Dadra and Nagar Haveli and Daman and Diu,Daman,Vapi,Ringanwada,From sheet text only
 cus_1df3e506-49e,Goa,North Goa,Mapusa,Mapusa Municipal Market,Confirmed (pin + address agree)
 cus_1df65a1b-341,Maharashtra,Thane,Thane,Thane West,Confirmed (pin + address agree)
-cus_1e06dcbf-352,Dadra and Nagar Haveli and Daman and Diu,Daman,Vapi,Gidc,Confirmed (pin + address agree)
+cus_1e06dcbf-352,Gujarat,Valsad,Vapi,,Corrected 2026-10-05: GSTIN / sheet city
 cus_1e0e812c-7d5,Rajasthan,Jaipur,Jaipur,Kanwar Nagar,Confirmed (pin + address agree)
 cus_1e0fc562-784,Odisha,Cuttack,Mahajanpur,,Check: pin and address disagree
 cus_1e24b4b3-1d1,Rajasthan,Jaipur,Jaipur,Murtikaar Udhyog Nagar,From pin only
@@ -778,7 +778,7 @@ cus_20526cc8-b0d,Maharashtra,Palghar,Boisar,Vanipada,From address only (no pin)
 cus_20795d9e-d7f,Maharashtra,Thane,Bhiwandi,Dapode,Confirmed (pin + address agree)
 cus_207aa8a9-48f,Madhya Pradesh,Indore,Indore,Ranipura,Confirmed (pin + address agree)
 cus_207b73f4-284,Madhya Pradesh,Indore,Indore,,From sheet text only
-cus_2082c23e-811,Rajasthan,Jaipur,Jaipur,Murlipura,Confirmed (pin + address agree)
+cus_2082c23e-811,Madhya Pradesh,Indore,Indore,,Corrected 2026-10-05: GSTIN / sheet city
 cus_2088864b-700,Kerala,Kozhikode,Menhaniam,Perambra,From pin only
 cus_2090490a-270,Madhya Pradesh,Indore,Indore,Chhawni,Confirmed (pin + address agree)
 cus_20a17755-777,Madhya Pradesh,Jabalpur,Jabalpur,Gour,From pin only
@@ -829,7 +829,7 @@ cus_2290084f-3c3,Odisha,Angul,Angul,Badakera,From pin only
 cus_229226f7-12c,Kerala,Ernakulam,Kochi,,From pin only
 cus_22a5cc62-0da,Rajasthan,Jaipur,Chomu,,Confirmed (pin + address agree)
 cus_22b3b9e9-8d0,Maharashtra,Thane,,,Not locatable
-cus_22d1881b-a57,Rajasthan,Jaipur,Jaipur,Durgapura,Confirmed (pin + address agree)
+cus_22d1881b-a57,Madhya Pradesh,Bhopal,Bhopal,,Corrected 2026-10-05: GSTIN / sheet city
 cus_22d3ec04-af7,Maharashtra,Thane,Kalyan,Khadakpada,Confirmed (pin + address agree)
 cus_22f3748e-4e3,Maharashtra,Mumbai,Mumbai,Andheri West,Confirmed (pin + address agree)
 cus_22fc87e6-4a0,Kerala,Kasargod,Kanhangad,Puthiyavalapu,Confirmed (pin + address agree)
@@ -872,7 +872,7 @@ cus_24d0da5a-025,Maharashtra,Thane,Kalyan,Dwarli Gaon,Confirmed (pin + address a
 cus_24d9ec88-927,Maharashtra,Mumbai,Mumbai,Jogeshwari West,Confirmed (pin + address agree)
 cus_24ec7db7-e5f,Madhya Pradesh,Indore,Indore,Pardesipura,Confirmed (pin + address agree)
 cus_24f7a88f-6e5,Maharashtra,Thane,Kalyan,Khadakpada,Confirmed (pin + address agree)
-cus_250da35d-61d,Dadra and Nagar Haveli and Daman and Diu,Daman,Vapi,Imran Nagar,Confirmed (pin + address agree)
+cus_250da35d-61d,Gujarat,Valsad,Vapi,,Corrected 2026-10-05: GSTIN / sheet city
 cus_25137d68-9db,Madhya Pradesh,Dhar,Pithampur,Pithampur Industrial Area,From address only (no pin)
 cus_252689e4-35e,Maharashtra,Nagpur,Nagpur,Shantinagar Colony,Confirmed (pin + address agree)
 cus_252b6d84-42a,Maharashtra,Palghar,Maswan,Mvw4Wpp,From address only (no pin)
@@ -919,13 +919,13 @@ cus_2708a733-a40,Madhya Pradesh,Mandsaur,Sitamau,,Confirmed (pin + address agree
 cus_2734c52e-786,Madhya Pradesh,Indore,Indore,Badi Bhamori,From address only (no pin)
 cus_2747b049-360,Madhya Pradesh,Indore,Indore,Kalani Nagar,Confirmed (pin + address agree)
 cus_2757967e-e28,Maharashtra,Mumbai,Mumbai,Borivali,From sheet text only
-cus_27587431-999,Rajasthan,Jodhpur,Jodhpur,Ashok Nagar,Confirmed (pin + address agree)
+cus_27587431-999,Maharashtra,Thane,Thane,,Corrected 2026-10-05: GSTIN / sheet city
 cus_275f2823-d40,Rajasthan,Ajmer,Kishangarh,RICCO Industrial Area,Confirmed (pin + address agree)
 cus_27668619-30c,Rajasthan,Ajmer,Kekri,,From pin only
 cus_276705de-b59,Madhya Pradesh,Jabalpur,Jabalpur,Karmeta,Confirmed (pin + address agree)
 cus_27739e1f-2e7,Kerala,Kannur,Panoor,,Confirmed (pin + address agree)
 cus_2779c389-dcb,Madhya Pradesh,Jabalpur,Jabalpur,Cheevani Phamad Nagar,Confirmed (pin + address agree)
-cus_27b61b0a-2eb,Kerala,Kannur,Chokli,,Check: pin and address disagree
+cus_27b61b0a-2eb,Maharashtra,Thane,Dombivli,,Corrected 2026-10-05: GSTIN / sheet city
 cus_27bafb79-a34,Rajasthan,Nagaur,Merta,,Confirmed (pin + address agree)
 cus_27bff0a7-dba,Maharashtra,Raigad,Patalganga,,From sheet text only
 cus_27c0d731-24f,Maharashtra,Palghar,Vasai,Vasai East,From sheet text only
@@ -953,7 +953,7 @@ cus_28c97f47-ed2,Madhya Pradesh,Indore,Indore,Khajrana,Confirmed (pin + address 
 cus_28dcf3e5-0c1,Madhya Pradesh,Indore,Indore,Kelod,Confirmed (pin + address agree)
 cus_28e01ae3-137,Madhya Pradesh,Jabalpur,Jabalpur,Sanjeevani Nagar,Confirmed (pin + address agree)
 cus_28f222cb-3ef,Kerala,Thrissur,Thrissur,Chembukkav,Confirmed (pin + address agree)
-cus_28fc92ee-68f,Dadra and Nagar Haveli and Daman and Diu,Daman,Vapi,Gidc,Confirmed (pin + address agree)
+cus_28fc92ee-68f,Gujarat,Valsad,Vapi,,Corrected 2026-10-05: GSTIN / sheet city
 cus_28fdb08f-4a0,Kerala,Thiruvananthapuram,Thiruvananthapuram,,Confirmed (pin + address agree)
 cus_28ff19cd-af2,Maharashtra,Thane,Dombivli,Dombivli East,Confirmed (pin + address agree)
 cus_290da827-4a0,Maharashtra,Kolhapur,Chinchwad,,Check: pin and address disagree
@@ -1009,7 +1009,7 @@ cus_2b3d0aa9-cbb,Rajasthan,Jaipur,Jaipur,Shankar Nagar,Confirmed (pin + address 
 cus_2b45df4d-506,Madhya Pradesh,Bhopal,Bhopal,Bairagarh,Confirmed (pin + address agree)
 cus_2b56e8f7-c60,Madhya Pradesh,Indore,Indore,Sukhlia,Confirmed (pin + address agree)
 cus_2b8b3b26-9eb,Madhya Pradesh,Burhanpur,Burhanpur,Monin Pura,Check: pin and address disagree
-cus_2ba6b214-48f,Maharashtra,Thane,Kalyan,Kalyan East,Check: pin and address disagree
+cus_2ba6b214-48f,Madhya Pradesh,Bhopal,Bhopal,,Corrected 2026-10-05: GSTIN / sheet city
 cus_2bb107c3-50f,Kerala,Thiruvananthapuram,Thiruvananthapuram,Maruthankuzhi,Confirmed (pin + address agree)
 cus_2bb8a799-652,Madhya Pradesh,Indore,Indore,Daulatganj,Confirmed (pin + address agree)
 cus_2bc6b3b7-755,Maharashtra,Mumbai,Mumbai,Kandivali West,Confirmed (pin + address agree)
@@ -1044,7 +1044,7 @@ cus_2cfb6672-3e6,Madhya Pradesh,Hoshangabad,Harda,,From address only (no pin)
 cus_2d189afb-aff,Maharashtra,Palghar,Virar,,From pin only
 cus_2d190b97-94c,Rajasthan,Jaipur,Chomu,Naya BaJar,Check: pin and address disagree
 cus_2d19bb5f-dc4,Maharashtra,Nanded,Nanded,Kautha,Confirmed (pin + address agree)
-cus_2d2b41f9-fa8,Dadra and Nagar Haveli and Daman and Diu,Daman,Vapi,Koliwara (Pardi,Confirmed (pin + address agree)
+cus_2d2b41f9-fa8,Gujarat,Valsad,Vapi,,Corrected 2026-10-05: GSTIN / sheet city
 cus_2d39a4fe-7b5,Madhya Pradesh,Bhopal,Bhopal,,From sheet text only
 cus_2d485130-66e,Maharashtra,Amravati,Amravati,Habib Nagar,Confirmed (pin + address agree)
 cus_2d563a4a-84e,Maharashtra,Thane,Bhiwandi,Chavindra,Confirmed (pin + address agree)
@@ -1112,7 +1112,7 @@ cus_2f39728e-ee3,Madhya Pradesh,Ratlam,Jaora,,Confirmed (pin + address agree)
 cus_2f464144-bf4,Odisha,Ganjam,Ganjam,,Confirmed (pin + address agree)
 cus_2f47f6b5-d92,Madhya Pradesh,Sehore,Sherpur,,Check: pin and address disagree
 cus_2f5768aa-19a,Maharashtra,Raigad,Raigad,Panvel,Confirmed (pin + address agree)
-cus_2f59e389-186,Rajasthan,Ajmer,Beawar,Shahpura Mohalla,Check: pin and address disagree
+cus_2f59e389-186,Maharashtra,Solapur,Pandharpur,,Corrected 2026-10-05: GSTIN / sheet city
 cus_2f69e2b2-a59,Madhya Pradesh,Jabalpur,Jabalpur,Adhartal,Confirmed (pin + address agree)
 cus_2f6f04d5-641,Rajasthan,Jodhpur,Jodhpur,Surya Colony,Confirmed (pin + address agree)
 cus_2f71130a-b5d,Maharashtra,Solapur,Londhevasti,,From pin only
@@ -1167,7 +1167,7 @@ cus_3199b936-7cf,Rajasthan,Jaipur,Jaipur,Ambika Colony,Confirmed (pin + address 
 cus_319a68a9-1ce,Odisha,Cuttack,Jagatpur,Chandrasekharprasad,From pin only
 cus_31af9b50-bbe,Madhya Pradesh,Bhopal,Gehun Kheda,,Check: pin and address disagree
 cus_31b18beb-829,Gujarat,Rajkot,Gondal,Gayatri Nagar,Confirmed (pin + address agree)
-cus_31b8f890-f59,Madhya Pradesh,Indore,Mhow Gaon,Dharnaka,Confirmed (pin + address agree)
+cus_31b8f890-f59,Maharashtra,Thane,Janta Market,,Corrected 2026-10-05: GSTIN / sheet city
 cus_31c4bfe1-86c,Madhya Pradesh,West Nimar,Khargone,Gouridham Extension Colony,Confirmed (pin + address agree)
 cus_31c57c7d-cb3,Madhya Pradesh,Indore,Indore,Palda,Confirmed (pin + address agree)
 cus_31c5e083-67e,Kerala,Pathanamthitta,Thiruvalla,,From address only (no pin)
@@ -1209,9 +1209,9 @@ cus_33195244-e48,Maharashtra,Palghar,Vasai,Vasai East,Confirmed (pin + address a
 cus_3323b783-ec3,Madhya Pradesh,Jabalpur,Jabalpur,Karmeta,Confirmed (pin + address agree)
 cus_3327e8c8-b12,Odisha,Ganjam,Brahmapur,Manjari Nagar,Confirmed (pin + address agree)
 cus_33299690-dfc,Maharashtra,Thane,Kalyan,Hanuman Nagar,Confirmed (pin + address agree)
-cus_332f7a67-f8a,Maharashtra,Solapur,Solapur,Mangalwar Peth,Confirmed (pin + address agree)
+cus_332f7a67-f8a,Madhya Pradesh,,,,Corrected 2026-10-05: GSTIN / sheet city
 cus_333b1b74-a58,Maharashtra,Pune,Pune,Bhawani Peth,Confirmed (pin + address agree)
-cus_3352fd69-ccb,Rajasthan,Jaipur,Jaipur,Murlipura,Confirmed (pin + address agree)
+cus_3352fd69-ccb,Maharashtra,Palghar,Vasai,,Corrected 2026-10-05: GSTIN / sheet city
 cus_335ecc4c-66a,Maharashtra,Thane,Thane,Thane West,Confirmed (pin + address agree)
 cus_336ef2f4-4e7,Maharashtra,Thane,Thane,Thane West,Confirmed (pin + address agree)
 cus_337a0bbe-d63,Kerala,Kozhikode,Kozhikode,Mananchira,Confirmed (pin + address agree)
@@ -1243,7 +1243,7 @@ cus_346ca591-871,Kerala,Kottayam,Mundakayam,,Confirmed (pin + address agree)
 cus_348d742a-f8d,Kerala,Kasargod,Kanhangad,,From pin only
 cus_3491e7b1-3a3,Rajasthan,Ajmer,Ajmer,Nagra,Confirmed (pin + address agree)
 cus_349b0a8d-a34,Madhya Pradesh,Jabalpur,Jabalpur,Marhatal,Confirmed (pin + address agree)
-cus_34adbc43-3e9,Dadra and Nagar Haveli and Daman and Diu,Daman,Vapi,Gidc,Confirmed (pin + address agree)
+cus_34adbc43-3e9,Gujarat,Valsad,Vapi,,Corrected 2026-10-05: GSTIN / sheet city
 cus_34b6fe83-800,Maharashtra,Mumbai,Mumbai,Jogeshwari West,Confirmed (pin + address agree)
 cus_34b9f784-133,Gujarat,Rajkot,Rajkot,Karanpara,Confirmed (pin + address agree)
 cus_34d4fd57-d00,Maharashtra,Mumbai,Mumbai,Malad West,From address only (no pin)
@@ -1311,7 +1311,7 @@ cus_37a59648-67e,Rajasthan,Chittorgarh,Chittorgarh,Krishna Colony,Confirmed (pin
 cus_37a818c7-6e7,Odisha,Sambalpur,Sambalpur,Sakhipara,From address only (no pin)
 cus_37b5b2d7-80b,Maharashtra,Mumbai,Mumbai,,Check: pin and address disagree
 cus_37b69276-f04,Odisha,Dhenkanal,Dhenkanal,Gudianali,Confirmed (pin + address agree)
-cus_37cd18ab-7b1,Madhya Pradesh,Jabalpur,Jabalpur,Karmeta,Check: pin and address disagree
+cus_37cd18ab-7b1,Maharashtra,Thane,Ulhasnagar,,Corrected 2026-10-05: GSTIN / sheet city
 cus_37d23665-ecd,Rajasthan,Bhilwara,Bhilwara,Bhopal Ganj,Confirmed (pin + address agree)
 cus_37d61d4a-81f,Kerala,Pathanamthitta,Pathanamthitta,Pandalam,From pin only
 cus_37d8df18-1fa,Maharashtra,Wardha,Wardha,Nalwadi,From address only (no pin)
@@ -1395,7 +1395,7 @@ cus_3b2e6e9b-4b7,Kerala,Pathanamthitta,Thiruvalla,Kuttoor,From pin only
 cus_3b48d219-b36,Madhya Pradesh,East Nimar,Khandwa,Ghaspura,Confirmed (pin + address agree)
 cus_3b4bebf8-712,Kerala,Kozhikode,Kozhikode,Kannanchery,From address only (no pin)
 cus_3b5a8d63-53b,Rajasthan,Barmer,Balotra,,Confirmed (pin + address agree)
-cus_3b9d20b4-7c0,Madhya Pradesh,East Nimar,Nagpur,Ghaspura,Check: pin and address disagree
+cus_3b9d20b4-7c0,Maharashtra,Nagpur,Nagpur,,Corrected 2026-10-05: GSTIN / sheet city
 cus_3bbb54b2-52c,Maharashtra,Buldhana,Malkapur,Old- Town,Confirmed (pin + address agree)
 cus_3bc43f88-b2c,Rajasthan,Kota,Kota,Electricity Board Area,Confirmed (pin + address agree)
 cus_3bcc0957-76d,Maharashtra,Palghar,Virar,Virar East,Confirmed (pin + address agree)
@@ -1476,7 +1476,7 @@ cus_3fe188a8-6e4,Odisha,Cuttack,Cuttack,CDA Sector 7,Confirmed (pin + address ag
 cus_4001aef7-bf5,Madhya Pradesh,Bhopal,Bhopal,Maharana Pratap Nagar,Check: pin and address disagree
 cus_400b396d-5b7,Madhya Pradesh,Bhopal,Bhopal,,From sheet text only
 cus_400cccb2-691,Madhya Pradesh,Vidisha,Vidisha,Shastri Nagar,Confirmed (pin + address agree)
-cus_402262ef-8c3,Dadra and Nagar Haveli and Daman and Diu,Daman,Vapi,Gidc,Confirmed (pin + address agree)
+cus_402262ef-8c3,Gujarat,Valsad,Vapi,,Corrected 2026-10-05: GSTIN / sheet city
 cus_4027f2f7-44a,Madhya Pradesh,Indore,Indore,Hukma Khedi,Confirmed (pin + address agree)
 cus_40336580-008,West Bengal,Kolkata,Kolkata,,From sheet text only
 cus_40484f75-66f,Maharashtra,Thane,Murbad,,From address only (no pin)
@@ -1626,7 +1626,7 @@ cus_4609976c-8d5,Rajasthan,Jaipur,Jaipur,Sindhi Camp,Confirmed (pin + address ag
 cus_460b61c1-85d,Maharashtra,Mumbai,Mumbai,Dahisar East,Confirmed (pin + address agree)
 cus_462a7a6e-5a3,Madhya Pradesh,Mandla,Bijadandi,,Not locatable
 cus_462dadb8-392,Maharashtra,Palghar,Nala Sopara,Nalasopara West,Confirmed (pin + address agree)
-cus_4635bc7f-067,Kerala,Thiruvananthapuram,Pazhayakunnummel,Kilimanoor,Confirmed (pin + address agree)
+cus_4635bc7f-067,Maharashtra,Nanded,Nanded,,Corrected 2026-10-05: GSTIN / sheet city
 cus_4635cbab-c91,Maharashtra,Thane,Murbad,,Confirmed (pin + address agree)
 cus_463cc53d-fe1,Rajasthan,Jhalawar,Jhalrapatan,,Confirmed (pin + address agree)
 cus_465b9391-0e8,Madhya Pradesh,Bhopal,Bhopal,,From sheet text only
@@ -1722,7 +1722,7 @@ cus_4a4b4182-b6a,Maharashtra,Palghar,Vasai,,From pin only
 cus_4a526251-11e,Rajasthan,Jaipur,Jaipur,Murlipura,Confirmed (pin + address agree)
 cus_4a5787a6-fa9,Rajasthan,Ajmer,Ajmer,Dargah Bazar,Confirmed (pin + address agree)
 cus_4a5ce612-d41,Rajasthan,Ajmer,Ajmer,Gyan Vihar Colony,Confirmed (pin + address agree)
-cus_4a6bcfb7-5e0,Gujarat,Rajkot,Rajkot,Gundavadi,Confirmed (pin + address agree)
+cus_4a6bcfb7-5e0,Madhya Pradesh,Bhopal,Bhopal,,Corrected 2026-10-05: GSTIN / sheet city
 cus_4a6e15fd-fd3,Maharashtra,Nagpur,Nagpur,Vayusena Nagar,Confirmed (pin + address agree)
 cus_4a6f202b-42b,Maharashtra,Palghar,Boisar,,From sheet text only
 cus_4a7353e6-379,Kerala,Kannur,Kuthuparamba,Suba Mahal,From pin only
@@ -1761,7 +1761,7 @@ cus_4bbbb360-3bc,Rajasthan,Ajmer,Ajmer,Ramganj,Confirmed (pin + address agree)
 cus_4bc0fcc3-c43,Rajasthan,Alwar,Alwar,Aravali Vihar,Confirmed (pin + address agree)
 cus_4bda39be-6df,Maharashtra,Sangli,Sangli,Khanbhag,From address only (no pin)
 cus_4be90632-3cb,Madhya Pradesh,Indore,Indore,Sanvid Nagar,Confirmed (pin + address agree)
-cus_4bea2479-ee6,Rajasthan,Ajmer,Ajmer,Ramganj,Confirmed (pin + address agree)
+cus_4bea2479-ee6,Maharashtra,Thane,Ambernath,,Corrected 2026-10-05: GSTIN / sheet city
 cus_4c1890bc-c8e,Maharashtra,Nagpur,Nagpur,Bhagwan Nagar,From address only (no pin)
 cus_4c1db132-19e,Madhya Pradesh,Jabalpur,Katangi,,Confirmed (pin + address agree)
 cus_4c2857e0-835,Maharashtra,Nagpur,Nagpur,Byramji Town,Confirmed (pin + address agree)
@@ -1790,7 +1790,7 @@ cus_4cf2fc28-808,Maharashtra,Gondia,Gondia,Laxmi Nagar,Check: pin and address di
 cus_4d0b8302-6aa,Maharashtra,Thane,Dombivli,Dombivli West,Confirmed (pin + address agree)
 cus_4d0f648b-048,Madhya Pradesh,Indore,Pithampur,Kalibillod,From pin only
 cus_4d45de79-9e3,Maharashtra,Solapur,Mandrup,,Check: pin and address disagree
-cus_4d4780d3-850,Dadra and Nagar Haveli and Daman and Diu,Daman,Vapi,Imran Nagar,Confirmed (pin + address agree)
+cus_4d4780d3-850,Gujarat,Valsad,Vapi,,Corrected 2026-10-05: GSTIN / sheet city
 cus_4d4c5e95-510,Maharashtra,Nagpur,Nagpur,Wadi,Confirmed (pin + address agree)
 cus_4d53e571-cf6,Rajasthan,Jaipur,Jaipur,Mansarovar,Confirmed (pin + address agree)
 cus_4d62cfc9-97f,Maharashtra,Thane,Bhiwandi,Narpoli,Confirmed (pin + address agree)
@@ -1875,7 +1875,7 @@ cus_50e80fcf-80a,Kerala,Ernakulam,Kochi,Cherai,Confirmed (pin + address agree)
 cus_50ead3df-198,Madhya Pradesh,Indore,Indore,Chanakyapuri,Confirmed (pin + address agree)
 cus_5103c5d5-ce2,Madhya Pradesh,Bhopal,Bhopal,,From sheet text only
 cus_5116096f-1bd,Madhya Pradesh,Jabalpur,Barela,,Confirmed (pin + address agree)
-cus_5120f26d-e37,Maharashtra,Thane,Mira-Bhayandar,Bhayandar East,Check: pin and address disagree
+cus_5120f26d-e37,Madhya Pradesh,Indore,Indore,,Corrected 2026-10-05: GSTIN / sheet city
 cus_51221809-134,Rajasthan,Kota,Kota,Bhimganj Mandi,Confirmed (pin + address agree)
 cus_513629af-7ae,Kerala,Palakkad,Palappuram,Sreeramakrishnanagar,From pin only
 cus_513b0492-11b,Madhya Pradesh,Bhopal,Bhopal,Idgah Hills,Confirmed (pin + address agree)
@@ -1924,7 +1924,7 @@ cus_530788a2-ea3,Madhya Pradesh,Indore,Indore,Transport Nagar,Check: pin and add
 cus_530a4570-61f,Madhya Pradesh,Indore,Indore,Sirpur,Confirmed (pin + address agree)
 cus_53216887-b45,Madhya Pradesh,Bhopal,Bhopal,,From address only (no pin)
 cus_533bbe33-ae6,Kerala,Pathanamthitta,Thiruvalla,Kuttoor,From pin only
-cus_533e4c4d-8a2,Maharashtra,Thane,Badlapur,Station Pada,Check: pin and address disagree
+cus_533e4c4d-8a2,Goa,South Goa,Goa,,Corrected 2026-10-05: GSTIN / sheet city
 cus_5346ce82-043,Kerala,Kozhikode,Nadapuram,Adukkath,From pin only
 cus_5347e2a9-d77,Maharashtra,Thane,Bhiwandi,,From sheet text only
 cus_5367fac6-518,Maharashtra,Thane,Bhiwandi,Purna,Confirmed (pin + address agree)
@@ -1997,7 +1997,7 @@ cus_5687e40e-00f,Madhya Pradesh,Indore,Indore,Talawali Chanda,Confirmed (pin + a
 cus_56896b6d-d28,Maharashtra,Nagpur,Nagpur,East,Confirmed (pin + address agree)
 cus_5694b6c9-33b,Maharashtra,Thane,Bhiwandi,Bapgaon,From pin only
 cus_569c567b-c0a,Gujarat,Rajkot,Rajkot,Karanpara,Confirmed (pin + address agree)
-cus_569edbbc-a02,Gujarat,Rajkot,Morbi,Sardar Nagar,Check: pin and address disagree
+cus_569edbbc-a02,Maharashtra,Thane,Thane,Manpada,Corrected 2026-10-05: GSTIN / sheet city
 cus_56a82920-d5b,Kerala,Kozhikode,Vadakara,,From sheet text only
 cus_56ab74cb-7ea,Maharashtra,Pune,Pune,Awhalwadi,From sheet text only
 cus_56c1a53c-47e,Madhya Pradesh,Indore,Indore,Chhavani,Confirmed (pin + address agree)
@@ -2011,7 +2011,7 @@ cus_570858f8-b61,Maharashtra,Palghar,Vasai,,From pin only
 cus_57093832-151,Maharashtra,Kolhapur,Kolhapur,New Shahupuri,Confirmed (pin + address agree)
 cus_570e7312-138,Madhya Pradesh,Bhopal,Bhopal,,From sheet text only
 cus_57395d91-a24,Odisha,Ganjam,Chatrapur,Conservation Colony,Check: pin and address disagree
-cus_573a07f8-b27,Maharashtra,Palghar,Mira-Bhayandar,,Check: pin and address disagree
+cus_573a07f8-b27,Odisha,Jagatsinghapur,Paradeep,,Corrected 2026-10-05: GSTIN / sheet city
 cus_57463289-cf3,Maharashtra,Mumbai,Mumbai,Kandivali West,Confirmed (pin + address agree)
 cus_5749e195-bac,Maharashtra,Nagpur,Nagpur,,From sheet text only
 cus_574d59cc-f43,Madhya Pradesh,Indore,Indore,Raj Mohalla,Confirmed (pin + address agree)
@@ -2092,7 +2092,7 @@ cus_5a1daa10-1d5,Odisha,Ganjam,Hinjilicut,Hinjillikatu,Confirmed (pin + address 
 cus_5a1e5864-6bb,Rajasthan,Jaipur,Bassi,Bassi Mod,Confirmed (pin + address agree)
 cus_5a2fbb3b-7d7,Rajasthan,Kota,Kota,Rangbari,Confirmed (pin + address agree)
 cus_5a30ac3a-d14,Odisha,Ganjam,Ganjam,Bada Bazar,Confirmed (pin + address agree)
-cus_5a49c3dd-75b,Kerala,Kozhikode,Maniyur,Gmh3Q52,Confirmed (pin + address agree)
+cus_5a49c3dd-75b,Chhattisgarh,Raipur,Raipur,,Corrected 2026-10-05: GSTIN / sheet city
 cus_5a50a833-7df,Rajasthan,Jaipur,Jaipur,Pratap Nagar,Confirmed (pin + address agree)
 cus_5a5d52bc-b41,Rajasthan,Jaipur,Jaipur,Daulatpura,Confirmed (pin + address agree)
 cus_5a6a8e2a-088,Maharashtra,Thane,Thane,Gharivali,Confirmed (pin + address agree)
@@ -2205,11 +2205,11 @@ cus_5de6b370-6ef,Odisha,Cuttack,Cuttack,Rajendra Nagar,Confirmed (pin + address 
 cus_5de79fac-80b,Maharashtra,Solapur,Solapur,Rangraj Nagar,Confirmed (pin + address agree)
 cus_5dee754c-026,Odisha,Sundergarh,Rourkela,Civil Township,Confirmed (pin + address agree)
 cus_5dfdfb23-92b,Madhya Pradesh,Dewas,Dewas,,From sheet text only
-cus_5e1128f6-ba5,Madhya Pradesh,Indore,Indore,,Confirmed (pin + address agree)
+cus_5e1128f6-ba5,Maharashtra,Jalna,Jalna,,Corrected 2026-10-05: GSTIN / sheet city
 cus_5e1f81b0-c7a,Madhya Pradesh,Indore,Indore,,Confirmed (pin + address agree)
 cus_5e244fc0-3ed,Maharashtra,Kolhapur,Kolhapur,Y.P.Powar nagar,Confirmed (pin + address agree)
 cus_5e2b1a8a-4cd,Maharashtra,Pune,Pimpri-Chinchwad,Bhosari,From sheet text only
-cus_5e3e442c-411,Dadra and Nagar Haveli and Daman and Diu,Daman,Vapi,Gidc,Confirmed (pin + address agree)
+cus_5e3e442c-411,Gujarat,Valsad,Vapi,,Corrected 2026-10-05: GSTIN / sheet city
 cus_5e428acf-fee,Kerala,Kozhikode,Kozhikode,Bilathikkulam,Confirmed (pin + address agree)
 cus_5e48bf14-a9a,Odisha,Bhadrak,Charampa,,Confirmed (pin + address agree)
 cus_5e4ef09b-95f,Gujarat,Rajkot,Rajkot,,Confirmed (pin + address agree)
@@ -2245,7 +2245,7 @@ cus_5f5cad71-17d,Madhya Pradesh,Bhopal,Bhopal,Gyan Kunj,Confirmed (pin + address
 cus_5f657c7e-d5e,Rajasthan,Sikar,Sikar,Jat Colony,Confirmed (pin + address agree)
 cus_5f85bdd6-e8d,Kerala,Thiruvananthapuram,Thiruvananthapuram,Cxwwfw3,From pin only
 cus_5f9137c0-f16,Rajasthan,Tonk,Tonk,Rajban,Confirmed (pin + address agree)
-cus_5fca057d-f63,Odisha,Khorda,Bhubaneswar,Rasulgarh,Confirmed (pin + address agree)
+cus_5fca057d-f63,Maharashtra,Thane,Bhiwandi,,Corrected 2026-10-05: GSTIN / sheet city
 cus_5fe16610-04f,Kerala,Kozhikode,Menhaniam,Muliyangal,From pin only
 cus_5fffcd31-01e,Maharashtra,Raigad,Raigad,Taloja,Confirmed (pin + address agree)
 cus_6013f3b9-064,Maharashtra,Sangli,Sangli,Abhay Nagar,Confirmed (pin + address agree)
@@ -2354,7 +2354,7 @@ cus_64561608-c0d,Madhya Pradesh,Indore,Indore,Badi Bhamori,Confirmed (pin + addr
 cus_645a54b5-c38,Maharashtra,Palghar,Khaira,,Check: pin and address disagree
 cus_645d3819-ebc,Maharashtra,Thane,Thane,Ambivali West,From pin only
 cus_646290fc-01b,Madhya Pradesh,Sagar,Sagar,Gujarati Bazaar,Confirmed (pin + address agree)
-cus_6478864a-450,Rajasthan,Ajmer,Beawar,Kisan Ganj,Confirmed (pin + address agree)
+cus_6478864a-450,Maharashtra,Pune,Pune,,Corrected 2026-10-05: GSTIN / sheet city
 cus_647ec1a7-b21,Maharashtra,Solapur,Solapur,Budhavar Peth,Confirmed (pin + address agree)
 cus_64839619-6a8,Maharashtra,Palghar,Virar,Virar East,Confirmed (pin + address agree)
 cus_648d06d6-d44,Madhya Pradesh,Indore,Indore,Noorani Nagar,Confirmed (pin + address agree)
@@ -2374,7 +2374,7 @@ cus_64ff1151-ef0,Kerala,Kannur,Chokli,Palloor,From pin only
 cus_65098c76-94e,Maharashtra,Aurangabad,Chhatrapati Sambhajinagar,,From sheet text only
 cus_65253285-3b0,Kerala,Malappuram,Kondotty,Kuruppath Junction,Confirmed (pin + address agree)
 cus_652be461-378,Madhya Pradesh,Indore,Indore,Siyaganj,Confirmed (pin + address agree)
-cus_65544932-82c,Dadra and Nagar Haveli and Daman and Diu,Daman,Vapi,Gidc,Confirmed (pin + address agree)
+cus_65544932-82c,Gujarat,Valsad,Vapi,,Corrected 2026-10-05: GSTIN / sheet city
 cus_6555d1e2-47d,Madhya Pradesh,Indore,Indore,Kabit Khedi,Confirmed (pin + address agree)
 cus_6557c3ed-573,Madhya Pradesh,Bhopal,Bhopal,Maharana Pratap Nagar,Confirmed (pin + address agree)
 cus_656b7c36-3bd,Maharashtra,Thane,Kalyan,Aundh,From pin only
@@ -2407,7 +2407,7 @@ cus_668295c6-a6f,Rajasthan,Jaipur,Jaipur,Jhotwara,Confirmed (pin + address agree
 cus_6689329a-b50,Maharashtra,Thane,Ambernath,Additional M.I.D.C,Confirmed (pin + address agree)
 cus_668c4ff8-058,Rajasthan,Ajmer,Ajmer,Amar Bazar,From address only (no pin)
 cus_66928eaf-482,Maharashtra,Palghar,Mira-Bhayandar,,From address only (no pin)
-cus_66a2988a-c51,Madhya Pradesh,Indore,Mhow Gaon,Shanti Nagar,Confirmed (pin + address agree)
+cus_66a2988a-c51,Maharashtra,Thane,Bhiwandi,,Corrected 2026-10-05: GSTIN / sheet city
 cus_66a81ac3-bc5,Maharashtra,Thane,Navi Mumbai,,From sheet text only
 cus_66aa50e4-4fb,Rajasthan,Jaipur,Jaipur,Gopal Pura Mode,From address only (no pin)
 cus_66ae5f93-b52,Kerala,Kozhikode,Vatakara,Edodi,Confirmed (pin + address agree)
@@ -2427,11 +2427,11 @@ cus_6717bc6c-923,Rajasthan,Jaipur,Jaipur,Sanjay Nagar,From address only (no pin)
 cus_671f00f7-ed6,Goa,South Goa,Vasco Da Gama,Vaddem,Confirmed (pin + address agree)
 cus_672f4670-6c7,Maharashtra,Pune,Pune,Hadapsar,Confirmed (pin + address agree)
 cus_673fdc7a-310,Maharashtra,Thane,Thane,Kalwa,From pin only
-cus_674bff8c-e5e,Rajasthan,Jaipur,Jaipur,Jagatpura,Confirmed (pin + address agree)
+cus_674bff8c-e5e,Madhya Pradesh,Indore,Indore,,Corrected 2026-10-05: GSTIN / sheet city
 cus_674c2417-717,Maharashtra,Thane,Murbad,,From sheet text only
 cus_6753bbbd-24c,Rajasthan,Jodhpur,Jodhpur,,Confirmed (pin + address agree)
 cus_6756847f-c7f,Maharashtra,Palghar,Vasai,Vasai East,Confirmed (pin + address agree)
-cus_67701e50-d88,Odisha,Cuttack,Jagatpur,Jagatpur Industrial Estate,Confirmed (pin + address agree)
+cus_67701e50-d88,Maharashtra,,,,Corrected 2026-10-05: GSTIN / sheet city
 cus_679e9c36-630,Maharashtra,Palghar,Vasai,,From pin only
 cus_67b2b0ec-ee9,Rajasthan,Jaipur,Jaipur,Sumel,Confirmed (pin + address agree)
 cus_67ce0c40-f22,Kerala,Kannur,Mattannur,Indira Nagar,Confirmed (pin + address agree)
@@ -2526,7 +2526,7 @@ cus_6c466b8d-875,Maharashtra,Palghar,Virar,,From pin only
 cus_6c4c7d85-b2f,Maharashtra,Mumbai,Mumbai,Borivali West,Confirmed (pin + address agree)
 cus_6c56c625-f4a,Rajasthan,Jodhpur,Jodhpur,Milkman Colony,Confirmed (pin + address agree)
 cus_6c582431-f1a,Madhya Pradesh,Indore,Indore,,Confirmed (pin + address agree)
-cus_6c641df4-d1b,Rajasthan,Jaipur,Jaipur,Jhotwara,Confirmed (pin + address agree)
+cus_6c641df4-d1b,Chhattisgarh,Korba,Korba,,Corrected 2026-10-05: GSTIN / sheet city
 cus_6c739267-974,Madhya Pradesh,Indore,Indore,Shanti Nagar,Confirmed (pin + address agree)
 cus_6c765195-cd6,Maharashtra,Thane,Thane,Kalwa,Confirmed (pin + address agree)
 cus_6c785390-542,Rajasthan,Jaipur,Jaipur,Malviya Nagar,Confirmed (pin + address agree)
@@ -2613,7 +2613,7 @@ cus_6fb889bf-993,Odisha,Ganjam,Hinjilicut,Hinjillikatu,Confirmed (pin + address 
 cus_6fb899b1-d76,Madhya Pradesh,Jabalpur,Jabalpur,South Civil Lines,Confirmed (pin + address agree)
 cus_6fc455d4-e4d,Maharashtra,Thane,,,Not locatable
 cus_6fc9daeb-f7c,Kerala,Kozhikode,Kozhikode,Kalanthod,From pin only
-cus_6fde598a-64a,Rajasthan,Alwar,Alwar,Indira Colony,Confirmed (pin + address agree)
+cus_6fde598a-64a,Madhya Pradesh,Bhopal,Bhopal,,Corrected 2026-10-05: GSTIN / sheet city
 cus_6fe097ce-496,Madhya Pradesh,Chhindwara,Chhindwara,Bararipura,Confirmed (pin + address agree)
 cus_6fe1b176-223,Maharashtra,Solapur,Sangola,Ganesh Nagar,From address only (no pin)
 cus_6ffa90a5-319,Rajasthan,Ajmer,Ajmer,Vaishali Nagar,Confirmed (pin + address agree)
@@ -2629,7 +2629,7 @@ cus_7099bacd-5ac,Madhya Pradesh,Dhar,Pithampur,Sagour Kuti,Confirmed (pin + addr
 cus_70a484dd-69b,Madhya Pradesh,Indore,Indore,Tanjim Nagar,Confirmed (pin + address agree)
 cus_70a6529b-eae,Maharashtra,Nagpur,Nagpur,Chandan Nagar,Confirmed (pin + address agree)
 cus_70b530cd-299,Madhya Pradesh,Indore,Indore,Nipania,Confirmed (pin + address agree)
-cus_70f1e7e0-083,Madhya Pradesh,Indore,Indore,Gopur Colony,Confirmed (pin + address agree)
+cus_70f1e7e0-083,Maharashtra,Buldhana,Buldhana,,Corrected 2026-10-05: GSTIN / sheet city
 cus_70f76c93-0cc,Maharashtra,Palghar,Nala Sopara,Palghar,From sheet text only
 cus_70ffad96-a34,Kerala,Thiruvananthapuram,Nedumangad,Pazhavadi,Confirmed (pin + address agree)
 cus_7101a4bb-cbd,Odisha,Cuttack,Cuttack,Jyoti Bihar,Confirmed (pin + address agree)
@@ -2703,8 +2703,8 @@ cus_741b0ef5-3e5,Kerala,Kannur,Punnol,Mahe,From pin only
 cus_741b17f0-a82,Maharashtra,Buldhana,Buldhana,Ramnagar,Confirmed (pin + address agree)
 cus_741eee60-64f,Madhya Pradesh,Bhopal,Bhopal,Bagmugaliya,Check: pin and address disagree
 cus_742dc17e-550,Maharashtra,Nagpur,Nagpur,Besa,Confirmed (pin + address agree)
-cus_743141a1-ca5,Rajasthan,Chittorgarh,Chittorgarh,Meera Nagar,Confirmed (pin + address agree)
-cus_7432d5b0-328,Madhya Pradesh,Neemuch,Chittorgarh,Kailash Nagar,Confirmed (pin + address agree)
+cus_743141a1-ca5,Maharashtra,Pune,Pune,,Corrected 2026-10-05: GSTIN / sheet city
+cus_7432d5b0-328,Rajasthan,Chittorgarh,Chittorgarh,,Corrected 2026-10-05: GSTIN / sheet city
 cus_743a7282-8d8,Maharashtra,Palghar,Vasai,,From sheet text only
 cus_744a0202-4a1,Madhya Pradesh,Vidisha,Vidisha,Tilakhedi,Confirmed (pin + address agree)
 cus_7451aa90-0e5,Maharashtra,Mumbai,Mumbai,Malad West,Confirmed (pin + address agree)
@@ -2742,7 +2742,7 @@ cus_75d89b54-b76,Maharashtra,Sangli,Sangli,Sangli Miraj Kupwad,Confirmed (pin + 
 cus_75dcaf40-3a0,Madhya Pradesh,Dhar,Khandwa,Tarapur,Confirmed (pin + address agree)
 cus_75e8f2ed-f71,Odisha,Bargarh,Bargarh,,Confirmed (pin + address agree)
 cus_760016ae-e21,Maharashtra,Chandrapur,Chandrapur,Babupeth,Confirmed (pin + address agree)
-cus_760c995f-1d1,Rajasthan,Chittorgarh,Chittorgarh,Kailash Nagar,Check: pin and address disagree
+cus_760c995f-1d1,Maharashtra,Aurangabad,,,Corrected 2026-10-05: GSTIN / sheet city
 cus_761e1a96-dc4,Maharashtra,Thane,Kalyan,,Confirmed (pin + address agree)
 cus_762bf665-c38,Maharashtra,Palghar,Mira-Bhayandar,,Confirmed (pin + address agree)
 cus_76345221-7a2,Madhya Pradesh,Dhar,Pithampur,Sagour Kuti,Confirmed (pin + address agree)
@@ -2751,7 +2751,7 @@ cus_76438ce5-3bf,Maharashtra,Thane,Kalyan,Chinchpada Gaon,Confirmed (pin + addre
 cus_7647d856-b45,Maharashtra,Thane,Dombivli,Dombivli East,Confirmed (pin + address agree)
 cus_7652420f-df9,Kerala,Ernakulam,Kochi,Edapally,Confirmed (pin + address agree)
 cus_7663b837-ed1,Maharashtra,Thane,Navi Mumbai,Nerul,From sheet text only
-cus_769d949f-f88,Chhattisgarh,Rajnandgaon,Rajnandgaon,Bharka Para,Check: pin and address disagree
+cus_769d949f-f88,Maharashtra,Chandrapur,Chandrapur,,Corrected 2026-10-05: GSTIN / sheet city
 cus_76b8b807-811,Kerala,Thiruvananthapuram,Thiruvananthapuram,Vazhuthacaud,Confirmed (pin + address agree)
 cus_76c0e7be-c86,Madhya Pradesh,Indore,Indore,Chauhan Nagar,Confirmed (pin + address agree)
 cus_76c6bb41-c8b,Maharashtra,Kolhapur,Gandhinagar,,Confirmed (pin + address agree)
@@ -2784,7 +2784,7 @@ cus_77d184e3-514,Maharashtra,Thane,Bhiwandi,Kalher,From sheet text only
 cus_77d871a0-14e,Rajasthan,Jaipur,Jaipur,Kanwar Nagar,Check: pin and address disagree
 cus_77dc388d-8c5,Madhya Pradesh,Indore,Indore,Sangam Nagar,Confirmed (pin + address agree)
 cus_77e7d274-d6e,Kerala,Ernakulam,Kochi,Pullamkulam School Pady,From pin only
-cus_77ff3b78-d85,Madhya Pradesh,Dewas,Dewas,Gomti Nagar,Confirmed (pin + address agree)
+cus_77ff3b78-d85,Uttar Pradesh,,,,Corrected 2026-10-05: GSTIN / sheet city
 cus_78063a4f-9bd,Maharashtra,Pune,Pune,Dhayari,From sheet text only
 cus_7817efea-3cf,Maharashtra,Solapur,Karkamb,,From sheet text only
 cus_7819fbf7-8a4,Kerala,Kozhikode,Nadapuram,Thottilpalam,From pin only
@@ -2826,7 +2826,7 @@ cus_796e6473-3e0,Maharashtra,Thane,Dombivli,Dombivli West,Confirmed (pin + addre
 cus_796f6bab-da2,Rajasthan,Ajmer,Ajmer,Dargah Bazar,Confirmed (pin + address agree)
 cus_7970dd23-66e,Maharashtra,Thane,Ambernath,Additional M.I.D.C,Confirmed (pin + address agree)
 cus_79747a63-af1,Maharashtra,Thane,Ulhasnagar,Vitthalwadi,Confirmed (pin + address agree)
-cus_7975a5b5-e91,Rajasthan,Kota,Kota,Kota Industrial Area,Confirmed (pin + address agree)
+cus_7975a5b5-e91,Maharashtra,Thane,Bhiwandi,Kalher,Corrected 2026-10-05: GSTIN / sheet city
 cus_79804a3b-a65,Maharashtra,Thane,Usatne,,From sheet text only
 cus_7995fe55-e95,Maharashtra,Thane,Kalyan,Sape,Check: pin and address disagree
 cus_799a99e7-217,Maharashtra,Thane,Dombivli,Dombivli West,Confirmed (pin + address agree)
@@ -2862,7 +2862,7 @@ cus_7b3db62b-df4,Madhya Pradesh,Ujjain,Ujjain,,From sheet text only
 cus_7b5f3856-191,Maharashtra,Akola,Akola,Baid Pura,Confirmed (pin + address agree)
 cus_7b641399-b07,Rajasthan,Jodhpur,Jodhpur,Madhuban,Confirmed (pin + address agree)
 cus_7b6d37ac-763,Rajasthan,Jaipur,Jaipur,Jhotwara,Confirmed (pin + address agree)
-cus_7b73ae4b-810,Rajasthan,Sikar,Sikar,Samrathpura Rural,Confirmed (pin + address agree)
+cus_7b73ae4b-810,Maharashtra,Sangli,Sangli,,Corrected 2026-10-05: GSTIN / sheet city
 cus_7b8e01a9-563,Maharashtra,Buldhana,Buldhana,Chaitanyawadi,Check: pin and address disagree
 cus_7b9563b3-1ab,Maharashtra,Palghar,Palghar,Vishnu Nagar,From address only (no pin)
 cus_7ba0c579-91f,Maharashtra,Raigad,Kolad,,From address only (no pin)
@@ -2896,13 +2896,13 @@ cus_7d28eb3d-882,Odisha,Puri,Puri,Badasankha,Confirmed (pin + address agree)
 cus_7d3c322e-d57,Madhya Pradesh,Mandla,Maneri,Takweli,From pin only
 cus_7d406288-279,Maharashtra,Palghar,Virar,Virar West,From address only (no pin)
 cus_7d49a4a9-7f9,Madhya Pradesh,Chhatarpur,Chhatarpur,Vishwanath Colony,Confirmed (pin + address agree)
-cus_7d504909-b56,Maharashtra,Palghar,Vasai,Vasai East,Check: pin and address disagree
+cus_7d504909-b56,Madhya Pradesh,Bhopal,Bhopal,,Corrected 2026-10-05: GSTIN / sheet city
 cus_7d527043-72b,Maharashtra,Kolhapur,Kolhapur,Bapat Camp,Confirmed (pin + address agree)
 cus_7d562f76-1e2,Odisha,Puri,Puri,Badasankha,Confirmed (pin + address agree)
 cus_7d5a12a9-333,Maharashtra,Solapur,Pandharpur,June Pat,Confirmed (pin + address agree)
 cus_7d60ce42-6c3,Kerala,Kozhikode,Thamarassery,,From sheet text only
 cus_7d7c598a-374,Rajasthan,Kota,Kota,Dhanmandi,Confirmed (pin + address agree)
-cus_7d8e109b-fde,Maharashtra,Mumbai,Mumbai,Goregaon,Confirmed (pin + address agree)
+cus_7d8e109b-fde,Uttarakhand,,,,Corrected 2026-10-05: GSTIN / sheet city
 cus_7da50abd-e06,Madhya Pradesh,West Nimar,Khargone,Jawahar Nagar,Confirmed (pin + address agree)
 cus_7db8eb1b-690,Madhya Pradesh,Dewas,Dewas,Nagar Nigam Colony,Confirmed (pin + address agree)
 cus_7db9d190-2cf,Madhya Pradesh,Indore,Indore,,From sheet text only
@@ -2931,7 +2931,7 @@ cus_7e8d0324-b31,Kerala,Pathanamthitta,Mallappally,Cmw4Ccc,From pin only
 cus_7e8d6217-143,Odisha,Khorda,Bhubaneswar,Rasulgarh,Confirmed (pin + address agree)
 cus_7eaaab7a-8c7,Maharashtra,Nagpur,Nagpur,Bank Colony,Confirmed (pin + address agree)
 cus_7eb055cb-294,Odisha,Koraput,Jeypore,Santoshi Maa Nagar,Confirmed (pin + address agree)
-cus_7eb64984-78d,Odisha,Cuttack,Jagatpur,Vinayak Nagar,Check: pin and address disagree
+cus_7eb64984-78d,Maharashtra,Sangli,Sangli,,Corrected 2026-10-05: GSTIN / sheet city
 cus_7eb80cd9-dc6,Madhya Pradesh,Bhopal,Bhopal,Peer Gate Area,Confirmed (pin + address agree)
 cus_7ebde005-e62,Madhya Pradesh,Indore,Indore,Sudama Nagar,Confirmed (pin + address agree)
 cus_7ed04b41-c88,Madhya Pradesh,Jabalpur,Jabalpur,Gwarighat,Confirmed (pin + address agree)
@@ -2988,7 +2988,7 @@ cus_812c9eb5-cf8,Maharashtra,Thane,Navi Mumbai,Turbhe,Confirmed (pin + address a
 cus_8132c486-229,Kerala,Kozhikode,Purameri,Tuneri,From pin only
 cus_814fd530-967,Maharashtra,Palghar,Dahanu,Malyan,From address only (no pin)
 cus_81694eda-f52,Odisha,Khorda,Bhubaneswar,Khandagiri,From address only (no pin)
-cus_8178836b-df0,Dadra and Nagar Haveli and Daman and Diu,Daman,Vapi,Imran Nagar,Confirmed (pin + address agree)
+cus_8178836b-df0,Gujarat,Valsad,Vapi,,Corrected 2026-10-05: GSTIN / sheet city
 cus_81797f26-238,Rajasthan,Jodhpur,Bilara,,Confirmed (pin + address agree)
 cus_81816804-efb,Maharashtra,Mumbai,Mumbai,Jogeshwari West,Confirmed (pin + address agree)
 cus_8190e3d8-95a,Tamil Nadu,Nilgiris,Ooty,Upper Bazar,Confirmed (pin + address agree)
@@ -3021,7 +3021,7 @@ cus_82c3d438-843,Maharashtra,Mumbai,Mumbai,Andheri,Confirmed (pin + address agre
 cus_82c9549d-419,Kerala,Alappuzha,Mannar,Eramathoor,Confirmed (pin + address agree)
 cus_82c9c816-e53,Rajasthan,Jodhpur,Jodhpur,Sardarpura,Check: pin and address disagree
 cus_82ccc530-792,Maharashtra,Raigad,Tala,Wali,Check: pin and address disagree
-cus_82d31b4b-f95,Madhya Pradesh,Indore,Indore,Nehru Nagar,Check: pin and address disagree
+cus_82d31b4b-f95,Maharashtra,Sangli,Sangli,,Corrected 2026-10-05: GSTIN / sheet city
 cus_82e4eb0c-951,Tamil Nadu,Nilgiris,Gudalur,,From pin only
 cus_82f69ed9-999,Maharashtra,Palghar,Vasai,Vasai West,From sheet text only
 cus_82f989ac-fe0,Madhya Pradesh,Bhopal,Bhopal,,From sheet text only
@@ -3089,7 +3089,7 @@ cus_857dbd0f-465,Rajasthan,Jaipur,Jaipur,Kanwar Nagar,Confirmed (pin + address a
 cus_8581a942-3f3,Kerala,Pathanamthitta,Mallappally,Cmw3Pwp,From pin only
 cus_85829cd2-f0e,Maharashtra,Thane,Bhiwandi,Kalher,Confirmed (pin + address agree)
 cus_858ac723-3b3,Madhya Pradesh,Indore,Indore,Bartan Bazar,Confirmed (pin + address agree)
-cus_8591ab41-6ad,Madhya Pradesh,Bhopal,Bhopal,,Check: pin and address disagree
+cus_8591ab41-6ad,Maharashtra,Thane,Ulhasnagar,,Corrected 2026-10-05: GSTIN / sheet city
 cus_859b4295-794,Maharashtra,Thane,Ambernath,,From sheet text only
 cus_85a1300b-b01,Maharashtra,Mumbai,Mumbai,Goregaon,Confirmed (pin + address agree)
 cus_85a3395c-0d8,Maharashtra,Mumbai,Mumbai,Andheri East,Confirmed (pin + address agree)
@@ -3109,7 +3109,7 @@ cus_8648db04-ad4,Kerala,Kozhikode,Villiappally,Kurikkilad,Confirmed (pin + addre
 cus_865bff67-9e2,Maharashtra,Raigad,Raigad,Taloja,From pin only
 cus_8660ab9b-080,Maharashtra,Thane,Thane,Thane West,Confirmed (pin + address agree)
 cus_86620ba5-558,Maharashtra,Nagpur,Nagpur,Chandan Nagar,Confirmed (pin + address agree)
-cus_866b7c4e-056,Rajasthan,Alwar,Alwar,Jawali Bhawan Colony,Check: pin and address disagree
+cus_866b7c4e-056,Maharashtra,Mumbai,Mumbai,Malad,Corrected 2026-10-05: GSTIN / sheet city
 cus_866b926d-f8b,Kerala,Kannur,Kadachira,Kizhunna,Confirmed (pin + address agree)
 cus_866dab74-fa8,Kerala,Pathanamthitta,Thiruvalla,,Confirmed (pin + address agree)
 cus_867265c7-1ff,Odisha,Nayagarh,Nayagarh,,From sheet text only
@@ -3128,7 +3128,7 @@ cus_870da564-c88,Maharashtra,Thane,Bhiwandi,,From sheet text only
 cus_87117eda-6ba,Maharashtra,Thane,Kalyan,Kalyan East,Confirmed (pin + address agree)
 cus_8718368c-15e,Kerala,Thiruvananthapuram,Thiruvananthapuram,Poozhikunnu,From pin only
 cus_87310241-4b7,Maharashtra,Palghar,Vasai,,From pin only
-cus_87438ef6-d0a,Kerala,Kozhikode,Vatakara,Nandi Bazar,From pin only
+cus_87438ef6-d0a,Maharashtra,Gondia,Gondia,,Corrected 2026-10-05: GSTIN / sheet city
 cus_8747412e-fb2,Maharashtra,Mumbai,Mumbai,Andheri East,Confirmed (pin + address agree)
 cus_8758a706-178,Madhya Pradesh,Bhopal,Bhopal,Peer Gate Area,Confirmed (pin + address agree)
 cus_87591561-06b,Maharashtra,Pune,Pune,Wagholi,Confirmed (pin + address agree)
@@ -3152,7 +3152,7 @@ cus_886bf3c5-7bd,Odisha,Khorda,Bhubaneswar,Laxmisagar,From address only (no pin)
 cus_886ed02d-fd4,Madhya Pradesh,Indore,Indore,New Palasia,Confirmed (pin + address agree)
 cus_88769b42-96b,Maharashtra,Thane,Bhiwandi,Valpada,Confirmed (pin + address agree)
 cus_887861e5-751,Kerala,Thrissur,Guruvayur,Edappully,From address only (no pin)
-cus_88825aea-6b3,Rajasthan,Jaipur,Jaipur,Bhopal,From pin only
+cus_88825aea-6b3,Madhya Pradesh,Bhopal,Bhopal,,Corrected 2026-10-05: GSTIN / sheet city
 cus_8882ad6e-180,Rajasthan,Jaipur,Jaipur,Brijlalpura,Confirmed (pin + address agree)
 cus_8887ad6e-1d6,Gujarat,Jamnagar,Jamnagar,Kamdar Colony,Confirmed (pin + address agree)
 cus_888b2ac4-1e8,Maharashtra,Osmanabad,Dharashiv,,Confirmed (pin + address agree)
@@ -3192,7 +3192,7 @@ cus_8a56d9d7-617,Maharashtra,Palghar,Virar,Virar East,From address only (no pin)
 cus_8a5ce189-20b,Madhya Pradesh,Indore,Indore,Dwarkapuri,Confirmed (pin + address agree)
 cus_8a5d4dde-971,Kerala,Ernakulam,Kochi,Ernakulam,Confirmed (pin + address agree)
 cus_8a5e1eb5-6b3,Maharashtra,Mumbai,Mumbai,,Confirmed (pin + address agree)
-cus_8a5f45ef-9cf,Kerala,Thiruvananthapuram,Pazhayakunnummel,Kilimanoor,Check: pin and address disagree
+cus_8a5f45ef-9cf,Madhya Pradesh,Satna,Satna,,Corrected 2026-10-05: GSTIN / sheet city
 cus_8a6362dc-197,Rajasthan,Chittorgarh,Chittorgarh,Kailash Nagar,Confirmed (pin + address agree)
 cus_8a80f130-34e,Maharashtra,Solapur,Pandharpur,Visthapit Nagar,Confirmed (pin + address agree)
 cus_8a880dc1-4e3,Madhya Pradesh,Dhar,Pithampur,Pankaj Colony,From sheet text only
@@ -3306,7 +3306,7 @@ cus_8f07b3ce-bb3,Rajasthan,Jaipur,Jaipur,Jamna Puri,Confirmed (pin + address agr
 cus_8f0cd20f-687,Maharashtra,Mumbai,Mumbai,Goregaon West,Confirmed (pin + address agree)
 cus_8f24bfee-0c8,Maharashtra,Thane,Ambernath,Additional M.I.D.C,Confirmed (pin + address agree)
 cus_8f30eb7b-6f4,Madhya Pradesh,Indore,Indore,Pardesipura,Confirmed (pin + address agree)
-cus_8f3508eb-a82,Maharashtra,Thane,Ambernath,Additional M.I.D.C,Check: pin and address disagree
+cus_8f3508eb-a82,Madhya Pradesh,Bhopal,Bhopal,,Corrected 2026-10-05: GSTIN / sheet city
 cus_8f4f2c33-5b2,Madhya Pradesh,Bhopal,Bhopal,,From sheet text only
 cus_8f70e2e7-ff1,Odisha,Koraput,Jeypore,Ganga Nagar,Confirmed (pin + address agree)
 cus_8f7eaf09-f95,Kerala,Thrissur,Thrissur,Kuttiady,From pin only
@@ -3344,14 +3344,14 @@ cus_90b2a783-d7c,Maharashtra,Thane,Kalyan,Bhoiwada,Confirmed (pin + address agre
 cus_90bd266e-467,Madhya Pradesh,Indore,Mhow Gaon,Shanti Nagar,Confirmed (pin + address agree)
 cus_90c0d060-7f6,Maharashtra,Gadchiroli,Gadchiroli,Navegaon,Confirmed (pin + address agree)
 cus_90c7a5eb-c0b,Odisha,Khorda,Bhubaneswar,,From sheet text only
-cus_90c9038c-e10,Madhya Pradesh,Indore,Indore,Badi Bhamori,Check: pin and address disagree
+cus_90c9038c-e10,Maharashtra,Nagpur,Nagpur,,Corrected 2026-10-05: GSTIN / sheet city
 cus_90ef1061-a35,Maharashtra,Thane,Bhiwandi,Dapode,Confirmed (pin + address agree)
 cus_90f03d3b-261,Rajasthan,Jaipur,Jaipur,Panchyawala,Confirmed (pin + address agree)
 cus_90f4334c-904,Kerala,Kasargod,Kasaragod,Thayalangadi,Confirmed (pin + address agree)
 cus_90f44793-93c,Rajasthan,Jaipur,Jaipur,Sanganer,Confirmed (pin + address agree)
 cus_90fdc0f7-cd3,Maharashtra,Solapur,Pandharpur,Isbavi,Confirmed (pin + address agree)
 cus_91173860-b5b,Madhya Pradesh,Indore,Indore,Navlakha,Confirmed (pin + address agree)
-cus_91221ff8-8b8,Kerala,Kozhikode,Nanded,Menhaniam,Check: pin and address disagree
+cus_91221ff8-8b8,Maharashtra,Nanded,Nanded,,Corrected 2026-10-05: GSTIN / sheet city
 cus_9133d46f-88c,Rajasthan,Jaipur,Jaipur,Tagore Nagar,Confirmed (pin + address agree)
 cus_9140bcda-46a,Madhya Pradesh,Bhopal,Bhopal,,From sheet text only
 cus_914144bf-488,Maharashtra,Thane,Navi Mumbai,Turbhe,Confirmed (pin + address agree)
@@ -3427,11 +3427,11 @@ cus_944424aa-919,Rajasthan,Jaipur,Jaipur,Nangal Jaisabohra,Confirmed (pin + addr
 cus_944682e5-1bd,Gujarat,Jamnagar,Jamnagar,,Confirmed (pin + address agree)
 cus_9457097c-871,Maharashtra,Thane,Thane,Khidkali,From pin only
 cus_946c2612-6d7,Madhya Pradesh,East Nimar,Khandwa,Rameshwar Nagar,Confirmed (pin + address agree)
-cus_946da645-2f9,Kerala,Thiruvananthapuram,Thiruvananthapuram,Thycaud,Confirmed (pin + address agree)
+cus_946da645-2f9,Madhya Pradesh,Indore,Indore,,Corrected 2026-10-05: GSTIN / sheet city
 cus_946f5e8a-4d2,Maharashtra,Nanded,Karegaon,,From address only (no pin)
 cus_94adbd14-9a8,Maharashtra,Thane,Thane,Thane West,Confirmed (pin + address agree)
 cus_94af2353-6e2,Madhya Pradesh,Indore,Indore,Transport Nagar,Confirmed (pin + address agree)
-cus_94b2eb94-956,Kerala,Kozhikode,Tuneri,,Confirmed (pin + address agree)
+cus_94b2eb94-956,Maharashtra,Beed,Beed,,Corrected 2026-10-05: GSTIN / sheet city
 cus_94bf24e9-55a,Madhya Pradesh,Indore,Indore,Gokul Nagar,Confirmed (pin + address agree)
 cus_94c5cc79-52e,Maharashtra,Thane,Thane,Shilphata,From address only (no pin)
 cus_94c6d6b7-518,Rajasthan,Kota,Kota,Mahaveer Nagar,Confirmed (pin + address agree)
@@ -3450,7 +3450,7 @@ cus_9539dd6f-b3d,Madhya Pradesh,Indore,Indore,Lokmanya Nagar,Confirmed (pin + ad
 cus_953a5569-35d,Rajasthan,Jaipur,Jaipur,Purani Basti,Confirmed (pin + address agree)
 cus_953d9085-d75,Kerala,Kannur,Kannur,Talap,From pin only
 cus_95417704-319,Rajasthan,Jaipur,Jaipur,,From sheet text only
-cus_954a126c-54a,Rajasthan,Jaipur,Jaipur,Harmada,Confirmed (pin + address agree)
+cus_954a126c-54a,Gujarat,Jamnagar,Jamnagar,,Corrected 2026-10-05: GSTIN / sheet city
 cus_954bfb4a-834,Odisha,Koraput,Jeypore,,Confirmed (pin + address agree)
 cus_9575d054-754,Madhya Pradesh,Vidisha,Vidisha,Durga Nagar,Confirmed (pin + address agree)
 cus_9585f229-752,Maharashtra,Jalna,Jalna,Gyatri Nagar,Confirmed (pin + address agree)
@@ -3497,7 +3497,7 @@ cus_973896bf-b42,Maharashtra,Thane,Bhiwandi,,From sheet text only
 cus_9745a5dc-974,Maharashtra,Palghar,Vasai,Vasai-Virar,Check: pin and address disagree
 cus_975aed99-5ea,Maharashtra,Thane,Murbad,,From sheet text only
 cus_9762dbbc-af5,Kerala,Kozhikode,Kollam,,From pin only
-cus_97704d55-dab,Dadra and Nagar Haveli and Daman and Diu,Daman,Vapi,Gidc,Confirmed (pin + address agree)
+cus_97704d55-dab,Maharashtra,Thane,Thane,,Corrected 2026-10-05: GSTIN / sheet city
 cus_977ca361-99c,Rajasthan,Kota,Kota,,From sheet text only
 cus_977e8c31-8e8,Odisha,Ganjam,Brahmapur,Basudev Nagar,Confirmed (pin + address agree)
 cus_9787dd9f-22c,Rajasthan,Jaipur,Jaipur,Jhotwara,Confirmed (pin + address agree)
@@ -3531,14 +3531,14 @@ cus_9856707e-045,Madhya Pradesh,Jabalpur,Jabalpur,Garha,From address only (no pi
 cus_98648048-f6f,Maharashtra,Thane,Badlapur,Dattanagar,Confirmed (pin + address agree)
 cus_986902ff-ac1,Maharashtra,Palghar,Dahanu,Malyan,From address only (no pin)
 cus_98787e4e-4a7,Maharashtra,Pune,Wagholi,Konark Orchid,Confirmed (pin + address agree)
-cus_9879440f-5a5,Odisha,Ganjam,Chatrapur,Rama Krishna Nagar,Confirmed (pin + address agree)
+cus_9879440f-5a5,Maharashtra,Thane,Ulhasnagar,,Corrected 2026-10-05: GSTIN / sheet city
 cus_98888a72-ac2,Maharashtra,Thane,Mira-Bhayandar,Bhayandar East,Confirmed (pin + address agree)
 cus_98904b53-1fc,Gujarat,Rajkot,Rajkot,,From sheet text only
 cus_9896b6a5-e73,Madhya Pradesh,East Nimar,Khandwa,Narayan Nagar,Confirmed (pin + address agree)
 cus_9897597b-493,Odisha,Cuttack,Mahidharpur,Fhrqvcf,Check: pin and address disagree
 cus_989aa757-129,Kerala,Kozhikode,Katameri,Thanneerpanthal,Confirmed (pin + address agree)
 cus_98bd97ce-728,Chhattisgarh,Raipur,Raipur,Tagore Nagar,Confirmed (pin + address agree)
-cus_98cbe233-457,Rajasthan,Pali,Raipur,,Confirmed (pin + address agree)
+cus_98cbe233-457,Maharashtra,Palghar,Vasai,,Corrected 2026-10-05: GSTIN / sheet city
 cus_98e5efdf-6ef,Madhya Pradesh,Indore,Indore,,Confirmed (pin + address agree)
 cus_98eaf185-006,Odisha,Khorda,Bhubaneswar,Bharatpur,Confirmed (pin + address agree)
 cus_98ec7ca6-73f,Rajasthan,Jodhpur,Jodhpur,,From address only (no pin)
@@ -3598,7 +3598,7 @@ cus_9b1a271e-e03,Rajasthan,Jaipur,Jaipur,Jhotwara,Confirmed (pin + address agree
 cus_9b1bf588-e72,Madhya Pradesh,Indore,Indore,Siyaganj,Confirmed (pin + address agree)
 cus_9b256f07-7b7,Madhya Pradesh,Chhindwara,Chhindwara,Mohan Nagar,Confirmed (pin + address agree)
 cus_9b4d1cc7-c84,Maharashtra,Solapur,Solapur,Shaniwar Peth,Confirmed (pin + address agree)
-cus_9b4ef0b6-109,Madhya Pradesh,Dhar,Pithampur,Bhayendar,From pin only
+cus_9b4ef0b6-109,Maharashtra,Palghar,Mira-Bhayandar,,Corrected 2026-10-05: GSTIN / sheet city
 cus_9b5f69e3-ce7,Maharashtra,Thane,Dombivli,Dombivli East,Confirmed (pin + address agree)
 cus_9b64c808-f51,Madhya Pradesh,Vidisha,Ganj Basoda,,Confirmed (pin + address agree)
 cus_9b71dec2-f30,Maharashtra,Mumbai,Mumbai,Goregaon West,Confirmed (pin + address agree)
@@ -3641,7 +3641,7 @@ cus_9ceeb781-b50,Maharashtra,Pune,Pune,,From sheet text only
 cus_9d027bf6-72c,Maharashtra,Palghar,Boisar,West,From address only (no pin)
 cus_9d0cb098-1b8,Kerala,Kozhikode,Kunnamangalam,,Confirmed (pin + address agree)
 cus_9d3a3ddf-e1a,Maharashtra,Kolhapur,Gandhinagar,Sai Baba Colony,From address only (no pin)
-cus_9d3ba7c8-550,Dadra and Nagar Haveli and Daman and Diu,Daman,Vapi,Gidc,Confirmed (pin + address agree)
+cus_9d3ba7c8-550,Gujarat,Valsad,Vapi,,Corrected 2026-10-05: GSTIN / sheet city
 cus_9d44ed3a-158,Madhya Pradesh,Indore,Indore,Badi Bhamori,Check: pin and address disagree
 cus_9d4a4693-44d,Madhya Pradesh,Bhopal,Bhopal,,From sheet text only
 cus_9d75c014-b98,Rajasthan,Ajmer,Ajmer,Panchsheel Nagar,Confirmed (pin + address agree)
@@ -3684,7 +3684,7 @@ cus_9f35ab78-611,Madhya Pradesh,Indore,Indore,Tejpur Gadbadi,Confirmed (pin + ad
 cus_9f3a908c-0f1,Madhya Pradesh,Indore,Indore,Panchshil Nagar,Confirmed (pin + address agree)
 cus_9f3dada2-90d,Kerala,Kasargod,Kasaragod,Bedira,Not locatable
 cus_9f535e2f-04e,Madhya Pradesh,Indore,Indore,Tilak Nagar,Confirmed (pin + address agree)
-cus_9f56d585-fac,Rajasthan,Jaipur,Jaipur,Pratap Nagar,Check: pin and address disagree
+cus_9f56d585-fac,Maharashtra,Sangli,Vita,,Corrected 2026-10-05: GSTIN / sheet city
 cus_9f62b5c9-7ed,Maharashtra,Palghar,Naigaon,Chandar Pada School,Check: pin and address disagree
 cus_9f661082-349,Madhya Pradesh,Bhopal,Bhopal,Bhanpur,Confirmed (pin + address agree)
 cus_9f947c51-660,Maharashtra,Nagpur,Nagpur,Manewada,Confirmed (pin + address agree)
@@ -3901,7 +3901,7 @@ cus_a987cc34-864,Kerala,Kozhikode,Vanimal,,Confirmed (pin + address agree)
 cus_a99145df-281,Odisha,Kendrapara,Kendrapara,,From sheet text only
 cus_a9a4ad79-186,Kerala,Kozhikode,Nadapuram,,Confirmed (pin + address agree)
 cus_a9a8bf93-624,Kerala,Thiruvananthapuram,Pazhayakunnummel,Kilimanoor,Confirmed (pin + address agree)
-cus_a9ae30b6-565,Rajasthan,Jaipur,Jaipur,Govardhan Nagar,Confirmed (pin + address agree)
+cus_a9ae30b6-565,Maharashtra,Thane,Murbad,,Corrected 2026-10-05: GSTIN / sheet city
 cus_a9b1cad0-5ac,Kerala,Thiruvananthapuram,Thiruvananthapuram,Ulloor,Confirmed (pin + address agree)
 cus_a9bba4cf-f60,Maharashtra,Thane,Dombivli,Dombivli East,Confirmed (pin + address agree)
 cus_a9cb3788-196,Maharashtra,Thane,Thane,Kukse Bhiwandi,From pin only
@@ -4047,14 +4047,14 @@ cus_af9afa27-411,Kerala,Kozhikode,Kozhikode,Pavangad,Confirmed (pin + address ag
 cus_af9f9118-842,Madhya Pradesh,Dewas,Dewas,Ganga Nagar,Confirmed (pin + address agree)
 cus_afc760a2-e55,Maharashtra,Thane,Ulhasnagar,Sidhi Vinayak Nagar,Confirmed (pin + address agree)
 cus_afc8692c-74f,Maharashtra,Raigad,Khopoli,Yashwant Nagar,Confirmed (pin + address agree)
-cus_afcfa480-9d8,Maharashtra,Kolhapur,Kolhapur,Yadav Nagar,Confirmed (pin + address agree)
+cus_afcfa480-9d8,Madhya Pradesh,Indore,Indore,,Corrected 2026-10-05: GSTIN / sheet city
 cus_afd0eb7c-881,Maharashtra,Sangli,Sangli,Ganapati Peth,Confirmed (pin + address agree)
 cus_afd20d65-0c3,Kerala,Kozhikode,Pulakkod,Thamarassery,From pin only
 cus_afd3430b-a51,Maharashtra,Palghar,Vasai,Vasai East,Confirmed (pin + address agree)
 cus_afdf8ce6-a43,Madhya Pradesh,Burhanpur,Burhanpur,Monin Pura,Confirmed (pin + address agree)
 cus_afe3ff33-f90,Odisha,Khorda,Bhubaneswar,Laxmisagar,Confirmed (pin + address agree)
 cus_b007ce3a-050,Odisha,Cuttack,Cuttack,Bachhapur,From pin only
-cus_b01524b1-081,Madhya Pradesh,Katni,Sihora,Marha,Confirmed (pin + address agree)
+cus_b01524b1-081,Maharashtra,Palghar,Vasai,,Corrected 2026-10-05: GSTIN / sheet city
 cus_b0473106-cca,Madhya Pradesh,Jabalpur,Jabalpur,Sonpur,Confirmed (pin + address agree)
 cus_b058f2fe-672,Maharashtra,Palghar,Boisar,Mahavir Nagar,From address only (no pin)
 cus_b05e31b6-f5a,Maharashtra,Thane,Thane,,From sheet text only
@@ -4091,7 +4091,7 @@ cus_b1b11f46-595,Maharashtra,Jalgaon,JalGoan,,From sheet text only
 cus_b1b213fd-673,Madhya Pradesh,Indore,Indore,Bengali Colony,Confirmed (pin + address agree)
 cus_b1c574c8-86d,Maharashtra,Aurangabad,Chhatrapati Sambhajinagar,New Usmanpura,Confirmed (pin + address agree)
 cus_b1db3bc6-b02,Maharashtra,Palghar,Kaman,,Check: pin and address disagree
-cus_b1e374af-cf8,Kerala,Kozhikode,Parakkadavu,,Confirmed (pin + address agree)
+cus_b1e374af-cf8,Rajasthan,Ajmer,Ajmer,,Corrected 2026-10-05: GSTIN / sheet city
 cus_b201b819-b1d,Rajasthan,Jaipur,Jaipur,,Confirmed (pin + address agree)
 cus_b206fc1c-dfc,Maharashtra,Thane,Navi Mumbai,Shilphata,Check: pin and address disagree
 cus_b2079cc8-94f,Odisha,Khorda,Bhubaneswar,Patrapada,Confirmed (pin + address agree)
@@ -4117,7 +4117,7 @@ cus_b3255276-9c5,Odisha,Cuttack,Cuttack,Cda,From address only (no pin)
 cus_b3290326-369,Rajasthan,Ajmer,Ajmer,Chandra Vardai Nagar,Confirmed (pin + address agree)
 cus_b32cf547-5c0,Maharashtra,Thane,Bhiwandi,Val,Confirmed (pin + address agree)
 cus_b32e0456-9fd,Maharashtra,Pune,Pune,Wagholi,From address only (no pin)
-cus_b330d603-5e0,Kerala,Kozhikode,Koyilandy,Cmqw6Cv,Check: pin and address disagree
+cus_b330d603-5e0,Maharashtra,Nagpur,Nagpur,Dharampeth,Corrected 2026-10-05: GSTIN / sheet city
 cus_b3314070-e04,Kerala,Kottayam,Changanassery,Perunna,Confirmed (pin + address agree)
 cus_b33ab895-ce3,Maharashtra,Nagpur,Nagpur,Itwari,Confirmed (pin + address agree)
 cus_b33da335-287,Goa,South Goa,Margao,Vagulem,Confirmed (pin + address agree)
@@ -4277,7 +4277,7 @@ cus_ba39c61b-6b9,Maharashtra,Palghar,Nala Sopara,,From pin only
 cus_ba3b8a0d-f06,Rajasthan,Jaipur,Jaipur,Jagatpura,Confirmed (pin + address agree)
 cus_ba54a52b-c97,Odisha,Nabarangapur,Nabarangapur,Nabarangapur PS,Confirmed (pin + address agree)
 cus_ba5b477b-407,Madhya Pradesh,Chhindwara,Chhindwara,Mohan Nagar,Confirmed (pin + address agree)
-cus_ba644994-808,Maharashtra,Jalgaon,Bhusawal,Kanhaya Kunj,Check: pin and address disagree
+cus_ba644994-808,Madhya Pradesh,Bhopal,Bhopal,,Corrected 2026-10-05: GSTIN / sheet city
 cus_ba67075f-e74,Rajasthan,Bhilwara,Mandal,Chwc8Pm,Confirmed (pin + address agree)
 cus_ba728ca1-a78,Maharashtra,Mumbai,Mumbai,Andheri East,From address only (no pin)
 cus_ba792652-28b,Maharashtra,Palghar,Vasai,,From pin only
@@ -4536,7 +4536,7 @@ cus_c539ab31-029,Rajasthan,Bundi,Bundi,Teerath,Confirmed (pin + address agree)
 cus_c53f7424-b93,Madhya Pradesh,Bhopal,Bhopal,Bairagarh,Confirmed (pin + address agree)
 cus_c5443fdf-a86,Maharashtra,Palghar,Vasai,Vasai-Virar,Confirmed (pin + address agree)
 cus_c54a4c7e-6b2,Maharashtra,Palghar,Vasai,Vasai East,Confirmed (pin + address agree)
-cus_c54d21b7-9ab,Dadra and Nagar Haveli and Daman and Diu,Daman,Vapi,Gidc,Confirmed (pin + address agree)
+cus_c54d21b7-9ab,Gujarat,Valsad,Vapi,,Corrected 2026-10-05: GSTIN / sheet city
 cus_c55a4924-d19,Maharashtra,Palghar,Mira-Bhayandar,Bhayandar,From sheet text only
 cus_c569e343-cb2,Madhya Pradesh,Indore,Indore,Patrakar Colony,Confirmed (pin + address agree)
 cus_c56b5b30-161,Rajasthan,Ajmer,Ajmer,Dilwari,From pin only
@@ -4600,7 +4600,7 @@ cus_c7ab8362-0d1,Rajasthan,Nagaur,Merta,M22Rfjv,Confirmed (pin + address agree)
 cus_c7b63e1b-dd4,Madhya Pradesh,Jabalpur,Jabalpur,Wright Town,Confirmed (pin + address agree)
 cus_c7b97a61-0c5,Maharashtra,Mumbai,Mumbai,Andheri East,Confirmed (pin + address agree)
 cus_c7ba2fa0-1cf,Madhya Pradesh,Bhopal,Bhopal,,From sheet text only
-cus_c7bb00e8-8d7,Dadra and Nagar Haveli and Daman and Diu,Daman,Vapi,Gidc,Confirmed (pin + address agree)
+cus_c7bb00e8-8d7,Gujarat,Valsad,Vapi,,Corrected 2026-10-05: GSTIN / sheet city
 cus_c7bc8ede-97b,Maharashtra,Thane,Sonale,,From sheet text only
 cus_c7cfd27b-ea8,Rajasthan,Jaipur,Jaipur,Jhotwara,Confirmed (pin + address agree)
 cus_c7d7a695-755,Kerala,Kollam,Sooranad,Sooranad North,Confirmed (pin + address agree)
@@ -4612,7 +4612,7 @@ cus_c7fd4ffb-5fd,Rajasthan,Jaipur,Jaipur,Harmada,Confirmed (pin + address agree)
 cus_c8070a05-b8d,Maharashtra,Pune,Pune,Manjari Budruk,From address only (no pin)
 cus_c80d5647-f15,Maharashtra,Thane,Ambernath,Additional M.I.D.C,Confirmed (pin + address agree)
 cus_c81d7376-838,Maharashtra,Mumbai,Mumbai,Malad West,Confirmed (pin + address agree)
-cus_c81def6b-b97,Maharashtra,Kolhapur,Gandhinagar,,Confirmed (pin + address agree)
+cus_c81def6b-b97,Telangana,Hyderabad,Hyderabad,,Corrected 2026-10-05: GSTIN / sheet city
 cus_c8226324-082,Maharashtra,Washim,Karanja,Shivaji Nagar,Confirmed (pin + address agree)
 cus_c837cde6-90a,Kerala,Kasargod,Kanhangad,Puthiyavalapu,Confirmed (pin + address agree)
 cus_c83c7124-da4,Kerala,Alappuzha,Kayamkulam,Charummoodu,From pin only
@@ -4620,7 +4620,7 @@ cus_c84bed35-e32,Madhya Pradesh,Indore,Indore,Transport Nagar,Confirmed (pin + a
 cus_c85d52d3-d7e,Rajasthan,Jaipur,Jaipur,Govindpura,Confirmed (pin + address agree)
 cus_c8607a98-d1b,Rajasthan,Barmer,Barmer,Jatiyon Ka Bas,Confirmed (pin + address agree)
 cus_c86582fc-220,Rajasthan,Ajmer,Beawar,Kisan Ganj,Confirmed (pin + address agree)
-cus_c86c8028-89b,Dadra and Nagar Haveli and Daman and Diu,Daman,Vapi,Gita Nagar,Confirmed (pin + address agree)
+cus_c86c8028-89b,Gujarat,Valsad,Vapi,,Corrected 2026-10-05: GSTIN / sheet city
 cus_c875ae38-5f4,Odisha,Khorda,Bhubaneswar,Phulnakhara,From pin only
 cus_c879b835-985,Maharashtra,Jalgaon,JalGoan,,From sheet text only
 cus_c87b3002-0f0,Rajasthan,Jaipur,Kookas,,Confirmed (pin + address agree)
@@ -4677,8 +4677,8 @@ cus_caa0ac79-459,Madhya Pradesh,Indore,Indore,,Confirmed (pin + address agree)
 cus_cab1713f-109,Kerala,Kozhikode,Memunda,,Confirmed (pin + address agree)
 cus_cac67cb7-71c,Odisha,Khorda,Bhubaneswar,Chandrasekharpur,Confirmed (pin + address agree)
 cus_cad2e5c1-7ba,Madhya Pradesh,Indore,Indore,Gurunanak Timber Market,Confirmed (pin + address agree)
-cus_cae34862-159,Madhya Pradesh,Bhopal,Bhopal,Vidya Nagar,Check: pin and address disagree
-cus_caed0dc4-da7,Dadra and Nagar Haveli and Daman and Diu,Daman,Vapi,Imran Nagar,Confirmed (pin + address agree)
+cus_cae34862-159,Maharashtra,Palghar,Mira-Bhayandar,,Corrected 2026-10-05: GSTIN / sheet city
+cus_caed0dc4-da7,Gujarat,Valsad,Vapi,,Corrected 2026-10-05: GSTIN / sheet city
 cus_cb09ab8c-d54,Madhya Pradesh,Indore,Indore,Sarafa Bazar,Confirmed (pin + address agree)
 cus_cb1bf4c8-311,Maharashtra,Raigad,Mangaon,Khandad,From address only (no pin)
 cus_cb37f6b6-74e,Kerala,Kozhikode,Cherapuram,,From address only (no pin)
@@ -4688,7 +4688,7 @@ cus_cb43c18c-1e7,Rajasthan,Tonk,Tonk,Adarsh Nagar,Confirmed (pin + address agree
 cus_cb531417-85d,Maharashtra,Palghar,Nala Sopara,Nalasopara West,From pin only
 cus_cb61b5bf-cc8,Maharashtra,Thane,,,Not locatable
 cus_cb62d930-e58,Madhya Pradesh,Indore,Indore,Krishna Bag Colony,Confirmed (pin + address agree)
-cus_cb721314-755,Kerala,Thiruvananthapuram,Thiruvananthapuram,Kesavadasapuram,Confirmed (pin + address agree)
+cus_cb721314-755,Maharashtra,Akola,Balapur,,Corrected 2026-10-05: GSTIN / sheet city
 cus_cb73bdff-d7d,Maharashtra,Thane,Bhiwandi,Padma Nagar,Confirmed (pin + address agree)
 cus_cb81f00b-67f,Maharashtra,Palghar,Vasai,,From pin only
 cus_cb83042d-e01,Maharashtra,Thane,Kalyan,Chinchpada Gaon,Confirmed (pin + address agree)
@@ -4740,7 +4740,7 @@ cus_cddde197-f95,Kerala,Kottayam,Kottayam,Eerayil Kadavu,Confirmed (pin + addres
 cus_cdeea9f8-90b,Rajasthan,Jaipur,Jaipur,Shastri Nagar,Confirmed (pin + address agree)
 cus_cdf284d5-49f,Rajasthan,Sikar,Sikar,Jat Colony,Confirmed (pin + address agree)
 cus_ce04525b-6c5,Maharashtra,Ratnagiri,Nachane,,Confirmed (pin + address agree)
-cus_ce0c2132-1e8,Dadra and Nagar Haveli and Daman and Diu,Daman,Vapi,Gidc,Confirmed (pin + address agree)
+cus_ce0c2132-1e8,Gujarat,Valsad,Vapi,,Corrected 2026-10-05: GSTIN / sheet city
 cus_ce117849-cb1,Maharashtra,Nagpur,Nagpur,Manewada,Confirmed (pin + address agree)
 cus_ce173be1-100,Madhya Pradesh,Indore,Indore,Gopur Square,Confirmed (pin + address agree)
 cus_ce26d010-adc,Maharashtra,Thane,Mira-Bhayandar,Bhayandar East,Confirmed (pin + address agree)
@@ -4766,7 +4766,7 @@ cus_ced698b5-97c,Rajasthan,Bhilwara,Bhilwara,Bhopal Ganj,From address only (no p
 cus_cede13c5-1c9,Maharashtra,Thane,Bhiwandi,Narpoli,Confirmed (pin + address agree)
 cus_cee37335-7bc,Rajasthan,Jaipur,Jaipur,Murlipura,Confirmed (pin + address agree)
 cus_cefbffc2-cfa,Maharashtra,Palghar,Mira-Bhayandar,Andheri,From pin only
-cus_cf112bd1-35a,Madhya Pradesh,Indore,Indore,Biyabani,Check: pin and address disagree
+cus_cf112bd1-35a,Maharashtra,Thane,Murbad,,Corrected 2026-10-05: GSTIN / sheet city
 cus_cf1212f8-74e,Kerala,Kozhikode,Kozhikode,Kodinattumukku,Confirmed (pin + address agree)
 cus_cf260f3f-359,Kerala,Thiruvananthapuram,Thiruvananthapuram,Pangodu,Confirmed (pin + address agree)
 cus_cf2ce4b8-708,Madhya Pradesh,Indore,Indore,Siyaganj,Confirmed (pin + address agree)
@@ -4783,7 +4783,7 @@ cus_cf81ad9d-425,Rajasthan,Kota,Kota,Mahaveer Nagar,Confirmed (pin + address agr
 cus_cfaff676-b85,Maharashtra,Thane,Badlapur,Kharvai,Confirmed (pin + address agree)
 cus_cfb6a64a-0ff,Rajasthan,Jaipur,Jaipur,Kanwar Nagar,Confirmed (pin + address agree)
 cus_cfd5a465-343,Madhya Pradesh,Jabalpur,Jabalpur,Kachnarcity,From pin only
-cus_cfe9ffa0-e57,Gujarat,Rajkot,Morbi,Sardar Nagar,Check: pin and address disagree
+cus_cfe9ffa0-e57,Maharashtra,Kolhapur,Kolhapur,Shahupuri,Corrected 2026-10-05: GSTIN / sheet city
 cus_cffffced-ffc,Kerala,Thrissur,Thrissur,Pallikkulam,Check: pin and address disagree
 cus_d0044512-d59,Rajasthan,Jaipur,Jaipur,Jhotwara,Confirmed (pin + address agree)
 cus_d01b5219-4ba,Maharashtra,Thane,Kalyan,,From pin only
@@ -4828,7 +4828,7 @@ cus_d16fed7d-d38,Rajasthan,Ajmer,Kishangarh,,From sheet text only
 cus_d1793f71-68b,Maharashtra,Thane,Airoli,,From sheet text only
 cus_d18a4eb2-6ac,Rajasthan,Jaipur,Jaipur,Jhotwara,Confirmed (pin + address agree)
 cus_d18de15f-a01,Rajasthan,Kota,Kota,Electricity Board Area,Confirmed (pin + address agree)
-cus_d191c790-d39,Maharashtra,Thane,Kalyan,Bhoirwadi,Confirmed (pin + address agree)
+cus_d191c790-d39,Rajasthan,Chittorgarh,Chittorgarh,,Corrected 2026-10-05: GSTIN / sheet city
 cus_d1a0ac79-55c,Maharashtra,Jalgaon,Jalgaon,Jaikisan Wadi,Confirmed (pin + address agree)
 cus_d1a42f8e-909,Rajasthan,Jaipur,Bagru,Bindayaka.,Confirmed (pin + address agree)
 cus_d1a638da-185,Kerala,Kozhikode,Koyilandy,Balussery,From pin only
@@ -4942,7 +4942,7 @@ cus_d60f989c-51e,Rajasthan,Ajmer,Kishangarh,,Confirmed (pin + address agree)
 cus_d61113e3-e64,Maharashtra,Thane,Ulhasnagar,,Confirmed (pin + address agree)
 cus_d617404d-95a,Odisha,Cuttack,Athagarh,,From pin only
 cus_d618cbe6-850,Madhya Pradesh,Indore,Indore,Vinoba Nagar,Confirmed (pin + address agree)
-cus_d62f787d-0d8,Rajasthan,Jaipur,Jaipur,Shastri Nagar,Confirmed (pin + address agree)
+cus_d62f787d-0d8,Maharashtra,Nagpur,Nagpur,,Corrected 2026-10-05: GSTIN / sheet city
 cus_d634d714-d94,Madhya Pradesh,Indore,Indore,Karas Dev Nagar,Confirmed (pin + address agree)
 cus_d63f48a2-a4d,Odisha,Khorda,Bhubaneswar,Nayapalli,Confirmed (pin + address agree)
 cus_d649c631-b55,Maharashtra,Pune,Pune,Wagholi,From address only (no pin)
@@ -5172,7 +5172,7 @@ cus_df517c30-93f,Rajasthan,Sikar,Mahroli,,Check: pin and address disagree
 cus_df576736-840,Rajasthan,Jaipur,Jaipur,Sitapura,Confirmed (pin + address agree)
 cus_df638a75-415,Maharashtra,Thane,Navi Mumbai,Vashi,Confirmed (pin + address agree)
 cus_df6799c9-585,Maharashtra,Thane,Badlapur,Sanewadi,Confirmed (pin + address agree)
-cus_df685a40-272,Maharashtra,Thane,Badlapur,Belavali,Confirmed (pin + address agree)
+cus_df685a40-272,Madhya Pradesh,Bhopal,Bhopal,,Corrected 2026-10-05: GSTIN / sheet city
 cus_df6a171d-403,Madhya Pradesh,Dewas,Dewas,Moti Bunglow,Confirmed (pin + address agree)
 cus_df6cd921-5da,Rajasthan,Jaipur,Jaipur,Paldi Meena,Confirmed (pin + address agree)
 cus_df6df818-175,Maharashtra,Thane,Ambernath,Additional M.I.D.C,Confirmed (pin + address agree)
@@ -5199,7 +5199,7 @@ cus_e0476f12-da4,Kerala,Alappuzha,Thamarakulam,,Confirmed (pin + address agree)
 cus_e0550a45-9c1,Puducherry,Pondicherry,Puducherry,,Check: pin and address disagree
 cus_e0593420-317,Odisha,,,,Not locatable
 cus_e05f67f3-e6f,Rajasthan,Jodhpur,Jodhpur,Rawaton Ka Bass,Confirmed (pin + address agree)
-cus_e066e5e1-759,Madhya Pradesh,Jabalpur,Jabalpur,Sadar,Confirmed (pin + address agree)
+cus_e066e5e1-759,Maharashtra,Thane,Badlapur,,Corrected 2026-10-05: GSTIN / sheet city
 cus_e06e19cf-ffa,Maharashtra,Thane,Thane,,Confirmed (pin + address agree)
 cus_e06f3b53-c65,Madhya Pradesh,Indore,Indore,Palda,Confirmed (pin + address agree)
 cus_e0875cb2-322,Maharashtra,Thane,Thane,Thane West,Confirmed (pin + address agree)
@@ -5332,11 +5332,11 @@ cus_e5c64c2f-59e,Maharashtra,Palghar,Nala Sopara,Nalasopara East,From sheet text
 cus_e5cadf50-ad1,Maharashtra,Thane,Thane,Thane West,Confirmed (pin + address agree)
 cus_e5d06efd-541,Maharashtra,Mumbai,Mumbai,Jogeshwari West,Confirmed (pin + address agree)
 cus_e5d1ef4a-ccd,Rajasthan,Jaipur,Jaipur,Modikhana,Confirmed (pin + address agree)
-cus_e5d4dcde-b42,Rajasthan,Jaipur,Jaipur,,Check: pin and address disagree
+cus_e5d4dcde-b42,Madhya Pradesh,Bhopal,Bhopal,,Corrected 2026-10-05: GSTIN / sheet city
 cus_e5d60a53-ef1,Odisha,Cuttack,Cuttack,LIC Colony,Confirmed (pin + address agree)
 cus_e5dde01d-b8c,Maharashtra,Mumbai,Mumbai,Malad West,Confirmed (pin + address agree)
 cus_e5e25b02-577,Maharashtra,Akola,Akola,Baid Pura,Confirmed (pin + address agree)
-cus_e60baa98-a04,Rajasthan,Jaipur,Jaipur,Murlipura,Confirmed (pin + address agree)
+cus_e60baa98-a04,Madhya Pradesh,Indore,Indore,,Corrected 2026-10-05: GSTIN / sheet city
 cus_e6191c48-ee3,Maharashtra,Palghar,Vasai,,Confirmed (pin + address agree)
 cus_e6217493-bc1,Madhya Pradesh,Indore,Indore,,From sheet text only
 cus_e62b234a-0d9,Maharashtra,Palghar,Dahanu,Malyan,From address only (no pin)
@@ -5401,7 +5401,7 @@ cus_e865ba60-0aa,Maharashtra,Mumbai,Mumbai,Kandivali East,Confirmed (pin + addre
 cus_e87ca94e-570,Maharashtra,Thane,Mumbai,Hanuman Nagar,Check: pin and address disagree
 cus_e87e516e-e91,Madhya Pradesh,Raisen,Manpur,,Confirmed (pin + address agree)
 cus_e8829a59-07e,Maharashtra,Mumbai,Mumbai,Kandivali West,Confirmed (pin + address agree)
-cus_e89d298d-5e5,Rajasthan,Jaipur,Jaipur,Pratap Nagar,Check: pin and address disagree
+cus_e89d298d-5e5,Maharashtra,Thane,Thane,,Corrected 2026-10-05: GSTIN / sheet city
 cus_e8a0532c-dec,Rajasthan,Jaipur,Jaipur,Sindhi Colony,Confirmed (pin + address agree)
 cus_e8a10502-645,Maharashtra,Thane,Ambernath,New Balaji Nagar,Confirmed (pin + address agree)
 cus_e8abdc3a-541,Odisha,Khorda,Bhubaneswar,Bhubanpur,Confirmed (pin + address agree)
@@ -5439,7 +5439,7 @@ cus_ea0ef448-4e5,Kerala,Kozhikode,Kozhikode,Bilathikkulam,Confirmed (pin + addre
 cus_ea224163-db3,Madhya Pradesh,Indore,Indore,,Confirmed (pin + address agree)
 cus_ea643ea6-73c,Odisha,Khorda,Bhubaneswar,Khandagiri,Confirmed (pin + address agree)
 cus_ea66d858-fbf,Kerala,Kannur,Thalassery,Thuvakkunnu,From pin only
-cus_ea6aa748-d8e,Madhya Pradesh,Indore,Indore,Indore Khajrana,Confirmed (pin + address agree)
+cus_ea6aa748-d8e,Maharashtra,Pune,Pimpri-Chinchwad,Bhosari,Corrected 2026-10-05: GSTIN / sheet city
 cus_ea90499d-454,Maharashtra,Thane,Dombivli,Dombivli West,Confirmed (pin + address agree)
 cus_ea9d48f7-0a6,Maharashtra,Gadchiroli,Gadchiroli,Gokul Nagar,Confirmed (pin + address agree)
 cus_eaa2bd3e-56a,Maharashtra,Jalgaon,Jalgaon,Rampeth,From address only (no pin)
@@ -5454,7 +5454,7 @@ cus_eaf13ec0-c88,Maharashtra,Aurangabad,Waluj,,From sheet text only
 cus_eb0bed7e-7fd,Maharashtra,Palghar,Mira-Bhayandar,,Check: pin and address disagree
 cus_eb18df67-a30,Kerala,Kozhikode,Vatakara,Edodi,Confirmed (pin + address agree)
 cus_eb24d1cf-d21,Gujarat,Rajkot,Shapar,Veraval,Check: pin and address disagree
-cus_eb282c7b-b0c,Maharashtra,Thane,Ulhasnagar,Krishna Nagar,Confirmed (pin + address agree)
+cus_eb282c7b-b0c,Madhya Pradesh,Rewa,Rewa,,Corrected 2026-10-05: GSTIN / sheet city
 cus_eb2dedd5-acf,Maharashtra,Palghar,Vasai,,From pin only
 cus_eb341cf1-539,Rajasthan,Tonk,Tonk,Kha Ngar,Confirmed (pin + address agree)
 cus_eb41e67c-f34,Gujarat,Rajkot,Rajkot,,Confirmed (pin + address agree)
@@ -5526,7 +5526,7 @@ cus_edde80b2-19d,Rajasthan,Jhalawar,Kota,Rampura,Confirmed (pin + address agree)
 cus_ede23f33-be3,Maharashtra,Nagpur,Nagpur,Narsala,From address only (no pin)
 cus_edeaf416-179,Odisha,Khorda,Bhubaneswar,VSS Nagar,From address only (no pin)
 cus_edec73db-052,Maharashtra,Thane,Bhiwandi,Dapode,Confirmed (pin + address agree)
-cus_edecdbb0-c41,Madhya Pradesh,Dewas,Dewas,Gomti Nagar,Check: pin and address disagree
+cus_edecdbb0-c41,Maharashtra,Thane,Thane,,Corrected 2026-10-05: GSTIN / sheet city
 cus_edfac923-7a3,Rajasthan,Jhalawar,Jhalrapatan,,From address only (no pin)
 cus_ee025b5f-f29,Kerala,Kozhikode,Purameri,Orkkatteri,From pin only
 cus_ee042344-54b,Rajasthan,Tonk,Deoli,,Confirmed (pin + address agree)
@@ -5543,7 +5543,7 @@ cus_ee94f18b-d35,Maharashtra,Solapur,Solapur,Jule,Confirmed (pin + address agree
 cus_ee992b21-209,Maharashtra,Pune,Pune,Hadapsar,Confirmed (pin + address agree)
 cus_eea42662-823,Madhya Pradesh,Indore,Indore,Palda,Confirmed (pin + address agree)
 cus_eeb27458-fba,Rajasthan,Jaipur,Jaipur,Bhakrota,Confirmed (pin + address agree)
-cus_eeb81a25-2e8,Odisha,Cuttack,Jagatpur,Gunjarpur,Confirmed (pin + address agree)
+cus_eeb81a25-2e8,Madhya Pradesh,Bhopal,Bhopal,,Corrected 2026-10-05: GSTIN / sheet city
 cus_eebd4884-be4,Maharashtra,Palghar,Vasai,Vasai East,Confirmed (pin + address agree)
 cus_eebf22e8-2e2,Madhya Pradesh,Indore,Indore,Scheme 71,Confirmed (pin + address agree)
 cus_eeda5389-c18,Maharashtra,Palghar,Vasai,,From sheet text only
@@ -5652,7 +5652,7 @@ cus_f39cecca-e51,Gujarat,Rajkot,Rajkot,Bhakti Nagar,Confirmed (pin + address agr
 cus_f3b158de-8f3,Madhya Pradesh,Dewas,Dewas,Gomti Nagar,Confirmed (pin + address agree)
 cus_f3c6f573-c72,Maharashtra,Palghar,Vasai,Vasai East,Confirmed (pin + address agree)
 cus_f3c91c4e-bb1,Odisha,Angul,Angul,,Confirmed (pin + address agree)
-cus_f3d2ad4e-e52,Maharashtra,Mumbai,Mumbai,Andheri East,Check: pin and address disagree
+cus_f3d2ad4e-e52,Madhya Pradesh,Indore,Indore,,Corrected 2026-10-05: GSTIN / sheet city
 cus_f3deacd4-8da,Rajasthan,Kota,Kota,Chawani,Confirmed (pin + address agree)
 cus_f3eb76be-018,Maharashtra,Nagpur,Nagpur,Dharampeth,Confirmed (pin + address agree)
 cus_f3ed8998-397,Kerala,Kozhikode,Ulliyeri,Ulliyeri SO,Confirmed (pin + address agree)
@@ -5732,7 +5732,7 @@ cus_f77f41ed-189,Maharashtra,Thane,Wagle Estate,Wagle Estate,Not locatable
 cus_f782ff4f-4bd,Kerala,Kozhikode,Thurayur,Kerala,From pin only
 cus_f78522e1-565,Maharashtra,Nagpur,Nagpur,,From sheet text only
 cus_f78ccd51-037,Rajasthan,Ajmer,Kharwa,,Confirmed (pin + address agree)
-cus_f79202de-54e,Kerala,Kasargod,Kasaragod,,Confirmed (pin + address agree)
+cus_f79202de-54e,Odisha,Bhadrak,Bhadrak,,Corrected 2026-10-05: GSTIN / sheet city
 cus_f79b8fd3-ca2,Maharashtra,Sangli,Sangli,Khanbhag,From address only (no pin)
 cus_f7b248e6-159,Maharashtra,Thane,Bhiwandi,,Confirmed (pin + address agree)
 cus_f7b2db74-b16,Madhya Pradesh,Bhopal,Bhopal,Qazi Camp,Confirmed (pin + address agree)
@@ -5786,7 +5786,7 @@ cus_fa2929e9-d1d,Maharashtra,Palghar,Vasai,Vasai East,Confirmed (pin + address a
 cus_fa2f0032-25a,Maharashtra,Raigad,Rasayani,Karade Kh,From pin only
 cus_fa44ca7e-dbf,Rajasthan,Jaipur,Jaipur,Bajaj Nagar,Confirmed (pin + address agree)
 cus_fa4d88dd-cc9,Uttar Pradesh,Budaun,Wazirganj,,From sheet text only
-cus_fa4dd4b5-d24,Madhya Pradesh,Jabalpur,Jabalpur,Ganga Nagar,Confirmed (pin + address agree)
+cus_fa4dd4b5-d24,Maharashtra,Sangli,Sangli,,Corrected 2026-10-05: GSTIN / sheet city
 cus_fa573d57-d8f,Rajasthan,Jaipur,Jaipur,Sitapura,Confirmed (pin + address agree)
 cus_fa6c5394-d8d,Maharashtra,Kolhapur,Gandhinagar,,Confirmed (pin + address agree)
 cus_fa7d7495-4a4,Rajasthan,Ajmer,Ajmer,Panchsheel Nagar,Confirmed (pin + address agree)
@@ -5834,7 +5834,7 @@ cus_fc0570a8-bef,Madhya Pradesh,Indore,Mhow Gaon,Dharnaka,Confirmed (pin + addre
 cus_fc080fae-da2,Odisha,Khorda,Bhubaneswar,Nayapalli,Confirmed (pin + address agree)
 cus_fc130cb2-85f,Maharashtra,Palghar,Mira-Bhayandar,,Confirmed (pin + address agree)
 cus_fc17c46a-5c2,Telangana,Hyderabad,Hydrabad,,From sheet text only
-cus_fc33b7df-e6f,Dadra and Nagar Haveli and Daman and Diu,Daman,Vapi,Gidc,Confirmed (pin + address agree)
+cus_fc33b7df-e6f,Madhya Pradesh,Bhopal,Bhopal,,Corrected 2026-10-05: GSTIN / sheet city
 cus_fc3f1b14-364,Rajasthan,Ajmer,Kishangarh,,Confirmed (pin + address agree)
 cus_fc41cde3-09f,Kerala,Thiruvananthapuram,Thiruvananthapuram,Chalai,Confirmed (pin + address agree)
 cus_fc42b8e7-e10,Maharashtra,Solapur,Solapur,Sakhar Peth,Confirmed (pin + address agree)
@@ -5847,7 +5847,7 @@ cus_fc619299-de4,Maharashtra,Palghar,Vasai,Naigaon East,Confirmed (pin + address
 cus_fc67975f-54c,Kerala,Kozhikode,Ulliyeri,Ulliyeri SO,Confirmed (pin + address agree)
 cus_fc74fe29-539,Rajasthan,Kota,Kota,Mahaveer Nagar,Confirmed (pin + address agree)
 cus_fc7b432f-8d8,Maharashtra,Palghar,Boisar,Sanjay Nagar,From address only (no pin)
-cus_fc8f0413-76b,Kerala,Palakkad,Palakkad,Parakkunnam,Check: pin and address disagree
+cus_fc8f0413-76b,Maharashtra,Nandurbar,Nandurbar,,Corrected 2026-10-05: GSTIN / sheet city
 cus_fc93d934-a95,Odisha,Cuttack,Cuttack,Gobara,From sheet text only
 cus_fc97bc9b-0e4,Maharashtra,Thane,Mira-Bhayandar,Bhayandar East,Confirmed (pin + address agree)
 cus_fc982738-ec3,Odisha,Bargarh,Bargarh,,Confirmed (pin + address agree)
@@ -5861,7 +5861,7 @@ cus_fcd455ca-bd0,Madhya Pradesh,Guna,Guna,,From sheet text only
 cus_fcd63b94-85d,Maharashtra,Thane,Badlapur,Belavali,Confirmed (pin + address agree)
 cus_fcdf3e40-c2f,Kerala,Kottayam,Puthuppally,,Confirmed (pin + address agree)
 cus_fcdf5b8d-f5e,Rajasthan,Jaipur,Jaipur,Vaishali Nagar,Confirmed (pin + address agree)
-cus_fce034fa-408,Odisha,Cuttack,Cuttack,,From pin only
+cus_fce034fa-408,Madhya Pradesh,Betul,Betul,,Corrected 2026-10-05: GSTIN / sheet city
 cus_fced25cc-4d7,Kerala,Idukki,Thodupuzha,Vpr47Mp,From pin only
 cus_fcf9544f-601,Maharashtra,Thane,Ambernath,MIDC East,Confirmed (pin + address agree)
 cus_fd09818b-745,Odisha,Jajapur,Byasanagar,W4Vjphj,Confirmed (pin + address agree)
@@ -5880,7 +5880,7 @@ cus_fddca084-f19,Madhya Pradesh,Indore,Indore,Sudama Nagar,Confirmed (pin + addr
 cus_fde5179f-075,Odisha,Khorda,Bhubaneswar,Rudrapur,Confirmed (pin + address agree)
 cus_fde83076-d3b,West Bengal,Kolkata,Kolkata,,From sheet text only
 cus_fdebe312-7a8,Maharashtra,Nagpur,Nagpur,Beltarodi,Confirmed (pin + address agree)
-cus_fdf47fee-820,Rajasthan,Jaipur,Jaipur,Bhakrota,Check: pin and address disagree
+cus_fdf47fee-820,Madhya Pradesh,Indore,Indore,,Corrected 2026-10-05: GSTIN / sheet city
 cus_fdfa7969-cac,Chhattisgarh,Rajnandgaon,Rajnandgaon,Gol Bazar,Confirmed (pin + address agree)
 cus_fdfaf942-a41,Madhya Pradesh,Jabalpur,Jabalpur,Ganga Nagar,Check: pin and address disagree
 cus_fe06477b-ae0,Gujarat,Rajkot,Rajkot,Gundavadi,Confirmed (pin + address agree)
@@ -5914,7 +5914,7 @@ cus_ff11b539-a7e,Maharashtra,Pune,Pune,Ganesh Peth,Confirmed (pin + address agre
 cus_ff2de019-a37,Kerala,Kannur,Chokli,Panniyannur,Confirmed (pin + address agree)
 cus_ff47d94e-e70,Chhattisgarh,Bilaspur,Bilaspur,Ambedkar Nagar,From pin only
 cus_ff48a1b8-9f3,Rajasthan,Jaipur,Jaipur,Harmada,Confirmed (pin + address agree)
-cus_ff5541e2-d8c,Odisha,Khorda,Bhubaneswar,Shirpur,From pin only
+cus_ff5541e2-d8c,Maharashtra,Dhule,Shirpur,,Corrected 2026-10-05: GSTIN / sheet city
 cus_ff65f673-d72,Rajasthan,Jaipur,Jaipur,Modikhana,Confirmed (pin + address agree)
 cus_ff6daed4-cf4,Maharashtra,Akola,Akola,Malipura,Confirmed (pin + address agree)
 cus_ff73b0ef-1d6,Rajasthan,Barmer,Barmer,Nehru Nagar,From address only (no pin)
@@ -5929,3 +5929,4 @@ cus_ffc305e1-a03,Maharashtra,Pune,Pune,,From sheet text only
 cus_fff401ac-165,Madhya Pradesh,Indore,Indore,Dwarkapuri,Check: pin and address disagree
 mbos_lead_0116ab02-5583-4ec5-9066-eade52b82f7a,Maharashtra,Palghar,Virar,,Not locatable
 mbos_lead_9b84105e-9c7a-4f92-b546-9684898e4c2c,Maharashtra,Mumbai,Mumbai,Bhandup,From pin only
+cus_6ba3eff4-f2c,Maharashtra,Mumbai,Mumbai,Kandivali West,Corrected 2026-10-05: GSTIN / sheet city
