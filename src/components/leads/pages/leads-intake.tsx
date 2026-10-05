@@ -58,10 +58,11 @@ export async function Body({
   const creatorWorksLeads =
     (await canOpenModule(user.id, DESK_MODULE)) && !canPrioritise && owners.some((o) => o.id === user.id);
 
-  /* Sales-Manager-only sources are drawn for the module holder in the Sales
-     workspace; the action re-checks the grant, so this is presentation only. */
-  const isSalesManager =
-    workspace === "sales" && (await isSalesManagerSeat(user.id));
+  /* Sales-Manager-only sources are drawn for whoever holds the Sales Manager
+     seat, in either workspace: that seat lives in the CRM app, so its holder
+     reaches this form as `/crm/...` as often as `/sales/...`. The action
+     re-checks the grant, so this is presentation only. */
+  const isSalesManager = await isSalesManagerSeat(user.id);
 
   return (
     <div className="p-6">
