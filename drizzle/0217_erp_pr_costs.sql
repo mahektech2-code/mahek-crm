@@ -18,3 +18,7 @@ CREATE TABLE IF NOT EXISTS "erp_pr_costs" (
   CONSTRAINT "erp_pr_costs_own_vehicle_check" CHECK ("transport_mode" <> 'own_vehicle' or ("km" is not null and "rate_per_km_paise" is not null)),
   CONSTRAINT "erp_pr_costs_none_check" CHECK ("transport_mode" <> 'none' or "transport_cost_paise" = 0)
 );
+
+-- The empty drum weight read at the gate, per drum: a kg line's net quantity
+-- is weight with drum minus drums × this.
+ALTER TABLE "erp_inward" ADD COLUMN IF NOT EXISTS "empty_drum_weight" numeric(10, 3);

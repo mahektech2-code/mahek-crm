@@ -85,6 +85,18 @@ export function settableStatuses(verifier: boolean): string[] {
   return verifier ? ["Purchase Verified"] : ["Invoice Received", "Purchase Matched"];
 }
 
+/**
+ * What came in, net of the drums it came in: the gross weight off the scale
+ * less every empty drum. Null where the scale or the drum weight is missing,
+ * or where the drums weigh as much as the load — that is a misread scale, not
+ * a delivery of nothing.
+ */
+export function netWeight(grossKg: number | null, drums: number | null, emptyDrumKg: number | null): number | null {
+  if (grossKg == null || drums == null || emptyDrumKg == null || grossKg <= 0 || drums < 0 || emptyDrumKg < 0) return null;
+  const net = Math.round((grossKg - drums * emptyDrumKg) * 1000) / 1000;
+  return net > 0 ? net : null;
+}
+
 /* ------------------------------------------------------------ landing cost */
 
 /**

@@ -10918,6 +10918,8 @@ export const erpInward = pgTable(
       .references(() => erpRawMaterials.id),
     drums: integer("drums"),
     weightWithDrum: numeric("weight_with_drum", { precision: 14, scale: 3, mode: "number" }),
+    /** Per drum, as weighed or read at the gate. A kg line's quantity is weight with drum − drums × this. */
+    emptyDrumWeight: numeric("empty_drum_weight", { precision: 10, scale: 3, mode: "number" }),
     quantity: numeric("quantity", { precision: 14, scale: 3, mode: "number" }).notNull(),
     unit: text("unit").notNull(),
     remark: text("remark"),

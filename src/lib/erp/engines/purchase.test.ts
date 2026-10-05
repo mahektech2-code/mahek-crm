@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { landingFigures, lotNumber, postsToStock, prBillLabel, purchaseFigures, settableStatuses, shareInwardCost, shortLabel, transportCostPaise } from "./purchase";
+import { landingFigures, lotNumber, netWeight, postsToStock, prBillLabel, purchaseFigures, settableStatuses, shareInwardCost, shortLabel, transportCostPaise } from "./purchase";
 
 const base = { quantity: 0, unit: "Litre", ratePaise: null, density: null, feedAdjustedLitre: 0, feedAdjustedAmountPaise: 0, gstBp: 1800, drums: null };
 
@@ -83,4 +83,12 @@ test("landing cost is material + share, and the landed rate is per purchase unit
   assert.equal(f.landingPaise, 1840000);
   assert.equal(f.landedRatePaise, 9200);
   assert.deepEqual(landingFigures({ quantity: 200, ratePaise: null, sharePaise: 40000 }), { materialPaise: null, landingPaise: null, landedRatePaise: null });
+});
+
+test("net weight is the gross off the scale less every empty drum", () => {
+  assert.equal(netWeight(1040, 5, 18), 950);
+  assert.equal(netWeight(218.5, 1, 18.25), 200.25);
+  assert.equal(netWeight(90, 5, 18), null, "drums as heavy as the load is a misread scale");
+  assert.equal(netWeight(1040, 5, null), null);
+  assert.equal(netWeight(null, 5, 18), null);
 });

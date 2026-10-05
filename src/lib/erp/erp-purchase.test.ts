@@ -81,7 +81,7 @@ describe("inward", () => {
     const ctx = await as(admin);
     const r = await mod("inward").forms!.new(ctx, { date: TODAY, supplier: "Asian Solvents", godown: "Bhiwandi", transportMode: NONE }, [
       { type: "Chemical", item: "Toluene", drums: "2", qty: "360" },
-      { type: "Chemical", item: "MEK", drums: "1", weight: "175", qty: "160" },
+      { type: "Chemical", item: "MEK", drums: "1", weight: "175", emptyDrum: "15" },
       { type: "Can", item: "1 L Tin Can", qty: "500" },
     ]);
     assert.ok(r.ok, JSON.stringify(r));
@@ -313,6 +313,8 @@ describe("transport and landing cost", () => {
   test("weight with drum is required for a kg item and optional for a litre one", async () => {
     const kg = await inward({ transportMode: "No Transport Charges" }, [{ type: "Chemical", item: "MEK", drums: "1", qty: "160" }]);
     assert.ok(!kg.ok && kg.fieldErrors?.[0].field === "l0.weight", JSON.stringify(kg));
+    const noTare = await inward({ transportMode: "No Transport Charges" }, [{ type: "Chemical", item: "MEK", drums: "1", weight: "175" }]);
+    assert.ok(!noTare.ok && noTare.fieldErrors?.[0].field === "l0.emptyDrum", JSON.stringify(noTare));
     const litre = await inward({ transportMode: "No Transport Charges" }, [{ type: "Chemical", item: "Toluene", drums: "1", qty: "180" }]);
     assert.ok(litre.ok, JSON.stringify(litre));
   });
@@ -337,7 +339,7 @@ describe("transport and landing cost", () => {
   test("supplier freight and other cost are shared by value, and the stock rate is the landed rate", async () => {
     const r = await inward({ transportMode: "Supplier Transport", transportCost: "2360", tempo: "GJ05 X 9", otherCost: "640", otherNote: "Unloading" }, [
       { type: "Can", item: "1 L Tin Can", qty: "100" },
-      { type: "Chemical", item: "MEK", drums: "1", weight: "220", qty: "200" },
+      { type: "Chemical", item: "MEK", drums: "1", weight: "220", emptyDrum: "20" },
     ]);
     assert.ok(r.ok, JSON.stringify(r));
     const pr = prOf(r);
@@ -369,5 +371,29 @@ describe("transport and landing cost", () => {
     assert.equal(c.transportCostPaise, 50000);
     const missing = await mod("inward").forms!.costs(ctx, { transportMode: "Supplier Transport" }, [], String(pr));
     assert.ok(!missing.ok && missing.fieldErrors?.[0].field === "transportCost");
+  });
+});
+
+describe("net quantity off the scale", () => {
+  test("a kg line's weight without drum is weight with drum − drums × empty drum weight, whatever was typed", async () => {
+    const ctx = await as(admin);
+    const r = await mod("inward").forms!.new(ctx, { date: TODAY, supplier: "Asian Solvents", godown: "Bhiwandi", transportMode: NONE }, [
+      { type: "Chemical", item: "MEK", drums: "4", weight: "872", emptyDrum: "18", qty: "999" },
+    ]);
+    assert.ok(r.ok, JSON.stringify(r));
+    const pr = Number(/^PR (\d+)/.exec(r.message ?? "")?.[1]);
+    const [line] = await db.select().from(erpInward).where(eq(erpInward.prNumber, pr));
+    assert.equal(line.quantity, 800, "872 − 4 × 18");
+    assert.equal(line.emptyDrumWeight, 18);
+    const [reg] = await db.select().from(erpPurchases).where(eq(erpPurchases.inwardId, line.id));
+    assert.equal(reg.quantity, 800, "the register gets the net, not the gross");
+    assert.equal(reg.weightWithDrum, 872);
+  });
+
+  test("drums as heavy as the load is refused as a misread scale", async () => {
+    const r = await mod("inward").forms!.new(await as(admin), { date: TODAY, supplier: "Asian Solvents", godown: "Bhiwandi", transportMode: NONE }, [
+      { type: "Chemical", item: "MEK", drums: "5", weight: "90", emptyDrum: "18" },
+    ]);
+    assert.ok(!r.ok && r.fieldErrors?.[0].field === "l0.weight", JSON.stringify(r));
   });
 });

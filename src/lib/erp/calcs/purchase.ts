@@ -1,5 +1,5 @@
 import { fmt, n, registerCalc } from "../calc";
-import { lotNumber, purchaseFigures, transportCostPaise, transportModeByLabel } from "../engines/purchase";
+import { lotNumber, netWeight, purchaseFigures, transportCostPaise, transportModeByLabel } from "../engines/purchase";
 
 /* ---------------------------------------------------------------------------
  * The purchase forms' derived fields. The server recomputes each on save from
@@ -16,6 +16,13 @@ registerCalc("inward.unit", ({ l, data }) => {
   if (!l.item) return "";
   if (l.type === "Box") return "Pcs";
   return String(map(data, "unitOf")[l.item] ?? "");
+});
+
+registerCalc("inward.net", ({ l }) => {
+  const net = netWeight(n(l.weight), n(l.drums), n(l.emptyDrum));
+  if (net != null) return `${fmt(net, 3)} kg`;
+  if (n(l.weight) && n(l.drums) != null && n(l.emptyDrum) != null) return "The empty drums weigh as much as the load — check the scale";
+  return "Weight with drum − drums × empty drum weight";
 });
 
 registerCalc("inward.testing", ({ l, data }) => {

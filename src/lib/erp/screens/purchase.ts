@@ -41,6 +41,7 @@ import { fd, inr, nf } from "../ui";
 import {
   TRANSPORT_MODES,
   lotNumber,
+  netWeight,
   postsToStock,
   prBillLabel,
   purchaseFigures,
@@ -494,10 +495,13 @@ async function inwardForm(ctx: ErpContext, init?: Record<string, string>): Promi
   ]);
   const unitOf: Record<string, string> = {};
   const unitIs: Record<string, string[]> = {};
+  /* "scale": a kg chemical, netted off the scale; "typed": measured or counted. */
+  const qtyBy: Record<string, string[]> = {};
   const testsOf: Record<string, string[]> = {};
   mats.forEach((m) => {
     unitOf[m.name] = m.materialType === "Box" ? "Pcs" : m.unit;
     unitIs[m.name] = [m.unit];
+    qtyBy[m.name] = [m.materialType === "Chemical" && m.unit === "Kg" ? "scale" : "typed"];
     testsOf[m.name] = m.testingList;
   });
   return {
@@ -514,7 +518,7 @@ async function inwardForm(ctx: ErpContext, init?: Record<string, string>): Promi
       godown: ctx.workingGodown?.name ?? "",
       ...init,
     },
-    data: { unitOf, unitIs, testsOf, ratePerKmPaise: config["erp.purchase.ownVehicleRatePerKmPaise"] },
+    data: { unitOf, unitIs, qtyBy, testsOf, ratePerKmPaise: config["erp.purchase.ownVehicleRatePerKmPaise"] },
     header: [
       { k: "pr", l: "PR number", t: "num", req: true, min: 1, hint: "The next PR number. Type over it to use another." },
       { k: "date", l: "Date", t: "date", req: true },
@@ -528,7 +532,10 @@ async function inwardForm(ctx: ErpContext, init?: Record<string, string>): Promi
       { k: "drums", l: "Drums", t: "num", req: true, min: 0, when: { k: "type", eq: "Chemical" } },
       /* A kg item is weighed on the drum; a litre item is measured, so the gross weight is optional there. */
       { k: "weight", l: "Weight with drum (kg)", t: "num", min: 0, when: { k: "type", eq: "Chemical" }, reqWhen: { k: "item", map: "unitIs", has: "Kg" } },
-      { k: "qty", l: "Weight without drum", t: "num", req: true, min: 0.001 },
+      { k: "emptyDrum", l: "Empty drum weight (kg, per drum)", t: "num", min: 0, when: { k: "type", eq: "Chemical" }, reqWhen: { k: "item", map: "unitIs", has: "Kg" } },
+      /* A kg chemical's net is the scale's answer, never typed; anything measured or counted is typed. */
+      { k: "net", l: "Weight without drum", t: "derived", calc: "inward.net", when: { k: "item", map: "qtyBy", has: "scale" } },
+      { k: "qty", l: "Weight without drum", t: "num", req: true, min: 0.001, when: { k: "item", map: "qtyBy", has: "typed" } },
       { k: "unit", l: "Unit", t: "derived", calc: "inward.unit" },
       { k: "testing", l: "Testing required", t: "derived", calc: "inward.testing" },
       { k: "remark", l: "Remark", t: "area", mic: true },
@@ -557,6 +564,7 @@ const inward: ScreenModule = {
       { k: "item", l: "Item", t: "b" },
       { k: "drums", l: "Drums", t: "n" },
       { k: "weight", l: "Weight with drum", t: "n" },
+      { k: "emptyDrum", l: "Empty drum weight", t: "n" },
       { k: "qty", l: "Weight without drum", t: "n" },
       { k: "unit", l: "Unit", t: "t" },
       { k: "godown", l: "Godown", t: "t" },
@@ -625,6 +633,7 @@ const inward: ScreenModule = {
             item: x.item,
             drums: x.r.drums,
             weight: x.r.weightWithDrum,
+            emptyDrum: x.r.emptyDrumWeight,
             qty: x.r.quantity,
             unit: x.r.unit,
             godown: x.godown,
@@ -663,10 +672,20 @@ const inward: ScreenModule = {
         const l = lines[i];
         const m = mats.find((x) => x.name === l.item && x.materialType === l.type);
         if (!m) return fieldErr(`l${i}.item`, "Pick an item of this material type");
-        const qty = num(l.qty);
-        if (qty == null || qty <= 0) return fieldErr(`l${i}.qty`, qty != null && qty < 0 ? "Minus Quantity Not Allowed" : "Weight without drum is required");
         if (l.type === "Chemical" && (int(l.drums) == null || int(l.drums)! < 0)) return fieldErr(`l${i}.drums`, "Drums is required");
-        if (l.type === "Chemical" && m.unit === "Kg" && !(num(l.weight)! > 0)) return fieldErr(`l${i}.weight`, "Weight with drum is required for an item bought in kg");
+        const scale = m.materialType === "Chemical" && m.unit === "Kg";
+        let qty: number | null;
+        if (scale) {
+          /* Net off the scale, whatever was typed into a quantity box. */
+          if (!(num(l.weight)! > 0)) return fieldErr(`l${i}.weight`, "Weight with drum is required for an item bought in kg");
+          const empty = num(l.emptyDrum);
+          if (empty == null || empty < 0) return fieldErr(`l${i}.emptyDrum`, empty != null ? "Minus Quantity Not Allowed" : "Empty drum weight is required");
+          qty = netWeight(num(l.weight), int(l.drums), empty);
+          if (qty == null) return fieldErr(`l${i}.weight`, "The empty drums weigh as much as the load — check the scale");
+        } else {
+          qty = num(l.qty);
+          if (qty == null || qty <= 0) return fieldErr(`l${i}.qty`, qty != null && qty < 0 ? "Minus Quantity Not Allowed" : "Weight without drum is required");
+        }
         parsed.push({ l, m, qty });
       }
       /*
@@ -722,6 +741,7 @@ const inward: ScreenModule = {
             rawMaterialId: m.id,
             drums: m.materialType === "Chemical" ? int(l.drums) : null,
             weightWithDrum: m.materialType === "Chemical" ? num(l.weight) : null,
+            emptyDrumWeight: m.materialType === "Chemical" ? num(l.emptyDrum) : null,
             quantity: qty,
             unit,
             remark: text(l.remark),
@@ -743,6 +763,7 @@ const inward: ScreenModule = {
             unit: unit === "Unit" ? "Pcs" : unit,
             godownId,
             drums: m.materialType === "Chemical" ? int(l.drums) : null,
+            weightWithDrum: m.materialType === "Chemical" ? num(l.weight) : null,
             remark: text(l.remark),
             source: "inward",
             inwardId,
