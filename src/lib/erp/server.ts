@@ -1,8 +1,8 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { auditLog } from "@/db/schema";
+import { auditLog, erpSeries } from "@/db/schema";
 import type { Result } from "@/lib/result";
 import type { ErpContext } from "./access";
 import type { ListRow, ListSpec, FormSpec, CellValue } from "./ui";
@@ -53,6 +53,51 @@ export async function nextNumber(
   const rows = (await tx.execute(sql`update erp_series set last = last + 1 where key = ${key} returning last`)) as unknown as { last: number }[];
   if (!rows[0]) throw new Error(`No ERP series "${key}"`);
   return Number(rows[0].last);
+}
+
+/**
+ * What the next number in a series WOULD be, for a form to offer — the way an
+ * invoice opens with the next invoice number already filled in. A suggestion,
+ * never a claim: nothing is reserved, and `claimNumber` decides on save.
+ */
+export async function peekNumber(key: "pr" | "sfg" | "fg" | "packBatch" | "order"): Promise<number> {
+  const [row] = await db.select({ last: erpSeries.last }).from(erpSeries).where(eq(erpSeries.key, key));
+  return (row?.last ?? 0) + 1;
+}
+
+/**
+ * The number a document is saved under, given what the form offered and what
+ * came back — safe for several people saving at once, and never random.
+ *
+ * The series row is locked FIRST, so every claim on a series waits its turn
+ * and the "is it free?" check cannot race another save.
+ *
+ * Left as offered (or blank), the number is DRAWN in sequence: two people who
+ * both opened the form on 1229 get 1229 and 1230, and the second is told
+ * (`moved`) rather than refused for a number they never chose. A drawn number
+ * already used — a PR typed in before this existed — is skipped.
+ *
+ * Typed over, the typed number stands if it is free, and the series moves past
+ * it so no form offers it again. `typedMayRepeat` is for a document that may
+ * legitimately share a number with another (a register entry for an inward's
+ * PR); the caller's own unique key then guards the collision.
+ */
+export async function claimNumber(
+  tx: { execute: (q: ReturnType<typeof sql>) => Promise<unknown> },
+  key: "pr" | "sfg" | "fg" | "packBatch" | "order",
+  typed: number | null,
+  offered: number | null,
+  opts: { inUse: (n: number) => Promise<boolean>; typedMayRepeat?: boolean },
+): Promise<{ ok: true; n: number; moved: boolean } | { ok: false; n: number }> {
+  await tx.execute(sql`select last from erp_series where key = ${key} for update`);
+  if (typed == null || typed === offered) {
+    let n = await nextNumber(tx, key);
+    while (await opts.inUse(n)) n = await nextNumber(tx, key);
+    return { ok: true, n, moved: offered != null && n !== offered };
+  }
+  if (!opts.typedMayRepeat && (await opts.inUse(typed))) return { ok: false, n: typed };
+  await tx.execute(sql`update erp_series set last = greatest(last, ${typed}::int) where key = ${key}`);
+  return { ok: true, n: typed, moved: false };
 }
 
 /** `erpgd_3f9c…` — a readable prefix and enough randomness to never collide. */
