@@ -274,7 +274,7 @@ const sfgBatches: ScreenModule = {
           fields: [
             { l: "Available SFG (litres)", v: nf(sfgYield(x.l.totalUse, x.l.litresAdjusted)), der: true },
             ...(recipeFor(x) != null
-              ? [{ l: "Recipe", v: `${nf(recipeFor(x)! * Number(x.l.batches))} for ${nf(Number(x.l.batches))} batch${Number(x.l.batches) === 1 ? "" : "es"} · this batch used ${nf(usedBy.get(`${x.l.sfgNo}|${x.l.rawMaterialId}`) ?? 0)}`, der: true }]
+              ? [{ l: "Recipe", v: `${nf(recipeFor(x)! * Number(x.l.batches))} Ltr for ${nf(Number(x.l.batches))} batch${Number(x.l.batches) === 1 ? "" : "es"} · this batch used ${nf(usedBy.get(`${x.l.sfgNo}|${x.l.rawMaterialId}`) ?? 0)} Ltr`, der: true }]
               : []),
           ],
           actions,
