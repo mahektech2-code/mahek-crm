@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/primitives";
 import { Drawer, DrawerHeader, FilterPills, Modal, RowMenu, ConfirmDialog } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
+import { calendarDate } from "@/lib/business-date";
 import { StatusBadge } from "../status-badge";
 import { PRODUCTS, type Product, type Status } from "../mock-data";
 
@@ -140,7 +141,7 @@ function ProductEditor({
       category: "Thinners",
       status: "draft",
       description: "",
-      updatedAt: new Date().toISOString().slice(0, 10),
+      updatedAt: calendarDate(new Date()),
     },
   );
 
@@ -175,7 +176,7 @@ function ProductEditor({
   const footer = (
     <>
       <Button variant="secondary" onClick={onClose}>Cancel</Button>
-      <Button variant="primary" onClick={() => onSave({ ...form, updatedAt: new Date().toISOString().slice(0, 10) })}>
+      <Button variant="primary" onClick={() => onSave({ ...form, updatedAt: calendarDate(new Date()) })}>
         {isNew ? "Add product" : "Save"}
       </Button>
     </>

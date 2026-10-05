@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/primitives";
 import { Drawer, DrawerHeader, Modal, RowMenu, ConfirmDialog } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
+import { calendarDate } from "@/lib/business-date";
 import { StatusBadge } from "../status-badge";
 import { GALLERY, type GalleryItem, type Status } from "../mock-data";
 
@@ -102,7 +103,7 @@ function GalleryEditor({
       title: "",
       category: "Facility",
       status: "draft",
-      updatedAt: new Date().toISOString().slice(0, 10),
+      updatedAt: calendarDate(new Date()),
     },
   );
 
@@ -138,7 +139,7 @@ function GalleryEditor({
   const footer = (
     <>
       <Button variant="secondary" onClick={onClose}>Cancel</Button>
-      <Button variant="primary" onClick={() => onSave({ ...form, updatedAt: new Date().toISOString().slice(0, 10) })}>
+      <Button variant="primary" onClick={() => onSave({ ...form, updatedAt: calendarDate(new Date()) })}>
         {isNew ? "Upload" : "Save"}
       </Button>
     </>

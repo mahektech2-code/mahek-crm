@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/primitives";
 import { Drawer, DrawerHeader, Modal, RowMenu, ConfirmDialog } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
+import { calendarDate } from "@/lib/business-date";
 import { StatusBadge } from "../status-badge";
 import { JOBS, type Job, type Status } from "../mock-data";
 
@@ -127,7 +128,7 @@ function JobEditor({
       department: "Manufacturing",
       location: "",
       status: "draft",
-      updatedAt: new Date().toISOString().slice(0, 10),
+      updatedAt: calendarDate(new Date()),
     },
   );
 
@@ -160,7 +161,7 @@ function JobEditor({
   const footer = (
     <>
       <Button variant="secondary" onClick={onClose}>Cancel</Button>
-      <Button variant="primary" onClick={() => onSave({ ...form, updatedAt: new Date().toISOString().slice(0, 10) })}>
+      <Button variant="primary" onClick={() => onSave({ ...form, updatedAt: calendarDate(new Date()) })}>
         {isNew ? "Add job" : "Save"}
       </Button>
     </>

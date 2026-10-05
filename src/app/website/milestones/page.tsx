@@ -4,6 +4,7 @@ import * as React from "react";
 import { Button, Card, Field, Input, PageHeader, Select, Td, Th, Tr, EmptyState } from "@/components/ui/primitives";
 import { Drawer, DrawerHeader, Modal, RowMenu, ConfirmDialog } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
+import { calendarDate } from "@/lib/business-date";
 import { StatusBadge } from "../status-badge";
 import { MILESTONES, type Milestone, type Status } from "../mock-data";
 
@@ -104,10 +105,10 @@ function MilestoneEditor({
   const [form, setForm] = React.useState<Milestone>(() =>
     milestone ?? {
       id: `ms${Date.now()}`,
-      year: new Date().getFullYear().toString(),
+      year: calendarDate(new Date()).slice(0, 4),
       title: "",
       status: "draft",
-      updatedAt: new Date().toISOString().slice(0, 10),
+      updatedAt: calendarDate(new Date()),
     },
   );
 
@@ -132,7 +133,7 @@ function MilestoneEditor({
   const footer = (
     <>
       <Button variant="secondary" onClick={onClose}>Cancel</Button>
-      <Button variant="primary" onClick={() => onSave({ ...form, updatedAt: new Date().toISOString().slice(0, 10) })}>
+      <Button variant="primary" onClick={() => onSave({ ...form, updatedAt: calendarDate(new Date()) })}>
         {isNew ? "Add milestone" : "Save"}
       </Button>
     </>
