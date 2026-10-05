@@ -12,13 +12,14 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { appAccess, erpInward, erpPurchases, erpRawMaterials, erpRmEntries, erpSuppliers, erpTests, users } from "@/db/schema";
+import { appAccess, appSettings, erpInward, erpPrCosts, erpPurchases, erpRawMaterials, erpRmEntries, erpSuppliers, erpTests, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { erpContext } from "@/lib/erp/access";
 import { screenModule } from "@/lib/erp/screens";
 import { purchaseStage } from "@/lib/erp/screens/purchase";
 import { rmLots, rmLotStock } from "@/lib/erp/stock";
 import { erpNavCounts } from "@/lib/erp/counts";
+import { invalidateConfig } from "@/lib/config/store";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -53,6 +54,7 @@ const mod = (k: string) => {
 let admin: typeof users.$inferSelect;
 let clerk: typeof users.$inferSelect;
 const TODAY = "2026-09-20";
+const NONE = "No Transport Charges";
 
 before(async () => {
   await db.execute(
@@ -77,9 +79,9 @@ after(async () => {
 describe("inward", () => {
   test("one inward draws one PR for all its lines, and sends each where it is going as it is saved", async () => {
     const ctx = await as(admin);
-    const r = await mod("inward").forms!.new(ctx, { date: TODAY, supplier: "Asian Solvents", godown: "Bhiwandi" }, [
-      { type: "Chemical", item: "Toluene", drums: "2", weight: "400", qty: "360" },
-      { type: "Chemical", item: "MEK", drums: "1", qty: "160" },
+    const r = await mod("inward").forms!.new(ctx, { date: TODAY, supplier: "Asian Solvents", godown: "Bhiwandi", transportMode: NONE }, [
+      { type: "Chemical", item: "Toluene", drums: "2", qty: "360" },
+      { type: "Chemical", item: "MEK", drums: "1", weight: "175", emptyDrum: "15" },
       { type: "Can", item: "1 L Tin Can", qty: "500" },
     ]);
     assert.ok(r.ok, JSON.stringify(r));
@@ -99,7 +101,7 @@ describe("inward", () => {
 
   test("a minus quantity is refused in the source's words", async () => {
     const ctx = await as(admin);
-    const r = await mod("inward").forms!.new(ctx, { date: TODAY, supplier: "Asian Solvents", godown: "Bhiwandi" }, [{ type: "Can", item: "1 L Tin Can", qty: "-4" }]);
+    const r = await mod("inward").forms!.new(ctx, { date: TODAY, supplier: "Asian Solvents", godown: "Bhiwandi", transportMode: NONE }, [{ type: "Can", item: "1 L Tin Can", qty: "-4" }]);
     assert.ok(!r.ok && r.fieldErrors?.[0].message === "Minus Quantity Not Allowed");
   });
 
@@ -261,7 +263,7 @@ describe("the PR number, offered like an invoice number", () => {
     return form.init!.prOffered;
   };
   const save = async (h: Record<string, string>) =>
-    mod("inward").forms!.new(await as(admin), { date: TODAY, supplier: "Asian Solvents", godown: "Bhiwandi", ...h }, [{ type: "Can", item: "1 L Tin Can", qty: "10" }]);
+    mod("inward").forms!.new(await as(admin), { date: TODAY, supplier: "Asian Solvents", godown: "Bhiwandi", transportMode: NONE, ...h }, [{ type: "Can", item: "1 L Tin Can", qty: "10" }]);
 
   test("the form opens on the next number, and it can be typed over", async () => {
     const next = await offered();
@@ -288,5 +290,110 @@ describe("the PR number, offered like an invoice number", () => {
     assert.equal(await offered(), String(Number(jump) + 1), "the next form does not offer a number already used");
     const again = await save({ pr: jump, prOffered: await offered() });
     assert.ok(!again.ok && again.fieldErrors?.[0].field === "pr", JSON.stringify(again));
+  });
+});
+
+describe("transport and landing cost", () => {
+  const ratePerKm = async (paise: number) => {
+    await db
+      .insert(appSettings)
+      .values({ key: "erp.purchase.ownVehicleRatePerKmPaise", value: paise, valueType: "integer", category: "erp", label: "Own vehicle rate per km" })
+      .onConflictDoUpdate({ target: appSettings.key, set: { value: paise } });
+    invalidateConfig();
+  };
+  const inward = async (h: Record<string, string>, lines: Record<string, string>[]) =>
+    mod("inward").forms!.new(await as(admin), { date: TODAY, supplier: "Asian Solvents", godown: "Bhiwandi", ...h }, lines);
+  const prOf = (r: { ok: boolean; message?: string }) => Number(/^PR (\d+)/.exec(r.message ?? "")?.[1]);
+
+  after(async () => {
+    await db.execute(sql`delete from app_settings where key = 'erp.purchase.ownVehicleRatePerKmPaise'`);
+    invalidateConfig();
+  });
+
+  test("weight with drum is required for a kg item and optional for a litre one", async () => {
+    const kg = await inward({ transportMode: "No Transport Charges" }, [{ type: "Chemical", item: "MEK", drums: "1", qty: "160" }]);
+    assert.ok(!kg.ok && kg.fieldErrors?.[0].field === "l0.weight", JSON.stringify(kg));
+    const noTare = await inward({ transportMode: "No Transport Charges" }, [{ type: "Chemical", item: "MEK", drums: "1", weight: "175" }]);
+    assert.ok(!noTare.ok && noTare.fieldErrors?.[0].field === "l0.emptyDrum", JSON.stringify(noTare));
+    const litre = await inward({ transportMode: "No Transport Charges" }, [{ type: "Chemical", item: "Toluene", drums: "1", qty: "180" }]);
+    assert.ok(litre.ok, JSON.stringify(litre));
+  });
+
+  test("our own vehicle is km × the approved rate, copied onto the PR; with no rate it is refused", async () => {
+    await ratePerKm(0);
+    const refused = await inward({ transportMode: "Mahek Own Vehicle", km: "40", tempo: "MH04 AB 1234" }, [{ type: "Can", item: "1 L Tin Can", qty: "10" }]);
+    assert.ok(!refused.ok && refused.fieldErrors?.[0].field === "km", JSON.stringify(refused));
+    await ratePerKm(1800);
+    const noTempo = await inward({ transportMode: "Mahek Own Vehicle", km: "40" }, [{ type: "Can", item: "1 L Tin Can", qty: "10" }]);
+    assert.ok(!noTempo.ok && noTempo.fieldErrors?.[0].field === "tempo");
+    const r = await inward({ transportMode: "Mahek Own Vehicle", km: "42.5", tempo: "MH04 AB 1234", transportCost: "1" }, [{ type: "Can", item: "1 L Tin Can", qty: "10" }]);
+    assert.ok(r.ok, JSON.stringify(r));
+    const [c] = await db.select().from(erpPrCosts).where(eq(erpPrCosts.prNumber, prOf(r)));
+    assert.equal(c.transportCostPaise, 76500, "42.5 km × ₹18 — a typed cost is ignored for our own vehicle");
+    assert.equal(c.ratePerKmPaise, 1800);
+    await ratePerKm(2500);
+    const [still] = await db.select().from(erpPrCosts).where(eq(erpPrCosts.prNumber, prOf(r)));
+    assert.equal(still.transportCostPaise, 76500, "a new rate never reprices a journey already made");
+  });
+
+  test("supplier freight and other cost are shared by value, and the stock rate is the landed rate", async () => {
+    const r = await inward({ transportMode: "Supplier Transport", transportCost: "2360", tempo: "GJ05 X 9", otherCost: "640", otherNote: "Unloading" }, [
+      { type: "Can", item: "1 L Tin Can", qty: "100" },
+      { type: "Chemical", item: "MEK", drums: "1", weight: "220", emptyDrum: "20" },
+    ]);
+    assert.ok(r.ok, JSON.stringify(r));
+    const pr = prOf(r);
+    const regs = await db.select().from(erpPurchases).where(eq(erpPurchases.prNumber, pr));
+    const can = regs.find((x) => x.rawMaterialId === "rm_can")!;
+    const mek = regs.find((x) => x.rawMaterialId === "rm_mek")!;
+    const ctx = await as(admin);
+    await mod("register").actions!.rate(ctx, can.id, { rate: "10" });
+    /* Only the can has a rate: it carries the whole ₹3,000 for now. */
+    let lots = await rmLots();
+    assert.equal(lots.find((l) => l.lotNo === can.lotNo)?.ratePaise, 4000, "₹1,000 of cans + ₹3,000 = ₹40 a can");
+    await mod("register").actions!.rate(ctx, mek.id, { rate: "90" });
+    /* Cans ₹1,000 and MEK ₹18,000: the ₹3,000 splits 1:18. */
+    lots = await rmLots();
+    assert.equal(lots.find((l) => l.lotNo === can.lotNo)?.ratePaise, 1158, "₹1,000 + ₹157.89 over 100 cans");
+    assert.equal(lots.find((l) => l.lotNo === mek.lotNo)?.ratePaise, 8337, "(₹18,000 + ₹2,842.11) ÷ 200 kg is ₹104.21 a kg, × density 0.8");
+    const { rows } = await mod("register").load(ctx);
+    assert.equal(rows.find((x) => x.id === mek.id)?.v.landing, 2084211);
+  });
+
+  test("transport is recorded or corrected after the inward, once for the PR", async () => {
+    const r = await inward({ transportMode: "No Transport Charges" }, [{ type: "Can", item: "1 L Tin Can", qty: "5" }]);
+    const pr = prOf(r);
+    const ctx = await as(admin);
+    const fixed = await mod("inward").forms!.costs(ctx, { transportMode: "Third-Party Transport", transportCost: "500", tempo: "MH12 Z 1" }, [], String(pr));
+    assert.ok(fixed.ok, JSON.stringify(fixed));
+    const [c] = await db.select().from(erpPrCosts).where(eq(erpPrCosts.prNumber, pr));
+    assert.equal(c.transportMode, "third_party");
+    assert.equal(c.transportCostPaise, 50000);
+    const missing = await mod("inward").forms!.costs(ctx, { transportMode: "Supplier Transport" }, [], String(pr));
+    assert.ok(!missing.ok && missing.fieldErrors?.[0].field === "transportCost");
+  });
+});
+
+describe("net quantity off the scale", () => {
+  test("a kg line's weight without drum is weight with drum − drums × empty drum weight, whatever was typed", async () => {
+    const ctx = await as(admin);
+    const r = await mod("inward").forms!.new(ctx, { date: TODAY, supplier: "Asian Solvents", godown: "Bhiwandi", transportMode: NONE }, [
+      { type: "Chemical", item: "MEK", drums: "4", weight: "872", emptyDrum: "18", qty: "999" },
+    ]);
+    assert.ok(r.ok, JSON.stringify(r));
+    const pr = Number(/^PR (\d+)/.exec(r.message ?? "")?.[1]);
+    const [line] = await db.select().from(erpInward).where(eq(erpInward.prNumber, pr));
+    assert.equal(line.quantity, 800, "872 − 4 × 18");
+    assert.equal(line.emptyDrumWeight, 18);
+    const [reg] = await db.select().from(erpPurchases).where(eq(erpPurchases.inwardId, line.id));
+    assert.equal(reg.quantity, 800, "the register gets the net, not the gross");
+    assert.equal(reg.weightWithDrum, 872);
+  });
+
+  test("drums as heavy as the load is refused as a misread scale", async () => {
+    const r = await mod("inward").forms!.new(await as(admin), { date: TODAY, supplier: "Asian Solvents", godown: "Bhiwandi", transportMode: NONE }, [
+      { type: "Chemical", item: "MEK", drums: "5", weight: "90", emptyDrum: "18" },
+    ]);
+    assert.ok(!r.ok && r.fieldErrors?.[0].field === "l0.weight", JSON.stringify(r));
   });
 });

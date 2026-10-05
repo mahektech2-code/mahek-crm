@@ -786,6 +786,7 @@ export const VERBS: Record<string, string> = {
   applySuggestion: "applied the suggested {0}",
   toTesting: "sent {} for testing",
   toPurchase: "sent {} on to purchase",
+  costs: "recorded the transport and inward cost of",
   billReceived: "marked the bill received on",
   billNotReceived: "marked the bill not received on",
   issueCn: "issued a credit note on",
