@@ -6,7 +6,7 @@ import { Button, cx } from "@/components/ui/primitives";
 import { ConfirmDialog, Drawer, DrawerHeader, Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import type { ActionSpec, BulkSpec, FieldSpec, FormSpec, PromptSpec, ToolResult, ToolSpec } from "@/lib/erp/ui";
-import { whenHolds } from "@/lib/erp/ui";
+import { resolveField, whenHolds } from "@/lib/erp/ui";
 import { runCalc } from "@/lib/erp/calc";
 import "@/lib/erp/calcs";
 import type { Result } from "@/lib/result";
@@ -371,15 +371,16 @@ function FormDrawer({
   const data = spec.data ?? {};
 
   const visible = (f: FieldSpec, l: Record<string, string> = {}) => whenHolds(f.when, { ...h, ...l }, data);
+  const resolved = (f: FieldSpec, l: Record<string, string> = {}) => resolveField(f, { ...h, ...l }, data);
 
   const submit = () => {
     const e: Record<string, string> = {};
-    spec.header.filter((f) => visible(f)).forEach((f) => {
+    spec.header.filter((f) => visible(f)).map((f) => resolved(f)).forEach((f) => {
       const m = checkField(f, h[f.k] ?? "");
       if (m) e[`h.${f.k}`] = m;
     });
     lines.forEach((l, i) =>
-      (spec.line ?? []).filter((f) => visible(f, l)).forEach((f) => {
+      (spec.line ?? []).filter((f) => visible(f, l)).map((f) => resolved(f, l)).forEach((f) => {
         const m = checkField(f, l[f.k] ?? "");
         if (m) e[`l${i}.${f.k}`] = m;
       }),
@@ -420,6 +421,7 @@ function FormDrawer({
         <Block title={spec.line ? "Header" : ""}>
           {spec.header
             .filter((f) => visible(f))
+            .map((f) => resolved(f))
             .map((f, i, shown) => (
               <Fragment key={f.k}>
               {f.sec && f.sec !== shown[i - 1]?.sec ? (
@@ -452,6 +454,7 @@ function FormDrawer({
               >
                 {spec.line!
                   .filter((f) => visible(f, l))
+                  .map((f) => resolved(f, l))
                   .map((f) => (
                     <Field
                       key={f.k}

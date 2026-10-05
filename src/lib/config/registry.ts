@@ -4231,6 +4231,17 @@ export const SETTINGS = [
     default: { time: [180, 90], description: [25, 15] },
   },
   {
+    key: "erp.purchase.ownVehicleRatePerKmPaise",
+    type: "integer",
+    category: "erp",
+    label: "Own vehicle rate per km",
+    description:
+      "Paise per kilometre. A purchase inward brought in on Mahek's own vehicle is costed at kilometres × this rate, so nobody prices our own tempo by hand. The rate is copied onto each inward as it is saved, so changing it later never reprices a journey already made. Zero means no rate is approved yet, and an own-vehicle inward is refused until one is.",
+    default: 0,
+    min: 0,
+    max: 100000,
+  },
+  {
     key: "erp.production.recipeTolerancePercent",
     type: "integer",
     category: "erp",
@@ -5452,6 +5463,7 @@ export type Config = {
   "hrms.performance.pointBands": { time: [number, number]; description: [number, number] };
 
   "erp.orders.live": boolean;
+  "erp.purchase.ownVehicleRatePerKmPaise": number;
   "erp.production.recipeTolerancePercent": number;
   "erp.ai.voice.enabled": boolean;
   "erp.ai.alerts.enabled": boolean;

@@ -10939,6 +10939,43 @@ export const erpInward = pgTable(
 );
 
 /**
+ * WHAT IT COST TO GET A PR TO THE GATE, beyond the goods — once per PR,
+ * because a delivery is one vehicle however many items ride on it. Landing
+ * cost is material + transport + other direct inward cost, and each lot's
+ * share of the last two is worked out on read, by value, by
+ * `shareInwardCost` — never stored, so a rate entered on the register a week
+ * later moves the split with nothing to rebuild.
+ *
+ * `rate_per_km_paise` is the approved rate COPIED at save: changing the
+ * setting next month must not reprice a journey already made.
+ */
+export const erpPrCosts = pgTable(
+  "erp_pr_costs",
+  {
+    prNumber: integer("pr_number").primaryKey(),
+    /** supplier | own_vehicle | third_party | none. */
+    transportMode: text("transport_mode").notNull(),
+    /** What it came to: the bill for supplier/third-party, km × rate for own vehicle, 0 for none. */
+    transportCostPaise: bigint("transport_cost_paise", { mode: "number" }).notNull().default(0),
+    km: numeric("km", { precision: 10, scale: 1, mode: "number" }),
+    ratePerKmPaise: bigint("rate_per_km_paise", { mode: "number" }),
+    tempoNumber: text("tempo_number"),
+    otherCostPaise: bigint("other_cost_paise", { mode: "number" }).notNull().default(0),
+    otherCostNote: text("other_cost_note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [
+    check("erp_pr_costs_mode_check", sql`${t.transportMode} in ('supplier', 'own_vehicle', 'third_party', 'none')`),
+    check("erp_pr_costs_amounts_check", sql`${t.transportCostPaise} >= 0 and ${t.otherCostPaise} >= 0`),
+    check("erp_pr_costs_own_vehicle_check", sql`${t.transportMode} <> 'own_vehicle' or (${t.km} is not null and ${t.ratePerKmPaise} is not null)`),
+    check("erp_pr_costs_none_check", sql`${t.transportMode} <> 'none' or ${t.transportCostPaise} = 0`),
+  ],
+);
+
+/**
  * A purchase quality test (spec §5.4). The evidence columns hold attachment
  * ids (bound to this row as parent `erp_test`). Only the verifier decides it,
  * and verifying creates the purchase register row in the same transaction.

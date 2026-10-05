@@ -1,5 +1,5 @@
 import { fmt, n, registerCalc } from "../calc";
-import { lotNumber, purchaseFigures } from "../engines/purchase";
+import { lotNumber, purchaseFigures, transportCostPaise, transportModeByLabel } from "../engines/purchase";
 
 /* ---------------------------------------------------------------------------
  * The purchase forms' derived fields. The server recomputes each on save from
@@ -74,4 +74,33 @@ registerCalc("register.summary", ({ h, data }) => {
   return f.finalPaise == null || f.finalPaise <= 0
     ? `warn:No rate yet — this lot will not reach stock until a rate above zero is entered.`
     : `ok:Posts ${fmt(f.availableLitres, 0)} to stock at the chosen godown.`;
+});
+
+/* Transport and other inward cost, once per PR (see erp_pr_costs). */
+function inwardCosts(h: Record<string, string>, data: Record<string, unknown>) {
+  const mode = transportModeByLabel(h.transportMode);
+  if (!mode) return null;
+  const rupees = (v: string | undefined) => {
+    const x = n(v);
+    return x == null || Number.isNaN(x) ? null : Math.round(x * 100);
+  };
+  const ratePerKmPaise = Number(data.ratePerKmPaise ?? 0);
+  const transport = transportCostPaise({ mode, billedPaise: rupees(h.transportCost), km: n(h.km), ratePerKmPaise });
+  return { mode, transport, other: rupees(h.otherCost) ?? 0, ratePerKmPaise };
+}
+
+registerCalc("inward.ownCost", ({ h, data }) => {
+  const c = inwardCosts(h, data);
+  if (!c) return "";
+  if (!c.ratePerKmPaise) return "No approved ₹/KM rate yet — an admin sets it in ERP settings";
+  if (c.transport == null) return `Kilometres × ₹${fmt(c.ratePerKmPaise / 100)} a km`;
+  return `₹${fmt(c.transport / 100)} · ${fmt(n(h.km) ?? 0, 1)} km × ₹${fmt(c.ratePerKmPaise / 100)}`;
+});
+
+registerCalc("inward.landing", ({ h, data }) => {
+  const c = inwardCosts(h, data);
+  if (!c || c.transport == null) return "";
+  const total = c.transport + c.other;
+  if (!total) return "No transport or other cost — landing cost is the material cost.";
+  return `₹${fmt(total / 100)} to add to the material cost, shared across the items by value once their rates are in.`;
 });
