@@ -5,7 +5,7 @@ import { z } from "zod";
  *
  * The call assistant reads a conversation into an OUTCOME; the visit assistant
  * reads one into a shop's ACTIONS. This reads one into the Calling Desk's own
- * twelve answers (`DESK_FIELDS` in `lib/engines/lead-calling-desk.ts`) and
+ * eleven answers (`DESK_FIELDS` in `lib/engines/lead-calling-desk.ts`) and
  * nothing else — it does not classify the call, does not pick a direction, and
  * does not decide whether the lead moves. One optional slot per `DeskFieldKey`,
  * each carrying what was said, how sure the model is, and the words it came
@@ -36,14 +36,6 @@ export const leadCallReadingSchema = z.object({
     .nullable(),
   monthlyLitres: slot
     .extend({ value: z.number().nullable().describe("Litres a month. Null if not said.") })
-    .nullable(),
-  potentialRupees: slot
-    .extend({
-      value: z
-        .number()
-        .nullable()
-        .describe("Expected monthly sales in whole RUPEES (not paise). 50 hazar = 50000."),
-    })
     .nullable(),
   product: slot
     .extend({ value: z.string().nullable().describe("The product AS THE CUSTOMER NAMED IT — never an id.") })
@@ -86,11 +78,10 @@ export const leadCallReadingSchema = z.object({
 
 export type LeadCallReading = z.infer<typeof leadCallReadingSchema>;
 
-/** The twelve desk keys this reading can ever propose a value for. */
+/** The eleven desk keys this reading can ever propose a value for. */
 export const LEAD_CALL_READING_KEYS = [
   "customerType",
   "monthlyLitres",
-  "potentialRupees",
   "product",
   "competitor",
   "application",
@@ -106,7 +97,6 @@ export const LEAD_CALL_READING_KEYS = [
 export const LEAD_CALL_SHAPE_HINT = JSON.stringify({
   customerType: { value: "dealer|manufacturer|distributor|retailer|null", confidence: 0, evidence: "" },
   monthlyLitres: { value: null, confidence: 0, evidence: "" },
-  potentialRupees: { value: null, confidence: 0, evidence: "" },
   product: { value: null, confidence: 0, evidence: "" },
   competitor: { value: null, confidence: 0, evidence: "" },
   application: { value: null, confidence: 0, evidence: "" },

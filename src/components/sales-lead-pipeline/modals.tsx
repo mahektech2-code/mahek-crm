@@ -214,7 +214,11 @@ function ConvertModal({ lead, onClose }: ModalProps) {
   if (!reason) missing.push("a reason");
   if (!customerType) missing.push("the customer type");
   for (const f of CONVERSION_FIELDS) {
-    if (f.key === "decisionMaker") continue;
+    /* Neither is needed for a Prospect: the decision maker is asked if known,
+       and the rupee estimate is no longer a question — the monthly requirement
+       in litres is the one monthly figure the gate wants. Both stay on the card
+       to confirm or correct where somebody recorded them. */
+    if (f.key === "decisionMaker" || f.key === "potentialPaise") continue;
     if (f.key === "product") {
       if (!productId) missing.push(f.label);
     } else if (!f.get(lead) && !valueFor(f)) missing.push(f.label);

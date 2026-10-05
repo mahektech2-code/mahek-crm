@@ -329,11 +329,11 @@ describe("C — the Telecaller", () => {
     await logQualificationCall({
       customerId: lead.id,
       outcome: "spoke_callback",
-      answers: { competitor: "Local" },
+      answers: { requiredProductId: productId },
       next: { kind: "call", text: "x", date: tomorrow },
     });
     const three = await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: {} });
-    assert.equal(three.ok && three.data.result, "lost");
+    assert.equal(three.ok && three.data.result, "lost", "the compulsory competitor was never learned");
     assert.equal((await row(lead.id)).leadStage, "lost");
     return lead;
   }
@@ -397,9 +397,8 @@ describe("C — the Telecaller", () => {
       customerId: lead.id,
       outcome: "spoke_collected",
       answers: {
-        requiredProductId: productId,
+        competitor: "Local thinner",
         decisionMaker: "Owner himself",
-        potentialPaise: 6_000_000,
       },
     });
     assert.equal(done.ok && done.data.result, "ready", done.ok ? "" : done.error);

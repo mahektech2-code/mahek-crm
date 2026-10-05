@@ -1,5 +1,4 @@
 import type { DeskField, DeskFieldKey } from "@/lib/engines/lead-calling-desk";
-import { parseAmounts } from "@/lib/engines/call-intel-signals";
 import type { ProductMatch } from "@/lib/engines/call-intel-decide";
 import type { LeadCallReading } from "@/lib/lead-call-intel-schema";
 
@@ -62,42 +61,11 @@ export type LeadCallDecideInput = {
   };
 };
 
-const rupees = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
-
 /** A positive integer, or null — the shape every litres/days box expects. */
 function intOrNull(n: number | null | undefined): number | null {
   if (n === null || n === undefined || !Number.isFinite(n)) return null;
   const r = Math.round(n);
   return r;
-}
-
-/**
- * An amount, checked against the words it was read from.
- *
- * Indian number words are where a model is confidently wrong by a zero, so
- * `parseAmounts` reads the same text independently. Agreement is `ready`;
- * disagreement is a question naming both — the same discipline the visit
- * engine's `checkedAmount` already keeps for money handed over on a visit.
- */
-function checkedAmount(
-  said: number | null,
-  text: string,
-  questions: string[],
-): { amount: number | null; sure: boolean } {
-  const heard = parseAmounts(text);
-  if (said != null && said > 0) {
-    if (!heard.length || heard.includes(Math.round(said))) {
-      return { amount: Math.round(said), sure: true };
-    }
-    const other = heard.find((h) => h !== Math.round(said));
-    questions.push(
-      other != null
-        ? `Was it ${rupees(said)} or ${rupees(other)}?`
-        : `Check the figure — ${rupees(said)}.`,
-    );
-    return { amount: Math.round(said), sure: false };
-  }
-  return { amount: null, sure: false };
 }
 
 /**
@@ -143,26 +111,6 @@ function fillFor(
         label: field.label,
         state: sure ? "ready" : "confirm",
         textValue: String(litres),
-        product: null,
-        confidence: slot.confidence,
-        evidence: slot.evidence || null,
-        questions: q,
-      };
-    }
-
-    case "potentialPaise": {
-      const slot = reading.potentialRupees;
-      if (!slot || slot.value == null) return null;
-      const { amount, sure } = checkedAmount(slot.value, input.text, q);
-      if (amount === null || amount <= 0) return null;
-      const confident = sure && slot.confidence >= conf;
-      if (!confident && q.length === 0) q.push(`Check the expected monthly sales — ${rupees(amount)}?`);
-      return {
-        key: field.key,
-        label: field.label,
-        state: confident ? "ready" : "confirm",
-        /* The box takes rupees and converts to paise itself (`paiseFrom`). */
-        textValue: String(amount),
         product: null,
         confidence: slot.confidence,
         evidence: slot.evidence || null,

@@ -79,7 +79,7 @@ function LeadRow({ r, base, day }: { r: DeskLeadRow; base: string; day: string }
           <>
             <CallMeter phase={r.phase} outcomes={r.callOutcomes} />
             <span className="text-[11px] text-muted">
-              {r.answered} / {r.required} required answers
+              {r.answered} / {r.needed} needed for Prospect
             </span>
           </>
         )}

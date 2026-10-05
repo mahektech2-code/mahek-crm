@@ -68,14 +68,13 @@ const NEXT_ACTION = {
 
 /* ============================================================ §5 §6 prospect */
 
-/** A suspect with all eight §6 answers. */
+/** A suspect with all seven §6 answers. */
 function prospectReady(over: Partial<LeadGateInput> = {}): LeadGateInput {
   return {
     salesType: "direct",
     stage: "suspect",
     customerType: "Furniture workshop",
     monthlyLitres: 400,
-    potentialPaise: 15_00_000,
     competitor: "Asian Paints",
     requiredProductId: "p1",
     contactPerson: "Ramesh",
@@ -85,25 +84,45 @@ function prospectReady(over: Partial<LeadGateInput> = {}): LeadGateInput {
   };
 }
 
-describe("§6 — the eight a suspect owes before it is a prospect", () => {
-  test("all eight answered opens the gate", () => {
+describe("§6 — the seven a suspect owes before it is a prospect", () => {
+  test("all seven answered opens the gate", () => {
     const v = gateTo(prospectReady(), "prospect");
     assert.deepEqual(v.missing, []);
     assert.equal(v.open, true);
   });
 
-  test("the conditions are the eight, and 'decision maker, if known' is not one", () => {
+  test("the conditions are the seven — no decision maker, and no rupee estimate", () => {
     assert.deepEqual(PROSPECT_CONDITIONS.map((c) => c.id), [
       "customer_type",
       "monthly_litres",
-      "potential_value",
       "competitor",
       "required_product",
       "contact_person",
       "next_action",
       "prospect_reason",
     ]);
-    assert.equal(PROSPECT_CONDITIONS.length, 8);
+    assert.equal(PROSPECT_CONDITIONS.length, 7);
+  });
+
+  test("a Prospect still needs Product and the monthly requirement in litres", () => {
+    for (const [id, gap] of [
+      ["required_product", { requiredProductId: null }],
+      ["monthly_litres", { monthlyLitres: null }],
+    ] as const) {
+      const v = gateTo(prospectReady(gap), "prospect");
+      assert.equal(v.open, false, id);
+      assert.deepEqual(v.missing.map((c) => c.id), [id]);
+    }
+  });
+
+  test("the decision maker is not needed — blank or named, the gate is the same", () => {
+    assert.equal(gateTo(prospectReady({ decisionMaker: null }), "prospect").open, true);
+    assert.equal(gateTo(prospectReady({ decisionMaker: "Suresh" }), "prospect").open, true);
+  });
+
+  test("the rupee estimate is not asked — a lead with none is not refused for it", () => {
+    assert.equal(gateTo(prospectReady({ potentialPaise: null }), "prospect").open, true);
+    assert.equal(gateTo(prospectReady({ potentialPaise: 15_00_000 }), "prospect").open, true);
   });
 
   /* One at a time, and the refusal has to NAME the one taken away — a refusal
@@ -111,7 +130,6 @@ describe("§6 — the eight a suspect owes before it is a prospect", () => {
   const KNOCKOUTS: Array<[string, Partial<LeadGateInput>]> = [
     ["customer_type", { customerType: null }],
     ["monthly_litres", { monthlyLitres: null }],
-    ["potential_value", { potentialPaise: null }],
     ["competitor", { competitor: "   " }],
     ["required_product", { requiredProductId: null }],
     ["contact_person", { contactPerson: null }],
@@ -233,7 +251,6 @@ describe("§5 — the eight before anybody may send a sample", () => {
     const named = bare.missing.map((m) => m.id);
     for (const id of [
       "monthly_litres",
-      "potential_value",
       "required_product",
       "competitor",
     ]) {

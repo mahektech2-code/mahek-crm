@@ -101,8 +101,11 @@ async function makeLead(over: Partial<typeof customers.$inferInsert> = {}) {
   return row;
 }
 
-const call1 = () => ({ monthlyLitres: 200, requiredProductId: productId, competitor: "Local thinner" });
-const call2 = { decisionMaker: "Owner himself", potentialPaise: 6_000_000 };
+/* Call 1 gives the competitor and the monthly requirement. Product is left for
+   Call 2 on purpose: it is needed for a Prospect but never compulsory on a call. */
+const call1 = () => ({ monthlyLitres: 200, competitor: "Local thinner" });
+/* Call 2 completes what a Prospect needs. No decision maker: it is optional. */
+const call2 = () => ({ requiredProductId: productId });
 
 /** A lead the desk has qualified completely, ready to be asked for. */
 async function readyLead(over: Partial<typeof customers.$inferInsert> = {}) {
@@ -110,7 +113,7 @@ async function readyLead(over: Partial<typeof customers.$inferInsert> = {}) {
   const r = await logQualificationCall({
     customerId: lead.id,
     outcome: "spoke_collected",
-    answers: { ...call1(), ...call2 },
+    answers: { ...call1(), ...call2() },
   });
   assert.equal(r.ok && r.data.result, "ready", r.ok ? "" : r.error);
   return lead;
@@ -185,7 +188,7 @@ after(async () => {
 });
 
 describe("Test A — ready after Call 2, with no third call forced", () => {
-  test("Call 1 partial, Call 2 completes the five", async () => {
+  test("Call 1 partial, Call 2 completes what a Prospect needs", async () => {
     const lead = await makeLead();
     const one = await logQualificationCall({
       customerId: lead.id,
@@ -197,7 +200,7 @@ describe("Test A — ready after Call 2, with no third call forced", () => {
     assert.equal(one.ok && one.data.result, "next");
     assert.equal((await deskLeadRecord(lead.id, DAY))?.phase, "call2");
 
-    const two = await logQualificationCall({ customerId: lead.id, outcome: "spoke_collected", answers: call2 });
+    const two = await logQualificationCall({ customerId: lead.id, outcome: "spoke_collected", answers: call2() });
     assert.equal(two.ok && two.data.result, "ready");
 
     const rec = await deskLeadRecord(lead.id, DAY);
@@ -211,12 +214,12 @@ describe("Test A — ready after Call 2, with no third call forced", () => {
     assert.equal(three.ok, false, "no further call on a lead that is ready");
   });
 
-  test("all five on Call 1 is ready straight away, and the twelve answers include the enquiry's own", async () => {
+  test("everything a Prospect needs on Call 1 is ready straight away, and the eleven answers include the enquiry's own", async () => {
     const lead = await makeLead({ email: "ganesh@shop.in", address: "Shop 12, Nashik" });
     const r = await logQualificationCall({
       customerId: lead.id,
       outcome: "spoke_collected",
-      answers: { ...call1(), ...call2, buyer: "Purchase head", creditDaysWanted: 30 },
+      answers: { ...call1(), ...call2(), buyer: "Purchase head", creditDaysWanted: 30 },
     });
     assert.equal(r.ok && r.data.result, "ready");
     const rec = await deskLeadRecord(lead.id, DAY);
@@ -269,7 +272,7 @@ describe("Test R — Request Prospect is a request, not a Prospect", () => {
     assert.equal((await stageOf(lead.id)).leadStage, "suspect");
   });
 
-  test("it is refused until every required answer is in", async () => {
+  test("it is refused until what a Prospect needs is in — and says what is not yet captured", async () => {
     const lead = await makeLead();
     await logQualificationCall({
       customerId: lead.id,
@@ -279,11 +282,12 @@ describe("Test R — Request Prospect is a request, not a Prospect", () => {
     });
     const r = await ask(lead.id, { customerType: "dealer" });
     assert.equal(r.ok, false);
-    assert.match(!r.ok ? r.error : "", /Decision maker/);
+    assert.match(!r.ok ? r.error : "", /Product/);
+    assert.doesNotMatch(!r.ok ? r.error : "", /Decision maker/, "the decision maker is never asked for");
     assert.equal((await stageOf(lead.id)).prospectRequestState, null);
   });
 
-  test("it asks for the two things the Prospect gate wants that are not among the five", async () => {
+  test("it asks for the two things the Prospect gate wants that are not desk answers", async () => {
     const lead = await readyLead({ contactPerson: null });
     const r = await requestProspect({ customerId: lead.id, reasonCode: "regular_requirement" });
     assert.equal(r.ok, false, "no business type or contact was given");
@@ -549,7 +553,7 @@ describe("Test X — Convert to Prospect: the calling desk's own direct promotio
       next: { kind: "call", text: "the rest", date: tomorrow },
     });
     assert.equal(one.ok && one.data.result, "next");
-    const two = await logQualificationCall({ customerId: lead.id, outcome: "spoke_collected", answers: call2 });
+    const two = await logQualificationCall({ customerId: lead.id, outcome: "spoke_collected", answers: call2() });
     assert.equal(two.ok && two.data.result, "ready");
 
     const r = await convert(lead.id);
@@ -564,7 +568,7 @@ describe("Test X — Convert to Prospect: the calling desk's own direct promotio
     const three = await logQualificationCall({
       customerId: lead.id,
       outcome: "spoke_collected",
-      answers: { requiredProductId: productId, competitor: "Asian", decisionMaker: "Owner", potentialPaise: 6_000_000 },
+      answers: { requiredProductId: productId, competitor: "Asian" },
     });
     assert.equal(three.ok && three.data.result, "ready");
 
@@ -583,12 +587,12 @@ describe("Test X — Convert to Prospect: the calling desk's own direct promotio
     });
     const r = await convert(lead.id);
     assert.equal(r.ok, false);
-    assert.match(!r.ok ? r.error : "", /Decision maker/);
+    assert.match(!r.ok ? r.error : "", /Product/);
     assert.equal((await stageOf(lead.id)).leadStage, "suspect", "a refused conversion writes nothing");
 
     /* Call 2 is still owed and accepted. */
     assert.equal((await deskLeadRecord(lead.id, DAY))?.phase, "call2");
-    const two = await logQualificationCall({ customerId: lead.id, outcome: "spoke_collected", answers: call2 });
+    const two = await logQualificationCall({ customerId: lead.id, outcome: "spoke_collected", answers: call2() });
     assert.equal(two.ok, true, two.ok ? "" : two.error);
   });
 
@@ -606,10 +610,10 @@ describe("Test X — Convert to Prospect: the calling desk's own direct promotio
     assert.equal(three.ok, true, three.ok ? "" : three.error);
   });
 
-  test("incomplete after Call 3 → the lead is Lost, and there is no path to convert it", async () => {
+  test("no competitor after Call 3 → the lead is Lost, and there is no path to convert it", async () => {
     const lead = await makeLead();
     await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: { monthlyLitres: 200 }, next: { kind: "call", text: "x", date: tomorrow } });
-    await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: { competitor: "Local" }, next: { kind: "call", text: "x", date: tomorrow } });
+    await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: { requiredProductId: productId }, next: { kind: "call", text: "x", date: tomorrow } });
     const last = await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: {} });
     assert.equal(last.ok && last.data.result, "lost");
     assert.equal((await stageOf(lead.id)).leadStage, "lost");
@@ -655,8 +659,8 @@ describe("Test X — Convert to Prospect: the calling desk's own direct promotio
     const row = await stageOf(lead.id);
     assert.equal(row.leadStage, "prospect");
     assert.equal(row.leadMonthlyVolumeLitres, 200, "the answers collected across the calls are untouched");
-    assert.equal(row.leadDecisionMaker, "Owner himself");
-    assert.equal(row.leadEstimatedPotentialPaise, 6_000_000);
+    assert.equal(row.leadDecisionMaker, null, "a decision maker nobody gave is not invented on the way");
+    assert.equal(row.leadEstimatedPotentialPaise, null, "and no rupee estimate was asked");
     assert.equal(row.leadCompetitor, "Local thinner");
     assert.equal(row.leadRequiredProductId, productId);
 
@@ -780,13 +784,14 @@ describe("Test B — Call 3 becomes available", () => {
 });
 
 describe("Test C — lost after Call 3, and no Call 4", () => {
+  /* Three calls that never learn the COMPULSORY competitor. */
   async function threeShortCalls(leadId: string) {
     await logQualificationCall({ customerId: leadId, outcome: "spoke_callback", answers: { monthlyLitres: 200 }, next: { kind: "call", text: "x", date: tomorrow } });
-    await logQualificationCall({ customerId: leadId, outcome: "spoke_callback", answers: { competitor: "Local" }, next: { kind: "call", text: "x", date: tomorrow } });
+    await logQualificationCall({ customerId: leadId, outcome: "spoke_callback", answers: { requiredProductId: productId }, next: { kind: "call", text: "x", date: tomorrow } });
     return logQualificationCall({ customerId: leadId, outcome: "spoke_callback", answers: {} });
   }
 
-  test("Call 3 finished and still short closes the lead as lost", async () => {
+  test("Call 3 finished with the competitor still missing closes the lead as lost", async () => {
     const lead = await makeLead();
     const last = await threeShortCalls(lead.id);
     assert.equal(last.ok, true, last.ok ? "" : last.error);
@@ -825,9 +830,48 @@ describe("Test C — lost after Call 3, and no Call 4", () => {
     const lead = await makeLead();
     await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: call1(), next: { kind: "call", text: "x", date: tomorrow } });
     await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: { decisionMaker: "Owner" }, next: { kind: "call", text: "x", date: tomorrow } });
-    const last = await logQualificationCall({ customerId: lead.id, outcome: "spoke_collected", answers: { potentialPaise: 6_000_000 } });
+    const last = await logQualificationCall({ customerId: lead.id, outcome: "spoke_collected", answers: call2() });
     assert.equal(last.ok && last.data.result, "ready");
     assert.equal((await stageOf(lead.id)).leadStage, "suspect");
+  });
+
+  test("Call 3 finished with Decision Maker, Product and Monthly requirement all blank is NOT lost", async () => {
+    const lead = await makeLead();
+    await logQualificationCall({ customerId: lead.id, outcome: "spoke_collected", answers: { competitor: "Local thinner" }, next: { kind: "call", text: "x", date: tomorrow } });
+    await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: {}, next: { kind: "call", text: "x", date: tomorrow } });
+    const last = await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: {} });
+    assert.equal(last.ok, true, last.ok ? "" : last.error);
+    assert.equal(last.ok && last.data.result, "exhausted");
+    assert.match(last.ok ? last.message ?? "" : "", /Not yet captured: Monthly requirement, Product/);
+
+    const row = await stageOf(lead.id);
+    assert.equal(row.leadStage, "suspect", "a blank answer never closes a lead");
+    assert.equal(row.leadLostReason, null);
+    assert.equal(row.leadMonthlyVolumeLitres, null);
+    assert.equal(row.leadRequiredProductId, null);
+    assert.equal(row.leadDecisionMaker, null);
+    assert.match(row.leadNextAction ?? "", /Capture what is still missing/);
+
+    const rec = await deskLeadRecord(lead.id, DAY);
+    assert.equal(rec?.phase, "exhausted", "it is where the desk already puts a lead after three calls");
+    assert.match(rec?.calls[2].finalDisposition ?? "", /not yet captured/i);
+    assert.equal((await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: {} })).ok, false, "still no Call 4");
+  });
+
+  test("an exhausted lead can be filled in on the record, and then asked for as a Prospect", async () => {
+    const lead = await makeLead();
+    await logQualificationCall({ customerId: lead.id, outcome: "spoke_collected", answers: { competitor: "Local thinner" }, next: { kind: "call", text: "x", date: tomorrow } });
+    await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: {}, next: { kind: "call", text: "x", date: tomorrow } });
+    await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: {} });
+    assert.equal((await ask(lead.id)).ok, false, "Product and Monthly requirement are still needed for a Prospect");
+
+    await db
+      .update(customers)
+      .set({ leadMonthlyVolumeLitres: 300, leadRequiredProductId: productId })
+      .where(eq(customers.id, lead.id));
+    assert.equal((await deskLeadRecord(lead.id, DAY))?.phase, "ready");
+    const asked = await ask(lead.id);
+    assert.equal(asked.ok, true, asked.ok ? "" : asked.error);
   });
 
   test("not interested and a wrong number close it at once, with the right reason", async () => {
@@ -837,6 +881,94 @@ describe("Test C — lost after Call 3, and no Call 4", () => {
     await logQualificationCall({ customerId: b.id, outcome: "wrong_number", answers: {} });
     assert.equal((await stageOf(a.id)).leadLostReason, "not_interested");
     assert.equal((await stageOf(b.id)).leadLostReason, "wrong_lead");
+  });
+});
+
+describe("Test O — Decision Maker, Product and Monthly requirement are optional on a call", () => {
+  test("a call saves with all three blank, and a blank is never an error", async () => {
+    const lead = await makeLead();
+    const r = await logQualificationCall({
+      customerId: lead.id,
+      outcome: "spoke_callback",
+      answers: { competitor: "Local thinner" },
+      next: { kind: "call", text: "the rest", date: tomorrow },
+    });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    assert.equal(r.ok && r.data.result, "next");
+    const row = await stageOf(lead.id);
+    assert.equal(row.leadDecisionMaker, null);
+    assert.equal(row.leadRequiredProductId, null);
+    assert.equal(row.leadMonthlyVolumeLitres, null);
+    assert.equal(row.leadStage, "suspect");
+  });
+
+  test("blank strings and zero litres are not stored as answers", async () => {
+    const lead = await makeLead();
+    const r = await logQualificationCall({
+      customerId: lead.id,
+      outcome: "spoke_callback",
+      answers: { competitor: "Local", decisionMaker: "", monthlyLitres: undefined },
+      next: { kind: "call", text: "x", date: tomorrow },
+    });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    const row = await stageOf(lead.id);
+    assert.equal(row.leadDecisionMaker, null);
+    assert.equal(row.leadMonthlyVolumeLitres, null);
+  });
+
+  test("a lead ready for Prospect has no decision maker, and is asked for and converted all the same", async () => {
+    const lead = await readyLead();
+    assert.equal((await stageOf(lead.id)).leadDecisionMaker, null);
+    const done = await convert(lead.id);
+    assert.equal(done.ok, true, done.ok ? "" : done.error);
+    assert.equal((await stageOf(lead.id)).leadStage, "prospect");
+  });
+
+  test("Prospect still needs Product — the request is refused without it, naming it", async () => {
+    const lead = await makeLead();
+    await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: { competitor: "Local", monthlyLitres: 200 }, next: { kind: "call", text: "x", date: tomorrow } });
+    const r = await ask(lead.id);
+    assert.equal(r.ok, false);
+    assert.match(!r.ok ? r.error : "", /Product/);
+    assert.equal((await stageOf(lead.id)).prospectRequestState, null);
+    const c = await convert(lead.id);
+    assert.equal(c.ok, false);
+    assert.equal((await stageOf(lead.id)).leadStage, "suspect");
+  });
+
+  test("Prospect still needs the Monthly requirement — the request is refused without it, naming it", async () => {
+    const lead = await makeLead();
+    await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: { competitor: "Local", requiredProductId: productId }, next: { kind: "call", text: "x", date: tomorrow } });
+    const r = await ask(lead.id);
+    assert.equal(r.ok, false);
+    assert.match(!r.ok ? r.error : "", /Monthly requirement/);
+    assert.equal((await stageOf(lead.id)).prospectRequestState, null);
+    assert.equal((await convert(lead.id)).ok, false);
+  });
+
+  test("the retired rupee estimate is neither asked nor stored by a call, and a stray value is dropped", async () => {
+    const lead = await makeLead();
+    const r = await logQualificationCall({
+      customerId: lead.id,
+      outcome: "spoke_callback",
+      answers: { competitor: "Local", potentialPaise: 6_000_000 } as never,
+      next: { kind: "call", text: "x", date: tomorrow },
+    });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    assert.equal((await stageOf(lead.id)).leadEstimatedPotentialPaise, null);
+    const rec = await deskLeadRecord(lead.id, DAY);
+    assert.ok(!Object.keys(rec?.values ?? {}).includes("potentialPaise"));
+  });
+
+  test("a lead somebody already gave an estimate keeps it, and is still ready without anyone asking again", async () => {
+    const lead = await makeLead({ leadEstimatedPotentialPaise: 9_000_000 });
+    const r = await logQualificationCall({
+      customerId: lead.id,
+      outcome: "spoke_collected",
+      answers: { ...call1(), ...call2() },
+    });
+    assert.equal(r.ok && r.data.result, "ready");
+    assert.equal((await stageOf(lead.id)).leadEstimatedPotentialPaise, 9_000_000, "nothing is deleted");
   });
 });
 
@@ -1007,8 +1139,8 @@ describe("round three: the record reads the way V6 draws it", () => {
     assert.ok(one.ok);
     assert.equal(said(one), "Call 1 / 3 saved. Call 2 due 5 Dec.");
 
-    const two = await logQualificationCall({ customerId: lead.id, outcome: "spoke_collected", answers: call2 });
-    assert.equal(said(two), "Call 2 / 3 saved. All required answers collected — Ready for Prospect.");
+    const two = await logQualificationCall({ customerId: lead.id, outcome: "spoke_collected", answers: call2() });
+    assert.equal(said(two), "Call 2 / 3 saved. Everything a Prospect needs is in — Ready for Prospect.");
 
     const other = await makeLead();
     const msg = await logQualificationCall({
@@ -1043,7 +1175,8 @@ describe("round three: the record reads the way V6 draws it", () => {
     assert.equal(rec?.marks.monthlyLitres?.kind, "unverified");
     assert.equal(rec?.marks.competitor?.kind, "corrected");
     assert.equal(rec?.marks.competitor?.was, "Local thinner");
-    assert.equal(rec?.marks.decisionMaker?.kind, "confirmed", "a passed verification confirms what nothing contradicted");
+    assert.equal(rec?.marks.requiredProductId?.kind, "confirmed", "a passed verification confirms what nothing contradicted");
+    assert.equal(rec?.marks.decisionMaker, undefined, "a blank decision maker is not captured, so there is nothing to confirm");
     assert.ok(rec?.verification && rec.verification.attempt >= 1);
     assert.equal(rec?.verification?.counts.unable, 1);
     assert.equal(rec?.verification?.counts.corrected, 1);
