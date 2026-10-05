@@ -1,6 +1,7 @@
 import { all, getKv, one, run, setKv, tx } from '../db';
 import { deviceId, type PullPayload, type TerritoryState } from './api';
 import { isoDate } from '../lib/format';
+import { CONVERTED_LEAD } from '../data/lead-query';
 
 /** Where `storeTerritory` files it, and where `territoryState` reads it back. */
 export const TERRITORY_KEY = 'territory';
@@ -96,7 +97,7 @@ export async function applyPull(pull: PullPayload): Promise<number> {
     /* AFTER the customer and lead upserts, so a mark set in the office today
        is seen, and BEFORE the book reconcile, which keeps any shop that still
        has a lead row. */
-    await c('thirdPartyLeads', () => releaseThirdPartyLeads());
+    await c('convertedLeads', () => releaseConvertedLeads());
     /* AFTER the tombstones and after the customer upsert, because it is the
        backstop for everything neither of them covered. */
     await c('book', () => reconcileBook(pull.bookIds));
@@ -1531,35 +1532,30 @@ export async function missingCustomerIds(): Promise<string[]> {
 }
 
 /**
- * A THIRD-PARTY SHOP IS A CUSTOMER, so it has no lead row on this phone.
+ * A LEAD THAT HAS BECOME A CUSTOMER HAS NO LEAD ROW ON THIS PHONE.
  *
- * A distributor we bill sells on to these shops, and the salesman visits them
- * to take orders for that distributor. Most were CRM leads before somebody
- * marked them, and the office sent them down the leads channel with their old
- * stage. Every screen here reads "is a lead" as a row in the leads table, so
- * they were listed under Leads, opened on the funnel instead of the record,
- * and asked to be qualified as Suspects.
+ * It began with third-party shops: most were CRM leads before somebody marked
+ * them, the office sent them down the leads channel with their old stage, and
+ * every screen here reads "is a lead" as a row in the leads table — so they
+ * were listed under Leads, opened on the funnel and asked to be qualified as
+ * Suspects. The same was true of every lead that converted by ordering: the
+ * channel stops sending a `won` lead, a pull only says what exists, and the
+ * row stayed at its last rung for the life of the installation.
  *
- * The office stopped sending them, but a pull only says what exists, and
- * nothing removes a lead row that is already here. This does, on every pass.
- * It checks the mark on both tables, because the customer row is the one the
- * office keeps current and the lead row may be all an older sync left.
+ * The office now tombstones a conversion, which ARCHIVES the row — off every
+ * Leads screen but the Archived one, where Mahek does not want it either. So
+ * this removes it, on every pass, by `CONVERTED_LEAD`: the same four facts the
+ * office's own Leads lists leave out, read from the customer row the office
+ * keeps current as well as from the lead row an older sync may have frozen.
  *
  * Synced rows only. A lead the salesman has changed and not yet sent is his
  * own work, and it waits in the outbox until the office has heard it.
  */
-async function releaseThirdPartyLeads(): Promise<number> {
-  const rows = await all<{ id: string }>(
-    `SELECT id FROM leads
-      WHERE ${noPending('leads')}
-        AND (thirdParty = 1 OR id IN (SELECT id FROM customers WHERE thirdParty = 1))`,
-  );
+async function releaseConvertedLeads(): Promise<number> {
+  const where = `${noPending('leads')} AND ${CONVERTED_LEAD}`;
+  const rows = await all<{ id: string }>(`SELECT id FROM leads WHERE ${where}`);
   if (!rows.length) return 0;
-  await run(
-    `DELETE FROM leads
-      WHERE ${noPending('leads')}
-        AND (thirdParty = 1 OR id IN (SELECT id FROM customers WHERE thirdParty = 1))`,
-  );
+  await run(`DELETE FROM leads WHERE ${where}`);
   return rows.length;
 }
 

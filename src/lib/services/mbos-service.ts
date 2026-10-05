@@ -1,4 +1,5 @@
 import "server-only";
+import { notConverted } from "../lead-action-window";
 import { and, eq, isNull, or, sql, type AnyColumn, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import {
@@ -2156,6 +2157,11 @@ async function openLeads(userId: string, since?: string | null) {
        -- handset would make "on hold" mean "gone" — which is exactly the
        -- conflation the status exists to end.
        and c.lead_stage not in ('won', 'lost')
+       -- Nor anything else that has become a customer: the same clause the
+       -- office's own Leads lists leave out, so a desk and a phone agree on
+       -- what a lead is. The handset removes such a row on every pass
+       -- (releaseConvertedLeads); sending it would only put it back.
+       and ${notConverted()}
        -- A THIRD-PARTY SHOP IS A CUSTOMER, not a lead. A distributor we bill
        -- buys from us and sells on to it, and the salesman visits it to take
        -- orders for that distributor. Most of them were CRM leads before they

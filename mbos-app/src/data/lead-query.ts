@@ -275,3 +275,23 @@ export function rungCountsQuery(
   };
 }
 
+/**
+ * A LEAD THAT HAS BECOME A CUSTOMER, asked of a `leads` row.
+ *
+ * The office's own definition is `notConverted` in MahekOne's
+ * `lib/lead-action-window.ts`, and this is the same four facts read off what
+ * the phone holds: the ledger calling the shop a customer (`customers.kind`,
+ * which arrives on every pull), a winning terminal rung, the legacy word for
+ * one, and the third-party mark on either table. A lead the office converted
+ * stops arriving on the leads channel, so its row here is frozen at whatever
+ * it last was — which is why the customer row, the one the office keeps
+ * current, is asked as well as the lead's own.
+ *
+ * A bare clause over `leads` with no parameters, so it can be spliced into a
+ * DELETE and run against a real SQLite in `leads-query.test.ts`.
+ */
+export const CONVERTED_LEAD = `(leads.thirdParty = 1
+    OR COALESCE(leads.funnelStage, '') IN ('won', 'customer', 'active_distributor')
+    OR leads.stage = 'Converted'
+    OR EXISTS (SELECT 1 FROM customers c
+                WHERE c.id = leads.id AND (c.thirdParty = 1 OR c.kind = 'customer')))`;
