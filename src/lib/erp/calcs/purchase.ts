@@ -12,6 +12,8 @@ registerCalc("requisitions.unit", ({ h }) =>
   !h.type ? "" : h.type === "Chemical" ? "Liter" : h.type === "Finish Good" ? "Box" : "Pcs",
 );
 
+registerCalc("inward.pr", ({ h }) => (h.prFixed ? h.prFixed : "Next PR number, on save"));
+
 /*
  * The item's stock, lot by lot, at the godown asking — then the total, then
  * what the other godowns hold, since a transfer may answer the need sooner

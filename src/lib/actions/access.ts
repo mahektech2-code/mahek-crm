@@ -9,6 +9,8 @@ import {
   appModuleAccess,
   auditLog,
   employees,
+  erpDesignations,
+  erpUserDesignations,
   erpUserPowers,
   hrmsUserPowers,
   passwordResets,
@@ -31,6 +33,7 @@ import {
   type LinkableEmployee,
 } from "@/lib/services/access-service";
 import { ADMIN } from "@/lib/admin-routes";
+import { writeErpPowers as writeErpPowersIn, writeModules } from "@/lib/services/access-writes";
 import { ConsoleNotConfirmedError } from "@/lib/console-confirm";
 
 /* ---------------------------------------------------------------------------
@@ -158,6 +161,14 @@ export type SetAccessInput = {
   erpPowers?: string[] | null;
   /** HRMS's special powers, the whole list, on the same terms as the ERP's. */
   hrmsPowers?: string[] | null;
+  /**
+   * The ERP designation this person holds. Absent leaves it as it is; null
+   * takes it away. It is a NAME on their access and the link an edit to the
+   * designation follows — the screens, level and powers themselves still
+   * arrive above, so a person can hold a designation and be customised from
+   * it. It goes with the ERP, like the powers.
+   */
+  erpDesignationId?: string | null;
   /** Only read when an account has to be created. */
   account?: {
     /** At least one of these two. Both is fine and often better. */
@@ -242,39 +253,6 @@ function desiredState(grants: AccessGrantInput[]): {
 const ROLES = ["associate", "manager", "admin"] as const;
 
 /**
- * Write one app's module rows.
- *
- * Every module ticked stores NO rows rather than a row each. That is what
- * makes "the whole app" a single fact instead of fourteen that can go stale:
- * add a fifteenth screen to the CRM tomorrow and everybody who holds the whole
- * app gets it, while everybody who was deliberately narrowed does not — which
- * is what both of those decisions meant.
- */
-async function writeModules(
-  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
-  userId: string,
-  app: AppId,
-  modules: string[],
-  grantedById: string,
-) {
-  await tx
-    .delete(appModuleAccess)
-    .where(and(eq(appModuleAccess.userId, userId), eq(appModuleAccess.app, app)));
-
-  if (modules.length >= moduleKeysForApp(app).length) return;
-
-  await tx.insert(appModuleAccess).values(
-    modules.map((module) => ({
-      id: newId("mod"),
-      userId,
-      app,
-      module,
-      grantedById,
-    })),
-  );
-}
-
-/**
  * Set what one person can open, across every app, in one write.
  *
  * The employee must be ACTIVE in HRMS. That check is here and not only in the
@@ -305,10 +283,32 @@ function wantedErpPowers(input: SetAccessInput, keepsErp: boolean, current: stri
 }
 
 async function writeErpPowers(userId: string, powers: string[], by: string) {
-  await db.transaction(async (tx) => {
-    await tx.delete(erpUserPowers).where(eq(erpUserPowers.userId, userId));
-    if (powers.length) await tx.insert(erpUserPowers).values(powers.map((power) => ({ userId, power, grantedById: by })));
-  });
+  await db.transaction((tx) => writeErpPowersIn(tx, userId, powers, by));
+}
+
+/**
+ * The designation a person should hold after this save: `undefined` where it
+ * does not change, `null` where it goes, an id where it is set. Refused — not
+ * guessed at — when the id names nothing, because a typo here would quietly
+ * leave somebody outside every future edit to their job's access.
+ */
+async function wantedDesignation(
+  input: SetAccessInput,
+  keepsErp: boolean,
+  current: string | null,
+): Promise<{ next: string | null | undefined; name: string | null; error?: string }> {
+  if (!keepsErp) return { next: current ? null : undefined, name: null };
+  if (input.erpDesignationId === undefined) return { next: undefined, name: null };
+  const id = input.erpDesignationId;
+  if (!id) return { next: current ? null : undefined, name: null };
+  const [d] = await db.select({ id: erpDesignations.id, name: erpDesignations.name }).from(erpDesignations).where(eq(erpDesignations.id, id)).limit(1);
+  if (!d) return { next: undefined, name: null, error: "That designation no longer exists." };
+  return { next: id === current ? undefined : id, name: d.name };
+}
+
+async function writeDesignation(userId: string, next: string | null, by: string) {
+  await db.delete(erpUserDesignations).where(eq(erpUserDesignations.userId, userId));
+  if (next) await db.insert(erpUserDesignations).values({ userId, designationId: next, assignedById: by });
 }
 
 export async function setAccess(
@@ -409,6 +409,9 @@ export async function setAccess(
       return fieldErr("phone", "An account already uses that work number.");
     }
 
+    const newDesignation = await wantedDesignation(input, wanted.has("erp"), null);
+    if (newDesignation.error) return fieldErr("erpDesignation", newDesignation.error);
+
     userId = newId("usr");
     personName = employee.name;
     created = true;
@@ -469,6 +472,7 @@ export async function setAccess(
     if (newPowers?.length) await writeErpPowers(userId!, newPowers, me.id);
     const newHrmsPowers = wantedHrmsPowers(input, wanted.has("hrms"), []);
     if (newHrmsPowers?.length) await writeHrmsPowers(userId!, newHrmsPowers, me.id);
+    if (newDesignation.next) await writeDesignation(userId!, newDesignation.next, me.id);
 
     await audit(
       me.id,
@@ -480,6 +484,7 @@ export async function setAccess(
           .join(", ")}`,
         newPowers?.length ? `ERP powers (${newPowers.join(", ")})` : "",
         newHrmsPowers?.length ? `HRMS powers (${newHrmsPowers.join(", ")})` : "",
+        newDesignation.next ? `ERP designation ${newDesignation.name}` : "",
       ]
         .filter(Boolean)
         .join("; "),
@@ -596,13 +601,23 @@ export async function setAccess(
   ).map((r) => r.power);
   const hrmsPowers = wantedHrmsPowers(input, wanted.has("hrms"), currentHrmsPowers);
 
+  const [currentDesignationRow] = await db
+    .select({ id: erpUserDesignations.designationId, name: erpDesignations.name })
+    .from(erpUserDesignations)
+    .innerJoin(erpDesignations, eq(erpDesignations.id, erpUserDesignations.designationId))
+    .where(eq(erpUserDesignations.userId, userId))
+    .limit(1);
+  const designation = await wantedDesignation(input, wanted.has("erp"), currentDesignationRow?.id ?? null);
+  if (designation.error) return fieldErr("erpDesignation", designation.error);
+
   if (
     !granted.length &&
     !revoked.length &&
     !changed.length &&
     !releveled.length &&
     !powers &&
-    !hrmsPowers
+    !hrmsPowers &&
+    designation.next === undefined
   ) {
     return ok(
       { userId, created: false, resetLinkSent: false, granted: [], revoked: [], changed: [] },
@@ -691,7 +706,13 @@ export async function setAccess(
     ? `HRMS powers ${currentHrmsPowers.length} → ${hrmsPowers.length}${hrmsPowers.length ? ` (${hrmsPowers.join(", ")})` : ""}`
     : "";
 
-  await audit(me.id, "set-app-access", userId, [detail, powerDetail, hrmsPowerDetail].filter(Boolean).join("; "));
+  if (designation.next !== undefined) await writeDesignation(userId, designation.next, me.id);
+  const designationDetail =
+    designation.next === undefined
+      ? ""
+      : `ERP designation ${currentDesignationRow?.name ?? "none"} → ${designation.next ? designation.name : "none"}`;
+
+  await audit(me.id, "set-app-access", userId, [detail, powerDetail, hrmsPowerDetail, designationDetail].filter(Boolean).join("; "));
   refresh();
 
   const said = [
@@ -712,6 +733,7 @@ export async function setAccess(
     revoked.length ? `no longer opens ${describe(revoked)}` : "",
     powers && wanted.has("erp") ? `holds ${powers.length} ERP power${powers.length === 1 ? "" : "s"}` : "",
     hrmsPowers && wanted.has("hrms") ? `holds ${hrmsPowers.length} HRMS power${hrmsPowers.length === 1 ? "" : "s"}` : "",
+    designation.next ? `is ${designation.name} in the ERP` : designation.next === null && wanted.has("erp") ? "holds no ERP designation" : "",
   ].filter(Boolean);
 
   return ok(
