@@ -14,6 +14,30 @@ registerCalc("requisitions.unit", ({ h }) =>
 
 registerCalc("inward.pr", ({ h }) => (h.prFixed ? h.prFixed : "Next PR number, on save"));
 
+/*
+ * The item's stock, lot by lot, at the godown asking — then the total, then
+ * what the other godowns hold, since a transfer may answer the need sooner
+ * than a purchase. One line each.
+ */
+registerCalc("requisitions.onHand", ({ h, data }) => {
+  if (!h.item) return "";
+  const lots = ((map(data, "stockOf")[h.item] ?? []) as { lot: string; godown: string; qty: number; unit: string }[]).slice();
+  const here = lots.filter((l) => l.godown === h.godown).sort((a, b) => b.qty - a.qty);
+  const there = lots.filter((l) => l.godown !== h.godown);
+  const unit = lots[0]?.unit ?? "";
+  const lines: string[] = [];
+  if (!here.length) lines.push(h.godown ? `None at ${h.godown}` : "Pick a godown");
+  else {
+    here.forEach((l) => lines.push(`Lot ${l.lot} · ${fmt(l.qty, 3)} ${l.unit}`));
+    if (here.length > 1) lines.push(`Total · ${fmt(here.reduce((a, l) => a + l.qty, 0), 3)} ${unit}`);
+  }
+  const elsewhere = new Map<string, number>();
+  there.forEach((l) => elsewhere.set(l.godown, (elsewhere.get(l.godown) ?? 0) + l.qty));
+  if (elsewhere.size)
+    lines.push(`Elsewhere · ${[...elsewhere].sort((a, b) => b[1] - a[1]).map(([g, q]) => `${g} ${fmt(q, 3)} ${unit}`).join(", ")}`);
+  return lines.join("\n");
+});
+
 registerCalc("inward.unit", ({ l, data }) => {
   if (!l.item) return "";
   if (l.type === "Box") return "Pcs";
