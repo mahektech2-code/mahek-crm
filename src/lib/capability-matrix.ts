@@ -789,6 +789,11 @@ export const MATRIX: Record<AppId, AppMatrix> = {
   hrms: { associate: [], manager: [] },
   people: { associate: [], manager: [] },
   enquiries: { associate: [], manager: [] },
+  /* The website CMS. No decision here needs withholding from an associate
+     yet — content is mock-only in this PR, and every real capability this
+     app ends up needing (publish, delete, etc.) arrives with the PR that
+     gives it something real to decide. */
+  website: { associate: [], manager: [] },
   /* The ERP's decisions are POWERS granted to named people (`lib/erp/powers.ts`),
      not capabilities of a level — the CEO who verifies a test is one person,
      not every ERP manager. Holding the app and its modules is what opens the

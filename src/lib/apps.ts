@@ -18,6 +18,7 @@ export const APP_IDS = [
   "founder",
   "enquiries",
   "erp",
+  "website",
 ] as const;
 
 export type AppId = (typeof APP_IDS)[number];
@@ -206,6 +207,24 @@ export const APPS: AppDefinition[] = [
     description:
       "Purchase, quality tests, stock, production, orders, dispatch and transport — from the godown to the lorry.",
     href: "/erp",
+    tone: "neutral",
+    built: true,
+  },
+  {
+    id: "website",
+    /*
+     * The CMS for mahek-website — its own app for the same reason Website
+     * Enquiries is one: it is work nobody already granted Sales, Accounts or
+     * HRMS does, so a separate grant is what lets somebody hold it without
+     * also holding whichever of those happens to be nearby. This PR wires up
+     * the app, its access and its 12 module screens over mock data only;
+     * reading and writing the live site is a later PR.
+     */
+    name: "Website",
+    initials: "WA",
+    description:
+      "Products, pages, gallery, careers and the rest of what the public site shows — content, not the calling book.",
+    href: "/website",
     tone: "neutral",
     built: true,
   },
