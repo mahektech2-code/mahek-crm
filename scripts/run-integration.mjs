@@ -173,6 +173,8 @@ const files = [
   // is drawn and for what may be done to it, admin sees all, owner-only and
   // unassigned leads are nobody's, and no other screen's scope moved.
   "src/lib/crm-sales-manager.test.ts",
+  // A lead's owner is respected: a Sales Manager's lead is not a Telecaller's.
+  "src/lib/lead-owner-visibility.test.ts",
   "src/lib/sales-manager-desk-queues.test.ts",
   // The dashboard reads its four figures from `queueProgress`, which must stay
   // exactly equal to what `getQueue` would have said. That equivalence is only

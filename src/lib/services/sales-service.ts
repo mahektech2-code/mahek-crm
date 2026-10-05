@@ -110,6 +110,12 @@ export type ManagerScope = {
    * screen's scope moved.
    */
   salesManagerId?: string;
+  /**
+   * SET ONLY FOR AN ASSOCIATE (`scopeStanding` = "own"): their book and nothing
+   * else. It exists so `seatVisible` can leave out the "nobody owns it" arm,
+   * which was written for managers — see `leadsVisible`.
+   */
+  own?: boolean;
 };
 
 /**
@@ -179,7 +185,7 @@ const baseManagerScope = cache(async function managerScope(): Promise<ManagerSco
   ]);
   const standing = scopeStanding({ platformAdmin, requestApp, levelInRequestApp, levelInSales });
   if (standing === "national") return { national: true, regions: [], salesmanIds: null };
-  if (standing === "own") return { national: false, regions: [], salesmanIds: [userId] };
+  if (standing === "own") return { national: false, regions: [], salesmanIds: [userId], own: true };
 
   const rows = await db.execute<{ region: string }>(sql`
     -- REGIONS ONLY. The table also holds a salesman's working cities now, and
@@ -326,7 +332,23 @@ function seatVisible(scope: ManagerScope, column: string) {
   }
   if (scope.salesmanIds === null) return sql``;
   const ids = scope.salesmanIds.length ? scope.salesmanIds : [""];
-  return sql`and (${sql.raw(column)} in (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})
+  const inIds = sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`;
+  /* A LEAD A SALES MANAGER HAS TAKEN INTO THEIR BOOK IS NOT "NOBODY'S". The
+     "unowned" arm below is for leads no one holds (a website enquiry waiting to
+     be assigned). A lead a Sales Manager raised carries no owner by default but
+     does carry their seat, and showing it to every Telecaller put a manager's
+     lead on the whole desk. For an associate, an unowned lead is therefore
+     visible only while no Sales Manager holds it — or when the associate is
+     that Sales Manager. It reaches a Telecaller by being assigned to them, and
+     then the owner column says so. Managers keep the whole arm: they assign.
+     Only an owner column has a sibling seat to compare; any other column keeps
+     the old rule rather than guess. */
+  if (scope.own && /owner_id$/.test(column)) {
+    const seat = sql.raw(column.replace(/owner_id$/, "sales_manager_id"));
+    return sql`and (${sql.raw(column)} in ${inIds}
+                or (${sql.raw(column)} is null and (${seat} is null or ${seat} in ${inIds})))`;
+  }
+  return sql`and (${sql.raw(column)} in ${inIds}
               or ${sql.raw(column)} is null)`;
 }
 
