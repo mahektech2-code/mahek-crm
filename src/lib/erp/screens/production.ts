@@ -1,6 +1,6 @@
 import "server-only";
 import { getConfig } from "@/lib/config/store";
-import { recipeMap } from "./recipes";
+import { recipeMap, recipeQtyByName } from "./recipes";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
@@ -94,10 +94,11 @@ async function syncSfgEntry(tx: Ex, line: SfgRow) {
 }
 
 export async function sfgForm(ctx: ErpContext, fixed?: { sfgNo: number; date: string; godown: string; product: string; batches: string }): Promise<FormSpec> {
-  const [gds, forms, lots] = await Promise.all([
+  const [gds, forms, lots, recipe] = await Promise.all([
     godownOptions(ctx, { lost: false }),
     db.select({ name: productFormulations.name }).from(productFormulations).where(eq(productFormulations.active, true)).orderBy(asc(productFormulations.name)),
     rmLots(),
+    recipeQtyByName(),
   ]);
   const items: Record<string, string[]> = {};
   const lotsOf: Record<string, string[]> = {};
@@ -133,7 +134,15 @@ export async function sfgForm(ctx: ErpContext, fixed?: { sfgNo: number; date: st
       { k: "item", l: "Raw item", t: "select", req: true, optsBy: { by: "godown", map: items }, when: { k: "godown", notEmpty: true }, hint: "Items with stock at this godown. Cans are never consumed here." },
       { k: "lot", l: "Raw-material lot", t: "select", req: true, optsBy: { by: ["godown", "item"], map: lotsOf }, when: { k: "item", notEmpty: true } },
       { k: "avail", l: "Available (litres)", t: "derived", calc: "sfg.avail" },
-      { k: "qty", l: "Quantity per batch (litres)", t: "num", req: true, min: 0.001 },
+      {
+        k: "qty",
+        l: "Quantity per batch (litres)",
+        t: "num",
+        req: true,
+        min: 0.001,
+        hint: "Filled from the product's recipe, in litres, when it has one for this raw material. Change it if this batch is different.",
+        fillBy: { by: ["product", "item"], map: recipe },
+      },
       { k: "total", l: "Total use incl. batches", t: "derived", calc: "sfg.total" },
       { k: "adjusted", l: "Litres adjusted (loss)", t: "num", min: 0 },
       { k: "yield", l: "Available SFG (litres)", t: "derived", calc: "sfg.yield" },
@@ -274,7 +283,7 @@ const sfgBatches: ScreenModule = {
           fields: [
             { l: "Available SFG (litres)", v: nf(sfgYield(x.l.totalUse, x.l.litresAdjusted)), der: true },
             ...(recipeFor(x) != null
-              ? [{ l: "Recipe", v: `${nf(recipeFor(x)! * Number(x.l.batches))} for ${nf(Number(x.l.batches))} batch${Number(x.l.batches) === 1 ? "" : "es"} · this batch used ${nf(usedBy.get(`${x.l.sfgNo}|${x.l.rawMaterialId}`) ?? 0)}`, der: true }]
+              ? [{ l: "Recipe", v: `${nf(recipeFor(x)! * Number(x.l.batches))} Ltr for ${nf(Number(x.l.batches))} batch${Number(x.l.batches) === 1 ? "" : "es"} · this batch used ${nf(usedBy.get(`${x.l.sfgNo}|${x.l.rawMaterialId}`) ?? 0)} Ltr`, der: true }]
               : []),
           ],
           actions,

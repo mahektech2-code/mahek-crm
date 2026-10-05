@@ -77,6 +77,13 @@ export type FieldSpec = {
   hint?: string;
   /** Default value on open. */
   def?: string;
+  /**
+   * Filled in when a field it depends on changes: `{ by: ["product", "item"],
+   * map: { "Nano|Toluene": "200" } }` — header and line values both count, keys
+   * joined with "|". No entry leaves the value as it was; whatever is filled
+   * stays editable. The SFG batch's quantity per batch reads the recipe this way.
+   */
+  fillBy?: { by: string[]; map: Record<string, string> };
   when?: When;
   /** Numeric bounds, checked in the browser and again on the server. */
   min?: number;
