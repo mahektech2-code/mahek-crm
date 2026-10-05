@@ -232,9 +232,9 @@ export function stageStatus(f: StageStatusFacts): { text: string; who: string | 
         who: desk,
       };
     case "exhausted":
-      return { text: "Three calls used and the required answers are still not in — close it", who: desk };
+      return { text: "Three calls used — not yet captured, fill it in or close it", who: desk };
     case "ready":
-      return { text: "Every required answer is in — request the Prospect", who: desk };
+      return { text: "Everything a Prospect needs is in — request the Prospect", who: desk };
     case "requested":
       return { text: "Prospect requested — awaiting Sales Manager verification", who: mgr };
     case "followup":
@@ -330,8 +330,6 @@ export function displayAnswer(
       return `${value} ${gstVerified ? "(Verified)" : "(Awaiting check)"}`;
     case "monthlyLitres":
       return `${Number(value).toLocaleString("en-IN")} Litres`;
-    case "potentialPaise":
-      return `₹${Math.round(Number(value) / 100).toLocaleString("en-IN")}`;
     case "creditDaysWanted":
       return `${value} days`;
     case "requiredProductId":

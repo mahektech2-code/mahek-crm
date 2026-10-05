@@ -24,7 +24,7 @@ import {
   nextCallNumber,
   parseLostNote,
   phaseOf,
-  requiredProgress,
+  prospectProgress,
   type CallOutcome,
   type DeskFieldKey,
   type DeskPhase,
@@ -43,7 +43,7 @@ import { countsAsPurchase } from "../order-status";
 import { deskReference } from "../calling-desk-labels";
 import { deskSummary, type DeskLeadRow, type DeskSummary } from "../calling-desk-summary";
 import type { LeadPriority } from "../lead-priority";
-import { stageLabel, type LeadSalesType, type LeadStage } from "../lead-labels";
+import { findingLabel, stageLabel, type LeadSalesType, type LeadStage } from "../lead-labels";
 import {
   leadReceipts,
   leadRecord,
@@ -119,7 +119,6 @@ type RawRow = {
   decisionMaker: string | null;
   buyer: string | null;
   monthlyLitres: number | null;
-  potentialPaise: number | null;
   requiredProductId: string | null;
   competitor: string | null;
   customerType: string | null;
@@ -140,7 +139,6 @@ function valuesOf(r: RawRow): DeskValues {
     buyer: r.buyer,
     gstin: r.gstin,
     monthlyLitres: r.monthlyLitres,
-    potentialPaise: r.potentialPaise,
     creditDaysWanted: r.creditDaysWanted,
     requiredProductId: r.requiredProductId,
     competitor: r.competitor,
@@ -165,7 +163,7 @@ function toRow(r: RawRow, sources: readonly { code: string; label: string }[] = 
   const values = valuesOf(r);
   const state = isRequestState(r.requestState) ? r.requestState : null;
   const phase = phaseOf(r.stage as LeadStage, values, Number(r.callCount), state);
-  const progress = requiredProgress(values);
+  const progress = prospectProgress(values);
   const pending = phase === "requested" || phase === "followup";
   return {
     id: r.id,
@@ -189,7 +187,7 @@ function toRow(r: RawRow, sources: readonly { code: string; label: string }[] = 
     phase,
     nextCall: nextCallNumber(phase),
     answered: progress.done,
-    required: progress.total,
+    needed: progress.total,
     ladderKey:
       phase === "lost"
         ? ladderKeyOfLost(r.lostFrom as LeadStage | null, values, Number(r.callCount))
@@ -225,7 +223,6 @@ const ROW_COLUMNS = sql`
      order by t.at desc limit 1) as "lostFrom",
   customers.lead_decision_maker as "decisionMaker", customers.lead_buyer as buyer,
   customers.lead_monthly_volume_litres::int as "monthlyLitres",
-  customers.lead_estimated_potential_paise::float8 as "potentialPaise",
   customers.lead_required_product_id as "requiredProductId",
   customers.lead_competitor as competitor, customers.customer_type::text as "customerType",
   customers.lead_application as application,
@@ -479,7 +476,6 @@ async function inDeskScope(customerId: string): Promise<boolean> {
 const FINDING_KEY: Record<string, DeskFieldKey> = {
   competitor: "competitor",
   monthly_litres: "monthlyLitres",
-  potential: "potentialPaise",
   required_product: "requiredProductId",
   decision_maker: "decisionMaker",
   credit_days: "creditDaysWanted",
@@ -573,7 +569,6 @@ export async function deskLeadRecord(customerId: string, today: string): Promise
     buyer: extras?.buyer ?? null,
     gstin: lead.gstin,
     monthlyLitres: lead.leadMonthlyVolumeLitres,
-    potentialPaise: lead.leadEstimatedPotentialPaise,
     creditDaysWanted: lead.leadCreditDaysWanted,
     requiredProductId: lead.leadRequiredProductId,
     competitor: lead.leadCompetitor,
@@ -672,7 +667,6 @@ export async function deskLeadRecord(customerId: string, today: string): Promise
     const v = values[key];
     if (key === "requiredProductId") return rec.requiredProductName ?? "Chosen";
     if (key === "monthlyLitres") return `${Number(v).toLocaleString("en-IN")} litres a month`;
-    if (key === "potentialPaise") return `₹${Math.round(Number(v) / 100).toLocaleString("en-IN")} a month`;
     if (key === "creditDaysWanted") return `${v} days`;
     return String(v ?? "");
   };
@@ -939,7 +933,7 @@ export async function deskLeadRecord(customerId: string, today: string): Promise
             corrections: checks
               .filter((c) => c.verdict === "corrected")
               .map((c) => ({
-                label: DESK_FIELDS.find((f) => f.key === FINDING_KEY[c.field])?.label ?? c.field,
+                label: DESK_FIELDS.find((f) => f.key === FINDING_KEY[c.field])?.label ?? findingLabel(c.field),
                 original: c.original,
                 corrected: c.corrected ?? "",
                 reason: c.reason ?? "",

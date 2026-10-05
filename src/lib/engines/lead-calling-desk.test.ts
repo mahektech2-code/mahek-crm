@@ -2,10 +2,11 @@
  * The calling desk's three calls and its request, pinned.
  *
  * The things worth failing the build over are the ones that were asked for in
- * as many words: ready as soon as the five answers are in (never forcing the
- * next call), Call 3 becoming available, a Call 3 that finishes short ending
- * the lead with no Call 4, no question being asked twice — and, above all, that
- * ASKING for a Prospect is not being one.
+ * as many words: ready as soon as what a Prospect needs is in (never forcing the
+ * next call), Call 3 becoming available, a Call 3 that finishes short of the
+ * COMPULSORY answer ending the lead with no Call 4, a Call 3 that finishes short
+ * of only Product or the monthly requirement NOT ending it, no question being
+ * asked twice — and, above all, that ASKING for a Prospect is not being one.
  *
  * Pure, like the engine: no database, no clock.
  */
@@ -34,6 +35,7 @@ import {
   nextCallNumber,
   parseLostNote,
   phaseOf,
+  prospectProgress,
   questionsForCall,
   requiredProgress,
   suggestedLostCode,
@@ -44,73 +46,100 @@ import { deskReference, displayAnswer, isCreatedToday, shortDay } from "../calli
 import { DESK_LIST_CAP, deskSummary, type DeskLeadRow } from "../calling-desk-summary";
 import { ladderFor } from "./lead-ladder";
 
+/** What Call 1 gave: the competitor and the monthly requirement. Product is blank on purpose. */
 const call1Answers: DeskValues = {
   monthlyLitres: 200,
-  requiredProductId: "prd_1",
   competitor: "Local thinner",
 };
-const all5: DeskValues = { ...call1Answers, decisionMaker: "Owner", potentialPaise: 6_000_000 };
+/** Everything a Prospect needs from the desk. No decision maker — it is not needed. */
+const prospectReady: DeskValues = { ...call1Answers, requiredProductId: "prd_1" };
 
-describe("the twelve answers, five of them required", () => {
-  test("the five that make a lead ready are the five the funnel already stores", () => {
-    assert.deepEqual(
-      DESK_FIELDS.filter((f) => f.required).map((f) => f.key).sort(),
-      ["competitor", "decisionMaker", "monthlyLitres", "potentialPaise", "requiredProductId"],
-    );
+describe("the eleven answers — only the competitor is compulsory on the calls", () => {
+  test("only the competitor is compulsory; Decision Maker, Product and Monthly requirement are optional", () => {
+    assert.deepEqual(DESK_FIELDS.filter((f) => f.required).map((f) => f.key), ["competitor"]);
+    for (const key of ["decisionMaker", "requiredProductId", "monthlyLitres"] as const) {
+      assert.equal(DESK_FIELDS.find((f) => f.key === key)!.required, false, key);
+    }
   });
 
-  test("there are twelve, in the manager's own Opportunity order", () => {
-    assert.equal(DESK_FIELDS.length, 12);
+  test("a Prospect needs the competitor, Product and the monthly requirement — never the decision maker", () => {
+    assert.deepEqual(
+      DESK_FIELDS.filter((f) => f.prospect).map((f) => f.key).sort(),
+      ["competitor", "monthlyLitres", "requiredProductId"],
+    );
+    assert.equal(DESK_FIELDS.find((f) => f.key === "decisionMaker")!.prospect, false);
+    /* Every compulsory answer is also one a Prospect needs. */
+    for (const f of DESK_FIELDS.filter((x) => x.required)) assert.equal(f.prospect, true, f.key);
+  });
+
+  test("there are eleven, in the manager's own Opportunity order, and no rupee estimate among them", () => {
+    assert.equal(DESK_FIELDS.length, 11);
     assert.deepEqual(
       DESK_FIELDS.map((f) => f.label),
       [
-        "Customer type", "Decision maker", "Buyer", "GST", "Monthly requirement", "Expected monthly sales",
+        "Customer type", "Decision maker", "Buyer", "GST", "Monthly requirement",
         "Credit days", "Product", "Competitor", "Application", "Address", "Email",
       ],
     );
+    assert.ok(!DESK_FIELDS.some((f) => (f.key as string) === "potentialPaise" || f.kind === "money"));
   });
 
-  test("progress counts what is on the record and names what is missing", () => {
-    const p = requiredProgress(call1Answers);
-    assert.equal(p.done, 3);
-    assert.equal(p.total, 5);
+  test("Monthly requirement (litres) is the one monthly question", () => {
+    const monthly = DESK_FIELDS.filter((f) => /monthly/i.test(f.label));
+    assert.deepEqual(monthly.map((f) => f.key), ["monthlyLitres"]);
+    assert.equal(monthly[0]!.kind, "litres");
+  });
+
+  test("the compulsory reading names only what is compulsory", () => {
+    assert.deepEqual(requiredProgress({}).missing.map((f) => f.key), ["competitor"]);
+    assert.equal(requiredProgress({ competitor: "Asian" }).complete, true, "everything else may stay blank");
+  });
+
+  test("Prospect progress counts what is on the record and names what is not yet captured", () => {
+    const p = prospectProgress(call1Answers);
+    assert.equal(p.done, 2);
+    assert.equal(p.total, 3);
     assert.equal(p.complete, false);
-    assert.deepEqual(p.missing.map((f) => f.key).sort(), ["decisionMaker", "potentialPaise"]);
-    assert.equal(requiredProgress(all5).complete, true);
+    assert.deepEqual(p.missing.map((f) => f.key), ["requiredProductId"]);
+    assert.equal(prospectProgress(prospectReady).complete, true);
   });
 
-  test("blank text, zero litres and zero rupees are not answers; zero credit days is", () => {
+  test("blank text and zero litres are not answers; zero credit days is", () => {
     assert.equal(isAnswered("competitor", "   "), false);
     assert.equal(isAnswered("monthlyLitres", 0), false);
-    assert.equal(isAnswered("potentialPaise", 0), false);
     assert.equal(isAnswered("competitor", "Asian"), true);
     assert.equal(isAnswered("creditDaysWanted", 0), true);
     assert.equal(isAnswered("creditDaysWanted", null), false);
   });
 });
 
-describe("Test A — ready as soon as the five are in, without forcing another call", () => {
+describe("Test A — ready as soon as what a Prospect needs is in, without forcing another call", () => {
   test("Call 1 partial, Call 2 completes: ready after two calls, not three", () => {
     assert.equal(phaseOf("suspect", {}, 0), "call1");
     assert.equal(phaseOf("suspect", call1Answers, 1), "call2");
-    assert.equal(phaseOf("suspect", all5, 2), "ready");
+    assert.equal(phaseOf("suspect", prospectReady, 2), "ready");
   });
 
-  test("all five on Call 1 is ready straight away — no Call 2 is owed", () => {
-    assert.equal(phaseOf("suspect", all5, 1), "ready");
+  test("a blank Decision Maker never holds a lead back from ready", () => {
+    assert.equal(prospectReady.decisionMaker, undefined);
+    assert.equal(phaseOf("suspect", prospectReady, 1), "ready");
+  });
+
+  test("everything on Call 1 is ready straight away — no Call 2 is owed", () => {
+    assert.equal(phaseOf("suspect", prospectReady, 1), "ready");
     assert.equal(nextCallNumber("ready"), null);
     assert.deepEqual(
-      afterCall({ callNumber: 1, outcome: "spoke_collected", merged: all5, priorOutcomes: [] }),
+      afterCall({ callNumber: 1, outcome: "spoke_collected", merged: prospectReady, priorOutcomes: [] }),
       { kind: "ready" },
     );
   });
 
   test("the last answer arriving on Call 3 is ready, not lost", () => {
     assert.deepEqual(
-      afterCall({ callNumber: 3, outcome: "spoke_collected", merged: all5, priorOutcomes: ["spoke_callback", "spoke_callback"] }),
+      afterCall({ callNumber: 3, outcome: "spoke_collected", merged: prospectReady, priorOutcomes: ["spoke_callback", "spoke_callback"] }),
       { kind: "ready" },
     );
-    assert.equal(phaseOf("suspect", all5, 3), "ready");
+    assert.equal(phaseOf("suspect", prospectReady, 3), "ready");
   });
 
   test("the legacy spellings of a suspect are worked the same way", () => {
@@ -122,33 +151,33 @@ describe("Test A — ready as soon as the five are in, without forcing another c
 describe("A request is not a Prospect", () => {
   test("a lead that has asked stays on the Suspect rung of the ladder", () => {
     for (const state of ["awaiting", "followup", "returned"] as const) {
-      const phase = phaseOf("suspect", all5, 2, state);
+      const phase = phaseOf("suspect", prospectReady, 2, state);
       assert.equal(ladderKeyOf(phase), "suspect", state);
     }
   });
 
   test("each request state is its own phase and outranks the calls and readiness", () => {
-    assert.equal(phaseOf("suspect", all5, 2, "awaiting"), "requested");
-    assert.equal(phaseOf("suspect", all5, 2, "followup"), "followup");
-    assert.equal(phaseOf("suspect", all5, 2, "returned"), "returned");
+    assert.equal(phaseOf("suspect", prospectReady, 2, "awaiting"), "requested");
+    assert.equal(phaseOf("suspect", prospectReady, 2, "followup"), "followup");
+    assert.equal(phaseOf("suspect", prospectReady, 2, "returned"), "returned");
     /* Even a lead that would otherwise be owed a call. */
     assert.equal(phaseOf("suspect", {}, 0, "awaiting"), "requested");
   });
 
   test("while the manager has it, the desk is offered no call", () => {
-    assert.equal(nextCallNumber(phaseOf("suspect", all5, 2, "awaiting")), null);
-    assert.equal(nextCallNumber(phaseOf("suspect", all5, 2, "followup")), null);
-    assert.equal(nextCallNumber(phaseOf("suspect", all5, 2, "returned")), null);
+    assert.equal(nextCallNumber(phaseOf("suspect", prospectReady, 2, "awaiting")), null);
+    assert.equal(nextCallNumber(phaseOf("suspect", prospectReady, 2, "followup")), null);
+    assert.equal(nextCallNumber(phaseOf("suspect", prospectReady, 2, "returned")), null);
     assert.equal(isPending("requested"), true);
     assert.equal(isPending("followup"), true);
     assert.equal(isPending("returned"), false, "returned is with the desk, not the manager");
   });
 
   test("it becomes a Prospect only when the stage itself has moved", () => {
-    assert.equal(phaseOf("prospect", all5, 2, null), "prospect");
+    assert.equal(phaseOf("prospect", prospectReady, 2, null), "prospect");
     assert.equal(ladderKeyOf("prospect"), "prospect");
     /* A stale request state on a lead that already moved is not read. */
-    assert.equal(phaseOf("prospect", all5, 2, "awaiting"), "prospect");
+    assert.equal(phaseOf("prospect", prospectReady, 2, "awaiting"), "prospect");
   });
 
   test("a returned lead is resubmitted or closed, never rung", () => {
@@ -176,11 +205,40 @@ describe("Test B — Call 3 becomes available", () => {
 });
 
 describe("Test C — lost after Call 3, and there is no Call 4", () => {
-  test("Call 3 finished and still short is lost", () => {
+  test("Call 3 finished with the COMPULSORY competitor still missing is lost", () => {
     assert.deepEqual(
-      afterCall({ callNumber: 3, outcome: "spoke_callback", merged: call1Answers, priorOutcomes: ["spoke_callback", "spoke_callback"] }),
+      afterCall({
+        callNumber: 3,
+        outcome: "spoke_callback",
+        merged: { monthlyLitres: 200, requiredProductId: "prd_1" },
+        priorOutcomes: ["spoke_callback", "spoke_callback"],
+      }),
       { kind: "lost", cause: "information_missing" },
     );
+  });
+
+  test("Call 3 finished with Product still blank is NOT lost — the lead stays a Suspect", () => {
+    assert.deepEqual(
+      afterCall({ callNumber: 3, outcome: "spoke_callback", merged: call1Answers, priorOutcomes: ["spoke_callback", "spoke_callback"] }),
+      { kind: "exhausted" },
+    );
+  });
+
+  test("Call 3 finished with Product, Monthly requirement and Decision Maker all blank is NOT lost", () => {
+    assert.deepEqual(
+      afterCall({
+        callNumber: 3,
+        outcome: "spoke_collected",
+        merged: { competitor: "Asian" },
+        priorOutcomes: ["spoke_callback", "spoke_callback"],
+      }),
+      { kind: "exhausted" },
+    );
+  });
+
+  test("an exhausted lead is not a ready one — Prospect still needs what is blank", () => {
+    assert.equal(phaseOf("suspect", { competitor: "Asian" }, 3), "exhausted");
+    assert.equal(prospectProgress({ competitor: "Asian" }).complete, false);
   });
 
   test("three calls nobody answered is a different loss from three that would not say", () => {
@@ -225,14 +283,14 @@ describe("Test D — no question is asked twice", () => {
     const q = questionsForCall(call1Answers, 2);
     const offered = [...q.askNow, ...q.later].map((f) => f.key);
     for (const key of Object.keys(call1Answers)) assert.ok(!offered.includes(key as never), `${key} was asked again`);
-    assert.deepEqual(q.answered.map((f) => f.key).sort(), ["competitor", "monthlyLitres", "requiredProductId"]);
+    assert.deepEqual(q.answered.map((f) => f.key).sort(), ["competitor", "monthlyLitres"]);
   });
 
-  test("what Call 2 captured is not offered on Call 3, and what is left of the five is what Call 3 is for", () => {
+  test("what Call 2 captured is not offered on Call 3, and what a Prospect still needs is what Call 3 is for", () => {
     const q = questionsForCall({ ...call1Answers, decisionMaker: "Owner" }, 3);
     const offered = [...q.askNow, ...q.later].map((f) => f.key);
     assert.ok(!offered.includes("decisionMaker"));
-    assert.deepEqual(q.askNow.filter((f) => f.required).map((f) => f.key), ["potentialPaise"]);
+    assert.deepEqual(q.askNow.filter((f) => f.prospect).map((f) => f.key), ["requiredProductId"]);
   });
 
   test("a question is either asked, deferred or answered — never two of them", () => {
@@ -244,11 +302,11 @@ describe("Test D — no question is asked twice", () => {
     }
   });
 
-  test("the required ones lead, and the last call asks every one still missing", () => {
+  test("the ones a Prospect needs lead, and the last call asks every one still missing", () => {
     const q = questionsForCall({}, 3);
-    const firstOptional = q.askNow.findIndex((f) => !f.required);
-    assert.ok(firstOptional === -1 || q.askNow.map((f) => f.required).lastIndexOf(true) < firstOptional);
-    for (const f of DESK_FIELDS.filter((x) => x.required)) assert.ok(q.askNow.includes(f), f.key);
+    const firstOther = q.askNow.findIndex((f) => !f.prospect);
+    assert.ok(firstOther === -1 || q.askNow.map((f) => f.prospect).lastIndexOf(true) < firstOther);
+    for (const f of DESK_FIELDS.filter((x) => x.prospect)) assert.ok(q.askNow.includes(f), f.key);
   });
 });
 
@@ -258,7 +316,7 @@ describe("where a lead stands outside the suspect rung", () => {
       "prospect", "qualification", "sample_trial", "sample_received", "sample_review", "negotiation",
       "first_order", "delivery", "payment", "second_order", "customer",
     ] as const) {
-      assert.equal(phaseOf(rung, all5, 2), rung);
+      assert.equal(phaseOf(rung, prospectReady, 2), rung);
       assert.equal(nextCallNumber(phaseOf(rung, {}, 0)), null, rung);
     }
     assert.equal(phaseOf("lost", {}, 3), "lost");
@@ -266,8 +324,8 @@ describe("where a lead stands outside the suspect rung", () => {
   });
 
   test("the legacy rungs fold onto the ones the desk draws", () => {
-    assert.equal(phaseOf("qualified", all5, 2), "qualification");
-    assert.equal(phaseOf("won", all5, 2), "customer");
+    assert.equal(phaseOf("qualified", prospectReady, 2), "qualification");
+    assert.equal(phaseOf("won", prospectReady, 2), "customer");
   });
 });
 
@@ -474,7 +532,7 @@ describe("the dashboard filters in the page", () => {
     phase: "call1",
     nextCall: 1,
     answered: 0,
-    required: 5,
+    needed: 3,
     ladderKey: "suspect",
     requestedAt: null,
     unassigned: false,

@@ -10,6 +10,7 @@ import { NO_ANSWER_REASONS } from "@/lib/call-outcomes";
 import { displayAnswer, MESSAGE_KINDS } from "@/lib/calling-desk-labels";
 import {
   CALL_OUTCOMES,
+  afterCall,
   DESK_FIELDS,
   DESK_LOST_REASONS,
   MAX_QUALIFICATION_CALLS,
@@ -17,6 +18,7 @@ import {
   isWorkingStage,
   lostCodeForCause,
   nextActionKindOf,
+  prospectProgress,
   questionsForCall,
   requiredProgress,
   suggestedLostCode,
@@ -184,7 +186,13 @@ function QuestionCell({
           {field.label}
           {unitOf(field) ? <span className="font-normal text-muted"> ({unitOf(field)})</span> : null}
         </span>
-        {field.required ? <Badge tone="warn">Required</Badge> : null}
+        {field.required ? (
+          <Badge tone="warn">Required</Badge>
+        ) : field.prospect ? (
+          <Badge tone="neutral" title="Not compulsory — leave it blank if the customer does not know yet">
+            Needed for Prospect
+          </Badge>
+        ) : null}
       </span>
       <span className={cx("block", isProduct ? "w-full" : "w-full sm:w-[230px] sm:flex-none")}>
         {field.kind === "product" ? (
@@ -290,8 +298,8 @@ export function LogCallDialog({
   const [error, setError] = React.useState<string | null>(null);
 
   const q = questionsForCall(lead.values, n);
-  const askRequired = q.askNow.filter((f) => f.required);
-  const askOptional = q.askNow.filter((f) => !f.required);
+  const askProspect = q.askNow.filter((f) => f.prospect);
+  const askOptional = q.askNow.filter((f) => !f.prospect);
   const spoke = outcome === "spoke_collected" || outcome === "spoke_callback";
   const endsLead = outcome === "not_interested" || outcome === "wrong_number";
   const exhausted = n >= MAX_QUALIFICATION_CALLS;
@@ -319,13 +327,25 @@ export function LogCallDialog({
     return out;
   };
   const draft = typed();
-  const progress = requiredProgress({ ...lead.values, ...draft });
+  const merged = { ...lead.values, ...draft };
+  const progress = prospectProgress(merged);
   const newCount = Object.keys(draft).length;
-  const willBeReady = spoke && progress.complete;
-  const willBeLost = endsLead || (!willBeReady && exhausted && outcome !== null);
-  const needsNext = outcome !== null && !willBeReady && !willBeLost;
   /* THIS ROUND only: calls made before a reopen are history, not part of the three. */
   const priorOutcomes = lead.calls.filter((c) => !c.earlier).map((c) => c.outcome);
+  /* What saving does to the lead is the engine's answer, not a second copy of
+     it: ready, closed, left a Suspect after Call 3, or another call owed. */
+  const after = outcome
+    ? afterCall({
+        callNumber: n,
+        outcome,
+        merged,
+        priorOutcomes,
+      })
+    : null;
+  const willBeReady = spoke && after?.kind === "ready";
+  const willBeLost = after?.kind === "lost";
+  const willBeExhausted = after?.kind === "exhausted";
+  const needsNext = outcome !== null && !willBeReady && !willBeLost && !willBeExhausted;
   const suggested = suggestedLostCode(priorOutcomes, outcome ?? undefined);
   const lostCode = lostOverride ?? suggested;
 
@@ -479,13 +499,13 @@ export function LogCallDialog({
             </div>
           ) : (
             <>
-              {askRequired.length ? (
+              {askProspect.length ? (
                 <>
-                  <div className="mb-1.5 text-[11px] font-semibold tracking-[0.04em] text-danger uppercase">
-                    Required — {askRequired.length} needed for Ready for Prospect
+                  <div className="mb-1.5 text-[11px] font-semibold tracking-[0.04em] text-muted uppercase">
+                    Needed for a Prospect — ask if you can, blank is fine
                   </div>
                   <QuestionGrid
-                    list={askRequired}
+                    list={askProspect}
                     customerId={lead.id}
                     text={text}
                     productId={productId}
@@ -500,10 +520,10 @@ export function LogCallDialog({
                   <div
                     className={cx(
                       "mb-1.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase",
-                      askRequired.length ? "mt-3" : "",
+                      askProspect.length ? "mt-3" : "",
                     )}
                   >
-                    Optional — worth asking, does not block Ready for Prospect
+                    Optional — ask if known, blank is fine
                   </div>
                   <QuestionGrid
                     list={askOptional}
@@ -560,8 +580,14 @@ export function LogCallDialog({
 
           {willBeReady ? (
             <Note tone="brand">
-              <b>Ready for Prospect.</b> All {progress.total} required answers will be in after this call — no
-              further calls are needed.
+              <b>Ready for Prospect.</b> Everything a Prospect needs will be in after this call — no further calls
+              are needed.
+            </Note>
+          ) : willBeExhausted ? (
+            <Note tone="warn">
+              <b>That was the last of {MAX_QUALIFICATION_CALLS} calls.</b> Not yet captured:{" "}
+              {progress.missing.map((f) => f.label).join(", ")}. The lead is not lost — it stays a Suspect, and you can
+              add these on the record when you know them, or close it yourself.
             </Note>
           ) : willBeLost ? (
             <Note tone="danger">
@@ -569,9 +595,9 @@ export function LogCallDialog({
                 <b>This call ends the lead — it will be marked Lost.</b>{" "}
                 {endsLead
                   ? "The customer has closed the door."
-                  : `That was the last of ${MAX_QUALIFICATION_CALLS} calls and ${progress.missing.length} required answer${
-                      progress.missing.length === 1 ? " is" : "s are"
-                    } still missing.`}
+                  : `That was the last of ${MAX_QUALIFICATION_CALLS} calls and ${requiredProgress(merged)
+                      .missing.map((f) => f.label)
+                      .join(", ")} is still missing.`}
               </div>
               <div className="mt-2.5 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
                 <FieldLabel label="Lost reason">
@@ -592,13 +618,13 @@ export function LogCallDialog({
             <div className="mb-2 rounded-[4px] border border-line bg-canvas px-4 py-3">
               <div className="text-[13px] text-ink">
                 <b>
-                  {progress.done} / {progress.total} required answers
+                  {progress.done} / {progress.total} needed for Prospect
                 </b>{" "}
                 after this call. Call {n + 1} / {MAX_QUALIFICATION_CALLS} follows.
               </div>
               {progress.missing.length ? (
                 <div className="mt-0.5 text-[12.5px] text-muted">
-                  Still open: {progress.missing.map((f) => f.label).slice(0, 4).join(" · ")}
+                  Not yet captured: {progress.missing.map((f) => f.label).slice(0, 4).join(" · ")}
                   {progress.missing.length > 4 ? ` · +${progress.missing.length - 4} more` : ""}
                 </div>
               ) : null}
@@ -1057,7 +1083,7 @@ export function ConvertDialog({
       }
     >
       <Note tone="brand">
-        <b>This converts the lead immediately.</b> All required answers are in, so pressing this moves{" "}
+        <b>This converts the lead immediately.</b> Everything a Prospect needs is in, so pressing this moves{" "}
         {lead.name} to Prospect now — no Sales Manager verification call is needed for this lead.
       </Note>
 

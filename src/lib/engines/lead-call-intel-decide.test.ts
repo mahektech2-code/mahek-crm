@@ -26,7 +26,6 @@ function reading(partial: Partial<LeadCallReading>): LeadCallReading {
   return {
     customerType: null,
     monthlyLitres: null,
-    potentialRupees: null,
     product: null,
     competitor: null,
     application: null,
@@ -107,24 +106,40 @@ describe("decideLeadCallFill — only what is currently being asked", () => {
     assert.equal(fillN!.product, null);
   });
 
-  test("4. an ambiguous numeric value (model and words disagree) becomes confirm, not ready", () => {
-    const r = reading({
-      potentialRupees: { value: 50000, confidence: 90, evidence: "fifty thousand a month" },
-    });
-    const askNow = questionsForCall({}, 2).askNow;
-    /* The words themselves say a different figure — the engine cross-checks
-       with parseAmounts and must not simply trust the model. */
-    const a = decideLeadCallFill({
-      reading: r,
-      text: "maybe 1 lakh a month, fifty thousand a month on the slow side",
+  test("4. Decision Maker, Product and Monthly requirement the call never mentioned are left blank, not invented", () => {
+    /* Call 3 asks all three, so a fill WOULD be possible if the reading offered one. */
+    const askNow = questionsForCall({}, 3).askNow;
+    for (const key of ["decisionMaker", "requiredProductId", "monthlyLitres"]) {
+      assert.ok(askNow.some((f) => f.key === key), `${key} is being asked`);
+    }
+    const nothingSaid = decideLeadCallFill({
+      reading: reading({}),
+      text: "he said he will think about it and call back",
       askNow,
       products: {},
       config: CONFIG,
     });
-    const fill = fillOf(a.fills, "potentialPaise");
-    assert.ok(fill);
-    assert.equal(fill!.state, "confirm");
-    assert.ok(fill!.questions.length > 0);
+    for (const key of ["decisionMaker", "requiredProductId", "monthlyLitres"]) {
+      assert.equal(fillOf(nothingSaid.fills, key), undefined, `${key} was invented`);
+    }
+    /* Empty-ish slots are not answers either: a blank name, a zero, a product with no words. */
+    const emptyish = decideLeadCallFill({
+      reading: reading({
+        decisionMaker: { value: "   ", confidence: 80, evidence: "" },
+        monthlyLitres: { value: 0, confidence: 80, evidence: "" },
+        product: { value: null, confidence: 0, evidence: "" },
+      }),
+      text: "not sure",
+      askNow,
+      products: {},
+      config: CONFIG,
+    });
+    assert.deepEqual(emptyish.fills, []);
+  });
+
+  test("4b. the rupee estimate is no longer a question the reading can answer", () => {
+    assert.ok(!DESK_FIELDS.some((f) => (f.key as string) === "potentialPaise"));
+    assert.ok(!("potentialRupees" in reading({})));
   });
 
   test("5. a field already answered is never proposed — it is not in askNow to begin with", () => {

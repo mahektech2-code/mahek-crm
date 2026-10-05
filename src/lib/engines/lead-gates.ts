@@ -40,17 +40,21 @@ export type Condition = {
 };
 
 /**
- * §6 — the eight answers a Suspect owes before it may be a Prospect.
+ * §6 — the seven answers a Suspect owes before it may be a Prospect.
  *
  * These are columns rather than checklist ticks, so the gate reads real values.
  * "Decision maker, if known" in the specification is deliberately NOT here: the
  * word "if" makes it an invitation, and a gate that refuses on an optional
  * field is a gate nobody can pass.
+ *
+ * There is no "what could they be worth in rupees" condition. The monthly
+ * requirement in litres is the one monthly figure asked of a lead; the rupee
+ * estimate (`lead_estimated_potential_paise`) is still stored and shown, but
+ * nothing here refuses a Prospect for want of it.
  */
 export const PROSPECT_CONDITIONS: readonly Condition[] = [
   { id: "customer_type", says: "Say what kind of business this is" },
   { id: "monthly_litres", says: "How many litres a month do they use?" },
-  { id: "potential_value", says: "How much can they buy in a month, in rupees?" },
   { id: "competitor", says: "Which brand are they using now?" },
   { id: "required_product", says: "Which of our products do they need?" },
   { id: "contact_person", says: "Who should we ask for when we call?" },
@@ -338,7 +342,6 @@ function conditionsToEnter(to: LeadStage, i: LeadGateInput): Condition[] {
           switch (c.id) {
             case "customer_type": return has(i.customerType);
             case "monthly_litres": return has(i.monthlyLitres);
-            case "potential_value": return has(i.potentialPaise);
             case "competitor": return has(i.competitor);
             case "required_product": return has(i.requiredProductId);
             case "contact_person": return has(i.contactPerson);

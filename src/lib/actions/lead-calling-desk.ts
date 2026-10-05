@@ -32,7 +32,7 @@ import {
   lostNote,
   nextActionKindOf,
   nextActionText,
-  requiredProgress,
+  prospectProgress,
   spoke,
   type CallOutcome,
   type DeskFieldKey,
@@ -97,14 +97,14 @@ const gen = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
 const CUSTOMER_TYPES = ["dealer", "manufacturer", "distributor", "retailer"] as const;
 
-/** Every answer optional: a call captures whatever the customer gave. */
+/** Every answer optional: a call captures whatever the customer gave. A key not
+    listed here — the retired "expected monthly sales" among them — is dropped. */
 const answersSchema = z.object({
   customerType: z.enum(CUSTOMER_TYPES).optional(),
   decisionMaker: z.string().trim().max(200).optional(),
   buyer: z.string().trim().max(200).optional(),
   gstin: z.string().trim().max(20).optional(),
   monthlyLitres: z.number().int().positive().max(10_000_000).optional(),
-  potentialPaise: z.number().int().positive().max(1_000_000_000_000).optional(),
   creditDaysWanted: z.number().int().min(0).max(365).optional(),
   requiredProductId: z.string().trim().min(1).optional(),
   competitor: z.string().trim().max(200).optional(),
@@ -139,7 +139,7 @@ export type LogQualificationCallInput = z.input<typeof callSchema>;
 export type LogQualificationCallResult = {
   callNumber: number;
   /** What the call did to the lead. */
-  result: "next" | "ready" | "lost";
+  result: "next" | "ready" | "lost" | "exhausted";
   /** Set when the call was saved but closing the lead failed — it can be closed from the record. */
   closeFailed?: string;
 };
@@ -159,7 +159,6 @@ const COLUMN_FOR: Record<DeskFieldKey, keyof typeof customers.$inferInsert> = {
   buyer: "leadBuyer",
   gstin: "gstin",
   monthlyLitres: "leadMonthlyVolumeLitres",
-  potentialPaise: "leadEstimatedPotentialPaise",
   creditDaysWanted: "leadCreditDaysWanted",
   requiredProductId: "leadRequiredProductId",
   competitor: "leadCompetitor",
@@ -293,6 +292,8 @@ export async function logQualificationCall(
     const skippedKeys: DeskFieldKey[] = [];
     let nextDate: string | null = null;
     let lostCode: string | null = null;
+    /** What a Prospect still lacks, in words — "not yet captured", never an error. */
+    let notCaptured = "";
 
     await db.transaction(async (tx) => {
       const [row] = await tx
@@ -302,7 +303,6 @@ export async function logQualificationCall(
           buyer: customers.leadBuyer,
           gstin: customers.gstin,
           monthlyLitres: customers.leadMonthlyVolumeLitres,
-          potentialPaise: customers.leadEstimatedPotentialPaise,
           creditDaysWanted: customers.leadCreditDaysWanted,
           requiredProductId: customers.leadRequiredProductId,
           competitor: customers.leadCompetitor,
@@ -341,7 +341,6 @@ export async function logQualificationCall(
         buyer: row.buyer,
         gstin: row.gstin,
         monthlyLitres: row.monthlyLitres,
-        potentialPaise: row.potentialPaise,
         creditDaysWanted: row.creditDaysWanted,
         requiredProductId: row.requiredProductId,
         competitor: row.competitor,
@@ -378,10 +377,10 @@ export async function logQualificationCall(
           ),
         );
       }
-      if (requiredProgress(values).complete) {
+      if (prospectProgress(values).complete) {
         throw new Refusal(
           err(
-            "Every required answer is already in, so no further call is needed. Request Prospect.",
+            "Everything a Prospect needs is already in, so no further call is needed. Request Prospect.",
             "rule_violation",
           ),
         );
@@ -442,12 +441,18 @@ export async function logQualificationCall(
             ? p.lostReasonCode
             : lostCodeForCause(disposition.cause);
       }
+      /* Blank answers are "not yet captured" — named, never refused. */
+      notCaptured = prospectProgress(merged)
+        .missing.map((f) => f.label)
+        .join(", ");
       const finalText =
         disposition.kind === "ready"
-          ? "All required answers in — ready for Prospect"
-          : disposition.kind === "lost"
-            ? `${DESK_LOST_REASONS.find((r) => r.code === lostCode)?.label ?? "Closed"} — Lost`
-            : null;
+          ? "Everything a Prospect needs is in — ready for Prospect"
+          : disposition.kind === "exhausted"
+            ? `Three calls made — not yet captured: ${notCaptured}`
+            : disposition.kind === "lost"
+              ? `${DESK_LOST_REASONS.find((r) => r.code === lostCode)?.label ?? "Closed"} — Lost`
+              : null;
 
       await tx.insert(calls).values({
         id: callId,
@@ -495,9 +500,18 @@ export async function logQualificationCall(
                 leadNextAction: "Request Prospect",
                 leadNextActionDate: day,
                 leadNextActionOwnerId: ctx.user.id,
-                leadNextActionOutcome: "All required answers are in",
+                leadNextActionOutcome: "Everything a Prospect needs is in",
               }
-            : {};
+            : disposition.kind === "exhausted"
+              ? {
+                  /* No Call 4, so the next thing owed is the record itself:
+                     fill in what has since come in, or close the lead. */
+                  leadNextAction: `Capture what is still missing (${notCaptured}), or close the lead`,
+                  leadNextActionDate: day,
+                  leadNextActionOwnerId: ctx.user.id,
+                  leadNextActionOutcome: "Three calls made",
+                }
+              : {};
 
       await tx
         .update(customers)
@@ -567,12 +581,14 @@ export async function logQualificationCall(
       (disposition.kind === "lost" ? lostNote(disposition.cause) : "");
     const message =
       disposition.kind === "ready"
-        ? `Call ${callNumber} / ${MAX_QUALIFICATION_CALLS} saved. All required answers collected — Ready for Prospect.`
-        : disposition.kind === "lost"
-          ? closeFailed
-            ? `Call ${callNumber} / ${MAX_QUALIFICATION_CALLS} saved, but the lead could not be closed: ${closeFailed}`
-            : `${lostLabel} — lead marked Lost.`
-          : `Call ${callNumber} / ${MAX_QUALIFICATION_CALLS} saved. ${
+        ? `Call ${callNumber} / ${MAX_QUALIFICATION_CALLS} saved. Everything a Prospect needs is in — Ready for Prospect.`
+        : disposition.kind === "exhausted"
+          ? `Call ${callNumber} / ${MAX_QUALIFICATION_CALLS} saved. Not yet captured: ${notCaptured}. The lead stays a Suspect — add them on the record when known, or close it.`
+          : disposition.kind === "lost"
+            ? closeFailed
+              ? `Call ${callNumber} / ${MAX_QUALIFICATION_CALLS} saved, but the lead could not be closed: ${closeFailed}`
+              : `${lostLabel} — lead marked Lost.`
+            : `Call ${callNumber} / ${MAX_QUALIFICATION_CALLS} saved. ${
               (p.next?.kind ?? "call") === "call" ? `Call ${disposition.callNumber}` : "Message"
             } due ${shortDay(nextDate)}.`;
 
@@ -594,7 +610,7 @@ const requestSchema = z.object({
   /** §5's coded reason, from `leads.prospectReasons`. Validated against it below. */
   reasonCode: z.string().trim().min(1, "Say why this is worth pursuing."),
   note: z.string().trim().max(2000).optional(),
-  /* The two things the Prospect gate wants that are not among the five. Asked
+  /* The two things the Prospect gate wants that are not desk answers. Asked
      here, once, if the record does not already hold them. */
   customerType: z.enum(CUSTOMER_TYPES).optional(),
   contactPerson: z.string().trim().max(200).optional(),
@@ -608,9 +624,10 @@ const requestSchema = z.object({
  * shared between `requestProspect` (the Sales Manager verification path) and
  * `convertLeadToProspect` (the calling desk's own direct promotion).
  *
- * ONE READINESS CONDITION, asked once. The five required desk answers
- * (`requiredProgress`, the same engine the "Ready for Prospect" phase and the
- * button's enabled state are drawn from), the sales type, the coded reason and
+ * ONE READINESS CONDITION, asked once. The desk answers a Prospect needs
+ * (`prospectProgress`, the same engine the "Ready for Prospect" phase and the
+ * button's enabled state are drawn from — the decision maker is not among them),
+ * the sales type, the coded reason and
  * the §28 Prospect gate itself are all checked here — so neither caller can
  * drift from what the other demands, and a lead accepted by one cannot later
  * be refused by the promotion for something it was never asked. `nextAction`
@@ -655,11 +672,10 @@ async function preparePromotion(
   const values: DeskValues = {
     decisionMaker: lead.leadDecisionMaker,
     monthlyLitres: lead.leadMonthlyVolumeLitres,
-    potentialPaise: lead.leadEstimatedPotentialPaise,
     requiredProductId: lead.leadRequiredProductId,
     competitor: lead.leadCompetitor,
   };
-  const progress = requiredProgress(values);
+  const progress = prospectProgress(values);
   if (!progress.complete) {
     return err(
       `Not ready for Prospect yet. Still needed: ${progress.missing.map((f) => f.label).join(", ")}.`,
@@ -797,7 +813,7 @@ async function preparePromotion(
  * path again the day that setting is flipped back.
  *
  * WHAT IS CHECKED HERE IS WHAT THE PROMOTION WILL NEED — see `preparePromotion`.
- * What the five required answers do not cover, the kind of business and who to
+ * What the desk answers do not cover, the kind of business and who to
  * ask for, is asked in the same act if the record lacks it.
  */
 export async function requestProspect(
@@ -945,10 +961,10 @@ export async function requestProspect(
  * "with the Sales Manager".
  *
  * THE READINESS CHECKED IS `preparePromotion`'S, the same one `requestProspect`
- * checks — the five required desk answers, the sales type, the coded reason,
+ * checks — the desk answers a Prospect needs, the sales type, the coded reason,
  * and the §28 Prospect gate itself. A malicious or direct call with any of
  * that missing is refused here exactly as it would be there; the button on the
- * record screen is drawn from the same `requiredProgress` reading, so the two
+ * record screen is drawn from the same `prospectProgress` reading, so the two
  * can never disagree about when a lead is ready.
  */
 export async function convertLeadToProspect(

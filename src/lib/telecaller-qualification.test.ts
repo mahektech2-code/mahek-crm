@@ -369,7 +369,6 @@ describe("Suspect → Prospect: the Telecaller promotes, the Sales Manager verif
         requiredProductId: productId,
         competitor: "Local thinner",
         decisionMaker: "Owner",
-        potentialPaise: 6_000_000,
       },
     });
     assert.equal(call.ok && call.data.result, "ready", call.ok ? "" : call.error);
@@ -970,7 +969,6 @@ describe("the whole workflow, start to finish", () => {
         requiredProductId: productId,
         competitor: "Local thinner",
         decisionMaker: "Owner",
-        potentialPaise: 6_000_000,
       },
     });
     assert.equal(call.ok && call.data.result, "ready", call.ok ? "" : call.error);

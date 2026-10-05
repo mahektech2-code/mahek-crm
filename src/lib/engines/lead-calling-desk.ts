@@ -4,8 +4,8 @@
  *
  * A lead that arrives from the website, WhatsApp or a portal is qualified over
  * the phone: nobody visits. The desk gets three calls at it, no more — Call 1,
- * Call 2, Call 3 — and what they are FOR is the five answers a Prospect is
- * asked for. Everything else about the funnel (the ladders, the §28 gates, the
+ * Call 2, Call 3 — and what they are FOR is the answers a Prospect is asked
+ * for (Product, the monthly requirement and the competitor). Everything else about the funnel (the ladders, the §28 gates, the
  * sales manager's verification call) already exists and is untouched: this file
  * only decides where a lead stands from the desk's side, and what happens when
  * a call ends.
@@ -48,7 +48,6 @@ export type DeskFieldKey =
   | "buyer"
   | "gstin"
   | "monthlyLitres"
-  | "potentialPaise"
   | "creditDaysWanted"
   | "requiredProductId"
   | "competitor"
@@ -62,8 +61,20 @@ export type DeskField = {
   key: DeskFieldKey;
   label: string;
   kind: DeskFieldKind;
-  /** One of the five that make a lead ready. */
+  /**
+   * COMPULSORY ON THE CALLS. Still missing after Call 3, the lead is closed as
+   * Lost (`afterCall`). Only the competitor is — every other answer is a blank
+   * that reads "Not yet captured", never an error and never a reason to close.
+   */
   required: boolean;
+  /**
+   * What the Prospect gate (`PROSPECT_CONDITIONS`) needs from the desk's own
+   * answers. It is NOT compulsory while calling: a call saves with it blank. It
+   * decides one thing — whether the lead reads "Ready for Prospect" — so that
+   * the desk never says ready where the promotion would then refuse. Every
+   * `required` field is also a `prospect` one.
+   */
+  prospect: boolean;
   /** The call it is best asked on. A hint about ORDER, never a rule about it. */
   suggestCall: 1 | 2 | 3;
   options?: readonly { value: string; label: string }[];
@@ -71,9 +82,15 @@ export type DeskField = {
 };
 
 /**
- * The twelve Suspect answers, in the order the sales manager's Opportunity card
- * lists them. Five are required. All of them map onto columns that already
- * exist — nothing is invented here.
+ * The eleven Suspect answers, in the order the sales manager's Opportunity card
+ * lists them. Only the competitor is compulsory on the calls; Product and the
+ * monthly requirement are needed for a Prospect but may be left blank on any
+ * call, and the decision maker is asked if known. All of them map onto columns
+ * that already exist — nothing is invented here.
+ *
+ * "Expected monthly sales" is not here: the monthly requirement in LITRES is the
+ * one monthly question. `customers.lead_estimated_potential_paise` still exists
+ * and is read by the funnel, the board and the manager's screens.
  */
 export const DESK_FIELDS: readonly DeskField[] = [
   {
@@ -81,6 +98,7 @@ export const DESK_FIELDS: readonly DeskField[] = [
     label: "Customer type",
     kind: "choice",
     required: false,
+    prospect: false,
     suggestCall: 1,
     options: [
       { value: "dealer", label: "Dealer" },
@@ -89,17 +107,16 @@ export const DESK_FIELDS: readonly DeskField[] = [
       { value: "retailer", label: "Retailer" },
     ],
   },
-  { key: "decisionMaker", label: "Decision maker", kind: "text", required: true, suggestCall: 2 },
-  { key: "buyer", label: "Buyer", kind: "text", required: false, suggestCall: 3 },
-  { key: "gstin", label: "GST", kind: "text", required: false, suggestCall: 2 },
-  { key: "monthlyLitres", label: "Monthly requirement", kind: "litres", required: true, suggestCall: 1, hint: "Litres a month" },
-  { key: "potentialPaise", label: "Expected monthly sales", kind: "money", required: true, suggestCall: 2, hint: "Rupees a month" },
-  { key: "creditDaysWanted", label: "Credit days", kind: "days", required: false, suggestCall: 3 },
-  { key: "requiredProductId", label: "Product", kind: "product", required: true, suggestCall: 1 },
-  { key: "competitor", label: "Competitor", kind: "text", required: true, suggestCall: 1 },
-  { key: "application", label: "Application", kind: "text", required: false, suggestCall: 1, hint: "What they will use it on" },
-  { key: "address", label: "Address", kind: "text", required: false, suggestCall: 3 },
-  { key: "email", label: "Email", kind: "text", required: false, suggestCall: 3 },
+  { key: "decisionMaker", label: "Decision maker", kind: "text", required: false, prospect: false, suggestCall: 2, hint: "Ask if known" },
+  { key: "buyer", label: "Buyer", kind: "text", required: false, prospect: false, suggestCall: 3 },
+  { key: "gstin", label: "GST", kind: "text", required: false, prospect: false, suggestCall: 2 },
+  { key: "monthlyLitres", label: "Monthly requirement", kind: "litres", required: false, prospect: true, suggestCall: 1, hint: "Litres a month" },
+  { key: "creditDaysWanted", label: "Credit days", kind: "days", required: false, prospect: false, suggestCall: 3 },
+  { key: "requiredProductId", label: "Product", kind: "product", required: false, prospect: true, suggestCall: 1 },
+  { key: "competitor", label: "Competitor", kind: "text", required: true, prospect: true, suggestCall: 1 },
+  { key: "application", label: "Application", kind: "text", required: false, prospect: false, suggestCall: 1, hint: "What they will use it on" },
+  { key: "address", label: "Address", kind: "text", required: false, prospect: false, suggestCall: 3 },
+  { key: "email", label: "Email", kind: "text", required: false, prospect: false, suggestCall: 3 },
 ] as const;
 
 const FIELD_BY_KEY = new Map(DESK_FIELDS.map((f) => [f.key, f]));
@@ -136,13 +153,32 @@ export type RequiredProgress = {
   complete: boolean;
 };
 
+/**
+ * What is COMPULSORY on the calls: the answers whose absence after Call 3 closes
+ * the lead. It is not what makes a lead ready — see `prospectProgress`.
+ */
 export function requiredProgress(values: DeskValues): RequiredProgress {
   const missing = DESK_FIELDS.filter((f) => f.required && !isAnswered(f.key, values[f.key]));
   const total = REQUIRED_KEYS.length;
   return { done: total - missing.length, total, missing, complete: missing.length === 0 };
 }
 
-/** How many of all twelve are answered — the "n of 12 in all" the progress bar reads. */
+/**
+ * What the Prospect gate needs from the desk's answers — the one reading behind
+ * "Ready for Prospect", the progress bar and the promotion's own pre-check.
+ *
+ * Calling completion and Prospect eligibility are different questions, and this
+ * is the second. A call saves with any of these blank ("Not yet captured"); what
+ * a blank costs is only that the lead is not yet READY. It mirrors the desk-side
+ * of `PROSPECT_CONDITIONS` so that "ready" never precedes a refusal.
+ */
+export function prospectProgress(values: DeskValues): RequiredProgress {
+  const needed = DESK_FIELDS.filter((f) => f.prospect);
+  const missing = needed.filter((f) => !isAnswered(f.key, values[f.key]));
+  return { done: needed.length - missing.length, total: needed.length, missing, complete: missing.length === 0 };
+}
+
+/** How many of all eleven are answered — the "n of 11 in all" the progress bar reads. */
 export function answeredCount(values: DeskValues): { done: number; total: number } {
   return {
     done: DESK_FIELDS.filter((f) => isAnswered(f.key, values[f.key])).length,
@@ -226,8 +262,8 @@ export function phaseOf(
     if (requestState === "followup") return "followup";
     if (requestState === "returned") return "returned";
     /* Ready wins over the call count: a lead whose last answer came on Call 3 is
-       ready, not exhausted. */
-    if (requiredProgress(values).complete) return "ready";
+       ready, not exhausted. Ready means what the Prospect gate needs is in. */
+    if (prospectProgress(values).complete) return "ready";
     if (callCount >= MAX_QUALIFICATION_CALLS) return "exhausted";
     return (["call1", "call2", "call3"] as const)[Math.max(0, callCount)];
   }
@@ -330,7 +366,7 @@ export function deskLadderSalesType(
 /* ------------------------------------------------------------------ questions */
 
 export type CallQuestions = {
-  /** Worth asking on this call, the five first. */
+  /** Worth asking on this call, the ones a Prospect needs first. */
   askNow: DeskField[];
   /** Still empty, better left to a later call. */
   later: DeskField[];
@@ -344,13 +380,15 @@ export function questionsForCall(values: DeskValues, callNumber: number): CallQu
     .filter(
       (f) =>
         f.suggestCall <= callNumber ||
-        /* The last call is the last chance, so every required answer still
-           missing is asked on it whatever call it was suggested for. */
-        (callNumber >= MAX_QUALIFICATION_CALLS && f.required),
+        /* The last call is the last chance, so every answer a Prospect needs
+           that is still missing is asked on it whatever call it was suggested
+           for. Asked, not demanded: it may still be left blank. */
+        (callNumber >= MAX_QUALIFICATION_CALLS && f.prospect),
     )
-    /* Required first, and stable within each group. Mixed in among optional ones
-       the question that gates Ready for Prospect is the one that gets skipped. */
-    .sort((a, b) => Number(b.required) - Number(a.required));
+    /* The ones a Prospect needs first, and stable within each group. Mixed in
+       among the rest the question that gates Ready for Prospect is the one that
+       gets skipped. */
+    .sort((a, b) => Number(b.prospect) - Number(a.prospect));
   const later = open.filter((f) => !askNow.includes(f));
   const answered = DESK_FIELDS.filter((f) => isAnswered(f.key, values[f.key]));
   return { askNow, later, answered };
@@ -403,15 +441,21 @@ export type LostCause = "wrong_number" | "not_interested" | "no_response" | "inf
 export type CallDisposition =
   | { kind: "ready" }
   | { kind: "lost"; cause: LostCause }
+  /** Three calls made, nothing compulsory missing, not yet ready for Prospect. Stays a Suspect. */
+  | { kind: "exhausted" }
   | { kind: "next"; callNumber: 2 | 3 };
 
 /**
  * What a call that has just been made does to the lead.
  *
  *   - somebody saying no, or a number that is not the business, ends it;
- *   - all five answers in ends the CALLING, whichever call it was — Call 3 is
- *     never forced on a lead that is already ready;
- *   - Call 3 finished and still short ends it as lost, and there is no Call 4;
+ *   - everything a Prospect needs in ends the CALLING, whichever call it was —
+ *     Call 3 is never forced on a lead that is already ready;
+ *   - Call 3 finished and a COMPULSORY answer (the competitor) still missing ends
+ *     it as lost, and there is no Call 4;
+ *   - Call 3 finished with only Product or the monthly requirement still blank
+ *     leaves the lead a Suspect — `exhausted` — to be filled in on the record or
+ *     closed by hand. A blank there is "not yet captured", never a loss;
  *   - otherwise the next call is owed.
  *
  * `merged` is the values AFTER this call's answers were applied, and
@@ -430,9 +474,10 @@ export function afterCall(input: {
   if (outcome === "not_interested") return { kind: "lost", cause: "not_interested" };
   if (outcome === "wrong_number") return { kind: "lost", cause: "wrong_number" };
 
-  if (requiredProgress(merged).complete) return { kind: "ready" };
+  if (prospectProgress(merged).complete) return { kind: "ready" };
 
   if (callNumber >= MAX_QUALIFICATION_CALLS) {
+    if (requiredProgress(merged).complete) return { kind: "exhausted" };
     const everSpoke = spoke(outcome) || priorOutcomes.some(spoke);
     return { kind: "lost", cause: everSpoke ? "information_missing" : "no_response" };
   }
@@ -449,7 +494,7 @@ export function lostNote(cause: LostCause): string {
     case "no_response":
       return "No response after three qualification calls.";
     case "information_missing":
-      return "Three qualification calls made and the required answers were still not obtained.";
+      return "Three qualification calls made and the competitor was still not obtained.";
   }
 }
 
