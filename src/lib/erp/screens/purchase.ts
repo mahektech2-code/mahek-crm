@@ -63,7 +63,15 @@ import { godownIdByName, godownOptions, has, materials, today, type Col, type Tx
 
 
 
-const REQ_TYPES = ["Chemical", "Can", "Box", "Stationary", "Finish Good"];
+/** One lot with stock in it, as the requisition form shows it. */
+type LotOnHand = { lot: string; godown: string; qty: number; unit: string };
+
+/*
+ * What a requisition may ask purchase for. Finished goods were offered once and
+ * are not bought in — they are made — so a new one may not name them; the
+ * requisitions already raised for one still read back as they were.
+ */
+const REQ_TYPES = ["Chemical", "Can", "Box", "Stationary"];
 const INWARD_TYPES = ["Chemical", "Can", "Box"];
 const REQ_STATUS = ["Pending", "Order Placed", "Booked", "Received"];
 
@@ -205,13 +213,16 @@ async function createPurchase(
 /* ========================================================= requisitions */
 
 export async function requisitionForm(ctx: ErpContext, init?: Record<string, string>): Promise<FormSpec> {
-  const [mats, gds, skus] = await Promise.all([
-    materials(),
-    godownOptions(ctx, { lost: false }),
-    db.select({ name: products.name }).from(products).where(eq(products.active, true)).orderBy(asc(products.name)),
-  ]);
+  const [mats, gds, rm] = await Promise.all([materials(), godownOptions(ctx, { lost: false }), rmLots()]);
   const map = itemsByType(mats, REQ_TYPES);
-  map["Finish Good"] = skus.map((s) => s.name);
+  /*
+   * WHAT IS ALREADY ON THE SHELF, lot by lot, read from the same functions the
+   * Stock screen reads — so somebody asking purchase for more can see what
+   * their godown and the others already hold before they ask.
+   */
+  const stockOf: Record<string, LotOnHand[]> = {};
+  const add = (item: string, l: LotOnHand) => (stockOf[item] ??= []).push(l);
+  rm.filter((l) => l.stock > 0).forEach((l) => add(l.item, { lot: l.lotNo, godown: l.godown, qty: l.stock, unit: l.unit }));
   return {
     screen: "requisitions",
     id: "new",
@@ -219,12 +230,14 @@ export async function requisitionForm(ctx: ErpContext, init?: Record<string, str
     sub: "Tell purchase what your godown needs.",
     submit: "Raise requisition",
     init: { date: today(), godown: ctx.workingGodown?.name ?? "", priority: "Medium", ...init },
+    data: { stockOf },
     header: [
       { k: "date", l: "Date", t: "date", req: true },
       { k: "godown", l: "Godown", t: "select", req: true, opts: gds.map((g) => g.name) },
       { k: "type", l: "Material type", t: "select", req: true, opts: REQ_TYPES },
       { k: "item", l: "Item", t: "select", req: true, optsBy: { by: "type", map }, when: { k: "type", notEmpty: true } },
       { k: "unit", l: "Unit", t: "derived", calc: "requisitions.unit" },
+      { k: "onHand", l: "Available stock", t: "derived", calc: "requisitions.onHand", when: { k: "item", notEmpty: true } },
       { k: "required", l: "Required quantity", t: "num", req: true, min: 0.001 },
       { k: "priority", l: "Priority", t: "select", req: true, opts: ["Urgent", "Medium", "For Stock"] },
       { k: "remarks", l: "Remarks", t: "area", mic: true },
@@ -324,28 +337,18 @@ const requisitions: ScreenModule = {
       const qty = num(h.required);
       if (qty == null || qty <= 0) return fieldErr("required", qty != null && qty < 0 ? "Minus Quantity Not Allowed" : "Required quantity is required");
       const priority = text(h.priority) ?? "Medium";
-      let rawMaterialId: string | null = null;
-      let productId: string | null = null;
-      if (type === "Finish Good") {
-        const [p] = await db.select({ id: products.id }).from(products).where(eq(products.name, item));
-        if (!p) return fieldErr("item", "Pick a product from the list");
-        productId = p.id;
-      } else {
-        const [m] = await db
-          .select({ id: erpRawMaterials.id })
-          .from(erpRawMaterials)
-          .where(and(eq(erpRawMaterials.name, item), eq(erpRawMaterials.materialType, type)));
-        if (!m) return fieldErr("item", "Pick an item of this material type");
-        rawMaterialId = m.id;
-      }
+      const [m] = await db
+        .select({ id: erpRawMaterials.id })
+        .from(erpRawMaterials)
+        .where(and(eq(erpRawMaterials.name, item), eq(erpRawMaterials.materialType, type)));
+      if (!m) return fieldErr("item", "Pick an item of this material type");
       const id = erpId("req");
       await db.insert(erpRequisitions).values({
         id,
         reqDate: text(h.date) ?? today(),
         godownId,
         materialType: type,
-        rawMaterialId,
-        productId,
+        rawMaterialId: m.id,
         unit: reqUnit(type),
         requiredQty: qty,
         priority,
