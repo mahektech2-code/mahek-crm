@@ -12,8 +12,6 @@ registerCalc("requisitions.unit", ({ h }) =>
   !h.type ? "" : h.type === "Chemical" ? "Liter" : h.type === "Finish Good" ? "Box" : "Pcs",
 );
 
-registerCalc("inward.pr", ({ h }) => (h.prFixed ? h.prFixed : "Next PR number, on save"));
-
 registerCalc("inward.unit", ({ l, data }) => {
   if (!l.item) return "";
   if (l.type === "Box") return "Pcs";

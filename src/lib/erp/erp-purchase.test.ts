@@ -254,3 +254,39 @@ describe("register and stock", () => {
     assert.deepEqual(rows.find((r) => r.v.source === mek.id)?.flags, ["orphan"]);
   });
 });
+
+describe("the PR number, offered like an invoice number", () => {
+  const offered = async () => {
+    const form = (await mod("inward").load(await as(admin))).spec.newForm!;
+    return form.init!.prOffered;
+  };
+  const save = async (h: Record<string, string>) =>
+    mod("inward").forms!.new(await as(admin), { date: TODAY, supplier: "Asian Solvents", godown: "Bhiwandi", ...h }, [{ type: "Can", item: "1 L Tin Can", qty: "10" }]);
+
+  test("the form opens on the next number, and it can be typed over", async () => {
+    const next = await offered();
+    const r = await save({ pr: next, prOffered: next });
+    assert.ok(r.ok, JSON.stringify(r));
+    assert.equal(r.message?.startsWith(`PR ${next} ·`), true, r.message);
+    assert.equal(await offered(), String(Number(next) + 1));
+  });
+
+  test("two people saving the same offered number get it and the one after, never a clash or a random one", async () => {
+    const next = await offered();
+    const [a, b] = await Promise.all([save({ pr: next, prOffered: next }), save({ pr: next, prOffered: next })]);
+    assert.ok(a.ok && b.ok, JSON.stringify([a, b]));
+    const prs = (await db.select().from(erpInward).where(sql`${erpInward.prNumber} in (${Number(next)}, ${Number(next) + 1})`)).map((x) => x.prNumber);
+    assert.deepEqual(prs.sort(), [Number(next), Number(next) + 1]);
+    const told = [a, b].filter((x) => x.ok && x.message?.includes(`PR ${next} was taken while you were filling this in`));
+    assert.equal(told.length, 1, "the second saver is told their number moved");
+  });
+
+  test("a typed number moves the series past it, and a used one is refused", async () => {
+    const next = await offered();
+    const jump = String(Number(next) + 50);
+    assert.ok((await save({ pr: jump, prOffered: next })).ok);
+    assert.equal(await offered(), String(Number(jump) + 1), "the next form does not offer a number already used");
+    const again = await save({ pr: jump, prOffered: await offered() });
+    assert.ok(!again.ok && again.fieldErrors?.[0].field === "pr", JSON.stringify(again));
+  });
+});

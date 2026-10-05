@@ -20,12 +20,13 @@ import { err, fieldErr, okVoid, type Result } from "@/lib/result";
 import type { ErpContext } from "../access";
 import { refValues } from "../refs";
 import {
+  claimNumber,
   erpAudit,
   erpId,
   int,
-  nextNumber,
   num,
   paise,
+  peekNumber,
   rupeesField,
   stampLine,
   text,
@@ -392,11 +393,21 @@ async function presentQuantities() {
 
 /* ============================================================== inward */
 
+/** Whether a PR number already names a delivery or a register entry. */
+async function prInUse(tx: Pick<typeof db, "select">, n: number): Promise<boolean> {
+  const [a, b] = await Promise.all([
+    tx.select({ id: erpInward.id }).from(erpInward).where(eq(erpInward.prNumber, n)).limit(1),
+    tx.select({ id: erpPurchases.id }).from(erpPurchases).where(eq(erpPurchases.prNumber, n)).limit(1),
+  ]);
+  return a.length > 0 || b.length > 0;
+}
+
 async function inwardForm(ctx: ErpContext, init?: Record<string, string>): Promise<FormSpec> {
-  const [mats, gds, sups] = await Promise.all([
+  const [mats, gds, sups, nextPr] = await Promise.all([
     materials(),
     godownOptions(ctx, { lost: false }),
     db.select({ name: erpSuppliers.name }).from(erpSuppliers).where(eq(erpSuppliers.active, true)).orderBy(asc(erpSuppliers.name)),
+    peekNumber("pr"),
   ]);
   const unitOf: Record<string, string> = {};
   const testsOf: Record<string, string[]> = {};
@@ -412,13 +423,15 @@ async function inwardForm(ctx: ErpContext, init?: Record<string, string>): Promi
     submit: "Save inward",
     lineLabel: "Item",
     init: {
+      pr: String(nextPr),
+      prOffered: String(nextPr),
       date: today(),
       godown: ctx.workingGodown?.name ?? "",
       ...init,
     },
     data: { unitOf, testsOf },
     header: [
-      { k: "pr", l: "PR number", t: "derived", calc: "inward.pr" },
+      { k: "pr", l: "PR number", t: "num", req: true, min: 1, hint: "The next PR number. Type over it to use another." },
       { k: "date", l: "Date", t: "date", req: true },
       { k: "supplier", l: "Supplier", t: "select", req: true, opts: sups.map((s) => s.name) },
       { k: "godown", l: "Godown", t: "select", req: true, opts: gds.map((g) => g.name) },
@@ -485,7 +498,11 @@ const inward: ScreenModule = {
         actions.push({
           id: "addMore",
           l: "Add more",
-          form: { ...form, init: { ...form.init, pr: String(x.r.prNumber), prFixed: String(x.r.prNumber), date: x.r.receivedDate, supplier: x.supplier, godown: x.godown } },
+          form: {
+            ...form,
+            header: form.header.map((f) => (f.k === "pr" ? { ...f, readOnly: true, hint: "Adding to this PR." } : f)),
+            init: { ...form.init, pr: String(x.r.prNumber), prFixed: String(x.r.prNumber), date: x.r.receivedDate, supplier: x.supplier, godown: x.godown },
+          },
         });
         return {
           id: x.r.id,
@@ -532,9 +549,17 @@ const inward: ScreenModule = {
         if (l.type === "Chemical" && (int(l.drums) == null || int(l.drums)! < 0)) return fieldErr(`l${i}.drums`, "Drums is required");
         parsed.push({ l, m, qty });
       }
-      /* "Add more" on a PR keeps its number; a new inward draws the next one. */
+      /*
+       * "Add more" on a PR keeps its number. A new inward takes what the form
+       * offered — drawn fresh if it was left alone, like an invoice — or the
+       * number somebody typed, which must not already be another delivery's.
+       */
       const fixed = int(h.prFixed);
+      const typed = fixed == null ? int(h.pr) : null;
+      if (fixed == null && h.pr?.trim() && (typed == null || typed < 1)) return fieldErr("pr", "A PR number is a whole number above zero");
+      const offered = int(h.prOffered);
       let pr = 0;
+      let moved = false;
       /*
        * EACH LINE GOES WHERE IT IS GOING, IN THE SAME SAVE. Mahek Plus asked a
        * person to press "Send to Testing" or "Send to Purchase" on every line,
@@ -545,8 +570,14 @@ const inward: ScreenModule = {
        * delivery.
        */
       const sent = { testing: 0, register: 0, stuck: [] as string[] };
-      await db.transaction(async (tx) => {
-        pr = fixed ?? (await nextNumber(tx, "pr"));
+      const taken = await db.transaction(async (tx) => {
+        if (fixed != null) pr = fixed;
+        else {
+          const claim = await claimNumber(tx, "pr", typed, offered, { inUse: (n) => prInUse(tx, n) });
+          if (!claim.ok) return claim.n;
+          pr = claim.n;
+          moved = claim.moved;
+        }
         for (const { l, m, qty } of parsed) {
           const inwardId = erpId("pin");
           const testing = m.testingList.length > 0;
@@ -592,11 +623,14 @@ const inward: ScreenModule = {
             sent.register++;
           } else sent.stuck.push(m.name);
         }
+        return null;
       });
+      if (taken != null) return fieldErr("pr", `PR ${taken} is already used — "Add more" on that PR adds to it`);
       await erpAudit(ctx, "erp.inward.create", "erp_inward", String(pr), null, { lines: parsed.length, supplier, ...sent });
       const where = [sent.testing ? `${sent.testing} to testing` : "", sent.register ? `${sent.register} in the register` : ""].filter(Boolean).join(", ");
       return okVoid(
-        `PR ${pr} · ${parsed.length} line${parsed.length > 1 ? "s" : ""} saved${where ? ` · ${where}` : ""}` +
+        (moved ? `PR ${offered} was taken while you were filling this in — saved as PR ${pr}` : `PR ${pr}`) +
+          ` · ${parsed.length} line${parsed.length > 1 ? "s" : ""} saved${where ? ` · ${where}` : ""}` +
           (sent.stuck.length ? ` · ${sent.stuck.join(", ")} not in the register: that lot number is taken — change the PR number and send it` : ""),
       );
     },
@@ -1102,10 +1136,11 @@ async function registerRows(): Promise<RegRow[]> {
 }
 
 async function purchaseForm(ctx: ErpContext, id?: string): Promise<FormSpec | null> {
-  const [mats, gds, sups] = await Promise.all([
+  const [mats, gds, sups, nextPr] = await Promise.all([
     materials(),
     godownOptions(ctx, { lost: false }),
     db.select().from(erpSuppliers).where(eq(erpSuppliers.active, true)).orderBy(asc(erpSuppliers.name)),
+    id ? null : peekNumber("pr"),
   ]);
   const money = ctx.powers.has("viewPurchaseMoney");
   const partyCode: Record<string, string> = {};
@@ -1116,7 +1151,13 @@ async function purchaseForm(ctx: ErpContext, id?: string): Promise<FormSpec | nu
     itemCode[m.name] = m.code ?? "";
     densityOf[m.name] = m.density;
   });
-  let init: Record<string, string> = { date: today(), godown: ctx.workingGodown?.name ?? "", gst: "18", company: "Mahek Marketing India" };
+  let init: Record<string, string> = {
+    ...(nextPr == null ? {} : { pr: String(nextPr), prOffered: String(nextPr) }),
+    date: today(),
+    godown: ctx.workingGodown?.name ?? "",
+    gst: "18",
+    company: "Mahek Marketing India",
+  };
   let editing: RegRow | undefined;
   if (id) {
     editing = (await registerRows()).find((r) => r.p.id === id);
@@ -1145,7 +1186,7 @@ async function purchaseForm(ctx: ErpContext, id?: string): Promise<FormSpec | nu
     };
   }
   const header: FieldSpec[] = [
-    { k: "pr", l: "PR number", t: id ? "text" : "num", readOnly: !!id, hint: id ? undefined : "Blank draws the next PR number." },
+    { k: "pr", l: "PR number", t: id ? "text" : "num", readOnly: !!id, hint: id ? undefined : "The next PR number. Type over it to use another, such as an inward's PR." },
     { k: "date", l: "Purchase date", t: "date", req: true },
     { k: "po", l: "P.O. number", t: "text" },
     { k: "supplier", l: "Party", t: "select", req: true, opts: sups.map((s) => s.name), readOnly: !!id },
@@ -1544,9 +1585,12 @@ async function savePurchase(ctx: ErpContext, h: Record<string, string>, id?: str
   const [mat] = await db.select().from(erpRawMaterials).where(eq(erpRawMaterials.name, text(h.item) ?? ""));
   if (!mat) return fieldErr("item", "Raw item is required");
   let result: Result<{ id: string; lotNo: string }> | null = null;
+  let movedTo: number | null = null;
   await db
     .transaction(async (tx) => {
-      const pr = int(h.pr) ?? (await nextNumber(tx, "pr"));
+      const claim = await claimNumber(tx, "pr", int(h.pr), int(h.prOffered), { inUse: (n) => prInUse(tx, n), typedMayRepeat: true });
+      const pr = claim.n;
+      if (claim.ok && claim.moved) movedTo = pr;
       result = await createPurchase(tx, ctx, {
         ...common,
         prNumber: pr,
@@ -1561,7 +1605,8 @@ async function savePurchase(ctx: ErpContext, h: Record<string, string>, id?: str
   if (!r) return err("Could not save the purchase.");
   if (!r.ok) return r;
   await erpAudit(ctx, "erp.purchase.create", "erp_purchase", r.data.id, null, common);
-  return okVoid(`Purchase saved · lot ${r.data.lotNo}`);
+  const moved = movedTo == null ? "" : ` · PR ${h.prOffered} was taken while you were filling this in — saved as PR ${movedTo}`;
+  return okVoid(`Purchase saved · lot ${r.data.lotNo}${moved}`);
 }
 
 /* ============================================================= barcode */
