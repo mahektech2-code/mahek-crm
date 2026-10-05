@@ -64,19 +64,23 @@ export const STILL_WORKING: SQL = sql`
  * Handovers view still lists it, because a handover exists only once a lead
  * has converted.
  *
- * Converted is any of three facts, because there are three ways to stop being
- * a lead: a conversion stamped by an order (`lead_converted_at`), a ladder
- * that ended on a winning rung (every terminal one except `lost`, from the
- * engine rather than typed out), and a shop marked as one somebody else bills
- * — a third-party shop is a customer, which is also why the handset's leads
- * channel stopped sending them.
+ * Converted is any of four facts, because there is more than one way to stop
+ * being a lead: the ledger calling the account a customer (`kind`, which an
+ * order flips — including the first-order conversions made before the rule
+ * moved to the second), a conversion stamped by an order (`lead_converted_at`),
+ * a ladder that ended on a winning rung (every terminal one except `lost`,
+ * from the engine rather than typed out), and a shop marked as one somebody
+ * else bills — a third-party shop is a customer, which is also why the
+ * handset's leads channel stopped sending them. The handset applies the same
+ * four in `releaseConvertedLeads`, so a phone and a desk agree.
  *
  * A FUNCTION OF THE ALIAS, because the calling desk reads `customers` bare.
  * Parenthesised, because it is spliced after an `and`.
  */
 export function notConverted(alias = "c"): SQL {
   const t = sql.raw(alias);
-  return sql`(${t}.lead_converted_at is null
+  return sql`(${t}.kind <> 'customer'
+    and ${t}.lead_converted_at is null
     and not ${t}.third_party
     and ${t}.lead_stage::text not in (${sql.join(
       TERMINAL_STAGES.filter((s) => s !== "lost").map((s) => sql`${s}`),

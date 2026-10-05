@@ -387,7 +387,7 @@ describe("the filters", () => {
 describe("a lead that has become a customer", () => {
   test("is off the Leads list, its tiles and its filters, and still on Handovers", async () => {
     /* Mahek's rule: a converted shop is worked as a customer from then on.
-       Three ways to stop being a lead, and the list must drop all three. */
+       Four ways to stop being a lead, and the list must drop all four. */
     const working = await makeLead({ name: "Still working", leadStage: "negotiation" });
     const byOrder = await makeLead({
       name: "Won by its orders",
@@ -397,11 +397,14 @@ describe("a lead that has become a customer", () => {
     });
     const onLadder = await makeLead({ name: "Distributor appointed", leadStage: "active_distributor" });
     const marked = await makeLead({ name: "Billed by a distributor", thirdParty: true });
+    // Converted on its FIRST order under the old rule: a customer by the
+    // ledger, still standing on a funnel rung, never stamped.
+    const ledger = await makeLead({ name: "Customer by the ledger", kind: "customer", leadStage: "second_order" });
 
     const page = await leadsPage(TODAY);
     const names = page.rows.map((r) => r.name);
     assert.ok(names.includes(working.name), "a lead still being worked stays");
-    for (const gone of [byOrder, onLadder, marked]) {
+    for (const gone of [byOrder, onLadder, marked, ledger]) {
       assert.ok(!names.includes(gone.name), `${gone.name} is a customer, not a lead`);
     }
 
