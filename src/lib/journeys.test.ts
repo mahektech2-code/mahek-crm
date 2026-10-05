@@ -48,6 +48,7 @@ import {
   notifications,
   syncConflicts,
   sheetTakenOrderRows,
+  mbosDeletions,
 } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { customerStatusLabel } from "@/lib/format";
@@ -4525,6 +4526,11 @@ describe("Who the Call Log puts in front of a telecaller", () => {
       .from(customers)
       .where(eq(customers.id, lead.id));
     assert.equal(afterFirst.kind, "lead", "one order is a trial, not a relationship");
+    assert.equal(
+      (await db.select().from(mbosDeletions).where(eq(mbosDeletions.entityId, lead.id))).length,
+      0,
+      "a lead still climbing stays on the handsets that hold it",
+    );
 
     /* Accounts accept the first one. Until they do it is the customer saying
        yes rather than the business, and `lib/order-status.ts` is what says so:
@@ -4555,6 +4561,19 @@ describe("Who the Call Log puts in front of a telecaller", () => {
       after.backOfficeAmId,
       null,
       "back office is a decision, not a guess on conversion",
+    );
+
+    /* The leads channel stops sending a won lead, and a pull only says what
+       exists — so without a tombstone the handset kept its lead row for ever,
+       listed under Leads at its last rung. `leads` only: the shop stays. */
+    const tombstones = await db
+      .select()
+      .from(mbosDeletions)
+      .where(eq(mbosDeletions.entityId, lead.id));
+    assert.deepEqual(
+      tombstones.map((t) => [t.entity, t.userId, t.reason]),
+      [["leads", null, "lead_converted"]],
+      "every handset holding the lead is told it is one no longer",
     );
 
     // And the Information tab stops hiding the purchase history it just began.

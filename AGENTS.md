@@ -5231,6 +5231,18 @@ nothing anywhere looking wrong. It is reference data only: nothing he authored
 is ever deleted by a sync, not a rejected order and not a visit that lost a
 conflict. `user_id` null means everybody, which is what a withdrawn product is.
 
+**A CONVERSION TOMBSTONES THE LEAD, because the leads channel just stops.**
+The handset holds a lead in `customers` AND in `leads`, and asks "is this a
+lead" of the second. The channel sends only leads that are not `won` or
+`lost`, so a lead that converted simply stopped being mentioned — and stayed
+on the phone at its last rung for the life of the installation, under Leads,
+opening the funnel for a shop accounts were already billing. Nothing on the
+server was wrong: the customer row arrived with `kind` moved. `recordConversion`
+is the one place every conversion passes, so it writes a `leads` tombstone
+there (never `customers` — the shop stays in his book), and the handset
+ARCHIVES it, so anything still queued against it reaches the office.
+`0215_converted_leads_leave_handsets` wrote the ones earlier conversions owed.
+
 **A REPLAN IS A DELETE, so it tombstones.** Both the handset's own pick and
 the office's replan delete the planned stops and write new ones under new ids.
 Without a `journey_stops` tombstone for each, the phone kept every old stop
