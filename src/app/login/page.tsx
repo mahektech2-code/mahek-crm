@@ -107,14 +107,14 @@ export default async function LoginPage({
             Welcome back
           </h1>
           <p className="mt-1 text-[15px] leading-[23px] text-muted">
-            Your work number or work email, and your password. One sign-in
+            Your mobile number or work email, and your password. One sign-in
             opens every app on your account.
           </p>
 
           {justReset ? (
             <div className="mt-4 rounded-[4px] border border-success-soft border-l-[3px] border-l-success bg-success-soft px-3 py-2.5 text-sm text-ink">
               Your password is set. It signs you in here and on the field
-              salesman app, with your work number either way.
+              salesman app, with your mobile number either way.
             </div>
           ) : null}
 

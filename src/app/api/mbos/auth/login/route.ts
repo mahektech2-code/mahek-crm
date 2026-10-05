@@ -30,7 +30,7 @@ export async function POST(request: Request) {
   const mobile = typeof body.mobile === "string" ? body.mobile : "";
   if (!mobile) {
     return NextResponse.json(
-      { ok: false, step: "validation", error: "Enter your work number or your email." },
+      { ok: false, step: "validation", error: "Enter your mobile number or your email." },
       { status: 400 },
     );
   }
