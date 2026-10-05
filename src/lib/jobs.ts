@@ -143,6 +143,8 @@ export type JobName =
   | "taken-order-reparse"
   /** The ERP customer profile from the Sales Party sheet — fills blanks only. */
   | "erp-seed-profiles"
+  /** The Mahek Plus "My Products" tab's Can Use and boxes onto ERP packing. `--dry-run` to look first. */
+  | "erp-packing-import"
   | "erp-alerts"
   /** HRMS: this month's paid-leave credit for every active employee — idempotent. */
   | "hrms-leave-credit"
@@ -1061,6 +1063,25 @@ export async function runJob(
               recordsAffected: r.created + r.filled,
               detail: `${r.matched} sheet parties matched · ${r.created} profiles created · ${r.filled} filled · ${r.refAdded} reference values added`,
             };
+          },
+          triggeredById,
+        ),
+      ];
+    case "erp-packing-import":
+      return [
+        await run(
+          "erp-packing-import",
+          async () => {
+            const { importPackingFromMahekPlus, packingImportSummary } = await import("./erp/packing-import");
+            const r = await importPackingFromMahekPlus({ dryRun: !!options.dryRun, userId: triggeredById });
+            const lines = [
+              packingImportSummary(r),
+              ...r.noSku.map((x) => `  no SKU: Product ID ${x.productIdOnSheet} (${x.name}) — row ${x.row}`),
+              ...r.unknownCan.map((x) => `  unknown Can Use: "${x.canUse}" on ${x.sku} — row ${x.row}`),
+              ...r.unknownBoxType.map((x) => `  unknown Box Type: "${x.boxType}" on ${x.sku} — row ${x.row}`),
+              ...r.conflicting.map((x) => `  disagrees: Product ID ${x.productIdOnSheet} on ${x.sku}, Product ID ${x.keptFrom} used — row ${x.row}`),
+            ];
+            return { recordsAffected: r.applied ? r.materialsCreated.length + r.packingSet.length : 0, detail: lines.join("\n") };
           },
           triggeredById,
         ),
