@@ -418,6 +418,7 @@ const DESCRIBE: Record<string, Describer> = {
   "hrms.leaveCredit.run": () => ({ says: ["ran the leave credit for everybody"], changes: false }),
   "hrms.salary.pay": () => ({ says: ["marked a salary as paid"], changes: false }),
   "hrms.advance.give": (c) => ({ says: ["gave a salary advance", ...(num(c.a.amount) ? ["of", strong(rupees(c.a.amount)!)] : [])], changes: false }),
+  "catalogue.packing_import": (c) => ({ says: ["imported ERP packing from Mahek Plus", ...(num(c.a.packingSet) !== null ? [`(${num(c.a.packingSet)} SKUs, ${num(c.a.withCanUse) ?? 0} with a Can Use, ${num(c.a.materialsCreated) ?? 0} packing materials added)`] : [])], changes: false }),
   "catalogue.import": (c) => ({ says: ["imported the product catalogue", ...(num(c.a.created) !== null ? [`(${num(c.a.created)} new, ${num(c.a.updated) ?? 0} changed)`] : [])], changes: false }),
   "import.bills": () => ({ says: ["imported bills from a file"], changes: false }),
 

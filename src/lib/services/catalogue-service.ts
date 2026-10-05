@@ -40,6 +40,10 @@ export type SkuRow = {
   active: boolean;
   /** How many order lines point at it — what makes deactivating it a decision. */
   timesOrdered: number;
+  /** The ERP packing's can or drum, by name; null where nobody has set it. */
+  canUse: string | null;
+  boxType: string | null;
+  emptyBoxesRequired: number | null;
   aliases: string[];
 };
 
@@ -105,6 +109,15 @@ export async function listSkus(opts: {
       timesOrdered: sql<number>`(
         select count(*)::int from interaction_product_lines l where l.product_id = ${products.id}
       )`,
+      // The ERP's packing for this SKU: which can or drum it is filled into,
+      // and the box it ships in. Null where nobody has set it yet.
+      canUse: sql<string | null>`(
+        select m.name from erp_product_packing pk
+          join erp_raw_materials m on m.id = pk.can_use_material_id
+         where pk.product_id = ${products.id}
+      )`,
+      boxType: sql<string | null>`(select pk.box_type from erp_product_packing pk where pk.product_id = ${products.id})`,
+      emptyBoxesRequired: sql<number | null>`(select pk.empty_boxes_required from erp_product_packing pk where pk.product_id = ${products.id})`,
       aliases: sql<string[]>`coalesce((
         select array_agg(a.name order by a.name) from product_aliases a where a.product_id = ${products.id}
       ), '{}')`,
