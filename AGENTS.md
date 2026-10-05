@@ -1684,6 +1684,21 @@ filters, sorts and pages what it was sent.
 Nobody assigned means no working location, said in words in the header, not a
 guessed default.
 
+**THE WORKING GODOWN IS FOUND BY STANDING IN IT, where it can be.** Once per
+tab, if the browser already holds location permission, the header takes a fix
+and `erpLocateWorkingGodown` measures it against the pins of the godowns that
+person is ASSIGNED to — on the server, so a crafted fix can only choose what the
+menu would have offered. `erp.location.godownRadiusM` is the fence; where two
+overlap the nearer pin wins, and a fix whose accuracy is wider than the fence
+answers "too vague" rather than guessing, because a wrong godown pre-fills every
+form. The browser's permission prompt is never raised unasked — a dialog on
+every page load teaches people to press Block — so the locate button beside the
+chip is how permission is first given. A godown picked by hand stays picked for
+the rest of the tab. The fix itself is not stored: the audit row names the
+godown and the distance from its pin, which answers "why did my location
+change" without recording where anybody was. A godown with no pin cannot be
+found this way, and asking says so.
+
 **The ERP extends MahekOne's records rather than copying them** (PRD §8): a
 Sales Party IS a `customers` row plus `erp_customer_profiles`; a product IS a
 `products` row plus `erp_product_packing`; price lists are the Price Desk's,

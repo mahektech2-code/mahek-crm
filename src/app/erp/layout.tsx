@@ -58,6 +58,7 @@ export default async function ErpLayout({ children }: { children: React.ReactNod
       working={ctx.workingGodown ? { id: ctx.workingGodown.id, name: ctx.workingGodown.name } : null}
       notifications={notifications}
       voice={config["erp.ai.voice.enabled"]}
+      locate={config["erp.location.autoDetect"]}
       ask={askState.on}
       apps={webApps(apps)}
     >
