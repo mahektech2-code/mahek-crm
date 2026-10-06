@@ -1101,9 +1101,9 @@ function buildPrimary(
         }
       } else if (heard.length === 1) {
         fill.payAmountRupees = heard[0];
-      } else {
-        questions.push("How much did they promise?");
       }
+      /* No "how much?" question: the form has no amount box any more, so there
+         is nowhere for the answer to go. */
       if (fill.payAmountRupees)
         fill.outcomeDetail.promisedAmount = String(
           Math.round(fill.payAmountRupees),

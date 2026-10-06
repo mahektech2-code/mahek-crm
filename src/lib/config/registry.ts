@@ -1383,6 +1383,17 @@ export const SETTINGS = [
     max: 30,
   },
   {
+    key: "interactions.paymentPromiseDefaultDays",
+    type: "integer",
+    category: "queue",
+    label: "Promised payment date when none is given",
+    description:
+      "A Pay Promise no longer asks the telecaller for a payment date. Saved with none, the promise is dated this many days ahead (moved on to the next working day), so it still writes its payment reminder and still holds the customer back from collections until it passes. It is a stand-in, not something the customer said: a date they actually named, supplied by the call assistant or the Command Centre, is used as given.",
+    default: 3,
+    min: 1,
+    max: 30,
+  },
+  {
     key: "customers.defaultCreditDays",
     type: "integer",
     category: "bills",
@@ -5424,6 +5435,7 @@ export type Config = {
   "complaints.defaultSeverity": "low" | "medium" | "high" | "critical";
   "interactions.maxNotesLength": number;
   "interactions.followUpDefaultDays": number;
+  "interactions.paymentPromiseDefaultDays": number;
   "customers.defaultCreditDays": number;
 
   "attachments.maxSizeMb": number;
