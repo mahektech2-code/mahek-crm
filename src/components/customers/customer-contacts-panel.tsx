@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { Badge, Button, Field, Input, Select, cx } from "@/components/ui/primitives";
-import { RowMenu } from "@/components/ui/overlays";
+import { Modal, RowMenu } from "@/components/ui/overlays";
 import { CardGrid } from "@/components/ui/card-grid";
 import { Icon } from "@/components/shell/icons";
 import { useToast } from "@/components/ui/toast";
@@ -71,6 +71,8 @@ export function CustomerContactsPanel({
     }
   };
 
+  const editingContact =
+    editing && editing !== "new" ? (contacts.find((c) => c.id === editing) ?? null) : null;
   const primary = contacts.find((c) => c.isPrimary) ?? null;
   const whatsapp = contacts.find((c) => c.forWhatsapp) ?? null;
   const payment = contacts.find((c) => c.forPaymentReminders) ?? null;
@@ -102,25 +104,16 @@ export function CustomerContactsPanel({
         />
       </CardGrid>
 
-      <div className="overflow-hidden rounded-[6px] border border-line">
-        {contacts.length === 0 && editing !== "new" ? (
-          <div className="px-4 py-6 text-center text-[13px] text-muted">
-            No numbers recorded for this customer yet.
-          </div>
-        ) : null}
-        {contacts.map((c) =>
-          editing === c.id ? (
-            <ContactEditor
-              key={c.id}
-              initial={c}
-              busy={busy}
-              onCancel={() => setEditing(null)}
-              onSave={async (v) => {
-                const okay = await act(updateCustomerContact(c.id, v));
-                if (okay) setEditing(null);
-              }}
-            />
-          ) : (
+      {/*
+        ONE CARD PER PERSON, with space between them, and the form in a
+        dialog. Editing used to open in place inside the list, so a contact
+        being read and a contact being changed looked alike and sat flush
+        against each other — nobody could tell which one the fields belonged
+        to, or whether they were adding a new one.
+      */}
+      {contacts.length ? (
+        <div className="flex flex-col gap-2">
+          {contacts.map((c) => (
             <ContactRow
               key={c.id}
               contact={c}
@@ -134,22 +127,15 @@ export function CustomerContactsPanel({
                 }
               }}
             />
-          ),
-        )}
-        {editing === "new" ? (
-          <ContactEditor
-            busy={busy}
-            isFirst={contacts.length === 0}
-            onCancel={() => setEditing(null)}
-            onSave={async (v) => {
-              const okay = await act(addCustomerContact(customerId, v));
-              if (okay) setEditing(null);
-            }}
-          />
-        ) : null}
-      </div>
+          ))}
+        </div>
+      ) : (
+        <div className="rounded-[6px] border border-dashed border-line px-4 py-6 text-center text-[13px] text-muted">
+          No numbers recorded for this customer yet.
+        </div>
+      )}
 
-      {canEdit && editing !== "new" ? (
+      {canEdit ? (
         <div>
           <Button variant="secondary" size="sm" disabled={busy} onClick={() => setEditing("new")}>
             <Icon name="plus" size={14} />
@@ -157,8 +143,45 @@ export function CustomerContactsPanel({
           </Button>
         </div>
       ) : null}
+
+      {editingContact || editing === "new" ? (
+        <ContactDialog
+          key={editing ?? "new"}
+          initial={editingContact ?? undefined}
+          busy={busy}
+          isFirst={contacts.length === 0}
+          onCancel={() => setEditing(null)}
+          onSave={async (v) => {
+            if (!editingContact) {
+              const okay = await act(addCustomerContact(customerId, v));
+              if (okay) setEditing(null);
+              return;
+            }
+            // The details, then whichever marks changed — each mark is its
+            // own action because each moves a number other screens read.
+            let okay = await act(updateCustomerContact(editingContact.id, v));
+            const want = new Set(v.designations ?? []);
+            const had = designationsOf(editingContact);
+            for (const d of ["primary", "whatsapp", "payment"] as const) {
+              if (!okay) break;
+              if (want.has(d) !== had.has(d)) {
+                okay = await act(designateCustomerContact(editingContact.id, d, want.has(d)));
+              }
+            }
+            if (okay) setEditing(null);
+          }}
+        />
+      ) : null}
     </div>
   );
+}
+
+function designationsOf(c: CustomerContact): Set<ContactDesignation> {
+  const out = new Set<ContactDesignation>();
+  if (c.isPrimary) out.add("primary");
+  if (c.forWhatsapp) out.add("whatsapp");
+  if (c.forPaymentReminders) out.add("payment");
+  return out;
 }
 
 function RouteTile({
@@ -216,7 +239,12 @@ function ContactRow({
   const mobile = isMobile(c.phone);
   const notMobile = "WhatsApp needs a mobile number — this looks like a landline.";
   return (
-    <div className="flex items-start gap-3 border-b border-divider px-4 py-3 last:border-b-0">
+    <div
+      className={cx(
+        "flex items-start gap-3 rounded-[6px] border bg-surface px-4 py-3",
+        c.isPrimary ? "border-brand-softer" : "border-line",
+      )}
+    >
       <span
         className={cx(
           "mt-0.5 flex h-8 w-8 flex-none items-center justify-center rounded-full text-[13px] font-semibold",
@@ -249,13 +277,20 @@ function ContactRow({
       </div>
       {canEdit ? (
         <div className="flex flex-none items-center gap-1.5">
-          {!c.isPrimary ? (
-            <Button variant="ghost" size="sm" onClick={() => onDesignate("primary", true)} title={DESIGNATION_LABELS.primary.meaning}>
-              Make primary
-            </Button>
-          ) : null}
+          <Button variant="ghost" size="sm" onClick={onEdit}>
+            Edit
+          </Button>
           <RowMenu
             items={[
+              ...(c.isPrimary
+                ? []
+                : [
+                    {
+                      label: DESIGNATION_LABELS.primary.action,
+                      title: DESIGNATION_LABELS.primary.meaning,
+                      onSelect: () => onDesignate("primary", true),
+                    },
+                  ]),
               {
                 label: c.forWhatsapp ? "Stop using for WhatsApp" : DESIGNATION_LABELS.whatsapp.action,
                 title: !mobile && !c.forWhatsapp ? notMobile : DESIGNATION_LABELS.whatsapp.meaning,
@@ -268,7 +303,6 @@ function ContactRow({
                 disabled: !mobile && !c.forPaymentReminders,
                 onSelect: () => onDesignate("payment", !c.forPaymentReminders),
               },
-              { label: "Edit", onSelect: onEdit },
               {
                 label: "Remove",
                 destructive: true,
@@ -293,7 +327,7 @@ type EditorValues = {
   designations?: ContactDesignation[];
 };
 
-function ContactEditor({
+function ContactDialog({
   initial,
   busy,
   isFirst,
@@ -312,7 +346,7 @@ function ContactEditor({
     phone: initial?.phone ?? "",
     email: initial?.email ?? "",
     note: initial?.note ?? "",
-    designations: [],
+    designations: initial ? [...designationsOf(initial)] : [],
   });
   const isNew = !initial;
   const mobile = isMobile(v.phone);
@@ -323,10 +357,33 @@ function ContactEditor({
         ? x.designations.filter((y) => y !== d)
         : [...(x.designations ?? []), d],
     }));
+  // The primary cannot be un-made from here: a customer always has one, and
+  // the way to move it is to make somebody else primary.
+  const lockedPrimary = Boolean(initial?.isPrimary);
+  const submit = () =>
+    void onSave({
+      ...v,
+      designations: mobile ? v.designations : v.designations?.filter((d) => d === "primary"),
+    });
 
   return (
-    <div className="border-b border-divider bg-canvas px-4 py-3 last:border-b-0">
-      <div className="grid grid-cols-2 gap-3">
+    <Modal
+      open
+      onClose={busy ? () => {} : onCancel}
+      title={isNew ? "Add a contact" : `Edit contact — ${initial?.name || phoneForReading(initial?.phone ?? "")}`}
+      width={560}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onCancel} disabled={busy}>
+            Cancel
+          </Button>
+          <Button variant="primary" disabled={busy || !v.phone.trim()} onClick={submit}>
+            {busy ? "Saving…" : isNew ? "Add contact" : "Save changes"}
+          </Button>
+        </>
+      }
+    >
+      <div className="grid grid-cols-2 gap-x-3 gap-y-3.5">
         <Field label="Name">
           <Input value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} placeholder="Who answers this number" autoFocus />
         </Field>
@@ -349,47 +406,39 @@ function ContactEditor({
           <Input value={v.note} onChange={(e) => setV({ ...v, note: e.target.value })} placeholder="Best time to call, language, anything worth knowing" />
         </Field>
       </div>
-      {isNew ? (
-        <div className="mt-3 flex flex-wrap gap-2">
-          {isFirst ? (
+
+      <div className="mt-4 border-t border-divider pt-3.5">
+        <div className="mb-2 text-[12px] font-medium text-muted">Use this number for</div>
+        <div className="flex flex-wrap gap-2">
+          {isNew && isFirst ? (
             <span className="text-[12px] text-muted">The first number on a customer is its primary number.</span>
           ) : (
-            <DesignationChip on={v.designations!.includes("primary")} onClick={() => toggle("primary")} label="Primary" />
+            <DesignationChip
+              on={v.designations!.includes("primary")}
+              disabled={lockedPrimary}
+              disabledTitle="Make another contact primary to move this."
+              onClick={() => toggle("primary")}
+              label="Calls (primary)"
+            />
           )}
-          <DesignationChip on={v.designations!.includes("whatsapp")} disabled={!mobile} onClick={() => toggle("whatsapp")} label="Use for WhatsApp" />
-          <DesignationChip on={v.designations!.includes("payment")} disabled={!mobile} onClick={() => toggle("payment")} label="Use for payment reminders" />
+          <DesignationChip on={v.designations!.includes("whatsapp")} disabled={!mobile} onClick={() => toggle("whatsapp")} label="WhatsApp" />
+          <DesignationChip on={v.designations!.includes("payment")} disabled={!mobile} onClick={() => toggle("payment")} label="Payment reminders" />
         </div>
-      ) : null}
-      <div className="mt-3 flex justify-end gap-2">
-        <Button variant="secondary" size="sm" onClick={onCancel} disabled={busy}>
-          Cancel
-        </Button>
-        <Button
-          variant="primary"
-          size="sm"
-          disabled={busy || !v.phone.trim()}
-          onClick={() =>
-            void onSave({
-              ...v,
-              designations: mobile ? v.designations : v.designations?.filter((d) => d === "primary"),
-            })
-          }
-        >
-          {busy ? "Saving…" : isNew ? "Add contact" : "Save contact"}
-        </Button>
       </div>
-    </div>
+    </Modal>
   );
 }
 
 function DesignationChip({
   on,
   disabled,
+  disabledTitle = "WhatsApp needs a mobile number.",
   onClick,
   label,
 }: {
   on: boolean;
   disabled?: boolean;
+  disabledTitle?: string;
   onClick: () => void;
   label: string;
 }) {
@@ -398,10 +447,14 @@ function DesignationChip({
       type="button"
       disabled={disabled}
       onClick={onClick}
-      title={disabled ? "WhatsApp needs a mobile number." : undefined}
+      title={disabled ? disabledTitle : undefined}
       className={cx(
         "flex h-7 items-center gap-1.5 rounded-[4px] border px-2.5 text-[13px]",
-        disabled
+        // A mark that is ON and cannot be turned off here (the primary) still
+        // reads as on; only an unavailable OFF chip greys out.
+        disabled && on
+          ? "cursor-not-allowed border-brand bg-brand-soft font-medium text-[#5223E0]"
+          : disabled
           ? "cursor-not-allowed border-line text-line-strong"
           : on
             ? "cursor-pointer border-brand bg-brand-soft font-medium text-[#5223E0]"
