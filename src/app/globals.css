@@ -397,6 +397,55 @@
   animation: toast-in 150ms var(--ease-swift);
 }
 
+/* ------------------------------------------------------------ notifications
+ * A new notification slides in from the right edge straight into its slot in
+ * the bottom right-hand corner, and after its few seconds (never while the
+ * pointer is on it) slides back out the way it came (`NotificationCenter`).
+ *
+ * Under reduced motion the rule below removes both, and the card simply
+ * appears and goes — the component times the exit itself for that reason.
+ */
+@keyframes notify-in {
+  from {
+    transform: translateX(calc(100% + 24px));
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+@keyframes notify-out {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(calc(100% + 24px));
+    opacity: 0;
+  }
+}
+.notify-in {
+  animation: notify-in 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.notify-out {
+  animation: notify-out 320ms cubic-bezier(0.7, 0, 0.84, 0) forwards;
+}
+@keyframes notify-dwell {
+  from {
+    width: 100%;
+  }
+  to {
+    width: 0%;
+  }
+}
+.notify-dwell {
+  width: 100%;
+  animation-name: notify-dwell;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

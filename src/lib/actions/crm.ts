@@ -2080,11 +2080,12 @@ export async function markNotificationsRead(): Promise<Result> {
 export async function markNotificationRead(
   notificationId: string,
 ): Promise<Result> {
-  await resolveScope();
+  const ctx = await resolveScope();
+  /* Only your own: an id is a string anybody can post to this action. */
   await db
     .update(notifications)
     .set({ read: true })
-    .where(eq(notifications.id, notificationId));
+    .where(and(eq(notifications.id, notificationId), eq(notifications.userId, ctx.user.id)));
   return okVoid();
 }
 

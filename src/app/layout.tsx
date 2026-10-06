@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { NotificationCenter } from "@/components/shell/notification-center";
 
 export const metadata: Metadata = {
   title: "MahekOne - CRM",
@@ -29,7 +30,11 @@ export default function RootLayout({
           rel="stylesheet"
         />
       </head>
-      <body>{children}</body>
+      <body>
+        {children}
+        {/* The live bell: polls, pops and chimes in every app. */}
+        <NotificationCenter />
+      </body>
     </html>
   );
 }

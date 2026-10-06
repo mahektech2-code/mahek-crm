@@ -4432,7 +4432,11 @@ export const notifications = pgTable(
     read: boolean("read").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("notifications_user_idx").on(t.userId, t.read)],
+  (t) => [
+    index("notifications_user_idx").on(t.userId, t.read),
+    // The live bell's read: one person's newest, every few seconds.
+    index("notifications_user_created_idx").on(t.userId, t.createdAt.desc()),
+  ],
 );
 
 /* ------------------------------------------------- founder inbox marks */
