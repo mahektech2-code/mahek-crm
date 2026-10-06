@@ -420,9 +420,17 @@ function NotificationPopup({
   React.useLayoutEffect(() => {
     const el = ref.current;
     if (!el || pop.waiting) return;
-    const r = el.getBoundingClientRect();
-    const dx = window.innerWidth / 2 - (r.left + r.width / 2);
-    const dy = window.innerHeight * 0.3 - (r.top + r.height / 2);
+    // NOT getBoundingClientRect on the card: that includes the flight's own
+    // transform, so a second measure (React runs this twice in development,
+    // and again on any re-layout) read the card already at the centre and
+    // answered a flight of zero. The stack has no transform, and offsets do
+    // not see one, so this is the card's slot whatever it is doing.
+    const stack = el.offsetParent?.getBoundingClientRect();
+    if (!stack) return;
+    const cx = stack.left + el.offsetLeft + el.offsetWidth / 2;
+    const cy = stack.top + el.offsetTop + el.offsetHeight / 2;
+    const dx = window.innerWidth / 2 - cx;
+    const dy = window.innerHeight * 0.3 - cy;
     el.style.setProperty("--nx", `${Math.round(dx)}px`);
     el.style.setProperty("--ny", `${Math.round(dy)}px`);
   }, [pop.waiting]);
