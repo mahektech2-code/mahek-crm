@@ -6,6 +6,7 @@ import { db } from "@/db";
 import {
   attachments,
   auditLog,
+  calls,
   complaints,
   complaintStatusHistory,
   customers,
@@ -129,6 +130,15 @@ export type ReminderRow = {
   closedBySourceId: string | null;
   closedByName: string | null;
   closedOn: string | null;
+  /**
+   * The newest call logged to this customer SINCE the reminder was set, on a
+   * pending reminder only — null where nobody has rung them since, and null on
+   * every closed one. It is what ties the list to the Call Log: a reminder
+   * that is still open after somebody rang is open for a reason the screen
+   * can say — nobody answered, or they were rung before it fell due — rather
+   * than looking as though the call never reached it.
+   */
+  lastCall: { on: string; answered: boolean; byName: string | null } | null;
 };
 
 export async function listReminders(view?: ReminderView): Promise<ReminderRow[]> {
@@ -175,7 +185,55 @@ export async function listReminders(view?: ReminderView): Promise<ReminderRow[]>
     ).filter((id): id is string => id !== null),
   );
 
+  const dateOpts = {
+    timezone: config["workingDay.timezone"],
+    dayBoundaryHour: config["workingDay.dayBoundaryHour"],
+    workingDays: config["workingDay.workingDays"],
+  };
+
+  /*
+   * One read for every pending customer, newest call each. An order received
+   * is not a call — nobody spoke to anybody — so it can neither explain nor
+   * close a promise to ring.
+   */
+  const pendingCustomerIds = [
+    ...new Set(rows.filter(({ reminder: r }) => r.status === "pending").map(({ reminder: r }) => r.customerId)),
+  ];
+  const lastCalls = new Map(
+    (pendingCustomerIds.length
+      ? await db
+          .selectDistinctOn([calls.customerId], {
+            id: calls.id,
+            customerId: calls.customerId,
+            createdAt: calls.createdAt,
+            outcome: calls.outcome,
+            byName: users.name,
+          })
+          .from(calls)
+          .leftJoin(users, eq(users.id, calls.userId))
+          .where(
+            and(
+              inArray(calls.customerId, pendingCustomerIds),
+              ne(calls.interactionType, "order_received"),
+            ),
+          )
+          .orderBy(calls.customerId, desc(calls.createdAt))
+      : []
+    ).map((c) => [c.customerId, c]),
+  );
+
   const mapped = rows.map(({ reminder: r, customerName, assignedUserName, closedByName }) => {
+    const call = r.status === "pending" ? lastCalls.get(r.customerId) : undefined;
+    // Strictly after: the call that WROTE this reminder shares its transaction
+    // and so its `now()`, and is not a call made about it.
+    const lastCall =
+      call && call.id !== r.callId && call.createdAt > r.createdAt
+        ? {
+            on: businessDate(call.createdAt, dateOpts),
+            answered: call.outcome !== "no_answer",
+            byName: call.byName,
+          }
+        : null;
     const overdueDays = Math.max(0, daysBetween(r.dueDate, day));
     const displayStatus =
       r.status === "completed"
@@ -210,13 +268,8 @@ export async function listReminders(view?: ReminderView): Promise<ReminderRow[]>
       closedByName,
       // A date, not the instant: this is read on a list, and the hour a
       // reminder was ticked has never been the question anybody asks of it.
-      closedOn: r.closedAt
-        ? businessDate(r.closedAt, {
-            timezone: config["workingDay.timezone"],
-            dayBoundaryHour: config["workingDay.dayBoundaryHour"],
-            workingDays: config["workingDay.workingDays"],
-          })
-        : null,
+      closedOn: r.closedAt ? businessDate(r.closedAt, dateOpts) : null,
+      lastCall,
     } satisfies ReminderRow;
   });
 
@@ -464,6 +517,7 @@ export async function closeRemindersOnEvidence(
       id: reminders.id,
       type: reminders.type,
       dueDate: reminders.dueDate,
+      callId: reminders.callId,
     })
     .from(reminders)
     .where(
@@ -475,7 +529,15 @@ export async function closeRemindersOnEvidence(
 
   const closing = remindersClosedBy(
     pending
-      .filter((r) => !excluded.has(r.id))
+      /*
+       * Nothing the evidence itself WROTE. `exclude` names one reminder, and a
+       * single call can write three — the outcome's promise, a "try again
+       * later" recall and a dated Next Action — so a Next Action dated today
+       * used to be closed by the very call that set it, the moment it was
+       * saved. `callId` is stamped on every reminder a call writes, so asking
+       * it is the whole of "never close what you just created".
+       */
+      .filter((r) => !excluded.has(r.id) && r.callId !== input.sourceId)
       .map((r) => ({
         id: r.id,
         type: r.type as ClosableReminderType,

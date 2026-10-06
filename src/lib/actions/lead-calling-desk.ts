@@ -49,6 +49,7 @@ import { stageLabel, type LeadSalesType } from "@/lib/lead-labels";
 import { reopenTarget } from "@/lib/engines/lead-reopen";
 import { advanceLeadStage, setLeadNextAction } from "@/lib/actions/leads";
 import { canOpenModule } from "@/lib/access";
+import { closeRemindersOnEvidence } from "@/lib/services/worklist-services";
 
 /** The module the desk's screens and writes are granted under — see `lib/modules.ts`. */
 const DESK_MODULE = "crm.lead-calling-desk";
@@ -143,6 +144,8 @@ export type LogQualificationCallResult = {
   result: "next" | "ready" | "lost" | "exhausted";
   /** Set when the call was saved but closing the lead failed — it can be closed from the record. */
   closeFailed?: string;
+  /** Due reminders on this lead the call settled — see `closeRemindersOnEvidence`. */
+  remindersClosed: number;
 };
 
 function zodErr(error: z.ZodError): ReturnType<typeof err> {
@@ -177,6 +180,9 @@ function refresh(customerId: string) {
     revalidatePath("/crm/leads/lost");
     revalidatePath("/sales/leads");
     revalidatePath(`/sales/leads/${customerId}`);
+    /* A desk call can close a reminder, and both lists read reminders. */
+    revalidatePath("/crm/reminders");
+    revalidatePath("/crm/call-log");
   } catch {
     /* no request context — a job or a test, where nothing is cached */
   }
@@ -295,6 +301,7 @@ export async function logQualificationCall(
     let lostCode: string | null = null;
     /** What a Prospect still lacks, in words — "not yet captured", never an error. */
     let notCaptured = "";
+    let remindersClosed = 0;
 
     await db.transaction(async (tx) => {
       const [row] = await tx
@@ -488,6 +495,22 @@ export async function logQualificationCall(
         createdById: ctx.user.id,
       });
 
+      /*
+       * THE PROMISES THIS CALL SETTLES, exactly as a call from the Call Log
+       * settles them. The desk wrote its own row into `calls` and never asked,
+       * so a reminder on a lead stayed open after the telecaller had rung them
+       * from here and had to be ticked off by hand — the one thing the evidence
+       * rule exists to make unnecessary. Same function, same transaction, same
+       * rule: a call somebody answered closes what is due; a no-answer or a
+       * dead number closes nothing, because the conversation is still owed.
+       */
+      remindersClosed = await closeRemindersOnEvidence(tx, {
+        customerId: p.customerId,
+        event: { kind: "call", on: day, answered: crmOutcomeFor(outcome) !== "no_answer" },
+        sourceId: callId,
+        actorId: ctx.user.id,
+      });
+
       const next: Partial<typeof customers.$inferInsert> =
         disposition.kind === "next"
           ? {
@@ -593,9 +616,13 @@ export async function logQualificationCall(
               (p.next?.kind ?? "call") === "call" ? `Call ${disposition.callNumber}` : "Message"
             } due ${shortDay(nextDate)}.`;
 
+    const closedLine = remindersClosed
+      ? ` ${remindersClosed === 1 ? "The reminder due on this lead is" : `${remindersClosed} reminders due on this lead are`} now closed.`
+      : "";
+
     return ok(
-      { callNumber, result: disposition.kind, ...(closeFailed ? { closeFailed } : {}) },
-      message,
+      { callNumber, result: disposition.kind, remindersClosed, ...(closeFailed ? { closeFailed } : {}) },
+      message + closedLine,
       warnings,
     );
   } catch (e) {
