@@ -206,6 +206,7 @@ export const PRESENTATION: Record<string, Presentation> = {
   /* --------------------------------------------------------- interactions */
   "interactions.singleSelectOutcomes": { tab: "Interactions", group: "Quick notes", control: "ordered" },
   "interactions.maxNotesLength": { tab: "Interactions", group: "Quick notes", unit: "characters" },
+  "interactions.followUpDefaultDays": { tab: "Interactions", group: "Follow-up", unit: "days" },
 
   /* -------------------------------------------------------------- products */
   "products.frequentCount": { tab: "Products", group: "How the order form offers them", unit: "products" },

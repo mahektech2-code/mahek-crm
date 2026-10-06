@@ -193,6 +193,8 @@ import {
 import {
   approveOrder,
   declineOrder,
+  orderLines,
+  pendingOrders,
 } from "@/lib/services/order-approval-service";
 import {
   customerTimeline,
@@ -2257,18 +2259,91 @@ describe("Journey 8 - the interaction log", () => {
     );
   });
 
-  test("follow-up needs a date; inbound payment promise needs one; outbound does not", async () => {
+  test("an order taken or received needs no products, reaches accounts with zero lines, and can be approved", async () => {
+    const taken = await makeCustomer(priya.id);
+    const received = await makeCustomer(priya.id);
+
+    const t = await saveInteraction({
+      customerId: taken.id,
+      interactionType: "outbound_call",
+      outcome: "order_taken",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(t.ok, true, !t.ok ? t.error : "");
+    const r = await saveInteraction({
+      customerId: received.id,
+      interactionType: "order_received",
+      orderDate: TODAY,
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(r.ok, true, !r.ok ? r.error : "");
+
+    for (const [cust, res] of [
+      [taken, t],
+      [received, r],
+    ] as const) {
+      const [row] = await db
+        .select({ orderId: calls.orderId })
+        .from(calls)
+        .where(eq(calls.id, res.data!.interactionId));
+      assert.ok(row.orderId, "the order is still written");
+      assert.equal((await orderLines(row.orderId!)).length, 0, "no lines were invented");
+      const pending = (await pendingOrders()).find((o) => o.orderId === row.orderId);
+      assert.ok(pending, "it is in the approval queue");
+      assert.equal(pending.lineCount, 0);
+      assert.equal(pending.customerId, cust.id);
+
+      setTestUser(deepa);
+      const approved = await approveOrder(row.orderId!);
+      setTestUser(priya);
+      assert.equal(approved.ok, true, !approved.ok ? approved.error : "");
+    }
+
+    /* What IS given is still checked. */
+    const bad = await saveInteraction({
+      customerId: taken.id,
+      interactionType: "outbound_call",
+      outcome: "order_taken",
+      productQuantities: { nope: 1.5 },
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(bad.ok, false);
+
+    /* Order Taken no longer takes a next action at all. */
+    const withAction = await saveInteraction({
+      customerId: taken.id,
+      interactionType: "outbound_call",
+      outcome: "order_taken",
+      nextActions: ["follow_up_payment"],
+      nextActionDate: addDays(TODAY, 2),
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(withAction.ok, false);
+    assert.equal(withAction.fieldErrors?.[0].field, "nextActions");
+  });
+
+  test("follow-up with no date still writes a reminder; inbound payment promise needs a date; outbound does not", async () => {
     const customer = await makeCustomer(priya.id);
 
+    /* The form no longer asks for a follow-up date. Saved with none, the call
+       is given the configured default day, so the customer is not left with a
+       follow-up nobody is reminded of. */
+    const undated = await makeCustomer(priya.id);
     const noDate = await saveInteraction({
-      customerId: customer.id,
+      customerId: undated.id,
       interactionType: "outbound_call",
       outcome: "follow_up",
       outcomeDetail: { followUpReason: "call_next_week" },
       idempotencyKey: randomUUID(),
     });
-    assert.equal(noDate.ok, false);
-    assert.equal(noDate.fieldErrors?.[0].field, "followUpDate");
+    assert.equal(noDate.ok, true, !noDate.ok ? noDate.error : "");
+    const defaulted = await db
+      .select()
+      .from(reminders)
+      .where(eq(reminders.callId, noDate.data.interactionId));
+    assert.equal(defaulted.length, 1, "a follow-up always leaves a reminder");
+    assert.equal(defaulted[0].type, "call_back");
+    assert.ok(defaulted[0].dueDate > TODAY, "defaults to a day ahead, never today or past");
 
     const past = await saveInteraction({
       customerId: customer.id,
@@ -2371,21 +2446,23 @@ describe("Journey 8 - the interaction log", () => {
     assert.match(r.error, /does not belong/i);
   });
 
-  test("Order Taken with no quantities is refused, and with them writes lines", async () => {
+  test("Order Taken with no quantities saves without lines, and with them writes lines", async () => {
     const customer = await makeCustomer(priya.id);
     const product = await firstProduct();
 
+    /* Products are optional now: the call is the record that they ordered. */
     const empty = await saveInteraction({
       customerId: customer.id,
       interactionType: "outbound_call",
       outcome: "order_taken",
       idempotencyKey: randomUUID(),
     });
-    assert.equal(
-      empty.ok,
-      false,
-      "an order with nothing ordered is not an order",
-    );
+    assert.equal(empty.ok, true, empty.ok ? "" : empty.error);
+    const emptyLines = await db
+      .select()
+      .from(interactionProductLines)
+      .where(eq(interactionProductLines.interactionId, empty.data.interactionId));
+    assert.equal(emptyLines.length, 0);
 
     const r = await saveInteraction({
       customerId: customer.id,
