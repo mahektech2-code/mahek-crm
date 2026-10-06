@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   Badge,
   Button,
@@ -201,6 +202,12 @@ export function WhatsappScreen(props: {
   /** Why nothing can go through the API, when `mode` is manual. */
   apiOffReason: string | null;
   sendingFailing: boolean;
+  /**
+   * Customers WhatsApp cannot deliver to on the number we hold (Meta 131026).
+   * Not a sending failure: listed so somebody corrects the number, and the
+   * automatic rule stops trying them meanwhile.
+   */
+  undeliverable: Array<{ customerId: string; name: string; number: string }>;
   initialCustomerId: string;
   initialTab: Tab;
   customers: Customer[];
@@ -233,6 +240,7 @@ export function WhatsappScreen(props: {
     isManager,
     mode,
     sendingFailing,
+    undeliverable,
     customers,
     templates,
     messages,
@@ -322,6 +330,34 @@ export function WhatsappScreen(props: {
                   Check
                 </button>
               </div>
+            ) : null}
+            {/* Numbers WhatsApp cannot reach. Quiet rather than red: sending
+                works, these numbers do not, and the fix is a better number. */}
+            {undeliverable.length ? (
+              <details className="flex-none border-b border-warn-line bg-warn-soft px-4 py-2 text-[12.5px] text-warn-ink">
+                <summary className="cursor-pointer font-medium">
+                  {undeliverable.length === 1
+                    ? `${undeliverable[0].name} can't receive WhatsApp on their number`
+                    : `${undeliverable.length} customers can't receive WhatsApp on their number`}
+                </summary>
+                <p className="mt-1 text-ink">
+                  WhatsApp refused these as undeliverable — the number is usually not on WhatsApp. Automatic
+                  messages to them have stopped; correcting the number on the record starts them again.
+                </p>
+                <ul className="mt-1 space-y-0.5">
+                  {undeliverable.map((u) => (
+                    <li key={u.customerId} className="flex gap-2">
+                      <Link
+                        href={app === "accounts" ? `/accounts/ledger?customer=${u.customerId}` : `/crm/customers/${u.customerId}`}
+                        className="font-medium text-[#008069] hover:underline"
+                      >
+                        {u.name}
+                      </Link>
+                      <span className="text-[#667781]">{phoneDisplay(u.number)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </details>
             ) : null}
             {/* A copy waiting on confirmation — easy to send the message and
                 walk away from the step that records it. */}

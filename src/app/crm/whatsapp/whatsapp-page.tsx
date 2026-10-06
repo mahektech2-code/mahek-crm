@@ -18,6 +18,8 @@ import { WhatsappScreen } from "./whatsapp-screen";
 import { listConversations } from "@/lib/services/whatsapp-chat-service";
 import { specKey } from "@/lib/wati-templates";
 import { writingConfigured } from "@/lib/writing-model";
+import { isUndeliverableNumber } from "@/lib/whatsapp-undeliverable";
+import { listUndeliverable } from "@/lib/services/whatsapp-undeliverable-service";
 
 /** Whole minutes a run took, floored at one so "0 min" never shows. */
 function runMinutes(from: Date, to: Date | null): number {
@@ -70,6 +72,7 @@ export async function WhatsappPage({
     unconfirmed,
     messageTotal,
     delivery,
+    undeliverable,
   ] = await Promise.all([
     listCustomers(),
     listTemplates(),
@@ -95,6 +98,7 @@ export async function WhatsappPage({
      */
     messageCount(),
     deliveryContext(),
+    listUndeliverable(),
   ]);
 
   // Read on every load, not only on the Chats tab: its count is on the tab
@@ -170,12 +174,16 @@ export async function WhatsappPage({
       // from the messages themselves rather than a health-check endpoint we do
       // not have — a banner that cannot be wrong is better than one that is
       // green because nothing has been asked of it.
+      undeliverable={undeliverable.map((u) => ({ customerId: u.customerId, name: u.name, number: u.number }))}
       sendingFailing={
         apiOn &&
         messages.some(
           (m) =>
             m.status === "failed" &&
             m.mode === "automatic" &&
+            // A number that cannot receive WhatsApp is not sending failing —
+            // it is listed on its own, below, and the rule stops trying it.
+            !isUndeliverableNumber(m.failureReason) &&
             now - m.updatedAt.getTime() < 24 * 3_600_000,
         )
       }

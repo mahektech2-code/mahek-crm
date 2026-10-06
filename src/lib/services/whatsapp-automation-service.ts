@@ -18,6 +18,10 @@ import { watiConfig } from "../wati";
 import { factsFor } from "./wati-facts-service";
 import { requireFounderDesk, whatsappServiceState } from "./whatsapp-switch-service";
 import { sendForRule } from "./whatsapp-service";
+import { undeliverableByCustomer } from "./whatsapp-undeliverable-service";
+import { undeliverableSkipReason } from "../whatsapp-undeliverable";
+import { calendarDate } from "../business-date";
+import { shortDate } from "../format";
 
 /* ---------------------------------------------------------------------------
  * Automated WhatsApp — the founder's rules, and the pass that runs them.
@@ -325,6 +329,10 @@ export async function runAutomation(opts: {
        and ((m.prepared_at) at time zone 'Asia/Kolkata')::date = ${day}::date
   `);
   const messagedToday = new Set(todayRows.map((r) => r.customer_id));
+  // A number WhatsApp has said it cannot deliver to is not tried again until
+  // it changes: a failed send never counts as sent, so without this the rule
+  // re-sends to it every single day. See lib/whatsapp-undeliverable.ts.
+  const undeliverable = await undeliverableByCustomer();
   let sentToday = messagedToday.size;
 
   const stats = new Map<string, RuleStats>(
@@ -359,6 +367,11 @@ export async function runAutomation(opts: {
 
       if (rule.minAmountPaise && clock.overduePaise < rule.minAmountPaise) {
         log(rule, facts, customerId, clock.day, "skipped", "Below the minimum overdue amount.");
+        continue;
+      }
+      const unreachable = undeliverable.get(customerId);
+      if (unreachable) {
+        log(rule, facts, customerId, clock.day, "skipped", undeliverableSkipReason(shortDate(calendarDate(unreachable.failedAt))));
         continue;
       }
       if (messagedToday.has(customerId)) {
