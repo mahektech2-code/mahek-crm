@@ -25,6 +25,7 @@ import {
   recordPayment,
 } from "@/lib/actions/crm";
 import { ageLabel, money, shortDate, stamp, today as todayISO } from "@/lib/format";
+import { whenLabel } from "@/lib/whatsapp-status";
 import { PaymentModeFields } from "@/components/crm/payment-mode-fields";
 import type { FollowUpPanelData } from "@/lib/services/payment-followup-service";
 import type { ReminderPreview } from "@/lib/services/whatsapp-service";
@@ -51,7 +52,8 @@ export type PanelTarget = {
   total: number;
 };
 
-type Tab = "account" | "log" | "msg";
+/** The two things a follow-up can be: a call logged, or a reminder sent. */
+type Tab = "log" | "msg";
 
 export function PaymentPanel(props: {
   /** `payments.modes` — the list is configuration, never a literal on a screen. */
@@ -168,9 +170,18 @@ function PanelBody({
 }) {
   const { run, push } = useToast();
 
-  const [tab, setTab] = React.useState<Tab>("account");
+  /*
+   * Null until somebody picks: the panel opens on whatever the stage asks
+   * for — the reminder at stage 1, the call log otherwise — so the commonest
+   * case is zero clicks from the row.
+   */
+  const [picked, setPicked] = React.useState<Tab | null>(null);
   const [panel, setPanel] = React.useState<FollowUpPanelData | null>(null);
-  const [message, setMessage] = React.useState<ReminderPreview | null>(null);
+  /** Every approved payment template, each rendered for this customer. */
+  const [reminders, setReminders] = React.useState<ReminderPreview[]>([]);
+  const [defaultTemplateId, setDefaultTemplateId] = React.useState<string | null>(null);
+  /** The template the telecaller picked, if they changed it. */
+  const [templateId, setTemplateId] = React.useState<string | null>(null);
   const [wa, setWa] = React.useState<{ messages: TrackerRow[]; rules: RuleOutlook[] }>({ messages: [], rules: [] });
   const [loading, setLoading] = React.useState(true);
 
@@ -183,6 +194,12 @@ function PanelBody({
   const [busy, setBusy] = React.useState(false);
   const [copiedId, setCopiedId] = React.useState<string | null>(null);
   const [confirming, setConfirming] = React.useState(false);
+  /**
+   * Why the API send just refused, if it did. The reminder still has to go,
+   * so the panel turns the manual route into the main one rather than leaving
+   * the telecaller with a red toast and nowhere to go.
+   */
+  const [autoError, setAutoError] = React.useState<string | null>(null);
   /** The bill a payment is being recorded against, from the Account tab. */
   const [payingBill, setPayingBill] = React.useState<string | null>(null);
 
@@ -195,7 +212,8 @@ function PanelBody({
         .then((r) => (r.ok ? r.json() : { panel: null }))
         .then((d) => {
           setPanel(d.panel);
-          setMessage(d.message ?? null);
+          setReminders(d.reminders ?? []);
+          setDefaultTemplateId(d.defaultTemplateId ?? null);
           setWa(d.whatsapp ?? { messages: [], rules: [] });
         })
         .catch(() => {})
@@ -210,6 +228,10 @@ function PanelBody({
   }, [load]);
 
   const def = outcomes.find((o) => o.key === outcome) ?? null;
+  const message =
+    reminders.find((r) => r.templateId === (templateId ?? defaultTemplateId)) ??
+    reminders[0] ??
+    null;
   const dirty = Boolean(typed.trim() || chips.length || amount || date);
 
   // Notes are the chips plus whatever was typed, kept in one string so the
@@ -312,6 +334,7 @@ function PanelBody({
         sendWhatsAppNow({ customerId: panel.customerId, templateId: message.templateId }),
       );
       if (result.ok) onSaved();
+      else setAutoError(result.error);
     } finally {
       setConfirming(false);
     }
@@ -333,6 +356,22 @@ function PanelBody({
   );
 
   const bill = panel?.bills.find((b) => b.id === payingBill) ?? null;
+  /*
+   * THE LAST AUTOMATIC SEND FAILED — Wati refused it, or reported it failed
+   * by webhook afterwards. The customer has heard nothing, and the stamp was
+   * taken back, so this is a reminder somebody now has to send by hand, from
+   * here. Only the NEWEST message counts: a failure followed by a send that
+   * went is history, not work.
+   */
+  const latest = wa.messages[0] ?? null;
+  const lastFailed = latest && latest.status === "failed" ? latest : null;
+  const autoFailure = autoError
+    ? { when: null, reason: autoError }
+    : lastFailed
+      ? { when: lastFailed.sentAt ?? lastFailed.preparedAt, reason: lastFailed.failureReason }
+      : null;
+  const tab: Tab =
+    picked ?? (panel?.nextChannel === "whatsapp" || lastFailed ? "msg" : "log");
 
   return (
     <BodyPortal>
@@ -348,36 +387,39 @@ function PanelBody({
           className="flex h-[760px] max-h-[calc(100vh-48px)] w-[1160px] max-w-[calc(100vw-48px)] flex-col overflow-hidden rounded-[6px] bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
         >
           {/* ------------------------------------------------------- header */}
-          <div className="flex-none">
-            <div className="flex items-start justify-between gap-3 px-6 pt-5 pb-3.5">
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2.5">
-                  <span className="text-[22px] leading-7 font-semibold text-ink">
-                    {panel?.name ?? "Loading…"}
-                  </span>
-                  {panel ? (
-                    <>
-                      <Badge
-                        tone={
-                          panel.stage === 3 ? "danger" : panel.stage === 2 ? "warn" : "neutral"
-                        }
-                      >
-                        Stage {panel.stage}
-                      </Badge>
-                      {panel.slowPayer ? <SlowPayerBadge /> : null}
-                      {panel.floorReason ? (
-                        <span title={panel.floorReason}>
-                          <Badge tone="warn">Held at this stage</Badge>
-                        </span>
-                      ) : null}
-                    </>
-                  ) : null}
-                </div>
+          <div className="flex flex-none items-start justify-between gap-3 border-b border-line px-6 pt-4 pb-3">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[20px] leading-7 font-semibold text-ink">
+                  {panel?.name ?? "Loading…"}
+                </span>
                 {panel ? (
-                  <div className="mt-1 flex items-center gap-2 text-sm text-muted">
-                    <span>{panel.contactPerson}</span>
-                    <span>·</span>
-                    <span className="font-medium text-ink">{panel.phone}</span>
+                  <>
+                    <Badge
+                      tone={panel.stage === 3 ? "danger" : panel.stage === 2 ? "warn" : "brand"}
+                      title={panel.stageName}
+                    >
+                      Stage {panel.stage}
+                    </Badge>
+                    {panel.slowPayer ? <SlowPayerBadge /> : null}
+                    {panel.floorReason ? (
+                      <Badge tone="warn" title={panel.floorReason}>
+                        Held at this stage
+                      </Badge>
+                    ) : null}
+                  </>
+                ) : null}
+              </div>
+              {panel ? (
+                <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[13px] text-muted">
+                  {panel.contactPerson ? <span>{panel.contactPerson}</span> : null}
+                  <span className="inline-flex items-center gap-1.5">
+                    <a
+                      href={`tel:${panel.phone}`}
+                      className="font-medium text-ink no-underline hover:underline"
+                    >
+                      {panel.phone}
+                    </a>
                     <button
                       type="button"
                       title="Copy number"
@@ -385,165 +427,140 @@ function PanelBody({
                         void navigator.clipboard.writeText(panel.phone);
                         push("Phone number copied");
                       }}
-                      className="inline-flex h-[22px] w-[22px] flex-none cursor-pointer items-center justify-center rounded-[4px] border border-line bg-surface text-muted hover:bg-canvas hover:text-body"
+                      className="inline-flex h-[20px] w-[20px] flex-none cursor-pointer items-center justify-center rounded-[4px] border border-line bg-surface text-muted hover:bg-canvas hover:text-body"
                     >
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                         <rect x="9" y="9" width="12" height="12" rx="2" />
                         <path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" />
                       </svg>
                     </button>
-                    <span>·</span>
-                    <span>{panel.city}</span>
-                    <span>·</span>
-                    <span>{panel.ownerName ?? "Unassigned"}</span>
-                  </div>
-                ) : null}
-              </div>
-              <button
-                type="button"
-                onClick={close}
-                aria-label="Close"
-                className="h-7 w-7 flex-none cursor-pointer rounded-[4px] border-none bg-transparent text-muted hover:bg-canvas hover:text-body"
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-                  <path d="M6 6l12 12M18 6 6 18" />
-                </svg>
-              </button>
-            </div>
-
-            {/* ------------------------------------------------ context bar */}
-            <div className="flex items-center gap-5 border-y border-line bg-canvas px-6 py-2.5">
-              <Stat label="Outstanding" tone={panel?.stage === 3 ? "danger" : undefined}>
-                {money(panel?.totalOverdue ?? 0)}
-              </Stat>
-              <Rule />
-              <Stat
-                label="Oldest bill"
-                tone={
-                  (panel?.oldestOverdueDays ?? 0) > 45
-                    ? "danger"
-                    : (panel?.oldestOverdueDays ?? 0) > 15
-                      ? "warn"
-                      : undefined
-                }
-              >
-                {panel ? (panel.oldestOverdueDays ? ageLabel(panel.oldestOverdueDays) : "Not due") : "-"}
-              </Stat>
-              <Rule />
-              <Stat label="Bills overdue">{panel?.overdueBillCount ?? 0}</Stat>
-              <Rule />
-              <Stat label="Last follow-up">
-                {panel?.lastFollowUpAt ? stamp(panel.lastFollowUpAt) : "Never"}
-              </Stat>
-              <span className="flex-1" />
-              <div className="text-right">
-                <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                  Prescribed now
+                  </span>
+                  <span>· {panel.city}</span>
+                  <span>· {panel.ownerName ?? "Unassigned"}</span>
                 </div>
-                <div className="text-sm font-semibold text-brand-hover">
-                  {panel?.nextAction ?? "-"}
-                </div>
-              </div>
+              ) : null}
             </div>
-
-            {/* ----------------------------------------------------- tabs */}
-            <div className="flex items-center border-b border-line px-6">
-              {(
-                [
-                  ["account", "Account"],
-                  ["log", "Log follow-up"],
-                  ["msg", message?.mode === "automatic" ? "Send message" : "Prepare message"],
-                ] as Array<[Tab, string]>
-              ).map(([key, label]) => (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => setTab(key)}
-                  className={cx(
-                    "mr-5 h-9 cursor-pointer border-none bg-transparent px-1 text-sm",
-                    tab === key
-                      ? "border-b-2 border-brand font-medium text-brand-hover"
-                      : "border-b-2 border-transparent text-muted",
-                  )}
-                >
-                  {label}
-                  {key === "log" && dirty ? (
-                    <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-brand align-middle" />
-                  ) : null}
-                </button>
-              ))}
-            </div>
+            <button
+              type="button"
+              onClick={close}
+              aria-label="Close"
+              className="h-7 w-7 flex-none cursor-pointer rounded-[4px] border-none bg-transparent text-muted hover:bg-canvas hover:text-body"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                <path d="M6 6l12 12M18 6 6 18" />
+              </svg>
+            </button>
           </div>
 
           {/* --------------------------------------------------------- body */}
           {loading ? (
-            <div className="flex-1 px-6 py-10 text-sm text-muted">Loading the account…</div>
+            <div className="flex-1 px-6 py-10 text-sm text-muted">Loading…</div>
           ) : !panel ? (
             <div className="flex-1 px-6 py-10 text-sm text-muted">
-              This customer is no longer on the follow-up list - their bills may have been
-              paid, or they are outside your book.
+              Not on the follow-up list any more — paid, or outside your book.
             </div>
-          ) : tab === "account" ? (
-            <AccountTab panel={panel} onRecordPayment={setPayingBill} />
-          ) : tab === "log" ? (
-            <LogTab
-              outcomes={outcomes}
-              def={def}
-              onPick={(key) => {
-                setOutcome(key);
-                setAmount("");
-                setDate("");
-                setChips([]);
-                setTyped("");
-                setErrors({});
-              }}
-              onBack={() => guard(() => { setOutcome(null); setChips([]); setTyped(""); setAmount(""); setDate(""); })}
-              amount={amount}
-              setAmount={setAmount}
-              date={date}
-              setDate={setDate}
-              chips={chips}
-              toggleChip={toggleChip}
-              notes={notes}
-              setTyped={setTyped}
-              errors={errors}
-              outstanding={panel.totalOverdue}
-              stage={panel.stage}
-              name={panel.name}
-            />
           ) : (
-            <MessageTab
-              wa={wa}
-              message={message}
-              copied={Boolean(copiedId)}
-              onCopy={copyMessage}
-              phone={panel.phone}
-            />
+            /*
+             * ONE SCREEN, TWO SIDES. The account on the left is what you READ
+             * before and during the call; the right is what you DO. They were
+             * three tabs, so the bills were out of sight at the exact moment
+             * the customer was asking about one.
+             */
+            <div className="flex min-h-0 flex-1">
+              <AccountPane panel={panel} onRecordPayment={setPayingBill} />
+              <div className="flex min-w-0 flex-1 flex-col">
+                <div className="flex flex-none items-center gap-3 border-b border-line px-6 py-3">
+                  <Segmented
+                    value={tab}
+                    onChange={setPicked}
+                    options={[
+                      { key: "log", label: "Log a call", dot: dirty },
+                      { key: "msg", label: "WhatsApp reminder", alert: Boolean(autoFailure) },
+                    ]}
+                  />
+                  <span className="flex-1" />
+                  <span className="text-[12px] text-muted">
+                    Next step:{" "}
+                    <span className="font-medium text-brand-hover">{panel.nextAction}</span>
+                  </span>
+                </div>
+                {tab === "log" ? (
+                  <LogPane
+                    outcomes={outcomes}
+                    def={def}
+                    onPick={(key) => {
+                      if (key === outcome) return;
+                      setOutcome(key);
+                      setAmount("");
+                      setDate("");
+                      // Quick notes belong to an outcome; what was typed
+                      // belongs to the call, so a change of mind keeps it.
+                      setChips([]);
+                      setErrors({});
+                    }}
+                    amount={amount}
+                    setAmount={setAmount}
+                    date={date}
+                    setDate={setDate}
+                    chips={chips}
+                    toggleChip={toggleChip}
+                    notes={notes}
+                    setTyped={setTyped}
+                    errors={errors}
+                    outstanding={panel.totalOverdue}
+                    stage={panel.stage}
+                  />
+                ) : (
+                  <MessagePane
+                    wa={wa}
+                    message={message}
+                    reminders={reminders}
+                    onPickTemplate={(id) => {
+                      // A different template is a different message: whatever
+                      // was copied was the old one, so the steps start again.
+                      if (id === message?.templateId) return;
+                      setTemplateId(id);
+                      setCopiedId(null);
+                      setAutoError(null);
+                    }}
+                    copied={Boolean(copiedId)}
+                    confirming={confirming}
+                    onCopy={copyMessage}
+                    onMarkSent={markSent}
+                    onSendNow={sendNow}
+                    autoFailure={autoFailure}
+                    today={businessDay}
+                    phone={panel.phone}
+                  />
+                )}
+              </div>
+            </div>
           )}
 
           {/* ------------------------------------------------------- footer */}
           <div className="flex flex-none items-center gap-2.5 border-t border-line bg-surface px-6 py-3">
             {target.total > 1 ? (
-              <span className="flex items-center gap-1.5">
-                <span className="text-[13px] text-muted">
-                  Customer {target.index + 1} of {target.total}
-                </span>
+              <span className="flex items-center gap-1">
                 <button
                   type="button"
                   disabled={target.index <= 0}
                   onClick={() => guard(() => onMove(-1))}
-                  className="inline-flex h-8 cursor-pointer items-center gap-1.5 border-none bg-transparent px-2.5 text-[13px] text-muted disabled:cursor-not-allowed disabled:text-line-strong"
+                  title="Previous customer"
+                  className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-[4px] border border-line bg-surface text-[13px] text-body hover:bg-canvas disabled:cursor-not-allowed disabled:text-line-strong"
                 >
-                  ◀ Previous
+                  ◀
                 </button>
-                <span className="text-line">|</span>
+                <span className="px-1.5 text-[13px] text-muted">
+                  {target.index + 1} / {target.total}
+                </span>
                 <button
                   type="button"
                   disabled={target.index >= target.total - 1}
                   onClick={() => guard(() => onMove(1))}
-                  className="inline-flex h-8 cursor-pointer items-center gap-1.5 border-none bg-transparent px-2.5 text-[13px] text-muted disabled:cursor-not-allowed disabled:text-line-strong"
+                  title="Next customer"
+                  className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-[4px] border border-line bg-surface text-[13px] text-body hover:bg-canvas disabled:cursor-not-allowed disabled:text-line-strong"
                 >
-                  Next ▶
+                  ▶
                 </button>
               </span>
             ) : null}
@@ -551,44 +568,25 @@ function PanelBody({
             <Button variant="secondary" onClick={close}>
               {tab === "log" && def ? "Cancel" : "Close"}
             </Button>
-            {tab === "account" ? (
-              <Button onClick={() => setTab("log")}>Log the follow-up ▸</Button>
-            ) : null}
-            {tab === "log" && def ? (
+            {panel && tab === "log" ? (
               <>
                 <Button
                   variant="secondary"
-                  disabled={blocked || busy}
-                  title={blocked ? blockedTitle(def) : undefined}
+                  disabled={!def || blocked || busy}
+                  title={!def ? "Pick what they said first" : blocked ? blockedTitle(def) : undefined}
                   onClick={() => save(false)}
                 >
-                  Save log
+                  Save
                 </Button>
                 <Button
-                  disabled={blocked || busy}
-                  title={blocked ? blockedTitle(def) : undefined}
+                  variant="primary"
+                  disabled={!def || blocked || busy}
+                  title={!def ? "Pick what they said first" : blocked ? blockedTitle(def) : undefined}
                   onClick={() => save(true)}
                 >
                   Save &amp; next ▸
                 </Button>
               </>
-            ) : null}
-            {tab === "msg" ? (
-              <Button
-                disabled={Boolean(message?.blocked) || confirming}
-                title={message?.blocked ? "Fill the missing merge fields first" : undefined}
-                onClick={() =>
-                  message?.mode === "automatic" ? sendNow() : copiedId ? markSent() : copyMessage()
-                }
-              >
-                {message?.mode === "automatic"
-                  ? confirming
-                    ? "Sending…"
-                    : "Send on WhatsApp"
-                  : copiedId
-                    ? "Mark as sent"
-                    : "Copy message first"}
-              </Button>
             ) : null}
           </div>
         </div>
@@ -782,17 +780,13 @@ function RecordPaymentForm({
 
             {leftOpen < 0 ? (
               <div className="mt-3 rounded-[4px] border border-warn-line bg-warn-soft px-2.5 py-2 text-[13px] text-warn-ink">
-                That is {money(-leftOpen)} more than {bill.billNo} has open. Record what
-                landed against this bill, and the rest against the next one.
+                {money(-leftOpen)} more than this bill has open — put the rest on the next bill.
               </div>
             ) : null}
           </div>
 
           {/* ------------------------------------------------------- footer */}
           <div className="flex items-center gap-2.5 border-t border-line bg-surface px-6 py-3">
-            <span className="text-[13px] text-muted">
-              Outstanding is rebuilt from the bills after this.
-            </span>
             <span className="flex-1" />
             <Button variant="secondary" onClick={onClose}>
               Cancel
@@ -867,9 +861,78 @@ function Stat({
   );
 }
 
-/* ------------------------------------------------------------ account tab */
+/** "payment_promised" → "Payment promised": a stored code is not a label. */
+function readable(code: string): string {
+  if (!/_/.test(code) && code !== code.toLowerCase()) return code;
+  const words = code.replace(/_/g, " ").trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
 
-function AccountTab({
+function ageTone(days: number): "danger" | "warn" | undefined {
+  return days > 45 ? "danger" : days > 15 ? "warn" : undefined;
+}
+
+function PaneLabel({ children, right }: { children: React.ReactNode; right?: React.ReactNode }) {
+  return (
+    <div className="mb-1.5 flex items-center gap-2">
+      <span className="text-[12px] font-medium text-muted">{children}</span>
+      {right ? (
+        <>
+          <span className="flex-1" />
+          {right}
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+/** Two buttons that behave as one control — which of two things you are doing. */
+function Segmented<T extends string>({
+  value,
+  onChange,
+  options,
+}: {
+  value: T;
+  onChange: (key: T) => void;
+  options: Array<{ key: T; label: string; dot?: boolean; alert?: boolean }>;
+}) {
+  return (
+    <div className="inline-flex rounded-[6px] border border-line bg-canvas p-0.5">
+      {options.map((o) => (
+        <button
+          key={o.key}
+          type="button"
+          onClick={() => onChange(o.key)}
+          className={cx(
+            "h-8 cursor-pointer rounded-[4px] border-none px-3.5 text-[13px]",
+            value === o.key
+              ? "bg-surface font-medium text-ink shadow-[0_1px_2px_rgba(22,22,22,0.08)]"
+              : "bg-transparent text-muted hover:text-body",
+          )}
+        >
+          {o.label}
+          {o.dot ? (
+            <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-brand align-middle" />
+          ) : null}
+          {o.alert ? (
+            <Badge tone="danger" className="ml-1.5">
+              Failed
+            </Badge>
+          ) : null}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------ account pane */
+
+/**
+ * EVERYTHING ABOUT THE ACCOUNT, IN READING ORDER: how much and how late, the
+ * bills it is made of, what was promised, and what happened last. No
+ * sentences restating the figures — the figures are the sentence.
+ */
+function AccountPane({
   panel,
   onRecordPayment,
 }: {
@@ -877,150 +940,157 @@ function AccountTab({
   onRecordPayment: (billId: string) => void;
 }) {
   return (
-    <div className="flex-1 overflow-y-auto">
-      <div className="border-b border-divider bg-brand-soft px-6 py-3.5">
-        <div className="text-sm text-ink">
-          Stage {panel.stage} says: {panel.nextAction.toLowerCase()}. Last follow-up{" "}
-          {panel.lastFollowUpAt ? stamp(panel.lastFollowUpAt) : "never"}.
-        </div>
-        <div className="mt-0.5 text-[13px] text-muted">
-          Stage {panel.stage} - {panel.stageName} · Credit terms {panel.creditDays} days ·{" "}
-          {panel.slowPayer ? "flagged as a slow payer" : "no slow-payer flag"}
-          {panel.floorReason ? ` · ${panel.floorReason}` : ""}
-        </div>
+    <div className="w-[440px] flex-none overflow-y-auto border-r border-line bg-canvas">
+      <div className="grid grid-cols-2 gap-x-4 gap-y-3 border-b border-line px-5 py-4">
+        <Stat label="Outstanding" tone={panel.stage === 3 ? "danger" : undefined}>
+          <span className="text-[18px] font-semibold">{money(panel.totalOverdue)}</span>
+        </Stat>
+        <Stat label="Oldest bill" tone={ageTone(panel.oldestOverdueDays)}>
+          <span className="text-[18px] font-semibold">
+            {panel.oldestOverdueDays ? ageLabel(panel.oldestOverdueDays) : "Not due"}
+          </span>
+        </Stat>
+        <Stat label="Last chased">
+          {panel.lastFollowUpAt ? stamp(panel.lastFollowUpAt) : "Never"}
+        </Stat>
+        <Stat label="Credit terms">{panel.creditDays} days</Stat>
       </div>
 
-      <div className="border-b border-divider px-6 py-4">
-        <div className="mb-2 text-xs font-medium tracking-[0.04em] text-muted uppercase">
-          Bills outstanding
-        </div>
+      <div className="border-b border-line px-5 py-4">
+        <PaneLabel>Open bills · {panel.bills.length}</PaneLabel>
         {panel.bills.length ? (
-          <div className="overflow-hidden rounded-[4px] border border-line">
-            <div className="flex items-center gap-3 bg-canvas px-3 py-1.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-              <span className="w-[132px] flex-none">Bill</span>
-              <span className="w-[76px] flex-none">Due</span>
-              <span className="flex-1">Amount</span>
-              <span className="w-24 flex-none text-right">Balance</span>
-              <span className="w-[76px] flex-none text-right">Overdue</span>
-              <span className="w-[132px] flex-none" />
-            </div>
+          <div className="overflow-hidden rounded-[6px] border border-line bg-surface">
             {panel.bills.map((b, i) => (
               <div
                 key={b.id}
                 className={cx(
                   "flex items-center gap-3 px-3 py-2",
-                  i ? "border-t border-canvas" : "",
-                  b.overdueDays > 45 ? "bg-danger-soft" : "bg-surface",
+                  i ? "border-t border-divider" : "",
                 )}
               >
-                <span
-                  title={b.billNo}
-                  className="w-[132px] flex-none truncate text-sm font-medium text-ink"
+                <span className="min-w-0 flex-1">
+                  <span
+                    title={b.billNo}
+                    className="block truncate text-[13px] font-medium text-ink"
+                  >
+                    {b.billNo}
+                    {b.disputed ? (
+                      <Badge tone="warn" className="ml-1.5">
+                        Disputed
+                      </Badge>
+                    ) : null}
+                  </span>
+                  <span className="block text-[12px] text-muted">
+                    Due {shortDate(b.dueDate)}
+                    {b.paid ? ` · ${money(b.paid)} paid` : ""}
+                  </span>
+                </span>
+                <span className="flex-none text-right">
+                  <span className="block text-[13px] font-semibold text-ink">
+                    {money(b.balance)}
+                  </span>
+                  <span
+                    className={cx(
+                      "block text-[12px]",
+                      ageTone(b.overdueDays) === "danger"
+                        ? "text-danger"
+                        : ageTone(b.overdueDays) === "warn"
+                          ? "text-warn-ink"
+                          : "text-muted",
+                    )}
+                  >
+                    {b.overdueDays > 0 ? ageLabel(b.overdueDays) : "Not due"}
+                  </span>
+                </span>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => onRecordPayment(b.id)}
+                  title={`Record a payment against ${b.billNo}`}
                 >
-                  {b.billNo}
-                </span>
-                <span className="w-[76px] flex-none whitespace-nowrap text-[13px] text-muted">
-                  {shortDate(b.dueDate)}
-                </span>
-                <span className="flex-1 text-sm text-body">
-                  {money(b.amount)} · paid {money(b.paid)}
-                  {b.disputed ? " · disputed" : ""}
-                </span>
-                <span className="w-24 flex-none text-right text-sm font-medium text-ink">
-                  {money(b.balance)}
-                </span>
-                <span
-                  className={cx(
-                    "w-[76px] flex-none text-right text-[13px] font-medium",
-                    b.overdueDays > 45
-                      ? "text-danger"
-                      : b.overdueDays > 15
-                        ? "text-warn-ink"
-                        : "text-muted",
-                  )}
-                >
-                  {b.overdueDays > 0 ? ageLabel(b.overdueDays) : "Not due"}
-                </span>
-                <span className="w-[132px] flex-none text-right">
-                  <Button size="sm" variant="secondary" onClick={() => onRecordPayment(b.id)}>
-                    Record payment
-                  </Button>
-                </span>
+                  Paid
+                </Button>
               </div>
             ))}
           </div>
         ) : (
-          <div className="rounded-[4px] border border-dashed border-line px-3 py-5 text-center text-sm text-muted">
-            No open bills on this account.
+          <div className="rounded-[6px] border border-dashed border-line bg-surface px-3 py-4 text-center text-[13px] text-muted">
+            No open bills
           </div>
         )}
-        <div className="mt-2 text-[13px] text-muted">
-          Record against a named bill here. For &ldquo;they paid ₹50,000&rdquo; with no
-          bill named, log <span className="font-medium text-ink">Already paid</span> on the
-          next tab - that spreads it over the oldest bills first.
-        </div>
+        {panel.bills.length ? (
+          <div className="mt-1.5 text-[12px] text-muted">
+            No bill named? Log <span className="font-medium text-body">Already paid</span> —
+            it clears the oldest first.
+          </div>
+        ) : null}
       </div>
 
       {panel.promises.length ? (
-        <div className="border-b border-divider px-6 py-4">
-          <div className="mb-2 text-xs font-medium tracking-[0.04em] text-muted uppercase">
-            Promises on record
-          </div>
+        <div className="border-b border-line px-5 py-4">
+          <PaneLabel>Promises</PaneLabel>
           {panel.promises.map((p, i) => (
-            <div key={i} className="border-t border-canvas py-1.5 first:border-0">
-              <div className="text-sm font-medium text-ink">
-                {money(p.amount)} promised by {shortDate(p.date)}
-                {p.broken ? (
-                  <span className="ml-2 text-[13px] font-normal text-danger">
-                    that date has passed
-                  </span>
-                ) : null}
+            <div key={i} className="py-1" title={p.note ?? undefined}>
+              <div className="flex items-center gap-2 text-[13px] text-ink">
+                <span className="font-medium">{money(p.amount)}</span>
+                <span className="text-muted">by {shortDate(p.date)}</span>
+                {p.broken ? <Badge tone="danger">Missed</Badge> : null}
               </div>
-              <div className="text-[13px] text-muted">{p.note ?? "No note"}</div>
+              {p.note ? <div className="truncate text-[12px] text-muted">{p.note}</div> : null}
             </div>
           ))}
         </div>
       ) : null}
 
-      <div className="px-6 py-4">
-        <div className="mb-2 text-xs font-medium tracking-[0.04em] text-muted uppercase">
-          Last three interactions
-        </div>
+      <div className="px-5 py-4">
+        <PaneLabel
+          right={
+            <Link
+              href={`/crm/customers/${panel.customerId}`}
+              className="text-[12px] text-brand no-underline"
+            >
+              Full record →
+            </Link>
+          }
+        >
+          Recent
+        </PaneLabel>
         {panel.recent.length ? (
           panel.recent.map((h, i) => (
-            <div key={i} className="flex gap-3 border-t border-canvas py-2 first:border-0">
-              <span className="w-[110px] flex-none whitespace-nowrap text-[13px] text-muted">
-                {stamp(h.at)}
-              </span>
-              <span className="min-w-0 flex-1">
+            <div key={i} className="border-t border-divider py-2 first:border-0">
+              <div className="flex items-center gap-2">
                 <Badge tone={h.channel === "Collections" ? "warn" : "brand"}>
-                  {h.outcome ?? h.channel}
+                  {readable(h.outcome ?? h.channel)}
                 </Badge>
-                <span className="mt-0.5 block text-[13px] text-muted">{h.note ?? "-"}</span>
-              </span>
+                <span className="text-[12px] text-muted">{stamp(h.at)}</span>
+              </div>
+              {h.note ? (
+                <div className="mt-0.5 line-clamp-2 text-[12px] text-body" title={h.note}>
+                  {h.note}
+                </div>
+              ) : null}
             </div>
           ))
         ) : (
-          <div className="text-sm text-muted">Nothing logged against this customer yet.</div>
+          <div className="text-[13px] text-muted">Nothing logged yet</div>
         )}
-        <Link
-          href={`/crm/customers/${panel.customerId}`}
-          className="mt-3 inline-block text-[13px] text-brand"
-        >
-          Open the full customer record ▸
-        </Link>
       </div>
     </div>
   );
 }
 
-/* ---------------------------------------------------------------- log tab */
+/* --------------------------------------------------------------- log pane */
 
-function LogTab(props: {
+/**
+ * WHAT DID THEY SAY — every answer on the screen at once, as a grid of
+ * buttons, and the fields it needs appear under it. The old flow was a list
+ * to pick from, then a second page with a back link, so changing your mind
+ * mid-call cost two clicks and the list disappeared.
+ */
+function LogPane(props: {
   outcomes: PayOutcomeDefinition[];
   def: PayOutcomeDefinition | null;
   onPick: (key: string) => void;
-  onBack: () => void;
   amount: string;
   setAmount: (v: string) => void;
   date: string;
@@ -1032,299 +1102,408 @@ function LogTab(props: {
   errors: Record<string, string>;
   outstanding: number;
   stage: number;
-  name: string;
 }) {
   const { def } = props;
 
   return (
     <div className="flex-1 overflow-y-auto px-6 py-5">
-      <div className="mx-auto max-w-[720px]">
-        {!def ? (
-          <div>
-            <div className="mb-1 text-[15px] font-semibold text-ink">What did they say?</div>
-            <div className="mb-3.5 text-[13px] text-muted">
-              Pick the outcome - it decides what gets created and whether the stage moves.
-            </div>
-            {props.outcomes.map((o) => (
-              <button
-                key={o.key}
-                type="button"
-                onClick={() => props.onPick(o.key)}
-                className="mb-2 flex h-10 w-full cursor-pointer items-center gap-2.5 rounded-[4px] border border-line bg-surface px-3 text-left text-sm text-ink hover:border-brand hover:bg-canvas"
-              >
-                {o.label}
-              </button>
-            ))}
-          </div>
-        ) : (
-          <div>
+      <PaneLabel>What did they say?</PaneLabel>
+      <div className="grid grid-cols-2 gap-2">
+        {props.outcomes.map((o) => {
+          const on = def?.key === o.key;
+          return (
             <button
+              key={o.key}
               type="button"
-              onClick={props.onBack}
-              className="mb-2.5 inline-flex cursor-pointer items-center gap-1.5 border-none bg-transparent p-0 text-[13px] text-muted"
+              onClick={() => props.onPick(o.key)}
+              aria-pressed={on}
+              className={cx(
+                "flex h-10 cursor-pointer items-center gap-2 rounded-[6px] border px-3 text-left text-[13px]",
+                on
+                  ? "border-brand bg-brand-soft font-medium text-brand-hover"
+                  : "border-line bg-surface text-ink hover:border-brand hover:bg-canvas",
+              )}
             >
-              ◀ All outcomes
-            </button>
-            <div className="mb-3 text-[15px] font-semibold text-ink">{def.label}</div>
-
-            {def.amount ? (
-              <Field
-                label={`${def.amount} · required`}
-                hint={`Outstanding is ${money(props.outstanding)}.`}
-                error={props.errors.amount ?? null}
-              >
-                <Input
-                  inputMode="numeric"
-                  placeholder="1,00,000"
-                  value={props.amount}
-                  onChange={(e) => props.setAmount(e.target.value.replace(/[^0-9,]/g, ""))}
-                />
-              </Field>
-            ) : null}
-
-            {def.date ? (
-              <Field
-                label={`${def.date} · required`}
-                error={props.errors.date ?? null}
-                hint="It becomes the reminder that chases this."
-              >
-                <Input
-                  type="date"
-                  value={props.date}
-                  onChange={(e) => props.setDate(e.target.value)}
-                  className="w-[200px]"
-                />
-              </Field>
-            ) : null}
-
-            <div className="mb-3.5">
-              <span className="mb-1 block text-xs font-medium tracking-[0.04em] text-muted uppercase">
-                Quick notes
-              </span>
-              <div className="flex flex-wrap gap-2">
-                {def.chips.map((c) => {
-                  const on = props.chips.includes(c);
-                  return (
-                    <button
-                      key={c}
-                      type="button"
-                      onClick={() => props.toggleChip(c)}
-                      className={cx(
-                        "h-7 cursor-pointer rounded-[4px] border px-2.5 text-[13px]",
-                        on
-                          ? "border-brand bg-brand-soft font-medium text-brand-hover"
-                          : "border-line bg-surface text-body hover:bg-canvas",
-                      )}
-                    >
-                      {c}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <Field
-              label="Notes"
-              hint="Quick notes add to this - you can still edit or type your own."
-            >
-              <VoiceTextarea
-                rows={4}
-                placeholder="Who you spoke to and exactly what they said"
-                value={props.notes}
-                onChange={(e) => props.setTyped(e.target.value)}
-                onDictate={props.setTyped}
+              <span
+                className={cx(
+                  "h-3.5 w-3.5 flex-none rounded-full border",
+                  on ? "border-[4px] border-brand bg-surface" : "border-line-strong",
+                )}
+                aria-hidden
               />
-            </Field>
-
-            {def.consequence ? (
-              <div className="mt-3 rounded-[4px] border border-warn-line bg-warn-soft px-2.5 py-2 text-[13px] text-warn-ink">
-                {def.consequence}
-              </div>
-            ) : null}
-            {def.escalates ? (
-              <div className="mt-2 rounded-[4px] border border-danger-soft bg-danger-soft px-2.5 py-2 text-[13px] text-danger">
-                Saving this holds {props.name} at stage {Math.min(3, props.stage + 1)} until
-                they pay, which prescribes a firmer follow-up. Their stage still rises with
-                the age of the debt.
-              </div>
-            ) : null}
-          </div>
-        )}
+              {o.label}
+            </button>
+          );
+        })}
       </div>
+
+      {def ? (
+        <div className="mt-5 border-t border-divider pt-4">
+          {def.amount || def.date ? (
+            <div className="mb-3 grid grid-cols-2 gap-3">
+              {def.amount ? (
+                <Field
+                  label={def.amount}
+                  hint={`Outstanding ${money(props.outstanding)}`}
+                  error={props.errors.amount ?? null}
+                >
+                  <Input
+                    inputMode="numeric"
+                    placeholder="1,00,000"
+                    value={props.amount}
+                    onChange={(e) => props.setAmount(e.target.value.replace(/[^0-9,]/g, ""))}
+                  />
+                </Field>
+              ) : null}
+              {def.date ? (
+                <Field label={def.date} error={props.errors.date ?? null}>
+                  <Input
+                    type="date"
+                    value={props.date}
+                    onChange={(e) => props.setDate(e.target.value)}
+                  />
+                </Field>
+              ) : null}
+            </div>
+          ) : null}
+
+          {def.chips.length ? (
+            <div className="mb-3 flex flex-wrap gap-1.5">
+              {def.chips.map((c) => {
+                const on = props.chips.includes(c);
+                return (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => props.toggleChip(c)}
+                    className={cx(
+                      "h-7 cursor-pointer rounded-full border px-3 text-[12px]",
+                      on
+                        ? "border-brand bg-brand-soft font-medium text-brand-hover"
+                        : "border-line bg-surface text-body hover:bg-canvas",
+                    )}
+                  >
+                    {on ? "✓ " : ""}
+                    {c}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+
+          <Field label="Note">
+            <VoiceTextarea
+              rows={3}
+              placeholder="Who you spoke to and what they said"
+              value={props.notes}
+              onChange={(e) => props.setTyped(e.target.value)}
+              onDictate={props.setTyped}
+            />
+          </Field>
+
+          {def.consequence || def.escalates ? (
+            <div className="mt-3 space-y-1 text-[12px]">
+              {def.consequence ? <div className="text-muted">→ {def.consequence}</div> : null}
+              {def.escalates ? (
+                <div className="text-danger">
+                  → Moves them to stage {Math.min(3, props.stage + 1)} until they pay.
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
 
-/* ------------------------------------------------------------ message tab */
+/* ----------------------------------------------------------- message pane */
 
-function MessageTab({
+/**
+ * THE MESSAGE AS THE CUSTOMER WILL SEE IT, and the buttons to send it. The
+ * merge-field table is shown only when something is missing — when every
+ * field is filled, the preview already shows each value in place.
+ *
+ * THE MANUAL ROUTE IS ALWAYS HERE. Where the reminder can go through the
+ * WhatsApp Business API, "Send on WhatsApp" is the main button — but an API
+ * send can be refused on the spot or reported failed by Wati afterwards, and
+ * the reminder still has to reach the customer. So copy → open WhatsApp →
+ * mark as sent sits under it every time, and once the automatic send has
+ * failed it becomes the main route, with the reason above it.
+ */
+function MessagePane({
   wa,
   message,
+  reminders,
+  onPickTemplate,
   copied,
+  confirming,
   onCopy,
+  onMarkSent,
+  onSendNow,
+  autoFailure,
+  today: businessDay,
   phone,
 }: {
   wa: { messages: TrackerRow[]; rules: RuleOutlook[] };
   message: ReminderPreview | null;
+  /** Every approved payment template, to pick from. */
+  reminders: ReminderPreview[];
+  onPickTemplate: (templateId: string) => void;
   copied: boolean;
+  confirming: boolean;
   onCopy: () => void;
+  onMarkSent: () => void;
+  onSendNow: () => void;
+  /** The automatic send failed — just now, or the last one Wati reported. */
+  autoFailure: { when: string | null; reason: string | null } | null;
+  today: string;
   phone: string;
 }) {
+  const [historyOpen, setHistoryOpen] = React.useState(false);
+  const missing = message?.fields.filter((f) => !f.ok) ?? [];
+
   const history = (
-    <div className="mx-auto mt-6 max-w-[720px] space-y-4">
-      <div>
-        <div className="mb-1.5 text-xs font-medium tracking-[0.04em] text-muted uppercase">
-          Messages to this customer
+    <div className="mt-5 border-t border-divider pt-3">
+      <button
+        type="button"
+        onClick={() => setHistoryOpen((o) => !o)}
+        className="cursor-pointer border-none bg-transparent p-0 text-[13px] text-brand"
+        aria-expanded={historyOpen}
+      >
+        {historyOpen ? "Hide" : "Show"} earlier messages ({wa.messages.length}) {historyOpen ? "▴" : "▾"}
+      </button>
+      {historyOpen ? (
+        <div className="mt-3 space-y-4">
+          <MessageTimeline messages={wa.messages} />
+          <div>
+            <PaneLabel>Automatic reminders</PaneLabel>
+            <RuleOutlookList rules={wa.rules} />
+          </div>
         </div>
-        <MessageTimeline messages={wa.messages} />
-      </div>
-      <div>
-        <div className="mb-1.5 text-xs font-medium tracking-[0.04em] text-muted uppercase">
-          Automatic reminders for this customer
-        </div>
-        <RuleOutlookList rules={wa.rules} />
-      </div>
+      ) : null}
     </div>
   );
 
+  const failureBanner = autoFailure ? (
+    <div className="mb-3 rounded-[6px] border border-danger-soft bg-danger-soft px-3 py-2 text-[13px] text-danger">
+      <span className="font-medium">
+        Automatic WhatsApp failed
+        {autoFailure.when ? ` · ${whenLabel(autoFailure.when, businessDay)}` : ""}
+      </span>
+      {autoFailure.reason ? <span className="text-body"> — {autoFailure.reason}</span> : null}
+      <div className="mt-0.5 text-body">The customer has not got it. Send it yourself below.</div>
+    </div>
+  ) : null;
+
   if (!message) {
     return (
-      <div className="flex-1 overflow-y-auto px-6 py-10 text-sm text-muted">
-        No active payment reminder template. A manager can write one on the WhatsApp
-        screen - until then, log a call instead.
+      <div className="flex-1 overflow-y-auto px-6 py-5">
+        {failureBanner}
+        <div className="rounded-[6px] border border-dashed border-line px-4 py-6 text-center text-[13px] text-muted">
+          No payment reminder template yet — log a call instead.
+        </div>
         {history}
       </div>
     );
   }
 
+  const api = message.mode === "automatic";
+  /** The manual steps lead only where the API is not the way, or has failed. */
+  const manualLeads = !api || Boolean(autoFailure);
+
+  const manualSteps = (
+    /*
+     * Copy, open, confirm — three buttons in a row, numbered. Only a
+     * CONFIRMED send counts as contact (AGENTS.md), so the third step
+     * stays, and it cannot be pressed before the first.
+     */
+    <div className="flex flex-wrap items-center gap-2">
+      <StepButton n={1} done={copied}>
+        <Button
+          size="sm"
+          variant={copied || !manualLeads ? "secondary" : "primary"}
+          disabled={message.blocked}
+          onClick={onCopy}
+        >
+          {copied ? "Copied ✓" : "Copy message"}
+        </Button>
+      </StepButton>
+      <span className="text-line-strong">→</span>
+      <StepButton n={2}>
+        <a
+          href={`https://wa.me/${phone.replace(/[^0-9]/g, "")}`}
+          target="_blank"
+          rel="noreferrer"
+          title={`Paste into ${message.destination}`}
+          className={cx(
+            "inline-flex h-8 items-center rounded-[4px] border px-2.5 text-[13px] font-medium no-underline",
+            copied
+              ? "border-brand bg-brand text-white hover:bg-brand-hover"
+              : "border-line-strong bg-surface text-body hover:bg-canvas",
+          )}
+        >
+          Open WhatsApp ↗
+        </a>
+      </StepButton>
+      <span className="text-line-strong">→</span>
+      <StepButton n={3}>
+        <Button
+          size="sm"
+          variant={copied ? "primary" : "secondary"}
+          disabled={!copied || confirming}
+          title={copied ? "Press once it has gone" : "Copy and send it first"}
+          onClick={onMarkSent}
+        >
+          {confirming && copied ? "Saving…" : "Mark as sent"}
+        </Button>
+      </StepButton>
+    </div>
+  );
+
   return (
     <div className="flex-1 overflow-y-auto px-6 py-5">
-      <div className="mx-auto max-w-[720px]">
-        <div className="mb-1.5 text-xs font-medium tracking-[0.04em] text-muted uppercase">
-          {message.templateName} · going to {message.destination} (
-          {message.destKind === "group" ? "group" : "personal number"})
+      {failureBanner}
+
+      {/*
+        WHICH APPROVED TEMPLATE. The same Wati templates the automatic
+        reminders send, in their fixed order, each one already filled for this
+        customer. One that its own rules refuse here (a payment reported, a
+        bill disputed) is still listed, marked, with the reason when picked.
+      */}
+      {reminders.length > 1 ? (
+        <div className="mb-3">
+          <PaneLabel>Template</PaneLabel>
+          <div className="flex flex-wrap gap-1.5">
+            {reminders.map((r) => {
+              const on = r.templateId === message.templateId;
+              return (
+                <button
+                  key={r.templateId}
+                  type="button"
+                  onClick={() => onPickTemplate(r.templateId)}
+                  aria-pressed={on}
+                  title={r.blocked ? (r.blockedReason ?? "Cannot go to this customer") : undefined}
+                  className={cx(
+                    "h-8 cursor-pointer rounded-full border px-3 text-[12px]",
+                    on
+                      ? "border-brand bg-brand-soft font-medium text-brand-hover"
+                      : "border-line bg-surface text-body hover:bg-canvas",
+                    r.blocked && !on ? "text-muted line-through decoration-line-strong" : "",
+                  )}
+                >
+                  {r.templateName}
+                </button>
+              );
+            })}
+          </div>
         </div>
+      ) : null}
 
-        {message.blocked ? (
-          <div className="mb-3 rounded-[4px] border border-warn-line border-l-[3px] border-l-warn bg-warn-soft px-3 py-2.5 text-sm leading-[21px] text-warn-ink">
-            {message.blockedReason}
-          </div>
-        ) : null}
+      <div className="mb-2 flex flex-wrap items-center gap-2 text-[13px]">
+        <span className="font-medium text-ink">{message.templateName}</span>
+        <span className="text-muted">
+          → {message.destination} ({message.destKind === "group" ? "group" : "personal"})
+        </span>
+      </div>
 
-        <div className="mb-3 overflow-hidden rounded-[4px] border border-line">
-          <div className="bg-canvas px-2.5 py-1.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-            Merge fields
-          </div>
-          {message.fields.map((f) => (
-            <div
-              key={f.label}
-              className={cx(
-                "flex items-center justify-between gap-3 border-b border-canvas px-2.5 py-1.5 last:border-0",
-                f.ok ? "bg-surface" : "bg-warn-soft",
-              )}
-            >
-              <span className="text-[13px] text-muted">{f.label}</span>
-              <span
-                className={cx(
-                  "text-[13px] font-medium",
-                  f.ok ? "text-ink" : "text-warn-ink",
-                )}
-              >
-                {f.value || "Missing"}
-              </span>
+      {message.blocked ? (
+        <div className="mb-3 rounded-[6px] border border-warn-line bg-warn-soft px-3 py-2 text-[13px] text-warn-ink">
+          {message.blockedReason}
+          {missing.length ? (
+            <div className="mt-1">
+              Missing: <span className="font-medium">{missing.map((f) => f.label).join(", ")}</span>
             </div>
-          ))}
+          ) : null}
         </div>
+      ) : null}
 
-        <div className="flex justify-end rounded-[6px] border border-line bg-canvas p-5">
-          <div className="max-w-[340px] rounded-[6px_6px_2px_6px] border border-brand-softer bg-brand-soft px-3 py-2.5">
+      {message.body ? (
+        <div className="flex justify-end rounded-[6px] border border-line bg-canvas p-4">
+          <div className="max-w-[420px] rounded-[6px_6px_2px_6px] border border-brand-softer bg-brand-soft px-3 py-2.5">
             {message.body.split("\n").map((line, i) => (
               <span
                 key={i}
-                className="block min-h-[11px] text-[15px] leading-[22px] whitespace-pre-wrap text-ink"
+                className="block min-h-[11px] text-[14px] leading-[21px] whitespace-pre-wrap text-ink"
               >
                 {line}
               </span>
             ))}
           </div>
         </div>
+      ) : null}
 
-        {message.mode === "automatic" ? (
-          <div className="mt-4 rounded-[6px] border border-line p-4 text-[13px] text-muted">
-            Sends from the business number, as the approved WhatsApp template, and
-            updates the last follow-up date. Delivered and read ticks come back on
-            their own — nothing to copy and nothing to confirm.
-          </div>
-        ) : (
-          <div className="mt-4 overflow-hidden rounded-[6px] border border-line">
-            <div className="border-b border-line px-4 py-3 text-sm font-semibold text-ink">
-              Send it in three steps
+      {manualLeads ? (
+        <div className="mt-3">
+          {!api && message.manualWhy ? (
+            <div className="mb-2 text-[12px] text-muted">
+              Send by hand — {message.manualWhy.charAt(0).toLowerCase() + message.manualWhy.slice(1)}
             </div>
-            <Step n={1} title="Copy the message">
-              <Button
-                variant={copied ? "secondary" : "primary"}
-                disabled={message.blocked}
-                onClick={onCopy}
-                className="w-full"
+          ) : null}
+          {manualSteps}
+          {api ? (
+            <div className="mt-2 text-[12px] text-muted">
+              Or{" "}
+              <button
+                type="button"
+                onClick={onSendNow}
+                disabled={message.blocked || confirming}
+                className="cursor-pointer border-none bg-transparent p-0 text-[12px] text-brand disabled:cursor-not-allowed disabled:text-muted"
               >
-                {copied ? "Copied" : "Copy message"}
-              </Button>
-            </Step>
-            <Step n={2} title="Send it from WhatsApp" dim={!copied}>
-              <a
-                href={`https://wa.me/${phone.replace(/[^0-9]/g, "")}`}
-                target="_blank"
-                rel="noreferrer"
-                className="flex h-9 w-full items-center justify-center rounded-[4px] border border-line-strong bg-surface text-sm font-medium text-body no-underline hover:bg-canvas"
-              >
-                Open WhatsApp Web ↗
-              </a>
-              <span className="mt-1.5 block text-[13px] text-muted">
-                Paste into: <span className="font-medium text-ink">{message.destination}</span>
-              </span>
-            </Step>
-            <Step n={3} title="Confirm" dim={!copied} last>
-              <span className="block text-[13px] text-muted">
-                Once it has gone, press <span className="font-medium text-ink">Mark as sent</span>{" "}
-                below. Only a confirmed send counts as contact.
-              </span>
-            </Step>
-            <div className="bg-canvas px-4 py-2.5 text-[13px] text-muted">
-              Confirming updates the last follow-up date and holds this customer back in the
-              call log.
+                try the automatic send again
+              </button>
             </div>
+          ) : null}
+        </div>
+      ) : (
+        <div className="mt-3">
+          <div className="flex items-center gap-3">
+            <Button
+              variant="primary"
+              disabled={message.blocked || confirming}
+              title={message.blocked ? "Some details are missing — see above" : undefined}
+              onClick={onSendNow}
+            >
+              {confirming ? "Sending…" : "Send on WhatsApp"}
+            </Button>
+            <span className="text-[12px] text-muted">
+              Goes from the business number. Ticks come back on their own.
+            </span>
           </div>
-        )}
-      </div>
+          <div className="mt-4 rounded-[6px] border border-line px-3 py-2.5">
+            <div className="mb-2 text-[12px] text-muted">
+              Not going through? Send it yourself:
+            </div>
+            {manualSteps}
+          </div>
+        </div>
+      )}
+
       {history}
     </div>
   );
 }
 
-function Step({
+function StepButton({
   n,
-  title,
+  done,
   children,
-  dim,
-  last,
 }: {
   n: number;
-  title: string;
+  done?: boolean;
   children: React.ReactNode;
-  dim?: boolean;
-  last?: boolean;
 }) {
   return (
-    <div className={cx("flex gap-3 px-4 py-3.5", last ? "" : "border-b border-divider")}>
-      <span className="flex h-5 w-5 flex-none items-center justify-center rounded-full bg-divider text-[11px] font-medium text-body">
-        {n}
+    <span className="inline-flex items-center gap-1.5">
+      <span
+        className={cx(
+          "inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-medium",
+          done ? "bg-success-soft text-success" : "bg-divider text-body",
+        )}
+      >
+        {done ? "✓" : n}
       </span>
-      <span className="flex-1">
-        <span className="mb-2 block text-sm font-medium text-ink">{title}</span>
-        <span className={cx("block", dim ? "pointer-events-none opacity-40" : "")}>
-          {children}
-        </span>
-      </span>
-    </div>
+      {children}
+    </span>
   );
 }
