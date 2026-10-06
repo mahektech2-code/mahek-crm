@@ -22,7 +22,7 @@ import {
 } from "../engines/receipt-match";
 import { effectiveDueDate } from "../engines/escalation";
 import { billCreditDaysSql } from "../bill-terms";
-import { addDays, daysBetween } from "../business-date";
+import { addDays, daysBetween, type BusinessDate } from "../business-date";
 import {
   recomputeBillPaid,
   recomputeBillStatuses,
@@ -1393,6 +1393,37 @@ export const reportedQuietByCustomer = cache(async function reportedQuietByCusto
       },
     ]),
   );
+});
+
+/**
+ * The latest day each customer paid us anything, for the cooling quiet a
+ * payment buys (`payments.paidCoolingDays`).
+ *
+ * Reported, held and confirmed all count — a customer who paid today has paid
+ * today whether or not accounts have found it yet, and a reported payment's
+ * own quiet ends the moment it is confirmed, which is exactly when this one
+ * has to carry on. Rejected and reversed money never arrived as far as anybody
+ * can stand behind. A credit note or an adjustment is not the customer paying,
+ * so it buys nothing. A received date in the future is a typo, not a payment.
+ *
+ * Only the recent past is read: nothing older than the longest cooling the
+ * setting allows can hold anybody back. Memoized per request for the same
+ * reason `reportedQuietByCustomer` is.
+ */
+export const lastPaidOnByCustomer = cache(async function lastPaidOnByCustomer(
+  day: BusinessDate,
+): Promise<Map<string, string>> {
+  const rows = await db.execute<{ customer_id: string; paid_on: string }>(sql`
+    select r.customer_id, max(r.received_at)::text as paid_on
+      from payment_receipts r
+     where r.status in ('reported', 'held', 'confirmed')
+       and r.received_at <= ${day}::date
+       and r.received_at >= ${day}::date - 31
+       and coalesce(r.idempotency_key, '') not like 'creditnote:%'
+       and r.mode not in ('Credit note', 'Adjustment')
+     group by r.customer_id
+  `);
+  return new Map(rows.map((r) => [r.customer_id, r.paid_on]));
 });
 
 /* ------------------------------------------- money we already know about */

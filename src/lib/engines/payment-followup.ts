@@ -69,6 +69,19 @@ export type FollowUpSubject = {
      */
     postDatedTo: BusinessDate | null;
   } | null;
+  /**
+   * The latest day this customer paid us anything — reported, held or
+   * confirmed, by its received date. Null when nothing is on record.
+   *
+   * A customer with three overdue bills who clears one of them today has done
+   * the thing we were chasing them for, even though two bills are still open.
+   * Ringing or messaging them tomorrow about "your overdue bills" is the call
+   * that loses a customer, so a payment buys `payments.paidCoolingDays` of
+   * quiet after its own day. It is separate from `reportedPayment` because
+   * that one vanishes the moment accounts confirm the money — which is exactly
+   * when the customer would otherwise be back on the list the next morning.
+   */
+  lastPaidOn: BusinessDate | null;
 };
 
 export type FollowUpConfig = Pick<
@@ -77,6 +90,7 @@ export type FollowUpConfig = Pick<
   | "escalation.messageIntervalDays"
   | "escalation.callIntervalDays"
   | "payments.reportedQuietDays"
+  | "payments.paidCoolingDays"
 >;
 
 /** Where the account sits relative to the quiet window. */
@@ -250,13 +264,16 @@ export function planPaymentFollowUps(
 function blockingReason(
   s: FollowUpSubject,
   today: BusinessDate,
-  config: Pick<Config, "payments.reportedQuietDays">,
+  config: Pick<Config, "payments.reportedQuietDays" | "payments.paidCoolingDays">,
 ): string | null {
   if (s.doNotContact) return "Marked do not contact";
   if (s.held) return s.heldReason ?? "Held - a bill is disputed";
 
   const reported = reportedQuiet(s, today, config);
   if (reported) return reported;
+
+  const cooling = paidCooling(s, today, config);
+  if (cooling) return cooling;
 
   if (s.promisedDate && s.promisedDate >= today) {
     return `Payment promised by ${s.promisedDate} - not chased until it passes`;
@@ -323,4 +340,35 @@ export function reportedQuiet(
   return age === 0
     ? `${amount} reported paid today - waiting for accounts to confirm it`
     : `${amount} reported paid ${age} ${age === 1 ? "day" : "days"} ago - waiting for accounts to confirm it`;
+}
+
+/**
+ * The first day a customer who paid on `lastPaidOn` may be chased about money
+ * again. Paid on the 6th with one cooling day: quiet on the 6th and the 7th,
+ * chased again from the 8th. Null when nothing holds them back.
+ */
+export function paidCoolingEndsOn(
+  lastPaidOn: BusinessDate | null,
+  config: Pick<Config, "payments.paidCoolingDays">,
+): BusinessDate | null {
+  const days = config["payments.paidCoolingDays"];
+  if (!lastPaidOn || days <= 0) return null;
+  return addDays(lastPaidOn, days + 1);
+}
+
+/**
+ * The quiet a payment buys. Any payment, against any bill: the customer has
+ * just done what we were chasing them for, and the rest of the debt can wait
+ * a day without anybody ringing to say "you still owe us".
+ */
+export function paidCooling(
+  s: Pick<FollowUpSubject, "lastPaidOn">,
+  today: BusinessDate,
+  config: Pick<Config, "payments.paidCoolingDays">,
+): string | null {
+  const ends = paidCoolingEndsOn(s.lastPaidOn, config);
+  if (!ends || !s.lastPaidOn || s.lastPaidOn > today || today >= ends) return null;
+  const age = daysBetween(s.lastPaidOn, today);
+  const when = age === 0 ? "today" : age === 1 ? "yesterday" : `${age} days ago`;
+  return `Paid ${when} - not chased about money until ${ends}`;
 }
