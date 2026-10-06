@@ -397,6 +397,58 @@
   animation: toast-in 150ms var(--ease-swift);
 }
 
+/* ------------------------------------------------------------ notifications
+ * A new notification arrives in the middle of the upper screen, where it
+ * cannot be missed, holds a beat, then glides down into its slot in the
+ * bottom right-hand corner (`NotificationCenter`). `--nx`/`--ny` are measured
+ * per card from its own slot, so the flight ends exactly where it sits.
+ *
+ * Under reduced motion the rule below removes the animation, and the card is
+ * simply in the corner — nothing is lost but the movement.
+ */
+@keyframes notify-fly {
+  0% {
+    transform: translate(var(--nx, 0), var(--ny, 0)) scale(0.9);
+    opacity: 0;
+  }
+  10% {
+    transform: translate(var(--nx, 0), var(--ny, 0)) scale(1.04);
+    opacity: 1;
+  }
+  16% {
+    transform: translate(var(--nx, 0), var(--ny, 0)) scale(1);
+  }
+  58% {
+    transform: translate(var(--nx, 0), var(--ny, 0)) scale(1);
+    animation-timing-function: cubic-bezier(0.65, 0, 0.25, 1);
+  }
+  100% {
+    transform: translate(0, 0) scale(1);
+    opacity: 1;
+  }
+}
+.notify-fly {
+  animation: notify-fly 2300ms var(--ease-swift) both;
+  will-change: transform;
+}
+.notify-popup {
+  transition: box-shadow 400ms var(--ease-swift);
+}
+@keyframes notify-dwell {
+  from {
+    width: 100%;
+  }
+  to {
+    width: 0%;
+  }
+}
+.notify-dwell {
+  width: 100%;
+  animation-name: notify-dwell;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

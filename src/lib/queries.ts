@@ -2079,6 +2079,34 @@ export async function listNotifications(userId: string) {
     .limit(30);
 }
 
+/**
+ * The live bell's answer: the newest thirty, and the TRUE unread count —
+ * the badge used to count unread among the thirty it had, so a person with
+ * forty unread was told thirty, or fewer once some of the thirty were read.
+ */
+export async function notificationFeed(userId: string) {
+  const [items, [counted]] = await Promise.all([
+    listNotifications(userId),
+    db
+      .select({ unread: sql<number>`count(*)::int` })
+      .from(notifications)
+      .where(and(eq(notifications.userId, userId), eq(notifications.read, false))),
+  ]);
+  return {
+    items: items.map((n) => ({
+      id: n.id,
+      title: n.title,
+      body: n.body,
+      kind: n.kind,
+      href: n.href,
+      read: n.read,
+      createdAt: n.createdAt.toISOString(),
+    })),
+    unread: Number(counted?.unread ?? 0),
+    now: new Date().toISOString(),
+  };
+}
+
 /* ------------------------------------------------------------------- help */
 
 export async function listHelpArticles() {
