@@ -14,14 +14,13 @@ import {
   Card,
   Field,
   Input,
-  PageHeader,
   Progress,
-  SectionLabel,
   SlowPayerBadge,
   Select,
   cx,
 } from "@/components/ui/primitives";
-import { FilterPills, Modal } from "@/components/ui/overlays";
+import { CardGrid } from "@/components/ui/card-grid";
+import { FilterPills, Modal, Tabs } from "@/components/ui/overlays";
 import { LogComplaintDialog } from "@/components/crm/log-complaint-dialog";
 import { VoiceTextarea } from "@/components/ui/dictate";
 import { useToast } from "@/components/ui/toast";
@@ -95,6 +94,20 @@ type Entry = {
   content: string;
   meta: string | null;
 };
+
+/** One kind of history at a time — see the tab strip on the record. */
+type RecordTab =
+  | "activity"
+  | "orders"
+  | "bills"
+  | "messages"
+  | "prices"
+  | "issues"
+  | "delivery";
+
+/** The label/value grid every side card uses, so their columns line up. */
+const FACTS =
+  "m-0 grid grid-cols-[112px_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-sm leading-[22px]";
 
 const KIND_TONE: Record<
   string,
@@ -353,6 +366,8 @@ export function RecordScreen({
   const [amOpen, setAmOpen] = React.useState(false);
   const [smOpen, setSmOpen] = React.useState(false);
   const [hoOpen, setHoOpen] = React.useState(false);
+  const [historyOpen, setHistoryOpen] = React.useState(false);
+  const [tab, setTab] = React.useState<RecordTab>("activity");
 
   /*
    * THE TIMELINE IS A PAGE, and this holds the pages read so far.
@@ -444,6 +459,49 @@ export function RecordScreen({
     })),
   };
 
+  /*
+   * THE RECORD IS TABS, NOT A STACK.
+   *
+   * It was eleven panels down one column beside a sidebar of thirteen figures,
+   * so the answer to any one question — what do they owe, what did they buy,
+   * what did we last tell them — was somewhere in a scroll of three thousand
+   * pixels. Now the page has one shape: who they are, five numbers, then one
+   * kind of history at a time beside the account's standing facts. Every
+   * panel and every read behind it is the same as before; only where each
+   * one sits has changed.
+   */
+  const tabs: Array<{ key: RecordTab; label: string; count?: number }> = [
+    { key: "activity", label: "Activity", count: timelineCounts.all },
+    { key: "orders", label: "Orders", count: detail.counts.orders },
+    { key: "bills", label: "Bills & payments", count: detail.counts.bills },
+    { key: "messages", label: "WhatsApp", count: messageTotal },
+    ...(pricing ? [{ key: "prices" as const, label: "Prices" }] : []),
+    {
+      key: "issues",
+      label: "Complaints & reminders",
+      count: detail.counts.complaints + detail.counts.reminders,
+    },
+    ...(distributors.length || customer.thirdParty || deliveryAddresses.length
+      ? [
+          {
+            key: "delivery" as const,
+            label: "Delivery",
+            count: distributors.length + deliveryAddresses.length,
+          },
+        ]
+      : []),
+  ];
+  const activeTab = tabs.some((t) => t.key === tab) ? tab : "activity";
+
+  const typeLabel = customer.thirdParty
+    ? "Third-party customer"
+    : customer.kind === "lead"
+      ? "Lead"
+      : "Direct customer";
+  const where = (customer.place?.state ? placeLine(customer.place) : "") || customer.city;
+  const targetPct =
+    target.amount === null ? null : pct(target.achieved, target.amount);
+
   return (
     <div className="max-w-[1440px] px-6 pt-6 pb-10">
       <Link
@@ -454,10 +512,11 @@ export function RecordScreen({
         All customers
       </Link>
 
-      <PageHeader
-        title={
-          <span className="flex items-center gap-3">
-            {customer.name}
+      {/* --------------------------------------------------------- header */}
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h1 className="m-0 flex flex-wrap items-center gap-2.5 text-[26px] leading-8 font-semibold text-ink">
+            <span className="min-w-0 break-words">{customer.name}</span>
             <Badge
               tone={
                 customer.status === "Slow payer"
@@ -471,776 +530,662 @@ export function RecordScreen({
             >
               {customer.status}
             </Badge>
-            {/*
-              The status badge already says it where the status IS "Slow
-              payer" — `customerStatusLabel` returns that when the flag is set
-              and nothing more urgent applies — so drawing both put "Slow payer
-              Slow payer" side by side on the header of every flagged account.
-              It is still drawn where the status says something else: a
-              deactivated or inactive slow payer is two facts, and the second
-              one is the one somebody needs before they ring.
-            */}
+            {/* The status already says "Slow payer" where that is the status;
+                drawn again only where it says something else. */}
             {customer.slowPayer && customer.status !== "Slow payer" ? (
               <SlowPayerBadge />
             ) : null}
-          </span>
-        }
-        /*
-         * The two seats, not the owner.
-         *
-         * `owner_id` records who FOUND the account and is one person for the
-         * whole book here — the import wrote it — so "Owner Priya Sharma" was
-         * on every customer in the CRM while the list and the form beside it
-         * named the real manager. Whose book a customer is in is the sales AM;
-         * the owner is only the answer for a LEAD, which is what
-         * `ASSIGNED_TO_SQL` reads for one.
-         */
-        subtitle={`${customer.contactPerson ?? "No contact person"} · ${phoneDisplay(customer.phone)} · ${
-          (customer.place?.state ? placeLine(customer.place) : "") || customer.city
-        } · ${
-          customer.kind === "lead"
-            ? `Lead owner ${customer.ownerName ?? "unassigned"}`
-            : `Sales ${customer.salesAmName ?? "unassigned"} · Sales manager ${customer.salesManagerName ?? "unassigned"} · Back office ${customer.backOfficeAmName ?? "unassigned"}`
-        }`}
-        actions={
-          <>
-            <Button
-              variant="secondary"
-              onClick={() =>
-                router.push(`/crm/whatsapp?customer=${customer.id}`)
-              }
-            >
-              WhatsApp
-            </Button>
-            <Button variant="secondary" onClick={() => setRemOpen(true)}>
-              Set reminder
-            </Button>
-            {/*
-              Offered on a LEAD and on a third-party customer, and on nothing
-              else. A direct customer is an account we invoice, so saying it
-              does not bill with us is a contradiction — the button is absent
-              rather than drawn and refused, which is the same rule the
-              customers list follows one screen along.
-            */}
-            {canClassify && customer.thirdParty ? (
-              <Button
-                variant="secondary"
-                onClick={async () => {
-                  const result = await run(revertThirdParty([customer.id]));
-                  if (result.ok) router.refresh();
-                }}
-                title="They bill with us now. Who used to bill them stays on the record."
-              >
-                No longer third party
-              </Button>
-            ) : canClassify && customer.kind === "lead" ? (
-              <Button variant="secondary" onClick={() => setConverting(true)}>
-                Convert to third party
-              </Button>
+            <Badge tone={customer.thirdParty ? "warn" : customer.kind === "lead" ? "brand" : "neutral"}>
+              {typeLabel}
+            </Badge>
+            {customer.doNotContact ? <Badge tone="danger">Do not contact</Badge> : null}
+            {customer.whatsappDnd ? (
+              <Badge tone="danger" title={customer.whatsappDndReason ?? undefined}>
+                WhatsApp DND
+              </Badge>
             ) : null}
-            <Button variant="secondary" onClick={() => setCmpOpen(true)}>
-              Log complaint
+          </h1>
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-body">
+            <span className="inline-flex items-center gap-1.5">
+              <Icon name="person" size={14} className="text-muted" />
+              {customer.contactPerson ?? <span className="text-muted">No contact person</span>}
+            </span>
+            <a
+              href={`tel:${customer.phone}`}
+              className="inline-flex items-center gap-1.5 font-medium text-ink no-underline hover:underline"
+            >
+              <Icon name="phone" size={14} className="text-muted" />
+              {phoneDisplay(customer.phone)}
+            </a>
+            {where ? (
+              <span className="text-muted">{where}</span>
+            ) : null}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {/*
+            Offered on a LEAD and on a third-party customer, and on nothing
+            else. A direct customer is an account we invoice, so saying it
+            does not bill with us is a contradiction — the button is absent
+            rather than drawn and refused.
+          */}
+          {canClassify && customer.thirdParty ? (
+            <Button
+              variant="ghost"
+              onClick={async () => {
+                const result = await run(revertThirdParty([customer.id]));
+                if (result.ok) router.refresh();
+              }}
+              title="They bill with us now. Who used to bill them stays on the record."
+            >
+              No longer third party
             </Button>
-            <Button variant="primary" onClick={() => setCalling(true)}>
-              <Icon name="phone" size={16} />
-              Call
+          ) : canClassify && customer.kind === "lead" ? (
+            <Button variant="ghost" onClick={() => setConverting(true)}>
+              Convert to third party
             </Button>
-          </>
-        }
-      />
+          ) : null}
+          <Button variant="secondary" onClick={() => setCmpOpen(true)}>
+            Log complaint
+          </Button>
+          <Button variant="secondary" onClick={() => setRemOpen(true)}>
+            Set reminder
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => router.push(`/crm/whatsapp?customer=${customer.id}`)}
+          >
+            WhatsApp
+          </Button>
+          <Button variant="primary" onClick={() => setCalling(true)}>
+            <Icon name="phone" size={16} />
+            Call
+          </Button>
+        </div>
+      </div>
 
       {alert ? (
-        <div className="mb-4 flex items-center gap-2.5 rounded-[4px] border border-danger-soft border-l-[3px] border-l-danger bg-danger-soft px-3.5 py-2.5">
+        <div className="mb-4 flex items-center gap-2.5 rounded-[6px] border border-danger-soft border-l-[3px] border-l-danger bg-danger-soft px-3.5 py-2.5">
           <Icon name="alert" size={16} className="flex-none text-danger" />
           <span className="text-sm text-ink">{alert}</span>
         </div>
       ) : null}
 
-      <div className="grid grid-cols-[minmax(0,1fr)_clamp(280px,24%,380px)] items-start gap-4">
-        <div className="flex flex-col gap-4">
-        <MessageHistory
-          messages={messages}
-          total={messageTotal}
-          chatHref={`/crm/whatsapp?tab=replies&chat=${customer.id}`}
+      {/* ---------------------------------------------------- the numbers */}
+      <CardGrid min={200} gap="gap-3" className="mb-4">
+        <Tile
+          label="Outstanding"
+          tone={customer.outstanding > 0 ? "danger" : undefined}
+          value={money(customer.outstanding)}
+          sub={
+            billStats.total
+              ? `${billStats.overdue} of ${billStats.total} bills overdue`
+              : "No open bills"
+          }
+          subTone={billStats.overdue ? "danger" : undefined}
         />
+        <Tile
+          label="Last order"
+          value={customer.lastOrderDate ? shortDate(customer.lastOrderDate) : "Never"}
+          sub={
+            daysSinceOrder === null
+              ? "Has not ordered yet"
+              : `${ageLabel(daysSinceOrder)} ago · cycle ${customer.cycleDays} days`
+          }
+          subTone={overCycle ? "danger" : undefined}
+        />
+        <Tile
+          label={`This month · ${monthLabel(period)}`}
+          value={money(target.achieved)}
+          sub={
+            target.amount === null
+              ? "No monthly target"
+              : `of ${money(target.amount)}${target.isDefault ? " (default)" : ""}`
+          }
+          progress={targetPct}
+        />
+        <Tile
+          label="Pays on average"
+          value={customer.paysInDays ? `${customer.paysInDays} days` : "—"}
+          tone={customer.paysInDays && paysLate ? "danger" : undefined}
+          sub={`Credit terms ${customer.creditTermDays} days`}
+        />
+        <Tile
+          label="Next call"
+          value={
+            customer.nextStep ? (
+              <NextCallCell step={customer.nextStep} today={today()} />
+            ) : (
+              // Nobody has logged a call yet, so nothing has been promised.
+              <span className="text-[16px] font-normal text-muted">Not set</span>
+            )
+          }
+          sub={
+            followUpStage
+              ? `Collections stage ${followUpStage.stage} · ${followUpStage.daysOverdue} days overdue`
+              : customer.expectedOrderDate
+                ? `Order expected ${shortDate(customer.expectedOrderDate)}`
+                : undefined
+          }
+          subTone={followUpStage && followUpStage.stage >= 3 ? "danger" : undefined}
+        />
+      </CardGrid>
 
-        <Card>
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-divider px-5 py-3.5">
-            <span className="text-lg leading-6 font-semibold text-ink">
-              Timeline
-            </span>
-            <FilterPills
-              value={filter}
-              onChange={(k) => {
-                if (k === filter) return;
-                setFilter(k);
-                // The newest page OF THAT KIND, from the server. Filtering the
-                // loaded page would answer with the bills among the newest
-                // fifty entries and call it the bill history.
-                void readTimeline(k, null);
-              }}
-              options={kinds.map((k) => ({
-                key: k,
-                label: k,
-                count: k === "All" ? timelineCounts.all : (timelineCounts[k] ?? 0),
-              }))}
+      <div className="grid grid-cols-[minmax(0,1fr)_clamp(300px,26%,380px)] items-start gap-4">
+        {/* ------------------------------------------------- history tabs */}
+        <Card className="min-w-0 overflow-hidden">
+          <div className="overflow-x-auto">
+            <Tabs
+              value={activeTab}
+              onChange={setTab}
+              className="px-2"
+              tabs={tabs}
             />
           </div>
-          {/*
-            FIXED HEIGHT, SCROLLING INSIDE ITSELF — the rule every other panel
-            on this page already follows, and the one this panel was written
-            before. Growing the page instead is what made COLOUR CAMP
-            unreadable: 3,504 entries pushed the orders, the bills, the
-            payments and the arrangement a hundred screens down, so the account
-            with the most history was the one whose record you could reach the
-            least of.
-          */}
-          <div className="max-h-[560px] overflow-y-auto px-5 py-4">
-            {loading === "filter" ? (
-              <div className="py-10 text-center text-[15px] text-muted">
-                Reading the {filter === "All" ? "timeline" : filter.toLowerCase()}…
+
+          {activeTab === "activity" ? (
+            <div>
+              <div className="flex flex-wrap items-center gap-2 border-b border-divider px-5 py-3">
+                <FilterPills
+                  value={filter}
+                  onChange={(k) => {
+                    if (k === filter) return;
+                    setFilter(k);
+                    // The newest page OF THAT KIND, from the server. Filtering the
+                    // loaded page would answer with the bills among the newest
+                    // fifty entries and call it the bill history.
+                    void readTimeline(k, null);
+                  }}
+                  options={kinds.map((k) => ({
+                    key: k,
+                    label: k,
+                    count: k === "All" ? timelineCounts.all : (timelineCounts[k] ?? 0),
+                  }))}
+                />
               </div>
-            ) : visible.length ? (
-              visible.map((t) => (
-                <div
-                  key={t.id}
-                  className="relative border-l border-divider pb-4 pl-5 last:pb-0"
-                >
-                  <span
-                    className={cx(
-                      "absolute top-1 -left-[4.5px] block h-2 w-2 rounded-full",
-                      KIND_TONE[t.kind] === "danger"
-                        ? "bg-danger"
-                        : KIND_TONE[t.kind] === "warn"
-                          ? "bg-warn"
-                          : KIND_TONE[t.kind] === "success"
-                            ? "bg-success"
-                            : KIND_TONE[t.kind] === "brand"
-                              ? "bg-brand"
-                              : "bg-line-strong",
-                    )}
-                  />
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge tone={KIND_TONE[t.kind] ?? "neutral"}>
-                      {t.kind}
-                    </Badge>
-                    <span className="text-[11px] text-muted">
-                      {stamp(t.at)}
-                    </span>
-                    <span className="text-[11px] text-muted">· {t.actor}</span>
+              {/* Fixed height, scrolling inside itself — the record is a
+                  fixed-length page however old the account is. */}
+              <div className="max-h-[600px] overflow-y-auto px-5 py-4">
+                {loading === "filter" ? (
+                  <div className="py-10 text-center text-sm text-muted">
+                    Reading the {filter === "All" ? "timeline" : filter.toLowerCase()}…
                   </div>
-                  <div className="mt-1 text-sm text-ink">{t.content}</div>
-                  {t.meta ? (
-                    <div className="mt-0.5 text-[13px] text-muted">
-                      {t.meta}
+                ) : visible.length ? (
+                  visible.map((t) => (
+                    <div
+                      key={t.id}
+                      className="relative border-l border-divider pb-4 pl-5 last:pb-0"
+                    >
+                      <span
+                        className={cx(
+                          "absolute top-1.5 -left-[4.5px] block h-2 w-2 rounded-full",
+                          KIND_TONE[t.kind] === "danger"
+                            ? "bg-danger"
+                            : KIND_TONE[t.kind] === "warn"
+                              ? "bg-warn"
+                              : KIND_TONE[t.kind] === "success"
+                                ? "bg-success"
+                                : KIND_TONE[t.kind] === "brand"
+                                  ? "bg-brand"
+                                  : "bg-line-strong",
+                        )}
+                      />
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge tone={KIND_TONE[t.kind] ?? "neutral"}>{t.kind}</Badge>
+                        <span className="text-[12px] text-muted">
+                          {stamp(t.at)} · {t.actor}
+                        </span>
+                      </div>
+                      <div className="mt-1 text-sm text-ink">{t.content}</div>
+                      {t.meta ? (
+                        <div className="mt-0.5 text-[13px] text-muted">{readableMeta(t.meta)}</div>
+                      ) : null}
                     </div>
-                  ) : null}
-                </div>
-              ))
-            ) : (
-              <div className="py-10 text-center text-[15px] text-muted">
-                Nothing of this type has been logged against this customer yet.
+                  ))
+                ) : (
+                  <div className="py-10 text-center text-sm text-muted">
+                    Nothing of this type logged yet.
+                  </div>
+                )}
+                {/* A list that simply stops reads as the whole history. The
+                    count is the true one, from SQL. */}
+                {more ? (
+                  <div className="mt-2 flex items-center justify-between gap-3 border-t border-divider pt-3">
+                    <span className="text-[13px] text-muted">
+                      Newest {visible.length} of{" "}
+                      {(filter === "All"
+                        ? timelineCounts.all
+                        : (timelineCounts[filter] ?? 0)
+                      ).toLocaleString("en-IN")}
+                    </span>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={loading !== null}
+                      onClick={() => void readTimeline(filter, cursor)}
+                    >
+                      {loading === "older" ? "Loading…" : "Load older"}
+                    </Button>
+                  </div>
+                ) : visible.length ? (
+                  <div className="mt-2 border-t border-divider pt-3 text-[13px] text-muted">
+                    That is the whole {filter === "All" ? "history" : `${filter.toLowerCase()} history`}.
+                  </div>
+                ) : null}
               </div>
-            )}
-            {/*
-              WHAT IS SHOWN AND WHAT IS NOT. A list that simply stops reads as
-              the whole history — and on these accounts it is one page of
-              seventy. The count is the true one, from SQL.
-            */}
-            {more ? (
-              <div className="flex items-center justify-between gap-3 border-t border-divider pt-3">
-                <span className="text-[13px] text-muted">
-                  Showing the newest {visible.length} of{" "}
-                  {(filter === "All"
-                    ? timelineCounts.all
-                    : (timelineCounts[filter] ?? 0)
-                  ).toLocaleString("en-IN")}
-                </span>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  disabled={loading !== null}
-                  onClick={() => void readTimeline(filter, cursor)}
+            </div>
+          ) : null}
+
+          {activeTab === "orders" ? (
+            <TabList
+              count={detail.counts.orders}
+              shown={detail.orders.length}
+              empty="No orders recorded against this customer."
+            >
+              {detail.orders.map((o) => (
+                <RowLine
+                  key={o.id}
+                  left={
+                    <>
+                      {o.orderNo ?? "no number"}
+                      {o.deliveredTo ? (
+                        <span className="text-muted"> → {o.deliveredTo}</span>
+                      ) : null}
+                    </>
+                  }
+                  sub={
+                    <>
+                      {shortDate(o.orderedAt)} · {o.status.replace(/_/g, " ")}
+                      {o.lines ? ` · ${o.lines} line${o.lines === 1 ? "" : "s"}` : ""}
+                      {/* An order accounts have not agreed to is not a sale,
+                          and the figures above do not count it. */}
+                      {o.counts ? "" : " · not counted as a sale"}
+                    </>
+                  }
+                  right={money(o.amount)}
+                  tone={o.counts ? undefined : "muted"}
+                />
+              ))}
+            </TabList>
+          ) : null}
+
+          {activeTab === "bills" ? (
+            /* Two questions always asked together — what they were billed and
+               what they paid against it — so they sit side by side. */
+            <div className="grid divide-divider md:grid-cols-2 md:divide-x">
+              <div className="min-w-0">
+                <SubHead
+                  title="Bills"
+                  count={detail.counts.bills}
+                  shown={detail.bills.length}
+                  right={
+                    <Link
+                      href={`/crm/bills?customer=${customer.id}`}
+                      className="text-[12px] text-brand no-underline"
+                    >
+                      All bills →
+                    </Link>
+                  }
+                />
+                <TabList
+                  count={detail.counts.bills}
+                  empty="No bills raised against this customer."
                 >
-                  {loading === "older" ? "Loading…" : "Load older"}
-                </Button>
+                  {detail.bills.map((b) => (
+                    <RowLine
+                      key={b.id}
+                      left={b.billNo}
+                      sub={
+                        <>
+                          {shortDate(b.billDate)}
+                          {b.dueDate ? ` · due ${shortDate(b.dueDate)}` : " · no due date"}
+                          {b.daysOverdue ? ` · ${b.daysOverdue} days overdue` : ""}
+                        </>
+                      }
+                      right={
+                        /* An `unstated` bill is neither paid nor owed, so its
+                           balance is not drawn as a figure. */
+                        b.stated ? (
+                          <>
+                            {money(b.balance)}
+                            <span className="block text-[12px] text-muted">
+                              of {money(b.amount)}
+                            </span>
+                          </>
+                        ) : (
+                          <span className="text-[13px] text-muted">
+                            not stated
+                            <span className="block text-[12px]">{money(b.amount)} billed</span>
+                          </span>
+                        )
+                      }
+                      tone={b.daysOverdue ? "danger" : undefined}
+                    />
+                  ))}
+                </TabList>
               </div>
-            ) : visible.length ? (
-              <div className="border-t border-divider pt-3 text-[13px] text-muted">
-                That is the whole{" "}
-                {filter === "All" ? "history" : `${filter.toLowerCase()} history`} for
-                this customer.
+              <div className="min-w-0">
+                <SubHead
+                  title="Payments received"
+                  count={detail.counts.receipts}
+                  shown={detail.receipts.length}
+                />
+                <TabList
+                  count={detail.counts.receipts}
+                  empty="No payment recorded."
+                >
+                  {detail.receipts.map((r) => (
+                    <RowLine
+                      key={r.id}
+                      left={
+                        <>
+                          {r.mode}
+                          {r.reference ? (
+                            <span className="text-muted"> · {r.reference}</span>
+                          ) : null}
+                        </>
+                      }
+                      sub={
+                        <>
+                          {shortDate(r.receivedAt)}
+                          {/* A cheque has two dates: when we got it, and when
+                              it can be banked. */}
+                          {r.instrumentDate ? ` · dated ${shortDate(r.instrumentDate)}` : ""}
+                          {" · "}
+                          {r.status}
+                          {r.source === "sheet_import" ? " · from the sheet" : ""}
+                        </>
+                      }
+                      right={money(r.amount)}
+                      /* Only confirmed money counts anywhere else, so anything
+                         else is drawn as the claim it is. */
+                      tone={
+                        r.status === "confirmed"
+                          ? undefined
+                          : r.status === "rejected" || r.status === "reversed"
+                            ? "danger"
+                            : "muted"
+                      }
+                    />
+                  ))}
+                </TabList>
               </div>
-            ) : null}
-          </div>
+            </div>
+          ) : null}
+
+          {activeTab === "messages" ? (
+            <div className="p-4">
+              <MessageHistory
+                messages={messages}
+                total={messageTotal}
+                chatHref={`/crm/whatsapp?tab=replies&chat=${customer.id}`}
+              />
+            </div>
+          ) : null}
+
+          {activeTab === "prices" && pricing ? (
+            <div className="p-4">
+              <CustomerPricesPanel
+                pricing={pricing}
+                canManage={canManagePrices}
+                basePath="/crm/price-lists"
+                app="crm"
+                gstBp={gstBp}
+                lists={pricingLists}
+              />
+            </div>
+          ) : null}
+
+          {activeTab === "issues" ? (
+            <div className="grid divide-divider md:grid-cols-2 md:divide-x">
+              <div className="min-w-0">
+                <SubHead
+                  title="Complaints"
+                  count={detail.counts.complaints}
+                  shown={detail.complaints.length}
+                />
+                <TabList count={detail.counts.complaints} empty="No complaint raised.">
+                  {detail.complaints.map((c) => (
+                    <RowLine
+                      key={c.id}
+                      left={categoryLabel(c.category)}
+                      sub={
+                        <>
+                          {shortDate(c.createdAt)} · {c.status.replace(/_/g, " ")}
+                          <span className="block">{c.description}</span>
+                        </>
+                      }
+                      tone={c.status === "resolved" ? "muted" : "warn"}
+                    />
+                  ))}
+                </TabList>
+              </div>
+              <div className="min-w-0">
+                <SubHead
+                  title="Reminders"
+                  count={detail.counts.reminders}
+                  shown={detail.reminders.length}
+                />
+                <TabList count={detail.counts.reminders} empty="No reminder set.">
+                  {detail.reminders.map((rm) => (
+                    <RowLine
+                      key={rm.id}
+                      left={rm.note ?? "no note"}
+                      sub={
+                        <>
+                          {shortDate(rm.dueDate)} · {rm.status}
+                          {rm.ownerName ? ` · ${rm.ownerName}` : ""}
+                        </>
+                      }
+                      tone={rm.status === "pending" ? undefined : "muted"}
+                    />
+                  ))}
+                </TabList>
+              </div>
+            </div>
+          ) : null}
+
+          {activeTab === "delivery" ? (
+            /* One list per direction, each holding both what somebody
+               recorded and what the order sheet has seen. */
+            <div className="flex flex-col gap-4 p-4">
+              {distributors.length || customer.thirdParty ? (
+                <DeliveryRelations
+                  anchorId={customer.id}
+                  anchorName={customer.name}
+                  relations={distributors}
+                  canEdit={canClassify}
+                  direction="distributors"
+                  isThirdParty={customer.thirdParty}
+                />
+              ) : null}
+              {deliveryAddresses.length ? (
+                <DeliveryRelations
+                  anchorId={customer.id}
+                  anchorName={customer.name}
+                  relations={deliveryAddresses}
+                  canEdit={canClassify}
+                  direction="addresses"
+                  isThirdParty={customer.thirdParty}
+                />
+              ) : null}
+            </div>
+          ) : null}
         </Card>
 
-        {/* ------------------------------------------------------------------
-            The record itself: what this customer has bought, been billed, paid
-            and complained about. All of it was already in the database and
-            none of it was on this page — a telecaller preparing for a call had
-            a timeline and five figures, while the drawer they open DURING the
-            call knew the product history and the buying cycle.
-
-            Every panel is the same height and scrolls inside itself. Growing
-            the page instead is what made a customer with three hundred bills
-            unreadable: the more history an account had, the less of its record
-            you could reach.
-        ------------------------------------------------------------------ */}
-
-        <ScrollPanel
-          title="Orders"
-          count={detail.counts.orders}
-          shown={detail.orders.length}
-          empty="No orders recorded against this customer."
-        >
-          {detail.orders.map((o) => (
-            <RowLine
-              key={o.id}
-              left={
-                <>
-                  {o.orderNo ?? "no number"}
-                  {o.deliveredTo ? (
-                    <span className="text-muted"> → {o.deliveredTo}</span>
-                  ) : null}
-                </>
-              }
-              sub={
-                <>
-                  {shortDate(o.orderedAt)} · {o.status.replace(/_/g, " ")}
-                  {o.lines ? ` · ${o.lines} line${o.lines === 1 ? "" : "s"}` : ""}
-                  {/* An order accounts have not agreed to is not a sale, and
-                      the figures above it do not count it. Saying so here is
-                      what stops the two reading as a contradiction. */}
-                  {o.counts ? "" : " · not counted as a sale"}
-                </>
-              }
-              right={money(o.amount)}
-              tone={o.counts ? undefined : "muted"}
-            />
-          ))}
-        </ScrollPanel>
-
-        {/* What they pay, straight after what they have bought — the two
-            questions a telecaller reads in that order before ringing. */}
-        {pricing ? (
-          <CustomerPricesPanel
-            pricing={pricing}
-            canManage={canManagePrices}
-            basePath="/crm/price-lists"
-            app="crm"
-            gstBp={gstBp}
-            lists={pricingLists}
-          />
-        ) : null}
-
-        <ScrollPanel
-          title="Bills"
-          count={detail.counts.bills}
-          shown={detail.bills.length}
-          empty="No bills raised against this customer."
-        >
-          {detail.bills.map((b) => (
-            <RowLine
-              key={b.id}
-              left={b.billNo}
-              sub={
-                <>
-                  {shortDate(b.billDate)}
-                  {b.dueDate ? ` · due ${shortDate(b.dueDate)}` : " · no due date"}
-                  {b.daysOverdue ? ` · ${b.daysOverdue} days overdue` : ""}
-                </>
-              }
-              right={
-                /* An `unstated` bill is neither paid nor owed — nobody has
-                   spoken for it either way — so its balance is not drawn as a
-                   figure. Rendering the full amount beside real balances is
-                   the mistake the payment_position column exists to prevent. */
-                b.stated ? (
-                  <>
-                    {money(b.balance)}
-                    <span className="block text-[12px] text-muted">
-                      of {money(b.amount)}
-                    </span>
-                  </>
-                ) : (
-                  <span className="text-[13px] text-muted">
-                    not stated
-                    <span className="block text-[12px]">{money(b.amount)} billed</span>
-                  </span>
-                )
-              }
-              tone={b.daysOverdue ? "danger" : undefined}
-            />
-          ))}
-        </ScrollPanel>
-
-        <ScrollPanel
-          title="Payments received"
-          count={detail.counts.receipts}
-          shown={detail.receipts.length}
-          empty="No payment has been recorded for this customer."
-        >
-          {detail.receipts.map((r) => (
-            <RowLine
-              key={r.id}
-              left={
-                <>
-                  {r.mode}
-                  {r.reference ? (
-                    <span className="text-muted"> · {r.reference}</span>
-                  ) : null}
-                </>
-              }
-              sub={
-                <>
-                  {shortDate(r.receivedAt)}
-                  {/* A cheque has two dates and they answer different
-                      questions: when we got it, and when it can be banked. */}
-                  {r.instrumentDate
-                    ? ` · dated ${shortDate(r.instrumentDate)}`
-                    : ""}
-                  {" · "}
-                  {r.status}
-                  {r.source === "sheet_import" ? " · from the sheet" : ""}
-                </>
-              }
-              right={money(r.amount)}
-              /* Only confirmed money counts anywhere else in the system, so
-                 anything else is drawn as the claim it is. */
-              tone={
-                r.status === "confirmed"
-                  ? undefined
-                  : r.status === "rejected" || r.status === "reversed"
-                    ? "danger"
-                    : "muted"
-              }
-            />
-          ))}
-        </ScrollPanel>
-
-        {/*
-          ONE LIST PER DIRECTION, and each one holds both halves of the answer.
-
-          This was three panels: the arrangement somebody recorded, and then —
-          under a title of its own — every shop the order sheet shows goods
-          going to. Four rows beside eighty-six, two counts, and nothing saying
-          how they differed, so the honest reading was that the page showed the
-          same list twice. What the sheet has seen and nobody has recorded is
-          not a second subject; it is the unfinished part of the first one, and
-          it belongs in the same list with the button that finishes it.
-        */}
-        {distributors.length || customer.thirdParty ? (
-          <DeliveryRelations
-            anchorId={customer.id}
-            anchorName={customer.name}
-            relations={distributors}
-            canEdit={canClassify}
-            direction="distributors"
-            isThirdParty={customer.thirdParty}
-          />
-        ) : null}
-
-        {deliveryAddresses.length ? (
-          <DeliveryRelations
-            anchorId={customer.id}
-            anchorName={customer.name}
-            relations={deliveryAddresses}
-            canEdit={canClassify}
-            direction="addresses"
-            isThirdParty={customer.thirdParty}
-          />
-        ) : null}
-
-        <div className="grid gap-4 md:grid-cols-2">
-          <ScrollPanel
-            title="Complaints"
-            count={detail.counts.complaints}
-            shown={detail.complaints.length}
-            empty="No complaint has been raised."
-          >
-            {detail.complaints.map((c) => (
-              <RowLine
-                key={c.id}
-                left={categoryLabel(c.category)}
-                sub={
-                  <>
-                    {shortDate(c.createdAt)} · {c.status.replace(/_/g, " ")}
-                    <span className="block">{c.description}</span>
-                  </>
-                }
-                tone={c.status === "resolved" ? "muted" : "warn"}
-              />
-            ))}
-          </ScrollPanel>
-
-          <ScrollPanel
-            title="Reminders"
-            count={detail.counts.reminders}
-            shown={detail.reminders.length}
-            empty="No reminder has been set."
-          >
-            {detail.reminders.map((rm) => (
-              <RowLine
-                key={rm.id}
-                left={rm.note ?? "no note"}
-                sub={
-                  <>
-                    {shortDate(rm.dueDate)} · {rm.status}
-                    {rm.ownerName ? ` · ${rm.ownerName}` : ""}
-                  </>
-                }
-                tone={rm.status === "pending" ? undefined : "muted"}
-              />
-            ))}
-          </ScrollPanel>
-        </div>
-        </div>
-
+        {/* --------------------------------------------------- the account */}
         <div className="flex flex-col gap-4">
-          <Card className="p-5">
-            <SectionLabel>Key figures</SectionLabel>
-            <div className="mt-3">
-              <Figure
-                label="Outstanding"
-                tone={customer.outstanding > 0 ? "danger" : undefined}
-              >
-                {money(customer.outstanding)}
-              </Figure>
-              <Figure
-                label="Bills overdue"
-                tone={billStats.overdue ? "danger" : undefined}
-              >
-                {billStats.overdue} of {billStats.total}
-              </Figure>
-              <Figure label="Last order">
-                {customer.lastOrderDate
-                  ? shortDate(customer.lastOrderDate)
-                  : "Never"}
-              </Figure>
-              <Figure
-                label="Days since order"
-                tone={overCycle ? "danger" : undefined}
-              >
-                {daysSinceOrder === null ? "-" : ageLabel(daysSinceOrder)}
-              </Figure>
-              <Figure label="Buying cycle">
-                {customer.cycleDays} days
-                {customer.cycleIsDefault ? (
-                  <span className="ml-1 text-[11px] font-normal text-muted">
-                    (default - not enough order history)
-                  </span>
-                ) : customer.cycleConfidence !== null &&
-                  customer.cycleConfidence !== undefined ? (
-                  /*
-                   * How much the date beside it is worth. 29, 30, 31, 30, 29
-                   * and 15, 45, 22, 60, 30 average to nearly the same number
-                   * and mean entirely different things; without this the
-                   * screen shows one figure for both.
-                   */
-                  <span className="ml-1 text-[11px] font-normal text-muted">
-                    ({confidenceWord(customer.cycleConfidence)} confidence ·{" "}
-                    {customer.cycleConfidence}%)
-                  </span>
-                ) : null}
-              </Figure>
-              <Figure label="Next call">
-                <NextCallCell step={customer.nextStep} today={today()} />
-              </Figure>
-              {customer.expectedOrderDate ? (
-                <Figure label="Expected order">
-                  {shortDate(customer.expectedOrderDate)}
-                </Figure>
-              ) : null}
-              {followUpStage ? (
-                <Figure
-                  label="Collections stage"
-                  tone={followUpStage.stage >= 3 ? "danger" : undefined}
-                >
-                  Stage {followUpStage.stage}
-                  <span className="ml-1 text-[11px] font-normal text-muted">
-                    ({followUpStage.daysOverdue} days overdue · next by{" "}
-                    {followUpStage.nextChannel})
-                  </span>
-                </Figure>
-              ) : null}
-              <Figure label="Average order">
-                {money(customer.avgOrderValue)}
-              </Figure>
-              <Figure label="Orders, last 6 months">{customer.orders6m}</Figure>
-              <Figure
-                label="Pays on average"
-                tone={paysLate ? "danger" : "success"}
-              >
-                {customer.paysInDays} days
-                <span className="ml-1 text-[11px] font-normal text-muted">
-                  (terms {customer.creditTermDays})
-                </span>
-              </Figure>
-              <Figure label="Share of your target" last>
-                {target.shareOfBook === null ? "-" : `${target.shareOfBook}%`}
-              </Figure>
-            </div>
-            <Link
-              href={`/crm/bills?customer=${customer.id}`}
-              className="mt-4 flex h-8 items-center justify-center rounded-[4px] border border-line-strong bg-surface text-sm font-medium text-body no-underline hover:bg-canvas hover:no-underline"
-            >
-              See all bills
-            </Link>
-          </Card>
-
-          <Card className="p-5">
-            <div className="flex items-center justify-between">
-              <SectionLabel>
-                {target.amount === null
-                  ? `This month - ${monthLabel(period)}`
-                  : `Target vs achieved - ${monthLabel(period)}`}
-              </SectionLabel>
-              {target.amount !== null && target.isDefault ? (
-                <Badge tone="muted">Default</Badge>
-              ) : null}
-            </div>
-            <div className="mt-2 flex items-baseline gap-2">
-              <span className="text-[32px] leading-9 font-semibold text-ink">
-                {money(target.achieved)}
-              </span>
-              {target.amount === null ? null : (
-                <span className="text-[13px] text-muted">
-                  of {money(target.amount)}
-                </span>
-              )}
-            </div>
-            {target.amount === null ? (
-              /*
-               * Said in words rather than drawn as a 0% bar. The account is
-               * not behind on anything — a monthly target is set on accounts
-               * we invoice, and this one becomes one by buying from us.
-               */
-              <p className="mt-3 text-[13px] text-muted">
-                {customer.thirdParty
-                  ? "No monthly target - this shop is billed by its distributor, so what it takes counts towards that account's month."
-                  : "No monthly target - a lead has never ordered. It picks one up as a customer on its first order."}
-              </p>
-            ) : (
-              <div className="mt-3 flex items-center gap-2.5">
-                <Progress
-                  value={pct(target.achieved, target.amount)}
-                  className="flex-1"
+          <SideCard title="Buying pattern">
+            <dl className={FACTS}>
+              <Fact
+                label="Buying cycle"
+                value={
+                  customer.cycleIsDefault
+                    ? `${customer.cycleDays} days (default)`
+                    : `${customer.cycleDays} days${
+                        customer.cycleConfidence === null || customer.cycleConfidence === undefined
+                          ? ""
+                          : ` · ${confidenceWord(customer.cycleConfidence).toLowerCase()} confidence`
+                      }`
+                }
+                title={
+                  customer.cycleIsDefault
+                    ? "Not enough order history yet — this is the configured default"
+                    : customer.cycleConfidence != null
+                      ? `${customer.cycleConfidence}% confident`
+                      : undefined
+                }
+              />
+              <Fact
+                label="Order expected"
+                value={customer.expectedOrderDate ? shortDate(customer.expectedOrderDate) : null}
+              />
+              <Fact label="Average order" value={money(customer.avgOrderValue)} />
+              <Fact label="Orders, 6 months" value={customer.orders6m} />
+              {target.billTarget ? (
+                <Fact
+                  label="Bills this month"
+                  value={`${target.billsAchieved} of ${target.billTarget}${
+                    target.billsAchieved >= target.billTarget ? " · met" : ""
+                  }`}
                 />
-                <span className="text-[13px] font-medium text-ink">
-                  {pct(target.achieved, target.amount)}%
-                </span>
-              </div>
-            )}
-            {target.billTarget ? (
-              <p className="mt-2 text-[13px] text-body">
-                <span className="font-medium text-ink tabular-nums">{target.billsAchieved}</span>{" "}
-                of {target.billTarget} bill{target.billTarget === 1 ? "" : "s"} raised
-                {target.billsAchieved >= target.billTarget ? (
-                  <span className="text-success"> · met</span>
-                ) : null}
-              </p>
-            ) : null}
-          </Card>
+              ) : null}
+              <Fact
+                label="Share of target"
+                value={target.shareOfBook === null ? null : `${target.shareOfBook}%`}
+              />
+            </dl>
+          </SideCard>
 
-          <Card className="p-5">
-            <div className="flex items-center justify-between">
-              <SectionLabel>Account</SectionLabel>
-              {customer.kind === "customer" && canReassign ? (
+          <SideCard
+            title="People"
+            action={
+              customer.kind === "customer" && canReassign ? (
                 <button
                   type="button"
                   onClick={() => setAmOpen(true)}
-                  className="cursor-pointer text-[12px] font-medium text-brand hover:text-brand-hover"
+                  className="flex-none cursor-pointer border-none bg-transparent p-0 text-[12px] font-medium whitespace-nowrap text-brand hover:text-brand-hover"
                 >
-                  Edit sales / back office
+                  Change sales / back office
                 </button>
-              ) : null}
-            </div>
+              ) : null
+            }
+          >
             {/*
-              A LABEL AND A VALUE, not a sentence.
-              
-              This was `GSTIN {value}` on one line and `Route {value}` on the
-              next, with nothing between the two halves — so "Route not set"
-              read as prose and a GST number ran straight on from its own
-              label. Two facts sharing a line need something separating them,
-              and the separator this codebase already uses is colour on the
-              label rather than punctuation: muted label, plain value, so the
-              eye picks out the values without reading a word of the labels.
+              Whose book this is. NO fallback to `ownerName` for a customer:
+              `SALES_AM_NAME_SQL` already carries it for an account nobody
+              decided about, and redoing it here would re-show the importer's
+              name on one somebody deliberately emptied. A lead answers to its
+              owner, which is what `ASSIGNED_TO_SQL` reads for one.
             */}
-            <dl className="mt-2.5 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm leading-[22px]">
-              <Fact label="GSTIN" value={customer.gstin} />
-              <Fact label="Grade" value={customer.grade} />
-              <Fact label="Credit terms" value={`${customer.creditTermDays} days`} />
-              <Fact label="Route" value={customer.route} />
-              <Fact label="Area" value={customer.area} />
-              <Fact label="Territory" value={customer.territoryRegion} />
-              <Fact label="Dealer code" value={customer.dealerCode} />
-              {(() => {
-                /*
-                 * Who the salesperson (or, on a lead, the owner) answers to.
-                 * Named here rather than left to the list, because this is
-                 * the screen somebody is on when they ask who to escalate an
-                 * account to — and it is the one seat of the three that is a
-                 * manager's to set. Shared between both branches below: a
-                 * lead is worth knowing this about before it has ordered,
-                 * which is not true of back office paperwork.
-                 */
-                const salesManagerFact = (
-                  <React.Fragment key="sales-manager">
-                    <dt className="text-muted whitespace-nowrap">Sales manager</dt>
-                    <dd className="m-0 flex min-w-0 items-center justify-between gap-2 break-words text-ink">
-                      <span>
-                        {customer.salesManagerName ?? (
-                          <span className="text-muted">-</span>
-                        )}
-                      </span>
-                      {canAssignSalesManager ? (
-                        <button
-                          type="button"
-                          onClick={() => setSmOpen(true)}
-                          className="cursor-pointer text-[12px] font-medium text-brand hover:text-brand-hover"
-                        >
-                          Edit
-                        </button>
-                      ) : null}
-                    </dd>
-                  </React.Fragment>
-                );
-                return customer.kind === "lead" ? (
-                  <>
-                    <Fact label="Lead since" value={shortDate(customer.createdAt)} />
-                    <Fact label="Source" value={customer.leadSource} />
-                    <Fact label="Owner" value={customer.ownerName} />
-                    {salesManagerFact}
-                  </>
-                ) : (
-                  <>
-                    <Fact
-                      label="Customer since"
-                      value={
-                        customer.customerSince ? shortDate(customer.customerSince) : null
-                      }
-                    />
-                    {/* The three seats at ONE size, as the customers list draws
-                        them: they are peers, and a hierarchy of type sizes down a
-                        column claims an importance ranking that does not exist. */}
-                    {/*
-                      NO fallback to `ownerName` here. `SALES_AM_NAME_SQL`
-                      already carries that fallback — for an account nobody has
-                      decided about. Redoing it here would override the one
-                      case that fallback deliberately excludes: an account
-                      somebody has decided has no salesperson, where null means
-                      unassigned and re-showing the importer's name is the exact
-                      bug this screen exists to not have.
-                    */}
-                    <Fact label="Sales" value={customer.salesAmName} />
-                    {salesManagerFact}
-                    <Fact label="Back office" value={customer.backOfficeAmName} />
-                    {/*
-                      §Q — who runs the relationship. Drawn at the same size as
-                      the three above because it is a fourth peer, not a
-                      footnote to them.
-
-                      "Not handed over" is said in WORDS rather than left as a
-                      dash. A dash reads as missing data; this is a real and
-                      actionable state — the account converted and nobody has
-                      taken it on — and it is the whole reason the marker
-                      exists. Same reasoning as naming an unassigned call on a
-                      team list instead of leaving the cell blank.
-                    */}
-                    <dt className="text-muted whitespace-nowrap">Relationship</dt>
-                    <dd className="m-0 flex min-w-0 items-center justify-between gap-2 break-words text-ink">
-                      <span>
-                        {customer.relationshipOwnerName ?? (
-                          <span className="text-muted">Not handed over</span>
-                        )}
-                      </span>
-                      {canHandOver ? (
-                        <button
-                          type="button"
-                          onClick={() => setHoOpen(true)}
-                          className="cursor-pointer text-[12px] font-medium text-brand hover:text-brand-hover"
-                        >
-                          {customer.relationshipOwnerName ? "Move" : "Hand over"}
-                        </button>
-                      ) : null}
-                    </dd>
-                    <Fact
-                      label="Buying cycle"
-                      value={
-                        customer.cycleIsDefault
-                          ? `${customer.cycleDays} days (default)`
-                          : `${customer.cycleDays} days${
-                              customer.cycleConfidence === null
-                                ? ""
-                                : ` · ${customer.cycleConfidence}% confident`
-                            }`
-                      }
-                    />
-                  </>
-                );
-              })()}
-              {/*
-                WHAT THIS ACCOUNT IS, said once and in full — this is the one
-                screen with room for it. The list badge answers the same
-                question in two words and has to pick between the mark and the
-                kind; here both fit, and the kind underneath is what explains
-                why a third-party customer can still be invoiced one day.
-              */}
-              {customer.thirdParty ? (
+            <dl className={FACTS}>
+              {customer.kind === "lead" ? (
+                <Fact label="Lead owner" value={customer.ownerName} />
+              ) : (
+                <Fact label="Sales" value={customer.salesAmName} />
+              )}
+              <dt className="whitespace-nowrap text-muted">Sales manager</dt>
+              <dd className="m-0 flex min-w-0 items-center justify-between gap-2 break-words text-ink">
+                <span>{customer.salesManagerName ?? <span className="text-muted">-</span>}</span>
+                {canAssignSalesManager ? (
+                  <button
+                    type="button"
+                    onClick={() => setSmOpen(true)}
+                    className="flex-none cursor-pointer border-none bg-transparent p-0 text-[12px] font-medium whitespace-nowrap text-brand hover:text-brand-hover"
+                  >
+                    Edit
+                  </button>
+                ) : null}
+              </dd>
+              {customer.kind === "customer" ? (
                 <>
-                  <Fact
-                    label="Type"
-                    value={`Third-party customer - we deliver, a distributor bills. Underneath, still a ${customer.kind}.`}
-                  />
-                  <Fact
-                    label="Billed by"
-                    value={billedBy(distributors)}
-                  />
-                </>
-              ) : customer.kind === "customer" && deliveryAddresses.length ? (
-                <Fact
-                  label="Delivers to"
-                  // The RECORDED half, because that is what somebody has
-                  // vouched for. The rest is on the panel, where it can say
-                  // what it is.
-                  value={`${deliveryAddresses.filter((d) => d.recorded).length} recorded of ${deliveryAddresses.length} addresses seen`}
-                />
-              ) : null}
-              {customer.doNotContact ? <Fact label="Standing" value="Do not contact" /> : null}
-              {customer.whatsappDnd ? (
-                <Fact label="WhatsApp" value={`DND${customer.whatsappDndReason ? ` — ${customer.whatsappDndReason}` : ""}`} />
-              ) : null}
-              {/* Who it was before, and why it moved. The question people ask
-                  after a resignation is not who owns this now — the line above
-                  answers that — it is what happened to it. */}
-              {amChanges.length ? (
-                <>
-                  <dt className="col-span-2 mt-1.5 border-t border-divider pt-1.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                    Manager history
-                  </dt>
-                  <dd className="col-span-2 m-0">
-                    {amChanges.map((c) => (
-                      <span key={c.id} className="block text-[11px] text-muted">
-                        {shortDate(c.changedAt)} ·{" "}
-                        {/* Four seats now, and the label comes from a map
-                            rather than a chain. The chain's last arm was
-                            "Back office", so adding a seat relabelled it
-                            instead of failing — a history line calling a
-                            handover a back office change is worse than one
-                            saying nothing. */}
-                        {seatLabel(c.role)}{" "}
-                        {c.fromName ?? "unassigned"} → {c.toName ?? "unassigned"} ·{" "}
-                        {c.reasonCode}
-                        {c.note ? ` — ${c.note}` : ""}
-                        {c.changedBy ? ` (${c.changedBy})` : ""}
-                      </span>
-                    ))}
+                  <Fact label="Back office" value={customer.backOfficeAmName} />
+                  {/* "Not handed over" in words: a real, actionable state,
+                      not missing data. */}
+                  <dt className="whitespace-nowrap text-muted">Relationship</dt>
+                  <dd className="m-0 flex min-w-0 items-center justify-between gap-2 break-words text-ink">
+                    <span>
+                      {customer.relationshipOwnerName ?? (
+                        <span className="text-muted">Not handed over</span>
+                      )}
+                    </span>
+                    {canHandOver ? (
+                      <button
+                        type="button"
+                        onClick={() => setHoOpen(true)}
+                        className="flex-none cursor-pointer border-none bg-transparent p-0 text-[12px] font-medium whitespace-nowrap text-brand hover:text-brand-hover"
+                      >
+                        {customer.relationshipOwnerName ? "Move" : "Hand over"}
+                      </button>
+                    ) : null}
                   </dd>
                 </>
               ) : null}
             </dl>
-          </Card>
+            {/* Who it was before, and why it moved — the question people ask
+                after a resignation. Folded: it is history, not the answer. */}
+            {amChanges.length ? (
+              <div className="mt-3 border-t border-divider pt-2.5">
+                <button
+                  type="button"
+                  onClick={() => setHistoryOpen((o) => !o)}
+                  className="cursor-pointer border-none bg-transparent p-0 text-[12px] text-brand"
+                  aria-expanded={historyOpen}
+                >
+                  {historyOpen ? "Hide" : "Show"} manager history ({amChanges.length})
+                </button>
+                {historyOpen ? (
+                  <div className="mt-2 space-y-1.5">
+                    {amChanges.map((c) => (
+                      <div key={c.id} className="text-[12px] leading-[18px] text-muted">
+                        <span className="text-body">
+                          {seatLabel(c.role)}: {c.fromName ?? "unassigned"} → {c.toName ?? "unassigned"}
+                        </span>
+                        <span className="block">
+                          {shortDate(c.changedAt)} · {c.reasonCode}
+                          {c.note ? ` — ${c.note}` : ""}
+                          {c.changedBy ? ` · ${c.changedBy}` : ""}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </SideCard>
+
+          <SideCard title="Details">
+            <dl className={FACTS}>
+              {customer.kind === "lead" ? (
+                <>
+                  <Fact label="Lead since" value={shortDate(customer.createdAt)} />
+                  <Fact label="Source" value={customer.leadSource} />
+                </>
+              ) : (
+                <Fact
+                  label="Customer since"
+                  value={customer.customerSince ? shortDate(customer.customerSince) : null}
+                />
+              )}
+              <Fact label="GSTIN" value={customer.gstin} />
+              <Fact label="Credit terms" value={`${customer.creditTermDays} days`} />
+              <Fact label="Grade" value={customer.grade} />
+              <Fact label="Dealer code" value={customer.dealerCode} />
+              <Fact label="Territory" value={customer.territoryRegion} />
+              <Fact label="Area" value={customer.area} />
+              <Fact label="Route" value={customer.route} />
+              {/* Only what somebody recorded: "Billed by X" reads as a fact
+                  somebody stands behind. */}
+              {customer.thirdParty ? (
+                <Fact label="Billed by" value={billedBy(distributors)} />
+              ) : customer.kind === "customer" && deliveryAddresses.length ? (
+                <Fact
+                  label="Delivers to"
+                  value={`${deliveryAddresses.filter((d) => d.recorded).length} recorded of ${deliveryAddresses.length} seen`}
+                />
+              ) : null}
+            </dl>
+          </SideCard>
         </div>
       </div>
 
@@ -1658,29 +1603,25 @@ function AccountManagerDialogBody({
  * so a missing GSTIN and a missing route line up as two blanks instead of
  * reading as two half-sentences.
  */
-function Fact({ label, value }: { label: string; value: string | number | null }) {
+function Fact({
+  label,
+  value,
+  title,
+}: {
+  label: string;
+  value: string | number | null;
+  /** The longer explanation, on hover, where the value is the short form. */
+  title?: string;
+}) {
   return (
     <>
       <dt className="text-muted whitespace-nowrap">{label}</dt>
-      <dd className="m-0 min-w-0 break-words text-ink">
+      <dd className="m-0 min-w-0 break-words text-ink" title={title}>
         {value === null || value === "" ? <span className="text-muted">-</span> : value}
       </dd>
     </>
   );
 }
-
-/**
- * A card of fixed height whose CONTENTS scroll.
- *
- * Everything on this page used to grow the page instead: a customer with three
- * hundred bills pushed the panel below them off the bottom of the screen, so
- * the more history an account had the less of its record you could reach. The
- * height is the same for every panel so the page has a rhythm rather than one
- * enormous box and five small ones.
- *
- * The count in the header is the WHOLE count, not the number of rows loaded —
- * a list silently cut at two hundred is a list somebody trusts and should not.
- */
 
 /**
  * Who bills this shop, in one line — the RECORDED ones only.
@@ -1704,43 +1645,139 @@ function billedBy(relations: Array<{ recorded: boolean; isPrimary: boolean; name
     : first.name;
 }
 
-function ScrollPanel({
-  title,
+/**
+ * A tab's list, at a fixed height whose CONTENTS scroll — the more history an
+ * account has, the more of its record must still be reachable, so nothing
+ * here grows the page.
+ */
+function TabList({
   count,
   shown,
   empty,
   children,
 }: {
-  title: string;
   count: number;
-  /** How many are actually rendered, where that is fewer than the count. */
+  /** How many are rendered, where fewer than the count — said, never silent. */
   shown?: number;
   empty: string;
   children: React.ReactNode;
 }) {
+  if (count === 0) return <p className="m-0 px-5 py-8 text-sm text-muted">{empty}</p>;
+  return (
+    <div className="max-h-[600px] overflow-y-auto px-5 py-2">
+      {children}
+      {shown !== undefined && shown < count ? (
+        <div className="border-t border-divider py-2.5 text-[12px] text-muted">
+          Newest {shown} of {count.toLocaleString("en-IN")}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** The heading over one half of a split tab, with the true count. */
+function SubHead({
+  title,
+  count,
+  shown,
+  right,
+}: {
+  title: string;
+  count: number;
+  shown?: number;
+  right?: React.ReactNode;
+}) {
   const capped = shown !== undefined && shown < count;
   return (
-    <Card className="flex max-h-[420px] flex-col">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-divider px-5 py-3.5">
-        <span className="text-lg leading-6 font-semibold text-ink">{title}</span>
-        <span className="text-[13px] text-muted">
-          {count === 0
-            ? "none"
-            : capped
-              ? `showing ${shown} of ${count}`
-              : `${count}`}
-        </span>
+    <div className="flex items-center gap-2 border-b border-divider bg-canvas px-5 py-2">
+      <span className="text-[13px] font-semibold text-ink">{title}</span>
+      <span className="text-[12px] text-muted">
+        {count === 0 ? "none" : capped ? `newest ${shown} of ${count}` : count}
+      </span>
+      {right ? (
+        <>
+          <span className="flex-1" />
+          {right}
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+/** A titled card in the side column. */
+function SideCard({
+  title,
+  action,
+  children,
+}: {
+  title: string;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <Card className="px-5 py-4">
+      <div className="mb-2.5 flex items-center justify-between gap-2">
+        <span className="text-[13px] font-semibold text-ink">{title}</span>
+        {action}
       </div>
-      {count === 0 ? (
-        <p className="px-5 py-6 text-sm text-muted">{empty}</p>
-      ) : (
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3">{children}</div>
-      )}
+      {children}
     </Card>
   );
 }
 
-/** A row of the tables inside the panels above. */
+/** One of the five numbers under the header. */
+function Tile({
+  label,
+  value,
+  sub,
+  tone,
+  subTone,
+  progress,
+}: {
+  label: string;
+  value: React.ReactNode;
+  sub?: string;
+  tone?: "danger";
+  subTone?: "danger";
+  /** 0–100, drawn as a bar under the value — the target tile. */
+  progress?: number | null;
+}) {
+  return (
+    <Card className="px-4 py-3">
+      <div className="text-[12px] font-medium text-muted">{label}</div>
+      <div
+        className={cx(
+          "mt-0.5 text-[20px] leading-7 font-semibold",
+          tone === "danger" ? "text-danger" : "text-ink",
+        )}
+      >
+        {value}
+      </div>
+      {progress !== undefined && progress !== null ? (
+        <div className="mt-1.5 flex items-center gap-2">
+          <Progress value={progress} className="flex-1" />
+          <span className="text-[12px] font-medium text-ink">{progress}%</span>
+        </div>
+      ) : null}
+      {sub ? (
+        <div className={cx("mt-0.5 text-[12px]", subTone === "danger" ? "text-danger" : "text-muted")}>
+          {sub}
+        </div>
+      ) : null}
+    </Card>
+  );
+}
+
+/**
+ * "sent_manually" → "sent manually". Timeline meta carries stored codes beside
+ * real words; a code is not a label, and only snake_case tokens are touched so
+ * a bill number or a UTR is never rewritten.
+ */
+function readableMeta(meta: string): string {
+  return meta.replace(/\b[a-z]+(?:_[a-z]+)+\b/g, (code) => code.replace(/_/g, " "));
+}
+
+/** A row of the lists inside the tabs. */
 function RowLine({
   left,
   right,
@@ -1771,41 +1808,6 @@ function RowLine({
       {right !== undefined ? (
         <div className="shrink-0 text-right text-sm tabular-nums text-ink">{right}</div>
       ) : null}
-    </div>
-  );
-}
-
-function Figure({
-  label,
-  children,
-  tone,
-  last,
-}: {
-  label: string;
-  children: React.ReactNode;
-  tone?: "danger" | "success";
-  last?: boolean;
-}) {
-  return (
-    <div
-      className={cx(
-        "flex items-center justify-between py-1.5",
-        !last && "border-b border-canvas",
-      )}
-    >
-      <span className="text-sm text-muted">{label}</span>
-      <span
-        className={cx(
-          "text-sm font-medium",
-          tone === "danger"
-            ? "text-danger"
-            : tone === "success"
-              ? "text-success"
-              : "text-ink",
-        )}
-      >
-        {children}
-      </span>
     </div>
   );
 }
