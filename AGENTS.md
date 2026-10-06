@@ -7176,6 +7176,31 @@ ships, a handset on the old screen draws the new conditions as bare ticks the
 server will not accept as answers. The engine copies are byte-identical as
 always (`mbos-wire.test.ts`).
 
+**A LEAD THE SALES MANAGER RAISED HERSELF IS APPROVED BY SOMEBODY ELSE, AND SHE
+COLLECTS ITS ANSWERS — a refinement of the paragraph above, which made a
+Salesman the only collector.** A lead is SELF-RAISED where she holds the seat
+(`sales_manager_id`) and she owns it or nobody does (`isSelfRaised`; there is no
+creator column, and the seats are exactly the state in which she would
+otherwise approve her own work). Where `leads.selfRaisedVerifierEmail` names an
+active account, that person verifies the Prospect, validates the GST number and
+reviews the Qualification, and the seat holder does none of the three — whatever
+else she holds. She fills the eight questions herself, so no Salesman has to be
+found for a lead nobody else touches.
+
+The designated person is a SETTING by work email and not a name in code, and it
+is OFF by default: blank, a typo, a deactivated account, or the Sales Manager
+herself all designate nobody, and every lead behaves as it did before.
+
+They can only act on a lead they can see, so they are seated on it as its
+coordinating seat (`lead_manager_id`) — at capture (`captureLead`), and for
+leads that already exist by `ensureSelfRaisedVerifierSeats`, nightly and by hand
+(`npm run jobs -- self-raised-verifier-seats`). It is a fill, not a decision: it
+leaves a seat somebody chose (`lead_manager_decided_at`), a Salesman's lead, and
+any lead past Qualification alone. `approvalRoute` in `lead-verifier.ts` is the
+one place the rule is decided: the designated person always may; the seat
+holder may not on a self-raised lead; everybody else is judged by the capability
+and the seat exactly as before.
+
 **A SAMPLE IS ASKED FOR ONLY WHEN THE LEAD MAY ENTER SAMPLE / TRIAL.**
 `sampleEligibility` asks the ordinary gate (no override) inside `requestSample` and
 the handset's sample handover, before any row is written, for funnel-ladder leads

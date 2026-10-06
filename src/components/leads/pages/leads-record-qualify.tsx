@@ -1,4 +1,4 @@
-import { canValidateGstById, holdsLeadSeatById, qualificationCollectorRefusalById } from "@/lib/services/lead-verifier";
+import { canValidateGstById, canVerifyLeadById, qualificationCollectorRefusalById } from "@/lib/services/lead-verifier";
 import { type LeadWorkspace } from "@/lib/lead-workspace";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
@@ -158,7 +158,7 @@ export async function Body({
        * `reviewLeadQualification`: a server action is a URL and an undrawn
        * button is a fact about a component.
        */
-      canReview={(await canLead(user, "lead.verify")) || (await holdsLeadSeatById(user, id))}
+      canReview={await canVerifyLeadById(user, id)}
     />
   );
 }

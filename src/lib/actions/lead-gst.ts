@@ -140,6 +140,7 @@ export async function validateGstin(
         salesAmId: true,
         backOfficeAmId: true,
         salesManagerId: true,
+        leadManagerId: true,
         gstin: true,
         gstVerified: true,
       },

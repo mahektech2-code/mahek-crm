@@ -95,6 +95,7 @@ export type JobName =
   | "day-boundary"
   | "recompute-cycles"
   | "recompute-sales-managers"
+  | "self-raised-verifier-seats"
   | "recompute-inactivity"
   | "recompute-followups"
   | "recompute-slow-payers"
@@ -289,6 +290,20 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
     await run("recompute-sales-managers", async () => {
       const n = await recomputeSalesManagers();
       return { recordsAffected: n, detail: `${n} customers updated` };
+    }, triggeredById),
+  );
+
+  /*
+   * The person Mahek designates to approve a lead its Sales Manager raised
+   * herself, seated on each one so they can see it. After the pass above, which
+   * may have just seated the Sales Manager. Does nothing until somebody is
+   * designated on the Settings screen.
+   */
+  results.push(
+    await run("self-raised-verifier-seats", async () => {
+      const { ensureSelfRaisedVerifierSeats } = await import("./services/self-raised-verifier-service");
+      const n = await ensureSelfRaisedVerifierSeats();
+      return { recordsAffected: n, detail: `${n} leads seated` };
     }, triggeredById),
   );
 
@@ -978,6 +993,18 @@ export async function runJob(
             const out = await resolveTypedPlaces();
             await refreshPlaceCounts();
             return { recordsAffected: out.considered, detail: out.detail };
+          },
+          triggeredById,
+        ),
+      ];
+    case "self-raised-verifier-seats":
+      return [
+        await run(
+          "self-raised-verifier-seats",
+          async () => {
+            const { ensureSelfRaisedVerifierSeats } = await import("./services/self-raised-verifier-service");
+            const n = await ensureSelfRaisedVerifierSeats();
+            return { recordsAffected: n, detail: `${n} leads seated` };
           },
           triggeredById,
         ),

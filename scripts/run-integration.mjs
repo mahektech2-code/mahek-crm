@@ -179,6 +179,8 @@ const files = [
   "src/lib/lead-verifier-seat.test.ts",
   // Qualification: the Salesman collects, the Sales Manager validates GST and reviews.
   "src/lib/qualification-flow.test.ts",
+  // A lead the Sales Manager raised herself is approved by the person Mahek designates.
+  "src/lib/self-raised-approver.test.ts",
   // A lead's owner is respected: a Sales Manager's lead is not a Telecaller's.
   "src/lib/lead-owner-visibility.test.ts",
   "src/lib/sales-manager-desk-queues.test.ts",

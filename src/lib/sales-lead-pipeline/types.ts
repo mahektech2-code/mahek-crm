@@ -311,6 +311,13 @@ export type Lead = {
    * Sales Manager refused it and the Salesman owes a correction).
    */
   gstState?: "none" | "unchecked" | "valid" | "refused";
+  /**
+   * Who verifies, validates and reviews this lead INSTEAD of its Sales Manager —
+   * set only on a lead the Sales Manager raised herself, where Mahek has
+   * designated somebody. A screen says so rather than leaving her to wonder why
+   * the buttons are not hers.
+   */
+  approverName?: string;
   creditDaysWanted?: number;
   buyer?: string;
   visits: number;

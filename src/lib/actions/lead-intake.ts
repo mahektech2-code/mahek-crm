@@ -9,6 +9,7 @@ import { db } from "@/db";
 import { auditLog, customerDistributors, customers, notifications, products, users } from "@/db/schema";
 import { canFor, requireCapability } from "@/lib/access-control";
 import { canOpenModule } from "@/lib/access";
+import { approverFor } from "@/lib/services/lead-verifier";
 import { LEAD_PRIORITIES } from "@/lib/lead-priority";
 import { sourcesFor } from "@/lib/lead-source-scope";
 import { isSalesManagerSeat } from "@/lib/services/lead-source-access";
@@ -529,6 +530,15 @@ export async function captureLead(
     const seatsCreator =
       ctx.user.role !== "admin" && (await canOpenModule(ctx.user.id, SALES_MANAGER_MODULE));
 
+    /* A LEAD SHE RAISES HERSELF IS APPROVED BY THE PERSON MAHEK DESIGNATES (`leads.
+       selfRaisedVerifierEmail`), so that person is seated on it at once: the
+       coordinating seat is what lets them see and act on it. Only where she is
+       its owner or nobody is — a lead she raises FOR a Salesman is the Salesman's
+       and follows the ordinary rule. Nobody designated, nothing seated. */
+    const selfRaisedApprover = seatsCreator
+      ? await approverFor({ ownerId: v.ownerId ?? null, salesManagerId: ctx.user.id })
+      : null;
+
     await db.transaction(async (tx) => {
       await tx.insert(customers).values({
         id: customerId,
@@ -550,6 +560,7 @@ export async function captureLead(
         ownerId: v.ownerId ?? null,
 
         ...(seatsCreator ? { salesManagerId: ctx.user.id, salesManagerDecidedAt: new Date() } : {}),
+        ...(selfRaisedApprover ? { leadManagerId: selfRaisedApprover.id } : {}),
 
         leadSalesType: v.salesType ?? null,
         leadStage: foot,
