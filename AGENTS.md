@@ -2890,6 +2890,17 @@ and packaging material is excluded outright — both stay listed rather than
 dropped on the floor, because a row nobody can account for later is worse than
 one that says why it is not a product.
 
+**The Empty Drum turned out to be a product, and that is why the exclusion is
+evidence-led.** The document excluded #152 as packaging; it is on 43 order
+lines, because customers buy empty drums. So it is a SKU now, under its own
+`Packaging` formulation, at 0 L — it holds no thinner, and a size borrowed from
+a full drum would add two hundred litres to somebody's volume target for every
+empty one sold. #76 and #77 were named "Plain Can" by the owner, and 234–236
+are newer than the document. All six live in `ADDED` in
+`scripts/parse-catalogue.mjs`, in the document's own columns and kept out of its
+count checks, and the import CLOSES a held row whose Product ID the seed now
+sells, so "Held & excluded" does not go on asking for a decision already made.
+
 **The import is idempotent, and it never unmakes a decision.** It matches on
 the canonical name, reports created/updated/unchanged per field, and a dry run
 shows exactly what a real run would change while writing nothing. Two things it

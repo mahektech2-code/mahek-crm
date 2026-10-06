@@ -230,6 +230,8 @@ export async function importCatalogue(
   const skuByKey = new Map(existingSkus.map((p) => [matchKey(p.name), p]));
 
   const needsCanonicalId: ImportReport["needsCanonicalId"] = [];
+  /** Which product each legacy ID now belongs to — closes the held rows it answers. */
+  const productByExternal = new Map<number, string>();
 
   for (const [i, s] of SKUS.entries()) {
     const finishedGoodId = goodIdByName.get(s.finishedGood);
@@ -243,10 +245,13 @@ export async function importCatalogue(
     const row = skuByKey.get(matchKey(s.name));
 
     if (!row) {
+      const newId = id("prd");
+      for (const x of s.externalIds) productByExternal.set(x, newId);
       changes.push({ level: "SKU", name: s.name, action: "created" });
-      if (!dryRun) await db.insert(products).values({ id: id("prd"), ...want });
+      if (!dryRun) await db.insert(products).values({ id: newId, ...want });
       continue;
     }
+    for (const x of s.externalIds) productByExternal.set(x, row.id);
 
     // A decision already made is never unmade by a re-run.
     //
@@ -295,6 +300,22 @@ export async function importCatalogue(
       kind: "excluded",
     })),
   ];
+
+  /* A held or excluded row whose legacy ID the seed now sells as a SKU has
+     been answered: it is CLOSED, naming the SKU, the way naming it by hand
+     closes it. Left open it would sit in "Held & excluded" for ever, asking
+     for a decision that has already been made. */
+  for (const row of existingExceptions) {
+    const productId = productByExternal.get(row.externalId);
+    if (row.resolvedAt || !productId) continue;
+    changes.push({ level: "exception", name: `#${row.externalId} ${row.label}`, action: "updated", fields: ["resolved"] });
+    if (!dryRun) {
+      await db
+        .update(catalogueExceptions)
+        .set({ resolvedProductId: productId, resolvedAt: new Date() })
+        .where(eq(catalogueExceptions.id, row.id));
+    }
+  }
 
   for (const e of exceptionRows) {
     const row = exceptionByExternal.get(e.externalId);

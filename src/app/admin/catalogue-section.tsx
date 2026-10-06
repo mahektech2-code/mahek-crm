@@ -1607,7 +1607,7 @@ function ImportTab({
           <ul className="flex flex-col gap-1.5 text-[13px] leading-5 text-body">
             <li>· A name carried by several legacy IDs is held, not guessed at. Those land in Duplicates.</li>
             <li>· A legacy row with no sellable name is held. Naming it is a person&rsquo;s decision.</li>
-            <li>· Packaging material is excluded outright — an empty drum is not a product.</li>
+            <li>· Packaging nobody sells is excluded. The Empty Drum is sold, so it is a SKU under Packaging.</li>
             <li>· No price is imported, because the source document carries none.</li>
             <li>· A canonical ID somebody has already chosen is never reset by a re-run.</li>
           </ul>

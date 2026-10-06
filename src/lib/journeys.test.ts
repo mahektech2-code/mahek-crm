@@ -5530,10 +5530,10 @@ describe("The product master — importing it, and what an import must not touch
              (select count(*)::int from finished_goods) as goods,
              (select count(*)::int from products where finished_good_id is not null) as skus
     `);
-    assert.equal(levels.formulations, 19);
-    assert.equal(levels.brands, 32);
-    assert.equal(levels.goods, 107);
-    assert.equal(levels.skus, 213);
+    assert.equal(levels.formulations, 20);
+    assert.equal(levels.brands, 33);
+    assert.equal(levels.goods, 110);
+    assert.equal(levels.skus, 219);
 
     const again = await importCatalogue();
     assert.equal(again.created, 0, "a second run must create nothing");
@@ -5642,14 +5642,33 @@ describe("The product master — importing it, and what an import must not touch
     assert.ok(results.every((r) => r.subtitle));
   });
 
+  /* The seed no longer holds anything back — the document's three were named
+     from Mahek Plus — so these tests bring their own held and excluded rows. */
+  async function heldRow(kind: "held" | "excluded", externalId: number) {
+    const [row] = await db
+      .insert(catalogueExceptionsTable)
+      .values({ id: `cex_test_${externalId}`, externalId, kind, label: `Row #${externalId}`, reason: "test" })
+      .returning();
+    return row;
+  }
+
+  test("the import closes a held row once the seed sells its Product ID", async () => {
+    // #234 is a SKU in the seed; a database that still holds it from an older
+    // seed must see the row answered rather than left asking for a name.
+    await heldRow("held", 234);
+    await importCatalogue();
+    const [row] = await db
+      .select()
+      .from(catalogueExceptionsTable)
+      .where(eq(catalogueExceptionsTable.externalId, 234));
+    assert.ok(row.resolvedAt, "an answered row must not stay open");
+    const [sku] = await db.select().from(productsTable).where(eq(productsTable.id, row.resolvedProductId!));
+    assert.equal(sku.name, "PU Thinner M16 Plain Can - 20 Liter (02 Can/Box)");
+  });
+
   test("a held legacy row cannot be ordered until somebody names it", async () => {
     setTestUser(manager);
-    const exceptions = await db.select().from(catalogueExceptionsTable);
-    const held = exceptions.filter((e) => e.kind === "held");
-    const excluded = exceptions.filter((e) => e.kind === "excluded");
-
-    assert.equal(held.length, 2, "IDs 76 and 77 have packing but no sellable name");
-    assert.equal(excluded.length, 1, "the empty drum is packaging, not a product");
+    const held = [await heldRow("held", 9001)];
     for (const e of held) assert.equal(e.resolvedAt, null);
 
     // Naming one is what turns it into something a telecaller can pick.
@@ -5672,10 +5691,7 @@ describe("The product master — importing it, and what an import must not touch
 
   test("excluded packaging cannot be named into a product", async () => {
     setTestUser(manager);
-    const [drum] = await db
-      .select()
-      .from(catalogueExceptionsTable)
-      .where(eq(catalogueExceptionsTable.kind, "excluded"));
+    const drum = await heldRow("excluded", 9002);
     const [good] = await db.select().from(finishedGoodsTable).limit(1);
 
     const refused = await nameHeldRow(drum.id, {
