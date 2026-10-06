@@ -438,10 +438,8 @@ test("a Next Action with no outcome reminder behind it still writes its own (unc
   assert.equal(rems[0].note, "Call again");
 });
 
-test("a payment chase before the promised day is its own reminder; the retired on-the-day chase is refused", async () => {
+test("a payment chase on the promised day is the promise's own reminder; the retired before-the-day chase is refused", async () => {
   const promised = addDays(today(), 6);
-  /* "Follow up on the promised date" is no longer offered — the promise's own
-     reminder already lands on that day — so a new save naming it is refused. */
   const same = await saveInteraction({
     customerId,
     interactionType: "outbound_call",
@@ -452,9 +450,11 @@ test("a payment chase before the promised day is its own reminder; the retired o
     nextActionDate: promised,
     idempotencyKey: randomUUID(),
   });
-  assert.equal(same.ok, false);
-  assert.equal(!same.ok && same.fieldErrors?.[0]?.field, "nextActions");
+  assert.ok(same.ok, !same.ok ? same.error : "");
+  assert.equal((await remindersOf(same.data.interactionId)).length, 1);
 
+  /* "Follow up before the promised date" is no longer offered, so a new save
+     naming it is refused — saved calls that carry it still read. */
   const before = await saveInteraction({
     customerId,
     interactionType: "outbound_call",
@@ -465,8 +465,8 @@ test("a payment chase before the promised day is its own reminder; the retired o
     nextActionDate: addDays(today(), 4),
     idempotencyKey: randomUUID(),
   });
-  assert.ok(before.ok, !before.ok ? before.error : "");
-  assert.equal((await remindersOf(before.data.interactionId)).length, 2);
+  assert.equal(before.ok, false);
+  assert.equal(!before.ok && before.fieldErrors?.[0]?.field, "nextActions");
 });
 
 test("a next action not offered by the outcome is still refused by the server", async () => {

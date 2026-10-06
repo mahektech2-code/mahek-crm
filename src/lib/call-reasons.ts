@@ -187,7 +187,8 @@ const OUTCOME_ACTIONS: Record<string, Array<{ code: string; label: string }>> = 
     { code: "discuss_manager", label: "Discuss with manager" },
   ],
   payment_promised: [
-    { code: "follow_up_before_promise", label: "Follow up before the promised date" },
+    { code: "follow_up_on_promise", label: "Follow up on the promised date" },
+    { code: "no_follow_up", label: "No further action" },
   ],
 };
 
@@ -204,7 +205,9 @@ const RETIRED_ACTIONS: Array<{ code: string; label: string }> = [
   { code: "follow_up_payment", label: "Follow up for payment" },
   { code: "follow_up_dispatch", label: "Follow up for dispatch" },
   { code: "follow_up_after_delivery", label: "Follow up after delivery" },
-  { code: "follow_up_on_promise", label: "Follow up on the promised date" },
+  /* No longer offered on a Pay Promise, still carried by calls saved while it
+     was — its date rule and its payment_promise reminder type stay below. */
+  { code: "follow_up_before_promise", label: "Follow up before the promised date" },
 ];
 
 /*
