@@ -583,7 +583,6 @@ function CallPanelForm({
   const [followUpDate, setFollowUpDate] = React.useState("");
   /* No order: the date the customer gave, or an explicit "they would not say". */
   const [noOrderNextCallDate, setNoOrderNextCallDate] = React.useState("");
-  const [noOrderNoCommitment, setNoOrderNoCommitment] = React.useState(false);
   const [payDate, setPayDate] = React.useState("");
   const [category, setCategory] = React.useState(
     complaintCategories[0]?.value ?? "other",
@@ -1414,12 +1413,17 @@ function CallPanelForm({
           quickNoteIds: picked.filter((id) => chips.some((c) => c.id === id)),
           productQuantities,
           lineDiscounts: Object.keys(discounts).length ? discounts : undefined,
-          followUpDate: needsFollowUp ? followUpDate : undefined,
+          /* THERE IS NO DATE BOX FOR EITHER OF THESE ANY MORE. A date can only
+             be here if the call assistant filled one from what the customer
+             said, and then it is used as given. Otherwise a Follow-up goes up
+             with none and the server gives it the configured default day, and
+             a No Order goes up as "no date named" — which is exactly the
+             existing path the usual-wait cooldown is for: no reminder, and the
+             queue's own no-order cooldown decides when they come back. */
+          followUpDate: needsFollowUp ? followUpDate || undefined : undefined,
           noOrderNextCallDate:
-            needsNextCall && !noOrderNoCommitment && noOrderNextCallDate
-              ? noOrderNextCallDate
-              : undefined,
-          noOrderNoCommitment: needsNextCall ? noOrderNoCommitment : false,
+            needsNextCall && noOrderNextCallDate ? noOrderNextCallDate : undefined,
+          noOrderNoCommitment: needsNextCall ? !noOrderNextCallDate : false,
           paymentPromiseDate: showPayDate ? payDate || undefined : undefined,
 
           /* Inbound's own answers. Everything here is sent only where the call
@@ -1688,7 +1692,6 @@ function CallPanelForm({
     }
     if (fill.noOrderNextCallDate && !noOrderNextCallDate) {
       setNoOrderNextCallDate(fill.noOrderNextCallDate);
-      setNoOrderNoCommitment(false);
       filled.push(`call back on ${shortDate(fill.noOrderNextCallDate)}`);
     }
     if (fill.payDate && !payDate) {
@@ -2827,108 +2830,6 @@ function CallPanelForm({
                           </Field>
                         ) : null}
 
-                        {needsFollowUp ? (
-                          <Field
-                            label="Follow-up date"
-                            hint="Pick the follow-up date - it becomes a reminder you will see on the day."
-                            error={errors.followUpDate ?? null}
-                          >
-                            {/* "Call me tomorrow" and "call me after three days" are what
-                      customers actually say, and both were three taps through a
-                      date picker. The chips write the same date into the same
-                      field, so the picker still wins for anything unusual. */}
-                            <div className="mb-1.5 flex flex-wrap gap-1.5">
-                              {FOLLOW_UP_PRESETS.map((preset) => {
-                                const date = addDays(today(), preset.days);
-                                return (
-                                  <button
-                                    key={preset.label}
-                                    type="button"
-                                    onClick={() => setFollowUpDate(date)}
-                                    className={cx(
-                                      "h-7 cursor-pointer rounded-[4px] border px-2.5 text-[13px]",
-                                      followUpDate === date
-                                        ? "border-brand bg-brand-soft font-medium text-brand-hover"
-                                        : "border-line bg-surface text-body hover:bg-canvas",
-                                    )}
-                                  >
-                                    {preset.label}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                            <Input
-                              type="date"
-                              value={followUpDate}
-                              min={today()}
-                              onChange={(e) => setFollowUpDate(e.target.value)}
-                            />
-                          </Field>
-                        ) : null}
-
-                        {needsNextCall ? (
-                          <Field
-                            label="When do we call back"
-                            hint="Ask before ringing off. A date they give becomes a reminder and beats the usual wait, so the call lands on the day they named."
-                            error={errors.noOrderNextCallDate ?? null}
-                          >
-                            <div className="mb-1.5 flex flex-wrap gap-1.5">
-                              {FOLLOW_UP_PRESETS.map((preset) => {
-                                const date = addDays(today(), preset.days);
-                                return (
-                                  <button
-                                    key={preset.label}
-                                    type="button"
-                                    onClick={() => {
-                                      setNoOrderNextCallDate(date);
-                                      setNoOrderNoCommitment(false);
-                                    }}
-                                    className={cx(
-                                      "h-7 cursor-pointer rounded-[4px] border px-2.5 text-[13px]",
-                                      !noOrderNoCommitment && noOrderNextCallDate === date
-                                        ? "border-brand bg-brand-soft font-medium text-brand-hover"
-                                        : "border-line bg-surface text-body hover:bg-canvas",
-                                    )}
-                                  >
-                                    {preset.label}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                            <Input
-                              type="date"
-                              value={noOrderNoCommitment ? "" : noOrderNextCallDate}
-                              min={today()}
-                              disabled={noOrderNoCommitment}
-                              onChange={(e) => setNoOrderNextCallDate(e.target.value)}
-                            />
-                            {/*
-                              The escape hatch, and it has to be deliberate. Plenty
-                              of customers will not name a day, and the telecaller
-                              must be able to say so — but by saying it, not by
-                              leaving the box empty, which is indistinguishable
-                              from having forgotten to ask.
-                            */}
-                            <label className="mt-2 flex cursor-pointer items-start gap-2 text-[13px] text-body">
-                              <input
-                                type="checkbox"
-                                checked={noOrderNoCommitment}
-                                onChange={(e) => {
-                                  setNoOrderNoCommitment(e.target.checked);
-                                  if (e.target.checked) setNoOrderNextCallDate("");
-                                }}
-                                className="mt-0.5 h-4 w-4 cursor-pointer"
-                              />
-                              <span>
-                                They would not commit to a date
-                                <span className="block text-[11px] text-muted">
-                                  We will ask again after the usual wait.
-                                </span>
-                              </span>
-                            </label>
-                          </Field>
-                        ) : null}
-
                         {showPayDate ? (
                           <Field
                             label={
@@ -3387,9 +3288,8 @@ function CallPanelForm({
                             ) : null}
 
                             {needsProducts && !countedLines.length ? (
-                              <div className="mt-2 rounded-[4px] border border-dashed border-warn-line bg-warn-soft px-3 py-5 text-center text-sm text-warn-ink">
-                                At least one product is needed to log this as an
-                                order.{" "}
+                              <div className="mt-2 rounded-[4px] border border-dashed border-line bg-canvas px-3 py-5 text-center text-sm text-muted">
+                                Optional - the order can be saved without products.{" "}
                                 {searchEnabled
                                   ? "Search above, or tap one this customer usually buys."
                                   : "Tap one this customer usually buys."}

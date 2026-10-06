@@ -129,7 +129,9 @@ test("an action this outcome does not offer is not put on the form", () => {
   assert.deepEqual(mixed.primary?.fill?.nextActions, ["send_quotation"]);
 });
 
-test("the same words are valid on one outcome and not on another", () => {
+test("an order taken proposes no next action, whatever was said", () => {
+  /* Order Taken no longer asks what happens next, so the assistant must not
+     fill the section either — `nextActionsFor` is the one list both read. */
   const spoken = [step("follow_up_payment", KAL())];
   const orderTaken = decideCallActions(
     input({
@@ -147,7 +149,7 @@ test("the same words are valid on one outcome and not on another", () => {
       },
     }),
   );
-  assert.deepEqual(orderTaken.primary?.fill?.nextActions, ["follow_up_payment"]);
+  assert.equal(orderTaken.primary?.fill?.nextActions, undefined);
   assert.equal(followUpCall(spoken).primary?.fill?.nextActions, undefined);
 });
 

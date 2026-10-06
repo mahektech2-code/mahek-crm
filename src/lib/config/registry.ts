@@ -1372,6 +1372,17 @@ export const SETTINGS = [
     max: 100000,
   },
   {
+    key: "interactions.followUpDefaultDays",
+    type: "integer",
+    category: "queue",
+    label: "Follow-up call back after",
+    description:
+      "A Follow-up call no longer asks the telecaller for a date. It becomes a call-back reminder this many days ahead, moved on to the next working day if that lands on a day off - so the customer is never left with a follow-up nobody is reminded of. A date the customer actually named, supplied by the call assistant or the Command Centre, is used as given.",
+    default: 1,
+    min: 0,
+    max: 30,
+  },
+  {
     key: "customers.defaultCreditDays",
     type: "integer",
     category: "bills",
@@ -5412,6 +5423,7 @@ export type Config = {
   "dashboard.complaintUnresolvedFlagDays": number;
   "complaints.defaultSeverity": "low" | "medium" | "high" | "critical";
   "interactions.maxNotesLength": number;
+  "interactions.followUpDefaultDays": number;
   "customers.defaultCreditDays": number;
 
   "attachments.maxSizeMb": number;

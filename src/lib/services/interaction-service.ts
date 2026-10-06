@@ -492,10 +492,30 @@ export async function saveInteraction(
   }
 
   // 2. Follow-up needs a date, and it cannot be in the past.
-  if (input.outcome === "follow_up") {
-    if (!input.followUpDate) {
-      return fieldError("followUpDate", "Pick the follow-up date - it becomes a reminder.");
-    }
+  //
+  //    THE FORM NO LONGER ASKS FOR ONE. A Follow-up with no date is given the
+  //    configured default (tomorrow, on the next working day) rather than
+  //    saved with no reminder — the reminder is what brings the customer back,
+  //    and an outcome that promises a follow-up and writes nothing to follow is
+  //    how a customer drops out of the calling workflow without anybody
+  //    deciding it. The one exception is a call whose Next Action carries a
+  //    date of its own: that already writes a reminder, so a second one for
+  //    tomorrow would be a promise nobody made. A date that IS sent (the call
+  //    assistant, the Command Centre) is used as given and checked exactly as
+  //    before.
+  const hasDatedNextAction =
+    (input.nextActions ?? []).length > 0 && !!input.nextActionDate;
+  if (input.outcome === "follow_up" && !input.followUpDate && !hasDatedNextAction) {
+    input.followUpDate = onOrAfterWorkingDay(
+      addDays(day, config["interactions.followUpDefaultDays"]),
+      {
+        timezone: config["workingDay.timezone"],
+        dayBoundaryHour: config["workingDay.dayBoundaryHour"],
+        workingDays: config["workingDay.workingDays"],
+      },
+    );
+  }
+  if (input.outcome === "follow_up" && input.followUpDate) {
     if (input.followUpDate < day) {
       return fieldError("followUpDate", "The follow-up date cannot be in the past.");
     }
@@ -777,15 +797,14 @@ export async function saveInteraction(
     }
   }
 
-  // 6. An order needs something ordered.
+  // 6. Products are OPTIONAL on an order, taken or received: the call is the
+  //    record that the customer ordered, and the order goes to accounts either
+  //    way (the approval queue shows an order with no lines as 0 items). What
+  //    IS given still has to be valid.
   const lines = Object.entries(input.productQuantities)
     .map(([productId, qty]) => ({ productId, quantity: Number(qty) }))
     .filter((l) => l.quantity > 0);
 
-  const needsProducts = isOrderReceived || input.outcome === "order_taken";
-  if (needsProducts && !lines.length) {
-    return fieldError("productQuantities", "Add at least one product and quantity.");
-  }
   for (const l of lines) {
     if (!Number.isInteger(l.quantity) || l.quantity <= 0) {
       return fieldError("productQuantities", "Quantities must be whole numbers above zero.");
@@ -1009,8 +1028,8 @@ export async function saveInteraction(
         workingDays: config["workingDay.workingDays"],
       });
     const outcomeReminders: Array<{ type: string; day: string }> = [];
-    if (input.outcome === "follow_up") {
-      outcomeReminders.push({ type: "call_back", day: workingDayOf(input.followUpDate!) });
+    if (input.outcome === "follow_up" && input.followUpDate) {
+      outcomeReminders.push({ type: "call_back", day: workingDayOf(input.followUpDate) });
       reminderId = id("rem");
       await tx.insert(reminders).values({
         id: reminderId,

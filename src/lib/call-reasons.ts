@@ -151,28 +151,21 @@ const NEXT_ACTIONS: Record<string, Array<{ code: string; label: string }>> = {
 };
 
 /**
- * WHAT AN ORDER TAKEN NEEDS NEXT, and it comes off the OUTCOME rather than the
+ * WHAT EACH OUTCOME OFFERS NEXT, and it comes off the OUTCOME rather than the
  * reason.
  *
  * The reason is what the customer wanted when they rang; once the call has
- * ended in an order, what happens next is about the order and nothing else —
- * somebody who rang to ask a price and ended up ordering needs chasing for
- * payment or dispatch, not sending a quotation. So this list REPLACES the
- * reason's own rather than adding to it.
- *
- * `no_follow_up` is the first of the four and it is the point of the set: an
- * order that needs nothing is a real answer, and the only way to tell it from
- * a telecaller who skipped the question is to let them say it. The same shape
- * as "they would not commit to a date" on the No Order form, for the same
- * reason — a blank box cannot tell the two apart.
+ * ended in an order or a refusal, what happens next is about that and nothing
+ * else. So an outcome's list REPLACES the reason's own rather than adding to
+ * it. Order Taken's list is deliberately EMPTY (see below): it asks nothing.
  */
 const OUTCOME_ACTIONS: Record<string, Array<{ code: string; label: string }>> = {
-  order_taken: [
-    { code: "no_follow_up", label: "No further follow-up required" },
-    { code: "follow_up_payment", label: "Follow up for payment" },
-    { code: "follow_up_dispatch", label: "Follow up for dispatch" },
-    { code: "follow_up_after_delivery", label: "Follow up after delivery" },
-  ],
+  /* An Order Taken is no longer asked what happens next — the section is gone
+     from the form. An EMPTY list rather than a missing key, because a missing
+     key falls through to the call REASON's own list and would offer an
+     inbound order a quotation to send. The four codes it used to carry are
+     kept below, as labels only. */
+  order_taken: [],
   no_order: [
     { code: "call_back", label: "Call again" },
     { code: "salesman_visit", label: "Visit customer" },
@@ -194,11 +187,25 @@ const OUTCOME_ACTIONS: Record<string, Array<{ code: string; label: string }>> = 
     { code: "discuss_manager", label: "Discuss with manager" },
   ],
   payment_promised: [
-    { code: "follow_up_on_promise", label: "Follow up on the promised date" },
     { code: "follow_up_before_promise", label: "Follow up before the promised date" },
-    { code: "no_follow_up", label: "No further action" },
   ],
 };
+
+/**
+ * CODES THAT ARE NO LONGER OFFERED and are still STORED. Calls already saved
+ * carry them in `calls.next_actions`, and reminders written from them carry
+ * their label as text — so the label lookup keeps them, and `DATED_ACTIONS` and
+ * `reminderTypeFor` below go on recognising them. Nothing here is a picker
+ * list: `nextActionsFor` never returns these, which is what makes the server
+ * refuse a new save that names one.
+ */
+const RETIRED_ACTIONS: Array<{ code: string; label: string }> = [
+  { code: "no_follow_up", label: "No further follow-up required" },
+  { code: "follow_up_payment", label: "Follow up for payment" },
+  { code: "follow_up_dispatch", label: "Follow up for dispatch" },
+  { code: "follow_up_after_delivery", label: "Follow up after delivery" },
+  { code: "follow_up_on_promise", label: "Follow up on the promised date" },
+];
 
 /*
  * THE CODES ARE SHARED WHERE THE ACT IS THE SAME, and the labels are not.
@@ -250,7 +257,14 @@ export function nextActionsFor(
  */
 export const NEXT_ACTION_LABEL: Record<string, string> = (() => {
   const map: Record<string, string> = {};
-  for (const list of [...Object.values(OUTCOME_ACTIONS), ...Object.values(NEXT_ACTIONS)]) {
+  /* Retired first: `no_follow_up` was defined by Order Taken before any other
+     list, so its stored label is "No further follow-up required" and must stay
+     so for every call that carries it. */
+  for (const list of [
+    RETIRED_ACTIONS,
+    ...Object.values(OUTCOME_ACTIONS),
+    ...Object.values(NEXT_ACTIONS),
+  ]) {
     for (const a of list) if (!(a.code in map)) map[a.code] = a.label;
   }
   return map;
