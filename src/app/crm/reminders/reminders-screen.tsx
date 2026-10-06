@@ -81,6 +81,18 @@ function closureLine(r: Row): string {
   }
 }
 
+/**
+ * The sentence under an open reminder somebody has already rung about. Only
+ * two cases can produce one, because an answered call on or after the due
+ * date closes the reminder by itself.
+ */
+function stillOpenLine(r: Row, call: NonNullable<Row["lastCall"]>): string {
+  const by = call.byName ? ` by ${call.byName}` : "";
+  return call.answered
+    ? `Spoke to them on ${shortDate(call.on)}${by}, before this was due - it closes with the next call that gets through.`
+    : `Rang on ${shortDate(call.on)}${by} - no answer, so this is still owed. It closes by itself when a call gets through.`;
+}
+
 export function RemindersScreen({
   scopeLabel,
   isTeamView,
@@ -246,9 +258,10 @@ export function RemindersScreen({
           */}
         {!canClose ? (
           <div className="border-b border-divider bg-canvas px-5 py-2.5 text-[13px] text-muted">
-            These close themselves. Press Call, and saving the call closes the
-            reminder behind it — so this list is a record of calls actually
-            made rather than of boxes ticked.
+            These close themselves. Press Call — or call them from the Call Log
+            or the Calling desk — and once a call that gets through is saved,
+            every reminder due for that customer closes on its own. A no-answer
+            keeps it open, because the conversation is still owed.
           </div>
         ) : null}
 
@@ -307,6 +320,23 @@ export function RemindersScreen({
                     ? ` · moved ${r.rescheduleCount} times`
                     : ""}
                 </div>
+                {/*
+                 * WHY IT IS STILL OPEN after somebody rang. A saved call closes
+                 * a due reminder by itself, so one still standing after a call
+                 * is open for a reason — nobody answered, or they were rung
+                 * before it fell due — and the row says which rather than
+                 * leaving the telecaller to wonder whether the call reached it.
+                 */}
+                {r.status === "pending" && r.lastCall ? (
+                  <div
+                    className={cx(
+                      "mt-1 text-[13px]",
+                      r.lastCall.answered ? "text-muted" : "text-warn-ink",
+                    )}
+                  >
+                    {stillOpenLine(r, r.lastCall)}
+                  </div>
+                ) : null}
                 {/*
                  * The same conflict the confirmation dialog offers to hold,
                  * read the same live way — see `hasConflictToday` on
