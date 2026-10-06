@@ -2192,6 +2192,56 @@ Files that arrived before the path was kept are found again in Wati's history
 by `backfillReplyMedia`, matched on number, kind and time (the history carries
 Wati's ids, not WhatsApp's); the hourly pass repeats it over two days.
 
+**A CUSTOMER IS SEVERAL PEOPLE, AND EACH KIND OF MESSAGE HAS ITS NUMBER.**
+The owner decides, somebody else orders, the accountant answers for the money
+and the godown man for the delivery — and the record held one `phone`, one
+`alt_phone` and one `whatsapp_phone`, so a payment reminder went to whichever
+number was typed first. `customer_contacts` is one row per person: a name, what
+they look after (a code from `CONTACT_ROLES` in `lib/customer-contacts.ts`,
+never a label), the number, an email and a note. Three DESIGNATIONS, each held
+by one contact at most, enforced by partial unique indexes: **primary** (who we
+ring), **WhatsApp** (where every message goes by default) and **payment
+reminders** (where a reminder about money goes). Primary can only be MOVED,
+never cleared; WhatsApp and payment reminders need a mobile; the last number
+cannot be removed.
+
+**The table is the truth and the columns are its MIRRORS.** Forty readers use
+`customers.phone`, `contact_person`, `whatsapp_phone` and `alt_phone`, plus
+the new `payment_whatsapp_phone`, and none of them had to change:
+`syncContactMirrors` writes them from the list inside every contact write's own
+transaction, and `mirrorsFrom` is the one statement of what they should be. A
+writer that still sets the columns directly — the party sheet filling a blank,
+the handset's customer edit, an old `updateCustomer` caller sending `phone` —
+is folded back in by `reconcileContacts`, which ADDS the number it finds and
+takes the column as that number's designation, because the column is the newer
+statement. A column somebody emptied takes the designation away. Reconciling an
+agreeing pair writes nothing, and the screens reconcile on read.
+
+**`whatsappNumberFor` decides where a personal message goes, on every path.**
+A payment template — category `payment_reminder`, or a Wati spec of kind
+`payment` (`purposeOf`) — goes to the payment-reminder number, then the WhatsApp
+number, then the phone; everything else skips the first. Unset is the honest
+default and the panel says so in words ("the WhatsApp number, by default")
+rather than a migration marking a choice nobody made: `0220` carried the book in
+with the phone as primary and a separate WhatsApp number as its own contact, and
+flagged nothing else. A reply from ANY number on the list is filed against the
+customer (`customerIdForNumber`). The sheet stops filling `whatsapp_phone` once a
+PERSON has written that customer's contacts, because "no separate WhatsApp
+number" is then a decision, not a blank.
+
+**The full edit form is tabs, and it edits everything that is not derived.**
+Details, Contacts, Address & area, Commercial, Account managers — the same form
+in the CRM and Accounts, since both render `CustomersScreen`. The row carries a
+dozen columns, so the form asks `loadCustomerEditor` for its one customer when it
+opens, and sends only the fields that MOVED (`detailChanges`). The contacts tab
+saves each change as it is made, apart from the form's Save. Absent on purpose:
+the seats (Reassign, audited), the status (deactivation has its own flow) and
+every cache — outstanding, the cycle, last order, health — which a typed value
+would lose on the next recompute. **The credit limit and stopping supply are the
+ledger desk's** (`payment.confirm`), checked in `updateCustomer` only where the
+value actually moves, and a stop needs a reason the salesman reads at the
+counter.
+
 **A payment reminder that went is a follow-up attempt.** The collections plan
 dates the next stage-1 nudge from the newest WhatsApp row in
 `follow_up_attempts`, and no path that sent a reminder — manual or otherwise —

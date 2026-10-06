@@ -2,6 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { placeShopsNow } from "@/lib/services/place-tree-service";
+import {
+  reconcileContacts,
+  renamePrimaryContact,
+} from "@/lib/services/customer-contact-service";
 import { cookies } from "next/headers";
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
@@ -19,6 +23,7 @@ import {
   createAttachment,
 } from "@/lib/services/attachment-service";
 import {
+  canFor,
   requireCapability,
   resolveScope,
   assertCustomerInScope,
@@ -615,6 +620,56 @@ const customerSchema = z.object({
   backOfficeAmId: z.string().optional(),
 });
 
+/*
+ * EVERY OTHER DETAIL OF A CUSTOMER, for the full edit form — the Accounts
+ * desk's in particular, which is where a record is corrected end to end.
+ *
+ * Optional one by one, and an empty string means "clear it": a field the form
+ * did not send is not touched. What is NOT here is as deliberate as what is:
+ * the account-manager seats (Reassign, audited), the status (deactivation is a
+ * decision with its own flow), and every DERIVED cache — outstanding, the
+ * buying cycle, last order and contact, health — which a typed value would be
+ * silently overwritten on the next recompute. Numbers live on the contacts
+ * list, which writes `phone`, `whatsapp_phone` and the rest as its mirrors.
+ */
+const blankable = (max: number) => z.string().trim().max(max).optional();
+const customerDetailSchema = z.object({
+  externalCode: blankable(60),
+  customerType: z.enum(["dealer", "manufacturer", "distributor", "retailer", ""]).optional(),
+  potential: z.enum(["high", "medium", "low", ""]).optional(),
+  potentialMonthlyPaise: z.number().int().min(0).max(1_000_000_000_000).nullable().optional(),
+  rating: blankable(60),
+  segmentation: blankable(60),
+  dealerCode: blankable(60),
+  customerSince: z
+    .string()
+    .trim()
+    .refine((v) => v === "" || /^\d{4}-\d{2}-\d{2}$/.test(v), "Enter the date as YYYY-MM-DD.")
+    .optional(),
+  specialInstructions: blankable(1000),
+  email: z
+    .string()
+    .trim()
+    .max(200)
+    .refine((v) => v === "" || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), "That email address does not look complete.")
+    .optional(),
+  whatsappDest: z.enum(["personal", "group", "both"]).optional(),
+  whatsappGroupName: blankable(200),
+  address: blankable(500),
+  region: blankable(120),
+  area: blankable(120),
+  beat: blankable(120),
+  territoryRegion: blankable(120),
+  visitFrequencyDays: z.coerce.number().int().min(1).max(365).nullable().optional(),
+  creditLimitPaise: z.number().int().min(0).max(1_000_000_000_000).nullable().optional(),
+  creditBlocked: z.boolean().optional(),
+  creditBlockReason: blankable(300),
+  priceTag: blankable(120),
+  freightTerm: z.enum(["paid", "to_pay", ""]).optional(),
+  deliveryType: blankable(60),
+  doNotContact: z.boolean().optional(),
+});
+
 export async function createCustomer(
   raw: Record<string, unknown>,
 ): Promise<Result<{ id: string; duplicateOf?: string }>> {
@@ -681,7 +736,7 @@ export async function updateCustomer(
 ): Promise<Result> {
   try {
     const ctx = await resolveScope();
-    const parsed = customerSchema.partial().safeParse(raw);
+    const parsed = customerSchema.partial().merge(customerDetailSchema).safeParse(raw);
     if (!parsed.success) {
       const issue = parsed.error.issues[0];
       return err(issue.message, "validation", [
@@ -718,6 +773,77 @@ export async function updateCustomer(
         "Account managers are changed from Reassign, not from the customer form - that is the one path that records who decided and why.",
         "not_permitted",
       );
+    }
+
+    /*
+     * THE CREDIT LIMIT AND THE SUPPLY STOP ARE MONEY DECISIONS, and they are
+     * the ledger desk's — the person confirming payments, not whoever can open
+     * the record. Asked only where the value actually MOVES, so a form that
+     * sends every field back unchanged is not refused for a field nobody
+     * touched.
+     */
+    const d = parsed.data;
+    const creditMoving =
+      (d.creditLimitPaise !== undefined && d.creditLimitPaise !== (existing.creditLimitPaise === null ? null : Number(existing.creditLimitPaise))) ||
+      (d.creditBlocked !== undefined && d.creditBlocked !== existing.creditBlocked) ||
+      (d.creditBlockReason !== undefined && (d.creditBlockReason || null) !== existing.creditBlockReason);
+    if (creditMoving && !(await canFor(ctx.user, "payment.confirm"))) {
+      return err(
+        "The credit limit and stopping supply are decided by Accounts — ask whoever confirms payments.",
+        "not_permitted",
+      );
+    }
+    const blockedAfter = d.creditBlocked ?? existing.creditBlocked;
+    const blockReasonAfter = d.creditBlockReason !== undefined ? d.creditBlockReason || null : existing.creditBlockReason;
+    if (blockedAfter && !blockReasonAfter) {
+      return err("Say why supply is stopped — the salesman reads it at the counter.", "validation", [
+        { field: "creditBlockReason", message: "Required while supply is stopped." },
+      ]);
+    }
+    const blank = (v: string | undefined) => (v === undefined ? undefined : v || null);
+    const detail: Partial<typeof customers.$inferInsert> = {};
+    const put = <K extends keyof typeof customers.$inferInsert>(k: K, v: (typeof customers.$inferInsert)[K] | undefined) => {
+      if (v !== undefined) detail[k] = v;
+    };
+    put("externalCode", blank(d.externalCode));
+    put("customerType", d.customerType === undefined ? undefined : d.customerType || null);
+    put("potential", d.potential === undefined ? undefined : d.potential || null);
+    if (
+      d.potentialMonthlyPaise !== undefined &&
+      d.potentialMonthlyPaise !== (existing.potentialMonthlyPaise === null ? null : Number(existing.potentialMonthlyPaise))
+    ) {
+      // A judgement, stamped with who made it and when — the handset's rule.
+      detail.potentialMonthlyPaise = d.potentialMonthlyPaise;
+      detail.potentialEstimatedAt = new Date();
+      detail.potentialEstimatedById = ctx.user.id;
+    }
+    put("rating", blank(d.rating));
+    put("segmentation", blank(d.segmentation));
+    put("dealerCode", blank(d.dealerCode));
+    put("customerSince", blank(d.customerSince));
+    put("specialInstructions", blank(d.specialInstructions));
+    put("email", blank(d.email));
+    put("whatsappDest", d.whatsappDest);
+    put("whatsappGroupName", blank(d.whatsappGroupName));
+    put("address", blank(d.address));
+    put("region", blank(d.region));
+    put("area", blank(d.area));
+    put("beat", blank(d.beat));
+    put("territoryRegion", blank(d.territoryRegion));
+    put("visitFrequencyDays", d.visitFrequencyDays);
+    put("creditLimitPaise", d.creditLimitPaise);
+    put("creditBlocked", d.creditBlocked);
+    put("creditBlockReason", blank(d.creditBlockReason));
+    put("priceTag", blank(d.priceTag));
+    put("freightTerm", d.freightTerm === undefined ? undefined : d.freightTerm || null);
+    put("deliveryType", blank(d.deliveryType));
+    put("doNotContact", d.doNotContact);
+    const whatsappDestAfter = d.whatsappDest ?? existing.whatsappDest;
+    const groupAfter = d.whatsappGroupName !== undefined ? d.whatsappGroupName || null : existing.whatsappGroupName;
+    if (whatsappDestAfter !== "personal" && !groupAfter) {
+      return err("Name the WhatsApp group, or send to their own number.", "validation", [
+        { field: "whatsappGroupName", message: "Required for a group." },
+      ]);
     }
 
     /* A CHANGED GSTIN IS NOT THE NUMBER ANYBODY VALIDATED — here as everywhere it
@@ -777,10 +903,21 @@ export async function updateCustomer(
         ...(parsed.data.route !== undefined
           ? { route: parsed.data.route || null }
           : {}),
+        ...detail,
         updatedAt: new Date(),
         updatedById: ctx.user.id,
       })
       .where(eq(customers.id, customerId));
+
+    /* A phone or a contact person sent here — an older caller, the sales
+       manager's edit — is folded into the contacts list rather than left as a
+       column the panel does not know. */
+    if (parsed.data.phone || parsed.data.contactPerson !== undefined) {
+      await reconcileContacts(customerId, ctx.user.id);
+      if (parsed.data.contactPerson !== undefined) {
+        await renamePrimaryContact(customerId, parsed.data.contactPerson || null, ctx.user.id);
+      }
+    }
 
     if (voided && before) await recordReviewVoid(db, { lead: before, voided, actorId: ctx.user.id });
 
@@ -790,12 +927,16 @@ export async function updateCustomer(
       action: "customer.update",
       entityType: "customer",
       entityId: customerId,
-      beforeState: { name: existing.name, phone: existing.phone } as never,
+      beforeState: Object.fromEntries(
+        Object.keys(parsed.data).map((k) => [k, (existing as Record<string, unknown>)[k] ?? null]),
+      ) as never,
       afterState: parsed.data as never,
     });
     // A new town re-places a shop the tree was matching from its text; a
     // reviewed or hand-picked place is left alone by the resolver itself.
-    if (parsed.data.city) await placeShopsNow([customerId]);
+    if (parsed.data.city || parsed.data.region !== undefined || parsed.data.area !== undefined) {
+      await placeShopsNow([customerId]);
+    }
 
     refreshAll();
     return okVoid("Customer updated");
@@ -2138,7 +2279,7 @@ export async function triggerJob(
      * runnable from the screen"). Every other job stays the administrator's.
      */
     const ctx = await resolveScope();
-    const { isPlatformAdmin, canFor } = await import("@/lib/access-control");
+    const { isPlatformAdmin } = await import("@/lib/access-control");
     const sheetJob = job === "sheet-reconcile" || job === "sheet-payments" || job === "project-sheet";
     const allowed =
       (await isPlatformAdmin(ctx.user)) || (sheetJob && (await canFor(ctx.user, "sheet.import")));
