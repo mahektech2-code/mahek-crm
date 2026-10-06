@@ -54,6 +54,7 @@ const APP_ROUTES: ReadonlyArray<readonly [string, string]> = [
   ["/founder", "founder"],
   ["/enquiries", "enquiries"],
   ["/erp", "erp"],
+  ["/website", "website"],
 ];
 
 /**

@@ -211,6 +211,20 @@ const enquiries = (
   note,
 });
 
+const website = (
+  slug: string,
+  label: string,
+  group: string,
+  note?: string,
+): AppModule => ({
+  key: `website.${slug}`,
+  app: "website",
+  label,
+  group,
+  href: `/website/${slug}`,
+  note,
+});
+
 /**
  * Every module MahekOne has, in the order its app draws them.
  *
@@ -964,6 +978,26 @@ export const APP_MODULES: AppModule[] = [
     "Website Enquiries",
     "The worklist itself — every enquiry, who it is assigned to, and what it is waiting on.",
   ),
+  /* -------------------------------------------------------- the Website CMS
+   * One module per screen — the public site's content desk, granted
+   * separately from every other app for the same reason the Website
+   * Enquiries app is: nobody who already holds Sales, Accounts or HRMS does
+   * this work. Mock data only in this PR; a grant here opens the screens and
+   * nothing on the live site yet.
+   */
+  { key: "website.dashboard", app: "website", label: "Dashboard", group: "Website", href: "/website", exact: true },
+  website("products", "Products", "Website", "The catalogue shown on the public site."),
+  website("industries", "Industries", "Website", "The industries the public site says Mahek serves."),
+  website("pages", "Pages", "Website", "About, Manufacturing, Distributor and Contact — their sections and copy."),
+  website("gallery", "Gallery", "Website", "Photos shown on the public site."),
+  website("media", "Media", "Website", "The media library behind every image on the site."),
+  website("careers", "Careers", "Website", "Job postings shown on the public site. Applications are managed in Enquiries."),
+  website("testimonials", "Testimonials", "Website", "Customer quotes shown on the public site."),
+  website("milestones", "Milestones", "Website", "The company timeline shown on the public site."),
+  website("navigation", "Navigation", "Website", "The header and footer menus."),
+  website("seo", "SEO", "Website", "Per-page titles, descriptions and metadata."),
+  website("settings", "Settings", "Website", "Company, social, contact and analytics settings for the public site."),
+
   /*
    * THE ERP: one module per BUILT screen, read off its own registry so the
    * sidebar, this guard and the access screen cannot disagree. Each screen is

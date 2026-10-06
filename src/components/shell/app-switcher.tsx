@@ -37,6 +37,7 @@ const GLYPH: Record<AppId, string> = {
   founder: "target",
   enquiries: "mail",
   erp: "clipboard",
+  website: "grid",
 };
 
 export function AppSwitcher({

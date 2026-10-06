@@ -669,6 +669,8 @@ export const appIdEnum = pgEnum("app_id", [
   "enquiries",
   /** The factory, the godowns and fulfilment: purchase to dispatch. */
   "erp",
+  /** The CMS for mahek-website — its own app, granted separately like `enquiries`. */
+  "website",
 ]);
 
 /* --------------------------------------------------------- §2 configuration */
