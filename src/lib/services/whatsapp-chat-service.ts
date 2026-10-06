@@ -17,6 +17,9 @@ import { sendWatiText } from "../wati";
 import { replyText, waNumber } from "../whatsapp-delivery";
 import { sessionWindowEnds, type TrackedMessage } from "../whatsapp-status";
 import { announceWa } from "../wa-live";
+import { getConfig } from "../config/store";
+import { write } from "../writing-model";
+import { buildPolishPrompt, cleanPolished, POLISH_SYSTEM, type PolishMode } from "../whatsapp-reply-polish";
 import { deliveryContext, recomputeLastWhatsapp } from "./whatsapp-service";
 
 /* ---------------------------------------------------------------------------
@@ -588,4 +591,57 @@ export async function markThreadHandled(key: string, handled = true): Promise<Re
     number: t.kind === "unknown" ? t.number : null,
   });
   return ok(undefined, handled ? "Marked handled" : "Back in Needs reply");
+}
+
+/**
+ * The draft, rewritten with the conversation in front of the model — the
+ * review step before a typed reply is sent. Reads the thread through
+ * `getThread`, so it is scoped exactly as opening the conversation is, and
+ * sends nothing anywhere but the writing model: the person still reads the
+ * answer and presses Send themselves.
+ *
+ * The model is the dictation writing model (`voice.languageModel`), through
+ * the same OpenAI-then-Sarvam fall-through, but NOT gated on `voice.enabled`:
+ * that switch is about microphones, and a deployment that turned dictation off
+ * has not said anything about help with the words.
+ */
+export async function polishChatReply(input: {
+  key: string;
+  draft: string;
+  mode: PolishMode;
+  instruction?: string;
+}): Promise<Result<{ text: string }>> {
+  await requireUser();
+  const draft = input.draft.trim();
+  if (!draft) return err("Write the message first.", "validation");
+  if (draft.length > 4000) return err("Keep the message under 4,000 characters.", "validation");
+  if (input.mode === "rewrite" && !input.instruction?.trim()) return err("Say what to change.", "validation");
+
+  const thread = await getThread(input.key);
+  if (!thread.ok) return thread;
+
+  const config = await getConfig();
+  const written = await write({
+    system: POLISH_SYSTEM,
+    prompt: buildPolishPrompt({
+      turns: thread.data.events.map((e) => ({ fromThem: e.fromThem, text: e.text, at: e.at })),
+      customerName: thread.data.name,
+      draft,
+      mode: input.mode,
+      instruction: input.instruction?.slice(0, 500),
+    }),
+    openaiModel: config["voice.languageModel"],
+    timeoutMs: 30_000,
+  });
+  if (!written.ok) {
+    return err(
+      written.reason === "not_configured"
+        ? "Help with the wording is not set up on this deployment — no OpenAI or Sarvam key."
+        : "That did not come back. Your message is unchanged — edit it here or send it as written.",
+      written.reason === "not_configured" ? "rule_violation" : "conflict",
+    );
+  }
+  const text = cleanPolished(written.text).slice(0, 4000);
+  if (!text) return err("That came back empty. Your message is unchanged.", "conflict");
+  return ok({ text });
 }

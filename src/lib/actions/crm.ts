@@ -64,6 +64,7 @@ import {
 import {
   markThreadHandled as markThreadHandledService,
   sendChatMessage as sendChatMessageService,
+  polishChatReply as polishChatReplyService,
 } from "@/lib/services/whatsapp-chat-service";
 import {
   actionReply as actionReplyService,
@@ -1714,6 +1715,27 @@ export async function sendChatMessage(input: {
       key: String(input?.key ?? ""),
       text: String(input?.text ?? ""),
       idempotencyKey: String(input?.idempotencyKey ?? ""),
+    });
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** The review step's rewrite. Write level only: it exists to be sent. */
+export async function polishChatReply(input: {
+  key: string;
+  draft: string;
+  mode: "enhance" | "rewrite";
+  instruction?: string;
+}): Promise<Result<{ text: string }>> {
+  try {
+    const refused = await whatsappRefusal("chat");
+    if (refused) return refused;
+    return await polishChatReplyService({
+      key: String(input?.key ?? ""),
+      draft: String(input?.draft ?? ""),
+      mode: input?.mode === "rewrite" ? "rewrite" : "enhance",
+      instruction: input?.instruction ? String(input.instruction) : undefined,
     });
   } catch (e) {
     return fromThrown(e);

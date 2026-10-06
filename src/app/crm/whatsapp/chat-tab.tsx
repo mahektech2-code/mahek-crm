@@ -12,6 +12,7 @@ import { clock, phoneDisplay, shortDate } from "@/lib/format";
 import { previewOf, whenLabel } from "@/lib/whatsapp-status";
 import { MEDIA_LABEL, type MediaType } from "@/lib/whatsapp-delivery";
 import { ReplyMedia } from "./reply-media";
+import { ReplyReview } from "./reply-review";
 import { ImageViewer, type ViewerImage } from "./image-viewer";
 import type {
   ChatShow,
@@ -74,6 +75,7 @@ const WA = {
 
 export function ChatTab({
   canWrite,
+  canPolish,
   recordHref,
   initial,
   initialKey,
@@ -89,6 +91,8 @@ export function ChatTab({
 }: {
   /** False for the Read level: the chats and the log, and no way to answer. */
   canWrite: boolean;
+  /** Whether the review step before a reply can offer to improve its wording. */
+  canPolish: boolean;
   /** Where "Open record" goes — the CRM record, or the Accounts ledger. */
   recordHref: (customerId: string) => string;
   initial: List;
@@ -428,6 +432,7 @@ export function ChatTab({
             now={clockMs}
             showAssignee={showAssignee}
             canWrite={canWrite}
+            canPolish={canPolish}
             recordHref={recordHref}
             onTemplate={(customerId) => openTool("send", customerId)}
             onChanged={() => {
@@ -590,6 +595,7 @@ function ThreadPane({
   now,
   showAssignee,
   canWrite,
+  canPolish,
   recordHref,
   onTemplate,
   onChanged,
@@ -599,6 +605,7 @@ function ThreadPane({
   now: number;
   showAssignee: boolean;
   canWrite: boolean;
+  canPolish: boolean;
   recordHref: (customerId: string) => string;
   /** Opens New message with this customer picked — the way past a closed window. */
   onTemplate: (customerId: string) => void;
@@ -639,8 +646,21 @@ function ThreadPane({
     if (el) el.scrollTop = el.scrollHeight;
   }, [t.events.length, sending]);
 
-  const send = async () => {
+  /*
+   * Send does not send: it opens the review, and the review sends. A typed
+   * reply leaves the business number for a customer's phone and cannot be
+   * recalled, so it is read once more first — see `reply-review.tsx`. It
+   * unmounts on closing, so each opening starts fresh.
+   */
+  const [reviewing, setReviewing] = React.useState<{ draft: string } | null>(null);
+  const review = () => {
     const body = text.trim();
+    if (!body || sending || reviewing) return;
+    setReviewing({ draft: body });
+  };
+
+  const send = async (approved: string) => {
+    const body = approved.trim();
     if (!body || sending) return;
     setSending(body);
     setText("");
@@ -674,6 +694,22 @@ function ThreadPane({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      {reviewing ? (
+        <ReplyReview
+          threadKey={t.key}
+          customerName={t.name}
+          draft={reviewing.draft}
+          canPolish={canPolish}
+          onBack={(back) => {
+            setText(back);
+            setReviewing(null);
+          }}
+          onSend={(approved) => {
+            setReviewing(null);
+            void send(approved);
+          }}
+        />
+      ) : null}
       {viewing !== null && photos[viewing] ? (
         <ImageViewer images={photos} index={viewing} onIndex={setViewing} onClose={() => setViewing(null)} />
       ) : null}
@@ -819,7 +855,7 @@ function ThreadPane({
                     // Enter sends and Shift+Enter is a new line, as in WhatsApp.
                     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                       e.preventDefault();
-                      void send();
+                      review();
                     }
                   }}
                   maxLength={4000}
@@ -830,22 +866,27 @@ function ThreadPane({
                 />
               </div>
               <button
-                onClick={() => void send()}
+                onClick={review}
                 disabled={!text.trim() || Boolean(sending)}
-                title="Send (Enter)"
-                aria-label="Send"
+                /*
+                 * One button, and it says what it does. There is no plain Send
+                 * beside it and no setting to skip the review: every typed
+                 * reply is read back before it leaves the business number.
+                 */
+                title="Review and send (Enter)"
                 className={cx(
-                  "mb-0.5 flex h-[42px] w-[42px] flex-none cursor-pointer items-center justify-center rounded-full text-white disabled:cursor-default disabled:opacity-40",
+                  "mb-0.5 flex h-[42px] flex-none cursor-pointer items-center gap-2 rounded-full px-4 text-[14px] font-medium text-white disabled:cursor-default disabled:opacity-40",
                   WA.accent,
                 )}
               >
-                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor" aria-hidden>
+                Review &amp; send
+                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor" aria-hidden>
                   <path d="M1.101 21.757 23.8 12.028 1.101 2.3l.011 7.912 13.623 1.816-13.623 1.817-.011 7.912z" />
                 </svg>
               </button>
             </div>
             <div className="mt-1 px-1 text-[11px] text-[#667781]">
-              From the business number · free text until {ends ? inline(whenLabel(ends.toISOString(), businessDay)) : "-"} · Shift+Enter for a new line
+              From the business number · free text until {ends ? inline(whenLabel(ends.toISOString(), businessDay)) : "-"} · Enter to review and send · Shift+Enter for a new line
             </div>
           </>
         )}
