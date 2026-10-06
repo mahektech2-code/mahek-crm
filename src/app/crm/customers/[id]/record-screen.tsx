@@ -623,6 +623,7 @@ export function RecordScreen({
               : "No open bills"
           }
           subTone={billStats.overdue ? "danger" : undefined}
+          link={{ href: `/crm/bills?customer=${customer.id}`, label: "See all bills →" }}
         />
         <Tile
           label="Last order"
@@ -639,16 +640,24 @@ export function RecordScreen({
           value={money(target.achieved)}
           sub={
             target.amount === null
-              ? "No monthly target"
-              : `of ${money(target.amount)}${target.isDefault ? " (default)" : ""}`
+              ? /* Said in words rather than drawn as a 0% bar: the account
+                   is not behind on anything. */
+                customer.thirdParty
+                ? "No target — billed by its distributor, so it counts to that account's month"
+                : "No target — a lead picks one up on its first order"
+              : `of ${money(target.amount)}${target.isDefault ? " (default target)" : ""}`
           }
           progress={targetPct}
         />
         <Tile
           label="Pays on average"
           value={customer.paysInDays ? `${customer.paysInDays} days` : "—"}
-          tone={customer.paysInDays && paysLate ? "danger" : undefined}
-          sub={`Credit terms ${customer.creditTermDays} days`}
+          tone={customer.paysInDays ? (paysLate ? "danger" : "success") : undefined}
+          sub={
+            customer.paysInDays
+              ? `Credit terms ${customer.creditTermDays} days`
+              : `No confirmed payment yet · terms ${customer.creditTermDays} days`
+          }
         />
         <Tile
           label="Next call"
@@ -662,7 +671,7 @@ export function RecordScreen({
           }
           sub={
             followUpStage
-              ? `Collections stage ${followUpStage.stage} · ${followUpStage.daysOverdue} days overdue`
+              ? `Collections stage ${followUpStage.stage} · ${followUpStage.daysOverdue} days overdue · next by ${followUpStage.nextChannel === "whatsapp" ? "WhatsApp" : "call"}`
               : customer.expectedOrderDate
                 ? `Order expected ${shortDate(customer.expectedOrderDate)}`
                 : undefined
@@ -1021,19 +1030,12 @@ export function RecordScreen({
                 label="Buying cycle"
                 value={
                   customer.cycleIsDefault
-                    ? `${customer.cycleDays} days (default)`
+                    ? `${customer.cycleDays} days (default — not enough order history)`
                     : `${customer.cycleDays} days${
                         customer.cycleConfidence === null || customer.cycleConfidence === undefined
                           ? ""
-                          : ` · ${confidenceWord(customer.cycleConfidence).toLowerCase()} confidence`
+                          : ` · ${confidenceWord(customer.cycleConfidence).toLowerCase()} confidence (${customer.cycleConfidence}%)`
                       }`
-                }
-                title={
-                  customer.cycleIsDefault
-                    ? "Not enough order history yet — this is the configured default"
-                    : customer.cycleConfidence != null
-                      ? `${customer.cycleConfidence}% confident`
-                      : undefined
                 }
               />
               <Fact
@@ -1085,7 +1087,7 @@ export function RecordScreen({
                 <Fact label="Sales" value={customer.salesAmName} />
               )}
               <dt className="whitespace-nowrap text-muted">Sales manager</dt>
-              <dd className="m-0 flex min-w-0 items-center justify-between gap-2 break-words text-ink">
+              <dd className="m-0 flex min-w-0 flex-wrap items-center justify-between gap-x-2 break-words text-ink">
                 <span>{customer.salesManagerName ?? <span className="text-muted">-</span>}</span>
                 {canAssignSalesManager ? (
                   <button
@@ -1103,7 +1105,7 @@ export function RecordScreen({
                   {/* "Not handed over" in words: a real, actionable state,
                       not missing data. */}
                   <dt className="whitespace-nowrap text-muted">Relationship</dt>
-                  <dd className="m-0 flex min-w-0 items-center justify-between gap-2 break-words text-ink">
+                  <dd className="m-0 flex min-w-0 flex-wrap items-center justify-between gap-x-2 break-words text-ink">
                     <span>
                       {customer.relationshipOwnerName ?? (
                         <span className="text-muted">Not handed over</span>
@@ -1176,6 +1178,22 @@ export function RecordScreen({
               <Fact label="Route" value={customer.route} />
               {/* Only what somebody recorded: "Billed by X" reads as a fact
                   somebody stands behind. */}
+              {/* What this account is, in full — the badge says it in two
+                  words; the kind underneath explains why a third-party
+                  customer can still be invoiced one day. */}
+              {customer.thirdParty ? (
+                <Fact
+                  label="Type"
+                  value={`Third-party customer — we deliver, a distributor bills. Underneath, still a ${customer.kind}.`}
+                />
+              ) : null}
+              {customer.doNotContact ? <Fact label="Standing" value="Do not contact" /> : null}
+              {customer.whatsappDnd ? (
+                <Fact
+                  label="WhatsApp"
+                  value={`DND${customer.whatsappDndReason ? ` — ${customer.whatsappDndReason}` : ""}`}
+                />
+              ) : null}
               {customer.thirdParty ? (
                 <Fact label="Billed by" value={billedBy(distributors)} />
               ) : customer.kind === "customer" && deliveryAddresses.length ? (
@@ -1733,14 +1751,17 @@ function Tile({
   tone,
   subTone,
   progress,
+  link,
 }: {
   label: string;
   value: React.ReactNode;
   sub?: string;
-  tone?: "danger";
+  tone?: "danger" | "success";
   subTone?: "danger";
   /** 0–100, drawn as a bar under the value — the target tile. */
   progress?: number | null;
+  /** Where to go for the whole of what this number summarises. */
+  link?: { href: string; label: string };
 }) {
   return (
     <Card className="px-4 py-3">
@@ -1748,7 +1769,7 @@ function Tile({
       <div
         className={cx(
           "mt-0.5 text-[20px] leading-7 font-semibold",
-          tone === "danger" ? "text-danger" : "text-ink",
+          tone === "danger" ? "text-danger" : tone === "success" ? "text-success" : "text-ink",
         )}
       >
         {value}
@@ -1763,6 +1784,11 @@ function Tile({
         <div className={cx("mt-0.5 text-[12px]", subTone === "danger" ? "text-danger" : "text-muted")}>
           {sub}
         </div>
+      ) : null}
+      {link ? (
+        <Link href={link.href} className="mt-1 inline-block text-[12px] text-brand no-underline">
+          {link.label}
+        </Link>
       ) : null}
     </Card>
   );
