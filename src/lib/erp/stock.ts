@@ -2,6 +2,7 @@ import "server-only";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { fillFigures, packCosting, boxFigures, sfgRate } from "./engines/production";
+import { landingFigures, shareInwardCost } from "./engines/purchase";
 
 /* ---------------------------------------------------------------------------
  * Stock, read off the inventory ledgers (spec §6.1). ONE statement of
@@ -40,6 +41,49 @@ export async function lockLot(ex: Ex, stage: string, lot: string, godownId: stri
 }
 
 /* =================================================================== RM */
+
+export type LotLanding = {
+  prNumber: number;
+  materialPaise: number | null;
+  transportSharePaise: number;
+  otherSharePaise: number;
+  landingPaise: number | null;
+  /** Per purchase unit (kg, litre or piece), before turning into a litre rate. */
+  landedRatePaise: number | null;
+};
+
+/**
+ * Every register lot whose PR carries a transport or other inward cost, with
+ * its share of each — by value across the PR's lots, worked out here on read
+ * so a rate entered later moves the split with nothing to rebuild. A lot with
+ * no entry here has no inward cost: its landing cost is its material cost.
+ */
+export async function lotLandings(ex: Ex = db): Promise<Map<string, LotLanding>> {
+  const out = await rows<Row>(
+    sql`
+    select p.id, p.lot_no as "lotNo", p.pr_number as "prNumber", p.quantity::float8 as qty, p.rate_paise::float8 as rate,
+           c.transport_cost_paise::float8 as transport, c.other_cost_paise::float8 as other
+      from erp_purchases p join erp_pr_costs c on c.pr_number = p.pr_number
+     where c.transport_cost_paise > 0 or c.other_cost_paise > 0
+  `,
+    ex,
+  );
+  const byPr = new Map<number, Row[]>();
+  for (const r of out) byPr.set(Number(r.prNumber), [...(byPr.get(Number(r.prNumber)) ?? []), r]);
+  const result = new Map<string, LotLanding>();
+  for (const [pr, lots] of byPr) {
+    const material = lots.map((l) => ({ id: String(l.id), materialPaise: l.rate == null ? null : Math.round(num(l.qty) * num(l.rate)) }));
+    const transport = shareInwardCost(material, num(lots[0].transport)).shares;
+    const other = shareInwardCost(material, num(lots[0].other)).shares;
+    for (const l of lots) {
+      const t = transport.get(String(l.id)) ?? 0;
+      const o = other.get(String(l.id)) ?? 0;
+      const f = landingFigures({ quantity: num(l.qty), ratePaise: l.rate == null ? null : num(l.rate), sharePaise: t + o });
+      result.set(String(l.lotNo), { prNumber: pr, transportSharePaise: t, otherSharePaise: o, ...f });
+    }
+  }
+  return result;
+}
 
 export type RmLot = {
   rawMaterialId: string;
@@ -92,9 +136,7 @@ export async function rmLots(ex: Ex = db): Promise<RmLot[]> {
            i.lot_no as "lotNo", i.godown_id as "godownId", g.name as godown,
            (i.qty - coalesce(o.qty, 0))::float8 as stock,
            l.id as "latestEntryId", l.entry_date::text as "latestDate", i.first as "firstDate",
-           case when r.rate_paise is null then null
-                when r.unit = 'Kg' then round(r.rate_paise * coalesce(r.density, 0))::float8
-                else r.rate_paise::float8 end as "ratePaise"
+           r.rate_paise::float8 as "unitRate", r.unit as "purchaseUnit", r.density::float8 as density
       from inflow i
       join erp_raw_materials m on m.id = i.raw_material_id
       join erp_godowns g on g.id = i.godown_id
@@ -105,6 +147,18 @@ export async function rmLots(ex: Ex = db): Promise<RmLot[]> {
   `,
     ex,
   );
+  /*
+   * THE STOCK RATE IS THE LANDED RATE: the bill rate plus the lot's share of
+   * its PR's transport and other inward cost, so what an SFG batch costs
+   * includes getting its raw material through the gate. A kg rate becomes a
+   * litre rate by density exactly as the bill rate always did.
+   */
+  const landings = await lotLandings(ex);
+  const litreRate = (r: Row): number | null => {
+    if (r.unitRate == null) return null;
+    const perUnit = landings.get(String(r.lotNo))?.landedRatePaise ?? Number(r.unitRate);
+    return r.purchaseUnit === "Kg" ? Math.round(perUnit * num(r.density)) : perUnit;
+  };
   const lots = out.map((r) => ({
     rawMaterialId: String(r.rawMaterialId),
     item: String(r.item),
@@ -117,7 +171,7 @@ export async function rmLots(ex: Ex = db): Promise<RmLot[]> {
     latestEntryId: String(r.latestEntryId),
     latestDate: String(r.latestDate),
     firstDate: String(r.firstDate ?? r.latestDate),
-    ratePaise: r.ratePaise == null ? null : Number(r.ratePaise),
+    ratePaise: litreRate(r),
   }));
   /*
    * CANS AND BOXES ARE USED UP (spec §14 A-30). Filling takes empty cans and

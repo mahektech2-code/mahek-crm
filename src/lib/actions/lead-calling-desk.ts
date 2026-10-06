@@ -7,6 +7,7 @@ import { z } from "zod";
 import { db } from "@/db";
 import { auditLog, calls, customers, users } from "@/db/schema";
 import { assertCustomerInScope, canAny, hatsFor, requireCapability } from "@/lib/access-control";
+import { holdsLeadSeat } from "@/lib/services/lead-verifier";
 import { NO_ANSWER_REASONS } from "@/lib/call-outcomes";
 import { addDays, nextWorkingDay, type BusinessDate } from "@/lib/business-date";
 import { getConfig } from "@/lib/config/store";
@@ -729,7 +730,25 @@ async function preparePromotion(
    * becoming a Prospect nobody can verify.
    */
   let managerId: string | null = null;
-  if (lead.leadManagerId) {
+  /* THE LEAD'S OWN SALES MANAGER COMES FIRST. Verification follows `sales_manager_id`,
+     so where the seat is filled and its holder can verify (the capability, or the
+     seat itself) the call is owed to them, not to some other `lead.verify` holder
+     the region happens to default to. */
+  if (lead.salesManagerId) {
+    const [sm] = await db
+      .select({ id: users.id, role: users.role, active: users.active })
+      .from(users)
+      .where(eq(users.id, lead.salesManagerId))
+      .limit(1);
+    if (
+      sm?.active &&
+      ((await holdsLeadSeat(sm, lead.salesManagerId)) ||
+        canAny(await hatsFor({ id: sm.id, role: sm.role }), "lead.verify"))
+    ) {
+      managerId = sm.id;
+    }
+  }
+  if (!managerId && lead.leadManagerId) {
     const decided = Boolean(lead.leadManagerDecidedAt);
     const seat = await db
       .select({ id: users.id, role: users.role, active: users.active })

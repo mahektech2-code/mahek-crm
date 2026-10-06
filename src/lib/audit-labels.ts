@@ -418,6 +418,7 @@ const DESCRIBE: Record<string, Describer> = {
   "hrms.leaveCredit.run": () => ({ says: ["ran the leave credit for everybody"], changes: false }),
   "hrms.salary.pay": () => ({ says: ["marked a salary as paid"], changes: false }),
   "hrms.advance.give": (c) => ({ says: ["gave a salary advance", ...(num(c.a.amount) ? ["of", strong(rupees(c.a.amount)!)] : [])], changes: false }),
+  "catalogue.packing_import": (c) => ({ says: ["imported ERP packing from Mahek Plus", ...(num(c.a.packingSet) !== null ? [`(${num(c.a.packingSet)} SKUs, ${num(c.a.withCanUse) ?? 0} with a Can Use, ${num(c.a.materialsCreated) ?? 0} packing materials added)`] : [])], changes: false }),
   "catalogue.import": (c) => ({ says: ["imported the product catalogue", ...(num(c.a.created) !== null ? [`(${num(c.a.created)} new, ${num(c.a.updated) ?? 0} changed)`] : [])], changes: false }),
   "import.bills": () => ({ says: ["imported bills from a file"], changes: false }),
 
@@ -573,6 +574,29 @@ const DESCRIBE: Record<string, Describer> = {
   "end-sessions": (c) => ({ says: ["signed", c.user(c.e.entityId), "out everywhere"], changes: false }),
   "impersonate.start": (c) => ({ says: ["made a link to sign in as", c.user(c.e.entityId)], note: null, changes: false }),
   "impersonate.enter": (c) => ({ says: ["signed in as", c.user(c.e.entityId)], note: null, changes: false }),
+  "access.erp-designation.create": (c) => ({
+    says: ["created the ERP designation", strong(str(c.a.name) ?? "a designation")],
+    note: null,
+    changes: false,
+  }),
+  "access.erp-designation.edit": (c) => ({
+    says: [
+      "changed the ERP designation",
+      strong(str(c.a.name) ?? str(c.b.name) ?? "a designation"),
+      ...(Array.isArray(c.a.moved) && c.a.moved.length
+        ? [`— ${c.a.moved.length} ${c.a.moved.length === 1 ? "person" : "people"} moved with it`]
+        : []),
+    ],
+    note: Array.isArray(c.a.leftAlone) && c.a.leftAlone.length ? `Left as customised: ${c.a.leftAlone.join(", ")}` : null,
+    changes: false,
+  }),
+  "access.erp-designation.delete": (c) => ({
+    says: ["deleted the ERP designation", strong(str(c.b.name) ?? "a designation")],
+    note: null,
+    changes: false,
+  }),
+  "erp.viewAs.start": (c) => ({ says: ["previewed the ERP as", strong(str(c.a.as) ?? "somebody else")], note: null, changes: false }),
+  "erp.viewAs.stop": (c) => ({ says: ["stopped previewing the ERP as", strong(str(c.b.as) ?? "somebody else")], note: null, changes: false }),
   "provision-user": (c) => ({ says: ["updated the account of", c.user(c.e.entityId), "from the team list"], changes: false }),
   "admin.identity-correction": (c) => ({ says: ["corrected whose account", c.user(c.e.entityId), "is, directly in the database"], changes: false }),
   "secret.set": (c) => ({
@@ -786,6 +810,7 @@ export const VERBS: Record<string, string> = {
   applySuggestion: "applied the suggested {0}",
   toTesting: "sent {} for testing",
   toPurchase: "sent {} on to purchase",
+  costs: "recorded the transport and inward cost of",
   billReceived: "marked the bill received on",
   billNotReceived: "marked the bill not received on",
   issueCn: "issued a credit note on",

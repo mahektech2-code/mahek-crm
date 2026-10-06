@@ -101,10 +101,25 @@ describe("order valuation is blocked until a price source is confirmed", () => {
 
 describe("the product master itself", () => {
   test("every level is populated and the counts are the document's", () => {
-    assert.equal(FORMULATIONS.length, 19);
-    assert.equal(BRANDS.length, 32);
-    assert.equal(FINISHED_GOODS.length, 107);
-    assert.equal(SKUS.length, 213);
+    // The document's 19 / 32 / 107 / 213, plus what was added after it from
+    // Mahek Plus: a Packaging formulation and brand, three finished goods and
+    // six SKUs — see ADDED in scripts/parse-catalogue.mjs.
+    assert.equal(FORMULATIONS.length, 20);
+    assert.equal(BRANDS.length, 33);
+    assert.equal(FINISHED_GOODS.length, 110);
+    assert.equal(SKUS.length, 219);
+  });
+
+  test("the empty drum is sold, so it is a SKU — and it holds no thinner", () => {
+    const drum = SKUS.find((s) => s.externalIds.includes(152));
+    assert.ok(drum, "#152 is on 43 order lines as \"Empty Drum\"");
+    assert.equal(drum.name, "Empty Drum");
+    assert.equal(drum.formulation, "Packaging");
+    assert.equal(drum.millilitresPerCan, 0, "an empty drum must add no litres to anybody's volume");
+  });
+
+  test("every Product ID the document held or excluded is now named", () => {
+    for (const id of [76, 77, 152]) assert.ok(SKUS.some((s) => s.externalIds.includes(id)), `#${id}`);
   });
 
   test("the canonical name is unique, because it is the join key to legacy orders", () => {

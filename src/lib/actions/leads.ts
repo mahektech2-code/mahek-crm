@@ -1,5 +1,6 @@
 "use server";
 
+import { requireLeadVerifier } from "@/lib/services/lead-verifier";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, notInArray } from "drizzle-orm";
@@ -1314,7 +1315,7 @@ export async function recordLeadValidationCall(
     if (!parsed.success) return zodErr(parsed.error);
     const c = parsed.data;
 
-    const ctx = await requireCapability("lead.verify");
+    const ctx = await requireLeadVerifier(customerId);
     const found = await reachableLead(customerId);
     if (!found.ok) return found.refusal;
     const lead = found.lead;

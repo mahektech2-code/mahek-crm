@@ -10,6 +10,8 @@ import { auditLog, customerDistributors, customers, notifications, products, use
 import { canFor, requireCapability } from "@/lib/access-control";
 import { canOpenModule } from "@/lib/access";
 import { LEAD_PRIORITIES } from "@/lib/lead-priority";
+import { sourcesFor } from "@/lib/lead-source-scope";
+import { isSalesManagerSeat } from "@/lib/services/lead-source-access";
 import { getConfig } from "@/lib/config/store";
 import { today } from "@/lib/recompute";
 import { MBOS_EVENT, writeTimelineEvent } from "@/lib/timeline";
@@ -349,7 +351,14 @@ export async function captureLead(
       );
     }
 
-    const sources = config["leads.sources"];
+    /* A source only the Sales Manager intake offers (`lead-source-scope.ts`) is
+       accepted from somebody explicitly granted that module and from nobody else — the
+       form's `workspace` field is the browser's claim and is not consulted. An
+       enquiry conversion sets its own source and gets no extras. */
+    const sources = sourcesFor(
+      config["leads.sources"],
+      !v.fromEnquiry && (await isSalesManagerSeat(ctx.user.id)),
+    );
     if (!sources.some((o) => o.code === v.source)) {
       return err(
         `"${v.source}" is not one of the sources we record. Pick one from the list.`,

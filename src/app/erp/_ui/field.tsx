@@ -98,7 +98,8 @@ function Control({
     return (
       <span
         className={cx(
-          "flex min-h-8.5 items-center rounded-[4px] border border-dashed bg-canvas px-2.5 text-sm tabular-nums",
+          /* pre-line: a calculation may list several lines, one per lot. */
+          "flex min-h-8.5 items-center whitespace-pre-line rounded-[4px] border border-dashed bg-canvas px-2.5 py-1.5 text-sm tabular-nums",
           error ? "border-danger" : "border-line",
           derived ? "text-ink" : "text-line-strong",
         )}

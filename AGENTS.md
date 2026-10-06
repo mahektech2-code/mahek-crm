@@ -1665,8 +1665,48 @@ column a power reveals is removed on the SERVER (`visibleCols` /
 `withoutHidden`) — the value never reaches the browser — and every write that
 needs one re-checks it in the handler.
 
+**A DESIGNATION IS THE JOB, and it is LINKED rather than stamped.** Owner /
+CEO, Office / accounts, Quality tester, Godown / dispatch — the ten the ERP's
+design previews access as — are rows in `erp_designations`, each a level, a set
+of screens and a set of powers with a name on it, seeded by
+`0218_erp_designations` from the design's own role table. The Access dialog
+offers one first on the ERP's block: picking it sets the level, the screens and
+the powers in one move. Editing a designation on Admin Console → ERP
+designations moves EVERYBODY WHO STILL HOLDS EXACTLY IT, in the same
+transaction, and tells them; a holder somebody changed by hand afterwards is
+CUSTOMISED and is left alone, because that difference is a decision made about
+one person that an edit to "Quality tester" says nothing about. The review page
+names both lists before anything is written.
+
+**Customised is DERIVED, never stored.** `lib/erp/designations.ts` compares
+EFFECTIVE access — no module rows is the whole app, the always-open screens are
+nobody's to grant, an administrator holds every power without a row — so two
+people who can open exactly the same screens are never told apart by how their
+rows happened to be saved. It is pure and client-safe because the dialog draws
+"matches / customised" live from the same arithmetic the edit is applied by.
+`all_screens` is the "no rows is the whole app" rule said once for a
+designation, so Owner / CEO gains a screen built next month. Deleting a
+designation never takes a screen away from anybody: its holders keep their
+access and lose only the name. Taking the ERP away takes the designation with
+it, like the powers. A test reads the seed migration and refuses a screen or a
+power the ERP does not have.
+
+**PREVIEW ACCESS AS is the design's sidebar control, made real and made
+read-only.** An ERP administrator can see the ERP exactly as a designation or as
+one person sees it — the sidebar, the hidden columns, the narrowed lists — from
+the foot of the sidebar or the designations page. `erpContext` carries `user`
+(whose ERP is drawn) and `actor` (who is signed in), and `requireErpWrite`
+refuses every write while `viewingAs` is set: acting with somebody else's access
+is a different thing from looking at it, and would need a different record.
+Loading a form is allowed, because it writes nothing and the fields are the
+point; its submit is not. The cookie is honoured only while its holder is still
+an ERP administrator, so taking that away ends the preview too. A designation
+has nobody behind it, so lists that belong to a person answer for the
+administrator, and the banner says so. `erpAudit` always records the actor.
+
 **Every write goes through four server actions** (`lib/actions/erp.ts`): run
-an action, run a bulk action, submit a form, load a form. Each re-checks that
+an action, run a bulk action, submit a form, load a form (which writes nothing
+and is the one a preview may open). Each re-checks that
 the person holds the SCREEN before the screen module's own handler checks any
 power, because a server action is a URL and a hidden button is not a
 permission. Screen modules live in `lib/erp/screens/`; a module is a loader
@@ -1683,6 +1723,21 @@ filters, sorts and pages what it was sent.
 (`erp_godown_staff`), never typed; an administrator is assigned everywhere.
 Nobody assigned means no working location, said in words in the header, not a
 guessed default.
+
+**THE WORKING GODOWN IS FOUND BY STANDING IN IT, where it can be.** Once per
+tab, if the browser already holds location permission, the header takes a fix
+and `erpLocateWorkingGodown` measures it against the pins of the godowns that
+person is ASSIGNED to — on the server, so a crafted fix can only choose what the
+menu would have offered. `erp.location.godownRadiusM` is the fence; where two
+overlap the nearer pin wins, and a fix whose accuracy is wider than the fence
+answers "too vague" rather than guessing, because a wrong godown pre-fills every
+form. The browser's permission prompt is never raised unasked — a dialog on
+every page load teaches people to press Block — so the locate button beside the
+chip is how permission is first given. A godown picked by hand stays picked for
+the rest of the tab. The fix itself is not stored: the audit row names the
+godown and the distance from its pin, which answers "why did my location
+change" without recording where anybody was. A godown with no pin cannot be
+found this way, and asking says so.
 
 **The ERP extends MahekOne's records rather than copying them** (PRD §8): a
 Sales Party IS a `customers` row plus `erp_customer_profiles`; a product IS a
@@ -2834,6 +2889,17 @@ same SKU. A legacy row with packing but no sellable name is held the same way,
 and packaging material is excluded outright — both stay listed rather than
 dropped on the floor, because a row nobody can account for later is worse than
 one that says why it is not a product.
+
+**The Empty Drum turned out to be a product, and that is why the exclusion is
+evidence-led.** The document excluded #152 as packaging; it is on 43 order
+lines, because customers buy empty drums. So it is a SKU now, under its own
+`Packaging` formulation, at 0 L — it holds no thinner, and a size borrowed from
+a full drum would add two hundred litres to somebody's volume target for every
+empty one sold. #76 and #77 were named "Plain Can" by the owner, and 234–236
+are newer than the document. All six live in `ADDED` in
+`scripts/parse-catalogue.mjs`, in the document's own columns and kept out of its
+count checks, and the import CLOSES a held row whose Product ID the seed now
+sells, so "Held & excluded" does not go on asking for a decision already made.
 
 **The import is idempotent, and it never unmakes a decision.** It matches on
 the canonical name, reports created/updated/unchanged per field, and a dry run

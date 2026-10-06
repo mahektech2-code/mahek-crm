@@ -10710,6 +10710,78 @@ export const erpUserPowers = pgTable(
 );
 
 /**
+ * A DESIGNATION IS A NAMED SHAPE OF ERP ACCESS — Quality tester, Godown /
+ * dispatch, Order desk — and it is LINKED, not stamped. It holds a level, the
+ * screens and the powers that job needs; a person given one holds exactly
+ * that, and editing the designation moves everybody who still matches it. A
+ * person changed by hand afterwards is CUSTOMISED, which is derived (their
+ * access no longer equals the designation's) and never stored, so an edit
+ * leaves them alone rather than overwriting the exception somebody made on
+ * purpose. See `lib/erp/designations.ts`.
+ */
+export const erpDesignations = pgTable(
+  "erp_designations",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    description: text("description"),
+    /** The level on the `erp` grant: `associate` | `manager` | `admin`. */
+    level: text("level").notNull().default("associate"),
+    /**
+     * Every screen, including ones built after today — the "no module rows is
+     * the whole app" rule, said once for the designation. Its module rows are
+     * then ignored.
+     */
+    allScreens: boolean("all_screens").notNull().default(false),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedById: text("updated_by_id").references(() => users.id, { onDelete: "set null" }),
+  },
+  (t) => [
+    uniqueIndex("erp_designations_name_key").on(t.name),
+    check("erp_designations_level_check", sql`${t.level} in ('associate', 'manager', 'admin')`),
+  ],
+);
+
+/** The screens a designation opens, as `erp.<key>` module keys. Dashboard and settings are always open and never stored. */
+export const erpDesignationModules = pgTable(
+  "erp_designation_modules",
+  {
+    designationId: text("designation_id")
+      .notNull()
+      .references(() => erpDesignations.id, { onDelete: "cascade" }),
+    module: text("module").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.designationId, t.module] })],
+);
+
+/** The ERP powers a designation carries (`lib/erp/powers.ts`). */
+export const erpDesignationPowers = pgTable(
+  "erp_designation_powers",
+  {
+    designationId: text("designation_id")
+      .notNull()
+      .references(() => erpDesignations.id, { onDelete: "cascade" }),
+    power: text("power").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.designationId, t.power] })],
+);
+
+/** Who holds which designation — at most one each, and only while they hold the ERP. */
+export const erpUserDesignations = pgTable("erp_user_designations", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  /** Restrict: a designation somebody holds cannot be deleted out from under them. */
+  designationId: text("designation_id")
+    .notNull()
+    .references(() => erpDesignations.id, { onDelete: "restrict" }),
+  assignedById: text("assigned_by_id").references(() => users.id, { onDelete: "set null" }),
+  assignedAt: timestamp("assigned_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
  * The editable value lists every ERP form picks from (spec §3): material
  * types, areas, transporters, complaint types and the rest. A list is keyed
  * by `list_key`; a retired value is deactivated, never deleted, because
@@ -10920,6 +10992,8 @@ export const erpInward = pgTable(
       .references(() => erpRawMaterials.id),
     drums: integer("drums"),
     weightWithDrum: numeric("weight_with_drum", { precision: 14, scale: 3, mode: "number" }),
+    /** Per drum, as weighed or read at the gate. A kg line's quantity is weight with drum − drums × this. */
+    emptyDrumWeight: numeric("empty_drum_weight", { precision: 10, scale: 3, mode: "number" }),
     quantity: numeric("quantity", { precision: 14, scale: 3, mode: "number" }).notNull(),
     unit: text("unit").notNull(),
     remark: text("remark"),
@@ -10937,6 +11011,43 @@ export const erpInward = pgTable(
   (t) => [
     index("erp_inward_pr_idx").on(t.prNumber),
     check("erp_inward_routed_check", sql`${t.routed} is null or ${t.routed} in ('Testing', 'Purchase')`),
+  ],
+);
+
+/**
+ * WHAT IT COST TO GET A PR TO THE GATE, beyond the goods — once per PR,
+ * because a delivery is one vehicle however many items ride on it. Landing
+ * cost is material + transport + other direct inward cost, and each lot's
+ * share of the last two is worked out on read, by value, by
+ * `shareInwardCost` — never stored, so a rate entered on the register a week
+ * later moves the split with nothing to rebuild.
+ *
+ * `rate_per_km_paise` is the approved rate COPIED at save: changing the
+ * setting next month must not reprice a journey already made.
+ */
+export const erpPrCosts = pgTable(
+  "erp_pr_costs",
+  {
+    prNumber: integer("pr_number").primaryKey(),
+    /** supplier | own_vehicle | third_party | none. */
+    transportMode: text("transport_mode").notNull(),
+    /** What it came to: the bill for supplier/third-party, km × rate for own vehicle, 0 for none. */
+    transportCostPaise: bigint("transport_cost_paise", { mode: "number" }).notNull().default(0),
+    km: numeric("km", { precision: 10, scale: 1, mode: "number" }),
+    ratePerKmPaise: bigint("rate_per_km_paise", { mode: "number" }),
+    tempoNumber: text("tempo_number"),
+    otherCostPaise: bigint("other_cost_paise", { mode: "number" }).notNull().default(0),
+    otherCostNote: text("other_cost_note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [
+    check("erp_pr_costs_mode_check", sql`${t.transportMode} in ('supplier', 'own_vehicle', 'third_party', 'none')`),
+    check("erp_pr_costs_amounts_check", sql`${t.transportCostPaise} >= 0 and ${t.otherCostPaise} >= 0`),
+    check("erp_pr_costs_own_vehicle_check", sql`${t.transportMode} <> 'own_vehicle' or (${t.km} is not null and ${t.ratePerKmPaise} is not null)`),
+    check("erp_pr_costs_none_check", sql`${t.transportMode} <> 'none' or ${t.transportCostPaise} = 0`),
   ],
 );
 

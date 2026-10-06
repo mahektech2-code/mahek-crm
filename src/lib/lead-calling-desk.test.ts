@@ -27,6 +27,7 @@ import { desc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   appAccess,
+  appModuleAccess,
   calls,
   customers,
   leadStageTransitions,
@@ -326,6 +327,35 @@ describe("Test R — Request Prospect is a request, not a Prospect", () => {
     const r = await ask(lead.id, { salesType: "third_party" });
     assert.equal(r.ok, true, r.ok ? "" : r.error);
     assert.equal((await stageOf(lead.id)).leadSalesType, "direct");
+  });
+
+  test("verification is owed to the lead's OWN Sales Manager, ahead of any other lead.verify holder", async () => {
+    /* An associate-level Sales Manager holding the seat and the module. The
+       region's default would have picked `manager` (who holds lead.verify). */
+    const seat = await makeUser("Seat Holder", "associate");
+    await db.insert(appModuleAccess).values({ id: id("ama"), userId: seat.id, app: "crm", module: "crm.sales-manager" });
+
+    const withSeat = await readyLead({ salesManagerId: seat.id });
+    const r = await ask(withSeat.id);
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    assert.equal((await stageOf(withSeat.id)).leadNextActionOwnerId, seat.id, "the verification call is the seat holder's");
+
+    /* Control: no seat, so the existing default still applies and is untouched. */
+    const noSeat = await readyLead();
+    const c = await ask(noSeat.id);
+    assert.equal(c.ok, true, c.ok ? "" : c.error);
+    assert.equal((await stageOf(noSeat.id)).leadNextActionOwnerId, manager.id);
+  });
+
+  test("a seat holder who cannot verify is passed over — the call is never owed to somebody who cannot make it", async () => {
+    /* Holds the seat but not the module: not eligible, so the default applies. */
+    const bare = await makeUser("No Module", "associate");
+    /* A narrowing to a different screen: with NO module rows an app holder has every module. */
+    await db.insert(appModuleAccess).values({ id: id("ama"), userId: bare.id, app: "crm", module: "crm.leads" });
+    const lead = await readyLead({ salesManagerId: bare.id });
+    const r = await ask(lead.id);
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    assert.equal((await stageOf(lead.id)).leadNextActionOwnerId, manager.id);
   });
 
   test("the request's own columns cannot describe an impossible state", async () => {

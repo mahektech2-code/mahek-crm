@@ -68,6 +68,8 @@ export type FieldSpec = {
   /** A section heading, drawn where it first changes down the form. */
   sec?: string;
   req?: boolean;
+  /** Required only while this holds — "weight with drum" is needed for a kg item, not a litre one. */
+  reqWhen?: When;
   /** Fixed options. */
   opts?: string[];
   /** Options that depend on other fields' values: `{ by: "type", map: { Chemical: [...] } }`; a list of fields keys the map by their values joined with "|". */
@@ -75,6 +77,13 @@ export type FieldSpec = {
   hint?: string;
   /** Default value on open. */
   def?: string;
+  /**
+   * Filled in when a field it depends on changes: `{ by: ["product", "item"],
+   * map: { "Nano|Toluene": "200" } }` — header and line values both count, keys
+   * joined with "|". No entry leaves the value as it was; whatever is filled
+   * stays editable. The SFG batch's quantity per batch reads the recipe this way.
+   */
+  fillBy?: { by: string[]; map: Record<string, string> };
   when?: When;
   /** Numeric bounds, checked in the browser and again on the server. */
   min?: number;
@@ -354,6 +363,11 @@ export function cellText(col: ColSpec, v: CellValue | undefined): string {
   if (col.t === "m") return v === "" || v == null ? "—" : inr(v);
   if (col.t === "n") return v === "" || v == null ? "—" : typeof v === "number" ? nf(v) + (col.u ?? "") : String(v);
   return v == null || v === "" ? "—" : String(v);
+}
+
+/** The field as it stands for these values: `reqWhen` folded into `req`. */
+export function resolveField(f: FieldSpec, values: Record<string, string>, data: Record<string, unknown> = {}): FieldSpec {
+  return f.reqWhen && !f.req && whenHolds(f.reqWhen, values, data) ? { ...f, req: true } : f;
 }
 
 export function whenHolds(

@@ -1,10 +1,16 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { cookies } from "next/headers";
 import { db } from "@/db";
-import { erpUserSettings } from "@/db/schema";
+import { eq, inArray } from "drizzle-orm";
+import { erpDesignations, erpGodowns, erpUserSettings, users } from "@/db/schema";
+import { requireUser } from "@/lib/auth";
+import { listUserApps } from "@/lib/access";
+import { getConfig } from "@/lib/config/store";
+import { godownAt, type FenceVerdict } from "@/lib/erp/engines/godown-fence";
 import { err, fromThrown, okVoid, ok, type Result } from "@/lib/result";
-import { ErpNotPermitted, erpContext, requireErpWrite } from "@/lib/erp/access";
+import { ErpNotPermitted, VIEW_AS_COOKIE, erpContext, isErpAdministrator, previewRefusal, requireErpForm, requireErpWrite, setTestViewAs } from "@/lib/erp/access";
 import { screenModule } from "@/lib/erp/screens";
 import { erpScreen, erpHref, erpLink } from "@/lib/erp/registry";
 import type { FormSpec } from "@/lib/erp/ui";
@@ -83,7 +89,7 @@ export async function erpSubmitForm(
 
 export async function erpLoadForm(screen: string, action: string, id: string): Promise<Result<FormSpec>> {
   try {
-    const ctx = await requireErpWrite(screen);
+    const ctx = await requireErpForm(screen);
     const loader = screenModule(screen)?.formLoaders?.[action];
     if (!loader) return err("That form is not available.", "not_found");
     const spec = await loader(ctx, id);
@@ -99,6 +105,7 @@ export async function erpSetWorkingGodown(godownId: string): Promise<Result<unde
   try {
     const ctx = await erpContext();
     if (!ctx.level) return err("The ERP is not on your account.", "not_permitted");
+    if (ctx.viewingAs) return err(previewRefusal(ctx.viewingAs), "not_permitted");
     const g = ctx.assignedGodowns.find((x) => x.id === godownId);
     if (!g) return err("You are not assigned to that godown.", "not_permitted");
     await db
@@ -108,6 +115,53 @@ export async function erpSetWorkingGodown(godownId: string): Promise<Result<unde
     await erpAudit(ctx, "erp.workingGodown", "user", ctx.user.id, null, { godown: g.name });
     revalidatePath("/erp", "layout");
     return okVoid(`Working location is ${g.name} · forms now pre-fill it`);
+  } catch (e) {
+    return refused(e);
+  }
+}
+
+export type ErpLocateResult =
+  | { status: "off" }
+  | { status: "switched" | "already"; godown: string; metres: number }
+  | Exclude<FenceVerdict, { kind: "inside" }>;
+
+/**
+ * The working location found from where somebody is standing. The browser
+ * sends a fix; the fence is measured HERE, against the godowns this person is
+ * assigned to, so a crafted fix can only ever pick something the header's own
+ * menu would have offered. The coordinates are not stored — the audit row
+ * records which godown and how far from its pin, which is what anybody asking
+ * "why did my location change" needs, and nothing about where they live.
+ */
+export async function erpLocateWorkingGodown(fix: { lat: number; lng: number; accuracyM: number | null }): Promise<Result<ErpLocateResult>> {
+  try {
+    const ctx = await erpContext();
+    if (!ctx.level) return err("The ERP is not on your account.", "not_permitted");
+    if (ctx.viewingAs) return ok({ status: "off" });
+    const config = await getConfig();
+    if (!config["erp.location.autoDetect"]) return ok({ status: "off" });
+    if (![fix.lat, fix.lng].every(Number.isFinite) || Math.abs(fix.lat) > 90 || Math.abs(fix.lng) > 180) {
+      return err("That location could not be read.", "validation");
+    }
+    const ids = ctx.assignedGodowns.map((g) => g.id);
+    const pins = ids.length
+      ? await db.select({ id: erpGodowns.id, name: erpGodowns.name, lat: erpGodowns.lat, lng: erpGodowns.lng }).from(erpGodowns).where(inArray(erpGodowns.id, ids))
+      : [];
+    const accuracyM = fix.accuracyM != null && Number.isFinite(fix.accuracyM) ? fix.accuracyM : null;
+    const v = godownAt(pins, { lat: fix.lat, lng: fix.lng, accuracyM }, config["erp.location.godownRadiusM"]);
+    if (v.kind !== "inside") return ok(v);
+    if (ctx.workingGodown?.id === v.godown.id) return ok({ status: "already", godown: v.godown.name, metres: v.metres });
+    await db
+      .insert(erpUserSettings)
+      .values({ userId: ctx.user.id, workingGodownId: v.godown.id })
+      .onConflictDoUpdate({ target: erpUserSettings.userId, set: { workingGodownId: v.godown.id, updatedAt: new Date() } });
+    await erpAudit(ctx, "erp.workingGodown", "user", ctx.user.id, ctx.workingGodown ? { godown: ctx.workingGodown.name } : null, {
+      godown: v.godown.name,
+      by: "location",
+      metresFromPin: v.metres,
+    });
+    revalidatePath("/erp", "layout");
+    return ok({ status: "switched", godown: v.godown.name, metres: v.metres });
   } catch (e) {
     return refused(e);
   }
@@ -175,4 +229,69 @@ export async function erpAsk(question: string): Promise<{ ok: true; answer: impo
   if (!ctx.level) return { ok: false, error: "The ERP is not on your account." };
   const { askErp } = await import("@/lib/erp/ai-ask");
   return askErp(ctx, question);
+}
+
+/* ---------------------------------------------------------------------------
+ * PREVIEW ACCESS AS — the design's sidebar control, made real. An ERP
+ * administrator sees the ERP exactly as a designation or one person would,
+ * read-only. Both doors are here; `erpContext` honours the cookie only while
+ * the person holding it is still an ERP administrator.
+ * ------------------------------------------------------------------------- */
+
+const PREVIEW_HOURS = 4;
+
+function refreshErp() {
+  try {
+    revalidatePath("/erp", "layout");
+  } catch {
+    /* outside a request, which is fine */
+  }
+}
+
+export async function erpStartViewAs(target: { kind: "designation" | "user"; id: string }): Promise<Result<{ label: string }>> {
+  try {
+    const actor = await requireUser();
+    if (!(await isErpAdministrator(actor))) return err("Only an ERP administrator can preview the ERP as somebody else.", "not_permitted");
+    let label: string;
+    if (target.kind === "designation") {
+      const [d] = await db.select({ name: erpDesignations.name }).from(erpDesignations).where(eq(erpDesignations.id, target.id)).limit(1);
+      if (!d) return err("That designation no longer exists.", "not_found");
+      label = d.name;
+    } else {
+      if (target.id === actor.id) return erpStopViewAs().then(() => ok({ label: actor.name }));
+      const [u] = await db.select({ name: users.name, active: users.active }).from(users).where(eq(users.id, target.id)).limit(1);
+      if (!u || !u.active) return err("That person cannot sign in, so there is nothing to preview.", "not_found");
+      if (!(await listUserApps(target.id)).includes("erp")) return err(`${u.name} does not hold the ERP.`, "validation");
+      label = u.name;
+    }
+    const value = `${target.kind}:${target.id}`;
+    if (process.env.NODE_ENV === "test") setTestViewAs(value);
+    else {
+      (await cookies()).set(VIEW_AS_COOKIE, value, {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: process.env.NODE_ENV === "production",
+        path: "/",
+        maxAge: PREVIEW_HOURS * 3600,
+      });
+    }
+    await erpAudit(await erpContext(), "erp.viewAs.start", target.kind, target.id, null, { as: label });
+    refreshErp();
+    return ok({ label }, `Previewing the ERP as ${label} · read-only`);
+  } catch (e) {
+    return refused(e);
+  }
+}
+
+export async function erpStopViewAs(): Promise<Result<undefined>> {
+  try {
+    const ctx = await erpContext();
+    if (process.env.NODE_ENV === "test") setTestViewAs(null);
+    else (await cookies()).delete(VIEW_AS_COOKIE);
+    if (ctx.viewingAs) await erpAudit(ctx, "erp.viewAs.stop", ctx.viewingAs.kind, ctx.viewingAs.id, { as: ctx.viewingAs.label }, null);
+    refreshErp();
+    return okVoid("Back to your own ERP");
+  } catch (e) {
+    return refused(e);
+  }
 }

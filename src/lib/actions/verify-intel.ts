@@ -1,7 +1,7 @@
 "use server";
 
+import { requireLeadVerifier } from "@/lib/services/lead-verifier";
 import { z } from "zod";
-import { requireCapability } from "@/lib/access-control";
 import { canOpenModule } from "@/lib/access";
 import { err, fromThrown, type Result } from "@/lib/result";
 import { analyseVerifyCall, type AnalyseVerifyResult } from "@/lib/services/verify-intel-service";
@@ -42,7 +42,7 @@ export async function analyseVerifyCallAction(
     const parsed = analyseSchema.safeParse(raw);
     if (!parsed.success) return err("That could not be read.", "validation");
 
-    const ctx = await requireCapability("lead.verify");
+    const ctx = await requireLeadVerifier(parsed.data.customerId);
     if (!(await inCrmSalesManagerWorkspace())) {
       return err("The verification assistant is part of the CRM Sales Manager workspace.", "not_permitted");
     }

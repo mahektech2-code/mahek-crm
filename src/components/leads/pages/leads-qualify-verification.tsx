@@ -1,3 +1,6 @@
+import { SALES_MANAGER_MODULE } from "@/lib/services/lead-verifier";
+import { inCrmSalesManagerWorkspace } from "@/lib/services/crm-sales-manager-scope";
+import { canOpenModule } from "@/lib/access";
 import { type LeadWorkspace } from "@/lib/lead-workspace";
 import { requireUser } from "@/lib/auth";
 import { getConfig } from "@/lib/config/store";
@@ -44,7 +47,7 @@ export async function Body({
         mineCount={queue.mine}
         mineOnly={mineOnly}
         dueDays={config["leads.verificationDueDays"]}
-        canVerify={await canLead(user, "lead.verify")}
+        canVerify={(await canLead(user, "lead.verify")) || ((await inCrmSalesManagerWorkspace()) && (await canOpenModule(user.id, SALES_MANAGER_MODULE)))}
       />
     </>
   );

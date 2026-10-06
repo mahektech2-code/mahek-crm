@@ -4231,6 +4231,17 @@ export const SETTINGS = [
     default: { time: [180, 90], description: [25, 15] },
   },
   {
+    key: "erp.purchase.ownVehicleRatePerKmPaise",
+    type: "integer",
+    category: "erp",
+    label: "Own vehicle rate per km",
+    description:
+      "Paise per kilometre. A purchase inward brought in on Mahek's own vehicle is costed at kilometres × this rate, so nobody prices our own tempo by hand. The rate is copied onto each inward as it is saved, so changing it later never reprices a journey already made. Zero means no rate is approved yet, and an own-vehicle inward is refused until one is.",
+    default: 0,
+    min: 0,
+    max: 100000,
+  },
+  {
     key: "erp.production.recipeTolerancePercent",
     type: "integer",
     category: "erp",
@@ -4240,6 +4251,26 @@ export const SETTINGS = [
     default: 5,
     min: 0,
     max: 100,
+  },
+  {
+    key: "erp.location.autoDetect",
+    type: "boolean",
+    category: "erp",
+    label: "Find the working godown by location",
+    description:
+      "On: when somebody opens the ERP with location allowed in their browser, and they are standing inside the fence of a godown they are assigned to, it becomes their working location by itself. Only godowns with a map pin can be found, a fix too vague to tell is ignored, and a godown picked by hand stays picked for the rest of that tab. Off: the working location is only ever chosen from the header.",
+    default: true,
+  },
+  {
+    key: "erp.location.godownRadiusM",
+    type: "integer",
+    category: "erp",
+    label: "Godown fence radius",
+    description:
+      "Metres from a godown's map pin within which somebody counts as working there. Wide enough to cover the yard and the gate, narrow enough that two godowns in one industrial estate do not both claim the same person — where fences overlap the nearer pin wins.",
+    default: 300,
+    min: 25,
+    max: 5000,
   },
   {
     key: "erp.orders.live",
@@ -5451,7 +5482,10 @@ export type Config = {
   "hrms.performance.outstandingBands": [number, number, number];
   "hrms.performance.pointBands": { time: [number, number]; description: [number, number] };
 
+  "erp.location.autoDetect": boolean;
+  "erp.location.godownRadiusM": number;
   "erp.orders.live": boolean;
+  "erp.purchase.ownVehicleRatePerKmPaise": number;
   "erp.production.recipeTolerancePercent": number;
   "erp.ai.voice.enabled": boolean;
   "erp.ai.alerts.enabled": boolean;

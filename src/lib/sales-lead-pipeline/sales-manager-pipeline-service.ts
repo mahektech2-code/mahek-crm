@@ -5,6 +5,7 @@ import { sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import { canFor } from "@/lib/access-control";
+import { canVerifyLeadById } from "@/lib/services/lead-verifier";
 import { requireUser } from "@/lib/auth";
 import { getConfig } from "@/lib/config/store";
 import { APP_TIMEZONE } from "@/lib/business-date";
@@ -1037,6 +1038,7 @@ export async function pipelineLead(
     canCaptureOrder,
     canDistributorTerms,
     canApproveDistributor,
+    canReopenLost,
   ] = await Promise.all([
     getConfig(),
     recordExtras(id, day),
@@ -1051,11 +1053,12 @@ export async function pipelineLead(
     distributor ? leadApprovalChain(id) : Promise.resolve([] as ApprovalStep[]),
     distributor ? distributorProfileFor(id) : Promise.resolve(null),
     canFor(user, "lead.work"),
-    canFor(user, "lead.verify"),
+    canVerifyLeadById(user, id),
     canFor(user, "sample.approve"),
     canFor(user, "order.capture"),
     canFor(user, "distributor.terms"),
     canFor(user, "distributor.approve"),
+    canFor(user, "lead.verify"),
   ]);
 
   const caps: Caps = {
@@ -1065,7 +1068,7 @@ export async function pipelineLead(
     canCaptureOrder,
     canDistributorTerms,
     canApproveDistributor,
-    canReopen: canVerify,
+    canReopen: canReopenLost,
   };
 
   const freshDays = config["leads.figuresFreshDays"];

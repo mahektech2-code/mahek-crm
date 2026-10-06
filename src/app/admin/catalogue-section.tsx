@@ -31,6 +31,7 @@ import {
   moveFormulation,
   renameLevel,
   runCatalogueImport,
+  runPackingImport,
   setFormulationOfferedForMix,
   setLevelActive,
   setSkuActive,
@@ -259,6 +260,7 @@ function SkuTab({
                 <Th>Formulation</Th>
                 <Th>Brand</Th>
                 <Th>Packing</Th>
+                <Th>Can use</Th>
                 <Th align="right">Can</Th>
                 <Th align="right">Cans/box</Th>
                 <Th align="right">Packing cost</Th>
@@ -285,6 +287,17 @@ function SkuTab({
                   <Td>{s.formulation ?? "—"}</Td>
                   <Td>{s.brand ?? "—"}</Td>
                   <Td>{s.packing ?? "—"}</Td>
+                  <Td>
+                    {s.canUse ? (
+                      <span className="block max-w-[260px] truncate" title={s.canUse}>
+                        {s.canUse}
+                      </span>
+                    ) : (
+                      <span className="text-muted" title="No can or drum set for this SKU in the ERP">
+                        —
+                      </span>
+                    )}
+                  </Td>
                   <Td align="right">{litres(s.millilitresPerCan)}</Td>
                   <Td align="right">{s.cansPerBox > 1 ? s.cansPerBox : "loose"}</Td>
                   <Td align="right">{money(s.packingCostPaise)}</Td>
@@ -463,6 +476,21 @@ function SkuDetailBody({
             label="Legacy Product ID"
             value={sku.externalCode ?? ((sku.externalIds ?? []).join(", ") || "—")}
             hint="Reference only. Not sequential, not a count, and not our primary key."
+          />
+          <Fact
+            label="Can use"
+            value={sku.canUse ?? "Not set"}
+            hint="The can or drum this SKU is filled into. Set in ERP → Products → Edit packing, or imported from Mahek Plus."
+          />
+          <Fact
+            label="Box"
+            value={
+              sku.boxType
+                ? `${sku.boxType}${sku.emptyBoxesRequired ? ` · ${sku.emptyBoxesRequired} empty box${sku.emptyBoxesRequired === 1 ? "" : "es"} required` : ""}`
+                : sku.canUse
+                  ? "Loose — no box"
+                  : "Not set"
+            }
           />
         </div>
 
@@ -1579,7 +1607,7 @@ function ImportTab({
           <ul className="flex flex-col gap-1.5 text-[13px] leading-5 text-body">
             <li>· A name carried by several legacy IDs is held, not guessed at. Those land in Duplicates.</li>
             <li>· A legacy row with no sellable name is held. Naming it is a person&rsquo;s decision.</li>
-            <li>· Packaging material is excluded outright — an empty drum is not a product.</li>
+            <li>· Packaging nobody sells is excluded. The Empty Drum is sold, so it is a SKU under Packaging.</li>
             <li>· No price is imported, because the source document carries none.</li>
             <li>· A canonical ID somebody has already chosen is never reset by a re-run.</li>
           </ul>
@@ -1604,6 +1632,8 @@ function ImportTab({
 
       {report ? <ImportReportCard report={report} /> : null}
 
+      <PackingImportCard canWrite={canWrite} refresh={refresh} />
+
       {data.discrepancies.length ? (
         <Card className="mt-4">
           <CardHeader
@@ -1620,6 +1650,119 @@ function ImportTab({
         </Card>
       ) : null}
     </>
+  );
+}
+
+type PackingReport = Extract<Awaited<ReturnType<typeof runPackingImport>>, { ok: true }>["data"];
+
+/**
+ * The ERP packing from Mahek Plus: Can Use, empty boxes, box type and box rate
+ * per SKU, from the Master workbook's "My Products" tab.
+ */
+function PackingImportCard({ canWrite, refresh }: { canWrite: boolean; refresh: () => void }) {
+  const [report, setReport] = React.useState<PackingReport | null>(null);
+  const { busy, run } = useAction(refresh);
+
+  async function go(dryRun: boolean) {
+    const r = await run(() => runPackingImport(dryRun), { skipRefresh: dryRun });
+    if (r.ok && r.data) setReport(r.data as PackingReport);
+  }
+
+  const problems = report
+    ? [
+        ...report.noSku.map((x) => `Row ${x.row}: Product ID ${x.productIdOnSheet} (${x.name}) matches no SKU in the catalogue.`),
+        ...report.unknownCan.map((x) => `Row ${x.row}: Can Use "${x.canUse}" on ${x.sku} is not a Can or Drum raw material.`),
+        ...report.unknownBoxType.map((x) => `Row ${x.row}: Box Type "${x.boxType}" on ${x.sku} is not one the ERP offers.`),
+        ...report.conflicting.map(
+          (x) => `Row ${x.row}: Product ID ${x.productIdOnSheet} is the same SKU as Product ID ${x.keptFrom} (${x.sku}) with different packing — Product ID ${x.keptFrom}'s was used.`,
+        ),
+      ]
+    : [];
+
+  return (
+    <Card className="mt-4">
+      <CardHeader
+        title="Import packing (Can Use) from Mahek Plus"
+        hint={`Reads the "My Products" tab of the Mahek Plus Master workbook and sets each SKU's Can Use, empty boxes required, box type and box rate in the ERP.`}
+      />
+      <div className="px-5 py-4">
+        <ul className="flex flex-col gap-1.5 text-[13px] leading-5 text-body">
+          <li>· A row is matched to a SKU by its legacy Product ID, never by its name.</li>
+          <li>
+            · The cans, drums and boxes it names are added to ERP raw materials from the &ldquo;Raw
+            Materials&rdquo; tab first, where they are missing. Chemicals and stationery are not touched.
+          </li>
+          <li>· A SKU whose packing was already set in the ERP is left exactly as it is.</li>
+          <li>· A Can Use or Product ID that matches nothing is listed below, never guessed.</li>
+        </ul>
+        <div className="mt-4 flex items-center gap-2">
+          <Button variant="secondary" disabled={busy} onClick={() => go(true)}>
+            Dry run
+          </Button>
+          <Button
+            variant="primary"
+            disabled={!canWrite || busy}
+            title={canWrite ? undefined : "Configuration is changed by a manager."}
+            onClick={() => go(false)}
+          >
+            Import packing
+          </Button>
+          <span className="text-[13px] text-muted">A dry run writes nothing.</span>
+        </div>
+      </div>
+      {report ? (
+        <div className="border-t border-divider">
+          <div className="grid grid-cols-2 gap-x-6 gap-y-3 px-5 py-4 md:grid-cols-4">
+            <Fact label={report.applied ? "Packing set" : "Packing to set"} value={`${report.packingSet.length} SKUs`} />
+            <Fact label="With a Can Use" value={String(report.withCanUse)} />
+            <Fact
+              label={report.applied ? "Packing materials added" : "Packing materials to add"}
+              value={String(report.materialsCreated.length)}
+              hint={`${report.materialsExisting} already in the ERP`}
+            />
+            <Fact label="Already set, left alone" value={String(report.kept.length)} />
+          </div>
+          {problems.length ? (
+            <div className="border-t border-divider px-5 py-3">
+              <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                Not placed ({problems.length})
+              </div>
+              <div className="mt-1.5 flex max-h-60 flex-col gap-1 overflow-y-auto">
+                {problems.map((p) => (
+                  <div key={p} className="text-[13px] text-ink">
+                    {p}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          {report.packingSet.length ? (
+            <div className="max-h-96 overflow-y-auto border-t border-divider" style={{ ["--rowh" as string]: "34px" }}>
+              <table className="w-full border-collapse">
+                <thead>
+                  <tr>
+                    <Th>Product ID</Th>
+                    <Th>SKU</Th>
+                    <Th>Can use</Th>
+                    <Th>Box</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {report.packingSet.map((p) => (
+                    <Tr key={p.sku}>
+                      <Td>{p.productIdOnSheet}</Td>
+                      <Td>{p.sku}</Td>
+                      <Td>{p.canUse ?? "—"}</Td>
+                      <Td>{p.boxType ? `${p.boxType} × ${p.emptyBoxesRequired}` : "Loose"}</Td>
+                    </Tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </Card>
   );
 }
 

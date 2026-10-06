@@ -47,6 +47,7 @@ const files = [
   "src/lib/order-change.test.ts",
   // The ERP: access, powers, working location and the masters.
   "src/lib/erp/erp-foundation.test.ts",
+  "src/lib/erp/erp-designations.test.ts",
   "src/lib/erp/erp-purchase.test.ts",
   "src/lib/erp/erp-production.test.ts",
   "src/lib/erp/erp-sales.test.ts",
@@ -160,6 +161,7 @@ const files = [
   "src/lib/telecaller-qualification.test.ts",
   // Intake: what they want, in words or from the catalogue — and never the Calling Desk Product answer.
   "src/lib/lead-intake-product.test.ts",
+  "src/lib/lead-source-scope.test.ts",
   // A fresh CRM/Sales grant made through the CLI, the provisioning endpoint
   // or the back-office bulk provision must not carry an offByDefault module
   // (the calling desk, the Sales Manager seat) along for free — and an
@@ -173,6 +175,10 @@ const files = [
   // is drawn and for what may be done to it, admin sees all, owner-only and
   // unassigned leads are nobody's, and no other screen's scope moved.
   "src/lib/crm-sales-manager.test.ts",
+  // Verification follows lead.sales_manager_id: the seat holder verifies, at any CRM level.
+  "src/lib/lead-verifier-seat.test.ts",
+  // A lead's owner is respected: a Sales Manager's lead is not a Telecaller's.
+  "src/lib/lead-owner-visibility.test.ts",
   "src/lib/sales-manager-desk-queues.test.ts",
   // The dashboard reads its four figures from `queueProgress`, which must stay
   // exactly equal to what `getQueue` would have said. That equivalence is only

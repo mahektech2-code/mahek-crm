@@ -367,11 +367,11 @@ describe("save protection", () => {
     assert.match(svc, /\.insert\(callAiDrafts\)/);
   });
 
-  test("the action asks for lead.verify, then the CRM workspace, then the module, before reading", () => {
+  test("the action asks for the verifier (lead.verify or the lead's own seat), then the CRM workspace, then the module, before reading", () => {
     const src = read("src/lib/actions/verify-intel.ts");
     const i = (s: string) => src.indexOf(s);
-    assert.ok(i('requireCapability("lead.verify")') > -1);
-    assert.ok(i('requireCapability("lead.verify")') < i("inCrmSalesManagerWorkspace()"));
+    assert.ok(i('requireLeadVerifier(parsed.data.customerId)') > -1);
+    assert.ok(i('requireLeadVerifier(parsed.data.customerId)') < i("inCrmSalesManagerWorkspace()"));
     assert.ok(i("inCrmSalesManagerWorkspace()") < i('canOpenModule(ctx.user.id, "crm.sales-manager")'));
     assert.ok(i('canOpenModule(ctx.user.id, "crm.sales-manager")') < i("analyseVerifyCall(parsed.data)"));
   });
