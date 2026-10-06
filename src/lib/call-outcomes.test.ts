@@ -131,10 +131,10 @@ test("the outcome's list wins over the reason's", () => {
      ordering must not be offered a quotation to send. An empty list from the
      outcome is an answer, not a gap to fall through. */
   assert.deepEqual(nextActionsFor("price_quotation", "order_taken"), []);
-  /* Pay Promise offers exactly one chase. */
+  /* Pay Promise offers the chase on the promised date, or nothing further. */
   assert.deepEqual(
     nextActionsFor("price_quotation", "payment_promised").map((a) => a.code),
-    ["follow_up_before_promise"],
+    ["follow_up_on_promise", "no_follow_up"],
   );
 });
 
@@ -147,11 +147,10 @@ test("retired next-action codes are never offered, and still read", () => {
   /* Calls and reminders already saved carry these. They must keep their label,
      their date rule and their reminder type — only the picker lost them. */
   const retired = [
-    "no_follow_up",
     "follow_up_payment",
     "follow_up_dispatch",
     "follow_up_after_delivery",
-    "follow_up_on_promise",
+    "follow_up_before_promise",
   ];
   const offered = new Set(
     ["order_taken", "payment_promised"].flatMap((o) =>
@@ -162,6 +161,11 @@ test("retired next-action codes are never offered, and still read", () => {
     assert.ok(!offered.has(code), `${code} is still offered`);
     assert.ok(NEXT_ACTION_LABEL[code], `${code} lost its label`);
   }
+  assert.equal(
+    NEXT_ACTION_LABEL.follow_up_before_promise,
+    "Follow up before the promised date",
+  );
+  assert.equal(reminderTypeFor(["follow_up_before_promise"]), "payment_promise");
   assert.equal(NEXT_ACTION_LABEL.no_follow_up, "No further follow-up required");
   assert.equal(reminderTypeFor(["follow_up_payment"]), "payment_promise");
   assert.equal(reminderTypeFor(["follow_up_after_delivery"]), "call_back");
