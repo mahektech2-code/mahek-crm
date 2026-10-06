@@ -1,4 +1,5 @@
 import "server-only";
+import { whatsappNumberFor, type MessagePurpose } from "@/lib/customer-contacts";
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -49,6 +50,7 @@ import {
   manualText,
   renderSpec,
   specKey,
+  specFor,
   type RenderResult,
 } from "../wati-templates";
 
@@ -335,7 +337,7 @@ export async function prepareMessage(
   const resolvedDestination =
     destKind === "group"
       ? (customer.whatsappGroupName ?? "")
-      : (customer.whatsappPhone ?? customer.phone);
+      : whatsappNumberFor(customer, purposeOf(template));
 
   if (!resolvedDestination) {
     return err(
@@ -400,6 +402,21 @@ export async function prepareMessage(
 /** Which rule set fills this template: its own, or the one its Wati link names. */
 export function specOf(template: { watiSpec: string | null; watiTemplateName: string | null }): string | null {
   return template.watiSpec ?? specKey(template.watiTemplateName);
+}
+
+/**
+ * WHAT A TEMPLATE IS ABOUT, as far as choosing a number goes. A payment
+ * reminder goes to the contact marked for payment reminders — the accounts
+ * person at a shop is routinely not the person who orders — and everything
+ * else to the WhatsApp number. `whatsappNumberFor` is the rule.
+ */
+export function purposeOf(template: {
+  category: string;
+  watiSpec: string | null;
+  watiTemplateName: string | null;
+}): MessagePurpose {
+  if (template.category === "payment_reminder") return "payment";
+  return specFor(specOf(template))?.kind === "payment" ? "payment" : "general";
 }
 
 /** Fresh facts, then the rules. `watiParams` is what Wati's approved copy asks for. */
@@ -971,7 +988,14 @@ export async function customerIdForNumber(last10: string): Promise<string | null
   const [match] = await db.execute<{ id: string }>(sql`
       select c.id from customers c
       where (right(regexp_replace(coalesce(c.whatsapp_phone, ''), '[^0-9]', '', 'g'), 10) = ${last10}
-         or right(regexp_replace(coalesce(c.phone, ''), '[^0-9]', '', 'g'), 10) = ${last10})
+         or right(regexp_replace(coalesce(c.phone, ''), '[^0-9]', '', 'g'), 10) = ${last10}
+         -- Any number on the contacts list: a reply from the accounts person
+         -- the payment reminder went to is that customer's reply.
+         or exists (
+           select 1 from customer_contacts cc
+           where cc.customer_id = c.id
+             and right(regexp_replace(cc.phone, '[^0-9]', '', 'g'), 10) = ${last10}
+         ))
         -- A lead in the trash is filed against nobody: the message is kept as
         -- an unknown number's, where an administrator will see it.
         and c.deleted_at is null
@@ -1635,7 +1659,7 @@ export async function previewPaymentReminder(
       templateId: template.id,
       templateName: template.name,
       destination:
-        legKind === "group" ? (customer.whatsappGroupName ?? "") : (customer.whatsappPhone ?? customer.phone),
+        legKind === "group" ? (customer.whatsappGroupName ?? "") : whatsappNumberFor(customer, "payment"),
       destKind: legKind,
       body: p.ok ? p.body : "",
       ...route,
@@ -1661,7 +1685,7 @@ export async function previewPaymentReminder(
   const destination =
     destKind === "group"
       ? (customer.whatsappGroupName ?? "")
-      : (customer.whatsappPhone ?? customer.phone);
+      : whatsappNumberFor(customer, "payment");
 
   return {
     templateId: template.id,
@@ -1781,7 +1805,7 @@ export async function sendForRule(input: {
 
   const rendered = await renderForCustomer(spec, input.customerId);
   if (!rendered.ok) return err(rendered.reasons.join(" "), "rule_violation");
-  const destination = customer.whatsappPhone ?? customer.phone;
+  const destination = whatsappNumberFor(customer, purposeOf(template));
   if (!destination) return err("No number on record.", "validation");
 
   const messageId = id("wam");

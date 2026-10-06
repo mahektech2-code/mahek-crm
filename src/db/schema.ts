@@ -1371,6 +1371,18 @@ export const customers = pgTable(
     whatsappDest: destKindEnum("whatsapp_dest").notNull().default("personal"),
     whatsappGroupName: text("whatsapp_group_name"),
     altPhone: text("alt_phone"),
+    /**
+     * WHERE A PAYMENT REMINDER GOES, when it is not where everything else goes.
+     *
+     * A MIRROR of the `customer_contacts` row marked `for_payment_reminders`,
+     * written by `syncContactMirrors` and by nothing else — the same way
+     * `phone` mirrors the primary contact and `whatsapp_phone` the WhatsApp
+     * one. The accounts person at a shop is routinely not the person who
+     * orders, and a reminder about money sent to the counter is read by
+     * whoever happens to be holding the phone. Null means "the WhatsApp
+     * number", which is what every customer meant before contacts existed.
+     */
+    paymentWhatsappPhone: text("payment_whatsapp_phone"),
     address: text("address"),
     city: text("city").notNull(),
     region: text("region"),
@@ -9691,6 +9703,63 @@ export const focusCustomers = pgTable(
     addedAt: timestamp("added_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("focus_customers_customer_key").on(t.customerId)],
+);
+
+/**
+ * THE PEOPLE AT A CUSTOMER, AND THEIR NUMBERS.
+ *
+ * A shop is not one phone. The owner decides, somebody else places the orders,
+ * the accountant answers for the money and the godown man for the delivery —
+ * and the CRM held one `phone`, one `alt_phone` and one `whatsapp_phone`, so a
+ * payment reminder went to whichever number happened to be typed first.
+ *
+ * Three DESIGNATIONS, each held by at most one row per customer (partial
+ * unique indexes, not a rule in a service the next writer will not know):
+ *
+ *   - `is_primary` — who we ring. Mirrors onto `customers.phone` and
+ *     `contact_person`, which forty readers already use.
+ *   - `for_whatsapp` — where WhatsApp goes by default. Mirrors onto
+ *     `customers.whatsapp_phone`.
+ *   - `for_payment_reminders` — where a reminder about money goes. Mirrors
+ *     onto `customers.payment_whatsapp_phone`; unset falls back to WhatsApp.
+ *
+ * The mirrors are written in ONE place, `syncContactMirrors`, inside the same
+ * transaction as every contact write, so the columns and this table cannot
+ * disagree. A writer that still sets the columns directly (the sheet filling a
+ * blank, the handset's customer edit) is folded back in by
+ * `reconcileContacts`, which adds the number it finds rather than losing it.
+ *
+ * `role` is a code from `CONTACT_ROLES` in `lib/customer-contacts.ts`, never a
+ * label, so a reworded role keeps resolving.
+ */
+export const customerContacts = pgTable(
+  "customer_contacts",
+  {
+    id: text("id").primaryKey(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    name: text("name"),
+    role: text("role").notNull().default("other"),
+    /** Stored as typed digits: ten for a mobile, more for a landline. */
+    phone: text("phone").notNull(),
+    email: text("email"),
+    note: text("note"),
+    isPrimary: boolean("is_primary").notNull().default(false),
+    forWhatsapp: boolean("for_whatsapp").notNull().default(false),
+    forPaymentReminders: boolean("for_payment_reminders").notNull().default(false),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id, { onDelete: "set null" }),
+    updatedById: text("updated_by_id").references(() => users.id, { onDelete: "set null" }),
+  },
+  (t) => [
+    index("customer_contacts_customer_idx").on(t.customerId),
+    uniqueIndex("customer_contacts_one_primary").on(t.customerId).where(sql`${t.isPrimary}`),
+    uniqueIndex("customer_contacts_one_whatsapp").on(t.customerId).where(sql`${t.forWhatsapp}`),
+    uniqueIndex("customer_contacts_one_payment").on(t.customerId).where(sql`${t.forPaymentReminders}`),
+  ],
 );
 
 /* ------------------------------------------------------- §3.32 website enquiry */
