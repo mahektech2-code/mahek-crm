@@ -603,7 +603,7 @@ export async function freshnessSources(): Promise<FreshSource[]> {
         staleAfter: STALE_AFTER_HOURS.hourly,
         marker: "escalate-complaint-sla",
         job: "hourly",
-        history: ["mbos-hourly", "whatsapp-automation", "sweep-unconfirmed", "escalate-complaint-sla"],
+        history: ["mbos-hourly", "whatsapp-automation", "whatsapp-receipts", "sweep-unconfirmed", "escalate-complaint-sla"],
       },
       r,
     ),

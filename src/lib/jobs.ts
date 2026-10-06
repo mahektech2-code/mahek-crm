@@ -110,6 +110,7 @@ export type JobName =
   | "snapshot-customer-health"
   | "sweep-unconfirmed"
   | "whatsapp-automation"
+  | "whatsapp-receipts"
   | "escalate-complaint-sla"
   | "auto-eod"
   /** Tell anybody still punched in at the end of the day. Half-hourly. */
@@ -664,6 +665,19 @@ export async function runHourly(triggeredById?: string): Promise<JobResult[]> {
       return {
         recordsAffected: swept,
         detail: `${swept} unconfirmed copies, ${autoConfirmed} auto-confirmed`,
+      };
+    }, triggeredById),
+  );
+
+  // Delivered and read, read back from Wati's history for the last week —
+  // the webhook has not been bringing them (see lib/wati-receipts.ts).
+  results.push(
+    await run("whatsapp-receipts", async () => {
+      const { refreshReceipts } = await import("./services/whatsapp-receipts-service");
+      const r = await refreshReceipts({ days: 7 });
+      return {
+        recordsAffected: r.updated,
+        detail: `${r.updated} ticks moved across ${r.numbers} numbers${r.errors ? `, ${r.errors} numbers Wati did not answer for` : ""}`,
       };
     }, triggeredById),
   );
