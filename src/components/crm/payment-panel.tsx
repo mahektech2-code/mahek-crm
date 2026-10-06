@@ -25,6 +25,7 @@ import {
   recordPayment,
 } from "@/lib/actions/crm";
 import { ageLabel, money, shortDate, stamp, today as todayISO } from "@/lib/format";
+import { whenLabel } from "@/lib/whatsapp-status";
 import { PaymentModeFields } from "@/components/crm/payment-mode-fields";
 import type { FollowUpPanelData } from "@/lib/services/payment-followup-service";
 import type { ReminderPreview } from "@/lib/services/whatsapp-service";
@@ -176,7 +177,11 @@ function PanelBody({
    */
   const [picked, setPicked] = React.useState<Tab | null>(null);
   const [panel, setPanel] = React.useState<FollowUpPanelData | null>(null);
-  const [message, setMessage] = React.useState<ReminderPreview | null>(null);
+  /** Every approved payment template, each rendered for this customer. */
+  const [reminders, setReminders] = React.useState<ReminderPreview[]>([]);
+  const [defaultTemplateId, setDefaultTemplateId] = React.useState<string | null>(null);
+  /** The template the telecaller picked, if they changed it. */
+  const [templateId, setTemplateId] = React.useState<string | null>(null);
   const [wa, setWa] = React.useState<{ messages: TrackerRow[]; rules: RuleOutlook[] }>({ messages: [], rules: [] });
   const [loading, setLoading] = React.useState(true);
 
@@ -189,6 +194,12 @@ function PanelBody({
   const [busy, setBusy] = React.useState(false);
   const [copiedId, setCopiedId] = React.useState<string | null>(null);
   const [confirming, setConfirming] = React.useState(false);
+  /**
+   * Why the API send just refused, if it did. The reminder still has to go,
+   * so the panel turns the manual route into the main one rather than leaving
+   * the telecaller with a red toast and nowhere to go.
+   */
+  const [autoError, setAutoError] = React.useState<string | null>(null);
   /** The bill a payment is being recorded against, from the Account tab. */
   const [payingBill, setPayingBill] = React.useState<string | null>(null);
 
@@ -201,7 +212,8 @@ function PanelBody({
         .then((r) => (r.ok ? r.json() : { panel: null }))
         .then((d) => {
           setPanel(d.panel);
-          setMessage(d.message ?? null);
+          setReminders(d.reminders ?? []);
+          setDefaultTemplateId(d.defaultTemplateId ?? null);
           setWa(d.whatsapp ?? { messages: [], rules: [] });
         })
         .catch(() => {})
@@ -216,6 +228,10 @@ function PanelBody({
   }, [load]);
 
   const def = outcomes.find((o) => o.key === outcome) ?? null;
+  const message =
+    reminders.find((r) => r.templateId === (templateId ?? defaultTemplateId)) ??
+    reminders[0] ??
+    null;
   const dirty = Boolean(typed.trim() || chips.length || amount || date);
 
   // Notes are the chips plus whatever was typed, kept in one string so the
@@ -318,6 +334,7 @@ function PanelBody({
         sendWhatsAppNow({ customerId: panel.customerId, templateId: message.templateId }),
       );
       if (result.ok) onSaved();
+      else setAutoError(result.error);
     } finally {
       setConfirming(false);
     }
@@ -339,7 +356,22 @@ function PanelBody({
   );
 
   const bill = panel?.bills.find((b) => b.id === payingBill) ?? null;
-  const tab: Tab = picked ?? (panel?.nextChannel === "whatsapp" ? "msg" : "log");
+  /*
+   * THE LAST AUTOMATIC SEND FAILED — Wati refused it, or reported it failed
+   * by webhook afterwards. The customer has heard nothing, and the stamp was
+   * taken back, so this is a reminder somebody now has to send by hand, from
+   * here. Only the NEWEST message counts: a failure followed by a send that
+   * went is history, not work.
+   */
+  const latest = wa.messages[0] ?? null;
+  const lastFailed = latest && latest.status === "failed" ? latest : null;
+  const autoFailure = autoError
+    ? { when: null, reason: autoError }
+    : lastFailed
+      ? { when: lastFailed.sentAt ?? lastFailed.preparedAt, reason: lastFailed.failureReason }
+      : null;
+  const tab: Tab =
+    picked ?? (panel?.nextChannel === "whatsapp" || lastFailed ? "msg" : "log");
 
   return (
     <BodyPortal>
@@ -443,7 +475,7 @@ function PanelBody({
                     onChange={setPicked}
                     options={[
                       { key: "log", label: "Log a call", dot: dirty },
-                      { key: "msg", label: "WhatsApp reminder" },
+                      { key: "msg", label: "WhatsApp reminder", alert: Boolean(autoFailure) },
                     ]}
                   />
                   <span className="flex-1" />
@@ -482,10 +514,22 @@ function PanelBody({
                   <MessagePane
                     wa={wa}
                     message={message}
+                    reminders={reminders}
+                    onPickTemplate={(id) => {
+                      // A different template is a different message: whatever
+                      // was copied was the old one, so the steps start again.
+                      if (id === message?.templateId) return;
+                      setTemplateId(id);
+                      setCopiedId(null);
+                      setAutoError(null);
+                    }}
                     copied={Boolean(copiedId)}
                     confirming={confirming}
                     onCopy={copyMessage}
                     onMarkSent={markSent}
+                    onSendNow={sendNow}
+                    autoFailure={autoFailure}
+                    today={businessDay}
                     phone={panel.phone}
                   />
                 )}
@@ -543,16 +587,6 @@ function PanelBody({
                   Save &amp; next ▸
                 </Button>
               </>
-            ) : null}
-            {panel && tab === "msg" && message?.mode === "automatic" ? (
-              <Button
-                variant="primary"
-                disabled={Boolean(message.blocked) || confirming}
-                title={message.blocked ? "Some details are missing — see above" : undefined}
-                onClick={sendNow}
-              >
-                {confirming ? "Sending…" : "Send on WhatsApp"}
-              </Button>
             ) : null}
           </div>
         </div>
@@ -860,7 +894,7 @@ function Segmented<T extends string>({
 }: {
   value: T;
   onChange: (key: T) => void;
-  options: Array<{ key: T; label: string; dot?: boolean }>;
+  options: Array<{ key: T; label: string; dot?: boolean; alert?: boolean }>;
 }) {
   return (
     <div className="inline-flex rounded-[6px] border border-line bg-canvas p-0.5">
@@ -879,6 +913,11 @@ function Segmented<T extends string>({
           {o.label}
           {o.dot ? (
             <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-brand align-middle" />
+          ) : null}
+          {o.alert ? (
+            <Badge tone="danger" className="ml-1.5">
+              Failed
+            </Badge>
           ) : null}
         </button>
       ))}
@@ -1184,22 +1223,41 @@ function LogPane(props: {
  * THE MESSAGE AS THE CUSTOMER WILL SEE IT, and the buttons to send it. The
  * merge-field table is shown only when something is missing — when every
  * field is filled, the preview already shows each value in place.
+ *
+ * THE MANUAL ROUTE IS ALWAYS HERE. Where the reminder can go through the
+ * WhatsApp Business API, "Send on WhatsApp" is the main button — but an API
+ * send can be refused on the spot or reported failed by Wati afterwards, and
+ * the reminder still has to reach the customer. So copy → open WhatsApp →
+ * mark as sent sits under it every time, and once the automatic send has
+ * failed it becomes the main route, with the reason above it.
  */
 function MessagePane({
   wa,
   message,
+  reminders,
+  onPickTemplate,
   copied,
   confirming,
   onCopy,
   onMarkSent,
+  onSendNow,
+  autoFailure,
+  today: businessDay,
   phone,
 }: {
   wa: { messages: TrackerRow[]; rules: RuleOutlook[] };
   message: ReminderPreview | null;
+  /** Every approved payment template, to pick from. */
+  reminders: ReminderPreview[];
+  onPickTemplate: (templateId: string) => void;
   copied: boolean;
   confirming: boolean;
   onCopy: () => void;
   onMarkSent: () => void;
+  onSendNow: () => void;
+  /** The automatic send failed — just now, or the last one Wati reported. */
+  autoFailure: { when: string | null; reason: string | null } | null;
+  today: string;
   phone: string;
 }) {
   const [historyOpen, setHistoryOpen] = React.useState(false);
@@ -1227,9 +1285,21 @@ function MessagePane({
     </div>
   );
 
+  const failureBanner = autoFailure ? (
+    <div className="mb-3 rounded-[6px] border border-danger-soft bg-danger-soft px-3 py-2 text-[13px] text-danger">
+      <span className="font-medium">
+        Automatic WhatsApp failed
+        {autoFailure.when ? ` · ${whenLabel(autoFailure.when, businessDay)}` : ""}
+      </span>
+      {autoFailure.reason ? <span className="text-body"> — {autoFailure.reason}</span> : null}
+      <div className="mt-0.5 text-body">The customer has not got it. Send it yourself below.</div>
+    </div>
+  ) : null;
+
   if (!message) {
     return (
       <div className="flex-1 overflow-y-auto px-6 py-5">
+        {failureBanner}
         <div className="rounded-[6px] border border-dashed border-line px-4 py-6 text-center text-[13px] text-muted">
           No payment reminder template yet — log a call instead.
         </div>
@@ -1238,8 +1308,98 @@ function MessagePane({
     );
   }
 
+  const api = message.mode === "automatic";
+  /** The manual steps lead only where the API is not the way, or has failed. */
+  const manualLeads = !api || Boolean(autoFailure);
+
+  const manualSteps = (
+    /*
+     * Copy, open, confirm — three buttons in a row, numbered. Only a
+     * CONFIRMED send counts as contact (AGENTS.md), so the third step
+     * stays, and it cannot be pressed before the first.
+     */
+    <div className="flex flex-wrap items-center gap-2">
+      <StepButton n={1} done={copied}>
+        <Button
+          size="sm"
+          variant={copied || !manualLeads ? "secondary" : "primary"}
+          disabled={message.blocked}
+          onClick={onCopy}
+        >
+          {copied ? "Copied ✓" : "Copy message"}
+        </Button>
+      </StepButton>
+      <span className="text-line-strong">→</span>
+      <StepButton n={2}>
+        <a
+          href={`https://wa.me/${phone.replace(/[^0-9]/g, "")}`}
+          target="_blank"
+          rel="noreferrer"
+          title={`Paste into ${message.destination}`}
+          className={cx(
+            "inline-flex h-8 items-center rounded-[4px] border px-2.5 text-[13px] font-medium no-underline",
+            copied
+              ? "border-brand bg-brand text-white hover:bg-brand-hover"
+              : "border-line-strong bg-surface text-body hover:bg-canvas",
+          )}
+        >
+          Open WhatsApp ↗
+        </a>
+      </StepButton>
+      <span className="text-line-strong">→</span>
+      <StepButton n={3}>
+        <Button
+          size="sm"
+          variant={copied ? "primary" : "secondary"}
+          disabled={!copied || confirming}
+          title={copied ? "Press once it has gone" : "Copy and send it first"}
+          onClick={onMarkSent}
+        >
+          {confirming && copied ? "Saving…" : "Mark as sent"}
+        </Button>
+      </StepButton>
+    </div>
+  );
+
   return (
     <div className="flex-1 overflow-y-auto px-6 py-5">
+      {failureBanner}
+
+      {/*
+        WHICH APPROVED TEMPLATE. The same Wati templates the automatic
+        reminders send, in their fixed order, each one already filled for this
+        customer. One that its own rules refuse here (a payment reported, a
+        bill disputed) is still listed, marked, with the reason when picked.
+      */}
+      {reminders.length > 1 ? (
+        <div className="mb-3">
+          <PaneLabel>Template</PaneLabel>
+          <div className="flex flex-wrap gap-1.5">
+            {reminders.map((r) => {
+              const on = r.templateId === message.templateId;
+              return (
+                <button
+                  key={r.templateId}
+                  type="button"
+                  onClick={() => onPickTemplate(r.templateId)}
+                  aria-pressed={on}
+                  title={r.blocked ? (r.blockedReason ?? "Cannot go to this customer") : undefined}
+                  className={cx(
+                    "h-8 cursor-pointer rounded-full border px-3 text-[12px]",
+                    on
+                      ? "border-brand bg-brand-soft font-medium text-brand-hover"
+                      : "border-line bg-surface text-body hover:bg-canvas",
+                    r.blocked && !on ? "text-muted line-through decoration-line-strong" : "",
+                  )}
+                >
+                  {r.templateName}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+
       <div className="mb-2 flex flex-wrap items-center gap-2 text-[13px]">
         <span className="font-medium text-ink">{message.templateName}</span>
         <span className="text-muted">
@@ -1258,69 +1418,64 @@ function MessagePane({
         </div>
       ) : null}
 
-      <div className="flex justify-end rounded-[6px] border border-line bg-canvas p-4">
-        <div className="max-w-[420px] rounded-[6px_6px_2px_6px] border border-brand-softer bg-brand-soft px-3 py-2.5">
-          {message.body.split("\n").map((line, i) => (
-            <span
-              key={i}
-              className="block min-h-[11px] text-[14px] leading-[21px] whitespace-pre-wrap text-ink"
-            >
-              {line}
-            </span>
-          ))}
+      {message.body ? (
+        <div className="flex justify-end rounded-[6px] border border-line bg-canvas p-4">
+          <div className="max-w-[420px] rounded-[6px_6px_2px_6px] border border-brand-softer bg-brand-soft px-3 py-2.5">
+            {message.body.split("\n").map((line, i) => (
+              <span
+                key={i}
+                className="block min-h-[11px] text-[14px] leading-[21px] whitespace-pre-wrap text-ink"
+              >
+                {line}
+              </span>
+            ))}
+          </div>
         </div>
-      </div>
+      ) : null}
 
-      {message.mode === "automatic" ? (
-        <div className="mt-3 text-[12px] text-muted">
-          Goes from the business number. Ticks come back on their own.
+      {manualLeads ? (
+        <div className="mt-3">
+          {!api && message.manualWhy ? (
+            <div className="mb-2 text-[12px] text-muted">
+              Send by hand — {message.manualWhy.charAt(0).toLowerCase() + message.manualWhy.slice(1)}
+            </div>
+          ) : null}
+          {manualSteps}
+          {api ? (
+            <div className="mt-2 text-[12px] text-muted">
+              Or{" "}
+              <button
+                type="button"
+                onClick={onSendNow}
+                disabled={message.blocked || confirming}
+                className="cursor-pointer border-none bg-transparent p-0 text-[12px] text-brand disabled:cursor-not-allowed disabled:text-muted"
+              >
+                try the automatic send again
+              </button>
+            </div>
+          ) : null}
         </div>
       ) : (
-        /*
-         * Copy, open, confirm — three buttons in a row, numbered. Only a
-         * CONFIRMED send counts as contact (AGENTS.md), so the third step
-         * stays, and it cannot be pressed before the first.
-         */
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <StepButton n={1} done={copied}>
+        <div className="mt-3">
+          <div className="flex items-center gap-3">
             <Button
-              size="sm"
-              variant={copied ? "secondary" : "primary"}
-              disabled={message.blocked}
-              onClick={onCopy}
-            >
-              {copied ? "Copied ✓" : "Copy message"}
-            </Button>
-          </StepButton>
-          <span className="text-line-strong">→</span>
-          <StepButton n={2}>
-            <a
-              href={`https://wa.me/${phone.replace(/[^0-9]/g, "")}`}
-              target="_blank"
-              rel="noreferrer"
-              title={`Paste into ${message.destination}`}
-              className={cx(
-                "inline-flex h-8 items-center rounded-[4px] border px-2.5 text-[13px] font-medium no-underline",
-                copied
-                  ? "border-brand bg-brand text-white hover:bg-brand-hover"
-                  : "border-line-strong bg-surface text-body hover:bg-canvas",
-              )}
-            >
-              Open WhatsApp ↗
-            </a>
-          </StepButton>
-          <span className="text-line-strong">→</span>
-          <StepButton n={3}>
-            <Button
-              size="sm"
               variant="primary"
-              disabled={!copied || confirming}
-              title={copied ? "Press once it has gone" : "Copy and send it first"}
-              onClick={onMarkSent}
+              disabled={message.blocked || confirming}
+              title={message.blocked ? "Some details are missing — see above" : undefined}
+              onClick={onSendNow}
             >
-              {confirming ? "Saving…" : "Mark as sent"}
+              {confirming ? "Sending…" : "Send on WhatsApp"}
             </Button>
-          </StepButton>
+            <span className="text-[12px] text-muted">
+              Goes from the business number. Ticks come back on their own.
+            </span>
+          </div>
+          <div className="mt-4 rounded-[6px] border border-line px-3 py-2.5">
+            <div className="mb-2 text-[12px] text-muted">
+              Not going through? Send it yourself:
+            </div>
+            {manualSteps}
+          </div>
         </div>
       )}
 

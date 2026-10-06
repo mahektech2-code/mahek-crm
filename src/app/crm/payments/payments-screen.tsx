@@ -713,6 +713,12 @@ function WorklistLine({
   onGo: (href: string) => void;
 }) {
   const wa = r.lastWa ? statusView(r.lastWa) : null;
+  /*
+   * The newest WhatsApp to them FAILED — the automatic reminder never
+   * arrived, so somebody has to send it by hand. The button says so, and the
+   * panel it opens leads with the manual route and the reason.
+   */
+  const waFailed = r.lastWa?.status === "failed";
   const flags: Array<{ label: string; tone: "warn" | "danger"; title?: string }> = [];
   if (r.promiseBroken) flags.push({ label: "Promise broken", tone: "danger" });
   if (r.held) flags.push({ label: "Held", tone: "warn", title: r.heldReason ?? undefined });
@@ -824,10 +830,16 @@ function WorklistLine({
             size="sm"
             variant={r.promiseBroken || r.stage === 3 ? "danger" : "primary"}
             disabled={r.held}
-            title={r.held ? (r.heldReason ?? "Held while the dispute is open") : r.nextAction}
+            title={
+              r.held
+                ? (r.heldReason ?? "Held while the dispute is open")
+                : waFailed
+                  ? `The automatic WhatsApp failed${r.lastWa?.failureReason ? ` — ${r.lastWa.failureReason}` : ""}. Send it yourself.`
+                  : r.nextAction
+            }
             onClick={onOpen}
           >
-            {r.nextChannel === "whatsapp" ? "Send reminder" : "Call & log"}
+            {waFailed ? "Send manually" : r.nextChannel === "whatsapp" ? "Send reminder" : "Call & log"}
           </Button>
           <RowMenu
             items={[
