@@ -681,6 +681,17 @@ export const SETTINGS = [
     max: 60,
   },
   {
+    key: "payments.paidCoolingDays",
+    type: "integer",
+    category: "payments",
+    label: "Cooling days after a customer pays",
+    description:
+      "Days after the day a customer pays (any amount, against any bill) on which they get no payment reminder message and no payment call - automated or from the collections list. At 1, somebody who pays on Monday is left alone on Monday and Tuesday and is chased again from Wednesday if anything is still overdue. Counts money reported, held or confirmed by its received date; credit notes and adjustments are not the customer paying and buy nothing. 0 switches it off.",
+    default: 1,
+    min: 0,
+    max: 30,
+  },
+  {
     key: "payments.allowOnAccountRemainder",
     type: "boolean",
     category: "payments",
@@ -4273,6 +4284,28 @@ export const SETTINGS = [
     max: 100000,
   },
   {
+    key: "erp.purchase.minQuotations",
+    type: "integer",
+    category: "erp",
+    label: "Quotations needed before one is selected",
+    description:
+      "For an item whose purchase rule is Quotation (or a requirement the buyer sent for quotations): how many vendors' quotations must be in before one can be selected and the PO raised. One means a single quotation is enough; two or more is a real comparison.",
+    default: 2,
+    min: 1,
+    max: 10,
+  },
+  {
+    key: "erp.purchase.receiptTolerancePercent",
+    type: "integer",
+    category: "erp",
+    label: "Receipt above the PO quantity",
+    description:
+      "How far above a PO line's quantity goods may be received against it, in percent of what was ordered — drums never weigh exactly what was ordered. Beyond it the receipt is refused and a new requirement and PO are needed for the extra.",
+    default: 5,
+    min: 0,
+    max: 50,
+  },
+  {
     key: "erp.production.recipeTolerancePercent",
     type: "integer",
     category: "erp",
@@ -5363,6 +5396,7 @@ export type Config = {
   "bills.creditDayOptions": number[];
 
   "payments.reportedQuietDays": number;
+  "payments.paidCoolingDays": number;
   "payments.allowOnAccountRemainder": boolean;
   "people.amChangeReasons": string[];
   "people.companyName": string;
@@ -5519,6 +5553,8 @@ export type Config = {
   "erp.location.godownRadiusM": number;
   "erp.orders.live": boolean;
   "erp.purchase.ownVehicleRatePerKmPaise": number;
+  "erp.purchase.minQuotations": number;
+  "erp.purchase.receiptTolerancePercent": number;
   "erp.production.recipeTolerancePercent": number;
   "erp.ai.voice.enabled": boolean;
   "erp.ai.alerts.enabled": boolean;

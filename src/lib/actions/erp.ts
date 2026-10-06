@@ -213,6 +213,15 @@ export async function erpSearch(q: string): Promise<ErpSearchHit[]> {
     )) as unknown as { id: string; lot: string; pr: number; item: string }[];
     rows.forEach((r) => out.push({ kind: "Lot", name: r.lot, meta: `PR ${r.pr} · ${r.item}`, href: go("register", r.id) }));
   }
+  if (ctx.screens.has("purchaseOrders")) {
+    const n = /^(?:po-?\s*)?(\d+)$/i.exec(term)?.[1];
+    if (n) {
+      const rows = (await db.execute(
+        sql`select o.id, o.po_number as n, o.status, s.name as vendor from erp_purchase_orders o join erp_suppliers s on s.id = o.supplier_id where o.po_number::text = ${n}`,
+      )) as unknown as { id: string; n: number; status: string; vendor: string }[];
+      rows.forEach((r) => out.push({ kind: "PO", name: `PO-${r.n}`, meta: `${r.vendor} · ${r.status}`, href: go("purchaseOrders", r.id) }));
+    }
+  }
   if (ctx.screens.has("inward") && /^\d+$/.test(term)) {
     const rows = (await db.execute(
       sql`select min(i.id) as id, i.pr_number as pr, count(*)::int as n from erp_inward i where i.pr_number::text = ${term} group by i.pr_number`,

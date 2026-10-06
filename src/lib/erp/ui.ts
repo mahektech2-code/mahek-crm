@@ -283,6 +283,11 @@ export const ST_TONE: Record<string, Tone> = {
   High: "success", Low: "warn", "Invoice Received": "info", "Purchase Matched": "brand",
   "Purchase Verified": "success", Dispatched: "success", Transfer: "neutral", Declined: "danger",
   Arrived: "neutral", Tested: "info", "Bill received": "info", Matched: "brand",
+  "Buyer decision": "brand", "Select vendor": "warn", "Collect quotations": "warn", "Compare quotations": "info",
+  "Ready for PO": "brand", "PO awaiting approval": "warn", "PO approved": "info", "PO sent": "info",
+  "Partly received": "warn", "Closed short": "muted", Closed: "muted", Cancelled: "muted",
+  "Direct purchase": "neutral", Quotation: "info", "Pending approval": "warn", Approved: "success",
+  Sent: "info", Selected: "success", "Not selected": "muted",
 };
 
 /** Named row states (the source's format rules), and how each is labelled. */
@@ -320,6 +325,13 @@ export const FLAG: Record<string, [string, Tone]> = {
   dueToday: ["Dispatch today", "brand"],
   dueTomorrow: ["Dispatch tomorrow", "neutral"],
   late: ["Dispatch late", "danger"],
+  requiredOverdue: ["Past its required date", "danger"],
+  noPo: ["Before POs", "neutral"],
+  rateOffPo: ["Rate differs from PO", "warn"],
+  lowestQuote: ["Lowest landed cost", "success"],
+  quoteExpired: ["Quotation expired", "muted"],
+  awaitingApproval: ["Awaiting approval", "warn"],
+  deliveryLate: ["Delivery overdue", "danger"],
 };
 
 /* -------------------------------------------------------------- formatting */
@@ -348,6 +360,15 @@ export function inr(paise: CellValue | undefined): string {
   if (!Number.isFinite(n)) return String(paise);
   const r = Math.round(n / 100);
   return (r < 0 ? "−" : "") + "₹" + groupIndian(Math.abs(r));
+}
+
+/** A RATE in paise → "₹11.50": a rate keeps its paise, where an amount is rounded to the rupee. */
+export function inrRate(paise: CellValue | undefined): string {
+  if (paise == null || paise === "") return "";
+  const n = Number(paise);
+  if (!Number.isFinite(n)) return String(paise);
+  const r = n / 100;
+  return (r < 0 ? "−" : "") + "₹" + Math.abs(r).toLocaleString("en-IN", { minimumFractionDigits: Number.isInteger(r) ? 0 : 2, maximumFractionDigits: 2 });
 }
 
 /** 12345.5 → "12,345.5" in Indian grouping, up to two decimals. */

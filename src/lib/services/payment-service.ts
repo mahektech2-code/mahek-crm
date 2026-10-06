@@ -29,12 +29,13 @@ import {
 import { billCreditDaysSql } from "../bill-terms";
 import {
   nextCallOn,
+  paidCoolingEndsOn,
   planPaymentFollowUps,
   type FollowUpDue,
   type FollowUpHeldBack,
 } from "../engines/payment-followup";
 import { recomputeFollowUpState, today } from "../recompute";
-import { recordReceipt, reportedQuietByCustomer } from "./receipt-service";
+import { lastPaidOnByCustomer, recordReceipt, reportedQuietByCustomer } from "./receipt-service";
 import {
   addDays,
   calendarDate,
@@ -498,7 +499,10 @@ export const getPaymentFollowUpPlan = cache(
 
   // Money somebody has reported and accounts have not yet decided on. Read
   // once for the whole plan rather than per customer.
-  const reported = await reportedQuietByCustomer();
+  const [reported, lastPaid] = await Promise.all([
+    reportedQuietByCustomer(),
+    lastPaidOnByCustomer(day),
+  ]);
 
   const plan = planPaymentFollowUps(
     rows.map(({ state, customer, ...last }) => ({
@@ -532,6 +536,7 @@ export const getPaymentFollowUpPlan = cache(
             }
           : null;
       })(),
+      lastPaidOn: lastPaid.get(customer.id) ?? null,
     })),
     day,
     config,
@@ -604,6 +609,11 @@ export async function paymentCadenceFor(customerId: string): Promise<{
     const until = addDays(row.promisedDate, 1);
     if (until > on) on = until;
   }
+  const cooledOn = paidCoolingEndsOn(
+    (await lastPaidOnByCustomer(day)).get(customerId) ?? null,
+    config,
+  );
+  if (cooledOn && cooledOn > on) on = cooledOn;
 
   return {
     nextCallOn: on,

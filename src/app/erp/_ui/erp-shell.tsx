@@ -55,6 +55,8 @@ const SCREEN_ICON: Record<string, string> = {
   powers: "lock",
   refLists: "clipboard",
   requisitions: "clipboard",
+  quotations: "rupee",
+  purchaseOrders: "book",
   inward: "truck",
   testing: "beaker",
   register: "book",

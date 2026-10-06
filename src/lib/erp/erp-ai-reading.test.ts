@@ -43,6 +43,12 @@ import { applyComplaint } from "@/lib/erp/ai-complaints";
 import { draftForm, recordDraft } from "@/lib/erp/ai-orders";
 import { applyLr, lrReviewForm, recordLrReading, recordTestReading, testReviewForm } from "@/lib/erp/ai-photos";
 import { screenModule } from "@/lib/erp/screens";
+import { approvedPoLine } from "@/lib/erp/po-fixture";
+
+const poFor = async (item: string, qty: number) => {
+  const p = await approvedPoLine("Asian Solvents", item, qty);
+  return { po: p.po, poLine: p.poLine };
+};
 import { orderForm } from "@/lib/erp/screens/sales";
 import { rmLotStock } from "@/lib/erp/stock";
 
@@ -108,9 +114,9 @@ before(async () => {
 
   const a = await as(admin);
   /* An earlier purchase at ₹100, then PR 2 with two unrated rows. */
-  await ok(mod("register").forms!.new(a, { pr: "1", date: "2026-08-01", supplier: "Asian Solvents", item: "Toluene", qty: "100", unit: "Litre", rate: "100", gst: "18", company: "Mahek Marketing India", godown: "Bhiwandi" }, []));
-  await ok(mod("register").forms!.new(a, { pr: "2", date: "2026-09-01", supplier: "Asian Solvents", item: "Toluene", qty: "200", unit: "Litre", gst: "18", company: "Mahek Marketing India", godown: "Bhiwandi" }, []));
-  await ok(mod("register").forms!.new(a, { pr: "2", date: "2026-09-01", supplier: "Asian Solvents", item: "Methyl Ethyl Ketone", qty: "50", unit: "Litre", gst: "18", company: "Mahek Marketing India", godown: "Bhiwandi" }, []));
+  await ok(mod("register").forms!.new(a, { pr: "1", date: "2026-08-01", ...(await poFor("Toluene", 100)), qty: "100", unit: "Litre", rate: "100", gst: "18", company: "Mahek Marketing India", godown: "Bhiwandi" }, []));
+  await ok(mod("register").forms!.new(a, { pr: "2", date: "2026-09-01", ...(await poFor("Toluene", 200)), qty: "200", unit: "Litre", gst: "18", company: "Mahek Marketing India", godown: "Bhiwandi" }, []));
+  await ok(mod("register").forms!.new(a, { pr: "2", date: "2026-09-01", ...(await poFor("Methyl Ethyl Ketone", 50)), qty: "50", unit: "Litre", gst: "18", company: "Mahek Marketing India", godown: "Bhiwandi" }, []));
 });
 
 after(async () => {

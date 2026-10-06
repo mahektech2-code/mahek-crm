@@ -97,6 +97,7 @@ import {
 } from "@/lib/services/delivery-party-service";
 import { customerRecordDetail } from "@/lib/services/customer-record-service";
 import { saveInteraction } from "@/lib/services/interaction-service";
+import { logQualificationCall } from "@/lib/actions/lead-calling-desk";
 import { seedCatalogue } from "@/db/seed-catalogue";
 import {
   products as productsTable,
@@ -106,6 +107,7 @@ import {
   quickNotes as quickNotesTable,
   interactionProductLines,
   appAccess,
+  appModuleAccess,
   queueSnapshots as queueSnapshotsTable,
 } from "@/db/schema";
 import { importCatalogue } from "@/lib/services/catalogue-import";
@@ -999,6 +1001,119 @@ describe("Journey 4 - the EOD gate", () => {
       .from(reminders)
       .where(eq(reminders.id, call.data.reminderId!));
     assert.equal(fresh.status, "pending");
+  });
+
+  test("a next action dated today is not closed by the call that set it", async () => {
+    const customer = await makeCustomer(priya.id);
+    await updateSetting("reminders.rollForwardOnNonWorkingDays", false, manager.id);
+
+    // An older promise, due today, which this call keeps.
+    const owed = await createReminder({
+      customerId: customer.id,
+      dueDate: TODAY,
+      note: "Ring about the quotation",
+    });
+    assert.ok(owed.ok);
+
+    const call = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "inbound_call",
+      callerRole: "purchase",
+      callReason: "price_quotation",
+      reasonDetail: { product: "Nano Thinner 20L" },
+      nextActions: ["send_quotation"],
+      nextActionDate: TODAY,
+      /* AND a call-back for later in the week, so this call writes TWO
+         reminders — the case a single excluded id could not cover. */
+      outcome: "follow_up",
+      outcomeDetail: { followUpReason: "call_next_week" },
+      followUpDate: addDays(TODAY, 3),
+      idempotencyKey: randomUUID(),
+    });
+    assert.ok(call.ok, call.ok ? "" : call.error);
+
+    const rows = await db
+      .select()
+      .from(reminders)
+      .where(eq(reminders.customerId, customer.id));
+    assert.equal(rows.length, 3);
+    const old = rows.find((r) => r.id === owed.data.id)!;
+    assert.equal(old.status, "completed", "the promise that was due is kept by the call");
+    for (const fresh of rows.filter((r) => r.id !== owed.data.id)) {
+      assert.equal(
+        fresh.status,
+        "pending",
+        `"${fresh.note}" was written by this call and must survive it`,
+      );
+    }
+  });
+
+  test("a call from the calling desk closes the lead's due reminder, and a no-answer does not", async () => {
+    await updateSetting("reminders.rollForwardOnNonWorkingDays", false, manager.id);
+    await db.insert(appModuleAccess).values({
+      id: id("amd"),
+      userId: priya.id,
+      app: "crm",
+      module: "crm.lead-calling-desk",
+    });
+    const lead = await makeCustomer(priya.id, { kind: "lead", leadStage: "new" });
+
+    const created = await createReminder({
+      customerId: lead.id,
+      dueDate: TODAY,
+      note: "Call back about their monthly requirement",
+    });
+    assert.ok(created.ok);
+
+    const missed = await logQualificationCall({
+      customerId: lead.id,
+      outcome: "no_answer",
+      noAnswerReason: "no_response",
+      next: { kind: "call", text: "", date: addDays(TODAY, 1) },
+    });
+    assert.ok(missed.ok, missed.ok ? "" : missed.error);
+    const [afterMiss] = await db.select().from(reminders).where(eq(reminders.id, created.data.id));
+    assert.equal(afterMiss.status, "pending", "nobody answered, so the conversation is still owed");
+
+    const spoke = await logQualificationCall({
+      customerId: lead.id,
+      outcome: "spoke_callback",
+      notes: "Busy today, asked us to ring next week",
+      next: { kind: "call", text: "", date: addDays(TODAY, 5) },
+    });
+    assert.ok(spoke.ok, spoke.ok ? "" : spoke.error);
+    assert.equal(spoke.data.remindersClosed, 1);
+
+    const [afterCall] = await db.select().from(reminders).where(eq(reminders.id, created.data.id));
+    assert.equal(afterCall.status, "completed");
+    assert.equal(afterCall.closedBy, "call");
+    assert.ok(afterCall.closedBySourceId, "it names the desk call that closed it");
+  });
+
+  test("the reminders list says when an open reminder was rung about and nobody answered", async () => {
+    const customer = await makeCustomer(priya.id);
+    await updateSetting("reminders.rollForwardOnNonWorkingDays", false, manager.id);
+    const created = await createReminder({
+      customerId: customer.id,
+      dueDate: TODAY,
+      note: "Chase the order confirmation",
+    });
+    assert.ok(created.ok);
+
+    let [row] = (await listReminders()).filter((r) => r.id === created.data.id);
+    assert.equal(row.lastCall, null, "nobody has rung them since it was set");
+
+    await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "no_answer",
+      outcomeDetail: { whyNoAnswer: "no_response" },
+      idempotencyKey: randomUUID(),
+    });
+    [row] = (await listReminders()).filter((r) => r.id === created.data.id);
+    assert.equal(row.status, "pending");
+    assert.equal(row.lastCall?.answered, false);
+    assert.equal(row.lastCall?.on, TODAY);
   });
 
   test("a reminder is dismissed, never deleted, and stays on the record", async () => {

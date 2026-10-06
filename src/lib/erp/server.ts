@@ -48,7 +48,7 @@ export type ScreenModule = {
  */
 export async function nextNumber(
   tx: { execute: (q: ReturnType<typeof sql>) => Promise<unknown> },
-  key: "pr" | "sfg" | "fg" | "packBatch" | "order",
+  key: "pr" | "sfg" | "fg" | "packBatch" | "order" | "po",
 ): Promise<number> {
   const rows = (await tx.execute(sql`update erp_series set last = last + 1 where key = ${key} returning last`)) as unknown as { last: number }[];
   if (!rows[0]) throw new Error(`No ERP series "${key}"`);
