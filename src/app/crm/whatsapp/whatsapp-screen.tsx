@@ -192,6 +192,8 @@ export function WhatsappScreen(props: {
    * refuse as well, so this is the courtesy half.
    */
   canWrite: boolean;
+  /** Whether a typed reply's review step can offer to improve the wording. */
+  canPolish: boolean;
   scopeLabel: string;
   isManager: boolean;
   /** `automatic` = the founder has switched API sending on and a key exists. */
@@ -287,6 +289,7 @@ export function WhatsappScreen(props: {
     <>
       <ChatTab
         canWrite={canWrite}
+        canPolish={props.canPolish}
         recordHref={(id) => (app === "accounts" ? `/accounts/ledger?customer=${id}` : `/crm/customers/${id}`)}
         initial={props.chats}
         initialKey={props.initialChat}

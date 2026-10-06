@@ -17,6 +17,7 @@ import { clock, longDate, nowMs } from "@/lib/format";
 import { WhatsappScreen } from "./whatsapp-screen";
 import { listConversations } from "@/lib/services/whatsapp-chat-service";
 import { specKey } from "@/lib/wati-templates";
+import { writingConfigured } from "@/lib/writing-model";
 
 /** Whole minutes a run took, floored at one so "0 min" never shows. */
 function runMinutes(from: Date, to: Date | null): number {
@@ -52,6 +53,8 @@ export async function WhatsappPage({
   /* A manager of THIS app, not of any app — see `managesHere`. */
   const managerHere = await managesHere(user, app);
   const canWrite = await canOpenModule(user.id, `${app}.whatsapp-reply`);
+  // Whether the review step can offer help with the words — a key, nothing more.
+  const canPolish = canWrite && (await writingConfigured());
   const now = nowMs();
   const day = await today();
 
@@ -149,6 +152,7 @@ export async function WhatsappPage({
     <WhatsappScreen
       app={app}
       canWrite={canWrite}
+      canPolish={canPolish}
       // The ledger desk reads every book, so naming one would be wrong there.
       scopeLabel={app === "accounts" ? "Every customer" : scopeLabel(scope, user)}
       isManager={managerHere}
