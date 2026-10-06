@@ -1,5 +1,6 @@
 "use server";
 
+import { requireLeadVerifier } from "@/lib/services/lead-verifier";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
@@ -178,7 +179,7 @@ export async function reviewLeadQualification(
     /* The hat that allowed it, recorded on the audit row exactly as every other
        audited write here records one — with several hats per person, "was he
        allowed to do this" is not answerable from the person alone. */
-    const ctx = await requireCapability("lead.verify");
+    const ctx = await requireLeadVerifier(customerId);
 
     const before = row.leadQualificationReview ?? null;
     /*

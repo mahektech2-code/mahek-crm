@@ -1411,6 +1411,43 @@ export async function recomputeSalesManagers(): Promise<number> {
   return changed;
 }
 
+
+/**
+ * THE SALES MANAGER A LEAD IS UNDER AT THE MOMENT IT IS RAISED — the same
+ * org-chart relationship `recomputeSalesManagers` applies nightly, asked about
+ * one owner, so the seat a salesman's new lead is born with and the seat the
+ * nightly pass would write for it cannot disagree about who reports to whom.
+ *
+ * Without it a lead raised on a handset had no Sales Manager until the next
+ * night, and nobody could verify it in the meantime. It is a FILL and not a
+ * decision: nothing here sets `sales_manager_decided_at`, so the nightly pass
+ * goes on owning the seat and an org-chart change still moves it. Null — no
+ * org chart yet, no manager named, or a manager with no login — leaves the
+ * lead exactly as it was before this existed.
+ */
+export async function salesManagerForOwner(
+  ownerUserId: string,
+): Promise<{ id: string | null; personName: string | null } | null> {
+  const managerNameOf = await managerNameByEmployeeName();
+  if (!managerNameOf.size) return null;
+
+  const [owner] = await db
+    .select({ name: users.name })
+    .from(users)
+    .where(eq(users.id, ownerUserId))
+    .limit(1);
+  if (!owner) return null;
+
+  const managerName = managerNameOf.get(owner.name.trim().toLowerCase()) ?? null;
+  if (!managerName) return null;
+
+  const [manager] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(and(eq(users.active, true), sql`lower(trim(${users.name})) = ${managerName.trim().toLowerCase()}`))
+    .limit(1);
+  return manager ? { id: manager.id, personName: null } : { id: null, personName: managerName };
+}
 /* ----------------------------------------------------------- full rebuild */
 
 /** Everything, in dependency order. Used after a migration or a config change. */

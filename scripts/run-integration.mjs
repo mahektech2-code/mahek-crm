@@ -175,6 +175,8 @@ const files = [
   // is drawn and for what may be done to it, admin sees all, owner-only and
   // unassigned leads are nobody's, and no other screen's scope moved.
   "src/lib/crm-sales-manager.test.ts",
+  // Verification follows lead.sales_manager_id: the seat holder verifies, at any CRM level.
+  "src/lib/lead-verifier-seat.test.ts",
   // A lead's owner is respected: a Sales Manager's lead is not a Telecaller's.
   "src/lib/lead-owner-visibility.test.ts",
   "src/lib/sales-manager-desk-queues.test.ts",

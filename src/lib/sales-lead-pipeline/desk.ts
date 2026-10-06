@@ -158,7 +158,7 @@ export function disabledReasons(caps: DeskCaps, f: DeskReasonFacts): string[] {
   const out: string[] = [];
   if (!caps.canVerify) {
     if (f.gateKind === "awaitingVerification" || ((f.stage === "prospect" || f.stage === "contacted") && !f.verified)) {
-      out.push("Verify prospect is switched off: it needs the lead.verify permission, which your account does not hold.");
+      out.push("Verify prospect is switched off: it needs the lead.verify permission, or to be the Sales Manager this lead is under, which your account is not.");
     }
     if (f.stage === "qualification" || f.stage === "qualified") {
       out.push("Reviewing the qualification is switched off: it needs the lead.verify permission, which your account does not hold.");
