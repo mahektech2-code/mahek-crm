@@ -65,14 +65,15 @@ function phoneFor(wa: string): string {
   return digits.length === 10 ? `91${digits}` : digits;
 }
 
-export type MiniMothSend = { ok: true; otpId: string; expiresAt: Date } | Fail;
+/** `raw` is MiniMoth's answer as it came back — kept for the OTP history. It never holds the code. */
+export type MiniMothSend = { ok: true; otpId: string; expiresAt: Date; raw: Record<string, unknown> } | Fail;
 
 export async function sendMiniMothOtp(key: string, phone: string): Promise<MiniMothSend> {
-  const r = await post<{ otp_id?: string; expires_at?: string }>(key, "/v1/otp/send", { phone: phoneFor(phone) });
+  const r = await post<{ otp_id?: string; expires_at?: string; [k: string]: unknown }>(key, "/v1/otp/send", { phone: phoneFor(phone) });
   if (!r.ok) return r;
   if (!r.data.otp_id) return { ok: false, code: "BAD_RESPONSE", error: "MiniMoth answered without an otp_id.", status: 200 };
   const expiresAt = r.data.expires_at ? new Date(r.data.expires_at) : new Date(Date.now() + 10 * 60_000);
-  return { ok: true, otpId: r.data.otp_id, expiresAt };
+  return { ok: true, otpId: r.data.otp_id, expiresAt, raw: r.data as Record<string, unknown> };
 }
 
 /**

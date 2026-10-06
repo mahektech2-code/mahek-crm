@@ -263,3 +263,89 @@ test("a forgotten password is reset with a code, and every session ends", async 
   const [row] = await db.select().from(users).where(eq(users.id, priya.id));
   assert.equal(await verifyPassword("brandnew99", row.passwordHash), true);
 });
+
+/* ------------------------------------------------------------ the history */
+
+test("a sent code records where it was asked from, what was typed and who carried it", async () => {
+  await configure();
+  const r = await sendOtp(priya.id, "login", { surface: "web", requestedWith: "priya@t.local" });
+  assert.equal(r.ok, true);
+  const [row] = await db.select().from(authOtps).where(eq(authOtps.userId, priya.id));
+  assert.equal(row.provider, "wati");
+  assert.equal(row.surface, "web");
+  assert.equal(row.requestedWith, "priya@t.local");
+  assert.equal(row.providerRef, row.id, "Wati's local message id is the row id");
+  assert.equal(row.refusedReason, null);
+});
+
+test("a refused request is recorded, and neither extends the cooldown nor hides the live code", async () => {
+  await configure();
+  await sendOtp(priya.id, "login", { surface: "handset" });
+  const code = lastCode!;
+  const refused = await sendOtp(priya.id, "login", { surface: "handset" });
+  assert.equal(refused.ok, false);
+  const rows = await db.select().from(authOtps).where(eq(authOtps.userId, priya.id));
+  assert.equal(rows.length, 2);
+  const refusal = rows.find((x) => x.refusedReason)!;
+  assert.equal(refusal.refusedReason, "cooldown");
+  assert.equal(refusal.sentAt, null);
+  // The code sent first still verifies: the refusal is newer and must not shadow it.
+  assert.deepEqual(await verifyOtp(priya.id, "login", code), { ok: true });
+});
+
+test("refusals do not use up the window's allowance", async () => {
+  await configure();
+  await updateSetting("auth.otp.maxRequestsPerWindow", 1, priya.id);
+  await updateSetting("auth.otp.resendCooldownSeconds", 0, priya.id);
+  invalidateConfig();
+  // Three refusals for want of an HRMS mobile, then the link is restored.
+  const empId = priya.employeeId!;
+  await db.update(users).set({ employeeId: null }).where(eq(users.id, priya.id));
+  for (let i = 0; i < 3; i++) assert.equal((await sendOtp(priya.id, "login")).ok, false);
+  await db.update(users).set({ employeeId: empId }).where(eq(users.id, priya.id));
+  const r = await sendOtp(priya.id, "login");
+  assert.equal(r.ok, true, r.ok ? "" : r.error);
+  const reasons = (await db.select().from(authOtps).where(eq(authOtps.userId, priya.id))).map((x) => x.refusedReason);
+  assert.equal(reasons.filter((x) => x === "no_hrms_mobile").length, 3);
+});
+
+test("every check of a code is recorded with its result", async () => {
+  await configure();
+  await sendOtp(priya.id, "login");
+  const wrong = lastCode === "000000" ? "111111" : "000000";
+  await verifyOtp(priya.id, "login", wrong);
+  let [row] = await db.select().from(authOtps).where(eq(authOtps.userId, priya.id));
+  assert.equal(row.lastAttemptResult, "wrong");
+  assert.equal(row.attempts, 1);
+  assert.ok(row.lastAttemptAt);
+  await verifyOtp(priya.id, "login", lastCode!);
+  [row] = await db.select().from(authOtps).where(eq(authOtps.userId, priya.id));
+  assert.equal(row.lastAttemptResult, "ok");
+  assert.ok(row.consumedAt);
+});
+
+test("the history lists, counts and narrows what was recorded", async () => {
+  await configure();
+  const { otpHistory, otpByPerson } = await import("@/lib/services/otp-history-service");
+  await sendOtp(priya.id, "login", { surface: "web", requestedWith: "9820011001" });
+  await verifyOtp(priya.id, "login", lastCode!);
+  await sendOtp(priya.id, "login", { surface: "web" }); // refused: cooldown
+
+  const all = await otpHistory({});
+  assert.equal(all.total, 2);
+  assert.equal(all.summary.verified, 1);
+  assert.equal(all.summary.refused, 1);
+  assert.deepEqual(all.rows.map((r) => r.status).sort(), ["refused", "verified"]);
+  assert.equal(all.rows.find((r) => r.status === "verified")!.employeeCode, "E001");
+
+  assert.equal((await otpHistory({ status: "refused" })).total, 1);
+  assert.equal((await otpHistory({ q: "98765" })).total, 2, "found by the number it went to");
+  assert.equal((await otpHistory({ q: "E001" })).total, 2, "found by employee code");
+  assert.equal((await otpHistory({ purpose: "password_reset" })).total, 0);
+
+  const [person] = await otpByPerson({});
+  assert.equal(person.requests, 2);
+  assert.equal(person.verified, 1);
+  assert.equal(person.refused, 1);
+  assert.deepEqual(person.numbers, ["919876500002"]);
+});

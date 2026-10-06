@@ -185,7 +185,7 @@ export async function changePassword(
 /** Sends the signed-in person a code on WhatsApp to change their password with. */
 export async function sendPasswordChangeCode(): Promise<Result<{ sentTo: string }>> {
   const user = await requireUser();
-  const sent = await sendOtp(user.id, "password_change");
+  const sent = await sendOtp(user.id, "password_change", { surface: "settings", requestedWith: user.email });
   if (!sent.ok) return fail(sent.error);
   return okData({ sentTo: sent.sentTo }, `Code sent to ${sent.sentTo} on WhatsApp`);
 }
