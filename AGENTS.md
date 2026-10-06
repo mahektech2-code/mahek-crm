@@ -7114,6 +7114,68 @@ clears `gst_verified`, its date and its person, wherever the number is written
 (`gstinChangeClear`). `mbos.ts` must never name `gstVerified:` (a handset cannot
 assert a verdict); it clears through the helper's return value.
 
+**QUALIFICATION IS THE SALESMAN'S EIGHT QUESTIONS, AND THAT IS A REVERSAL OF THE
+TWO PARAGRAPHS ABOVE ON WHO COLLECTS AND WHO VALIDATES GST.** The Salesman who
+owns the lead collects the answers; the Sales Manager it is under
+(`customers.sales_manager_id`) validates the GST number and reviews them. The
+Telecaller is not part of this stage. The engine, the actions and the handset
+are role-agnostic about who the owner is — `owner_id` completes it — so a lead a
+Telecaller owns still works; what changed is who the product assumes and who
+may validate and approve.
+
+The eight, as `QUALIFICATION_CONDITIONS` states them: the GST number, the
+application (what they will use it on — there is NO success criterion), the
+trial plan (product, pack, quantity, who tests it, for how long), who decides /
+orders / pays, price and credit (the range, the credit days, how they took
+it), delivery (where, the lead time, whether it suits them), still willing to
+test (only a *yes* passes, and it is asked after the commercial facts), and the
+agreed next step with a date. Monthly litres, competitor, required product and
+contact person are Prospect answers and are NOT re-asked; the freshness check
+(`figures_fresh`) still confirms them. Four answers live on the lead's own
+columns (GSTIN, application, credit days, decision maker); the rest are keys in
+the existing `lead_qualification` jsonb, named in `QUALIFICATION_ANSWER_KEYS`
+and checked by `qualificationAnswerFault` on the web action and the handset's
+sync handler alike. No migration: an old tick stored against a retired id stays
+where it is and is simply never read. A "tick" satisfies nothing any more —
+every condition reads a stored answer.
+
+**GST IS COLLECTED BY THE SALESMAN AND VALIDATED BY THE RESPONSIBLE SALES
+MANAGER, as part of her review.** `validateGstin` asks `gstValidatorRefusal`
+for a lead on the funnel: the seat holder, an administrator, or — where nobody
+holds the seat — a `lead.verify` holder; never the lead's owner. An account that
+was never a lead keeps the old rule (`lead.gstValidate` or the back-office
+seat); `lead.gstValidate` and `back_office_am_id` are not removed, and every
+validation already on record is untouched. A refusal needs a reason and goes
+straight back to the Salesman as "Correct the GST number" with the reason in
+the bell. A validation belongs to the number it was made on: changing the
+GSTIN clears it, and — now even for a reviewer's own edit — takes a standing
+approval away.
+
+**THE LEAD IS READY FOR REVIEW BEFORE GST IS VALIDATED, OR IT WOULD NEVER BE
+ASKED FOR.** `qualificationReadyForReview` is every answer in with the GST
+number entered and not refused; `qualificationComplete` stays strict (it adds the
+validation) and is what a `verified` verdict and the Sample/Trial gate require.
+`reviewLeadQualification` now refuses `verified` unless the strict test holds
+and names what is missing — before, a verdict could be recorded over a checklist
+with holes in it and the gate would refuse the sample afterwards.
+
+**THE COLLECTOR CANNOT BE THE APPROVER.** `lead-verifier.ts`: a Sales Manager
+does not fill in her own lead's Qualification (`qualificationCollectorRefusal`,
+on the web actions and the handset handler); the owner cannot approve it or
+validate its GST; and a Sales Manager seated on a different lead is not its
+reviewer merely because her level carries `lead.verify`
+(`requireQualificationApprover`). A lead a Sales Manager raised herself therefore
+needs a Salesman named as its owner: after her verification the next action is
+"Assign a Salesman to complete the qualification", owed by her. The review goes
+to `sales_manager_id` first (the lead-manager seat is the fall-through for a
+lead raised before every lead carried one).
+
+**THE SALESMAN'S FORM IS ON THE HANDSET** (`qualification-form.tsx`), which is
+where he works — he has no web screen. It is a separate APK release; until it
+ships, a handset on the old screen draws the new conditions as bare ticks the
+server will not accept as answers. The engine copies are byte-identical as
+always (`mbos-wire.test.ts`).
+
 **A SAMPLE IS ASKED FOR ONLY WHEN THE LEAD MAY ENTER SAMPLE / TRIAL.**
 `sampleEligibility` asks the ordinary gate (no override) inside `requestSample` and
 the handset's sample handover, before any row is written, for funnel-ladder leads

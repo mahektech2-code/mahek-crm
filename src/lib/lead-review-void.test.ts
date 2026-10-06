@@ -32,9 +32,25 @@ const verified = (over: Partial<ReviewVoidLead> = {}): ReviewVoidLead => ({
   leadRequiredProductId: "p1",
   leadCompetitor: "Local",
   leadSalesType: "direct",
-  leadQualification: { price_discussed: true, delivery_discussed: true, agrees_to_test: true, next_step_agreed: true },
+  leadQualification: { ...ANSWERS },
   ...over,
 });
+
+const ANSWERS = {
+  trial_product: "PU Thinner",
+  trial_pack: "20 L",
+  trial_quantity: "2 cans",
+  trial_tester: "Ramesh",
+  trial_duration: "7 days",
+  price_range: "180 to 200 a litre",
+  price_reaction: "accepted",
+  delivery_location: "Nashik",
+  delivery_lead_time: "3 days",
+  delivery_suits: "yes",
+  willing_to_test: "yes",
+  next_step: "First order of 200 L",
+  next_step_date: "2026-11-01",
+};
 
 describe("what counts as a material change", () => {
   const changes: Array<[string, Record<string, unknown>]> = [
@@ -49,7 +65,10 @@ describe("what counts as a material change", () => {
     ["product", { leadRequiredProductId: "p2" }],
     ["competitor", { leadCompetitor: "Asian" }],
     ["sales type", { leadSalesType: "third_party" }],
-    ["a tick taken away", { leadQualification: { price_discussed: false, delivery_discussed: true, agrees_to_test: true, next_step_agreed: true } }],
+    ["an answer taken away", { leadQualification: { ...ANSWERS, trial_product: "" } }],
+    ["an answer changed, not removed", { leadQualification: { ...ANSWERS, price_reaction: "objecting" } }],
+    ["willingness withdrawn", { leadQualification: { ...ANSWERS, willing_to_test: "no" } }],
+    ["the next-step date moved", { leadQualification: { ...ANSWERS, next_step_date: "2026-12-01" } }],
   ];
   for (const [name, change] of changes) {
     test(`${name} voids a verified review`, () => {
@@ -100,8 +119,14 @@ describe("what counts as a material change", () => {
     }
   });
 
-  test("the reviewer's own edit does not void his review — except a change of sales type", () => {
-    assert.equal(reviewVoidPatch(verified(), { leadApplication: "x", gstin: "29AAAAA0000A1Z5" }, { reviewer: true }), null);
+  test("the reviewer's own edit does not void his review — except a change of sales type or of GST", () => {
+    assert.equal(reviewVoidPatch(verified(), { leadApplication: "x" }, { reviewer: true }), null);
+    /* The approval was given on a validated GST number. A different number, or a
+       validation withdrawn, is a different approval even when the reviewer makes it. */
+    const gst = reviewVoidPatch(verified(), { gstin: "29AAAAA0000A1Z5" }, { reviewer: true });
+    assert.ok(gst);
+    assert.deepEqual(gst!.fields, ["GST number"]);
+    assert.ok(reviewVoidPatch(verified(), { gstVerified: false }, { reviewer: true }));
     assert.equal(reviewVoidPatch(verified(), {}, { reviewer: true, extra: ["distributor"] }), null);
     const structural = reviewVoidPatch(verified(), { leadSalesType: "third_party", leadApplication: "x" }, { reviewer: true });
     assert.ok(structural);

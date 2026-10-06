@@ -9,7 +9,7 @@ import { today } from "@/lib/recompute";
 import { stampDate } from "@/lib/format";
 import { MBOS_EVENT, writeTimelineEvent } from "@/lib/timeline";
 import { ladderFor } from "@/lib/engines/lead-ladder";
-import { qualificationComplete } from "@/lib/engines/lead-gates";
+import { qualificationReadyForReview } from "@/lib/engines/lead-gates";
 import { reviewVoidPatch, type ReviewVoid } from "@/lib/lead-review-void";
 import type { LeadSalesType } from "@/lib/lead-labels";
 import {
@@ -26,8 +26,10 @@ import { nextWorkingDate } from "./lead-qualification-service";
 /* ---------------------------------------------------------------------------
  * THE QUALIFICATION WORKFLOW, in one place.
  *
- * Suspect → Telecaller Calling Desk → Prospect → Sales Manager verification →
- * Qualification by the Telecaller → Sales Manager review → Sample / Trial.
+ * Prospect → Sales Manager verification → Qualification by the Salesman who
+ * owns the lead → Sales Manager validates the GST number and reviews →
+ * Sample / Trial. (The earlier steps — a Suspect becoming a Prospect — are the
+ * Calling Desk's and are unchanged.)
  *
  * Three doors verify a Prospect (the console's verification screen, the Sales
  * Manager pipeline, and a handset) and four screens write Qualification data.
@@ -69,6 +71,8 @@ export const QUAL_NEXT = {
   review: "Review qualification",
   answer: "Answer the Sales Manager's note",
   sample: "Request the sample",
+  gst: "Correct the GST number",
+  assign: "Assign a Salesman to complete the qualification",
 } as const;
 
 /** Whether this person holds the manager's own judgement (`lead.verify`). */
@@ -216,9 +220,13 @@ export async function settleQualificationState(
 
     const gate = await leadGateInput(customerId);
     if (!gate) return { handedTo: null };
-    const complete = qualificationComplete(gate);
+    const complete = qualificationReadyForReview(gate);
     const review = lead.leadQualificationReview;
-    const manager = lead.leadManagerId;
+    /* THE REVIEWER IS THE SALES MANAGER THE LEAD IS UNDER. The lead-manager seat
+       is the fall-through for a lead raised before every lead carried a Sales
+       Manager seat; where both exist, the seat the verification was owed to
+       comes first. */
+    const manager = (await activeUser(lead.salesManagerId)) ?? lead.leadManagerId;
     const owner = await activeUser(lead.ownerId);
 
     /* ONLY WHERE THERE IS NO STANDING VERDICT. A negative review is a note the
@@ -248,7 +256,7 @@ export async function settleQualificationState(
         title: `${lead.name}: qualification is ready for your review`,
         body: opts.voided
           ? "It was verified before and has changed since, so it needs your review again."
-          : "The Telecaller has completed the qualification. Nothing goes to a sample until you verify it.",
+          : "The Salesman has completed the qualification. Validate the GST number and review it; nothing goes to a sample until you verify it.",
         kind: "info",
         href: `/crm/leads/${lead.id}/qualify`,
       }).catch(() => {});
@@ -276,7 +284,7 @@ export async function settleQualificationState(
 }
 
 /**
- * After the manager's verdict: hand the next action back to the Telecaller.
+ * After the manager's verdict: hand the next action back to the Salesman.
  *
  *   verified                  → "Request the sample", and the Telecaller is told
  *   incomplete / clarification → "Answer the Sales Manager's note", with the note
@@ -313,6 +321,50 @@ export async function handBackAfterReview(
     );
   } catch {
     /* A courtesy on top of a verdict already standing on the record. */
+  }
+}
+
+/**
+ * The Sales Manager refused the GST number: hand it straight back to the
+ * Salesman, with the reason travelling IN the message.
+ *
+ * A refusal that only sets a flag leaves the Salesman with a lead that has
+ * stopped moving and no idea why — the number was typed in the shop, and what
+ * is wrong with it is exactly what he can fix from there. So the next action
+ * becomes "Correct the GST number" owed by the lead's owner, and he is told.
+ * Best-effort on top of a refusal already on the record, like every other
+ * hand-back here.
+ */
+export async function handBackAfterGstRefusal(
+  customerId: string,
+  note: string,
+  actorId: string,
+): Promise<void> {
+  try {
+    const lead = await leadRow(customerId);
+    if (!lead) return;
+    const owner = await activeUser(lead.ownerId);
+    if (!owner || owner === actorId) return;
+    await setNextAction(
+      lead,
+      {
+        action: QUAL_NEXT.gst,
+        date: await nextWorkingDate(),
+        ownerId: owner,
+        outcome: note,
+      },
+      actorId,
+      "GST number refused",
+    );
+    await notifyUser({
+      userId: owner,
+      title: `${lead.name}: the GST number was refused`,
+      body: `${note} — correct the number, and your Sales Manager will check it again.`,
+      kind: "warn",
+      href: `/crm/leads/${lead.id}/qualify`,
+    }).catch(() => {});
+  } catch {
+    /* A courtesy on top of a refusal already standing on the record. */
   }
 }
 
@@ -386,13 +438,18 @@ export async function openQualificationAfterVerification(
   const gate = await leadGateInput(customerId);
   if (!gate) return { opened: false, reason: "not_found", message: "That lead is not on MahekOne." };
 
-  const telecaller = await activeUser(lead.ownerId);
+  /* THE SALESMAN WHO OWNS THE LEAD COLLECTS THE ANSWERS, and it cannot be the
+     Sales Manager it is reviewed by: a lead she raised herself carries her as
+     owner or nobody, and neither can complete it. So there the next action is
+     hers to ASSIGN — name a Salesman — rather than a job she is handed. */
+  const ownerId = await activeUser(lead.ownerId);
+  const telecaller = ownerId && ownerId !== lead.salesManagerId ? ownerId : null;
   const owed = telecaller ?? actor.userId;
   const next = {
-    action: telecaller ? QUAL_NEXT.complete : "Assign somebody to complete the qualification",
+    action: telecaller ? QUAL_NEXT.complete : QUAL_NEXT.assign,
     date: await nextWorkingDate(),
     ownerId: owed,
-    outcome: "Answer every condition, then it goes to the Sales Manager for review",
+    outcome: "Answer the eight questions, then it goes to the Sales Manager for review",
   };
 
   const decision = await evaluateLeadStageMove({
@@ -442,8 +499,8 @@ export async function openQualificationAfterVerification(
   return {
     opened: true,
     message: telecaller
-      ? "Verified — Qualification is open and the Telecaller has been told."
-      : "Verified — Qualification is open, but this lead has no owner. Assign somebody to complete it.",
+      ? "Verified — Qualification is open and the Salesman has been told."
+      : "Verified — Qualification is open. Name a Salesman as this lead's owner; he completes it and you review it.",
   };
 }
 

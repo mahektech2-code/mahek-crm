@@ -26,6 +26,10 @@ import {
   ladderVerdicts,
   managementRouteReason,
   mustDecideSuspect,
+  qualificationAnswerFault,
+  qualificationAnswerSummary,
+  qualificationReadyForReview,
+  qualificationComplete,
   type LeadGateInput,
 } from "./lead-gates";
 
@@ -172,9 +176,26 @@ describe("§7 — a prospect is verified before it is qualified", () => {
 /* --------------------------------------------------------------------- §9 */
 
 /** The eight, with the three column-backed ones actually answered. */
+/** A complete set of Qualification answers, as the Salesman's form stores them. */
+const ANSWERS: Record<string, string> = {
+  trial_product: "PU Thinner",
+  trial_pack: "20 L",
+  trial_quantity: "2 cans",
+  trial_tester: "Ramesh",
+  trial_duration: "7 days",
+  buyer_same: "yes",
+  payer_same: "yes",
+  price_range: "180 to 200 a litre",
+  price_reaction: "accepted",
+  delivery_location: "Nashik",
+  delivery_lead_time: "3 days",
+  delivery_suits: "yes",
+  willing_to_test: "yes",
+  next_step: "First order of 200 L",
+  next_step_date: "2026-11-01",
+};
+
 function trialReady(over: Partial<LeadGateInput> = {}): LeadGateInput {
-  const ticks: Record<string, boolean> = {};
-  for (const c of QUALIFICATION_CONDITIONS) ticks[c.id] = true;
   return {
     salesType: "direct",
     stage: "qualification",
@@ -189,7 +210,7 @@ function trialReady(over: Partial<LeadGateInput> = {}): LeadGateInput {
     creditDaysWanted: 30,
     decisionMaker: "Ramesh",
     application: "Wood finishing",
-    qualification: ticks,
+    qualification: { ...ANSWERS },
     /* The Sales Manager's review is MANDATORY for Sample/Trial, so a lead that is
        otherwise ready carries a verified one. Every test that wants the review
        missing says so by overriding it. */
@@ -211,12 +232,12 @@ describe("§5 — the eight before anybody may send a sample", () => {
     assert.deepEqual(QUALIFICATION_CONDITIONS.map((c) => c.id), [
       "gst_verified",
       "application_understood",
-      "price_discussed",
-      "credit_days",
-      "delivery_discussed",
-      "buyer_confirmed",
-      "agrees_to_test",
-      "next_step_agreed",
+      "trial_plan",
+      "people_identified",
+      "price_and_credit",
+      "delivery_workable",
+      "willing_to_test",
+      "next_step_dated",
     ]);
   });
 
@@ -265,22 +286,60 @@ describe("§5 — the eight before anybody may send a sample", () => {
   });
 
   test("each of the eight, taken away one at a time, is named", () => {
-    /* The tick-only ones. */
-    for (const id of ["price_discussed", "delivery_discussed", "agrees_to_test", "next_step_agreed"]) {
-      const ticks = { ...(trialReady().qualification as Record<string, boolean>) };
-      delete ticks[id];
-      assert.ok(missingIds(trialReady({ qualification: ticks }), "sample_trial").includes(id), id);
+    /* The answers kept in the jsonb. */
+    const gaps: Array<[string, string]> = [
+      ["trial_plan", "trial_product"],
+      ["trial_plan", "trial_pack"],
+      ["trial_plan", "trial_quantity"],
+      ["trial_plan", "trial_tester"],
+      ["trial_plan", "trial_duration"],
+      ["price_and_credit", "price_range"],
+      ["price_and_credit", "price_reaction"],
+      ["delivery_workable", "delivery_location"],
+      ["delivery_workable", "delivery_lead_time"],
+      ["delivery_workable", "delivery_suits"],
+      ["willing_to_test", "willing_to_test"],
+      ["next_step_dated", "next_step"],
+      ["next_step_dated", "next_step_date"],
+      ["people_identified", "payer_same"],
+    ];
+    for (const [id, key] of gaps) {
+      const answers = { ...ANSWERS };
+      delete answers[key];
+      assert.ok(missingIds(trialReady({ qualification: answers }), "sample_trial").includes(id), `${id} without ${key}`);
     }
     /* The column-backed ones. */
-    const gaps: Array<[string, Partial<LeadGateInput>]> = [
+    const columns: Array<[string, Partial<LeadGateInput>]> = [
       ["gst_verified", { gstin: null }],
       ["gst_verified", { gstVerified: false }],
-      ["credit_days", { creditDaysWanted: null }],
+      ["price_and_credit", { creditDaysWanted: null }],
       ["application_understood", { application: null }],
+      ["people_identified", { decisionMaker: null }],
     ];
-    for (const [id, gap] of gaps) {
+    for (const [id, gap] of columns) {
       assert.ok(missingIds(trialReady(gap), "sample_trial").includes(id), `${id} ${JSON.stringify(gap)}`);
     }
+  });
+
+  test("only a YES to 'still willing to test' passes, and a no is held", () => {
+    for (const bad of ["no", "", "maybe"]) {
+      assert.ok(
+        missingIds(trialReady({ qualification: { ...ANSWERS, willing_to_test: bad } }), "sample_trial").includes("willing_to_test"),
+        bad,
+      );
+    }
+  });
+
+  test("the price reaction must be one of the three, and the next-step date a real date shape", () => {
+    assert.ok(missingIds(trialReady({ qualification: { ...ANSWERS, price_reaction: "happy" } }), "sample_trial").includes("price_and_credit"));
+    for (const reaction of ["accepted", "negotiating", "objecting"]) {
+      assert.ok(!missingIds(trialReady({ qualification: { ...ANSWERS, price_reaction: reaction } }), "sample_trial").includes("price_and_credit"));
+    }
+    assert.ok(missingIds(trialReady({ qualification: { ...ANSWERS, next_step_date: "next week" } }), "sample_trial").includes("next_step_dated"));
+  });
+
+  test("delivery that does NOT suit is still an answer: the Sales Manager judges it at review", () => {
+    assert.ok(!missingIds(trialReady({ qualification: { ...ANSWERS, delivery_suits: "no" } }), "sample_trial").includes("delivery_workable"));
   });
 
   /* §11.6 — THE VALIDATION IS SOMEBODY ELSE'S. A GST number on the record and
@@ -294,48 +353,47 @@ describe("§5 — the eight before anybody may send a sample", () => {
     assert.ok(missing.includes("gst_verified"), "the salesman's tick must not stand in for the check");
   });
 
-  /* The buyer is asked for ONLY where it is a different person, which is the
-     specification's own wording and the reason this one condition can be
-     satisfied by a fact about another field. */
-  describe("the buyer is conditional", () => {
-    test("a named buyer answers it outright", () => {
-      const ticks = { ...(trialReady().qualification as Record<string, boolean>) };
-      delete ticks.buyer_confirmed;
-      const v = missingIds(trialReady({ buyer: "Suresh", qualification: ticks }), "sample_trial");
-      assert.ok(!v.includes("buyer_confirmed"));
+  /* WHO DECIDES, WHO ORDERS, WHO PAYS. The decision maker is a Prospect column;
+     where the buyer or the payer is the same person, saying so is the answer. */
+  describe("the people are identified", () => {
+    test("a named buyer and payer answer it outright", () => {
+      const answers: Record<string, string> = { ...ANSWERS, payer: "Suresh" };
+      delete answers.buyer_same;
+      delete answers.payer_same;
+      assert.ok(!missingIds(trialReady({ buyer: "Suresh", qualification: answers }), "sample_trial").includes("people_identified"));
     });
 
-    test("no buyer, but a decision maker confirmed as the same man, answers it", () => {
-      assert.ok(
-        !missingIds(trialReady({ buyer: null }), "sample_trial").includes("buyer_confirmed"),
-      );
+    test("a buyer named in the answers (the handset's way) answers it too", () => {
+      const answers: Record<string, string> = { ...ANSWERS, buyer_name: "Suresh" };
+      delete answers.buyer_same;
+      assert.ok(!missingIds(trialReady({ buyer: null, qualification: answers }), "sample_trial").includes("people_identified"));
     });
 
-    test("neither does not", () => {
-      const ticks = { ...(trialReady().qualification as Record<string, boolean>) };
-      delete ticks.buyer_confirmed;
-      const v = missingIds(
-        trialReady({ buyer: null, decisionMaker: null, qualification: ticks }),
-        "sample_trial",
-      );
-      assert.ok(v.includes("buyer_confirmed"));
+    test("'the same person' answers the buyer and the payer", () => {
+      assert.ok(!missingIds(trialReady({ buyer: null }), "sample_trial").includes("people_identified"));
     });
 
-    /* A lead qualified before the list was cut carries the OLD key. Reading
-       only the new one would un-tick finished work and send it back down. */
-    test("the old `decision_maker` tick still counts", () => {
-      const v = missingIds(
-        trialReady({ buyer: null, qualification: { ...(trialReady().qualification as Record<string, boolean>), buyer_confirmed: false, decision_maker: true } }),
-        "sample_trial",
-      );
-      assert.ok(!v.includes("buyer_confirmed"));
+    test("no buyer and no statement that it is the same man does not", () => {
+      const answers = { ...ANSWERS };
+      delete answers.buyer_same;
+      assert.ok(missingIds(trialReady({ buyer: null, qualification: answers }), "sample_trial").includes("people_identified"));
+    });
+
+    test("no payer and no statement that it is the same man does not", () => {
+      const answers = { ...ANSWERS };
+      delete answers.payer_same;
+      assert.ok(missingIds(trialReady({ qualification: answers }), "sample_trial").includes("people_identified"));
+    });
+
+    test("no decision maker does not", () => {
+      assert.ok(missingIds(trialReady({ decisionMaker: null }), "sample_trial").includes("people_identified"));
     });
   });
 
   /* THE WHOLE POINT OF THE ENGINE: a tick beside an empty field is exactly the
      state it exists to stop. Every one of these is ticked below and still
      refused, because the column behind it is empty. */
-  test("a tick alone does not satisfy a condition a column answers", () => {
+  test("a tick alone does not satisfy any of the eight", () => {
     const ticked: Record<string, boolean> = {};
     for (const c of QUALIFICATION_CONDITIONS) ticked[c.id] = true;
     const allTicksNoValues: LeadGateInput = {
@@ -345,8 +403,8 @@ describe("§5 — the eight before anybody may send a sample", () => {
       ...NEXT_ACTION,
     };
     const missing = missingIds(allTicksNoValues, "sample_trial");
-    for (const id of ["gst_verified", "credit_days", "application_understood"]) {
-      assert.ok(missing.includes(id), `${id} refused on the tick alone`);
+    for (const c of QUALIFICATION_CONDITIONS) {
+      assert.ok(missing.includes(c.id), `${c.id} refused on the tick alone`);
     }
   });
 
@@ -480,6 +538,97 @@ describe("§5 — the eight before anybody may send a sample", () => {
 });
 
 /* ============================================================ §15 §16 §17 */
+
+describe("the Qualification answers a form can send", () => {
+  test("an empty answer is always fine — it is how an answer is taken back", () => {
+    for (const key of ["trial_product", "willing_to_test", "price_reaction", "next_step_date"]) {
+      assert.equal(qualificationAnswerFault(key, ""), null, key);
+      assert.equal(qualificationAnswerFault(key, "   "), null, key);
+    }
+  });
+
+  test("yes/no answers take yes or no and nothing else", () => {
+    for (const key of ["buyer_same", "payer_same", "delivery_suits", "willing_to_test"]) {
+      assert.equal(qualificationAnswerFault(key, "yes"), null, key);
+      assert.equal(qualificationAnswerFault(key, "no"), null, key);
+      assert.ok(qualificationAnswerFault(key, "maybe"), key);
+      assert.ok(qualificationAnswerFault(key, "true"), key);
+    }
+  });
+
+  test("the price reaction is one of three", () => {
+    for (const r of ["accepted", "negotiating", "objecting"]) assert.equal(qualificationAnswerFault("price_reaction", r), null, r);
+    assert.ok(qualificationAnswerFault("price_reaction", "delighted"));
+  });
+
+  test("the next-step date is a real calendar date", () => {
+    assert.equal(qualificationAnswerFault("next_step_date", "2026-11-01"), null);
+    for (const bad of ["next week", "01/11/2026", "2026-13-01", "2026-02-30", "2026-1-1"]) {
+      assert.ok(qualificationAnswerFault("next_step_date", bad), bad);
+    }
+  });
+
+  test("free text has a ceiling", () => {
+    assert.ok(qualificationAnswerFault("trial_product", "x".repeat(501)));
+    assert.equal(qualificationAnswerFault("trial_product", "x".repeat(500)), null);
+  });
+});
+
+describe("ready for review versus complete — GST validation is the Sales Manager's part of the review", () => {
+  test("every answer in, the number entered and not yet validated: ready, but not complete", () => {
+    const i = trialReady({ gstVerified: false, qualificationReview: null });
+    assert.equal(qualificationReadyForReview(i), true);
+    assert.equal(qualificationComplete(i), false);
+  });
+
+  test("a number the Sales Manager REFUSED is not ready — the Salesman owes a correction", () => {
+    const i = trialReady({ gstVerified: false, gstRefused: true, qualificationReview: null });
+    assert.equal(qualificationReadyForReview(i), false);
+    assert.equal(qualificationComplete(i), false);
+  });
+
+  test("the number validated: both", () => {
+    const i = trialReady({ qualificationReview: null });
+    assert.equal(qualificationReadyForReview(i), true);
+    assert.equal(qualificationComplete(i), true);
+  });
+
+  test("no number at all: neither", () => {
+    const i = trialReady({ gstin: null, gstVerified: false, qualificationReview: null });
+    assert.equal(qualificationReadyForReview(i), false);
+    assert.equal(qualificationComplete(i), false);
+  });
+
+  test("a missing answer: neither", () => {
+    const answers = { ...ANSWERS };
+    delete answers.trial_pack;
+    const i = trialReady({ qualification: answers, gstVerified: false, qualificationReview: null });
+    assert.equal(qualificationReadyForReview(i), false);
+  });
+
+  test("a distributor has no such thing", () => {
+    assert.equal(qualificationReadyForReview(trialReady({ salesType: "distributor" })), false);
+  });
+});
+
+describe("what was answered, in a line for the reviewer", () => {
+  test("each of the eight reads back what the form stored", () => {
+    const i = trialReady({ buyer: null, decisionMaker: "Ramesh" });
+    assert.equal(qualificationAnswerSummary("gst_verified", i), "27AAAPL1234C1ZV");
+    assert.equal(qualificationAnswerSummary("application_understood", i), "Wood finishing");
+    assert.equal(qualificationAnswerSummary("trial_plan", i), "PU Thinner · 20 L · 2 cans · tested by Ramesh · 7 days");
+    assert.equal(qualificationAnswerSummary("people_identified", i), "decides: Ramesh · orders: the same person · pays: the same person");
+    assert.equal(qualificationAnswerSummary("price_and_credit", i), "180 to 200 a litre · credit 30 days · accepted");
+    assert.equal(qualificationAnswerSummary("delivery_workable", i), "Nashik · 3 days · suits them: yes");
+    assert.equal(qualificationAnswerSummary("willing_to_test", i), "yes");
+    assert.equal(qualificationAnswerSummary("next_step_dated", i), "First order of 200 L · 2026-11-01");
+  });
+
+  test("nothing answered reads as nothing", () => {
+    const i = trialReady({ qualification: {}, gstin: null, application: null, decisionMaker: null, creditDaysWanted: null });
+    for (const c of QUALIFICATION_CONDITIONS) assert.equal(qualificationAnswerSummary(c.id, i), "", c.id);
+  });
+});
 
 describe("the sample rungs", () => {
   const base = (over: Partial<LeadGateInput> = {}): LeadGateInput => ({

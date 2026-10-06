@@ -1,4 +1,4 @@
-import { holdsLeadSeatById } from "@/lib/services/lead-verifier";
+import { canValidateGstById, holdsLeadSeatById } from "@/lib/services/lead-verifier";
 import { type LeadWorkspace } from "@/lib/lead-workspace";
 import { qualificationAccess } from "@/lib/lead-qualification-access";
 import { canOpenModule } from "@/lib/access";
@@ -189,8 +189,8 @@ export async function Body({
    * The sentence travels with the answer, so the disabled control's hover says
    * the same thing the action would have said.
    */
-  const gstSeatOrCapability =
-    record.backOfficeAmId === user.id || (await canLead(user, "lead.gstValidate"));
+  /* The responsible Sales Manager validates GST (`validateGstin` says so). */
+  const gstSeatOrCapability = await canValidateGstById(user, id);
   const gstNotYet = qualificationAccess(record.stage);
   const gstBeforeQualification = ["suspect", "new", "prospect", "contacted"].includes(record.stage);
   const canValidateGst = gstSeatOrCapability && !gstBeforeQualification;

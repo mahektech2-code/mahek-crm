@@ -10,7 +10,7 @@ import { requireUser } from "@/lib/auth";
 import { getConfig } from "@/lib/config/store";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { gateAction } from "@/lib/engines/lead-gate-action";
-import { gateForNext, gateTo, mustDecideSuspect, checklistFor } from "@/lib/engines/lead-gates";
+import { gateForNext, gateTo, mustDecideSuspect, checklistFor, qualificationAnswerSummary, type LeadGateInput } from "@/lib/engines/lead-gates";
 import { isParked } from "@/lib/engines/lead-ladder";
 import { isReopenTransition, reopenTarget } from "@/lib/engines/lead-reopen";
 import { isRecentLead } from "@/lib/lead-recent";
@@ -520,6 +520,9 @@ type Extra = {
   notes: string | null;
   prospectRequestState: string | null;
   holdReason: string | null;
+  /** `customers.gst_verified` as stored: true validated, false REFUSED (with a date), null never checked. */
+  gstVerifiedRaw: boolean | null;
+  gstVerifiedAt: string | null;
   /** IST calendar days since the lead was raised, worked out in SQL like `leadsPage`'s `ageDays`. */
   ageDays: number;
 };
@@ -561,6 +564,7 @@ async function recordExtras(id: string, day: string): Promise<Extra | null> {
     select c.created_at as "createdAt", c.address, c.email, c.lead_notes as notes,
            c.prospect_request_state as "prospectRequestState",
            c.lead_hold_reason as "holdReason",
+           c.gst_verified as "gstVerifiedRaw", c.gst_verified_at as "gstVerifiedAt",
            (${day}::date - (c.created_at at time zone ${sql.raw(`'${APP_TIMEZONE}'`)})::date)::int as "ageDays"
       from customers c
      where c.id = ${id}
@@ -569,19 +573,17 @@ async function recordExtras(id: string, day: string): Promise<Extra | null> {
   return rows[0] ?? null;
 }
 
-const CONDITION_TICKABLE = new Set(["price_discussed", "delivery_discussed", "agrees_to_test", "next_step_agreed", "buyer_confirmed"]);
-
 /** The eight (or, on a distributor, thirty) conditions the REAL gate reads, each with whether it is met. */
-function qualItemsFor(record: LeadRecord, missingIds: Set<string>): QualItem[] {
+function qualItemsFor(record: LeadRecord, missingIds: Set<string>, input: LeadGateInput): QualItem[] {
   return checklistFor(record.salesType, "qualification").map((c) => ({
     id: c.id,
     says: c.says,
     done: !missingIds.has(c.id),
-    /* A buyer NAMED on the record satisfies `buyer_confirmed` by value, so a tick beside it would be a box that changes nothing. */
-    tickable:
-      record.salesType !== "distributor" &&
-      CONDITION_TICKABLE.has(c.id) &&
-      !(c.id === "buyer_confirmed" && Boolean(record.buyer)),
+    /* Nothing on a shop's checklist is a tick any more: the Salesman's answers
+       are stored values and the Sales Manager READS them. A distributor's thirty
+       are answered on the distributor profile, never ticked here either. */
+    tickable: false,
+    answer: record.salesType === "distributor" ? undefined : qualificationAnswerSummary(c.id, input) || undefined,
   }));
 }
 
@@ -1162,7 +1164,14 @@ export async function pipelineLead(
     conversionReason: conversion?.reasonCode ?? undefined,
     verification,
     verificationCorrections: corrections.length ? corrections : undefined,
-    qualItems: qualItemsFor(record, missingIds),
+    qualItems: qualItemsFor(record, missingIds, input),
+    gstState: !clean(record.gstin)
+      ? "none"
+      : extra?.gstVerifiedRaw === true
+        ? "valid"
+        : extra?.gstVerifiedRaw === false && extra.gstVerifiedAt
+          ? "refused"
+          : "unchecked",
     qualReview: record.qualificationReview
       ? {
           verdict: record.qualificationReview,

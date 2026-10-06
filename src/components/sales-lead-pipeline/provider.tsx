@@ -13,6 +13,7 @@ import {
   setLeadNextAction,
 } from "@/lib/actions/leads";
 import { reviewLeadQualification } from "@/lib/actions/lead-qualification-review";
+import { validateGstin } from "@/lib/actions/lead-gst";
 import { decideSample, dispatchSample } from "@/lib/actions/lead-samples";
 import {
   agreeCommercialTerms,
@@ -91,6 +92,8 @@ type Ctx = {
   /* --- qualification --- */
   doSaveChecklist: (answers: Record<string, boolean>) => Promise<boolean>;
   doReviewChecklist: (verdict: "verified" | "incomplete" | "clarification", note: string) => Promise<boolean>;
+  /** The Sales Manager's own check of the GST number: true validates it, false refuses it with a reason. */
+  doValidateGst: (valid: boolean, note: string) => Promise<boolean>;
 
   /* --- samples --- */
   doRequestSample: (input: { productId: string; quantityCans: number; application: string; reasonCode: string }) => Promise<boolean>;
@@ -226,9 +229,14 @@ export function LeadPipelineProvider({
       run(() => reopenSalesManagerLead({ customerId: id, reasonCode, note: note.trim() || undefined })),
 
     doSaveChecklist: (answers) => run(() => saveLeadQualification(id, answers), { close: false, success: "Checklist saved." }),
+    doValidateGst: (valid, note) =>
+      run(() => validateGstin({ customerId: id, valid, note: note.trim() || undefined }), {
+        close: false,
+        success: valid ? "GST number validated." : "GST number refused — the Salesman has been told what to correct.",
+      }),
     doReviewChecklist: (verdict, note) =>
       run(() => reviewLeadQualification({ customerId: id, verdict, note: note.trim() || undefined }), {
-        success: verdict === "verified" ? "Checklist marked verified." : "Sent back to the salesman.",
+        success: verdict === "verified" ? "Checklist marked verified." : "Sent back to the Salesman.",
       }),
 
     doRequestSample: (input) => run(() => requestSampleForLead({ customerId: id, ...input })),

@@ -59,6 +59,7 @@ import {
   setLeadNextAction,
 } from "@/lib/actions/leads";
 import { reviewLeadQualification } from "@/lib/actions/lead-qualification-review";
+import { QUALIFICATION_ANSWERS } from "@/lib/qualification-fixtures";
 import { decideSample, dispatchSample, requestSample } from "@/lib/actions/lead-samples";
 import {
   agreeCommercialTerms,
@@ -172,7 +173,7 @@ async function qualifiedLead(over: Partial<typeof customers.$inferInsert> = {}) 
     leadCreditDaysWanted: 30,
     leadBuyer: "Ganesh's brother",
     leadFiguresConfirmedAt: new Date(),
-    leadQualification: { price_discussed: true, delivery_discussed: true, agrees_to_test: true, next_step_agreed: true },
+    leadQualification: { ...QUALIFICATION_ANSWERS },
     /* THE MANAGER'S REVIEW IS MANDATORY FOR SAMPLE/TRIAL, so a lead that is
        "ready for a sample" carries a verified one. Tests about the review itself
        override these. */
@@ -360,13 +361,16 @@ describe("R — the reads are counted in the database", () => {
   });
 
   test("a checklist that is short says which conditions, from the engine, and draws the checklist button", async () => {
-    const lead = await qualifiedLead({ leadQualification: { price_discussed: true }, gstVerified: false });
+    const lead = await qualifiedLead({ leadQualification: { willing_to_test: "yes" }, gstVerified: false });
     const l = (await pipelineLead(lead.id, DAY))!.lead;
     assert.equal(l.gate.kind, "qualify");
     assert.ok(l.qualItems.some((q) => !q.done));
     const gst = l.qualItems.find((q) => q.id === "gst_verified")!;
     assert.equal(gst.tickable, false, "a value on the record is never a box to tick");
-    assert.equal(l.qualItems.find((q) => q.id === "price_discussed")!.tickable, true);
+    assert.ok(l.qualItems.every((q) => !q.tickable), "the Sales Manager reads answers; nothing on her checklist is a tick");
+    assert.equal(l.qualItems.find((q) => q.id === "trial_plan")!.done, false);
+    assert.equal(l.qualItems.find((q) => q.id === "willing_to_test")!.answer, "yes", "what was answered is shown, for the read-through");
+    assert.equal(l.gstState, "unchecked", "entered, nobody has validated it");
   });
 
   test("a regional manager cannot open a lead outside the patch, and the list does not draw it", async () => {
@@ -593,16 +597,17 @@ describe("M — every mutation persists, and the screen is told what the databas
   });
 
   test("qualification: ticks persist and merge, and the manager's review is recorded and holds the lead", async () => {
-    const lead = await qualifiedLead({ leadQualification: { price_discussed: true } });
+    const lead = await qualifiedLead({ leadQualification: { willing_to_test: "yes" } });
     const before = (await pipelineLead(lead.id, DAY))!.lead;
-    assert.equal(before.qualItems.find((q) => q.id === "delivery_discussed")!.done, false);
+    assert.equal(before.qualItems.find((q) => q.id === "delivery_workable")!.done, false);
 
-    const saved = await saveLeadQualification(lead.id, { delivery_discussed: true, agrees_to_test: true, next_step_agreed: true });
+    const rest = Object.fromEntries(Object.entries(QUALIFICATION_ANSWERS).filter(([k]) => k !== "willing_to_test"));
+    const saved = await saveLeadQualification(lead.id, rest);
     assert.equal(saved.ok, true, saved.ok ? "" : saved.error);
     assert.deepEqual(
       Object.keys((await row(lead.id)).leadQualification ?? {}).sort(),
-      ["agrees_to_test", "delivery_discussed", "next_step_agreed", "price_discussed"],
-      "a patch merges — it does not erase last week's ticks",
+      Object.keys(QUALIFICATION_ANSWERS).sort(),
+      "a patch merges — it does not erase last week's answers",
     );
     const after = (await pipelineLead(lead.id, DAY))!.lead;
     assert.ok(after.qualItems.every((q) => q.done));

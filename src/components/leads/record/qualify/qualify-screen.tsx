@@ -60,9 +60,8 @@ import { ProductField } from "@/components/products/product-field";
  * ------------------------------------------------------------------------- */
 
 /** Where an answer is stored, which decides which action writes it. */
-type Target = "prospect" | "tick" | "profile";
-
-type FieldKind = "text" | "long" | "int" | "litres" | "money" | "bool" | "date" | "product";
+type Target = "prospect" | "tick" | "profile" | "answer";
+type FieldKind = "text" | "long" | "int" | "litres" | "money" | "bool" | "date" | "product" | "yesno" | "choice";
 
 type FieldSpec = {
   target: Target;
@@ -72,6 +71,10 @@ type FieldSpec = {
   hint?: string;
   /** A ceiling for a number box, matching the server's own range. */
   max?: number;
+  /** What the box is, above it. Several boxes share one condition now. */
+  label?: string;
+  /** The choices of a `choice` box, value then words. */
+  options?: readonly { value: string; label: string }[];
 };
 
 /**
@@ -85,37 +88,70 @@ type FieldSpec = {
  * record, and a column named wrongly writes an answer into the wrong place.
  */
 const SHOP_FIELDS: Record<string, FieldSpec[]> = {
-  /* GST is a NUMBER the Telecaller writes and a validation the Telecaller also
-     records. The validation is NOT a tick: the gate reads `customers.gst_verified`
-     (with who and when), so the control for it is a real action further down,
-     and this box is only the number. Changing the number clears the validation. */
+  /* GST is a NUMBER the Salesman writes; the VALIDATION is the responsible Sales
+     Manager's, made as part of her review. It is not a tick: the gate reads
+     `customers.gst_verified` (with who and when), so the control for it is a
+     real action further down and this box is only the number. Changing the
+     number clears the validation and takes a standing approval away. */
   gst_verified: [
     { target: "prospect", key: "gstin", kind: "text", hint: "15 characters, as printed. Changing it clears any validation." },
   ],
+  /* What they will use it on — and nothing more. There is no success criterion. */
   application_understood: [
     {
       target: "prospect",
       key: "application",
       kind: "long",
-      hint: "What they will use it on. A trial nobody can judge is stock given away.",
+      hint: "What they will use it on.",
     },
   ],
-  credit_days: [
-    { target: "prospect", key: "creditDaysWanted", kind: "int", hint: "Days, 0 to 365", max: 365 },
+  trial_plan: [
+    { target: "answer", key: "trial_product", kind: "text", label: "Product", hint: "What we are sending for the trial" },
+    { target: "answer", key: "trial_pack", kind: "text", label: "Pack size", hint: "For example 20 L" },
+    { target: "answer", key: "trial_quantity", kind: "text", label: "Sample quantity", hint: "For example 2 cans" },
+    { target: "answer", key: "trial_tester", kind: "text", label: "Who will test it" },
+    { target: "answer", key: "trial_duration", kind: "text", label: "Expected trial duration", hint: "For example 7 days" },
   ],
-  /* The decision maker is a Prospect answer and is SHOWN, not asked again. What
-     this condition wants is the person who PLACES the order, where that is not
-     the decision maker — either named, or a statement that it is the same
-     person. */
-  buyer_confirmed: [
-    { target: "prospect", key: "buyer", kind: "text", hint: "Who places the order, if that is not the decision maker" },
-    { target: "tick", key: "buyer_confirmed", kind: "bool", hint: "The decision maker also places the order" },
+  /* The decision maker and the buyer are Prospect columns; the payer has no
+     column. Where one person does two jobs, saying so is the answer. */
+  people_identified: [
+    { target: "prospect", key: "decisionMaker", kind: "text", label: "Who decides" },
+    { target: "answer", key: "decision_maker_phone", kind: "text", label: "Their phone (optional)" },
+    { target: "prospect", key: "buyer", kind: "text", label: "Who places the order", hint: "Leave empty and answer yes below if it is the same person" },
+    { target: "answer", key: "buyer_same", kind: "yesno", label: "Is the buyer the same person as the decision maker?" },
+    { target: "answer", key: "buyer_phone", kind: "text", label: "Buyer's phone (optional)" },
+    { target: "answer", key: "payer", kind: "text", label: "Who pays", hint: "Leave empty and answer yes below if it is the same person" },
+    { target: "answer", key: "payer_same", kind: "yesno", label: "Is the payer the same person as the decision maker?" },
+    { target: "answer", key: "payer_phone", kind: "text", label: "Payer's phone (optional)" },
   ],
-  /* price_discussed, delivery_discussed, agrees_to_test and next_step_agreed have
-     no column: they are genuine ticks, drawn as ticks. The monthly requirement,
-     the potential, the product and the competitor are NOT here — they are
-     Prospect figures, confirmed as a group below, and the gate stopped asking
-     for them at Qualification. */
+  price_and_credit: [
+    { target: "answer", key: "price_range", kind: "text", label: "Price or range discussed" },
+    { target: "prospect", key: "creditDaysWanted", kind: "int", label: "Credit days requested", hint: "Days, 0 to 365", max: 365 },
+    {
+      target: "answer",
+      key: "price_reaction",
+      kind: "choice",
+      label: "How they took it",
+      options: [
+        { value: "accepted", label: "Accepted" },
+        { value: "negotiating", label: "Negotiating" },
+        { value: "objecting", label: "Objecting" },
+      ],
+    },
+  ],
+  delivery_workable: [
+    { target: "answer", key: "delivery_location", kind: "text", label: "Where we deliver" },
+    { target: "answer", key: "delivery_lead_time", kind: "text", label: "Lead time we quoted", hint: "For example 3 days" },
+    { target: "answer", key: "delivery_suits", kind: "yesno", label: "Does that timing suit them?" },
+  ],
+  /* ONLY A YES PASSES. A no is recorded, and the lead is held. */
+  willing_to_test: [
+    { target: "answer", key: "willing_to_test", kind: "yesno", label: "Will they still test it?", hint: "Ask this after price, credit and delivery. Only a yes passes." },
+  ],
+  next_step_dated: [
+    { target: "answer", key: "next_step", kind: "long", label: "What happens if the trial goes well" },
+    { target: "answer", key: "next_step_date", kind: "date", label: "By when" },
+  ],
 };
 
 const DISTRIBUTOR_FIELDS: Record<string, FieldSpec[]> = {
@@ -233,6 +269,7 @@ export function QualifyScreen({
   figures,
   thirdParty,
   complete,
+  collectorBarred = null,
 }: {
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
   workspace: LeadWorkspace;
@@ -284,13 +321,19 @@ export function QualifyScreen({
     distributors: string[];
     options: { id: string; name: string; city: string | null }[];
   };
-  /** Everything the Telecaller owns is answered (the review conditions left out). */
+  /** Everything the Salesman owns is answered (the GST validation and the review left out). */
   complete: boolean;
+  /**
+   * The sentence to refuse with where this person is the lead's own Sales Manager,
+   * who reviews a Qualification and does not fill it in — or null where they may
+   * write. The server refuses on the same function.
+   */
+  collectorBarred?: string | null;
 }) {
   const router = useRouter();
   const toast = useToast();
   /* Can this person write, HERE, NOW — the capability AND the rung. */
-  const editable = canWork && access.writable;
+  const editable = canWork && access.writable && !collectorBarred;
 
   const distributor = salesType === "distributor";
   const fieldMap = distributor ? DISTRIBUTOR_FIELDS : SHOP_FIELDS;
@@ -386,6 +429,9 @@ export function QualifyScreen({
         const value = coerce(spec, raw);
         if (spec.target === "prospect") prospect[key] = value;
         else if (spec.target === "profile") patch[key] = value;
+        /* A stored answer: text, yes/no or a choice. An empty box is "no answer" and
+           is sent as the empty string, which is how an answer is taken back. */
+        else if (spec.target === "answer") ticks[key] = typeof raw === "string" ? raw.trim() : "";
         else ticks[key] = raw === true;
       }
 
@@ -879,6 +925,35 @@ function FieldControl({
   productName: string | null;
   onChange: (v: string | boolean | null) => void;
 }) {
+  if (spec.kind === "yesno" || spec.kind === "choice") {
+    const options =
+      spec.kind === "yesno"
+        ? [
+            { value: "yes", label: "Yes" },
+            { value: "no", label: "No" },
+          ]
+        : (spec.options ?? []);
+    return (
+      <label className="block">
+        {spec.label ? <span className="mb-1 block text-[12.5px] text-muted">{spec.label}</span> : null}
+        <select
+          className="h-9 w-full max-w-[320px] rounded-[4px] border border-line bg-surface px-2.5 text-[13px] text-ink"
+          disabled={disabled}
+          value={typeof value === "string" ? value : ""}
+          onChange={(e) => onChange(e.target.value)}
+        >
+          <option value="">Not answered</option>
+          {options.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+        {spec.hint ? <span className="mt-1 block text-[12px] text-muted">{spec.hint}</span> : null}
+      </label>
+    );
+  }
+
   if (spec.kind === "bool") {
     /*
      * THREE STATES, because two of them are not the same. "Not answered" and

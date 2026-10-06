@@ -1,10 +1,10 @@
-import { holdsLeadSeatById } from "@/lib/services/lead-verifier";
+import { canValidateGstById, holdsLeadSeatById, qualificationCollectorRefusalById } from "@/lib/services/lead-verifier";
 import { type LeadWorkspace } from "@/lib/lead-workspace";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { getConfig } from "@/lib/config/store";
 import { today } from "@/lib/recompute";
-import { checklistFor, gateTo, qualificationComplete } from "@/lib/engines/lead-gates";
+import { checklistFor, gateTo, qualificationReadyForReview } from "@/lib/engines/lead-gates";
 import { nextStage } from "@/lib/engines/lead-ladder";
 import { canLead, gateInputFor, leadRecord } from "@/lib/services/lead-console-service";
 import { distributorProfileFor } from "@/lib/services/lead-record-service";
@@ -90,8 +90,7 @@ export async function Body({
 
   /* GST: the capability OR the named back-office seat. There is no self-check any
      more — the Telecaller who entered the number validates it. */
-  const canValidateGst =
-    record.backOfficeAmId === user.id || (await canLead(user, "lead.gstValidate"));
+  const canValidateGst = await canValidateGstById(user, id);
 
   const isThirdParty = record.salesType === "third_party";
 
@@ -117,7 +116,8 @@ export async function Body({
       requiredProductName={record.requiredProductName}
       canWork={await canLead(user, "lead.work")}
       access={access}
-      complete={qualificationComplete(gateInputFor(record, config["leads.figuresFreshDays"]))}
+      complete={qualificationReadyForReview(gateInputFor(record, config["leads.figuresFreshDays"]))}
+      collectorBarred={await qualificationCollectorRefusalById(user, id)}
       decisionMaker={record.decisionMaker}
       gst={{
         hasNumber: Boolean(record.gstin?.trim()),

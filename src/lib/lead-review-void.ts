@@ -1,3 +1,5 @@
+import { QUALIFICATION_ANSWER_KEYS } from "./engines/lead-gates";
+
 /* ---------------------------------------------------------------------------
  * WHEN A MANAGER'S "VERIFIED" STOPS BEING TRUE.
  *
@@ -44,20 +46,14 @@ export const MATERIAL_COLUMNS = [
 export type MaterialColumn = (typeof MATERIAL_COLUMNS)[number];
 
 /**
- * The ticks inside `lead_qualification` the gate reads. Anything else in that
- * jsonb (an old `gst_verified` tick nothing reads any more, a key a retired
- * condition left behind) is not the manager's business and does not void a
- * review when it changes.
+ * The answers inside `lead_qualification` the gate reads. Anything else in that
+ * jsonb (an old tick nothing reads any more, a key a retired condition left
+ * behind) is not the manager's business and does not void a review when it
+ * changes. These are compared by VALUE, not by whether they are filled: moving
+ * the price reaction from "accepted" to "objecting" is exactly the change a
+ * standing review was not about.
  */
-export const MATERIAL_TICKS = [
-  "price_discussed",
-  "delivery_discussed",
-  "agrees_to_test",
-  "next_step_agreed",
-  "buyer_confirmed",
-  /* the old id of `buyer_confirmed`, still read by the gate */
-  "decision_maker",
-] as const;
+export const MATERIAL_TICKS = QUALIFICATION_ANSWER_KEYS;
 
 /** What the sentence on the timeline calls each one. */
 export const MATERIAL_LABELS: Record<MaterialColumn | "distributor", string> = {
@@ -115,12 +111,12 @@ export function sameAnswer(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-/** Only the ticks the gate reads, so an unrelated key changing is not a change. */
-function tickView(q: Record<string, unknown> | null | undefined): Record<string, boolean> {
-  const out: Record<string, boolean> = {};
+/** Only the answers the gate reads, so an unrelated key changing is not a change. */
+function tickView(q: Record<string, unknown> | null | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
   for (const id of MATERIAL_TICKS) {
     const v = q?.[id];
-    out[id] = typeof v === "string" ? v.trim().length > 0 : Boolean(v);
+    out[id] = typeof v === "string" ? v.trim() : v ? "true" : "";
   }
   return out;
 }
@@ -152,7 +148,7 @@ export function materialChanges(
     if (column === "leadQualification") {
       const before = tickView(lead.leadQualification ?? null);
       const after = tickView(changed.leadQualification as Record<string, unknown> | null);
-      if (MATERIAL_TICKS.some((id) => before[id] !== after[id])) out.push(column);
+      if (MATERIAL_TICKS.some((id) => !sameAnswer(before[id], after[id]))) out.push(column);
       continue;
     }
     if (!sameAnswer(lead[column], changed[column])) out.push(column);
@@ -190,7 +186,11 @@ export function reviewVoidPatch(
   let columns = materialChanges(lead, changed);
   const extra = opts.extra ?? [];
   if (opts.reviewer) {
-    columns = columns.filter((c) => c === "leadSalesType");
+    /* Two things a reviewer's own edit still voids: a change of sales type (it
+       changes which conditions exist) and a change to the GST number or its
+       validation — the approval was given on a validated number, and a different
+       one is a different approval. */
+    columns = columns.filter((c) => c === "leadSalesType" || c === "gstin" || c === "gstVerified");
   }
   const fields: string[] = [
     ...columns.map((c) => MATERIAL_LABELS[c]),

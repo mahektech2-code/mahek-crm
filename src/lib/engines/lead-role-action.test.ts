@@ -157,11 +157,32 @@ describe("scope of each vantage, as §7 states it", () => {
       }
     });
 
-    test("THERE IS NO SALESMAN — he has no action at Prospect or Qualification", () => {
-      for (const stage of ["prospect", "contacted", "qualification", "qualified"] as LeadStage[]) {
+    test("at Prospect the Salesman has no action — the Sales Manager makes the check call", () => {
+      for (const stage of ["prospect", "contacted"] as LeadStage[]) {
         const a = roleAction(facts(stage), "salesman");
         assert.equal(a.actionable, false, stage);
         assert.equal(a.label, "Nothing for you on this lead", stage);
+      }
+    });
+
+    test("at Qualification the SALESMAN has a job, then a wait, then the manager's word", () => {
+      /* Qualification is the Salesman's: he collects the eight answers, the Sales
+         Manager the lead is under validates the GST number and reviews. The same
+         counted-down job, wait and hand-back the calling desk's wording has. */
+      for (const stage of ["qualification", "qualified"] as LeadStage[]) {
+        const job = roleAction(facts(stage), "salesman");
+        assert.deepEqual([job.label, job.actionable], ["Complete qualification", true], stage);
+
+        const waiting = roleAction(facts(stage, { qualificationComplete: true }), "salesman");
+        assert.deepEqual([waiting.label, waiting.actionable], ["Waiting for Sales Manager review", false], stage);
+
+        for (const review of ["incomplete", "clarification"] as const) {
+          const back = roleAction(facts(stage, { qualificationComplete: true, qualificationReview: review }), "salesman");
+          assert.deepEqual([back.label, back.actionable], ["Answer the Sales Manager's note", true], review);
+        }
+
+        const done = roleAction(facts(stage, { qualificationComplete: true, qualificationReview: "verified" }), "salesman");
+        assert.deepEqual([done.label, done.actionable], ["Request the sample", true], stage);
       }
     });
 

@@ -1567,6 +1567,7 @@ export function gateInputFor(record: LeadRecord, freshDays: number): LeadGateInp
     gstin: record.gstin,
     /* §11.6 — somebody else's check, not the salesman's tick. */
     gstVerified: record.gstVerified,
+    gstRefused: record.gstVerified === false && record.gstVerifiedAt != null,
     /* §5.3 — computed through the ONE definition of staleness, which lives in
        `lead-service.ts` beside the column it reads. The record page and the
        server action have to agree about the same lead on the same afternoon,

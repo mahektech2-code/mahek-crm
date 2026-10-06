@@ -35,7 +35,7 @@ import {
   type NextActionKind,
   type RequestState,
 } from "../engines/lead-calling-desk";
-import { QUALIFICATION_CONDITIONS, gateTo, qualificationComplete } from "../engines/lead-gates";
+import { QUALIFICATION_CONDITIONS, gateTo, qualificationReadyForReview } from "../engines/lead-gates";
 import { ladderFor } from "../engines/lead-ladder";
 import { resolveScope, scopedToUsers, scopedUserIds } from "../access-control";
 import { MBOS_EVENT } from "../timeline";
@@ -771,7 +771,7 @@ export async function deskLeadRecord(customerId: string, today: string): Promise
 
   const sample = samples[0] ?? null;
   const qualGate = lead.leadSalesType !== "distributor" ? await leadGateInput(customerId) : null;
-  const qualComplete = qualGate ? qualificationComplete(qualGate) : false;
+  const qualComplete = qualGate ? qualificationReadyForReview(qualGate) : false;
 
   /* ---- the order, and the after-sales steps read off the ledger ---- */
   const counting = orderRows.filter((o) => countsAsPurchase(o.status));
