@@ -319,7 +319,7 @@ export async function requestSignInCode(
 ): Promise<ActionResult<{ sentTo: string; expiresInMinutes: number }>> {
   const user = identifier.trim() ? await findAccount(identifier) : null;
   if (!user || !user.active) return fail(WRONG_ACCOUNT);
-  const sent = await sendOtp(user.id, purpose);
+  const sent = await sendOtp(user.id, purpose, { surface: "web", requestedWith: identifier });
   if (!sent.ok) return fail(sent.error);
   await audit(user, purpose === "login" ? "sign-in-code-sent" : "reset-code-sent", "user", user.id);
   return ok2({ sentTo: sent.sentTo, expiresInMinutes: sent.expiresInMinutes }, `Code sent to ${sent.sentTo} on WhatsApp`);

@@ -1617,6 +1617,28 @@ same tail as a password; on the handset it takes the password's place inside
 still applies, and it leaves no offline credential behind. Where codes are on,
 changing a password takes a code instead of the current password.
 
+**EVERY OTP IS ON THE ADMIN CONSOLE, including the ones that were never
+sent.** Admin Console → People → OTP history (`/admin/otp`, platform
+administrators only — it names people and their personal mobiles) lists each
+request: who, the HRMS employee behind them, what they typed at the screen,
+where they asked from (`surface`: web, handset, settings), the number it went
+to, MiniMoth or Wati and that provider's own id and answer (`provider_ref`,
+`provider_response`, any field that could be the code stripped first), every
+check of the code (`attempts`, `last_attempt_at`, `last_attempt_result`), the
+IP and device — and a By person tab answering "how many times". The status is
+DERIVED, never stored: `otpStatus` in `lib/otp-history.ts` and its SQL CASE in
+`otp-history-service.ts`, pinned together by a test.
+
+**A REFUSED REQUEST IS A ROW, AND ONLY HISTORY.** The cooldown, the window cap,
+a missing HRMS mobile and a closed account used to refuse with nothing
+written, so "she pressed it five times" was invisible. They are written now
+with `refused_reason`, and `notRefused` keeps them out of all three questions
+`sendOtp`/`verifyOtp` ask: counted towards the cooldown a refusal would extend
+itself, counted towards the cap pressing the button would spend the allowance
+without a code, and as the newest row it would shadow the code that WAS sent.
+The digits are never on the screen and cannot be — Wati codes are a salted
+hash, MiniMoth's never reach MahekOne.
+
 **`otp_channel` was declared in schema.ts and never created by a migration**;
 `0168` creates it, guarded.
 

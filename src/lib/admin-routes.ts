@@ -58,6 +58,10 @@ export const ADMIN_TABS = {
     { slug: "sync", label: "Sync" },
     { slug: "history", label: "Every sheet's history" },
   ],
+  otp: [
+    { slug: "requests", label: "Every request" },
+    { slug: "people", label: "By person" },
+  ],
   person: [
     { slug: "profile", label: "Profile" },
     { slug: "apps", label: "Apps" },
@@ -96,6 +100,8 @@ export const ADMIN = {
   /** Access, narrowed to the holders of one ERP designation. */
   accessForDesignation: (id: string) => `/admin/access?designation=${id}`,
   signIns: (tab?: TabsOf<"signIns">) => withTab("/admin/sign-ins", tab),
+  /** Every one-time code sent through MiniMoth or Wati, and every request refused. */
+  otp: (tab?: TabsOf<"otp">) => withTab("/admin/otp", tab),
   settings: "/admin/settings",
   /** One app's settings. The page id comes from `SETTINGS_PAGES`. */
   settingsFor: (page: string, tab?: string) => withTab(`/admin/settings/${page}`, tab),
@@ -148,6 +154,7 @@ export const ADMIN_GROUPS: AdminNavGroup[] = [
       { href: ADMIN.access, label: "Access", icon: "people", platform: true },
       { href: ADMIN.designations, label: "ERP designations", icon: "book", platform: true },
       { href: ADMIN.signIns(), label: "Sign-ins", icon: "lock", platform: true },
+      { href: ADMIN.otp(), label: "OTP history", icon: "phone", platform: true },
     ],
   },
   { label: "Settings", icon: "settings", items: [] },
