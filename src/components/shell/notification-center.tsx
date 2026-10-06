@@ -29,9 +29,9 @@ import { Icon } from "./icons";
  * It asks `/api/notifications` on a cadence, keeps the answer in a small store
  * the header bells read, and for whatever is NEW:
  *
- *   1. flies a pop-up in at the middle of the upper screen, where it cannot be
- *      missed, holds it there a beat, then glides it down into the bottom
- *      right-hand corner, where it waits to be opened or tidies itself away;
+ *   1. slides a pop-up in from the right edge into the bottom right-hand
+ *      corner, where it waits a few seconds — for as long as the pointer is
+ *      on it — and then slides back out to the right;
  *   2. chimes — on by default, one switch to turn it off, remembered per
  *      browser;
  *   3. where the tab is in the background and the person has allowed it,
@@ -363,7 +363,7 @@ export function NotificationCenter() {
         <NotificationPopup
           key={p.key}
           pop={p}
-          onDismiss={() => dismiss(p.key)}
+          onDismiss={dismiss}
           onOpen={async () => {
             dismiss(p.key);
             await readOne(p.item.id);
@@ -400,54 +400,50 @@ function NotificationPopup({
   onReadAll,
 }: {
   pop: Pop;
-  onDismiss: () => void;
+  /** Stable, and takes the key — a fresh closure per render would re-arm every card's clock. */
+  onDismiss: (key: string) => void;
   onOpen: () => void;
   onRead: () => void;
   onReadAll: () => void;
 }) {
-  const ref = React.useRef<HTMLDivElement>(null);
   const [hover, setHover] = React.useState(false);
   const [landed, setLanded] = React.useState(false);
+  const [leaving, setLeaving] = React.useState(false);
   const [nowMs, setNowMs] = React.useState<number | null>(null);
   const prefs = useNotifyPrefs();
   const style = TONE_STYLE[pop.tone];
   const dwell = dwellMs(pop.tone);
-  // Flight: arrive centred in the upper screen, hold, glide to the corner.
-  const FLIGHT_MS = 2300;
+  // It slides in from the right edge straight into its slot in the corner.
+  const SLIDE_IN_MS = 420;
+  const SLIDE_OUT_MS = 320;
 
-  // Where the middle of the screen is, relative to this card's own slot in
-  // the corner — measured before paint so the first frame is already there.
-  React.useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el || pop.waiting) return;
-    // NOT getBoundingClientRect on the card: that includes the flight's own
-    // transform, so a second measure (React runs this twice in development,
-    // and again on any re-layout) read the card already at the centre and
-    // answered a flight of zero. The stack has no transform, and offsets do
-    // not see one, so this is the card's slot whatever it is doing.
-    const stack = el.offsetParent?.getBoundingClientRect();
-    if (!stack) return;
-    const cx = stack.left + el.offsetLeft + el.offsetWidth / 2;
-    const cy = stack.top + el.offsetTop + el.offsetHeight / 2;
-    const dx = window.innerWidth / 2 - cx;
-    const dy = window.innerHeight * 0.3 - cy;
-    el.style.setProperty("--nx", `${Math.round(dx)}px`);
-    el.style.setProperty("--ny", `${Math.round(dy)}px`);
-  }, [pop.waiting]);
+  // Out to the right, then gone. A timer rather than `animationend`, because
+  // under reduced motion there is no animation to end and the card would stay.
+  const leave = React.useCallback(
+    (then?: () => void) => {
+      setLeaving(true);
+      setTimeout(() => {
+        onDismiss(pop.key);
+        then?.();
+      }, SLIDE_OUT_MS);
+    },
+    [onDismiss, pop.key],
+  );
 
-  // Landed once the flight is over; the dwell clock starts there.
+  // Landed once the slide is over; the dwell clock starts there.
   React.useEffect(() => {
     if (pop.waiting) return;
-    const t = setTimeout(() => setLanded(true), FLIGHT_MS + pop.delayMs);
+    const t = setTimeout(() => setLanded(true), SLIDE_IN_MS + pop.delayMs);
     return () => clearTimeout(t);
   }, [pop.waiting, pop.delayMs]);
 
-  // Tidies itself away after its dwell, paused while the pointer is on it.
+  // After its dwell it slides back out to the right — never while the
+  // pointer is on it; leaving the card starts the clock again.
   React.useEffect(() => {
-    if (!landed || hover) return;
-    const t = setTimeout(onDismiss, dwell);
+    if (!landed || hover || leaving) return;
+    const t = setTimeout(() => leave(), dwell);
     return () => clearTimeout(t);
-  }, [landed, hover, dwell, onDismiss]);
+  }, [landed, hover, leaving, dwell, leave]);
 
   // "just now" moves on while it sits there.
   React.useEffect(() => {
@@ -460,15 +456,14 @@ function NotificationPopup({
   const n = pop.item;
   return (
     <div
-      ref={ref}
       role="status"
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{ animationDelay: `${pop.delayMs}ms` }}
       className={cx(
         "notify-popup pointer-events-auto relative overflow-hidden rounded-[8px] border border-line bg-surface",
-        pop.waiting ? "invisible" : "notify-fly",
-        landed ? "shadow-[0_8px_24px_rgba(22,22,22,0.14)]" : "shadow-[0_18px_48px_rgba(22,22,22,0.22)]",
+        pop.waiting ? "invisible" : leaving ? "notify-out" : "notify-in",
+        "shadow-[0_8px_24px_rgba(22,22,22,0.16)]",
       )}
     >
       <span className={cx("absolute inset-y-0 left-0 w-1", style.bar)} aria-hidden />
@@ -483,7 +478,7 @@ function NotificationPopup({
           </div>
           <button
             type="button"
-            onClick={onOpen}
+            onClick={() => leave(onOpen)}
             className="mt-1 block w-full cursor-pointer text-left"
           >
             <span className="block text-[15px] leading-5 font-medium text-ink">{n.title}</span>
@@ -493,11 +488,11 @@ function NotificationPopup({
           </button>
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px]">
             {n.href ? (
-              <button type="button" onClick={onOpen} className="cursor-pointer font-medium text-brand hover:underline">
+              <button type="button" onClick={() => leave(onOpen)} className="cursor-pointer font-medium text-brand hover:underline">
                 Open
               </button>
             ) : null}
-            <button type="button" onClick={onRead} className="cursor-pointer text-muted hover:text-body">
+            <button type="button" onClick={() => leave(onRead)} className="cursor-pointer text-muted hover:text-body">
               Mark read
             </button>
             {pop.more > 0 ? (
@@ -510,7 +505,7 @@ function NotificationPopup({
         <div className="flex flex-none flex-col items-center gap-1">
           <button
             type="button"
-            onClick={onDismiss}
+            onClick={() => leave()}
             aria-label="Dismiss"
             title="Dismiss — it stays in the bell"
             className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-[4px] text-muted hover:bg-canvas hover:text-body"
