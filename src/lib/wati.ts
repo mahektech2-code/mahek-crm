@@ -347,6 +347,10 @@ export type WatiHistoryItem = {
   whatsappMessageId?: string | null;
   /** Wati's path to the file, where the message is a photograph, a PDF, a voice note. */
   data?: string | null;
+  /** How far one of OURS got: SENT, DELIVERED, READ, FAILED. */
+  statusString?: string | null;
+  /** A template message's words as they went — `text` is empty on those. */
+  finalText?: string | null;
 };
 
 /** A page of one number's conversation, newest first. */

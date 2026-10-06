@@ -49,6 +49,7 @@ import {
   fillBody,
   manualText,
   renderSpec,
+  SPEC_KEYS,
   specKey,
   specFor,
   type RenderResult,
@@ -1629,24 +1630,72 @@ export async function previewPaymentReminder(
   customerId: string,
   stage: number,
 ): Promise<ReminderPreview | null> {
+  const all = await previewPaymentReminders(customerId, stage);
+  return all.options.find((o) => o.templateId === all.defaultTemplateId) ?? null;
+}
+
+/**
+ * EVERY PAYMENT REMINDER THE TEAM MAY SEND THIS CUSTOMER, each rendered as it
+ * would actually go — the approved Wati wording, filled by the template's own
+ * rule set, on the route it would take.
+ *
+ * It used to be ONE template: the stage's own, else `templates[0]`. The eight
+ * Wati templates carry no escalation stage (0165 left that to Mahek), so the
+ * fallback was taken every time, and `templates[0]` of an unordered select is
+ * whichever row the planner returned first — a stage 3 debt could be offered
+ * the gentle first reminder, and a different one tomorrow. The person sending
+ * it now sees the approved templates in their fixed order and picks; the
+ * stage's own, where one is set, is picked for them.
+ *
+ * Only rule-set templates are offered while any exist: WhatsApp goes out as
+ * one of the approved Wati templates, and a free-text one left active by hand
+ * would be the copy route saying something Wati never approved.
+ */
+export async function previewPaymentReminders(
+  customerId: string,
+  stage: number,
+): Promise<{ options: ReminderPreview[]; defaultTemplateId: string | null }> {
   const delivery = await deliveryContext();
   const [customer] = await db
     .select()
     .from(customers)
     .where(eq(customers.id, customerId));
-  if (!customer) return null;
+  if (!customer) return { options: [], defaultTemplateId: null };
   await assertCustomerInScope(customer);
 
-  // The stage's own template, falling back to any active payment reminder —
-  // a missing stage-3 template must not leave the telecaller with no message.
-  const templates = await db
+  const active = await db
     .select()
     .from(waTemplates)
     .where(and(eq(waTemplates.category, "payment_reminder"), eq(waTemplates.active, true)));
-  const template =
-    templates.find((t) => t.escalationStage === stage) ?? templates[0];
-  if (!template) return null;
+  const specd = active.filter((t) => specOf(t));
+  const rank = (t: (typeof active)[number]) => {
+    const i = SPEC_KEYS.indexOf(specOf(t) ?? "");
+    return i < 0 ? SPEC_KEYS.length : i;
+  };
+  const templates = (specd.length ? specd : active).sort(
+    (x, y) => rank(x) - rank(y) || x.name.localeCompare(y.name),
+  );
+  if (!templates.length) return { options: [], defaultTemplateId: null };
 
+  const options: ReminderPreview[] = [];
+  for (const template of templates) {
+    options.push(await previewOne(customer, template, delivery));
+  }
+  // The stage's own template where somebody set one; otherwise the first
+  // that can actually go, so the panel does not open on a refusal.
+  const chosen =
+    templates.find((t) => t.escalationStage === stage) ??
+    templates[options.findIndex((o) => !o.blocked)] ??
+    templates[0];
+  return { options, defaultTemplateId: chosen.id };
+}
+
+async function previewOne(
+  customer: typeof customers.$inferSelect,
+  template: typeof waTemplates.$inferSelect,
+  delivery: Awaited<ReturnType<typeof deliveryContext>>,
+): Promise<ReminderPreview> {
+  const customerId = customer.id;
   // A rule-set template is previewed by the same rules that will send it. Its
   // "fields" are the reasons it cannot go, if any — there is nothing for a
   // telecaller to fill in, and a list of merge fields would suggest otherwise.
@@ -1680,10 +1729,8 @@ export async function previewPaymentReminder(
   // The preview describes the first leg. A both-ways customer still starts at
   // their own number; the second leg is spelled out on the send screen, which
   // is the only place it can actually be worked.
-  const standing = customer.whatsappGroupName ? customer.whatsappDest : "personal";
-  const destKind: "personal" | "group" = standing === "both" ? "personal" : standing;
   const destination =
-    destKind === "group"
+    legKind === "group"
       ? (customer.whatsappGroupName ?? "")
       : whatsappNumberFor(customer, "payment");
 
@@ -1691,9 +1738,9 @@ export async function previewPaymentReminder(
     templateId: template.id,
     templateName: template.name,
     destination,
-    destKind,
+    destKind: legKind,
     body: applyMerge(template.body, values),
-    ...routeFor(delivery, { destKind, watiTemplateName: template.watiTemplateName, edited: false }),
+    ...routeFor(delivery, { destKind: legKind, watiTemplateName: template.watiTemplateName, edited: false }),
     fields,
     blocked: missing.length > 0,
     blockedReason: missing.length
