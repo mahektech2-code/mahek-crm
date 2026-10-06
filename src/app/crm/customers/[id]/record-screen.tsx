@@ -32,6 +32,8 @@ import {
   type QuickNoteOption,
 } from "@/components/crm/call-panel";
 import { MessageHistory, type MessageEntry } from "./message-history";
+import { CustomerContactsPanel } from "@/components/customers/customer-contacts-panel";
+import type { CustomerContact } from "@/lib/services/customer-contact-service";
 import { NextCallCell, type StoredNextStep } from "@/components/crm/next-call-cell";
 import { TIMELINE_KINDS, type TimelineKind } from "@/lib/timeline-kinds";
 import {
@@ -126,6 +128,7 @@ const KIND_TONE: Record<
 export function RecordScreen({
   detail,
   customer,
+  contacts,
   distributors,
   deliveryAddresses,
   distributorSuggestions,
@@ -175,6 +178,8 @@ export function RecordScreen({
    * on its bills. Both are read for every record, because an account can sit at
    * both ends at once.
    */
+  /** The people at this shop and which number gets what. */
+  contacts: CustomerContact[];
   distributors: Relation[];
   deliveryAddresses: Relation[];
   /** Who the order history suggests, on a lead nobody has converted yet. */

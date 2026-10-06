@@ -424,6 +424,17 @@ const DESCRIBE: Record<string, Describer> = {
 
   /* ---- customers & leads */
   "customer.update": (c) => ["edited the details of", c.subject()],
+  "customer.contact.add": (c) => ({ says: ["added a contact", ...(str(c.a.name) ? [strong(str(c.a.name)!)] : []), "to", c.subject()], changes: false }),
+  "customer.contact.update": (c) => ["edited a contact at", c.subject()],
+  "customer.contact.remove": (c) => ({ says: ["removed a contact", ...(str(c.b.name) ? [strong(str(c.b.name)!)] : []), "from", c.subject()], changes: false }),
+  "customer.contact.designate": (c) => ({
+    says: [
+      "changed which number at",
+      c.subject(),
+      str(c.a.designation) === "payment" ? "gets payment reminders" : str(c.a.designation) === "whatsapp" ? "gets WhatsApp" : "is the primary one",
+    ],
+    changes: false,
+  }),
   "customer.deactivate": (c) => ({ says: ["deactivated", c.subject()], changes: false }),
   "customer.focus.add": (c) => ({ says: ["added", c.subject(), "to focus customers"], changes: false }),
   "customer.focus.remove": (c) => ({ says: ["took", c.subject(), "off focus customers"], changes: false }),

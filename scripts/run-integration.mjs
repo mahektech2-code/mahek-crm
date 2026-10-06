@@ -98,6 +98,9 @@ const files = [
   "src/lib/storage-fallback.test.ts",
   "src/lib/relationship-handover.test.ts",
   "src/lib/seat-mirrors.test.ts",
+  // The people at a customer: the list and the columns it mirrors cannot
+  // disagree, a column written directly is folded in, and the full edit form.
+  "src/lib/customer-contacts.integration.test.ts",
   "src/lib/place-master.test.ts",
   "src/lib/place-tree-filters.test.ts",
   "src/lib/territory-requests.test.ts",

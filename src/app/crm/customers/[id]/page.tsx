@@ -44,6 +44,7 @@ import { categoryLabel, categoryValue } from "@/lib/complaint-labels";
 import { TIMELINE_PAGE } from "@/lib/timeline-kinds";
 import { addDays, calendarDate } from "@/lib/business-date";
 import { RecordScreen } from "./record-screen";
+import { listCustomerContacts } from "@/lib/services/customer-contact-service";
 
 export async function generateMetadata({
   params,
@@ -193,7 +194,8 @@ export default async function CustomerRecordPage({
    * lead nobody has converted yet, whose order history already shows goods
    * arriving on somebody's bill.
    */
-  const [distributors, deliveryAddresses, suggestions] = await Promise.all([
+  const [contacts, distributors, deliveryAddresses, suggestions] = await Promise.all([
+    listCustomerContacts(id),
     distributorsFor(id),
     deliveryAddressesFor(id),
     customer.kind === "lead" && !customer.thirdParty
@@ -296,6 +298,7 @@ export default async function CustomerRecordPage({
         reactivationReason: customer.reactivationReason,
         deactivationReason: customer.deactivationReason,
       }}
+      contacts={contacts}
       distributors={distributors}
       deliveryAddresses={deliveryAddresses}
       distributorSuggestions={suggestions}

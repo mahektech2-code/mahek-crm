@@ -1,4 +1,5 @@
 import "server-only";
+import { reconcileContacts } from "@/lib/services/customer-contact-service";
 import { createHash, randomUUID } from "node:crypto";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -8666,6 +8667,14 @@ async function handleCustomerEdit(
       });
     }
   });
+
+  /* The handset still writes the number COLUMNS; the contacts list is the
+     office's truth for them. Folding the edit in here adds the number he typed
+     as a contact (and the primary, where it was the phone) rather than leaving
+     the panel naming a number the record no longer rings. */
+  if (p.phone !== undefined || p.altPhone !== undefined || p.whatsappPhone !== undefined) {
+    await reconcileContacts(customer.id, principal.user.id);
+  }
 
   if (conflicted) {
     // Nothing is discarded silently: whoever made the edit that lost is told.
