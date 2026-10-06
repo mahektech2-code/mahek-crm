@@ -51,7 +51,7 @@ export async function POST(request: Request) {
       { status: 404 },
     );
   }
-  const sent = await sendOtp(user.id, "login");
+  const sent = await sendOtp(user.id, "login", { surface: "handset", requestedWith: mobile });
   if (!sent.ok) {
     return NextResponse.json({ ok: false, error: sent.error, retryInSeconds: sent.retryInSeconds ?? null },
       { status: sent.retryInSeconds ? 429 : 400 },

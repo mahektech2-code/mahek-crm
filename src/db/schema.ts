@@ -4110,8 +4110,39 @@ export const authOtps = pgTable(
     sentAt: timestamp("sent_at", { withTimezone: true }),
     failureReason: text("failure_reason"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+
+    /* ---- THE HISTORY: what the Admin Console's OTP screen reads ----
+     *
+     * Every one of these is null on rows written before `0221`, and the screen
+     * says "not recorded" rather than guessing. None is read by sending or
+     * checking a code — they describe a request, they do not decide one. */
+
+    /** `minimoth` or `wati` — which service carried it. */
+    provider: text("provider"),
+    /** Where it was asked for: `web` sign-in or reset, `handset`, `settings` (password change). */
+    surface: text("surface"),
+    /** Exactly what was typed at the screen — an email, a work number, a personal mobile. */
+    requestedWith: text("requested_with"),
+    requestIp: text("request_ip"),
+    userAgent: text("user_agent"),
+    /** MiniMoth's own otp id, or Wati's local message id — what their dashboards search by. */
+    providerRef: text("provider_ref"),
+    /** The provider's answer to the send, as it came back. Never holds the digits. */
+    providerResponse: jsonb("provider_response"),
+    /**
+     * Set when the request was turned down BEFORE anything was sent — the
+     * cooldown, the window cap, no HRMS mobile. Such a row is history and
+     * nothing else: it never counts towards a limit and can never verify.
+     */
+    refusedReason: text("refused_reason"),
+    lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
+    /** `ok`, `wrong`, `expired`, `too_many`, `unavailable`, or the provider's own code. */
+    lastAttemptResult: text("last_attempt_result"),
   },
-  (t) => [index("auth_otps_user_purpose_idx").on(t.userId, t.purpose, t.createdAt.desc())],
+  (t) => [
+    index("auth_otps_user_purpose_idx").on(t.userId, t.purpose, t.createdAt.desc()),
+    index("auth_otps_created_idx").on(t.createdAt.desc()),
+  ],
 );
 
 /**

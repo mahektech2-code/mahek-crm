@@ -15,14 +15,44 @@ import { BodyPortal } from "@/components/ui/body-portal";
  * from there had to change.
  * ------------------------------------------------------------------------- */
 
-export function useEscape(onClose: () => void) {
+/**
+ * Every overlay currently listening for Escape, oldest first.
+ *
+ * ESCAPE CLOSES THE TOP ONE, NOT ALL OF THEM. Each overlay used to put its own
+ * listener on `window`, so a dialog opened over another — a contact over the
+ * customer edit form, a payment over the follow-up panel — closed both on one
+ * key, and the form underneath lost whatever had been typed into it.
+ */
+const escapeStack: symbol[] = [];
+
+export function useEscape(onClose: () => void, active = true) {
+  /*
+   * The latest handler, read at the moment of the key press. Callers pass a
+   * fresh arrow every render; registering on it would re-push this overlay to
+   * the top of the stack each time it re-rendered, so a form underneath that
+   * re-rendered after a dialog opened over it would take Escape back.
+   */
+  const latest = React.useRef(onClose);
   React.useEffect(() => {
+    latest.current = onClose;
+  });
+  React.useEffect(() => {
+    if (!active) return;
+    const token = Symbol("escape");
+    escapeStack.push(token);
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key !== "Escape") return;
+      // Only the most recently opened overlay answers.
+      if (escapeStack[escapeStack.length - 1] !== token) return;
+      latest.current();
     };
     window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [onClose]);
+    return () => {
+      window.removeEventListener("keydown", handler);
+      const at = escapeStack.indexOf(token);
+      if (at >= 0) escapeStack.splice(at, 1);
+    };
+  }, [active]);
 }
 
 export function Modal({
@@ -40,7 +70,9 @@ export function Modal({
   footer?: React.ReactNode;
   width?: number;
 }) {
-  useEscape(onClose);
+  // A closed modal is not listening: mounted-but-shut must never be the "top"
+  // overlay and swallow the Escape meant for one that is open.
+  useEscape(onClose, open);
   if (!open) return null;
 
   return (

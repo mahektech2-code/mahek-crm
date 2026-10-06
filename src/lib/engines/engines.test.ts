@@ -26,6 +26,7 @@ import {
 } from "./escalation";
 import {
   planPaymentFollowUps,
+  paidCoolingEndsOn,
   callingOpensOn,
   nextMessageOn,
   nextCallOn,
@@ -1987,6 +1988,7 @@ function subject(over: Partial<FollowUpSubject> = {}): FollowUpSubject {
     heldReason: null,
     promisedDate: null,
     reportedPayment: null,
+    lastPaidOn: null,
     ...over,
   };
 }
@@ -2338,6 +2340,60 @@ describe("E7 payment follow-up cadence", () => {
       ],
       TODAY,
       C,
+    );
+    assert.match(plan.heldBack[0].reason, /do not contact/i);
+  });
+
+  test("a customer who paid today is not messaged or called today or tomorrow, and is chased again the day after", () => {
+    // Three overdue bills, one paid today: the other two are still open, and
+    // they still wait until the day after tomorrow. Message and call both due.
+    const s = { anchorDueDate: addDays(TODAY, -40), overdueBillCount: 2 };
+    const cfg = { ...C, "payments.paidCoolingDays": 1 };
+
+    const paidToday = planPaymentFollowUps([subject({ ...s, lastPaidOn: TODAY })], TODAY, cfg);
+    assert.equal(paidToday.calls.length, 0);
+    assert.equal(paidToday.messages.length, 0);
+    assert.equal(paidToday.heldBack.length, 2);
+    assert.match(paidToday.heldBack[0].reason, /^Paid today/);
+
+    const tomorrow = addDays(TODAY, 1);
+    const nextDay = planPaymentFollowUps([subject({ ...s, lastPaidOn: TODAY })], tomorrow, cfg);
+    assert.equal(nextDay.calls.length, 0);
+    assert.equal(nextDay.messages.length, 0);
+    assert.match(nextDay.heldBack[0].reason, /^Paid yesterday/);
+    assert.match(nextDay.heldBack[0].reason, new RegExp(addDays(TODAY, 2)));
+
+    const dayAfter = planPaymentFollowUps([subject({ ...s, lastPaidOn: TODAY })], addDays(TODAY, 2), cfg);
+    assert.equal(dayAfter.calls.length, 1);
+    assert.equal(dayAfter.messages.length, 1);
+  });
+
+  test("the cooling after a payment is configuration, and 0 switches it off", () => {
+    const off = planPaymentFollowUps(
+      [subject({ anchorDueDate: addDays(TODAY, -40), lastPaidOn: TODAY })],
+      TODAY,
+      { ...C, "payments.paidCoolingDays": 0 },
+    );
+    assert.equal(off.calls.length, 1);
+    assert.equal(paidCoolingEndsOn(TODAY, { "payments.paidCoolingDays": 0 }), null);
+    assert.equal(paidCoolingEndsOn("2026-07-06", { "payments.paidCoolingDays": 1 }), "2026-07-08");
+    assert.equal(paidCoolingEndsOn("2026-07-06", { "payments.paidCoolingDays": 3 }), "2026-07-10");
+  });
+
+  test("a payment date in the future buys no cooling", () => {
+    const plan = planPaymentFollowUps(
+      [subject({ anchorDueDate: addDays(TODAY, -40), lastPaidOn: addDays(TODAY, 5) })],
+      TODAY,
+      { ...C, "payments.paidCoolingDays": 1 },
+    );
+    assert.equal(plan.calls.length, 1);
+  });
+
+  test("do-not-contact still wins over a payment made today", () => {
+    const plan = planPaymentFollowUps(
+      [subject({ anchorDueDate: addDays(TODAY, -40), doNotContact: true, lastPaidOn: TODAY })],
+      TODAY,
+      { ...C, "payments.paidCoolingDays": 1 },
     );
     assert.match(plan.heldBack[0].reason, /do not contact/i);
   });

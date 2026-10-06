@@ -29,7 +29,7 @@ export function Drawer({
   width?: number;
   label?: string;
 }) {
-  useEscape(onClose);
+  useEscape(onClose, open);
   if (!open) return null;
 
   return (
