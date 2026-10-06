@@ -1836,6 +1836,66 @@ order line's margin reads the issued credit note where it is
 ERP's complaints screen (`canRead` falls back to it). 0184 carried every ERP
 request across under the same id; `erp_requests` is retired, not dropped.
 
+**THE PURCHASE FLOW IS Requirement → Purchase method → Vendor / Quotation →
+Approval → PO → Receipt, and NO PURCHASE IS COMPLETED WITHOUT A PO.** Goods
+inward (the GRN) names an approved PO and every line one of its items; a lot
+entered by hand on the register does the same; neither takes a typed supplier
+or item any more. `engines/purchase-flow.ts` is the rule, pure, and
+`screens/purchase-flow.ts` the requirements, their Quotations tab and the
+Purchase orders screen. The receipt side stays in `screens/purchase.ts`.
+
+**The ITEM MASTER says how an item is bought** — `erp_raw_materials.purchase_method`:
+`direct` (boxes, cans, stationery, routine chemicals: pick the vendor, raise
+the PO), `quotation` (price-sensitive chemicals: quotations are collected and
+compared first) or `buyer` (the buyer decides per requirement, with the
+`purchaseBuyer` power). `preferred_supplier_id` is the vendor a direct purchase
+is offered. **The rule is COPIED onto the requirement when it is raised**
+(`purchase_rule`, and the resolved `method`), so changing an item's rule never
+re-routes a requirement already in flight. `0222` started every chemical on
+quotation and everything else direct.
+
+**A quotation is required ONLY where the rule says so.** A quotation
+requirement is not ready for a PO until one quotation is SELECTED, and one can
+be selected only once `erp.purchase.minQuotations` are in. They are compared on
+LANDED cost (rate × quantity, its GST, the freight); an expired one is never
+the lowest; choosing other than the lowest needs the reason in words
+(`selection_note`). The PO takes the selected quotation's rate and refuses
+another — the negotiation is recorded on the quotation, not hidden on the PO.
+
+**A requirement's STAGE is derived, never typed** (`requirementStage`): Buyer
+decision, Select vendor, Collect / Compare quotations, Ready for PO, PO awaiting
+approval, PO approved, PO sent, Partly received, Received, Closed short,
+Cancelled. `erp_requisitions.status` is written by the flow (Pending → Order
+Placed on approval → Received) and the old "Change status" button is gone,
+because a status somebody types can say Received with nothing in the gate.
+
+**A PO is raised FOR APPROVAL and approved by somebody else.**
+`approvePurchaseOrder` approves or sends back; whoever raised a PO cannot
+approve it unless they are an ERP administrator. Only an approved PO is sent
+(WhatsApp, email, a printed copy at `/erp/po/<id>`, or phone — the action
+answers with the PO written out, which is why a record action may now answer
+with a dialog like a tool does) and only an approved PO is received against.
+Sent back or cancelled, its requirements return to Ready for PO with their
+vendor; a PO with goods against it is CLOSED SHORT with a reason instead.
+
+**What has been received against a PO line is READ, never stored**
+(`receivedByLine`: inward lines plus hand-entered register lots), and
+`refreshPurchaseOrder` rewrites the PO's receiving status and its
+requirements' status inside the receipt's own transaction. A receipt above the
+line is refused beyond `erp.purchase.receiptTolerancePercent` — the extra needs
+its own requirement and PO.
+
+**A lot is registered at the PO line's rate and GST**, so goods received
+against a PO reach stock without anybody typing a rate. The supplier's bill
+still moves the register's rate; a rate that no longer matches the PO is
+flagged "Rate differs from PO". Rows from before POs carry no PO and say so
+("Before POs"); nothing back-fills one.
+
+**`app_id` enum literals cannot appear in a migration that runs on a fresh
+database** in the same transaction that added the value — drizzle-kit applies
+every pending migration in one. `0222` compares `app::text` and copies the
+value from an existing row for exactly that reason.
+
 **What filling and packing use comes out of stock** (spec §14 A-30). Mahek
 Plus subtracted empty cans and boxes only on the re-order screen, so the lot
 stock counted every can ever bought. `rmLots` now takes the cans a filling

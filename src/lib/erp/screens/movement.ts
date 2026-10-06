@@ -23,7 +23,7 @@ import { nf } from "../ui";
 import { fgReorderPercent, rmReorderPercent, rmRequired } from "../engines/production";
 import { fgLevelAvailable, fgLots, lockLot, packLots, rmLevelAvailable, rmLots, sfgLots, type Ex } from "../stock";
 import { godownIdByName, godownOptions, inTx, materials, pair, refuse, today, type Tx } from "./common";
-import { requisitionForm } from "./purchase";
+import { requisitionForm } from "./purchase-flow";
 import { levelSuggestions } from "../suggest";
 import type { LevelSuggestion } from "../engines/production";
 
@@ -381,8 +381,7 @@ function rmLevelList(key: "rmLevels" | "reorderRm"): ScreenModule {
       async raise(ctx, id) {
         const [r] = (await rmLevelRows()).filter((x) => x.id === id);
         if (!r) return null;
-        const type = ["Chemical", "Can", "Box", "Stationary"].includes(r.type) ? r.type : "Chemical";
-        return requisitionForm(ctx, { godown: r.godown, type, item: r.item, required: r.required == null ? "" : String(r.required), priority: "For Stock" });
+        return requisitionForm(ctx, { godown: r.godown, type: r.type, item: r.item, required: r.required == null ? "" : String(r.required), priority: "For Stock", department: "Godown / Store" });
       },
       ...(key === "rmLevels"
         ? {

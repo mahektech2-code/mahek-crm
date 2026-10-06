@@ -4284,6 +4284,28 @@ export const SETTINGS = [
     max: 100000,
   },
   {
+    key: "erp.purchase.minQuotations",
+    type: "integer",
+    category: "erp",
+    label: "Quotations needed before one is selected",
+    description:
+      "For an item whose purchase rule is Quotation (or a requirement the buyer sent for quotations): how many vendors' quotations must be in before one can be selected and the PO raised. One means a single quotation is enough; two or more is a real comparison.",
+    default: 2,
+    min: 1,
+    max: 10,
+  },
+  {
+    key: "erp.purchase.receiptTolerancePercent",
+    type: "integer",
+    category: "erp",
+    label: "Receipt above the PO quantity",
+    description:
+      "How far above a PO line's quantity goods may be received against it, in percent of what was ordered — drums never weigh exactly what was ordered. Beyond it the receipt is refused and a new requirement and PO are needed for the extra.",
+    default: 5,
+    min: 0,
+    max: 50,
+  },
+  {
     key: "erp.production.recipeTolerancePercent",
     type: "integer",
     category: "erp",
@@ -5531,6 +5553,8 @@ export type Config = {
   "erp.location.godownRadiusM": number;
   "erp.orders.live": boolean;
   "erp.purchase.ownVehicleRatePerKmPaise": number;
+  "erp.purchase.minQuotations": number;
+  "erp.purchase.receiptTolerancePercent": number;
   "erp.production.recipeTolerancePercent": number;
   "erp.ai.voice.enabled": boolean;
   "erp.ai.alerts.enabled": boolean;

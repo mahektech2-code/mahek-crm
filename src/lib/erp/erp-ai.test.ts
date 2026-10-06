@@ -36,6 +36,7 @@ import { runErpAlerts, visibleAlerts } from "@/lib/erp/alerts";
 import { dashboardSections } from "@/lib/erp/dashboard";
 import { addDaysIso } from "@/lib/erp/engines/sales";
 import { screenModule } from "@/lib/erp/screens";
+import { approvedPoLine } from "@/lib/erp/po-fixture";
 import { today } from "@/lib/erp/screens/common";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
@@ -101,8 +102,10 @@ before(async () => {
   await db.insert(erpCustomerProfiles).values({ customerId: "cus_shree", transporter: "VRL" });
 
   const a = await as(admin);
-  const buy = (pr: string, date: string, item: string, qty: string, unit: string, rate: string) =>
-    ok(mod("register").forms!.new(a, { pr, date, supplier: "Asian Solvents", item, qty, unit, rate, gst: "18", company: "Mahek Marketing India", godown: "Bhiwandi" }, []));
+  const buy = async (pr: string, date: string, item: string, qty: string, unit: string, rate: string) => {
+    const po = await approvedPoLine("Asian Solvents", item, Number(qty));
+    return ok(mod("register").forms!.new(a, { pr, date, po: po.po, poLine: po.poLine, qty, unit, rate, gst: "18", company: "Mahek Marketing India", godown: "Bhiwandi" }, []));
+  };
   await buy("1", ago(40), "Toluene", "500", "Litre", "100");
   await buy("2", ago(30), "Toluene", "500", "Litre", "102");
   await buy("3", ago(20), "Toluene", "500", "Litre", "150");

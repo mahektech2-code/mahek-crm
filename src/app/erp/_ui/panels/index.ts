@@ -2,3 +2,4 @@
 import "./test-evidence";
 import "./video";
 import "./trace";
+import "./purchase-flow";

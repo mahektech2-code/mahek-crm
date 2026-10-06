@@ -1,5 +1,6 @@
 import { fmt, n, registerCalc } from "../calc";
 import { lotNumber, netWeight, purchaseFigures, transportCostPaise, transportModeByLabel } from "../engines/purchase";
+import { poLineFigures, quoteFigures } from "../engines/purchase-flow";
 
 /* ---------------------------------------------------------------------------
  * The purchase forms' derived fields. The server recomputes each on save from
@@ -8,9 +9,51 @@ import { lotNumber, netWeight, purchaseFigures, transportCostPaise, transportMod
 
 const map = (data: Record<string, unknown>, k: string) => (data[k] ?? {}) as Record<string, unknown>;
 
-registerCalc("requisitions.unit", ({ h }) =>
-  !h.type ? "" : h.type === "Chemical" ? "Liter" : h.type === "Finish Good" ? "Box" : "Pcs",
-);
+/* The item's purchase unit — what the requirement, its quotations, the PO and the register all count it in. */
+registerCalc("requisitions.unit", ({ h, data }) => (h.item ? String(map(data, "unitOf")[h.item] ?? "") : ""));
+
+/* CHECK PURCHASE RULE: where this requirement will go, read off the item master. */
+registerCalc("requisitions.rule", ({ h, data }) => (h.item ? String(map(data, "ruleOf")[h.item] ?? "") : ""));
+
+registerCalc("quotations.landed", ({ h, data }) => {
+  const qty = Number(map(data, "qtyOf")[h.requirement] ?? 0);
+  const rate = n(h.rate);
+  if (!h.requirement || rate == null || Number.isNaN(rate)) return "Rate × quantity, its GST and the freight";
+  const f = quoteFigures({ ratePaise: Math.round(rate * 100), gstBp: Math.round((n(h.gst) ?? 0) * 100), freightPaise: Math.round((n(h.freight) ?? 0) * 100) }, qty);
+  const unit = String(map(data, "unitOf")[h.requirement] ?? "");
+  return `₹${fmt(f.landedPaise / 100)} for ${fmt(qty, 3)} ${unit} · ₹${fmt(f.perUnitLandedPaise / 100)} a ${unit} landed`;
+});
+
+registerCalc("purchaseOrders.number", ({ h }) => (h.poNo ? h.poNo : "Next PO number, on save"));
+registerCalc("purchaseOrders.item", ({ l, data }) => {
+  if (!l.requirement) return "";
+  const quoted = map(data, "quotedOf")[l.requirement];
+  return `${map(data, "itemOf")[l.requirement] ?? ""}${quoted ? ` · quoted at ₹${quoted}` : " · direct purchase"}`;
+});
+registerCalc("purchaseOrders.unit", ({ l, data }) => (l.requirement ? String(map(data, "unitOf")[l.requirement] ?? "") : ""));
+
+function poLine(l: Record<string, string>) {
+  const qty = n(l.qty);
+  const rate = n(l.rate);
+  if (qty == null || rate == null || Number.isNaN(qty) || Number.isNaN(rate)) return null;
+  return poLineFigures({ quantity: qty, ratePaise: Math.round(rate * 100), gstBp: Math.round((n(l.gst) ?? 0) * 100) });
+}
+
+registerCalc("purchaseOrders.amount", ({ l }) => {
+  const f = poLine(l);
+  return f ? `₹${fmt(f.totalPaise / 100)} (₹${fmt(f.amountPaise / 100)} + GST ₹${fmt(f.gstPaise / 100)})` : "";
+});
+
+registerCalc("purchaseOrders.summary", ({ h, lines }) => {
+  const figs = lines.map(poLine);
+  if (!figs.some(Boolean)) return "";
+  const total = figs.reduce((a, f) => a + (f?.totalPaise ?? 0), 0) + Math.round((n(h.freight) ?? 0) * 100);
+  return `ok:PO total ₹${fmt(total / 100)} with GST${n(h.freight) ? " and freight" : ""} · it goes for approval on save, and only an approved PO is sent and received against.`;
+});
+
+registerCalc("inward.supplier", ({ h, data }) => (h.po ? String(map(data, "supplierOf")[h.po] ?? "") : "The PO's vendor"));
+registerCalc("inward.pending", ({ h, l, data }) => (h.po && l.poLine ? String(map(data, "pendingOf")[`${h.po}|${l.poLine}`] ?? "") : ""));
+registerCalc("register.pending", ({ h, data }) => (h.po && h.poLine ? String(map(data, "pendingOf")[`${h.po}|${h.poLine}`] ?? "") : ""));
 
 registerCalc("inward.pr", ({ h }) => (h.prFixed ? h.prFixed : "Next PR number, on save"));
 
@@ -79,8 +122,9 @@ function figures(h: Record<string, string>, data: Record<string, unknown>) {
 }
 
 registerCalc("register.lot", ({ h, data }) => {
-  if (!h.supplier || !h.item) return "";
-  const party = String(map(data, "partyCode")[h.supplier] ?? "");
+  const viaPo = h.po && map(data, "partyOfPo")[h.po] != null;
+  if ((!h.supplier && !viaPo) || !h.item) return "";
+  const party = String(viaPo ? map(data, "partyOfPo")[h.po] : (map(data, "partyCode")[h.supplier] ?? ""));
   const item = String(map(data, "itemCode")[h.item] ?? "");
   const pr = n(h.pr);
   if (pr == null || Number.isNaN(pr)) return `${party}${item} + the next PR number`;

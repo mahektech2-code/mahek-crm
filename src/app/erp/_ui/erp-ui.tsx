@@ -78,12 +78,15 @@ export function ErpUiProvider({
   }, []);
 
   const finish = useCallback(
-    (res: Result<unknown> | void, after?: () => void) => {
+    (res: Result<unknown> | void, after?: () => void, screen?: string) => {
       if (!res) return;
       if (res.ok) {
         toast(res.message ?? "Saved");
         router.refresh();
         after?.();
+        /* An action may answer like a tool does: "Send to vendor" hands back the PO written out. */
+        const dialog = (res.data as ToolResult | undefined)?.dialog;
+        if (dialog && screen) setResultDialog({ screen, d: dialog });
       } else {
         toast(res.error, "error");
       }
@@ -113,12 +116,12 @@ export function ErpUiProvider({
         if (a.prompt) {
           prompt(a.prompt, async (v) => {
             const res = await kit.runAction(screen, a.id, recordId, v);
-            if (res.ok) finish(res, after);
+            if (res.ok) finish(res, after, screen);
             return res;
           });
           return;
         }
-        void kit.runAction(screen, a.id, recordId).then((res) => finish(res, after));
+        void kit.runAction(screen, a.id, recordId).then((res) => finish(res, after, screen));
       };
       if (a.confirm) confirm(a.confirm, go);
       else go();
@@ -449,7 +452,13 @@ function FormDrawer({
                   setH((s) => ({ ...s, [target]: v }));
                 }}
                 onChange={(v) => {
-                  const nh = { ...h, [f.k]: v };
+                  let nh = { ...h, [f.k]: v };
+                  /* A header field filled from another (a PO item fills the item it names). */
+                  for (const g of spec.header) {
+                    if (!g.fillBy || !g.fillBy.by.includes(f.k)) continue;
+                    const x = g.fillBy.map[g.fillBy.by.map((k) => nh[k] ?? "").join("|")];
+                    if (x != null) nh = { ...nh, [g.k]: x };
+                  }
                   setH(nh);
                   if (spec.line?.some((x) => x.fillBy?.by.includes(f.k))) setLines((s) => s.map((x) => fillLine(x, nh, f.k)));
                   setErrs((s) => ({ ...s, [`h.${f.k}`]: "" }));
