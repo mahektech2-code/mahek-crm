@@ -97,3 +97,139 @@ export async function holdsLeadSeatById(
     .limit(1);
   return holdsLeadSeat(user, row?.salesManagerId);
 }
+
+/* ---------------------------------------------------------------------------
+ * QUALIFICATION: A SALESMAN COLLECTS, THE RESPONSIBLE SALES MANAGER APPROVES.
+ *
+ * Three rules, each one sentence a person can act on when it refuses:
+ *
+ *   1. The lead's Sales Manager does not fill in its Qualification. A Sales
+ *      Manager raising her own lead names a Salesman as its owner and he
+ *      collects the answers; otherwise she would be approving her own work.
+ *   2. Whoever owns the lead (and so collected the answers) cannot approve them
+ *      or validate the GST number they entered.
+ *   3. Where a lead has a Sales Manager, a DIFFERENT Sales Manager does not
+ *      become its reviewer just because their level carries `lead.verify`. A
+ *      platform administrator is not a "different Sales Manager" and keeps the
+ *      reach they have always had, as does a manager who is not seated as a
+ *      Sales Manager at all (the global workflow, unchanged).
+ * ------------------------------------------------------------------------- */
+
+type LeadSeats = {
+  ownerId: string | null;
+  salesManagerId: string | null;
+  leadStage?: string | null;
+};
+
+/** Qualification is being worked at these rungs; see `qualificationAccess`. */
+const WORKING_RUNGS = ["qualification", "qualified"];
+
+/**
+ * Null where this person may write the lead's Qualification answers, otherwise
+ * the sentence to refuse with. Only the lead's own Sales Manager is refused —
+ * the Salesman who owns it, and any other writer the existing scope allows,
+ * are untouched — and only while Qualification is the live job.
+ */
+export async function qualificationCollectorRefusal(
+  user: { id: string; role: string },
+  lead: LeadSeats,
+): Promise<string | null> {
+  if (!lead.leadStage || !WORKING_RUNGS.includes(lead.leadStage)) return null;
+  if (user.role === "admin") return null;
+  if (!(await holdsLeadSeat(user, lead.salesManagerId))) return null;
+  return "The Salesman who owns this lead completes its Qualification, and you review it. If nobody owns it yet, name a Salesman as its owner first.";
+}
+
+/** Whether `user` is a Sales Manager seated on some OTHER lead's seat, and not an administrator. */
+async function isOtherSalesManager(
+  user: { id: string; role: string },
+  lead: LeadSeats,
+): Promise<boolean> {
+  if (!lead.salesManagerId || lead.salesManagerId === user.id) return false;
+  if (user.role === "admin") return false;
+  return canOpenModule(user.id, SALES_MANAGER_MODULE);
+}
+
+async function seatsOf(customerId: string): Promise<LeadSeats | null> {
+  const [row] = await db
+    .select({
+      ownerId: customers.ownerId,
+      salesManagerId: customers.salesManagerId,
+      leadStage: customers.leadStage,
+    })
+    .from(customers)
+    .where(eq(customers.id, customerId))
+    .limit(1);
+  return row ?? null;
+}
+
+export type ApproverCheck =
+  | { ok: true; ctx: Awaited<ReturnType<typeof requireLeadVerifier>> }
+  | { ok: false; message: string };
+
+/**
+ * Who may APPROVE a lead's Qualification — give the review verdict. The
+ * verification rule first (`lead.verify` or the seat), then the three rules
+ * above. A refusal for a capability the person never held still throws exactly
+ * as it always did; the two ownership refusals come back as sentences.
+ */
+export async function requireQualificationApprover(customerId: string): Promise<ApproverCheck> {
+  const ctx = await requireLeadVerifier(customerId);
+  const seats = await seatsOf(customerId);
+  if (!seats) return { ok: true, ctx };
+  if (seats.ownerId && seats.ownerId === ctx.user.id) {
+    return {
+      ok: false,
+      message:
+        "You own this lead, so you collected its Qualification and cannot approve it. The Salesman who owns a lead collects; its Sales Manager reviews.",
+    };
+  }
+  if (await isOtherSalesManager(ctx.user, seats)) {
+    return {
+      ok: false,
+      message: "This lead is under a different Sales Manager. Only its own Sales Manager reviews its Qualification.",
+    };
+  }
+  return { ok: true, ctx };
+}
+
+/**
+ * Null where this person may validate (or refuse) the GST number on a lead,
+ * otherwise the sentence to refuse with. The responsible Sales Manager only:
+ * the seat holder, an administrator, and — where nobody holds the seat at all —
+ * whoever holds `lead.verify`. The lead's owner never.
+ */
+export async function gstValidatorRefusal(
+  user: { id: string; role: string },
+  lead: LeadSeats,
+): Promise<string | null> {
+  if (lead.ownerId && lead.ownerId === user.id) {
+    return "You own this lead, so you entered its GST number and cannot validate it. Its Sales Manager does that when reviewing.";
+  }
+  if (user.role === "admin") return null;
+  if (await holdsLeadSeat(user, lead.salesManagerId)) return null;
+  if (!lead.salesManagerId && (await canFor(user, "lead.verify"))) return null;
+  return lead.salesManagerId
+    ? "Only this lead's own Sales Manager validates its GST number."
+    : "This lead has no Sales Manager yet. Ask for one to be named; they validate its GST number.";
+}
+
+/** The screens' form of `gstValidatorRefusal`: may this person validate GST on this lead? */
+export async function canValidateGstById(
+  user: { id: string; role: string },
+  customerId: string,
+): Promise<boolean> {
+  const seats = await seatsOf(customerId);
+  if (!seats) return false;
+  return (await gstValidatorRefusal(user, seats)) === null;
+}
+
+/** The screens' form of `qualificationCollectorRefusal`: the sentence, or null where they may write. */
+export async function qualificationCollectorRefusalById(
+  user: { id: string; role: string },
+  customerId: string,
+): Promise<string | null> {
+  const seats = await seatsOf(customerId);
+  if (!seats) return null;
+  return qualificationCollectorRefusal(user, seats);
+}

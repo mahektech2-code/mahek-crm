@@ -53,6 +53,8 @@ import {
 import { MBOS_EVENT, writeTimelineEvent, type TimelineWriter } from "../timeline";
 import { APP_TIMEZONE, calendarDate } from "../business-date";
 import { qualifyLead } from "../services/lead-qualification-service";
+import { qualificationCollectorRefusal } from "../services/lead-verifier";
+import { QUALIFICATION_ANSWER_KEYS, qualificationAnswerFault } from "../engines/lead-gates";
 import {
   openQualificationAfterVerification,
   recordReviewVoid,
@@ -4329,6 +4331,24 @@ async function handleLeadUpdate(
   }
 
   /*
+   * THE SALES MANAGER A LEAD IS UNDER DOES NOT FILL IN ITS QUALIFICATION.
+   *
+   * The Salesman who owns it collects the answers and she reviews them. The web
+   * actions refuse her for the same reason; this is the handset's door to the
+   * same rule, for a Sales Manager who happens to be signed in on a phone. A
+   * refusal, not a retry: nothing about the lead will change by waiting.
+   */
+  if (
+    p.qualification != null ||
+    p.gstin != null ||
+    p.application != null ||
+    p.creditDaysWanted != null
+  ) {
+    const barred = await qualificationCollectorRefusal(principal.user, existing);
+    if (barred) return { kind: "rejected", value: reject("not_permitted", barred) };
+  }
+
+  /*
    * §23 — WHO BILLS THIS SHOP IS CHECKED BEFORE ANYTHING IS WRITTEN.
    *
    * A distributor is an account we invoice: a real customer, not a lead and
@@ -4587,7 +4607,20 @@ async function handleLeadUpdate(
      a handset posting only what was on screen would erase the four somebody
      established last week. */
   if (p.qualification != null) {
-    changed.leadQualification = { ...(existing.leadQualification ?? {}), ...p.qualification };
+    /* The eight questions' own answers are checked here as the web action checks
+       them, and a value the gate could not read is dropped rather than stored:
+       one stale answer must not cost the rest of what the Salesman wrote. */
+    const answerKeys = new Set<string>(QUALIFICATION_ANSWER_KEYS);
+    const incoming: Record<string, boolean | string> = {};
+    for (const [key, value] of Object.entries(p.qualification)) {
+      if (!answerKeys.has(key)) {
+        incoming[key] = value;
+        continue;
+      }
+      if (typeof value !== "string" || qualificationAnswerFault(key, value)) continue;
+      incoming[key] = value.trim();
+    }
+    changed.leadQualification = { ...(existing.leadQualification ?? {}), ...incoming };
   }
   if (p.nextAction != null) {
     changed.leadNextAction = p.nextAction.action;

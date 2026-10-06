@@ -214,6 +214,8 @@ export type QualItem = {
    * prevent, so those are shown as answered or not and never toggled.
    */
   tickable: boolean;
+  /** What was answered, in one line, for the Sales Manager's read-through. "" where nothing yet. */
+  answer?: string;
 };
 
 /** What the manager's review of the salesman's checklist says. */
@@ -303,6 +305,12 @@ export type Lead = {
   customerType?: string;
   gstin?: string;
   gstVerified: boolean;
+  /**
+   * Where the GST number stands for the review: `none` (no number yet),
+   * `unchecked` (entered, nobody has validated it), `valid`, or `refused` (the
+   * Sales Manager refused it and the Salesman owes a correction).
+   */
+  gstState?: "none" | "unchecked" | "valid" | "refused";
   creditDaysWanted?: number;
   buyer?: string;
   visits: number;

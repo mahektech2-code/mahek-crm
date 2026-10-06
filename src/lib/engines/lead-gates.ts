@@ -97,16 +97,114 @@ export const PROSPECT_CONDITIONS: readonly Condition[] = [
  *
  * `buyer_confirmed` is the eighth and it is CONDITIONAL — see its satisfier.
  */
+/*
+ * ---------------------------------------------------------------------------
+ * THE EIGHT QUESTIONS, AS MAHEK FINALISED THEM — a Salesman collects, the
+ * responsible Sales Manager validates the GST number and reviews.
+ *
+ * The earlier eight were ticks for four of them (price, delivery, willingness,
+ * next step), which proved a conversation was claimed and nothing about what
+ * was said. These eight each read a stored ANSWER, so a tick beside an empty
+ * field cannot happen and a reviewer reads what was actually agreed.
+ *
+ *   gst_verified          the GSTIN, AND the Sales Manager's validation of it
+ *   application_understood  what they will use it on — and nothing more
+ *   trial_plan            product, pack, quantity, who tests it, for how long
+ *   people_identified     decision maker, buyer, payer (or "the same person")
+ *   price_and_credit      price or range discussed, credit days, how they took it
+ *   delivery_workable     where, the lead time quoted, and whether it suits them
+ *   willing_to_test       still yes, asked AFTER price, credit and delivery
+ *   next_step_dated       what happens if the trial goes well, and by when
+ *
+ * Monthly litres, competitor, required product and contact person are NOT here:
+ * they are Prospect answers, still mandatory there, and the freshness check on
+ * the Sample/Trial gate (`figures_fresh`) still confirms them.
+ *
+ * `gst_verified` and `application_understood` keep their ids, and the columns
+ * behind them (`gstin`, `gst_verified`, `lead_application`, `lead_credit_days_
+ * wanted`, `lead_buyer`, `lead_decision_maker`) are unchanged. The answers
+ * that had no column live in the existing `lead_qualification` jsonb under the
+ * keys in `QUALIFICATION_ANSWER_KEYS`. An old tick stored against a retired id
+ * stays where it is and is simply never read.
+ * ---------------------------------------------------------------------------
+ */
 export const QUALIFICATION_CONDITIONS: readonly Condition[] = [
-  { id: "gst_verified", says: "Get their GST number for the back office to check" },
-  { id: "application_understood", says: "Find out exactly what they will use it on" },
-  { id: "price_discussed", says: "Talk about price, or at least a range" },
-  { id: "credit_days", says: "Ask what credit they need" },
-  { id: "delivery_discussed", says: "Tell them how long delivery takes, and check it suits them" },
-  { id: "buyer_confirmed", says: "Find out who places the order, if not the person who decides" },
-  { id: "agrees_to_test", says: "Check again that they will try it, now they know the price and credit" },
-  { id: "next_step_agreed", says: "Agree what happens if the trial goes well" },
+  { id: "gst_verified", says: "Get their GST number — your Sales Manager validates it at review" },
+  { id: "application_understood", says: "Find out what they will use it on" },
+  { id: "trial_plan", says: "Agree the trial: the product and pack, the quantity, who will test it and for how long" },
+  { id: "people_identified", says: "Name who decides, who places the order and who pays" },
+  { id: "price_and_credit", says: "Discuss price and credit, and note how they took it" },
+  { id: "delivery_workable", says: "Say where we deliver and how long it takes, and whether that suits them" },
+  { id: "willing_to_test", says: "Check they will still test it, now they know the price, credit and delivery" },
+  { id: "next_step_dated", says: "Agree what happens if the trial goes well, and by when" },
 ] as const;
+
+/**
+ * The answers Qualification keeps in `lead_qualification` (jsonb), by key. The
+ * save action accepts exactly these plus the condition ids, so a key invented
+ * by a stale screen is dropped rather than stored.
+ */
+export const QUALIFICATION_ANSWER_KEYS = [
+  /* trial_plan */
+  "trial_product",
+  "trial_pack",
+  "trial_quantity",
+  "trial_tester",
+  "trial_duration",
+  /* people_identified — the decision maker is a Prospect column. The buyer's name
+     is the web's `lead_buyer` column OR `buyer_name` here: the handset has no
+     way to write that column, and the Salesman works on the handset. */
+  "buyer_name",
+  "buyer_same",
+  "buyer_phone",
+  "decision_maker_phone",
+  "payer",
+  "payer_same",
+  "payer_phone",
+  /* price_and_credit — credit days is a Prospect column */
+  "price_range",
+  "price_reaction",
+  /* delivery_workable */
+  "delivery_location",
+  "delivery_lead_time",
+  "delivery_suits",
+  /* willing_to_test, next_step_dated */
+  "willing_to_test",
+  "next_step",
+  "next_step_date",
+] as const;
+
+/** How the customer took the price. */
+const PRICE_REACTIONS = ["accepted", "negotiating", "objecting"] as const;
+
+/** The answers that are a stated yes or no, and nothing else. */
+const YES_NO_ANSWERS: readonly string[] = ["buyer_same", "payer_same", "delivery_suits", "willing_to_test"];
+
+/** The longest any free-text Qualification answer may be. */
+const QUALIFICATION_ANSWER_MAX = 500;
+
+/**
+ * Whether one Qualification answer is something the gate can read, in words for
+ * a person — or null where it is fine. An empty value is always fine: it is how
+ * an answer is taken back. Shared by the server action that stores the answers
+ * and the screens that draw the boxes, so a value a form can send is a value the
+ * gate understands.
+ */
+export function qualificationAnswerFault(key: string, value: string): string | null {
+  const v = value.trim();
+  if (v === "") return null;
+  if (v.length > QUALIFICATION_ANSWER_MAX) return "That answer is too long.";
+  if (YES_NO_ANSWERS.includes(key) && v !== "yes" && v !== "no") return "Answer yes or no.";
+  if (key === "price_reaction" && !(PRICE_REACTIONS as readonly string[]).includes(v)) {
+    return "Say whether they accepted, are negotiating or are objecting.";
+  }
+  if (key === "next_step_date") {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+    const d = m ? new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))) : null;
+    if (!m || !d || d.getUTCMonth() !== Number(m[2]) - 1) return "Give the date as year-month-day.";
+  }
+  return null;
+}
 
 /**
  * §11 — the thirty a distributor answers, in the specification's five groups.
@@ -214,6 +312,16 @@ export type LeadGateInput = {
    * is the number somebody wrote down; this is whether anybody checked it.
    */
   gstVerified?: boolean | null;
+  /**
+   * The Sales Manager looked at the GST number and REFUSED it: `gst_verified` is
+   * false with a date and a name on it. Never-validated is the same `false` with
+   * both empty, and the two are different facts — a refused number is a
+   * correction the Salesman owes, so the lead is not ready for review until the
+   * number changes, while a number nobody has looked at yet is exactly what the
+   * review is for. Absent on the handset, which is never told: it reads as "not
+   * refused", and the office's own verdict stands.
+   */
+  gstRefused?: boolean | null;
   creditDaysWanted?: number | null;
   application?: string | null;
   gstin?: string | null;
@@ -286,10 +394,21 @@ function has(v: unknown): boolean {
   return true;
 }
 
-/** A checklist answer counts where it is `true` or a non-empty string. */
-function ticked(q: Record<string, boolean | string> | null | undefined, id: string): boolean {
-  if (!q) return false;
-  return has(q[id]);
+/** The trimmed text stored under a Qualification answer key, or "". */
+function textOf(q: Record<string, boolean | string> | null | undefined, key: string): string {
+  const v = q?.[key];
+  return typeof v === "string" ? v.trim() : "";
+}
+
+/** A Qualification answer somebody actually wrote. */
+function answered(q: Record<string, boolean | string> | null | undefined, key: string): boolean {
+  return textOf(q, key).length > 0;
+}
+
+/** A stated yes, in words. Anything else — no, blank, a stray tick — is not one. */
+function isYes(q: Record<string, boolean | string> | null | undefined, key: string): boolean {
+  const v = q?.[key];
+  return typeof v === "string" && v.trim().toLowerCase() === "yes";
 }
 
 function missingFrom(
@@ -377,48 +496,58 @@ function conditionsToEnter(to: LeadStage, i: LeadGateInput): Condition[] {
         out.push(
           ...missingFrom(QUALIFICATION_CONDITIONS, (c) => {
             switch (c.id) {
-              /* THREE of the eight are answered by a real column rather than
-                 a tick, so the gate reads the value: a ticked box beside an
-                 empty field is exactly the state this engine exists to stop.
-                 The rest are genuine yes/no judgements with nothing to store
-                 but the answer — "did you talk about price" has no column
-                 because the answer is the conversation.
+              /* EVERY ONE OF THE EIGHT READS A STORED ANSWER. A ticked box beside
+                 an empty field is exactly the state this engine exists to stop,
+                 so the gate reads the value and there is no tick to satisfy it.
 
-                 §11.6 — GST NOW READS A COLUMN SOMEBODY ELSE WROTE. It used to
-                 be the number plus a TICK, and the tick was writable by anyone
-                 holding `lead.work`, which is the salesman who typed the number
-                 in. So the man collecting it was the man certifying it. The
-                 specification gives validation to the back office, and
-                 `customers.gst_verified` is their answer, stamped with who and
-                 when. The old tick is not read at all: carrying it forward
-                 would import the self-certification into the column that exists
-                 to end it. */
+                 GST reads a column the Sales Manager writes: the number is the
+                 Salesman's, the validation (`customers.gst_verified`, with who
+                 and when) is the responsible Sales Manager's. The old tick is
+                 not read at all — carrying it forward would import the
+                 self-certification into the column that exists to end it. */
               case "gst_verified": return has(i.gstin) && i.gstVerified === true;
-              case "credit_days": return has(i.creditDaysWanted);
               case "application_understood": return has(i.application);
-              /* CONDITIONAL, and the only condition here that can be satisfied
-                 by a fact about a DIFFERENT field.
-
-                 The specification asks for the buyer "only if different from
-                 the Decision Maker already on record" — so on a shop where the
-                 owner both decides and orders, naming him once is the whole
-                 answer and being asked again is the re-asking this checklist
-                 was cut down to avoid. A buyer on the record satisfies it
-                 outright; with no buyer named, a decision maker plus the
-                 salesman's tick saying "same man" does.
-
-                 The tick is also read under its OLD id. This condition was
-                 `decision_maker` until the list was cut to eight, and a lead
-                 somebody qualified last week carries that key in its jsonb —
-                 reading only the new one would un-tick work already done and
-                 send finished leads back down the ladder. */
-              case "buyer_confirmed":
+              case "trial_plan":
                 return (
-                  has(i.buyer) ||
-                  (has(i.decisionMaker) &&
-                    (ticked(q, "buyer_confirmed") || ticked(q, "decision_maker")))
+                  answered(q, "trial_product") &&
+                  answered(q, "trial_pack") &&
+                  answered(q, "trial_quantity") &&
+                  answered(q, "trial_tester") &&
+                  answered(q, "trial_duration")
                 );
-              default: return ticked(q, c.id);
+              /* THE SAME PERSON IS A REAL ANSWER. Where the decision maker also
+                 places the order, or also pays, saying so once is the whole
+                 answer — and being asked to type the name three times is how a
+                 form gets three different spellings of one man. The Prospect
+                 columns carry the decision maker and the buyer; the payer has
+                 no column and lives with the other answers. */
+              case "people_identified":
+                return (
+                  has(i.decisionMaker) &&
+                  (has(i.buyer) || answered(q, "buyer_name") || isYes(q, "buyer_same")) &&
+                  (answered(q, "payer") || isYes(q, "payer_same"))
+                );
+              case "price_and_credit":
+                return (
+                  answered(q, "price_range") &&
+                  has(i.creditDaysWanted) &&
+                  (PRICE_REACTIONS as readonly string[]).includes(textOf(q, "price_reaction"))
+                );
+              /* Yes AND no both answer "does the timing suit them". The
+                 condition is that somebody asked; whether a "no" is acceptable
+                 is the Sales Manager's judgement at review. */
+              case "delivery_workable":
+                return (
+                  answered(q, "delivery_location") &&
+                  answered(q, "delivery_lead_time") &&
+                  ["yes", "no"].includes(textOf(q, "delivery_suits"))
+                );
+              /* ONLY A YES PASSES. A "no" is recorded and held: a shop that will
+                 not test is a lead for the next-step conversation, not a sample. */
+              case "willing_to_test": return isYes(q, "willing_to_test");
+              case "next_step_dated":
+                return answered(q, "next_step") && /^\d{4}-\d{2}-\d{2}$/.test(textOf(q, "next_step_date"));
+              default: return false;
             }
           }),
         );
@@ -772,6 +901,87 @@ export function qualificationComplete(i: LeadGateInput): boolean {
   return gateTo(i, "sample_trial").missing.every(
     (c) => REVIEW_CONDITION_IDS.includes(c.id) || c.id === "next_action",
   );
+}
+
+/**
+ * Has the SALESMAN finished — is this lead ready to be put in front of the
+ * Sales Manager?
+ *
+ * Everything `qualificationComplete` asks except the GST validation, which is
+ * the Sales Manager's own act and happens AS PART OF the review. If the number
+ * had to be validated before the review was even asked for, the lead would sit
+ * waiting for a validation nobody had been told to make. A number that has been
+ * entered and not refused is ready; one the Sales Manager has refused
+ * (`gstRefused`) is not, because the Salesman owes a correction.
+ *
+ * `qualificationComplete` stays the strict test — it is what a "verified"
+ * verdict and the Sample/Trial gate itself require.
+ */
+export function qualificationReadyForReview(i: LeadGateInput): boolean {
+  if (i.salesType === "distributor" || !i.salesType) return false;
+  return gateTo(i, "sample_trial").missing.every(
+    (c) =>
+      REVIEW_CONDITION_IDS.includes(c.id) ||
+      c.id === "next_action" ||
+      (c.id === "gst_verified" && has(i.gstin) && !i.gstRefused),
+  );
+}
+
+/**
+ * WHAT WAS ANSWERED, in one line a reviewer can read — or "" where nothing has
+ * been. The Sales Manager's review is a read-through of exactly these lines, so
+ * they are drawn from the same stored answers the gate reads and cannot say
+ * something the gate does not.
+ */
+export function qualificationAnswerSummary(id: string, i: LeadGateInput): string {
+  const q = i.qualification;
+  const t = (key: string) => textOf(q, key);
+  const join = (parts: Array<string | null | undefined>) => parts.filter((p): p is string => Boolean(p && p.trim())).join(" · ");
+  const yesNo = (key: string) => (t(key) === "yes" ? "yes" : t(key) === "no" ? "no" : "");
+  switch (id) {
+    case "gst_verified":
+      return (i.gstin ?? "").trim();
+    case "application_understood":
+      return (i.application ?? "").trim();
+    case "trial_plan":
+      return join([
+        t("trial_product"),
+        t("trial_pack"),
+        t("trial_quantity"),
+        t("trial_tester") ? `tested by ${t("trial_tester")}` : "",
+        t("trial_duration"),
+      ]);
+    case "people_identified":
+      return join([
+        i.decisionMaker ? `decides: ${i.decisionMaker.trim()}` : "",
+        i.buyer?.trim()
+          ? `orders: ${i.buyer.trim()}`
+          : t("buyer_name")
+            ? `orders: ${t("buyer_name")}`
+            : isYes(q, "buyer_same")
+              ? "orders: the same person"
+              : "",
+        t("payer") ? `pays: ${t("payer")}` : isYes(q, "payer_same") ? "pays: the same person" : "",
+      ]);
+    case "price_and_credit":
+      return join([
+        t("price_range"),
+        i.creditDaysWanted !== null && i.creditDaysWanted !== undefined ? `credit ${i.creditDaysWanted} days` : "",
+        t("price_reaction"),
+      ]);
+    case "delivery_workable":
+      return join([
+        t("delivery_location"),
+        t("delivery_lead_time"),
+        yesNo("delivery_suits") ? `suits them: ${yesNo("delivery_suits")}` : "",
+      ]);
+    case "willing_to_test":
+      return yesNo("willing_to_test");
+    case "next_step_dated":
+      return join([t("next_step"), t("next_step_date")]);
+    default:
+      return "";
+  }
 }
 
 /** The ordinary question: may it go UP one, and what is in the way. */

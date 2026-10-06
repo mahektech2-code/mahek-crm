@@ -315,6 +315,7 @@ export async function leadGateInput(customerId: string): Promise<LeadGateInput |
        tick, which is what the gate used to read. The number and the check are
        two different people's statements and the gate wants both. */
     gstVerified: lead.gstVerified,
+    gstRefused: lead.gstVerified === false && lead.gstVerifiedAt != null,
     /* §5.3 — the two halves of what replaced the four questions that were cut
        out of the qualification checklist: the figures still holding, and a
        manager who said the checklist was not finished being listened to. */

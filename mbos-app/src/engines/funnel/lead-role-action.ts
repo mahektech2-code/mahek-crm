@@ -373,10 +373,25 @@ export function roleAction(facts: LeadActionFacts, vantage: LeadVantage): LeadAc
     case "qualification":
     case "qualified":
       switch (vantage) {
-        case "salesman":
-          return NOT_YOUR_LADDER;
+        case "salesman": {
+          /* QUALIFICATION IS THE SALESMAN'S, collected on the shop floor and
+             approved by the Sales Manager the lead is under. He sees a
+             counted-down job until it is complete, then a wait for the review,
+             and his own next step once the manager has spoken. */
+          const review = facts.qualificationReview ?? null;
+          if (review === "verified") {
+            return { label: "Request the sample", tone: "brand", actionable: true };
+          }
+          if (review === "incomplete" || review === "clarification") {
+            return { label: "Answer the Sales Manager's note", tone: "warn", actionable: true };
+          }
+          if (facts.qualificationComplete) {
+            return { label: "Waiting for Sales Manager review", tone: "warn", actionable: false };
+          }
+          return { label: "Complete qualification", tone: "brand", actionable: true };
+        }
         case "calling_desk": {
-          /* QUALIFICATION IS THE TELECALLER'S. What they see is a counted-down
+          /* The calling desk's own wording, unchanged. QUALIFICATION WAS THE TELECALLER'S. What they see is a counted-down
              job until it is complete, then a wait for the manager, and their own
              next step once the manager has spoken. */
           const review = facts.qualificationReview ?? null;

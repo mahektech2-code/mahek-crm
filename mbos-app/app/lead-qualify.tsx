@@ -16,6 +16,7 @@ import { checklistFor, stageLabel, type Condition } from '../src/engines/funnel'
 import { plural } from '../src/lib/format';
 import { useStore } from '../src/state/store';
 import { Pop, Stagger, animateLayout } from '../src/components/ui/motion';
+import { QualificationForm } from '../src/components/leads/qualification-form';
 
 /**
  * §9 §11 — the checklist, and it is two different sizes of question.
@@ -240,6 +241,18 @@ export default function QualifyScreen() {
   const { lead, salesType } = view;
   const conditions = checklistFor(salesType, 'qualification');
   const isDistributor = salesType === 'distributor';
+
+  /* A SHOP'S QUALIFICATION IS THE SALESMAN'S EIGHT QUESTIONS, each a stored
+     answer — see `QualificationForm`. The distributor's thirty keep the screen
+     below, untouched. */
+  if (!isDistributor && conditions.length > 0) {
+    return (
+      <AppFrame title="Qualification" activeTab={null} onBack={goBack} contentStyle={{ padding: 16, paddingBottom: 24 }}>
+        <BackLink label={back.label} onPress={goBack} />
+        <QualificationForm key={lead.id} view={view} onSaved={load} />
+      </AppFrame>
+    );
+  }
 
   /*
    * Whether one condition is answered, asked the same way the gate asks it.

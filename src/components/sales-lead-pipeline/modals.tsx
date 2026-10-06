@@ -624,18 +624,21 @@ function VerifyModal({ lead, onClose }: ModalProps) {
 /* ------------------------------------------------------- qualification */
 
 function QualifyModal({ lead, onClose }: ModalProps) {
-  const width = useProtoWidth(580, 560);
-  const { doSaveChecklist, doReviewChecklist, busy } = useLeadPipeline();
+  const width = useProtoWidth(620, 580);
+  const { doReviewChecklist, doValidateGst, busy } = useLeadPipeline();
   const status = qualificationStatus(lead);
-  const tickable = lead.qualItems.filter((c) => c.tickable);
-  const [ticks, setTicks] = React.useState<Record<string, boolean>>(() =>
-    Object.fromEntries(tickable.map((c) => [c.id, c.done])),
-  );
   const [verdict, setVerdict] = React.useState<"verified" | "incomplete" | "clarification">(lead.qualReview?.verdict ?? "verified");
   const [note, setNote] = React.useState("");
-  const dirty = tickable.some((c) => ticks[c.id] !== c.done);
+  const [gstNote, setGstNote] = React.useState("");
+  const [refusing, setRefusing] = React.useState(false);
   const reviewOpen = lead.stage === "qualification" || lead.stage === "qualified";
   const noteMissing = verdict !== "verified" && !note.trim();
+  const gst = lead.gstState ?? "none";
+  /* A "verified" verdict needs every answer in AND the GST number validated; the
+     server refuses it otherwise and names what is missing, so the button only
+     asks the screen to say the same thing first. */
+  const gstOk = gst === "valid";
+  const verifyBlocked = verdict === "verified" && (!status.allDone || !gstOk);
 
   return (
     <Modal
@@ -644,65 +647,74 @@ function QualifyModal({ lead, onClose }: ModalProps) {
       width={width}
       title={
         <div>
-          <div>Qualification checklist</div>
-          <div className="mt-0.5 text-[13px] font-normal text-muted">{lead.name} · every condition unlocks Sample / Trial</div>
+          <div>Qualification review</div>
+          <div className="mt-0.5 text-[13px] font-normal text-muted">{lead.name} · what the Salesman collected, for you to read and approve</div>
         </div>
       }
-      footer={
-        <>
-          <Button variant="secondary" onClick={onClose}>Close</Button>
-          {tickable.length ? (
-            <Button variant="primary" disabled={busy || !dirty || !lead.caps.canWork} onClick={() => void doSaveChecklist(ticks)}>
-              {busy ? "Saving…" : "Save ticks"}
-            </Button>
-          ) : null}
-        </>
-      }
+      footer={<Button variant="secondary" onClick={onClose}>Close</Button>}
     >
       <FormError />
       <Callout tone={status.allDone ? "brand" : "warn"}>
-        {status.done} of {status.total} conditions met{status.allDone ? " — ready for Sample / Trial." : "."}
+        {status.done} of {status.total} answered{status.allDone ? " — ready for your decision." : "."}
       </Callout>
       <div className="mt-3 flex flex-col gap-2">
-        {lead.qualItems.map((c) => {
-          const done = c.tickable ? ticks[c.id] : c.done;
-          const box = (
+        {lead.qualItems.map((c) => (
+          <div key={c.id} className="flex items-start gap-2.5 rounded-[4px] border border-divider bg-canvas px-3 py-2 text-sm">
             <span
               className={
                 "mt-0.5 flex h-4.5 w-4.5 flex-none items-center justify-center rounded-[3px] border " +
-                (done ? "border-brand bg-brand text-white" : "border-line-strong bg-surface")
+                (c.done ? "border-brand bg-brand text-white" : "border-line-strong bg-surface")
               }
             >
-              {done ? "✓" : ""}
+              {c.done ? "✓" : ""}
             </span>
-          );
-          return c.tickable ? (
-            <button
-              key={c.id}
-              type="button"
-              onClick={() => setTicks((t) => ({ ...t, [c.id]: !t[c.id] }))}
-              className="flex items-start gap-2.5 rounded-[4px] border border-line px-3 py-2 text-left text-sm hover:bg-canvas"
-            >
-              {box}
-              <span className={done ? "text-body" : "text-ink"}>{c.says}</span>
-            </button>
-          ) : (
-            <div key={c.id} className="flex items-start gap-2.5 rounded-[4px] border border-divider bg-canvas px-3 py-2 text-sm">
-              {box}
-              <span className={done ? "text-body" : "text-ink"}>
-                {c.says}
-                <span className="block text-[12px] text-muted">
-                  {done ? "Answered on the record." : "Answered by a value on the record, not a tick — it is filled in from the lead's own details."}
-                </span>
-              </span>
-            </div>
-          );
-        })}
+            <span className={c.done ? "text-body" : "text-ink"}>
+              {c.says}
+              {c.answer ? <span className="block text-[13px] font-medium text-ink">{c.answer}</span> : null}
+              {!c.done && !c.answer ? <span className="block text-[12px] text-muted">Not answered yet.</span> : null}
+            </span>
+          </div>
+        ))}
       </div>
 
       {reviewOpen ? (
         <div className="mt-5 border-t border-divider pt-4">
-          <div className="mb-1 text-xs font-medium tracking-[0.04em] text-muted uppercase">Manager review</div>
+          <div className="mb-1 text-xs font-medium tracking-[0.04em] text-muted uppercase">GST number</div>
+          <p className="mb-2 text-[13px] text-body">
+            {gst === "none"
+              ? "The Salesman has not entered a GST number yet."
+              : gst === "valid"
+                ? `${lead.gstin} — you have validated it.`
+                : gst === "refused"
+                  ? `${lead.gstin} — you refused it. The Salesman has been told what to correct.`
+                  : `${lead.gstin} — entered by the Salesman. Check it, then validate or refuse it. You cannot verify the Qualification until it is validated.`}
+          </p>
+          {lead.caps.canVerify && gst !== "none" ? (
+            refusing ? (
+              <div className="space-y-2">
+                <Field label="What is wrong with it?">
+                  <Textarea rows={2} value={gstNote} onChange={(e) => setGstNote(e.target.value)} />
+                </Field>
+                <div className="flex gap-2">
+                  <Button variant="secondary" size="sm" disabled={busy || !gstNote.trim()} onClick={() => void doValidateGst(false, gstNote).then((ok) => ok && setRefusing(false))}>
+                    Refuse the number
+                  </Button>
+                  <Button variant="secondary" size="sm" onClick={() => setRefusing(false)}>Cancel</Button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex gap-2">
+                <Button variant="primary" size="sm" disabled={busy || gst === "valid"} onClick={() => void doValidateGst(true, "")}>
+                  {gst === "valid" ? "Validated" : "Validate the number"}
+                </Button>
+                <Button variant="secondary" size="sm" disabled={busy || gst === "refused"} onClick={() => setRefusing(true)}>
+                  Refuse it
+                </Button>
+              </div>
+            )
+          ) : null}
+
+          <div className="mb-1 mt-5 text-xs font-medium tracking-[0.04em] text-muted uppercase">Your review</div>
           {lead.qualReview ? (
             <p className="mb-2 text-[13px] text-body">
               Last review: <b>{lead.qualReview.verdict}</b>
@@ -710,28 +722,33 @@ function QualifyModal({ lead, onClose }: ModalProps) {
               {lead.qualReview.note ? ` — ${lead.qualReview.note}` : ""}
             </p>
           ) : (
-            <p className="mb-2 text-[13px] text-muted">The salesman completes the checklist; you review it. An unreviewed checklist does not hold the lead.</p>
+            <p className="mb-2 text-[13px] text-muted">The Salesman completes the answers; you review them. An unreviewed checklist does not hold the lead.</p>
           )}
           {lead.caps.canVerify ? (
             <>
               <div className="flex flex-col gap-1.5">
-                <RadioCard name="qrv" label="Verified — it is complete" checked={verdict === "verified"} onChange={() => setVerdict("verified")} />
-                <RadioCard name="qrv" label="Incomplete — hold the lead here" checked={verdict === "incomplete"} onChange={() => setVerdict("incomplete")} />
-                <RadioCard name="qrv" label="Needs clarification" checked={verdict === "clarification"} onChange={() => setVerdict("clarification")} />
+                <RadioCard name="qrv" label="Verified — complete, GST validated, ready for a sample" checked={verdict === "verified"} onChange={() => setVerdict("verified")} />
+                <RadioCard name="qrv" label="Incomplete — something is missing or too thin" checked={verdict === "incomplete"} onChange={() => setVerdict("incomplete")} />
+                <RadioCard name="qrv" label="Needs clarification — it is there but I need it explained" checked={verdict === "clarification"} onChange={() => setVerdict("clarification")} />
               </div>
               {verdict !== "verified" ? (
-                <Field label="What does he need to do?" className="mt-2">
+                <Field label="What does the Salesman need to do?" className="mt-2">
                   <Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} />
                 </Field>
+              ) : verifyBlocked ? (
+                <p className="mt-2 text-[12.5px] text-muted">
+                  {!status.allDone ? "Every answer has to be in before you can verify. " : ""}
+                  {!gstOk ? "The GST number has to be validated first." : ""}
+                </p>
               ) : null}
               <div className="mt-2">
-                <Button variant="secondary" size="sm" disabled={busy || noteMissing} onClick={() => void doReviewChecklist(verdict, note)}>
+                <Button variant="secondary" size="sm" disabled={busy || noteMissing || verifyBlocked} onClick={() => void doReviewChecklist(verdict, note)}>
                   Record review
                 </Button>
               </div>
             </>
           ) : (
-            <p className="text-[12.5px] text-muted">Reviewing a checklist is a sales manager&rsquo;s. Yours is not a hat that carries it.</p>
+            <p className="text-[12.5px] text-muted">Reviewing a Qualification is for the Sales Manager the lead is under.</p>
           )}
         </div>
       ) : null}

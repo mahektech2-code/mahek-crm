@@ -177,6 +177,8 @@ const files = [
   "src/lib/crm-sales-manager.test.ts",
   // Verification follows lead.sales_manager_id: the seat holder verifies, at any CRM level.
   "src/lib/lead-verifier-seat.test.ts",
+  // Qualification: the Salesman collects, the Sales Manager validates GST and reviews.
+  "src/lib/qualification-flow.test.ts",
   // A lead's owner is respected: a Sales Manager's lead is not a Telecaller's.
   "src/lib/lead-owner-visibility.test.ts",
   "src/lib/sales-manager-desk-queues.test.ts",

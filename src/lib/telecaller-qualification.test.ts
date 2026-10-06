@@ -34,6 +34,7 @@ import {
 import { verifyProspect } from "@/lib/actions/sales-manager-pipeline";
 import { resubmitForReview, reviewLeadQualification } from "@/lib/actions/lead-qualification-review";
 import { validateGstin } from "@/lib/actions/lead-gst";
+import { QUALIFICATION_ANSWERS } from "@/lib/qualification-fixtures";
 import { confirmLeadFigures } from "@/lib/actions/lead-figures";
 import { nameLeadDistributor } from "@/lib/actions/lead-distributor-link";
 import { addDistributor } from "@/lib/actions/third-party";
@@ -46,7 +47,7 @@ import {
   leadRow,
 } from "@/lib/services/lead-service";
 import { QUAL_NEXT, sampleEligibility } from "@/lib/services/lead-qualification-flow-service";
-import { qualificationComplete, gateTo } from "@/lib/engines/lead-gates";
+import { qualificationComplete, qualificationReadyForReview, gateTo } from "@/lib/engines/lead-gates";
 import type { MbosPrincipal } from "@/lib/services/mbos-service";
 import type { SyncItem } from "@/lib/mbos/types";
 
@@ -163,19 +164,16 @@ const atQualification = (over: Partial<typeof customers.$inferInsert> = {}) =>
 const answered = (over: Partial<typeof customers.$inferInsert> = {}) =>
   atQualification({
     gstin: "27ABCDE1234F1Z5",
+    /* The Sales Manager validates the GST number: here, the manager. */
     gstVerified: true,
     gstVerifiedAt: new Date(),
-    gstVerifiedById: tele.id,
+    gstVerifiedById: mgr.id,
     leadApplication: "Wood polish",
     leadCreditDaysWanted: 30,
     leadBuyer: "Ganesh's brother",
     leadFiguresConfirmedAt: new Date(),
-    leadQualification: {
-      price_discussed: true,
-      delivery_discussed: true,
-      agrees_to_test: true,
-      next_step_agreed: true,
-    },
+    /* All eight answered: the four columns above and these stored answers. */
+    leadQualification: { ...QUALIFICATION_ANSWERS },
     ...over,
   });
 
@@ -522,7 +520,7 @@ describe("Qualification is the Telecaller's, and it exists only after verificati
     const lead = await prospect();
     setTestUser(tele);
     for (const r of [
-      await saveLeadQualification(lead.id, { price_discussed: true }),
+      await saveLeadQualification(lead.id, { willing_to_test: "yes" }),
       await saveProspectFields(lead.id, { application: "Wood polish" }),
       await saveProspectFields(lead.id, { creditDaysWanted: 30 }),
       await saveProspectFields(lead.id, { buyer: "Brother" }),
@@ -544,52 +542,59 @@ describe("Qualification is the Telecaller's, and it exists only after verificati
     assert.equal((await confirmLeadFigures({ customerId: lead.id })).ok, false);
   });
 
-  test("the Telecaller completes every condition, and the manager is asked to review — once", async () => {
+  test("the owner completes every condition, and the manager is asked to review — once", async () => {
     const lead = await atQualification();
     setTestUser(tele);
     const steps = [
       await saveProspectFields(lead.id, { gstin: "27ABCDE1234F1Z5", application: "Wood polish", creditDaysWanted: 30, buyer: "Ganesh's brother" }),
-      await saveLeadQualification(lead.id, {
-        price_discussed: true,
-        delivery_discussed: true,
-        agrees_to_test: true,
-        next_step_agreed: true,
-      }),
-      await validateGstin({ customerId: lead.id, valid: true }),
+      await saveLeadQualification(lead.id, { ...QUALIFICATION_ANSWERS }),
     ];
     for (const s of steps) assert.equal(s.ok, true, s.ok ? "" : s.error);
     // Figures are the last thing outstanding.
     let gate = await leadGateInput(lead.id);
-    assert.equal(qualificationComplete(gate!), false);
+    assert.equal(qualificationReadyForReview(gate!), false);
     assert.ok(gateTo(gate!, "sample_trial").missing.some((c) => c.id === "figures_fresh"));
 
     assert.equal((await confirmLeadFigures({ customerId: lead.id })).ok, true);
     gate = await leadGateInput(lead.id);
-    assert.equal(qualificationComplete(gate!), true, "everything the Telecaller owns is answered");
+    assert.equal(qualificationReadyForReview(gate!), true, "everything the owner collects is answered");
+    assert.equal(qualificationComplete(gate!), false, "the GST validation is still the manager's to make");
     assert.deepEqual(
-      gateTo(gate!, "sample_trial").missing.map((c) => c.id),
-      ["manager_review_pending"],
-      "and only the manager's review stands in the way",
+      gateTo(gate!, "sample_trial").missing.map((c) => c.id).sort(),
+      ["gst_verified", "manager_review_pending"],
+      "the manager's validation and review stand in the way, and nothing else",
     );
 
     const after = await row(lead.id);
     assert.equal(after.leadNextAction, QUAL_NEXT.review);
     assert.equal(after.leadNextActionOwnerId, mgr.id);
     // Saving again does not ring him again.
-    await saveLeadQualification(lead.id, { price_discussed: true });
+    await saveLeadQualification(lead.id, { willing_to_test: "yes" });
     const bells = await db.select().from(notifications).where(eq(notifications.userId, mgr.id));
     assert.equal(bells.filter((b) => /ready for your review/.test(b.title)).length, 1);
+
+    // The manager validates the number; only his review remains.
+    setTestUser(mgr);
+    assert.equal((await validateGstin({ customerId: lead.id, valid: true })).ok, true);
+    gate = await leadGateInput(lead.id);
+    assert.equal(qualificationComplete(gate!), true);
+    assert.deepEqual(gateTo(gate!, "sample_trial").missing.map((c) => c.id), ["manager_review_pending"]);
   });
 
-  test("the Telecaller enters AND validates the GSTIN themselves", async () => {
+  test("the owner ENTERS the GSTIN; the manager validates it, and the owner cannot", async () => {
     const lead = await atQualification();
     setTestUser(tele);
     assert.equal((await saveProspectFields(lead.id, { gstin: "27ABCDE1234F1Z5" })).ok, true);
+    const own = await validateGstin({ customerId: lead.id, valid: true });
+    assert.equal(own.ok, false, "a check by the person who entered it is not a check");
+    assert.notEqual((await row(lead.id)).gstVerified, true);
+
+    setTestUser(mgr);
     const v = await validateGstin({ customerId: lead.id, valid: true });
     assert.equal(v.ok, true, v.ok ? "" : v.error);
     const after = await row(lead.id);
     assert.equal(after.gstVerified, true);
-    assert.equal(after.gstVerifiedById, tele.id, "the record says which person asserted it");
+    assert.equal(after.gstVerifiedById, mgr.id, "the record says which person asserted it");
   });
 
   test("changing the GSTIN clears the validation; saving the same number does not", async () => {
@@ -613,7 +618,7 @@ describe("Qualification is the Telecaller's, and it exists only after verificati
   test("nobody outside the Telecaller's book can work it — a field holder cannot touch a Telecaller's Qualification", async () => {
     const lead = await atQualification();
     setTestUser(fieldUser);
-    assert.equal((await saveLeadQualification(lead.id, { price_discussed: true })).ok, false);
+    assert.equal((await saveLeadQualification(lead.id, { willing_to_test: "yes" })).ok, false);
     assert.equal((await saveProspectFields(lead.id, { application: "x" })).ok, false);
   });
 });
@@ -687,14 +692,16 @@ describe("a Telecaller's material edit takes a verified review away", () => {
     ["decision maker", (l) => saveProspectFields(l, { decisionMaker: "His son" })],
     ["monthly litres (a Prospect figure)", (l) => saveProspectFields(l, { monthlyLitres: 900 })],
     ["competitor (a Prospect figure)", (l) => saveProspectFields(l, { competitor: "Asian Paints" })],
-    ["a checklist tick", (l) => saveLeadQualification(l, { price_discussed: false })],
+    ["a stored answer", (l) => saveLeadQualification(l, { willing_to_test: "no" })],
     ["the GST verification state", (l) => validateGstin({ customerId: l, valid: false, note: "Does not match the name." })],
   ];
   for (const [name, edit] of cases) {
     test(`${name}: the review is voided, the history says so, and the sample is blocked until it is reviewed again`, async () => {
       const lead = await reviewed();
       assert.equal(await stillVerified(lead.id), true);
-      setTestUser(tele);
+      /* The GST validation is the manager's act, so that edit is his; every other
+         one is the owner's. */
+      setTestUser(name === "the GST verification state" ? mgr : tele);
       await edit(lead.id);
 
       const after = await row(lead.id);
@@ -718,7 +725,7 @@ describe("a Telecaller's material edit takes a verified review away", () => {
     const lead = await reviewed();
     setTestUser(tele);
     await saveProspectFields(lead.id, { application: "Wood polish", creditDaysWanted: 30, buyer: "Ganesh's brother", gstin: "27ABCDE1234F1Z5" });
-    await saveLeadQualification(lead.id, { price_discussed: true });
+    await saveLeadQualification(lead.id, { willing_to_test: "yes" });
     await confirmLeadFigures({ customerId: lead.id });
     assert.equal(await stillVerified(lead.id), true);
   });
@@ -753,7 +760,7 @@ describe("a Telecaller's material edit takes a verified review away", () => {
     setTestUser(tele);
     // Saves that change nothing, and one that changes only a non-material thing.
     await saveProspectFields(lead.id, { application: "Wood polish", creditDaysWanted: 30, buyer: "Ganesh's brother" });
-    await saveLeadQualification(lead.id, { price_discussed: true });
+    await saveLeadQualification(lead.id, { willing_to_test: "yes" });
     await confirmLeadFigures({ customerId: lead.id });
     await setLeadNextAction(lead.id, { action: "Ring the buyer", date: "2026-10-05", ownerId: tele.id });
 
@@ -991,12 +998,11 @@ describe("the whole workflow, start to finish", () => {
     assert.equal(lead.ownerId, tele.id);
     assert.equal(lead.leadNextActionOwnerId, tele.id);
 
-    // 4. The Telecaller completes it — including validating the GST number they entered.
+    // 4. The owner collects the eight answers. The GST number is entered, not validated.
     setTestUser(tele);
     for (const r of [
       await saveProspectFields(leadId, { gstin: "27ABCDE1234F1Z5", application: "Wood polish", creditDaysWanted: 30, buyer: "Ganesh's brother" }),
-      await saveLeadQualification(leadId, { price_discussed: true, delivery_discussed: true, agrees_to_test: true, next_step_agreed: true }),
-      await validateGstin({ customerId: leadId, valid: true }),
+      await saveLeadQualification(leadId, { ...QUALIFICATION_ANSWERS }),
       await confirmLeadFigures({ customerId: leadId }),
     ]) {
       assert.equal(r.ok, true, r.ok ? "" : r.error);
@@ -1004,8 +1010,9 @@ describe("the whole workflow, start to finish", () => {
     assert.equal((await row(leadId)).leadNextActionOwnerId, mgr.id, "it is now with the manager");
     assert.equal((await ask(leadId)).ok, false, "not yet: nothing has been reviewed");
 
-    // 5. The manager reviews and verifies.
+    // 5. The manager validates the GST number, reviews and verifies.
     setTestUser(mgr);
+    assert.equal((await validateGstin({ customerId: leadId, valid: true })).ok, true);
     assert.equal((await reviewLeadQualification({ customerId: leadId, verdict: "verified" })).ok, true);
     assert.equal((await row(leadId)).leadNextActionOwnerId, tele.id);
 

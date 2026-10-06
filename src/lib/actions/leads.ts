@@ -1,6 +1,6 @@
 "use server";
 
-import { requireLeadVerifier } from "@/lib/services/lead-verifier";
+import { qualificationCollectorRefusal, requireLeadVerifier } from "@/lib/services/lead-verifier";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, notInArray } from "drizzle-orm";
@@ -45,7 +45,7 @@ import {
   VERIFICATION_FAILED_CODE,
   type LeadStage,
 } from "@/lib/lead-labels";
-import { checklistFor } from "@/lib/engines/lead-gates";
+import { checklistFor, QUALIFICATION_ANSWER_KEYS, qualificationAnswerFault } from "@/lib/engines/lead-gates";
 import { commitmentGap, commitmentState, isConfirmedCommitment } from "@/lib/lead-commitment";
 import { addDays, money } from "@/lib/format";
 import { isParked, ladderFor, rungOf } from "@/lib/engines/lead-ladder";
@@ -657,14 +657,32 @@ export async function saveLeadQualification(
     const access = qualificationAccess(lead.leadStage);
     if (!access.writable) return err(access.reason, "rule_violation");
 
-    const known = new Set(
-      checklistFor(lead.leadSalesType as LeadSalesType | null, "qualification").map((c) => c.id),
-    );
+    /* The Sales Manager the lead is under reviews it; she does not fill it in. */
+    const barred = await qualificationCollectorRefusal(ctx.user, lead);
+    if (barred) return err(barred, "rule_violation");
+
+    /* The condition ids, and the stored answers the eight questions keep in this
+       jsonb. Anything else a stale screen sends is dropped rather than stored. */
+    const known = new Set<string>([
+      ...checklistFor(lead.leadSalesType as LeadSalesType | null, "qualification").map((c) => c.id),
+      ...QUALIFICATION_ANSWER_KEYS,
+    ]);
+    const answerKeys = new Set<string>(QUALIFICATION_ANSWER_KEYS);
     const kept: Record<string, boolean | string> = {};
     const dropped: string[] = [];
     for (const [id, value] of Object.entries(answers ?? {})) {
-      if (!known.has(id)) dropped.push(id);
-      else if (typeof value === "boolean" || typeof value === "string") kept[id] = value;
+      if (!known.has(id)) {
+        dropped.push(id);
+        continue;
+      }
+      if (answerKeys.has(id)) {
+        if (typeof value !== "string") continue;
+        const fault = qualificationAnswerFault(id, value);
+        if (fault) return err(fault, "validation", [{ field: id, message: fault }]);
+        kept[id] = value.trim();
+      } else if (typeof value === "boolean" || typeof value === "string") {
+        kept[id] = value;
+      }
     }
 
     const merged = { ...(lead.leadQualification ?? {}), ...kept };
@@ -785,6 +803,10 @@ export async function saveProspectFields(
     if (asked.length) {
       const access = qualificationAccess(lead.leadStage);
       if (!access.writable) return err(access.reason, "rule_violation");
+      /* The Sales Manager the lead is under reviews it; she does not fill in
+         its GST number, application, credit or buyer. */
+      const barred = await qualificationCollectorRefusal(ctx.user, lead);
+      if (barred) return err(barred, "rule_violation");
     }
 
     const set: Partial<typeof customers.$inferInsert> = {
