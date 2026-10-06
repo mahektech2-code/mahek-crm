@@ -968,8 +968,10 @@ function CallPanelForm({
   const needsProducts = isOrderReceived || outcome === "order_taken";
   const needsFollowUp = outcome === "follow_up";
   const needsNextCall = outcome === "no_order";
-  const needsPayDate =
-    type === "inbound_call" && outcome === "payment_promised";
+  /* No date box is drawn for a Pay Promise. A date can only be here if the
+     call assistant filled one from what the customer said; otherwise the call
+     goes up without one and the server dates it (see
+     `interactions.paymentPromiseDefaultDays`). */
   const showPayDate = outcome === "payment_promised";
   const needsCategory = outcome === "complaint";
 
@@ -2826,32 +2828,6 @@ function CallPanelForm({
                               value={orderDate}
                               max={today()}
                               onChange={(e) => setOrderDate(e.target.value)}
-                            />
-                          </Field>
-                        ) : null}
-
-                        {showPayDate ? (
-                          <Field
-                            label={
-                              needsPayDate
-                                ? "Payment date"
-                                : "Payment date (optional)"
-                            }
-                            hint="Enter the date they committed to."
-                            error={errors.paymentPromiseDate ?? null}
-                          >
-                            {/* THE FLOOR WAS THE HALF THAT WAS MISSING. Both other
-                                date fields on this form reject the past and this
-                                one did not, so a mistyped year produced a payment
-                                reminder already overdue — which puts the customer
-                                at `reminderOverdue`, the strongest tier in the
-                                queue, the next morning, for a promise they had
-                                just made. */}
-                            <Input
-                              type="date"
-                              value={payDate}
-                              min={today()}
-                              onChange={(e) => setPayDate(e.target.value)}
                             />
                           </Field>
                         ) : null}

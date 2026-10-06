@@ -2322,7 +2322,7 @@ describe("Journey 8 - the interaction log", () => {
     assert.equal(withAction.fieldErrors?.[0].field, "nextActions");
   });
 
-  test("follow-up with no date still writes a reminder; inbound payment promise needs a date; outbound does not", async () => {
+  test("follow-up and pay promise with no date are dated by default and still write their reminder", async () => {
     const customer = await makeCustomer(priya.id);
 
     /* The form no longer asks for a follow-up date. Saved with none, the call
@@ -2366,16 +2366,26 @@ describe("Journey 8 - the interaction log", () => {
       outcome: "payment_promised",
       idempotencyKey: randomUUID(),
     });
-    assert.equal(inbound.ok, false);
-    assert.equal(inbound.fieldErrors?.[0].field, "paymentPromiseDate");
-
+    /* The form no longer asks for the promised date. A promise saved with none,
+       inbound or outbound, is dated by the configured default — so it still
+       writes its payment reminder and its collections attempt. */
+    assert.equal(inbound.ok, true, !inbound.ok ? inbound.error : "");
     const outbound = await saveInteraction({
       customerId: customer.id,
       interactionType: "outbound_call",
       outcome: "payment_promised",
       idempotencyKey: randomUUID(),
     });
-    assert.equal(outbound.ok, true, "outbound may promise without a date");
+    assert.equal(outbound.ok, true, !outbound.ok ? outbound.error : "");
+    for (const res of [inbound, outbound]) {
+      const rems = await db
+        .select()
+        .from(reminders)
+        .where(eq(reminders.callId, res.data!.interactionId));
+      assert.equal(rems.length, 1);
+      assert.equal(rems[0].type, "payment_promise");
+      assert.ok(rems[0].dueDate > TODAY, "dated ahead, never today or past");
+    }
   });
 
   test("quick notes are stored as references and accumulate in the text", async () => {

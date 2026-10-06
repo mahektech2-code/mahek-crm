@@ -309,28 +309,14 @@ test("saving the call writes what it was saved as onto the draft — and only th
     "the original transcript is kept",
   );
 
-  /* The amount rides into the reminder the person ringing on the day reads. */
+  /* The promise still writes its reminder. The amount is no longer asked or
+     kept, so it is not in the note. */
   const [rem] = await db
     .select()
     .from(reminders)
     .where(eq(reminders.type, "payment_promise"));
-  assert.match(rem.note, /₹50,000/);
-});
-
-test("an amount that is not a number is refused at its field", async () => {
-  const r = await saveInteraction({
-    customerId,
-    interactionType: "outbound_call",
-    outcome: "payment_promised",
-    paymentPromiseDate: addDays(today(), 1),
-    outcomeDetail: { promisedAmount: "fifty thousand" },
-    idempotencyKey: randomUUID(),
-  });
-  assert.equal(r.ok, false);
-  assert.equal(
-    !r.ok && r.fieldErrors?.[0]?.field,
-    "outcomeDetail.promisedAmount",
-  );
+  assert.ok(rem, "the promise still writes its payment reminder");
+  assert.doesNotMatch(rem.note, /₹50,000/);
 });
 
 /* ------------------------------------------------ one promise, one reminder

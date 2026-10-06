@@ -557,10 +557,23 @@ export async function saveInteraction(
   //    morning, for a promise they had just made. `onOrAfterWorkingDay` shifts
   //    off a Sunday and deliberately never clamps forward, so nothing
   //    downstream was going to catch it.
-  if (input.interactionType === "inbound_call" && input.outcome === "payment_promised") {
-    if (!input.paymentPromiseDate) {
-      return fieldError("paymentPromiseDate", "Enter the date they committed to.");
-    }
+  //
+  //    THE FORM NO LONGER ASKS FOR THE DATE, and a promise with none cannot be
+  //    left undated: the date is what writes the payment reminder AND what the
+  //    collections attempt holds the customer back until. So a Pay Promise —
+  //    inbound or outbound, since the form cannot tell the server which it
+  //    wanted — is given the configured default day. It is a stand-in, said so
+  //    in the setting's own description; a date that IS sent (the call
+  //    assistant, the Command Centre) is used as given and checked as below.
+  if (input.outcome === "payment_promised" && !input.paymentPromiseDate) {
+    input.paymentPromiseDate = onOrAfterWorkingDay(
+      addDays(day, config["interactions.paymentPromiseDefaultDays"]),
+      {
+        timezone: config["workingDay.timezone"],
+        dayBoundaryHour: config["workingDay.dayBoundaryHour"],
+        workingDays: config["workingDay.workingDays"],
+      },
+    );
   }
   if (input.paymentPromiseDate && input.paymentPromiseDate < day) {
     return fieldError(
