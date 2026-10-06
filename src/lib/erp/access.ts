@@ -284,6 +284,8 @@ export function powerRefusal(power: ErpPower): string {
     verifyTest: "Only the verifier decides a purchase test.",
     verifyPurchase: "Only the verifier sets a purchase to Purchase Verified.",
     reopenPurchase: "Only an admin sets a verified purchase back to Pending.",
+    purchaseBuyer: "Only the buyer decides how a requirement is bought.",
+    approvePurchaseOrder: "Only the PO approver approves a purchase order.",
     lostStock: "Only somebody who can write off stock may use Item Lost Record.",
     customerStatus: "Only an admin or the office changes a customer's status.",
     approveParty: "Only an admin approves orders from a pending customer.",

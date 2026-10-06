@@ -51,6 +51,7 @@ import {
 import type { ActionSpec, ColSpec, FieldSpec, FormSpec, ListRow } from "../ui";
 import { inr } from "../ui";
 import { rmTotalsByItem } from "../stock";
+import { PURCHASE_METHODS, methodByLabel, methodLabel, type PurchaseMethod } from "../engines/purchase-flow";
 
 /* ---------------------------------------------------------------------------
  * Masters (spec §4): raw materials, suppliers, products, customers, godowns,
@@ -77,6 +78,7 @@ export function phoneContacts(phone: string | null | undefined, email?: string |
 async function rawMaterialForm(ctx: ErpContext, id?: string): Promise<FormSpec> {
   const types = await refValues("materialType");
   const tests = await refValues("testingList");
+  const sups = await db.select({ id: erpSuppliers.id, name: erpSuppliers.name, active: erpSuppliers.active }).from(erpSuppliers).orderBy(asc(erpSuppliers.name));
   let init: Record<string, string> | undefined;
   if (id) {
     const [r] = await db.select().from(erpRawMaterials).where(eq(erpRawMaterials.id, id));
@@ -89,6 +91,8 @@ async function rawMaterialForm(ctx: ErpContext, id?: string): Promise<FormSpec> 
         density: r.density == null ? "" : String(r.density),
         testingList: r.testingList.join("|"),
         price: rupeesField(r.pricePaise),
+        purchaseMethod: methodLabel(r.purchaseMethod),
+        preferredSupplier: sups.find((x) => x.id === r.preferredSupplierId)?.name ?? "",
         remark: r.remark ?? "",
       };
     }
@@ -110,6 +114,23 @@ async function rawMaterialForm(ctx: ErpContext, id?: string): Promise<FormSpec> 
       { k: "density", l: "Density (kg to litre)", t: "num", req: true, when: { k: "materialType", eq: "Chemical" }, min: 0.1, max: 3 },
       { k: "testingList", l: "Testing list", t: "multi", req: true, opts: tests, when: { k: "materialType", eq: "Chemical" } },
       ...(money ? [{ k: "price", l: "Price (₹)", t: "num" as const, min: 0, hint: "Used as the packing rate for cans and drums." }] : []),
+      {
+        k: "purchaseMethod",
+        l: "Purchase rule",
+        t: "select",
+        req: true,
+        sec: "Purchase rule",
+        opts: PURCHASE_METHODS.map((m) => m.label),
+        hint: "Direct purchase: pick the vendor, raise the PO (boxes, cans, stationery, routine chemicals). Quotation: collect and compare quotations first (price-sensitive chemicals). Buyer decision: the buyer chooses per requirement.",
+      },
+      {
+        k: "preferredSupplier",
+        l: "Default vendor",
+        t: "select",
+        opts: sups.filter((x) => x.active).map((x) => x.name),
+        when: { k: "purchaseMethod", in: [methodLabel("direct"), methodLabel("buyer")] },
+        hint: "Offered as the vendor when a direct purchase is raised. Blank: the vendor is chosen on each requirement.",
+      },
       { k: "remark", l: "Remark", t: "area", mic: true },
     ],
   };
@@ -120,6 +141,7 @@ const rawMaterials: ScreenModule = {
   async load(ctx) {
     const rows = await db.select().from(erpRawMaterials).orderBy(asc(erpRawMaterials.serialNo));
     const totals = await rmTotalsByItem();
+    const supName = new Map((await db.select({ id: erpSuppliers.id, name: erpSuppliers.name }).from(erpSuppliers)).map((x) => [x.id, x.name]));
     const all: Col[] = [
       { k: "sn", l: "S.no", t: "n" },
       { k: "item", l: "Item", t: "b" },
@@ -128,6 +150,8 @@ const rawMaterials: ScreenModule = {
       { k: "type", l: "Material type", t: "s" },
       { k: "density", l: "Density", t: "n" },
       { k: "tests", l: "Testing list", t: "t" },
+      { k: "rule", l: "Purchase rule", t: "s" },
+      { k: "vendor", l: "Default vendor", t: "t" },
       { k: "price", l: "Price", t: "m", pw: "viewPurchaseMoney" },
       { k: "stock", l: "Total stock", t: "n" },
       { k: "status", l: "Status", t: "s" },
@@ -154,6 +178,8 @@ const rawMaterials: ScreenModule = {
             type: r.materialType,
             density: r.density,
             tests: r.testingList.join(", ") || "—",
+            rule: methodLabel(r.purchaseMethod),
+            vendor: r.preferredSupplierId ? (supName.get(r.preferredSupplierId) ?? null) : null,
             price: r.pricePaise,
             stock: totals.get(r.id) ?? 0,
             status: r.active ? "Active" : "Inactive",
@@ -214,6 +240,16 @@ async function saveRawMaterial(ctx: ErpContext, h: Record<string, string>, id?: 
   const tests = multi(h.testingList);
   if (chemical && (density == null || density <= 0)) return fieldErr("density", "Density is required for a chemical");
   if (chemical && tests.length === 0) return fieldErr("testingList", "Testing list is required for a chemical");
+  /* The form always asks; a save that names no rule keeps the stored one, or starts from the
+     category's usual answer — chemicals are price-sensitive, everything else is routine. */
+  const stored = id ? (await db.select({ m: erpRawMaterials.purchaseMethod }).from(erpRawMaterials).where(eq(erpRawMaterials.id, id)))[0]?.m : null;
+  const typed = text(h.purchaseMethod);
+  const purchaseMethod = typed ? methodByLabel(typed) : ((stored as PurchaseMethod | null) ?? (chemical ? "quotation" : "direct"));
+  if (!purchaseMethod) return fieldErr("purchaseMethod", "Purchase rule is required");
+  const keepVendor = id && !typed && h.preferredSupplier === undefined;
+  const vendorName = purchaseMethod === "quotation" ? null : text(h.preferredSupplier);
+  const [vendor] = vendorName ? await db.select({ id: erpSuppliers.id }).from(erpSuppliers).where(eq(erpSuppliers.name, vendorName)) : [];
+  if (vendorName && !vendor) return fieldErr("preferredSupplier", "Pick a vendor from the list");
 
   const dup = await db
     .select({ id: erpRawMaterials.id })
@@ -228,6 +264,8 @@ async function saveRawMaterial(ctx: ErpContext, h: Record<string, string>, id?: 
     materialType,
     density: chemical ? density : null,
     testingList: chemical ? tests : [],
+    purchaseMethod,
+    ...(keepVendor ? {} : { preferredSupplierId: vendor?.id ?? null }),
     remark: text(h.remark),
     updatedAt: new Date(),
     updatedById: ctx.user.id,

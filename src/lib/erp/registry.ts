@@ -106,9 +106,13 @@ export const ERP_GROUPS: ErpGroup[] = [
     label: "Purchase",
     icon: "cart",
     screens: [
-      s("requisitions", "requisitions", "Purchase requisitions", "What the godowns need bought. Status changes directly on the record.", true),
-      s("register", "register", "Purchases", "Goods arriving and the lots they become. A line that needs testing goes to the tester as it is saved; the rest are in the register at once, and post to stock when a rate is entered.", true, [
-        v("inward", "Arrivals"),
+      s("requisitions", "requisitions", "Purchase requirements", "What a department needs bought. The item's purchase rule decides the method — direct purchase, quotation, or the buyer decides — and each requirement moves on to a vendor, an approved PO and the goods.", true, [
+        v("requisitions", "Requirements"),
+        v("quotations", "Quotations"),
+      ]),
+      s("purchaseOrders", "purchase-orders", "Purchase orders", "No purchase without a PO. Raised from requirements whose vendor is chosen, approved, sent to the vendor and received against at the gate.", true),
+      s("register", "register", "Purchases", "Goods received against an approved PO and the lots they become. A line that needs testing goes to the tester as it is saved; the rest are in the register at once at the PO's rate, and the supplier's bill is matched to them.", true, [
+        v("inward", "Goods receipt (GRN)"),
         v("register", "Register"),
         v("barcode", "Drum labels"),
       ]),

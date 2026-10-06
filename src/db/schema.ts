@@ -631,6 +631,8 @@ export const attachmentParentEnum = pgEnum("attachment_parent", [
   "erp_transport",
   /** An uploaded help video. */
   "erp_video",
+  /** A vendor's quotation, photographed or as its PDF. */
+  "erp_quotation",
   /* HRMS parents: read under the HRMS screen the record lives on (see
      lib/hrms/attachments.ts), never under a customer's scope. */
   "hrms_attendance",
@@ -10888,6 +10890,18 @@ export const erpRawMaterials = pgTable(
     density: numeric("density", { precision: 8, scale: 3, mode: "number" }),
     testingList: text("testing_list").array().notNull().default(sql`'{}'::text[]`),
     pricePaise: bigint("price_paise", { mode: "number" }),
+    /**
+     * THE PURCHASE RULE: how a requirement for this item is bought.
+     * `direct` — a vendor is chosen and the PO raised (boxes, cans,
+     * stationery, the routine chemicals); `quotation` — quotations are
+     * collected and compared before a vendor is chosen; `buyer` — the buyer
+     * decides, per requirement, which of the two it is. Read when a
+     * requirement is raised and COPIED onto it, so changing the rule later
+     * never re-routes a requirement already in flight.
+     */
+    purchaseMethod: text("purchase_method").notNull().default("direct"),
+    /** The vendor a direct purchase is offered first. A suggestion, never a lock. */
+    preferredSupplierId: text("preferred_supplier_id").references(() => erpSuppliers.id),
     remark: text("remark"),
     active: boolean("active").notNull().default(true),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -10897,6 +10911,7 @@ export const erpRawMaterials = pgTable(
   },
   (t) => [
     uniqueIndex("erp_raw_materials_name_key").on(t.name),
+    check("erp_raw_materials_purchase_method_check", sql`${t.purchaseMethod} in ('direct', 'quotation', 'buyer')`),
     uniqueIndex("erp_raw_materials_serial_key").on(t.serialNo),
     check("erp_raw_materials_unit_check", sql`${t.unit} in ('Kg', 'Litre', 'Unit')`),
   ],
@@ -11020,9 +11035,34 @@ export const erpRequisitions = pgTable(
     requiredQty: numeric("required_qty", { precision: 14, scale: 3, mode: "number" }).notNull(),
     /** Urgent | Medium | For Stock. */
     priority: text("priority").notNull(),
-    /** Pending | Order Placed | Booked | Received (spec §14 A-27 adds Pending). */
+    /**
+     * Pending | Order Placed | Booked | Received | Cancelled — WRITTEN BY THE
+     * FLOW, never typed: Pending until its PO is approved, Order Placed while
+     * the PO is out, Received once the goods are in (or the PO is closed
+     * short), Cancelled with a reason. Booked is a value only older rows carry.
+     */
     status: text("status").notNull().default("Pending"),
     remarks: text("remarks"),
+    /** Who needs it (a reference list: Production, Quality…). */
+    department: text("department"),
+    /** The date the department needs the goods by. */
+    requiredBy: date("required_by"),
+    /** The item's purchase rule when this was raised: direct | quotation | buyer. Null on rows from before the rule. */
+    purchaseRule: text("purchase_rule"),
+    /** How it is being bought: direct | quotation. The rule's answer, or the buyer's; null while the buyer has not decided. */
+    method: text("method"),
+    methodDecidedById: text("method_decided_by_id").references(() => users.id),
+    methodDecidedAt: timestamp("method_decided_at", { withTimezone: true }),
+    methodNote: text("method_note"),
+    /** The vendor chosen — directly, or by selecting a quotation. */
+    supplierId: text("supplier_id").references(() => erpSuppliers.id),
+    /** The quotation selected, where the method is quotation. */
+    quotationId: text("quotation_id"),
+    vendorSelectedById: text("vendor_selected_by_id").references(() => users.id),
+    vendorSelectedAt: timestamp("vendor_selected_at", { withTimezone: true }),
+    /** Why a quotation that was not the cheapest landed cost was chosen. */
+    selectionNote: text("selection_note"),
+    cancelReason: text("cancel_reason"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     createdById: text("created_by_id").references(() => users.id),
@@ -11031,7 +11071,9 @@ export const erpRequisitions = pgTable(
   (t) => [
     index("erp_requisitions_status_idx").on(t.status, t.reqDate),
     check("erp_requisitions_priority_check", sql`${t.priority} in ('Urgent', 'Medium', 'For Stock')`),
-    check("erp_requisitions_status_check", sql`${t.status} in ('Pending', 'Order Placed', 'Booked', 'Received')`),
+    check("erp_requisitions_status_check", sql`${t.status} in ('Pending', 'Order Placed', 'Booked', 'Received', 'Cancelled')`),
+    check("erp_requisitions_rule_check", sql`${t.purchaseRule} is null or ${t.purchaseRule} in ('direct', 'quotation', 'buyer')`),
+    check("erp_requisitions_method_check", sql`${t.method} is null or ${t.method} in ('direct', 'quotation')`),
     check("erp_requisitions_item_check", sql`num_nonnulls(${t.rawMaterialId}, ${t.productId}) = 1`),
   ],
 );
@@ -11068,6 +11110,9 @@ export const erpInward = pgTable(
     remark: text("remark"),
     /** Decided at save from the item's testing list; kept because the list can change later. */
     testingRequired: boolean("testing_required").notNull(),
+    /** The PO this delivery was received against. Null only on lines from before POs were compulsory. */
+    poId: text("po_id").references(() => erpPurchaseOrders.id),
+    poLineId: text("po_line_id").references(() => erpPoLines.id),
     /** null | Testing | Purchase. */
     routed: text("routed"),
     routedAt: timestamp("routed_at", { withTimezone: true }),
@@ -11079,6 +11124,7 @@ export const erpInward = pgTable(
   },
   (t) => [
     index("erp_inward_pr_idx").on(t.prNumber),
+    index("erp_inward_po_line_idx").on(t.poLineId),
     check("erp_inward_routed_check", sql`${t.routed} is null or ${t.routed} in ('Testing', 'Purchase')`),
   ],
 );
@@ -11224,6 +11270,9 @@ export const erpPurchases = pgTable(
       .references(() => erpGodowns.id),
     testId: text("test_id").references(() => erpTests.id),
     inwardId: text("inward_id").references(() => erpInward.id),
+    /** The PO line this lot was bought on — the rate and GST it started from. */
+    poId: text("po_id").references(() => erpPurchaseOrders.id),
+    poLineId: text("po_line_id").references(() => erpPoLines.id),
     /** inward | test | manual. */
     source: text("source").notNull(),
     /** AI-1: the values were read off a supplier bill and accepted by a person. */
@@ -11240,6 +11289,138 @@ export const erpPurchases = pgTable(
     uniqueIndex("erp_purchases_inward_key").on(t.inwardId),
     check("erp_purchases_status_check", sql`${t.status} in ('Pending', 'Invoice Received', 'Purchase Matched', 'Purchase Verified')`),
     check("erp_purchases_unit_check", sql`${t.unit} in ('Kg', 'Litre', 'Pcs')`),
+  ],
+);
+
+/**
+ * A vendor's quotation against one requirement — the QUOTATION method's step
+ * between the requirement and the PO. Collected until there are enough to
+ * compare (`erp.purchase.minQuotations`), compared on LANDED cost (rate ×
+ * quantity, its GST and the freight), and exactly one is Selected: that
+ * choice is the requirement's vendor, and its rate is the PO's rate.
+ */
+export const erpQuotations = pgTable(
+  "erp_quotations",
+  {
+    id: text("id").primaryKey(),
+    requisitionId: text("requisition_id")
+      .notNull()
+      .references(() => erpRequisitions.id, { onDelete: "cascade" }),
+    supplierId: text("supplier_id")
+      .notNull()
+      .references(() => erpSuppliers.id),
+    quoteDate: date("quote_date").notNull(),
+    /** The vendor's own quotation number, if they gave one. */
+    reference: text("reference"),
+    /** Per unit of the requirement (Kg, Litre or Pcs), before GST. */
+    ratePaise: bigint("rate_paise", { mode: "number" }).notNull(),
+    gstBp: integer("gst_bp").notNull().default(1800),
+    /** Freight the vendor charges on top, for the whole quantity. */
+    freightPaise: bigint("freight_paise", { mode: "number" }).notNull().default(0),
+    /** Days from the PO to delivery. */
+    deliveryDays: integer("delivery_days"),
+    paymentTerms: text("payment_terms"),
+    validUntil: date("valid_until"),
+    /** The quotation itself — a photograph or PDF (attachment parent `erp_quotation`). */
+    documentId: text("document_id"),
+    remarks: text("remarks"),
+    /** Received | Selected | Not selected. */
+    status: text("status").notNull().default("Received"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [
+    uniqueIndex("erp_quotations_vendor_key").on(t.requisitionId, t.supplierId),
+    uniqueIndex("erp_quotations_selected_key").on(t.requisitionId).where(sql`${t.status} = 'Selected'`),
+    check("erp_quotations_status_check", sql`${t.status} in ('Received', 'Selected', 'Not selected')`),
+    check("erp_quotations_amounts_check", sql`${t.ratePaise} > 0 and ${t.freightPaise} >= 0 and ${t.gstBp} >= 0`),
+  ],
+);
+
+/**
+ * THE PURCHASE ORDER. No purchase is completed without one: goods inward and
+ * a hand-entered register row both name a PO line, and the PO must be
+ * approved first. Raised from requirements whose vendor is chosen; approved
+ * by somebody holding `approvePurchaseOrder`; sent to the vendor; received
+ * against, line by line. `status` past Sent is rewritten from what has been
+ * received (`refreshPurchaseOrder`), never typed.
+ */
+export const erpPurchaseOrders = pgTable(
+  "erp_purchase_orders",
+  {
+    id: text("id").primaryKey(),
+    poNumber: integer("po_number").notNull(),
+    poDate: date("po_date").notNull(),
+    supplierId: text("supplier_id")
+      .notNull()
+      .references(() => erpSuppliers.id),
+    /** Where the goods are to be delivered. */
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    deliveryDate: date("delivery_date").notNull(),
+    paymentTerms: text("payment_terms").notNull(),
+    /** Freight on the whole PO, beyond the lines. */
+    freightPaise: bigint("freight_paise", { mode: "number" }).notNull().default(0),
+    remarks: text("remarks"),
+    /** Pending approval | Approved | Sent | Partly received | Received | Closed | Cancelled | Rejected. */
+    status: text("status").notNull().default("Pending approval"),
+    approvedById: text("approved_by_id").references(() => users.id),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    /** The approver's note, or why it was sent back. */
+    decisionNote: text("decision_note"),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    sentById: text("sent_by_id").references(() => users.id),
+    /** WhatsApp | Email | Printed copy | Phone. */
+    sentVia: text("sent_via"),
+    /** Why it was closed short or cancelled. */
+    closeReason: text("close_reason"),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    closedById: text("closed_by_id").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [
+    uniqueIndex("erp_purchase_orders_number_key").on(t.poNumber),
+    index("erp_purchase_orders_status_idx").on(t.status, t.poDate),
+    check(
+      "erp_purchase_orders_status_check",
+      sql`${t.status} in ('Pending approval', 'Approved', 'Sent', 'Partly received', 'Received', 'Closed', 'Cancelled', 'Rejected')`,
+    ),
+    check("erp_purchase_orders_freight_check", sql`${t.freightPaise} >= 0`),
+  ],
+);
+
+/** One item on a PO, always for one requirement. What arrived against it is read from inward, never stored here. */
+export const erpPoLines = pgTable(
+  "erp_po_lines",
+  {
+    id: text("id").primaryKey(),
+    poId: text("po_id")
+      .notNull()
+      .references(() => erpPurchaseOrders.id, { onDelete: "cascade" }),
+    requisitionId: text("requisition_id")
+      .notNull()
+      .references(() => erpRequisitions.id),
+    rawMaterialId: text("raw_material_id")
+      .notNull()
+      .references(() => erpRawMaterials.id),
+    quantity: numeric("quantity", { precision: 14, scale: 3, mode: "number" }).notNull(),
+    /** Kg | Litre | Pcs — the item's own purchase unit. */
+    unit: text("unit").notNull(),
+    ratePaise: bigint("rate_paise", { mode: "number" }).notNull(),
+    gstBp: integer("gst_bp").notNull().default(1800),
+    sortOrder: integer("sort_order").notNull().default(0),
+  },
+  (t) => [
+    index("erp_po_lines_po_idx").on(t.poId),
+    index("erp_po_lines_requisition_idx").on(t.requisitionId),
+    check("erp_po_lines_amounts_check", sql`${t.quantity} > 0 and ${t.ratePaise} > 0 and ${t.gstBp} >= 0`),
+    check("erp_po_lines_unit_check", sql`${t.unit} in ('Kg', 'Litre', 'Pcs')`),
   ],
 );
 

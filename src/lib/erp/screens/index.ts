@@ -2,6 +2,7 @@ import "server-only";
 import type { ScreenModule } from "../server";
 import { MASTER_SCREENS } from "./masters";
 import { PURCHASE_SCREENS } from "./purchase";
+import { PURCHASE_FLOW_SCREENS } from "./purchase-flow";
 import { PRODUCTION_SCREENS } from "./production";
 import { MOVEMENT_SCREENS } from "./movement";
 import { SALES_SCREENS } from "./sales";
@@ -16,7 +17,7 @@ import { inboxScreen } from "./inbox";
  * here is a screen the registry lists but that is not built yet.
  * ------------------------------------------------------------------------- */
 
-const ALL: ScreenModule[] = [...MASTER_SCREENS, ...PURCHASE_SCREENS, ...PRODUCTION_SCREENS, ...MOVEMENT_SCREENS, ...SALES_SCREENS, ...LOGISTICS_SCREENS, ...COMPLAINT_SCREENS, recipesScreen, alertsScreen, inboxScreen];
+const ALL: ScreenModule[] = [...MASTER_SCREENS, ...PURCHASE_FLOW_SCREENS, ...PURCHASE_SCREENS, ...PRODUCTION_SCREENS, ...MOVEMENT_SCREENS, ...SALES_SCREENS, ...LOGISTICS_SCREENS, ...COMPLAINT_SCREENS, recipesScreen, alertsScreen, inboxScreen];
 
 const BY_KEY = new Map(ALL.map((m) => [m.key, m]));
 
