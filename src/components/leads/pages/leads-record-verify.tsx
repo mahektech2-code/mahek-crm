@@ -1,4 +1,4 @@
-import { holdsLeadSeatById } from "@/lib/services/lead-verifier";
+import { canVerifyLeadById } from "@/lib/services/lead-verifier";
 import { type LeadWorkspace } from "@/lib/lead-workspace";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
@@ -6,7 +6,7 @@ import { money } from "@/lib/format";
 import { VERIFICATION_FINDINGS } from "@/lib/lead-labels";
 import { today } from "@/lib/recompute";
 import { getConfig } from "@/lib/config/store";
-import { canLead, leadRecord, managerCalls } from "@/lib/services/lead-console-service";
+import { leadRecord, managerCalls } from "@/lib/services/lead-console-service";
 import { VerifyScreen, type Finding } from "@/components/leads/record/verify/verify-screen";
 import { RequestNotice } from "@/components/leads/calling-desk/request-notice";
 import { prospectRequestFor } from "@/lib/services/lead-calling-desk-service";
@@ -65,7 +65,7 @@ export async function Body({
   const failureReasons = config["leads.verificationFailureReasons"];
   /* A calling-desk request this verification would settle, if there is one. */
   const request = await prospectRequestFor(id);
-  const canVerify = (await canLead(user, "lead.verify")) || (await holdsLeadSeatById(user, id));
+  const canVerify = await canVerifyLeadById(user, id);
 
   /*
    * A finding with nothing recorded against it is still LISTED. "He did not

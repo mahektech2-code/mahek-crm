@@ -22,6 +22,7 @@ import {
   type LeadRow,
 } from "./lead-service";
 import { nextWorkingDate } from "./lead-qualification-service";
+import { approverFor } from "./lead-verifier";
 
 /* ---------------------------------------------------------------------------
  * THE QUALIFICATION WORKFLOW, in one place.
@@ -84,6 +85,20 @@ async function nameOf(userId: string | null | undefined): Promise<string> {
   if (!userId) return "Somebody";
   const [u] = await db.select({ name: users.name }).from(users).where(eq(users.id, userId)).limit(1);
   return u?.name ?? "Somebody";
+}
+
+/**
+ * WHO COLLECTS THE ANSWERS. The lead's owner — except on a lead its Sales Manager
+ * raised herself where somebody else is designated to approve it: there she
+ * collects (the owner, or the seat holder where nobody owns it), and the
+ * approvals are theirs.
+ */
+async function collectorOf(lead: LeadRow): Promise<string | null> {
+  const owner = await activeUser(lead.ownerId);
+  if (await approverFor({ ownerId: lead.ownerId, salesManagerId: lead.salesManagerId })) {
+    return owner ?? (await activeUser(lead.salesManagerId));
+  }
+  return owner;
 }
 
 async function activeUser(userId: string | null | undefined): Promise<string | null> {
@@ -226,8 +241,9 @@ export async function settleQualificationState(
        is the fall-through for a lead raised before every lead carried a Sales
        Manager seat; where both exist, the seat the verification was owed to
        comes first. */
-    const manager = (await activeUser(lead.salesManagerId)) ?? lead.leadManagerId;
-    const owner = await activeUser(lead.ownerId);
+    const approver = await approverFor({ ownerId: lead.ownerId, salesManagerId: lead.salesManagerId });
+    const manager = approver?.id ?? (await activeUser(lead.salesManagerId)) ?? lead.leadManagerId;
+    const owner = await collectorOf(lead);
 
     /* ONLY WHERE THERE IS NO STANDING VERDICT. A negative review is a note the
        Telecaller has not yet answered: a save that changes nothing must not put
@@ -304,7 +320,7 @@ export async function handBackAfterReview(
   try {
     const lead = await leadRow(customerId);
     if (!lead) return;
-    const owner = await activeUser(lead.ownerId);
+    const owner = await collectorOf(lead);
     if (!owner) return;
     const negative = verdict !== "verified";
 
@@ -343,7 +359,7 @@ export async function handBackAfterGstRefusal(
   try {
     const lead = await leadRow(customerId);
     if (!lead) return;
-    const owner = await activeUser(lead.ownerId);
+    const owner = await collectorOf(lead);
     if (!owner || owner === actorId) return;
     await setNextAction(
       lead,
@@ -442,8 +458,11 @@ export async function openQualificationAfterVerification(
      Sales Manager it is reviewed by: a lead she raised herself carries her as
      owner or nobody, and neither can complete it. So there the next action is
      hers to ASSIGN — name a Salesman — rather than a job she is handed. */
-  const ownerId = await activeUser(lead.ownerId);
-  const telecaller = ownerId && ownerId !== lead.salesManagerId ? ownerId : null;
+  const collector = await collectorOf(lead);
+  const selfRaisedWithApprover = Boolean(
+    await approverFor({ ownerId: lead.ownerId, salesManagerId: lead.salesManagerId }),
+  );
+  const telecaller = collector && (collector !== lead.salesManagerId || selfRaisedWithApprover) ? collector : null;
   const owed = telecaller ?? actor.userId;
   const next = {
     action: telecaller ? QUAL_NEXT.complete : QUAL_NEXT.assign,

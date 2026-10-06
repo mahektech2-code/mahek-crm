@@ -7,7 +7,7 @@ import { z } from "zod";
 import { db } from "@/db";
 import { auditLog, calls, customers, users } from "@/db/schema";
 import { assertCustomerInScope, canAny, hatsFor, requireCapability } from "@/lib/access-control";
-import { holdsLeadSeat } from "@/lib/services/lead-verifier";
+import { approverFor, holdsLeadSeat } from "@/lib/services/lead-verifier";
 import { NO_ANSWER_REASONS } from "@/lib/call-outcomes";
 import { addDays, nextWorkingDay, type BusinessDate } from "@/lib/business-date";
 import { getConfig } from "@/lib/config/store";
@@ -734,7 +734,11 @@ async function preparePromotion(
      so where the seat is filled and its holder can verify (the capability, or the
      seat itself) the call is owed to them, not to some other `lead.verify` holder
      the region happens to default to. */
-  if (lead.salesManagerId) {
+  /* A LEAD THE SALES MANAGER RAISED HERSELF IS VERIFIED BY THE PERSON MAHEK
+     DESIGNATES, not by her: the verification is the check on her own work. */
+  const selfRaisedApprover = await approverFor({ ownerId: lead.ownerId, salesManagerId: lead.salesManagerId });
+  if (selfRaisedApprover) managerId = selfRaisedApprover.id;
+  if (!managerId && lead.salesManagerId) {
     const [sm] = await db
       .select({ id: users.id, role: users.role, active: users.active })
       .from(users)

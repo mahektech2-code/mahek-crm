@@ -748,7 +748,11 @@ function QualifyModal({ lead, onClose }: ModalProps) {
               </div>
             </>
           ) : (
-            <p className="text-[12.5px] text-muted">Reviewing a Qualification is for the Sales Manager the lead is under.</p>
+            <p className="text-[12.5px] text-muted">
+              {lead.approverName
+                ? `You raised this lead yourself, so ${lead.approverName} validates its GST number and reviews it. You collect the answers.`
+                : "Reviewing a Qualification is for the Sales Manager the lead is under."}
+            </p>
           )}
         </div>
       ) : null}

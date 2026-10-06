@@ -5,7 +5,7 @@ import { sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import { canFor } from "@/lib/access-control";
-import { canVerifyLeadById } from "@/lib/services/lead-verifier";
+import { approverNameFor, canVerifyLeadById } from "@/lib/services/lead-verifier";
 import { requireUser } from "@/lib/auth";
 import { getConfig } from "@/lib/config/store";
 import { APP_TIMEZONE } from "@/lib/business-date";
@@ -1164,6 +1164,7 @@ export async function pipelineLead(
     conversionReason: conversion?.reasonCode ?? undefined,
     verification,
     verificationCorrections: corrections.length ? corrections : undefined,
+    approverName: (await approverNameFor(id)) ?? undefined,
     qualItems: qualItemsFor(record, missingIds, input),
     gstState: !clean(record.gstin)
       ? "none"

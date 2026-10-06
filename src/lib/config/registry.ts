@@ -3659,6 +3659,15 @@ export const SETTINGS = [
     max: 30,
   },
   {
+    key: "leads.selfRaisedVerifierEmail",
+    type: "text",
+    category: "mbos-leads",
+    label: "Who approves a lead its own Sales Manager raised",
+    description:
+      "The work email of the person who verifies the Prospect, validates the GST number and reviews the Qualification on a lead a Sales Manager raised herself — one she holds the seat on and owns, or that nobody owns. She still collects its answers; the approvals are theirs, so nobody approves their own work. Blank switches the rule off and the Sales Manager approves her own leads as before. A name that matches no active account does the same, so a typo cannot lock a lead.",
+    default: "",
+  },
+  {
     key: "leads.figuresFreshDays",
     type: "integer",
     category: "mbos-leads",
@@ -5723,6 +5732,7 @@ export type Config = {
   "leads.orderBlockers": { code: string; label: string }[];
   "leads.sampleReviewChaseDays": number[];
   "leads.verificationDueDays": number;
+  "leads.selfRaisedVerifierEmail": string;
   "leads.figuresFreshDays": number;
   "leads.sources": { code: string; label: string }[];
   "leads.distributorDiscountApprovalPercent": number;
