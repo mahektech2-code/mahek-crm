@@ -681,6 +681,17 @@ export const SETTINGS = [
     max: 60,
   },
   {
+    key: "payments.paidCoolingDays",
+    type: "integer",
+    category: "payments",
+    label: "Cooling days after a customer pays",
+    description:
+      "Days after the day a customer pays (any amount, against any bill) on which they get no payment reminder message and no payment call - automated or from the collections list. At 1, somebody who pays on Monday is left alone on Monday and Tuesday and is chased again from Wednesday if anything is still overdue. Counts money reported, held or confirmed by its received date; credit notes and adjustments are not the customer paying and buy nothing. 0 switches it off.",
+    default: 1,
+    min: 0,
+    max: 30,
+  },
+  {
     key: "payments.allowOnAccountRemainder",
     type: "boolean",
     category: "payments",
@@ -5363,6 +5374,7 @@ export type Config = {
   "bills.creditDayOptions": number[];
 
   "payments.reportedQuietDays": number;
+  "payments.paidCoolingDays": number;
   "payments.allowOnAccountRemainder": boolean;
   "people.amChangeReasons": string[];
   "people.companyName": string;
