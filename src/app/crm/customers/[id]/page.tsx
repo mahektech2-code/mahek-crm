@@ -236,6 +236,11 @@ export default async function CustomerRecordPage({
         name: customer.name,
         contactPerson: customer.contactPerson,
         phone: customer.phone,
+        // What the contacts list does not hold: where the shop is, the
+        // WhatsApp group its staff read, and on a lead who signs.
+        address: customer.address,
+        whatsappGroupName: customer.whatsappGroupName,
+        decisionMaker: customer.leadDecisionMaker,
         city: customer.city,
         place: customer.place ?? null,
         ownerName: customer.ownerName,

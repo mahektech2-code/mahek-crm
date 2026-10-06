@@ -5,6 +5,7 @@ import { placeLine } from "@/lib/place-tree";
 import type { PlaceNames } from "@/lib/place-filters";
 import { seatLabel, type AmRole } from "@/lib/seat-labels";
 import { categoryLabel } from "@/lib/complaint-labels";
+import { contactRoleLabel, phoneForReading } from "@/lib/customer-contacts";
 import type { CustomerRecordDetail } from "@/lib/services/customer-record-service";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -20,7 +21,7 @@ import {
   cx,
 } from "@/components/ui/primitives";
 import { CardGrid } from "@/components/ui/card-grid";
-import { FilterPills, Modal, Tabs } from "@/components/ui/overlays";
+import { FilterPills, Modal, RowMenu, Tabs } from "@/components/ui/overlays";
 import { LogComplaintDialog } from "@/components/crm/log-complaint-dialog";
 import { VoiceTextarea } from "@/components/ui/dictate";
 import { useToast } from "@/components/ui/toast";
@@ -99,6 +100,7 @@ type Entry = {
 
 /** One kind of history at a time — see the tab strip on the record. */
 type RecordTab =
+  | "contacts"
   | "activity"
   | "orders"
   | "bills"
@@ -242,6 +244,11 @@ export function RecordScreen({
     name: string;
     contactPerson: string | null;
     phone: string;
+    whatsappGroupName: string | null;
+    /** The postal address as the sheet holds it — often several lines long. */
+    address: string | null;
+    /** Who signs, on a lead — distinct from whoever answers the phone. */
+    decisionMaker: string | null;
     city: string;
     /** Where the shop is on the reviewed location tree — see `place-tree-service.ts`. */
     place: PlaceNames | null;
@@ -477,8 +484,9 @@ export function RecordScreen({
    */
   const tabs: Array<{ key: RecordTab; label: string; count?: number }> = [
     { key: "activity", label: "Activity", count: timelineCounts.all },
+    { key: "contacts", label: "Contacts", count: contacts.length },
     { key: "orders", label: "Orders", count: detail.counts.orders },
-    { key: "bills", label: "Bills & payments", count: detail.counts.bills },
+    { key: "bills", label: "Bills", count: detail.counts.bills },
     { key: "messages", label: "WhatsApp", count: messageTotal },
     ...(pricing ? [{ key: "prices" as const, label: "Prices" }] : []),
     {
@@ -498,6 +506,7 @@ export function RecordScreen({
   ];
   const activeTab = tabs.some((t) => t.key === tab) ? tab : "activity";
 
+  const primaryContact = contacts.find((c) => c.isPrimary) ?? contacts[0] ?? null;
   const typeLabel = customer.thirdParty
     ? "Third-party customer"
     : customer.kind === "lead"
@@ -550,62 +559,93 @@ export function RecordScreen({
               </Badge>
             ) : null}
           </h1>
+          {/*
+            WHO WE RING, from the contacts list rather than the single field
+            it is mirrored onto — and how many others there are, one click
+            from the list. A shop with five people is not a shop with one.
+          */}
           <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-body">
             <span className="inline-flex items-center gap-1.5">
               <Icon name="person" size={14} className="text-muted" />
-              {customer.contactPerson ?? <span className="text-muted">No contact person</span>}
+              {primaryContact?.name ?? customer.contactPerson ?? (
+                <span className="text-muted">No contact name</span>
+              )}
+              {primaryContact && primaryContact.role !== "other" ? (
+                <span className="text-muted">· {contactRoleLabel(primaryContact.role, "short")}</span>
+              ) : null}
             </span>
             <a
-              href={`tel:${customer.phone}`}
+              href={`tel:${primaryContact?.phone ?? customer.phone}`}
               className="inline-flex items-center gap-1.5 font-medium text-ink no-underline hover:underline"
             >
               <Icon name="phone" size={14} className="text-muted" />
-              {phoneDisplay(customer.phone)}
+              {primaryContact ? phoneForReading(primaryContact.phone) : phoneDisplay(customer.phone)}
             </a>
-            {where ? (
-              <span className="text-muted">{where}</span>
+            {contacts.length > 1 ? (
+              <button
+                type="button"
+                onClick={() => setTab("contacts")}
+                className="cursor-pointer border-none bg-transparent p-0 text-sm text-brand hover:text-brand-hover"
+              >
+                +{contacts.length - 1} more contact{contacts.length === 2 ? "" : "s"}
+              </button>
             ) : null}
+            {where ? <span className="text-muted">{where}</span> : null}
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {/*
-            Offered on a LEAD and on a third-party customer, and on nothing
-            else. A direct customer is an account we invoice, so saying it
-            does not bill with us is a contradiction — the button is absent
-            rather than drawn and refused.
-          */}
-          {canClassify && customer.thirdParty ? (
-            <Button
-              variant="ghost"
-              onClick={async () => {
-                const result = await run(revertThirdParty([customer.id]));
-                if (result.ok) router.refresh();
-              }}
-              title="They bill with us now. Who used to bill them stays on the record."
-            >
-              No longer third party
-            </Button>
-          ) : canClassify && customer.kind === "lead" ? (
-            <Button variant="ghost" onClick={() => setConverting(true)}>
-              Convert to third party
-            </Button>
-          ) : null}
-          <Button variant="secondary" onClick={() => setCmpOpen(true)}>
-            Log complaint
-          </Button>
-          <Button variant="secondary" onClick={() => setRemOpen(true)}>
-            Set reminder
-          </Button>
-          <Button
-            variant="secondary"
+        {/*
+          ONE PRIMARY, ONE CHANNEL, ONE GROUP, ONE MENU. Four identical outlined
+          boxes in a row read as four equal choices, and they are not: calling
+          is what this page is for, WhatsApp is the other way to reach them,
+          a reminder and a complaint are things you RECORD, and converting the
+          account is rare. Each is drawn at the weight it deserves.
+        */}
+        <div className="flex flex-none flex-wrap items-center gap-2">
+          <div className="inline-flex overflow-hidden rounded-[6px] border border-line-strong bg-surface">
+            <HeaderAction icon="clock" onClick={() => setRemOpen(true)}>
+              Reminder
+            </HeaderAction>
+            <span className="w-px bg-line" aria-hidden />
+            <HeaderAction icon="warning" onClick={() => setCmpOpen(true)}>
+              Complaint
+            </HeaderAction>
+          </div>
+          <button
+            type="button"
             onClick={() => router.push(`/crm/whatsapp?customer=${customer.id}`)}
+            className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-[6px] border border-success/40 bg-success-soft px-3.5 text-sm font-medium text-success hover:brightness-95"
           >
+            <Icon name="chat" size={16} />
             WhatsApp
-          </Button>
-          <Button variant="primary" onClick={() => setCalling(true)}>
+          </button>
+          <Button variant="primary" onClick={() => setCalling(true)} className="h-9 rounded-[6px] px-4">
             <Icon name="phone" size={16} />
             Call
           </Button>
+          {/*
+            Offered on a LEAD and on a third-party customer, and on nothing
+            else. A direct customer is an account we invoice, so saying it does
+            not bill with us is a contradiction — the menu is absent rather
+            than drawn and refused.
+          */}
+          {canClassify && (customer.thirdParty || customer.kind === "lead") ? (
+            <RowMenu
+              items={
+                customer.thirdParty
+                  ? [
+                      {
+                        label: "No longer third party",
+                        title: "They bill with us now. Who used to bill them stays on the record.",
+                        onSelect: async () => {
+                          const result = await run(revertThirdParty([customer.id]));
+                          if (result.ok) router.refresh();
+                        },
+                      },
+                    ]
+                  : [{ label: "Convert to third party", onSelect: () => setConverting(true) }]
+              }
+            />
+          ) : null}
         </div>
       </div>
 
@@ -696,6 +736,29 @@ export function RecordScreen({
               tabs={tabs}
             />
           </div>
+
+          {activeTab === "contacts" ? (
+            /* Who to ring, and where WhatsApp and payment reminders go — read
+               before the call, corrected here when the call says otherwise.
+               Full width, so the three "goes to" tiles sit side by side. */
+            <div className="p-5">
+              <CustomerContactsPanel
+                customerId={customer.id}
+                initial={contacts}
+                onChange={() => router.refresh()}
+              />
+              {customer.whatsappGroupName || customer.decisionMaker ? (
+                <dl className={cx(FACTS, "mt-4 border-t border-divider pt-4")}>
+                  {customer.whatsappGroupName ? (
+                    <Fact label="WhatsApp group" value={customer.whatsappGroupName} />
+                  ) : null}
+                  {customer.decisionMaker ? (
+                    <Fact label="Decision maker" value={customer.decisionMaker} />
+                  ) : null}
+                </dl>
+              ) : null}
+            </div>
+          ) : null}
 
           {activeTab === "activity" ? (
             <div>
@@ -1065,7 +1128,7 @@ export function RecordScreen({
           </SideCard>
 
           <SideCard
-            title="People"
+            title="Account managers"
             action={
               customer.kind === "customer" && canReassign ? (
                 <button
@@ -1073,7 +1136,7 @@ export function RecordScreen({
                   onClick={() => setAmOpen(true)}
                   className="flex-none cursor-pointer border-none bg-transparent p-0 text-[12px] font-medium whitespace-nowrap text-brand hover:text-brand-hover"
                 >
-                  Change sales / back office
+                  Change
                 </button>
               ) : null
             }
@@ -1162,6 +1225,7 @@ export function RecordScreen({
           </SideCard>
 
           <SideCard title="Details">
+            {customer.address ? <AddressBlock address={customer.address} /> : null}
             <dl className={FACTS}>
               {customer.kind === "lead" ? (
                 <>
@@ -1722,6 +1786,66 @@ function SubHead({
           <span className="flex-1" />
           {right}
         </>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * One of the quieter header actions — an icon and a word, inside a joined
+ * group, so "Reminder | Complaint" reads as one set of things to record
+ * rather than two more buttons competing with Call.
+ */
+function HeaderAction({
+  icon,
+  onClick,
+  children,
+}: {
+  icon: React.ComponentProps<typeof Icon>["name"];
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex h-9 cursor-pointer items-center gap-1.5 border-none bg-transparent px-3 text-sm font-medium text-body hover:bg-canvas"
+    >
+      <Icon name={icon} size={15} className="text-muted" />
+      {children}
+    </button>
+  );
+}
+
+/**
+ * THE SHOP'S ADDRESS, however long the sheet made it. Several hundred are
+ * whole postal addresses with a flat, a society and a landmark; two lines are
+ * shown and the rest is one click away, so a long one never pushes the
+ * account's details off the card.
+ */
+function AddressBlock({ address }: { address: string }) {
+  const [open, setOpen] = React.useState(false);
+  const long = address.length > 90;
+  return (
+    <div className="mb-3 border-b border-divider pb-3">
+      <div className="mb-0.5 text-[12px] text-muted">Address</div>
+      <div
+        className={cx(
+          "text-sm leading-[21px] break-words whitespace-pre-line text-ink",
+          long && !open ? "line-clamp-2" : "",
+        )}
+        title={long && !open ? address : undefined}
+      >
+        {address}
+      </div>
+      {long ? (
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          className="mt-0.5 cursor-pointer border-none bg-transparent p-0 text-[12px] text-brand"
+        >
+          {open ? "Show less" : "Show full address"}
+        </button>
       ) : null}
     </div>
   );
