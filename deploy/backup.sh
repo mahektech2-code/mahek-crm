@@ -110,11 +110,13 @@ hc() {
 REASON="exited early"
 LOCAL=""
 DUMP_OK=0
+FILES=()
 finish() {
   local rc=${1:-$?}
   # The encrypted copy exists only to be uploaded. Left behind by a failed
   # upload it matches no prune pattern below and would sit there for ever.
-  if [ -n "$LOCAL" ]; then rm -f "${LOCAL}.gpg"; fi
+  local f
+  for f in "${FILES[@]:-}"; do [ -n "$f" ] && rm -f "${APP_DIR}/backups/${f}.gpg"; done
   if [ "$rc" -eq 0 ]; then hc "" "${MODE} ok"; return; fi
   log "FAILED: ${REASON}"
   hc "/fail" "${MODE} failed: ${REASON}"
@@ -222,6 +224,33 @@ REASON="${ACTUAL} bytes is too small to be the database"
 REASON="${FILE} is not a complete gzip stream"
 gzip -t "$LOCAL"
 DUMP_OK=1
+FILES=("$FILE")
+
+# EVERY OTHER DATABASE ON THE SERVER, found rather than listed. The public
+# website keeps its enquiries, quotes and job applications in `mahek_website`
+# in this same Postgres, and for its first month nothing backed it up at all:
+# the dump named one database and the server held two. Discovered at run time
+# so the third one is covered the day it is created, not the day somebody
+# remembers. No size floor — a small database is a real one — but gzip still
+# has to agree the stream is whole. Named `db-<name>_…`, never `mahekone_…`,
+# so `--verify` and restore.sh, which are about MahekOne, never pick one up.
+OTHERS=$(pg -d postgres -Atc "select datname from pg_database where not datistemplate and datname not in ('postgres', 'mahekone', '${VERIFY_DB}') order by 1" </dev/null)
+#
+# One of these failing must not cost MahekOne its offsite copy, so it is
+# noted and the run carries on — and still ends in a failure, with the name.
+FAILED_DBS=""
+for db in $OTHERS; do
+  if [ "$MODE" = "intraday" ]; then f="db-${db}_${STAMP}_intraday.sql.gz"; else f="db-${db}_${STAMP}.sql.gz"; fi
+  if ! { docker compose exec -T postgres pg_dump -U mahek -d "$db" --no-owner --clean --if-exists \
+         | gzip -9 > "${APP_DIR}/backups/${f}" && gzip -t "${APP_DIR}/backups/${f}"; }; then
+    rm -f "${APP_DIR}/backups/${f}"
+    log "pg_dump of ${db} FAILED — carrying on with the rest"
+    FAILED_DBS="${FAILED_DBS} ${db}"
+    continue
+  fi
+  log "wrote ${f} ($(du -h "${APP_DIR}/backups/${f}" | cut -f1))"
+  FILES+=("$f")
+done
 
 # ------------------------------------------------------------------ offsite
 if [ -n "${R2_ACCESS_KEY_ID:-}" ]; then
@@ -235,33 +264,40 @@ if [ -n "${R2_ACCESS_KEY_ID:-}" ]; then
   # The LOCAL copy stays plain. It sits beside the live database it was taken
   # from, so encrypting it protects nothing, and it is what a restore in a
   # hurry reaches for first.
-  SEND="$FILE"
+  ENCRYPT=0
   if [ -n "${BACKUP_GPG_RECIPIENT_FILE:-}" ]; then
-    REASON="encryption failed — is ${BACKUP_GPG_RECIPIENT_FILE} a public key?"
-    # A throwaway keyring per run: nothing is imported into the deploy user's
-    # own, so there is no keyring here for anybody to find a key in.
-    GNUPGHOME=$(mktemp -d)
-    export GNUPGHOME
-    gpg --batch --yes --quiet --trust-model always --compress-algo none \
-      --recipient-file "$BACKUP_GPG_RECIPIENT_FILE" \
-      --output "${LOCAL}.gpg" --encrypt "$LOCAL"
-    rm -rf "$GNUPGHOME"; unset GNUPGHOME
-    SEND="${FILE}.gpg"
+    ENCRYPT=1
   else
     # Said loudly rather than passed over, like the missing-R2 warning below.
     log "WARNING: BACKUP_GPG_RECIPIENT_FILE not set — the R2 copy is NOT encrypted"
   fi
+  for f in "${FILES[@]}"; do
+    SEND="$f"
+    if [ "$ENCRYPT" -eq 1 ]; then
+      REASON="encryption failed — is ${BACKUP_GPG_RECIPIENT_FILE} a public key?"
+      # A throwaway keyring per run: nothing is imported into the deploy
+      # user's own, so there is no keyring here for anybody to find a key in.
+      GNUPGHOME=$(mktemp -d)
+      export GNUPGHOME
+      gpg --batch --yes --quiet --trust-model always --compress-algo none \
+        --recipient-file "$BACKUP_GPG_RECIPIENT_FILE" \
+        --output "${APP_DIR}/backups/${f}.gpg" --encrypt "${APP_DIR}/backups/${f}"
+      rm -rf "$GNUPGHOME"; unset GNUPGHOME
+      SEND="${f}.gpg"
+    fi
 
-  REASON="upload to R2 failed"
-  log "uploading ${SEND} to R2 ${MODE}/"
-  r2 copy "/backups/${SEND}" "R2:${R2_BUCKET}/${MODE}/"
-  # The first nightly of each month is also kept for a year. Thirty days is
-  # how long a mistake can go unnoticed before it becomes unrecoverable, and
-  # "the customer master has been wrong since August" is found in October.
-  if [ "$MODE" = "daily" ] && [ "$(date -u +%d)" = "01" ]; then
-    log "first of the month — also to monthly/"
-    r2 copy "/backups/${SEND}" "R2:${R2_BUCKET}/monthly/"
-  fi
+    REASON="upload of ${SEND} to R2 failed"
+    log "uploading ${SEND} to R2 ${MODE}/"
+    r2 copy "/backups/${SEND}" "R2:${R2_BUCKET}/${MODE}/"
+    # The first nightly of each month is also kept for a year. Thirty days
+    # is how long a mistake can go unnoticed before it becomes
+    # unrecoverable, and "the customer master has been wrong since August" is
+    # found in October.
+    if [ "$MODE" = "daily" ] && [ "$(date -u +%d)" = "01" ]; then
+      log "first of the month — also to monthly/"
+      r2 copy "/backups/${SEND}" "R2:${R2_BUCKET}/monthly/"
+    fi
+  done
   log "uploaded"
 
   # Pruned by age, each prefix on its own clock. These deletes are EXPECTED
@@ -279,6 +315,11 @@ else
   log "WARNING: R2 not configured — this backup exists ONLY on the droplet"
 fi
 
-find "${APP_DIR}/backups" -name 'mahekone_*_intraday.sql.gz' -mtime "+${KEEP_LOCAL_INTRADAY_DAYS}" -delete
-find "${APP_DIR}/backups" -name 'mahekone_*.sql.gz' ! -name '*_intraday.sql.gz' -mtime "+${KEEP_LOCAL_DAYS}" -delete
+for pat in 'mahekone_*' 'db-*'; do
+  find "${APP_DIR}/backups" -name "${pat}_intraday.sql.gz" -mtime "+${KEEP_LOCAL_INTRADAY_DAYS}" -delete
+  find "${APP_DIR}/backups" -name "${pat}.sql.gz" ! -name '*_intraday.sql.gz' -mtime "+${KEEP_LOCAL_DAYS}" -delete
+done
+
+REASON="pg_dump failed for:${FAILED_DBS} (mahekone itself was backed up)"
+[ -z "$FAILED_DBS" ]
 log "done"

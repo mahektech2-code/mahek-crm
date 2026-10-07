@@ -235,6 +235,12 @@ Two, doing different jobs.
 | first nightly of the month | 02:15 on the 2nd | — | `monthly/`, ~13 months |
 | verify | Monday 04:00 | restores the newest dump into a scratch database, compares it with the live one, drops it | — |
 
+Every OTHER database on the server — today `mahek_website`, the public site's
+enquiries and applications — is dumped alongside as `db-<name>_<stamp>.sql.gz`,
+found at run time rather than listed. Restore one by hand:
+`gunzip -c backups/db-mahek_website_<stamp>.sql.gz | docker compose exec -T
+postgres psql -U mahek -d mahek_website` (it was dumped with `--clean`).
+
 So the most a disk failure can lose is about six working hours, not a day,
 and a mistake noticed after a month still has a monthly copy to go back to.
 
