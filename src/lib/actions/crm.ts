@@ -38,6 +38,9 @@ import {
   updateSettings,
 } from "@/lib/config/store";
 import { saveInteraction } from "@/lib/services/interaction-service";
+import { setOpportunityStatus } from "@/lib/services/opportunity-service";
+import { canOpenModule } from "@/lib/access";
+import type { CallDetailView } from "@/lib/call-detail";
 import { createComplaint } from "@/lib/services/complaint-create";
 import type { NextStep } from "@/lib/engines/next-step";
 import {
@@ -113,6 +116,7 @@ const SHARED = [
   "/crm/call-log",
   "/crm/reminders",
   "/crm/history",
+  "/crm/opportunities",
   "/crm/payments",
   "/crm/bills",
   "/crm/customers",
@@ -211,6 +215,8 @@ export type SaveInteractionActionInput = {
     estimatedValueRupees?: number;
     expectedOrderDate?: string;
   };
+  /** "no" — asked, and there was none. See the service. */
+  opportunityAnswer?: "yes" | "no";
   complaintCategory?: string;
   complaintDescription?: string;
   complaintRequestCn?: boolean;
@@ -269,6 +275,7 @@ export async function saveInteractionAction(
       nextActions: raw.nextActions ?? [],
       nextActionDate: raw.nextActionDate,
       opportunity: raw.opportunity,
+      opportunityAnswer: raw.opportunityAnswer,
       complaintCategory: raw.complaintCategory as never,
       complaintDescription: raw.complaintDescription,
       complaintRequestCn: raw.complaintRequestCn ?? false,
@@ -992,6 +999,7 @@ export async function loadCustomerTimeline(
         actor: e.actor,
         content: e.content,
         meta: e.meta ?? null,
+        detail: e.detail ?? null,
       })),
       cursor: page.cursor,
       more: page.more,
@@ -1008,6 +1016,7 @@ type SerialisedEntry = {
   actor: string;
   content: string;
   meta: string | null;
+  detail: CallDetailView | null;
 };
 
 export async function requestDeactivation(
@@ -2300,6 +2309,31 @@ export async function triggerJob(
       { ran: results.map((r) => `${r.job}: ${r.detail}`) },
       `${job} finished - ${results.reduce((a, r) => a + r.recordsAffected, 0)} records touched`,
     );
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/* ---------------------------------------------------- opportunities worked */
+
+/**
+ * Working an opportunity a call turned up. The module is asked here as well as
+ * on the route — a hidden screen is not a withheld one, and this is a URL — and
+ * the service then asks whether the row is on THIS person's list.
+ */
+export async function setOpportunityStatusAction(input: {
+  id: string;
+  status: string;
+  note?: string;
+}): Promise<Result<{ status: string }>> {
+  try {
+    const ctx = await resolveScope();
+    if (!(await canOpenModule(ctx.user.id, "crm.opportunities"))) {
+      return err("Opportunities are not part of your access.", "not_permitted");
+    }
+    const result = await setOpportunityStatus(input);
+    if (result.ok) refreshAll();
+    return result;
   } catch (e) {
     return fromThrown(e);
   }

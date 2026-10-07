@@ -2507,6 +2507,32 @@ export const calls = pgTable(
      */
     callAttempt: integer("call_attempt"),
 
+    /**
+     * WAS A SALES OPPORTUNITY ASKED ABOUT, AND WHAT WAS THE ANSWER — 'yes',
+     * 'no', or null.
+     *
+     * Null is the answer for every call logged before this column existed and
+     * for every call that never asked (outbound, Order Received): nobody was
+     * asked. 'no' is somebody being asked and saying no, which used to leave no
+     * trace at all and so was indistinguishable from silence. 'yes' is the
+     * answer that also writes a `call_opportunities` row. Nothing backfills it:
+     * an old call with no opportunity row might have been a No or might have
+     * been skipped, and nothing on the row says which.
+     */
+    opportunityAnswer: text("opportunity_answer"),
+    /**
+     * WHAT THE SCREEN SHOWED, as the server read it when the call was saved.
+     *
+     * The live ledger, the ERP's transport record and the stock figure all move
+     * after the call, so a call record read next quarter would describe a world
+     * that no longer exists. This is the SNAPSHOT of the figures behind the
+     * conversation — read by the server inside the save, never taken from the
+     * browser — and it is a record of what was true on the day, so it is never
+     * recomputed. Null on every call that predates it and on every reason that
+     * has nothing to snapshot. `lib/call-detail.ts` owns the shape.
+     */
+    contextSnapshot: jsonb("context_snapshot").$type<Record<string, unknown>>(),
+
     nextActions: jsonb("next_actions").$type<string[]>().notNull().default([]),
     /**
      * The day it was undertaken FOR. Where one is given it becomes a reminder
@@ -2625,6 +2651,28 @@ export const callOpportunities = pgTable(
     estimatedValuePaise: bigint("estimated_value_paise", { mode: "number" }),
     expectedOrderDate: date("expected_order_date"),
 
+    /**
+     * WHERE IT STANDS, so it can be WORKED and not only read.
+     *
+     * `open → in_progress → won | lost`. The row used to be write-once: it
+     * landed on the customer's timeline and nobody was told, so the only way
+     * anything came of it was somebody happening to read that account. The
+     * default is `open`, which is what every row that already exists is.
+     * `won` is a person saying it turned into business — never derived from an
+     * order, because an order on the same customer a week later does not prove
+     * it was this opportunity.
+     */
+    status: text("status").notNull().default("open"),
+    /**
+     * WHO IS EXPECTED TO WORK IT. Null on every row written before this
+     * existed, which the worklist reads as "whoever logged the call".
+     */
+    assignedUserId: text("assigned_user_id").references(() => users.id),
+    /** What came of working it — the sentence somebody reads next. */
+    workedNote: text("worked_note"),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    closedById: text("closed_by_id"),
+
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     createdById: text("created_by_id"),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -2633,6 +2681,7 @@ export const callOpportunities = pgTable(
   (t) => [
     index("call_opportunities_customer_idx").on(t.customerId),
     index("call_opportunities_call_idx").on(t.callId),
+    index("call_opportunities_assignee_idx").on(t.assignedUserId, t.status),
   ],
 );
 

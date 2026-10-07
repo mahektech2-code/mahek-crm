@@ -102,6 +102,11 @@ const NEXT_ACTIONS: Record<string, Array<{ code: string; label: string }>> = {
     { code: "send_quotation", label: "Send quotation" },
     { code: "call_back", label: "Call back" },
     { code: "salesman_visit", label: "Salesman visit" },
+    /* "Follow-up Date" in the brief. It is the same machinery as every other
+       dated action — a day is demanded and becomes a reminder — so it is one
+       more code on the list rather than a second date field beside
+       `next_action_date`. */
+    { code: "follow_up_date", label: "Follow-up date" },
   ],
   product_enquiry: [
     { code: "send_brochure", label: "Send brochure" },
@@ -296,6 +301,8 @@ export const ALL_NEXT_ACTION_CODES = Object.keys(NEXT_ACTION_LABEL) as [
  */
 const COVERED_BY_REMINDER_TYPE: Record<string, string> = {
   call_back: "call_back",
+  /* "Follow-up date" is a call-back said another way, and covered the same way. */
+  follow_up_date: "call_back",
   follow_up_on_promise: "payment_promise",
 };
 
@@ -344,6 +351,7 @@ export function nextActionCoveredByOutcome(
 const DATED_ACTIONS = new Set([
   "send_price",
   "send_quotation",
+  "follow_up_date",
   "send_brochure",
   "send_technical",
   "send_sample",
@@ -475,7 +483,7 @@ export function reminderTypeFor(
   ) {
     return "send_information";
   }
-  if (actions.includes("call_back")) return "call_back";
+  if (actions.includes("call_back") || actions.includes("follow_up_date")) return "call_back";
   return "other";
 }
 
@@ -494,6 +502,25 @@ export const DELIVERY_ISSUES = [
 export const DELIVERY_ISSUE_LABEL: Record<string, string> = Object.fromEntries(
   DELIVERY_ISSUES.map((i) => [i.code, i.label]),
 );
+
+/* ------------------------------------------------------- payment position */
+
+/**
+ * WHAT THE CUSTOMER SAYS THE POSITION IS, as a code.
+ *
+ * `paymentStatus` stays — free text, exactly as before, because "cheque posted
+ * Tuesday" is the sentence somebody reads back. This is the value a report
+ * counts: how many of the people who rang about money said it was paid, and how
+ * many disputed it. Optional, and a new box beside the old one, so a historical
+ * row's free text is never reinterpreted and nothing is migrated.
+ */
+export const PAYMENT_POSITIONS = [
+  { code: "not_paid", label: "Not paid yet" },
+  { code: "part_paid", label: "Part paid" },
+  { code: "says_paid", label: "Says it is paid" },
+  { code: "disputed", label: "Disputes the amount" },
+  { code: "waiting_on_us", label: "Waiting on a document from us" },
+] as const;
 
 /* ----------------------------------------------------------- what is asked */
 
@@ -517,7 +544,20 @@ export type ReasonField = {
   hint?: string;
   /** `choice` only. */
   options?: ReadonlyArray<{ code: string; label: string }>;
+  /**
+   * A field the SCREEN fills and the person never types — the ERP order the
+   * telecaller tapped, the SKU the stock check was run for. It is stored with
+   * the rest of the reason's answers and validated like them, but the form
+   * does not draw a box for it, and the SERVER re-reads whatever it points at
+   * rather than trusting what the browser says that thing contained.
+   */
+  system?: boolean;
 };
+
+/** The fields a person actually answers — everything but the system ones. */
+export function visibleReasonFields(fields: ReasonField[]): ReasonField[] {
+  return fields.filter((f) => !f.system);
+}
 
 const REASON_FIELDS: Record<string, ReasonField[]> = {
   price_quotation: [
@@ -552,6 +592,9 @@ const REASON_FIELDS: Record<string, ReasonField[]> = {
     { key: "product", label: "Product", kind: "text", required: true },
     { key: "requiredQuantity", label: "Required quantity", kind: "text" },
     { key: "requiredDate", label: "Required by", kind: "date" },
+    /* Set by the stock check, never typed: the SKU the availability figure was
+       read for. The server re-reads the figure from it at save. */
+    { key: "skuId", label: "Product checked", kind: "text", system: true },
   ],
   payment_outstanding: [
     {
@@ -567,14 +610,24 @@ const REASON_FIELDS: Record<string, ReasonField[]> = {
       kind: "text",
       hint: "“Cheque posted Tuesday”, “disputing the last bill”.",
     },
+    {
+      key: "paymentPosition",
+      label: "Payment status",
+      kind: "choice",
+      options: PAYMENT_POSITIONS,
+      hint: "The nearest of these — the sentence above stays as they said it.",
+    },
   ],
   delivery_transport: [
     {
       key: "orderRef",
       label: "Order / invoice number",
       kind: "text",
-      hint: "Whatever they quoted. MahekOne does not hold the transporter or the LR number yet.",
+      hint: "Whatever they quoted. Tap one of their orders above and it fills in, with the dispatch details read from the ERP.",
     },
+    /* Set by tapping an order, never typed: the ERP order number the dispatch
+       details were read for. The server re-reads them at save. */
+    { key: "erpOrderNo", label: "ERP order", kind: "text", system: true },
     {
       key: "issue",
       label: "Issue",
@@ -625,7 +678,7 @@ export function unbackedBy(reason: string | null | undefined): string | null {
     return "MahekOne holds no quotation record yet, so this is captured against the call. Whoever sends the quotation still sends it themselves.";
   }
   if (reason === "stock_availability") {
-    return "There is no stock system connected, so nothing here checks availability. Confirm with the godown before telling the customer.";
+    return "The figure below is an indication read from the ERP's stock ledgers — nothing is reserved. Confirm with the godown before promising it to the customer.";
   }
   return null;
 }

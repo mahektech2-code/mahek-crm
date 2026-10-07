@@ -61,6 +61,10 @@ const files = [
   // The call assistant: learning from logged calls, reading with no model,
   // and the save writing back what the call was really logged as.
   "src/lib/call-intel.test.ts",
+  // "They called us", completed: the opportunity answer and its worklist, next
+  // actions handed to the people they belong to, the ERP/ledger snapshot read
+  // by the server, and the history drawing what a call recorded.
+  "src/lib/they-called-us.test.ts",
   // The visit assistant: scope, no model, the switch, and the visit writing
   // back what it was really saved as.
   "src/lib/visit-intel.test.ts",

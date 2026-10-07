@@ -36,6 +36,8 @@ import { MessageHistory, type MessageEntry } from "./message-history";
 import { CustomerContactsPanel } from "@/components/customers/customer-contacts-panel";
 import type { CustomerContact } from "@/lib/services/customer-contact-service";
 import { NextCallCell, type StoredNextStep } from "@/components/crm/next-call-cell";
+import { CallDetailBlock } from "@/components/crm/call-detail-block";
+import type { CallDetailView } from "@/lib/call-detail";
 import { TIMELINE_KINDS, type TimelineKind } from "@/lib/timeline-kinds";
 import {
   createReminder,
@@ -96,6 +98,8 @@ type Entry = {
   actor: string;
   content: string;
   meta: string | null;
+  /** Why they rang, who rang, the answers, the next action — calls only. */
+  detail?: CallDetailView | null;
 };
 
 /** One kind of history at a time — see the tab strip on the record. */
@@ -817,6 +821,7 @@ export function RecordScreen({
                       {t.meta ? (
                         <div className="mt-0.5 text-[13px] text-muted">{readableMeta(t.meta)}</div>
                       ) : null}
+                      <CallDetailBlock detail={t.detail} />
                     </div>
                   ))
                 ) : (

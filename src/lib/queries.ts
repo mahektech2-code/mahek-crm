@@ -31,6 +31,8 @@ import { eodMetricsFor, eodMetricsForRange } from "./services/eod-service";
 import { managerNameByEmployeeName } from "./services/org-service";
 import { placeFilterOptions, placeFilterSql } from "./services/place-filter-service";
 import type { PlaceFilterOptions, PlaceFilterValues, PlaceNames } from "./place-filters";
+import { callDetailsFor } from "./services/call-detail-service";
+import type { CallDetailView } from "./call-detail";
 
 /* ---------------------------------------------------------------------------
  * Reads for the screens. Every one resolves scope, so a missed check cannot
@@ -1378,6 +1380,12 @@ export type TimelineEntry = {
   actor: string;
   content: string;
   meta?: string;
+  /**
+   * What a CALL recorded beyond its note — why they rang, who rang, the
+   * answers, the next action, the opportunity. Absent on every other kind and
+   * on every call that predates those columns, which draw as they always did.
+   */
+  detail?: CallDetailView | null;
 };
 
 /** Where a page of the timeline stopped, so the next one can carry on. */
@@ -1623,6 +1631,14 @@ export async function customerTimeline(
     content: r.content,
     meta: r.meta ?? undefined,
   }));
+  /* The detail behind each CALL on this page — one read for the whole page, and
+     only for the calls: a bill or a message has nothing to add. A failure here
+     must never cost the page its rows, so it degrades to the plain timeline. */
+  const callIds = entries.filter((e) => e.kind === "Call").map((e) => e.id);
+  const details = await callDetailsFor(callIds).catch(() => new Map<string, CallDetailView>());
+  for (const e of entries) {
+    if (e.kind === "Call") (e as TimelineEntry).detail = details.get(e.id) ?? null;
+  }
   const last = entries[entries.length - 1];
 
   return {
@@ -1868,6 +1884,8 @@ export type InteractionRow = {
   sourceModule: string | null;
   /** What this call said would happen next. Null on calls logged before it existed. */
   nextStep: StoredNextStep | null;
+  /** Why they rang, who rang, the answers and the next action. Null where the call recorded none. */
+  detail: CallDetailView | null;
 };
 
 export async function listInteractions(limit = 400): Promise<InteractionRow[]> {
@@ -1883,8 +1901,13 @@ export async function listInteractions(limit = 400): Promise<InteractionRow[]> {
     .orderBy(desc(calls.startedAt))
     .limit(limit);
 
+  const details = await callDetailsFor(rows.map((r) => r.call.id)).catch(
+    () => new Map<string, CallDetailView>(),
+  );
+
   return rows.map(({ call: c, customerName, userName }) => ({
     id: c.id,
+    detail: details.get(c.id) ?? null,
     occurredAt: c.startedAt,
     customerId: c.customerId,
     customerName,

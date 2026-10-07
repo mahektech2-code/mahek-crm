@@ -152,6 +152,7 @@ export const NAV: NavGroup[] = [
       { href: at("/call-log"), label: "Call Log", icon: "phone" },
       { href: at("/reminders"), label: "Reminders", icon: "bell", badge: "reminders" },
       { href: at("/history"), label: "Call History", icon: "history" },
+      { href: at("/opportunities"), label: "Opportunities", icon: "target" },
     ],
   },
   {

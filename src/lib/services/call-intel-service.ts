@@ -452,6 +452,11 @@ async function existingRecords(customerId: string): Promise<ExistingRecords> {
         and(
           eq(callOpportunities.customerId, customerId),
           sql`${callOpportunities.createdAt} > now() - interval '90 days'`,
+          /* One somebody has CLOSED (won or lost) is not "already open" — telling
+             the telecaller a fresh opportunity duplicates a finished one would
+             talk them out of recording a new one. Every row that predates the
+             status is `open`, so nothing existing drops out. */
+          inArray(callOpportunities.status, ["open", "in_progress"]),
         ),
       )
       .orderBy(desc(callOpportunities.createdAt))
