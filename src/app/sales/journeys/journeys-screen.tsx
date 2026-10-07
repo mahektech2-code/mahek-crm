@@ -64,6 +64,7 @@ export function JourneysScreen({
   plans,
   book,
   cities,
+  stay = "",
 }: {
   selected: Salesman | null;
   from: string;
@@ -72,6 +73,8 @@ export function JourneysScreen({
   book: BookCustomer[];
   /** The cities this salesman's own book actually names. */
   cities: string[];
+  /** Appended to the links back into this view — `&in=team` keeps it in its modal. */
+  stay?: string;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -220,7 +223,7 @@ export function JourneysScreen({
           <input
             type="date"
             value={from}
-            onChange={(e) => go(router, selected?.id ?? "", e.target.value, horizon)}
+            onChange={(e) => go(router, stay, selected?.id ?? "", e.target.value, horizon)}
             className="h-8.5 rounded-[4px] border border-line bg-surface px-2 text-sm text-ink outline-none focus:border-brand"
           />
         </label>
@@ -233,7 +236,7 @@ export function JourneysScreen({
             {HORIZONS.map((h) => (
               <button
                 key={h}
-                onClick={() => go(router, selected?.id ?? "", from, h)}
+                onClick={() => go(router, stay, selected?.id ?? "", from, h)}
                 className={
                   "h-8.5 cursor-pointer rounded-[4px] border px-2.5 text-sm font-medium " +
                   (horizon === h
@@ -252,7 +255,7 @@ export function JourneysScreen({
               placeholder="Custom"
               onChange={(e) => {
                 const n = Number(e.target.value);
-                if (n >= 1 && n <= 31) go(router, selected?.id ?? "", from, n);
+                if (n >= 1 && n <= 31) go(router, stay, selected?.id ?? "", from, n);
               }}
               title="Any run of days up to 31. Beyond a month a route is a forecast — the book moves under it."
               className="h-8.5 w-[92px] rounded-[4px] border border-line bg-surface px-2 text-sm text-ink outline-none focus:border-brand"
@@ -726,12 +729,13 @@ function DayLine({
 
 function go(
   router: ReturnType<typeof useRouter>,
+  stay: string,
   salesman: string,
   from: string,
   horizon: number,
 ) {
   router.push(
-    `/sales/journeys?tab=salesman&view=propose&salesman=${salesman}&from=${from}&days=${horizon}`,
+    `/sales/journeys?tab=salesman&view=propose&salesman=${salesman}&from=${from}&days=${horizon}${stay}`,
   );
 }
 

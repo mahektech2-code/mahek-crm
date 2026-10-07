@@ -73,26 +73,7 @@ export function TodayTab({
       adherencePct,
       note,
       hasFixes: points.length > 0,
-      /* What the modal lists: his route and what he actually walked into.
-         Plain values, so they cross to the client table. */
-      route: plan
-        ? plan.stops
-            .slice()
-            .sort((a, b) => a.sequence - b.sequence)
-            .map((st) => ({ id: st.id, name: st.customerName, status: st.status, skipReason: st.skipReason }))
-        : [],
       city: plan?.city ?? plan?.shopCities[0] ?? null,
-      walked: salesmanVisits
-        .slice()
-        .sort((a, b) => (a.checkInAt ? new Date(a.checkInAt).getTime() : 0) - (b.checkInAt ? new Date(b.checkInAt).getTime() : 0))
-        .map((v) => ({
-          id: v.id,
-          name: v.customerName,
-          at: v.checkInAt ? new Date(v.checkInAt).toISOString() : null,
-          outcome: v.outcome,
-          wasPlanned: v.wasPlanned,
-          verified: v.verified,
-        })),
     };
   });
 

@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { addDays } from "@/lib/business-date";
 import type { Salesman } from "@/lib/services/sales-service";
 import type { TeamJourneySummary, TeamPlanDay } from "@/lib/services/journey-service";
@@ -9,7 +9,6 @@ import { DAY_STATE_LABEL, areaAnswerState, datesBetween, dayWhere } from "@/lib/
 import { Cell, Empty, HeadCell, Row, Table } from "@/components/console/parts";
 import { plural } from "@/components/console/words";
 import { CardGrid } from "@/components/ui/card-grid";
-import { Modal } from "@/components/ui/modal";
 import { cx } from "@/components/ui/primitives";
 
 /**
@@ -17,16 +16,14 @@ import { cx } from "@/components/ui/primitives";
  *
  * Four figures, a short list of what needs the manager, and one row per
  * salesman that fits the screen: his areas, today, the week ahead as seven
- * squares, what is waiting and the last thirty days. Everything longer — every
- * area, the fortnight with its cities, each refusal's reason, the thirty days
- * in full and the ways into his calendar — is in the modal a row opens, so the
- * table never needs scrolling sideways and the detail is one click away
- * without leaving the page.
+ * squares, what is waiting and the last thirty days. A row opens the whole of
+ * him over this list — his month as a calendar or a list, every day's drawer,
+ * proposing days and his visit log — so the table never needs scrolling
+ * sideways and nothing is a page away.
  */
 
 /* The window itself is `teamWindow` in page.tsx, which reads it on the
-   server; these two must match it. */
-const AHEAD = 14;
+   server; these must sit inside it. */
 const STRIP = 7;
 const BEHIND = 30;
 
@@ -63,7 +60,8 @@ export function TeamTab({
   summary: TeamJourneySummary;
   today: string;
 }) {
-  const [openId, setOpenId] = React.useState<string | null>(null);
+  const router = useRouter();
+  const openPerson = (id: string) => router.push(personHref(id), { scroll: false });
 
   const active = team.filter((t) => t.active);
   const tomorrow = addDays(today, 1);
@@ -135,7 +133,6 @@ export function TeamTab({
   ]);
 
   const strip = datesBetween(today, addDays(today, STRIP - 1));
-  const open = rows.find((r) => r.t.id === openId) ?? null;
 
   return (
     <div className="space-y-4">
@@ -160,7 +157,7 @@ export function TeamTab({
               <li key={n.key}>
                 <button
                   type="button"
-                  onClick={() => setOpenId(n.id)}
+                  onClick={() => openPerson(n.id)}
                   className="flex w-full items-center gap-2.5 px-4 py-2 text-left text-[13px] hover:bg-canvas"
                 >
                   <span
@@ -194,7 +191,7 @@ export function TeamTab({
           {rows.map((r, i) => {
             const areas = areaNames(r.t);
             return (
-              <Row key={r.t.id} striped={i % 2 === 1} onClick={() => setOpenId(r.t.id)}>
+              <Row key={r.t.id} striped={i % 2 === 1} onClick={() => openPerson(r.t.id)}>
                 <Cell>
                   <span className="flex items-center gap-2.5">
                     <Avatar initials={r.t.initials} />
@@ -260,157 +257,9 @@ export function TeamTab({
 
       <Legend />
 
-      {open ? (
-        <SalesmanModal
-          key={open.t.id}
-          r={open}
-          today={today}
-          holiday={holiday}
-          onClose={() => setOpenId(null)}
-        />
-      ) : null}
     </div>
   );
 }
-
-/* ------------------------------------------------------------------ modal */
-
-function SalesmanModal({
-  r,
-  today,
-  holiday,
-  onClose,
-}: {
-  r: TeamRow;
-  today: string;
-  holiday: Map<string, string>;
-  onClose: () => void;
-}) {
-  const ahead = datesBetween(today, addDays(today, AHEAD - 1));
-  const areas = areaNames(r.t);
-  const base = `/sales/journeys?tab=salesman&salesman=${r.t.id}`;
-
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      width={780}
-      title={
-        <span className="flex items-center gap-3">
-          <Avatar initials={r.t.initials} size="lg" />
-          <span className="min-w-0">
-            <span className="block text-[17px] leading-6">{r.t.name}</span>
-            <span className="block text-[12px] font-normal text-muted">
-              {plural(Number(r.t.customerCount), "shop")} in his book
-            </span>
-          </span>
-        </span>
-      }
-      footer={
-        <>
-          <ActionLink href={`/sales/live?salesman=${r.t.id}&view=today`} newTab>
-            Live map
-          </ActionLink>
-          <ActionLink href={`/sales/journeys?tab=visits&salesman=${r.t.id}`}>Today&rsquo;s visits</ActionLink>
-          <ActionLink href={`/sales/people/${r.t.id}`}>Change areas</ActionLink>
-          <ActionLink href={`${base}&view=propose`}>Propose days</ActionLink>
-          <ActionLink href={base} primary>
-            Open calendar
-          </ActionLink>
-        </>
-      }
-    >
-      <div className="space-y-5">
-        <Section title="Areas">
-          {areas.length ? (
-            <span className="flex flex-wrap gap-1.5">
-              {areas.map((a) => (
-                <span key={a} className="rounded-[4px] bg-canvas px-2 py-0.5 text-[12px] text-body">
-                  {a}
-                </span>
-              ))}
-            </span>
-          ) : (
-            null
-          )}
-          <p className={cx(areas.length ? "mt-1.5 text-[12px]" : "text-[13px]", toneText(r.area.tone))}>
-            {r.area.text}
-            {r.t.areaAnswer?.reason ? ` — “${r.t.areaAnswer.reason}”` : ""}
-          </p>
-        </Section>
-
-        <Section title="Today">
-          <TodayLine r={r} today={today} holiday={holiday.get(today) ?? null} />
-        </Section>
-
-        {r.refused.length || r.proposed.length || r.agreed.length ? (
-          <Section title="Waiting">
-            <ul className="space-y-1 text-[13px]">
-              {r.refused.map((p) => (
-                <li key={p.planId}>
-                  <Link href={dayHref(r.t.id, p.planDate)} className="text-danger no-underline hover:underline">
-                    {shortDate(p.planDate)} · {p.city ?? "no city"} — refused
-                  </Link>
-                  <span className="text-muted">
-                    {p.refusalReason ? ` “${p.refusalReason}”` : ""}
-                    {p.counterCity ? `, wants ${p.counterCity}` : ""}
-                  </span>
-                </li>
-              ))}
-              {r.proposed.length ? (
-                <li className="text-warn-ink">{plural(r.proposed.length, "day")} for him to answer</li>
-              ) : null}
-              {r.agreed.length ? (
-                <li className="text-[#5223E0]">{plural(r.agreed.length, "day")} agreed, shops not picked</li>
-              ) : null}
-            </ul>
-          </Section>
-        ) : null}
-
-        <Section title={`Next ${AHEAD} days`}>
-          <div className="grid grid-cols-7 gap-1.5">
-            {ahead.map((d) => {
-              const p = r.byDay.get(d);
-              const leave = r.leaveOn(d);
-              const off = holiday.get(d);
-              const where = p ? dayWhere(p).text : null;
-              return (
-                <Link
-                  key={d}
-                  href={dayHref(r.t.id, d)}
-                  title={dayTitle(p, leave?.state ?? null, off ?? null)}
-                  className={cx(
-                    "flex min-h-[54px] flex-col rounded-[4px] px-1.5 py-1 text-[11px] leading-[14px] no-underline hover:no-underline hover:ring-1 hover:ring-brand",
-                    cellSkin(p, Boolean(leave), Boolean(off), d === today),
-                  )}
-                >
-                  <span className="font-semibold">{shortDay(d)}</span>
-                  <span className="truncate">{where ?? (leave ? "Leave" : off ? "Holiday" : "—")}</span>
-                  {p ? <span className="truncate opacity-80">{DAY_STATE_LABEL[p.dayState]}</span> : null}
-                </Link>
-              );
-            })}
-          </div>
-        </Section>
-
-        <Section title={`Last ${BEHIND} days`}>
-          <div className="grid grid-cols-4 gap-2">
-            <Figure label="Route kept" value={r.adherence == null ? "—" : `${r.adherence}%`} />
-            <Figure label="Shops visited" value={r.allocated ? `${r.visited}/${r.allocated}` : "—"} />
-            <Figure label="Missed" value={String(r.missed)} tone={r.missed ? "danger" : undefined} />
-            <Figure label="Days walked" value={String(r.daysWalked)} />
-            <Figure label="Visits" value={String(r.visits)} />
-            <Figure label="Off route" value={String(r.offPlan)} />
-            <Figure label="Unverified" value={String(r.unverified)} tone={r.unverified ? "warn" : undefined} />
-            <Figure label="Skipped" value={String(r.skipped)} />
-          </div>
-        </Section>
-      </div>
-    </Modal>
-  );
-}
-
-/* ------------------------------------------------------------- the pieces */
 
 function TodayLine({ r, today, holiday }: { r: TeamRow; today: string; holiday: string | null }) {
   if (r.today) {
@@ -500,58 +349,8 @@ function Tile({ label, value, sub, tone }: { label: string; value: string; sub?:
   );
 }
 
-function Figure({ label, value, tone }: { label: string; value: string; tone?: "danger" | "warn" }) {
-  return (
-    <div className="rounded-[4px] bg-canvas px-3 py-2">
-      <div className="text-[11px] text-muted">{label}</div>
-      <div
-        className={cx(
-          "text-[15px] font-semibold tabular-nums",
-          tone === "danger" ? "text-danger" : tone === "warn" ? "text-warn-ink" : "text-ink",
-        )}
-      >
-        {value}
-      </div>
-    </div>
-  );
-}
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section>
-      <h3 className="mb-1.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">{title}</h3>
-      {children}
-    </section>
-  );
-}
 
-function ActionLink({
-  href,
-  children,
-  primary = false,
-  newTab = false,
-}: {
-  href: string;
-  children: React.ReactNode;
-  primary?: boolean;
-  newTab?: boolean;
-}) {
-  return (
-    <Link
-      href={href}
-      target={newTab ? "_blank" : undefined}
-      rel={newTab ? "noopener" : undefined}
-      className={cx(
-        "inline-flex h-8 items-center rounded-[4px] px-3 text-[13px] no-underline hover:no-underline",
-        primary
-          ? "bg-brand font-medium text-white hover:opacity-90"
-          : "border border-line bg-surface text-body hover:bg-canvas",
-      )}
-    >
-      {children}
-    </Link>
-  );
-}
 
 function Avatar({ initials, size = "md" }: { initials: string; size?: "md" | "lg" }) {
   return (
@@ -603,8 +402,10 @@ function shortArea(key: ReturnType<typeof areaAnswerState>["key"]): string {
   }
 }
 
-function dayHref(salesmanId: string, date: string) {
-  return `/sales/journeys?tab=salesman&salesman=${salesmanId}&month=${date.slice(0, 7)}&open=${date}`;
+
+/** His whole month and visit log, opened over this list. */
+function personHref(salesmanId: string) {
+  return `/sales/journeys?tab=salesman&salesman=${salesmanId}&in=team`;
 }
 
 function dayTitle(p: TeamPlanDay | undefined, leave: string | null, holiday: string | null): string {
@@ -661,8 +462,3 @@ function shortDate(iso: string): string {
   return `${p.weekday} ${p.day} ${p.month}`;
 }
 
-/** "Mon 12" — a day cell's heading. */
-function shortDay(iso: string): string {
-  const p = parts(iso);
-  return `${p.weekday} ${p.day}`;
-}

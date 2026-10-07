@@ -19,6 +19,7 @@ import {
 import { monthGrid, monthParam } from "@/lib/journey-days";
 import { Empty, ScreenHeader } from "@/components/console/parts";
 import { JourneysScreen } from "./journeys-screen";
+import { PersonModal, type PersonPane } from "./person-modal";
 import { SalesmanPicker } from "./salesman-picker";
 import { SalesmanTab } from "./salesman-tab";
 import { TeamTab } from "./team-tab";
@@ -49,6 +50,7 @@ const TABS = [
   { key: "visits", label: "Visit log" },
 ] as const;
 type Tab = (typeof TABS)[number]["key"];
+type Over = "team" | "today";
 
 /**
  * JOURNEYS AND VISITS ARE ONE SCREEN, because they are one story.
@@ -84,6 +86,7 @@ export default async function Page({
     days?: string;
     day?: string;
     show?: string;
+    in?: string;
   }>;
 }) {
   const params = await searchParams;
@@ -94,6 +97,13 @@ export default async function Page({
       ? "salesman"
       : "team";
   const keep = params.salesman ? `&salesman=${params.salesman}` : "";
+  /* `&in=team` or `&in=today` on a One salesman or Visit log address draws it
+     in a panel over that tab rather than as the tab itself — see person-modal. */
+  const over: Over | null =
+    (params.in === "team" || params.in === "today") && (tab === "salesman" || tab === "visits") && params.salesman
+      ? params.in
+      : null;
+  const shown: Tab = over ?? tab;
 
   return (
     <div className="p-6">
@@ -109,7 +119,7 @@ export default async function Page({
             href={`/sales/journeys?tab=${t.key}${t.key === "salesman" || t.key === "visits" ? keep : ""}`}
             className={
               "-mb-px border-b-2 px-4 py-2.5 text-[14px] no-underline hover:no-underline " +
-              (tab === t.key
+              (shown === t.key
                 ? "border-brand font-medium text-ink"
                 : "border-transparent text-muted hover:text-body")
             }
@@ -119,15 +129,17 @@ export default async function Page({
         ))}
       </div>
 
-      {tab === "team" ? (
+      {shown === "team" ? (
         <TeamSection now={now} />
-      ) : tab === "today" ? (
+      ) : shown === "today" ? (
         <TodaySection now={now} />
       ) : tab === "visits" ? (
         <VisitsSection params={params} now={now} />
       ) : (
         <SalesmanSection params={params} now={now} />
       )}
+
+      {over ? <PersonSection params={params} now={now} tab={tab} over={over} /> : null}
     </div>
   );
 }
@@ -151,9 +163,11 @@ async function TodaySection({ now }: { now: string }) {
 async function VisitsSection({
   params,
   now,
+  stay = "",
 }: {
   params: { day?: string; show?: string; salesman?: string };
   now: string;
+  stay?: string;
 }) {
   const day = /^\d{4}-\d{2}-\d{2}$/.test(params.day ?? "") ? params.day! : now;
   const show = ["all", "unverified", "offplan"].includes(params.show ?? "") ? params.show! : "all";
@@ -168,6 +182,7 @@ async function VisitsSection({
       mismatchThresholdM={config["mbos.location.visitMismatchM"]}
       team={team}
       salesmanId={salesmanId}
+      stay={stay}
     />
   );
 }
@@ -175,9 +190,12 @@ async function VisitsSection({
 async function SalesmanSection({
   params,
   now,
+  stay = "",
 }: {
   params: { salesman?: string; view?: string; month?: string; open?: string; from?: string; days?: string; day?: string };
   now: string;
+  /** Set when drawn inside his panel: links keep it open, and there is no picker. */
+  stay?: string;
 }) {
   const team = await fieldTeam();
   const selected =
@@ -201,7 +219,7 @@ async function SalesmanSection({
   }
 
   if (view === "propose") {
-    return <ProposeSection params={params} now={now} team={team} selectedId={selected.id} />;
+    return <ProposeSection params={params} now={now} team={team} selectedId={selected.id} stay={stay} />;
   }
 
   const month = monthParam(params.month, now);
@@ -223,7 +241,7 @@ async function SalesmanSection({
 
   return (
     <>
-      <SalesmanPicker team={team} selectedId={selected.id} view={view} />
+      {stay ? null : <SalesmanPicker team={team} selectedId={selected.id} view={view} />}
       <SalesmanTab
         /* Keyed so a different salesman or month REMOUNTS with fresh state
            rather than resetting itself in an effect. */
@@ -239,6 +257,7 @@ async function SalesmanSection({
         facts={facts}
         history={history}
         cities={cities}
+        stay={stay}
       />
     </>
   );
@@ -255,11 +274,13 @@ async function ProposeSection({
   now,
   team,
   selectedId,
+  stay = "",
 }: {
   params: { from?: string; days?: string; day?: string };
   now: string;
   team: Awaited<ReturnType<typeof fieldTeam>>;
   selectedId: string;
+  stay?: string;
 }) {
   const asked = params.from ?? params.day;
   const from = /^\d{4}-\d{2}-\d{2}$/.test(asked ?? "") ? asked! : addDays(now, 1);
@@ -281,7 +302,7 @@ async function ProposeSection({
 
   return (
     <>
-      <SalesmanPicker team={team} selectedId={selected.id} view="propose" />
+      {stay ? null : <SalesmanPicker team={team} selectedId={selected.id} view="propose" />}
       <JourneysScreen
         key={`${selected.id}:${from}:${horizon}`}
         selected={selected}
@@ -290,8 +311,56 @@ async function ProposeSection({
         plans={plans}
         book={book}
         cities={cities}
+        stay={stay}
       />
     </>
+  );
+}
+
+/**
+ * One salesman — his month, his proposals and his visit log — in a panel over
+ * the Team or Today tab, so opening somebody from either list never leaves it.
+ * The same sections the two tabs render, with `&in=` carried on every link.
+ */
+async function PersonSection({
+  params,
+  now,
+  tab,
+  over,
+}: {
+  params: { salesman?: string; view?: string; month?: string; open?: string; from?: string; days?: string; day?: string; show?: string };
+  now: string;
+  tab: Tab;
+  over: Over;
+}) {
+  const team = await fieldTeam();
+  const who = team.find((t) => t.id === params.salesman);
+  if (!who) return null;
+  const stay = `&in=${over}`;
+  const pane: PersonPane =
+    tab === "visits" ? "visits" : params.view === "list" ? "list" : params.view === "propose" ? "propose" : "calendar";
+  const href = (q: string) => `/sales/journeys?${q}&salesman=${who.id}${stay}`;
+  const shops = Number(who.customerCount);
+  return (
+    <PersonModal
+      name={who.name}
+      initials={who.initials}
+      sub={[`${shops} ${shops === 1 ? "shop" : "shops"} in his book`, who.phone].filter(Boolean).join(" · ")}
+      pane={pane}
+      closeHref={`/sales/journeys?tab=${over}`}
+      panes={[
+        { key: "calendar", label: "Calendar", href: href("tab=salesman&view=calendar") },
+        { key: "list", label: "List", href: href("tab=salesman&view=list") },
+        { key: "propose", label: "Propose days", href: href("tab=salesman&view=propose") },
+        { key: "visits", label: "Visit log", href: href("tab=visits") },
+      ]}
+    >
+      {pane === "visits" ? (
+        <VisitsSection params={params} now={now} stay={stay} />
+      ) : (
+        <SalesmanSection params={params} now={now} stay={stay} />
+      )}
+    </PersonModal>
   );
 }
 
