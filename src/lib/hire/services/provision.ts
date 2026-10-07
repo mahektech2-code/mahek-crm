@@ -12,7 +12,7 @@ import { appOrigin, hashResetToken, newResetToken, RESET_TTL_MINUTES } from "@/l
 import { err, ok, type Result } from "@/lib/result";
 import { grantAppWithDefaultModules, rederiveAccountLevel } from "@/lib/services/app-provisioning";
 import type { HireContext } from "../access";
-import { audit, ensureExecution, getApplication, type AppBundle } from "./core";
+import { hireTrail, ensureExecution, getApplication, type AppBundle } from "./core";
 import { courierArrived, currentOffer } from "./offers";
 
 /* ---------------------------------------------------------------------------
@@ -157,27 +157,27 @@ export async function provision(ctx: HireContext, applicationId: string, note: s
       agreedWithAi: null,
       evidenceReviewed: ["documents", "offer", "induction", "setup"],
     });
-    await audit(
+    await hireTrail(
       ctx,
       {
         applicationId,
         candidateId: b.candidate.id,
         entityType: "application",
         entityId: applicationId,
-        eventType: "provisioned",
+        event: "provisioned",
         summary: `Provisioned MahekOne account ${created ? "(created)" : `(linked to ${plan.existingUser?.name})`} · ${granted.length ? `granted ${granted.join(", ")}` : "no new apps"}${alreadyHeld.length ? ` · already held ${alreadyHeld.join(", ")}` : ""} as ${plan.level} — ${plan.roleLabel} · status Hired`,
         after: { userId, apps: plan.apps.map((a) => a.id), level: plan.level },
       },
       tx,
     );
-    await audit(
+    await hireTrail(
       ctx,
       {
         applicationId,
         candidateId: b.candidate.id,
         entityType: "application",
         entityId: applicationId,
-        eventType: "training_portal_handoff",
+        event: "training_portal_handoff",
         summary: `Handed off to the Training Portal with employee account ${userId}. Hire recorded which topics were taught; the portal records what is learned.`,
       },
       tx,

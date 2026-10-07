@@ -13,7 +13,7 @@ import type { HireContext } from "../access";
 import { aiState, runTask } from "../ai/orchestrator";
 import { scoreAnswer } from "../ai/score-answer";
 import { VOICE_PROMPT_VERSION, VOICE_TOOLS, voiceInstructions } from "../ai/voice-instructions";
-import { audit, getApplication, hid, type AppBundle } from "./core";
+import { hireTrail, getApplication, hid, type AppBundle } from "./core";
 import { currentAnswers, scoringView, type ScoringView } from "./scoring";
 
 /* ---------------------------------------------------------------------------
@@ -109,7 +109,7 @@ export async function mintRealtimeSession(ctx: HireContext, execId: string): Pro
     console.error("hire realtime session:", error);
     return err("The AI interviewer could not be started. Schedule a person to screen this candidate instead.", "rule_violation");
   }
-  await audit(ctx, { applicationId: t.b.app.id, candidateId: t.b.candidate.id, entityType: "stage", entityId: execId, eventType: "voice_screen_started", summary: `AI voice screen started for ${t.stage.name} · the AI discloses itself and asks consent first` });
+  await hireTrail(ctx, { applicationId: t.b.app.id, candidateId: t.b.candidate.id, entityType: "stage", entityId: execId, event: "voice_screen_started", summary: `AI voice screen started for ${t.stage.name} · the AI discloses itself and asks consent first` });
   return ok({ clientSecret: out.value, model: state.model, expiresAt: out.expires_at ?? null });
 }
 
@@ -195,7 +195,7 @@ export async function saveVoiceScreen(ctx: HireContext, p: FinishPayload, audio:
   await db.update(hireStageExecutions).set({ status: "in_progress", modality: "ai_voice", startedAt: startedAt, conductedById: ctx.user.id, updatedAt: new Date() }).where(eq(hireStageExecutions.id, t.execId));
 
   if (refused) {
-    await audit(ctx, { applicationId: b.app.id, candidateId: b.candidate.id, entityType: "session", entityId: sessionId, eventType: "voice_screen_consent_refused", summary: "AI voice screen ended: the candidate did not agree to recording. Nothing was recorded — schedule a person to screen them." });
+    await hireTrail(ctx, { applicationId: b.app.id, candidateId: b.candidate.id, entityType: "session", entityId: sessionId, event: "voice_screen_consent_refused", summary: "AI voice screen ended: the candidate did not agree to recording. Nothing was recorded — schedule a person to screen them." });
     return ok({ sessionId, scored: 0, manual: 0 }, "The candidate did not agree to recording. Nothing was kept; a person should screen them.");
   }
 
@@ -258,12 +258,12 @@ export async function saveVoiceScreen(ctx: HireContext, p: FinishPayload, audio:
   });
   if (rec.ok) await db.insert(hireAiOutputs).values({ id: hid("hao"), kind: "voice_recommendation", applicationId: b.app.id, content: { sessionId, ...rec.output }, aiTaskId: rec.taskId, createdById: ctx.user.id });
 
-  await audit(ctx, {
+  await hireTrail(ctx, {
     applicationId: b.app.id,
     candidateId: b.candidate.id,
     entityType: "session",
     entityId: sessionId,
-    eventType: "voice_screen_ended",
+    event: "voice_screen_ended",
     summary: `AI voice screen ${p.endReason === "completed" ? "completed" : `ended (${(p.endReason ?? "stopped").replace(/_/g, " ")})`} · ${Math.round(p.durationMs / 60000)} min · recording consent ${p.consent ? "given" : "not given"} · ${scored} answer${scored === 1 ? "" : "s"} assessed by AI, ${manual} for a person to score`,
   });
   return ok({ sessionId, scored, manual }, "Saved. Every score waits for a person to confirm it.");

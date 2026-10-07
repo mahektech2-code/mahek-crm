@@ -3,7 +3,7 @@ import { db } from "@/db";
 import { hireDocuments, hireFiles } from "@/db/schema";
 import { fileStorage } from "@/lib/storage";
 import { hireContext } from "@/lib/hire/access";
-import { audit, getApplication } from "@/lib/hire/services/core";
+import { hireTrail, getApplication } from "@/lib/hire/services/core";
 
 /**
  * A file Hire holds, read through Hire's own rules.
@@ -37,12 +37,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   } catch {
     return new Response("The file could not be read from storage.", { status: 502 });
   }
-  await audit(ctx, {
+  await hireTrail(ctx, {
     applicationId: f.applicationId,
     candidateId: f.candidateId,
     entityType: "file",
     entityId: f.id,
-    eventType: "file_viewed",
+    event: "file_viewed",
     summary: `Opened ${req?.label ?? f.purpose} (${f.filename})`,
     pii: req && req.pii !== "none" ? [req.kind] : undefined,
   });

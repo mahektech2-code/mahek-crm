@@ -5,7 +5,7 @@ import { hireApplications, hireOffers, type HireOffer } from "@/db/schema";
 import { err, ok, type Result } from "@/lib/result";
 import { renderLetter, rupees } from "@/app/hire/_onboard/letter";
 import type { HireContext } from "../access";
-import { audit, getApplication, hid, recordMessage, type AppBundle } from "./core";
+import { hireTrail, getApplication, hid, recordMessage, type AppBundle } from "./core";
 
 /* ---------------------------------------------------------------------------
  * OFFERS (spec §2.8, design §7.9).
@@ -121,7 +121,7 @@ export async function saveOffer(ctx: HireContext, applicationId: string, input: 
   if (cur && (cur.status === "issued" || cur.status === "accepted")) return err("This offer has been issued. Record the candidate’s response — a negotiation starts a new offer.", "rule_violation");
   const id = hid("hof");
   await db.insert(hireOffers).values({ id, applicationId, status: "draft", ...values, letter: letterFor(b, { ...values }), createdById: ctx.user.id });
-  await audit(ctx, { applicationId, candidateId: b.candidate.id, entityType: "offer", entityId: id, eventType: "offer_drafted", summary: `Offer drafted · ${v.data.gradeLabel} · ${rupees(v.data.basicPaise)} a month (INR)` });
+  await hireTrail(ctx, { applicationId, candidateId: b.candidate.id, entityType: "offer", entityId: id, event: "offer_drafted", summary: `Offer drafted · ${v.data.gradeLabel} · ${rupees(v.data.basicPaise)} a month (INR)` });
   return ok({ offerId: id }, "Draft saved.");
 }
 
@@ -136,7 +136,7 @@ export async function issueOffer(ctx: HireContext, applicationId: string): Promi
   const now = new Date();
   const letter = letterFor(b, o, now);
   await db.update(hireOffers).set({ status: "issued", issuedAt: now, issuedById: ctx.user.id, letter, updatedAt: now, updatedById: ctx.user.id }).where(eq(hireOffers.id, o.id));
-  await audit(ctx, { applicationId, candidateId: b.candidate.id, entityType: "offer", entityId: o.id, eventType: "offer_issued", summary: `Offer issued · ${o.gradeLabel} · ${rupees(o.basicPaise)} a month (INR) · joining ${o.joiningDate} · open until ${o.expiryDate}` });
+  await hireTrail(ctx, { applicationId, candidateId: b.candidate.id, entityType: "offer", entityId: o.id, event: "offer_issued", summary: `Offer issued · ${o.gradeLabel} · ${rupees(o.basicPaise)} a month (INR) · joining ${o.joiningDate} · open until ${o.expiryDate}` });
   await recordMessage(ctx, {
     candidateId: b.candidate.id,
     applicationId,
@@ -185,7 +185,7 @@ export async function recordResponse(ctx: HireContext, applicationId: string, in
         createdById: ctx.user.id,
       });
       await tx.update(hireOffers).set({ supersededById: nid, respondedAt: now, response: "negotiating", growthConfirmation: gc, letterConfirmation: lc, updatedAt: now }).where(eq(hireOffers.id, o.id));
-      await audit(ctx, { applicationId, candidateId: b.candidate.id, entityType: "offer", entityId: o.id, eventType: "offer_negotiating", summary: `Candidate is negotiating · “${input.note.trim()}” · a revised draft was opened from the issued offer` }, tx);
+      await hireTrail(ctx, { applicationId, candidateId: b.candidate.id, entityType: "offer", entityId: o.id, event: "offer_negotiating", summary: `Candidate is negotiating · “${input.note.trim()}” · a revised draft was opened from the issued offer` }, tx);
     });
     return ok(undefined, "A revised draft is open. Change the figures and issue it again.");
   }
@@ -201,14 +201,14 @@ export async function recordResponse(ctx: HireContext, applicationId: string, in
         .set({ status: "offer_declined", closedAt: now, decisionReason: input.note.trim(), updatedAt: now, updatedById: ctx.user.id })
         .where(eq(hireApplications.id, applicationId));
     }
-    await audit(
+    await hireTrail(
       ctx,
       {
         applicationId,
         candidateId: b.candidate.id,
         entityType: "offer",
         entityId: o.id,
-        eventType: `offer_${input.response}`,
+        event: `offer_${input.response}`,
         summary: `Offer ${input.response}${gc ? ` · growth plan: ${CONFIRM_LABEL[gc]}` : ""}${lc ? ` · letter: ${CONFIRM_LABEL[lc]}` : ""}${input.note.trim() ? ` · “${input.note.trim()}”` : ""}`,
       },
       tx,
@@ -232,12 +232,12 @@ export async function updateTracking(ctx: HireContext, applicationId: string, pa
     set.backgroundCheck = patch.backgroundCheck;
   }
   await db.update(hireOffers).set(set).where(eq(hireOffers.id, o.id));
-  await audit(ctx, {
+  await hireTrail(ctx, {
     applicationId,
     candidateId: b.candidate.id,
     entityType: "offer",
     entityId: o.id,
-    eventType: "offer_tracking",
+    event: "offer_tracking",
     summary: [patch.courierStatus ? `Courier: ${COURIER_LABEL[patch.courierStatus]}` : "", patch.backgroundCheck ? `Background check: ${BG_LABEL[patch.backgroundCheck]}` : ""].filter(Boolean).join(" · "),
   });
   return ok(undefined, "Saved.");

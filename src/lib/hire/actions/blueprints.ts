@@ -6,7 +6,7 @@ import { db } from "@/db";
 import { hireBlueprints } from "@/db/schema";
 import { err, ok, type Result } from "@/lib/result";
 import { HireNotPermitted, requireHireCap, type HireContext } from "../access";
-import { audit, hid } from "../services/core";
+import { hireTrail, hid } from "../services/core";
 import { blankDefinition, freeKey, getBlueprintRow, publishedForCopy, studioIssues, type StudioDefinition } from "../services/blueprints";
 import { blocking } from "../engines/validator";
 import { critiqueRubric } from "../ai/rubric-critic";
@@ -60,7 +60,7 @@ export async function saveDraft(id: string, identity: IdentityInput, definition:
         updatedById: ctx.user.id,
       })
       .where(and(eq(hireBlueprints.id, id), eq(hireBlueprints.status, "draft")));
-    await audit(ctx, { entityType: "blueprint", entityId: id, eventType: "blueprint_saved", summary: `${identity.title} v${b.version} draft saved${note ? ` · ${note}` : ""}` });
+    await hireTrail(ctx, { entityType: "blueprint", entityId: id, event: "blueprint_saved", summary: `${identity.title} v${b.version} draft saved${note ? ` · ${note}` : ""}` });
     revalidatePath(`/hire/blueprints/${id}`);
     return ok(undefined, "Saved.");
   });
@@ -76,7 +76,7 @@ export async function runCritic(id: string): Promise<Result<{ findings: number }
     const r = await critiqueRubric(b.definition, { title: b.title, blueprintId: b.id, actorId: ctx.user.id });
     if (!r.ok) return err(r.reason);
     await db.update(hireBlueprints).set({ critic: r.output, updatedAt: new Date() }).where(and(eq(hireBlueprints.id, id), eq(hireBlueprints.status, "draft")));
-    await audit(ctx, { entityType: "blueprint", entityId: id, eventType: "rubric_critic", summary: `Rubric critic: ${r.output.length} finding${r.output.length === 1 ? "" : "s"}`, aiTaskId: r.taskId || null });
+    await hireTrail(ctx, { entityType: "blueprint", entityId: id, event: "rubric_critic", summary: `Rubric critic: ${r.output.length} finding${r.output.length === 1 ? "" : "s"}`, aiTaskId: r.taskId || null });
     revalidatePath(`/hire/blueprints/${id}`);
     return ok({ findings: r.output.length }, r.output.length ? `${r.output.length} things for a person to look at.` : "The critic found nothing to flag.");
   });
@@ -99,9 +99,9 @@ export async function publishBlueprint(id: string): Promise<Result> {
         retired.push(l.version);
       }
       await tx.update(hireBlueprints).set({ status: "published", publishedAt: new Date(), publishedById: ctx.user.id, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(hireBlueprints.id, id));
-      await audit(
+      await hireTrail(
         ctx,
-        { entityType: "blueprint", entityId: id, eventType: "blueprint_published", summary: `Published ${b.title} v${b.version}${retired.length ? ` · v${retired.join(", v")} retired; candidates on it stay on it` : ""}` },
+        { entityType: "blueprint", entityId: id, event: "blueprint_published", summary: `Published ${b.title} v${b.version}${retired.length ? ` · v${retired.join(", v")} retired; candidates on it stay on it` : ""}` },
         tx,
       );
     });
@@ -141,7 +141,7 @@ export async function newVersion(id: string): Promise<Result<{ id: string }>> {
       createdById: ctx.user.id,
       updatedById: ctx.user.id,
     });
-    await audit(ctx, { entityType: "blueprint", entityId: newId, eventType: "blueprint_version", summary: `Started ${b.title} v${version} from v${b.version}` });
+    await hireTrail(ctx, { entityType: "blueprint", entityId: newId, event: "blueprint_version", summary: `Started ${b.title} v${version} from v${b.version}` });
     return ok({ id: newId }, `Drafting v${version}. v${b.version} stays exactly as it is until this is published.`);
   });
 }
@@ -174,7 +174,7 @@ export async function copyToNewRole(fromId: string, title: string): Promise<Resu
       createdById: ctx.user.id,
       updatedById: ctx.user.id,
     });
-    await audit(ctx, { entityType: "blueprint", entityId: newId, eventType: "blueprint_created", summary: `New role “${t}” started from ${b.title} v${b.version}` });
+    await hireTrail(ctx, { entityType: "blueprint", entityId: newId, event: "blueprint_created", summary: `New role “${t}” started from ${b.title} v${b.version}` });
     return ok({ id: newId }, `“${t}” started from ${b.title}. Review every section before publishing.`);
   });
 }
@@ -196,7 +196,7 @@ export async function createBlank(title: string, family: string, department: str
       createdById: ctx.user.id,
       updatedById: ctx.user.id,
     });
-    await audit(ctx, { entityType: "blueprint", entityId: newId, eventType: "blueprint_created", summary: `New role “${title.trim()}” started from a blank skeleton` });
+    await hireTrail(ctx, { entityType: "blueprint", entityId: newId, event: "blueprint_created", summary: `New role “${title.trim()}” started from a blank skeleton` });
     return ok({ id: newId });
   });
 }
@@ -239,7 +239,7 @@ export async function saveGenerated(intake: Intake, parts: GenParts): Promise<Re
       createdById: ctx.user.id,
       updatedById: ctx.user.id,
     });
-    await audit(ctx, { entityType: "blueprint", entityId: newId, eventType: "blueprint_generated", summary: `AI drafted “${title}” — nothing approved yet` });
+    await hireTrail(ctx, { entityType: "blueprint", entityId: newId, event: "blueprint_generated", summary: `AI drafted “${title}” — nothing approved yet` });
     const c = await critiqueRubric(def, { title, blueprintId: newId, actorId: ctx.user.id });
     if (c.ok) await db.update(hireBlueprints).set({ critic: c.output }).where(eq(hireBlueprints.id, newId));
     return ok({ id: newId }, "Drafted. Review and approve every element before publishing.");

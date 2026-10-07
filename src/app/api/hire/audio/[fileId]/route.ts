@@ -1,5 +1,5 @@
 import { hireContext } from "@/lib/hire/access";
-import { audit } from "@/lib/hire/services/core";
+import { hireTrail } from "@/lib/hire/services/core";
 import { audioFor } from "@/lib/hire/services/voice";
 import { fileStorage } from "@/lib/storage";
 
@@ -17,7 +17,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ fileId: 
   const bytes = new Uint8Array(await fileStorage.read(f.ref));
   const range = req.headers.get("range");
   if (!range) {
-    await audit(ctx, { applicationId: f.applicationId, candidateId: f.candidateId, entityType: "file", entityId: fileId, eventType: "recording_played", summary: "Listened to the AI voice screen recording" });
+    await hireTrail(ctx, { applicationId: f.applicationId, candidateId: f.candidateId, entityType: "file", entityId: fileId, event: "recording_played", summary: "Listened to the AI voice screen recording" });
     return new Response(bytes, { headers: { "Content-Type": f.contentType, "Content-Length": String(bytes.length), "Accept-Ranges": "bytes", "Cache-Control": "private, no-store" } });
   }
   const m = /bytes=(\d*)-(\d*)/.exec(range);

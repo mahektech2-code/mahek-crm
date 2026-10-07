@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { auditLog, hireAudit, hireBlueprints, hireUserRoles } from "@/db/schema";
+import { auditLog, hireBlueprints, hireUserRoles } from "@/db/schema";
+import { hireTrail } from "./services/core";
 import { grantAppWithDefaultModules, rederiveAccountLevel } from "@/lib/services/app-provisioning";
 import type { BlueprintDefinition } from "./blueprint-types";
 import { SALES_EXECUTIVE, SEED_BLUEPRINTS } from "./seed/blueprints";
@@ -112,12 +113,12 @@ export async function grantHireToPlatformAdmins(): Promise<{ granted: string[] }
       await tx.insert(auditLog).values({
         id: `aud_${randomUUID().slice(0, 12)}`,
         actorId: null,
-        action: "app-grant",
+        action: "set-app-access",
         entityType: "user",
         entityId: u.id,
-        afterState: { detail: "granted hire as admin (install: platform administrator)", accountLevel } as never,
+        afterState: { detail: "granted hire (1/1 modules) · admin · hire (1/1)", reason: "Installing Hire: every platform administrator holds it", accountLevel } as never,
       });
-      await tx.insert(hireAudit).values({ id: `hau_${randomUUID()}`, entityType: "hire_role", entityId: u.id, eventType: "installed", summary: `${u.name} given Hire as Admin — a platform administrator`, actorName: "System" });
+      await hireTrail(null, { entityType: "hire_role", entityId: u.id, event: "installed", summary: `${u.name} given Hire as Admin — a platform administrator` }, tx);
     });
   }
   return { granted: rows.map((r) => r.name) };

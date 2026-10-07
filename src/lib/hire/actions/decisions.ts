@@ -13,7 +13,7 @@ import { GATE_POINT } from "../roles";
 import { recommendAtGate, type GateRec } from "../ai/gate-recommendation";
 import { draftRejection, rejectionTemplate, type RejectionDraft } from "../ai/rejection";
 import { rankShortlist, type Ranking } from "../ai/rank";
-import { audit, currentExecution, getApplication, hid, recordMessage } from "../services/core";
+import { hireTrail, currentExecution, getApplication, hid, recordMessage } from "../services/core";
 import { advanceFromGate, compareColumns, gateView, rejectApplication, storeGateRecommendation } from "../services/decisions";
 
 /* ---------------------------------------------------------------------------
@@ -53,7 +53,7 @@ export async function refreshGateRecommendation(applicationId: string): Promise<
     });
     if (!res.ok) return err(res.reason, "rule_violation");
     await storeGateRecommendation(ctx, applicationId, res.output, res.taskId);
-    await audit(ctx, { applicationId, candidateId: v.bundle.candidate.id, entityType: "application", entityId: applicationId, eventType: "ai_recommendation", summary: `AI recommendation at the gate: ${res.output.action} (${res.output.confidence})`, aiTaskId: res.taskId });
+    await hireTrail(ctx, { applicationId, candidateId: v.bundle.candidate.id, entityType: "application", entityId: applicationId, event: "ai_recommendation", summary: `AI recommendation at the gate: ${res.output.action} (${res.output.confidence})`, aiTaskId: res.taskId });
     revalidatePath(`/hire/gate/${applicationId}`);
     return ok(res.output, "Recommendation refreshed.");
   });
@@ -103,12 +103,12 @@ export async function recordGateDecision(
       aiRecommendation: aiSnap,
       agreedWithAi: agreed,
     });
-    await audit(ctx, {
+    await hireTrail(ctx, {
       applicationId,
       candidateId: b.candidate.id,
       entityType: "decision",
       entityId: applicationId,
-      eventType: "gate_decision",
+      event: "gate_decision",
       summary: `Decision gate: ${input.decision === "advance" ? "Advance" : "Hold"}${rec ? (agreed ? " · agreed with the AI" : " · disagreed with the AI") : " · no AI recommendation"} · “${reasoning}”`,
     });
 
@@ -167,12 +167,12 @@ export async function dismissProposal(proposalId: string, reasoning: string): Pr
     const why = reasoning.trim();
     if (why.length < MIN_REASON) return reasonErr(MIN_REASON);
     await db.update(hireRejectionProposals).set({ status: "dismissed", resolvedById: ctx.user.id, resolvedAt: new Date(), resolution: why }).where(eq(hireRejectionProposals.id, proposalId));
-    await audit(ctx, {
+    await hireTrail(ctx, {
       applicationId: b.app.id,
       candidateId: b.candidate.id,
       entityType: "rejection_proposal",
       entityId: proposalId,
-      eventType: "rejection_dismissed",
+      event: "rejection_dismissed",
       summary: `Proposed rejection at ${stageByKey(b.def, p.stageKey)?.name ?? p.stageKey} dismissed — the candidate stays · “${why}”`,
     });
     revalidatePath("/hire/decisions");

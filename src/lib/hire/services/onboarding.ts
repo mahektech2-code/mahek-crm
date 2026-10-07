@@ -9,7 +9,7 @@ import { stageByKey } from "../blueprint-types";
 import { maskNumber } from "../engines/identity";
 import type { HireContext } from "../access";
 import { extractDocument } from "../ai/extract-document";
-import { audit, ensureExecution, getApplication, hid, stageOutcome, type AppBundle } from "./core";
+import { hireTrail, ensureExecution, getApplication, hid, stageOutcome, type AppBundle } from "./core";
 import { boardRows, type BoardRow } from "./pipeline";
 import { cleanNumber, reveal, storeNumber, vaultAvailable, vaultEntry, type VaultKind } from "./vault";
 import { courierArrived, currentOffer } from "./offers";
@@ -129,7 +129,7 @@ export async function uploadDocument(ctx: HireContext, applicationId: string, re
   const docId = hid("hdo");
   await supersede(applicationId, req.key, docId);
   await db.insert(hireDocuments).values({ id: docId, applicationId, requirementKey: req.key, fileId, verificationStatus: "pending", createdById: ctx.user.id });
-  await audit(ctx, { applicationId, candidateId: b.candidate.id, entityType: "document", entityId: docId, eventType: "document_uploaded", summary: `Uploaded ${req.label} (${type.replace("application/", "").replace("image/", "").toUpperCase()}, ${Math.round(stored.sizeBytes / 1024)} KB)` });
+  await hireTrail(ctx, { applicationId, candidateId: b.candidate.id, entityType: "document", entityId: docId, event: "document_uploaded", summary: `Uploaded ${req.label} (${type.replace("application/", "").replace("image/", "").toUpperCase()}, ${Math.round(stored.sizeBytes / 1024)} KB)` });
 
   const ex = await extractDocument({ requirement: req, bytes, contentType: type, actorId: ctx.user.id, applicationId, documentId: docId });
   if (!ex.ok) return ok({ extracted: false, note: ex.reason }, "Uploaded. " + ex.reason);
@@ -157,12 +157,12 @@ export async function uploadDocument(ctx: HireContext, applicationId: string, re
       updatedAt: new Date(),
     })
     .where(eq(hireDocuments.id, docId));
-  await audit(ctx, {
+  await hireTrail(ctx, {
     applicationId,
     candidateId: b.candidate.id,
     entityType: "document",
     entityId: docId,
-    eventType: "document_extracted",
+    event: "document_extracted",
     summary: `AI read ${req.label} · ${e.fields.length} fields · ${low ? "routed to manual review" : "waiting for a person to confirm"}${vaultId ? " · number vaulted" : ""}`,
     aiTaskId: e.aiTaskId,
   });
@@ -206,12 +206,12 @@ export async function confirmFields(ctx: HireContext, documentId: string, input:
     })
     .where(eq(hireDocuments.id, documentId));
   const corrected = fields.filter((f) => before.find((x) => x.label === f.label)?.value !== f.value).map((f) => f.label);
-  await audit(ctx, {
+  await hireTrail(ctx, {
     applicationId: d.applicationId,
     candidateId: b.candidate.id,
     entityType: "document",
     entityId: documentId,
-    eventType: input.verify ? "document_verified" : "document_fields",
+    event: input.verify ? "document_verified" : "document_fields",
     summary: `${input.verify ? "Verified" : "Saved"} ${req.label}${corrected.length ? ` · corrected ${corrected.join(", ")}` : ""}${vaultId !== d.vaultId ? " · number stored in the vault" : ""}`,
   });
   return ok(undefined, input.verify ? `${req.label} verified.` : "Saved.");
@@ -232,7 +232,7 @@ export async function setDocumentStatus(ctx: HireContext, applicationId: string,
     if (status !== "waived") return err("Nothing has been uploaded to fail.", "rule_violation");
     await db.insert(hireDocuments).values({ id: hid("hdo"), applicationId, requirementKey, verificationStatus: "waived", verificationNotes: notes.trim(), verifiedById: ctx.user.id, verifiedAt: now, createdById: ctx.user.id });
   }
-  await audit(ctx, { applicationId, candidateId: b.candidate.id, entityType: "document", entityId: d?.id ?? null, eventType: `document_${status}`, summary: `${req.label}: ${status === "failed" ? "failed verification — a new one requested" : status === "waived" ? "waived" : "sent to manual review"} · “${notes.trim()}”` });
+  await hireTrail(ctx, { applicationId, candidateId: b.candidate.id, entityType: "document", entityId: d?.id ?? null, event: `document_${status}`, summary: `${req.label}: ${status === "failed" ? "failed verification — a new one requested" : status === "waived" ? "waived" : "sent to manual review"} · “${notes.trim()}”` });
   return ok(undefined, status === "failed" ? "Marked failed. Ask the candidate for a new one." : status === "waived" ? "Waived, with the reason on the record." : "Sent to manual review.");
 }
 
@@ -246,12 +246,12 @@ export async function unmask(ctx: HireContext, vaultId: string): Promise<Result<
   if (!b) return err("Not found.", "not_found");
   const value = await reveal(vaultId);
   if (!value) return err("The vault could not open this entry with the current key.", "rule_violation");
-  await audit(ctx, {
+  await hireTrail(ctx, {
     applicationId: d.applicationId,
     candidateId: b.candidate.id,
     entityType: "vault",
     entityId: vaultId,
-    eventType: "pii_unmasked",
+    event: "pii_unmasked",
     summary: `Unmasked ${b.def.documents.find((r) => r.key === d.requirementKey)?.label ?? v.kind} number (ending ${v.last4})`,
     pii: [v.kind],
   });
@@ -303,12 +303,12 @@ export async function setItem(ctx: HireContext, applicationId: string, k: ItemKe
       target: [hireOnboardingItems.applicationId, hireOnboardingItems.kind, hireOnboardingItems.groupKey, hireOnboardingItems.itemKey],
       set: { done, serial: ser, doneById: done ? ctx.user.id : null, doneAt: done ? now : null },
     });
-  await audit(ctx, {
+  await hireTrail(ctx, {
     applicationId,
     candidateId: b.candidate.id,
     entityType: "onboarding",
     entityId: `${k.kind}:${k.group}:${k.item}`,
-    eventType: done ? "onboarding_done" : "onboarding_undone",
+    event: done ? "onboarding_done" : "onboarding_undone",
     summary: `${k.kind === "asset" ? (done ? "Received" : "Marked pending") : k.kind === "topic" ? (done ? "Taught" : "Un-ticked") : done ? "Completed" : "Re-opened"}: ${label}${ser ? ` · serial ${ser}` : ""}`,
   });
   await refreshStage(ctx, b);

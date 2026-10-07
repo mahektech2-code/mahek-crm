@@ -8,7 +8,7 @@ import { err, ok, type Result } from "@/lib/result";
 import { HireNotPermitted, requireHireCap } from "../access";
 import { stageByKey } from "../blueprint-types";
 import { canMove } from "../engines/gating";
-import { audit, currentExecution, getApplication, moveApplication, stageOutcome } from "../services/core";
+import { hireTrail, currentExecution, getApplication, moveApplication, stageOutcome } from "../services/core";
 import { createApplication, screenIn, type NewCandidateInput } from "../services/pipeline";
 import { bookInterview, suggestSlots, type Slot } from "../services/schedule";
 
@@ -127,7 +127,7 @@ export async function assignBulk(applicationIds: string[], patch: { recruiterId?
     .set({ ...set, updatedAt: new Date(), updatedById: ctx.user.id })
     .where(inArray(hireApplications.id, visible));
   for (const id of visible)
-    await audit(ctx, { applicationId: id, entityType: "application", entityId: id, eventType: "assigned", summary: `Assigned ${Object.keys(set).map((k) => k.replace("Id", "")).join(" and ")}`, after: set });
+    await hireTrail(ctx, { applicationId: id, entityType: "application", entityId: id, event: "assigned", summary: `Assigned ${Object.keys(set).map((k) => k.replace("Id", "")).join(" and ")}`, after: set });
   revalidatePath("/hire/candidates");
   return ok({ n: visible.length }, `Assigned ${visible.length} candidate${visible.length === 1 ? "" : "s"}.`);
 }

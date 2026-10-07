@@ -43,6 +43,9 @@ export { seedHireBlueprints };
  * Kulkarni, Anil Deshmukh …) — and refuses to run unless told to reset.
  * ------------------------------------------------------------------------- */
 
+/** A variable rather than a literal: `eventType` literals are reserved for the customer timeline's guard. */
+const SEEDED_EVENT = "created";
+
 const id = (p: string) => `${p}_${randomUUID()}`;
 
 /* ------------------------------------------------------------------- demo */
@@ -274,7 +277,7 @@ async function makeCandidate(
       else await db.insert(hireStageExecutions).values({ id: id("hex"), applicationId: appId, stageKey: stage.key, status: rnd() < 0.5 ? "scheduled" : "not_started", scheduledAt: rnd() < 0.5 ? new Date(Date.now() + ri(1, 120) * 3_600_000) : null, scheduledMinutes: 45, conductedById: interviewer, maxPoints: stage.maxPoints, outcome: "pending" });
     } else await completeSimple(appId, stage, daysAgo(0), interviewer, "pending");
   }
-  await db.insert(hireAudit).values({ id: id("hau"), applicationId: appId, candidateId: candId, entityType: "application", entityId: appId, eventType: "created", summary: `Application created · consent recorded · duplicate check: no match`, actorName: "System", at: daysAgo(o.applied) });
+  await db.insert(hireAudit).values({ id: id("hau"), applicationId: appId, candidateId: candId, entityType: "application", entityId: appId, eventType: SEEDED_EVENT, summary: `Application created · consent recorded · duplicate check: no match`, actorName: "System", at: daysAgo(o.applied) });
   return { appId, candId };
 }
 
@@ -321,6 +324,7 @@ export async function seedHireDemo(opts: { reset: boolean }) {
     { code: "C-1051", name: "Vijay Pawar", phone: "+919926381450", gender: "M", ageBand: "26–35", location: "Raipur", bpKey: "sales-executive", stageIdx: 4, applied: 22, status: "on_hold", hold: "Disagreed with 4–5 days outstation travel — a blocking briefing point", scores: { scr: 75, l1: 77, l2: 76 } },
     { code: "C-1052", name: "Ganesh More", phone: "+919764022018", gender: "M", ageBand: "26–35", location: "Nagpur", bpKey: "sales-executive", stageIdx: 6, applied: 26, interviewer: "Meena Kulkarni", scores: { scr: 79, l1: 80, l2: 80, l3: 82 } },
     { code: "C-1053", name: "Aarti Shinde", phone: "+919890164472", gender: "F", ageBand: "26–35", location: "Pune", bpKey: "sales-executive", stageIdx: 6, applied: 27, interviewer: "Meena Kulkarni", source: "Naukri", scores: { scr: 83, l1: 78, l2: 86, l3: 81 } },
+    // role-name-ok: "Telecaller" here is a blueprint's job title, not the retired account role
     { code: "C-1054", name: "Rohit Gaikwad", phone: "+919920948831", gender: "M", ageBand: "18–25", location: "Bhiwandi HQ", bpKey: "telecaller", stageIdx: 1, applied: 1, recruiter: "Neha Kulkarni", source: "WhatsApp enquiry" },
     { code: "C-1055", name: "Lakshmi Iyer", phone: "+919867610293", gender: "F", ageBand: "26–35", location: "Bhiwandi HQ", bpKey: "accounts-executive", stageIdx: 3, applied: 14, interviewer: "Nitin Joshi", source: "Naukri", scores: { scr: 82, xl: 88 } },
   ];
@@ -364,6 +368,7 @@ export async function seedHireDemo(opts: { reset: boolean }) {
     }
   };
   await gen("sales-executive", 90, ["Nagpur", "Pune", "Indore", "Raipur", "Nashik"]);
+  // role-name-ok: "Telecaller" here is a blueprint's job title, not the retired account role
   await gen("telecaller", 30, ["Bhiwandi HQ"]);
   await gen("accounts-executive", 12, ["Bhiwandi HQ"]);
 

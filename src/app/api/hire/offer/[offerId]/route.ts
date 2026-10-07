@@ -3,7 +3,7 @@ import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { db } from "@/db";
 import { hireOffers } from "@/db/schema";
 import { hireContext } from "@/lib/hire/access";
-import { audit, getApplication } from "@/lib/hire/services/core";
+import { hireTrail, getApplication } from "@/lib/hire/services/core";
 import { letterFor } from "@/lib/hire/services/offers";
 
 /**
@@ -69,7 +69,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ offerId
   });
   if (o.status === "draft") page.drawText("DRAFT - not issued", { x: M, y: M - 20, size: 9, font: bold, color: rgb(0.54, 0.36, 0.02) });
   const bytes = await pdf.save();
-  await audit(ctx, { applicationId: o.applicationId, candidateId: b.candidate.id, entityType: "offer", entityId: o.id, eventType: "offer_pdf", summary: `Downloaded the offer letter PDF (${o.status})` });
+  await hireTrail(ctx, { applicationId: o.applicationId, candidateId: b.candidate.id, entityType: "offer", entityId: o.id, event: "offer_pdf", summary: `Downloaded the offer letter PDF (${o.status})` });
   return new Response(Buffer.from(bytes), {
     headers: {
       "Content-Type": "application/pdf",

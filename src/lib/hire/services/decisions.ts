@@ -6,7 +6,7 @@ import { notifyUsers } from "@/lib/notify";
 import { REJECTION_LABEL, stageByKey, type BlueprintDefinition } from "../blueprint-types";
 import { scopeWhere, seesScores, type HireContext } from "../access";
 import { GATE_POINT } from "../roles";
-import { audit, ensureExecution, getApplication, hid, hoursSince, stageOutcome, type AppBundle } from "./core";
+import { hireTrail, ensureExecution, getApplication, hid, hoursSince, stageOutcome, type AppBundle } from "./core";
 import { caseFile, type CaseFile } from "./evidence";
 import type { GateRec } from "../ai/gate-recommendation";
 
@@ -229,14 +229,14 @@ export async function rejectApplication(
         .update(hireRejectionProposals)
         .set({ status: "confirmed", resolvedById: ctx.user.id, resolvedAt: now, resolution: r.reasoning.trim() })
         .where(inArray(hireRejectionProposals.id, open.map((o) => o.id)));
-    await audit(
+    await hireTrail(
       ctx,
       {
         applicationId: b.app.id,
         candidateId: b.candidate.id,
         entityType: "application",
         entityId: b.app.id,
-        eventType: "rejected",
+        event: "rejected",
         summary: `Rejected at ${stageByKey(b.def, r.stageKey)?.name ?? r.stageKey} · ${REJECTION_LABEL[r.reasonCode] ?? r.reasonCode}${r.proposalId ? " · proposal confirmed" : ""} · “${r.reasoning.trim()}”`,
         before: { status: b.app.status },
         after: { status: "rejected", reasonCode: r.reasonCode },
@@ -327,7 +327,7 @@ export async function advanceFromGate(ctx: HireContext, applicationId: string): 
     await tx.update(hireStageExecutions).set({ status: "completed", outcome: "pass", completedAt: now, conductedById: ctx.user.id }).where(eq(hireStageExecutions.id, ex.id));
     await tx.update(hireApplications).set({ stageKey: next.key, stageEnteredAt: now, updatedAt: now, updatedById: ctx.user.id }).where(eq(hireApplications.id, applicationId));
     await ensureExecution(applicationId, next, ctx.user.id, tx);
-    await audit(ctx, { applicationId, candidateId: b.candidate.id, entityType: "application", entityId: applicationId, eventType: "stage_move", summary: `Moved ${b.stage!.name} → ${next.name} · on the recorded gate decision`, before: { stageKey: b.app.stageKey }, after: { stageKey: next.key } }, tx);
+    await hireTrail(ctx, { applicationId, candidateId: b.candidate.id, entityType: "application", entityId: applicationId, event: "stage_move", summary: `Moved ${b.stage!.name} → ${next.name} · on the recorded gate decision`, before: { stageKey: b.app.stageKey }, after: { stageKey: next.key } }, tx);
   });
   return { ok: true, next: next.name };
 }

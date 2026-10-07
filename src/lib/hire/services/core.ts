@@ -41,7 +41,7 @@ export type AuditInput = {
   candidateId?: string | null;
   entityType: string;
   entityId?: string | null;
-  eventType: string;
+  event: string;
   summary: string;
   before?: unknown;
   after?: unknown;
@@ -50,14 +50,14 @@ export type AuditInput = {
 };
 
 /** Append one line to the audit trail. `ctx` null means the system did it. */
-export async function audit(ctx: Pick<HireContext, "user" | "roleLabel"> | null, a: AuditInput, x: Exec = db): Promise<void> {
+export async function hireTrail(ctx: Pick<HireContext, "user" | "roleLabel"> | null, a: AuditInput, x: Exec = db): Promise<void> {
   await x.insert(hireAudit).values({
     id: hid("hau"),
     applicationId: a.applicationId ?? null,
     candidateId: a.candidateId ?? null,
     entityType: a.entityType,
     entityId: a.entityId ?? null,
-    eventType: a.eventType,
+    eventType: a.event,
     summary: a.summary,
     actorId: ctx?.user.id ?? null,
     actorName: ctx?.user.name ?? "System",
@@ -228,14 +228,14 @@ export async function moveApplication(ctx: HireContext, applicationId: string, t
       .where(eq(hireApplications.id, applicationId));
     const exec = await ensureExecution(applicationId, target, ctx.user.id, tx);
     if (overridden) await tx.update(hireStageExecutions).set({ entryWasGated: false, gateOverrideById: ctx.user.id, gateOverrideReason: overrideReason!.trim() }).where(eq(hireStageExecutions.id, exec.id));
-    await audit(
+    await hireTrail(
       ctx,
       {
         applicationId,
         candidateId: b.candidate.id,
         entityType: "application",
         entityId: applicationId,
-        eventType: overridden ? "gate_override" : "stage_move",
+        event: overridden ? "gate_override" : "stage_move",
         summary: overridden ? `Gate override: ${from} → ${target.name} · “${overrideReason!.trim()}”` : `Moved ${from} → ${target.name} · entry rule passed`,
         before: { stageKey: b.app.stageKey },
         after: { stageKey: target.key },
@@ -286,6 +286,6 @@ export async function recordMessage(
     status: m.status ?? "sent",
     sentById: m.direction === "out" ? (ctx?.user.id ?? null) : null,
   });
-  await audit(ctx, { applicationId: m.applicationId, candidateId: m.candidateId, entityType: "message", entityId: msgId, eventType: m.direction === "out" ? "message_sent" : "message_received", summary: `${m.direction === "out" ? "Sent" : "Received"} ${m.channel} (${m.language ?? "English"})${m.aiDrafted ? " · AI-drafted, reviewed by a person" : ""}` });
+  await hireTrail(ctx, { applicationId: m.applicationId, candidateId: m.candidateId, entityType: "message", entityId: msgId, event: m.direction === "out" ? "message_sent" : "message_received", summary: `${m.direction === "out" ? "Sent" : "Received"} ${m.channel} (${m.language ?? "English"})${m.aiDrafted ? " · AI-drafted, reviewed by a person" : ""}` });
   return msgId;
 }

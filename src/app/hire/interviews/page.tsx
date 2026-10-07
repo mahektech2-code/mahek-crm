@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { cx } from "@/components/ui/primitives";
+import { ADMIN } from "@/lib/admin-routes";
 import { requireHireScreen } from "@/lib/hire/access";
 import { listHumanInterviews, listVoiceScreens, voiceSetup, type InterviewRow } from "@/lib/hire/services/interview";
 import { AiMark, BtnLink, Callout, Empty, Label, PageHead, Panel, Pill, fd, fdt, type Tone } from "../_ui/kit";
@@ -224,7 +225,7 @@ async function Setup() {
         </Panel>
         {!s.aiOn ? <Callout tone="warn">{s.aiWhy} Voice screens fall back to scheduling a person.</Callout> : null}
         <div>
-          <BtnLink href="/admin/settings/hire">Change in Admin Console → Settings → Hire</BtnLink>
+          <BtnLink href={ADMIN.settingsFor("hire")}>Change in Admin Console → Settings → Hire</BtnLink>
         </div>
       </div>
     </div>

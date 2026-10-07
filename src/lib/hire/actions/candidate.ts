@@ -10,7 +10,7 @@ import { err, fieldErr, ok, type Result } from "@/lib/result";
 import { fileStorage } from "@/lib/storage";
 import { isScored, stageByKey } from "../blueprint-types";
 import { HireNotPermitted, requireHireCap, seesScores, type HireContext } from "../access";
-import { audit, ensureExecution, getApplication, hid, recordMessage } from "../services/core";
+import { hireTrail, ensureExecution, getApplication, hid, recordMessage } from "../services/core";
 import { candidateSources } from "../services/candidate";
 import { resolveDuplicate, screenIn } from "../services/pipeline";
 import { summariseCandidate } from "../ai/summary";
@@ -103,14 +103,14 @@ export async function changeStatus(applicationId: string, to: "hold" | "resume" 
           updatedById: ctx.user.id,
         })
         .where(eq(hireApplications.id, applicationId));
-      await audit(
+      await hireTrail(
         ctx,
         {
           applicationId,
           candidateId: b.candidate.id,
           entityType: "application",
           entityId: applicationId,
-          eventType: `status_${to}`,
+          event: `status_${to}`,
           summary: `${to === "hold" ? "Put on hold" : to === "resume" ? "Resumed" : "Withdrawn"} · “${reasoning.trim()}”`,
           before: { status: from },
           after: { status },
@@ -166,7 +166,7 @@ export async function generateSummary(applicationId: string): Promise<Result> {
       .update(hireApplications)
       .set({ aiRecommendation: { action: res.output.recommendation.action, confidence: res.output.recommendation.confidence, why: res.output.recommendation.why, taskId: res.taskId, at: now.toISOString() } })
       .where(eq(hireApplications.id, applicationId));
-    await audit(ctx, { applicationId, candidateId: b.candidate.id, entityType: "ai_output", eventType: "summary_generated", summary: `AI summary generated · recommendation: ${res.output.recommendation.action} (${res.output.recommendation.confidence})`, aiTaskId: res.taskId });
+    await hireTrail(ctx, { applicationId, candidateId: b.candidate.id, entityType: "ai_output", event: "summary_generated", summary: `AI summary generated · recommendation: ${res.output.recommendation.action} (${res.output.recommendation.confidence})`, aiTaskId: res.taskId });
     revalidatePath(path(applicationId));
     return ok(undefined, "Summary updated.");
   });
@@ -195,13 +195,13 @@ export async function runConsistencyCheck(applicationId: string): Promise<Result
       /* Degradation (spec §4.3): skipped, and the record says it was not performed. */
       const [prior] = await db.select({ id: hireAiOutputs.id }).from(hireAiOutputs).where(and(eq(hireAiOutputs.applicationId, applicationId), eq(hireAiOutputs.kind, "consistency"))).limit(1);
       if (!prior) await db.insert(hireAiOutputs).values({ id: hid("hao"), kind: "consistency", applicationId, blueprintId: b.blueprint.id, content: { skipped: true, reason: res.reason }, aiTaskId: res.taskId, createdById: ctx.user.id });
-      await audit(ctx, { applicationId, candidateId: b.candidate.id, entityType: "ai_output", eventType: "consistency_skipped", summary: `Consistency check not performed — ${res.reason}`, aiTaskId: res.taskId });
+      await hireTrail(ctx, { applicationId, candidateId: b.candidate.id, entityType: "ai_output", event: "consistency_skipped", summary: `Consistency check not performed — ${res.reason}`, aiTaskId: res.taskId });
       revalidatePath(path(applicationId));
       return err(`${res.reason} The check was not performed, and the record says so.`, "rule_violation");
     }
     await db.insert(hireAiOutputs).values({ id: hid("hao"), kind: "consistency", applicationId, blueprintId: b.blueprint.id, content: res.output, aiTaskId: res.taskId, createdById: ctx.user.id });
     const n = res.output.inconsistencies.length;
-    await audit(ctx, { applicationId, candidateId: b.candidate.id, entityType: "ai_output", eventType: "consistency_checked", summary: `Consistency check: ${n ? `${n} item${n === 1 ? "" : "s"} to ask about` : "nothing to ask about"}`, aiTaskId: res.taskId });
+    await hireTrail(ctx, { applicationId, candidateId: b.candidate.id, entityType: "ai_output", event: "consistency_checked", summary: `Consistency check: ${n ? `${n} item${n === 1 ? "" : "s"} to ask about` : "nothing to ask about"}`, aiTaskId: res.taskId });
     revalidatePath(path(applicationId));
     return ok(undefined, n ? `${n} thing${n === 1 ? "" : "s"} worth asking about.` : "Nothing contradicts.");
   });
@@ -228,7 +228,7 @@ export async function uploadCv(applicationId: string, form: FormData): Promise<R
     const fileId = hid("hfl");
     const stored = await fileStorage.upload({ key: `hire/cv/${b.candidate.id}/${fileId}`, body: bytes, contentType: type });
     await db.insert(hireFiles).values({ id: fileId, candidateId: b.candidate.id, applicationId, purpose: "cv", filename: file.name.slice(0, 200), contentType: type, sizeBytes: stored.sizeBytes, storedRef: stored.ref, uploadedById: ctx.user.id });
-    await audit(ctx, { applicationId, candidateId: b.candidate.id, entityType: "file", entityId: fileId, eventType: "cv_uploaded", summary: `CV uploaded · ${file.name}` });
+    await hireTrail(ctx, { applicationId, candidateId: b.candidate.id, entityType: "file", entityId: fileId, event: "cv_uploaded", summary: `CV uploaded · ${file.name}` });
     revalidatePath(path(applicationId));
     return ok({ fileId }, "CV uploaded.");
   });
@@ -278,7 +278,7 @@ export async function parseCvAction(applicationId: string, fileId: string): Prom
     } else {
       await db.insert(hireProfiles).values({ applicationId, data, sourceFileId: f.id, extractionConfidence: res.output.confidence, extractedAt: new Date(), aiTaskId: res.taskId, createdById: ctx.user.id });
     }
-    await audit(ctx, { applicationId, candidateId: b.candidate.id, entityType: "profile", entityId: applicationId, eventType: "cv_parsed", summary: `CV parsed by AI · ${f.filename} · overall confidence ${Math.round(res.output.confidence * 100)}% — low-confidence fields are marked for review`, aiTaskId: res.taskId });
+    await hireTrail(ctx, { applicationId, candidateId: b.candidate.id, entityType: "profile", entityId: applicationId, event: "cv_parsed", summary: `CV parsed by AI · ${f.filename} · overall confidence ${Math.round(res.output.confidence * 100)}% — low-confidence fields are marked for review`, aiTaskId: res.taskId });
     revalidatePath(path(applicationId));
     return ok(undefined, "Parsed. Check the amber fields.");
   });
@@ -307,7 +307,7 @@ export async function correctProfileField(applicationId: string, field: string, 
         .set({ data, corrections: [...(prior.corrections ?? []), { field, from: old, to: v, byId: ctx.user.id, byName: ctx.user.name, at }], updatedAt: new Date(), updatedById: ctx.user.id })
         .where(eq(hireProfiles.applicationId, applicationId));
     }
-    await audit(ctx, { applicationId, candidateId: b.candidate.id, entityType: "profile", entityId: applicationId, eventType: "profile_corrected", summary: `Corrected ${field} → ${v}` });
+    await hireTrail(ctx, { applicationId, candidateId: b.candidate.id, entityType: "profile", entityId: applicationId, event: "profile_corrected", summary: `Corrected ${field} → ${v}` });
     revalidatePath(path(applicationId));
     return ok(undefined, `${field} saved.`);
   });
@@ -403,7 +403,7 @@ export async function setDoNotContact(applicationId: string, on: boolean, reason
     const b = await load(ctx, applicationId);
     if (on && reason.trim().length < 10) return fieldErr("reason", "Say why, briefly.");
     await db.update(hireCandidates).set({ doNotContact: on, dncReason: on ? reason.trim() : null, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(hireCandidates.id, b.candidate.id));
-    await audit(ctx, { applicationId, candidateId: b.candidate.id, entityType: "candidate", entityId: b.candidate.id, eventType: on ? "dnc_on" : "dnc_off", summary: on ? `Marked do not contact · “${reason.trim()}”` : "Do-not-contact lifted" });
+    await hireTrail(ctx, { applicationId, candidateId: b.candidate.id, entityType: "candidate", entityId: b.candidate.id, event: on ? "dnc_on" : "dnc_off", summary: on ? `Marked do not contact · “${reason.trim()}”` : "Do-not-contact lifted" });
     revalidatePath(path(applicationId));
     return ok(undefined, on ? "Marked do not contact." : "Contact allowed again.");
   });

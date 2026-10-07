@@ -7,7 +7,7 @@ import { notifyUsers } from "@/lib/notify";
 import { err, ok, type Result } from "@/lib/result";
 import { isScored } from "../blueprint-types";
 import { scopeWhere, type HireContext } from "../access";
-import { audit, ensureExecution, type AppBundle } from "./core";
+import { hireTrail, ensureExecution, type AppBundle } from "./core";
 
 /* ---------------------------------------------------------------------------
  * Interviews on a calendar. Times are proposed by a plain rule — the first
@@ -113,12 +113,12 @@ export async function bookInterview(
     .set({ status: "scheduled", scheduledAt: start, scheduledMinutes: minutes, place: input.place.trim() || null, modality: input.modality || "in_person", conductedById: input.interviewerId, updatedAt: new Date(), updatedById: ctx.user.id })
     .where(eq(hireStageExecutions.id, exec.id));
   await db.update(hireApplications).set({ interviewerId: input.interviewerId, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(hireApplications.id, b.app.id));
-  await audit(ctx, {
+  await hireTrail(ctx, {
     applicationId: b.app.id,
     candidateId: b.candidate.id,
     entityType: "stage",
     entityId: exec.id,
-    eventType: before.scheduledAt ? "rescheduled" : "scheduled",
+    event: before.scheduledAt ? "rescheduled" : "scheduled",
     summary: `${stage.name} booked for ${when} IST with ${person.name} · ${minutes} min${input.place.trim() ? ` · ${input.place.trim()}` : ""} · confirmed by a person`,
     before,
     after: { scheduledAt: start.toISOString(), conductedById: input.interviewerId },

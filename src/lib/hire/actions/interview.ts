@@ -7,7 +7,7 @@ import { err, ok, type Result } from "@/lib/result";
 import { isScored, stageByKey } from "../blueprint-types";
 import { requireHireCap, HireNotPermitted, type HireContext } from "../access";
 import { copilotSuggest, type CopilotOut } from "../ai/copilot";
-import { audit, getApplication, hid, type AppBundle } from "../services/core";
+import { hireTrail, getApplication, hid, type AppBundle } from "../services/core";
 import { contradictionSources, liveSession } from "../services/interview";
 
 /* ---------------------------------------------------------------------------
@@ -64,14 +64,14 @@ export async function startInterview(execId: string, consent: boolean, takeOver 
         .update(hireStageExecutions)
         .set({ status: "in_progress", startedAt: exec.startedAt ?? now, conductedById: exec.conductedById ?? ctx.user.id, updatedAt: now, updatedById: ctx.user.id })
         .where(eq(hireStageExecutions.id, execId));
-      await audit(
+      await hireTrail(
         ctx,
         {
           applicationId: bundle.app.id,
           candidateId: bundle.candidate.id,
           entityType: "session",
           entityId: sessionId,
-          eventType: "interview_started",
+          event: "interview_started",
           summary: `${takeOver ? "Took over the AI voice screen · " : ""}${stage.name} interview started · ${consent ? "recording consent given out loud" : "no recording consent — notes only, nothing recorded"}`,
         },
         tx,
@@ -231,14 +231,14 @@ export async function endInterview(execId: string, captured: Record<string, Reco
         made++;
       }
       await tx.update(hireSessions).set({ status: "ended", endedAt: now, candidateTalkRatio: ratio, updatedAt: now, updatedById: ctx.user.id }).where(eq(hireSessions.id, s.id));
-      await audit(
+      await hireTrail(
         ctx,
         {
           applicationId: bundle.app.id,
           candidateId: bundle.candidate.id,
           entityType: "session",
           entityId: s.id,
-          eventType: "interview_ended",
+          event: "interview_ended",
           summary: `${stage.name} interview ended · ${made} of ${stage.questions.length} questions with an answer · ${Math.round((now.getTime() - new Date(s.startedAt).getTime()) / 60_000)} min${ratio != null ? ` · candidate spoke ${Math.round(ratio * 100)}% of the time` : ""}`,
         },
         tx,

@@ -10,7 +10,7 @@ import { grantAppWithDefaultModules, rederiveAccountLevel, revokeApps } from "@/
 import { err, ok, type Result } from "@/lib/result";
 import { HireNotPermitted, requireHireCap } from "../access";
 import { HIRE_ROLES, ROLE_LABEL, type HireRole } from "../roles";
-import { audit } from "../services/core";
+import { hireTrail } from "../services/core";
 
 /** Set somebody's job inside Hire. */
 export async function setHireRole(userId: string, role: HireRole | "default"): Promise<Result> {
@@ -27,10 +27,10 @@ export async function setHireRole(userId: string, role: HireRole | "default"): P
         .insert(hireUserRoles)
         .values({ userId, role, grantedById: ctx.user.id })
         .onConflictDoUpdate({ target: hireUserRoles.userId, set: { role, grantedById: ctx.user.id, grantedAt: new Date() } });
-    await audit(ctx, {
+    await hireTrail(ctx, {
       entityType: "hire_role",
       entityId: userId,
-      eventType: "role_changed",
+      event: "role_changed",
       summary: `${u?.name ?? "Somebody"}: ${before ? ROLE_LABEL[before.role as HireRole] ?? before.role : "level default"} → ${role === "default" ? "level default" : ROLE_LABEL[role]}`,
       before: before ?? null,
       after: { role },
@@ -78,12 +78,12 @@ export async function addToHire(userId: string, role: HireRole): Promise<Result>
       await tx.insert(auditLog).values({
         id: `aud_${randomUUID().slice(0, 12)}`,
         actorId: ctx.user.id,
-        action: "app-grant",
+        action: "set-app-access",
         entityType: "user",
         entityId: userId,
-        afterState: { detail: `granted hire as ${LEVEL_FOR[role]} (${ROLE_LABEL[role]}, from Hire's Team screen)`, accountLevel } as never,
+        afterState: { detail: `granted hire (1/1 modules) · ${LEVEL_FOR[role]} · hire (1/1)`, reason: `Given Hire as ${ROLE_LABEL[role]} on Hire's Team screen`, accountLevel } as never,
       });
-      await audit(ctx, { entityType: "hire_role", entityId: userId, eventType: "added", summary: `${u.name} given Hire as ${ROLE_LABEL[role]}`, after: { role } }, tx);
+      await hireTrail(ctx, { entityType: "hire_role", entityId: userId, event: "added", summary: `${u.name} given Hire as ${ROLE_LABEL[role]}`, after: { role } }, tx);
     });
     await notifyUser({ userId, title: "You now have Hire", body: `${ctx.user.name} gave you Hire as ${ROLE_LABEL[role]}.`, href: "/hire" });
     revalidatePath("/hire/team");
@@ -109,12 +109,12 @@ export async function removeFromHire(userId: string): Promise<Result> {
       await tx.insert(auditLog).values({
         id: `aud_${randomUUID().slice(0, 12)}`,
         actorId: ctx.user.id,
-        action: "app-revoke",
+        action: "set-app-access",
         entityType: "user",
         entityId: userId,
-        afterState: { detail: "revoked hire (from Hire's Team screen)", accountLevel } as never,
+        afterState: { detail: "revoked hire", reason: "Removed from Hire on Hire's Team screen", accountLevel } as never,
       });
-      await audit(ctx, { entityType: "hire_role", entityId: userId, eventType: "removed", summary: `${u?.name ?? "Somebody"} removed from Hire` }, tx);
+      await hireTrail(ctx, { entityType: "hire_role", entityId: userId, event: "removed", summary: `${u?.name ?? "Somebody"} removed from Hire` }, tx);
     });
     revalidatePath("/hire/team");
     return ok(undefined, `${u?.name ?? "They"} no longer have Hire.`);

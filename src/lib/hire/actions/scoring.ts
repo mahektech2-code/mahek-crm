@@ -9,7 +9,7 @@ import { err, ok, type Result } from "@/lib/result";
 import { HireNotPermitted, requireHireCap, type HireContext } from "../access";
 import { scoreAnswer } from "../ai/score-answer";
 import { graceProblem, scoreCalc, scoreFixed, stageResult } from "../engines/scoring";
-import { audit, hid, moveApplication } from "../services/core";
+import { hireTrail, hid, moveApplication } from "../services/core";
 import { confirmedPoints, currentAnswers, loadExecution } from "../services/scoring";
 
 /* ---------------------------------------------------------------------------
@@ -119,7 +119,7 @@ export async function confirmAnswer(execId: string, questionKey: string, input: 
     const id = await appendAnswer(prev, row);
     if (exec.status === "not_started" || exec.status === "scheduled")
       await db.update(hireStageExecutions).set({ status: "in_progress", startedAt: exec.startedAt ?? new Date(), conductedById: exec.conductedById ?? ctx.user.id, updatedAt: new Date() }).where(eq(hireStageExecutions.id, exec.id));
-    await audit(ctx, { applicationId: b.app.id, candidateId: b.candidate.id, entityType: "answer", entityId: id, eventType: "score_confirmed", summary: `${stage.name}: ${summary}` });
+    await hireTrail(ctx, { applicationId: b.app.id, candidateId: b.candidate.id, entityType: "answer", entityId: id, event: "score_confirmed", summary: `${stage.name}: ${summary}` });
     revalidatePath(`/hire/scoring/${execId}`);
     return ok({ score }, "Score confirmed.");
   });
@@ -170,12 +170,12 @@ export async function aiScoreQuestion(execId: string, questionKey: string, respo
       aiTaskId: r.taskId,
       createdById: ctx.user.id,
     });
-    await audit(ctx, {
+    await hireTrail(ctx, {
       applicationId: b.app.id,
       candidateId: b.candidate.id,
       entityType: "answer",
       entityId: id,
-      eventType: "ai_scored",
+      event: "ai_scored",
       summary: `${stage.name}: AI ${o.insufficient ? "found the answer too brief to score" : `proposed ${o.score}/${q.maxPoints} (${o.confidenceWord})`} on “${q.text.slice(0, 60)}” — awaiting a person`,
       aiTaskId: r.taskId,
     });
@@ -194,7 +194,7 @@ export async function setGrace(execId: string, grace: number, reason: string): P
     const problem = graceProblem(stage, grace, reason);
     if (problem) return { ok: false, error: problem, code: "validation", fieldErrors: [{ field: "graceReason", message: problem }] };
     await db.update(hireStageExecutions).set({ grace, graceReason: grace ? reason.trim() : null, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(hireStageExecutions.id, exec.id));
-    await audit(ctx, { applicationId: b.app.id, candidateId: b.candidate.id, entityType: "stage", entityId: exec.id, eventType: "grace", summary: `${stage.name}: grace ${grace > 0 ? "+" : ""}${grace}${grace ? ` · “${reason.trim()}”` : ""}` });
+    await hireTrail(ctx, { applicationId: b.app.id, candidateId: b.candidate.id, entityType: "stage", entityId: exec.id, event: "grace", summary: `${stage.name}: grace ${grace > 0 ? "+" : ""}${grace}${grace ? ` · “${reason.trim()}”` : ""}` });
     revalidatePath(`/hire/scoring/${execId}`);
     return ok(undefined, "Grace saved.");
   });
@@ -257,14 +257,14 @@ export async function completeStage(execId: string, grace: number, graceReason: 
           proposed = true;
         }
       }
-      await audit(
+      await hireTrail(
         ctx,
         {
           applicationId: b.app.id,
           candidateId: b.candidate.id,
           entityType: "stage",
           entityId: exec.id,
-          eventType: "stage_completed",
+          event: "stage_completed",
           summary: `${stage.name} completed · ${r.earned} of ${r.max} · ${r.normalised}${grace ? ` · grace ${grace > 0 ? "+" : ""}${grace} → ${r.final}` : ""} · ${r.outcome === "pass" ? "Pass" : "Fail"} against ${stage.passThreshold}${r.graceFlipped ? " · GRACE CHANGED THE OUTCOME" : ""}${manualWhileDown ? " · scored by hand, flagged for AI review" : ""}${proposed ? " · rejection proposed for a person to confirm" : ""}`,
           after: { earned: r.earned, normalised: r.normalised, grace, final: r.final, outcome: r.outcome, graceFlipped: r.graceFlipped },
         },
@@ -318,7 +318,7 @@ export async function reopenStage(execId: string, reason: string): Promise<Resul
       }
       await tx.update(hireStageExecutions).set({ supersededById: newId }).where(eq(hireStageExecutions.id, exec.id));
       await tx.execute(sql`update hire_rejection_proposals set status = 'dismissed', resolved_by_id = ${ctx.user.id}, resolved_at = now(), resolution = ${"Stage reopened for correction: " + reason.trim()} where application_id = ${b.app.id} and stage_key = ${stage.key} and status = 'open'`);
-      await audit(ctx, { applicationId: b.app.id, candidateId: b.candidate.id, entityType: "stage", entityId: newId, eventType: "stage_reopened", summary: `${stage.name} reopened for correction — the earlier result (${exec.finalScore}, ${exec.outcome}) is kept and superseded · “${reason.trim()}”` }, tx);
+      await hireTrail(ctx, { applicationId: b.app.id, candidateId: b.candidate.id, entityType: "stage", entityId: newId, event: "stage_reopened", summary: `${stage.name} reopened for correction — the earlier result (${exec.finalScore}, ${exec.outcome}) is kept and superseded · “${reason.trim()}”` }, tx);
     });
     return ok({ execId: newId }, "Reopened as a new record. The earlier result stays in the history.");
   });

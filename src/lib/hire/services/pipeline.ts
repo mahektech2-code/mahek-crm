@@ -7,7 +7,7 @@ import { REJECTION_LABEL, stageByKey } from "../blueprint-types";
 import { findDuplicates, normalisePhone } from "../engines/identity";
 import { slaBreached } from "../engines/gating";
 import { scopeWhere, seesScores, type HireContext } from "../access";
-import { audit, ensureExecution, hid, hoursSince, loadBlueprint } from "./core";
+import { hireTrail, ensureExecution, hid, hoursSince, loadBlueprint } from "./core";
 
 /* ---------------------------------------------------------------------------
  * The pipeline as a list: one row per application with everything the board,
@@ -267,14 +267,14 @@ export async function createApplication(ctx: HireContext | null, input: NewCandi
       createdById: ctx?.user.id ?? null,
     });
     await ensureExecution(applicationId, first, ctx?.user.id ?? null, tx);
-    await audit(
+    await hireTrail(
       ctx,
       {
         applicationId,
         candidateId,
         entityType: "application",
         entityId: applicationId,
-        eventType: "created",
+        event: "created",
         summary: `Application created for ${bp.title} v${bp.version} · consent and AI notice recorded · duplicate check: ${duplicate ? `possible match (${duplicate.confidence}) — ${duplicate.why}` : "no match"}`,
       },
       tx,
@@ -295,12 +295,12 @@ export async function resolveDuplicate(ctx: HireContext, applicationId: string, 
     .update(hireApplications)
     .set({ duplicate: { ...a.duplicate, status: same ? "same" : "different" }, reapplicationOfId: same ? (a.duplicate.applicationId ?? a.reapplicationOfId) : a.reapplicationOfId, updatedAt: new Date(), updatedById: ctx.user.id })
     .where(eq(hireApplications.id, applicationId));
-  await audit(ctx, {
+  await hireTrail(ctx, {
     applicationId,
     candidateId: a.candidateId,
     entityType: "application",
     entityId: applicationId,
-    eventType: "duplicate_resolved",
+    event: "duplicate_resolved",
     summary: `${same ? "Confirmed the same person — linked to the earlier application" : "Confirmed a different person"}${same && cooling ? " · inside the cooling-off period" : ""} · “${reason.trim()}”`,
   });
   return ok(undefined, same ? "Linked to the earlier application. Their history is visible throughout." : "Marked as a different person.");
@@ -316,14 +316,14 @@ export async function screenIn(ctx: HireContext, applicationId: string): Promise
   if (!stage || stage.type !== "application") return err("This candidate is past the application stage.", "rule_violation");
   const ex = await ensureExecution(applicationId, stage, ctx.user.id);
   await db.update(hireStageExecutions).set({ status: "completed", outcome: "pass", completedAt: new Date(), conductedById: ctx.user.id }).where(eq(hireStageExecutions.id, ex.id));
-  await audit(ctx, { applicationId, candidateId: a.candidateId, entityType: "stage", entityId: ex.id, eventType: "screened_in", summary: "Application reviewed and screened in" });
+  await hireTrail(ctx, { applicationId, candidateId: a.candidateId, entityType: "stage", entityId: ex.id, event: "screened_in", summary: "Application reviewed and screened in" });
   return ok(undefined, "Screened in.");
 }
 
 /** Assign people to an application. */
 export async function assignPeople(ctx: HireContext, applicationId: string, patch: { recruiterId?: string | null; interviewerId?: string | null; hiringManagerId?: string | null }): Promise<Result> {
   await db.update(hireApplications).set({ ...patch, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(hireApplications.id, applicationId));
-  await audit(ctx, { applicationId, entityType: "application", entityId: applicationId, eventType: "assigned", summary: `Assigned ${Object.keys(patch).join(", ")}`, after: patch });
+  await hireTrail(ctx, { applicationId, entityType: "application", entityId: applicationId, event: "assigned", summary: `Assigned ${Object.keys(patch).join(", ")}`, after: patch });
   return ok(undefined, "Saved.");
 }
 

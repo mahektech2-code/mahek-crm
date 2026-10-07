@@ -464,6 +464,7 @@ export const TELECALLER: BlueprintDefinition = {
     approved: true,
     ai: false,
   },
+  // role-name-ok: "Telecaller" here is a blueprint's job title, not the retired account role
   provisioning: { apps: ["crm", "hrms"], level: "associate", roleLabel: "Telecaller", device: false, approved: true, ai: false },
   fairness: { ...SALES_EXECUTIVE.fairness, masked: ["name", "gender_markers", "age", "photo", "location", "institution"], unmaskedJustification: {} },
   openQuestions: [],
@@ -672,7 +673,9 @@ export const SEED_BLUEPRINTS: SeedBlueprint[] = [
     source: "Seeded from the AppSheet Sales_Hire_App v1.000412 — seven stages, three scored levels, threshold 70.",
   },
   {
+    // role-name-ok: "Telecaller" here is a blueprint's job title, not the retired account role
     key: "telecaller",
+    // role-name-ok: "Telecaller" here is a blueprint's job title, not the retired account role
     title: "Telecaller",
     family: "Desk sales",
     department: "Sales",

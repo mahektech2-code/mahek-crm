@@ -6,7 +6,7 @@ import { db } from "@/db";
 import { hireBlueprints, hireCandidates } from "@/db/schema";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
 import { HireNotPermitted, requireHireCap } from "../access";
-import { audit } from "../services/core";
+import { hireTrail } from "../services/core";
 import { createApplication } from "../services/pipeline";
 import { candidateInScope, searchPool, type SearchFilters, type SearchResult } from "../services/talent";
 
@@ -64,12 +64,12 @@ export async function inviteToApply(input: { candidateId: string; blueprintKey: 
       enteredVia: "talent_pool",
     });
     if (!r.ok) return r;
-    await audit(ctx, {
+    await hireTrail(ctx, {
       applicationId: r.data.applicationId,
       candidateId: input.candidateId,
       entityType: "candidate",
       entityId: input.candidateId,
-      eventType: "pool_invite",
+      event: "pool_invite",
       summary: `Invited from the talent pool to apply for ${bp.title} v${bp.version} · consent re-recorded${input.note.trim() ? ` · “${input.note.trim()}”` : ""}`,
     });
     revalidatePath("/hire/pool");
@@ -87,7 +87,7 @@ export async function setSilverMedallist(candidateId: string, on: boolean, reaso
     const c = await candidateInScope(ctx, candidateId);
     if (!c) return err("That candidate is not in your pool.", "not_found");
     await db.update(hireCandidates).set({ talentPoolStatus: on ? "silver_medallist" : "active", updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(hireCandidates.id, candidateId));
-    await audit(ctx, { candidateId, entityType: "candidate", entityId: candidateId, eventType: on ? "silver_medallist" : "silver_medallist_removed", summary: `${on ? "Marked a silver medallist" : "No longer a silver medallist"} · “${reason.trim()}”`, before: { talentPoolStatus: c.talent_pool_status }, after: { talentPoolStatus: on ? "silver_medallist" : "active" } });
+    await hireTrail(ctx, { candidateId, entityType: "candidate", entityId: candidateId, event: on ? "silver_medallist" : "silver_medallist_removed", summary: `${on ? "Marked a silver medallist" : "No longer a silver medallist"} · “${reason.trim()}”`, before: { talentPoolStatus: c.talent_pool_status }, after: { talentPoolStatus: on ? "silver_medallist" : "active" } });
     revalidatePath("/hire/pool");
     return ok(undefined, on ? "Marked a silver medallist." : "Removed from silver medallists.");
   } catch (e) {
@@ -102,7 +102,7 @@ export async function skipForRole(candidateId: string, blueprintKey: string, rea
     if (reason.trim().length < 10) return { ok: false, error: "Say briefly why.", code: "validation", fieldErrors: [{ field: "reason", message: "At least 10 characters" }] };
     const c = await candidateInScope(ctx, candidateId);
     if (!c) return err("That candidate is not in your pool.", "not_found");
-    await audit(ctx, { candidateId, entityType: "candidate", entityId: candidateId, eventType: "pool_skip", summary: `Not for ${blueprintKey} · “${reason.trim()}”`, after: { blueprintKey } });
+    await hireTrail(ctx, { candidateId, entityType: "candidate", entityId: candidateId, event: "pool_skip", summary: `Not for ${blueprintKey} · “${reason.trim()}”`, after: { blueprintKey } });
     revalidatePath("/hire/pool");
     return ok(undefined, "Taken off this role’s list.");
   } catch (e) {
