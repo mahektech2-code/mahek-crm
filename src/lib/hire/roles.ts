@@ -156,6 +156,8 @@ export const ROLE_GROUPS: Record<HireRole, readonly string[]> = {
 /** Screens inside a group a role holds, but not for them (Team is HR Head / Admin). */
 const HIDDEN: Partial<Record<HireRole, HireNavKey[]>> = {
   hiring_manager: ["team"],
+  /* Decisions and Compare show scores across stages; an interviewer sees none. */
+  interviewer: ["decisions", "compare"],
 };
 
 export function navFor(role: HireRole): HireNavGroup[] {

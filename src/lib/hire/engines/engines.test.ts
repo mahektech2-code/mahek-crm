@@ -130,8 +130,9 @@ test("D5: a failed or pending stage cannot be left without an override", () => {
   assert.match(!skip.ok ? skip.why : "", /skips Level 2/);
   const back = canMove(def, { status: "in_progress", stageKey: "l2", currentOutcome: "pass" }, "l1");
   assert.equal(!back.ok && back.overridable, false);
-  const gate = canMove(def, { status: "in_progress", stageKey: "gate", currentOutcome: "pass" }, "doc");
+  const gate = canMove(def, { status: "in_progress", stageKey: "gate", currentOutcome: "pending" }, "doc");
   assert.equal(!gate.ok && gate.route, "gate");
+  assert.equal(canMove(def, { status: "in_progress", stageKey: "gate", currentOutcome: "pass" }, "doc").ok, true, "a recorded advance opens the gate");
 });
 
 test("identity: phone is the key; names only propose", () => {

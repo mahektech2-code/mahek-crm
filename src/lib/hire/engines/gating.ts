@@ -44,7 +44,9 @@ export function canMove(def: BlueprintDefinition, st: AppState, targetKey: strin
       overridable: false,
     };
   const cur = def.stages[from];
-  if (cur?.type === "decision_gate")
+  /* A gate is left only on a RECORDED decision to advance — which is what a
+     passed gate outcome means (stageOutcome reads the decision). */
+  if (cur?.type === "decision_gate" && st.currentOutcome !== "pass")
     return { ok: false, why: `Leaving the decision gate needs a recorded decision with reasoning from a ${cur.gateRole ?? "Hiring Manager"}.`, overridable: false, route: "gate" };
   if (to === def.stages.length)
     return { ok: false, why: "Hired is set only when onboarding is complete and the MahekOne account is provisioned.", overridable: false, route: "provision" };
