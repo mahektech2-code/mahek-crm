@@ -1,4 +1,11 @@
 /* ---------------------------------------------------------------------------
+ * SUPERSEDED — the droplet's `deploy/sheet-sync.sh` now runs these three
+ * modes on its own cron (`cycle` and `nightly`). This trigger is kept for a
+ * deployment with no server of its own; installing both is harmless, since
+ * an overlapping call answers 409, but it is not needed.
+ * ------------------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------------------
  * The Activity tab's own trigger, living beside the workbook it reads.
  *
  * This is a DIFFERENT spreadsheet from the order book ("Mahek EMP 2.0 -

@@ -320,13 +320,18 @@ The host clock is **UTC**, so the crontab is written in UTC.
 
 | UTC | IST | What |
 |---|---|---|
-| `:07`, `:37` hourly | — | `sheet-sync.sh cycle` — append, taken, payments, parties, then project, then the punch-out reminders |
+| `:07`, `:37` hourly | — | `sheet-sync.sh cycle` — append, taken, payments, parties, then project, then the EMP 2.0 activity tab and its projection, then the punch-out reminders |
 | `:22` hourly | — | `sheet-sync.sh hourly` — the salesman score, the MBOS sweeps and escalations |
-| `20:13` | 01:43 | `sheet-sync.sh nightly` — reconcile, project, then the recomputes |
+| `20:13` | 01:43 | `sheet-sync.sh nightly` — reconcile, project, the activity tab's full compare, then the recomputes |
 | `20:45` | 02:15 | `backup.sh` — dump to R2, after the nightly has settled |
 | `02:45`, `08:45`, `14:45` | 08:15, 14:15, 20:15 | `backup.sh --intraday` — the day's work, so a disk failure loses hours, not a day |
 | `22:30` Sunday | 04:00 Monday | `backup.sh --verify` — restore the newest dump into a scratch database and compare |
 | `04:30` on the 1st | 10:00 on the 1st | `sheet-sync.sh monthly` — the Top customers report for the month just finished |
+
+`sheet-sync.sh` itself is copied to the droplet by the **Ship sync schedule**
+workflow whenever it changes on `main`, so a change to what the cron runs
+lands without anybody remembering to scp it. The crontab LINES are not
+copied — a new row below still has to be added by hand.
 
 The hourly row is newer than the other two and a deployment installed before it
 **will not have it** — check with `crontab -l` and add it if it is missing:

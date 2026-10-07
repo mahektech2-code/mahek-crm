@@ -18,7 +18,8 @@
 # cron is a real cron, and it can call the app it is hosting. The reason the
 # schedule lived somewhere else was that there was nowhere else to put it.
 #
-#   bash sheet-sync.sh cycle     the half-hourly read modes, then publish
+#   bash sheet-sync.sh cycle     the half-hourly read modes, then publish —
+#                                the order workbook and the EMP 2.0 activity tab
 #   bash sheet-sync.sh hourly    the salesman score and the MBOS sweeps
 #   bash sheet-sync.sh nightly   the daily full compare, then the recomputes
 #   bash sheet-sync.sh monthly   the Top customers report, 10:00 IST on the 1st
@@ -89,6 +90,16 @@ case "${1:-cycle}" in
     # previous cycle's data as though it were fresh.
     for m in append taken payments parties; do sync "$m"; done
     sync "project&owner=${OWNER}"
+    # THE EMP 2.0 ACTIVITY TAB, which nothing on this droplet ever asked for.
+    # Its schedule was an Apps Script trigger in that workbook
+    # (`scripts/field-activity-sync-trigger.gs`), pointed at whatever URL it
+    # was given when it was installed — and when the schedule for the ORDER
+    # sheet moved here, this one was left behind. Activity history stopped
+    # growing and nothing anywhere reported it: no run, so no failed run.
+    # After the order sheet's publish, so a slow activity read can never hold
+    # an order back from a telecaller.
+    sync field-activity
+    sync field-activity-project
     # Not a sheet mode — it rides this cycle for its clock. `hourly` runs at
     # :52 IST, which would send a six o'clock reminder at ten to seven.
     sync punch-out-reminders
@@ -111,6 +122,10 @@ case "${1:-cycle}" in
     # found.
     sync reconcile
     sync "project&owner=${OWNER}"
+    # The activity tab's full compare: the only pass that sees an edited or
+    # withdrawn activity row, or rows appended above the watermark.
+    sync field-activity-reconcile
+    sync field-activity-project
     sync nightly
     ;;
   monthly)
