@@ -208,6 +208,7 @@ export const PRESENTATION: Record<string, Presentation> = {
   "interactions.maxNotesLength": { tab: "Interactions", group: "Quick notes", unit: "characters" },
   "interactions.followUpDefaultDays": { tab: "Interactions", group: "Follow-up", unit: "days" },
   "interactions.paymentPromiseDefaultDays": { tab: "Interactions", group: "Follow-up", unit: "days" },
+  "customers.birthdayHeadsUpDays": { tab: "Interactions", group: "Customer contacts", unit: "days" },
 
   /* -------------------------------------------------------------- products */
   "products.frequentCount": { tab: "Products", group: "How the order form offers them", unit: "products" },

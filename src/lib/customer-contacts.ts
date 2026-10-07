@@ -58,6 +58,8 @@ export type ContactLike = {
   phone: string;
   email?: string | null;
   note?: string | null;
+  birthDay?: number | null;
+  birthMonth?: number | null;
   isPrimary: boolean;
   forWhatsapp: boolean;
   forPaymentReminders: boolean;
@@ -175,4 +177,108 @@ export function phoneForReading(raw: string): string {
   const n = normalisePhone(raw);
   if (n.ok && n.mobile) return `${n.phone.slice(0, 5)} ${n.phone.slice(5)}`;
   return raw;
+}
+
+/* ---------------------------------------------------------------- birthdays */
+
+/**
+ * A BIRTHDAY IS A DAY AND A MONTH, NEVER A YEAR. Nobody at a counter is asked
+ * how old they are, and a year typed to fill a date picker would be a fact
+ * nobody stated — so the two are stored as two small numbers, both or neither.
+ */
+export const BIRTH_MONTHS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+] as const;
+
+export const BIRTH_MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+] as const;
+
+/** Days a month can hold in ANY year — February has a 29th somebody was born on. */
+export function daysInBirthMonth(month: number): number {
+  return [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1] ?? 31;
+}
+
+/** Why a day and month cannot be stored, or null where they can (both blank included). */
+export function birthdayProblem(day: number | null | undefined, month: number | null | undefined): string | null {
+  const hasDay = day !== null && day !== undefined;
+  const hasMonth = month !== null && month !== undefined;
+  if (!hasDay && !hasMonth) return null;
+  if (!hasDay) return "Pick the day of the birthday as well as the month.";
+  if (!hasMonth) return "Pick the month of the birthday as well as the day.";
+  if (!Number.isInteger(month) || month < 1 || month > 12) return "That is not a month.";
+  if (!Number.isInteger(day) || day < 1 || day > daysInBirthMonth(month)) {
+    return `${BIRTH_MONTH_NAMES[month - 1]} has only ${daysInBirthMonth(month)} days.`;
+  }
+  return null;
+}
+
+/** "14 Mar", or null where none is recorded. */
+export function birthdayLabel(day: number | null | undefined, month: number | null | undefined): string | null {
+  if (!day || !month || birthdayProblem(day, month)) return null;
+  return `${day} ${BIRTH_MONTHS[month - 1]}`;
+}
+
+function isLeap(year: number): boolean {
+  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+}
+
+/**
+ * Whole days from `today` (a business date, YYYY-MM-DD) to the next birthday —
+ * 0 on the day itself. A 29 February birthday falls on the 28th in a year
+ * without one, because that is the day anybody would ring.
+ */
+export function daysUntilBirthday(
+  day: number | null | undefined,
+  month: number | null | undefined,
+  today: string,
+): number | null {
+  if (!day || !month || birthdayProblem(day, month)) return null;
+  const [y, m, d] = today.split("-").map(Number);
+  const start = Date.UTC(y, m - 1, d);
+  const on = (year: number) => {
+    const dd = month === 2 && day === 29 && !isLeap(year) ? 28 : day;
+    return Date.UTC(year, month - 1, dd);
+  };
+  let next = on(y);
+  if (next < start) next = on(y + 1);
+  return Math.round((next - start) / 86_400_000);
+}
+
+/** "Birthday today", "Birthday tomorrow", "Birthday in 3 days". */
+export function birthdayWhen(days: number): string {
+  if (days === 0) return "Birthday today";
+  if (days === 1) return "Birthday tomorrow";
+  return `Birthday in ${days} days`;
+}
+
+export type UpcomingBirthday = {
+  contactId: string;
+  name: string | null;
+  role: string;
+  label: string;
+  days: number;
+};
+
+/** The contacts whose birthday is within `withinDays` of today, soonest first. */
+export function upcomingBirthdays(
+  contacts: ReadonlyArray<Pick<ContactLike, "id" | "name" | "role" | "birthDay" | "birthMonth">>,
+  today: string,
+  withinDays: number,
+): UpcomingBirthday[] {
+  const out: UpcomingBirthday[] = [];
+  for (const c of contacts) {
+    const days = daysUntilBirthday(c.birthDay, c.birthMonth, today);
+    if (days === null || days > withinDays) continue;
+    out.push({ contactId: c.id, name: c.name, role: c.role, label: birthdayLabel(c.birthDay, c.birthMonth)!, days });
+  }
+  return out.sort((a, b) => a.days - b.days || (a.name ?? "").localeCompare(b.name ?? ""));
+}
+
+/** One line naming who: "Ramesh (Owner) — birthday today". */
+export function birthdaySentence(b: UpcomingBirthday): string {
+  const who = b.name?.trim() || "A contact";
+  const role = b.role && b.role !== "other" ? ` (${contactRoleLabel(b.role, "short")})` : "";
+  return `${who}${role} — ${birthdayWhen(b.days).replace("Birthday", "birthday")}`;
 }

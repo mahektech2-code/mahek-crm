@@ -10,7 +10,8 @@
  *      WhatsApp needs a mobile, and the last number cannot be removed;
  *   E  the full edit form's details save, and the credit decisions are the
  *      ledger desk's alone;
- *   W  a reply from any number on the list is filed against the customer.
+ *   W  a reply from any number on the list is filed against the customer;
+ *   B  a contact's birthday is a day and a month, saved, cleared and checked.
  */
 import { after, before, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
@@ -316,5 +317,57 @@ describe("W — inbound replies", () => {
     const c = await makeCustomer();
     await addCustomerContact(c.id, { phone: "9811100011", role: "accounts" });
     assert.equal(await customerIdForNumber("9811100011"), c.id);
+  });
+});
+
+describe("B — a contact's birthday", () => {
+  test("is saved with the contact, edited, and cleared", async () => {
+    const c = await makeCustomer();
+    const added = await addCustomerContact(c.id, {
+      name: "Sunita",
+      phone: "9811100021",
+      role: "accounts",
+      birthDay: 14,
+      birthMonth: 3,
+    });
+    assert.ok(added.ok, added.ok ? "" : added.error);
+    const sunita = added.data.find((x) => x.name === "Sunita")!;
+    assert.equal(sunita.birthDay, 14);
+    assert.equal(sunita.birthMonth, 3);
+
+    const moved = await updateCustomerContact(sunita.id, { name: "Sunita", phone: "9811100021", birthDay: 29, birthMonth: 2 });
+    assert.ok(moved.ok);
+    assert.equal(moved.data.find((x) => x.id === sunita.id)!.birthDay, 29);
+
+    const cleared = await updateCustomerContact(sunita.id, { name: "Sunita", phone: "9811100021", birthDay: null, birthMonth: null });
+    assert.ok(cleared.ok);
+    const row = cleared.data.find((x) => x.id === sunita.id)!;
+    assert.equal(row.birthDay, null);
+    assert.equal(row.birthMonth, null);
+  });
+
+  test("a day without a month, or a day the month cannot hold, is refused", async () => {
+    const c = await makeCustomer();
+    const half = await addCustomerContact(c.id, { phone: "9811100022", birthDay: 14 });
+    assert.equal(half.ok, false);
+    const impossible = await addCustomerContact(c.id, { phone: "9811100023", birthDay: 31, birthMonth: 4 });
+    assert.equal(impossible.ok, false);
+    assert.match(impossible.ok ? "" : impossible.error, /April has only 30 days/);
+  });
+
+  test("the database refuses a half birthday written round the service", async () => {
+    const c = await makeCustomer();
+    await reconcileContacts(c.id);
+    await assert.rejects(
+      db.update(customerContacts).set({ birthDay: 3 }).where(eq(customerContacts.customerId, c.id)),
+    );
+  });
+
+  test("the edit form is told today's date and the heads-up window", async () => {
+    const c = await makeCustomer();
+    const e = await loadCustomerEditor(c.id);
+    assert.ok(e.ok);
+    assert.match(e.data.today, /^\d{4}-\d{2}-\d{2}$/);
+    assert.equal(e.data.birthdayHeadsUpDays, 7);
   });
 });

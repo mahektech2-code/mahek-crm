@@ -16,6 +16,13 @@ const PATHS: Record<string, React.ReactNode> = {
       <path d="M5 4h3l1.6 4-2 1.4a11 11 0 0 0 5 5L14 12.4 18 14v3a2 2 0 0 1-2.2 2A15 15 0 0 1 3 6.2 2 2 0 0 1 5 4z" />
     </>
   ),
+  gift: (
+    <>
+      <rect x="3" y="8" width="18" height="4" rx="1" />
+      <path d="M5 12v8h14v-8M12 8v12" />
+      <path d="M12 8C10.5 4 7 4 7 6s3 2 5 2c2 0 5 0 5-2s-3.5-2-5 2" />
+    </>
+  ),
   bell: (
     <>
       <path d="M18 8A6 6 0 1 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />

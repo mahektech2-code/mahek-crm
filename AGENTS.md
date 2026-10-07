@@ -2346,6 +2346,18 @@ customer (`customerIdForNumber`). The sheet stops filling `whatsapp_phone` once 
 PERSON has written that customer's contacts, because "no separate WhatsApp
 number" is then a decision, not a blank.
 
+**A CONTACT CARRIES A BIRTHDAY, AS A DAY AND A MONTH.** Never a year — nobody
+at a counter is asked their age, and a year typed to satisfy a date picker is
+a fact nobody stated. `customer_contacts.birth_day` and `birth_month` are both
+or neither, held by a check constraint that names `is not null` because a CHECK
+passes on null. The rules are pure, in `lib/customer-contacts.ts`: a 29
+February birthday falls on the 28th in other years, and `upcomingBirthdays` is
+the one statement of "soon" — `customers.birthdayHeadsUpDays` (7) — read by the
+contact cards, the record header, the call drawer, the customer list (CRM and
+Accounts) and its export, so no two of them disagree about whose birthday is
+near. The date is the server's business date, passed down, because a client
+component may not read the clock in render.
+
 **The full edit form is tabs, and it edits everything that is not derived.**
 Details, Contacts, Address & area, Commercial, Account managers — the same form
 in the CRM and Accounts, since both render `CustomersScreen`. The row carries a

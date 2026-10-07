@@ -162,6 +162,7 @@ export default async function CustomersPage({
         nextStep: c.nextStep,
         reactivationRequested: c.reactivationRequested,
         reactivationReason: c.reactivationReason,
+        birthdays: c.birthdays ?? [],
       }))}
     />
   );
