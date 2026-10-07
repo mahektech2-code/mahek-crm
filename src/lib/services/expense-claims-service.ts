@@ -127,6 +127,95 @@ export async function claimDays(opts: { from: string; to: string }): Promise<Cla
   `);
 }
 
+/* ------------------------------------------------- raised, and not yet sent */
+
+export type UnsentClaimDayRow = {
+  userId: string;
+  userName: string;
+  day: string;
+  lineCount: number;
+  claimedPaise: number;
+  legCount: number;
+  metres: number;
+  /** When he got back — the handset will not close a day without it. */
+  returnedAt: Date | string | null;
+  lastRaisedAt: Date | string | null;
+};
+
+/**
+ * Claims the office HOLDS and the list above does not draw.
+ *
+ * `claimDays` reads submitted days only, and a day is submitted from one place
+ * on the handset — Close the day, which also wants the time he got back. The
+ * claim itself goes up the moment he presses Send claim, and the phone told
+ * him it was "sent to your manager". So a salesman who never closed the day
+ * had claims on the server that no screen showed, and the office reported
+ * them as missing. This is that set, said as what it is: raised, stored, and
+ * waiting on HIM rather than on anybody here.
+ *
+ * Nothing in it can be decided. The day is the unit of a decision and it has
+ * not been priced or locked — what the office can do is ask him to close it.
+ *
+ * A line with no `expense_day_id` is matched to its day by person and date,
+ * because an older build sent claims without one; a line filed under an old
+ * claim (`claim_id`) is left out, since `/sales/approvals` already draws those.
+ */
+export async function unsentClaimDays(opts: {
+  from: string;
+  to: string;
+}): Promise<UnsentClaimDayRow[]> {
+  const scope = await managerScope();
+  return db.execute<UnsentClaimDayRow>(sql`
+    with lines as (
+      select e.user_id, e.expense_date as day,
+             count(*)::int as n, sum(e.amount_paise) as claimed,
+             max(e.server_created_at) as last_at
+        from mbos_expenses e
+       where e.superseded_by_id is null
+         and e.claim_id is null
+         and e.expense_date between ${opts.from}::date and ${opts.to}::date
+         and not exists (
+           select 1 from mbos_expense_days d
+            where d.submitted_at is not null
+              and (d.id = e.expense_day_id
+                   or (e.expense_day_id is null
+                       and d.user_id = e.user_id and d.day = e.expense_date)))
+       group by 1, 2
+    ),
+    legs as (
+      select d.user_id, d.day, count(*)::int as n,
+             coalesce(sum(l.chosen_metres), 0)::int as metres,
+             max(l.server_created_at) as last_at
+        from mbos_travel_legs l
+        join mbos_expense_days d on d.id = l.expense_day_id
+       where d.submitted_at is null
+         and not l.claim_excluded
+         and d.day between ${opts.from}::date and ${opts.to}::date
+       group by 1, 2
+    ),
+    joined as (
+      select coalesce(lines.user_id, legs.user_id) as user_id,
+             coalesce(lines.day, legs.day) as day,
+             coalesce(lines.n, 0) as line_count,
+             coalesce(lines.claimed, 0) as claimed,
+             coalesce(legs.n, 0) as leg_count,
+             coalesce(legs.metres, 0) as metres,
+             greatest(lines.last_at, legs.last_at) as last_at
+        from lines
+        full outer join legs on legs.user_id = lines.user_id and legs.day = lines.day
+    )
+    select j.user_id as "userId", u.name as "userName", j.day::text as day,
+           j.line_count as "lineCount", j.claimed as "claimedPaise",
+           j.leg_count as "legCount", j.metres,
+           d.returned_at as "returnedAt", j.last_at as "lastRaisedAt"
+      from joined j
+      join users u on u.id = j.user_id
+      left join mbos_expense_days d on d.user_id = j.user_id and d.day = j.day
+     where true ${onlyMine(scope, "j.user_id")}
+     order by j.day desc, u.name asc
+  `);
+}
+
 /* ------------------------------------------------------ what a day is made of */
 
 export type ClaimLineFile = { id: string; filename: string; contentType: string; gone: boolean };

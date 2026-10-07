@@ -1,9 +1,9 @@
 import React from 'react';
 import { Pressable, TextInput, View } from 'react-native';
-import { useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
-import { Badge, Choice, ListCard, PrimaryButton, SecondaryButton, T } from '../src/components/ui/primitives';
+import { Badge, Card, Choice, ListCard, PrimaryButton, SecondaryButton, T } from '../src/components/ui/primitives';
 import { VoiceField } from '../src/components/ui/dictate';
 import { BottomSheet, Calendar } from '../src/components/ui/overlays';
 import { Icon } from '../src/components/ui/Icon';
@@ -11,7 +11,15 @@ import { Presence, Stagger, animateLayout, animateLayoutFor } from '../src/compo
 import { feedback } from '../src/components/ui/feedback';
 import { claimExpense, expenseTotals, expensesOn, listExpenses, type Expense } from '../src/data/requests';
 import { getConfig } from '../src/data/config';
-import { activePolicy, previewClaim, CLAIM_KINDS, type ClaimedLine, type LocalPolicy } from '../src/data/travel';
+import {
+  activePolicy,
+  previewClaim,
+  unsentDays,
+  CLAIM_KINDS,
+  type ClaimedLine,
+  type LocalPolicy,
+  type UnsentDay,
+} from '../src/data/travel';
 import type { ExpenseKind } from '../src/engines/generated/expense-policy';
 import { pickDocuments, pickPhotos, takePhoto, type Picked } from '../src/native/capture';
 import { discardQueuedMedia } from '../src/sync/media';
@@ -82,6 +90,7 @@ export default function ExpensesScreen() {
   const back = useCameFrom('more');
   const notify = useStore((s) => s.notify);
   const boot = useBoot();
+  const userId = boot.session?.user.id ?? '';
 
   const [rows, setRows] = React.useState<Expense[]>([]);
   /* What the capped list cannot say for itself: how many claims there are in
@@ -106,6 +115,9 @@ export default function ExpensesScreen() {
      claim, so a preview priced without these reports the whole cap however much
      of it has gone — and he finds out at approval. */
   const [dayLines, setDayLines] = React.useState<ClaimedLine[]>([]);
+  /* Days with claims on them that he has not closed. Until a day is closed the
+     office holds the claims and cannot decide them — see `unsentDays`. */
+  const [unsent, setUnsent] = React.useState<UnsentDay[]>([]);
 
   const [open, setOpen] = React.useState(false);
   const [fixing, setFixing] = React.useState(false);
@@ -145,7 +157,8 @@ export default function ExpensesScreen() {
       getConfig<number>('mbos.expenses.backdatedDaysAllowed', 30),
       getConfig<number>('mbos.expenses.maxAttachments', 6),
       getConfig<number>('attachments.maxSizeMb', 5),
-    ]).then(([e, t, p, age, files, mb]) => {
+      unsentDays(userId),
+    ]).then(([e, t, p, age, files, mb, u]) => {
       if (!live) return;
       /* A claim just sent arrives at the top and pushes the rest down; that
          move eases rather than jumps. Capped, like every list here. */
@@ -156,11 +169,12 @@ export default function ExpensesScreen() {
       setMaxAgeDays(age);
       setMaxFiles(files);
       setMaxSizeMb(mb);
+      setUnsent(u);
     });
     return () => {
       live = false;
     };
-  }, []);
+  }, [userId]);
 
   useFocusEffect(load);
 
@@ -414,7 +428,7 @@ export default function ExpensesScreen() {
     setSendFail(null);
     try {
       await claimExpense({
-        userId: boot.session?.user.id ?? '',
+        userId,
         spentOn: ex.whenIso,
         category: kinds.find((k) => k.key === kind)?.category ?? 'other',
         kind,
@@ -441,7 +455,7 @@ export default function ExpensesScreen() {
       notify(
         exOver
           ? 'Claimed ' + inrFromPaise(exAmtPaise) + ' · above the limit. Your manager must allow it'
-          : 'Claimed ' + inrFromPaise(exAmtPaise) + ' · sent to your manager',
+          : 'Claimed ' + inrFromPaise(exAmtPaise) + ' · close the day to send it to your manager',
         exOver ? 'warn' : 'success',
       );
     } catch (e) {
@@ -459,8 +473,38 @@ export default function ExpensesScreen() {
       <BackLink label={back.label} onPress={back.go} />
       <T s="h1">Expenses</T>
       <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-        {inrFromPaise(pending) + ' waiting for your manager'}
+        {inrFromPaise(pending) + ' claimed and not yet decided'}
       </T>
+
+      {/* THE CLAIM IS NOT WITH HIS MANAGER UNTIL THE DAY IS CLOSED, and this
+          screen used to say it was. A day is what the office decides, so a
+          claim on a day he never closed was stored and drawn nowhere a manager
+          looks. Each day still open is named here, with the way to send it. */}
+      {unsent.length ? (
+        <Card style={{ marginTop: 12, backgroundColor: C.warnBg }}>
+          <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>Not sent to your manager yet</T>
+          <T s="small" style={{ color: C.ink, marginTop: 2 }}>
+            Your manager sees a claim only after you close its day.
+          </T>
+          {unsent.map((u) => (
+            <View
+              key={u.day}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 10 }}>
+              <T style={[{ flex: 1, minWidth: 0, fontSize: 14, color: C.ink }, tabular]}>
+                {(u.day === todayIso ? 'Today' : dmy(u.day)) +
+                  ' · ' +
+                  (u.claims
+                    ? inrFromPaise(u.claimedPaise) + ' in ' + u.claims + (u.claims === 1 ? ' claim' : ' claims')
+                    : u.legs + (u.legs === 1 ? ' trip' : ' trips'))}
+              </T>
+              <SecondaryButton
+                label="Close day"
+                onPress={() => router.push(`/eod?day=${u.day}&from=expenses` as never)}
+              />
+            </View>
+          ))}
+        </Card>
+      ) : null}
 
       <PrimaryButton label="Add an expense" style={{ marginTop: 12, borderRadius: radius.xl }} onPress={add} />
       <T s="caption" style={{ marginTop: 10 }}>
