@@ -19,7 +19,7 @@ import {
   gpsForLeg,
   duplicatesForDay,
 } from "./expense-service";
-import { resolveSubject, classOfCity } from "./expense-policy-service";
+import { resolveSubject, classOfCity, ensurePolicyRow } from "./expense-policy-service";
 
 /* ---------------------------------------------------------------------------
  * Closing a day: pricing it, writing the eligible figures onto its lines,
@@ -108,6 +108,7 @@ export async function rescoreLeg(legId: string): Promise<void> {
 async function writeLineFigures(answer: NonNullable<Awaited<ReturnType<typeof priceDay>>>) {
   const c = answer.computation;
   if (!c) return;
+  if (answer.policy) await ensurePolicyRow(answer.policy.id);
 
   /* A travel leg's money is an expense LINE, so the ledger stays one list.
      Upserted on (sourceType, sourceId) rather than inserted, because a day is
@@ -407,6 +408,7 @@ export async function submitDay(
     };
   }
 
+  await ensurePolicyRow(answer.policy!.id);
   await db
     .update(mbosExpenseDays)
     .set({ policyId: answer.policy!.id, updatedAt: new Date() })
