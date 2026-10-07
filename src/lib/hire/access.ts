@@ -48,6 +48,7 @@ export async function requireHire(): Promise<HireContext> {
        that imports this module, which a test runner cannot load. */
     const { redirect } = await import("next/navigation");
     redirect("/apps");
+    throw new Error("unreachable");
   }
   return ctx;
 }
