@@ -81,10 +81,7 @@ export function ShopMap({
   prospects,
   apiKey,
   keysSpent,
-  height,
 }: {
-  /** A fixed height in pixels, for a map laid out beside a list. Absent keeps the wide frame. */
-  height?: number;
   shops: ShopPin[];
   prospects: ProspectPin[];
   /** Ola Maps' key, read once server-side and handed down — see `street-map.tsx`'s doc comment. */
@@ -414,7 +411,7 @@ export function ShopMap({
 
   if (!apiKey) {
     return (
-      <Frame key="no-key" height={height}>
+      <Frame key="no-key">
         <div className="flex h-full flex-col items-center justify-center px-6 text-center">
           <p className="text-[15px] font-semibold text-ink">
             {keysSpent ? "Every Ola Maps key has run out" : "The map needs a key"}
@@ -423,7 +420,7 @@ export function ShopMap({
             {keysSpent
               ? "Ola has refused every key held for quota, so there are no streets to draw until one of them resets at the start of the month or another is added in Admin Console → Integrations."
               : "Add an Ola Maps key in Admin Console → Integrations to draw the streets under this."}{" "}
-            The figures and the list beside it still have everything that is known.
+            The People and Cities tabs still have everything that is known.
           </p>
         </div>
       </Frame>
@@ -432,7 +429,7 @@ export function ShopMap({
 
   if (!hasAnything) {
     return (
-      <Frame key="empty" height={height}>
+      <Frame key="empty">
         <div className="flex h-full flex-col items-center justify-center px-6 text-center">
           <p className="text-[15px] font-semibold text-ink">Nothing to place yet</p>
           <p className="mt-1 max-w-[420px] text-[13px] text-muted">
@@ -445,7 +442,7 @@ export function ShopMap({
 
   if (failed) {
     return (
-      <Frame key="failed" height={height}>
+      <Frame key="failed">
         <div className="flex h-full flex-col items-center justify-center px-6 text-center">
           <p className="text-[15px] font-semibold text-ink">The map could not be drawn</p>
           <p className="mt-1 max-w-[420px] text-[13px] text-muted">
@@ -457,7 +454,7 @@ export function ShopMap({
   }
 
   return (
-    <Frame key="map" height={height}>
+    <Frame key="map">
       <div ref={host} className="h-full w-full" />
       <OlaMapsStyleSwitcher mode={styleMode} onChange={setStyleMode} />
       {/* Stacked below the style switcher rather than beside it — both anchored
@@ -644,13 +641,10 @@ function shopFeatures(list: ShopPin[]): GeoJSON.FeatureCollection {
 }
 
 /** Same frame shape as the Live map's, so the two read as one family of screen. */
-function Frame({ children, height }: { children: React.ReactNode; height?: number }) {
+function Frame({ children }: { children: React.ReactNode }) {
   return (
     <div className="relative overflow-hidden rounded-[6px] border border-line bg-surface">
-      <div
-        className="relative min-h-[320px] bg-[#F0F2F6]"
-        style={height ? { height } : { aspectRatio: "2.4" }}
-      >
+      <div className="relative min-h-[320px] bg-[#F0F2F6]" style={{ aspectRatio: "2.4" }}>
         {children}
       </div>
     </div>

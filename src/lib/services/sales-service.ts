@@ -4497,6 +4497,65 @@ export async function territorySeatPeople(seat: TerritorySeat): Promise<Territor
   `) as unknown as TerritoryPerson[];
 }
 
+export type TerritoryCity = {
+  state: string | null;
+  city: string | null;
+  customers: number;
+  leads: number;
+  unpinned: number;
+  outstandingPaise: number;
+  /** Who holds this city's accounts in the chosen seat, most accounts first. */
+  holders: string[];
+  /** Accounts here nobody holds in the chosen seat. */
+  unassigned: number;
+};
+
+/**
+ * The same book as `territorySeatPeople`, cut by place instead of by person —
+ * "who covers Nagpur" rather than "where does Priya work".
+ */
+export async function territoryCities(
+  seat: TerritorySeat,
+  person: string | null,
+): Promise<TerritoryCity[]> {
+  const scope = await placeScope();
+  const col = sql.raw(seatColumn(seat));
+  return db.execute<TerritoryCity>(sql`
+    with rows as (
+      select ${placeNameSql("c", "state", "region")} as state,
+             ${placeNameSql("c", "city", "city")} as city,
+             c.kind, c.outstanding,
+             (c.gps_lat is null or c.gps_lng is null) as unpinned,
+             ${col} as uid
+        from customers c
+       where ${TERRITORY_BOOK}
+         ${seatPersonClause(seat, person)}
+         ${mineByPlace(scope, "coalesce(c.sales_am_id, c.owner_id)", "c")}
+    ),
+    holders as (
+      select state, city, array_agg(name order by n desc, name) as names
+        from (
+          select r.state, r.city, u.name, count(*) as n
+            from rows r join users u on u.id = r.uid
+           group by r.state, r.city, u.name
+        ) x
+       group by state, city
+    )
+    select r.state, r.city,
+           count(*) filter (where r.kind = 'customer')::int as customers,
+           count(*) filter (where r.kind = 'lead')::int as leads,
+           count(*) filter (where r.unpinned)::int as unpinned,
+           coalesce(sum(r.outstanding) filter (where r.kind = 'customer'), 0)::bigint as "outstandingPaise",
+           count(*) filter (where r.uid is null)::int as unassigned,
+           coalesce(h.names, '{}') as holders
+      from rows r
+      left join holders h on h.state is not distinct from r.state and h.city is not distinct from r.city
+     group by r.state, r.city, h.names
+     order by count(*) desc, r.city asc nulls last
+     limit 1000
+  `) as unknown as TerritoryCity[];
+}
+
 export type TerritoryTotals = {
   customers: number;
   leads: number;
