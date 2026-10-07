@@ -82,6 +82,7 @@ const files = [
   "src/lib/timeline-fold.test.ts",
   "src/lib/feedback.test.ts",
   "src/lib/activity-location.test.ts",
+  "src/lib/salesman-day.test.ts",
   // The server's end-of-day punch-out reminder: found, claimed, sent once.
   "src/lib/punch-out-reminders.test.ts",
   "src/lib/positions-endpoint.test.ts",

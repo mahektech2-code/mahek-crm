@@ -35,6 +35,7 @@ import {
   policyReadiness,
 } from "@/lib/actions/expense-policy";
 import { policyForDate, readPolicy } from "@/lib/services/expense-policy-service";
+import { STANDARD_POLICY_ID } from "@/lib/expense-policy-standard";
 import { priceDay } from "@/lib/services/expense-service";
 import { submitDay, reopenDay } from "@/lib/services/expense-submit-service";
 import { claimDays } from "@/lib/services/expense-claims-service";
@@ -251,13 +252,9 @@ after(async () => {
 /* ------------------------------------------------------- §A authoring */
 
 describe("authoring a policy", () => {
-  test("a draft becomes the version in force, and reads back as sentences", async () => {
-    await publishPolicyV("2026-04-01", 350);
-    const policy = await policyForDate("2026-06-15");
-    assert.ok(policy, "a policy should cover a date inside its range");
-    assert.equal(policy!.versionNo, 1);
-
-    const detail = await readPolicy(policy!.id, "2026-06-15");
+  test("a published draft reads back as sentences", async () => {
+    const policyId = await publishPolicyV("2026-04-01", 350);
+    const detail = await readPolicy(policyId, "2026-06-15");
     assert.ok(detail);
     assert.equal(detail!.unreadableCount, 0, "every rule should be readable");
     const sentences = detail!.rules.map((r) => r.sentence).join(" ");
@@ -320,44 +317,27 @@ describe("authoring a policy", () => {
 
 /* ------------------------------------- §A6 the policy of the expense's date */
 
-describe("requirement 6 — an old expense keeps its old policy", () => {
-  test("a rate rise does not restate what last quarter's day was worth", async () => {
-    await publishPolicyV("2026-04-01", 350);
-
-    const oldDay = "2026-06-15";
-    const oldDayId = await openDay(oldDay);
-    await addBikeLeg(oldDayId, oldDay, 40);
-    setTestUser(salesman);
-    const first = await submitDay(salesman.id, oldDay);
-    assert.ok(first.ok);
-
-    const beforeRise = await priceDay(salesman.id, oldDay);
-    assert.equal(beforeRise!.computation!.travelPaise, 14000, "40 km × ₹3.50");
-
-    /* The rate goes up. A new VERSION, which is the only way it can go up. */
-    setTestUser(admin);
-    await publishPolicyV("2026-09-01", 500);
-
-    const afterRise = await priceDay(salesman.id, oldDay);
-    assert.equal(
-      afterRise!.computation!.travelPaise,
-      14000,
-      "June is still worked out on June's policy",
-    );
-
-    const newDay = "2026-09-10";
-    const newDayId = await openDay(newDay);
-    await addBikeLeg(newDayId, newDay, 40);
-    const priced = await priceDay(salesman.id, newDay);
-    assert.equal(priced!.computation!.travelPaise, 20000, "September gets the new rate");
+describe("the hard-coded standard policy", () => {
+  test("it is the policy in force on every date, whatever the table holds", async () => {
+    await publishPolicyV("2026-04-01", 500);
+    assert.equal((await policyForDate("2026-06-15"))!.id, STANDARD_POLICY_ID);
+    assert.equal((await policyForDate("2001-01-01"))!.id, STANDARD_POLICY_ID);
   });
 
-  test("the version in force ends the day before the next one starts", async () => {
-    await publishPolicyV("2026-04-01", 350);
-    await publishPolicyV("2026-09-01", 500);
-
-    assert.equal((await policyForDate("2026-08-31"))!.versionNo, 1);
-    assert.equal((await policyForDate("2026-09-01"))!.versionNo, 2);
+  test("a day is priced and stamped with it, at ₹3.50 a km on a bike", async () => {
+    const day = "2026-06-15";
+    const dayId = await openDay(day);
+    await addBikeLeg(dayId, day, 40);
+    setTestUser(salesman);
+    const sent = await submitDay(salesman.id, day);
+    assert.ok(sent.ok);
+    const priced = await priceDay(salesman.id, day);
+    assert.equal(priced!.computation!.travelPaise, 14000, "40 km × ₹3.50");
+    const [row] = await db
+      .select({ policyId: mbosExpenseDays.policyId })
+      .from(mbosExpenseDays)
+      .where(eq(mbosExpenseDays.id, dayId));
+    assert.equal(row!.policyId, STANDARD_POLICY_ID);
   });
 });
 
@@ -822,7 +802,7 @@ describe("a claim written down twice", () => {
 
 describe("what a draft would have cost", () => {
   test("a rate rise is priced against days that really happened", async () => {
-    await publishPolicyV("2026-04-01", 350);
+    const publishedId = await publishPolicyV("2026-04-01", 350);
     const day = "2026-06-15";
     const dayId = await openDay(day);
     await addBikeLeg(dayId, day, 40);
@@ -834,7 +814,7 @@ describe("what a draft would have cost", () => {
       title: "Proposed rise",
       effectiveFrom: "2027-01-01",
       notes: null,
-      copyFromPolicyId: (await policyForDate(day))!.id,
+      copyFromPolicyId: publishedId,
     });
     assert.ok(draft.ok);
 
@@ -869,7 +849,7 @@ describe("what a draft would have cost", () => {
   });
 
   test("it writes nothing — the day is worth what it was worth afterwards", async () => {
-    await publishPolicyV("2026-04-01", 350);
+    const publishedId = await publishPolicyV("2026-04-01", 350);
     const day = "2026-06-16";
     const dayId = await openDay(day);
     await addBikeLeg(dayId, day, 40);
@@ -881,7 +861,7 @@ describe("what a draft would have cost", () => {
       title: "Much higher",
       effectiveFrom: "2027-01-01",
       notes: null,
-      copyFromPolicyId: (await policyForDate(day))!.id,
+      copyFromPolicyId: publishedId,
     });
     assert.ok(draft.ok);
     const copied = (await readPolicy(draft.data.id, day))!.rules.find(

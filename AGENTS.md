@@ -48,6 +48,9 @@ npm run jobs -- erp-alerts                 # the ERP's unusual-activity checks �
                            # they also run hourly
 npm run jobs -- erp-digest                 # yesterday's owner summary — it also
                            # runs nightly
+npm run jobs -- field-activity-reparse     # re-read every stored EMP 2.0
+                           # activity date in its own read's day/month order
+                           # (also runs after the daily reconcile)
 npm run jobs -- taken-order-reparse        # re-read what is stored — the one
                            # to run when the RULE changed, not the sheet
 npm run jobs -- project-sheet --owner=vikram@mahek.in --bills
@@ -6251,6 +6254,23 @@ MahekOne sets no monthly target for a field salesman and a figure with nothing
 to be computed from would be an invention on the one screen where a wrong number
 is least forgivable.
 
+**THE EXPENSE POLICY IS HARD-CODED, and that is a REVERSAL (Oct 2026).**
+It shipped as versioned rules typed into the Admin Console — thirteen rule
+kinds, grades, city classes, drafts, a simulator and a publish step over five
+tabs — and it was too much to use: nothing was published, so every day reached
+a manager unpriced. `lib/expense-policy-standard.ts` is now THE policy, one
+for everybody, every city and every date, and `policyForDate` returns it. The
+engine is untouched and still pure — it is handed this `Policy` exactly as it
+was handed a published version, on the server and on the handset. The Admin
+Console and the Sales Dashboard both draw `policyInWords()`, built from the
+same rules, so the page and the arithmetic cannot disagree. Changing a figure is
+a code change, on purpose, until making it editable again is decided. Days are
+stamped `xpol_standard`, an ARCHIVED anchor row (`0228`, and `ensurePolicyRow`
+on the write path) so `mbos_expense_days.policy_id` keeps its foreign key; the
+old tables, actions and simulator are left in place and read by no screen. The
+manager's Expenses screen reads "Asked for / Policy allows / Status", one
+Review button a day.
+
 **TRAVEL IS ASKED TWICE A DAY, AND NEVER AT A SHOP — a reversal (Sep 2026).**
 The paragraphs below describe how a visit used to ask how he was travelling,
 open a meter camera, and ask for the bus fare on the way out. The field would
@@ -6948,6 +6968,21 @@ figure read off a visit and one read off the shop under it are one answer. The
 dwell ring and the activity dot underneath it stand down when a click lands on
 a visit (`overVisit`): MapLibre fires every layer handler under the cursor, and
 two popups each covering half of the other is a control nobody can aim.
+
+**TODAY IS A TABLE, AND A NAME OPENS THAT MAN'S DAY IN A NEW TAB.** The team
+on `/sales` was a card per salesman, which is a wall at a hundred. It is one
+table now — search, status tabs with counts, sort on any column — in a box that
+scrolls DOWN and never across at 1280. A row opens `/sales/live/[id]` in a new
+tab, because Today is the screen a manager keeps open. That page is one man's
+day with NO switcher: his live map on the left and, on the right, a timeline of
+every punch, leg, unexplained stop, visit (customer or lead, outcome, notes,
+photos), order, payment and other act, filterable by kind.
+`engines/salesman-day.ts` builds it, pure, from the same dwell and trip engines
+the map draws with, so the kilometres and stops on the page and on the line
+agree; `salesman-day-service.ts` is the server read, scoped through
+`lastKnownPositions`, and `salesman-day.test.ts` executes every query in it.
+`/sales/live?salesman=` redirects there, which is how the Live map's own
+"follow one man" mode retired.
 
 **FULL SCREEN IS A LAYOUT, NOT THE BROWSER'S.** The browser's own fullscreen
 takes the tab bar with it, which is more than anybody asked for, and it owns the

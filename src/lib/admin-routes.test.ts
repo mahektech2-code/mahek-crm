@@ -61,7 +61,7 @@ test("every address the console builds has a page behind it", () => {
     ...ADMIN_TABS.feedback.map((t) => ADMIN.feedback(t.slug)),
     ...ADMIN_TABS.signIns.map((t) => ADMIN.signIns(t.slug)),
     ...ADMIN_TABS.catalogue.map((t) => ADMIN.catalogue(t.slug)),
-    ...ADMIN_TABS.expensePolicy.map((t) => ADMIN.expensePolicy(t.slug)),
+    ADMIN.expensePolicy(),
     ...ADMIN_TABS.sheets.map((t) => ADMIN.sheets(t.slug)),
     ...ADMIN_TABS.audit.map((t) => ADMIN.audit(t.slug)),
     ...SETTINGS_PAGES.flatMap((p) => schemaForPage(p.id)!.tabs.map((t) => ADMIN.settingsFor(p.id, t.key))),

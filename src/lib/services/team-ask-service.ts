@@ -7,9 +7,8 @@ import { sql as pg } from "@/db";
 import type { ReservedSql } from "postgres";
 import { requireCapability } from "@/lib/access-control";
 import { listUserApps, listUserModules } from "@/lib/access";
-import { APP_TIMEZONE } from "@/lib/business-date";
+import { APP_TIMEZONE, calendarDate } from "@/lib/business-date";
 import { getConfig } from "@/lib/config/store";
-import { toISODate } from "@/lib/format";
 import { today } from "@/lib/recompute";
 import { readSecret } from "@/lib/secrets";
 import { managerScope } from "@/lib/services/sales-service";
@@ -121,8 +120,8 @@ function describe(views: BuiltView[], enums: Map<string, string[]>): string {
 /** A value as the model should read it: instants in IST, dates as dates. */
 function plain(value: unknown, typeOid: number | undefined): unknown {
   if (value instanceof Date) {
-    // A DATE arrives as UTC midnight of that day, so its UTC parts ARE the date.
-    if (typeOid === 1082) return toISODate(value);
+    /* A DATE column: the driver parses it as UTC midnight, so read it back in UTC. */
+    if (typeOid === 1082) return calendarDate(value, "UTC");
     return (
       new Intl.DateTimeFormat("en-CA", {
         timeZone: APP_TIMEZONE,
