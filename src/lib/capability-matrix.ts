@@ -794,6 +794,11 @@ export const MATRIX: Record<AppId, AppMatrix> = {
      app ends up needing (publish, delete, etc.) arrives with the PR that
      gives it something real to decide. */
   website: { associate: [], manager: [] },
+  /* Hire's decisions are its own ROLES (`lib/hire/roles.ts`): six jobs —
+     recruiter, interviewer, hiring manager, onboarding, HR head, admin — do
+     not fit two levels, and the capability that matters most there, keeping
+     an interviewer away from earlier scores, is a scope rather than a verb. */
+  hire: { associate: [], manager: [] },
   /* The ERP's decisions are POWERS granted to named people (`lib/erp/powers.ts`),
      not capabilities of a level — the CEO who verifies a test is one person,
      not every ERP manager. Holding the app and its modules is what opens the
