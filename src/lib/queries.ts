@@ -33,6 +33,8 @@ import { placeFilterOptions, placeFilterSql } from "./services/place-filter-serv
 import type { PlaceFilterOptions, PlaceFilterValues, PlaceNames } from "./place-filters";
 import { callDetailsFor } from "./services/call-detail-service";
 import type { CallDetailView } from "./call-detail";
+import { getConfig } from "./config/store";
+import { upcomingBirthdays, type UpcomingBirthday } from "./customer-contacts";
 
 /* ---------------------------------------------------------------------------
  * Reads for the screens. Every one resolves scope, so a missed check cannot
@@ -410,6 +412,11 @@ export type CustomerRow = typeof customers.$inferSelect & {
    * rungs are rungs nobody could place.
    */
   place?: PlaceNames;
+  /**
+   * Contacts whose birthday falls inside `customers.birthdayHeadsUpDays`,
+   * soonest first. Absent on reads that do not ask for it.
+   */
+  birthdays?: UpcomingBirthday[];
 };
 
 /**
@@ -1118,6 +1125,8 @@ export async function listCustomersPage(
 
   const total = Number(agg?.total ?? 0);
   const pageCount = Math.max(1, Math.ceil(total / perPage));
+  const birthdayDay = await businessToday();
+  const birthdayWindow = (await getConfig())["customers.birthdayHeadsUpDays"];
   const page = Math.min(Math.max(filters.page ?? 1, 1), pageCount);
 
   const rows = await db
@@ -1179,6 +1188,16 @@ export async function listCustomersPage(
         select count(*)::int from customer_distributors d
          where d.distributor_customer_id = customers.id
       )`,
+      // Only the contacts with a birthday on record — the window is applied in
+      // JS by `upcomingBirthdays`, the same rule the record and the call
+      // drawer use, so the three cannot disagree about whose birthday is near.
+      birthdayContacts: sql<Array<{ id: string; name: string | null; role: string; birthDay: number; birthMonth: number }> | null>`(
+        select json_agg(json_build_object(
+                 'id', cc.id, 'name', cc.name, 'role', cc.role,
+                 'birthDay', cc.birth_day, 'birthMonth', cc.birth_month))
+          from customer_contacts cc
+         where cc.customer_id = customers.id and cc.birth_month is not null
+      )`,
     })
     .from(customers)
     .leftJoin(users, eq(users.id, customers.ownerId))
@@ -1199,6 +1218,9 @@ export async function listCustomersPage(
       servedShops: Number(r.servedShops),
       nextStep: r.nextStep ?? null,
       place: r.place,
+      birthdays: r.birthdayContacts?.length
+        ? upcomingBirthdays(r.birthdayContacts, birthdayDay, birthdayWindow)
+        : [],
     })),
     total,
     bookTotal: Number(book?.n ?? 0),

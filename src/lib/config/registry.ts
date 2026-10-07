@@ -1418,6 +1418,17 @@ export const SETTINGS = [
     max: 180,
   },
   {
+    key: "customers.birthdayHeadsUpDays",
+    type: "integer",
+    category: "interactions",
+    label: "Birthday heads-up",
+    description:
+      "How many days ahead a contact's birthday is called out on the customer record, the call drawer and the customer list. 0 shows it on the day only.",
+    default: 7,
+    min: 0,
+    max: 60,
+  },
+  {
     key: "dashboard.reminderOverdueFlagDays",
     type: "integer",
     category: "reminders",
@@ -5590,6 +5601,7 @@ export type Config = {
   "interactions.followUpDefaultDays": number;
   "interactions.paymentPromiseDefaultDays": number;
   "customers.defaultCreditDays": number;
+  "customers.birthdayHeadsUpDays": number;
 
   "attachments.maxSizeMb": number;
   "attachments.acceptedTypes": string[];

@@ -2,7 +2,8 @@ import "server-only";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { orderCountsSql, orderValueSql } from "../order-status";
-import { bills, calls, customers, orders } from "@/db/schema";
+import { bills, calls, customerContacts, customers, orders } from "@/db/schema";
+import { upcomingBirthdays, type UpcomingBirthday } from "../customer-contacts";
 import { assertCustomerInScope } from "../access-control";
 import { getConfig } from "../config/store";
 import { customerProducts, type FrequentProduct } from "./product-service";
@@ -107,6 +108,11 @@ export type CustomerInformation = {
    * disagree about what the promise actually is.
    */
   pendingHold: { headline: string; detail: string; reminderId: string; dueDate: string } | null;
+  /**
+   * Contacts whose birthday falls inside `customers.birthdayHeadsUpDays`,
+   * soonest first — said on the call drawer so the telecaller can mention it.
+   */
+  birthdays: UpcomingBirthday[];
 };
 
 /**
@@ -367,6 +373,14 @@ export async function customerInformation(
       totalOrderCount: r.totalOrderCount,
     })),
     frequentProducts: frequent,
+    birthdays: upcomingBirthdays(
+      await db
+        .select()
+        .from(customerContacts)
+        .where(eq(customerContacts.customerId, customerId)),
+      day,
+      config["customers.birthdayHeadsUpDays"],
+    ),
     productHistorySource: "crm",
     productHistorySyncedAt: null,
     pendingHold,

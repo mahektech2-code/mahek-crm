@@ -9833,6 +9833,13 @@ export const customerContacts = pgTable(
     phone: text("phone").notNull(),
     email: text("email"),
     note: text("note"),
+    /**
+     * The birthday, as a day and a month and never a year — nobody at a
+     * counter is asked their age. Both or neither (a check constraint), and
+     * null is "nobody asked", which is every contact that existed before.
+     */
+    birthDay: smallint("birth_day"),
+    birthMonth: smallint("birth_month"),
     isPrimary: boolean("is_primary").notNull().default(false),
     forWhatsapp: boolean("for_whatsapp").notNull().default(false),
     forPaymentReminders: boolean("for_payment_reminders").notNull().default(false),
@@ -9847,6 +9854,10 @@ export const customerContacts = pgTable(
     uniqueIndex("customer_contacts_one_primary").on(t.customerId).where(sql`${t.isPrimary}`),
     uniqueIndex("customer_contacts_one_whatsapp").on(t.customerId).where(sql`${t.forWhatsapp}`),
     uniqueIndex("customer_contacts_one_payment").on(t.customerId).where(sql`${t.forPaymentReminders}`),
+    check(
+      "customer_contacts_birthday_check",
+      sql`(${t.birthDay} is null and ${t.birthMonth} is null) or (${t.birthDay} is not null and ${t.birthMonth} is not null and ${t.birthMonth} between 1 and 12 and ${t.birthDay} between 1 and 31)`,
+    ),
   ],
 );
 

@@ -168,6 +168,7 @@ export default async function Page({
         nextStep: c.nextStep,
         reactivationRequested: c.reactivationRequested,
         reactivationReason: c.reactivationReason,
+        birthdays: c.birthdays ?? [],
       }))}
     />
   );

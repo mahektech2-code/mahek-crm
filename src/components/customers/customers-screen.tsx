@@ -33,6 +33,7 @@ import {
   Tabs,
 } from "@/components/ui/overlays";
 import { CustomerContactsPanel } from "@/components/customers/customer-contacts-panel";
+import { birthdaySentence, type UpcomingBirthday } from "@/lib/customer-contacts";
 import {
   loadCustomerEditor,
   type CustomerEditorData,
@@ -138,6 +139,8 @@ export type Row = {
   reactivationReason: string | null;
   /** The next call, as of the last call logged. Null where nobody has called. */
   nextStep: StoredNextStep | null;
+  /** Contacts with a birthday inside the heads-up window, soonest first. */
+  birthdays?: UpcomingBirthday[];
 };
 
 /**
@@ -547,6 +550,7 @@ export function CustomersScreen({
           "Outstanding (₹)",
           "Next call",
           "Next call said on",
+          "Birthdays coming up",
         ],
         subset.map((r) => [
           r.name,
@@ -574,6 +578,7 @@ export function CustomersScreen({
             ? (r.nextStep.date ?? NEXT_STEP_LABELS[r.nextStep.kind].short)
             : "",
           r.nextStep?.toldOn ?? "",
+          (r.birthdays ?? []).map(birthdaySentence).join("; "),
         ]),
       ),
       [
@@ -970,6 +975,15 @@ export function CustomersScreen({
                       >
                         {r.name}
                       </Link>
+                      {r.birthdays?.length ? (
+                        <span
+                          className="ml-2 inline-flex shrink-0 text-brand"
+                          title={r.birthdays.map(birthdaySentence).join("\n")}
+                          aria-label={r.birthdays.map(birthdaySentence).join("; ")}
+                        >
+                          <Icon name="gift" size={14} />
+                        </span>
+                      ) : null}
                       {r.slowPayer ? (
                         <span className="ml-2 shrink-0">
                           <SlowPayerBadge />
@@ -2464,12 +2478,15 @@ function CustomerFormBody({
         {editor && customerId ? (
           <>
             <p className="mb-3 text-[13px] text-muted">
-              Everybody at this shop worth having a number for. Mark who we ring, where WhatsApp
-              goes and where payment reminders go — each change is saved as you make it.
+              Everybody at this shop worth having a number for, with their birthday where you know
+              it. Mark who we ring, where WhatsApp goes and where payment reminders go — each
+              change is saved as you make it.
             </p>
             <CustomerContactsPanel
               customerId={customerId}
               initial={editor.contacts}
+              today={editor.today}
+              birthdayHeadsUpDays={editor.birthdayHeadsUpDays}
               onChange={(contacts) => setEditor((e) => (e ? { ...e, contacts } : e))}
             />
             {detail ? (

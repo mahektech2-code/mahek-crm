@@ -7,9 +7,15 @@ import { CardGrid } from "@/components/ui/card-grid";
 import { Icon } from "@/components/shell/icons";
 import { useToast } from "@/components/ui/toast";
 import {
+  BIRTH_MONTH_NAMES,
   CONTACT_ROLES,
   DESIGNATION_LABELS,
+  birthdayLabel,
+  birthdayProblem,
+  birthdayWhen,
   contactRoleLabel,
+  daysInBirthMonth,
+  daysUntilBirthday,
   isMobile,
   phoneForReading,
   sortContacts,
@@ -42,10 +48,20 @@ export function CustomerContactsPanel({
   initial,
   canEdit = true,
   onChange,
+  today,
+  birthdayHeadsUpDays = 7,
 }: {
   customerId: string;
   initial: CustomerContact[];
   canEdit?: boolean;
+  /**
+   * The business date (YYYY-MM-DD), read on the server — a client component
+   * may not read the clock in render. Without it a birthday shows its date
+   * and no countdown.
+   */
+  today?: string;
+  /** How far ahead a birthday is called out — `customers.birthdayHeadsUpDays`. */
+  birthdayHeadsUpDays?: number;
   /** Told after every saved change, with the list as the server now holds it. */
   onChange?: (contacts: CustomerContact[]) => void;
 }) {
@@ -119,6 +135,8 @@ export function CustomerContactsPanel({
               contact={c}
               canEdit={canEdit && !busy}
               onlyOne={contacts.length === 1}
+              today={today}
+              birthdayHeadsUpDays={birthdayHeadsUpDays}
               onEdit={() => setEditing(c.id)}
               onDesignate={(d, on) => void act(designateCustomerContact(c.id, d, on))}
               onRemove={() => {
@@ -151,7 +169,13 @@ export function CustomerContactsPanel({
           busy={busy}
           isFirst={contacts.length === 0}
           onCancel={() => setEditing(null)}
-          onSave={async (v) => {
+          onSave={async (values) => {
+            // The selects hold text; the action takes the numbers, or null for none.
+            const v = {
+              ...values,
+              birthDay: values.birthDay ? Number(values.birthDay) : null,
+              birthMonth: values.birthMonth ? Number(values.birthMonth) : null,
+            };
             if (!editingContact) {
               const okay = await act(addCustomerContact(customerId, v));
               if (okay) setEditing(null);
@@ -225,6 +249,8 @@ function ContactRow({
   contact: c,
   canEdit,
   onlyOne,
+  today,
+  birthdayHeadsUpDays,
   onEdit,
   onDesignate,
   onRemove,
@@ -232,12 +258,17 @@ function ContactRow({
   contact: CustomerContact;
   canEdit: boolean;
   onlyOne: boolean;
+  today?: string;
+  birthdayHeadsUpDays: number;
   onEdit: () => void;
   onDesignate: (d: ContactDesignation, on: boolean) => void;
   onRemove: () => void;
 }) {
   const mobile = isMobile(c.phone);
   const notMobile = "WhatsApp needs a mobile number — this looks like a landline.";
+  const birthday = birthdayLabel(c.birthDay, c.birthMonth);
+  const untilBirthday = today ? daysUntilBirthday(c.birthDay, c.birthMonth, today) : null;
+  const birthdaySoon = untilBirthday !== null && untilBirthday <= birthdayHeadsUpDays;
   return (
     <div
       className={cx(
@@ -261,6 +292,7 @@ function ContactRow({
           {c.isPrimary ? <Badge tone="brand">{DESIGNATION_LABELS.primary.badge}</Badge> : null}
           {c.forWhatsapp ? <Badge tone="success">{DESIGNATION_LABELS.whatsapp.badge}</Badge> : null}
           {c.forPaymentReminders ? <Badge tone="warn">{DESIGNATION_LABELS.payment.badge}</Badge> : null}
+          {birthdaySoon ? <Badge tone="brand">{birthdayWhen(untilBirthday!)}</Badge> : null}
         </div>
         <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[13px] text-body">
           <a href={`tel:${c.phone}`} className="tabular-nums hover:text-brand">
@@ -271,6 +303,12 @@ function ContactRow({
             <a href={`mailto:${c.email}`} className="truncate text-muted hover:text-brand">
               {c.email}
             </a>
+          ) : null}
+          {birthday ? (
+            <span className="inline-flex items-center gap-1 text-muted" title="Birthday">
+              <Icon name="gift" size={12} />
+              {birthday}
+            </span>
           ) : null}
         </div>
         {c.note ? <div className="mt-0.5 text-[12px] text-muted">{c.note}</div> : null}
@@ -324,6 +362,9 @@ type EditorValues = {
   phone: string;
   email: string;
   note: string;
+  /** "" where none is picked — a select's own empty value. */
+  birthDay: string;
+  birthMonth: string;
   designations?: ContactDesignation[];
 };
 
@@ -346,8 +387,15 @@ function ContactDialog({
     phone: initial?.phone ?? "",
     email: initial?.email ?? "",
     note: initial?.note ?? "",
+    birthDay: initial?.birthDay ? String(initial.birthDay) : "",
+    birthMonth: initial?.birthMonth ? String(initial.birthMonth) : "",
     designations: initial ? [...designationsOf(initial)] : [],
   });
+  const birthdayWrong = birthdayProblem(
+    v.birthDay ? Number(v.birthDay) : null,
+    v.birthMonth ? Number(v.birthMonth) : null,
+  );
+  const dayCount = v.birthMonth ? daysInBirthMonth(Number(v.birthMonth)) : 31;
   const isNew = !initial;
   const mobile = isMobile(v.phone);
   const toggle = (d: ContactDesignation) =>
@@ -377,7 +425,7 @@ function ContactDialog({
           <Button variant="secondary" onClick={onCancel} disabled={busy}>
             Cancel
           </Button>
-          <Button variant="primary" disabled={busy || !v.phone.trim()} onClick={submit}>
+          <Button variant="primary" disabled={busy || !v.phone.trim() || Boolean(birthdayWrong)} onClick={submit}>
             {busy ? "Saving…" : isNew ? "Add contact" : "Save changes"}
           </Button>
         </>
@@ -401,6 +449,50 @@ function ContactDialog({
         </Field>
         <Field label="Email">
           <Input value={v.email} onChange={(e) => setV({ ...v, email: e.target.value })} type="email" />
+        </Field>
+        <Field
+          label="Birthday"
+          className="col-span-2"
+          hint={birthdayWrong ?? "Day and month only — no year is asked."}
+        >
+          <div className="grid grid-cols-[120px_1fr_auto] items-center gap-2">
+            <Select
+              aria-label="Birthday day"
+              value={v.birthDay}
+              onChange={(e) => setV({ ...v, birthDay: e.target.value })}
+            >
+              <option value="">Day</option>
+              {Array.from({ length: dayCount }, (_, i) => i + 1).map((d) => (
+                <option key={d} value={String(d)}>
+                  {d}
+                </option>
+              ))}
+            </Select>
+            <Select
+              aria-label="Birthday month"
+              value={v.birthMonth}
+              onChange={(e) => {
+                const month = e.target.value;
+                // A day the new month cannot hold is cleared, not carried into an error.
+                const keepDay = !month || !v.birthDay || Number(v.birthDay) <= daysInBirthMonth(Number(month));
+                setV({ ...v, birthMonth: month, birthDay: keepDay ? v.birthDay : "" });
+              }}
+            >
+              <option value="">Month</option>
+              {BIRTH_MONTH_NAMES.map((m, i) => (
+                <option key={m} value={String(i + 1)}>
+                  {m}
+                </option>
+              ))}
+            </Select>
+            {v.birthDay || v.birthMonth ? (
+              <Button variant="ghost" size="sm" onClick={() => setV({ ...v, birthDay: "", birthMonth: "" })}>
+                Clear
+              </Button>
+            ) : (
+              <span />
+            )}
+          </div>
         </Field>
         <Field label="Note" className="col-span-2">
           <Input value={v.note} onChange={(e) => setV({ ...v, note: e.target.value })} placeholder="Best time to call, language, anything worth knowing" />

@@ -4,6 +4,7 @@ import { and, asc, eq, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLog, customerContacts, customers } from "@/db/schema";
 import {
+  birthdayProblem,
   emailProblem,
   last10,
   mirrorsFrom,
@@ -37,6 +38,10 @@ export type CustomerContact = {
   phone: string;
   email: string | null;
   note: string | null;
+  /** Day of the month, 1–31, or null. Always set together with the month. */
+  birthDay: number | null;
+  /** Month, 1–12, or null. */
+  birthMonth: number | null;
   isPrimary: boolean;
   forWhatsapp: boolean;
   forPaymentReminders: boolean;
@@ -61,6 +66,8 @@ async function rowsOf(exec: Exec, customerId: string): Promise<CustomerContact[]
       phone: r.phone,
       email: r.email,
       note: r.note,
+      birthDay: r.birthDay,
+      birthMonth: r.birthMonth,
       isPrimary: r.isPrimary,
       forWhatsapp: r.forWhatsapp,
       forPaymentReminders: r.forPaymentReminders,
@@ -210,9 +217,20 @@ export type ContactInput = {
   phone: string;
   email?: string | null;
   note?: string | null;
+  birthDay?: number | null;
+  birthMonth?: number | null;
 };
 
-type Clean = { name: string | null; role: ContactRole; phone: string; mobile: boolean; email: string | null; note: string | null };
+type Clean = {
+  name: string | null;
+  role: ContactRole;
+  phone: string;
+  mobile: boolean;
+  email: string | null;
+  note: string | null;
+  birthDay: number | null;
+  birthMonth: number | null;
+};
 
 function clean(input: ContactInput): { ok: true; value: Clean } | { ok: false; field: string; reason: string } {
   const phone = normalisePhone(input.phone);
@@ -225,7 +243,14 @@ function clean(input: ContactInput): { ok: true; value: Clean } | { ok: false; f
     : "other";
   const name = (input.name ?? "").trim().slice(0, 120) || null;
   const note = (input.note ?? "").trim().slice(0, 500) || null;
-  return { ok: true, value: { name, role, phone: phone.phone, mobile: phone.mobile, email, note } };
+  const birthDay = input.birthDay ?? null;
+  const birthMonth = input.birthMonth ?? null;
+  const birthdayWrong = birthdayProblem(birthDay, birthMonth);
+  if (birthdayWrong) return { ok: false, field: "birthDay", reason: birthdayWrong };
+  return {
+    ok: true,
+    value: { name, role, phone: phone.phone, mobile: phone.mobile, email, note, birthDay, birthMonth },
+  };
 }
 
 function duplicateOf(contacts: CustomerContact[], phone: string, except?: string): CustomerContact | undefined {
@@ -293,6 +318,8 @@ export async function addContact(
       phone: v.phone,
       email: v.email,
       note: v.note,
+      birthDay: v.birthDay,
+      birthMonth: v.birthMonth,
       isPrimary: wants.has("primary"),
       forWhatsapp: wants.has("whatsapp"),
       forPaymentReminders: wants.has("payment"),
@@ -303,7 +330,7 @@ export async function addContact(
     await tx.insert(customerContacts).values(row);
     await syncContactMirrors(tx, customerId);
     await audit(tx, actorId, "customer.contact.add", customerId, null, {
-      name: v.name, role: v.role, phone: v.phone, designations: [...wants],
+      name: v.name, role: v.role, phone: v.phone, birthDay: v.birthDay, birthMonth: v.birthMonth, designations: [...wants],
     });
     return ok(await rowsOf(tx, customerId), "Contact added");
   });
@@ -338,12 +365,22 @@ export async function updateContact(
     }
     await tx
       .update(customerContacts)
-      .set({ name: v.name, role: v.role, phone: v.phone, email: v.email, note: v.note, updatedAt: new Date(), updatedById: actorId })
+      .set({
+        name: v.name,
+        role: v.role,
+        phone: v.phone,
+        email: v.email,
+        note: v.note,
+        birthDay: v.birthDay,
+        birthMonth: v.birthMonth,
+        updatedAt: new Date(),
+        updatedById: actorId,
+      })
       .where(eq(customerContacts.id, contactId));
     await syncContactMirrors(tx, existing.customerId);
     await audit(tx, actorId, "customer.contact.update", existing.customerId,
-      { name: existing.name, role: existing.role, phone: existing.phone, email: existing.email },
-      { name: v.name, role: v.role, phone: v.phone, email: v.email });
+      { name: existing.name, role: existing.role, phone: existing.phone, email: existing.email, birthDay: existing.birthDay, birthMonth: existing.birthMonth },
+      { name: v.name, role: v.role, phone: v.phone, email: v.email, birthDay: v.birthDay, birthMonth: v.birthMonth });
     return ok(await rowsOf(tx, existing.customerId), "Contact saved");
   });
 }

@@ -5,7 +5,13 @@ import { placeLine } from "@/lib/place-tree";
 import type { PlaceNames } from "@/lib/place-filters";
 import { seatLabel, type AmRole } from "@/lib/seat-labels";
 import { categoryLabel } from "@/lib/complaint-labels";
-import { contactRoleLabel, phoneForReading } from "@/lib/customer-contacts";
+import {
+  birthdaySentence,
+  birthdayWhen,
+  contactRoleLabel,
+  phoneForReading,
+  upcomingBirthdays,
+} from "@/lib/customer-contacts";
 import type { CustomerRecordDetail } from "@/lib/services/customer-record-service";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -135,6 +141,8 @@ export function RecordScreen({
   detail,
   customer,
   contacts,
+  businessDay,
+  birthdayHeadsUpDays,
   distributors,
   deliveryAddresses,
   distributorSuggestions,
@@ -186,6 +194,10 @@ export function RecordScreen({
    */
   /** The people at this shop and which number gets what. */
   contacts: CustomerContact[];
+  /** The business date, read on the server — for "birthday in 3 days". */
+  businessDay: string;
+  /** `customers.birthdayHeadsUpDays`. */
+  birthdayHeadsUpDays: number;
   distributors: Relation[];
   deliveryAddresses: Relation[];
   /** Who the order history suggests, on a lead nobody has converted yet. */
@@ -511,6 +523,10 @@ export function RecordScreen({
   const activeTab = tabs.some((t) => t.key === tab) ? tab : "activity";
 
   const primaryContact = contacts.find((c) => c.isPrimary) ?? contacts[0] ?? null;
+  /* A birthday close enough to say something on the call — named in the
+     header, because the person about to ring should not have to open the
+     Contacts tab to find out it is the owner's birthday today. */
+  const birthdays = upcomingBirthdays(contacts, businessDay, birthdayHeadsUpDays);
   const typeLabel = customer.thirdParty
     ? "Third-party customer"
     : customer.kind === "lead"
@@ -557,6 +573,21 @@ export function RecordScreen({
               {typeLabel}
             </Badge>
             {customer.doNotContact ? <Badge tone="danger">Do not contact</Badge> : null}
+            {birthdays.length ? (
+              <button
+                type="button"
+                onClick={() => setTab("contacts")}
+                title={birthdays.map(birthdaySentence).join("\n")}
+                className="cursor-pointer border-none bg-transparent p-0"
+              >
+                <Badge tone="brand" className="gap-1">
+                  <Icon name="gift" size={12} />
+                  {birthdays.length === 1
+                    ? `${birthdays[0].name?.trim() || "A contact"} · ${birthdayWhen(birthdays[0].days)}`
+                    : `${birthdays.length} birthdays coming up`}
+                </Badge>
+              </button>
+            ) : null}
             {customer.whatsappDnd ? (
               <Badge tone="danger" title={customer.whatsappDndReason ?? undefined}>
                 WhatsApp DND
@@ -749,6 +780,8 @@ export function RecordScreen({
               <CustomerContactsPanel
                 customerId={customer.id}
                 initial={contacts}
+                today={businessDay}
+                birthdayHeadsUpDays={birthdayHeadsUpDays}
                 onChange={() => router.refresh()}
               />
               {customer.whatsappGroupName || customer.decisionMaker ? (

@@ -304,6 +304,8 @@ export default async function CustomerRecordPage({
         deactivationReason: customer.deactivationReason,
       }}
       contacts={contacts}
+      businessDay={day}
+      birthdayHeadsUpDays={config["customers.birthdayHeadsUpDays"]}
       distributors={distributors}
       deliveryAddresses={deliveryAddresses}
       distributorSuggestions={suggestions}

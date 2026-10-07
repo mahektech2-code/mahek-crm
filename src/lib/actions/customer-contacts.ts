@@ -18,6 +18,8 @@ import {
   type CustomerContact,
 } from "@/lib/services/customer-contact-service";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
+import { getConfig } from "@/lib/config/store";
+import { today } from "@/lib/recompute";
 
 /*
  * THE CONTACTS PANEL'S DOORS. Each one asks the question `updateCustomer`
@@ -50,6 +52,8 @@ const contactSchema = z.object({
   phone: z.string().trim().min(1, "Enter a phone number.").max(24),
   email: z.string().trim().max(200).nullish(),
   note: z.string().trim().max(500).nullish(),
+  birthDay: z.coerce.number().int().min(1).max(31).nullish(),
+  birthMonth: z.coerce.number().int().min(1).max(12).nullish(),
 });
 
 function validation(e: z.ZodError): Result<never> {
@@ -182,6 +186,10 @@ export type CustomerEditorData = {
     doNotContact: boolean;
   };
   contacts: CustomerContact[];
+  /** The business date, so the panel can say "birthday in 3 days". */
+  today: string;
+  /** `customers.birthdayHeadsUpDays`. */
+  birthdayHeadsUpDays: number;
   /** Whether this person may change the credit limit and the supply stop. */
   canDecideCredit: boolean;
 };
@@ -228,6 +236,8 @@ export async function loadCustomerEditor(customerId: string): Promise<Result<Cus
         doNotContact: c.doNotContact,
       },
       contacts,
+      today: await today(),
+      birthdayHeadsUpDays: (await getConfig())["customers.birthdayHeadsUpDays"],
       canDecideCredit: await canFor(ctx.user, "payment.confirm"),
     });
   } catch (e) {

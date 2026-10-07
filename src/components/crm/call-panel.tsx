@@ -22,6 +22,7 @@ import {
   saveInteractionAction,
 } from "@/lib/actions/crm";
 import type { NextStep } from "@/lib/engines/next-step";
+import { birthdaySentence, type UpcomingBirthday } from "@/lib/customer-contacts";
 import {
   OUTCOMES_BY_TYPE,
   OUTCOME_LABEL as CATALOGUE_OUTCOME_LABEL,
@@ -324,6 +325,8 @@ export type CustomerInfo = {
   }>;
   /** Newest first — what a Request CN on a complaint picks its bill from. */
   bills: Array<{ id: string; billNo: string; billDate: string }>;
+  /** Contacts with a birthday inside the heads-up window, soonest first. */
+  birthdays?: UpcomingBirthday[];
   /** §2.1 — ranked and trimmed on the server, per configuration. */
   frequentProducts: Array<{
     productId: string;
@@ -1811,6 +1814,18 @@ function CallPanelForm({
                   {target.name}
                 </span>
                 {isLead ? <Badge tone="brand">Lead</Badge> : null}
+                {info?.birthdays?.length ? (
+                  <Badge
+                    tone="brand"
+                    className="gap-1"
+                    title={info.birthdays.map(birthdaySentence).join("\n")}
+                  >
+                    <Icon name="gift" size={12} />
+                    {info.birthdays.length === 1
+                      ? birthdaySentence(info.birthdays[0])
+                      : `${info.birthdays.length} birthdays coming up`}
+                  </Badge>
+                ) : null}
               </div>
               <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted">
                 <span>{target.contactPerson}</span>

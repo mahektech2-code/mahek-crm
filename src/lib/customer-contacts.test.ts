@@ -95,3 +95,47 @@ test("an order message never borrows the payment number", () => {
     "9000000001",
   );
 });
+
+import {
+  birthdayLabel as bdLabel,
+  birthdayProblem as bdProblem,
+  daysUntilBirthday as bdUntil,
+  upcomingBirthdays as bdUpcoming,
+} from "./customer-contacts";
+
+test("a birthday is both a day and a month, or neither", () => {
+  assert.equal(bdProblem(null, null), null);
+  assert.match(bdProblem(14, null)!, /month/);
+  assert.match(bdProblem(null, 3)!, /day/);
+  assert.match(bdProblem(31, 4)!, /April has only 30 days/);
+  assert.equal(bdProblem(29, 2), null);
+  assert.equal(bdLabel(14, 3), "14 Mar");
+  assert.equal(bdLabel(null, 3), null);
+});
+
+test("days until a birthday count from today and wrap into next year", () => {
+  assert.equal(bdUntil(7, 10, "2026-10-07"), 0);
+  assert.equal(bdUntil(8, 10, "2026-10-07"), 1);
+  assert.equal(bdUntil(6, 10, "2026-10-07"), 364);
+  assert.equal(bdUntil(1, 1, "2026-12-31"), 1);
+});
+
+test("a 29 February birthday falls on the 28th in a year without one", () => {
+  assert.equal(bdUntil(29, 2, "2027-02-27"), 1);
+  assert.equal(bdUntil(29, 2, "2028-02-28"), 1);
+});
+
+test("upcoming birthdays are the ones inside the window, soonest first", () => {
+  const base = { role: "owner", phone: "9820011001", isPrimary: false, forWhatsapp: false, forPaymentReminders: false, sortOrder: 0 };
+  const list = bdUpcoming(
+    [
+      { ...base, id: "a", name: "Asha", birthDay: 12, birthMonth: 10 },
+      { ...base, id: "b", name: "Bina", birthDay: 7, birthMonth: 10 },
+      { ...base, id: "c", name: "Chetan", birthDay: 30, birthMonth: 10 },
+      { ...base, id: "d", name: "Dev" },
+    ],
+    "2026-10-07",
+    7,
+  );
+  assert.deepEqual(list.map((b) => [b.contactId, b.days]), [["b", 0], ["a", 5]]);
+});
