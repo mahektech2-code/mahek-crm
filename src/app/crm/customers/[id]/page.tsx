@@ -426,6 +426,7 @@ export default async function CustomerRecordPage({
         actor: t.actor,
         content: t.content,
         meta: t.meta ?? null,
+        detail: t.detail ?? null,
       }))}
       timelineCursor={timeline.cursor}
       timelineMore={timeline.more}

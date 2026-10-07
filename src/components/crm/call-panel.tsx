@@ -60,8 +60,15 @@ import {
   reconcileNextActions,
   showsLedger,
   unbackedBy,
+  visibleReasonFields,
   wantsDate,
 } from "@/lib/call-reasons";
+import { routingNote } from "@/lib/engines/next-action-routing";
+import {
+  CallerSuggestions,
+  DeliveryOrders,
+  StockCheck,
+} from "@/components/crm/inbound-context";
 import { BodyPortal } from "@/components/ui/body-portal";
 
 /**
@@ -1475,6 +1482,10 @@ function CallPanelForm({
                   expectedOrderDate: oppDate || undefined,
                 }
               : undefined,
+          /* "No" is an answer and is now kept as one. Unanswered stays absent —
+             nobody was asked — and a Yes carries its details above. */
+          opportunityAnswer:
+            offersOpportunity && hasOpportunity === false ? "no" : undefined,
           complaintCategory: needsCategory ? category : undefined,
           complaintDescription: needsCategory
             ? complaintDescription
@@ -2578,6 +2589,20 @@ function CallPanelForm({
                                 On record for this account: {target.contactPerson}
                               </p>
                             ) : null}
+                            {/* SUGGESTED, never filled in on their behalf. A phone
+                                number cannot say who is holding the handset, and
+                                the role is the one answer that changes what the
+                                call is worth — so these are one-tap chips drawn
+                                from this account's own earlier calls and its
+                                listed contact, and the manual boxes above stay
+                                exactly as they were. */}
+                            <CallerSuggestions
+                              customerId={target.customerId}
+                              onPick={(s) => {
+                                if (s.role) setCallerRole(s.role);
+                                if (s.name) setCallerName(s.name);
+                              }}
+                            />
 
                             {/* ------------------------------ why they rang
                                 THE MAIN CLASSIFICATION. What the customer wanted
@@ -2592,6 +2617,31 @@ function CallPanelForm({
                                 <button
                                   key={r.code}
                                   onClick={() => {
+                                    /* A COMPLAINT REASON GOES STRAIGHT TO THE
+                                       COMPLAINT FORM. The form is the Complaint
+                                       OUTCOME's, and asking somebody who rang to
+                                       complain to also pick an outcome before
+                                       they could reach it was the gap. The
+                                       outcome is pre-set, not removed: the
+                                       existing pipeline (SLA, credit note,
+                                       routing, history) is still exactly what
+                                       runs, and "back" still lets them choose a
+                                       different ending. Moving off Complaint
+                                       takes a pre-set outcome with it.
+
+                                       It goes through `pickOutcome`, the one
+                                       place an outcome is set, and BEFORE the
+                                       clears below — `pickOutcome` reconciles
+                                       against the next actions as this render
+                                       saw them, so the clear that follows has to
+                                       be the last word. */
+                                    const presetOutcome =
+                                      r.code === "complaint"
+                                        ? "complaint"
+                                        : callReason === "complaint" && outcome === "complaint"
+                                          ? null
+                                          : outcome;
+                                    if (presetOutcome !== outcome) pickOutcome(presetOutcome);
                                     setCallReason(r.code);
                                     /* Changing the reason changes the questions,
                                        so the old answers go with it — carrying a
@@ -2749,10 +2799,59 @@ function CallPanelForm({
                             Rendered from `reasonFieldsFor`, which is also what
                             the server validates against — one list, so a box that
                             is mandatory on the screen is mandatory in the rule. */}
-                        {reasonFields.length ? (
+                        {/* ------------------- the ERP, read-only, for these two
+                            What the ERP already knows about where their goods are
+                            and whether it is in stock, put on the screen. Read
+                            only and never required: it fills one hidden field
+                            each, and the SERVER re-reads the figures at save. */}
+                        {isInbound && callReason === "delivery_transport" ? (
+                          <DeliveryOrders
+                            customerId={target.customerId}
+                            selected={reasonDetail.erpOrderNo ?? ""}
+                            onPick={(o) =>
+                              setReasonDetail((d) => {
+                                const next = { ...d };
+                                if (!o) {
+                                  delete next.erpOrderNo;
+                                  return next;
+                                }
+                                next.erpOrderNo = String(o.orderNo);
+                                /* The visible box is theirs to word, but an empty
+                                   one is filled with what was tapped. */
+                                if (!(next.orderRef ?? "").trim()) {
+                                  next.orderRef = o.billNo
+                                    ? `Order ${o.orderNo} / bill ${o.billNo}`
+                                    : `Order ${o.orderNo}`;
+                                }
+                                return next;
+                              })
+                            }
+                          />
+                        ) : null}
+                        {isInbound && callReason === "stock_availability" ? (
+                          <StockCheck
+                            customerId={target.customerId}
+                            fallbackProducts={products.map((p) => ({ id: p.id, name: p.name }))}
+                            requiredQuantity={reasonDetail.requiredQuantity ?? ""}
+                            skuId={reasonDetail.skuId ?? ""}
+                            onPick={(p) =>
+                              setReasonDetail((d) => {
+                                const next = { ...d };
+                                if (!p) {
+                                  delete next.skuId;
+                                  return next;
+                                }
+                                next.skuId = p.id;
+                                if (!(next.product ?? "").trim()) next.product = p.name;
+                                return next;
+                              })
+                            }
+                          />
+                        ) : null}
+                        {visibleReasonFields(reasonFields).length ? (
                           <AnswerBlock
                             heading={CALL_REASON_LABEL[callReason]}
-                            fields={reasonFields}
+                            fields={visibleReasonFields(reasonFields)}
                             answers={reasonDetail}
                             onChange={(k, v) =>
                               setReasonDetail((d) => ({ ...d, [k]: v }))
@@ -3378,6 +3477,11 @@ function CallPanelForm({
                                 );
                               })}
                             </div>
+                            {routingNote(nextActions) ? (
+                              <p className="mt-1.5 text-[11px] text-muted">
+                                {routingNote(nextActions)}
+                              </p>
+                            ) : null}
                             {aiNextNote ? (
                               <p className="mt-1.5 text-[13px] text-warn-ink">
                                 {aiNextNote}
@@ -3509,9 +3613,10 @@ function CallPanelForm({
                                   />
                                 </Field>
                                 <p className="text-[11px] text-muted">
-                                  This is recorded against the customer and appears
-                                  on their record. It does not create a lead — they
-                                  are already a customer.
+                                  This is recorded against the customer, appears on
+                                  their record and goes to the Opportunities list of
+                                  the person who looks after the account. It does not
+                                  create a lead — they are already a customer.
                                 </p>
                               </div>
                             ) : null}

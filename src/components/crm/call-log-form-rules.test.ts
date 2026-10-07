@@ -122,8 +122,10 @@ test("every other VoiceTextarea keeps its microphone by default", () => {
 /* --------------------------------------------------- stale next actions */
 
 test("every way of changing the outcome drops a Next Action it no longer offers", () => {
-  /* The three buttons that set or clear the outcome all go through it. */
-  assert.equal(count(panel, "pickOutcome("), 4, "the definition and three handlers");
+  /* The three buttons that set or clear the outcome all go through it — and
+     the fourth caller is the reason button, which pre-sets Complaint (and
+     takes it back off) so a complaint reason opens the complaint form. */
+  assert.equal(count(panel, "pickOutcome("), 5, "the definition and four handlers");
   const outside = panel
     .replace(bodyOf(panel, "pickOutcome"), "")
     .replace(bodyOf(panel, "reset"), "")

@@ -55,6 +55,7 @@ export default async function HistoryPage() {
         note: r.note,
         produced: r.produced,
         nextStep: r.nextStep,
+        detail: r.detail,
       }))}
       openCommitments={reminders
         .filter((r) => r.status === "pending")
