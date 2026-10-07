@@ -7,6 +7,9 @@ import {
 } from "@/lib/services/sales-service";
 import { Empty, FilterChips, ScreenHeader } from "@/components/console/parts";
 import { ActivityTable } from "./activity-table";
+import { ReparseButton } from "./reparse-button";
+import { getCurrentUser } from "@/lib/auth";
+import { isPlatformAdmin } from "@/lib/access-control";
 
 export const metadata = {
   title: "Activity history — Sales Dashboard — MahekOne",
@@ -50,6 +53,9 @@ export default async function Page({
     ? Number(params.per)
     : 50;
 
+  const me = await getCurrentUser();
+  const canReparse = !!me && (await isPlatformAdmin(me));
+
   const [salesmen, counts, result] = await Promise.all([
     fieldActivitySalesmen(),
     fieldActivityMatchCounts({ from, to, salesmanName }),
@@ -83,6 +89,7 @@ export default async function Page({
       <ScreenHeader
         title="Activity history"
         subtitle="Visits and calls from the old field app (EMP 2.0)."
+        actions={canReparse ? <ReparseButton /> : undefined}
       />
 
       <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
