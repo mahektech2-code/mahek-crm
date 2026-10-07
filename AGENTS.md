@@ -1651,6 +1651,43 @@ hash, MiniMoth's never reach MahekOne.
 **`otp_channel` was declared in schema.ts and never created by a migration**;
 `0168` creates it, guarded.
 
+**"ASK ABOUT THE TEAM" READS THE DATABASE, THROUGH THE ASKER'S OWN ACCESS.**
+It used to hand OpenAI one pre-written brief of this month's figures and
+forbid anything else, so "when did Mahesh take leave this year" or "which
+shops did Priya visit on Tuesday" could never be answered. Now the model writes
+its own reads through one tool, `run_sql`, as many as a question needs
+(`salesAsk.maxQueries`), and `/api/sales/ask` streams each read and the answer
+as they happen. What makes that safe is structural, not the prompt:
+`team-ask/catalog.ts` builds TEMPORARY VIEWS named after the real tables, for
+one person — only the tables a Sales Dashboard screen they hold already shows
+(leave needs Leave, salary needs Salary, the trail needs the Live map: the
+Access screen's own answer), only the rows `managerScope()` lets them see, and
+never a credential, identity number or raw sheet snapshot. The transaction sets
+`search_path = pg_temp` so those views are the only relations a name can
+reach, is READ ONLY, runs each query in a savepoint under
+`salesAsk.queryTimeoutSeconds`, and is ROLLED BACK so the views vanish with it.
+`team-ask/sql-guard.ts` refuses what spells its way round that: a
+schema-qualified name, `pg_*`, anything that runs a query from a string
+(`query_to_xml`, `ts_stat`), comments, more than one statement. The session
+zone is `APP_TIMEZONE`, so `current_date` is India's day. It cannot act: no
+write, no approval, no nudge. A table added to the catalog needs its module
+named and its scope rule stated, or it is everybody's.
+
+**AND IT IS REMEMBERED IN THREE LAYERS, so a question touches the database only
+when it has to.** A person's access (scope, screens, the views, the prompt) is
+kept for `salesAsk.contextCacheSeconds` — opening the drawer warms it, and an
+Access or Territory change reaches the panel within that window. A query's rows
+are kept for `salesAsk.resultCacheSeconds`, keyed on a hash of the exact view
+definitions plus the normalised SQL, so two managers who see the same rows
+share them and two who see different rows never can. A FRESH question's answer
+is kept for `salesAsk.answerCacheSeconds` and replayed with no model and no
+database; a follow-up never is, because its meaning is the conversation. The
+connection is reserved only on the first cache MISS, so a fully remembered
+question never takes one. The prompt puts the rules and schema first and the
+date and name last, with a `promptCacheKey` per visibility, so OpenAI reads the
+long prefix from its own cache. All of it is in memory and re-derivable — losing
+it costs a slower answer, never a wrong one.
+
 ## The ERP (operations app)
 
 **The ERP is the client's AppSheet "Mahek Plus" rebuilt as a MahekOne app**
@@ -3098,16 +3135,29 @@ cost because it is the only number on the row would put believable wrong
 figures on every target screen. `pricelist` is refused by `checkConsistency`
 until a customer price list actually exists.
 
-**A PRICE LIST IS CHANGED AT TWO DESKS AND READ AT FOUR.** `pricelist.manage`
+**A PRICE LIST IS CHANGED AT TWO DESKS AND READ AT THREE.** `pricelist.manage`
 is the Price Desk's (`PRICE_DESK` in `access-control.ts`), granted by name at
 both levels of Accounts and of the Founder Dashboard, and nowhere else. It
 shipped in `ACCOUNTS_OR_MANAGER`, which spread it into every CRM and Sales
 Dashboard manager; Mahek's instruction was that the two apps that QUOTE prices
 never set them. The screens enforce the other half by MOUNT —
-`priceListDoorCanManage` answers false on `/crm/price-lists` and
-`/sales/price-lists` whatever the person holds, so a telecaller's screen never
-grows an edit button because somebody also wears the Accounts hat.
-`price-desk-grant.test.ts` pins both. `pricelist.read` is named on Accounts and
+`priceListDoorCanManage` answers false on `/crm/price-lists` whatever the
+person holds, so a telecaller's screen never grows an edit button because
+somebody also wears the Accounts hat. `price-desk-grant.test.ts` pins both.
+
+**THE SALES DASHBOARD SHOWS NO PRICES, NO CATALOGUE AND NO PAY.** Mahek's
+instruction: Catalogue & rates, Price lists and Salary were removed from it
+outright — routes, sidebar, modules and the queries only they read. Prices
+belong to the price desk (Accounts, Founder) and pay to HRMS; a sales manager
+is the person whose number both move, which is the same reason `order.approve`
+is kept off managers. Two consequences worth knowing. **Cost & return counts
+field SPEND, never salary** — a cost column of salary plus expenses beside an
+expense screen is a salary column with one subtraction in the way. And the
+handset's own rate table and schemes (`mbos_price_list`, `mbos_schemes`) have
+NO screen now: the Catalogue page was the only editor, so they are read by the
+phone as they stand until a desk that owns prices is given one. The handset's
+payslip stays — a salesman reading his own pay is HRMS's channel to him, not
+a manager's view of it. `pricelist.read` is named on Accounts and
 Founder too: it arrives with `BOOK_WORK`, which neither is given, and without
 it the desk that uploads a PDF could not poll it being read.
 

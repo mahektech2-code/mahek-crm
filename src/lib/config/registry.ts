@@ -4780,6 +4780,103 @@ export const SETTINGS = [
       "An OpenAI text model that reads order messages and complaint descriptions, and answers questions.",
     default: "gpt-5-mini",
   },
+  /* ---------------------------------------------- ask about the team
+   *
+   * The Sales Dashboard's "Ask about the team" drawer. OpenAI writes its own
+   * read-only queries against views narrowed to what the asker may see; these
+   * decide which model, how long it may take, and how long answers are
+   * remembered so a repeated question does not touch the database again.
+   */
+  {
+    key: "salesAsk.enabled",
+    type: "boolean",
+    category: "performance",
+    label: "Ask about the team",
+    description:
+      "Let managers ask the Sales Dashboard anything about their team — attendance, leave, visits, routes, orders, collections, targets — and have it answered from the data they are allowed to see. Off hides the answers immediately.",
+    default: true,
+  },
+  {
+    key: "salesAsk.model",
+    type: "text",
+    category: "performance",
+    label: "Ask about the team · model",
+    description:
+      "The OpenAI model that reads the question and writes the queries. A faster model answers sooner; a stronger one handles harder questions.",
+    default: "gpt-5-mini",
+  },
+  {
+    key: "salesAsk.reasoningEffort",
+    type: "text",
+    category: "performance",
+    label: "Ask about the team · thinking effort",
+    description:
+      "How long a reasoning model thinks before answering: minimal, low, medium or high. Lower is faster. Ignored by models that do not reason.",
+    default: "low",
+  },
+  {
+    key: "salesAsk.maxQueries",
+    type: "integer",
+    category: "performance",
+    label: "Ask about the team · queries per question",
+    description: "The most database reads one question may make before it has to answer with what it has.",
+    default: 6,
+    min: 1,
+    max: 15,
+  },
+  {
+    key: "salesAsk.timeoutSeconds",
+    type: "integer",
+    category: "performance",
+    label: "Ask about the team · time limit",
+    description: "Seconds before a question is given up on and the manager is asked to narrow it.",
+    default: 75,
+    min: 10,
+    max: 240,
+  },
+  {
+    key: "salesAsk.queryTimeoutSeconds",
+    type: "integer",
+    category: "performance",
+    label: "Ask about the team · one query's time limit",
+    description: "Seconds a single database read may run. A slower one is stopped and the model is told to ask for less.",
+    default: 8,
+    min: 1,
+    max: 60,
+  },
+  {
+    key: "salesAsk.resultCacheSeconds",
+    type: "integer",
+    category: "performance",
+    label: "Ask about the team · remember a query for",
+    description:
+      "Seconds a query's rows are remembered, for anybody who can see exactly the same rows. The same read inside this window is answered from memory, not the database. 0 turns it off.",
+    default: 60,
+    min: 0,
+    max: 3600,
+  },
+  {
+    key: "salesAsk.answerCacheSeconds",
+    type: "integer",
+    category: "performance",
+    label: "Ask about the team · remember an answer for",
+    description:
+      "Seconds a fresh question's answer is remembered. The same question asked again inside this window — by the same person or anybody who sees the same rows — is answered instantly. Follow-up questions are always worked out again. 0 turns it off.",
+    default: 120,
+    min: 0,
+    max: 3600,
+  },
+  {
+    key: "salesAsk.contextCacheSeconds",
+    type: "integer",
+    category: "performance",
+    label: "Ask about the team · remember a person's access for",
+    description:
+      "Seconds a person's access and territory are remembered between questions. A change on the Access or Territory screen reaches the panel within this window.",
+    default: 300,
+    min: 0,
+    max: 3600,
+  },
   /* ------------------------------------------------------------------ hire */
   {
     key: "hire.ai.enabled",
@@ -5007,6 +5104,12 @@ export function validateSetting(key: string, raw: unknown): ValidationResult {
  */
 export function checkConsistency(config: Config): string[] {
   const problems: string[] = [];
+
+  /* The effort is passed to OpenAI as written, and a word it does not know is
+     a refused request on every question rather than a slower answer. */
+  if (!["minimal", "low", "medium", "high"].includes(config["salesAsk.reasoningEffort"])) {
+    problems.push("Ask about the team's thinking effort must be minimal, low, medium or high.");
+  }
 
   /* A suggested minimum at or above the suggested maximum is a level nobody can hold. */
   if (config["erp.ai.reorder.minCoverDays"] >= config["erp.ai.reorder.maxCoverDays"]) {
@@ -5740,6 +5843,15 @@ export type Config = {
   "erp.ai.complaints.monthlyCap": number;
   "erp.ai.visionModel": string;
   "erp.ai.textModel": string;
+  "salesAsk.enabled": boolean;
+  "salesAsk.model": string;
+  "salesAsk.reasoningEffort": string;
+  "salesAsk.maxQueries": number;
+  "salesAsk.timeoutSeconds": number;
+  "salesAsk.queryTimeoutSeconds": number;
+  "salesAsk.resultCacheSeconds": number;
+  "salesAsk.answerCacheSeconds": number;
+  "salesAsk.contextCacheSeconds": number;
   "hire.ai.enabled": boolean;
   "hire.ai.reasoningModel": string;
   "hire.ai.fastModel": string;

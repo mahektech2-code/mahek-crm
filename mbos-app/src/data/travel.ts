@@ -1,5 +1,6 @@
 import { all, getKv, one, run, setKv } from '../db';
 import { insertAndQueue, stamp } from './write';
+import { isoDate } from '../lib/format';
 import {
   computeDay,
   routeDay,
@@ -553,7 +554,13 @@ export async function submitDay(
   const priced = await priceDay(userId, day);
   if (!priced.day) return { ok: false, reason: 'Nothing is saved for that day.' };
   if (priced.day.lockedAt) return { ok: false, reason: 'You already sent this day.' };
-  if (priced.day.returnedAt == null) {
+  /* TODAY waits for the punch-out, because the meals are priced from it and he
+     can still give it. A PAST day cannot be punched out of any more — the only
+     thing that writes the return is the punch — so refusing it there left every
+     claim on a day he forgot to punch out of unsendable for ever. That day goes
+     with no return time: no meals are worked out for it, the office sees the
+     gap, and the bills on it are still paid. */
+  if (priced.day.returnedAt == null && day >= isoDate(new Date())) {
     return {
       ok: false,
       reason: 'First say what time you got back. The meal allowance depends on when you left and came back.',
@@ -578,6 +585,37 @@ export async function submitDay(
   ]);
 
   return { ok: true, claimedPaise: claimed };
+}
+
+export type UnsentDay = { day: string; claims: number; claimedPaise: number; legs: number };
+
+/**
+ * Days with something claimed on them that have not been sent.
+ *
+ * A claim goes up the moment Send claim is pressed, but the office decides a
+ * DAY, and a day reaches it only from Close the day. So a claim on a day he
+ * never closed is stored at the office and drawn on no screen anybody decides
+ * from — and the phone had told him it was with his manager. This is the list
+ * that tells him otherwise, oldest first, so the one longest overdue is the one
+ * he sees. A refused claim does not keep a day here: there is nothing on it
+ * left to send.
+ */
+export async function unsentDays(userId: string): Promise<UnsentDay[]> {
+  return all<UnsentDay>(
+    `SELECT d.day AS day,
+            (SELECT count(*) FROM expenses e
+              WHERE e.expenseDayId = d.id AND e.state <> 'Rejected') AS claims,
+            (SELECT COALESCE(SUM(e.amountPaise), 0) FROM expenses e
+              WHERE e.expenseDayId = d.id AND e.state <> 'Rejected') AS claimedPaise,
+            (SELECT count(*) FROM travel_legs l WHERE l.expenseDayId = d.id) AS legs
+       FROM expense_days d
+      WHERE d.userId = ? AND d.lockedAt IS NULL
+        AND (EXISTS (SELECT 1 FROM expenses e
+                      WHERE e.expenseDayId = d.id AND e.state <> 'Rejected')
+             OR EXISTS (SELECT 1 FROM travel_legs l WHERE l.expenseDayId = d.id))
+      ORDER BY d.day ASC`,
+    [userId],
+  );
 }
 
 

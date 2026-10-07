@@ -194,6 +194,7 @@ const RULES: Rule[] = [
     group: "The six weights",
   },
   { test: /^performance\./, page: "sales", tab: "performance", group: "Scoring and targets" },
+  { test: /^salesAsk\./, page: "sales", tab: "performance", group: "Ask about the team" },
   { test: /^mbos\.health\./, page: "sales", tab: "performance", group: "Customer health score" },
   { test: /^expenses\./, page: "sales", tab: "expenses", group: "Checking a claim" },
   { test: /^mbos\.expenses\./, page: "sales", tab: "expenses", group: "Recording an expense" },

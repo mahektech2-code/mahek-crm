@@ -195,7 +195,6 @@ const person = (over: Partial<SalesmanPeriod> = {}): SalesmanPeriod => ({
   foodPaise: 900_00,
   lodgingPaise: 0,
   otherPaise: 100_00,
-  salaryPaise: 25_000_00,
   ...over,
 });
 
@@ -221,16 +220,10 @@ describe("what a salesman brought in against what he cost", () => {
     assert.equal(travelExpenseRatioBps(person()).value, 400, "₹2,000 of ₹50,000 is 4%");
   });
 
-  test("total cost is salary plus every approved expense", () => {
+  test("total cost is every approved expense, and never the salary", () => {
     const c = totalSalesmanCost(person());
-    assert.equal(c.totalPaise, 25_000_00 + 2_000_00 + 900_00 + 0 + 100_00);
-    assert.equal(c.salaryMissing, false);
-  });
-
-  test("a missing salary is SAID, never treated as free", () => {
-    const c = totalSalesmanCost(person({ salaryPaise: null }));
-    assert.equal(c.salaryMissing, true);
-    assert.equal(c.totalPaise, 3_000_00);
+    assert.equal(c.totalPaise, 2_000_00 + 900_00 + 0 + 100_00);
+    assert.equal("salaryPaise" in c, false, "pay is HRMS's; the Sales Dashboard does not see it");
   });
 
   test("with no margin the figure is REVENUE and carries the sentence saying so", () => {

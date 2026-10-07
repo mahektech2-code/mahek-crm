@@ -3,7 +3,11 @@ import { money, shortDate, stamp } from "@/lib/format";
 import { today } from "@/lib/recompute";
 import { endOfMonth } from "@/lib/business-date";
 import { MonthNav } from "@/components/ui/month-nav";
-import { claimDays } from "@/lib/services/expense-claims-service";
+import {
+  claimDays,
+  unsentClaimDays,
+  type UnsentClaimDayRow,
+} from "@/lib/services/expense-claims-service";
 import { canDecideExpenses } from "@/lib/actions/expenses";
 import { DecideDay } from "./decide-day";
 import {
@@ -58,12 +62,13 @@ export default async function Page({
   const from = `${month}-01`;
   const to = endOfMonth(month);
 
-  const [all, canDecide] = await Promise.all([
+  const [all, unsent, canDecide] = await Promise.all([
     claimDays({ from, to }),
+    unsentClaimDays({ from, to }),
     canDecideExpenses(),
   ]);
 
-  const show = ["all", "waiting", "decided"].includes(params.show ?? "")
+  const show = ["all", "waiting", "decided", "unsent"].includes(params.show ?? "")
     ? params.show!
     : "waiting";
 
@@ -117,6 +122,19 @@ export default async function Page({
         />
       ) : null}
 
+      {unsent.length && show !== "unsent" ? (
+        <Banner
+          tone="warn"
+          title={`${plural(unsent.length, "day")} of claims raised and not sent yet`}
+          body="These claims are with us, but the salesman has not closed the day on his phone, so they cannot be priced or decided. Ask him to open More → Close the day and send it."
+          action={
+            <Link href={`/sales/expenses?show=unsent&month=${month}`} className="text-sm font-semibold">
+              See them
+            </Link>
+          }
+        />
+      ) : null}
+
       <MetricRow
         metrics={[
           { label: "Waiting", value: String(waiting.length), tone: waiting.length ? "warn" : undefined },
@@ -141,10 +159,13 @@ export default async function Page({
           { key: "waiting", href: `/sales/expenses?show=waiting&month=${month}`, label: "Waiting", count: waiting.length },
           { key: "decided", href: `/sales/expenses?show=decided&month=${month}`, label: "Decided", count: decided.length },
           { key: "all", href: `/sales/expenses?show=all&month=${month}`, label: "Everything", count: all.length },
+          { key: "unsent", href: `/sales/expenses?show=unsent&month=${month}`, label: "Not sent yet", count: unsent.length },
         ]}
       />
 
-      {rows.length === 0 ? (
+      {show === "unsent" ? (
+        <UnsentDays rows={unsent} />
+      ) : rows.length === 0 ? (
         <Empty
           title={show === "waiting" ? "Nothing to decide" : "No days submitted"}
           body="A salesman closes his day on the handset: the meals are worked out from when he left and got back, the travel from the legs he recorded, and the whole day is priced against the policy in force that date before it reaches you."
@@ -309,3 +330,73 @@ const COLUMNS: SortColumns<{
   approved: (d) => (d.approvedAmountPaise === null ? null : Number(d.approvedAmountPaise)),
   monthToDate: (d) => Number(d.monthToDatePaise),
 };
+
+/**
+ * Claims raised on the phone whose day was never closed.
+ *
+ * Read-only on purpose: nothing here has been priced against the policy or
+ * locked, so there is no Eligible to show and no day to decide. What the row
+ * owes the reader is WHO has to act — the salesman — and the one thing stopping
+ * him, which is usually that he never said when he got back.
+ */
+function UnsentDays({ rows }: { rows: UnsentClaimDayRow[] }) {
+  if (!rows.length) {
+    return (
+      <Empty
+        title="Nothing waiting on a salesman"
+        body="Every claim raised this month belongs to a day that has been closed and sent."
+      />
+    );
+  }
+  return (
+    <>
+      <Banner
+        tone="info"
+        title="Raised on the phone, not sent yet"
+        body="The salesman pressed Send claim, so each claim reached us — but a claim is decided as part of its day, and the day goes to you only when he closes it on his phone (More → Close the day). Until then it has not been priced against the policy, so there is no Eligible figure and nothing to decide."
+      />
+      <Table
+        minWidth={960}
+        head={
+          <>
+            <HeadCell width={190}>Salesman</HeadCell>
+            <HeadCell width={110}>Day</HeadCell>
+            <HeadCell width={220}>What is on it</HeadCell>
+            <HeadCell align="right" width={130}>Claimed</HeadCell>
+            <HeadCell width={260}>What is holding it</HeadCell>
+          </>
+        }
+      >
+        {rows.map((d, i) => (
+          <Row key={`${d.userId}:${d.day}`} striped={i % 2 === 1}>
+            <Cell truncate={190}>
+              <EntityLink href={`/sales/people/${d.userId}`}>{d.userName}</EntityLink>
+            </Cell>
+            <Cell>{shortDate(d.day)}</Cell>
+            <Cell>
+              <span className="text-[12px] text-muted">
+                {[
+                  d.lineCount ? plural(Number(d.lineCount), "claim") : null,
+                  d.legCount
+                    ? `${plural(Number(d.legCount), "leg")}, ${km(Number(d.metres))}`
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </span>
+            </Cell>
+            <Cell align="right">{money(Number(d.claimedPaise))}</Cell>
+            <Cell>
+              <Pill tone="warn">Day not closed</Pill>
+              <span className="block text-[12px] text-muted">
+                {d.returnedAt
+                  ? "He has not sent the day yet"
+                  : "He has not said when he got back, which closing the day needs"}
+              </span>
+            </Cell>
+          </Row>
+        ))}
+      </Table>
+    </>
+  );
+}
