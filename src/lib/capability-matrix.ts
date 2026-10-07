@@ -630,8 +630,8 @@ const DESK_CHECKS: ReadonlySet<Capability> = new Set<Capability>(["lead.gstValid
  * levels of Founder, because a founder grant is not split by seniority in any
  * way that means something here.
  *
- * The screens enforce the other half by MOUNT: `/crm/price-lists` and
- * `/sales/price-lists` draw no control that writes, even for somebody who
+ * The screens enforce the other half by MOUNT: `/crm/price-lists` draws no
+ * control that writes, even for somebody who
  * holds this capability through Accounts — see `priceListDoorCanManage`.
  */
 const PRICE_DESK: ReadonlySet<Capability> = new Set<Capability>(["pricelist.manage"]);
