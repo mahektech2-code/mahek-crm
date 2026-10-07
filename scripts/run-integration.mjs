@@ -184,6 +184,8 @@ const files = [
   "src/lib/crm-sales-manager.test.ts",
   // Verification follows lead.sales_manager_id: the seat holder verifies, at any CRM level.
   "src/lib/lead-verifier-seat.test.ts",
+  // The verifier is chosen while the lead is still a Suspect: suggested, picked, and able to verify.
+  "src/lib/prospect-verifier-choice.test.ts",
   // Qualification: the Salesman collects, the Sales Manager validates GST and reviews.
   "src/lib/qualification-flow.test.ts",
   // A lead the Sales Manager raised herself is approved by the person Mahek designates.

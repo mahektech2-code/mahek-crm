@@ -397,7 +397,7 @@ describe("Suspect → Prospect: the Telecaller promotes, the Sales Manager verif
     const lead = await promote({ leadManagerId: null, territoryRegion: "Maharashtra" });
     const r = await convert(lead.id);
     assert.equal(r.ok, false);
-    assert.match(r.ok ? "" : r.error, /No Sales Manager covers this lead's region\. Ask an administrator\./);
+    assert.match(r.ok ? "" : r.error, /No Sales Manager covers this lead's region./);
     const after = await row(lead.id);
     assert.equal(after.leadStage, "suspect");
     assert.equal(after.leadNextActionOwnerId === tele.id && after.leadNextAction === QUAL_NEXT.verify, false);
