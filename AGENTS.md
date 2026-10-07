@@ -6949,6 +6949,21 @@ dwell ring and the activity dot underneath it stand down when a click lands on
 a visit (`overVisit`): MapLibre fires every layer handler under the cursor, and
 two popups each covering half of the other is a control nobody can aim.
 
+**TODAY IS A TABLE, AND A NAME OPENS THAT MAN'S DAY IN A NEW TAB.** The team
+on `/sales` was a card per salesman, which is a wall at a hundred. It is one
+table now — search, status tabs with counts, sort on any column — in a box that
+scrolls DOWN and never across at 1280. A row opens `/sales/live/[id]` in a new
+tab, because Today is the screen a manager keeps open. That page is one man's
+day with NO switcher: his live map on the left and, on the right, a timeline of
+every punch, leg, unexplained stop, visit (customer or lead, outcome, notes,
+photos), order, payment and other act, filterable by kind.
+`engines/salesman-day.ts` builds it, pure, from the same dwell and trip engines
+the map draws with, so the kilometres and stops on the page and on the line
+agree; `salesman-day-service.ts` is the server read, scoped through
+`lastKnownPositions`, and `salesman-day.test.ts` executes every query in it.
+`/sales/live?salesman=` redirects there, which is how the Live map's own
+"follow one man" mode retired.
+
 **FULL SCREEN IS A LAYOUT, NOT THE BROWSER'S.** The browser's own fullscreen
 takes the tab bar with it, which is more than anybody asked for, and it owns the
 Escape key — so the shop record a pin opens could not be closed with Escape

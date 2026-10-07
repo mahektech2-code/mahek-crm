@@ -245,6 +245,7 @@ export function LivePanel({
           map was a picture you scrolled past to reach it. `min-h-0` is what
           lets a grid child shrink enough to scroll at all. */}
       <TeamList
+        day={day}
         rows={frame.rows}
         distanceMetres={view === "today" ? derived.distanceMetres : null}
         speedKmh={speeds}
