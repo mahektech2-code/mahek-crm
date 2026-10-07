@@ -28,7 +28,9 @@ import { calendarDate } from "@/lib/business-date";
 import type { BlueprintDefinition, Stage } from "../blueprint-types";
 import { isScored } from "../blueprint-types";
 import { scoreFixed } from "../engines/scoring";
-import { SALES_EXECUTIVE, SEED_BLUEPRINTS } from "./blueprints";
+import { seedHireBlueprints } from "../install";
+
+export { seedHireBlueprints };
 
 /* ---------------------------------------------------------------------------
  * Seeding Hire.
@@ -42,80 +44,6 @@ import { SALES_EXECUTIVE, SEED_BLUEPRINTS } from "./blueprints";
  * ------------------------------------------------------------------------- */
 
 const id = (p: string) => `${p}_${randomUUID()}`;
-
-/** Sales Executive v2 — the AppSheet app as it was, defects and all, so the diff has something real to show. */
-function salesExecutiveV2(): BlueprintDefinition {
-  const v2 = structuredClone(SALES_EXECUTIVE);
-  for (const st of v2.stages) {
-    if (st.key === "l1") {
-      const q4 = st.questions.find((q) => q.key === "q4")!;
-      if (q4.calc?.kind === "bands") {
-        q4.calc.bands = q4.calc.bands.filter((b) => b.min != null);
-        q4.calc.uncovered = null;
-      }
-      q4.note = "Salary below ₹15,000 has no score (D7).";
-    }
-    if (st.key === "l2") {
-      const q7 = st.questions.find((q) => q.key === "q7")!;
-      q7.options = q7.options!.map((o) => (o.key === "c" ? { ...o, points: null } : o));
-      q7.note = "“Ask the team for help” scores nothing (D7).";
-      for (const q of st.questions.filter((x) => x.mode === "ai_rubric")) q.mode = "fixed_choice";
-    }
-    if (st.key === "l3") {
-      const q6 = st.questions.find((q) => q.key === "q6")!;
-      if (q6.calc?.kind === "bands") q6.calc.bands = [{ min: null, max: 90, points: 0 }, { min: 90, max: null, points: 10 }];
-      q6.note = "60–90% scores zero while above 90% scores 10 (D7).";
-      const q8 = st.questions.find((q) => q.key === "q8")!;
-      if (q8.calc?.kind === "formula") q8.calc.cap = null;
-      for (const q of st.questions.filter((x) => x.mode === "ai_rubric")) q.mode = "fixed_choice";
-    }
-    if (st.key === "brf") st.briefing = st.briefing!.map((p) => ({ ...p, blocking: false }));
-  }
-  v2.stages = v2.stages.filter((s) => s.key !== "scr" && s.key !== "gate");
-  v2.offer.growth = [
-    { fromGrade: "S1", toGrade: "S2", criterion: "Cumulative sales of ₹10,00,000", incrementType: "fixed_amount", value: 200000 },
-    { fromGrade: "S2", toGrade: "S3", criterion: "Cumulative sales of ₹25,00,000", incrementType: "fixed_amount", value: 250000 },
-  ];
-  v2.openQuestions = ["Level 2 passes at 70 for status but the result message fires from 63 (D4)."];
-  return v2;
-}
-
-export async function seedHireBlueprints(actorId: string | null = null): Promise<{ created: string[] }> {
-  const created: string[] = [];
-  const rows = [
-    ...SEED_BLUEPRINTS.map((b) => ({ ...b })),
-    { ...SEED_BLUEPRINTS[0], version: 2, status: "retired" as const, definition: salesExecutiveV2(), source: "The AppSheet app as imported, before the D4/D7/D8/D11/D12 fixes." },
-  ];
-  for (const b of rows) {
-    const [have] = await db.select({ id: hireBlueprints.id }).from(hireBlueprints).where(and(eq(hireBlueprints.key, b.key), eq(hireBlueprints.version, b.version))).limit(1);
-    if (have) continue;
-    const at = b.status === "draft" ? null : new Date(Date.now() - (b.version === 2 ? 120 : b.key === "sales-executive" ? 50 : 20) * 86_400_000);
-    await db.insert(hireBlueprints).values({
-      id: `hbp_${b.key}_v${b.version}`,
-      key: b.key,
-      version: b.version,
-      status: b.status,
-      title: b.title,
-      family: b.family,
-      department: b.department,
-      level: b.level,
-      employmentType: b.employmentType,
-      locations: b.locations,
-      headcount: b.headcount,
-      descriptionSource: b.source,
-      aiGenerated: b.ai,
-      generationPromptVersion: b.ai ? "blueprint/v1" : null,
-      parentId: b.version > 1 ? `hbp_${b.key}_v${b.version - 1}` : null,
-      definition: b.definition,
-      publishedAt: at,
-      publishedById: b.status === "draft" ? null : actorId,
-      retiredAt: b.status === "retired" ? new Date(Date.now() - 50 * 86_400_000) : null,
-      createdById: actorId,
-    });
-    created.push(`${b.title} v${b.version}`);
-  }
-  return { created };
-}
 
 /* ------------------------------------------------------------------- demo */
 

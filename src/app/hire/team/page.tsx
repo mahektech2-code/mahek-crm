@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requireHireScreen } from "@/lib/hire/access";
 import { ROLE_CAPS, ROLE_LABEL, HIRE_ROLES } from "@/lib/hire/roles";
 import { hireTeam } from "@/lib/hire/services/blueprints";
 import { Callout, Empty, PageHead } from "../_ui/kit";
 import { RolePicker } from "./role-picker";
+import { AddPerson, RemovePerson } from "./team-controls";
 
 export const metadata: Metadata = { title: "Team" };
 export const dynamic = "force-dynamic";
@@ -28,15 +28,16 @@ export default async function TeamPage() {
   return (
     <>
       <PageHead title="Team" sub="What each person does inside Hire. The role decides what they see and what they may do; it is checked on every action, not only on the screen." />
+      <AddPerson canMakeAdmin={ctx.role === "admin"} />
       <Callout className="mb-5">
-        Giving somebody Hire at all is done on the Admin Console’s <Link href="/admin">Access screen</Link>. Without a role here, the level they were granted decides — an admin is Admin, a manager is a Hiring Manager, an associate is an Interviewer, the narrowest there is.
+        Without a role, the level they hold Hire at decides — an admin is Admin, a manager is a Hiring Manager, an associate is an Interviewer, the narrowest there is. Every platform administrator holds Hire as Admin from the day it is installed.
       </Callout>
       {rows.length ? (
         <div className="overflow-hidden rounded-[6px] border border-line bg-surface">
           <table className="w-full border-collapse text-sm">
             <thead>
               <tr className="text-left text-xs font-medium tracking-[0.04em] text-muted uppercase">
-                {["Person", "Granted at", "Role in Hire", "What that means"].map((h) => (
+                {["Person", "Granted at", "Role in Hire", "What that means", ""].map((h) => (
                   <th key={h} className="border-b border-divider px-4 py-2.5 font-medium">{h}</th>
                 ))}
               </tr>
@@ -58,6 +59,7 @@ export default async function TeamPage() {
                       <RolePicker userId={r.userId} role={r.role} fallback={ROLE_LABEL[LEVEL_DEFAULT[r.level] as keyof typeof ROLE_LABEL] ?? "Interviewer"} self={r.userId === ctx.user.id} />
                     </td>
                     <td className="max-w-[420px] px-4 py-2 text-[13px] text-muted">{SENTENCE[effective]}</td>
+                    <td className="px-4 text-right">{r.userId === ctx.user.id ? null : <RemovePerson userId={r.userId} name={r.name} />}</td>
                   </tr>
                 );
               })}
@@ -65,7 +67,7 @@ export default async function TeamPage() {
           </table>
         </div>
       ) : (
-        <Empty title="Nobody holds Hire yet">Grant it on the Admin Console’s Access screen.</Empty>
+        <Empty title="Nobody else holds Hire yet">Add somebody above.</Empty>
       )}
       <details className="mt-6 text-[13px] text-muted">
         <summary className="cursor-pointer">What each role may do</summary>

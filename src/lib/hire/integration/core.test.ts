@@ -19,6 +19,7 @@ import { hireContext, type HireContext } from "@/lib/hire/access";
 import { boardRows, createApplication, resolveDuplicate, screenIn } from "@/lib/hire/services/pipeline";
 import { getApplication, moveApplication, stageOutcome } from "@/lib/hire/services/core";
 import { seedHireBlueprints } from "@/lib/hire/seed/seed";
+import { installHire } from "@/lib/hire/install";
 import { runTask } from "@/lib/hire/ai/orchestrator";
 import { z } from "zod";
 import { invalidateConfig } from "@/lib/config/store";
@@ -145,6 +146,21 @@ describe("Hire core", () => {
     await assert.rejects(
       db.insert(hireDecisions).values({ id: `hde_${randomUUID()}`, applicationId: a.id, decisionPoint: "decision_gate", decidedById: head.id, decidedByRole: "HR Head", decision: "advance", reasoning: "ok" }),
     );
+  });
+
+  test("installing gives every platform administrator Hire as Admin, once, and seeds nothing twice", async () => {
+    const [admin] = await db
+      .insert(users)
+      .values({ id: uid(), name: "Platform Admin", email: `pa.${randomUUID().slice(0, 6)}@test.in`, passwordHash: "x", role: "admin", initials: "PA" })
+      .returning();
+    await db.insert(appAccess).values({ id: `acc_${randomUUID()}`, userId: admin.id, app: "admin", role: "admin" });
+    const first = await installHire();
+    assert.deepEqual(first.blueprints, [], "the blueprints were already seeded");
+    assert.ok(first.admins.includes("Platform Admin"));
+    const ctx = await as(admin);
+    assert.equal(ctx.role, "admin");
+    const again = await installHire();
+    assert.deepEqual(again, { blueprints: [], admins: [] });
   });
 
   test("with AI switched off, a task takes its manual path and is still logged", async () => {

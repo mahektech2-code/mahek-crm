@@ -182,7 +182,7 @@ export async function confirmFields(ctx: HireContext, documentId: string, input:
   if (kind && input.idNumber?.trim()) {
     const clean = cleanNumber(kind, input.idNumber);
     if (!clean) return { ok: false, error: `That does not look like a ${req.label} number.`, code: "validation", fieldErrors: [{ field: "idNumber", message: "Check the number" }] };
-    if (!vaultAvailable()) return err("No vault key is configured, so the number cannot be stored.", "rule_violation");
+    if (!vaultAvailable()) return err("This deployment has no app signing secret, so the number cannot be stored.", "rule_violation");
     vaultId = (await storeNumber(b.candidate.id, kind, clean, ctx.user.id)).id;
   }
   if (input.verify && kind && !vaultId) return { ok: false, error: `Enter the ${req.label} number before verifying.`, code: "validation", fieldErrors: [{ field: "idNumber", message: "Required" }] };

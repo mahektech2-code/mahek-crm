@@ -81,7 +81,7 @@ npm run jobs -- resolve-places             # build `places` and point every
 npm run hrms:sync    # pull the employee sheet now
 npm run app:grant -- hrms vikram@mahek.in --level=manager
                      # give somebody an app; the level defaults to associate
-npm run hire:seed    # Hire's seeded role blueprints — safe anywhere
+npm run hire:deploy  # Hire's install step (blueprints + admins) — runs on every deploy
 npm run hire:seed -- --demo --reset   # DEV: wipe Hire, load its staff and pipeline
 npm run report:qualification   # READ-ONLY: what the Telecaller-owned Qualification
                      # rules mean for the leads already in the book — writes nothing
@@ -7425,14 +7425,13 @@ no second number to fire from. Grace is shown beside the rubric score, never
 merged, bounded by the stage's range, and needs a 20-character reason; a grace
 that flips an outcome is flagged.
 
-**The seeded blueprint carries the business's open questions out loud.**
-`seed/blueprints.ts` resolves D7, D8, D11 and D12 the way the design did and
-leaves D13 (a boss rating of 10 scores 0) as it was, named on the validation
-panel. Level 1's option values were not transcribed from the sheets — the
-sheets were not available — and the blueprint says so until PRD §11 phase 3
-(re-scoring historical candidates and matching the sheet exactly) has been
-run. Sales Executive v2 is seeded RETIRED with the defects in, so the version
-diff shows what changed.
+**The seeded blueprint is the rule, not a draft of one.** `seed/blueprints.ts`
+resolves D4, D7, D8, D11 and D12 the way the design did, keeps the boss-rating
+curve (a 10 scores 0 — a perfect rating from a former manager is read as
+inflated) and caps the efficiency formula at 10. None of it is provisional: a
+change is a new version published from the studio, and the diff shows what
+moved. Sales Executive v2 is seeded RETIRED with the AppSheet defects in, so
+that diff has something real to show.
 
 **The validator blocks what would mis-score a real person** — weights not
 totalling 100%, a question mapped to nothing, a reachable answer with no
@@ -7485,20 +7484,29 @@ narrowing. Scope is SQL — `scopeWhere` in `lib/hire/access.ts` — and an
 interviewer sees only applications they are interviewing and never an
 earlier stage's score.
 
-**PII IS VAULTED.** Aadhaar, PAN and account numbers live encrypted in
-`hire_vault` and are drawn masked; unmasking is a capability, a warning and an
-audit line with `is_pii_access`. Files are `hire_files`, read through
-`/api/hire/files/[id]`, never a stored URL.
+**PII IS VAULTED, with nothing to configure.** Aadhaar, PAN and account
+numbers live encrypted in `hire_vault` (AES-256-GCM) under a key derived from
+the app signing secret MBOS sign-in already depends on (`MBOS_JWT_SECRET`, or
+`JWT_SECRET`) — deliberately no Hire-only variable, because a key that can be
+added later silently strands every number stored before it. Rotating that
+secret means re-encrypting the vault. Numbers are drawn masked; unmasking is a
+capability, a warning and an audit line with `is_pii_access`. Files are
+`hire_files`, read through `/api/hire/files/[id]`, never a stored URL.
 
 **HIRED IS SET BY PROVISIONING (D9).** The pipeline ends by creating the
 MahekOne account and granting the apps the blueprint's provisioning names —
 that act, and nothing else, makes an application `hired`.
 
-Seeding: `npm run hire:seed` inserts the seeded blueprint versions that are
-missing and is safe in production; `-- --demo --reset` wipes Hire and loads
-the demo pipeline, development only. Granting the app is `npm run app:grant --
-hire <who> --level=manager` or the Access screen; the job inside it is set on
-`/hire/team`.
+**INSTALLING IS PART OF THE DEPLOY.** `installHire` (`lib/hire/install.ts`)
+seeds the role blueprints that are missing and gives Hire, as Admin, to every
+platform administrator who lacks it; `deploy:db` runs it as `hire:deploy`
+after the migrations and the catalogue, and it is idempotent. The layout also
+seeds the blueprints the first time Hire opens on an empty database. From
+there Hire is handed out on its own Team screen — `addToHire` is the same
+write the Access screen makes (`grantAppWithDefaultModules`, the level
+re-derived, a platform audit row), so the two cannot disagree; Hire being one
+module is what makes a second door safe. `npm run hire:seed -- --demo --reset`
+wipes Hire and loads the demo pipeline, development only.
 
 ## Testing
 

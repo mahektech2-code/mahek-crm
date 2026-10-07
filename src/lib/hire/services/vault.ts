@@ -14,12 +14,13 @@ import { hid } from "./core";
  * `last4` and nothing more; the plaintext is decrypted only by `reveal`, which
  * its caller must audit as a PII access.
  *
- * WHICH KEY. `HIRE_VAULT_KEY` when it is set — that is the one to set, and
- * rotate by re-encrypting. Without it the vault derives a key from
- * `MBOS_JWT_SECRET`, the app secret every deployment already carries, so the
- * vault works on day one rather than refusing documents. The Documents screen
- * says which of the two is protecting it. With neither, numbers are refused
- * rather than stored in a way that only looks protected.
+ * WHICH KEY. One, derived from the deployment's app signing secret — the
+ * secret MBOS sign-in already depends on (`MBOS_JWT_SECRET`, or `JWT_SECRET`
+ * where that is the name it was given), so the vault works on every
+ * deployment with nothing to set up. There is deliberately no second,
+ * Hire-only variable: a key that can be added later is a key that, once
+ * added, silently makes every number stored before it unreadable. Rotating
+ * the app secret therefore needs the vault re-encrypted in the same breath.
  *
  * A database dump alone does not open the vault: the key lives in the
  * environment, not in a table.
@@ -27,21 +28,16 @@ import { hid } from "./core";
 
 export type VaultKind = "aadhaar" | "pan" | "bank";
 
-function keySource(): { key: Buffer; source: "HIRE_VAULT_KEY" | "MBOS_JWT_SECRET" } | null {
-  const own = process.env.HIRE_VAULT_KEY?.trim();
-  if (own) return { key: scryptSync(own, "mahekone.hire.vault", 32), source: "HIRE_VAULT_KEY" };
-  const app = process.env.MBOS_JWT_SECRET?.trim();
-  if (app) return { key: scryptSync(app, "mahekone.hire.vault.derived", 32), source: "MBOS_JWT_SECRET" };
-  return null;
+function keySource(): Buffer | null {
+  const app = (process.env.MBOS_JWT_SECRET ?? process.env.JWT_SECRET)?.trim();
+  return app ? scryptSync(app, "mahekone.hire.vault.derived", 32) : null;
 }
 
-/** For the Documents screen: which key protects the vault, in words. */
+/** For the Documents screen: how the vault is protected, in words. */
 export function vaultKeyLine(): string {
-  const k = keySource();
-  if (!k) return "No vault key is configured (HIRE_VAULT_KEY), so identity numbers cannot be stored — only the documents themselves.";
-  return k.source === "HIRE_VAULT_KEY"
-    ? "Identity and bank numbers are encrypted (AES-256-GCM) with this deployment’s HIRE_VAULT_KEY."
-    : "Identity and bank numbers are encrypted (AES-256-GCM) with a key derived from the app secret. Set HIRE_VAULT_KEY to give the vault a key of its own.";
+  return keySource()
+    ? "Identity and bank numbers are encrypted (AES-256-GCM) with this deployment’s own key."
+    : "This deployment has no app signing secret, so identity numbers cannot be stored — only the documents themselves.";
 }
 
 export const vaultAvailable = () => keySource() !== null;
@@ -62,19 +58,19 @@ export const NUMBER_HINT: Record<VaultKind, string> = {
 
 function encrypt(plain: string): string {
   const k = keySource();
-  if (!k) throw new Error("No vault key is configured.");
+  if (!k) throw new Error("This deployment has no app signing secret.");
   const iv = randomBytes(12);
-  const c = createCipheriv("aes-256-gcm", k.key, iv);
+  const c = createCipheriv("aes-256-gcm", k, iv);
   const data = Buffer.concat([c.update(plain, "utf8"), c.final()]);
-  return `v1:${k.source === "HIRE_VAULT_KEY" ? "own" : "app"}:${iv.toString("base64")}:${c.getAuthTag().toString("base64")}:${data.toString("base64")}`;
+  return `v1:app:${iv.toString("base64")}:${c.getAuthTag().toString("base64")}:${data.toString("base64")}`;
 }
 
 function decrypt(ciphertext: string): string {
   const [ver, , iv, tag, data] = ciphertext.split(":");
   if (ver !== "v1") throw new Error("Unknown vault format.");
   const k = keySource();
-  if (!k) throw new Error("No vault key is configured.");
-  const d = createDecipheriv("aes-256-gcm", k.key, Buffer.from(iv, "base64"));
+  if (!k) throw new Error("This deployment has no app signing secret.");
+  const d = createDecipheriv("aes-256-gcm", k, Buffer.from(iv, "base64"));
   d.setAuthTag(Buffer.from(tag, "base64"));
   return Buffer.concat([d.update(Buffer.from(data, "base64")), d.final()]).toString("utf8");
 }

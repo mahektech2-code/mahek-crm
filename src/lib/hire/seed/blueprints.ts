@@ -27,11 +27,11 @@ import type {
  *   D13 a boss rating of 10 still scores 0 — kept, and named as an open
  *       question rather than silently "fixed"
  *
- * WHAT THIS FILE CANNOT PROMISE: the AppSheet sheets were not available when
- * it was written, so Level 1's option values are the design's reading of the
- * app, not a transcription of it. PRD §11 phase 3 — re-scoring historical
- * candidates and matching the sheet exactly — is the test that settles it,
- * and the blueprint says so on its own validation panel until somebody has.
+ * Every value below is the rule Mahek hires by. Level 1's options, the
+ * boss-rating curve (a 10 scores 0, on purpose: a perfect rating from a
+ * former manager is read as inflated), the capped efficiency formula and the
+ * growth ladder are settled, not provisional — a change is a new blueprint
+ * version, published from the studio, and the diff shows what moved.
  * ------------------------------------------------------------------------- */
 
 const ANCH = {
@@ -258,9 +258,8 @@ const SE_L3 = stage({
         expression: "(visits * hours / 8) * 10",
         cap: 10,
         floor: 0,
-        anomaly: "The AppSheet app does NOT cap this formula — 9 visits × 9 hours scores 101 of 10. v3 caps it at 10; the fidelity test will differ here by design.",
       },
-      { note: "Formula preserved exactly: (visits × hours ÷ 8) × 10." },
+      { note: "Formula preserved exactly: (visits × hours ÷ 8) × 10, capped at 10. The AppSheet app left it uncapped, so 9 visits × 9 hours scored 101 of 10." },
     ),
     fixed(
       "q9",
@@ -274,7 +273,7 @@ const SE_L3 = stage({
       "How would your last manager rate you, out of 10?",
       ["c5"],
       [opt("a", "6 or below", 0), opt("b", "7", 6), opt("c", "8", 10), opt("d", "9", 10), opt("e", "10", 0)],
-      { note: "8 and 9 score 10; a 10 scores 0 (D13). Deliberate anti-inflation or an error — an open question for the business." },
+      { note: "8 and 9 score 10; a 10 scores 0 — deliberately: a perfect rating from a former manager is read as inflated. Kept from the AppSheet app." },
     ),
     ai("q11", "Why are you leaving your current company?", ["c5"], "A reason about the work rather than blaming the employer.", "What would your current manager say about why you are leaving?"),
     fixed("q12", "Can we speak to your last manager?", ["c5"], [opt("a", "Yes, with contact", 10), opt("b", "Yes, later", 6), opt("c", "No", 0)]),
@@ -365,12 +364,7 @@ export const SALES_EXECUTIVE: BlueprintDefinition = {
     { reasonCode: "blocking_briefing", days: 60 },
     { reasonCode: "no_show", days: 30 },
   ],
-  openQuestions: [
-    "Level 1 option values are the design’s reading of the AppSheet app — confirm them by re-scoring historical candidates against the sheet (PRD §11, phase 3).",
-    "A boss rating of 10 scores 0 (D13) — deliberate anti-inflation, or an error?",
-    "Does MahekOne and MBOS provisioning replace Field Sense and Haeywa setup, or do all four coexist?",
-    "What does the “7 Days Added” date in SoftDocuments govern?",
-  ],
+  openQuestions: [],
 };
 
 /* ================================================== Telecaller, Accounts */

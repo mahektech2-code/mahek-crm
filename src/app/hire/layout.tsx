@@ -5,6 +5,7 @@ import { initialsOf } from "@/lib/format";
 import { hatForHeader } from "@/lib/hat-for-header";
 import { listNotifications } from "@/lib/queries";
 import { requireHire } from "@/lib/hire/access";
+import { ensureHireBlueprints } from "@/lib/hire/install";
 import { aiState } from "@/lib/hire/ai/orchestrator";
 import { navFor } from "@/lib/hire/roles";
 import { navCounts } from "@/lib/hire/services/counts";
@@ -20,6 +21,7 @@ export const metadata: Metadata = { title: { template: "%s · Hire · MahekOne",
  */
 export default async function HireLayout({ children }: { children: React.ReactNode }) {
   const ctx = await requireHire();
+  await ensureHireBlueprints();
   const [apps, hat, notifications, counts, ai] = await Promise.all([
     listUserApps(ctx.user.id),
     hatForHeader(ctx.user, "hire"),

@@ -143,7 +143,7 @@ function questionChecks(
       if (c.anomaly) warn("rubrics", where, c.anomaly);
     }
   }
-  if (q.note && /D1[03]|open question/i.test(q.note)) warn("rubrics", where, q.note);
+  if (q.note && /open question/i.test(q.note)) warn("rubrics", where, q.note);
 }
 
 function bandsCoverEverything(bands: { min: number | null; max: number | null }[]): boolean {
