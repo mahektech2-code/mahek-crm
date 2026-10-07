@@ -1,13 +1,17 @@
 import "server-only";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { sheetFieldActivityRows, sheetSyncRuns, users } from "@/db/schema";
+import { sheetFieldActivityRows, sheetSyncRuns, timelineEvents, users } from "@/db/schema";
 import { readTab, sheetsConfigured, type SheetTable } from "@/lib/sheets";
 import {
+  detectDateOrder,
+  FIELD_ACTIVITY_COL,
   isBlankFieldActivityRow,
   parseFieldActivityRow,
+  type DateOrder,
   type ParsedFieldActivityRow,
 } from "@/lib/field-activity-parse";
+import { MBOS_EVENT } from "@/lib/timeline";
 import {
   decideCustomerMatch,
   matchSalesmanName,
@@ -161,12 +165,26 @@ async function pullFromSheet(
    *  reconcile withdraws what is NOT in here; an append never withdraws. */
   const seen = new Set<string>();
 
+  /*
+   * The order the Date column is written in, decided from what this read can
+   * see. An append pass in the first week of a month holds nothing over 12 and
+   * cannot settle it alone, so it falls back on the rows already stored —
+   * which were read from the same workbook — and only then on month-first.
+   */
+  let order: DateOrder | null = null;
+
   for await (const window of readWindows(read, startRow, FIRST_DATA_ROW)) {
     const rows = window.rows.filter((row) => !isBlankFieldActivityRow(row.cells));
     rowsRead += rows.length;
     for (const row of rows) highestRow = Math.max(highestRow, row.rowNumber);
 
-    const result = await writeWindow(syncId, { ...window, rows }, salesmen, customerCache, seen);
+    order =
+      detectDateOrder(rows.map((r) => r.cells[FIELD_ACTIVITY_COL.date])) ??
+      order ??
+      (await storedDateOrder()) ??
+      "mdy";
+
+    const result = await writeWindow(syncId, { ...window, rows }, salesmen, customerCache, seen, order);
     created += result.created;
     updated += result.updated;
     unchanged += result.unchanged;
@@ -216,6 +234,7 @@ async function writeWindow(
   salesmen: { id: string; name: string }[],
   customerCache: Map<string, MatchResult>,
   seen: Set<string>,
+  order: DateOrder,
 ) {
   let created = 0;
   let updated = 0;
@@ -228,7 +247,7 @@ async function writeWindow(
 
     const prepared = slice.map((row) => ({
       row,
-      parsed: parseFieldActivityRow(row.cells),
+      parsed: parseFieldActivityRow(row.cells, order),
       hash: hashRow(row.cells),
     }));
 
@@ -438,4 +457,124 @@ export async function rematchFieldActivitySalesmen(): Promise<{
   }
 
   return { scanned: rows.length, matched, ambiguous, stillUnmatched };
+}
+
+/**
+ * How the stored rows write their dates — the most recent read that said
+ * anything either way. Used only where a read is too small to say for itself.
+ */
+async function storedDateOrder(): Promise<DateOrder | null> {
+  const rows = await db.execute<{ d: string | null }>(sql`
+    select raw->>${FIELD_ACTIVITY_COL.date} as d
+      from sheet_field_activity_rows
+     order by updated_at desc
+     limit 5000
+  `);
+  return detectDateOrder(rows.map((r) => r.d));
+}
+
+/**
+ * RE-READ EVERY STORED DATE, without touching Google.
+ *
+ * The twin of `rematchFieldActivitySalesmen`, for the date rather than the
+ * salesman. A hash-driven sync never rewrites a row whose cells did not
+ * change, so a row read month-first from a day-first workbook keeps its wrong
+ * date for ever — 10 June sitting on the screen as 6 October, a visit on a
+ * day nobody made it, by somebody who may have left in July.
+ *
+ * Every row's `raw` is what ONE sync run read, so the order is decided per run
+ * (`sync_id`): a CSV export and a live read of the same tab can disagree, and
+ * deciding for the whole table would put one of them wrong. A run too small to
+ * say — an append in the first week of a month — takes the nearest run that
+ * did, earlier first. Only rows whose answer MOVED are written, and a moved
+ * row's timeline entry moves with it, because that entry is what reaches the
+ * customer's history and the salesman's phone.
+ */
+export async function reparseFieldActivityDates(): Promise<{
+  scanned: number;
+  moved: number;
+  nowUnreadable: number;
+  timelineMoved: number;
+  orders: { dmy: number; mdy: number };
+}> {
+  const rows = await db
+    .select({
+      id: sheetFieldActivityRows.id,
+      syncId: sheetFieldActivityRows.syncId,
+      raw: sheetFieldActivityRows.raw,
+      visitDate: sheetFieldActivityRows.visitDate,
+      reminderDate: sheetFieldActivityRows.reminderDate,
+      timelineEventWritten: sheetFieldActivityRows.timelineEventWritten,
+      startedAt: sheetSyncRuns.startedAt,
+    })
+    .from(sheetFieldActivityRows)
+    .leftJoin(sheetSyncRuns, eq(sheetSyncRuns.id, sheetFieldActivityRows.syncId));
+
+  // Runs in the order they happened, each with what its own rows say.
+  const byRun = new Map<string, { at: number; rows: typeof rows }>();
+  for (const r of rows) {
+    const run = byRun.get(r.syncId) ?? { at: r.startedAt ? r.startedAt.getTime() : 0, rows: [] };
+    run.rows.push(r);
+    byRun.set(r.syncId, run);
+  }
+  const runs = [...byRun.entries()]
+    .map(([id, run]) => ({
+      id,
+      ...run,
+      order: detectDateOrder(run.rows.map((r) => r.raw[FIELD_ACTIVITY_COL.date])),
+    }))
+    .sort((a, b) => a.at - b.at);
+  const decided = runs.map((run, i) => {
+    if (run.order) return run.order;
+    for (let j = i - 1; j >= 0; j--) if (runs[j].order) return runs[j].order!;
+    for (let j = i + 1; j < runs.length; j++) if (runs[j].order) return runs[j].order!;
+    return "mdy" as DateOrder;
+  });
+
+  let moved = 0;
+  let nowUnreadable = 0;
+  let timelineMoved = 0;
+  const orders = { dmy: 0, mdy: 0 };
+
+  for (const [i, run] of runs.entries()) {
+    const order = decided[i];
+    orders[order] += run.rows.length;
+    for (const row of run.rows) {
+      const parsed = parseFieldActivityRow(row.raw, order);
+      if (parsed.visitDate === row.visitDate && parsed.reminderDate === row.reminderDate) continue;
+      moved++;
+      if (!parsed.visitDate) nowUnreadable++;
+
+      await db
+        .update(sheetFieldActivityRows)
+        .set({
+          visitDate: parsed.visitDate,
+          reminderDate: parsed.reminderDate,
+          issues: parsed.issues,
+          // No readable date is nothing to put on a timeline; a fresh one is
+          // owed one if it never had it.
+          timelineEventWritten: parsed.visitDate ? row.timelineEventWritten : false,
+          updatedAt: new Date(),
+        })
+        .where(eq(sheetFieldActivityRows.id, row.id));
+
+      if (row.timelineEventWritten && parsed.visitDate !== row.visitDate) {
+        const where = and(
+          eq(timelineEvents.sourceApp, "mbos"),
+          eq(timelineEvents.eventType, MBOS_EVENT.visit),
+          eq(timelineEvents.sourceRecordId, row.id),
+        );
+        const changed = parsed.visitDate
+          ? await db
+              .update(timelineEvents)
+              .set({ occurredAt: new Date(`${parsed.visitDate}T12:00:00+05:30`) })
+              .where(where)
+              .returning({ id: timelineEvents.id })
+          : await db.delete(timelineEvents).where(where).returning({ id: timelineEvents.id });
+        timelineMoved += changed.length;
+      }
+    }
+  }
+
+  return { scanned: rows.length, moved, nowUnreadable, timelineMoved, orders };
 }

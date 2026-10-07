@@ -48,6 +48,9 @@ npm run jobs -- erp-alerts                 # the ERP's unusual-activity checks �
                            # they also run hourly
 npm run jobs -- erp-digest                 # yesterday's owner summary — it also
                            # runs nightly
+npm run jobs -- field-activity-reparse     # re-read every stored EMP 2.0
+                           # activity date in its own read's day/month order
+                           # (also runs after the daily reconcile)
 npm run jobs -- taken-order-reparse        # re-read what is stored — the one
                            # to run when the RULE changed, not the sheet
 npm run jobs -- project-sheet --owner=vikram@mahek.in --bills
