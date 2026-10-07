@@ -1,13 +1,13 @@
 import React from 'react';
 import { View } from 'react-native';
-import { router, useFocusEffect } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Badge, Card, Divider, Input, Field, PrimaryButton, SecondaryButton, T } from '../src/components/ui/primitives';
 import { ConfirmSheet } from '../src/components/ui/overlays';
 import { useBoot } from '../src/state/boot';
 import { useStore } from '../src/state/store';
-import { inrFromPaise, isoDate } from '../src/lib/format';
+import { dmy, inrFromPaise, isoDate } from '../src/lib/format';
 import { CountUp, Stagger, Swap } from '../src/components/ui/motion';
 import { color as C, weight, tabular, type as typeScale } from '../src/theme/tokens';
 import { priceDay, submitDay } from '../src/data/travel';
@@ -36,7 +36,16 @@ export default function EodScreen() {
      body it re-derived on every render, so a day that rolled over while the
      sheet was open silently re-triggered the load against a different date —
      and the React Compiler rules forbid it outright. */
-  const day = React.useMemo(() => isoDate(new Date()), []);
+  const today = React.useMemo(() => isoDate(new Date()), []);
+  /* An EARLIER day can be closed too. This screen used to close today and
+     nothing else, so a claim made for yesterday — or on a day he forgot to
+     close — was stored at the office and could never be sent from the phone.
+     Expenses links here with `?day=` for each one still open. A malformed or
+     future date falls back to today rather than opening a day nobody chose. */
+  const asked = useLocalSearchParams<{ day?: string }>().day;
+  const day = asked && /^\d{4}-\d{2}-\d{2}$/.test(asked) && asked <= today ? asked : today;
+  const isPast = day < today;
+  const dayWord = isPast ? dmy(day) : 'today';
 
   /** Null means the read has not landed. That is NOT "nothing recorded today",
    *  which is what this screen used to say while it was still reading. */
@@ -67,6 +76,9 @@ export default function EodScreen() {
   const c = priced?.computation ?? null;
   const locked = priced?.day?.lockedAt != null;
   const noReturn = priced?.day != null && priced.day.returnedAt == null;
+  /* Only TODAY can still be punched out of. A past day with no return time is
+     sent without one — see `submitDay` — and says what that costs. */
+  const blockedOnReturn = noReturn && !isPast;
 
   /**
    * The lock is a REF, and the sheet closes before the await rather than after.
@@ -114,7 +126,7 @@ export default function EodScreen() {
   return (
     <AppFrame title="MBOS" activeTab={null} contentStyle={{ padding: 16, paddingBottom: 32 }}>
       <BackLink label={back.label} onPress={back.go} />
-      <T s="h1">Close the day</T>
+      <T s="h1">{isPast ? 'Close ' + dmy(day) : 'Close the day'}</T>
       <T s="small" style={{ color: C.muted, marginTop: 2, marginBottom: 14 }}>
         Check it, then send it. After you send it, the day is locked. Only your manager can open it
         again.
@@ -128,18 +140,20 @@ export default function EodScreen() {
         <Card style={{ paddingVertical: 28 }}>
           <T s="small" style={{ color: C.muted, textAlign: 'center' }}>
             {readFailed
-              ? 'Today did not load. Come back to this screen to try again.'
+              ? (isPast ? 'This day' : 'Today') + ' did not load. Come back to this screen to try again.'
               : 'Loading…'}
           </T>
         </Card>
       ) : !priced.day ? (
         <Card style={{ paddingVertical: 28 }}>
           <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>
-            Nothing saved today
+            {'Nothing saved for ' + dayWord}
           </T>
-          <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 4 }}>
-            Punch in from Home. This will fill in as you travel.
-          </T>
+          {isPast ? null : (
+            <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 4 }}>
+              Punch in from Home. This will fill in as you travel.
+            </T>
+          )}
         </Card>
       ) : (
         <>
@@ -150,7 +164,9 @@ export default function EodScreen() {
           ) : null}
 
           <Card>
-            <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>Today’s total</T>
+            <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>
+              {isPast ? 'Total for ' + dmy(day) : 'Today’s total'}
+            </T>
             {c ? (
               <>
                 {line('Travel', c.travelPaise, `${(c.totalMetres / 1000).toFixed(1)} km in ${c.legs.length} ${c.legs.length === 1 ? 'trip' : 'trips'}`)}
@@ -196,7 +212,7 @@ export default function EodScreen() {
               </>
             ) : (
               <T s="small" style={{ color: C.muted, marginTop: 8 }}>
-                The office has not set a policy for today yet. So nothing can be worked out now.
+                {'The office has not set a policy for ' + dayWord + ' yet.'} So nothing can be worked out now.
                 Everything you added is saved. It will be worked out later.
               </T>
             )}
@@ -207,7 +223,7 @@ export default function EodScreen() {
           {c && c.meals.some((m) => !m.earned) ? (
             <Stagger index={1}>
             <Card style={{ marginTop: 10 }}>
-              <T style={[{ fontSize: 14, color: C.ink }, weight(600)]}>Meals not paid today</T>
+              <T style={[{ fontSize: 14, color: C.ink }, weight(600)]}>{'Meals not paid ' + (isPast ? 'on ' + dmy(day) : 'today')}</T>
               {c.meals
                 .filter((m) => !m.earned)
                 .map((m) => (
@@ -250,12 +266,20 @@ export default function EodScreen() {
               <Field label="Anything to tell the office">
                 <Input value={note} onChangeText={setNote} placeholder="Optional" multiline />
               </Field>
+              {noReturn && isPast ? (
+                <Card style={{ marginTop: 12, backgroundColor: C.warnBg }}>
+                  <T s="small" style={{ color: C.ink }}>
+                    You did not punch out on this day, so no meals can be worked out for it. Your
+                    bills and travel are still sent.
+                  </T>
+                </Card>
+              ) : null}
               <PrimaryButton
                 label="Send day"
                 style={{ marginTop: 14 }}
-                disabled={busy || noReturn}
+                disabled={busy || blockedOnReturn}
                 whyDisabled={
-                  noReturn
+                  blockedOnReturn
                     ? 'Punch out first. Your food allowance is worked out from the time you punch out.'
                     : undefined
                 }
@@ -266,7 +290,7 @@ export default function EodScreen() {
                   punch-out itself — through Home's, which asks for the same
                   photograph wherever it starts. This screen used to ask him to
                   "add the time you got back" with nothing on it that could. */}
-              {noReturn ? (
+              {blockedOnReturn ? (
                 <SecondaryButton
                   label="Punch out · photo"
                   style={{ marginTop: 10 }}
@@ -281,7 +305,7 @@ export default function EodScreen() {
 
       <ConfirmSheet
         open={confirming}
-        title="Send today?"
+        title={isPast ? 'Send ' + dmy(day) + '?' : 'Send today?'}
         body={
           c
             ? `You are sending ${inrFromPaise(c.totalClaimedPaise)}. After this the day is locked. Only your manager can open it again.`
