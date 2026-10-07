@@ -119,6 +119,9 @@ describe("The production env example matches what the code reads", () => {
       "R2_SECRET_ACCESS_KEY",
       "R2_ENDPOINT",
       "R2_BUCKET",
+      // deploy/backup.sh
+      "BACKUP_GPG_RECIPIENT_FILE",
+      "BACKUP_HEALTHCHECK_URL",
     ]);
     const stale = [...documentedNames()].filter(
       (n) => !referenced.has(n) && !infrastructure.has(n),
