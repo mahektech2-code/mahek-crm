@@ -10,10 +10,12 @@ import {
   activityPointsForDay,
   lastKnownPositions,
   tracksForDay,
+  visitsBetween,
 } from "@/lib/services/sales-service";
 import { plural } from "@/components/console/words";
 import { LiveAlerts, type LiveAlert } from "./live-alerts";
 import { LivePanel } from "./live-panel";
+import { VisitsStrip } from "./visits-strip";
 
 export const metadata = { title: "Live map — Sales Dashboard — MahekOne" };
 
@@ -59,12 +61,15 @@ export const metadata = { title: "Live map — Sales Dashboard — MahekOne" };
 export default async function Page({
   searchParams,
 }: {
-  searchParams: Promise<{ day?: string; view?: string }>;
+  searchParams: Promise<{ day?: string; view?: string; salesman?: string }>;
 }) {
   const params = await searchParams;
   const now = await today();
   const day = /^\d{4}-\d{2}-\d{2}$/.test(params.day ?? "") ? params.day! : now;
-  const view = params.view === "today" ? "today" : "now";
+  /* A link from Today names one salesman, and what it asks is "show me his
+     day" — so his trail, not only his last pin, unless a view was named. */
+  const focusParam = params.salesman ?? null;
+  const view = params.view === "now" ? "now" : params.view === "today" || focusParam ? "today" : "now";
   const isToday = day === now;
 
   const [rows, config, olaMaps] = await Promise.all([
@@ -77,6 +82,13 @@ export default async function Page({
      so what it gets is the live key at RENDER and, where there is none left, a
      sentence saying which of the two silences this is. */
   const olaMapsKey = olaMaps.key;
+  /* Only somebody on this manager's own team — `lastKnownPositions` is already
+     scoped, so an id from outside it simply focuses nobody. */
+  const focus = focusParam ? (rows.find((r) => r.salesmanId === focusParam) ?? null) : null;
+  const focusVisits = focus
+    ? await visitsBetween({ from: day, to: day, salesmanId: focus.salesmanId })
+    : [];
+  const keep = focus ? `&salesman=${focus.salesmanId}` : "";
   const olaKeysSpent = olaMaps.allSpent;
   const tracking = config["mbos.location.trackWhileWorking"];
   const everySeconds = config["mbos.location.trackEverySeconds"];
@@ -261,7 +273,14 @@ export default async function Page({
     <div className="flex h-full min-h-[640px] flex-col gap-3 px-5 pt-4 pb-4">
       <div className="flex flex-none flex-wrap items-center justify-between gap-x-6 gap-y-2">
         <div className="flex min-w-0 items-baseline gap-3">
-          <h1 className="text-2xl leading-[30px] font-semibold text-ink">Live map</h1>
+          <h1 className="text-2xl leading-[30px] font-semibold text-ink">
+            {focus ? focus.salesmanName : "Live map"}
+          </h1>
+          {focus ? (
+            <Link href={`/sales/live?day=${day}&view=${view}`} className="text-[13px] whitespace-nowrap">
+              Whole team
+            </Link>
+          ) : null}
           <p className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 text-[13px] text-muted">
             <Count n={rows.length} label={plural(rows.length, "salesman", "salesmen")} plain />
             {isToday ? <Count n={out.length} label="out now" tone="good" /> : null}
@@ -278,7 +297,7 @@ export default async function Page({
               has reported a position yet that has not happened. */}
           <div className="inline-flex h-8 items-stretch overflow-hidden rounded-[4px] border border-line bg-surface">
             <Link
-              href={`/sales/live?day=${addDays(day, -1)}&view=${view}`}
+              href={`/sales/live?day=${addDays(day, -1)}&view=${view}${keep}`}
               className="inline-flex w-8 items-center justify-center text-body no-underline hover:bg-canvas hover:no-underline"
               title="The day before"
             >
@@ -297,7 +316,7 @@ export default async function Page({
               </span>
             ) : (
               <Link
-                href={`/sales/live?day=${addDays(day, 1)}&view=${view}`}
+                href={`/sales/live?day=${addDays(day, 1)}&view=${view}${keep}`}
                 className="inline-flex w-8 items-center justify-center text-body no-underline hover:bg-canvas hover:no-underline"
                 title="The day after"
               >
@@ -307,17 +326,18 @@ export default async function Page({
           </div>
           {!isToday ? (
             <Link
-              href={`/sales/live?view=${view}`}
+              href={`/sales/live?view=${view}${keep}`}
               className="inline-flex h-8 items-center rounded-[4px] border border-line bg-surface px-2.5 text-[13px] text-body no-underline hover:bg-canvas hover:no-underline"
             >
               Back to today
             </Link>
           ) : null}
           <div className="inline-flex h-8 items-stretch rounded-[4px] border border-line bg-surface p-0.5">
-            <Mode day={day} view={view} mine="now" label={isToday ? "Where they are now" : "Last position"} />
+            <Mode day={day} view={view} keep={keep} mine="now" label={isToday ? "Where they are now" : "Last position"} />
             <Mode
               day={day}
               view={view}
+              keep={keep}
               mine="today"
               label={isToday ? "Everywhere they went today" : "Everywhere they went"}
             />
@@ -377,6 +397,7 @@ export default async function Page({
           isToday={isToday}
           olaMapsKey={olaMapsKey}
           olaKeysSpent={olaKeysSpent}
+          initialSelectedId={focus?.salesmanId ?? null}
           handsetThresholds={{
             quietMinutes: config["mbos.location.handsetQuietMinutes"],
             noTrailMinutes: config["mbos.location.noTrailMinutes"],
@@ -400,6 +421,8 @@ export default async function Page({
           pollSeconds={config["mbos.location.livePollSeconds"]}
         />
       </div>
+
+      {focus ? <VisitsStrip visits={focusVisits} isToday={isToday} /> : null}
     </div>
   );
 }
@@ -455,18 +478,20 @@ function About({ children }: { children: React.ReactNode }) {
 function Mode({
   day,
   view,
+  keep,
   mine,
   label,
 }: {
   day: string;
   view: string;
+  keep: string;
   mine: "now" | "today";
   label: string;
 }) {
   const on = view === mine;
   return (
     <Link
-      href={`/sales/live?day=${day}&view=${mine}`}
+      href={`/sales/live?day=${day}&view=${mine}${keep}`}
       aria-current={on ? "page" : undefined}
       className={
         "inline-flex items-center rounded-[3px] px-3 text-[13px] whitespace-nowrap no-underline hover:no-underline " +
