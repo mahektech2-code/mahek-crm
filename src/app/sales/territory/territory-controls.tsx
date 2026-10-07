@@ -212,7 +212,7 @@ export function CitiesTable({ cities, seatName }: { cities: TerritoryCity[]; sea
       head={
         <>
           <HeadCell width={190}>City</HeadCell>
-          <HeadCell width={140}>State</HeadCell>
+          <HeadCell width={140}>Region</HeadCell>
           <HeadCell align="right" width={95}>
             Customers
           </HeadCell>
