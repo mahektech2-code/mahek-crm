@@ -95,7 +95,9 @@ export type SettingCategory =
   /** The ERP as an operations system: whether it is where orders are taken. */
   | "erp"
   /** HRMS: attendance, leave, payroll, performance and tasks (docs/hrms spec §24). */
-  | "hrms";
+  | "hrms"
+  /** Hire: the AI layer's models, thresholds and budget, and the pipeline's review windows. */
+  | "hire";
 
 export type SettingDefinition = {
   key: string;
@@ -4743,6 +4745,114 @@ export const SETTINGS = [
       "An OpenAI text model that reads order messages and complaint descriptions, and answers questions.",
     default: "gpt-5-mini",
   },
+  /* ------------------------------------------------------------------ hire */
+  {
+    key: "hire.ai.enabled",
+    type: "boolean",
+    category: "hire",
+    label: "AI assistance in Hire",
+    description:
+      "Off, every AI step in Hire takes its manual path: interviewers score by hand, CVs are typed in, messages go out as templates. The pipeline never stops for want of a model; it runs slower and says so.",
+    default: true,
+  },
+  {
+    key: "hire.ai.reasoningModel",
+    type: "text",
+    category: "hire",
+    label: "Reasoning model",
+    description: "Rubric scoring, consistency checks, ranking, blueprint generation and committee briefs.",
+    default: "gpt-5",
+  },
+  {
+    key: "hire.ai.fastModel",
+    type: "text",
+    category: "hire",
+    label: "Fast model",
+    description: "CV parsing, message drafting, summaries and the copilot's suggestions.",
+    default: "gpt-5-mini",
+  },
+  {
+    key: "hire.ai.visionModel",
+    type: "text",
+    category: "hire",
+    label: "Vision model",
+    description: "Reads identity documents, bank statements, certificates and payslips.",
+    default: "gpt-4o",
+  },
+  {
+    key: "hire.ai.transcriptionModel",
+    type: "text",
+    category: "hire",
+    label: "Transcription model",
+    description: "Interview and voice-screen recordings into text.",
+    default: "gpt-4o-transcribe",
+  },
+  {
+    key: "hire.ai.realtimeModel",
+    type: "text",
+    category: "hire",
+    label: "Realtime speech model",
+    description: "The AI voice screener, speech to speech.",
+    default: "gpt-realtime",
+  },
+  {
+    key: "hire.ai.minConfidence",
+    type: "decimal",
+    category: "hire",
+    label: "Confidence below which a person scores",
+    description:
+      "An AI score below this confidence is shown as Low, greyed, with \"Human scoring recommended\" — it is never accepted by default either way.",
+    default: 0.55,
+    min: 0,
+    max: 1,
+  },
+  {
+    key: "hire.ai.monthlyBudgetPaise",
+    type: "integer",
+    category: "hire",
+    label: "Monthly AI budget (paise)",
+    description: "Past this the AI usage screen and the bell say so. It alerts; it never blocks a hire.",
+    default: 1000000,
+    min: 0,
+    max: 1000000000,
+  },
+  {
+    key: "hire.rejection.reviewDays",
+    type: "integer",
+    category: "hire",
+    label: "Days to confirm a proposed rejection",
+    description:
+      "A score below a stage's floor PROPOSES a rejection. It waits this long in Decisions for a named person to confirm or dismiss it; nothing is rejected by the system alone.",
+    default: 2,
+    min: 1,
+    max: 30,
+  },
+  {
+    key: "hire.languages",
+    type: "text",
+    category: "hire",
+    label: "Candidate languages",
+    description: "Languages messages are drafted in and the voice screen speaks, comma-separated.",
+    default: "English, Hindi, Marathi, Gujarati",
+  },
+  {
+    key: "hire.voice.callWindow",
+    type: "text",
+    category: "hire",
+    label: "Voice screen call window",
+    description: "When the AI screener may call a candidate, in IST.",
+    default: "10:00-19:00",
+  },
+  {
+    key: "hire.voice.maxAttempts",
+    type: "integer",
+    category: "hire",
+    label: "Voice screen attempts",
+    description: "Unanswered after this many, the screen falls back to scheduling a person.",
+    default: 3,
+    min: 1,
+    max: 10,
+  },
 ] as const satisfies readonly SettingDefinition[];
 
 export type SettingKey = (typeof SETTINGS)[number]["key"];
@@ -5594,6 +5704,18 @@ export type Config = {
   "erp.ai.complaints.monthlyCap": number;
   "erp.ai.visionModel": string;
   "erp.ai.textModel": string;
+  "hire.ai.enabled": boolean;
+  "hire.ai.reasoningModel": string;
+  "hire.ai.fastModel": string;
+  "hire.ai.visionModel": string;
+  "hire.ai.transcriptionModel": string;
+  "hire.ai.realtimeModel": string;
+  "hire.ai.minConfidence": number;
+  "hire.ai.monthlyBudgetPaise": number;
+  "hire.rejection.reviewDays": number;
+  "hire.languages": string;
+  "hire.voice.callWindow": string;
+  "hire.voice.maxAttempts": number;
   "voice.enabled": boolean;
   "voice.maxSeconds": number;
   "voice.maxSizeMb": number;

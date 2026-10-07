@@ -93,6 +93,8 @@ const JOBS: Partial<Record<AppId, Partial<Record<Level, string>>>> = {
   reports: { associate: "reads the owner's figures", manager: "reads the owner's figures for a team", admin: "Reports administrator" },
   founder: { associate: "works the founder's desks", manager: "founder", admin: "Command Centre administrator" },
   enquiries: { associate: "works website enquiries", manager: "runs the enquiries desk", admin: "Enquiries administrator" },
+  /* The level is only the floor: the job inside Hire is its own role row. */
+  hire: { associate: "interviews candidates", manager: "hiring manager", admin: "Hire administrator" },
   /* HRMS is the one app EVERYBODY holds for themselves — checking in, asking
      for leave, reading a payslip — so its associate is a description of that
      rather than a job. The old words ("reads the employee master", "maintains
