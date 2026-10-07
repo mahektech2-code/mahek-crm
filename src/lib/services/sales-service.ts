@@ -740,8 +740,6 @@ export type ConsoleCounts = {
   samples: number;
   leave: number;
   expenses: number;
-  /** Everything the bell would raise, added up. */
-  alerts: number;
 };
 
 /**
@@ -898,13 +896,6 @@ export async function consoleCounts(
     samples: n("samples"),
     leave: n("leave"),
     expenses: n("expenses"),
-    alerts:
-      n("orders") +
-      n("samples") +
-      n("leave") +
-      n("expenses") +
-      n("refused") +
-      (team - n("live") > 0 ? 1 : 0),
   };
 }
 
