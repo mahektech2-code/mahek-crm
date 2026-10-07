@@ -36,11 +36,7 @@ import { canonicalState, stateKey, stateVariants } from "@/lib/india-states";
 import { metresBetween } from "@/lib/geo";
 import { NOBODY, type TerritorySeat } from "@/lib/territory-seats";
 import { dropInaccurateFixes } from "../engines/trail-gaps";
-import {
-  leaveBalances as leaveBalancesFor,
-  leaveDebitDays,
-  type LeaveBalance,
-} from "@/lib/engines/leave";
+import { leaveDebitDays } from "@/lib/engines/leave";
 
 /* ---------------------------------------------------------------------------
  * Every read the Sales Dashboard makes.
@@ -3500,6 +3496,7 @@ export type LeaveRow = {
   approvalState: string | null;
   decisionNote: string | null;
   approverName: string | null;
+  decidedAt: Date | null;
   requestedAt: Date | null;
   /** Somebody else in the field off on an overlapping day. */
   clashesWith: string | null;
@@ -3558,6 +3555,7 @@ export async function leaveRequests(): Promise<LeaveRequests> {
            ap.state::text as "approvalState",
            ap.decision_note as "decisionNote",
            d.name as "approverName",
+           ap.decided_at as "decidedAt",
            ap.requested_at as "requestedAt",
            /* Who ELSE is off on these days.
             *
@@ -6185,32 +6183,34 @@ export async function salesmanRecord(
 
 /* ══════════════════════════════════════ leave, per person */
 
-export type EntitlementRow = {
+export type LeaveTakenRow = {
   userId: string;
   name: string;
-  balances: LeaveBalance[];
-  /** The kinds this person has a stored figure for, as against the default. */
-  overridden: string[];
+  /** Approved days this year, by kind. Never a balance — see below. */
+  taken: Record<string, number>;
+  takenTotal: number;
+  /** Requests still waiting on somebody's answer. */
+  waiting: number;
+  /** Every request this year, withdrawn ones excepted. */
+  requested: number;
 };
 
 /**
- * What each salesman may take this year, and how much is left.
+ * Who on the team has taken leave this year, and who has asked.
  *
- * The entitlement itself is CONFIGURATION — `mbos.leave.annualEntitlementDays`
- * — and a row in `mbos_leave_balances` overrides it for one person. That much
- * already worked. What did not exist was any way to WRITE such a row: nothing
- * in MahekOne created one, so the override was a mechanism with no door, and a
- * salesman on different terms could not be given them.
- *
- * Read through `leaveBalances`, the same engine the handset's own figures come
- * through, so this screen and the phone in somebody's pocket cannot disagree
- * about how many days remain.
+ * TAKEN, NEVER WHAT IS LEFT. Mahek holds leave allowances in HRMS and nowhere
+ * else, so this screen used to draw a second copy of them — "12 of 12, company
+ * default" — from a configuration figure nobody on the team had agreed to, with
+ * a door to set per-person terms that HRMS never read. Two answers to "how many
+ * days does he get" is one too many, and the handset already shows no balance.
+ * So the figure here is what was approved, counted from the requests through
+ * `leaveDebitDays` so a half day is half, and a salesman with no request at all
+ * is listed rather than dropped — "who has not asked" is half the question.
  */
-export async function leaveEntitlements(year: number): Promise<EntitlementRow[]> {
+export async function leaveTakenByPerson(year: number): Promise<LeaveTakenRow[]> {
   const scope = await managerScope();
-  const { getConfig } = await import("../config/store");
 
-  const [people, overrideRows, usedRows, config] = await Promise.all([
+  const [people, requestRows] = await Promise.all([
     db.execute<{ userId: string; name: string }>(sql`
       select u.id as "userId", u.name
         from users u
@@ -6218,45 +6218,39 @@ export async function leaveEntitlements(year: number): Promise<EntitlementRow[]>
        where u.active ${onlyMine(scope, "u.id")}
        order by u.name asc
     `),
-    db.execute<{ userId: string; kind: string; entitled: number }>(sql`
-      select b.user_id as "userId", b.leave_type::text as kind, b.entitled_days as entitled
-        from mbos_leave_balances b
-       where b.year = ${year}
-    `),
-    /* The approved requests, not a stored sum — what a request costs is
-       `leaveDebitDays`, and spelling that arithmetic out in SQL as well is how
-       two answers to "how much has he taken" come to exist. */
-    db.execute<{ userId: string; kind: string; days: number; halfDay: boolean }>(sql`
-      select r.user_id as "userId", r.leave_type::text as kind, r.days, r.half_day as "halfDay"
+    db.execute<{ userId: string; kind: string; days: number; halfDay: boolean; state: string | null }>(sql`
+      select r.user_id as "userId", r.leave_type::text as kind, r.days,
+             r.half_day as "halfDay", ap.state::text as state
         from mbos_leave_requests r
-        join mbos_approvals ap on ap.subject_id = r.id and ap.type = 'leave'
-       where ap.state in ('approved', 'partially_approved')
-         and r.cancelled_at is null
+        left join mbos_approvals ap on ap.subject_id = r.id and ap.type = 'leave'
+       where r.cancelled_at is null
          and extract(year from r.from_date) = ${year}
+         ${onlyMine(scope, "r.user_id")}
     `),
-    getConfig(),
   ]);
 
-  const entitlement = config["mbos.leave.annualEntitlementDays"] ?? {};
-
-  const overridesBy = new Map<string, Record<string, number>>();
-  for (const r of overrideRows as unknown as { userId: string; kind: string; entitled: number }[]) {
-    const forUser = overridesBy.get(r.userId) ?? {};
-    forUser[r.kind] = r.entitled;
-    overridesBy.set(r.userId, forUser);
-  }
-
-  const usedBy = new Map<string, Record<string, number>>();
-  for (const r of usedRows as unknown as { userId: string; kind: string; days: number; halfDay: boolean }[]) {
-    const forUser = usedBy.get(r.userId) ?? {};
-    forUser[r.kind] = (forUser[r.kind] ?? 0) + leaveDebitDays(Number(r.days), r.halfDay);
-    usedBy.set(r.userId, forUser);
+  const by = new Map<string, Omit<LeaveTakenRow, "userId" | "name">>();
+  for (const r of requestRows as unknown as {
+    userId: string;
+    kind: string;
+    days: number;
+    halfDay: boolean;
+    state: string | null;
+  }[]) {
+    const row = by.get(r.userId) ?? { taken: {}, takenTotal: 0, waiting: 0, requested: 0 };
+    row.requested += 1;
+    if (!r.state || r.state === "pending") row.waiting += 1;
+    if (r.state === "approved" || r.state === "partially_approved") {
+      const d = leaveDebitDays(Number(r.days), r.halfDay);
+      row.taken[r.kind] = (row.taken[r.kind] ?? 0) + d;
+      row.takenTotal += d;
+    }
+    by.set(r.userId, row);
   }
 
   return (people as unknown as { userId: string; name: string }[]).map((p) => ({
     userId: p.userId,
     name: p.name,
-    balances: leaveBalancesFor(entitlement, usedBy.get(p.userId) ?? {}, overridesBy.get(p.userId) ?? {}),
-    overridden: Object.keys(overridesBy.get(p.userId) ?? {}),
+    ...(by.get(p.userId) ?? { taken: {}, takenTotal: 0, waiting: 0, requested: 0 }),
   }));
 }
