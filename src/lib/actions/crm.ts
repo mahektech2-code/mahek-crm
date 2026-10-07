@@ -2271,7 +2271,8 @@ export async function triggerJob(
     | "project-sheet"
     | "backfill-timeline"
     | "wa-reply-media"
-    | "link-delivery-parties",
+    | "link-delivery-parties"
+    | "field-activity-reparse",
   options: { owner?: string; bills?: boolean } = {},
 ): Promise<Result<{ ran: string[] }>> {
   try {

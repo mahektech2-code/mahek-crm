@@ -735,8 +735,6 @@ export type ConsoleCounts = {
   samples: number;
   leave: number;
   expenses: number;
-  /** Everything the bell would raise, added up. */
-  alerts: number;
 };
 
 /**
@@ -893,13 +891,6 @@ export async function consoleCounts(
     samples: n("samples"),
     leave: n("leave"),
     expenses: n("expenses"),
-    alerts:
-      n("orders") +
-      n("samples") +
-      n("leave") +
-      n("expenses") +
-      n("refused") +
-      (team - n("live") > 0 ? 1 : 0),
   };
 }
 
@@ -1373,16 +1364,40 @@ export type FieldActivityRow = {
   location: string | null;
   customerMatchStatus: "pending" | "matched" | "ambiguous" | "unmatched";
   matchNote: string | null;
+
+  /* What the detail view reads — every row carries it, because a page is two
+     hundred rows and a second round trip per click buys nothing. */
+  activityId: string;
+  rowNumber: number;
+  reminderDate: string | null;
+  moodRaw: string | null;
+  salesmanMatchStatus: "pending" | "matched" | "ambiguous" | "unmatched";
+  /** The MahekOne sign-in, where the name matched one. */
+  salesmanAccountActive: boolean | null;
+  /** HRMS, through the account's employee link — the cross-check on a date. */
+  employmentStatus: string | null;
+  dateOfJoining: string | null;
+  dateOfLeaving: string | null;
+  customerCity: string | null;
+  /** Every cell exactly as the sheet gave it, in the sheet's column order. */
+  raw: Record<string, string>;
+  issues: { column: string; value: string; problem: string }[];
+  /** When this row was last read from the sheet, in IST, already worded. */
+  readAt: string;
 };
 
 export type FieldActivityFilter = {
   from: string;
   to: string;
-  salesmanId?: string;
+  /** The name exactly as the sheet writes it — most have no MahekOne account. */
+  salesmanName?: string;
   matchStatus?: "matched" | "ambiguous" | "unmatched";
+  /** 1-based. Every row in range is reachable a page at a time. */
+  page?: number;
+  perPage?: number;
 };
 
-const FIELD_ACTIVITY_LIMIT = 200;
+const FIELD_ACTIVITY_PER_PAGE = 50;
 
 /**
  * A capped, filtered slice of the imported "Mahek EMP 2.0" activity history
@@ -1428,7 +1443,8 @@ export async function fieldActivityHistory(
 ): Promise<{
   rows: FieldActivityRow[];
   total: number;
-  capped: boolean;
+  page: number;
+  perPage: number;
   /** Rows in the staging table regardless of filter — see the note below. */
   everInTable: number;
 }> {
@@ -1436,8 +1452,8 @@ export async function fieldActivityHistory(
   const matchClause = filter.matchStatus
     ? sql`and f.customer_match_status = ${filter.matchStatus}`
     : sql``;
-  const salesmanClause = filter.salesmanId
-    ? sql`and f.matched_salesman_id = ${filter.salesmanId}`
+  const salesmanClause = filter.salesmanName
+    ? sql`and f.employee_name = ${filter.salesmanName}`
     : sql``;
 
   const counted = await db.execute<{ n: number }>(sql`
@@ -1451,6 +1467,9 @@ export async function fieldActivityHistory(
        ${salesmanClause}
   `);
   const total = counted[0]?.n ?? 0;
+  const perPage = filter.perPage ?? FIELD_ACTIVITY_PER_PAGE;
+  // A page past the end (filters narrowed under it) lands on the last one.
+  const page = Math.min(Math.max(1, filter.page ?? 1), Math.max(1, Math.ceil(total / perPage)));
 
   const rows = await db.execute<FieldActivityRow>(sql`
     select f.id, f.visit_date as "visitDate",
@@ -1462,17 +1481,28 @@ export async function fieldActivityHistory(
            f.meeting_type as "meetingType", f.meeting_purpose as "meetingPurpose",
            f.meeting_note as "meetingNote", f.issue_note as "issueNote",
            f.location, f.customer_match_status as "customerMatchStatus",
-           f.match_note as "matchNote"
+           f.match_note as "matchNote",
+           f.activity_id as "activityId", f.row_number as "rowNumber",
+           f.reminder_date as "reminderDate", f.mood_raw as "moodRaw",
+           f.salesman_match_status as "salesmanMatchStatus",
+           u.active as "salesmanAccountActive",
+           e.status::text as "employmentStatus",
+           e.date_of_joining::text as "dateOfJoining",
+           e.date_of_leaving::text as "dateOfLeaving",
+           c.city as "customerCity",
+           f.raw, f.issues,
+           to_char(f.updated_at ${IST_DAY}, 'DD Mon YYYY, HH24:MI') as "readAt"
       from sheet_field_activity_rows f
       left join users u on u.id = f.matched_salesman_id
+      left join employees e on e.id = u.employee_id
       left join customers c on c.id = f.matched_customer_id
      where f.status = 'present'
        and f.visit_date between ${filter.from}::date and ${filter.to}::date
        ${mineOrNobodys(scope, "u.id")}
        ${matchClause}
        ${salesmanClause}
-     order by f.visit_date desc nulls last, f.id desc
-     limit ${FIELD_ACTIVITY_LIMIT}
+     order by f.visit_date desc nulls last, f.row_number desc, f.id desc
+     limit ${perPage} offset ${(page - 1) * perPage}
   `) as unknown as FieldActivityRow[];
 
   /*
@@ -1497,22 +1527,31 @@ export async function fieldActivityHistory(
   return {
     rows,
     total,
-    capped: total > FIELD_ACTIVITY_LIMIT,
+    page,
+    perPage,
     everInTable: everything ? (everything[0]?.n ?? 0) : total,
   };
 }
 
-/** Distinct salesmen the imported activity actually resolved to, for a filter. */
-export async function fieldActivitySalesmen(): Promise<{ id: string; name: string }[]> {
+/**
+ * Every salesman NAME the imported activity carries, for the filter.
+ *
+ * Read off the sheet's own column rather than off the matched accounts: most of
+ * these men never had a MahekOne sign-in, so a list of accounts offered two
+ * names out of twenty and the rest of the book could not be narrowed at all.
+ */
+export async function fieldActivitySalesmen(): Promise<{ name: string; rows: number }[]> {
   const scope = await managerScope();
-  return db.execute<{ id: string; name: string }>(sql`
-    select distinct u.id, u.name
+  return db.execute<{ name: string; rows: number }>(sql`
+    select f.employee_name as name, count(*)::int as rows
       from sheet_field_activity_rows f
-      join users u on u.id = f.matched_salesman_id
+      left join users u on u.id = f.matched_salesman_id
      where f.status = 'present'
+       and f.employee_name is not null
        ${mineOrNobodys(scope, "u.id")}
-     order by u.name
-  `) as unknown as { id: string; name: string }[];
+     group by f.employee_name
+     order by f.employee_name
+  `) as unknown as { name: string; rows: number }[];
 }
 
 /**
@@ -1524,8 +1563,8 @@ export async function fieldActivityMatchCounts(
   filter: Omit<FieldActivityFilter, "matchStatus">,
 ): Promise<{ all: number; matched: number; ambiguous: number; unmatched: number }> {
   const scope = await managerScope();
-  const salesmanClause = filter.salesmanId
-    ? sql`and f.matched_salesman_id = ${filter.salesmanId}`
+  const salesmanClause = filter.salesmanName
+    ? sql`and f.employee_name = ${filter.salesmanName}`
     : sql``;
 
   const rows = await db.execute<{ status: string; n: number }>(sql`

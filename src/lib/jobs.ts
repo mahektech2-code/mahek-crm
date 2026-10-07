@@ -62,6 +62,7 @@ import {
   fieldActivitySheetId,
   FIELD_ACTIVITY_TAB,
   rematchFieldActivitySalesmen,
+  reparseFieldActivityDates,
   syncFieldActivitySheet,
 } from "./services/field-activity-sync-service";
 import { projectFieldActivityTimeline } from "./services/field-activity-projection-service";
@@ -128,6 +129,7 @@ export type JobName =
   | "field-activity-sync"
   | "field-activity-project"
   | "field-activity-rematch"
+  | "field-activity-reparse"
   | "customer-master-sync"
   | "customer-master-project"
   /** Address to a coordinate, for the shops nobody has stood in. */
@@ -1148,6 +1150,8 @@ export async function runJob(
       return [await runFieldActivityProjection(triggeredById)];
     case "field-activity-rematch":
       return [await runFieldActivityRematch(triggeredById)];
+    case "field-activity-reparse":
+      return [await runFieldActivityReparse(triggeredById)];
     case "customer-master-sync":
       return [await runCustomerMasterSync(triggeredById)];
     case "customer-master-project":
@@ -1326,9 +1330,35 @@ async function runFieldActivitySync(
         mode,
         triggeredById,
       });
+      /* The daily full read also re-reads every stored DATE, because the hash
+         compare above rewrites only rows whose cells changed and a row read
+         the wrong way round is otherwise wrong for ever. Cheap: no Google,
+         and it writes only rows whose answer moved. */
+      const dates = mode === "reconcile" ? await reparseFieldActivityDates() : null;
       return {
-        recordsAffected: outcome.rowsCreated + outcome.rowsUpdated,
-        detail: outcome.detail,
+        recordsAffected: outcome.rowsCreated + outcome.rowsUpdated + (dates?.moved ?? 0),
+        detail: outcome.detail + (dates?.moved ? `; ${dates.moved} stored dates re-read` : ""),
+      };
+    },
+    triggeredById,
+  );
+}
+
+/**
+ * Re-read every stored activity date in the order its own read was written —
+ * see `reparseFieldActivityDates`. The one to run when the READING of a date
+ * changed rather than the sheet.
+ */
+async function runFieldActivityReparse(triggeredById?: string): Promise<JobResult> {
+  return run(
+    "field-activity-reparse",
+    async () => {
+      const r = await reparseFieldActivityDates();
+      return {
+        recordsAffected: r.moved,
+        detail:
+          `${r.scanned} rows re-read (${r.orders.dmy} day-first, ${r.orders.mdy} month-first) · ` +
+          `${r.moved} dates corrected · ${r.nowUnreadable} unreadable · ${r.timelineMoved} timeline entries moved`,
       };
     },
     triggeredById,

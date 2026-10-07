@@ -10,6 +10,7 @@ import { hatForHeader } from "@/lib/hat-for-header";
 import { addDays } from "@/lib/business-date";
 import { today } from "@/lib/recompute";
 import { consoleCounts } from "@/lib/services/sales-service";
+import { listNotifications } from "@/lib/queries";
 import { leadSidebarCounts } from "@/lib/services/lead-sidebar-service";
 import { SalesShell } from "./sales-shell";
 
@@ -52,9 +53,10 @@ export default async function SalesLayout({
 
   // One wait, not two. Both narrow through `managerScope`, which is cached for
   // the request, so the second read pays for its own counting and nothing else.
-  const [counts, leads] = await Promise.all([
+  const [counts, leads, notifications] = await Promise.all([
     consoleCounts(day, addDays(day, 1)),
     leadSidebarCounts(day),
+    listNotifications(user.id),
   ]);
   const hat = await hatForHeader(user, "sales");
 
@@ -110,7 +112,7 @@ export default async function SalesLayout({
           "/sales/leads": leads.overdue > 0 ? leads.overdue : leads.dueToday,
           "/sales/leads/actions": leads.overdue,
         }}
-        alertCount={counts.alerts}
+        notifications={notifications}
         allowed={modules.map((m) => m.href)}
         switcher={
           apps.length > 1 ? (
