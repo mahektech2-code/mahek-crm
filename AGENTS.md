@@ -1651,6 +1651,43 @@ hash, MiniMoth's never reach MahekOne.
 **`otp_channel` was declared in schema.ts and never created by a migration**;
 `0168` creates it, guarded.
 
+**"ASK ABOUT THE TEAM" READS THE DATABASE, THROUGH THE ASKER'S OWN ACCESS.**
+It used to hand OpenAI one pre-written brief of this month's figures and
+forbid anything else, so "when did Mahesh take leave this year" or "which
+shops did Priya visit on Tuesday" could never be answered. Now the model writes
+its own reads through one tool, `run_sql`, as many as a question needs
+(`salesAsk.maxQueries`), and `/api/sales/ask` streams each read and the answer
+as they happen. What makes that safe is structural, not the prompt:
+`team-ask/catalog.ts` builds TEMPORARY VIEWS named after the real tables, for
+one person — only the tables a Sales Dashboard screen they hold already shows
+(leave needs Leave, salary needs Salary, the trail needs the Live map: the
+Access screen's own answer), only the rows `managerScope()` lets them see, and
+never a credential, identity number or raw sheet snapshot. The transaction sets
+`search_path = pg_temp` so those views are the only relations a name can
+reach, is READ ONLY, runs each query in a savepoint under
+`salesAsk.queryTimeoutSeconds`, and is ROLLED BACK so the views vanish with it.
+`team-ask/sql-guard.ts` refuses what spells its way round that: a
+schema-qualified name, `pg_*`, anything that runs a query from a string
+(`query_to_xml`, `ts_stat`), comments, more than one statement. The session
+zone is `APP_TIMEZONE`, so `current_date` is India's day. It cannot act: no
+write, no approval, no nudge. A table added to the catalog needs its module
+named and its scope rule stated, or it is everybody's.
+
+**AND IT IS REMEMBERED IN THREE LAYERS, so a question touches the database only
+when it has to.** A person's access (scope, screens, the views, the prompt) is
+kept for `salesAsk.contextCacheSeconds` — opening the drawer warms it, and an
+Access or Territory change reaches the panel within that window. A query's rows
+are kept for `salesAsk.resultCacheSeconds`, keyed on a hash of the exact view
+definitions plus the normalised SQL, so two managers who see the same rows
+share them and two who see different rows never can. A FRESH question's answer
+is kept for `salesAsk.answerCacheSeconds` and replayed with no model and no
+database; a follow-up never is, because its meaning is the conversation. The
+connection is reserved only on the first cache MISS, so a fully remembered
+question never takes one. The prompt puts the rules and schema first and the
+date and name last, with a `promptCacheKey` per visibility, so OpenAI reads the
+long prefix from its own cache. All of it is in memory and re-derivable — losing
+it costs a slower answer, never a wrong one.
+
 ## The ERP (operations app)
 
 **The ERP is the client's AppSheet "Mahek Plus" rebuilt as a MahekOne app**
