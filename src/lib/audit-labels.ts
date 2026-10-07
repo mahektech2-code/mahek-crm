@@ -556,6 +556,12 @@ const DESCRIBE: Record<string, Describer> = {
   }),
   "mbos.task.created": (c) => ({ says: ["gave", c.user(c.a.assignedToUserId), "a task:", strong(str(c.a.title) ?? "")], changes: false }),
   "mbos.task.bulkCreated": (c) => ({ says: ["gave", plural(num(c.a.created) ?? 0, "person", "people"), "a task:", strong(str(c.a.title) ?? "")], changes: false }),
+  "mbos.task.campaignCreated": (c) => ({
+    says: ["assigned", plural(num(c.a.tasks) ?? 0, "task"), ...(num(c.a.questions) ? ["asking", plural(num(c.a.questions)!, "question")] : []), ":", strong(str(c.a.title) ?? "")],
+    note: str(c.a.audience),
+    changes: false,
+  }),
+  "mbos.task.campaignClosed": (c) => ({ says: ["withdrew", plural(num(c.a.cancelled) ?? 0, "open task"), "from an assignment"], changes: false }),
   "mbos.document.publish": (c) => ({ says: ["published a document to the field team", ...(str(c.a.title) ? [strong(str(c.a.title)!)] : [])], changes: false }),
   "mbos.document.withdraw": () => ({ says: ["withdrew a document from the field team"], changes: false }),
   "mbos.course.publish": (c) => ({ says: ["published a training course", ...(str(c.a.title) ? [strong(str(c.a.title)!)] : [])], changes: false }),

@@ -13,7 +13,7 @@
  *
  * Needs mahekone_test, which `npm run test:db` creates from the migrations.
  */
-import { before, beforeEach, describe, test } from "node:test";
+import { after, before, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
@@ -150,6 +150,12 @@ beforeEach(async () => {
     shops.push(c.id);
   }
   setTestUser(manager);
+});
+
+/* Without this the pool keeps the process alive and the runner waits for ever. */
+after(async () => {
+  setTestUser(null);
+  await db.$client.end();
 });
 
 describe("assigning a task with a form", () => {
