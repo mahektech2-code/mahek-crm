@@ -25,6 +25,7 @@ import {
   type StoredNextStep,
 } from "@/components/crm/next-call-cell";
 import { NEXT_STEP_LABELS } from "@/lib/next-step-labels";
+import type { CallDetailView } from "@/lib/call-detail";
 
 type Row = {
   id: string;
@@ -39,6 +40,8 @@ type Row = {
   produced: string | null;
   /** What this call said would happen next. Null on calls logged before it existed. */
   nextStep: StoredNextStep | null;
+  /** Why they rang, who rang, the answers, the next action. Null where none was recorded. */
+  detail?: CallDetailView | null;
 };
 
 type Commitment = { customerId: string; note: string; dueDate: string };
@@ -396,7 +399,20 @@ export function HistoryScreen({
                       <span className="text-muted">-</span>
                     )}
                   </Td>
-                  <Td>{r.outcome ?? "-"}</Td>
+                  <Td>
+                    {r.outcome ?? "-"}
+                    {/* One short line under the outcome, and the whole of it on hover:
+                        this table holds its line, so an expandable block would be
+                        clipped. The record's timeline draws the full detail. */}
+                    {r.detail ? (
+                      <div
+                        className="truncate text-[11px] text-muted"
+                        title={r.detail.lines.map((l) => `${l.label}: ${l.value}`).join("\n")}
+                      >
+                        {r.detail.summary ?? "Call details"}
+                      </div>
+                    ) : null}
+                  </Td>
                   <Td>
                     <NextCallCell step={r.nextStep} today={today} />
                   </Td>

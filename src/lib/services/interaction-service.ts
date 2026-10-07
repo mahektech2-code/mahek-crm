@@ -18,9 +18,13 @@ import {
   products,
   quickNotes,
   reminders,
+  users,
 } from "@/db/schema";
 import { OUTCOMES_BY_TYPE, type InteractionTypeKey, type OutcomeKey } from "@/db/catalogue";
-import { resolveScope, assertCustomerInScope, levelInApp } from "../access-control";
+import { resolveScope, assertCustomerInScope, assignedUserId, levelInApp } from "../access-control";
+import { notifyUsers, type NotifyEntry } from "../notify";
+import { ROUTE_LABEL, routeNextActions } from "../engines/next-action-routing";
+import { snapshotFor } from "./call-context-service";
 import { getConfig } from "../config/store";
 import {
   recomputeBuyingCycle,
@@ -253,6 +257,14 @@ export const saveInteractionSchema = z.object({
       expectedOrderDate: z.string().optional(),
     })
     .optional(),
+  /**
+   * "No" — the other half of the question. `opportunity` above is the Yes and
+   * carries its details; this is somebody being asked and answering No, which
+   * used to leave no trace and so read as a call nobody asked on. Absent still
+   * means nobody was asked. Sent with an `opportunity` it is a contradiction
+   * and is refused.
+   */
+  opportunityAnswer: z.enum(["yes", "no"]).optional(),
 
   /** Order-received only. User-entered, may be in the past, never the future. */
   orderDate: z.string().optional(),
@@ -627,6 +639,17 @@ export async function saveInteraction(
       if (trimmed) reasonDetail[key] = trimmed;
     }
     for (const f of fields) {
+      /* A SYSTEM field is one the screen fills — the ERP order tapped, the SKU
+         checked. It is never required, and where it is present it must be what
+         it claims to be, because the snapshot is read FROM it: a malformed
+         order number is dropped rather than refusing a call somebody has
+         already finished. */
+      if (f.system) {
+        if (f.key === "erpOrderNo" && reasonDetail[f.key] && !/^\d{1,9}$/.test(reasonDetail[f.key])) {
+          delete reasonDetail[f.key];
+        }
+        continue;
+      }
       if (f.required && !reasonDetail[f.key]) {
         return fieldError(
           `reasonDetail.${f.key}`,
@@ -757,6 +780,19 @@ export async function saveInteraction(
     if (input.nextActionDate < day) {
       return fieldError("nextActionDate", "The next action cannot be in the past.");
     }
+  }
+
+  if (input.opportunity && input.opportunityAnswer === "no") {
+    return fieldError(
+      "opportunityAnswer",
+      "An opportunity is described, so the answer cannot be No.",
+    );
+  }
+  if (input.opportunityAnswer && isOrderReceived) {
+    return fieldError(
+      "opportunityAnswer",
+      "An order that arrived with no call has nobody to ask about an opportunity.",
+    );
   }
 
   /* An opportunity with a date on it must be a date somebody can still act on. */
@@ -979,6 +1015,46 @@ export async function saveInteraction(
   // CONTACT, or a customer nobody has spoken to keeps falling out of the queue.
   const updatesLastCall = !isOrderReceived;
   const updatesLastContact = !isOrderReceived && input.outcome !== "no_answer";
+
+  /* ---------------------------------------------- read once, before the write
+   *
+   * THE SNAPSHOT of the figures behind this conversation — the ledger, the ERP
+   * order, the stock figure — read by the SERVER from the ids the panel named,
+   * never from numbers the browser sends back. Inbound only: those are the
+   * reasons that have anything to snapshot. A failure drops the part that
+   * failed and nothing else; the call is saved either way.
+   */
+  const contextSnapshot =
+    input.interactionType === "inbound_call"
+      ? await snapshotFor({
+          customerId: customer.id,
+          reason: input.callReason,
+          reasonDetail,
+        }).catch(() => null)
+      : null;
+
+  /* THE SEATS an action can be handed to, restricted to people who can still
+     sign in. A seat holding somebody who has left is an empty seat. */
+  const seatCandidates = [
+    assignedUserId(customer),
+    customer.backOfficeAmId,
+    customer.salesManagerId,
+  ].filter((x): x is string => Boolean(x));
+  const liveSeatUsers = new Map<string, string>();
+  if (seatCandidates.length) {
+    const rows = await db
+      .select({ id: users.id, name: users.name })
+      .from(users)
+      .where(and(inArray(users.id, seatCandidates), eq(users.active, true)));
+    for (const r of rows) liveSeatUsers.set(r.id, r.name);
+  }
+  const liveSeat = (uid: string | null | undefined) =>
+    uid && liveSeatUsers.has(uid) ? uid : null;
+  /** Said to people after the commit, never inside it — a bell that could not
+      be written must not undo a call that already happened. */
+  const toNotify: NotifyEntry[] = [];
+  /** What the record keeps of who the next actions were handed to. */
+  const routingRecord: Array<{ action: string; to: string; note: string }> = [];
 
   await db.transaction(async (tx) => {
     /* ------------------------------------------------------------- order */
@@ -1209,42 +1285,100 @@ export async function saveInteraction(
       input.nextActionDate &&
       !(actionDay && nextActionCoveredByOutcome(nextActions, actionDay, outcomeReminders))
     ) {
-      const actionReminderId = id("rem");
-      await tx.insert(reminders).values({
-        id: actionReminderId,
-        customerId: customer.id,
-        createdByUserId: ctx.user.id,
-        assignedUserId: ctx.user.id,
-        callId: interactionId,
-        dueDate: onOrAfterWorkingDay(input.nextActionDate, {
-          timezone: config["workingDay.timezone"],
-          dayBoundaryHour: config["workingDay.dayBoundaryHour"],
-          workingDays: config["workingDay.workingDays"],
-        }),
-        /*
-         * The note says WHAT, because "follow up" tells whoever picks it up
-         * nothing about why they are ringing — the same reasoning the no-order
-         * callback note carries one line down.
-         */
-        note: nextActions
-          .map((a) => NEXT_ACTION_LABEL[a] ?? a)
-          .join(", "),
-        type: reminderTypeFor(nextActions),
-        systemGenerated: true,
-        createdById: ctx.user.id,
-        updatedById: ctx.user.id,
-      });
-      produced.push("reminder");
       /*
-       * The call row names ONE reminder and a call can legitimately owe two
-       * things on two different days — a payment promised for Friday and a
-       * quotation to send tomorrow. The column keeps whichever the call
-       * produced first, exactly as before; both rows are on the reminders list,
-       * which is where either of them actually gets worked. Overwriting would
-       * silently repoint the promise at the errand.
+       * WHO IT IS FOR. A visit is the salesperson's, a call to logistics the
+       * back office person's, an escalation the sales manager's — read off the
+       * seats the account already has, never a user named in code. Where every
+       * action is the caller's own (which is every call on an account with no
+       * seats, and every call that picks only callbacks and quotations) this
+       * produces exactly the one reminder it always did.
+       *
+       * A call that asks for two things for two people writes two reminders on
+       * the same day, one each, so that each person's list carries only what is
+       * theirs to do.
        */
-      reminderId = reminderId ?? actionReminderId;
+      const groups = routeNextActions(
+        nextActions,
+        {
+          salesUserId: liveSeat(assignedUserId(customer)),
+          backOfficeUserId: liveSeat(customer.backOfficeAmId),
+          salesManagerUserId: liveSeat(customer.salesManagerId),
+        },
+        ctx.user.id,
+      );
+      const dueDate = onOrAfterWorkingDay(input.nextActionDate, {
+        timezone: config["workingDay.timezone"],
+        dayBoundaryHour: config["workingDay.dayBoundaryHour"],
+        workingDays: config["workingDay.workingDays"],
+      });
+      for (const g of groups) {
+        const actionReminderId = id("rem");
+        const handedOver = g.assigneeId !== ctx.user.id;
+        const what = g.actions.map((a) => NEXT_ACTION_LABEL[a] ?? a).join(", ");
+        await tx.insert(reminders).values({
+          id: actionReminderId,
+          customerId: customer.id,
+          createdByUserId: ctx.user.id,
+          assignedUserId: g.assigneeId,
+          callId: interactionId,
+          dueDate,
+          /*
+           * The note says WHAT, because "follow up" tells whoever picks it up
+           * nothing about why they are ringing — the same reasoning the
+           * no-order callback note carries one line down. A handed-over one
+           * also says by whom and what call it came out of, since its new owner
+           * was not on the phone.
+           */
+          note: handedOver
+            ? `${what} — handed over by ${ctx.user.name} from a call with ${customer.name}${
+                input.callReason ? ` about ${CALL_REASON_LABEL[input.callReason] ?? input.callReason}` : ""
+              }`
+            : what,
+          type: reminderTypeFor(g.actions),
+          systemGenerated: true,
+          createdById: ctx.user.id,
+          updatedById: ctx.user.id,
+        });
+        produced.push("reminder");
+        /*
+         * The call row names ONE reminder and a call can legitimately owe two
+         * things on two different days — a payment promised for Friday and a
+         * quotation to send tomorrow. The column keeps whichever the call
+         * produced first, exactly as before; both rows are on the reminders
+         * list, which is where either of them actually gets worked.
+         * Overwriting would silently repoint the promise at the errand. The
+         * caller's own group is always first, so a call that has one keeps
+         * pointing at the reminder it always pointed at.
+         */
+        reminderId = reminderId ?? actionReminderId;
+
+        if (handedOver) {
+          const to = liveSeatUsers.get(g.assigneeId) ?? "Someone";
+          for (const a of g.actions) {
+            routingRecord.push({
+              action: a,
+              to,
+              note: `${ROUTE_LABEL[g.routedTo]}, by ${shortDate(dueDate)}`,
+            });
+          }
+          toNotify.push({
+            userId: g.assigneeId,
+            title: "A call has handed you something to do",
+            body: `${ctx.user.name} took a call from ${customer.name}${
+              input.callReason ? ` about ${CALL_REASON_LABEL[input.callReason] ?? input.callReason}` : ""
+            }: ${what}, by ${shortDate(dueDate)}.`,
+            kind: "info",
+            href: `/crm/customers/${customer.id}`,
+          });
+        } else if (g.fellBack) {
+          /* Said to the person saving, in the toast: an action that belonged to
+             somebody else and stayed with them must not look as though it had
+             been handed on. */
+          warnings.push(`Part of that was for someone else, but ${g.fellBack}.`);
+        }
+      }
     }
+
 
     /* --------------------------------------------------------- complaint */
     if (input.outcome === "complaint") {
@@ -1381,6 +1515,18 @@ export async function saveInteraction(
        */
       reasonDetail: Object.keys(reasonDetail).length ? reasonDetail : null,
       outcomeDetail: Object.keys(outcomeDetail).length ? outcomeDetail : null,
+      /* Yes where a record was written, No where somebody was asked and said
+         so, null where nobody was — and null stays the answer for every call
+         that predates the column. */
+      opportunityAnswer: input.opportunity ? "yes" : input.opportunityAnswer === "no" ? "no" : null,
+      contextSnapshot:
+        contextSnapshot || routingRecord.length
+          ? ({
+              ...(contextSnapshot ?? {}),
+              takenAt: contextSnapshot?.takenAt ?? now.toISOString(),
+              ...(routingRecord.length ? { routing: routingRecord } : {}),
+            } as Record<string, unknown>)
+          : null,
       callAttempt,
       nextActions,
       nextActionDate: input.nextActionDate ?? null,
@@ -1408,11 +1554,21 @@ export async function saveInteraction(
     let opportunityId: string | null = null;
     if (input.opportunity) {
       opportunityId = id("opp");
+      /*
+       * WHO WORKS IT: the person whose book the account is in — the one
+       * definition of that, `assignedUserId` — falling back to whoever took the
+       * call. Not a lead and not a new owner concept: it is the same seat every
+       * list and every target already reads, so the opportunity lands on the
+       * list of the person who will actually be asked about the account.
+       */
+      const opportunityOwner = liveSeat(assignedUserId(customer)) ?? ctx.user.id;
       await tx.insert(callOpportunities).values({
         id: opportunityId,
         customerId: customer.id,
         callId: interactionId,
         userId: ctx.user.id,
+        assignedUserId: opportunityOwner,
+        status: "open",
         product: input.opportunity.product.trim(),
         estimatedQuantity: input.opportunity.estimatedQuantity?.trim() || null,
         /*
@@ -1429,6 +1585,17 @@ export async function saveInteraction(
         updatedById: ctx.user.id,
       });
       produced.push("opportunity");
+      if (opportunityOwner !== ctx.user.id) {
+        toNotify.push({
+          userId: opportunityOwner,
+          title: "A call turned up an opportunity on your account",
+          body: `${customer.name} rang${
+            input.callReason ? ` about ${CALL_REASON_LABEL[input.callReason] ?? input.callReason}` : ""
+          } and may buy ${input.opportunity.product.trim()}. It is on your Opportunities list.`,
+          kind: "info",
+          href: "/crm/opportunities",
+        });
+      }
     }
 
     /* ------------------------------------------ what the assistant read
@@ -1735,6 +1902,21 @@ export async function saveInteraction(
       } as never,
     });
   });
+
+  /* ------------------------------------- telling the people it was handed to
+   *
+   * After the commit and never inside it: the call and the reminders are in the
+   * ledger, and a bell that could not be written must not undo any of them.
+   * Nobody is told who took the call themselves — `toNotify` only ever holds
+   * somebody else.
+   */
+  if (toNotify.length) {
+    try {
+      await notifyUsers(toNotify);
+    } catch {
+      /* The reminder is on their list either way. */
+    }
+  }
 
   /* --------------------------------------------- post-commit recomputation */
 

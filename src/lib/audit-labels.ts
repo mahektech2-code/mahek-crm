@@ -80,6 +80,7 @@ export const AUDIT_GROUPS = [
       "distributor.",
       "queue.",
       "interaction.",
+      "opportunity.",
       "reminder.",
       "complaint.",
       "watch.",
@@ -481,6 +482,10 @@ const DESCRIBE: Record<string, Describer> = {
   "queue.rebuild": (c) => ({ says: ["rebuilt the Call Log for", strong(shortDate(str(c.a.day) ?? ""))], changes: false }),
   "interaction.save": (c) => ({
     says: [callWord(c.a.interactionType), c.subject(), ...(str(c.a.outcome) ? [`— ${words(str(c.a.outcome)!)}`] : [])],
+    changes: false,
+  }),
+  "opportunity.status": (c) => ({
+    says: ["moved a call opportunity to", strong(words(str(c.a.status) ?? "a new status"))],
     changes: false,
   }),
   "reminder.close": (c) => ({ says: ["completed a reminder for", c.subject()], changes: false }),
