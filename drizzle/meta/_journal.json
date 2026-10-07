@@ -1576,6 +1576,13 @@
       "when": 1792013273442,
       "tag": "0227_contact_birthdays",
       "breakpoints": true
+    },
+    {
+      "idx": 225,
+      "version": "7",
+      "when": 1792099673442,
+      "tag": "0228_standard_expense_policy",
+      "breakpoints": true
     }
   ]
 }

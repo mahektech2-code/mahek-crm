@@ -11,6 +11,7 @@ import {
 import { parseRule, describeRule } from "@/lib/expense-rule-forms";
 import { policyOn, type Policy, type PolicySubject } from "@/lib/engines/expense-policy";
 import { asDate } from "@/lib/business-date";
+import { STANDARD_POLICY, STANDARD_POLICY_TITLE } from "@/lib/expense-policy-standard";
 
 /* ---------------------------------------------------------------------------
  * Reading the expense policy, and working out which one applies to whom.
@@ -191,16 +192,39 @@ async function loadPolicies(statuses: readonly string[]): Promise<Policy[]> {
   return [...byId.values()];
 }
 
-/** The policy in force on a date, assembled for the engine. Null where none is. */
+/**
+ * The policy in force on a date — the hard-coded standard policy, for every
+ * date. See `lib/expense-policy-standard.ts` for why it is in code for now.
+ *
+ * Still async and still nullable so its callers (the claim path, the handset's
+ * pull, the simulator) did not have to change shape, and so that making the
+ * policy editable again is a change to this one function.
+ */
 export async function policyForDate(onDate: string): Promise<Policy | null> {
-  const policies = await loadPolicies(["published", "superseded"]);
-  return policyOn(policies, onDate);
+  return policyOn([STANDARD_POLICY], onDate);
 }
 
 /** A draft, assembled for the engine — what the simulator runs against. */
 export async function draftPolicy(id: string): Promise<Policy | null> {
   const policies = await loadPolicies(["draft", "published", "superseded", "archived"]);
   return policies.find((p) => p.id === id) ?? null;
+}
+
+/**
+ * Make sure the hard-coded policy has its row before anything is stamped
+ * with its id. Migration 0228 writes it; this is the net under the migration —
+ * for a database rebuilt by truncation, as the test suite does, and for a
+ * row somebody deleted. One idempotent insert, on the write paths only.
+ */
+export async function ensurePolicyRow(policyId: string): Promise<void> {
+  if (policyId !== STANDARD_POLICY.id) return;
+  await db.execute(sql`
+    insert into expense_policies (id, version_no, title, status, effective_from, notes)
+    values (${STANDARD_POLICY.id}, ${STANDARD_POLICY.versionNo}, ${STANDARD_POLICY_TITLE}, 'archived',
+            ${STANDARD_POLICY.effectiveFrom}::date,
+            'The hard-coded standard policy. Its rules are in src/lib/expense-policy-standard.ts; this row is only the key expense days are stamped with.')
+    on conflict do nothing
+  `);
 }
 
 /* ----------------------------------------------------- grades and cities */

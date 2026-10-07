@@ -6254,6 +6254,23 @@ MahekOne sets no monthly target for a field salesman and a figure with nothing
 to be computed from would be an invention on the one screen where a wrong number
 is least forgivable.
 
+**THE EXPENSE POLICY IS HARD-CODED, and that is a REVERSAL (Oct 2026).**
+It shipped as versioned rules typed into the Admin Console — thirteen rule
+kinds, grades, city classes, drafts, a simulator and a publish step over five
+tabs — and it was too much to use: nothing was published, so every day reached
+a manager unpriced. `lib/expense-policy-standard.ts` is now THE policy, one
+for everybody, every city and every date, and `policyForDate` returns it. The
+engine is untouched and still pure — it is handed this `Policy` exactly as it
+was handed a published version, on the server and on the handset. The Admin
+Console and the Sales Dashboard both draw `policyInWords()`, built from the
+same rules, so the page and the arithmetic cannot disagree. Changing a figure is
+a code change, on purpose, until making it editable again is decided. Days are
+stamped `xpol_standard`, an ARCHIVED anchor row (`0228`, and `ensurePolicyRow`
+on the write path) so `mbos_expense_days.policy_id` keeps its foreign key; the
+old tables, actions and simulator are left in place and read by no screen. The
+manager's Expenses screen reads "Asked for / Policy allows / Status", one
+Review button a day.
+
 **TRAVEL IS ASKED TWICE A DAY, AND NEVER AT A SHOP — a reversal (Sep 2026).**
 The paragraphs below describe how a visit used to ask how he was travelling,
 open a meter camera, and ask for the bus fare on the way out. The field would
