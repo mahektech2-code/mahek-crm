@@ -3068,10 +3068,10 @@ async function customerTargetsFor(userId: string): Promise<Record<string, unknow
  * His own pay, this month and last — the channel `app/salary.tsx` on the
  * handset was built to read and never had.
  *
- * A per-user narrowing of `payForPeriod` (the web Sales Dashboard's team-wide
- * version), not a second implementation of it — same columns, same
- * employee-record join by email-then-mobile, same "no incentive column"
- * shape AGENTS.md already settled: MahekOne sets no monthly target for a
+ * Only ever HIS: pay is HRMS's to manage, and the Sales Dashboard's
+ * team-wide salary screen was removed so that no sales manager reads what his
+ * salesmen earn. The handset keeps this because a man reading his own payslip
+ * is a different thing. Same "no incentive column" shape AGENTS.md settled: MahekOne sets no monthly target for a
  * field salesman, so a number computed from one would be an invention on the
  * one screen where a wrong figure is least forgivable.
  *
