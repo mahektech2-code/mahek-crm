@@ -13,6 +13,7 @@ import {
   mbosDeletions,
   mbosDocuments,
   mbosHolidays,
+  mbosHolidayAssignments,
   mbosLeaveRequests,
   mbosUserTerritories,
   mbosJourneyPlans,
@@ -39,6 +40,7 @@ import { bindAttachments, createAttachment } from "@/lib/services/attachment-ser
 import { APP_TIMEZONE, calendarDate } from "@/lib/business-date";
 import {
   fieldBook,
+  fieldTeam,
   LEAD_BULK_CAP,
   leadIdsMatching,
   leadsInScope,
@@ -68,6 +70,15 @@ import { repriceDay, rescoreLeg } from "@/lib/services/expense-submit-service";
 import { notifyUsers } from "../notify";
 import { announce } from "@/lib/services/announcement-service";
 import { mirrorToHrms, removeEverywhere } from "@/lib/services/holiday-calendar";
+import {
+  previewAudience,
+  rebuildHolidayMembers,
+  searchPlaces,
+  syncHolidayToHrms,
+  type HolidayPlace,
+} from "@/lib/services/holiday-service";
+import { HOLIDAY_CATEGORIES, isHolidayLevel, placeKindFor } from "@/lib/engines/holiday-audience";
+import { holidayAppliesSql } from "@/lib/holiday-sql";
 
 /** Count, noun and verb agree at every value. */
 function plural(n: number, noun: string, pl?: string): string {
@@ -1028,82 +1039,283 @@ export async function answerRefusal(input: {
 /* ═══════════════════════════════════════════════════════════ the holidays */
 
 /**
- * A day nobody is expected to work.
+ * A day nobody is expected to work — or nobody in one state, one district,
+ * one city, one area, or a few named people (`lib/engines/holiday-audience.ts`
+ * says who).
  *
- * Small, and load-bearing in three places: attendance reads as absent for
- * everybody otherwise, leave is measured in working days that nothing else
- * defines, and a journey plan will cheerfully route somebody into a shut
- * market.
+ * Load-bearing in more places than it looks: attendance reads as absent
+ * otherwise, leave is measured in working days, a journey plan will route
+ * somebody into a shut market — and the handset reads all of it through the
+ * pull, so a holiday saved here is on the salesman's phone at its next sync
+ * without anybody updating the app.
  *
- * `scope` is free text — "all beats", "Nagpur East, Nagpur West" — because a
- * holiday is regional in a way the territory model cannot express, and a join
- * table would need maintaining every time a beat is renamed.
+ * The places are PICKED from the reviewed tree rather than typed, which is
+ * what lets a state holiday reach exactly the people allocated that state.
  */
-export async function addHoliday(input: {
+export type HolidayInput = {
+  id?: string | null;
   onDate: string;
   name: string;
-  scope?: string | null;
-}): Promise<Result> {
+  category: string;
+  level: string;
+  placeIds: string[];
+  /** Given the day whatever the place says. */
+  include: string[];
+  /** Not given it whatever the place says. */
+  exclude: string[];
+  note?: string | null;
+  /** Ring the bell on the phones of the people it reaches (default on). */
+  notify?: boolean;
+};
+
+export async function saveHoliday(input: HolidayInput): Promise<Result<{ id: string; reaches: number }>> {
   try {
     const user = await requireSalesAccess(SALES_MANAGER("sales.holidays"));
 
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(input.onDate)) {
-      return err("That is not a date.", "validation");
-    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(input.onDate)) return err("That is not a date.", "validation");
     const name = input.name.trim();
-    if (!name) {
-      return err("Give it a name — a date on its own tells nobody why they are off.", "validation");
+    if (!name) return err("Give it a name — a date on its own tells nobody why they are off.", "validation");
+    if (name.length > 120) return err("Keep the name under 120 characters.", "validation");
+    if (!isHolidayLevel(input.level)) return err("Say who the holiday is for.", "validation");
+    const level = input.level;
+    const category = (HOLIDAY_CATEGORIES as readonly string[]).includes(input.category) ? input.category : "Festival";
+    const include = [...new Set(input.include)];
+    const exclude = [...new Set(input.exclude)].filter((id) => !include.includes(id));
+    const note = input.note?.trim() || null;
+
+    const kind = placeKindFor(level);
+    let placeIds: string[] = [];
+    if (kind) {
+      placeIds = [...new Set(input.placeIds)];
+      if (!placeIds.length) return err(`Pick at least one ${kind} — a ${kind} holiday has to say which.`, "validation");
+      const found = await db.execute<{ id: string }>(sql`
+        select id from places where kind = ${kind}
+           and id in (${sql.join(placeIds.map((id) => sql`${id}`), sql`, `)})
+      `);
+      if (found.length !== placeIds.length)
+        return err(`One of those is not a ${kind} on the place tree any more. Pick again.`, "validation");
+    }
+    if (level === "people" && !include.length)
+      return err("Name at least one person — a holiday for named people with nobody named is nobody's.", "validation");
+
+    const people = [...include, ...exclude];
+    if (people.length) {
+      const known = await db.execute<{ id: string }>(sql`
+        select id from users where id in (${sql.join(people.map((id) => sql`${id}`), sql`, `)})
+      `);
+      if (known.length !== people.length) return err("One of the people named is not on MahekOne.", "validation");
     }
 
-    const scope = input.scope?.trim() || null;
+    const [clash] = (await db.execute<{ id: string; name: string }>(sql`
+      select id, name from mbos_holidays
+       where on_date = ${input.onDate}::date and lower(name) = lower(${name})
+         and id <> ${input.id ?? ""}
+       limit 1
+    `)) as unknown as { id: string; name: string }[];
+    if (clash)
+      return err(`${clash.name} is already on the calendar for that day. Edit that one instead — two entries are two answers to who is off.`, "duplicate");
 
-    const clash = await db
-      .select({ id: mbosHolidays.id, name: mbosHolidays.name })
-      .from(mbosHolidays)
-      .where(
-        and(
-          sql`${mbosHolidays.onDate} = ${input.onDate}::date`,
-          scope ? eq(mbosHolidays.scope, scope) : sql`${mbosHolidays.scope} is null`,
-        ),
-      )
-      .limit(1);
-
-    if (clash.length) {
-      return err(
-        `${clash[0].name} is already recorded for that day and scope. Two entries for one day is two answers to whether anybody is working.`,
-        "duplicate",
-      );
+    let before: Record<string, unknown> | null = null;
+    if (input.id) {
+      const [row] = await db.select().from(mbosHolidays).where(eq(mbosHolidays.id, input.id)).limit(1);
+      if (!row) return err("That day is no longer on the calendar.", "not_found");
+      before = { name: row.name, onDate: row.onDate, level: row.level, placeIds: row.placeIds, category: row.category };
     }
 
-    /* One calendar: the day goes on HRMS's too, under the same id, so payroll
-       and the absentee list know about it (lib/services/holiday-calendar.ts). */
-    const holidayId = gen("mbos_hol");
+    /* Who it reaches BEFORE the write, so only people newly given the day are told. */
+    const reachedBefore = input.id
+      ? new Set(
+          ((await db.execute<{ id: string }>(sql`
+            select u.id from users u join app_access a on a.user_id = u.id and a.app = 'field'
+             where exists (select 1 from mbos_holidays h where h.id = ${input.id}
+                             and h.on_date = ${input.onDate}::date
+                             and ${holidayAppliesSql("h", sql`u.id`)})
+          `)) as unknown as { id: string }[]).map((r) => r.id),
+        )
+      : new Set<string>();
+
+    const holidayId = input.id ?? gen("mbos_hol");
     await db.transaction(async (tx) => {
-      await tx.insert(mbosHolidays).values({
-        id: holidayId,
-        onDate: input.onDate,
-        name,
-        scope,
-        createdById: user.id,
-        updatedById: user.id,
-      });
-      await mirrorToHrms(tx, { id: holidayId, onDate: input.onDate, name, scope }, user);
+      if (input.id) {
+        await tx
+          .update(mbosHolidays)
+          .set({ onDate: input.onDate, name, category, level, placeIds, note, updatedById: user.id, updatedAt: new Date() })
+          .where(eq(mbosHolidays.id, holidayId));
+      } else {
+        await tx.insert(mbosHolidays).values({
+          id: holidayId,
+          onDate: input.onDate,
+          name,
+          category,
+          level,
+          placeIds,
+          note,
+          createdById: user.id,
+          updatedById: user.id,
+        });
+        /* One calendar: the day goes on HRMS's too, under the same id. Who it
+           is for there is kept current by the rebuild below. */
+        await mirrorToHrms(tx, { id: holidayId, onDate: input.onDate, name, scope: level === "company" ? null : "Sales Dashboard" }, user);
+      }
+      await tx.delete(mbosHolidayAssignments).where(eq(mbosHolidayAssignments.holidayId, holidayId));
+      for (const [mode, ids] of [["include", include], ["exclude", exclude]] as const)
+        for (const userId of ids)
+          await tx.insert(mbosHolidayAssignments).values({ id: gen("hola"), holidayId, userId, mode, createdById: user.id });
     });
+
+    await rebuildHolidayMembers();
+    await syncHolidayToHrms(holidayId);
+
+    const reaches = (await db.execute<{ id: string; name: string }>(sql`
+      select u.id, u.name from users u join app_access a on a.user_id = u.id and a.app = 'field'
+       where u.active and exists (select 1 from mbos_holidays h where h.id = ${holidayId}
+                                    and ${holidayAppliesSql("h", sql`u.id`)})
+    `)) as unknown as { id: string; name: string }[];
 
     await db.insert(auditLog).values({
       id: gen("aud"),
       actorId: user.id,
-      action: "mbos.holiday.add",
+      action: input.id ? "mbos.holiday.edit" : "mbos.holiday.add",
       entityType: "mbos_holiday",
-      entityId: input.onDate,
-      afterState: { name, scope, onDate: input.onDate } as never,
+      entityId: holidayId,
+      beforeState: before as never,
+      afterState: { name, onDate: input.onDate, level, category, placeIds, include, exclude, reaches: reaches.length } as never,
     });
 
+    const day = await today();
+    if (input.notify !== false && input.onDate >= day) {
+      const newly = reaches.filter((r) => !reachedBefore.has(r.id));
+      await notifyUsers(
+        newly.map((r) => ({
+          userId: r.id,
+          title: `Holiday: ${name}`,
+          body: `${shortDay(input.onDate)} is a holiday for you${note ? ` — ${note}` : ""}. No punch-in is expected that day.`,
+          kind: "info" as const,
+          href: null,
+          mbosHref: null,
+        })),
+      );
+    }
+
     refresh();
-    return okVoid(`${name} recorded.`);
+    return ok(
+      { id: holidayId, reaches: reaches.length },
+      `${name} ${input.id ? "saved" : "recorded"} — it reaches ${reaches.length} ${reaches.length === 1 ? "person" : "people"} in the field.`,
+    );
   } catch (e) {
     return fromThrown(e);
   }
+}
+
+/** Kept for anything still posting the old three-field form: a company-wide day. */
+export async function addHoliday(input: { onDate: string; name: string; scope?: string | null }): Promise<Result> {
+  const r = await saveHoliday({ onDate: input.onDate, name: input.name, category: "Festival", level: "company", placeIds: [], include: [], exclude: [], note: input.scope ?? null });
+  return r.ok ? okVoid(r.message) : r;
+}
+
+/**
+ * ONE PERSON, ONE HOLIDAY: allocate it to him, take it from him, or put him
+ * back on whatever the holiday's level says. The By-employee view's switch.
+ */
+export async function setHolidayPerson(input: {
+  holidayId: string;
+  userId: string;
+  mode: "include" | "exclude" | "clear";
+  reason?: string | null;
+}): Promise<Result> {
+  try {
+    const user = await requireSalesAccess(SALES_MANAGER("sales.holidays"));
+    const [h] = await db.select().from(mbosHolidays).where(eq(mbosHolidays.id, input.holidayId)).limit(1);
+    if (!h) return err("That day is no longer on the calendar.", "not_found");
+    const [person] = await db.select({ id: users.id, name: users.name }).from(users).where(eq(users.id, input.userId)).limit(1);
+    if (!person) return err("That account is not on MahekOne.", "not_found");
+    const reason = input.reason?.trim() || null;
+    if (input.mode === "exclude" && !reason)
+      return err(`Say why ${person.name} is not getting ${h.name} — he will ask, and so will whoever reads his attendance.`, "validation");
+
+    await db.transaction(async (tx) => {
+      await tx
+        .delete(mbosHolidayAssignments)
+        .where(and(eq(mbosHolidayAssignments.holidayId, h.id), eq(mbosHolidayAssignments.userId, person.id)));
+      if (input.mode !== "clear")
+        await tx.insert(mbosHolidayAssignments).values({ id: gen("hola"), holidayId: h.id, userId: person.id, mode: input.mode, reason, createdById: user.id });
+      /* The phone hears it on the next pull even where the rebuild finds the
+         member set unchanged — a company-wide exclude lists nobody there. */
+      await tx.update(mbosHolidays).set({ updatedAt: new Date(), updatedById: user.id }).where(eq(mbosHolidays.id, h.id));
+    });
+    await rebuildHolidayMembers();
+    await syncHolidayToHrms(h.id);
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: input.mode === "include" ? "mbos.holiday.allocate" : input.mode === "exclude" ? "mbos.holiday.deallocate" : "mbos.holiday.reset",
+      entityType: "mbos_holiday",
+      entityId: h.id,
+      afterState: { name: h.name, onDate: h.onDate, person: person.name, personId: person.id, reason } as never,
+    });
+
+    if (h.onDate >= (await today()) && input.mode !== "clear")
+      await notifyUsers([
+        {
+          userId: person.id,
+          title: input.mode === "include" ? `Holiday: ${h.name}` : `${h.name} is a working day for you`,
+          body:
+            input.mode === "include"
+              ? `${shortDay(h.onDate)} is a holiday for you${reason ? ` — ${reason}` : ""}.`
+              : `${shortDay(h.onDate)} is not a holiday for you: ${reason}. Punch in as usual.`,
+          kind: input.mode === "include" ? "info" : "warn",
+          href: null,
+          mbosHref: null,
+        },
+      ]);
+
+    refresh();
+    return okVoid(
+      input.mode === "include"
+        ? `${h.name} given to ${person.name}.`
+        : input.mode === "exclude"
+          ? `${h.name} taken from ${person.name}.`
+          : `${person.name} is back on the usual rule for ${h.name}.`,
+    );
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** Who a holiday would reach, for the dialog — before anything is saved. */
+export async function previewHolidayAudience(input: {
+  level: string;
+  placeIds: string[];
+  include: string[];
+  exclude: string[];
+}): Promise<Result<{ id: string; name: string; reasons: string[] }[]>> {
+  try {
+    await requireSalesAccess(SALES_MANAGER("sales.holidays"));
+    if (!isHolidayLevel(input.level)) return ok([]);
+    const team = (await fieldTeam()).map((p) => p.id);
+    return ok(await previewAudience({ level: input.level, placeIds: input.placeIds, include: input.include, exclude: input.exclude }, team));
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** Places of one kind for the picker, searched on the server — the tree is thousands. */
+export async function searchHolidayPlaces(kind: string, query: string): Promise<Result<HolidayPlace[]>> {
+  try {
+    await requireSalesAccess(SALES_MANAGER("sales.holidays"));
+    if (!["state", "district", "city", "area"].includes(kind)) return ok([]);
+    return ok(await searchPlaces(kind, query));
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+function shortDay(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(
+    new Date(Date.UTC(y, m - 1, d)),
+  );
 }
 
 /** Taking a day back off the calendar. */

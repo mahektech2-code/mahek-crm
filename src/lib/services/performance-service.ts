@@ -641,7 +641,8 @@ export async function workingDaysIn(
   const holidays = await db.execute<{ on_date: string }>(sql`
     select to_char(on_date, 'YYYY-MM-DD') as on_date
       from mbos_holidays
-     where on_date >= ${sql.raw(`'${from}'::date`)}
+     where level = 'company'
+       and on_date >= ${sql.raw(`'${from}'::date`)}
        and on_date <= ${sql.raw(`'${to}'::date`)}
   `);
   const off = new Set(holidays.map((h) => h.on_date));

@@ -1,6 +1,7 @@
 import "server-only";
 import { notConverted } from "../lead-action-window";
 import { and, eq, isNull, or, sql, type AnyColumn, type SQL } from "drizzle-orm";
+import { holidayAppliesSql } from "@/lib/holiday-sql";
 import { db } from "@/db";
 import {
   appAccess,
@@ -1039,7 +1040,7 @@ export type BootstrapPayload = {
    * `restoreAttendance` on the other side for why it may only ever fill a gap.
    */
   attendanceToday: unknown | null;
-  /** This year's and last's. See `holidaysFor` for why only `universal` ones bind. */
+  /** This year's and last's; `universal` is "this one is his". See `holidaysFor`. */
   holidays: unknown[];
   documents: unknown[];
   courses: unknown[];
@@ -1219,7 +1220,7 @@ export async function buildBootstrap(
     customerBills(principal, ids, { from: statementStart }),
     leaveBalances(principal.user.id, Number(day.slice(0, 4))),
     attendanceToday(principal.user.id, day),
-    holidaysFor(),
+    holidaysFor(principal.user.id),
     visibleDocuments(principal.role, ids),
     coursesFor(principal.user.id),
     unreadNotifications(principal.user.id),
@@ -3008,17 +3009,23 @@ async function coursesFor(userId: string, since?: string | null) {
  * telling us its own working-day horizon, which is exactly the kind of
  * two-projections-that-disagree this codebase keeps getting bitten by.
  *
- * `scope` is free text on the server (see the schema comment) and the handset
- * has no reliable way to match it against a salesman's own territory, so only
- * a NULL-scope (everywhere) row is sent as `universal: true` — the one signal
- * the attendance engine may act on automatically. A regionally-scoped holiday
- * still goes down, `universal: false`, so it can be shown in a list, but
- * nothing here pretends to know it applies to any one salesman.
+ * PER PERSON. `universal` used to mean "the row names no place", because a
+ * free-text place could not be matched to anybody. Places are picked from the
+ * tree now and resolved per salesman (`holidayAppliesSql`), so `universal` is
+ * "this is HIS day off" — which is exactly what the handset's attendance
+ * engine and leave form already read it as. A holiday that does not reach him
+ * still goes down, `universal: false`, so his phone can list the company's
+ * calendar and say which days are not his. `scope` carries where it applies,
+ * in words ("Odisha", "2 named people"); null is company-wide.
+ *
+ * A change in who a holiday reaches — an allocation, a territory, a new place
+ * — moves the holiday's `updated_at` (`rebuildHolidayMembers`), so the delta
+ * carries it with no app update and no new column on the wire.
  */
-async function holidaysFor(since?: string | null) {
+async function holidaysFor(userId: string, since?: string | null) {
   return db.execute<Record<string, unknown>>(sql`
-    select h.id, h.on_date::text as "onDate", h.name, h.scope,
-           (h.scope is null) as "universal"
+    select h.id, h.on_date::text as "onDate", h.name, h.audience_label as scope,
+           ${holidayAppliesSql("h", sql`${userId}`)} as "universal"
       from mbos_holidays h
      where extract(year from h.on_date) >= extract(year from (now() at time zone ${APP_TIMEZONE})) - 1
        ${since ? sql`and h.updated_at > ${since}` : sql``}
@@ -3586,7 +3593,7 @@ export async function buildPull(
        * catch, and the cheapest way to pass it is to have one query. */
       leaveBalances(principal.user.id, deltaYear),
 
-      holidaysFor(sinceIso),
+      holidaysFor(principal.user.id, sinceIso),
 
       /* What the customer pays.
        *

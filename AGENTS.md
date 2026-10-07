@@ -5226,6 +5226,37 @@ HRMS's is the master, a holiday for everybody is also a row of
 `mbos_holidays` under the same id, and the Sales Dashboard's Holidays screen
 writes through the same service.
 
+**A HOLIDAY HAS A LEVEL, AND WHO IT REACHES IS RESOLVED PER PERSON.** Company,
+state, district, city, area or named people (`HOLIDAY_LEVELS` in
+`lib/engines/holiday-audience.ts`, pure and the one statement of the rule).
+The places are PICKED from the reviewed `places` tree, never typed — a typed
+"where" could not be matched to anybody, which is why the server used to read
+every holiday as everybody's and the handset read only the ones with no place.
+A state reaches everybody allocated that state or a city or beat inside it; a
+district its cities; a city itself and its beats; an area its beat. A manager's
+`region` oversight patch is not "working there" and reaches nothing. On top of
+the level, `mbos_holiday_assignments` gives a day to ONE person (`include`) or
+takes it from him (`exclude`, which needs a reason and wins over everything).
+
+**`mbos_holiday_members` is a CACHE**, rebuilt by `rebuildHolidayMembers` after
+every holiday save, every allocation, every `setWorkingTerritories`, and
+hourly and nightly as the net under them. It lists non-company holidays only;
+`holidayAppliesSql` (`lib/holiday-sql.ts`) is the one SQL reading — company and
+not excluded, or listed — and the attendance verdict, leave on the handset's
+sync, the salesman's journey calendar and the pull all ask it. The team-level
+readers (the performance forecast, the command centre, the qualification
+call's next working day) read `level = 'company'` only, because one state's
+festival is not a day the company is shut.
+
+**THE HANDSET HEARS IT WITH NO UPDATE.** The wire is unchanged — the same five
+columns — and `universal` now means "this one is HIS", which is exactly what
+the phone's attendance engine and leave form already read it as. A rebuild that
+moves who a holiday reaches also moves its `updated_at`, and an allocation
+always does, so the delta carries the change. `scope` on the wire is
+`audience_label` ("Odisha", "2 named people", null for company-wide). Rows typed
+before levels existed were migrated as `company` (how the server already read
+them) and keep their text in `scope`, which the Holidays screen flags.
+
 **The employee master is a mirror, and mirrors do not get edited.** HRMS reads
 the workbook's `Employee Details` tab and nothing on its screens can be
 changed, because HR maintains that sheet and a field edited here would be

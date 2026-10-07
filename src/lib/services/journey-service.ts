@@ -1,5 +1,6 @@
 import "server-only";
 import { sql } from "drizzle-orm";
+import { holidayAppliesSql } from "@/lib/holiday-sql";
 import { db } from "@/db";
 import { APP_TIMEZONE } from "../business-date";
 import { managerScope, onlyMine } from "./sales-service";
@@ -104,6 +105,7 @@ export async function calendarFacts(
       select h.on_date::text as "onDate", h.name
         from mbos_holidays h
        where h.on_date between ${from}::date and ${to}::date
+         and ${holidayAppliesSql("h", sql`${userId}`)}
        order by h.on_date
     `),
   ]);
