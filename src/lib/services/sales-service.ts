@@ -34,6 +34,7 @@ import type { PlaceFilterOptions, PlaceFilterValues } from "@/lib/place-filters"
 import { rankShopCities } from "@/lib/journey-days";
 import { canonicalState, stateKey, stateVariants } from "@/lib/india-states";
 import { metresBetween } from "@/lib/geo";
+import { NOBODY, type TerritorySeat } from "@/lib/territory-seats";
 import { dropInaccurateFixes } from "../engines/trail-gaps";
 import {
   leaveBalances as leaveBalancesFor,
@@ -4395,121 +4396,135 @@ export async function locationOf(
   return rows[0] ?? null;
 }
 
-export type TerritoryRow = {
-  region: string | null;
-  city: string;
-  beat: string | null;
-  salesmanId: string | null;
-  salesmanName: string | null;
-  shops: number;
-  withGps: number;
-  outstandingPaise: number;
-};
+/* ════════════════════════════════════════════════ territory, by seat */
 
 /**
- * Which states, cities and beats belong to whom.
- *
- * Grouped rather than listed: a territory screen answers "who covers Nagpur"
- * and "how much of Karnataka has nobody", and a thousand customer rows answers
- * neither. The customer list itself is a screen away.
+ * The column a seat is read through. Field sales keeps the fall-through the
+ * Territory screen always grouped by; the other three are their own columns.
  */
-export async function territory(): Promise<TerritoryRow[]> {
-  const scope = await placeScope();
-  return db.execute<TerritoryRow>(sql`
-    select c.territory_region as region, c.city, c.beat,
-           coalesce(c.sales_am_id, c.owner_id) as "salesmanId",
-           u.name as "salesmanName",
-           count(*)::int as shops,
-           count(*) filter (where c.gps_lat is not null and c.gps_lng is not null)::int as "withGps",
-           coalesce(sum(c.outstanding), 0) as "outstandingPaise"
-      from customers c
-      left join users u on u.id = coalesce(c.sales_am_id, c.owner_id)
-     where c.status = 'active' and c.kind = 'customer'
-       ${mineByPlace(scope, "coalesce(c.sales_am_id, c.owner_id)", "c")}
-     group by c.territory_region, c.city, c.beat, coalesce(c.sales_am_id, c.owner_id), u.name
-     order by c.territory_region asc nulls last, c.city asc, c.beat asc nulls last
-     /* A CAP ON GROUPS, AND IT SITS ON THE BOUNDARY.
-        The group key is (region, city, beat, salesman), and this book produces
-        exactly 500 of them — so one new beat truncates the tiles silently, and
-        the rows that go are the ones sorting LAST, which nulls-last makes
-        precisely the shops with no region recorded. Raised rather than removed:
-        the screen groups rather than lists because a thousand rows answers
-        nothing, and an unbounded query on a book that keeps growing is the
-        other way to be wrong. */
-     limit 5000
-  `) as unknown as TerritoryRow[];
+function seatColumn(seat: TerritorySeat): string {
+  switch (seat) {
+    case "field":
+      return "coalesce(c.sales_am_id, c.owner_id)";
+    case "sales_am":
+      return "c.sales_am_id";
+    case "back_office":
+      return "c.back_office_am_id";
+    case "sales_manager":
+      return "c.sales_manager_id";
+  }
 }
 
-export type TeamRegionRow = {
-  salesmanId: string;
-  salesmanName: string;
+/** Narrow to one person in a seat, to nobody in it, or not at all. */
+function seatPersonClause(seat: TerritorySeat, person: string | null): SQL {
+  if (!person) return sql``;
+  const col = sql.raw(seatColumn(seat));
+  return person === NOBODY ? sql`and ${col} is null` : sql`and ${col} = ${person}`;
+}
+
+/** The book Territory counts: live accounts, customers and leads both. */
+const TERRITORY_BOOK = sql`c.deleted_at is null and c.status = 'active' and c.kind in ('customer', 'lead')`;
+
+export type TerritoryPerson = {
+  id: string;
+  name: string;
   initials: string;
-  active: boolean;
-  /** The region most of this salesman's own book sits in. Null where they
-   * cover no active customers yet. */
-  region: string | null;
-  cities: string[];
-  shopCount: number;
-  checkedInToday: boolean;
-  onLeaveToday: boolean;
-  reportsToId: string | null;
-  reportsToName: string | null;
+  customers: number;
+  leads: number;
+  /** No field GPS fix — an address-only geocode does not count. */
+  unpinned: number;
+  outstandingPaise: number;
+  cityCount: number;
+  /** The cities with the most of this person's book, biggest first. */
+  topCities: string[];
 };
 
 /**
- * The field team, each person's own region, and who they report to —
- * everything the Territory screen groups by.
+ * Everybody holding a seat, and the book they hold in it.
  *
- * A salesman has no region of his own in this schema, only a book of
- * customers that each carry one; `region` here is the one his book has the
- * MOST of, which is the honest answer to "where does this person work"
- * without inventing a field nothing else in MahekOne has. `reportsToId` is
- * the general reporting line every user carries (`access-control.ts` already
- * reads it for scope), not something built for this screen.
+ * Field sales lists every active Salesman App holder, a book of none
+ * included — a salesman with nothing named against him opens his handset on
+ * an empty book, and that has to be visible here rather than absent.
  */
-export async function teamByRegion(day: string): Promise<TeamRegionRow[]> {
-  const scope = await managerScope();
-  return db.execute<TeamRegionRow>(sql`
-    with counts as (
-      select coalesce(c.sales_am_id, c.owner_id) as salesman_id,
-             c.territory_region as region,
-             count(*) as n
+export async function territorySeatPeople(seat: TerritorySeat): Promise<TerritoryPerson[]> {
+  const scope = await placeScope();
+  const team = await managerScope();
+  const col = sql.raw(seatColumn(seat));
+  const inScope = mineByPlace(scope, "coalesce(c.sales_am_id, c.owner_id)", "c");
+  const city = placeNameSql("c", "city", "city");
+  const joinBook =
+    seat === "field"
+      ? sql`join app_access a on a.user_id = u.id and a.app = 'field'
+            left join book b on b.uid = u.id`
+      : sql`join book b on b.uid = u.id`;
+  const onlyTeam = seat === "field" ? sql`and u.active ${onlyMine(team, "u.id")}` : sql``;
+
+  return db.execute<TerritoryPerson>(sql`
+    with book as (
+      select ${col} as uid,
+             count(*) filter (where c.kind = 'customer')::int as customers,
+             count(*) filter (where c.kind = 'lead')::int as leads,
+             count(*) filter (where c.gps_lat is null or c.gps_lng is null)::int as unpinned,
+             coalesce(sum(c.outstanding) filter (where c.kind = 'customer'), 0)::bigint as outstanding
         from customers c
-       where c.status = 'active' and c.kind = 'customer'
-         and coalesce(c.sales_am_id, c.owner_id) is not null
-       group by coalesce(c.sales_am_id, c.owner_id), c.territory_region
+       where ${TERRITORY_BOOK} and ${col} is not null ${inScope}
+       group by 1
     ),
-    top_region as (
-      select distinct on (salesman_id) salesman_id, region
-        from counts
-       order by salesman_id, n desc nulls last
-    ),
-    book as (
-      select coalesce(c.sales_am_id, c.owner_id) as salesman_id,
-             coalesce(array_agg(distinct c.city order by c.city), '{}') as cities,
-             count(*)::int as shop_count
-        from customers c
-       where c.status = 'active' and c.kind = 'customer'
-       group by coalesce(c.sales_am_id, c.owner_id)
+    by_city as (
+      select uid, count(*)::int as city_count,
+             (array_agg(city order by n desc, city))[1:6] as top_cities
+        from (
+          select ${col} as uid, ${city} as city, count(*) as n
+            from customers c
+           where ${TERRITORY_BOOK} and ${col} is not null ${inScope}
+           group by 1, 2
+        ) x
+       where city is not null and city <> ''
+       group by uid
     )
-    select u.id as "salesmanId", u.name as "salesmanName", u.initials, u.active,
-           tr.region,
-           coalesce(b.cities, '{}') as cities,
-           coalesce(b.shop_count, 0) as "shopCount",
-           (d.check_in_at is not null) as "checkedInToday",
-           (d.status = 'on_leave') as "onLeaveToday",
-           u.reports_to_id as "reportsToId",
-           m.name as "reportsToName"
+    select u.id, u.name, u.initials,
+           coalesce(b.customers, 0) as customers,
+           coalesce(b.leads, 0) as leads,
+           coalesce(b.unpinned, 0) as unpinned,
+           coalesce(b.outstanding, 0) as "outstandingPaise",
+           coalesce(bc.city_count, 0) as "cityCount",
+           coalesce(bc.top_cities, '{}') as "topCities"
       from users u
-      join app_access a on a.user_id = u.id and a.app = 'field'
-      left join top_region tr on tr.salesman_id = u.id
-      left join book b on b.salesman_id = u.id
-      left join mbos_attendance_days d on d.user_id = u.id and d.day = ${day}::date
-      left join users m on m.id = u.reports_to_id
-     where u.active
-       ${onlyMine(scope, "u.id")}
-     order by u.name asc
-  `) as unknown as TeamRegionRow[];
+      ${joinBook}
+      left join by_city bc on bc.uid = u.id
+     where true ${onlyTeam}
+     order by coalesce(b.customers, 0) + coalesce(b.leads, 0) desc, u.name asc
+  `) as unknown as TerritoryPerson[];
+}
+
+export type TerritoryTotals = {
+  customers: number;
+  leads: number;
+  cities: number;
+  unpinned: number;
+  /** Accounts nobody holds in the chosen seat. */
+  unassigned: number;
+};
+
+/** The figures above the map, for the whole book or one person's part of it. */
+export async function territoryTotals(
+  seat: TerritorySeat,
+  person: string | null,
+): Promise<TerritoryTotals> {
+  const scope = await placeScope();
+  const col = sql.raw(seatColumn(seat));
+  const [row] = (await db.execute<TerritoryTotals>(sql`
+    select count(*) filter (where c.kind = 'customer')::int as customers,
+           count(*) filter (where c.kind = 'lead')::int as leads,
+           count(distinct ${placeNameSql("c", "city", "city")})::int as cities,
+           count(*) filter (where c.gps_lat is null or c.gps_lng is null)::int as unpinned,
+           count(*) filter (where ${col} is null)::int as unassigned
+      from customers c
+     where ${TERRITORY_BOOK}
+       ${seatPersonClause(seat, person)}
+       ${mineByPlace(scope, "coalesce(c.sales_am_id, c.owner_id)", "c")}
+  `)) as unknown as TerritoryTotals[];
+  return row ?? { customers: 0, leads: 0, cities: 0, unpinned: 0, unassigned: 0 };
 }
 
 export type PerformanceRow = {
@@ -5135,26 +5150,6 @@ export async function fieldBook(filter?: {
   }));
 }
 
-/** How much of the book has no coordinates. A count, and then a decision. */
-export async function gpsGap(): Promise<{ missing: number; total: number }> {
-  /* SCOPED LIKE EVERYTHING ELSE ON THE SCREEN. It was the one unscoped read
-     here, so a regional manager got a national "Without a pin" figure sitting
-     beside a "Shops" tile counting only his own — two numbers from one row of
-     tiles that could not be reconciled, on the screen somebody opens when they
-     suspect data is missing. Being national made it look like the gap, which
-     is exactly the wrong direction for a tile whose job is to say how much
-     work is left. */
-  const scope = await placeScope();
-  const rows = await db.execute<{ missing: number; total: number }>(sql`
-    select count(*) filter (where c.gps_lat is null or c.gps_lng is null)::int as missing,
-           count(*)::int as total
-      from customers c
-     where c.status = 'active' and c.kind = 'customer'
-       ${mineByPlace(scope, "coalesce(c.sales_am_id, c.owner_id)", "c")}
-  `);
-  return { missing: Number(rows[0]?.missing ?? 0), total: Number(rows[0]?.total ?? 0) };
-}
-
 /** The beats somebody has actually written down, for the filter. */
 export async function beats(): Promise<string[]> {
   const rows = await db.execute<{ beat: string }>(sql`
@@ -5255,6 +5250,8 @@ export type ShopPin = {
  * screen measure with, so one distance is never phrased two ways.
  */
 export async function shopPins(options?: {
+  /** One person in one seat, or nobody in it — the Territory filter. */
+  seat?: { seat: TerritorySeat; person: string | null };
   near?: {
     /** Where the team is. An EMPTY list is not "everywhere" — see below. */
     centres: Array<{ lat: number; lng: number }>;
@@ -5330,6 +5327,7 @@ export async function shopPins(options?: {
        and c.deleted_at is null
        and coalesce(c.gps_lng, c.geocoded_lng) is not null
        ${box}
+       ${options?.seat ? seatPersonClause(options.seat.seat, options.seat.person) : sql``}
        ${mineByPlace(scope, "coalesce(c.sales_am_id, c.owner_id)", "c")}
   `)) as unknown as ShopPin[];
 
