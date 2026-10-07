@@ -5,7 +5,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cx } from "@/components/ui/primitives";
 import { AppFrame } from "@/components/shell/app-frame";
-import { Wordmark } from "@/components/shell/wordmark";
+import { HeaderLead } from "@/components/shell/header-lead";
+import type { AppDefinition } from "@/lib/apps";
 import { Icon } from "@/components/shell/icons";
 import { SignOutButton } from "@/components/shell/sign-out-button";
 
@@ -41,27 +42,36 @@ const NAV: Item[] = [
 export function WebsiteShell({
   user,
   allowed,
-  switcher,
+  apps,
   feedback,
   children,
 }: {
   user: { name: string; initials: string; role: string };
   /** The routes this person may open, resolved in the layout. */
   allowed: string[];
-  switcher: React.ReactNode;
+  /** Every web app this person opens, for the switcher — drawn always. */
+  apps: AppDefinition[];
   feedback: React.ReactNode;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
   const permitted = new Set(allowed);
   const items = NAV.filter((i) => permitted.has(i.href));
+  /* The sidebar narrows to an icon rail; the toggle is HeaderLead's ☰. */
+  const [collapsed, setCollapsed] = React.useState(false);
 
   return (
     <AppFrame
       header={
         <header className="flex h-14 flex-none items-center gap-3 border-b border-line bg-surface px-4">
-          {switcher}
-          <Wordmark label="MAHEK WA" />
+          <HeaderLead
+            apps={apps}
+            current="website"
+            collapsed={collapsed}
+            onToggleSidebar={() => setCollapsed((c) => !c)}
+            href="/website"
+            label="MAHEK WA"
+          />
           <span className="flex-1" />
           {feedback}
           <span className="mx-1 h-6 w-px flex-none bg-divider" />
@@ -82,7 +92,12 @@ export function WebsiteShell({
         </header>
       }
       sidebar={
-        <aside className="flex w-[clamp(196px,17vw,240px)] flex-none flex-col border-r border-line bg-surface">
+        <aside
+          className={cx(
+            "flex flex-none flex-col border-r border-line bg-surface transition-[width] duration-150",
+            collapsed ? "w-14" : "w-[clamp(196px,17vw,240px)]",
+          )}
+        >
           <nav aria-label="Website sections" className="flex-1 overflow-y-auto px-1.5 pt-2 pb-4">
             {items.map((item) => {
               const active = item.exact ? pathname === item.href : pathname.startsWith(item.href);
@@ -91,10 +106,13 @@ export function WebsiteShell({
                   key={item.href}
                   href={item.href}
                   aria-current={active ? "page" : undefined}
+                  aria-label={collapsed ? item.label : undefined}
+                  title={collapsed ? item.label : undefined}
                   className={cx(
-                    "relative mb-px flex h-9 items-center gap-2.5 overflow-hidden rounded-[4px] border-l-[3px] pr-2.5 pl-[9px] text-sm whitespace-nowrap no-underline transition-colors duration-100 hover:no-underline",
+                    "relative mb-px flex h-9 items-center overflow-hidden rounded-[4px] border-l-[3px] text-sm whitespace-nowrap no-underline transition-colors duration-100 hover:no-underline",
+                    collapsed ? "justify-center border-l-transparent" : "gap-2.5 pr-2.5 pl-[9px]",
                     active
-                      ? "border-l-brand font-medium text-[#5223E0]"
+                      ? cx("font-medium text-[#5223E0]", !collapsed && "border-l-brand")
                       : "border-l-transparent text-body hover:bg-canvas",
                   )}
                 >
@@ -102,9 +120,11 @@ export function WebsiteShell({
                     <span className="pointer-events-none absolute inset-0 rounded-[4px] bg-brand-soft" />
                   ) : null}
                   <Icon name={item.icon} size={18} className="relative z-1 flex-none" />
-                  <span className="relative z-1 min-w-0 flex-1 overflow-hidden text-ellipsis">
-                    {item.label}
-                  </span>
+                  {collapsed ? null : (
+                    <span className="relative z-1 min-w-0 flex-1 overflow-hidden text-ellipsis">
+                      {item.label}
+                    </span>
+                  )}
                 </Link>
               );
             })}

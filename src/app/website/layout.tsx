@@ -2,7 +2,6 @@ import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { listUserApps, listUserModules } from "@/lib/access";
 import { webApps } from "@/lib/apps";
-import { AppSwitcher } from "@/components/shell/app-switcher";
 import { FeedbackButton } from "@/components/shell/feedback-button";
 import { ToastProvider } from "@/components/ui/toast";
 import { initialsOf } from "@/lib/format";
@@ -38,7 +37,7 @@ export default async function WebsiteLayout({
       <WebsiteShell
         user={{ name: user.name, initials: initialsOf(user.name), role: hat.label }}
         allowed={modules.map((m) => m.href)}
-        switcher={apps.length > 1 ? <AppSwitcher apps={webApps(apps)} current="website" /> : null}
+        apps={webApps(apps)}
         feedback={<FeedbackButton />}
       >
         {children}

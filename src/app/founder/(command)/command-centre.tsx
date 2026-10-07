@@ -21,7 +21,7 @@ import {
 import { C, DesignStyles, EASE, Hov, Icon, PILL, Pulse, upper } from "./ui";
 import { addDays } from "@/lib/format";
 import { AppFrame } from "@/components/shell/app-frame";
-import { ASK_BUTTON, crumbFor, DeskTabs, FounderHeader, FounderSidebar, QUICK_BUTTON, SEARCH_BOX, TITLES, TitleBlock, WHATSAPP_TABS } from "./chrome";
+import { ASK_BUTTON, crumbFor, DeskTabs, FounderHeader, FounderSidebar, QUICK_BUTTON, SEARCH_BOX, TITLES, TitleBlock, useFounderSidebar, WHATSAPP_TABS } from "./chrome";
 import type { AppDefinition } from "@/lib/apps";
 
 /** 1 = Monday … 7 = Sunday, for a YYYY-MM-DD calendar date (Sakamoto). */
@@ -105,8 +105,8 @@ type Props = {
   section: SectionKey;
   shell: ShellData;
   canAct: boolean;
-  /** Every web app this person opens, for the switcher every MahekOne header carries. Null with one app. */
-  switcherApps: AppDefinition[] | null;
+  /** Every web app this person opens, for the switcher every MahekOne header carries. */
+  switcherApps: AppDefinition[];
   company: CompanyPayload | null;
   payload: SectionPayload | null;
   quickItems: [string, string][];
@@ -117,6 +117,7 @@ type Props = {
 
 export function CommandCentre({ section, shell, canAct, switcherApps, company, payload, quickItems, askSuggestions, initial }: Props) {
   const router = useRouter();
+  const [collapsed, toggleSidebar] = useFounderSidebar();
   const [pending, startTransition] = React.useTransition();
   const period = shell.period;
   const periodIn = React.useMemo(() => ({ key: period.key, from: period.from, to: period.to }), [period]);
@@ -318,6 +319,8 @@ export function CommandCentre({ section, shell, canAct, switcherApps, company, p
         header={
           <FounderHeader
             switcherApps={switcherApps}
+            collapsed={collapsed}
+            onToggleSidebar={toggleSidebar}
             user={shell.user}
             liveCount={live.length}
             onBell={() => go("inbox")}
@@ -402,7 +405,7 @@ export function CommandCentre({ section, shell, canAct, switcherApps, company, p
           />
         }
         sidebar={
-            <FounderSidebar active={section} allowed={shell.allowed} navCounts={shell.navCounts} freshness={shell.freshness} onGo={go} />
+            <FounderSidebar active={section} allowed={shell.allowed} navCounts={shell.navCounts} freshness={shell.freshness} onGo={go} collapsed={collapsed} />
         }
       >
         <TitleBlock

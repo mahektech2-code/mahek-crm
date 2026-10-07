@@ -5,8 +5,8 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { AppFrame } from "@/components/shell/app-frame";
 import { AccountMenu } from "@/components/shell/account-menu";
-import { AppSwitcher } from "@/components/shell/app-switcher";
 import { FeedbackButton } from "@/components/shell/feedback-button";
+import { HeaderLead } from "@/components/shell/header-lead";
 import { NotificationBell } from "@/components/shell/notification-bell";
 import { cx } from "@/components/ui/primitives";
 import { ToastProvider } from "@/components/ui/toast";
@@ -88,25 +88,8 @@ export function HireShell({
       <AppFrame
         header={
           <header className="z-30 flex h-14 flex-none items-center gap-3 border-b border-line bg-surface px-4">
-            <button
-              onClick={toggleRail}
-              title={rail ? "Collapse the menu to icons" : "Expand the menu"}
-              aria-label={rail ? "Collapse the menu to icons" : "Expand the menu"}
-              className="flex h-[34px] w-[34px] flex-none cursor-pointer items-center justify-center rounded-[4px] border border-line bg-surface text-body"
-            >
-              <Icon n="menu" s={18} />
-            </button>
-            {apps.length > 1 ? <AppSwitcher apps={apps} current="hire" /> : null}
-            <Link href="/apps" title="Back to the MahekOne launcher" className="flex flex-none items-center gap-2 no-underline hover:no-underline">
-              <span className="flex h-4 w-4 items-center justify-center rounded-[3px] bg-brand">
-                <span className="block h-1.5 w-1.5 rounded-[1px] bg-brand-lime" />
-              </span>
-              <span className="text-[15px] font-semibold whitespace-nowrap text-heading">MAHEK ONE</span>
-            </Link>
-            <span className="text-line-strong">›</span>
-            <Link href="/hire" className="text-[15px] font-semibold text-brand no-underline hover:no-underline">
-              Hire
-            </Link>
+            {/* `rail` is true when the menu is OPEN, so the collapsed rail is its negation. */}
+            <HeaderLead apps={apps} current="hire" collapsed={!rail} onToggleSidebar={toggleRail} href="/hire" label="MAHEK HIRE" />
             <span className="ml-4 hidden md:block">
               <HireSearch />
             </span>
