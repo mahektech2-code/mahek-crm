@@ -1,4 +1,4 @@
--- CONTACT BIRTHDAYS (0226) — ADDITIVE ONLY.
+-- CONTACT BIRTHDAYS (0227) — ADDITIVE ONLY.
 --
 -- Each person at a customer may carry a birthday as a day and a month, never
 -- a year. Both columns are nullable and nothing is backfilled: null is

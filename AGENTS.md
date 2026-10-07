@@ -1722,6 +1722,28 @@ access and lose only the name. Taking the ERP away takes the designation with
 it, like the powers. A test reads the seed migration and refuses a screen or a
 power the ERP does not have.
 
+**PURCHASE RUNS DEPARTMENT BY DEPARTMENT, and the department is the
+designation's.** Mixing & Blending raises chemical requirements, tests each
+chemical lot as it arrives and makes SFG; Refilling raises can (and drum)
+requirements and fills FG; Packing raises empty-box and packing-stationery
+requirements and makes packing batches; the Production Head does all of it.
+`lib/erp/departments.ts` is the whole rule, pure: which categories each
+department may ask for, and the steps in order. `erp_designations.department`
+(`mixing`, `refilling`, `packing`, `head`) puts a job in one, `0226` seeds the
+four designations, and `ErpContext.department` carries it — null for anybody
+outside production and always for an administrator, so nothing that worked
+before moved. Two rules, both in `saveRequirement` and not only in the form: a
+requirement filed under a production department is for that department's
+categories, whoever raises it; and somebody in a department raises for their
+own only, sees only those requirements (and their own) on the list and in the
+badge, and cannot cancel another's. The requirement's `department` column
+stays the LABEL it always was. **Departments** (`/erp/departments`) is the
+step-by-step page: one numbered card per step with what is waiting on it and a
+button that opens the ordinary form already filled in (`?new=1&field=value` on
+any list opens its new form with those answers — only the form's own fields
+are taken). Testing is recorded by the department; VERIFYING a test is still
+the `verifyTest` power, which no departmental designation carries by default.
+
 **PREVIEW ACCESS AS is the design's sidebar control, made real and made
 read-only.** An ERP administrator can see the ERP exactly as a designation or as
 one person sees it — the sidebar, the hidden columns, the narrowed lists — from

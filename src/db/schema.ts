@@ -10901,6 +10901,14 @@ export const erpDesignations = pgTable(
      * then ignored.
      */
     allScreens: boolean("all_screens").notNull().default(false),
+    /**
+     * The production department this job works in — `mixing`, `refilling`,
+     * `packing`, or `head` for all three (`lib/erp/departments.ts`). It
+     * decides which categories its holders may raise a purchase requirement
+     * for and which requirements they see. Null: not a departmental job, and
+     * nothing is narrowed.
+     */
+    department: text("department"),
     sortOrder: integer("sort_order").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -10909,6 +10917,7 @@ export const erpDesignations = pgTable(
   (t) => [
     uniqueIndex("erp_designations_name_key").on(t.name),
     check("erp_designations_level_check", sql`${t.level} in ('associate', 'manager', 'admin')`),
+    check("erp_designations_department_check", sql`${t.department} is null or ${t.department} in ('mixing', 'refilling', 'packing', 'head')`),
   ],
 );
 

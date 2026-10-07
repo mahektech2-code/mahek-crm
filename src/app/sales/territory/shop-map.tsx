@@ -420,7 +420,7 @@ export function ShopMap({
             {keysSpent
               ? "Ola has refused every key held for quota, so there are no streets to draw until one of them resets at the start of the month or another is added in Admin Console → Integrations."
               : "Add an Ola Maps key in Admin Console → Integrations to draw the streets under this."}{" "}
-            The table above still has everything that is known.
+            The People and Cities tabs still have everything that is known.
           </p>
         </div>
       </Frame>
