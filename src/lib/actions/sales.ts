@@ -86,13 +86,27 @@ import {
   type TaskAudience,
 } from "@/lib/task-audience";
 import {
+  formHasLinks,
+  linkedTaskComplete,
   MAX_TASK_FIELDS,
   MAX_TASK_OPTIONS,
   TASK_FIELD_TYPES,
+  TASK_LINK_TARGET_KEYS,
   taskFormProblems,
   tidyTaskForm,
   type TaskField,
+  type TaskLinkTarget,
 } from "@/lib/task-form";
+import { linkContexts } from "@/lib/services/task-link-service";
+import { taskCampaign } from "@/lib/services/task-campaign-service";
+import {
+  draftTask,
+  suggestLinks,
+  summariseCampaign,
+  type LinkSuggestion,
+  type TaskDraft,
+  type TaskSummary,
+} from "@/lib/services/task-ai-service";
 
 /** Count, noun and verb agree at every value. */
 function plural(n: number, noun: string, pl?: string): string {
@@ -3408,6 +3422,13 @@ const taskFieldSchema = z.object({
       value: z.string().max(200).optional(),
     })
     .optional(),
+  link: z
+    .object({
+      target: z.enum(TASK_LINK_TARGET_KEYS as [TaskLinkTarget, ...TaskLinkTarget[]]),
+      mode: z.enum(["fill", "update"]),
+      scope: z.enum(["primary", "each"]).optional(),
+    })
+    .optional(),
 });
 
 const placesSchema = z.object({
@@ -3442,20 +3463,34 @@ export type TaskAudiencePreview = {
   noCarrier: number;
   outsideTeam: number;
   tooMany: boolean;
+  /** Shops left out because their record already has everything asked. */
+  alreadyComplete: number;
   salesmen: { id: string; name: string; count: number }[];
   sample: string[];
 };
 
-/** The expansion both the preview and the save run. */
-async function resolveAudience(audience: TaskAudience) {
-  const [shops, team] = await Promise.all([shopsForTarget(audience.shops), fieldTeam()]);
+/**
+ * The expansion both the preview and the save run. A task that only collects
+ * customer data (every question a linked FILL question) is not sent to a shop
+ * whose record already holds all of it — that visit would ask for nothing.
+ */
+async function resolveAudience(audience: TaskAudience, form: TaskField[] = []) {
+  const [allShops, team] = await Promise.all([shopsForTarget(audience.shops), fieldTeam()]);
   const active = new Map(team.filter((s) => s.active).map((s) => [s.id, s.name]));
+  let shops = allShops;
+  let alreadyComplete = 0;
+  if (shops && shops.length && formHasLinks(form)) {
+    const contexts = await linkContexts(shops.map((c) => c.id));
+    const before = shops.length;
+    shops = shops.filter((c) => !linkedTaskComplete(form, contexts.get(c.id) ?? null));
+    alreadyComplete = before - shops.length;
+  }
   const expanded = expandTaskAudience(
     shops?.map((c) => ({ id: c.id, carrierId: c.carrierId })) ?? null,
     audience.assignees,
     (id) => active.has(id),
   );
-  return { shops, active, ...expanded };
+  return { shops, active, alreadyComplete, ...expanded };
 }
 
 function previewOf(r: Awaited<ReturnType<typeof resolveAudience>>): TaskAudiencePreview {
@@ -3466,6 +3501,7 @@ function previewOf(r: Awaited<ReturnType<typeof resolveAudience>>): TaskAudience
     shops: r.shops ? Math.min(r.shops.length, MAX_TASKS_PER_ASSIGNMENT) : null,
     noCarrier: r.noCarrier,
     outsideTeam: r.outsideTeam,
+    alreadyComplete: r.alreadyComplete,
     tooMany: r.pairs.length > MAX_TASKS_PER_ASSIGNMENT || (r.shops?.length ?? 0) > MAX_TASKS_PER_ASSIGNMENT,
     salesmen: [...per.entries()]
       .map(([id, count]) => ({ id, name: r.active.get(id) ?? "Somebody", count }))
@@ -3475,14 +3511,19 @@ function previewOf(r: Awaited<ReturnType<typeof resolveAudience>>): TaskAudience
 }
 
 /** Who and how many an audience means, before anything is written. */
-export async function previewTaskAudience(input: TaskAudience): Promise<Result<TaskAudiencePreview>> {
+export async function previewTaskAudience(
+  input: TaskAudience,
+  formInput: TaskField[] = [],
+): Promise<Result<TaskAudiencePreview>> {
   try {
     await requireSalesAccess(SALES_MANAGER(TASK_MODULE));
     const parsed = audienceSchema.safeParse(input);
     if (!parsed.success) return err("That selection could not be read. Pick it again.", "validation");
     const problem = taskAudienceProblem(parsed.data);
     if (problem) return err(problem, "validation");
-    return ok(previewOf(await resolveAudience(parsed.data)));
+    const formParsed = z.array(taskFieldSchema).max(MAX_TASK_FIELDS).safeParse(formInput ?? []);
+    const form = formParsed.success ? tidyTaskForm(formParsed.data as TaskField[]) : [];
+    return ok(previewOf(await resolveAudience(parsed.data, form)));
   } catch (e) {
     return fromThrown(e);
   }
@@ -3518,6 +3559,8 @@ export async function assignTaskCampaign(input: {
   form: TaskField[];
   audience: TaskAudience;
   expectedCount: number;
+  /** The plain-words description the AI drafted the form from, if it did. */
+  aiBrief?: string;
 }): Promise<Result<{ campaignId: string; created: number }>> {
   try {
     const user = await requireSalesAccess(SALES_MANAGER(TASK_MODULE));
@@ -3537,7 +3580,7 @@ export async function assignTaskCampaign(input: {
     const audProblem = taskAudienceProblem(audience);
     if (audProblem) return err(audProblem, "validation");
 
-    const resolved = await resolveAudience(audience);
+    const resolved = await resolveAudience(audience, form);
     const preview = previewOf(resolved);
     if (preview.tooMany) {
       return err(
@@ -3577,6 +3620,8 @@ export async function assignTaskCampaign(input: {
         priority,
         dueDate: input.dueDate,
         taskCount: preview.tasks,
+        skippedComplete: preview.alreadyComplete,
+        aiBrief: input.aiBrief?.trim().slice(0, 4000) || null,
         createdById: user.id,
       });
       for (let i = 0; i < resolved.pairs.length; i += 500) {
@@ -3632,8 +3677,60 @@ export async function assignTaskCampaign(input: {
     return ok(
       { campaignId, created: preview.tasks },
       `${plural(preview.tasks, "task")} assigned to ${plural(preview.salesmen.length, "salesman", "salesmen")}.` +
-        (skipped ? ` ${plural(skipped, "shop")} had nobody in your field team to do it and ${skipped === 1 ? "was" : "were"} skipped.` : ""),
+        (skipped ? ` ${plural(skipped, "shop")} had nobody in your field team to do it and ${skipped === 1 ? "was" : "were"} skipped.` : "") +
+        (preview.alreadyComplete ? ` ${plural(preview.alreadyComplete, "shop")} already had everything on the customer record and ${preview.alreadyComplete === 1 ? "was" : "were"} left out.` : ""),
     );
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/* ---------------------------------------------------------- the task brain */
+
+/** Draft a whole task — questions, links and targeting — from a description. */
+export async function aiDraftTask(brief: string): Promise<Result<TaskDraft>> {
+  try {
+    await requireSalesAccess(SALES_MANAGER(TASK_MODULE));
+    const text = String(brief ?? "").trim();
+    if (text.length < 8) return err("Say a little more about what you need from the field.", "validation");
+    const draft = await draftTask(text);
+    if (!draft) return err("The AI could not draft this just now. Build it by hand, or try again.", "rule_violation");
+    return ok(draft);
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** Which questions are really the customer record's own fields. */
+export async function aiSuggestLinks(
+  formInput: TaskField[],
+  title: string,
+): Promise<Result<{ suggestions: LinkSuggestion[]; usedAi: boolean }>> {
+  try {
+    await requireSalesAccess(SALES_MANAGER(TASK_MODULE));
+    const parsed = z.array(taskFieldSchema).max(MAX_TASK_FIELDS).safeParse(formInput ?? []);
+    if (!parsed.success) return err("The form could not be read.", "validation");
+    return ok(await suggestLinks(tidyTaskForm(parsed.data as TaskField[]), String(title ?? "").slice(0, 200)));
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** Read everything the field answered, and keep the reading on the assignment. */
+export async function aiSummariseCampaign(campaignId: string): Promise<Result<TaskSummary>> {
+  try {
+    await requireSalesAccess(SALES_MANAGER(TASK_MODULE));
+    const c = await taskCampaign(campaignId, await today());
+    if (!c) return err("That assignment is not one of your team's.", "not_found");
+    if (!c.tasks.some((t) => t.status === "done")) return err("Nothing has been answered yet.", "validation");
+    const summary = await summariseCampaign(c);
+    if (!summary) return err("The AI could not read the answers just now. Try again in a minute.", "rule_violation");
+    await db
+      .update(mbosTaskCampaigns)
+      .set({ aiSummary: JSON.stringify(summary), aiSummaryAt: new Date() })
+      .where(eq(mbosTaskCampaigns.id, campaignId));
+    refreshCampaign(campaignId);
+    return ok(summary);
   } catch (e) {
     return fromThrown(e);
   }

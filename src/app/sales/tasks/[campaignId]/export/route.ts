@@ -4,7 +4,7 @@ import { canOpenModule } from "@/lib/access";
 import { toCsv } from "@/lib/csv";
 import { today } from "@/lib/recompute";
 import { taskCampaign } from "@/lib/services/task-campaign-service";
-import { taskAnswerText, visibleTaskFields } from "@/lib/task-form";
+import { expandTaskForm, taskAnswerText, visibleTaskFields } from "@/lib/task-form";
 
 /**
  * Every answer to one assignment, as a file — one row per salesman per shop,
@@ -29,20 +29,29 @@ export async function GET(request: Request, { params }: { params: Promise<{ camp
     ["Salesman", "Shop", "Place", "State", "Due", "Answered at", ...questions.map((f) => f.label), "Note"],
     c.tasks.map((t) => {
       const answers = t.responses ?? {};
-      const showing = new Set(visibleTaskFields(c.form, answers).map((f) => f.id));
+      const expanded = expandTaskForm(c.form, t.context).fields;
+      const shown = visibleTaskFields(expanded, answers);
       return [
         t.salesmanName,
         t.customerName ?? "",
         t.place ?? "",
-        t.status === "done" ? "Answered" : t.status === "cancelled" ? "Withdrawn" : t.overdueDays > 0 ? "Overdue" : "Waiting",
+        t.status === "done" ? (t.completedVia === "record" ? "From the record" : "Answered") : t.status === "cancelled" ? "Withdrawn" : t.overdueDays > 0 ? "Overdue" : "Waiting",
         t.dueDate ?? "",
         t.completedAt ? new Date(t.completedAt).toISOString() : "",
         ...questions.map((f) => {
           if (t.status !== "done") return "";
-          if (!showing.has(f.id)) return "(not asked)";
-          const v = answers[f.id];
-          if (f.type === "photo" && Array.isArray(v)) return v.map((id) => `${origin}/api/attachments/${id}`).join(" ");
-          return taskAnswerText(f, v);
+          const parts = shown.filter((x) => x.id === f.id || x.id.startsWith(`${f.id}@`));
+          if (!parts.length) return "(not asked)";
+          return parts
+            .map((p) => {
+              const v = answers[p.id];
+              const text =
+                f.type === "photo" && Array.isArray(v)
+                  ? v.map((id) => `${origin}/api/attachments/${id}`).join(" ")
+                  : taskAnswerText(f, v);
+              return parts.length > 1 ? `${p.label.split(" — ").pop()}: ${text}` : text;
+            })
+            .join("; ");
         }),
         t.completionNote ?? "",
       ];

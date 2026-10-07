@@ -3,6 +3,7 @@ import { shortDate, stamp } from "@/lib/format";
 import { today } from "@/lib/recompute";
 import { fieldTeam, tasksList } from "@/lib/services/sales-service";
 import { recentTaskForms, taskCampaigns, taskPlaceOptions } from "@/lib/services/task-campaign-service";
+import { taskAiAvailable } from "@/lib/services/task-ai-service";
 import { AssignTask } from "./assign-task";
 import type { CampaignSummary } from "@/lib/services/task-campaign-service";
 import {
@@ -45,12 +46,13 @@ export default async function Page({
 }) {
   const params = await searchParams;
   const day = await today();
-  const [all, salesmen, campaigns, recentForms, placeOptions] = await Promise.all([
+  const [all, salesmen, campaigns, recentForms, placeOptions, aiAvailable] = await Promise.all([
     tasksList(day),
     fieldTeam(),
     taskCampaigns(day),
     recentTaskForms(),
     taskPlaceOptions({}),
+    taskAiAvailable(),
   ]);
 
   /* ASSIGNMENTS FIRST, because that is what the office set: one row per thing
@@ -102,6 +104,8 @@ export default async function Page({
             salesmen={salesmen.filter((s) => s.active).map((s) => ({ id: s.id, name: s.name }))}
             recentForms={recentForms}
             placeOptions={placeOptions}
+            aiAvailable={aiAvailable}
+            today={day}
           />
         }
       />
@@ -283,6 +287,7 @@ function Campaigns({ rows }: { rows: CampaignSummary[] }) {
               <span className="block text-[12px] text-muted">
                 {`${plural(c.salesmen, "salesman", "salesmen")}`}
                 {c.overdue ? <span className="text-danger">{` · ${c.overdue} overdue`}</span> : null}
+                {c.fromRecord ? <span className="text-success">{` · ${c.fromRecord} from the record`}</span> : null}
                 {c.closedAt ? " · withdrawn" : ""}
               </span>
             </Cell>

@@ -1,4 +1,5 @@
 import "server-only";
+import { taskContextSql } from "@/lib/services/task-link-service";
 import { notConverted } from "../lead-action-window";
 import { and, eq, isNull, or, sql, type AnyColumn, type SQL } from "drizzle-orm";
 import { db } from "@/db";
@@ -1685,6 +1686,10 @@ async function openTasks(userId: string) {
            t.campaign_id as "campaignId",
            k.form as "form",
            t.responses as "responses",
+           -- What the customer record says, for the questions linked to it:
+           -- the handset shows it and starts each answer from it.
+           case when t.campaign_id is null or t.customer_id is null then null
+                else ${taskContextSql("t.customer_id")} end as "context",
            t.updated_at as "updatedAt"
       from mbos_tasks t
       left join mbos_task_campaigns k on k.id = t.campaign_id
@@ -1724,6 +1729,10 @@ async function tasksSince(userId: string, sinceIso: string) {
            t.campaign_id as "campaignId",
            k.form as "form",
            t.responses as "responses",
+           -- What the customer record says, for the questions linked to it:
+           -- the handset shows it and starts each answer from it.
+           case when t.campaign_id is null or t.customer_id is null then null
+                else ${taskContextSql("t.customer_id")} end as "context",
            t.updated_at as "updatedAt"
       from mbos_tasks t
       left join mbos_task_campaigns k on k.id = t.campaign_id

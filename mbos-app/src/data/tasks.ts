@@ -2,7 +2,7 @@ import { all, getKv, one, run, setKv } from '../db';
 import { insertAndQueue, stamp, updateAndQueue } from './write';
 import { isoDate } from '../lib/format';
 import { wirePriority } from '../lib/wire';
-import { parseTaskForm, type TaskAnswers, type TaskField } from '../engines/task-form';
+import { expandTaskForm, parseTaskForm, type TaskAnswers, type TaskField, type TaskLinkContext } from '../engines/task-form';
 
 export type Task = {
   id: string;
@@ -27,12 +27,35 @@ export type Task = {
   form: string | null;
   /** His answers to that form, JSON text — see `taskAnswersOf`. */
   responses: string | null;
+  /** The customer record as the linked questions see it — `taskContextOf`. */
+  context: string | null;
   syncState: string;
 };
 
 /** The questions this task asks. Empty is a plain task: a note and a tick. */
 export function taskFormOf(t: Pick<Task, 'form'>): TaskField[] {
   return parseTaskForm(t.form);
+}
+
+/** What the customer record holds for this task's shop, or null. */
+export function taskContextOf(t: Pick<Task, 'context'>): TaskLinkContext | null {
+  if (!t.context) return null;
+  try {
+    const v = JSON.parse(t.context);
+    return v && typeof v === 'object' && Array.isArray(v.contacts) && v.shop ? (v as TaskLinkContext) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The form as he answers it on THIS shop: a question about every contact
+ * repeated per person, each linked question showing what the record holds,
+ * and the record's values as the first answers — the same expansion the
+ * office runs over what he sends.
+ */
+export function taskFormForShop(t: Pick<Task, 'form' | 'context'>): ReturnType<typeof expandTaskForm> {
+  return expandTaskForm(taskFormOf(t), taskContextOf(t));
 }
 
 /** What he has answered so far — kept when he leaves the form half done. */
@@ -56,17 +79,18 @@ export function taskAnswersOf(t: Pick<Task, 'responses'>): TaskAnswers {
  */
 const draftKey = (id: string) => 'taskDraft:' + id;
 
-export async function loadTaskDraft(t: Pick<Task, 'id' | 'responses'>): Promise<TaskAnswers> {
+export async function loadTaskDraft(t: Pick<Task, 'id' | 'responses' | 'form' | 'context'>): Promise<TaskAnswers> {
+  const start = { ...taskFormForShop(t).prefill, ...taskAnswersOf(t) };
   const raw = await getKv(draftKey(t.id)).catch(() => null);
   if (raw) {
     try {
       const v = JSON.parse(raw);
-      if (v && typeof v === 'object' && !Array.isArray(v)) return v as TaskAnswers;
+      if (v && typeof v === 'object' && !Array.isArray(v)) return { ...start, ...(v as TaskAnswers) };
     } catch {
       /* A draft that cannot be read is no draft. */
     }
   }
-  return taskAnswersOf(t);
+  return start;
 }
 
 export async function saveTaskDraft(id: string, answers: TaskAnswers): Promise<void> {

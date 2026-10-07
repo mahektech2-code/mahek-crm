@@ -2107,6 +2107,9 @@ export const MIGRATIONS: string[][] = [
     `ALTER TABLE tasks ADD COLUMN campaignId TEXT;`,
     `ALTER TABLE tasks ADD COLUMN form TEXT;`,
     `ALTER TABLE tasks ADD COLUMN responses TEXT;`,
+    /* What the customer record says about this task's shop, for questions
+       linked to it: shown on each question and used as its first answer. */
+    `ALTER TABLE tasks ADD COLUMN context TEXT;`,
   ],
 
 ];

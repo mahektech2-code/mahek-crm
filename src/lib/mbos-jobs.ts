@@ -561,6 +561,21 @@ async function refreshPerformance(): Promise<Counted> {
  * setting says and what it does is exactly the kind of thing nobody notices
  * until it is the subject of an argument about somebody's pay.
  */
+/**
+ * Field tasks that collect customer data and whose shop's record now has it,
+ * whoever put it there — the CRM, the sheet, another salesman — complete
+ * themselves. Hourly is the net under the contact screens, which settle at
+ * once.
+ */
+async function settleTasksFromRecords(): Promise<Counted> {
+  const { settleLinkedTasks } = await import("./services/task-link-service");
+  const { completed } = await settleLinkedTasks();
+  return {
+    recordsAffected: completed,
+    detail: completed ? `${completed} field tasks completed from the customer record` : "no field task completed from the record",
+  };
+}
+
 async function sweepSelfies(): Promise<Counted> {
   const { sweepAttendanceSelfies } = await import("./services/attachment-service");
   const { swept } = await sweepAttendanceSelfies();
@@ -610,6 +625,7 @@ export async function mbosHourly(): Promise<Counted> {
     await judgeRecentDays(),
     await readPushReceipts(),
     await sweepSelfies(),
+    await settleTasksFromRecords(),
   ];
   return {
     recordsAffected: parts.reduce((a, p) => a + p.recordsAffected, 0),

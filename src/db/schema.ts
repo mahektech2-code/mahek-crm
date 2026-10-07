@@ -8371,6 +8371,13 @@ export const mbosTaskCampaigns = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     /** Set when the manager withdrew what was still open. */
     closedAt: timestamp("closed_at", { withTimezone: true }),
+    /** The plain-words description the AI drafted the form from, if it did. */
+    aiBrief: text("ai_brief"),
+    /** The last AI reading of the answers, and when it was taken. */
+    aiSummary: text("ai_summary"),
+    aiSummaryAt: timestamp("ai_summary_at", { withTimezone: true }),
+    /** Shops left out because their record already had everything asked. */
+    skippedComplete: integer("skipped_complete").notNull().default(0),
   },
   (t) => [index("mbos_task_campaigns_created_idx").on(t.createdAt)],
 );
@@ -8419,6 +8426,12 @@ export const mbosTasks = pgTable(
         `lib/task-form.ts`. Cleaned on arrival; never typed by the office. */
     responses: jsonb("responses"),
     respondedAt: timestamp("responded_at", { withTimezone: true }),
+    /** What became of each linked answer on the record, keyed like `responses`:
+        `saved`, `same`, `kept` (fill mode, record already had one) or a reason. */
+    linkResults: jsonb("link_results"),
+    /** `answer` — the salesman submitted it; `record` — the record already said
+        everything it asked, so it completed itself. */
+    completedVia: text("completed_via"),
   },
   (t) => [
     index("mbos_tasks_campaign_idx").on(t.campaignId),

@@ -96,6 +96,7 @@ type Rule = { test: RegExp; page: string; tab: string; group?: string | ((key: s
 
 /** The words for a key's assistant, so the assistants page reads as five named things. */
 const ASSISTANT: Record<string, string> = {
+  taskIntel: "Assigning tasks",
   visitIntel: "The visit",
   leadCallIntel: "The lead calling desk",
   verifyIntel: "The verification call",
@@ -232,7 +233,7 @@ const RULES: Rule[] = [
   { test: /^voice\./, page: "ai", tab: "dictation" },
   { test: /^callIntel\./, page: "ai", tab: "call-assistant" },
   {
-    test: /^(visitIntel|leadCallIntel|verifyIntel|convertIntel|intakeIntel|leadScan|leadVoice|mbos\.ai)\./,
+    test: /^(taskIntel|visitIntel|leadCallIntel|verifyIntel|convertIntel|intakeIntel|leadScan|leadVoice|mbos\.ai)\./,
     page: "ai",
     tab: "assistants",
     group: (k) => ASSISTANT[k.split(".")[0]] ?? "Other",

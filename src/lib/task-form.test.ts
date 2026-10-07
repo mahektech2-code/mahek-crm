@@ -149,3 +149,78 @@ test("an audience is one task per salesman per shop, never shared", () => {
   assert.ok(taskAudienceProblem({ shops: { kind: "list", customerIds: [] }, assignees: { kind: "carrier" } }));
   assert.equal(taskAudienceProblem({ shops: { kind: "none" }, assignees: { kind: "chosen", salesmanIds: ["u1"] } }), null);
 });
+
+/* ------------------------------------------------- linked to the customer */
+
+import {
+  expandTaskForm,
+  guessTaskLink,
+  linkedTaskComplete,
+  type TaskLinkContext,
+} from "./task-form";
+
+const ctx = (over: Partial<TaskLinkContext> = {}): TaskLinkContext => ({
+  contacts: [
+    { id: "c1", name: "Ramesh", role: "owner", phone: "9820011001", email: null, birthDay: 14, birthMonth: 8, isPrimary: true },
+    { id: "c2", name: "Sunil", role: "accounts", phone: "9820011002", email: null, birthDay: null, birthMonth: null, isPrimary: false },
+  ],
+  shop: { email: null, address: "Shop 4, MG Road", lat: null, lng: null },
+  ...over,
+});
+
+test("a linked question starts from what the record holds and says so", () => {
+  const form: TaskField[] = [
+    { id: "b", type: "birthday", label: "Owner's birthday", required: true, link: { target: "contact.birthday", mode: "fill", scope: "primary" } },
+    { id: "a", type: "long_text", label: "Address", required: false, link: { target: "shop.address", mode: "update" } },
+  ];
+  const out = expandTaskForm(form, ctx());
+  assert.deepEqual(out.prefill, { b: { day: 14, month: 8 }, a: "Shop 4, MG Road" });
+  assert.match(out.fields[0].help ?? "", /On the customer record: 14 Aug/);
+  assert.equal(out.links.b.contactId, "c1");
+});
+
+test("a question about every contact is asked once per person, conditions following the person", () => {
+  const form: TaskField[] = [
+    { id: "has", type: "yes_no", label: "Do they celebrate?", link: undefined },
+    { id: "b", type: "birthday", label: "Birthday", required: true, link: { target: "contact.birthday", mode: "fill", scope: "each" } },
+    { id: "m", type: "phone", label: "Mobile", required: false, link: { target: "contact.mobile", mode: "update", scope: "each" } },
+  ];
+  const out = expandTaskForm(form, ctx());
+  assert.deepEqual(out.fields.map((f) => f.id), ["has", "b@c1", "b@c2", "m@c1", "m@c2"]);
+  assert.equal(out.fields[2].label, "Birthday — Sunil");
+  assert.deepEqual(out.prefill["b@c1"], { day: 14, month: 8 });
+  assert.equal(out.prefill["b@c2"], undefined);
+});
+
+test("a shop with no contacts yet asks once, and the shop's own number stands in", () => {
+  const out = expandTaskForm(
+    [{ id: "b", type: "birthday", label: "Birthday", required: true, link: { target: "contact.birthday", mode: "fill", scope: "each" } }],
+    ctx({ contacts: [] }),
+  );
+  assert.deepEqual(out.fields.map((f) => f.id), ["b"]);
+});
+
+test("a fill task is complete from the record only when every question is linked and filled", () => {
+  const birthday: TaskField = { id: "b", type: "birthday", label: "Birthday", required: true, link: { target: "contact.birthday", mode: "fill", scope: "primary" } };
+  assert.equal(linkedTaskComplete([birthday], ctx()), true);
+  assert.equal(linkedTaskComplete([{ ...birthday, link: { ...birthday.link!, scope: "each" } }], ctx()), false, "Sunil has none");
+  assert.equal(linkedTaskComplete([{ ...birthday, link: { ...birthday.link!, mode: "update" } }], ctx()), false, "checking is the work");
+  assert.equal(linkedTaskComplete([birthday, { id: "p", type: "photo", label: "Shop photo", max: 2 }], ctx()), false, "a photo still needs a visit");
+  assert.equal(linkedTaskComplete([birthday], null), false);
+});
+
+test("the keyword guess links only what plainly is the record's", () => {
+  assert.equal(guessTaskLink({ id: "x", type: "birthday", label: "Owner's birthday" })?.target, "contact.birthday");
+  assert.equal(guessTaskLink({ id: "x", type: "birthday", label: "Birthdays of all staff" })?.scope, "each");
+  assert.equal(guessTaskLink({ id: "x", type: "phone", label: "Owner's WhatsApp number" })?.target, "contact.mobile");
+  assert.equal(guessTaskLink({ id: "x", type: "short_text", label: "Shop email" })?.target, "shop.email");
+  assert.equal(guessTaskLink({ id: "x", type: "location", label: "Where the shop is" })?.target, "shop.location");
+  assert.equal(guessTaskLink({ id: "x", type: "short_text", label: "Which brand do they buy?" }), null);
+  assert.equal(guessTaskLink({ id: "x", type: "photo", label: "Shop photo" }), null);
+});
+
+test("a link the question type cannot hold is refused by the builder and dropped by tidying", () => {
+  const bad: TaskField = { id: "x", type: "short_text", label: "Birthday", link: { target: "contact.birthday", mode: "fill" } };
+  assert.ok(taskFormProblems([bad]).some((p) => p.includes("cannot be saved")));
+  assert.equal(tidyTaskForm([bad])[0].link, undefined);
+});

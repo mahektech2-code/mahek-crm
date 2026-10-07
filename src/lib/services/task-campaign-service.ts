@@ -5,7 +5,8 @@ import { managerScope, onlyMine } from "@/lib/services/sales-service";
 import { placeFilterOptions, placeFilterSql, placeNameSql } from "@/lib/services/place-filter-service";
 import type { PlaceFilterOptions, PlaceFilterValues } from "@/lib/place-filters";
 import { MAX_TASKS_PER_ASSIGNMENT, type TaskShopTarget } from "@/lib/task-audience";
-import { parseTaskForm, type TaskAnswers, type TaskField } from "@/lib/task-form";
+import { parseTaskForm, type TaskAnswers, type TaskField, type TaskLinkContext } from "@/lib/task-form";
+import { taskContextSql } from "@/lib/services/task-link-service";
 
 /* ---------------------------------------------------------------------------
  * The reads behind assigning a task with a form, and reading back what the
@@ -143,6 +144,7 @@ export type CampaignSummary = {
   cancelled: number;
   salesmen: number;
   lastAnswerAt: Date | null;
+  fromRecord: number;
 };
 
 /**
@@ -164,7 +166,8 @@ export async function taskCampaigns(day: string): Promise<CampaignSummary[]> {
                                  and t.due_date < ${day}::date)::int as overdue,
            count(t.id) filter (where t.status = 'cancelled')::int as cancelled,
            count(distinct t.assigned_to_user_id)::int as salesmen,
-           max(t.completed_at) as "lastAnswerAt"
+           max(t.completed_at) as "lastAnswerAt",
+           count(t.id) filter (where t.completed_via = 'record')::int as "fromRecord"
       from mbos_task_campaigns k
       join mbos_tasks t on t.campaign_id = k.id
       left join users b on b.id = k.created_by_id
@@ -193,6 +196,11 @@ export type CampaignTaskRow = {
   snoozeReason: string | null;
   overdueDays: number;
   responses: TaskAnswers | null;
+  /** What became of each linked answer on the record — see `applyLinkedAnswers`. */
+  linkResults: Record<string, string> | null;
+  completedVia: string | null;
+  /** What the record says about this task's shop now, for per-contact columns. */
+  context: TaskLinkContext | null;
 };
 
 export type CampaignDetail = {
@@ -206,6 +214,10 @@ export type CampaignDetail = {
   createdAt: Date;
   createdBy: string | null;
   closedAt: Date | null;
+  aiBrief: string | null;
+  aiSummary: string | null;
+  aiSummaryAt: Date | null;
+  skippedComplete: number;
   tasks: CampaignTaskRow[];
 };
 
@@ -215,7 +227,9 @@ export async function taskCampaign(id: string, day: string): Promise<CampaignDet
   const [head] = (await db.execute<Omit<CampaignDetail, "tasks" | "form"> & { form: unknown }>(sql`
     select k.id, k.title, k.description, k.form, k.audience_sentence as "audienceSentence",
            k.priority::text as priority, k.due_date::text as "dueDate",
-           k.created_at as "createdAt", b.name as "createdBy", k.closed_at as "closedAt"
+           k.created_at as "createdAt", b.name as "createdBy", k.closed_at as "closedAt",
+           k.ai_brief as "aiBrief", k.ai_summary as "aiSummary", k.ai_summary_at as "aiSummaryAt",
+           k.skipped_complete as "skippedComplete"
       from mbos_task_campaigns k
       left join users b on b.id = k.created_by_id
      where k.id = ${id}
@@ -233,7 +247,8 @@ export async function taskCampaign(id: string, day: string): Promise<CampaignDet
            t.completion_note as "completionNote", t.completion_photo_id as "completionPhotoId",
            t.snoozed_to::text as "snoozedTo", t.snooze_reason as "snoozeReason",
            greatest(0, ${day}::date - t.due_date)::int as "overdueDays",
-           t.responses
+           t.responses, t.link_results as "linkResults", t.completed_via as "completedVia",
+           case when t.customer_id is null then null else ${taskContextSql("t.customer_id")} end as context
       from mbos_tasks t
       join users u on u.id = t.assigned_to_user_id
       left join customers c on c.id = t.customer_id

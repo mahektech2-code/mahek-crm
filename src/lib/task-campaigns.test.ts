@@ -19,7 +19,7 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { appAccess, customers, mbosDevices, mbosTasks, users } from "@/db/schema";
+import { appAccess, customerContacts, customers, mbosDevices, mbosTasks, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import {
@@ -30,6 +30,8 @@ import {
 import { ingestSyncBatch } from "@/lib/actions/mbos";
 import { buildBootstrap, type MbosPrincipal } from "@/lib/services/mbos-service";
 import { taskCampaign, taskCampaigns } from "@/lib/services/task-campaign-service";
+import { settleLinkedTasks } from "@/lib/services/task-link-service";
+import { addContact, listCustomerContacts } from "@/lib/services/customer-contact-service";
 import type { SyncItem } from "@/lib/mbos/types";
 import { addDays, today } from "@/lib/format";
 import type { TaskField } from "@/lib/task-form";
@@ -106,7 +108,7 @@ before(async () => {
 beforeEach(async () => {
   await db.execute(sql`
     truncate table
-      mbos_tasks, mbos_task_campaigns, customers, mbos_devices, attachments,
+      mbos_tasks, mbos_task_campaigns, customer_contacts, customers, mbos_devices, attachments,
       audit_log, notifications, app_access, sessions, users, app_settings
     restart identity cascade
   `);
@@ -283,5 +285,86 @@ describe("answering on the handset and reading it back", () => {
       .returning();
     const out = await ingestSyncBatch(principalFor(rahul), [answer(t.id, { responses: { owner: "x" } })]);
     assert.equal(out[0].status, "rejected");
+  });
+});
+
+describe("questions linked to the customer record", () => {
+  const BIRTHDAY: TaskField[] = [
+    {
+      id: "bday",
+      type: "birthday",
+      label: "Owner's birthday",
+      required: true,
+      link: { target: "contact.birthday", mode: "fill", scope: "primary" },
+    },
+  ];
+
+  test("a shop that already has the birthday is never sent the task", async () => {
+    await addContact(shops[0], { name: "Ramesh", phone: "9876500001", birthDay: 14, birthMonth: 8, designations: ["primary"] }, manager.id);
+    await addContact(shops[1], { name: "Sunil", phone: "9876500002", designations: ["primary"] }, manager.id);
+    const audience: TaskAudience = { shops: { kind: "list", customerIds: shops.slice(0, 2) }, assignees: { kind: "carrier" } };
+    const preview = await previewTaskAudience(audience, BIRTHDAY);
+    assert.ok(preview.ok, JSON.stringify(preview));
+    assert.equal(preview.data.alreadyComplete, 1);
+    assert.equal(preview.data.tasks, 1);
+  });
+
+  test("the answer is written to the contact, and the same ask on the same shop completes itself", async () => {
+    await addContact(shops[1], { name: "Sunil", phone: "9876500002", designations: ["primary"] }, manager.id);
+    /* Two salesmen asked about the same shop. */
+    const saved = await assignTaskCampaign({
+      title: "Collect birthdays",
+      dueDate: DUE,
+      form: BIRTHDAY,
+      audience: { shops: { kind: "list", customerIds: [shops[1]] }, assignees: { kind: "chosen", salesmanIds: [rahul.id, seema.id] } },
+      expectedCount: 2,
+    });
+    assert.ok(saved.ok, JSON.stringify(saved));
+    const tasks = await db.select().from(mbosTasks).where(eq(mbosTasks.campaignId, saved.data.campaignId));
+    const mine = tasks.find((t) => t.assignedToUserId === rahul.id)!;
+    const hers = tasks.find((t) => t.assignedToUserId === seema.id)!;
+
+    /* His phone is told what the record holds — nothing yet. */
+    const boot = await buildBootstrap(principalFor(rahul));
+    const onPhone = (boot.tasks as Array<{ id: string; context: { contacts: { name: string }[] } | null }>).find((t) => t.id === mine.id)!;
+    assert.equal(onPhone.context?.contacts[0].name, "Sunil");
+
+    const out = await ingestSyncBatch(principalFor(rahul), [answer(mine.id, { responses: { bday: { day: 2, month: 3 } } })]);
+    assert.equal(out[0].status, "accepted", JSON.stringify(out[0]));
+
+    const contact = (await listCustomerContacts(shops[1])).find((x) => x.isPrimary)!;
+    assert.equal(contact.name, "Sunil");
+    assert.equal(contact.birthDay, 2);
+    assert.equal(contact.birthMonth, 3);
+
+    const [after] = await db.select().from(mbosTasks).where(eq(mbosTasks.id, mine.id));
+    assert.equal(after.completedVia, "answer");
+    assert.deepEqual(after.linkResults, { bday: "saved" });
+
+    const [other] = await db.select().from(mbosTasks).where(eq(mbosTasks.id, hers.id));
+    assert.equal(other.status, "done");
+    assert.equal(other.completedVia, "record");
+  });
+
+  test("a birthday typed in the CRM completes the field task asking for it", async () => {
+    const [c] = await db
+      .insert(customerContacts)
+      .values({ id: "cct_test1", customerId: shops[2], name: "Mohan", role: "owner", phone: "9876500003", isPrimary: true })
+      .returning();
+    const saved = await assignTaskCampaign({
+      title: "Collect birthdays",
+      dueDate: DUE,
+      form: BIRTHDAY,
+      audience: { shops: { kind: "list", customerIds: [shops[2]] }, assignees: { kind: "carrier" } },
+      expectedCount: 1,
+    });
+    assert.ok(saved.ok, JSON.stringify(saved));
+    await db.update(customerContacts).set({ birthDay: 9, birthMonth: 11 }).where(eq(customerContacts.id, c.id));
+    const { completed } = await settleLinkedTasks([shops[2]]);
+    assert.equal(completed, 1);
+    const [t] = await db.select().from(mbosTasks).where(eq(mbosTasks.campaignId, saved.data.campaignId));
+    assert.equal(t.status, "done");
+    assert.equal(t.completedVia, "record");
+    assert.deepEqual(t.responses, { bday: { day: 9, month: 11 } });
   });
 });

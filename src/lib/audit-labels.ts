@@ -562,6 +562,7 @@ const DESCRIBE: Record<string, Describer> = {
     changes: false,
   }),
   "mbos.task.campaignClosed": (c) => ({ says: ["withdrew", plural(num(c.a.cancelled) ?? 0, "open task"), "from an assignment"], changes: false }),
+  "customer.task.linkSaved": (c) => ({ says: ["saved a field task's answer to the customer record", c.subject()], changes: false }),
   "mbos.document.publish": (c) => ({ says: ["published a document to the field team", ...(str(c.a.title) ? [strong(str(c.a.title)!)] : [])], changes: false }),
   "mbos.document.withdraw": () => ({ says: ["withdrew a document from the field team"], changes: false }),
   "mbos.course.publish": (c) => ({ says: ["published a training course", ...(str(c.a.title) ? [strong(str(c.a.title)!)] : [])], changes: false }),

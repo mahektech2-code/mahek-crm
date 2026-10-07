@@ -88,6 +88,8 @@ export type TaskField = {
   /** number: what the figure is counted in — "litres", "cans", "₹". */
   unit?: string;
   showIf?: TaskFieldCondition;
+  /** Where the answer belongs on the customer record — see TASK_LINK_TARGETS. */
+  link?: TaskFieldLink;
 };
 
 export type BirthdayAnswer = { day: number; month: number };
@@ -176,6 +178,9 @@ export function taskFormProblems(fields: TaskField[]): string[] {
     if (f.type === "rating" && ((f.min ?? 1) < 0 || (f.max ?? 5) > 10)) {
       out.push(`${n}: a rating runs from 0 to at most 10.`);
     }
+    if (f.link && !linkFits(f.type, f.link.target)) {
+      out.push(`${n} cannot be saved to "${TASK_LINK_TARGETS[f.link.target]?.label ?? "that field"}" — the kinds of answer do not match.`);
+    }
     if (f.showIf) {
       const at = fields.findIndex((p) => p.id === f.showIf!.field);
       if (at < 0 || at >= i) out.push(`${n} depends on a question that does not come before it.`);
@@ -211,6 +216,10 @@ export function tidyTaskForm(fields: TaskField[]): TaskField[] {
     if (f.showIf) {
       out.showIf = { field: f.showIf.field, op: f.showIf.op };
       if (f.showIf.op !== "answered") out.showIf.value = (f.showIf.value ?? "").trim();
+    }
+    if (f.link && linkFits(f.type, f.link.target)) {
+      out.link = { target: f.link.target, mode: f.link.mode === "update" ? "update" : "fill" };
+      if (TASK_LINK_TARGETS[f.link.target].contact) out.link.scope = f.link.scope === "each" ? "each" : "primary";
     }
     return out;
   });
@@ -546,9 +555,9 @@ export const TASK_FORM_TEMPLATES: { key: string; title: string; description: str
     title: "Collect the owner's birthday",
     description: "Ask the owner for their birthday so we can wish them.",
     fields: [
-      { id: "owner", type: "short_text", label: "Owner's name", required: true },
-      { id: "birthday", type: "birthday", label: "Owner's birthday", required: true },
-      { id: "mobile", type: "phone", label: "Owner's mobile", required: false },
+      { id: "owner", type: "short_text", label: "Owner's name", required: true, link: { target: "contact.name", mode: "fill", scope: "primary" } },
+      { id: "birthday", type: "birthday", label: "Owner's birthday", required: true, link: { target: "contact.birthday", mode: "fill", scope: "primary" } },
+      { id: "mobile", type: "phone", label: "Owner's mobile", required: false, link: { target: "contact.mobile", mode: "fill", scope: "primary" } },
     ],
   },
   {
@@ -557,7 +566,7 @@ export const TASK_FORM_TEMPLATES: { key: string; title: string; description: str
     description: "A clear photo of the shop front and the board.",
     fields: [
       { id: "front", type: "photo", label: "Shop front with the board", required: true, min: 1, max: 3 },
-      { id: "location", type: "location", label: "Where the shop is", required: true },
+      { id: "location", type: "location", label: "Where the shop is", required: true, link: { target: "shop.location", mode: "fill" } },
     ],
   },
   {
@@ -617,6 +626,27 @@ export const TASK_FORM_TEMPLATES: { key: string; title: string; description: str
     ],
   },
   {
+    key: "google_review",
+    title: "Get a Google review",
+    description: "Ask the owner to post a Google review for us, and bring back a screenshot of it.",
+    fields: [
+      { id: "posted", type: "yes_no", label: "Did they post the review?", required: true },
+      { id: "screenshot", type: "photo", label: "Screenshot of the review", required: true, min: 1, max: 2, showIf: { field: "posted", op: "is", value: "yes" } },
+      { id: "stars", type: "rating", label: "Stars they gave", required: false, min: 1, max: 5, showIf: { field: "posted", op: "is", value: "yes" } },
+      { id: "why_not", type: "long_text", label: "Why not?", required: true, showIf: { field: "posted", op: "is", value: "no" } },
+    ],
+  },
+  {
+    key: "contacts_refresh",
+    title: "Check every contact's details",
+    description: "Check the name, number and birthday of every person we have at the shop.",
+    fields: [
+      { id: "name", type: "short_text", label: "Name", required: true, link: { target: "contact.name", mode: "update", scope: "each" } },
+      { id: "mobile", type: "phone", label: "Mobile", required: true, link: { target: "contact.mobile", mode: "update", scope: "each" } },
+      { id: "birthday", type: "birthday", label: "Birthday", required: false, link: { target: "contact.birthday", mode: "update", scope: "each" } },
+    ],
+  },
+  {
     key: "feedback",
     title: "Customer feedback",
     description: "How the customer rates us, in their own words.",
@@ -633,3 +663,237 @@ export const TASK_FORM_TEMPLATES: { key: string; title: string; description: str
     ],
   },
 ];
+
+/* ------------------------------------------------- linked to the customer */
+
+/**
+ * A QUESTION CAN BE THE CUSTOMER RECORD'S OWN FIELD.
+ *
+ * "Collect the owner's birthday" is not a free-standing fact about a task: the
+ * record has a place for it (`customer_contacts.birth_day`/`birth_month`), and
+ * an answer kept only on the task is a birthday nobody's birthday screen will
+ * ever show. So a question may name the record field it is really asking for:
+ *
+ *   - the handset opens it showing what the record already says;
+ *   - the answer is written back to the record when it lands;
+ *   - in FILL mode, a shop whose record already has everything the task asks
+ *     is never sent the task, and a task whose shop gets the data from
+ *     anywhere else — the CRM, another salesman — completes itself.
+ *
+ * FILL is "collect what is missing"; UPDATE is "check what we have and
+ * correct it", which always asks, because confirming a value is the work.
+ *
+ * A contact-scoped question asks about the shop's MAIN contact, or about EACH
+ * contact — and "each" is expanded per shop into one question per person by
+ * `expandTaskForm`, so validation, conditions and cleaning all run unchanged
+ * over the expanded form.
+ */
+export const TASK_LINK_TARGETS = {
+  "contact.birthday": { label: "Contact's birthday", types: ["birthday"], contact: true },
+  "contact.mobile": { label: "Contact's phone number", types: ["phone"], contact: true },
+  "contact.email": { label: "Contact's email", types: ["short_text"], contact: true },
+  "contact.name": { label: "Contact's name", types: ["short_text"], contact: true },
+  "shop.email": { label: "Shop's email", types: ["short_text"], contact: false },
+  "shop.address": { label: "Shop's address", types: ["short_text", "long_text"], contact: false },
+  "shop.location": { label: "Shop's map pin", types: ["location"], contact: false },
+} as const satisfies Record<string, { label: string; types: readonly TaskFieldType[]; contact: boolean }>;
+
+export type TaskLinkTarget = keyof typeof TASK_LINK_TARGETS;
+export const TASK_LINK_TARGET_KEYS = Object.keys(TASK_LINK_TARGETS) as TaskLinkTarget[];
+
+export type TaskFieldLink = {
+  target: TaskLinkTarget;
+  /** fill: collect what is missing (auto-completes); update: confirm and correct. */
+  mode: "fill" | "update";
+  /** Contact targets only: the main contact, or every contact on the shop. */
+  scope?: "primary" | "each";
+};
+
+/** Can this kind of question carry this record field? */
+export function linkFits(type: TaskFieldType, target: string): boolean {
+  const t = TASK_LINK_TARGETS[target as TaskLinkTarget];
+  return Boolean(t) && (t.types as readonly string[]).includes(type);
+}
+
+/** The record fields a question of this type may be saved to. */
+export function linkTargetsFor(type: TaskFieldType): TaskLinkTarget[] {
+  return TASK_LINK_TARGET_KEYS.filter((k) => linkFits(type, k));
+}
+
+/** What the record says about one shop, as a task needs it. */
+export type TaskLinkContext = {
+  contacts: {
+    /** Null for a shop whose people were never split into contacts yet —
+        the main number from the shop row stands in for its primary. */
+    id: string | null;
+    name: string | null;
+    role: string | null;
+    phone: string | null;
+    email: string | null;
+    birthDay: number | null;
+    birthMonth: number | null;
+    isPrimary: boolean;
+  }[];
+  shop: { email: string | null; address: string | null; lat: number | null; lng: number | null };
+};
+
+export type ExpandedLink = TaskFieldLink & {
+  /** The base field this expanded question came from. */
+  baseId: string;
+  contactId: string | null;
+  /** The record's current value, or undefined where it holds none. */
+  recordValue: TaskAnswer | undefined;
+};
+
+type ContactRow = TaskLinkContext["contacts"][number];
+
+function contactValue(target: TaskLinkTarget, c: ContactRow): TaskAnswer | undefined {
+  if (target === "contact.birthday") {
+    return c.birthDay && c.birthMonth ? { day: c.birthDay, month: c.birthMonth } : undefined;
+  }
+  if (target === "contact.mobile") return c.phone?.trim() || undefined;
+  if (target === "contact.email") return c.email?.trim() || undefined;
+  if (target === "contact.name") return c.name?.trim() || undefined;
+  return undefined;
+}
+
+function shopValue(target: TaskLinkTarget, s: TaskLinkContext["shop"]): TaskAnswer | undefined {
+  if (target === "shop.email") return s.email?.trim() || undefined;
+  if (target === "shop.address") return s.address?.trim() || undefined;
+  if (target === "shop.location") return s.lat != null && s.lng != null ? { lat: s.lat, lng: s.lng } : undefined;
+  return undefined;
+}
+
+function contactWord(c: ContactRow): string {
+  return c.name?.trim() || (c.isPrimary ? "Main contact" : c.phone?.trim() || "A contact");
+}
+
+/** Contacts a scope reaches: the primary (or the first), or all of them. */
+function contactsFor(scope: "primary" | "each" | undefined, ctx: TaskLinkContext): ContactRow[] {
+  if (!ctx.contacts.length) return [];
+  if (scope === "each") return ctx.contacts;
+  return [ctx.contacts.find((c) => c.isPrimary) ?? ctx.contacts[0]];
+}
+
+/**
+ * The form as THIS shop's salesman sees it: per-contact questions repeated
+ * for each person, every linked question showing what the record holds, and
+ * the record's values as the starting answers. Without a context (a task
+ * about no shop) the form is returned unchanged and nothing is prefilled.
+ */
+export function expandTaskForm(
+  fields: TaskField[],
+  ctx: TaskLinkContext | null,
+): { fields: TaskField[]; prefill: TaskAnswers; links: Record<string, ExpandedLink> } {
+  const out: TaskField[] = [];
+  const prefill: TaskAnswers = {};
+  const links: Record<string, ExpandedLink> = {};
+  /* Which expanded ids each base id became, so a condition on a repeated
+     question follows the same person. */
+  const perContact = new Map<string, Map<string, string>>();
+
+  for (const f of fields) {
+    const link = f.link && linkFits(f.type, f.link.target) ? f.link : undefined;
+    if (!link || !ctx) {
+      out.push(link ? { ...f, link: undefined } : f);
+      continue;
+    }
+    const target = TASK_LINK_TARGETS[link.target];
+    if (!target.contact) {
+      const value = shopValue(link.target, ctx.shop);
+      const shown = { ...f, help: withRecordHint(f, value) };
+      out.push(shown);
+      links[f.id] = { ...link, baseId: f.id, contactId: null, recordValue: value };
+      if (value !== undefined) prefill[f.id] = value;
+      continue;
+    }
+    const people = contactsFor(link.scope, ctx);
+    const map = new Map<string, string>();
+    perContact.set(f.id, map);
+    if (!people.length) {
+      /* Nobody on record yet: ask once, and the answer creates nothing on
+         its own — the write-back names the shop's main number instead. */
+      out.push({ ...f });
+      links[f.id] = { ...link, baseId: f.id, contactId: null, recordValue: undefined };
+      continue;
+    }
+    for (const c of people) {
+      const key = link.scope === "each" ? `${f.id}@${c.id ?? "main"}` : f.id;
+      map.set(c.id ?? "main", key);
+      const value = contactValue(link.target, c);
+      let showIf = f.showIf;
+      if (showIf && perContact.get(showIf.field)?.has(c.id ?? "main")) {
+        showIf = { ...showIf, field: perContact.get(showIf.field)!.get(c.id ?? "main")! };
+      }
+      out.push({
+        ...f,
+        id: key,
+        label: link.scope === "each" || people.length > 1 ? `${f.label} — ${contactWord(c)}` : f.label,
+        help: withRecordHint(f, value),
+        showIf,
+      });
+      links[key] = { ...link, baseId: f.id, contactId: c.id, recordValue: value };
+      if (value !== undefined) prefill[key] = value;
+    }
+  }
+  return { fields: out, prefill, links };
+}
+
+function withRecordHint(f: TaskField, value: TaskAnswer | undefined): string | undefined {
+  const hint = value === undefined
+    ? "Not on the customer record yet — your answer will be saved there."
+    : `On the customer record: ${taskAnswerText(f, value)}. Change it if it is wrong.`;
+  return f.help ? `${f.help} ${hint}` : hint;
+}
+
+/**
+ * Whether the record already holds everything a FILL task asks for, so the
+ * task is not worth sending — or, already sent, can complete itself. Only a
+ * form whose every question is a linked FILL question can be complete from
+ * the record alone: a task that also asks for a photo still needs a visit.
+ */
+export function linkedTaskComplete(fields: TaskField[], ctx: TaskLinkContext | null): boolean {
+  if (!ctx) return false;
+  const asking = fields.filter((f) => f.type !== "info");
+  if (!asking.length) return false;
+  if (!asking.every((f) => f.link && f.link.mode === "fill" && linkFits(f.type, f.link.target))) return false;
+  const { fields: expanded, prefill } = expandTaskForm(fields, ctx);
+  return expanded
+    .filter((f) => f.type !== "info")
+    .every((f) => prefill[f.id] !== undefined);
+}
+
+/** Does any question carry a link? */
+export function formHasLinks(fields: TaskField[]): boolean {
+  return fields.some((f) => f.link && linkFits(f.type, f.link.target));
+}
+
+/**
+ * A guess at the record field a question means, from its words and type — the
+ * instant answer the builder shows before (or without) the AI's. Deliberately
+ * narrow: a wrong link writes into a customer record, so only a type that fits
+ * AND a word that says so produces a guess.
+ */
+export function guessTaskLink(field: TaskField): TaskFieldLink | null {
+  const words = `${field.label} ${field.help ?? ""}`.toLowerCase();
+  const fits = (t: TaskLinkTarget) => linkFits(field.type, t);
+  if (field.type === "birthday" && fits("contact.birthday")) {
+    return { target: "contact.birthday", mode: "fill", scope: /every|each|all|staff|partner/.test(words) ? "each" : "primary" };
+  }
+  if (field.type === "phone" && /owner|contact|mobile|phone|number|whatsapp/.test(words)) {
+    return { target: "contact.mobile", mode: "fill", scope: "primary" };
+  }
+  if (field.type === "location" && /shop|store|outlet|godown|location|pin|where/.test(words)) {
+    return { target: "shop.location", mode: "fill" };
+  }
+  if (field.type === "short_text" && /e-?mail/.test(words)) {
+    return { target: /shop|business|company|office/.test(words) ? "shop.email" : "contact.email", mode: "fill", scope: "primary" };
+  }
+  if ((field.type === "short_text" || field.type === "long_text") && /address/.test(words)) {
+    return { target: "shop.address", mode: "fill" };
+  }
+  if (field.type === "short_text" && /(owner|contact|proprietor|person)('s)? name|name of the (owner|contact|proprietor)/.test(words)) {
+    return { target: "contact.name", mode: "fill", scope: "primary" };
+  }
+  return null;
+}

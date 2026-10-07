@@ -4,6 +4,7 @@ import { shortDate, stamp } from "@/lib/format";
 import { today } from "@/lib/recompute";
 import { taskCampaign, type CampaignTaskRow } from "@/lib/services/task-campaign-service";
 import {
+  expandTaskForm,
   isTaskFieldAnswered,
   summariseTaskField,
   TASK_FIELD_TYPE_LABELS,
@@ -28,6 +29,8 @@ import {
 import { CustomerName } from "@/components/console/customer-name";
 import { plural } from "@/components/console/words";
 import { CampaignActions } from "./campaign-actions";
+import { CampaignBrain } from "./campaign-brain";
+import { taskAiAvailable } from "@/lib/services/task-ai-service";
 
 export const metadata = { title: "Task answers — Sales Dashboard — MahekOne" };
 
@@ -55,7 +58,7 @@ export default async function Page({
 }) {
   const [{ campaignId }, sp] = await Promise.all([params, searchParams]);
   const day = await today();
-  const c = await taskCampaign(campaignId, day);
+  const [c, aiAvailable] = await Promise.all([taskCampaign(campaignId, day), taskAiAvailable()]);
   if (!c) notFound();
 
   const view = ["answers", "people", "summary"].includes(sp.view ?? "") ? sp.view! : "answers";
@@ -66,6 +69,7 @@ export default async function Page({
   const done = live.filter((t) => t.status === "done");
   const open = live.filter((t) => t.status !== "done");
   const overdue = open.filter((t) => t.overdueDays > 0);
+  const fromRecord = done.filter((t) => t.completedVia === "record").length;
   const people = new Map<string, { name: string; rows: CampaignTaskRow[] }>();
   for (const t of c.tasks) {
     const p = people.get(t.salesmanId) ?? { name: t.salesmanName, rows: [] };
@@ -109,6 +113,17 @@ export default async function Page({
         <p className="mb-4 max-w-[80ch] text-[13px] whitespace-pre-line text-body">{c.description}</p>
       ) : null}
 
+      <CampaignBrain
+        campaignId={c.id}
+        aiAvailable={aiAvailable}
+        answered={done.length}
+        summary={c.aiSummary}
+        summaryAt={c.aiSummaryAt ? stamp(c.aiSummaryAt) : null}
+        brief={c.aiBrief}
+        linked={c.form.filter((f) => f.link).map((f) => f.label)}
+        skippedComplete={c.skippedComplete}
+      />
+
       <MetricRow
         metrics={[
           { label: "Assigned", value: String(live.length), sub: plural(people.size, "salesman", "salesmen") },
@@ -118,6 +133,9 @@ export default async function Page({
             sub: live.length ? `${Math.round((done.length / live.length) * 100)}%` : undefined,
             tone: live.length && done.length === live.length ? "success" : undefined,
           },
+          ...(fromRecord
+            ? [{ label: "From the record", value: String(fromRecord), sub: "completed themselves", tone: "success" as const }]
+            : []),
           { label: "Waiting", value: String(open.length) },
           { label: "Overdue", value: String(overdue.length), tone: overdue.length ? "danger" : undefined },
         ]}
@@ -234,10 +252,18 @@ function Answers({ form, rows }: { form: TaskField[]; rows: CampaignTaskRow[] })
     >
       {rows.map((t, i) => {
         const answers = t.responses ?? {};
-        const showing = new Set(visibleTaskFields(form, answers).map((f) => f.id));
+        /* The form as this shop's salesman saw it — a question about every
+           contact is one question per person — so each base column can show
+           every person's answer, and the record's verdict on each. */
+        const expanded = expandTaskForm(form, t.context).fields;
+        const showing = new Set(visibleTaskFields(expanded, answers).map((f) => f.id));
         const missing = new Set(
-          t.status === "done" ? taskAnswerProblems(form, answers).map((p) => p.fieldId) : [],
+          t.status === "done" && t.completedVia !== "record"
+            ? taskAnswerProblems(expanded, answers).map((p) => p.fieldId)
+            : [],
         );
+        const partsOf = (base: TaskField) =>
+          expanded.filter((e) => e.id === base.id || e.id.startsWith(`${base.id}@`));
         return (
           <Row key={t.id} striped={i % 2 === 1}>
             <Cell truncate={170}>{t.salesmanName}</Cell>
@@ -260,23 +286,35 @@ function Answers({ form, rows }: { form: TaskField[]; rows: CampaignTaskRow[] })
                 </span>
               ) : null}
             </Cell>
-            {questions.map((f) => (
-              <Cell key={f.id} truncate={colWidth(f)}>
-                {t.status !== "done" ? (
-                  <span className="text-muted">—</span>
-                ) : !showing.has(f.id) ? (
-                  <span className="text-faint" title="The form did not ask this, because of an earlier answer.">
-                    not asked
-                  </span>
-                ) : missing.has(f.id) && !isTaskFieldAnswered(f, answers[f.id]) ? (
-                  <span className="text-danger" title="Needed, and not in what came back — usually an older app.">
-                    missing
-                  </span>
-                ) : (
-                  <AnswerCell field={f} value={answers[f.id]} />
-                )}
-              </Cell>
-            ))}
+            {questions.map((f) => {
+              const parts = partsOf(f);
+              const asked = parts.filter((p) => showing.has(p.id));
+              return (
+                <Cell key={f.id} truncate={colWidth(f)}>
+                  {t.status !== "done" ? (
+                    <span className="text-muted">—</span>
+                  ) : !asked.length ? (
+                    <span className="text-faint" title="The form did not ask this, because of an earlier answer.">
+                      not asked
+                    </span>
+                  ) : (
+                    asked.map((p) => (
+                      <span key={p.id} className="block">
+                        {asked.length > 1 ? <span className="text-[11px] text-muted">{p.label.split(" — ").pop()}: </span> : null}
+                        {missing.has(p.id) && !isTaskFieldAnswered(p, answers[p.id]) ? (
+                          <span className="text-danger" title="Needed, and not in what came back — usually an older app.">
+                            missing
+                          </span>
+                        ) : (
+                          <AnswerCell field={f} value={answers[p.id]} />
+                        )}
+                        {f.link ? <RecordMark result={t.linkResults?.[p.id]} viaRecord={t.completedVia === "record"} /> : null}
+                      </span>
+                    ))
+                  )}
+                </Cell>
+              );
+            })}
             <Cell truncate={260} title={t.completionNote ?? undefined}>
               {t.completionNote && !questions.length ? t.completionNote : extraNote(t.completionNote, form, answers)}
             </Cell>
@@ -311,6 +349,7 @@ function colWidth(f: TaskField): number {
 }
 
 function StatePill({ t }: { t: CampaignTaskRow }) {
+  if (t.status === "done" && t.completedVia === "record") return <Pill tone="success">From record</Pill>;
   if (t.status === "done") return <Pill tone="success">Answered</Pill>;
   if (t.status === "cancelled") return <Pill tone="neutral">Withdrawn</Pill>;
   if (t.overdueDays > 0) return <Pill tone="danger">{`${plural(t.overdueDays, "day")} late`}</Pill>;
@@ -354,8 +393,16 @@ function Summary({ form, rows, asked }: { form: TaskField[]; rows: CampaignTaskR
       {form
         .filter((f) => f.type !== "info")
         .map((f, i) => {
-          const showing = rows.filter((t) => visibleTaskFields(form, t.responses ?? {}).some((x) => x.id === f.id));
-          const s = summariseTaskField(f, showing.map((t) => (t.responses ?? {})[f.id]));
+          /* Every person's answer counts — a question about every contact
+             was asked once per contact. */
+          const partsOf = (t: CampaignTaskRow) => {
+            const answers = t.responses ?? {};
+            const shown = visibleTaskFields(expandTaskForm(form, t.context).fields, answers);
+            return shown.filter((x) => x.id === f.id || x.id.startsWith(`${f.id}@`)).map((x) => answers[x.id]);
+          };
+          const perRow = rows.map(partsOf);
+          const showing = rows.filter((_, k) => perRow[k].length > 0);
+          const s = summariseTaskField(f, perRow.flat());
           return (
             <div key={f.id} className="rounded-[6px] border border-line bg-surface p-4">
               <p className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
@@ -406,4 +453,22 @@ function Summary({ form, rows, asked }: { form: TaskField[]; rows: CampaignTaskR
 
 function round(n: number): string {
   return Number.isInteger(n) ? n.toLocaleString("en-IN") : n.toLocaleString("en-IN", { maximumFractionDigits: 2 });
+}
+
+/** What became of a linked answer on the customer record. */
+function RecordMark({ result, viaRecord }: { result: string | undefined; viaRecord: boolean }) {
+  if (viaRecord) {
+    return <span className="ml-1 text-[11px] text-success" title="The customer record already had this, so the task completed itself.">↻ from record</span>;
+  }
+  if (!result) return null;
+  if (result === "saved") return <span className="ml-1 text-[11px] text-success" title="Written to the customer record.">↻ saved</span>;
+  if (result === "same") return <span className="ml-1 text-[11px] text-muted" title="The record already said exactly this.">↻ same</span>;
+  if (result === "kept") {
+    return (
+      <span className="ml-1 text-[11px] text-warn" title="The record already had a value and this task only fills blanks, so the record was kept.">
+        ↻ kept record
+      </span>
+    );
+  }
+  return <span className="ml-1 text-[11px] text-danger" title={result}>↻ not saved</span>;
 }

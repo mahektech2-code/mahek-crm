@@ -1188,6 +1188,8 @@ async function upsertTasks(rows: unknown[] | undefined, now: number): Promise<nu
       campaignId?: string | null;
       form?: unknown;
       responses?: unknown;
+      /* The customer record as the linked questions see it. */
+      context?: unknown;
     };
     const status = t.status === 'in_progress' ? 'open' : t.status;
     const asJson = (v: unknown) => (v == null ? null : typeof v === 'string' ? v : JSON.stringify(v));
@@ -1197,9 +1199,9 @@ async function upsertTasks(rows: unknown[] | undefined, now: number): Promise<nu
     await run(
       `INSERT INTO tasks (id, title, description, assigneeId, assignerId, priority, dueDate,
                           customerId, status, completionNote, completionPhotoId, snoozeHistory,
-                          sourceType, sourceId, campaignId, form, responses,
+                          sourceType, sourceId, campaignId, form, responses, context,
                           escalated, clientCreatedAt, serverCreatedAt, deviceId, syncState)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'server', 'synced')
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'server', 'synced')
        ON CONFLICT(id) DO UPDATE SET
          title = excluded.title, description = excluded.description,
          priority = excluded.priority, dueDate = excluded.dueDate, customerId = excluded.customerId,
@@ -1207,6 +1209,7 @@ async function upsertTasks(rows: unknown[] | undefined, now: number): Promise<nu
          completionPhotoId = excluded.completionPhotoId, escalated = excluded.escalated,
          sourceType = excluded.sourceType, sourceId = excluded.sourceId,
          campaignId = excluded.campaignId, form = excluded.form, responses = excluded.responses,
+         context = excluded.context,
          syncState = 'synced'
        WHERE ${noPending('tasks')}`,
       [
@@ -1229,6 +1232,7 @@ async function upsertTasks(rows: unknown[] | undefined, now: number): Promise<nu
         t.campaignId ?? null,
         asJson(t.form),
         asJson(t.responses),
+        asJson(t.context),
         t.escalatedAt ? 1 : 0,
         now,
       ],

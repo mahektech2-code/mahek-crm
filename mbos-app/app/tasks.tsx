@@ -20,6 +20,7 @@ import {
   saveTaskDraft,
   snoozeTarget,
   snoozeTask,
+  taskFormForShop,
   taskFormOf,
   type Task,
 } from '../src/data/tasks';
@@ -63,6 +64,7 @@ function formLine(fields: ReturnType<typeof taskFormOf>): string {
     asks ? plural(asks, 'question') : '',
     photos ? plural(photos, 'photo') + ' to take' : '',
   ]
+    .concat(fields.some((f) => f.link) ? ['updates the shop record'] : [])
     .filter(Boolean)
     .join(' · ') || 'Read and confirm';
 }
@@ -122,7 +124,10 @@ export default function TasksScreen() {
      opens where he left it. */
   const [answers, setAnswers] = React.useState<TaskAnswers>({});
   const [answerErrs, setAnswerErrs] = React.useState<Map<string, string>>(new Map());
-  const closingForm = React.useMemo(() => (closing ? taskFormOf(closing) : []), [closing]);
+  /* The form as he answers it on this shop — linked questions show what the
+     customer record holds, and a question about every contact is asked once
+     per person. */
+  const closingForm = React.useMemo(() => (closing ? taskFormForShop(closing).fields : []), [closing]);
   const doneLock = React.useRef(false);
   const [noteRequired, setNoteRequired] = React.useState(true);
   React.useEffect(() => {
@@ -232,7 +237,7 @@ export default function TasksScreen() {
   const markDone = async () => {
     const t = closing;
     if (!t || doneLock.current) return;
-    const form = taskFormOf(t);
+    const form = taskFormForShop(t).fields;
     let responses: TaskAnswers | null = null;
     let note = doneNote;
     if (form.length) {

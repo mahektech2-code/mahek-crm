@@ -7,12 +7,15 @@ import { useToast } from "@/components/ui/toast";
 import { PlaceFilterSelects } from "@/components/ui/place-filter-selects";
 import { MultiSelect } from "@/components/ui/multi-select";
 import {
+  aiDraftTask,
+  aiSuggestLinks,
   assignTaskCampaign,
   loadTaskPlaceOptions,
   previewTaskAudience,
   searchTaskShops,
   type TaskAudiencePreview,
 } from "@/lib/actions/sales";
+import type { LinkSuggestion } from "@/lib/services/task-ai-service";
 import { Button } from "@/components/console/parts";
 import type { PlaceFilterOptions, PlaceFilterValues } from "@/lib/place-filters";
 import type { PlaceKind } from "@/lib/place-parse";
@@ -21,7 +24,10 @@ import {
   canDriveCondition,
   conditionSentence,
   conditionValues,
+  guessTaskLink,
+  linkTargetsFor,
   MAX_TASK_FIELDS,
+  TASK_LINK_TARGETS,
   TASK_FIELD_TYPE_LABELS,
   TASK_FIELD_TYPES,
   TASK_FORM_TEMPLATES,
@@ -31,6 +37,7 @@ import {
   type TaskAnswer,
   type TaskAnswers,
   type TaskField,
+  type TaskFieldLink,
   type TaskFieldType,
 } from "@/lib/task-form";
 import { taskAudienceProblem, type TaskAudience, type TaskShopTarget } from "@/lib/task-audience";
@@ -83,10 +90,16 @@ export function AssignTask({
   salesmen,
   recentForms,
   placeOptions: initialPlaceOptions,
+  aiAvailable,
+  today,
 }: {
   salesmen: PickSalesman[];
   recentForms: RecentForm[];
   placeOptions: PlaceFilterOptions;
+  /** Whether the task brain can be asked — an OpenAI key and the switch on. */
+  aiAvailable: boolean;
+  /** The business date, for turning "due in 3 days" into a day. */
+  today: string;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -96,7 +109,7 @@ export function AssignTask({
   return (
     <>
       <Button tone="primary" onClick={() => setOpen(true)}>
-        Assign a task
+        {aiAvailable ? "✦ Assign a task" : "Assign a task"}
       </Button>
       {open ? (
         <Builder
@@ -104,6 +117,8 @@ export function AssignTask({
           salesmen={salesmen}
           recentForms={recentForms}
           initialPlaceOptions={initialPlaceOptions}
+          aiAvailable={aiAvailable}
+          today={today}
           onClose={() => {
             setOpen(false);
             setRound((r) => r + 1);
@@ -120,16 +135,26 @@ export function AssignTask({
   );
 }
 
+function addDays(iso: string, days: number): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
 function Builder({
   salesmen,
   recentForms,
   initialPlaceOptions,
+  aiAvailable,
+  today,
   onClose,
   onDone,
 }: {
   salesmen: PickSalesman[];
   recentForms: RecentForm[];
   initialPlaceOptions: PlaceFilterOptions;
+  aiAvailable: boolean;
+  today: string;
   onClose: () => void;
   onDone: (message: string, campaignId: string) => void;
 }) {
@@ -151,6 +176,17 @@ function Builder({
   const [previewing, setPreviewing] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+
+  /* The brain. `brief` is what the manager said in plain words; `aiNote` is
+     the model's own account of what it built, shown above the questions so
+     nothing it decided is hidden. */
+  const [brief, setBrief] = React.useState("");
+  const [drafting, setDrafting] = React.useState(false);
+  const [aiNote, setAiNote] = React.useState<string | null>(null);
+  const [usedBrief, setUsedBrief] = React.useState<string | null>(null);
+  const [suggestions, setSuggestions] = React.useState<LinkSuggestion[] | null>(null);
+  const [checkingLinks, setCheckingLinks] = React.useState(false);
+  const [linksCheckedFor, setLinksCheckedFor] = React.useState<string | null>(null);
 
   const audience: TaskAudience = {
     shops: shops.kind === "list" ? { kind: "list", customerIds: pickedShops.map((s) => s.id) } : shops,
@@ -186,7 +222,7 @@ function Builder({
     setPreviewing(true);
     setError(null);
     try {
-      const r = await previewTaskAudience(audience);
+      const r = await previewTaskAudience(audience, fields);
       if (!r.ok) setError(r.error);
       else setPreview(r.data);
     } finally {
@@ -206,6 +242,78 @@ function Builder({
     setError(null);
     setStep(next);
     if ((next === "review" || next === "who") && !preview && !audienceProblem) void runPreview();
+    if (next === "review") void checkLinks();
+  }
+
+  /** Change the questions — and with them what "already on record" means. */
+  function changeFields(next: TaskField[]) {
+    setFields(next);
+    setPreview(null);
+  }
+
+  async function buildWithAi() {
+    if (brief.trim().length < 8) {
+      setError("Say a little more about what you need from the field.");
+      return;
+    }
+    setDrafting(true);
+    setError(null);
+    try {
+      const r = await aiDraftTask(brief);
+      if (!r.ok) {
+        setError(r.error);
+        return;
+      }
+      const d = r.data;
+      setTitle(d.title);
+      setDescription(d.description);
+      setPriority(d.priority);
+      setDueDate(addDays(today, d.dueInDays ?? 3));
+      setFields(d.fields);
+      if (d.targeting.shops === "filter") {
+        setShopsRaw({ kind: "filter", places: {}, carriedBy: [], accountKinds: d.targeting.accountKinds.length === 1 ? d.targeting.accountKinds : [] });
+        setAssignKind(d.targeting.assignTo);
+      } else {
+        setShopsRaw({ kind: "none" });
+        setAssignKind("chosen");
+      }
+      setPreview(null);
+      setAiNote(d.explanation);
+      setUsedBrief(brief.trim());
+      setSuggestions(null);
+      setLinksCheckedFor(null);
+      setStep("form");
+    } finally {
+      setDrafting(false);
+    }
+  }
+
+  /**
+   * The link check: which questions are really the customer record's own
+   * fields. Run once per version of the form, on reaching the review, and
+   * answered instantly by the keyword guess where the AI is off.
+   */
+  async function checkLinks() {
+    const signature = JSON.stringify(fields.map((f) => [f.id, f.type, f.label, f.link?.target ?? null]));
+    if (linksCheckedFor === signature) return;
+    if (!fields.some((f) => !f.link && f.type !== "info")) {
+      setSuggestions([]);
+      setLinksCheckedFor(signature);
+      return;
+    }
+    setCheckingLinks(true);
+    try {
+      const r = await aiSuggestLinks(fields, title);
+      setSuggestions(r.ok ? r.data.suggestions : []);
+      setLinksCheckedFor(signature);
+    } finally {
+      setCheckingLinks(false);
+    }
+  }
+
+  function applyLink(fieldId: string, link: TaskFieldLink) {
+    changeFields(fields.map((f) => (f.id === fieldId ? { ...f, link } : f)));
+    setSuggestions((s) => (s ? s.filter((x) => x.fieldId !== fieldId) : s));
   }
 
   async function save() {
@@ -221,6 +329,7 @@ function Builder({
         form: fields,
         audience,
         expectedCount: preview.tasks,
+        aiBrief: usedBrief ?? undefined,
       });
       if (!r.ok) {
         setError(r.error);
@@ -287,16 +396,24 @@ function Builder({
           setPriority={setPriority}
           recentForms={recentForms}
           hasFields={fields.length > 0}
+          aiAvailable={aiAvailable}
+          brief={brief}
+          setBrief={setBrief}
+          drafting={drafting}
+          onBuild={() => void buildWithAi()}
           onTemplate={(t) => {
             if (!title.trim()) setTitle(t.title);
             if (!description.trim() && t.description) setDescription(t.description);
-            setFields(t.fields.map((f) => ({ ...f, options: f.options ? [...f.options] : undefined })));
+            changeFields(t.fields.map((f) => ({ ...f, options: f.options ? [...f.options] : undefined, link: f.link ? { ...f.link } : undefined })));
+            setAiNote(null);
             setStep("form");
           }}
         />
       ) : null}
 
-      {step === "form" ? <FormStep fields={fields} setFields={setFields} title={title} /> : null}
+      {step === "form" ? (
+        <FormStep fields={fields} setFields={changeFields} title={title} aiNote={aiNote} onDismissNote={() => setAiNote(null)} />
+      ) : null}
 
       {step === "who" ? (
         <WhoStep
@@ -336,6 +453,11 @@ function Builder({
           preview={preview}
           previewing={previewing}
           onPreview={() => void runPreview()}
+          aiAvailable={aiAvailable}
+          suggestions={suggestions}
+          checkingLinks={checkingLinks}
+          onApplyLink={applyLink}
+          onDismissLink={(id) => setSuggestions((s) => (s ? s.filter((x) => x.fieldId !== id) : s))}
         />
       ) : null}
     </Modal>
@@ -355,9 +477,50 @@ function WhatStep(props: {
   setPriority: (v: Priority) => void;
   recentForms: RecentForm[];
   hasFields: boolean;
+  aiAvailable: boolean;
+  brief: string;
+  setBrief: (v: string) => void;
+  drafting: boolean;
+  onBuild: () => void;
   onTemplate: (t: { title: string; description: string | null; fields: TaskField[] }) => void;
 }) {
   return (
+    <div>
+      {props.aiAvailable ? (
+        <div className="mb-5 rounded-[8px] border border-brand/40 bg-gradient-to-br from-brand-soft to-surface p-4">
+          <p className="text-[14px] font-semibold text-ink">✦ Describe what you need from the field</p>
+          <p className="mb-2 text-[12px] text-pretty text-muted">
+            In plain words. The AI writes the questions, links each answer to the customer record where it belongs, and
+            suggests who should get it. You review everything before it goes.
+          </p>
+          <textarea
+            value={props.brief}
+            onChange={(e) => props.setBrief(e.target.value)}
+            rows={3}
+            maxLength={4000}
+            placeholder="e.g. Get the owner's birthday and WhatsApp number at every shop that doesn't have one yet, by Friday."
+            className={`${AREA} bg-surface`}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) props.onBuild();
+            }}
+          />
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            <Button tone="primary" size="sm" disabled={props.drafting} onClick={props.onBuild}>
+              {props.drafting ? "Building…" : "✦ Build it with AI"}
+            </Button>
+            {AI_EXAMPLES.map((ex) => (
+              <button
+                key={ex}
+                type="button"
+                onClick={() => props.setBrief(ex)}
+                className="rounded-full border border-line bg-surface px-2.5 py-1 text-[12px] text-body hover:border-brand"
+              >
+                {ex}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
     <div className="grid grid-cols-[1fr_280px] gap-5">
       <div>
         <label className="mb-3 block">
@@ -435,8 +598,15 @@ function WhatStep(props: {
         ) : null}
       </div>
     </div>
+    </div>
   );
 }
+
+const AI_EXAMPLES = [
+  "Collect birthdays of every contact at shops missing them",
+  "Get a Google review from our happiest customers, with a screenshot",
+  "Check which of our products each shop stocks, with a shelf photo",
+];
 
 /* ----------------------------------------------------------------- step 2 */
 
@@ -444,10 +614,14 @@ function FormStep({
   fields,
   setFields,
   title,
+  aiNote,
+  onDismissNote,
 }: {
   fields: TaskField[];
   setFields: (f: TaskField[]) => void;
   title: string;
+  aiNote: string | null;
+  onDismissNote: () => void;
 }) {
   const problems = taskFormProblems(fields);
   const update = (i: number, patch: Partial<TaskField>) =>
@@ -477,6 +651,15 @@ function FormStep({
   return (
     <div className="grid grid-cols-[1fr_340px] gap-5">
       <div>
+        {aiNote ? (
+          <div className="mb-3 flex gap-2 rounded-[6px] border border-brand/40 bg-brand-soft p-3 text-[13px] text-pretty text-ink">
+            <span aria-hidden>✦</span>
+            <span className="flex-1">
+              <span className="font-medium">The AI drafted this.</span> {aiNote} Check every question — nothing is sent until you assign it.
+            </span>
+            <IconBtn label="Dismiss" onClick={onDismissNote}>✕</IconBtn>
+          </div>
+        ) : null}
         {fields.length === 0 ? (
           <div className={`${CARD} mb-3 text-[13px] text-pretty text-muted`}>
             No questions yet — the salesman will just mark it done with a note. Add what you want back below:
@@ -571,6 +754,7 @@ function FieldEditor({
       max: blank.max,
       unit: undefined,
       required: type === "info" ? undefined : (f.required ?? true),
+      link: f.link && linkTargetsFor(type).includes(f.link.target) ? f.link : undefined,
     });
   };
 
@@ -677,6 +861,8 @@ function FieldEditor({
           <NumberBox label="Most characters" value={f.max} onChange={(v) => onChange({ max: v })} />
         </div>
       ) : null}
+
+      <LinkEditor field={f} onChange={(link) => onChange({ link })} />
 
       {drivers.length ? (
         <div className="mt-2 rounded-[4px] bg-canvas p-2">
@@ -839,6 +1025,11 @@ function PhonePreview({ title, fields }: { title: string; fields: TaskField[] })
                       {`${i + 1}. ${f.label || "Question"}${f.required ? " · needed" : ""}`}
                     </p>
                     {f.help ? <p className="text-[11px] text-muted">{f.help}</p> : null}
+                    {f.link ? (
+                      <p className="text-[11px] text-[#5223E0]">
+                        {`↻ Shows what the record holds; saved to ${TASK_LINK_TARGETS[f.link.target].label.toLowerCase()}${f.link.scope === "each" ? " — asked once per contact" : ""}`}
+                      </p>
+                    ) : null}
                     <div className="mt-1">
                       <PreviewInput field={f} value={answers[f.id]} onChange={(v) => set(f.id, v)} />
                     </div>
@@ -1259,6 +1450,11 @@ function AudienceSummary({
       {preview.sample.length ? (
         <p className="text-[12px] text-muted">{`${preview.sample.join(", ")}${(preview.shops ?? 0) > preview.sample.length ? ", …" : ""}`}</p>
       ) : null}
+      {preview.alreadyComplete ? (
+        <p className="mt-1 text-[12px] text-success">
+          {`✓ ${preview.alreadyComplete} shop${preview.alreadyComplete === 1 ? " already has" : "s already have"} everything this asks for on the customer record, so ${preview.alreadyComplete === 1 ? "it is" : "they are"} left out — nobody visits a shop to collect what we already hold.`}
+        </p>
+      ) : null}
       {preview.noCarrier || preview.outsideTeam ? (
         <p className="mt-1 text-[12px] text-warn">
           {preview.noCarrier ? `${preview.noCarrier} shop${preview.noCarrier === 1 ? " has" : "s have"} no salesman and will be skipped. ` : ""}
@@ -1291,9 +1487,61 @@ function ReviewStep(props: {
   preview: TaskAudiencePreview | null;
   previewing: boolean;
   onPreview: () => void;
+  aiAvailable: boolean;
+  suggestions: LinkSuggestion[] | null;
+  checkingLinks: boolean;
+  onApplyLink: (fieldId: string, link: TaskFieldLink) => void;
+  onDismissLink: (fieldId: string) => void;
 }) {
+  const pending = (props.suggestions ?? []).filter((x) => props.fields.some((f) => f.id === x.fieldId && !f.link));
   return (
     <div className="space-y-3">
+      {props.checkingLinks || pending.length ? (
+        <div className="rounded-[8px] border border-brand/40 bg-brand-soft p-3">
+          <p className="text-[13px] font-semibold text-ink">
+            ✦ {props.checkingLinks ? "Checking which answers belong on the customer record…" : "These answers look like customer data"}
+          </p>
+          {!props.checkingLinks ? (
+            <>
+              <p className="mb-2 text-[12px] text-muted">
+                Link them and each answer updates the shop&apos;s record, the phone shows what we already hold, and a shop
+                that already has it is never visited for it.
+              </p>
+              <div className="space-y-1.5">
+                {pending.map((x) => {
+                  const f = props.fields.find((ff) => ff.id === x.fieldId)!;
+                  return (
+                    <div key={x.fieldId} className="flex items-center gap-2 rounded-[6px] bg-surface p-2 text-[13px]">
+                      <span className="flex-1">
+                        <span className="font-medium text-ink">“{f.label}”</span>
+                        {" → "}
+                        <span className="text-[#5223E0]">{linkWords(x.link)}</span>
+                        <span className="block text-[12px] text-muted">
+                          {x.reason}
+                          {x.source === "ai" ? ` · AI, ${x.confidence}% sure` : " · matched by its words"}
+                        </span>
+                      </span>
+                      <Button size="sm" tone="primary" onClick={() => props.onApplyLink(x.fieldId, x.link)}>
+                        Link it
+                      </Button>
+                      <Button size="sm" tone="quiet" onClick={() => props.onDismissLink(x.fieldId)}>
+                        No
+                      </Button>
+                    </div>
+                  );
+                })}
+              </div>
+              {pending.length > 1 ? (
+                <div className="mt-2">
+                  <Button size="sm" onClick={() => pending.forEach((x) => props.onApplyLink(x.fieldId, x.link))}>
+                    Link all {pending.length}
+                  </Button>
+                </div>
+              ) : null}
+            </>
+          ) : null}
+        </div>
+      ) : null}
       <div className={CARD}>
         <p className="text-[15px] font-semibold text-ink">{props.title}</p>
         {props.description ? <p className="mt-1 text-[13px] whitespace-pre-line text-body">{props.description}</p> : null}
@@ -1307,6 +1555,7 @@ function ReviewStep(props: {
           {props.fields.map((f) => (
             <li key={f.id}>
               {f.label} <span className="text-muted">— {TASK_FIELD_TYPE_LABELS[f.type].label}{f.required ? ", needed" : ""}</span>
+              {f.link ? <LinkBadge link={f.link} /> : null}
               {f.showIf ? <span className="block text-[12px] text-muted">{conditionSentence(f.showIf, props.fields)}</span> : null}
             </li>
           ))}
@@ -1317,3 +1566,91 @@ function ReviewStep(props: {
   );
 }
 
+
+/* ------------------------------------------------------------ record links */
+
+function linkWords(link: TaskFieldLink): string {
+  const target = TASK_LINK_TARGETS[link.target];
+  const who = target.contact ? (link.scope === "each" ? " (every contact)" : " (main contact)") : "";
+  return `${target.label}${who}, ${link.mode === "fill" ? "collected where missing" : "checked and corrected"}`;
+}
+
+function LinkBadge({ link }: { link: TaskFieldLink }) {
+  return (
+    <span
+      className="ml-1.5 inline-flex items-center gap-1 rounded-full bg-brand-soft px-2 py-0.5 text-[11px] font-medium text-[#5223E0]"
+      title={linkWords(link)}
+    >
+      ↻ {TASK_LINK_TARGETS[link.target].label}
+    </span>
+  );
+}
+
+/**
+ * Where a question's answer goes on the customer record. Offered only for a
+ * question whose type the record field can hold; a keyword guess is offered
+ * as a one-click suggestion where nothing is linked yet.
+ */
+function LinkEditor({ field: f, onChange }: { field: TaskField; onChange: (link: TaskFieldLink | undefined) => void }) {
+  const targets = linkTargetsFor(f.type);
+  if (!targets.length) return null;
+  const guess = !f.link ? guessTaskLink(f) : null;
+  const target = f.link ? TASK_LINK_TARGETS[f.link.target] : null;
+  return (
+    <div className="mt-2 rounded-[4px] border border-dashed border-brand/40 p-2">
+      <div className="flex flex-wrap items-center gap-1.5 text-[12px]">
+        <span className="font-medium text-ink">↻ Save the answer to the customer record</span>
+        <select
+          value={f.link?.target ?? ""}
+          onChange={(e) => {
+            const t = e.target.value as TaskFieldLink["target"] | "";
+            if (!t) return onChange(undefined);
+            onChange({ target: t, mode: f.link?.mode ?? "fill", ...(TASK_LINK_TARGETS[t].contact ? { scope: f.link?.scope ?? "primary" } : {}) });
+          }}
+          className={`${CONTROL} h-7.5 w-auto`}
+        >
+          <option value="">No — keep it on the task</option>
+          {targets.map((t) => (
+            <option key={t} value={t}>
+              {TASK_LINK_TARGETS[t].label}
+            </option>
+          ))}
+        </select>
+        {f.link && target?.contact ? (
+          <select
+            value={f.link.scope ?? "primary"}
+            onChange={(e) => onChange({ ...f.link!, scope: e.target.value as "primary" | "each" })}
+            className={`${CONTROL} h-7.5 w-auto`}
+          >
+            <option value="primary">Main contact</option>
+            <option value="each">Every contact (asked once per person)</option>
+          </select>
+        ) : null}
+        {f.link ? (
+          <select
+            value={f.link.mode}
+            onChange={(e) => onChange({ ...f.link!, mode: e.target.value as "fill" | "update" })}
+            className={`${CONTROL} h-7.5 w-auto`}
+          >
+            <option value="fill">Collect where missing</option>
+            <option value="update">Check and correct</option>
+          </select>
+        ) : null}
+      </div>
+      {f.link ? (
+        <p className="mt-1 text-[11px] text-muted">
+          {f.link.mode === "fill"
+            ? "The phone shows what the record holds. Shops that already have it are skipped, and the task completes itself if somebody fills it in elsewhere."
+            : "The phone shows what the record holds; whatever the salesman confirms or corrects is written back."}
+        </p>
+      ) : guess ? (
+        <p className="mt-1 text-[11px] text-muted">
+          This looks like the {TASK_LINK_TARGETS[guess.target].label.toLowerCase()}.{" "}
+          <button type="button" className="text-brand hover:underline" onClick={() => onChange(guess)}>
+            Link it
+          </button>
+        </p>
+      ) : null}
+    </div>
+  );
+}
