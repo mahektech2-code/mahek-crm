@@ -174,7 +174,7 @@ function PersonPerformanceModal({
                   {reading.rating ? <Pill tone={ratingTone(reading.totalScoreBp)}>{reading.rating}</Pill> : null}
                 </div>
               ) : (
-                <div className="text-right text-[13px] text-muted">No target set — nothing to score against</div>
+                <div className="text-right text-[13px] text-muted">No target set</div>
               )
             ) : null}
             <button
@@ -268,18 +268,11 @@ function Detail({ reading: r }: { reading: PersonPerformance }) {
   const notes: string[] = [];
   if (r.monthsInRange > 1 || r.prorated) {
     notes.push(
-      r.monthsTargeted === 0
-        ? "No month in this range carried a published target."
-        : `Scored against the targets of ${r.monthsTargeted} of the ${r.monthsInRange} ${r.monthsInRange === 1 ? "month" : "months"} in this range, added up` +
-            (r.prorated ? " — a month only partly inside the range asks for that part of its target." : "."),
+      `Targets from ${r.monthsTargeted} of ${r.monthsInRange} ${r.monthsInRange === 1 ? "month" : "months"}${r.prorated ? ", part-month prorated" : ""}`,
     );
   }
   if (r.hasTarget && r.untargeted.length) {
-    notes.push(
-      `No target for ${r.untargeted.map((k) => (COMPONENT_LABEL[k] ?? k).toLowerCase()).join(", ")}, so ${
-        r.untargeted.length === 1 ? "it is" : "they are"
-      } left out and the other parts count for more. The score is still out of 100.`,
-    );
+    notes.push(`Not targeted: ${r.untargeted.map((k) => (COMPONENT_LABEL[k] ?? k).toLowerCase()).join(", ")}`);
   }
 
   return (
@@ -300,16 +293,12 @@ function Detail({ reading: r }: { reading: PersonPerformance }) {
         <Tile
           label="Tasks done"
           value={r.activityAssigned > 0 ? bpPercent(Math.round((r.activityActual / r.activityAssigned) * 10_000)) : "—"}
-          sub={r.activityAssigned > 0 ? `${r.activityActual} of ${r.activityAssigned} tasks` : "no tasks were set"}
+          sub={r.activityAssigned > 0 ? `${r.activityActual} of ${r.activityAssigned} tasks` : "none set"}
         />
       </CardGrid>
 
       {notes.length ? (
-        <div className="flex flex-col gap-1 text-[13px] text-muted">
-          {notes.map((n) => (
-            <p key={n}>{n}</p>
-          ))}
-        </div>
+        <p className="text-[12px] text-muted">{notes.join(" · ")}</p>
       ) : null}
 
       {r.alerts.length ? (
@@ -371,10 +360,6 @@ function Detail({ reading: r }: { reading: PersonPerformance }) {
             </tbody>
           </table>
         </div>
-        <p className="mt-1.5 text-[12px] text-muted">
-          Points are achievement (capped) times weight. A component nobody set a target for is left out and its weight
-          is shared among the rest.
-        </p>
       </Section>
 
       {/* Where the month is heading. */}
@@ -451,16 +436,11 @@ function Detail({ reading: r }: { reading: PersonPerformance }) {
               ))}
             </div>
           ) : (
-            <p className="text-[13px] text-muted">No accepted orders credited to them in this range.</p>
+            <p className="text-[13px] text-muted">No orders in this range.</p>
           )}
         </Section>
       </CardGrid>
 
-      {r.unmatchedRevenuePaise > 0 ? (
-        <p className="text-[12px] text-muted">
-          {money(r.unmatchedRevenuePaise)} of revenue is on products the catalogue could not match, so it carries no litres.
-        </p>
-      ) : null}
     </div>
   );
 }
@@ -479,7 +459,7 @@ function componentFigures(key: string, r: PersonPerformance): { actual: string; 
       /* Said as the share it is asked as — of what was overdue when the range opened. */
       return {
         actual: bpPercent(r.collectionShareBp),
-        target: r.collectionTargetBp ? `${bpPercent(r.collectionTargetBp)} of overdue` : "—",
+        target: r.collectionTargetBp ? bpPercent(r.collectionTargetBp) : "—",
       };
     case "activity":
       /* A share of the tasks that fell due, like collection is of the debt. */
@@ -571,7 +551,7 @@ function ForecastCard({
     <div className="rounded-[6px] border border-line px-3.5 py-3 text-[13px]">
       <div className="text-[11px] tracking-[0.04em] text-muted uppercase">{label}</div>
       {f.projected === null ? (
-        <p className="mt-1 text-muted">Too early to project — no working day of this month is complete yet.</p>
+        <p className="mt-1 text-muted">Too early to project</p>
       ) : (
         <>
           <div className="mt-0.5 text-lg font-semibold tabular-nums text-ink">{render(f.projected)}</div>
@@ -643,8 +623,8 @@ function DailyChart({ daily, target }: { daily: { date: string; revenuePaise: nu
       <div className="flex justify-between text-[11px] text-muted">
         <span>{label(daily[0].date)}</span>
         <span>
-          Running total {money(run)}
-          {target ? ` · dashed line: steady pace to ${money(target)}` : ""}
+          Total {money(run)}
+          {target ? ` · dashed: pace to ${moneyShort(target)}` : ""}
         </span>
         <span>{label(daily[daily.length - 1].date)}</span>
       </div>
@@ -676,9 +656,6 @@ function MonthTable({ months }: { months: PersonPerformance["months"] }) {
           </span>
         </div>
       ))}
-      <p className="border-t border-divider bg-canvas px-3 py-1.5 text-[11px] text-muted">
-        The month in progress is worked out now; earlier months as the nightly job last worked them out.
-      </p>
     </div>
   );
 }

@@ -66,7 +66,6 @@ export default async function Page({
     unattributedForPeriod(month),
   ]);
 
-  const scored = rows.filter((r) => r.hasTarget);
   const totals = rows.reduce(
     (a, r) => ({
       revenue: a.revenue + r.actuals.revenuePaise,
@@ -88,7 +87,7 @@ export default async function Page({
     <div className="p-6">
       <ScreenHeader
         title="Performance"
-        subtitle={`${monthName(month)} — revenue, litres, product mix, new customers, collection and activity, scored out of 100.`}
+        subtitle={`${monthName(month)} · scored out of 100 · click a name for detail`}
         actions={
           <div className="flex items-center gap-1 text-[13px]">
             <Link
@@ -161,15 +160,13 @@ export default async function Page({
               ? `${priceRisk[0].userName} is at target on revenue but not on volume`
               : `${priceRisk.length} people are at target on revenue but not on volume`
           }
-          body="Revenue can rise on a price revision alone. Where volume has not risen with it, the month is a price effect rather than more selling — the litres column is the one to read."
         />
       ) : null}
 
       {orphaned.revenuePaise > 0 ? (
         <Banner
           tone="info"
-          title={`${money(orphaned.revenuePaise)} is not counted towards anybody`}
-          body={`${orphaned.customers} ${orphaned.customers === 1 ? "customer has" : "customers have"} neither a salesperson nor a back office person, so their orders belong to no one's target. Setting either seat on the customer record fixes it — nothing here guesses.`}
+          title={`${money(orphaned.revenuePaise)} from ${orphaned.customers} ${orphaned.customers === 1 ? "customer" : "customers"} with no salesperson counts towards nobody`}
         />
       ) : null}
 
@@ -180,7 +177,7 @@ export default async function Page({
             label: "Volume",
             value: litres(totals.millilitres),
             sub: totals.unmatched
-              ? `${money(totals.unmatched)} on unrecognised products`
+              ? `${moneyShort(totals.unmatched)} unmatched`
               : undefined,
           },
           {
@@ -190,7 +187,7 @@ export default async function Page({
             label: "Collection",
             value: bpPercent(shareBp({ done: totals.collected, base: totals.overdue })),
             sub: totals.overdue > 0
-              ? `${collectionLine({ done: totals.collected, base: totals.overdue }, money)}, confirmed only`
+              ? collectionLine({ done: totals.collected, base: totals.overdue }, moneyShort)
               : NOTHING_OVERDUE,
           },
           { label: "New customers", value: String(totals.newCustomers) },
@@ -204,7 +201,7 @@ export default async function Page({
       {rows.length === 0 ? (
         <Empty
           title="Nobody to score yet"
-          body="Nobody holds a published target for this month and nothing has been sold against a customer with a salesperson or a back office person."
+          body="No published targets and no sales this month."
         />
       ) : (
         <>
@@ -357,25 +354,6 @@ export default async function Page({
             })}
           </Table>
 
-          <p className="mt-3 max-w-[860px] text-[13px] text-pretty text-muted">
-            The small figure under revenue, volume and new customers is how much of
-            their target that is; under collection and tasks, the share that was
-            asked. Collection is the share of what was overdue when the month
-            opened that has been collected. Click a name for the detail, over any
-            period. A customer&rsquo;s figures count towards their salesperson, and where an
-            account has none, towards the back office person who works it — one person
-            per customer, never both, so these rows add up to the company rather than
-            past it. Revenue is orders accounts have accepted; collection is money
-            accounts have confirmed against the bank. Litres are known only for order
-            lines whose product could be matched to the catalogue
-            {totals.unmatched
-              ? `, and ${money(totals.unmatched)} this month could not be`
-              : ""}
-            .{" "}
-            {scored.length < rows.length
-              ? `${rows.length - scored.length} of these people have no published target for ${monthName(month)}.`
-              : ""}
-          </p>
         </>
       )}
     </div>
