@@ -8754,6 +8754,13 @@ export const mbosDocuments = pgTable(
       onDelete: "cascade",
     }),
     visibleToRoles: jsonb("visible_to_roles").$type<string[]>().notNull().default([]),
+    /**
+     * The people it is tagged to, as USER ids — what a handset signs in as.
+     * Empty means everybody in the field. Narrows `visibleToRoles`, never
+     * widens it. Tagging somebody off writes them a tombstone, because a pull
+     * says what exists and only a tombstone says what stopped (drizzle/0229).
+     */
+    visibleToUserIds: jsonb("visible_to_user_ids").$type<string[]>().notNull().default([]),
     active: boolean("active").notNull().default(true),
     /**
      * ONE LIBRARY FOR THE COMPANY. HRMS kept its own documents table beside

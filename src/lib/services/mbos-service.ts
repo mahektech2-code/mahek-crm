@@ -1220,7 +1220,7 @@ export async function buildBootstrap(
     leaveBalances(principal.user.id, Number(day.slice(0, 4))),
     attendanceToday(principal.user.id, day),
     holidaysFor(),
-    visibleDocuments(principal.role, ids),
+    visibleDocuments(principal.role, principal.user.id, ids),
     coursesFor(principal.user.id),
     unreadNotifications(principal.user.id),
     // The epoch, so the cache's own `computed_at` gate lets everything through.
@@ -2958,11 +2958,16 @@ function leaveBalanceRows(
 /**
  * The library, filtered by role and by book.
  *
- * `visible_to_roles` empty means everybody — a price list nobody tagged is
+ * `visible_to_roles` empty means everybody, and so does `visible_to_user_ids` — a price list nobody tagged is
  * still a price list the field team needs, and an empty list read as "nobody"
  * would produce a document section that is silently blank on every handset.
  */
-async function visibleDocuments(role: string, customerIds: string[], since?: string | null) {
+async function visibleDocuments(
+  role: string,
+  userId: string,
+  customerIds: string[],
+  since?: string | null,
+) {
   const scoped = customerIds.length
     ? sql`(d.customer_id is null or d.customer_id in ${sql`(${sql.join(customerIds.map((i) => sql`${i}`), sql`, `)})`})`
     : sql`d.customer_id is null`;
@@ -2976,6 +2981,10 @@ async function visibleDocuments(role: string, customerIds: string[], since?: str
      where d.active = true
        and (jsonb_array_length(d.visible_to_roles) = 0
             or d.visible_to_roles ? ${role})
+       -- Tagged to named people narrows further; empty is everybody, for the
+       -- same reason an empty role list is.
+       and (jsonb_array_length(d.visible_to_user_ids) = 0
+            or d.visible_to_user_ids ? ${userId})
        and ${scoped}
        ${since ? sql`and d.updated_at > ${since}` : sql``}
      order by d.category asc, d.title asc
@@ -3602,7 +3611,7 @@ export async function buildPull(
       /* The library and the training, narrowed exactly as the bootstrap
        * narrows them — same functions, so a document a salesman could not see
        * at sign-in cannot arrive an hour later through the delta. */
-      visibleDocuments(principal.role, ids, sinceIso),
+      visibleDocuments(principal.role, principal.user.id, ids, sinceIso),
       coursesFor(principal.user.id, sinceIso),
 
       /* Not `since`-gated — see `salaryFor`. Two small rows, one join each,

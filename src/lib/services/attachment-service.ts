@@ -557,13 +557,25 @@ async function canReadDocument(documentId: string): Promise<boolean> {
       active: mbosDocuments.active,
       customerId: mbosDocuments.customerId,
       visibleToRoles: mbosDocuments.visibleToRoles,
+      visibleToUserIds: mbosDocuments.visibleToUserIds,
     })
     .from(mbosDocuments)
     .where(eq(mbosDocuments.id, documentId));
-  if (!doc?.active) return false;
+  if (!doc) return false;
 
   const ctx = await resolveScope();
+  /* WHOEVER PUBLISHES THE LIBRARY MAY OPEN ANY OF IT, withdrawn included. The
+   * Documents screen links every row to its file, and the rules below are
+   * about who it was published TO — so a manager who tagged three salesmen,
+   * or withdrew a price list, was refused the file on his own screen. */
+  const { canOpenModule } = await import("@/lib/access");
+  if (await canOpenModule(ctx.user.id, "sales.documents")) return true;
+
+  if (!doc.active) return false;
   if (doc.visibleToRoles?.length && !doc.visibleToRoles.includes(ctx.user.role)) {
+    return false;
+  }
+  if (doc.visibleToUserIds?.length && !doc.visibleToUserIds.includes(ctx.user.id)) {
     return false;
   }
   if (!doc.customerId) return true;
