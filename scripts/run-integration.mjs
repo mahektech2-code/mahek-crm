@@ -73,6 +73,9 @@ const files = [
   // The visit assistant: scope, no model, the switch, and the visit writing
   // back what it was really saved as.
   "src/lib/visit-intel.test.ts",
+  // A task with a form: assigned on the dashboard, answered on the handset,
+  // and every salesman's answers read back side by side.
+  "src/lib/task-campaigns.test.ts",
   "src/lib/accounts.test.ts",
   "src/lib/bill-paging.test.ts",
   // A call's own reminder is folded onto the call in the All view.

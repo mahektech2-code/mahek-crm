@@ -571,6 +571,12 @@ const ENGINE_COPIES: { server: string; handset: string }[] = [
    * two different sentences about one month.
    */
   { server: "src/lib/performance-labels.ts", handset: "mbos-app/src/engines/performance-labels.ts" },
+  /*
+   * A task's form — which fields show for which answers, and which answers are
+   * owed. The builder, the phone and the sync handler read one copy, or a
+   * salesman fills in a form the office reads as half empty.
+   */
+  { server: "src/lib/task-form.ts", handset: "mbos-app/src/engines/task-form.ts" },
 ];
 
 /** The import lines are the one difference allowed, so they are normalised. */

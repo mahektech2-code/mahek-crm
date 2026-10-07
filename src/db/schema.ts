@@ -8337,6 +8337,52 @@ export const mbosTaskStatusEnum = pgEnum("mbos_task_status", [
 ]);
 
 /**
+ * One ASSIGNMENT from the Sales Dashboard — the thing a manager sets once and
+ * the field answers many times.
+ *
+ * A manager who asks twenty salesmen for a photo of each of their shops writes
+ * one of these and gets one `mbos_tasks` row per (salesman, shop) pair, each
+ * pointing back here. The FORM lives here and nowhere else: what was asked is
+ * one fact, and a copy on each task would be two hundred copies to disagree.
+ * The results screen reads the tasks through this row, so "what did everybody
+ * say" is one query rather than a search for tasks that happen to share a
+ * title.
+ *
+ * The form is a `TaskField[]` (`lib/task-form.ts`) and is never edited after
+ * it is assigned — answers are keyed by field id, and changing a question
+ * under an answer already given would make the answer mean something nobody
+ * said. `audience` is what the manager picked, kept so the header can say it
+ * back; it is not re-run.
+ */
+export const mbosTaskCampaigns = pgTable(
+  "mbos_task_campaigns",
+  {
+    id: text("id").primaryKey(),
+    title: text("title").notNull(),
+    description: text("description"),
+    form: jsonb("form").notNull().default([]),
+    audience: jsonb("audience"),
+    audienceSentence: text("audience_sentence"),
+    priority: mbosTaskPriorityEnum("priority").notNull().default("medium"),
+    dueDate: date("due_date"),
+    taskCount: integer("task_count").notNull().default(0),
+    createdById: text("created_by_id").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    /** Set when the manager withdrew what was still open. */
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    /** The plain-words description the AI drafted the form from, if it did. */
+    aiBrief: text("ai_brief"),
+    /** The last AI reading of the answers, and when it was taken. */
+    aiSummary: text("ai_summary"),
+    aiSummaryAt: timestamp("ai_summary_at", { withTimezone: true }),
+    /** Shops left out because their record already had everything asked. */
+    skippedComplete: integer("skipped_complete").notNull().default(0),
+  },
+  (t) => [index("mbos_task_campaigns_created_idx").on(t.createdAt)],
+);
+
+/**
  * §2.11 — an action item with somebody's name and a date on it.
  *
  * `sourceType`/`sourceId` are how the system assigns itself work: a rejected
@@ -8371,8 +8417,24 @@ export const mbosTasks = pgTable(
     /** Where the system raised it itself: `rejected_order`, `sample`, `visit`. */
     sourceType: text("source_type"),
     sourceId: text("source_id"),
+    /** The assignment this task is one row of. Null for a task the salesman
+        raised himself or the app raised on its own. */
+    campaignId: text("campaign_id").references(() => mbosTaskCampaigns.id, {
+      onDelete: "set null",
+    }),
+    /** The answers to the assignment's form, keyed by field id — see
+        `lib/task-form.ts`. Cleaned on arrival; never typed by the office. */
+    responses: jsonb("responses"),
+    respondedAt: timestamp("responded_at", { withTimezone: true }),
+    /** What became of each linked answer on the record, keyed like `responses`:
+        `saved`, `same`, `kept` (fill mode, record already had one) or a reason. */
+    linkResults: jsonb("link_results"),
+    /** `answer` — the salesman submitted it; `record` — the record already said
+        everything it asked, so it completed itself. */
+    completedVia: text("completed_via"),
   },
   (t) => [
+    index("mbos_tasks_campaign_idx").on(t.campaignId),
     index("mbos_tasks_assignee_idx").on(t.assignedToUserId, t.status, t.dueDate),
     index("mbos_tasks_customer_idx").on(t.customerId),
     index("mbos_tasks_overdue_idx").on(t.status, t.dueDate),

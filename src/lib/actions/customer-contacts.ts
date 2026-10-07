@@ -61,6 +61,20 @@ function validation(e: z.ZodError): Result<never> {
   return err(issue.message, "validation", [{ field: issue.path.join("."), message: issue.message }]);
 }
 
+/**
+ * A birthday typed here may be exactly what a field task was sent to collect.
+ * Completing that task — and refreshing the phones still holding it — is a
+ * courtesy on top of a saved contact, so it can never fail the save.
+ */
+async function settleTasksFor(customerId: string) {
+  try {
+    const { settleLinkedTasks } = await import("@/lib/services/task-link-service");
+    await settleLinkedTasks([customerId]);
+  } catch (e) {
+    console.error("settling linked tasks failed", e);
+  }
+}
+
 export async function loadCustomerContacts(customerId: string): Promise<Result<CustomerContact[]>> {
   try {
     const scope = await inScope(customerId);
@@ -83,7 +97,10 @@ export async function addCustomerContact(
       .safeParse(raw);
     if (!parsed.success) return validation(parsed.error);
     const result = await addContactService(customerId, parsed.data, scope.actorId);
-    if (result.ok) refresh();
+    if (result.ok) {
+      refresh();
+      await settleTasksFor(customerId);
+    }
     return result;
   } catch (e) {
     return fromThrown(e);
@@ -102,7 +119,10 @@ export async function updateCustomerContact(
     const parsed = contactSchema.safeParse(raw);
     if (!parsed.success) return validation(parsed.error);
     const result = await updateContactService(contactId, parsed.data, scope.actorId);
-    if (result.ok) refresh();
+    if (result.ok) {
+      refresh();
+      await settleTasksFor(customerId);
+    }
     return result;
   } catch (e) {
     return fromThrown(e);
