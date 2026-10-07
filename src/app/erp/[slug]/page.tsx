@@ -19,10 +19,18 @@ export default async function ErpScreenPage({
   searchParams,
 }: {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{ f?: string; fl?: string; open?: string; view?: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { slug } = await params;
-  const sp = await searchParams;
+  const raw = await searchParams;
+  const one = (k: string) => (typeof raw[k] === "string" ? (raw[k] as string) : undefined);
+  const sp = { f: one("f"), fl: one("fl"), open: one("open"), view: one("view"), new: one("new") };
+  /* `?new=1&department=…&type=…` opens the new form with those answers in it;
+     the list keeps only the keys that are fields of its form. */
+  const RESERVED = new Set(["f", "fl", "open", "view", "new"]);
+  const initialNew = sp.new
+    ? Object.fromEntries(Object.entries(raw).filter((e): e is [string, string] => !RESERVED.has(e[0]) && typeof e[1] === "string"))
+    : null;
   const screen = erpScreenBySlug(slug);
   if (!screen || !screen.built) notFound();
 
@@ -49,6 +57,7 @@ export default async function ErpScreenPage({
   return (
     <ListScreen
       key={`${key}|${sp.open ?? ""}|${sp.f ?? ""}`}
+      initialNew={initialNew}
       spec={spec}
       rows={rows}
       label={screen.label}

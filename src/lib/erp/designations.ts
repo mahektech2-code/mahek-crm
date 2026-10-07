@@ -1,5 +1,6 @@
 import { ERP_ALWAYS_OPEN } from "./registry";
 import { ERP_POWERS, type ErpPower } from "./powers";
+import type { ErpDepartmentSeat } from "./departments";
 
 /* ---------------------------------------------------------------------------
  * ERP DESIGNATIONS — the arithmetic, PURE and client-safe.
@@ -29,6 +30,8 @@ export type ErpDesignationDef = {
   /** `erp.<key>` module keys, always-open screens excluded. */
   modules: string[];
   powers: ErpPower[];
+  /** The production department the job works in; null for any other job. Not access — it narrows what is asked to be bought. */
+  department?: ErpDepartmentSeat | null;
 };
 
 /** What one person holds in the ERP, as stored. */
