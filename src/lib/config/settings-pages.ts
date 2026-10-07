@@ -84,6 +84,13 @@ export const SETTINGS_PAGES: SettingsPage[] = [
     icon: "clipboard",
   },
   {
+    id: "hire",
+    label: "Hire",
+    blurb: "Which models evaluate candidates, how sure they must be, the AI budget, and how long a proposed rejection waits for a person.",
+    owners: ["hire"],
+    icon: "people",
+  },
+  {
     id: "reports",
     label: "Reports",
     blurb: "How the owner's KPIs are measured, and when a customer counts as at risk or lost.",

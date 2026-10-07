@@ -77,6 +77,10 @@ export const PAGE_TABS: Record<string, Array<{ slug: string; label: string }>> =
     { slug: "alerts", label: "Alerts" },
     { slug: "assistants", label: "AI assistants" },
   ],
+  hire: [
+    { slug: "ai", label: "AI" },
+    { slug: "pipeline", label: "Pipeline & voice screen" },
+  ],
   reports: [
     { slug: "kpis", label: "Owner's KPIs" },
     { slug: "health", label: "Customer health" },
@@ -208,6 +212,11 @@ const RULES: Rule[] = [
   { test: /^erp\.ai\.alerts\.enabled$/, page: "erp", tab: "alerts", group: "Switch" },
   { test: /^erp\.ai\.alerts\./, page: "erp", tab: "alerts", group: "Thresholds" },
   { test: /^erp\.ai\./, page: "erp", tab: "assistants", group: (k) => ERP_ASSISTANT[k.split(".")[2]] ?? "Other" },
+
+  /* ------------------------------------------------------------------ hire */
+  { test: /^hire\.ai\.(enabled|minConfidence|monthlyBudgetPaise)$/, page: "hire", tab: "ai", group: "Switch, confidence and budget" },
+  { test: /^hire\.ai\./, page: "hire", tab: "ai", group: "Models" },
+  { test: /^hire\./, page: "hire", tab: "pipeline" },
 
   /* --------------------------------------------------------------- reports */
   { test: /^owner\./, page: "reports", tab: "kpis", group: "The owner's five" },

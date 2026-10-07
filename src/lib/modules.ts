@@ -992,6 +992,21 @@ export const APP_MODULES: AppModule[] = [
    * nothing on the live site yet.
    */
   { key: "website.dashboard", app: "website", label: "Dashboard", group: "Website", href: "/website", exact: true },
+  /*
+   * HIRE is one module. What somebody can open inside it is their Hire ROLE
+   * (`lib/hire/roles.ts`), not a tick-list: an interviewer who could be
+   * granted the Decisions screen would be a hiring manager in all but name,
+   * and the scope that keeps interviewers away from earlier scores is not a
+   * screen at all.
+   */
+  {
+    key: "hire.app",
+    app: "hire",
+    label: "Hire",
+    group: "Hire",
+    href: "/hire",
+    note: "What they can do inside Hire is their Hire role — recruiter, interviewer, hiring manager, onboarding, HR head or admin — set on Hire's Team screen.",
+  },
   website("products", "Products", "Website", "The catalogue shown on the public site."),
   website("industries", "Industries", "Website", "The industries the public site says Mahek serves."),
   website("pages", "Pages", "Website", "About, Manufacturing, Distributor and Contact — their sections and copy."),

@@ -36,11 +36,29 @@
   --color-warn-soft: #fdf6e7;
   --color-warn-line: #f9e9c4;
 
+  /* AI — indigo. Used ONLY to mark AI-generated content (Hire design §4.1):
+     never a button, never decoration, so it keeps meaning one thing. */
+  --color-ai: #343e96;
+  --color-ai-mid: #4f5bc4;
+  --color-ai-soft: #eef0fb;
+  --color-ai-line: #dce0f6;
+
+  --color-info: #2b5cbf;
+  --color-info-soft: #edf2fc;
+
+  /* The page behind an evidence-heavy app, one step lighter than canvas. */
+  --color-page: #fcfcfd;
+  --color-heading: #1a1e28;
+  --color-faint: #9ba3b2;
+
   --radius-control: 4px;
   --radius-card: 6px;
 
   --font-sans: "Google Sans Flex", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  /* What a candidate SAID is set in a serif — testimony, set apart from the
+     system's own voice (Hire design §4.2). Nothing else uses it. */
+  --font-evidence: "Source Serif 4", Georgia, "Times New Roman", serif;
 
   --ease-swift: cubic-bezier(0.2, 0, 0.2, 1);
 
@@ -545,3 +563,7 @@
     display: none !important;
   }
 }
+
+/* Hire: table rows are 44px comfortable, 36px compact (design brief §4.3). */
+.hire-root .hire-row { height: 44px; }
+.hire-root[data-density="compact"] .hire-row { height: 36px; }

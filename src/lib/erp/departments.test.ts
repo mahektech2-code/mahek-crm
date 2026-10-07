@@ -74,7 +74,7 @@ test("every step names a built screen", () => {
 });
 
 test("the departmental designations seed only real screens, powers and seats", () => {
-  const sql = readFileSync(new URL("../../../drizzle/0225_erp_departments.sql", import.meta.url), "utf8");
+  const sql = readFileSync(new URL("../../../drizzle/0226_erp_departments.sql", import.meta.url), "utf8");
   const built = new Set(ERP_SCREENS.filter((s) => s.built).map((s) => `erp.${s.key}`));
   for (const m of sql.matchAll(/'(erp\.[A-Za-z]+)'/g)) assert.ok(built.has(m[1]), `${m[1]} is not an ERP screen`);
   for (const m of sql.matchAll(/'(mixing|refilling|packing|head)'/g)) assert.ok((DEPARTMENT_SEATS as readonly string[]).includes(m[1]));

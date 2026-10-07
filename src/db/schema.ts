@@ -673,6 +673,8 @@ export const appIdEnum = pgEnum("app_id", [
   "erp",
   /** The CMS for mahek-website — its own app, granted separately like `enquiries`. */
   "website",
+  /** Hiring and onboarding — the pipeline that ends in a provisioned account. */
+  "hire",
 ]);
 
 /* --------------------------------------------------------- §2 configuration */
@@ -12797,3 +12799,636 @@ export type HrmsOffice = typeof hrmsOffices.$inferSelect;
 export type HrmsAttendance = typeof hrmsAttendance.$inferSelect;
 export type HrmsLeaveRequest = typeof hrmsLeaveRequests.$inferSelect;
 export type HrmsSalary = typeof hrmsSalaries.$inferSelect;
+
+/* ===========================================================================
+ * HIRE — AI hiring and onboarding (docs: hire PRD + functional spec).
+ *
+ * Universal rules (spec §1.2) as they land in these tables:
+ *  - Scores, decisions, overrides and transcripts are APPEND-ONLY. A
+ *    correction is a new row whose predecessor carries `superseded_by_id`;
+ *    nothing here has an edit path for a judgement (fixes D3).
+ *  - Money is whole paise, with the currency stated beside it (fixes D11).
+ *  - Aadhaar, PAN and bank numbers live in `hire_vault`, encrypted, and are
+ *    referenced by id; the candidate record never holds one (fixes D2).
+ *  - Every AI call is a `hire_ai_tasks` row: prompt version, model, tokens,
+ *    latency, cost and the full structured output.
+ *  - A candidate is their phone number plus an id, never their typed name
+ *    (fixes D1).
+ * ========================================================================= */
+
+const hireStamps = () => ({
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  createdById: text("created_by_id"),
+  updatedById: text("updated_by_id"),
+});
+
+/** One VERSION of a role blueprint. A published row is never updated again. */
+export const hireBlueprints = pgTable(
+  "hire_blueprints",
+  {
+    id: text("id").primaryKey(),
+    /** Stable across versions — "sales-executive". */
+    key: text("key").notNull(),
+    version: integer("version").notNull(),
+    status: text("status").notNull().default("draft"),
+    title: text("title").notNull(),
+    family: text("family").notNull(),
+    department: text("department").notNull(),
+    level: text("level").notNull().default("Executive"),
+    employmentType: text("employment_type").notNull().default("Full time"),
+    locations: jsonb("locations").$type<string[]>().notNull().default([]),
+    headcount: integer("headcount").notNull().default(1),
+    /** The JD or intake answers it was generated from. */
+    descriptionSource: text("description_source"),
+    aiGenerated: boolean("ai_generated").notNull().default(false),
+    generationPromptVersion: text("generation_prompt_version"),
+    parentId: text("parent_id"),
+    definition: jsonb("definition").$type<import("@/lib/hire/blueprint-types").BlueprintDefinition>().notNull(),
+    /** The rubric critic's findings, kept with the draft they were about. */
+    critic: jsonb("critic").$type<{ where: string; kind: string; message: string; suggestion?: string }[]>(),
+    retentionMonths: integer("retention_months").notNull().default(24),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    publishedById: text("published_by_id").references(() => users.id),
+    retiredAt: timestamp("retired_at", { withTimezone: true }),
+    ...hireStamps(),
+  },
+  (t) => [
+    uniqueIndex("hire_blueprints_key_version").on(t.key, t.version),
+    check("hire_blueprints_status", sql`${t.status} in ('draft','published','retired')`),
+  ],
+);
+
+/** What somebody IS inside Hire (spec §8) — recruiter, interviewer, … */
+export const hireUserRoles = pgTable("hire_user_roles", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  role: text("role").notNull(),
+  grantedById: text("granted_by_id").references(() => users.id),
+  grantedAt: timestamp("granted_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const hireCandidates = pgTable(
+  "hire_candidates",
+  {
+    id: text("id").primaryKey(),
+    /** C-1042 — what people say out loud. */
+    code: text("code").notNull(),
+    /** E.164 — the natural identity key. */
+    primaryPhone: text("primary_phone").notNull(),
+    alternatePhone: text("alternate_phone"),
+    email: text("email"),
+    fullName: text("full_name").notNull(),
+    preferredName: text("preferred_name"),
+    nameVariants: jsonb("name_variants").$type<string[]>().notNull().default([]),
+    /** For AGGREGATE fairness monitoring only. Never shown beside a score. */
+    gender: text("gender"),
+    ageBand: text("age_band"),
+    location: text("location"),
+    preferredLanguage: text("preferred_language").notNull().default("English"),
+    source: text("source"),
+    sourceDetail: text("source_detail"),
+    referredBy: text("referred_by"),
+    consentAt: timestamp("consent_at", { withTimezone: true }),
+    /** "AI assists evaluation" was stated to them at application (PRD §9.1). */
+    aiDisclosedAt: timestamp("ai_disclosed_at", { withTimezone: true }),
+    doNotContact: boolean("do_not_contact").notNull().default(false),
+    dncReason: text("dnc_reason"),
+    talentPoolStatus: text("talent_pool_status").notNull().default("active"),
+    preMigration: boolean("pre_migration").notNull().default(false),
+    ...hireStamps(),
+  },
+  (t) => [
+    uniqueIndex("hire_candidates_code").on(t.code),
+    uniqueIndex("hire_candidates_phone").on(t.primaryPhone),
+    check("hire_candidates_pool", sql`${t.talentPoolStatus} in ('active','silver_medallist','archived','withdrawn')`),
+  ],
+);
+
+export const hireApplications = pgTable(
+  "hire_applications",
+  {
+    id: text("id").primaryKey(),
+    candidateId: text("candidate_id")
+      .notNull()
+      .references(() => hireCandidates.id),
+    /** The VERSION row. Evaluated against it for the whole journey. */
+    blueprintId: text("blueprint_id")
+      .notNull()
+      .references(() => hireBlueprints.id),
+    appliedAt: timestamp("applied_at", { withTimezone: true }).notNull().defaultNow(),
+    location: text("location"),
+    stageKey: text("stage_key").notNull(),
+    stageEnteredAt: timestamp("stage_entered_at", { withTimezone: true }).notNull().defaultNow(),
+    status: text("status").notNull().default("in_progress"),
+    holdReason: text("hold_reason"),
+    recruiterId: text("recruiter_id").references(() => users.id),
+    interviewerId: text("interviewer_id").references(() => users.id),
+    hiringManagerId: text("hiring_manager_id").references(() => users.id),
+    /** Latest AI recommendation, cached for the board; the source is hire_ai_tasks. */
+    aiRecommendation: jsonb("ai_recommendation").$type<{ action: string; confidence: string; why: string; taskId?: string; at?: string }>(),
+    rejectionReasonCode: text("rejection_reason_code"),
+    rejectionStageKey: text("rejection_stage_key"),
+    decisionReason: text("decision_reason"),
+    reapplicationOfId: text("reapplication_of_id"),
+    enteredVia: text("entered_via").notNull().default("hr"),
+    /** A possible duplicate waiting on a person (never auto-merged). */
+    duplicate: jsonb("duplicate").$type<{ candidateId: string; applicationId?: string; confidence: string; why: string; outcome?: string; coolingEnds?: string; status: "open" | "same" | "different" }>(),
+    /** The latest gate override, drawn as a marker on the record. */
+    override: jsonb("override").$type<{ by: string; byName: string; reason: string; at: string; into: string }>(),
+    hiredAt: timestamp("hired_at", { withTimezone: true }),
+    employeeUserId: text("employee_user_id").references(() => users.id),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    ...hireStamps(),
+  },
+  (t) => [
+    index("hire_applications_candidate").on(t.candidateId),
+    index("hire_applications_blueprint").on(t.blueprintId),
+    index("hire_applications_status").on(t.status),
+    check(
+      "hire_applications_status",
+      sql`${t.status} in ('in_progress','on_hold','rejected','withdrawn','offer_declined','hired','archived')`,
+    ),
+  ],
+);
+
+/** One stage, run once (or again — the old run is superseded, never edited). */
+export const hireStageExecutions = pgTable(
+  "hire_stage_executions",
+  {
+    id: text("id").primaryKey(),
+    applicationId: text("application_id")
+      .notNull()
+      .references(() => hireApplications.id),
+    stageKey: text("stage_key").notNull(),
+    status: text("status").notNull().default("not_started"),
+    modality: text("modality"),
+    scheduledAt: timestamp("scheduled_at", { withTimezone: true }),
+    scheduledMinutes: integer("scheduled_minutes"),
+    place: text("place"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    conductedById: text("conducted_by_id").references(() => users.id),
+    earned: doublePrecision("earned"),
+    maxPoints: integer("max_points"),
+    normalised: doublePrecision("normalised"),
+    grace: integer("grace").notNull().default(0),
+    graceReason: text("grace_reason"),
+    finalScore: doublePrecision("final_score"),
+    outcome: text("outcome").notNull().default("pending"),
+    aiRecommendation: text("ai_recommendation"),
+    aiConfidence: doublePrecision("ai_confidence"),
+    aiReasoning: text("ai_reasoning"),
+    entryWasGated: boolean("entry_was_gated").notNull().default(true),
+    gateOverrideById: text("gate_override_by_id").references(() => users.id),
+    gateOverrideReason: text("gate_override_reason"),
+    /** Manual scoring because AI was unavailable — flagged for AI review later. */
+    aiReviewPending: boolean("ai_review_pending").notNull().default(false),
+    supersededById: text("superseded_by_id"),
+    ...hireStamps(),
+  },
+  (t) => [
+    index("hire_exec_app").on(t.applicationId, t.stageKey),
+    index("hire_exec_sched").on(t.scheduledAt),
+    check("hire_exec_status", sql`${t.status} in ('not_started','scheduled','in_progress','completed','skipped','failed')`),
+    check("hire_exec_outcome", sql`${t.outcome} in ('pass','fail','pending','not_applicable')`),
+  ],
+);
+
+export type HireEvidenceSpan = {
+  verbatim: string;
+  start: number;
+  end: number;
+  criterionKey: string | null;
+  criterion: string;
+  tier: string;
+  points: number | null;
+  source: string;
+};
+
+/** A scored answer. APPEND-ONLY — the current one has no `superseded_by_id`. */
+export const hireAnswers = pgTable(
+  "hire_answers",
+  {
+    id: text("id").primaryKey(),
+    executionId: text("execution_id")
+      .notNull()
+      .references(() => hireStageExecutions.id),
+    questionKey: text("question_key").notNull(),
+    responseText: text("response_text"),
+    selected: jsonb("selected").$type<string[]>(),
+    calcInputs: jsonb("calc_inputs").$type<Record<string, number>>(),
+    /** The score that COUNTS — null until a person confirms it. */
+    score: doublePrecision("score"),
+    maxPoints: integer("max_points").notNull(),
+    scoredBy: text("scored_by"),
+    aiScore: doublePrecision("ai_score"),
+    aiReasoning: text("ai_reasoning"),
+    aiConfidence: doublePrecision("ai_confidence"),
+    aiFlags: jsonb("ai_flags").$type<string[]>().notNull().default([]),
+    evidence: jsonb("evidence").$type<HireEvidenceSpan[]>().notNull().default([]),
+    probeSuggestion: text("probe_suggestion"),
+    aiTaskId: text("ai_task_id"),
+    /** accepted | adjusted | scored_myself | manual | calculated | selected */
+    humanAction: text("human_action"),
+    overrideReason: text("override_reason"),
+    confirmedById: text("confirmed_by_id").references(() => users.id),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+    notes: text("notes"),
+    supersededById: text("superseded_by_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id"),
+  },
+  (t) => [index("hire_answers_exec").on(t.executionId, t.questionKey)],
+);
+
+export const hireBriefingResponses = pgTable(
+  "hire_briefing_responses",
+  {
+    id: text("id").primaryKey(),
+    executionId: text("execution_id")
+      .notNull()
+      .references(() => hireStageExecutions.id),
+    pointKey: text("point_key").notNull(),
+    /** told | agree | disagree | will_try | unclear */
+    response: text("response").notNull(),
+    comment: text("comment"),
+    recordedById: text("recorded_by_id").references(() => users.id),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+    supersededById: text("superseded_by_id"),
+  },
+  (t) => [index("hire_briefing_exec").on(t.executionId)],
+);
+
+/** A named person committing a decision. Append-only; reasoning mandatory. */
+export const hireDecisions = pgTable(
+  "hire_decisions",
+  {
+    id: text("id").primaryKey(),
+    applicationId: text("application_id")
+      .notNull()
+      .references(() => hireApplications.id),
+    executionId: text("execution_id"),
+    decisionPoint: text("decision_point").notNull(),
+    decidedById: text("decided_by_id")
+      .notNull()
+      .references(() => users.id),
+    decidedByRole: text("decided_by_role").notNull(),
+    decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow(),
+    decision: text("decision").notNull(),
+    reasoning: text("reasoning").notNull(),
+    reasonCode: text("reason_code"),
+    aiRecommendation: jsonb("ai_recommendation").$type<{ action: string; confidence: string; why: string } | null>(),
+    agreedWithAi: boolean("agreed_with_ai"),
+    evidenceReviewed: jsonb("evidence_reviewed").$type<string[]>().notNull().default([]),
+    supersededById: text("superseded_by_id"),
+  },
+  (t) => [
+    index("hire_decisions_app").on(t.applicationId),
+    check("hire_decisions_decision", sql`${t.decision} in ('advance','reject','hold','hire','revise_offer','resume','withdraw')`),
+    check("hire_decisions_reasoning", sql`length(trim(${t.reasoning})) >= 20`),
+  ],
+);
+
+/** A rejection PROPOSED by a rule, waiting for a named person (spec §6.2). */
+export const hireRejectionProposals = pgTable(
+  "hire_rejection_proposals",
+  {
+    id: text("id").primaryKey(),
+    applicationId: text("application_id")
+      .notNull()
+      .references(() => hireApplications.id),
+    stageKey: text("stage_key").notNull(),
+    score: doublePrecision("score"),
+    reasonCode: text("reason_code").notNull(),
+    note: text("note"),
+    proposedById: text("proposed_by_id").references(() => users.id),
+    proposedAt: timestamp("proposed_at", { withTimezone: true }).notNull().defaultNow(),
+    windowEndsAt: timestamp("window_ends_at", { withTimezone: true }).notNull(),
+    status: text("status").notNull().default("open"),
+    resolvedById: text("resolved_by_id").references(() => users.id),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    resolution: text("resolution"),
+  },
+  (t) => [
+    index("hire_rejections_open").on(t.status),
+    check("hire_rejections_status", sql`${t.status} in ('open','confirmed','dismissed')`),
+  ],
+);
+
+export type HireSegment = {
+  speaker: "interviewer" | "candidate" | "ai";
+  name?: string;
+  startMs: number;
+  endMs: number;
+  text: string;
+  confidence?: number;
+  language?: string;
+  original?: string;
+  questionKey?: string;
+};
+
+export type HireCopilotEvent = {
+  at: string;
+  kind: "suggestion" | "contradiction" | "coverage" | "time";
+  text: string;
+  why?: string;
+  sources?: { text: string; source: string }[];
+  action: "shown" | "used" | "dismissed";
+};
+
+/** An interview: human, phone, AI voice or async. The transcript is append-only. */
+export const hireSessions = pgTable(
+  "hire_sessions",
+  {
+    id: text("id").primaryKey(),
+    executionId: text("execution_id")
+      .notNull()
+      .references(() => hireStageExecutions.id),
+    modality: text("modality").notNull(),
+    status: text("status").notNull().default("live"),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+    recordingConsent: boolean("recording_consent").notNull().default(false),
+    consentAt: timestamp("consent_at", { withTimezone: true }),
+    aiDisclosed: boolean("ai_disclosed").notNull().default(false),
+    language: text("language"),
+    languages: jsonb("languages").$type<string[]>().notNull().default([]),
+    segments: jsonb("segments").$type<HireSegment[]>().notNull().default([]),
+    copilot: jsonb("copilot").$type<HireCopilotEvent[]>().notNull().default([]),
+    audioFileId: text("audio_file_id"),
+    candidateTalkRatio: doublePrecision("candidate_talk_ratio"),
+    escalated: text("escalated"),
+    interviewerIds: jsonb("interviewer_ids").$type<string[]>().notNull().default([]),
+    ...hireStamps(),
+  },
+  (t) => [index("hire_sessions_exec").on(t.executionId), check("hire_sessions_status", sql`${t.status} in ('live','ended','abandoned')`)],
+);
+
+/** Files Hire holds: CVs, documents, recordings, letters. Read through /api/hire/files. */
+export const hireFiles = pgTable(
+  "hire_files",
+  {
+    id: text("id").primaryKey(),
+    candidateId: text("candidate_id")
+      .notNull()
+      .references(() => hireCandidates.id),
+    applicationId: text("application_id"),
+    purpose: text("purpose").notNull(),
+    filename: text("filename").notNull(),
+    contentType: text("content_type").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    storedRef: text("stored_ref").notNull(),
+    uploadedById: text("uploaded_by_id"),
+    uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull().defaultNow(),
+    removedAt: timestamp("removed_at", { withTimezone: true }),
+  },
+  (t) => [index("hire_files_candidate").on(t.candidateId)],
+);
+
+/** Encrypted identity and bank numbers (AES-256-GCM). Only `last4` is ever selected for a list. */
+export const hireVault = pgTable("hire_vault", {
+  id: text("id").primaryKey(),
+  candidateId: text("candidate_id")
+    .notNull()
+    .references(() => hireCandidates.id),
+  kind: text("kind").notNull(),
+  ciphertext: text("ciphertext").notNull(),
+  last4: text("last4").notNull(),
+  createdById: text("created_by_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  purgedAt: timestamp("purged_at", { withTimezone: true }),
+});
+
+export const hireDocuments = pgTable(
+  "hire_documents",
+  {
+    id: text("id").primaryKey(),
+    applicationId: text("application_id")
+      .notNull()
+      .references(() => hireApplications.id),
+    requirementKey: text("requirement_key").notNull(),
+    fileId: text("file_id"),
+    vaultId: text("vault_id"),
+    /** Extracted fields, never containing an identity number (those go to the vault). */
+    extraction: jsonb("extraction").$type<{ fields: { label: string; value: string; confidence: number }[]; signals: string[]; quality: string; aiTaskId?: string } | null>(),
+    extractionConfidence: doublePrecision("extraction_confidence"),
+    verificationStatus: text("verification_status").notNull().default("pending"),
+    verificationNotes: text("verification_notes"),
+    verifiedById: text("verified_by_id").references(() => users.id),
+    verifiedAt: timestamp("verified_at", { withTimezone: true }),
+    supersededById: text("superseded_by_id"),
+    ...hireStamps(),
+  },
+  (t) => [
+    index("hire_documents_app").on(t.applicationId),
+    check("hire_documents_status", sql`${t.verificationStatus} in ('pending','verified','failed','manual_review','waived')`),
+  ],
+);
+
+export type HireProfileField = { value: string; source: "ai" | "human"; confidence: number | null };
+export type HireProfileData = {
+  fields: Record<string, HireProfileField>;
+  employers: { name: string; title: string; from: string; to: string; months: number | null }[];
+  education: string[];
+  skills: string[];
+  languages: string[];
+  gaps: { period: string; months: number; explanation?: string }[];
+};
+
+/** CV-extracted profile, human-correctable; corrections are kept, not overwritten. */
+export const hireProfiles = pgTable("hire_profiles", {
+  applicationId: text("application_id")
+    .primaryKey()
+    .references(() => hireApplications.id),
+  data: jsonb("data").$type<HireProfileData>().notNull(),
+  corrections: jsonb("corrections").$type<{ field: string; from: string; to: string; byId: string; byName: string; at: string }[]>().notNull().default([]),
+  sourceFileId: text("source_file_id"),
+  extractionConfidence: doublePrecision("extraction_confidence"),
+  extractedAt: timestamp("extracted_at", { withTimezone: true }),
+  aiTaskId: text("ai_task_id"),
+  ...hireStamps(),
+});
+
+export const hireOffers = pgTable(
+  "hire_offers",
+  {
+    id: text("id").primaryKey(),
+    applicationId: text("application_id")
+      .notNull()
+      .references(() => hireApplications.id),
+    status: text("status").notNull().default("draft"),
+    grade: text("grade").notNull(),
+    gradeLabel: text("grade_label").notNull(),
+    basicPaise: bigint("basic_paise", { mode: "number" }).notNull(),
+    currency: text("currency").notNull().default("INR"),
+    incentive: text("incentive"),
+    ctcPaise: bigint("ctc_paise", { mode: "number" }),
+    /** The growth ladder as it stood — rendered from the blueprint, never typed. */
+    growth: jsonb("growth").$type<import("@/lib/hire/blueprint-types").GrowthStep[]>().notNull().default([]),
+    letter: text("letter"),
+    growthConfirmation: text("growth_confirmation"),
+    letterConfirmation: text("letter_confirmation"),
+    backgroundCheck: text("background_check").notNull().default("needed"),
+    courierStatus: text("courier_status").notNull().default("not_sent"),
+    joiningDate: date("joining_date"),
+    expiryDate: date("expiry_date"),
+    issuedAt: timestamp("issued_at", { withTimezone: true }),
+    issuedById: text("issued_by_id").references(() => users.id),
+    respondedAt: timestamp("responded_at", { withTimezone: true }),
+    response: text("response"),
+    negotiatedFromId: text("negotiated_from_id"),
+    supersededById: text("superseded_by_id"),
+    ...hireStamps(),
+  },
+  (t) => [
+    index("hire_offers_app").on(t.applicationId),
+    check("hire_offers_status", sql`${t.status} in ('draft','issued','accepted','declined','withdrawn')`),
+  ],
+);
+
+/** One tickable thing in onboarding: an asset, a training topic, a setup step. */
+export const hireOnboardingItems = pgTable(
+  "hire_onboarding_items",
+  {
+    id: text("id").primaryKey(),
+    applicationId: text("application_id")
+      .notNull()
+      .references(() => hireApplications.id),
+    kind: text("kind").notNull(),
+    groupKey: text("group_key").notNull(),
+    itemKey: text("item_key").notNull(),
+    done: boolean("done").notNull().default(false),
+    serial: text("serial"),
+    doneById: text("done_by_id").references(() => users.id),
+    doneAt: timestamp("done_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("hire_onboarding_item").on(t.applicationId, t.kind, t.groupKey, t.itemKey),
+    check("hire_onboarding_kind", sql`${t.kind} in ('asset','topic','setup')`),
+  ],
+);
+
+export const hireMessages = pgTable(
+  "hire_messages",
+  {
+    id: text("id").primaryKey(),
+    candidateId: text("candidate_id")
+      .notNull()
+      .references(() => hireCandidates.id),
+    applicationId: text("application_id"),
+    direction: text("direction").notNull(),
+    channel: text("channel").notNull(),
+    language: text("language").notNull().default("English"),
+    subject: text("subject"),
+    body: text("body").notNull(),
+    aiDrafted: boolean("ai_drafted").notNull().default(false),
+    aiTaskId: text("ai_task_id"),
+    /** draft | sent | delivered | read | failed | logged */
+    status: text("status").notNull().default("sent"),
+    sentById: text("sent_by_id").references(() => users.id),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("hire_messages_candidate").on(t.candidateId, t.at)],
+);
+
+/** The AI task ledger (spec §2.11). Every model call, success or not. */
+export const hireAiTasks = pgTable(
+  "hire_ai_tasks",
+  {
+    id: text("id").primaryKey(),
+    taskType: text("task_type").notNull(),
+    promptVersion: text("prompt_version").notNull(),
+    tier: text("tier").notNull(),
+    modelId: text("model_id"),
+    provider: text("provider").notNull().default("openai"),
+    inputHash: text("input_hash"),
+    inputTokens: integer("input_tokens"),
+    output: jsonb("output"),
+    outputTokens: integer("output_tokens"),
+    latencyMs: integer("latency_ms"),
+    costPaise: integer("cost_paise"),
+    /** success | schema_violation | refused | timeout | error | evidence_invalid | prohibited | disabled | cached */
+    status: text("status").notNull(),
+    error: text("error"),
+    retryCount: integer("retry_count").notNull().default(0),
+    fallbackUsed: text("fallback_used"),
+    triggeredById: text("triggered_by_id"),
+    entityType: text("entity_type"),
+    entityId: text("entity_id"),
+    applicationId: text("application_id"),
+    blueprintId: text("blueprint_id"),
+    redactionApplied: boolean("redaction_applied").notNull().default(false),
+    redactedFields: jsonb("redacted_fields").$type<string[]>().notNull().default([]),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("hire_ai_tasks_type_at").on(t.taskType, t.createdAt),
+    index("hire_ai_tasks_app").on(t.applicationId),
+    index("hire_ai_tasks_hash").on(t.taskType, t.inputHash),
+  ],
+);
+
+/** AI outputs kept for a screen: summaries, consistency checks, briefs, rankings. */
+export const hireAiOutputs = pgTable(
+  "hire_ai_outputs",
+  {
+    id: text("id").primaryKey(),
+    kind: text("kind").notNull(),
+    applicationId: text("application_id"),
+    blueprintId: text("blueprint_id"),
+    content: jsonb("content").notNull(),
+    aiTaskId: text("ai_task_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id"),
+  },
+  (t) => [index("hire_ai_outputs_app_kind").on(t.applicationId, t.kind, t.createdAt)],
+);
+
+/** Append-only audit trail (spec §2.10). No edit path, no delete path. */
+export const hireAudit = pgTable(
+  "hire_audit",
+  {
+    id: text("id").primaryKey(),
+    applicationId: text("application_id"),
+    candidateId: text("candidate_id"),
+    entityType: text("entity_type").notNull(),
+    entityId: text("entity_id"),
+    eventType: text("event_type").notNull(),
+    summary: text("summary").notNull(),
+    actorId: text("actor_id"),
+    actorName: text("actor_name").notNull(),
+    actorRole: text("actor_role"),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+    before: jsonb("before"),
+    after: jsonb("after"),
+    isPiiAccess: boolean("is_pii_access").notNull().default(false),
+    piiFields: jsonb("pii_fields").$type<string[]>().notNull().default([]),
+    aiTaskId: text("ai_task_id"),
+  },
+  (t) => [index("hire_audit_candidate").on(t.candidateId, t.at), index("hire_audit_at").on(t.at), index("hire_audit_actor").on(t.actorId, t.at)],
+);
+
+/** What became of a hire — for Quality and the success predictor. */
+export const hireOutcomes = pgTable("hire_outcomes", {
+  applicationId: text("application_id")
+    .primaryKey()
+    .references(() => hireApplications.id),
+  leftAt: date("left_at"),
+  firstTargetAt: date("first_target_at"),
+  performanceScore: doublePrecision("performance_score"),
+  managerSatisfaction: integer("manager_satisfaction"),
+  ...hireStamps(),
+});
+
+export type HireBlueprint = typeof hireBlueprints.$inferSelect;
+export type HireCandidate = typeof hireCandidates.$inferSelect;
+export type HireApplication = typeof hireApplications.$inferSelect;
+export type HireStageExecution = typeof hireStageExecutions.$inferSelect;
+export type HireAnswer = typeof hireAnswers.$inferSelect;
+export type HireSession = typeof hireSessions.$inferSelect;
+export type HireOffer = typeof hireOffers.$inferSelect;
+export type HireDocument = typeof hireDocuments.$inferSelect;
+export type HireMessage = typeof hireMessages.$inferSelect;
+export type HireAiTask = typeof hireAiTasks.$inferSelect;

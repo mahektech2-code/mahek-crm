@@ -19,6 +19,7 @@ export const APP_IDS = [
   "enquiries",
   "erp",
   "website",
+  "hire",
 ] as const;
 
 export type AppId = (typeof APP_IDS)[number];
@@ -225,6 +226,24 @@ export const APPS: AppDefinition[] = [
     description:
       "Products, pages, gallery, careers and the rest of what the public site shows — content, not the calling book.",
     href: "/website",
+    tone: "neutral",
+    built: true,
+  },
+  {
+    id: "hire",
+    /*
+     * Hiring and onboarding. It ends where the other apps begin: the last act
+     * of the pipeline is provisioning the new employee's MahekOne account with
+     * the apps their role blueprint names, which is also what makes a
+     * candidate `hired` (Hire PRD §1.1, P8). What somebody may do inside it is
+     * their Hire ROLE — recruiter, interviewer, hiring manager, onboarding,
+     * HR head, admin — set on Hire's own Team screen (`lib/hire/roles.ts`).
+     */
+    name: "Hire",
+    initials: "HI",
+    description:
+      "Role blueprints, the hiring pipeline, AI-assisted interviews with evidence, decisions, offers and onboarding — ending in a working account.",
+    href: "/hire",
     tone: "neutral",
     built: true,
   },
