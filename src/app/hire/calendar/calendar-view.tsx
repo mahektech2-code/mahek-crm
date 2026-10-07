@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { addDays } from "@/lib/format";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Field, Input, Select } from "@/components/ui/primitives";
@@ -19,11 +20,7 @@ const istParts = (iso: string) => {
   const g = (t: string) => p.find((x) => x.type === t)?.value ?? "";
   return { ymd: `${g("year")}-${g("month")}-${g("day")}`, h: Number(g("hour")) % 24, m: Number(g("minute")) };
 };
-const addYmd = (ymd: string, d: number) => {
-  const x = new Date(`${ymd}T12:00:00Z`);
-  x.setUTCDate(x.getUTCDate() + d);
-  return x.toISOString().slice(0, 10);
-};
+const addYmd = (ymd: string, d: number) => addDays(ymd, d);
 const dayLabel = (ymd: string) => new Intl.DateTimeFormat("en-GB", { timeZone: "UTC", day: "2-digit", month: "short" }).format(new Date(`${ymd}T12:00:00Z`));
 const whenLabel = (iso: string) => new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Kolkata", weekday: "short", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(iso));
 

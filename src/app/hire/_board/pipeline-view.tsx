@@ -166,7 +166,7 @@ export function PipelineView({ data, initialView }: { data: PipelineData; initia
     const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `hire-candidates-${new Date(data.nowMs).toISOString().slice(0, 10)}.csv`;
+    a.download = `hire-candidates-${new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date(data.nowMs))}.csv`;
     a.click();
     URL.revokeObjectURL(a.href);
   };

@@ -1,5 +1,6 @@
 import "server-only";
 import { eq, sql } from "drizzle-orm";
+import { addDays } from "@/lib/format";
 import { db } from "@/db";
 import { hireApplications, hireStageExecutions } from "@/db/schema";
 import { notifyUsers } from "@/lib/notify";
@@ -31,9 +32,7 @@ export const istAt = (ymd: string, h: number, m = 0) => new Date(`${ymd}T${Strin
 
 /** Add days to a YYYY-MM-DD date, calendar-wise. */
 export function addYmd(ymd: string, days: number): string {
-  const d = new Date(`${ymd}T12:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
+  return addDays(ymd, days);
 }
 
 /** 0 = Sunday … 6 = Saturday, for an IST date. */

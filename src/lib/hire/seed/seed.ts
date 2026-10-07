@@ -25,7 +25,7 @@ import {
 } from "@/db/schema";
 import { hashPassword } from "@/lib/password";
 import { calendarDate } from "@/lib/business-date";
-import type { BlueprintDefinition, Question, Stage } from "../blueprint-types";
+import type { BlueprintDefinition, Stage } from "../blueprint-types";
 import { isScored } from "../blueprint-types";
 import { scoreFixed } from "../engines/scoring";
 import { SALES_EXECUTIVE, SEED_BLUEPRINTS } from "./blueprints";
