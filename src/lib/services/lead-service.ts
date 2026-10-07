@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
+  appAccess,
   auditLog,
   customerDistributors,
   customers,
@@ -1406,4 +1407,42 @@ export async function leadManagerCandidatesFor(
     .limit(1);
   if (!row) return [];
   return leadManagerCandidates(row.region);
+}
+
+/**
+ * WHO THE LEAD MANAGER PICKER OFFERS — everybody `assignLeadManager` would accept.
+ *
+ * `leadManagerCandidates` answers a different question: who is the DEFAULT for
+ * this region, which is why it keeps to people with the manager role who cover
+ * the region (or everywhere). An administrator is not that — their role is
+ * `admin` — so a picker built from it never offered one, although the action
+ * has always accepted one: it asks only that the person is active and holds the
+ * CRM or the Sales Dashboard at manager or admin level.
+ *
+ * So the picker is the default's list first, in the default's own order, and
+ * then everyone else the action would accept, by name. The default itself is
+ * untouched — it still reads `leadManagerCandidates` — so which manager a
+ * Prospect is put forward to when nobody is named does not move, and neither
+ * does anything the regional fallback decides.
+ */
+export async function leadManagerPickerFor(
+  customerId: string,
+): Promise<{ id: string; name: string }[]> {
+  const candidates = await leadManagerCandidatesFor(customerId);
+  const eligible = await db
+    .selectDistinct({ id: users.id, name: users.name })
+    .from(users)
+    .innerJoin(appAccess, eq(appAccess.userId, users.id))
+    .where(
+      and(
+        eq(users.active, true),
+        inArray(appAccess.app, ["crm", "sales"]),
+        inArray(appAccess.role, ["manager", "admin"]),
+      ),
+    );
+  const seen = new Set(candidates.map((c) => c.id));
+  const rest = eligible
+    .filter((u) => !seen.has(u.id))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  return [...candidates.map((c) => ({ id: c.id, name: c.name })), ...rest];
 }

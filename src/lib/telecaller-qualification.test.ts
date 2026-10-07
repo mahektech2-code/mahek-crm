@@ -44,6 +44,7 @@ import { leadRecord } from "@/lib/services/lead-console-service";
 import {
   leadGateInput,
   leadManagerCandidates,
+  leadManagerPickerFor,
   leadRow,
 } from "@/lib/services/lead-service";
 import { QUAL_NEXT, sampleEligibility } from "@/lib/services/lead-qualification-flow-service";
@@ -407,6 +408,53 @@ describe("Suspect → Prospect: the Telecaller promotes, the Sales Manager verif
     const names = (await leadManagerCandidates(null)).map((c) => c.name);
     assert.ok(names.includes("Manoj Manager"));
     assert.equal(names.includes(acctMgr.name), false);
+  });
+
+  test("the picker offers an administrator and every active CRM manager; the region default is unchanged", async () => {
+    const [admin] = await db
+      .insert(users)
+      .values({
+        id: id("usr"),
+        name: "Priya Admin",
+        email: `admin-${randomUUID().slice(0, 6)}@test.local`,
+        phone: String(9830000000 + Math.floor(Math.random() * 999999)),
+        passwordHash: "x",
+        role: "admin",
+        initials: "PA",
+      })
+      .returning();
+    await db.insert(appAccess).values({ id: id("aca"), userId: admin.id, app: "crm", role: "admin" });
+    const [gone] = await db
+      .insert(users)
+      .values({
+        id: id("usr"),
+        name: "Retired Manager",
+        email: `gone-${randomUUID().slice(0, 6)}@test.local`,
+        phone: String(9840000000 + Math.floor(Math.random() * 999999)),
+        passwordHash: "x",
+        role: "manager",
+        initials: "RM",
+        active: false,
+      })
+      .returning();
+    await db.insert(appAccess).values({ id: id("aca"), userId: gone.id, app: "crm", role: "manager" });
+
+    const lead = await makeLead();
+    const picker = (await leadManagerPickerFor(lead.id)).map((p) => p.name);
+    assert.ok(picker.includes("Priya Admin"), "an administrator is eligible and is offered");
+    assert.ok(picker.includes("Manoj Manager"), "the region's managers are still offered");
+    assert.ok(
+      picker.indexOf("Manoj Manager") < picker.indexOf("Priya Admin"),
+      "the default's own list comes first",
+    );
+    assert.equal(picker.includes("Retired Manager"), false, "an inactive account is not offered");
+    assert.equal(picker.includes(tele.name), false, "an associate is not offered");
+    assert.equal(picker.includes(acctMgr.name), false, "an Accounts-only manager is not offered");
+
+    /* The DEFAULT is a different question and does not move: an administrator is
+       not what a Prospect is put forward to when nobody is named. */
+    const defaults = (await leadManagerCandidates(null)).map((c) => c.name);
+    assert.equal(defaults.includes("Priya Admin"), false);
   });
 });
 

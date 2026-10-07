@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { SalesManagerEditForm } from "@/components/sales-lead-pipeline/desk/edit-form";
 import { today } from "@/lib/recompute";
 import { pipelineLead, pipelineRefs } from "@/lib/sales-lead-pipeline/sales-manager-pipeline-service";
-import { leadManagerCandidatesFor } from "@/lib/services/lead-service";
+import { leadManagerPickerFor } from "@/lib/services/lead-service";
 
 export const metadata = { title: "Edit lead — Sales Manager — CRM — MahekOne" };
 export const dynamic = "force-dynamic";
@@ -23,12 +23,14 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   const found = await pipelineLead(id, await today());
   if (!found) notFound();
 
-  const [refs, candidates] = await Promise.all([pipelineRefs(), leadManagerCandidatesFor(id)]);
+  /* Everybody the action would accept, the region's default first — an
+     administrator is eligible and was never offered. See `leadManagerPickerFor`. */
+  const [refs, candidates] = await Promise.all([pipelineRefs(), leadManagerPickerFor(id)]);
 
   /* The current holder is always offered, even where they would not be picked
      today (a retired territory, say), so the box never opens on a name that
      is not in it and a save cannot silently move it. */
-  const managers = candidates.map((c) => ({ id: c.id, name: c.name }));
+  const managers = [...candidates];
   const lead = found.lead;
   if (lead.managerId && !managers.some((m) => m.id === lead.managerId)) {
     managers.unshift({ id: lead.managerId, name: lead.manager || "Current sales manager" });
