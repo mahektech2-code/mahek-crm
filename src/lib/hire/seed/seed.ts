@@ -24,6 +24,7 @@ import {
   type HireEvidenceSpan,
 } from "@/db/schema";
 import { hashPassword } from "@/lib/password";
+import { calendarDate } from "@/lib/business-date";
 import type { BlueprintDefinition, Question, Stage } from "../blueprint-types";
 import { isScored } from "../blueprint-types";
 import { scoreFixed } from "../engines/scoring";
@@ -567,7 +568,7 @@ export async function seedHireDemo(opts: { reset: boolean }) {
 
   /* Hired outcomes for Quality */
   const hiredApps = (await db.execute(sql`select id from hire_applications where status = 'hired'`)) as unknown as { id: string }[];
-  for (const h of hiredApps) await db.execute(sql`insert into hire_outcomes (application_id, performance_score, left_at) values (${h.id}, ${ri(55, 95)}, ${rnd() < 0.12 ? daysAgo(ri(1, 60)).toISOString().slice(0, 10) : null}) on conflict do nothing`);
+  for (const h of hiredApps) await db.execute(sql`insert into hire_outcomes (application_id, performance_score, left_at) values (${h.id}, ${ri(55, 95)}, ${rnd() < 0.12 ? calendarDate(daysAgo(ri(1, 60))) : null}) on conflict do nothing`);
 
   const [{ apps }] = (await db.execute(sql`select count(*)::int as apps from hire_applications`)) as unknown as { apps: number }[];
   return { staff: Object.keys(staff).length, applications: apps };

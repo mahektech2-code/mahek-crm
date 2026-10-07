@@ -1,7 +1,6 @@
 import "server-only";
 import { cache } from "react";
 import { eq, sql, type SQL } from "drizzle-orm";
-import { redirect } from "next/navigation";
 import { db } from "@/db";
 import { hireUserRoles, type User } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
@@ -44,14 +43,22 @@ export const hireContext = cache(async function hireContext(): Promise<HireConte
 /** The layout's gate: Hire granted, or the launcher. */
 export async function requireHire(): Promise<HireContext> {
   const ctx = await hireContext();
-  if (!ctx) redirect("/apps");
+  if (!ctx) {
+    /* Imported lazily: next/navigation pulls the client router into anything
+       that imports this module, which a test runner cannot load. */
+    const { redirect } = await import("next/navigation");
+    redirect("/apps");
+  }
   return ctx;
 }
 
 /** A page's gate: the screen is in this person's navigation, or the board. */
 export async function requireHireScreen(key: HireNavKey): Promise<HireContext> {
   const ctx = await requireHire();
-  if (!holdsScreen(ctx.role, key)) redirect("/hire");
+  if (!holdsScreen(ctx.role, key)) {
+    const { redirect } = await import("next/navigation");
+    redirect("/hire");
+  }
   return ctx;
 }
 
