@@ -7,7 +7,7 @@ import { sql as pg } from "@/db";
 import type { ReservedSql } from "postgres";
 import { requireCapability } from "@/lib/access-control";
 import { listUserApps, listUserModules } from "@/lib/access";
-import { APP_TIMEZONE } from "@/lib/business-date";
+import { APP_TIMEZONE, calendarDate } from "@/lib/business-date";
 import { getConfig } from "@/lib/config/store";
 import { today } from "@/lib/recompute";
 import { readSecret } from "@/lib/secrets";
@@ -120,7 +120,7 @@ function describe(views: BuiltView[], enums: Map<string, string[]>): string {
 /** A value as the model should read it: instants in IST, dates as dates. */
 function plain(value: unknown, typeOid: number | undefined): unknown {
   if (value instanceof Date) {
-    if (typeOid === 1082) return value.toISOString().slice(0, 10);
+    if (typeOid === 1082) return calendarDate(value);
     return (
       new Intl.DateTimeFormat("en-CA", {
         timeZone: APP_TIMEZONE,
