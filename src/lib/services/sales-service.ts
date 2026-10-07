@@ -22,7 +22,6 @@ import { sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { APP_TIMEZONE } from "../business-date";
 import { today } from "../recompute";
-import { employeeLateral, employeeLinkKindSql } from "@/lib/employee-link";
 import {
   TERRITORY_BEAT_SQL,
   TERRITORY_REGION_SQL,
@@ -36,11 +35,7 @@ import { canonicalState, stateKey, stateVariants } from "@/lib/india-states";
 import { metresBetween } from "@/lib/geo";
 import { NOBODY, type TerritorySeat } from "@/lib/territory-seats";
 import { dropInaccurateFixes } from "../engines/trail-gaps";
-import {
-  leaveBalances as leaveBalancesFor,
-  leaveDebitDays,
-  type LeaveBalance,
-} from "@/lib/engines/leave";
+import { leaveDebitDays } from "@/lib/engines/leave";
 
 /* ---------------------------------------------------------------------------
  * Every read the Sales Dashboard makes.
@@ -740,8 +735,6 @@ export type ConsoleCounts = {
   samples: number;
   leave: number;
   expenses: number;
-  /** Everything the bell would raise, added up. */
-  alerts: number;
 };
 
 /**
@@ -898,13 +891,6 @@ export async function consoleCounts(
     samples: n("samples"),
     leave: n("leave"),
     expenses: n("expenses"),
-    alerts:
-      n("orders") +
-      n("samples") +
-      n("leave") +
-      n("expenses") +
-      n("refused") +
-      (team - n("live") > 0 ? 1 : 0),
   };
 }
 
@@ -1378,16 +1364,40 @@ export type FieldActivityRow = {
   location: string | null;
   customerMatchStatus: "pending" | "matched" | "ambiguous" | "unmatched";
   matchNote: string | null;
+
+  /* What the detail view reads — every row carries it, because a page is two
+     hundred rows and a second round trip per click buys nothing. */
+  activityId: string;
+  rowNumber: number;
+  reminderDate: string | null;
+  moodRaw: string | null;
+  salesmanMatchStatus: "pending" | "matched" | "ambiguous" | "unmatched";
+  /** The MahekOne sign-in, where the name matched one. */
+  salesmanAccountActive: boolean | null;
+  /** HRMS, through the account's employee link — the cross-check on a date. */
+  employmentStatus: string | null;
+  dateOfJoining: string | null;
+  dateOfLeaving: string | null;
+  customerCity: string | null;
+  /** Every cell exactly as the sheet gave it, in the sheet's column order. */
+  raw: Record<string, string>;
+  issues: { column: string; value: string; problem: string }[];
+  /** When this row was last read from the sheet, in IST, already worded. */
+  readAt: string;
 };
 
 export type FieldActivityFilter = {
   from: string;
   to: string;
-  salesmanId?: string;
+  /** The name exactly as the sheet writes it — most have no MahekOne account. */
+  salesmanName?: string;
   matchStatus?: "matched" | "ambiguous" | "unmatched";
+  /** 1-based. Every row in range is reachable a page at a time. */
+  page?: number;
+  perPage?: number;
 };
 
-const FIELD_ACTIVITY_LIMIT = 200;
+const FIELD_ACTIVITY_PER_PAGE = 50;
 
 /**
  * A capped, filtered slice of the imported "Mahek EMP 2.0" activity history
@@ -1433,7 +1443,8 @@ export async function fieldActivityHistory(
 ): Promise<{
   rows: FieldActivityRow[];
   total: number;
-  capped: boolean;
+  page: number;
+  perPage: number;
   /** Rows in the staging table regardless of filter — see the note below. */
   everInTable: number;
 }> {
@@ -1441,8 +1452,8 @@ export async function fieldActivityHistory(
   const matchClause = filter.matchStatus
     ? sql`and f.customer_match_status = ${filter.matchStatus}`
     : sql``;
-  const salesmanClause = filter.salesmanId
-    ? sql`and f.matched_salesman_id = ${filter.salesmanId}`
+  const salesmanClause = filter.salesmanName
+    ? sql`and f.employee_name = ${filter.salesmanName}`
     : sql``;
 
   const counted = await db.execute<{ n: number }>(sql`
@@ -1456,6 +1467,9 @@ export async function fieldActivityHistory(
        ${salesmanClause}
   `);
   const total = counted[0]?.n ?? 0;
+  const perPage = filter.perPage ?? FIELD_ACTIVITY_PER_PAGE;
+  // A page past the end (filters narrowed under it) lands on the last one.
+  const page = Math.min(Math.max(1, filter.page ?? 1), Math.max(1, Math.ceil(total / perPage)));
 
   const rows = await db.execute<FieldActivityRow>(sql`
     select f.id, f.visit_date as "visitDate",
@@ -1467,17 +1481,28 @@ export async function fieldActivityHistory(
            f.meeting_type as "meetingType", f.meeting_purpose as "meetingPurpose",
            f.meeting_note as "meetingNote", f.issue_note as "issueNote",
            f.location, f.customer_match_status as "customerMatchStatus",
-           f.match_note as "matchNote"
+           f.match_note as "matchNote",
+           f.activity_id as "activityId", f.row_number as "rowNumber",
+           f.reminder_date as "reminderDate", f.mood_raw as "moodRaw",
+           f.salesman_match_status as "salesmanMatchStatus",
+           u.active as "salesmanAccountActive",
+           e.status::text as "employmentStatus",
+           e.date_of_joining::text as "dateOfJoining",
+           e.date_of_leaving::text as "dateOfLeaving",
+           c.city as "customerCity",
+           f.raw, f.issues,
+           to_char(f.updated_at ${IST_DAY}, 'DD Mon YYYY, HH24:MI') as "readAt"
       from sheet_field_activity_rows f
       left join users u on u.id = f.matched_salesman_id
+      left join employees e on e.id = u.employee_id
       left join customers c on c.id = f.matched_customer_id
      where f.status = 'present'
        and f.visit_date between ${filter.from}::date and ${filter.to}::date
        ${mineOrNobodys(scope, "u.id")}
        ${matchClause}
        ${salesmanClause}
-     order by f.visit_date desc nulls last, f.id desc
-     limit ${FIELD_ACTIVITY_LIMIT}
+     order by f.visit_date desc nulls last, f.row_number desc, f.id desc
+     limit ${perPage} offset ${(page - 1) * perPage}
   `) as unknown as FieldActivityRow[];
 
   /*
@@ -1502,22 +1527,31 @@ export async function fieldActivityHistory(
   return {
     rows,
     total,
-    capped: total > FIELD_ACTIVITY_LIMIT,
+    page,
+    perPage,
     everInTable: everything ? (everything[0]?.n ?? 0) : total,
   };
 }
 
-/** Distinct salesmen the imported activity actually resolved to, for a filter. */
-export async function fieldActivitySalesmen(): Promise<{ id: string; name: string }[]> {
+/**
+ * Every salesman NAME the imported activity carries, for the filter.
+ *
+ * Read off the sheet's own column rather than off the matched accounts: most of
+ * these men never had a MahekOne sign-in, so a list of accounts offered two
+ * names out of twenty and the rest of the book could not be narrowed at all.
+ */
+export async function fieldActivitySalesmen(): Promise<{ name: string; rows: number }[]> {
   const scope = await managerScope();
-  return db.execute<{ id: string; name: string }>(sql`
-    select distinct u.id, u.name
+  return db.execute<{ name: string; rows: number }>(sql`
+    select f.employee_name as name, count(*)::int as rows
       from sheet_field_activity_rows f
-      join users u on u.id = f.matched_salesman_id
+      left join users u on u.id = f.matched_salesman_id
      where f.status = 'present'
+       and f.employee_name is not null
        ${mineOrNobodys(scope, "u.id")}
-     order by u.name
-  `) as unknown as { id: string; name: string }[];
+     group by f.employee_name
+     order by f.employee_name
+  `) as unknown as { name: string; rows: number }[];
 }
 
 /**
@@ -1529,8 +1563,8 @@ export async function fieldActivityMatchCounts(
   filter: Omit<FieldActivityFilter, "matchStatus">,
 ): Promise<{ all: number; matched: number; ambiguous: number; unmatched: number }> {
   const scope = await managerScope();
-  const salesmanClause = filter.salesmanId
-    ? sql`and f.matched_salesman_id = ${filter.salesmanId}`
+  const salesmanClause = filter.salesmanName
+    ? sql`and f.employee_name = ${filter.salesmanName}`
     : sql``;
 
   const rows = await db.execute<{ status: string; n: number }>(sql`
@@ -3247,121 +3281,6 @@ export async function fieldSamples(): Promise<FieldSamples> {
   };
 }
 
-export type CatalogueRow = {
-  id: string;
-  name: string;
-  rawName: string | null;
-  packSize: string | null;
-  packing: string | null;
-  cansPerBox: number | null;
-  millilitresPerCan: number | null;
-  active: boolean;
-  status: string;
-  formulation: string | null;
-  brand: string | null;
-  orderedCans: number;
-};
-
-/**
- * What the app offers, and how much of it has actually been ordered.
- *
- * No prices. `products.priceSource` is `unset` and the product master carries
- * none at all, so the design's Retail / Dealer / Distributor columns have
- * nothing behind them — and reaching for the packing cost because it is the
- * only number on the row would put believable wrong figures on a rate card.
- * The screen says that rather than showing three zeroes.
- */
-export async function catalogueRows(search?: string): Promise<CatalogueRow[]> {
-  const where = search
-    ? sql`and (p.name ilike ${"%" + search + "%"}
-            or coalesce(f.name, '') ilike ${"%" + search + "%"}
-            or coalesce(br.name, '') ilike ${"%" + search + "%"})`
-    : sql``;
-
-  return db.execute<CatalogueRow>(sql`
-    select p.id, p.name, p.raw_name as "rawName",
-           p.pack_size as "packSize", p.packing,
-           p.cans_per_box as "cansPerBox",
-           p.millilitres_per_can as "millilitresPerCan",
-           p.active, p.status::text as status,
-           f.name as formulation, br.name as brand,
-           coalesce((select sum((x->>'quantity')::int)
-                       from orders o,
-                            jsonb_array_elements(coalesce(o.line_items, '[]'::jsonb)) x
-                      where o.source = 'mbos' and x->>'product' = p.name), 0)::int
-             as "orderedCans"
-      from products p
-      left join finished_goods fg on fg.id = p.finished_good_id
-      left join product_brands br on br.id = fg.brand_id
-      left join product_formulations f on f.id = br.formulation_id
-     where true ${where}
-     order by p.active desc, p.display_order asc nulls last, p.name asc
-     limit 400
-  `) as unknown as CatalogueRow[];
-}
-
-export type PriceListRow = {
-  id: string;
-  customerPriceTag: string;
-  productId: string;
-  productName: string;
-  ratePaise: number;
-  validFrom: string | null;
-  validTo: string | null;
-};
-
-/**
- * Every rate ever set, current and superseded alike.
- *
- * A superseded row (`validTo` in the past) is shown rather than hidden — it
- * is what explains an order priced last month, and hiding it the moment it
- * expires would make that explanation unreachable the day after it mattered.
- * The screen is the one that decides how much of the past to draw.
- */
-export async function priceListEntries(): Promise<PriceListRow[]> {
-  return db.execute<PriceListRow>(sql`
-    select pl.id, pl.customer_price_tag as "customerPriceTag", pl.product_id as "productId",
-           p.name as "productName", pl.rate_paise as "ratePaise",
-           pl.valid_from::text as "validFrom", pl.valid_to::text as "validTo"
-      from mbos_price_list pl
-      join products p on p.id = pl.product_id
-     order by (pl.valid_to is not null) asc, pl.customer_price_tag asc, p.name asc, pl.valid_from desc
-     limit 2000
-  `) as unknown as PriceListRow[];
-}
-
-/** Every price tag the Sales Party tab actually uses — a dropdown, not a guess. */
-export async function priceTagOptions(): Promise<string[]> {
-  const rows = await db.execute<{ tag: string }>(sql`
-    select distinct tag_pricelist as tag
-      from sheet_party_rows
-     where tag_pricelist is not null and tag_pricelist <> ''
-     order by 1
-  `);
-  return rows.map((r) => r.tag);
-}
-
-export type SchemeRow = {
-  id: string;
-  name: string;
-  description: string | null;
-  active: boolean;
-  eligibility: unknown;
-  benefit: unknown;
-  validFrom: string | null;
-  validTo: string | null;
-};
-
-export async function schemeEntries(): Promise<SchemeRow[]> {
-  return db.execute<SchemeRow>(sql`
-    select s.id, s.name, s.description, s.active, s.eligibility, s.benefit,
-           s.valid_from::text as "validFrom", s.valid_to::text as "validTo"
-      from mbos_schemes s
-     order by s.active desc, s.valid_from desc nulls last, s.name asc
-     limit 500
-  `) as unknown as SchemeRow[];
-}
-
 /* ═══════════════════════════════════════════════════════════════════ people */
 
 export type AttendanceRow = {
@@ -3500,6 +3419,7 @@ export type LeaveRow = {
   approvalState: string | null;
   decisionNote: string | null;
   approverName: string | null;
+  decidedAt: Date | null;
   requestedAt: Date | null;
   /** Somebody else in the field off on an overlapping day. */
   clashesWith: string | null;
@@ -3558,6 +3478,7 @@ export async function leaveRequests(): Promise<LeaveRequests> {
            ap.state::text as "approvalState",
            ap.decision_note as "decisionNote",
            d.name as "approverName",
+           ap.decided_at as "decidedAt",
            ap.requested_at as "requestedAt",
            /* Who ELSE is off on these days.
             *
@@ -5600,117 +5521,6 @@ export async function fieldSettings(): Promise<
   return groups;
 }
 
-/* ══════════════════════════════════════════════════════════════════ pay */
-
-export type PayRow = {
-  salesmanId: string;
-  salesmanName: string;
-  active: boolean;
-  employeeCode: string | null;
-  /**
-   * Whether that employee was CHOSEN or merely matched.
-   *
-   * `guessed` means nobody has linked this account and the old email-or-mobile
-   * heuristic found the row — which on this book is rare and, where it does
-   * fire, is matching an account against whichever of two same-named payroll
-   * rows happened to share a number. A pay figure arrived at that way is worth
-   * saying out loud rather than printing beside a chosen one as though the two
-   * were the same kind of fact.
-   */
-  employeeMatch: "linked" | "guessed";
-  employeeStatus: string | null;
-  netSalaryPaise: number | null;
-  conveyancePaise: number | null;
-  otherSalaryPaise: number | null;
-  pfEsicApplicable: boolean | null;
-  dateOfJoining: string | null;
-  /** Days worked in the window. What a month's pay is actually against. */
-  daysWorked: number;
-  daysOnLeave: number;
-  /** Expenses approved in the window — reimbursed, not salary. */
-  reimbursedPaise: number;
-};
-
-/**
- * What each salesman is paid, read from the employee master.
- *
- * `DECISIONS.md` settled this before MBOS shipped: **salary is read-only and
- * reads what payroll publishes.** HR maintains the employee workbook, HRMS
- * mirrors it hash-for-hash, and this reads that mirror — nothing here writes a
- * figure and no MBOS table holds one.
- *
- * The match is email then company mobile, the same rule the Access screen uses
- * to find a person's employee record. Two rules for "which employee is this
- * account" is how one of them ends up finding somebody the other does not.
- *
- * Days worked and reimbursements sit beside the pay because they are what a
- * month's figure is actually against — but neither is combined with it. An
- * expense reimbursement is money owed back, not earnings, and adding them
- * would produce a number that is neither.
- */
-export async function payForPeriod(from: string, to: string): Promise<PayRow[]> {
-  const scope = await managerScope();
-  return db.execute<PayRow>(sql`
-    select u.id as "salesmanId", u.name as "salesmanName", u.active,
-           e.employee_code as "employeeCode",
-           ${employeeLinkKindSql("u")} as "employeeMatch",
-           e.status_raw as "employeeStatus",
-           e.net_salary_paise as "netSalaryPaise",
-           e.conveyance_paise as "conveyancePaise",
-           e.other_salary_paise as "otherSalaryPaise",
-           e.pf_esic_applicable as "pfEsicApplicable",
-           e.date_of_joining::text as "dateOfJoining",
-
-           (select count(*)::int from mbos_attendance_days d
-             where d.user_id = u.id and d.check_in_at is not null
-               and d.day between ${from}::date and ${to}::date) as "daysWorked",
-           (select count(*)::int from mbos_attendance_days d
-             where d.user_id = u.id and d.status = 'on_leave'
-               and d.day between ${from}::date and ${to}::date) as "daysOnLeave",
-
-           /* Two shapes of claim. One approval per EXPENSE is how claims were
-              raised before the day-level submit flow; one per DAY is how they
-              are raised now, decided by its highest step. Reading only the
-              first left every salesman's reimbursement at zero. */
-           (coalesce((select sum(coalesce(ap.approved_amount_paise, ex.amount_paise))
-                       from mbos_expenses ex
-                       join mbos_approvals ap
-                         on ap.subject_id = ex.id and ap.type = 'expense_claim'
-                        and ap.subject_type <> 'mbos_expense_days'
-                      where ex.user_id = u.id
-                        and ap.state in ('approved', 'partially_approved')
-                        and ex.expense_date between ${from}::date and ${to}::date), 0)
-            + coalesce((select sum(coalesce(top.approved_amount_paise,
-                                            d.submitted_eligible_paise,
-                                            d.submitted_claimed_paise, 0))
-                          from mbos_expense_days d
-                          join lateral (
-                            select a.state, a.approved_amount_paise
-                              from mbos_approvals a
-                             where a.subject_type = 'mbos_expense_days'
-                               and a.subject_id = d.id
-                             order by a.step_index desc
-                             limit 1
-                          ) top on true
-                         where d.user_id = u.id
-                           and top.state in ('approved', 'partially_approved')
-                           and d.day between ${from}::date and ${to}::date), 0))::bigint
-             as "reimbursedPaise"
-
-      from users u
-      join app_access a on a.user_id = u.id and a.app = 'field'
-      /* The link somebody made, falling back to the old email-or-mobile guess
-         where nobody has made one -- see lib/employee-link.ts, which the
-         handset's own copy of these figures reads too. The guess alone matched
-         almost nobody on the real book, so this screen showed a blank salary
-         for every field salesman with no way to say whether that meant unpaid
-         or unknown. */
-      ${employeeLateral("u", "e")}
-     where u.active ${onlyMine(scope, "u.id")}
-     order by u.name asc
-  `) as unknown as PayRow[];
-}
-
 /* ═══════════════════════════════════════════════════ who covers what */
 
 export type ManagerRow = {
@@ -6185,32 +5995,34 @@ export async function salesmanRecord(
 
 /* ══════════════════════════════════════ leave, per person */
 
-export type EntitlementRow = {
+export type LeaveTakenRow = {
   userId: string;
   name: string;
-  balances: LeaveBalance[];
-  /** The kinds this person has a stored figure for, as against the default. */
-  overridden: string[];
+  /** Approved days this year, by kind. Never a balance — see below. */
+  taken: Record<string, number>;
+  takenTotal: number;
+  /** Requests still waiting on somebody's answer. */
+  waiting: number;
+  /** Every request this year, withdrawn ones excepted. */
+  requested: number;
 };
 
 /**
- * What each salesman may take this year, and how much is left.
+ * Who on the team has taken leave this year, and who has asked.
  *
- * The entitlement itself is CONFIGURATION — `mbos.leave.annualEntitlementDays`
- * — and a row in `mbos_leave_balances` overrides it for one person. That much
- * already worked. What did not exist was any way to WRITE such a row: nothing
- * in MahekOne created one, so the override was a mechanism with no door, and a
- * salesman on different terms could not be given them.
- *
- * Read through `leaveBalances`, the same engine the handset's own figures come
- * through, so this screen and the phone in somebody's pocket cannot disagree
- * about how many days remain.
+ * TAKEN, NEVER WHAT IS LEFT. Mahek holds leave allowances in HRMS and nowhere
+ * else, so this screen used to draw a second copy of them — "12 of 12, company
+ * default" — from a configuration figure nobody on the team had agreed to, with
+ * a door to set per-person terms that HRMS never read. Two answers to "how many
+ * days does he get" is one too many, and the handset already shows no balance.
+ * So the figure here is what was approved, counted from the requests through
+ * `leaveDebitDays` so a half day is half, and a salesman with no request at all
+ * is listed rather than dropped — "who has not asked" is half the question.
  */
-export async function leaveEntitlements(year: number): Promise<EntitlementRow[]> {
+export async function leaveTakenByPerson(year: number): Promise<LeaveTakenRow[]> {
   const scope = await managerScope();
-  const { getConfig } = await import("../config/store");
 
-  const [people, overrideRows, usedRows, config] = await Promise.all([
+  const [people, requestRows] = await Promise.all([
     db.execute<{ userId: string; name: string }>(sql`
       select u.id as "userId", u.name
         from users u
@@ -6218,45 +6030,39 @@ export async function leaveEntitlements(year: number): Promise<EntitlementRow[]>
        where u.active ${onlyMine(scope, "u.id")}
        order by u.name asc
     `),
-    db.execute<{ userId: string; kind: string; entitled: number }>(sql`
-      select b.user_id as "userId", b.leave_type::text as kind, b.entitled_days as entitled
-        from mbos_leave_balances b
-       where b.year = ${year}
-    `),
-    /* The approved requests, not a stored sum — what a request costs is
-       `leaveDebitDays`, and spelling that arithmetic out in SQL as well is how
-       two answers to "how much has he taken" come to exist. */
-    db.execute<{ userId: string; kind: string; days: number; halfDay: boolean }>(sql`
-      select r.user_id as "userId", r.leave_type::text as kind, r.days, r.half_day as "halfDay"
+    db.execute<{ userId: string; kind: string; days: number; halfDay: boolean; state: string | null }>(sql`
+      select r.user_id as "userId", r.leave_type::text as kind, r.days,
+             r.half_day as "halfDay", ap.state::text as state
         from mbos_leave_requests r
-        join mbos_approvals ap on ap.subject_id = r.id and ap.type = 'leave'
-       where ap.state in ('approved', 'partially_approved')
-         and r.cancelled_at is null
+        left join mbos_approvals ap on ap.subject_id = r.id and ap.type = 'leave'
+       where r.cancelled_at is null
          and extract(year from r.from_date) = ${year}
+         ${onlyMine(scope, "r.user_id")}
     `),
-    getConfig(),
   ]);
 
-  const entitlement = config["mbos.leave.annualEntitlementDays"] ?? {};
-
-  const overridesBy = new Map<string, Record<string, number>>();
-  for (const r of overrideRows as unknown as { userId: string; kind: string; entitled: number }[]) {
-    const forUser = overridesBy.get(r.userId) ?? {};
-    forUser[r.kind] = r.entitled;
-    overridesBy.set(r.userId, forUser);
-  }
-
-  const usedBy = new Map<string, Record<string, number>>();
-  for (const r of usedRows as unknown as { userId: string; kind: string; days: number; halfDay: boolean }[]) {
-    const forUser = usedBy.get(r.userId) ?? {};
-    forUser[r.kind] = (forUser[r.kind] ?? 0) + leaveDebitDays(Number(r.days), r.halfDay);
-    usedBy.set(r.userId, forUser);
+  const by = new Map<string, Omit<LeaveTakenRow, "userId" | "name">>();
+  for (const r of requestRows as unknown as {
+    userId: string;
+    kind: string;
+    days: number;
+    halfDay: boolean;
+    state: string | null;
+  }[]) {
+    const row = by.get(r.userId) ?? { taken: {}, takenTotal: 0, waiting: 0, requested: 0 };
+    row.requested += 1;
+    if (!r.state || r.state === "pending") row.waiting += 1;
+    if (r.state === "approved" || r.state === "partially_approved") {
+      const d = leaveDebitDays(Number(r.days), r.halfDay);
+      row.taken[r.kind] = (row.taken[r.kind] ?? 0) + d;
+      row.takenTotal += d;
+    }
+    by.set(r.userId, row);
   }
 
   return (people as unknown as { userId: string; name: string }[]).map((p) => ({
     userId: p.userId,
     name: p.name,
-    balances: leaveBalancesFor(entitlement, usedBy.get(p.userId) ?? {}, overridesBy.get(p.userId) ?? {}),
-    overridden: Object.keys(overridesBy.get(p.userId) ?? {}),
+    ...(by.get(p.userId) ?? { taken: {}, takenTotal: 0, waiting: 0, requested: 0 }),
   }));
 }

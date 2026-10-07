@@ -38,6 +38,7 @@ export function VisitsTab({
   mismatchThresholdM,
   team,
   salesmanId,
+  stay = "",
 }: {
   day: string;
   longDay: string;
@@ -47,13 +48,15 @@ export function VisitsTab({
   team: Salesman[];
   /** Narrowed to one salesman, or "" for the whole team. */
   salesmanId: string;
+  /** Set when this is one salesman's log inside his modal: links keep it there and nobody else can be picked. */
+  stay?: string;
 }) {
   const router = useRouter();
   const actions = useVisitActions();
   /* Narrowed in the browser: the day's list for the team is already here,
      and the counts on the chips should follow whoever is picked. */
   const all = salesmanId ? everyone.filter((v) => v.salesmanId === salesmanId) : everyone;
-  const base = `/sales/journeys?tab=visits${salesmanId ? `&salesman=${salesmanId}` : ""}`;
+  const base = `/sales/journeys?tab=visits${salesmanId ? `&salesman=${salesmanId}` : ""}${stay}`;
   /* Which visits are opened out. A set, so a manager comparing two visits to
      one shop can have both open at once. */
   const [open, setOpen] = React.useState<Set<string>>(() => new Set());
@@ -105,7 +108,7 @@ export function VisitsTab({
     <SortHead
       width={width}
       align={align}
-      href={sortHref("/sales/journeys", sort, key, `tab=visits&day=${day}&show=${show}${salesmanId ? `&salesman=${salesmanId}` : ""}`)}
+      href={sortHref("/sales/journeys", sort, key, `tab=visits&day=${day}&show=${show}${salesmanId ? `&salesman=${salesmanId}` : ""}${stay}`)}
       active={sort.key === key}
       dir={sort.dir}
     >
@@ -144,6 +147,7 @@ export function VisitsTab({
             </Link>
           </div>
         </div>
+        {stay ? null : (
         <label className="block">
           <span className="mb-1 block text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
             Salesman
@@ -165,10 +169,11 @@ export function VisitsTab({
             ))}
           </select>
         </label>
+        )}
         <div className="flex-1" />
         {salesmanId ? (
           <Link
-            href={`/sales/journeys?tab=salesman&salesman=${salesmanId}&month=${day.slice(0, 7)}&open=${day}`}
+            href={`/sales/journeys?tab=salesman&salesman=${salesmanId}&month=${day.slice(0, 7)}&open=${day}${stay}`}
             className="text-[13px] text-brand no-underline hover:underline"
           >
             His plan for this day →
@@ -245,7 +250,7 @@ export function VisitsTab({
             <Row striped={i % 2 === 1} selected={open.has(v.id)} onClick={() => toggle(v.id)}>
               <Cell truncate={170} onClick={(e) => e.stopPropagation()}>
                 <Link
-                  href={`/sales/journeys?tab=salesman&salesman=${v.salesmanId}&month=${day.slice(0, 7)}&open=${day}`}
+                  href={`/sales/journeys?tab=salesman&salesman=${v.salesmanId}&month=${day.slice(0, 7)}&open=${day}${stay}`}
                   className="no-underline"
                 >
                   {v.salesmanName}
@@ -305,7 +310,7 @@ export function VisitsTab({
                     ...actions.items(v),
                     {
                       label: "His whole day",
-                      href: `/sales/journeys?tab=salesman&salesman=${v.salesmanId}&month=${day.slice(0, 7)}&open=${day}`,
+                      href: `/sales/journeys?tab=salesman&salesman=${v.salesmanId}&month=${day.slice(0, 7)}&open=${day}${stay}`,
                     },
                   ]}
                 />

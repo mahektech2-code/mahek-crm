@@ -62,7 +62,6 @@ const gen = (prefix: string) => `${prefix}_${randomUUID().slice(0, 12)}`;
 
 function refresh(customerId?: string) {
   try {
-    revalidatePath("/sales/price-lists");
     revalidatePath("/crm/price-lists");
     revalidatePath("/accounts/price-lists");
     revalidatePath("/founder/price-lists");
@@ -1524,17 +1523,29 @@ export async function deleteDocument(documentId: string): Promise<Result> {
 
 /* ------------------------------------------------------- a special price */
 
-/** Whoever may decide one. The bell has to reach everybody who can answer. */
-async function decidersOfPrices(): Promise<string[]> {
-  const rows = await db.execute<{ id: string }>(sql`
-    select distinct u.id
+/**
+ * Whoever may decide one. The bell has to reach everybody who can answer.
+ *
+ * Each is sent to the Requests tab in an app they actually HOLD — Accounts
+ * first, where the price desk is, then the CRM. It used to point everybody at
+ * the Sales Dashboard's copy, which has since been removed: prices are not
+ * the Sales Dashboard's subject, so a sales manager is told only where he is
+ * also a CRM or Accounts manager.
+ */
+async function decidersOfPrices(): Promise<Array<{ id: string; href: string }>> {
+  const rows = await db.execute<{ id: string; accounts: boolean }>(sql`
+    select u.id, bool_or(a.app = 'accounts') as accounts
       from users u
       left join app_access a on a.user_id = u.id
      where u.active
        and (u.role = 'admin'
-            or (a.role in ('manager', 'admin') and a.app in ('crm', 'sales', 'accounts')))
+            or (a.role in ('manager', 'admin') and a.app in ('crm', 'accounts')))
+     group by u.id
   `);
-  return [...rows].map((r) => r.id);
+  return [...rows].map((r) => ({
+    id: r.id,
+    href: r.accounts ? "/accounts/price-lists/requests" : "/crm/price-lists/requests",
+  }));
 }
 
 export async function requestSpecialPrice(input: {
@@ -1601,13 +1612,13 @@ export async function requestSpecialPrice(input: {
     const [product] = await db.execute<{ name: string }>(sql`select name from products where id = ${input.productId}`);
     await notifyUsers(
       (await decidersOfPrices())
-        .filter((uid) => uid !== ctx.user.id)
-        .map((userId) => ({
-          userId,
+        .filter((d) => d.id !== ctx.user.id)
+        .map((d) => ({
+          userId: d.id,
           title: "A special price has been asked for",
           body: `${ctx.user.name} has asked for ${customer.name} to pay a different price for ${product?.name ?? "a product"}. Reason: ${input.reason.trim()}`,
           kind: "info",
-          href: "/sales/price-lists/requests",
+          href: d.href,
         })),
     );
 

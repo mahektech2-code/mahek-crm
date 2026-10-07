@@ -1,5 +1,4 @@
 import "server-only";
-import { employeeLateral } from "@/lib/employee-link";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { expenseMonthSnapshots } from "@/db/schema";
@@ -105,16 +104,11 @@ export async function salesmanPeriods(from: string, to: string): Promise<Salesma
            coalesce(s.travel, 0) as "travelPaise",
            coalesce(s.food, 0) as "foodPaise",
            coalesce(s.lodging, 0) as "lodgingPaise",
-           coalesce(s.other, 0) as "otherPaise",
-           e.net_salary_paise as "salaryPaise"
+           coalesce(s.other, 0) as "otherPaise"
       from users u
       join app_access a on a.user_id = u.id and a.app = 'field'
       left join spend s on s.user_id = u.id
       left join distance d on d.user_id = u.id
-      /* The same one-row reading of "which employee is this" the Salary
-         screen makes, so the salary here and the salary there cannot differ —
-         and a person matching two payroll rows is still one row here. */
-      ${employeeLateral("u", "e")}
      where u.active ${onlyMine(scope, "u.id")}
      order by u.name asc
   `);
