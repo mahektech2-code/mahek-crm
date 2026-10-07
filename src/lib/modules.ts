@@ -815,7 +815,7 @@ export const APP_MODULES: AppModule[] = [
   sales("leave", "Leave", "People", "Requests waiting on a decision, and the policy behind them."),
   sales("holidays", "Holidays", "People", "The days nobody is expected to work."),
   sales("salary", "Salary", "People", "Pay, incentive and deductions. Granted deliberately."),
-  sales("expenses", "Expenses & claims", "People", "What the field spent, and what it is owed back."),
+  sales("expenses", "Expenses", "People", "Each day a salesman sends, worked out against the policy, to approve."),
   sales(
     "travel",
     "Travel ledger",
@@ -824,15 +824,15 @@ export const APP_MODULES: AppModule[] = [
   ),
   sales(
     "exceptions",
-    "Expense exceptions",
+    "Flagged expenses",
     "People",
-    "Claims outside policy, distances that do not agree and spending unlike anything this person usually does. Questions rather than refusals — the money is already spent.",
+    "Claims the policy flagged for a second look — a missing bill, an amount over the limit, distances that do not agree.",
   ),
   sales(
     "expense-policy",
     "Expense policy",
     "People",
-    "Which rules are in force, from when, and who they apply to. Read-only: a policy is authored in the Admin Console, because a manager writing the rules for what their own team's travelling may cost is the conflict order approval exists to avoid.",
+    "What a salesman is paid back for travel, meals, hotels and bills. Read-only.",
   ),
   sales(
     "roi",
