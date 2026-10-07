@@ -1,11 +1,5 @@
-import {
-  Cell,
-  Empty,
-  HeadCell,
-  MetricRow,
-  RowMenu,
-  Table,
-} from "@/components/console/parts";
+import { MetricRow } from "@/components/console/parts";
+import { TodayTable } from "./today-table";
 import { plural } from "@/components/console/words";
 import type { Salesman, JourneyPlan, VisitRow, TrackPoint } from "@/lib/services/sales-service";
 import { formatDistance, metresBetween } from "@/lib/geo";
@@ -79,6 +73,26 @@ export function TodayTab({
       adherencePct,
       note,
       hasFixes: points.length > 0,
+      /* What the modal lists: his route and what he actually walked into.
+         Plain values, so they cross to the client table. */
+      route: plan
+        ? plan.stops
+            .slice()
+            .sort((a, b) => a.sequence - b.sequence)
+            .map((st) => ({ id: st.id, name: st.customerName, status: st.status, skipReason: st.skipReason }))
+        : [],
+      city: plan?.city ?? plan?.shopCities[0] ?? null,
+      walked: salesmanVisits
+        .slice()
+        .sort((a, b) => (a.checkInAt ? new Date(a.checkInAt).getTime() : 0) - (b.checkInAt ? new Date(b.checkInAt).getTime() : 0))
+        .map((v) => ({
+          id: v.id,
+          name: v.customerName,
+          at: v.checkInAt ? new Date(v.checkInAt).toISOString() : null,
+          outcome: v.outcome,
+          wasPlanned: v.wasPlanned,
+          verified: v.verified,
+        })),
     };
   });
 
@@ -110,78 +124,7 @@ export function TodayTab({
         ]}
       />
 
-      {rows.length === 0 ? (
-        <Empty title="Nobody in the field" body="No active salesman holds the Salesman App yet." />
-      ) : (
-        <Table
-          minWidth={980}
-          head={
-            <>
-              <HeadCell width={190}>Salesman</HeadCell>
-              <HeadCell width={110}>Stops</HeadCell>
-              <HeadCell align="right" width={100}>Off plan</HeadCell>
-              <HeadCell align="right" width={100}>Distance</HeadCell>
-              <HeadCell width={120}>Adherence</HeadCell>
-              <HeadCell>What happened</HeadCell>
-              <HeadCell width={44} />
-            </>
-          }
-        >
-          {rows.map((r, i) => (
-            <tr key={r.id} className={i % 2 === 1 ? "bg-canvas" : "bg-surface"}>
-              <Cell truncate={190}>
-                <span className="flex items-center gap-2.5">
-                  <span className="flex h-7 w-7 flex-none items-center justify-center rounded-full bg-brand-soft text-[11px] font-semibold text-[#5223E0]">
-                    {r.initials}
-                  </span>
-                  <span className="font-medium text-ink">{r.name}</span>
-                </span>
-              </Cell>
-              <Cell>
-                {r.done} of {r.planned || "—"}
-              </Cell>
-              <Cell align="right">{r.offPlan}</Cell>
-              <Cell align="right">{r.km}</Cell>
-              <Cell>
-                {r.adherencePct === null ? (
-                  <span className="text-muted">—</span>
-                ) : (
-                  <span className="flex items-center gap-2">
-                    <span className="block h-1.5 w-[70px] overflow-hidden rounded-[3px] bg-canvas">
-                      <span
-                        className={
-                          "block h-full rounded-[3px] " +
-                          (r.adherencePct >= 80
-                            ? "bg-success"
-                            : r.adherencePct >= 50
-                              ? "bg-warn"
-                              : "bg-danger")
-                        }
-                        style={{ width: `${Math.min(100, r.adherencePct)}%` }}
-                      />
-                    </span>
-                    <span className="tabular-nums text-ink">{r.adherencePct}%</span>
-                  </span>
-                )}
-              </Cell>
-              <Cell truncate={280} className={r.note === "—" ? "text-muted" : undefined}>
-                {r.note}
-              </Cell>
-              <Cell align="right">
-                <RowMenu
-                  items={[
-                    { label: "See the route on a map", href: "/sales/live?view=today" },
-                    { label: "Today, stop by stop", href: `/sales/journeys?tab=salesman&salesman=${r.id}&open=${today}` },
-                    { label: "Today's visits", href: `/sales/journeys?tab=visits&salesman=${r.id}` },
-                    { label: "His month", href: `/sales/journeys?tab=salesman&salesman=${r.id}` },
-                    { label: "Assign a task", href: "/sales/tasks" },
-                  ]}
-                />
-              </Cell>
-            </tr>
-          ))}
-        </Table>
-      )}
+      <TodayTable rows={rows} today={today} />
     </div>
   );
 }

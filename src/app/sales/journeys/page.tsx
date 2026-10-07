@@ -21,7 +21,7 @@ import { Empty, ScreenHeader } from "@/components/console/parts";
 import { JourneysScreen } from "./journeys-screen";
 import { SalesmanPicker } from "./salesman-picker";
 import { SalesmanTab } from "./salesman-tab";
-import { TeamTab, teamWindow } from "./team-tab";
+import { TeamTab } from "./team-tab";
 import { TodayTab } from "./today-tab";
 import { VisitsTab } from "./visits-tab";
 
@@ -35,6 +35,11 @@ export const metadata = { title: "Journeys & visits — Sales Dashboard — Mahe
  * render before the server refuses them.
  */
 const MAX_DAYS = 31;
+
+/** The Team tab's window: the last 30 days and the next 14 — see team-tab.tsx. */
+function teamWindow(today: string): { from: string; to: string } {
+  return { from: addDays(today, -29), to: addDays(today, 13) };
+}
 const DEFAULT_DAYS = 7;
 
 const TABS = [
@@ -94,7 +99,7 @@ export default async function Page({
     <div className="p-6">
       <ScreenHeader
         title="Journeys & visits"
-        subtitle="Where each salesman was asked to go, what he said, and what he actually did. You propose a city and he answers; he picks the shops, because he knows whether that market is open on a Wednesday — and every visit is read against the route it belonged to."
+        subtitle="Where each salesman was asked to go, and what he did."
       />
 
       <div className="mb-4 flex items-center border-b border-line">

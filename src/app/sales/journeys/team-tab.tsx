@@ -1,34 +1,58 @@
+"use client";
+
+import * as React from "react";
 import Link from "next/link";
 import { addDays } from "@/lib/business-date";
 import type { Salesman } from "@/lib/services/sales-service";
 import type { TeamJourneySummary, TeamPlanDay } from "@/lib/services/journey-service";
-import {
-  DAY_STATE_LABEL,
-  areaAnswerState,
-  datesBetween,
-  dayWhere,
-} from "@/lib/journey-days";
-import { Banner, Empty, MetricRow, RowMenu } from "@/components/console/parts";
+import { DAY_STATE_LABEL, areaAnswerState, datesBetween, dayWhere } from "@/lib/journey-days";
+import { Cell, Empty, HeadCell, Row, Table } from "@/components/console/parts";
 import { plural } from "@/components/console/words";
+import { CardGrid } from "@/components/ui/card-grid";
+import { Modal } from "@/components/ui/modal";
+import { cx } from "@/components/ui/primitives";
 
 /**
  * THE WHOLE TEAM'S DAYS ON ONE SCREEN, and who owes whom an answer.
  *
- * Opening Journey planning used to land on a salesman picker and a blank card
- * — the one screen a manager opens to find out who is going where showed
- * nobody going anywhere until he chose a name, and then only a week forward.
- * This is the answer before any choice: for every salesman, the areas he was
- * allocated and whether he accepted them, today's city, the fortnight ahead
- * day by day, what is waiting on whom, and what the last thirty days came to —
- * shops allocated against shops visited, and the visits off the route.
+ * Four figures, a short list of what needs the manager, and one row per
+ * salesman that fits the screen: his areas, today, the week ahead as seven
+ * squares, what is waiting and the last thirty days. Everything longer — every
+ * area, the fortnight with its cities, each refusal's reason, the thirty days
+ * in full and the ways into his calendar — is in the modal a row opens, so the
+ * table never needs scrolling sideways and the detail is one click away
+ * without leaving the page.
  */
 
+/* The window itself is `teamWindow` in page.tsx, which reads it on the
+   server; these two must match it. */
 const AHEAD = 14;
+const STRIP = 7;
 const BEHIND = 30;
 
-export function teamWindow(today: string): { from: string; to: string } {
-  return { from: addDays(today, -(BEHIND - 1)), to: addDays(today, AHEAD - 1) };
-}
+type Leave = TeamJourneySummary["leave"][number];
+
+type TeamRow = {
+  t: Salesman;
+  area: ReturnType<typeof areaAnswerState>;
+  today: TeamPlanDay | null;
+  todayVisits: TeamJourneySummary["visits"][number] | null;
+  byDay: Map<string, TeamPlanDay>;
+  leaveOn: (d: string) => Leave | null;
+  refused: TeamPlanDay[];
+  proposed: TeamPlanDay[];
+  agreed: TeamPlanDay[];
+  bareTomorrow: boolean;
+  allocated: number;
+  visited: number;
+  skipped: number;
+  missed: number;
+  adherence: number | null;
+  offPlan: number;
+  visits: number;
+  unverified: number;
+  daysWalked: number;
+};
 
 export function TeamTab({
   team,
@@ -39,16 +63,17 @@ export function TeamTab({
   summary: TeamJourneySummary;
   today: string;
 }) {
+  const [openId, setOpenId] = React.useState<string | null>(null);
+
   const active = team.filter((t) => t.active);
-  const ahead = datesBetween(today, addDays(today, AHEAD - 1));
   const tomorrow = addDays(today, 1);
   const holiday = new Map(summary.holidays.map((h) => [h.onDate, h.name]));
 
-  const rows = active.map((t) => {
+  const rows: TeamRow[] = active.map((t) => {
     const plans = summary.plans.filter((p) => p.userId === t.id);
     const visits = summary.visits.filter((v) => v.userId === t.id);
     const leave = summary.leave.filter((l) => l.userId === t.id);
-    const onLeave = (d: string) => leave.find((l) => l.fromDate <= d && l.toDate >= d) ?? null;
+    const leaveOn = (d: string) => leave.find((l) => l.fromDate <= d && l.toDate >= d) ?? null;
     const future = plans.filter((p) => p.planDate >= today);
     const past = plans.filter((p) => p.planDate < today);
 
@@ -69,11 +94,11 @@ export function TeamTab({
       today: plans.find((p) => p.planDate === today) ?? null,
       todayVisits: visits.find((v) => v.day === today) ?? null,
       byDay: new Map(plans.map((p) => [p.planDate, p])),
-      onLeave,
+      leaveOn,
       refused: future.filter((p) => p.dayState === "refused"),
       proposed: future.filter((p) => p.dayState === "proposed"),
       agreed: future.filter((p) => p.dayState === "agreed"),
-      bareTomorrow: !plans.some((p) => p.planDate === tomorrow) && !onLeave(tomorrow) && !holiday.has(tomorrow),
+      bareTomorrow: !plans.some((p) => p.planDate === tomorrow) && !leaveOn(tomorrow) && !holiday.has(tomorrow),
       allocated,
       visited,
       skipped,
@@ -86,279 +111,496 @@ export function TeamTab({
     };
   });
 
-  const sum = (f: (r: (typeof rows)[number]) => number) => rows.reduce((n, r) => n + f(r), 0);
-  const refused = rows.flatMap((r) => r.refused.map((p) => ({ r, p })));
-  const areaAsks = rows.filter((r) => r.area.key === "change-pending");
-  const areaGaps = rows.filter((r) => r.area.key === "none-allocated");
+  const sum = (f: (r: TeamRow) => number) => rows.reduce((n, r) => n + f(r), 0);
   const teamAllocated = sum((r) => r.allocated);
+  const waitingOnYou = sum((r) => r.refused.length) + rows.filter((r) => r.area.key === "change-pending").length;
+  const waitingOnThem = sum((r) => r.proposed.length + r.agreed.length);
+  const bare = rows.filter((r) => r.bareTomorrow).length;
+
+  /* What needs the manager, one line each — the old banners, without the prose. */
+  const needs = rows.flatMap((r) => [
+    ...r.refused.map((p) => ({
+      key: `r:${p.planId}`,
+      id: r.t.id,
+      tone: "danger" as const,
+      who: r.t.name,
+      what: `refused ${shortDate(p.planDate)}${p.city ? ` · ${p.city}` : ""}`,
+    })),
+    ...(r.area.key === "change-pending"
+      ? [{ key: `a:${r.t.id}`, id: r.t.id, tone: "warn" as const, who: r.t.name, what: "asked for different areas" }]
+      : []),
+    ...(r.area.key === "none-allocated"
+      ? [{ key: `n:${r.t.id}`, id: r.t.id, tone: "warn" as const, who: r.t.name, what: "has no area allocated" }]
+      : []),
+  ]);
+
+  const strip = datesBetween(today, addDays(today, STRIP - 1));
+  const open = rows.find((r) => r.t.id === openId) ?? null;
 
   return (
-    <div>
-      <MetricRow
-        metrics={[
-          {
-            label: "Waiting on you",
-            value: String(refused.length + areaAsks.length),
-            sub: `${plural(refused.length, "refused day")} · ${plural(areaAsks.length, "area change")}`,
-            tone: refused.length + areaAsks.length ? "danger" : undefined,
-          },
-          {
-            label: "Waiting on them",
-            value: String(sum((r) => r.proposed.length + r.agreed.length)),
-            sub: `${sum((r) => r.proposed.length)} to answer · ${sum((r) => r.agreed.length)} to pick shops`,
-            tone: sum((r) => r.proposed.length + r.agreed.length) ? "warn" : undefined,
-          },
-          {
-            label: "Nothing tomorrow",
-            value: String(rows.filter((r) => r.bareTomorrow).length),
-            sub: `of ${active.length} in the field`,
-            tone: rows.some((r) => r.bareTomorrow) ? "warn" : "success",
-          },
-          {
-            label: `Last ${BEHIND} days`,
-            value: teamAllocated ? `${Math.round((sum((r) => r.visited) / teamAllocated) * 100)}%` : "—",
-            sub: `${sum((r) => r.visited)} of ${teamAllocated} allocated shops visited`,
-          },
-          {
-            label: "Off the route",
-            value: String(sum((r) => r.offPlan)),
-            sub: `of ${sum((r) => r.visits)} visits`,
-          },
-        ]}
-      />
+    <div className="space-y-4">
+      <CardGrid min={170} gap="gap-3">
+        <Tile label="Waiting on you" value={String(waitingOnYou)} tone={waitingOnYou ? "danger" : undefined} />
+        <Tile label="Waiting on them" value={String(waitingOnThem)} tone={waitingOnThem ? "warn" : undefined} />
+        <Tile label="Nothing tomorrow" value={`${bare} of ${active.length}`} tone={bare ? "warn" : undefined} />
+        <Tile
+          label={`Route kept · ${BEHIND} days`}
+          value={teamAllocated ? `${Math.round((sum((r) => r.visited) / teamAllocated) * 100)}%` : "—"}
+          sub={teamAllocated ? `${sum((r) => r.visited)} of ${teamAllocated} shops` : undefined}
+        />
+      </CardGrid>
 
-      {refused.length ? (
-        <Banner
-          tone="danger"
-          title={`${plural(refused.length, "day")} came back refused`}
-          body={
-            <span className="flex flex-col gap-0.5">
-              {refused.slice(0, 6).map(({ r, p }) => (
-                <Link
-                  key={p.planId}
-                  href={dayHref(r.t.id, p.planDate)}
-                  className="text-[13px] text-body no-underline hover:underline"
+      {needs.length ? (
+        <section className="rounded-[6px] border border-line bg-surface">
+          <div className="border-b border-divider px-4 py-2.5 text-[13px] font-semibold text-ink">
+            Needs you <span className="ml-1 font-normal text-muted">{needs.length}</span>
+          </div>
+          <ul className="divide-y divide-divider">
+            {needs.slice(0, 8).map((n) => (
+              <li key={n.key}>
+                <button
+                  type="button"
+                  onClick={() => setOpenId(n.id)}
+                  className="flex w-full items-center gap-2.5 px-4 py-2 text-left text-[13px] hover:bg-canvas"
                 >
-                  <span className="font-medium text-ink">{r.t.name}</span> · {shortDate(p.planDate)} ·{" "}
-                  {p.city} — “{p.refusalReason}”{p.counterCity ? `, wants ${p.counterCity}` : ""}
-                </Link>
-              ))}
-              {refused.length > 6 ? <span className="text-muted">and {refused.length - 6} more</span> : null}
-            </span>
-          }
-        />
-      ) : null}
-
-      {areaAsks.length || areaGaps.length ? (
-        <Banner
-          tone="warn"
-          title="Areas"
-          body={
-            <span className="flex flex-col gap-0.5">
-              {areaAsks.map((r) => (
-                <span key={r.t.id}>
-                  <span className="font-medium text-ink">{r.t.name}</span>: {r.area.text}
-                  {r.t.areaAnswer?.reason ? ` — “${r.t.areaAnswer.reason}”` : ""} ·{" "}
-                  <Link href="/sales/approvals" className="text-brand no-underline hover:underline">
-                    decide it
-                  </Link>
-                </span>
-              ))}
-              {areaGaps.map((r) => (
-                <span key={r.t.id}>
-                  <span className="font-medium text-ink">{r.t.name}</span> has no area allocated, so his handset shows
-                  no shops ·{" "}
-                  <Link href={`/sales/people/${r.t.id}`} className="text-brand no-underline hover:underline">
-                    allocate one
-                  </Link>
-                </span>
-              ))}
-            </span>
-          }
-        />
+                  <span
+                    className={cx("block size-2 flex-none rounded-full", n.tone === "danger" ? "bg-danger" : "bg-warn")}
+                  />
+                  <span className="font-medium text-ink">{n.who}</span>
+                  <span className="truncate text-muted">{n.what}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
       ) : null}
 
       {rows.length === 0 ? (
         <Empty title="Nobody in the field" body="No active salesman holds the Salesman App yet." />
       ) : (
-        <div className="overflow-x-auto rounded-[6px] border border-line bg-surface">
-          <table className="w-full min-w-[1080px] border-collapse text-[13px]">
-            <thead className="border-b border-line bg-canvas">
-              <tr>
-                {[
-                  ["Salesman", "w-[170px]"],
-                  ["Areas allocated", "w-[190px]"],
-                  ["Today", "w-[140px]"],
-                  [`Next ${AHEAD} days`, ""],
-                  ["Waiting", "w-[130px]"],
-                  [`Last ${BEHIND} days`, "w-[160px]"],
-                  ["", "w-[44px]"],
-                ].map(([h, w]) => (
-                  <th
-                    key={h || "menu"}
-                    className={`px-3 py-2 text-left text-[11px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase ${w}`}
-                  >
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.t.id} className="border-b border-divider align-top last:border-0 hover:bg-canvas/60">
-                  <td className="px-3 py-2.5">
-                    <Link
-                      href={`/sales/journeys?tab=salesman&salesman=${r.t.id}`}
-                      className="flex items-center gap-2.5 no-underline"
-                    >
-                      <span className="flex h-7 w-7 flex-none items-center justify-center rounded-full bg-brand-soft text-[11px] font-semibold text-[#5223E0]">
-                        {r.t.initials}
-                      </span>
-                      <span className="min-w-0">
-                        <span className="block truncate font-medium text-ink hover:text-brand">{r.t.name}</span>
-                        <span className="block text-[11px] text-muted">
-                          {plural(Number(r.t.customerCount), "shop")}
-                        </span>
-                      </span>
-                    </Link>
-                  </td>
-
-                  <td className="px-3 py-2.5">
-                    <span className="block truncate text-body" title={areaList(r.t)}>
-                      {areaList(r.t) || <span className="text-muted">None</span>}
+        <Table
+          minWidth={910}
+          head={
+            <>
+              <HeadCell width={200}>Salesman</HeadCell>
+              <HeadCell width={140}>Areas</HeadCell>
+              <HeadCell width={150}>Today</HeadCell>
+              <HeadCell width={180}>Next {STRIP} days</HeadCell>
+              <HeadCell width={140}>Waiting</HeadCell>
+              <HeadCell width={100}>Last {BEHIND} days</HeadCell>
+            </>
+          }
+        >
+          {rows.map((r, i) => {
+            const areas = areaNames(r.t);
+            return (
+              <Row key={r.t.id} striped={i % 2 === 1} onClick={() => setOpenId(r.t.id)}>
+                <Cell>
+                  <span className="flex items-center gap-2.5">
+                    <Avatar initials={r.t.initials} />
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium text-ink">{r.t.name}</span>
+                      <span className="block text-[11px] text-muted">{plural(Number(r.t.customerCount), "shop")}</span>
                     </span>
-                    <span className={"block text-[11px] " + toneText(r.area.tone)} title={r.t.areaAnswer?.reason ?? undefined}>
-                      {r.area.text}
-                    </span>
-                  </td>
-
-                  <td className="px-3 py-2.5">
-                    {r.today ? (
+                  </span>
+                </Cell>
+                <Cell title={areas.join(", ")}>
+                  <span className="block truncate text-body">
+                    {areas.length ? (
                       <>
-                        <span className="block truncate font-medium text-ink">{dayWhere(r.today).text ?? "—"}</span>
-                        <span className="block text-[11px] text-muted">
-                          {r.today.dayState === "planned"
-                            ? `${r.today.visited}/${r.today.stops} visited${r.today.skipped ? ` · ${r.today.skipped} skipped` : ""}`
-                            : DAY_STATE_LABEL[r.today.dayState]}
-                          {r.todayVisits?.offPlan ? ` · +${r.todayVisits.offPlan} off route` : ""}
-                        </span>
-                      </>
-                    ) : r.onLeave(today) ? (
-                      <span className="text-muted">On leave</span>
-                    ) : holiday.has(today) ? (
-                      <span className="text-muted">Holiday</span>
-                    ) : (
-                      <span className="text-muted">
-                        Nothing planned
-                        {r.todayVisits ? ` · ${plural(r.todayVisits.visits, "visit")}` : ""}
-                      </span>
-                    )}
-                  </td>
-
-                  <td className="px-3 py-2.5">
-                    <span className="flex gap-[2px]">
-                      {ahead.map((d) => {
-                        const p = r.byDay.get(d);
-                        const leave = r.onLeave(d);
-                        const off = holiday.get(d);
-                        return (
-                          <Link
-                            key={d}
-                            href={dayHref(r.t.id, d)}
-                            title={`${shortDate(d)} — ${dayTitle(p, leave?.state ?? null, off ?? null)}`}
-                            className={
-                              "flex h-9 w-[28px] flex-none flex-col items-center justify-center rounded-[3px] text-[10px] leading-3 no-underline hover:no-underline hover:ring-1 hover:ring-brand " +
-                              cellSkin(p, Boolean(leave), Boolean(off), d === today)
-                            }
-                          >
-                            <span className="font-medium">{Number(d.slice(8))}</span>
-                            <span className="w-full truncate px-0.5 text-center">
-                              {p && dayWhere(p).text ? dayWhere(p).text!.slice(0, 4) : leave ? "lv" : off ? "hol" : ""}
-                            </span>
-                          </Link>
-                        );
-                      })}
-                    </span>
-                  </td>
-
-                  <td className="px-3 py-2.5 text-[12px]">
-                    {r.refused.length ? (
-                      <span className="block text-danger">{plural(r.refused.length, "refusal")} for you</span>
-                    ) : null}
-                    {r.proposed.length ? (
-                      <span className="block text-warn-ink">{r.proposed.length} for him to answer</span>
-                    ) : null}
-                    {r.agreed.length ? (
-                      <span className="block text-[#5223E0]">{r.agreed.length} to pick shops</span>
-                    ) : null}
-                    {r.bareTomorrow ? <span className="block text-muted">Nothing tomorrow</span> : null}
-                    {!r.refused.length && !r.proposed.length && !r.agreed.length && !r.bareTomorrow ? (
-                      <span className="text-muted">Nothing</span>
-                    ) : null}
-                  </td>
-
-                  <td className="px-3 py-2.5 text-[12px]">
-                    {r.allocated ? (
-                      <>
-                        <span className="flex items-center gap-2">
-                          <span className="block h-1.5 w-[64px] overflow-hidden rounded-[3px] bg-divider">
-                            <span
-                              className={
-                                "block h-full " +
-                                (r.adherence! >= 80 ? "bg-success" : r.adherence! >= 50 ? "bg-warn" : "bg-danger")
-                              }
-                              style={{ width: `${r.adherence}%` }}
-                            />
-                          </span>
-                          <span className="text-ink tabular-nums">{r.adherence}%</span>
-                        </span>
-                        <span className="block text-muted">
-                          {r.visited}/{r.allocated} shops · {plural(r.daysWalked, "day")}
-                        </span>
-                        {r.missed ? <span className="block text-danger">{r.missed} missed, no reason</span> : null}
+                        {areas[0]}
+                        {areas.length > 1 ? <span className="text-muted"> +{areas.length - 1}</span> : null}
                       </>
                     ) : (
-                      <span className="block text-muted">No route walked</span>
+                      <span className="text-muted">None</span>
                     )}
-                    <span className="block text-muted">
-                      {plural(r.visits, "visit")}
-                      {r.offPlan ? ` · ${r.offPlan} off route` : ""}
-                      {r.unverified ? ` · ${r.unverified} unverified` : ""}
+                  </span>
+                  <span className={cx("block truncate text-[11px]", toneText(r.area.tone))}>{shortArea(r.area.key)}</span>
+                </Cell>
+                <Cell>
+                  <TodayLine r={r} today={today} holiday={holiday.get(today) ?? null} />
+                </Cell>
+                <Cell>
+                  <span className="flex gap-[3px]">
+                    {strip.map((d) => {
+                      const p = r.byDay.get(d);
+                      return (
+                        <span
+                          key={d}
+                          title={`${shortDate(d)} — ${dayTitle(p, r.leaveOn(d)?.state ?? null, holiday.get(d) ?? null)}`}
+                          className={cx(
+                            "flex h-7 w-[20px] flex-none items-center justify-center rounded-[3px] text-[10px] font-medium",
+                            cellSkin(p, Boolean(r.leaveOn(d)), holiday.has(d), d === today),
+                          )}
+                        >
+                          {Number(d.slice(8))}
+                        </span>
+                      );
+                    })}
+                  </span>
+                </Cell>
+                <Cell>
+                  <WaitingChips r={r} />
+                </Cell>
+                <Cell>
+                  {r.adherence == null ? (
+                    <span className="text-[12px] text-muted">No route</span>
+                  ) : (
+                    <span className="flex items-center gap-1.5">
+                      <Bar pct={r.adherence} />
+                      <span className="text-[12px] text-ink tabular-nums">{r.adherence}%</span>
                     </span>
-                  </td>
-
-                  <td className="px-2 py-2.5 text-right">
-                    <RowMenu
-                      items={[
-                        { label: "His calendar", href: `/sales/journeys?tab=salesman&salesman=${r.t.id}` },
-                        { label: "His days as a list", href: `/sales/journeys?tab=salesman&salesman=${r.t.id}&view=list` },
-                        { label: "Propose days", href: `/sales/journeys?tab=salesman&salesman=${r.t.id}&view=propose` },
-                        { label: "Today's visits", href: `/sales/journeys?tab=visits&salesman=${r.t.id}` },
-                        { label: "His trail today", href: "/sales/live?view=today" },
-                        { label: "Change his areas", href: `/sales/people/${r.t.id}` },
-                      ]}
-                    />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                  )}
+                </Cell>
+              </Row>
+            );
+          })}
+        </Table>
       )}
-      <p className="mt-2 text-[12px] text-muted">
-        Each square is a day; the letters are the start of its city. Green is a route ready or walked, amber a city
-        waiting on his answer, red one he refused, violet one he agreed and has not picked shops for. Click a square to
-        open that day.
-      </p>
+
+      <Legend />
+
+      {open ? (
+        <SalesmanModal
+          key={open.t.id}
+          r={open}
+          today={today}
+          holiday={holiday}
+          onClose={() => setOpenId(null)}
+        />
+      ) : null}
     </div>
   );
 }
 
-function areaList(t: Salesman): string {
-  return t.territories
-    .filter((a) => a.kind !== "region")
-    .map((a) => a.value)
-    .join(", ");
+/* ------------------------------------------------------------------ modal */
+
+function SalesmanModal({
+  r,
+  today,
+  holiday,
+  onClose,
+}: {
+  r: TeamRow;
+  today: string;
+  holiday: Map<string, string>;
+  onClose: () => void;
+}) {
+  const ahead = datesBetween(today, addDays(today, AHEAD - 1));
+  const areas = areaNames(r.t);
+  const base = `/sales/journeys?tab=salesman&salesman=${r.t.id}`;
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      width={780}
+      title={
+        <span className="flex items-center gap-3">
+          <Avatar initials={r.t.initials} size="lg" />
+          <span className="min-w-0">
+            <span className="block text-[17px] leading-6">{r.t.name}</span>
+            <span className="block text-[12px] font-normal text-muted">
+              {plural(Number(r.t.customerCount), "shop")} in his book
+            </span>
+          </span>
+        </span>
+      }
+      footer={
+        <>
+          <ActionLink href={`/sales/live?salesman=${r.t.id}&view=today`} newTab>
+            Live map
+          </ActionLink>
+          <ActionLink href={`/sales/journeys?tab=visits&salesman=${r.t.id}`}>Today&rsquo;s visits</ActionLink>
+          <ActionLink href={`/sales/people/${r.t.id}`}>Change areas</ActionLink>
+          <ActionLink href={`${base}&view=propose`}>Propose days</ActionLink>
+          <ActionLink href={base} primary>
+            Open calendar
+          </ActionLink>
+        </>
+      }
+    >
+      <div className="space-y-5">
+        <Section title="Areas">
+          {areas.length ? (
+            <span className="flex flex-wrap gap-1.5">
+              {areas.map((a) => (
+                <span key={a} className="rounded-[4px] bg-canvas px-2 py-0.5 text-[12px] text-body">
+                  {a}
+                </span>
+              ))}
+            </span>
+          ) : (
+            null
+          )}
+          <p className={cx(areas.length ? "mt-1.5 text-[12px]" : "text-[13px]", toneText(r.area.tone))}>
+            {r.area.text}
+            {r.t.areaAnswer?.reason ? ` — “${r.t.areaAnswer.reason}”` : ""}
+          </p>
+        </Section>
+
+        <Section title="Today">
+          <TodayLine r={r} today={today} holiday={holiday.get(today) ?? null} />
+        </Section>
+
+        {r.refused.length || r.proposed.length || r.agreed.length ? (
+          <Section title="Waiting">
+            <ul className="space-y-1 text-[13px]">
+              {r.refused.map((p) => (
+                <li key={p.planId}>
+                  <Link href={dayHref(r.t.id, p.planDate)} className="text-danger no-underline hover:underline">
+                    {shortDate(p.planDate)} · {p.city ?? "no city"} — refused
+                  </Link>
+                  <span className="text-muted">
+                    {p.refusalReason ? ` “${p.refusalReason}”` : ""}
+                    {p.counterCity ? `, wants ${p.counterCity}` : ""}
+                  </span>
+                </li>
+              ))}
+              {r.proposed.length ? (
+                <li className="text-warn-ink">{plural(r.proposed.length, "day")} for him to answer</li>
+              ) : null}
+              {r.agreed.length ? (
+                <li className="text-[#5223E0]">{plural(r.agreed.length, "day")} agreed, shops not picked</li>
+              ) : null}
+            </ul>
+          </Section>
+        ) : null}
+
+        <Section title={`Next ${AHEAD} days`}>
+          <div className="grid grid-cols-7 gap-1.5">
+            {ahead.map((d) => {
+              const p = r.byDay.get(d);
+              const leave = r.leaveOn(d);
+              const off = holiday.get(d);
+              const where = p ? dayWhere(p).text : null;
+              return (
+                <Link
+                  key={d}
+                  href={dayHref(r.t.id, d)}
+                  title={dayTitle(p, leave?.state ?? null, off ?? null)}
+                  className={cx(
+                    "flex min-h-[54px] flex-col rounded-[4px] px-1.5 py-1 text-[11px] leading-[14px] no-underline hover:no-underline hover:ring-1 hover:ring-brand",
+                    cellSkin(p, Boolean(leave), Boolean(off), d === today),
+                  )}
+                >
+                  <span className="font-semibold">{shortDay(d)}</span>
+                  <span className="truncate">{where ?? (leave ? "Leave" : off ? "Holiday" : "—")}</span>
+                  {p ? <span className="truncate opacity-80">{DAY_STATE_LABEL[p.dayState]}</span> : null}
+                </Link>
+              );
+            })}
+          </div>
+        </Section>
+
+        <Section title={`Last ${BEHIND} days`}>
+          <div className="grid grid-cols-4 gap-2">
+            <Figure label="Route kept" value={r.adherence == null ? "—" : `${r.adherence}%`} />
+            <Figure label="Shops visited" value={r.allocated ? `${r.visited}/${r.allocated}` : "—"} />
+            <Figure label="Missed" value={String(r.missed)} tone={r.missed ? "danger" : undefined} />
+            <Figure label="Days walked" value={String(r.daysWalked)} />
+            <Figure label="Visits" value={String(r.visits)} />
+            <Figure label="Off route" value={String(r.offPlan)} />
+            <Figure label="Unverified" value={String(r.unverified)} tone={r.unverified ? "warn" : undefined} />
+            <Figure label="Skipped" value={String(r.skipped)} />
+          </div>
+        </Section>
+      </div>
+    </Modal>
+  );
+}
+
+/* ------------------------------------------------------------- the pieces */
+
+function TodayLine({ r, today, holiday }: { r: TeamRow; today: string; holiday: string | null }) {
+  if (r.today) {
+    const where = dayWhere(r.today).text ?? "No city";
+    return (
+      <>
+        <span className="block truncate font-medium text-ink">{where}</span>
+        <span className="block truncate text-[11px] text-muted">
+          {r.today.dayState === "planned"
+            ? `${r.today.visited}/${r.today.stops} visited`
+            : DAY_STATE_LABEL[r.today.dayState]}
+          {r.todayVisits?.offPlan ? ` · +${r.todayVisits.offPlan} off route` : ""}
+        </span>
+      </>
+    );
+  }
+  const label = r.leaveOn(today) ? "On leave" : holiday ? "Holiday" : "Nothing planned";
+  return (
+    <>
+      <span className="block text-muted">{label}</span>
+      {r.todayVisits ? (
+        <span className="block text-[11px] text-muted">{plural(r.todayVisits.visits, "visit")}</span>
+      ) : null}
+    </>
+  );
+}
+
+function WaitingChips({ r }: { r: TeamRow }) {
+  const chips: Array<{ n: number; cls: string; title: string }> = [
+    { n: r.refused.length, cls: "bg-danger-soft text-danger", title: "refused — yours to answer" },
+    { n: r.proposed.length, cls: "bg-warn-soft text-warn-ink", title: "proposed — his to answer" },
+    { n: r.agreed.length, cls: "bg-brand-soft text-[#5223E0]", title: "agreed — shops not picked" },
+  ].filter((c) => c.n > 0);
+  if (!chips.length) {
+    return r.bareTomorrow ? (
+      <span className="text-[12px] text-warn-ink">Nothing tomorrow</span>
+    ) : (
+      <span className="text-[12px] text-muted">—</span>
+    );
+  }
+  return (
+    <span className="flex gap-1">
+      {chips.map((c) => (
+        <span key={c.title} title={`${c.n} ${c.title}`} className={cx("rounded-[9px] px-2 text-[11px] font-semibold tabular-nums", c.cls)}>
+          {c.n}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function Legend() {
+  const items = [
+    ["bg-success-soft", "Route set"],
+    ["bg-brand-soft", "Agreed, no shops"],
+    ["bg-warn-soft", "Awaiting his answer"],
+    ["bg-danger-soft", "Refused"],
+    ["bg-divider", "Leave / holiday"],
+  ];
+  return (
+    <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted">
+      {items.map(([cls, label]) => (
+        <span key={label} className="flex items-center gap-1.5">
+          <span className={cx("block size-2.5 rounded-[2px]", cls)} />
+          {label}
+        </span>
+      ))}
+      <span>Click a salesman for his detail.</span>
+    </p>
+  );
+}
+
+function Tile({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: "danger" | "warn" }) {
+  return (
+    <div className="rounded-[6px] border border-line bg-surface px-4 py-3">
+      <div className="text-[12px] text-muted">{label}</div>
+      <div
+        className={cx(
+          "mt-0.5 text-[22px] leading-7 font-semibold tabular-nums",
+          tone === "danger" ? "text-danger" : tone === "warn" ? "text-warn-ink" : "text-ink",
+        )}
+      >
+        {value}
+      </div>
+      {sub ? <div className="text-[12px] text-muted">{sub}</div> : null}
+    </div>
+  );
+}
+
+function Figure({ label, value, tone }: { label: string; value: string; tone?: "danger" | "warn" }) {
+  return (
+    <div className="rounded-[4px] bg-canvas px-3 py-2">
+      <div className="text-[11px] text-muted">{label}</div>
+      <div
+        className={cx(
+          "text-[15px] font-semibold tabular-nums",
+          tone === "danger" ? "text-danger" : tone === "warn" ? "text-warn-ink" : "text-ink",
+        )}
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section>
+      <h3 className="mb-1.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">{title}</h3>
+      {children}
+    </section>
+  );
+}
+
+function ActionLink({
+  href,
+  children,
+  primary = false,
+  newTab = false,
+}: {
+  href: string;
+  children: React.ReactNode;
+  primary?: boolean;
+  newTab?: boolean;
+}) {
+  return (
+    <Link
+      href={href}
+      target={newTab ? "_blank" : undefined}
+      rel={newTab ? "noopener" : undefined}
+      className={cx(
+        "inline-flex h-8 items-center rounded-[4px] px-3 text-[13px] no-underline hover:no-underline",
+        primary
+          ? "bg-brand font-medium text-white hover:opacity-90"
+          : "border border-line bg-surface text-body hover:bg-canvas",
+      )}
+    >
+      {children}
+    </Link>
+  );
+}
+
+function Avatar({ initials, size = "md" }: { initials: string; size?: "md" | "lg" }) {
+  return (
+    <span
+      className={cx(
+        "flex flex-none items-center justify-center rounded-full bg-brand-soft font-semibold text-[#5223E0]",
+        size === "lg" ? "size-10 text-[13px]" : "size-7 text-[11px]",
+      )}
+    >
+      {initials}
+    </span>
+  );
+}
+
+function Bar({ pct }: { pct: number }) {
+  return (
+    <span className="block h-1.5 w-[44px] overflow-hidden rounded-[3px] bg-divider">
+      <span
+        className={cx("block h-full", pct >= 80 ? "bg-success" : pct >= 50 ? "bg-warn" : "bg-danger")}
+        style={{ width: `${Math.min(100, pct)}%` }}
+      />
+    </span>
+  );
+}
+
+/* ---------------------------------------------------------------- helpers */
+
+function areaNames(t: Salesman): string[] {
+  return t.territories.filter((a) => a.kind !== "region").map((a) => a.value);
+}
+
+/** The area state in two or three words, for a table cell. The modal has the sentence. */
+function shortArea(key: ReturnType<typeof areaAnswerState>["key"]): string {
+  switch (key) {
+    case "none-allocated":
+      return "Not allocated";
+    case "unanswered":
+      return "Not answered";
+    case "accepted":
+      return "Accepted";
+    case "accepted-earlier":
+      return "Accepted earlier set";
+    case "change-pending":
+      return "Asked to change";
+    case "change-approved":
+      return "Change approved";
+    case "change-declined":
+      return "Change declined";
+  }
 }
 
 function dayHref(salesmanId: string, date: string) {
@@ -399,9 +641,28 @@ function toneText(tone: string): string {
         : "text-muted";
 }
 
-function shortDate(iso: string): string {
+/*
+ * Dates are spelled by hand, not with Intl. This is a client component and
+ * it is rendered twice — on the server and in the browser — and the two ICU
+ * builds disagree about punctuation ("Mon 12 Oct" against "Mon, 12 Oct"),
+ * which React reports as a hydration mismatch on every square.
+ */
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function parts(iso: string) {
   const [y, m, d] = iso.split("-").map(Number);
-  return new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }).format(
-    new Date(Date.UTC(y, m - 1, d)),
-  );
+  return { weekday: WEEKDAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()], day: d, month: MONTHS[m - 1] };
+}
+
+/** "Mon 12 Oct". */
+function shortDate(iso: string): string {
+  const p = parts(iso);
+  return `${p.weekday} ${p.day} ${p.month}`;
+}
+
+/** "Mon 12" — a day cell's heading. */
+function shortDay(iso: string): string {
+  const p = parts(iso);
+  return `${p.weekday} ${p.day}`;
 }
