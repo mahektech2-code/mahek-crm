@@ -237,7 +237,7 @@ export const APPS: AppDefinition[] = [
      * the apps their role blueprint names, which is also what makes a
      * candidate `hired` (Hire PRD §1.1, P8). What somebody may do inside it is
      * their Hire ROLE — recruiter, interviewer, hiring manager, onboarding,
-     * HR head, admin — set on Hire's own Team screen (`lib/hire/roles.ts`).
+     * HR head, admin — set on the Access screen beside the grant (`lib/hire/roles.ts`).
      */
     name: "Hire",
     initials: "HI",

@@ -35,6 +35,7 @@ import { LEVEL_LABELS } from "@/lib/hat-labels";
 import { getApp, type AppId } from "@/lib/apps";
 import { ERP_POWERS, ERP_POWER_LABEL } from "@/lib/erp/powers";
 import { HRMS_POWERS, HRMS_POWER_LABEL } from "@/lib/hrms/powers";
+import { HIRE_ROLES, LEVEL_FOR_ROLE, ROLE_LABEL as HIRE_ROLE_LABEL, ROLE_SENTENCE as HIRE_ROLE_SENTENCE, defaultRoleFor, type HireRole } from "@/lib/hire/roles";
 import {
   candidatesForGrant,
   employeesToLink,
@@ -827,6 +828,10 @@ function AccessDialog({
      payroll. Unticking HRMS takes them with it. */
   const hrmsPowersBefore = React.useMemo(() => basis?.hrmsPowers ?? [], [basis]);
   const [hrmsPowers, setHrmsPowers] = React.useState<string[]>(hrmsPowersBefore);
+  /* HIRE'S ROLE — their job inside Hire. Null means the level decides.
+     Unticking Hire takes it with it, like the powers above. */
+  const hireRoleBefore = basis?.hireRole ?? null;
+  const [hireRole, setHireRole] = React.useState<string | null>(hireRoleBefore);
   /* THE ERP DESIGNATION — the name on their ERP access, and the link an edit
      to it follows. Picking one sets the screens, level and powers below;
      changing any of those afterwards leaves the name and marks them
@@ -865,6 +870,7 @@ function AccessDialog({
     setRoleDraft(levelsOf(existing));
     setPowers(existing?.erpPowers ?? []);
     setHrmsPowers(existing?.hrmsPowers ?? []);
+    setHireRole(existing?.hireRole ?? null);
     setDesignationId(existing?.erpDesignation?.id ?? null);
     setFieldError({});
     setStep("access");
@@ -894,6 +900,7 @@ function AccessDialog({
       })),
       erpPowers: draft.erp ? powers : [],
       hrmsPowers: draft.hrms ? hrmsPowers : [],
+      hireRole: draft.hire ? hireRole : null,
       erpDesignationId: draft.erp ? designationId : null,
       /* No level on the account. It is DERIVED from the per-app levels by the
          action, and the select that used to sit here could make a platform
@@ -937,7 +944,9 @@ function AccessDialog({
   const designationName = (id: string | null) => (id ? (designations.find((d) => d.id === id)?.name ?? "a removed designation") : null);
   const designationNow = designationAfter ? (designations.find((d) => d.id === designationAfter) ?? null) : null;
   const standingAfter = designationNow ? standingOf(designationNow, draft.erp ?? [], levelOf("erp"), powers) : null;
-  const changes = { ...moduleChanges, any: moduleChanges.any || powersChanged || hrmsPowersChanged || designationChanged };
+  const hireRoleAfter = draft.hire ? hireRole : null;
+  const hireRoleChanged = hireRoleAfter !== hireRoleBefore;
+  const changes = { ...moduleChanges, any: moduleChanges.any || powersChanged || hrmsPowersChanged || designationChanged || hireRoleChanged };
 
   return (
     <Modal
@@ -1010,6 +1019,8 @@ function AccessDialog({
           onPowers={setPowers}
           hrmsPowers={hrmsPowers}
           onHrmsPowers={setHrmsPowers}
+          hireRole={hireRole}
+          onHireRole={setHireRole}
           designations={designations}
           designationId={designationId}
           onDesignation={setDesignationId}
@@ -1025,6 +1036,7 @@ function AccessDialog({
           levels={levelsAfter}
           powerChange={powersChanged ? { before: powersBefore, after: powersAfter } : null}
           hrmsPowerChange={hrmsPowersChanged ? { before: hrmsPowersBefore, after: hrmsPowersAfter } : null}
+          hireRoleChange={hireRoleChanged && draft.hire ? { before: hireRoleBefore, after: hireRoleAfter, level: levelOf("hire") } : null}
           designationChange={
             designationChanged || (designationNow && standingAfter && !standingAfter.matches)
               ? { before: designationName(designationBefore), after: designationName(designationAfter), standing: standingAfter }
@@ -1353,6 +1365,8 @@ function AccessStep({
   onPowers,
   hrmsPowers,
   onHrmsPowers,
+  hireRole,
+  onHireRole,
   designations,
   designationId,
   onDesignation,
@@ -1377,6 +1391,9 @@ function AccessStep({
   /** HRMS's special powers, drawn under HRMS while it is ticked. */
   hrmsPowers: string[];
   onHrmsPowers: (next: string[]) => void;
+  /** Their job inside Hire; null lets the level decide. */
+  hireRole: string | null;
+  onHireRole: (role: string | null) => void;
   designations: ErpDesignationDef[];
   designationId: string | null;
   onDesignation: (id: string | null) => void;
@@ -1392,6 +1409,12 @@ function AccessStep({
     onDraft({ ...draft, erp: f.modules });
     onRoleDraft({ ...roleDraft, erp: f.level as RoleId });
     onPowers(f.powers);
+  };
+  /* PICKING A HIRE ROLE SETS THE LEVEL IT NEEDS, the way a designation sets
+     the ERP's: an HR Head is a manager of Hire, an Admin its administrator. */
+  const pickHireRole = (role: string | null) => {
+    onHireRole(role);
+    if (role) onRoleDraft({ ...roleDraft, hire: LEVEL_FOR_ROLE[role as HireRole] as RoleId });
   };
   const current = designationId ? (designations.find((d) => d.id === designationId) ?? null) : null;
   const erpStanding = current && draft.erp ? standingOf(current, draft.erp, roleDraft.erp ?? "associate", powers) : null;
@@ -1518,6 +1541,7 @@ function AccessStep({
                   }
                 : undefined
             }
+            hireRole={app.id === "hire" ? { value: hireRole, onPick: pickHireRole, level: roleDraft.hire ?? "associate", error: fieldError.hireRole } : undefined}
             powers={
               app.id === "erp"
                 ? { held: powers, onChange: onPowers, error: fieldError.erpPowers, list: ERP_POWERS, labels: ERP_POWER_LABEL, adminLine: "An ERP administrator holds every power." }
@@ -1553,6 +1577,7 @@ function AppBlock({
   onChange,
   powers,
   designation,
+  hireRole,
 }: {
   app: AppId;
   name: string;
@@ -1574,6 +1599,8 @@ function AppBlock({
     labels: Record<string, { label: string; source: string }>;
     adminLine: string;
   };
+  /** Hire's role picker — their job inside Hire — drawn under Hire once it is ticked. */
+  hireRole?: { value: string | null; onPick: (role: string | null) => void; level: string; error?: string };
   /** The ERP's designation picker, drawn first under the app once it is ticked. */
   designation?: {
     list: ErpDesignationDef[];
@@ -1740,6 +1767,31 @@ function AppBlock({
                 Pick one to set the level, screens and powers in one go.
               </span>
             ) : null}
+          </span>
+        </div>
+      ) : null}
+
+      {on && hireRole ? (
+        <div className="flex items-start gap-2 border-t border-divider bg-surface px-2.5 py-1.5">
+          <span className="w-[132px] flex-none pt-[5px] text-[10px] leading-[14px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase">
+            Role in Hire
+          </span>
+          <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+            <select
+              value={hireRole.value ?? ""}
+              aria-label="Role in Hire"
+              onChange={(e) => hireRole.onPick(e.target.value || null)}
+              className="h-7 cursor-pointer rounded-[4px] border border-line bg-surface px-1.5 text-[13px] text-ink"
+            >
+              <option value="">Level decides — {HIRE_ROLE_LABEL[defaultRoleFor(hireRole.level)]}</option>
+              {HIRE_ROLES.map((r) => (
+                <option key={r} value={r}>
+                  {HIRE_ROLE_LABEL[r]}
+                </option>
+              ))}
+            </select>
+            <span className="text-[12px] text-muted">{HIRE_ROLE_SENTENCE[(hireRole.value as HireRole | null) ?? defaultRoleFor(hireRole.level)]}</span>
+            {hireRole.error ? <span className="text-[12px] text-danger">{hireRole.error}</span> : null}
           </span>
         </div>
       ) : null}
@@ -1967,6 +2019,7 @@ function ReviewStep({
   levels,
   powerChange,
   hrmsPowerChange,
+  hireRoleChange,
   designationChange,
 }: {
   name: string;
@@ -1981,6 +2034,8 @@ function ReviewStep({
   powerChange: { before: string[]; after: string[] } | null;
   /** The HRMS powers before and after, where they change. */
   hrmsPowerChange: { before: string[]; after: string[] } | null;
+  /** Their Hire role before and after, where it changes. */
+  hireRoleChange: { before: string | null; after: string | null; level: string } | null;
   /** The ERP designation, where it changes or where the result is customised from it. */
   designationChange: {
     before: string | null;
@@ -2146,6 +2201,17 @@ function ReviewStep({
             detail: hrmsPowerChange.after.length
               ? `${hrmsPowerChange.after.map((p) => HRMS_POWER_LABEL[p as keyof typeof HRMS_POWER_LABEL]?.label ?? p).join(", ")}.`
               : "no HRMS powers.",
+          },
+        ]
+      : []),
+    ...(hireRoleChange
+      ? [
+          {
+            key: "hire-role",
+            tone: "success" as const,
+            tag: "Role",
+            what: "Hire",
+            detail: `${hireRoleChange.after ? HIRE_ROLE_LABEL[hireRoleChange.after as HireRole] : `the level decides — ${HIRE_ROLE_LABEL[defaultRoleFor(hireRoleChange.level)]}`}${hireRoleChange.before ? ` (was ${HIRE_ROLE_LABEL[hireRoleChange.before as HireRole] ?? hireRoleChange.before})` : ""}. ${HIRE_ROLE_SENTENCE[(hireRoleChange.after as HireRole | null) ?? defaultRoleFor(hireRoleChange.level)]}`,
           },
         ]
       : []),

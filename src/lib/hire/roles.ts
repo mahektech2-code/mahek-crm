@@ -4,8 +4,8 @@
  * the same table on the server.
  *
  * MahekOne grants an app at a LEVEL (associate / manager / admin). Hiring has
- * six jobs, not three, so the job is a `hire_user_roles` row set on Hire's
- * Team screen. With no row the level decides, narrowly: an admin of Hire is
+ * six jobs, not three, so the job is a `hire_user_roles` row, set where every
+ * other grant is set: the Admin Console's People → Access screen, under Hire. With no row the level decides, narrowly: an admin of Hire is
  * Admin, a manager is a Hiring Manager, an associate is an Interviewer — the
  * least anybody can be given, because an interviewer sees only who they are
  * interviewing.
@@ -39,7 +39,6 @@ export const HIRE_CAPS = [
   "bias",
   "export",
   "auditAll",
-  "team",
   "addCandidate",
   "message",
   "documents",
@@ -77,13 +76,13 @@ export type HireNavKey =
   | "board" | "candidates" | "calendar" | "tasks"
   | "interviews" | "review" | "decisions" | "compare"
   | "offers" | "documents" | "induction" | "provision"
-  | "blueprints" | "questions" | "library" | "team"
+  | "blueprints" | "questions" | "library"
   | "funnel" | "quality" | "fairness" | "calibrate" | "aiusage"
   | "pool" | "search";
 
 export type HireNavIcon =
   | "board" | "people" | "cal" | "check" | "mic" | "list" | "gavel" | "cols" | "doc" | "shield" | "box" | "key"
-  | "layers" | "help" | "book" | "funnel" | "chart" | "scale" | "sliders" | "cpu" | "star" | "search" | "team";
+  | "layers" | "help" | "book" | "funnel" | "chart" | "scale" | "sliders" | "cpu" | "star" | "search";
 
 export type HireNavGroup = { label: string; items: { key: HireNavKey; label: string; href: string; icon: HireNavIcon }[] };
 
@@ -121,7 +120,6 @@ export const HIRE_NAV: HireNavGroup[] = [
       { key: "blueprints", label: "Blueprints", href: "/hire/blueprints", icon: "layers" },
       { key: "questions", label: "Questions", href: "/hire/questions", icon: "help" },
       { key: "library", label: "Library", href: "/hire/library", icon: "book" },
-      { key: "team", label: "Team", href: "/hire/team", icon: "team" },
     ],
   },
   {
@@ -153,9 +151,8 @@ export const ROLE_GROUPS: Record<HireRole, readonly string[]> = {
   admin: ["Pipeline", "Evaluate", "Onboard", "Roles", "Insights", "Talent"],
 };
 
-/** Screens inside a group a role holds, but not for them (Team is HR Head / Admin). */
+/** Screens inside a group a role holds, but not for them. */
 const HIDDEN: Partial<Record<HireRole, HireNavKey[]>> = {
-  hiring_manager: ["team"],
   /* Decisions and Compare show scores across stages; an interviewer sees none. */
   interviewer: ["decisions", "compare"],
 };
@@ -172,3 +169,31 @@ export function holdsScreen(role: HireRole, key: HireNavKey): boolean {
 
 /** The decision point every gate decision is filed under. */
 export const GATE_POINT = "decision_gate";
+
+/**
+ * The MahekOne app level a Hire role is held at. The Access screen sets it
+ * when a role is picked, the way an ERP designation sets the ERP's level.
+ */
+export const LEVEL_FOR_ROLE: Record<HireRole, "associate" | "manager" | "admin"> = {
+  recruiter: "associate",
+  interviewer: "associate",
+  onboarding: "associate",
+  hiring_manager: "manager",
+  hr_head: "manager",
+  admin: "admin",
+};
+
+/** The role somebody has with no `hire_user_roles` row: the level decides, narrowly. */
+export function defaultRoleFor(level: string | null | undefined): HireRole {
+  return level === "admin" ? "admin" : level === "manager" ? "hiring_manager" : "interviewer";
+}
+
+/** One line per role, for the Access screen. */
+export const ROLE_SENTENCE: Record<HireRole, string> = {
+  recruiter: "Moves their own requisitions through; confirms rejections; never sees unmasked PII.",
+  interviewer: "Sees only the candidates assigned to them, and only the stage they are conducting — never earlier scores.",
+  hiring_manager: "Decides at the gate, overrides an entry rule with a reason, issues offers, proposes blueprints.",
+  onboarding: "Documents, offers, induction and provisioning; may unmask PII, and every unmask is logged.",
+  hr_head: "Everything, including publishing blueprints, fairness analytics and exports.",
+  admin: "Everything.",
+};
