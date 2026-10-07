@@ -3,10 +3,18 @@ import "server-only";
 import { and, eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { customers, users } from "@/db/schema";
+import { appModuleAccess, customers, users } from "@/db/schema";
 import { canOpenModule } from "@/lib/access";
-import { canFor, levelInApp, requireCapability, resolveScope } from "@/lib/access-control";
+import {
+  canAny,
+  canFor,
+  hatsFor,
+  levelInApp,
+  requireCapability,
+  resolveScope,
+} from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
+import { leadVerifierManagers } from "@/lib/services/lead-service";
 
 /**
  * WHO MAY VERIFY A LEAD, VALIDATE ITS GST AND REVIEW ITS QUALIFICATION.
@@ -301,4 +309,294 @@ export async function qualificationCollectorRefusalById(
   const seats = await seatsOf(customerId);
   if (!seats) return null;
   return qualificationCollectorRefusal(user, seats);
+}
+
+/* ---------------------------------------------------------------------------
+ * WHO A SUSPECT'S VERIFICATION IS OWED TO — chosen while it is still a Suspect.
+ *
+ * Converting a Suspect makes it a Prospect at once and the Sales Manager's
+ * verification is the next thing owed, so the person it is owed to has to be
+ * known BEFORE the Telecaller presses the button, not discovered when it
+ * refuses. There are two kinds of person who can verify and the desk has to
+ * know both:
+ *
+ *   capability  holds `lead.verify` — a manager-level grant in the CRM, the
+ *               Sales Dashboard or the field app.
+ *   seat        holds the Sales Manager MODULE and is the lead's
+ *               `sales_manager_id`. This is the Sales Manager on this team: the
+ *               CRM at associate level plus the module, and `holdsLeadSeat` is
+ *               what lets her verify. She does NOT hold `lead.verify`, so a
+ *               picker that asked only for the capability offered nobody.
+ *
+ * A seat holder can verify ONLY a lead whose seat is hers, so choosing one
+ * means the seat is written too; `needsSeat` says so, and the action does it
+ * in the same transaction as the promotion. A capability holder needs no seat.
+ *
+ * Nothing here grants anything and nothing weakens `lead.verify`: eligibility
+ * is read from the same two questions the verification itself asks, and the
+ * Telecaller who is converting is never offered themselves.
+ * ------------------------------------------------------------------------- */
+
+export type VerifierOption = {
+  id: string;
+  name: string;
+  via: "capability" | "seat";
+  /** Covers this lead's region, or covers everywhere. Seat holders have no region. */
+  covers: boolean;
+  national: boolean;
+};
+
+export type VerifierSource =
+  | "designated"
+  | "sales_manager"
+  | "lead_manager"
+  | "region"
+  | "seat_holder"
+  | "chosen";
+
+export type ResolvedVerifier = {
+  id: string;
+  name: string;
+  via: "capability" | "seat" | "designated";
+  source: VerifierSource;
+  /** The lead's `sales_manager_id` must be set to them for them to be able to verify. */
+  needsSeat: boolean;
+};
+
+export type VerifierChoice = {
+  chosen: ResolvedVerifier | null;
+  /** Everybody who could verify, for the manual pick, excluding the person converting. */
+  options: VerifierOption[];
+  /** In words, when there is nobody — never the generic "ask an administrator". */
+  message: string | null;
+};
+
+type LeadForVerifier = {
+  ownerId: string | null;
+  salesManagerId: string | null;
+  leadManagerId: string | null;
+  territoryRegion: string | null;
+};
+
+/**
+ * Active people who were GRANTED the Sales Manager module, administrators excluded.
+ *
+ * EXPLICITLY granted, not merely able to open it. An account holding the whole
+ * CRM with no module rows at all holds every module, and `canOpenModule` says so
+ * — correct for deciding who may open a screen, and useless for deciding who to
+ * OFFER as a Sales Manager, since it would list every telecaller who was never
+ * narrowed. The seat is a manager-tier grant made to a person at a time
+ * (`offByDefault`), so the row is the evidence.
+ */
+async function seatHolders(): Promise<{ id: string; name: string }[]> {
+  const rows = await db
+    .selectDistinct({ id: users.id, name: users.name, role: users.role })
+    .from(users)
+    .innerJoin(
+      appModuleAccess,
+      and(eq(appModuleAccess.userId, users.id), eq(appModuleAccess.module, SALES_MANAGER_MODULE)),
+    )
+    .where(eq(users.active, true));
+  const out: { id: string; name: string }[] = [];
+  for (const r of rows) {
+    if (r.role === "admin") continue;
+    if (await canOpenModule(r.id, SALES_MANAGER_MODULE)) out.push({ id: r.id, name: r.name });
+  }
+  return out;
+}
+
+/** Every active person who could verify some lead, by one route or the other. */
+export async function verifierOptions(region: string | null, exceptUserId?: string): Promise<VerifierOption[]> {
+  const [managers, seats] = await Promise.all([leadVerifierManagers(region), seatHolders()]);
+  const out: VerifierOption[] = managers.map((m) => ({
+    id: m.id,
+    name: m.name,
+    via: "capability",
+    covers: m.covers,
+    national: m.national,
+  }));
+  const have = new Set(out.map((o) => o.id));
+  for (const sm of seats) {
+    if (have.has(sm.id)) continue;
+    out.push({ id: sm.id, name: sm.name, via: "seat", covers: true, national: true });
+  }
+  return out.filter((o) => o.id !== exceptUserId);
+}
+
+/** Can this person verify by capability? The same question `requireLeadVerifier` asks first. */
+async function holdsVerifyCapability(user: { id: string; role: string }): Promise<boolean> {
+  return canAny(await hatsFor(user), "lead.verify");
+}
+
+async function activeUser(id: string) {
+  const [u] = await db
+    .select({ id: users.id, name: users.name, role: users.role, active: users.active })
+    .from(users)
+    .where(eq(users.id, id))
+    .limit(1);
+  return u?.active ? u : null;
+}
+
+/** Turns a person into the answer, deciding by which route they verify. */
+async function asResolved(
+  u: { id: string; name: string; role: string },
+  source: VerifierSource,
+  lead: Pick<LeadForVerifier, "salesManagerId">,
+): Promise<ResolvedVerifier> {
+  const capable = await holdsVerifyCapability(u);
+  return {
+    id: u.id,
+    name: u.name,
+    via: capable ? "capability" : "seat",
+    source,
+    needsSeat: !capable && lead.salesManagerId !== u.id,
+  };
+}
+
+/** The sentence for "nobody", read off who actually exists. */
+export function noVerifierMessage(options: VerifierOption[]): string {
+  if (!options.length) {
+    return "Nobody can verify this lead yet: no active Sales Manager holds the verification permission or the Sales Manager seat. Ask an administrator to give one of them access — the lead stays a Suspect until then.";
+  }
+  if (!options.some((o) => o.covers)) {
+    return "No Sales Manager covers this lead's region. Pick who should verify it from the list, or ask an administrator.";
+  }
+  return "More than one Sales Manager could verify this lead and nothing says which. Pick one from the list.";
+}
+
+/**
+ * WHO THE VERIFICATION IS OWED TO, in the order the desk has always asked:
+ * the designated approver of a self-raised lead, the lead's Sales Manager seat,
+ * the lead manager seat, the region's capability holders, and — new — the one
+ * Sales Manager seat holder where there is exactly one. With several, nothing
+ * guesses: the Telecaller picks.
+ *
+ * A DECIDED LEAD MANAGER NO LONGER VOUCHES FOR THEMSELVES. It used to accept a
+ * decided seat holder whatever they held, which is how a lead could be
+ * promoted to somebody who could not then verify it.
+ */
+export async function resolveVerifier(lead: LeadForVerifier, actorId: string): Promise<VerifierChoice> {
+  const options = await verifierOptions(lead.territoryRegion, actorId);
+
+  const designated = await approverFor({ ownerId: lead.ownerId, salesManagerId: lead.salesManagerId });
+  if (designated) {
+    return {
+      chosen: { id: designated.id, name: designated.name, via: "designated", source: "designated", needsSeat: false },
+      options,
+      message: null,
+    };
+  }
+
+  if (lead.salesManagerId) {
+    const sm = await activeUser(lead.salesManagerId);
+    if (sm && ((await holdsLeadSeat(sm, lead.salesManagerId)) || (await holdsVerifyCapability(sm)))) {
+      return { chosen: await asResolved(sm, "sales_manager", lead), options, message: null };
+    }
+  }
+
+  if (lead.leadManagerId) {
+    const lm = await activeUser(lead.leadManagerId);
+    if (
+      lm &&
+      ((await holdsVerifyCapability(lm)) ||
+        (lm.role !== "admin" && (await canOpenModule(lm.id, SALES_MANAGER_MODULE))))
+    ) {
+      return { chosen: await asResolved(lm, "lead_manager", lead), options, message: null };
+    }
+  }
+
+  const covering = options
+    .filter((o) => o.via === "capability" && o.covers)
+    .sort((a, b) => Number(a.national) - Number(b.national));
+  if (covering[0]) {
+    return {
+      chosen: { id: covering[0].id, name: covering[0].name, via: "capability", source: "region", needsSeat: false },
+      options,
+      message: null,
+    };
+  }
+
+  const seats = options.filter((o) => o.via === "seat");
+  if (seats.length === 1) {
+    const only = seats[0];
+    return {
+      chosen: {
+        id: only.id,
+        name: only.name,
+        via: "seat",
+        source: "seat_holder",
+        needsSeat: lead.salesManagerId !== only.id,
+      },
+      options,
+      message: null,
+    };
+  }
+
+  return { chosen: null, options, message: noVerifierMessage(options) };
+}
+
+/** A manual pick, checked against the same list — a posted id is not a permission. */
+export async function chooseVerifier(
+  lead: LeadForVerifier,
+  actorId: string,
+  userId: string,
+): Promise<{ ok: true; chosen: ResolvedVerifier } | { ok: false; message: string }> {
+  const options = await verifierOptions(lead.territoryRegion, actorId);
+  const hit = options.find((o) => o.id === userId);
+  if (!hit) {
+    return {
+      ok: false,
+      message:
+        userId === actorId
+          ? "You cannot be the one who verifies a lead you are converting. Pick the Sales Manager."
+          : "That person cannot verify leads — they hold neither the verification permission nor the Sales Manager seat. Pick somebody from the list.",
+    };
+  }
+  return {
+    ok: true,
+    chosen: {
+      id: hit.id,
+      name: hit.name,
+      via: hit.via,
+      source: "chosen",
+      needsSeat: hit.via === "seat" && lead.salesManagerId !== hit.id,
+    },
+  };
+}
+
+/**
+ * WHAT PUTTING SOMEBODY IN CHARGE OF THE VERIFICATION WRITES ON THE LEAD.
+ *
+ * Pure, so both callers — the request and the direct promotion — write exactly
+ * the same thing and a test can read it without a database.
+ *
+ *  - `lead_manager_id` is filled when empty and never moved from a decided
+ *    seat, as it always was — EXCEPT that a person the Telecaller named is a
+ *    decision, so it is written and stamped.
+ *  - `sales_manager_id` is written only for somebody who verifies through the
+ *    seat, because `holdsLeadSeat` asks for exactly that. It is stamped decided:
+ *    the nightly org-chart pass skips a stamped seat, and without the stamp it
+ *    would blank this one the first night the lead's owner is missing from the
+ *    org chart, leaving a Prospect nobody can verify.
+ *
+ * A person who holds the capability needs no seat, and nothing here touches
+ * `lead.verify` itself.
+ */
+export function verifierWrites(
+  v: ResolvedVerifier,
+  lead: { leadManagerId: string | null; leadManagerDecidedAt: Date | null },
+  now: Date,
+): Partial<typeof customers.$inferInsert> {
+  const set: Partial<typeof customers.$inferInsert> = {};
+  const chosen = v.source === "chosen";
+  if (v.id !== lead.leadManagerId && (chosen || !lead.leadManagerDecidedAt)) {
+    set.leadManagerId = v.id;
+    if (chosen) set.leadManagerDecidedAt = now;
+  }
+  if (v.needsSeat) {
+    set.salesManagerId = v.id;
+    set.salesManagerPersonName = null;
+    set.salesManagerDecidedAt = now;
+  }
+  return set;
 }

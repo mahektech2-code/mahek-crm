@@ -515,6 +515,7 @@ const DESCRIBE: Record<string, Describer> = {
   "lead.prospectRequest.return": (c) => ({ says: ["sent back the request to make", c.subject(), "a prospect"], changes: false }),
   "lead.qualificationReview": (c) => ({ says: ["reviewed the qualification of", c.subject()], changes: false }),
   "lead.manager.assign": (c) => ({ says: ["made", c.user(c.a.leadManagerId), "the manager of the lead", c.subject()], changes: false }),
+  "lead.verifier.set": (c) => ({ says: ["sent", c.subject(), "to", c.user(c.a.verifierId), "to verify"], changes: false }),
   "lead.firstOrder.confirm": (c) => ({ says: ["confirmed the first order of", c.customer(c.a.customerId), ...(num(c.a.valuePaise) ? ["worth", strong(rupees(c.a.valuePaise)!)] : [])], changes: false }),
   "lead.duplicate.dismissed": (c) => ({ says: ["said two leads that looked alike are different shops"], note: str(c.a.reason), changes: false }),
   "whatsapp.sent_api": (c) => ({ says: ["sent", c.customer(c.a.customerId), "a WhatsApp message", ...(str(c.a.watiTemplate) ? [`(${words(str(c.a.watiTemplate)!)})`] : [])], changes: false }),

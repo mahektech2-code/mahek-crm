@@ -7358,11 +7358,26 @@ timeline event, so no reassignment can edit it. There is one reassign,
 desk: it moves `owner_id`, and a next action that was the OLD owner's follows the
 lead while one owed by the Sales Manager stays with the Sales Manager.
 
-**A PROSPECT NOBODY CAN VERIFY IS NOT CREATED.** Verification is owed by a holder
-of `lead.verify` (candidates are filtered to it — `users.role = 'manager'` alone
-includes an Accounts-only manager), and never falls back to the Telecaller being
-verified; with no manager available the conversion is refused and the lead stays a
-Suspect.
+**A PROSPECT NOBODY CAN VERIFY IS NOT CREATED, AND WHO CAN IS KNOWN WHILE IT IS
+STILL A SUSPECT.** The direct promotion stays: converting makes the Prospect at once
+and the verification is the next thing owed. There are two kinds of person who can
+verify — a holder of `lead.verify`, and the Sales Manager who holds the
+`crm.sales-manager` module and the lead's `sales_manager_id` seat (`holdsLeadSeat`),
+who is the CRM at ASSOCIATE level and holds no `lead.verify`. `resolveVerifier` and
+`chooseVerifier` in `lead-verifier.ts` know both, and are the ONE answer: the
+Calling Desk draws its "Sales Manager who verifies it" picker from the same function
+the conversion resolves with, a manual pick is re-checked against the same list
+(a posted id is not a permission), and a seat holder who is chosen gets the seat
+written in the conversion's own transaction (`verifierWrites`) — stamped decided, or
+the nightly org-chart pass would blank it and leave a Prospect nobody can open. A
+seat holder is OFFERED only where the module was explicitly granted: no module rows
+means every module, which would list every un-narrowed telecaller. Several seat
+holders and nothing to choose between them asks rather than guessing; nobody at all
+says so ("Nobody can verify this lead yet"), not that nobody covers the region, which
+is true only where capability holders exist and none covers it. The Telecaller is
+never offered themselves and never falls back to being the verifier. Only `region`
+rows of `mbos_user_territories` make a manager regional — the same table holds a
+salesman's state, city and beat.
 
 **WHERE A SHOP IS, IS THE REVIEWED TREE, and every list narrows by it.**
 `customers.city` is whatever the sheet typed — 1,165 spellings of a few hundred

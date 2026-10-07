@@ -19,6 +19,7 @@ import {
   isCallOutcome,
   isOnlineSource,
   isRequestState,
+  isWorkingStage,
   ladderKeyOf,
   ladderKeyOfLost,
   nextActionKindOf,
@@ -52,6 +53,7 @@ import {
   type LeadRecord,
 } from "./lead-console-service";
 import { leadRow, leadGateInput } from "./lead-service";
+import { resolveVerifier } from "./lead-verifier";
 import { leadSamplesFor } from "./lead-record-service";
 import { reopenedAtSql } from "./lead-reopen-service";
 import { isReopenTransition, reopenTarget, type ReopenTarget } from "../engines/lead-reopen";
@@ -408,6 +410,18 @@ export type DeskLeadRecord = {
   /** Set once the lead has been reopened from Lost — derived from the transitions, never stored. */
   reopened: { at: string; byName: string | null; times: number } | null;
   qualification: { done: number; total: number; conditions: { id: string; says: string; done: boolean }[] } | null;
+  /**
+   * WHO WOULD VERIFY IT IF IT WERE CONVERTED NOW, worked out while it is still a
+   * Suspect. `suggested` is the same answer the conversion itself resolves — one
+   * function, so the screen and the action cannot name different people — and
+   * `options` is everybody who could, for a manual pick. `message` says in words
+   * why there is nobody. Null where the lead is not a Suspect being worked.
+   */
+  verifier: {
+    suggested: { id: string; name: string; via: "capability" | "seat" | "designated"; source: string } | null;
+    options: { id: string; name: string; via: "capability" | "seat"; covers: boolean }[];
+    message: string | null;
+  } | null;
   /**
    * WHO VERIFIED THE PROSPECT, and where the manager's review of the
    * Qualification stands. The desk says "Verified by X on D. Qualification is now
@@ -871,6 +885,19 @@ export async function deskLeadRecord(customerId: string, today: string): Promise
   const pair = (rows: [string, string | null][]) =>
     rows.filter(([, val]) => val && val.trim()).map(([label, val]) => ({ label, value: val!.trim() }));
 
+  let verifier: DeskLeadRecord["verifier"] = null;
+  if (isWorkingStage(lead.leadStage) && !requestState) {
+    const me = (await resolveScope()).user;
+    const choice = await resolveVerifier(lead, me.id);
+    verifier = {
+      suggested: choice.chosen
+        ? { id: choice.chosen.id, name: choice.chosen.name, via: choice.chosen.via, source: choice.chosen.source }
+        : null,
+      options: choice.options.map((o) => ({ id: o.id, name: o.name, via: o.via, covers: o.covers })),
+      message: choice.message,
+    };
+  }
+
   return {
     id: customerId,
     reference: deskReference(extras?.rank ?? 0),
@@ -894,6 +921,7 @@ export async function deskLeadRecord(customerId: string, today: string): Promise
     ownerName: extras?.ownerName ?? rec.salesmanName,
     unassigned: !rec.salesmanId,
     managerName: rec.leadManagerName,
+    verifier,
     values,
     gstVerified: rec.gstVerified,
     productName: rec.requiredProductName,

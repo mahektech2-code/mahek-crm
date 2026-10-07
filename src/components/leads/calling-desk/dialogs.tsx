@@ -44,6 +44,83 @@ import { LeadCallAssistant } from "@/components/leads/calling-desk/lead-call-ass
 type Coded = { code: string; label: string };
 
 /* ---------------------------------------------------------------------------
+ * WHO VERIFIES IT — chosen here, while the lead is still a Suspect.
+ *
+ * Converting makes the Prospect at once, and the Sales Manager's verification is
+ * the next thing owed. So the person it is owed to is shown before the button is
+ * pressed, pre-filled with the same answer the conversion itself resolves, and
+ * can be changed from a list of people who can really verify. With nobody to
+ * send it to the button is held and the reason is on the screen, in words, not
+ * in a refusal after the form has been filled in.
+ *
+ * It decides nothing: `convertLeadToProspect` checks whatever is sent against
+ * the same list, so a posted id is not a permission.
+ * ------------------------------------------------------------------------- */
+
+const VERIFIER_SOURCE: Record<string, string> = {
+  designated: "the person Mahek designates for a lead its Sales Manager raised",
+  sales_manager: "this lead's Sales Manager",
+  lead_manager: "this lead's manager",
+  region: "covers this lead's region",
+  seat_holder: "the only Sales Manager there is",
+};
+
+function useVerifierChoice(lead: DeskLeadRecord) {
+  const v = lead.verifier;
+  const [picked, setPicked] = React.useState<string>(v?.suggested?.id ?? "");
+  return {
+    picked,
+    setPicked,
+    /** Sent only where the Telecaller changed the answer or there was no suggestion. */
+    managerId: v && picked && picked !== v.suggested?.id ? picked : undefined,
+    /** There is nobody the verification can be sent to. */
+    blocked: Boolean(v) && !picked,
+  };
+}
+
+function VerifierPicker({
+  lead,
+  choice,
+}: {
+  lead: DeskLeadRecord;
+  choice: ReturnType<typeof useVerifierChoice>;
+}) {
+  const v = lead.verifier;
+  if (!v) return null;
+  const options = [...v.options];
+  if (v.suggested && !options.some((o) => o.id === v.suggested!.id)) {
+    options.unshift({ id: v.suggested.id, name: v.suggested.name, via: "capability", covers: true });
+  }
+  if (!options.length) {
+    return (
+      <div className="mb-3 rounded-[4px] border border-danger/40 bg-danger/5 px-3 py-2 text-[13px] text-danger">
+        <b>No Sales Manager can verify this lead yet.</b> {v.message}
+      </div>
+    );
+  }
+  const suggested = v.suggested && choice.picked === v.suggested.id ? v.suggested : null;
+  return (
+    <FieldLabel label="Sales Manager who verifies it" className="mb-3">
+      <Select value={choice.picked} onChange={(e) => choice.setPicked(e.target.value)} className="w-full">
+        {!v.suggested ? <option value="">Pick the Sales Manager…</option> : null}
+        {options.map((o) => (
+          <option key={o.id} value={o.id}>
+            {o.name}
+            {v.suggested?.id === o.id ? " — suggested" : ""}
+            {o.via === "capability" && !o.covers ? " — another region" : ""}
+          </option>
+        ))}
+      </Select>
+      <span className="mt-1 block text-[12px] text-muted">
+        {suggested
+          ? `Suggested because they are ${VERIFIER_SOURCE[suggested.source] ?? "able to verify it"}. You can pick someone else.`
+          : v.message ?? "Whoever you pick is sent the verification and is told."}
+      </span>
+    </FieldLabel>
+  );
+}
+
+/* ---------------------------------------------------------------------------
  * The five Telecaller dialogs — Log call, Log a message, Set next action,
  * Request Prospect (or Resubmit) and Mark Lost.
  *
@@ -842,6 +919,7 @@ export function RequestDialog({
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
+  const verify = useVerifierChoice(lead);
   const sent = DESK_FIELDS.filter((f) => isAnswered(f.key, lead.values[f.key]));
   const typeField = DESK_FIELDS.find((f) => f.key === "customerType")!;
 
@@ -862,6 +940,10 @@ export function RequestDialog({
       setError("Say who to ask for when the Sales Manager rings.");
       return;
     }
+    if (verify.blocked) {
+      setError(lead.verifier?.message ?? "Pick the Sales Manager who will verify this lead.");
+      return;
+    }
     setBusy(true);
     setError(null);
     let result;
@@ -873,6 +955,7 @@ export function RequestDialog({
         salesType: needsSalesType ? (salesType as "direct" | "third_party") : undefined,
         customerType: needsType ? (customerType as never) : undefined,
         contactPerson: needsContact ? contactPerson.trim() : undefined,
+        managerId: verify.managerId,
       });
     } finally {
       setBusy(false);
@@ -902,7 +985,7 @@ export function RequestDialog({
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" disabled={busy} onClick={() => void save()}>
+          <Button variant="primary" disabled={busy || verify.blocked} onClick={() => void save()}>
             {busy ? "Sending…" : resubmit ? "Resubmit for verification" : "Request Prospect"}
           </Button>
         </>
@@ -912,6 +995,7 @@ export function RequestDialog({
         <b>This is a request, not a conversion.</b> {lead.managerName ?? "The Sales Manager"} verifies what you
         collected. The lead becomes a Prospect only when they confirm it.
       </Note>
+      <VerifierPicker lead={lead} choice={verify} />
 
       <FieldLabel label="Why is this worth pursuing?" className="mb-3">
         <div className="mt-1.5 flex flex-col gap-1.5">
@@ -1016,6 +1100,7 @@ export function ConvertDialog({
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
+  const verify = useVerifierChoice(lead);
   const sent = DESK_FIELDS.filter((f) => isAnswered(f.key, lead.values[f.key]));
   const typeField = DESK_FIELDS.find((f) => f.key === "customerType")!;
 
@@ -1036,6 +1121,10 @@ export function ConvertDialog({
       setError("Say who to ask for.");
       return;
     }
+    if (verify.blocked) {
+      setError(lead.verifier?.message ?? "Pick the Sales Manager who will verify this lead.");
+      return;
+    }
     setBusy(true);
     setError(null);
     let result;
@@ -1047,6 +1136,7 @@ export function ConvertDialog({
         salesType: needsSalesType ? (salesType as "direct" | "third_party") : undefined,
         customerType: needsType ? (customerType as never) : undefined,
         contactPerson: needsContact ? contactPerson.trim() : undefined,
+        managerId: verify.managerId,
       });
     } finally {
       setBusy(false);
@@ -1076,16 +1166,17 @@ export function ConvertDialog({
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" disabled={busy} onClick={() => void save()}>
+          <Button variant="primary" disabled={busy || verify.blocked} onClick={() => void save()}>
             {busy ? "Converting…" : "Convert to Prospect"}
           </Button>
         </>
       }
     >
       <Note tone="brand">
-        <b>This converts the lead immediately.</b> Everything a Prospect needs is in, so pressing this moves{" "}
-        {lead.name} to Prospect now — no Sales Manager verification call is needed for this lead.
+        <b>This will create the Prospect and send it to the Sales Manager for verification.</b> {lead.name} becomes a
+        Prospect now. The Sales Manager verifies what you collected, and Qualification opens for you when they do.
       </Note>
+      <VerifierPicker lead={lead} choice={verify} />
 
       <FieldLabel label="Why is this worth pursuing?" className="mb-3">
         <div className="mt-1.5 flex flex-col gap-1.5">

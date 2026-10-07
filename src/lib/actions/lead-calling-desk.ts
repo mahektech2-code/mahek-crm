@@ -6,8 +6,8 @@ import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import { auditLog, calls, customers, users } from "@/db/schema";
-import { assertCustomerInScope, canAny, hatsFor, requireCapability } from "@/lib/access-control";
-import { approverFor, holdsLeadSeat } from "@/lib/services/lead-verifier";
+import { assertCustomerInScope, requireCapability } from "@/lib/access-control";
+import { chooseVerifier, resolveVerifier, verifierWrites, type ResolvedVerifier } from "@/lib/services/lead-verifier";
 import { NO_ANSWER_REASONS } from "@/lib/call-outcomes";
 import { addDays, nextWorkingDay, type BusinessDate } from "@/lib/business-date";
 import { getConfig } from "@/lib/config/store";
@@ -41,7 +41,7 @@ import {
 } from "@/lib/engines/lead-calling-desk";
 import { gateTo } from "@/lib/engines/lead-gates";
 import { ladderFor } from "@/lib/engines/lead-ladder";
-import { leadGateInput, leadManagerCandidatesFor, leadRow } from "@/lib/services/lead-service";
+import { leadGateInput, leadRow } from "@/lib/services/lead-service";
 import { QUAL_NEXT } from "@/lib/services/lead-qualification-flow-service";
 import { requestOf } from "@/lib/services/lead-prospect-request-service";
 import { latestReopen, lostFromOf, reopenLostLead, reopenedAtOf } from "@/lib/services/lead-reopen-service";
@@ -642,6 +642,11 @@ const requestSchema = z.object({
      here, once, if the record does not already hold them. */
   customerType: z.enum(CUSTOMER_TYPES).optional(),
   contactPerson: z.string().trim().max(200).optional(),
+  /* WHO VERIFIES IT, where the Telecaller names somebody rather than taking the
+     suggestion. Never trusted as sent: `chooseVerifier` checks it against the
+     same list the picker was drawn from, and a person who can verify neither by
+     capability nor by the Sales Manager seat is refused. */
+  managerId: z.string().min(1).optional(),
   /* Asked only where the lead has not been told how it will be sold. Never
      defaulted: which ladder a lead climbs decides which gates apply. */
   salesType: z.enum(["direct", "third_party"]).optional(),
@@ -673,6 +678,8 @@ async function preparePromotion(
     salesType: "direct" | "third_party";
     setsSalesType: boolean;
     managerId: string;
+    /** Who they are and by which route they verify — what the seat writes are decided from. */
+    verifier: ResolvedVerifier;
     /** The Sales Manager the verification is owed to — the same owner the dry run
         above was asked with, so a caller's real write can never name a different one. */
     nextActionOwnerId: string;
@@ -756,54 +763,27 @@ async function preparePromotion(
    * lead stays a Suspect — ready, waiting for somebody to be set — rather than
    * becoming a Prospect nobody can verify.
    */
-  let managerId: string | null = null;
-  /* THE LEAD'S OWN SALES MANAGER COMES FIRST. Verification follows `sales_manager_id`,
-     so where the seat is filled and its holder can verify (the capability, or the
-     seat itself) the call is owed to them, not to some other `lead.verify` holder
-     the region happens to default to. */
-  /* A LEAD THE SALES MANAGER RAISED HERSELF IS VERIFIED BY THE PERSON MAHEK
-     DESIGNATES, not by her: the verification is the check on her own work. */
-  const selfRaisedApprover = await approverFor({ ownerId: lead.ownerId, salesManagerId: lead.salesManagerId });
-  if (selfRaisedApprover) managerId = selfRaisedApprover.id;
-  if (!managerId && lead.salesManagerId) {
-    const [sm] = await db
-      .select({ id: users.id, role: users.role, active: users.active })
-      .from(users)
-      .where(eq(users.id, lead.salesManagerId))
-      .limit(1);
-    if (
-      sm?.active &&
-      ((await holdsLeadSeat(sm, lead.salesManagerId)) ||
-        canAny(await hatsFor({ id: sm.id, role: sm.role }), "lead.verify"))
-    ) {
-      managerId = sm.id;
+  /* THE SAME RESOLUTION THE DESK DRAWS ITS PICKER FROM (`resolveVerifier`), so what
+     the Telecaller was shown is what is used. A pick they made is checked against
+     the same list. There is still no fallback to the Telecaller, and nobody is
+     promoted to a Prospect that nobody can verify: with no verifier the conversion
+     is refused, in words that say which of the three reasons it is. */
+  let verifier: ResolvedVerifier;
+  if (p.managerId) {
+    const picked = await chooseVerifier(lead, ctx.user.id, p.managerId);
+    if (!picked.ok) {
+      return err(picked.message, "validation", [{ field: "managerId", message: picked.message }]);
     }
-  }
-  if (!managerId && lead.leadManagerId) {
-    const decided = Boolean(lead.leadManagerDecidedAt);
-    const seat = await db
-      .select({ id: users.id, role: users.role, active: users.active })
-      .from(users)
-      .where(eq(users.id, lead.leadManagerId))
-      .limit(1);
-    const seatHolder = seat[0];
-    if (
-      seatHolder?.active &&
-      (decided || canAny(await hatsFor({ id: seatHolder.id, role: seatHolder.role }), "lead.verify"))
-    ) {
-      managerId = seatHolder.id;
+    verifier = picked.chosen;
+  } else {
+    const resolved = await resolveVerifier(lead, ctx.user.id);
+    if (!resolved.chosen) {
+      const why = resolved.message ?? "Nobody can verify this lead yet.";
+      return err(why, "rule_violation", [{ field: "managerId", message: why }]);
     }
+    verifier = resolved.chosen;
   }
-  if (!managerId) {
-    const candidates = await leadManagerCandidatesFor(p.customerId);
-    managerId = candidates[0]?.id ?? null;
-  }
-  if (!managerId) {
-    return err(
-      "No Sales Manager covers this lead's region. Ask an administrator.",
-      "rule_violation",
-    );
-  }
+  const managerId: string = verifier.id;
   const nextActionOwnerId: string = managerId;
 
   /* THE DRY RUN. The same gate the promotion will be asked, with what this
@@ -842,6 +822,7 @@ async function preparePromotion(
     salesType: salesType as "direct" | "third_party",
     setsSalesType,
     managerId,
+    verifier,
     nextActionOwnerId,
     day,
   });
@@ -888,7 +869,7 @@ export async function requestProspect(
 
     const prepared = await preparePromotion(p, ctx, { action: "Sales manager verification", date: due });
     if (!prepared.ok) return prepared;
-    const { lead, req, salesType, setsSalesType, managerId, nextActionOwnerId } = prepared.data;
+    const { lead, req, salesType, setsSalesType, managerId, verifier, nextActionOwnerId } = prepared.data;
     const resubmitted = req.state === "returned";
 
     const now = new Date();
@@ -914,9 +895,31 @@ export async function requestProspect(
       if (setsSalesType) set.leadSalesType = salesType;
       if (!lead.customerType && p.customerType) set.customerType = p.customerType;
       if (!lead.contactPerson?.trim() && p.contactPerson) set.contactPerson = p.contactPerson;
-      /* The seat is FILLED, never moved, and `lead_manager_decided_at` is left
-         alone: nobody chose this person, the region did. */
-      if (managerId !== lead.leadManagerId && !lead.leadManagerDecidedAt) set.leadManagerId = managerId;
+      /* THE SEATS THE VERIFICATION NEEDS. See `verifierWrites`: an unchosen seat is
+         FILLED and never moved; a person the Telecaller picked is a decision and is
+         stamped as one; and a Sales Manager who verifies through the seat gets the
+         seat, in this same transaction, or she could not open what she was sent. */
+      const seats = verifierWrites(verifier, lead, now);
+      Object.assign(set, seats);
+      if (Object.keys(seats).length) {
+        await tx.insert(auditLog).values({
+          id: gen("aud"),
+          actorId: ctx.user.id,
+          action: "lead.verifier.set",
+          entityType: "customer",
+          entityId: p.customerId,
+          actorRole: ctx.authorisedBy,
+          actorApp: ctx.authorisedIn,
+          beforeState: { leadManagerId: lead.leadManagerId, salesManagerId: lead.salesManagerId },
+          afterState: {
+            verifierId: verifier.id,
+            via: verifier.via,
+            source: verifier.source,
+            ...(seats.leadManagerId ? { leadManagerId: seats.leadManagerId } : {}),
+            ...(seats.salesManagerId ? { salesManagerId: seats.salesManagerId } : {}),
+          },
+        });
+      }
 
       await tx.update(customers).set(set).where(eq(customers.id, p.customerId));
 
@@ -991,8 +994,10 @@ export async function requestProspect(
 /* ═══════════════════════════════════════ the calling desk's own conversion */
 
 /**
- * Convert a ready Suspect straight to Prospect — the telecaller's own act,
- * with no Sales Manager verification call in between.
+ * Convert a ready Suspect straight to Prospect — the telecaller's own act. The
+ * lead is a Prospect at once; the Sales Manager's verification is what is owed
+ * NEXT, to the person `preparePromotion` resolved (or the one the Telecaller
+ * picked), and Qualification opens only when they have done it.
  *
  * MAHEK'S OWN REVERSAL OF THE RULE ABOVE `requestProspect` STATES. Where the
  * three qualification calls collect everything a Prospect is asked for, on
@@ -1044,7 +1049,7 @@ export async function convertLeadToProspect(
     const due = addDays(day, config["leads.verificationDueDays"]);
     const prepared = await preparePromotion(p, ctx, { action: QUAL_NEXT.verify, date: due });
     if (!prepared.ok) return prepared;
-    const { lead, salesType, setsSalesType, managerId } = prepared.data;
+    const { lead, salesType, setsSalesType, managerId, verifier } = prepared.data;
 
     const now = new Date();
     await db.transaction(async (tx) => {
@@ -1055,9 +1060,31 @@ export async function convertLeadToProspect(
       if (setsSalesType) set.leadSalesType = salesType;
       if (!lead.customerType && p.customerType) set.customerType = p.customerType;
       if (!lead.contactPerson?.trim() && p.contactPerson) set.contactPerson = p.contactPerson;
-      /* The seat is FILLED, never moved, and `lead_manager_decided_at` is left
-         alone: nobody chose this person, the region did. */
-      if (managerId !== lead.leadManagerId && !lead.leadManagerDecidedAt) set.leadManagerId = managerId;
+      /* THE SEATS THE VERIFICATION NEEDS. See `verifierWrites`: an unchosen seat is
+         FILLED and never moved; a person the Telecaller picked is a decision and is
+         stamped as one; and a Sales Manager who verifies through the seat gets the
+         seat, in this same transaction, or she could not open what she was sent. */
+      const seats = verifierWrites(verifier, lead, now);
+      Object.assign(set, seats);
+      if (Object.keys(seats).length) {
+        await tx.insert(auditLog).values({
+          id: gen("aud"),
+          actorId: ctx.user.id,
+          action: "lead.verifier.set",
+          entityType: "customer",
+          entityId: p.customerId,
+          actorRole: ctx.authorisedBy,
+          actorApp: ctx.authorisedIn,
+          beforeState: { leadManagerId: lead.leadManagerId, salesManagerId: lead.salesManagerId },
+          afterState: {
+            verifierId: verifier.id,
+            via: verifier.via,
+            source: verifier.source,
+            ...(seats.leadManagerId ? { leadManagerId: seats.leadManagerId } : {}),
+            ...(seats.salesManagerId ? { salesManagerId: seats.salesManagerId } : {}),
+          },
+        });
+      }
       /* A lead the manager had once RETURNED, then completed on a later call,
          converts here rather than resubmitting — the queue it was in is left
          behind rather than resolved through it. */

@@ -1342,6 +1342,34 @@ function stageMoveSummary(
 export async function leadManagerCandidates(region: string | null): Promise<
   { id: string; name: string; national: boolean }[]
 > {
+  const all = await leadVerifierManagers(region);
+  /* Whoever names this region sorts above whoever covers everywhere: a
+     regional answer is the better default and the picker is read top-down. */
+  return all
+    .filter((m) => m.covers)
+    .map(({ id, name, national }) => ({ id, name, national }))
+    .sort((a, b) => Number(a.national) - Number(b.national));
+}
+
+/**
+ * EVERY manager who holds `lead.verify`, and whether each covers the region.
+ *
+ * `leadManagerCandidates` is the covering half of this and stays what it was;
+ * the rest are the same people who do NOT cover it, which the calling desk's
+ * picker offers as a manual choice. Refusing to list somebody who plainly can
+ * verify merely because their region differs would leave a Telecaller with no
+ * way forward and a sentence telling them to ask somebody else.
+ *
+ * ONLY `region` ROWS DECIDE "REGIONAL VERSUS NATIONAL". `mbos_user_territories`
+ * also holds the state, city and beat a SALESMAN works — the same table, a
+ * different question — and `managerScope` and `setManagerTerritories` both read
+ * `kind = 'region'` for that reason. Reading every row here made a manager who
+ * had merely been allocated a city look regional, which excluded them from
+ * every lead whose own region is blank, which is nearly all of them.
+ */
+export async function leadVerifierManagers(region: string | null): Promise<
+  { id: string; name: string; national: boolean; covers: boolean }[]
+> {
   const [managers, territories] = await Promise.all([
     db
       .select({ id: users.id, name: users.name })
@@ -1349,7 +1377,8 @@ export async function leadManagerCandidates(region: string | null): Promise<
       .where(and(eq(users.role, "manager"), eq(users.active, true))),
     db
       .select({ userId: mbosUserTerritories.userId, region: mbosUserTerritories.region })
-      .from(mbosUserTerritories),
+      .from(mbosUserTerritories)
+      .where(eq(mbosUserTerritories.kind, "region")),
   ]);
 
   const covered = new Map<string, string[]>();
@@ -1357,7 +1386,7 @@ export async function leadManagerCandidates(region: string | null): Promise<
     covered.set(t.userId, [...(covered.get(t.userId) ?? []), t.region]);
   }
 
-  const out: { id: string; name: string; national: boolean }[] = [];
+  const out: { id: string; name: string; national: boolean; covers: boolean }[] = [];
   for (const m of managers) {
     /* A candidate has to be somebody who can actually DO the verification.
        `users.role` is the widest level held under any hat, so an Accounts-only
@@ -1369,13 +1398,11 @@ export async function leadManagerCandidates(region: string | null): Promise<
     const mine = covered.get(m.id);
     /* No rows at all is national. Rows that are all somewhere else is a
        manager who covers a different part of the country, and offering them
-       here would make the default meaningless. */
-    if (!mine) out.push({ id: m.id, name: m.name, national: true });
-    else if (region && mine.includes(region)) out.push({ id: m.id, name: m.name, national: false });
+       as the DEFAULT here would make the default meaningless. */
+    if (!mine) out.push({ id: m.id, name: m.name, national: true, covers: true });
+    else out.push({ id: m.id, name: m.name, national: false, covers: Boolean(region && mine.includes(region)) });
   }
-  /* Whoever names this region sorts above whoever covers everywhere: a
-     regional answer is the better default and the picker is read top-down. */
-  return out.sort((a, b) => Number(a.national) - Number(b.national));
+  return out;
 }
 
 /**

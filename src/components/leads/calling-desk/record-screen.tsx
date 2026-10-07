@@ -218,7 +218,7 @@ export function RecordScreen({
               more calls needed.
             </div>
             <div className="text-[12.5px] text-muted">
-              Converting to Prospect moves this lead now — no Sales Manager verification call is needed.
+              Converting creates the Prospect now and sends it to {lead.verifier?.suggested?.name ?? lead.managerName ?? "the Sales Manager"} for verification.
             </div>
           </div>
           <Button variant="primary" disabled={!canConvert} onClick={() => open("convert")}>
@@ -359,7 +359,15 @@ export function RecordScreen({
             }
           />
           <MetaItem label="Owner" value={lead.ownerName ?? "Unassigned"} />
-          <MetaItem label="Sales manager" value={lead.requestedAt ? lead.managerName : "Assigned when requested"} />
+          <MetaItem
+            label="Sales manager"
+            value={
+              lead.requestedAt
+                ? lead.managerName
+                : (lead.managerName ??
+                  (lead.verifier?.suggested ? `${lead.verifier.suggested.name} (suggested)` : "Chosen when converted"))
+            }
+          />
           <MetaItem label="City" value={lead.city} />
           <MetaItem label="Contact" value={lead.contactPerson} />
           <MetaItem label="Phone" value={lead.phone} />
@@ -864,7 +872,7 @@ function SuspectCallsTracker({
             </span>
           ) : (
             <span className="text-[12.5px] text-muted">
-              Converts immediately — no Sales Manager verification is needed.
+              Creates the Prospect now and sends it to the Sales Manager for verification.
             </span>
           )}
         </div>
@@ -1146,7 +1154,7 @@ function GateActionCard({
   if (p === "lost") return note("No further action — this lead is closed. Its history stays for reference.");
   if (p === "ready")
     return box(
-      "Everything a Prospect needs is in. Pick the reason it is worth pursuing and convert it — this moves the lead to Prospect at once, with no Sales Manager verification call needed.",
+      "Everything a Prospect needs is in. Pick the reason it is worth pursuing and convert it — this creates the Prospect at once and sends it to the Sales Manager for verification.",
       <Button variant="primary" disabled={!canWork} onClick={onConvert}>
         Convert to Prospect
       </Button>,
