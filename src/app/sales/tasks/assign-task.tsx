@@ -17,6 +17,7 @@ import {
 } from "@/lib/actions/sales";
 import type { LinkSuggestion } from "@/lib/services/task-ai-service";
 import { Button } from "@/components/console/parts";
+import { addDays } from "@/lib/format";
 import type { PlaceFilterOptions, PlaceFilterValues } from "@/lib/place-filters";
 import type { PlaceKind } from "@/lib/place-parse";
 import {
@@ -133,12 +134,6 @@ export function AssignTask({
       ) : null}
     </>
   );
-}
-
-function addDays(iso: string, days: number): string {
-  const d = new Date(`${iso}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
 }
 
 function Builder({

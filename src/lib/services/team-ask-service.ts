@@ -9,6 +9,7 @@ import { requireCapability } from "@/lib/access-control";
 import { listUserApps, listUserModules } from "@/lib/access";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { getConfig } from "@/lib/config/store";
+import { toISODate } from "@/lib/format";
 import { today } from "@/lib/recompute";
 import { readSecret } from "@/lib/secrets";
 import { managerScope } from "@/lib/services/sales-service";
@@ -120,7 +121,8 @@ function describe(views: BuiltView[], enums: Map<string, string[]>): string {
 /** A value as the model should read it: instants in IST, dates as dates. */
 function plain(value: unknown, typeOid: number | undefined): unknown {
   if (value instanceof Date) {
-    if (typeOid === 1082) return value.toISOString().slice(0, 10);
+    // A DATE arrives as UTC midnight of that day, so its UTC parts ARE the date.
+    if (typeOid === 1082) return toISODate(value);
     return (
       new Intl.DateTimeFormat("en-CA", {
         timeZone: APP_TIMEZONE,
