@@ -17,8 +17,6 @@ import {
   mbosUserTerritories,
   mbosJourneyPlans,
   mbosJourneyStops,
-  mbosPriceList,
-  mbosSchemes,
   mbosTasks,
   mbosTravelLegs,
   mbosVisits,
@@ -36,7 +34,7 @@ import { salesGateRefusal, scopeCovers } from "@/lib/sales-gate";
 import { inCrmSalesManagerWorkspace } from "@/lib/services/crm-sales-manager-scope";
 import { getConfig, updateSettings } from "@/lib/config/store";
 import { bindAttachments, createAttachment } from "@/lib/services/attachment-service";
-import { APP_TIMEZONE, calendarDate } from "@/lib/business-date";
+import { APP_TIMEZONE } from "@/lib/business-date";
 import {
   fieldBook,
   LEAD_BULK_CAP,
@@ -206,22 +204,6 @@ async function leadOutsideScope(leadId: string): Promise<boolean> {
 /** The screens a lead is worked from — either one opens a lead action. */
 const LEAD_MODULES = ["sales.leads", "sales.lead-pipeline"] as const;
 
-/**
- * THE PRICE DESK, which is not the Sales Dashboard's.
- *
- * What a customer pays is `pricelist.manage` — the Accounts desk's and the
- * founder's, by Mahek's own instruction, and deliberately nobody's whose
- * target the price moves. The handset's rate table and its schemes ARE prices:
- * a manager who could set the dealer rate on the Catalogue screen could cut
- * his own team's prices to meet his own team's number, which is the conflict
- * `order.approve` exists to keep away from managers, arriving by a side door.
- * The screen stays where it is; the write asks the desk.
- */
-async function requirePriceDesk() {
-  await requireSalesAccess({ modules: ["sales.catalogue"] });
-  return (await requireCapability("pricelist.manage")).user;
-}
-
 function refresh() {
   try {
     revalidatePath("/crm/leads/sales-manager", "layout");
@@ -234,7 +216,6 @@ function refresh() {
     revalidatePath("/sales/knowledge");
     revalidatePath("/sales/tasks");
     revalidatePath("/sales/leads");
-    revalidatePath("/sales/catalogue");
     revalidatePath("/sales/notify");
     revalidatePath("/apps");
   } catch {
@@ -1229,226 +1210,6 @@ export async function sendFieldNotification(input: {
 
     refresh();
     return okVoid(`Sent to ${plural(targets.length, "person", "people")}.`);
-  } catch (e) {
-    return fromThrown(e);
-  }
-}
-
-/* ═══════════════════════════════════════════════ what a customer pays */
-
-/**
- * Setting a rate.
- *
- * Keyed on the PRICE TAG, not the customer — see the schema comment on
- * `mbosPriceList`: every dealer on the "DEALER" tag gets the dealer rate, so
- * a row here is one line for the whole tier rather than one per account.
- *
- * **A superseded rate is dated out, never deleted.** An order taken last
- * month priced against last month's rate is a fact about last month; deleting
- * the row would make that order's own value unexplainable later. So an
- * existing OPEN-ENDED row for the same tag and product is closed the day
- * before the new one starts, and the new row is inserted beside it — the
- * handset's own pull already reads only what is in force today, so nothing
- * downstream has to know two rows exist.
- *
- * This does NOT flip `products.priceSource` to `"pricelist"` — that switch is
- * the CRM's own order-valuation path, a separate decision by design (see the
- * schema comment: "a half-populated price list is worse than none, and
- * switching the source has to be somebody's deliberate act"). This screen
- * only fills the table the handset's own order form reads from.
- */
-export async function setPriceListRate(input: {
-  customerPriceTag: string;
-  productId: string;
-  ratePaise: number;
-  validFrom?: string;
-}): Promise<Result> {
-  try {
-    const user = await requirePriceDesk();
-
-    const tag = input.customerPriceTag.trim();
-    if (!tag) return err("A rate needs a price tag — DEALER, DISTRIBUTOR, and so on.", "validation");
-    if (!input.productId) return err("Pick a product.", "validation");
-    if (!Number.isFinite(input.ratePaise) || input.ratePaise <= 0) {
-      return err("The rate has to be a positive amount.", "validation");
-    }
-    const validFrom = input.validFrom || calendarDate(new Date());
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(validFrom)) return err("That is not a date.", "validation");
-
-    await db.transaction(async (tx) => {
-      const [superseded] = await tx
-        .select({ id: mbosPriceList.id })
-        .from(mbosPriceList)
-        .where(
-          and(
-            eq(mbosPriceList.customerPriceTag, tag),
-            eq(mbosPriceList.productId, input.productId),
-            sql`${mbosPriceList.validTo} is null`,
-          ),
-        )
-        .limit(1);
-
-      if (superseded) {
-        await tx
-          .update(mbosPriceList)
-          .set({ validTo: sql`${validFrom}::date - 1`, updatedById: user.id, updatedAt: new Date() })
-          .where(eq(mbosPriceList.id, superseded.id));
-      }
-
-      await tx.insert(mbosPriceList).values({
-        id: gen("mbos_price"),
-        customerPriceTag: tag,
-        productId: input.productId,
-        ratePaise: input.ratePaise,
-        validFrom,
-        createdById: user.id,
-        updatedById: user.id,
-      });
-    });
-
-    await db.insert(auditLog).values({
-      id: gen("aud"),
-      actorId: user.id,
-      action: "mbos.priceList.set",
-      entityType: "mbos_price_list",
-      entityId: `${tag}:${input.productId}`,
-      afterState: { customerPriceTag: tag, productId: input.productId, ratePaise: input.ratePaise, validFrom } as never,
-    });
-
-    refresh();
-    return okVoid("Rate saved. It reaches every handset on that tag on the next sync.");
-  } catch (e) {
-    return fromThrown(e);
-  }
-}
-
-/** Withdrawing a rate without deleting it — the row stays for what it once explained. */
-export async function endPriceListRate(id: string): Promise<Result> {
-  try {
-    const user = await requirePriceDesk();
-
-    const [row] = await db.select().from(mbosPriceList).where(eq(mbosPriceList.id, id)).limit(1);
-    if (!row) return err("That rate is no longer on the list.", "not_found");
-    if (row.validTo) return err("That rate has already been withdrawn.", "validation");
-
-    await db
-      .update(mbosPriceList)
-      .set({ validTo: sql`current_date`, updatedById: user.id, updatedAt: new Date() })
-      .where(eq(mbosPriceList.id, id));
-
-    await db.insert(auditLog).values({
-      id: gen("aud"),
-      actorId: user.id,
-      action: "mbos.priceList.end",
-      entityType: "mbos_price_list",
-      entityId: id,
-      beforeState: { customerPriceTag: row.customerPriceTag, productId: row.productId, ratePaise: row.ratePaise } as never,
-    });
-
-    refresh();
-    return okVoid("Withdrawn. It drops off every handset on the next sync.");
-  } catch (e) {
-    return fromThrown(e);
-  }
-}
-
-/**
- * A promotion, as data.
- *
- * `eligibility` and `benefit` are JSON exactly as the handset's own scheme
- * engine (`mbos-app/src/engines/schemes.ts`) reads them. Nothing here
- * interprets either, the same way `mbos-service.ts` ships them down unread:
- * expressing a scheme as a rule engine's input is what lets one be added for
- * a festival without a deploy.
- *
- * **The two columns carry five fields between them, not two.** `benefit` is
- * exactly a `SchemeBenefit` — `{"kind":"free_quantity","perCans":10,
- * "freeCans":1}`, `{"kind":"percent_discount","percent":5}` or
- * `{"kind":"flat_discount","amountPaise":50000}`. `eligibility` carries
- * everything else the engine needs and this table has no column for:
- * `{"level":"line","priority":0,"stackable":false,"when":{"field":"skuId",
- * "op":"eq","value":"prod_xyz"}}` — `when` is the actual predicate
- * (`Predicate` in the same file), `level` is `"line"` or `"order"`, and a
- * missing `when` is read on the handset as `{"any":[]}`, which never
- * matches — a blank predicate fails CLOSED rather than discounting
- * everything nobody asked it to.
- */
-export async function addScheme(input: {
-  name: string;
-  description?: string;
-  eligibility: Record<string, unknown>;
-  benefit: Record<string, unknown>;
-  validFrom?: string;
-  validTo?: string;
-}): Promise<Result> {
-  try {
-    const user = await requirePriceDesk();
-
-    const name = input.name.trim();
-    if (!name) return err("A scheme needs a name — it is what a salesman sees on the order form.", "validation");
-
-    const id = gen("mbos_scheme");
-    await db.insert(mbosSchemes).values({
-      id,
-      name,
-      description: input.description?.trim() || null,
-      eligibility: input.eligibility,
-      benefit: input.benefit,
-      validFrom: input.validFrom || null,
-      validTo: input.validTo || null,
-      createdById: user.id,
-      updatedById: user.id,
-    });
-
-    await db.insert(auditLog).values({
-      id: gen("aud"),
-      actorId: user.id,
-      action: "mbos.scheme.add",
-      entityType: "mbos_scheme",
-      entityId: id,
-      afterState: { name, eligibility: input.eligibility, benefit: input.benefit } as never,
-    });
-
-    refresh();
-    return okVoid(`${name} added. It reaches every handset on the next sync.`);
-  } catch (e) {
-    return fromThrown(e);
-  }
-}
-
-/**
- * Withdrawing a scheme.
- *
- * `active = false` takes it off the handsets that have not pulled it yet;
- * the tombstone is what tells a handset that ALREADY has it to take it down —
- * a scheme, unlike the price list, is upserted rather than replaced wholesale
- * on the phone, so without this a withdrawn scheme stays offered for ever on
- * any handset that already saw it.
- */
-export async function withdrawScheme(id: string): Promise<Result> {
-  try {
-    const user = await requirePriceDesk();
-
-    const [row] = await db.select().from(mbosSchemes).where(eq(mbosSchemes.id, id)).limit(1);
-    if (!row) return err("That scheme is no longer on the list.", "not_found");
-
-    await db
-      .update(mbosSchemes)
-      .set({ active: false, updatedById: user.id, updatedAt: new Date() })
-      .where(eq(mbosSchemes.id, id));
-    await tombstone("schemes", id, "Scheme withdrawn");
-
-    await db.insert(auditLog).values({
-      id: gen("aud"),
-      actorId: user.id,
-      action: "mbos.scheme.withdraw",
-      entityType: "mbos_scheme",
-      entityId: id,
-      beforeState: { name: row.name } as never,
-    });
-
-    refresh();
-    return okVoid(`${row.name} withdrawn.`);
   } catch (e) {
     return fromThrown(e);
   }
@@ -3458,117 +3219,6 @@ export async function bulkAssignTask(input: {
     );
   } catch (e) {
     return fromThrown(e);
-  }
-}
-
-/* --------------------------------------------------- leave, for one person */
-
-/**
- * Give somebody terms of their own, or put them back on everybody's.
- *
- * `mbos.leave.annualEntitlementDays` is what a person gets unless a row in
- * `mbos_leave_balances` says otherwise. That override already worked and there
- * was NO WAY TO WRITE ONE — nothing in MahekOne created such a row, so it was
- * a mechanism with no door, and a salesman hired on different terms could not
- * be given them from any screen.
- *
- * NULL CLEARS rather than sets zero, and the two are genuinely different: a
- * cleared kind falls back to the company figure, and a stored zero is somebody
- * deciding this person gets none — which is a real answer for a probationer.
- * Clearing DELETES the row rather than storing a sentinel, because the engine
- * reads a present row as an override and the absence of one as "use the
- * default"; a row meaning "no override" would be a third state nothing reads.
- *
- * `used_days` is never touched. What somebody has taken is counted from their
- * approved requests, and a column that could be edited here would let days be
- * handed back by typing over the record of them being taken.
- */
-export async function setLeaveEntitlement(input: {
-  userId: string;
-  year: number;
-  /** Kind to days, or null to fall back to the company figure. */
-  days: Record<string, number | null>;
-}): Promise<Result> {
-  try {
-    const me = await requireSalesAccess(SALES_MANAGER("sales.leave"));
-    /* Nobody sets their own allowance — the same reason nobody answers their
-       own leave request. */
-    if (input.userId === me.id) {
-      return err("That is your own allowance. Somebody else has to set it.", "not_permitted");
-    }
-    if (await salesmanOutsideScope(input.userId)) return err(NOT_YOUR_TEAM, "not_permitted");
-
-    const [person] = await db
-      .select({ id: users.id, name: users.name })
-      .from(users)
-      .where(eq(users.id, input.userId))
-      .limit(1);
-    if (!person) return err("That account no longer exists.", "not_found");
-
-    if (!Number.isInteger(input.year) || input.year < 2000 || input.year > 2100) {
-      return err("That is not a year.", "validation");
-    }
-
-    for (const [kind, value] of Object.entries(input.days)) {
-      if (value === null) continue;
-      if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
-        return err(`${kind} has to be a number of days, and not a negative one.`, "validation");
-      }
-      /* Half days, because leave is taken in them — and nothing finer, because
-         a quarter day is not a thing anybody applies for and would print as a
-         balance nobody could act on. */
-      if (value * 2 !== Math.round(value * 2)) {
-        return err(`${kind} has to be a whole number of days or a half.`, "validation");
-      }
-      if (value > 365) return err(`${kind} cannot be more than a year.`, "validation");
-    }
-
-    await db.transaction(async (tx) => {
-      for (const [kind, value] of Object.entries(input.days)) {
-        /* Loss of pay is what leave BECOMES when a balance runs out. There is
-           no balance of unpaid days to hold, so there is nothing to override. */
-        if (kind === "loss_of_pay") continue;
-
-        if (value === null) {
-          await tx.execute(sql`
-            delete from mbos_leave_balances
-             where user_id = ${person.id} and year = ${input.year}
-               and leave_type = ${kind}::mbos_leave_type
-          `);
-          continue;
-        }
-
-        await tx.execute(sql`
-          insert into mbos_leave_balances
-            (id, user_id, year, leave_type, entitled_days, used_days,
-             created_at, updated_at, created_by_id, updated_by_id)
-          values (${gen("mbos_lbal")}, ${person.id}, ${input.year},
-                  ${kind}::mbos_leave_type, ${value}, 0, now(), now(), ${me.id}, ${me.id})
-          on conflict (user_id, year, leave_type) do update
-            set entitled_days = excluded.entitled_days,
-                updated_at = now(),
-                updated_by_id = ${me.id}
-        `);
-      }
-    });
-
-    await db.insert(auditLog).values({
-      id: gen("aud"),
-      actorId: me.id,
-      action: "leave.entitlement.set",
-      entityType: "user",
-      entityId: person.id,
-      afterState: { year: input.year, days: input.days } as never,
-    });
-
-    refresh();
-    revalidatePath("/sales/leave");
-    return ok(
-      undefined,
-      `${person.name}'s leave for ${input.year} is set. It reaches their handset on the next sync.`,
-    );
-  } catch (e) {
-    return err(e instanceof Error ? e.message : "That did not work.", "not_permitted");
   }
 }
 

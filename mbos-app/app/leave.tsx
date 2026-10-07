@@ -16,7 +16,12 @@ import { useBoot } from '../src/state/boot';
 import { color as C, radius, weight, type BadgeTone } from '../src/theme/tokens';
 
 /**
- * Leave: ask for it, and follow what happened to every request.
+ * Leave: ask for it, follow what happened to every request, and see how many
+ * days have been taken this year.
+ *
+ * TAKEN, NEVER LEFT. The top card counts approved days this year, by kind,
+ * off his own requests — what happened, which he can check against his own
+ * memory. Allowances are kept in HRMS, and the office decides every request.
  *
  * NO BALANCE IS SHOWN, ANYWHERE. Mahek does not show a salesman how many days
  * of leave he has; whether a request is paid is the office's decision. The
@@ -29,6 +34,14 @@ import { color as C, radius, weight, type BadgeTone } from '../src/theme/tokens'
  */
 
 const TYPES = ['Casual', 'Sick', 'Earned', 'Loss of pay'] as const;
+
+/** What each kind is FOR, in the words a salesman would use. */
+const TYPE_HELP: Record<(typeof TYPES)[number], string> = {
+  Casual: 'Personal work, a function, a family matter. Ask a few days before.',
+  Sick: 'You or your family are unwell. Ask on the day if you have to.',
+  Earned: 'Planned time off — a trip, a festival at home. Ask well before.',
+  'Loss of pay': 'Time off without pay, when you want it recorded that way.',
+};
 
 const SPANS: [Draft['span'], string][] = [
   ['half', 'Half day'],
@@ -89,9 +102,14 @@ export default function LeaveScreen() {
      count the balance is debited by. Null until read, and the form then falls
      back to calendar days rather than showing nothing. */
   const [calendar, setCalendar] = React.useState<LeaveCalendar | null>(null);
+  /* The year the "taken" card counts — read when the screen loads rather than
+     during render, which must not read the clock. */
+  const [year, setYear] = React.useState<string | null>(null);
+  const [guide, setGuide] = React.useState(false);
 
   const load = React.useCallback(() => {
     let live = true;
+    setYear(isoDate(new Date()).slice(0, 4));
     void leaveCalendar()
       .then((c) => live && setCalendar(c))
       .catch(() => {});
@@ -185,6 +203,15 @@ export default function LeaveScreen() {
       },
     });
 
+  /* Approved days this year, by kind — a request is counted in the year it
+     starts, the way the office counts it. */
+  const takenThisYear = (rows ?? []).filter(
+    (r) => r.state === 'Approved' && year !== null && r.fromDate.slice(0, 4) === year,
+  );
+  const takenByKind = new Map<string, number>();
+  for (const r of takenThisYear) takenByKind.set(r.kind, (takenByKind.get(r.kind) ?? 0) + r.days);
+  const takenTotal = takenThisYear.reduce((n, r) => n + r.days, 0);
+
   const waiting = (rows ?? []).filter((r) => r.state === 'Pending');
   const history = (rows ?? []).filter((r) => r.state !== 'Pending');
 
@@ -202,6 +229,28 @@ export default function LeaveScreen() {
     <AppFrame title="Leave" activeTab={null} onBack={back.go} contentStyle={{ padding: 16, paddingBottom: 24 }}>
       <BackLink label={back.label} onPress={back.go} />
 
+      {/* ------------------------------------------------ taken this year */}
+      <Card style={{ marginBottom: 12 }}>
+        <T s="label">{year ? 'Taken in ' + year : 'Taken this year'}</T>
+        <T style={[{ fontSize: 28, color: C.ink, marginTop: 4 }, weight(600)]}>
+          {takenTotal ? lengthOf(takenTotal) : 'No leave yet'}
+        </T>
+        {takenByKind.size ? (
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+            {[...takenByKind].map(([kind, d]) => (
+              <Badge key={kind} tone="neutral">
+                {kind + ' · ' + lengthOf(d)}
+              </Badge>
+            ))}
+          </View>
+        ) : null}
+        <T s="caption" style={{ marginTop: 8 }}>
+          {waiting.length
+            ? plural(waiting.length, 'request') + ' waiting for your manager. Days count here once approved.'
+            : 'Only approved leave is counted here.'}
+        </T>
+      </Card>
+
       <PrimaryButton
         label="Apply for leave"
         style={{ borderRadius: radius.xl }}
@@ -211,6 +260,46 @@ export default function LeaveScreen() {
           setOpen(true);
         }}
       />
+
+      {/* ---------------------------------------------- how leave works */}
+      <Pressable
+        accessibilityRole="button"
+        onPress={() => {
+          animateLayout();
+          setGuide((g) => !g);
+        }}
+        style={{ minHeight: 48, justifyContent: 'center', alignSelf: 'flex-start', marginTop: 4 }}>
+        <T style={[{ fontSize: 14, color: C.primary }, weight(600)]}>
+          {guide ? 'Hide how leave works' : 'How leave works'}
+        </T>
+      </Pressable>
+      {guide ? (
+        <Card>
+          <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>How to apply</T>
+          {[
+            '1. Press Apply for leave.',
+            '2. Pick the kind of leave, and half a day, one day or more.',
+            '3. Pick the dates and write why — your manager decides on the reason.',
+            '4. Press Send. It goes to your manager when the phone has signal.',
+            '5. The answer comes back here, with who decided it.',
+          ].map((line) => (
+            <T key={line} style={{ fontSize: 14, color: C.body, marginTop: 4 }}>
+              {line}
+            </T>
+          ))}
+          <T style={[{ fontSize: 15, color: C.ink, marginTop: 14 }, weight(600)]}>Kinds of leave</T>
+          {TYPES.map((k) => (
+            <View key={k} style={{ marginTop: 8 }}>
+              <T style={[{ fontSize: 14, color: C.ink }, weight(600)]}>{k}</T>
+              <T s="caption">{TYPE_HELP[k]}</T>
+            </View>
+          ))}
+          <T s="caption" style={{ marginTop: 12 }}>
+            {'Weekly days off and holidays inside your dates are not counted. You can withdraw a ' +
+              "request while it is still waiting. Whether it is approved is your manager's decision."}
+          </T>
+        </Card>
+      ) : null}
 
       {rows === null ? null : rows.length === 0 ? (
         <T style={{ fontSize: 15, color: C.muted, textAlign: 'center', marginTop: 32 }}>
@@ -262,6 +351,9 @@ export default function LeaveScreen() {
             <Choice key={k} label={k} selected={lv.type === k} onPress={() => patch({ type: k })} />
           ))}
         </View>
+        <T s="caption" style={{ marginTop: 6 }}>
+          {TYPE_HELP[lv.type as (typeof TYPES)[number]] ?? ''}
+        </T>
 
         <T s="label" style={{ marginTop: 16, marginBottom: 8 }}>
           How long

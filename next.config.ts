@@ -124,6 +124,13 @@ const nextConfig: NextConfig = {
        */
       { source: "/reports", destination: "/apps", permanent: false },
       { source: "/reports/:path*", destination: "/apps", permanent: false },
+      /* Removed from the Sales Dashboard on Mahek's instruction: prices are the
+         price desk's and pay is HRMS's. A bookmark lands on the dashboard
+         rather than on a 404 that reads as something broken. */
+      { source: "/sales/catalogue", destination: "/sales", permanent: false },
+      { source: "/sales/price-lists", destination: "/sales", permanent: false },
+      { source: "/sales/price-lists/:path*", destination: "/sales", permanent: false },
+      { source: "/sales/salary", destination: "/sales", permanent: false },
 
       /*
        * The Accounts app was called Orders, and lived at /orders, until it grew

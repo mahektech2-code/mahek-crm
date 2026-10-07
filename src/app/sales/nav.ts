@@ -164,8 +164,6 @@ export const SALES_NAV: NavGroup[] = [
       { href: "/sales/orders", label: "Orders", icon: "order" },
       { href: "/sales/payments", label: "Payments", icon: "money" },
       { href: "/sales/invoices", label: "Invoices", icon: "doc" },
-      { href: "/sales/catalogue", label: "Catalogue & rates", icon: "grid" },
-      { href: "/sales/price-lists", label: "Price lists", icon: "money" },
     ],
   },
   {
@@ -175,7 +173,6 @@ export const SALES_NAV: NavGroup[] = [
       { href: "/sales/attendance", label: "Attendance", icon: "clock" },
       { href: "/sales/leave", label: "Leave", icon: "cal" },
       { href: "/sales/holidays", label: "Holidays", icon: "cal" },
-      { href: "/sales/salary", label: "Salary", icon: "money" },
       { href: "/sales/expenses", label: "Expenses", icon: "receipt" },
       { href: "/sales/exceptions", label: "Flagged expenses", icon: "bell" },
       { href: "/sales/expense-policy", label: "Expense policy", icon: "doc" },
