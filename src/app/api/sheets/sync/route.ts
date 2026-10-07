@@ -94,6 +94,9 @@ const JOBS: Record<string, JobName> = {
      unchanged row, so a salesman who got a MahekOne account after the import
      never gets matched to the rows that are plainly his. */
   "field-activity-rematch": "field-activity-rematch",
+  /* Re-read every stored activity DATE in its own read's order — a row read
+     month-first from a day-first workbook is otherwise wrong for ever. */
+  "field-activity-reparse": "field-activity-reparse",
   // The derived values: buying cycles, the inactive watch, follow-up stages,
   // slow payers, bill statuses, today's queue snapshot.
   nightly: "nightly",
