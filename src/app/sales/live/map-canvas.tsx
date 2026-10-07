@@ -47,8 +47,11 @@ export function TeamList({
   thresholds,
   nowMs,
   isToday,
+  day,
   feed,
 }: {
+  /** The day on screen, so a row's link opens the same day. */
+  day: string;
   rows: LastKnown[];
   /** Null outside the "today" view — there is no trail to measure yet. */
   distanceMetres: Map<string, number> | null;
@@ -162,17 +165,22 @@ export function TeamList({
           const distance = distanceMetres ? distanceMetres.get(r.salesmanId) ?? 0 : null;
           const speed = r.checkOutAt ? undefined : speedKmh?.get(r.salesmanId);
           return (
-            <button
+            <div
               key={r.salesmanId}
+              className={
+                "flex items-stretch border-t border-divider first:border-t-0" +
+                (selected ? " bg-brand-soft shadow-[inset_3px_0_0_#6E3FF3]" : "")
+              }
+            >
+            <button
               type="button"
               disabled={!hasFix}
               onClick={() => onSelect(r.salesmanId)}
               title={hasFix ? `Show ${r.salesmanName} on the map` : "No position to show on the map"}
               aria-pressed={selected}
               className={
-                "flex w-full items-start gap-2.5 border-t border-divider px-3 py-2.5 text-left first:border-t-0 disabled:cursor-default " +
-                (hasFix ? "cursor-pointer hover:bg-canvas" : "") +
-                (selected ? " bg-brand-soft shadow-[inset_3px_0_0_#6E3FF3]" : "")
+                "flex min-w-0 flex-1 items-start gap-2.5 py-2.5 pl-3 text-left disabled:cursor-default " +
+                (hasFix ? "cursor-pointer hover:bg-canvas" : "")
               }
             >
               <span className="relative mt-0.5 flex size-7 flex-none items-center justify-center rounded-[4px] bg-brand-soft text-[11px] font-semibold text-[#5223E0]">
@@ -218,6 +226,21 @@ export function TeamList({
                 ))}
               </span>
             </button>
+            {/* HIS WHOLE DAY, in a tab of its own — the map and every visit,
+                stop and act in order. A link beside the row rather than the
+                row itself, because the row's own click is "show him on this
+                map", which a manager watching the team still wants. */}
+            <a
+              href={`/sales/live/${r.salesmanId}${isToday ? "" : `?day=${day}`}`}
+              target="_blank"
+              rel="noopener"
+              title={`Open ${r.salesmanName}'s whole day in a new tab`}
+              aria-label={`Open ${r.salesmanName}'s whole day in a new tab`}
+              className="flex w-9 flex-none items-start justify-center pt-3 text-[14px] text-muted no-underline hover:bg-canvas hover:text-brand hover:no-underline"
+            >
+              ↗
+            </a>
+            </div>
           );
         })}
       </div>
