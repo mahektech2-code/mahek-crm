@@ -171,8 +171,10 @@ export async function stageOutcome(app: HireApplication, def: BlueprintDefinitio
       const okKeys = new Set(docs.filter((d) => d.verificationStatus === "verified" || d.verificationStatus === "waived").map((d) => d.requirementKey));
       const missing = def.documents.filter((d) => d.mandatory && !okKeys.has(d.key));
       if (missing.length) return { outcome: "pending", why: `Mandatory documents missing or unverified: ${missing.map((d) => d.label).join(", ")}.` };
-      const [offer] = await db.select({ status: hireOffers.status }).from(hireOffers).where(and(eq(hireOffers.applicationId, app.id), isNull(hireOffers.supersededById))).orderBy(desc(hireOffers.createdAt)).limit(1);
+      const [offer] = await db.select({ status: hireOffers.status, courier: hireOffers.courierStatus }).from(hireOffers).where(and(eq(hireOffers.applicationId, app.id), isNull(hireOffers.supersededById))).orderBy(desc(hireOffers.createdAt)).limit(1);
       if (offer?.status !== "accepted") return { outcome: "pending", why: offer ? `The offer is ${offer.status}, not accepted.` : "No offer has been issued yet." };
+      /* Courier status gates progression (spec §7.1): the signed letter is back with us. */
+      if (offer.courier !== "received" && offer.courier !== "received_by_staff") return { outcome: "pending", why: "The signed offer letter has not come back by courier yet." };
       return { outcome: "pass" };
     }
     case "checklist":
