@@ -1,0 +1,49 @@
+# The droplet's cron runs /opt/mahekone/sheet-sync.sh, and that file was
+# copied there by hand once, at setup. A change to it in this repository
+# therefore reached production only if somebody remembered to scp it — which
+# is how the EMP 2.0 activity sync, added to the script, would have sat here
+# while the droplet went on running the old copy.
+#
+# This copies it whenever it changes on main, syntax-checks it on the droplet,
+# and only then swaps it in, so a broken script never replaces a working one.
+# The crontab calls the file by path, so replacing it is the whole change.
+#
+# Run it by hand (Actions → Ship sync schedule → Run workflow) to push the
+# current copy without changing anything.
+
+name: Ship sync schedule
+
+on:
+  push:
+    branches: [main]
+    paths: [deploy/sheet-sync.sh]
+  workflow_dispatch:
+
+concurrency:
+  group: ship-sync-schedule
+  cancel-in-progress: false
+
+jobs:
+  ship:
+    runs-on: ubuntu-latest
+    # The same environment the deploy uses, so it reads the same secrets.
+    environment: production
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check it parses here first
+        run: bash -n deploy/sheet-sync.sh
+
+      - name: Set up the SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          # Pinned, not trust-on-first-use — see deploy.yml.
+          echo "${{ secrets.SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+
+      - name: Copy, check on the droplet, swap in
+        run: |
+          scp deploy/sheet-sync.sh deploy@${{ secrets.DROPLET_HOST }}:/opt/mahekone/sheet-sync.sh.new
+          ssh deploy@${{ secrets.DROPLET_HOST }} \
+            "bash -n /opt/mahekone/sheet-sync.sh.new && mv /opt/mahekone/sheet-sync.sh.new /opt/mahekone/sheet-sync.sh && grep -c field-activity /opt/mahekone/sheet-sync.sh"
