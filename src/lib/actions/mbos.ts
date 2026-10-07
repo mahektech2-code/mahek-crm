@@ -39,6 +39,7 @@ import {
   mbosSamples,
   sampleFeedback,
   mbosSyncReceipts,
+  mbosTaskCampaigns,
   mbosTasks,
   mbosVisits,
   notifications,
@@ -125,6 +126,7 @@ import {
   type LeaveCalendar,
 } from "../engines/leave";
 import { notifyUsers } from "../notify";
+import { cleanTaskAnswers, parseTaskForm, taskAnswerPhotoIds, taskAnswersNote } from "../task-form";
 
 /* ---------------------------------------------------------------------------
  * MBOS — every write the handset makes.
@@ -6053,6 +6055,13 @@ const taskSchema = z.object({
   completionPhotoId: z.string().nullish(),
   snoozedTo: z.string().nullish(),
   snoozeReason: z.string().max(500).nullish(),
+  /**
+   * The answers to the assignment's form, keyed by field id. Taken as any
+   * object and CLEANED against the form the office stored (`cleanTaskAnswers`)
+   * — never trusted for shape, and never refused for an answer owed: an APK
+   * cannot be recalled, and the results screen says what is missing instead.
+   */
+  responses: z.record(z.string(), z.unknown()).nullish(),
   /*
    * A SNOOZE, IN THE ONLY SHAPE THE HANDSET HAS EVER SENT IT.
    *
@@ -6109,8 +6118,14 @@ async function handleTaskUpdate(
   const p = parsed.data;
 
   const [existing] = await db
-    .select({ id: mbosTasks.id, title: mbosTasks.title })
+    .select({
+      id: mbosTasks.id,
+      title: mbosTasks.title,
+      assignedToUserId: mbosTasks.assignedToUserId,
+      form: mbosTaskCampaigns.form,
+    })
     .from(mbosTasks)
+    .leftJoin(mbosTaskCampaigns, eq(mbosTaskCampaigns.id, mbosTasks.campaignId))
     .where(eq(mbosTasks.id, item.entityId))
     .limit(1);
 
@@ -6125,8 +6140,24 @@ async function handleTaskUpdate(
     };
   }
 
+  /* A task with a form is answered by the form. The answers ARE the "how",
+     so they stand in for the note — written out as one, so every screen that
+     reads a completed task's note reads the answers without being taught. */
+  const form = parseTaskForm(existing.form);
+  const answers =
+    form.length && p.responses != null ? cleanTaskAnswers(form, p.responses) : null;
+  if (answers && !p.completionNote) {
+    const note = taskAnswersNote(form, answers);
+    if (note) p.completionNote = note;
+  }
+
   const config = await getConfig();
-  if (p.status === "done" && config["mbos.tasks.requireCompletionNote"] && !p.completionNote) {
+  if (
+    p.status === "done" &&
+    config["mbos.tasks.requireCompletionNote"] &&
+    !p.completionNote &&
+    !(answers && Object.keys(answers).length)
+  ) {
     return {
       kind: "rejected",
       value: reject(
@@ -6167,8 +6198,21 @@ async function handleTaskUpdate(
     if (p.snoozeReason == null && snooze.reason != null) changed.snoozeReason = snooze.reason;
   }
 
+  if (answers) {
+    changed.responses = answers;
+    changed.respondedAt = new Date();
+  }
+
   await db.update(mbosTasks).set(changed).where(eq(mbosTasks.id, item.entityId));
   await bindMbosMedia(p.completionPhotoId, "mbos_task", item.entityId, principal.user.id);
+  /* Every photograph the form asked for is filed under the task, so the
+     results screen can open it — the media queue uploads them naming the
+     task, and this binds the ones that arrived first under `pending`. */
+  if (answers) {
+    for (const photoId of taskAnswerPhotoIds(form, answers)) {
+      await bindMbosMedia(photoId, "mbos_task", item.entityId, principal.user.id);
+    }
+  }
 
   return { kind: "accepted", value: { serverId: item.entityId } };
 }

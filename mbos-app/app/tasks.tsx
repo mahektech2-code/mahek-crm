@@ -10,7 +10,21 @@ import { discardQueuedMedia } from '../src/sync/media';
 import { getConfig } from '../src/data/config';
 import { useBoot } from '../src/state/boot';
 import { color as C, radius, shadow, weight } from '../src/theme/tokens';
-import { bucketOf, completeTask, createTask, listOpenTasks, snoozeTarget, snoozeTask, type Task } from '../src/data/tasks';
+import {
+  bucketOf,
+  completeTask,
+  createTask,
+  dropTaskDraft,
+  listOpenTasks,
+  loadTaskDraft,
+  saveTaskDraft,
+  snoozeTarget,
+  snoozeTask,
+  taskFormOf,
+  type Task,
+} from '../src/data/tasks';
+import { TaskFormFields } from '../src/components/task-form';
+import { cleanTaskAnswers, taskAnswerProblems, taskAnswersNote, type TaskAnswers } from '../src/engines/task-form';
 import { customerNames, daysSince, listCustomersPage, type Customer } from '../src/data/customers';
 import { dmy, isoDate, plural } from '../src/lib/format';
 import { useStore } from '../src/state/store';
@@ -40,6 +54,18 @@ import { Stagger, SwipeRow, animateLayoutFor } from '../src/components/ui/motion
 const BUCKETS = ['Overdue', 'Today', 'Tomorrow', 'This week', 'Later'] as const;
 const WHENS = ['Today', 'Tomorrow', 'This week'] as const;
 const PRIS = ['Normal', 'High'] as const;
+
+/** What a form asks, in one line: "4 questions · 2 photos". */
+function formLine(fields: ReturnType<typeof taskFormOf>): string {
+  const asks = fields.filter((f) => f.type !== 'info' && f.type !== 'photo').length;
+  const photos = fields.filter((f) => f.type === 'photo').length;
+  return [
+    asks ? plural(asks, 'question') : '',
+    photos ? plural(photos, 'photo') + ' to take' : '',
+  ]
+    .filter(Boolean)
+    .join(' · ') || 'Read and confirm';
+}
 
 /** The three offers the design makes, as real dates. */
 function dateFor(when: (typeof WHENS)[number], today: string): string {
@@ -91,6 +117,12 @@ export default function TasksScreen() {
   const [donePhoto, setDonePhoto] = React.useState<string | null>(null);
   const [doneErr, setDoneErr] = React.useState<string | null>(null);
   const [doneBusy, setDoneBusy] = React.useState(false);
+  /* A task the office attached a form to is answered by the form. The
+     answers are kept as a draft as they are given, so a form left half done
+     opens where he left it. */
+  const [answers, setAnswers] = React.useState<TaskAnswers>({});
+  const [answerErrs, setAnswerErrs] = React.useState<Map<string, string>>(new Map());
+  const closingForm = React.useMemo(() => (closing ? taskFormOf(closing) : []), [closing]);
   const doneLock = React.useRef(false);
   const [noteRequired, setNoteRequired] = React.useState(true);
   React.useEffect(() => {
@@ -163,6 +195,16 @@ export default function TasksScreen() {
     setDoneNote('');
     setDonePhoto(null);
     setDoneErr(null);
+    setAnswerErrs(new Map());
+    setAnswers({});
+    if (taskFormOf(t).length) void loadTaskDraft(t).then(setAnswers).catch(() => undefined);
+  };
+
+  const changeAnswers = (next: TaskAnswers) => {
+    setAnswers(next);
+    setAnswerErrs(new Map());
+    setDoneErr(null);
+    if (closing) void saveTaskDraft(closing.id, next).catch(() => undefined);
   };
 
   const closeDone = () => {
@@ -190,14 +232,29 @@ export default function TasksScreen() {
   const markDone = async () => {
     const t = closing;
     if (!t || doneLock.current) return;
-    if (noteRequired && !doneNote.trim()) {
+    const form = taskFormOf(t);
+    let responses: TaskAnswers | null = null;
+    let note = doneNote;
+    if (form.length) {
+      const problems = taskAnswerProblems(form, answers);
+      if (problems.length) {
+        setAnswerErrs(new Map(problems.map((p) => [p.fieldId, p.message])));
+        setDoneErr(problems.length === 1 ? 'One answer is still needed.' : problems.length + ' answers are still needed.');
+        return;
+      }
+      responses = cleanTaskAnswers(form, answers);
+      /* The answers are the "how"; a note he adds goes on top of them. */
+      const summary = taskAnswersNote(form, responses);
+      note = [doneNote.trim(), summary].filter(Boolean).join('\n');
+    } else if (noteRequired && !doneNote.trim()) {
       setDoneErr('Say what you did. Your manager reads this.');
       return;
     }
     doneLock.current = true;
     setDoneBusy(true);
     try {
-      await completeTask(t.id, { note: doneNote, photoId: donePhoto });
+      await completeTask(t.id, { note, photoId: donePhoto, responses });
+      if (responses) void dropTaskDraft(t.id);
       animateLayoutFor(tasks.length);
       setClosing(null);
       notify('Done · ' + t.title);
@@ -271,7 +328,7 @@ export default function TasksScreen() {
                     <SwipeRow
                       /* The "Done" toast already buzzes. */
                       buzz={false}
-                      right={{ label: 'Done', color: C.success, run: () => openDone(t) }}
+                      right={{ label: taskFormOf(t).length ? 'Answer' : 'Done', color: C.success, run: () => openDone(t) }}
                       style={{ borderRadius: radius.xl, overflow: 'hidden' }}>
                       <View
                         style={{
@@ -322,6 +379,14 @@ export default function TasksScreen() {
                             instruction. It was stored and never drawn. */}
                         {t.description ? (
                           <T s="small" style={{ color: C.body, marginTop: 6 }}>{t.description}</T>
+                        ) : null}
+                        {/* A task with a form says how much it asks before he
+                            opens it, so "two questions" and "fifteen questions
+                            and four photos" are not the same tap. */}
+                        {taskFormOf(t).length ? (
+                          <T s="caption" style={{ marginTop: 6, color: C.primary }}>
+                            {formLine(taskFormOf(t))}
+                          </T>
                         ) : null}
 
                         {/* A task that ASKS for something specific opens the screen
@@ -393,7 +458,9 @@ export default function TasksScreen() {
                                 alignItems: 'center',
                                 justifyContent: 'center',
                               }}>
-                              <T style={[{ fontSize: 15, color: C.surface }, weight(500)]}>Done</T>
+                              <T style={[{ fontSize: 15, color: C.surface }, weight(500)]}>
+                                {taskFormOf(t).length ? 'Answer' : 'Done'}
+                              </T>
                             </Pressable>
                           </View>
                         </View>
@@ -492,30 +559,51 @@ export default function TasksScreen() {
 
       <BottomSheet open={closing !== null} onClose={closeDone} scroll>
         <T style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.285, color: C.ink }, weight(600)]}>
-          Mark as done
+          {closingForm.length ? 'Answer and finish' : 'Mark as done'}
         </T>
         {closing ? <T s="small" style={{ color: C.muted, marginTop: 4 }}>{closing.title}</T> : null}
+        {closing?.description && closingForm.length ? (
+          <T s="small" style={{ color: C.body, marginTop: 6 }}>{closing.description}</T>
+        ) : null}
+        {closing && closingForm.length ? (
+          <View style={{ marginTop: 14 }}>
+            <TaskFormFields
+              taskId={closing.id}
+              fields={closingForm}
+              answers={answers}
+              onChange={changeAnswers}
+              problems={answerErrs}
+            />
+          </View>
+        ) : null}
         <View style={{ marginTop: 14 }}>
-          <SectionLabel style={{ marginBottom: 6 }}>{noteRequired ? 'What you did · needed' : 'What you did'}</SectionLabel>
+          <SectionLabel style={{ marginBottom: 6 }}>
+            {closingForm.length ? 'Anything else (optional)' : noteRequired ? 'What you did · needed' : 'What you did'}
+          </SectionLabel>
           <VoiceField
             value={doneNote}
             onChangeText={(v) => {
               setDoneNote(v);
               setDoneErr(null);
             }}
-            placeholder="Gave them the new rate list. They will order next week."
+            placeholder={closingForm.length ? 'Anything the questions did not ask.' : 'Gave them the new rate list. They will order next week.'}
             multiline
             maxLength={2000}
           />
         </View>
-        <View style={{ marginTop: 12 }}>
-          <SecondaryButton label={donePhoto ? 'Photo added. Take it again' : 'Add a photo (optional)'} onPress={() => void addDonePhoto()} />
-        </View>
+        {closingForm.length ? null : (
+          <View style={{ marginTop: 12 }}>
+            <SecondaryButton label={donePhoto ? 'Photo added. Take it again' : 'Add a photo (optional)'} onPress={() => void addDonePhoto()} />
+          </View>
+        )}
+        {closingForm.length ? (
+          <T s="caption" style={{ marginTop: 10 }}>Your answers are kept on the phone if you close this — finish later.</T>
+        ) : null}
         {doneErr ? <T style={{ fontSize: 13, color: C.danger, marginTop: 10 }}>{doneErr}</T> : null}
         <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
           <SecondaryButton label="Cancel" onPress={closeDone} style={{ flex: 1, borderRadius: radius.xl }} />
           <PrimaryButton
-            label={doneBusy ? 'Saving…' : 'Done'}
+            label={doneBusy ? 'Saving…' : closingForm.length ? 'Submit' : 'Done'}
             onPress={() => void markDone()}
             disabled={doneBusy}
             style={{ flex: 1, borderRadius: radius.xl }}

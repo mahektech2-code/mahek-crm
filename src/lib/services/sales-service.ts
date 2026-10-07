@@ -1145,6 +1145,8 @@ export type TaskRow = {
   createdAt: Date;
   /** Days past due. Zero where it is not late. */
   overdueDays: number;
+  /** The assignment it is one row of, where the office set it with a form. */
+  campaignId: string | null;
 };
 
 /**
@@ -1167,7 +1169,8 @@ export async function tasksList(day: string): Promise<TaskRow[]> {
            t.completion_note as "completionNote",
            b.name as "raisedBy",
            t.server_created_at as "createdAt",
-           greatest(0, ${day}::date - t.due_date)::int as "overdueDays"
+           greatest(0, ${day}::date - t.due_date)::int as "overdueDays",
+           t.campaign_id as "campaignId"
       from mbos_tasks t
       join users u on u.id = t.assigned_to_user_id
       join app_access a on a.user_id = u.id and a.app = 'field'

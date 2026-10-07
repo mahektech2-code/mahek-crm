@@ -1,7 +1,8 @@
-import { all, one, run } from '../db';
+import { all, getKv, one, run, setKv } from '../db';
 import { insertAndQueue, stamp, updateAndQueue } from './write';
 import { isoDate } from '../lib/format';
 import { wirePriority } from '../lib/wire';
+import { parseTaskForm, type TaskAnswers, type TaskField } from '../engines/task-form';
 
 export type Task = {
   id: string;
@@ -20,8 +21,61 @@ export type Task = {
   sourceId: string | null;
   assigneeId: string | null;
   assignerId: string | null;
+  /** The office's assignment this task is one of, and the form it asks him
+   *  to fill — JSON text, read through `taskFormOf`. Null on a plain task. */
+  campaignId: string | null;
+  form: string | null;
+  /** His answers to that form, JSON text — see `taskAnswersOf`. */
+  responses: string | null;
   syncState: string;
 };
+
+/** The questions this task asks. Empty is a plain task: a note and a tick. */
+export function taskFormOf(t: Pick<Task, 'form'>): TaskField[] {
+  return parseTaskForm(t.form);
+}
+
+/** What he has answered so far — kept when he leaves the form half done. */
+export function taskAnswersOf(t: Pick<Task, 'responses'>): TaskAnswers {
+  if (!t.responses) return {};
+  try {
+    const v = JSON.parse(t.responses);
+    return v && typeof v === 'object' && !Array.isArray(v) ? (v as TaskAnswers) : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Answers kept on the phone without closing the task, so a form left half
+ * done — the shop was shut, the owner was out — opens where he left it.
+ *
+ * In `kv` rather than on the row: a pull rewrites `responses` from the office
+ * on every pass, and a draft written there would be erased by the next sync.
+ * Nothing goes to the office until he submits.
+ */
+const draftKey = (id: string) => 'taskDraft:' + id;
+
+export async function loadTaskDraft(t: Pick<Task, 'id' | 'responses'>): Promise<TaskAnswers> {
+  const raw = await getKv(draftKey(t.id)).catch(() => null);
+  if (raw) {
+    try {
+      const v = JSON.parse(raw);
+      if (v && typeof v === 'object' && !Array.isArray(v)) return v as TaskAnswers;
+    } catch {
+      /* A draft that cannot be read is no draft. */
+    }
+  }
+  return taskAnswersOf(t);
+}
+
+export async function saveTaskDraft(id: string, answers: TaskAnswers): Promise<void> {
+  await setKv(draftKey(id), JSON.stringify(answers));
+}
+
+export async function dropTaskDraft(id: string): Promise<void> {
+  await run('DELETE FROM kv WHERE key = ?', [draftKey(id)]).catch(() => undefined);
+}
 
 export async function createTask(args: {
   title: string;
@@ -81,15 +135,18 @@ export function bucketOf(dueDate: string, today: string): 'Overdue' | 'Today' | 
  */
 export async function completeTask(
   id: string,
-  args: { note: string | null; photoId?: string | null },
+  args: { note: string | null; photoId?: string | null; responses?: TaskAnswers | null },
 ): Promise<void> {
   const note = args.note?.trim() || null;
-  await updateAndQueue({
-    table: 'tasks',
-    entityType: 'task',
-    id,
-    patch: { status: 'done', completionNote: note, completionPhotoId: args.photoId ?? null },
-  });
+  const patch: Record<string, unknown> = {
+    status: 'done',
+    completionNote: note,
+    completionPhotoId: args.photoId ?? null,
+  };
+  /* The answers travel in the same update as the tick, so the office never
+     holds a closed task whose answers are still on the phone. */
+  if (args.responses) patch.responses = args.responses;
+  await updateAndQueue({ table: 'tasks', entityType: 'task', id, patch });
 }
 
 /**

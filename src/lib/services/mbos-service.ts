@@ -1679,8 +1679,15 @@ async function openTasks(userId: string) {
            t.completion_note as "completionNote",
            t.completion_photo_id as "completionPhotoId",
            t.escalated_at as "escalatedAt",
+           -- The form the office asked him to fill, and what he has answered.
+           -- The form lives on the assignment and only there; the answers are
+           -- sent back so a pull never writes NULL over a reply he gave.
+           t.campaign_id as "campaignId",
+           k.form as "form",
+           t.responses as "responses",
            t.updated_at as "updatedAt"
       from mbos_tasks t
+      left join mbos_task_campaigns k on k.id = t.campaign_id
      where t.assigned_to_user_id = ${userId}
        and t.status in ('open', 'in_progress')
      order by t.due_date asc nulls last
@@ -1711,8 +1718,15 @@ async function tasksSince(userId: string, sinceIso: string) {
            t.completion_note as "completionNote",
            t.completion_photo_id as "completionPhotoId",
            t.escalated_at as "escalatedAt",
+           -- The form the office asked him to fill, and what he has answered.
+           -- The form lives on the assignment and only there; the answers are
+           -- sent back so a pull never writes NULL over a reply he gave.
+           t.campaign_id as "campaignId",
+           k.form as "form",
+           t.responses as "responses",
            t.updated_at as "updatedAt"
       from mbos_tasks t
+      left join mbos_task_campaigns k on k.id = t.campaign_id
      where t.assigned_to_user_id = ${userId}
        and t.updated_at > ${sinceIso}
      order by t.updated_at asc

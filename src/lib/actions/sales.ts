@@ -2,6 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 import { and, eq, inArray, isNotNull, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import {
@@ -19,6 +20,7 @@ import {
   mbosJourneyStops,
   mbosPriceList,
   mbosSchemes,
+  mbosTaskCampaigns,
   mbosTasks,
   mbosTravelLegs,
   mbosVisits,
@@ -38,11 +40,11 @@ import { getConfig, updateSettings } from "@/lib/config/store";
 import { bindAttachments, createAttachment } from "@/lib/services/attachment-service";
 import { APP_TIMEZONE, calendarDate } from "@/lib/business-date";
 import {
-  fieldBook,
   LEAD_BULK_CAP,
   leadIdsMatching,
   leadsInScope,
   leadsPage,
+  fieldTeam,
   managerScope,
   onlyMine,
 } from "@/lib/services/sales-service";
@@ -68,6 +70,29 @@ import { repriceDay, rescoreLeg } from "@/lib/services/expense-submit-service";
 import { notifyUsers } from "../notify";
 import { announce } from "@/lib/services/announcement-service";
 import { mirrorToHrms, removeEverywhere } from "@/lib/services/holiday-calendar";
+import {
+  placeNames,
+  searchShopsForTask,
+  shopsForTarget,
+  taskPlaceOptions,
+  type AudienceShopRow,
+} from "@/lib/services/task-campaign-service";
+import type { PlaceFilterOptions, PlaceFilterValues } from "@/lib/place-filters";
+import {
+  expandTaskAudience,
+  MAX_TASKS_PER_ASSIGNMENT,
+  taskAudienceProblem,
+  taskAudienceSentence,
+  type TaskAudience,
+} from "@/lib/task-audience";
+import {
+  MAX_TASK_FIELDS,
+  MAX_TASK_OPTIONS,
+  TASK_FIELD_TYPES,
+  taskFormProblems,
+  tidyTaskForm,
+  type TaskField,
+} from "@/lib/task-form";
 
 /** Count, noun and verb agree at every value. */
 function plural(n: number, noun: string, pl?: string): string {
@@ -3246,33 +3271,6 @@ export async function uploadPublishFile(form: FormData): Promise<Result<{ id: st
 /* ═══════════════════════════════════════════════════════════ task allocation */
 
 /**
- * What a filter would match, before anybody commits to it.
- *
- * `fieldBook` is a plain read function, not a server action — this is the
- * thinnest possible wrapper, so the count a manager reviews here and the
- * count `bulkAssignTask` re-derives at save time come from the exact same
- * query and cannot drift.
- */
-export async function previewTaskTargets(filter: {
-  salesmanId?: string;
-  beat?: string;
-  missingGpsOnly?: boolean;
-  search?: string;
-}): Promise<Result<{ count: number; names: string[]; unassigned: number }>> {
-  try {
-    await requireSalesAccess({ modules: ["sales.tasks"] });
-    const matches = await fieldBook(filter);
-    return ok({
-      count: matches.length,
-      names: matches.slice(0, 8).map((c) => c.name),
-      unassigned: matches.filter((c) => !c.salesmanId).length,
-    });
-  } catch (e) {
-    return fromThrown(e);
-  }
-}
-
-/**
  * Assigning a task, on the web, to somebody who reads it on a handset.
  *
  * `mbos_tasks` already existed — it is how a rejected order raises "ring back
@@ -3361,101 +3359,350 @@ export async function createTask(input: {
   }
 }
 
+/* ---------------------------------------------------------- tasks with forms */
+
 /**
- * The same task, to whoever carries every shop a filter matches.
+ * ONE ASSIGNMENT, MANY ANSWERS.
  *
- * The pattern `assignSalesManager` already uses for moving accounts in bulk:
- * `expectedCount` is what was reviewed on screen, the filter is re-run here
- * rather than trusted from the client, and a mismatch is refused rather than
- * silently acting on a different set than the one somebody looked at.
- * `fieldBook` is the SAME read the review list itself would page through, so
- * the count cannot drift between the two.
+ * The office picks what to ask (a form of any fields, `lib/task-form.ts`),
+ * which shops it is about and who does it (`lib/task-audience.ts`), and this
+ * writes one `mbos_task_campaigns` row and one task per (salesman, shop) pair.
+ * The handset draws the form on each task; the answers come back on the task
+ * and are read side by side on `/sales/tasks/<campaign>`.
  *
- * One task per matching shop, addressed to whoever actually carries it — a
- * shop with nobody assigned is counted and skipped rather than silently
- * dropped or given to nobody.
+ * The preview and the save run the SAME expansion over the SAME reads, and the
+ * save refuses when the count has moved since it was reviewed — the shape the
+ * bulk tools elsewhere in this product already use, so nothing is written to a
+ * set nobody looked at.
+ *
+ * WHO MAY BE GIVEN WORK is the manager's active field team (`fieldTeam`, which
+ * is already narrowed by `managerScope`). A shop's carrier who holds no field
+ * app — a telecaller, the importer — would receive a task no screen of theirs
+ * can show, so that shop is counted as having nobody to do it.
  */
-export async function bulkAssignTask(input: {
-  filter: {
-    salesmanId?: string;
-    beat?: string;
-    missingGpsOnly?: boolean;
-    search?: string;
+
+const TASK_MODULE = "sales.tasks";
+
+function refreshCampaign(campaignId: string) {
+  try {
+    revalidatePath(`/sales/tasks/${campaignId}`);
+  } catch {
+    /* Outside a request — a job or a test — there is no cache to clear. */
+  }
+}
+
+const taskFieldSchema = z.object({
+  id: z.string().min(1).max(60),
+  type: z.enum(TASK_FIELD_TYPES),
+  label: z.string().max(300),
+  help: z.string().max(1000).optional(),
+  required: z.boolean().optional(),
+  options: z.array(z.string().max(200)).max(MAX_TASK_OPTIONS + 10).optional(),
+  min: z.number().finite().optional(),
+  max: z.number().finite().optional(),
+  unit: z.string().max(40).optional(),
+  showIf: z
+    .object({
+      field: z.string().min(1).max(60),
+      op: z.enum(["is", "is_not", "includes", "answered"]),
+      value: z.string().max(200).optional(),
+    })
+    .optional(),
+});
+
+const placesSchema = z.object({
+  state: z.string().max(4000).optional(),
+  district: z.string().max(4000).optional(),
+  city: z.string().max(4000).optional(),
+  area: z.string().max(4000).optional(),
+});
+
+const audienceSchema = z.object({
+  shops: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("none") }),
+    z.object({ kind: z.literal("list"), customerIds: z.array(z.string().min(1)).max(MAX_TASKS_PER_ASSIGNMENT) }),
+    z.object({
+      kind: z.literal("filter"),
+      places: placesSchema,
+      carriedBy: z.array(z.string().min(1)).max(500),
+      accountKinds: z.array(z.enum(["customer", "lead"])).max(2),
+      missingGpsOnly: z.boolean().optional(),
+      search: z.string().max(200).optional(),
+    }),
+  ]),
+  assignees: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("carrier") }),
+    z.object({ kind: z.literal("chosen"), salesmanIds: z.array(z.string().min(1)).max(500) }),
+  ]),
+});
+
+export type TaskAudiencePreview = {
+  tasks: number;
+  shops: number | null;
+  noCarrier: number;
+  outsideTeam: number;
+  tooMany: boolean;
+  salesmen: { id: string; name: string; count: number }[];
+  sample: string[];
+};
+
+/** The expansion both the preview and the save run. */
+async function resolveAudience(audience: TaskAudience) {
+  const [shops, team] = await Promise.all([shopsForTarget(audience.shops), fieldTeam()]);
+  const active = new Map(team.filter((s) => s.active).map((s) => [s.id, s.name]));
+  const expanded = expandTaskAudience(
+    shops?.map((c) => ({ id: c.id, carrierId: c.carrierId })) ?? null,
+    audience.assignees,
+    (id) => active.has(id),
+  );
+  return { shops, active, ...expanded };
+}
+
+function previewOf(r: Awaited<ReturnType<typeof resolveAudience>>): TaskAudiencePreview {
+  const per = new Map<string, number>();
+  for (const p of r.pairs) per.set(p.salesmanId, (per.get(p.salesmanId) ?? 0) + 1);
+  return {
+    tasks: r.pairs.length,
+    shops: r.shops ? Math.min(r.shops.length, MAX_TASKS_PER_ASSIGNMENT) : null,
+    noCarrier: r.noCarrier,
+    outsideTeam: r.outsideTeam,
+    tooMany: r.pairs.length > MAX_TASKS_PER_ASSIGNMENT || (r.shops?.length ?? 0) > MAX_TASKS_PER_ASSIGNMENT,
+    salesmen: [...per.entries()]
+      .map(([id, count]) => ({ id, name: r.active.get(id) ?? "Somebody", count }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)),
+    sample: (r.shops ?? []).slice(0, 6).map((c) => c.name),
   };
-  expectedCount: number;
+}
+
+/** Who and how many an audience means, before anything is written. */
+export async function previewTaskAudience(input: TaskAudience): Promise<Result<TaskAudiencePreview>> {
+  try {
+    await requireSalesAccess(SALES_MANAGER(TASK_MODULE));
+    const parsed = audienceSchema.safeParse(input);
+    if (!parsed.success) return err("That selection could not be read. Pick it again.", "validation");
+    const problem = taskAudienceProblem(parsed.data);
+    if (problem) return err(problem, "validation");
+    return ok(previewOf(await resolveAudience(parsed.data)));
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** The shop picker's search. */
+export async function searchTaskShops(query: string): Promise<Result<AudienceShopRow[]>> {
+  try {
+    await requireSalesAccess(SALES_MANAGER(TASK_MODULE));
+    return ok(await searchShopsForTask(String(query ?? "").slice(0, 100)));
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** The four place dropdowns, re-counted as the picks above narrow them. */
+export async function loadTaskPlaceOptions(picks: PlaceFilterValues): Promise<Result<PlaceFilterOptions>> {
+  try {
+    await requireSalesAccess(SALES_MANAGER(TASK_MODULE));
+    const parsed = placesSchema.safeParse(picks ?? {});
+    return ok(await taskPlaceOptions(parsed.success ? parsed.data : {}));
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** Assign a task, with whatever it asks for, to everybody the audience means. */
+export async function assignTaskCampaign(input: {
   title: string;
   description?: string;
   priority?: TaskPriority;
   dueDate: string;
-}): Promise<Result<{ created: number; skipped: number }>> {
+  form: TaskField[];
+  audience: TaskAudience;
+  expectedCount: number;
+}): Promise<Result<{ campaignId: string; created: number }>> {
   try {
-    const user = await requireSalesAccess(SALES_MANAGER("sales.tasks"));
-    const title = input.title.trim();
+    const user = await requireSalesAccess(SALES_MANAGER(TASK_MODULE));
+    const title = String(input.title ?? "").trim();
     const problem = validTask(title, input.dueDate, input.priority);
     if (problem) return err(problem, "validation");
 
-    const matches = await fieldBook(input.filter);
-    if (matches.length !== input.expectedCount) {
+    const formParsed = z.array(taskFieldSchema).max(MAX_TASK_FIELDS).safeParse(input.form ?? []);
+    if (!formParsed.success) return err("The form could not be read. Check each question.", "validation");
+    const form = tidyTaskForm(formParsed.data as TaskField[]);
+    const formProblems = taskFormProblems(form);
+    if (formProblems.length) return err(formProblems[0], "validation");
+
+    const audParsed = audienceSchema.safeParse(input.audience);
+    if (!audParsed.success) return err("Who it goes to could not be read. Pick it again.", "validation");
+    const audience = audParsed.data;
+    const audProblem = taskAudienceProblem(audience);
+    if (audProblem) return err(audProblem, "validation");
+
+    const resolved = await resolveAudience(audience);
+    const preview = previewOf(resolved);
+    if (preview.tooMany) {
       return err(
-        `This would now create ${matches.length} tasks, not the ${input.expectedCount} you reviewed. Open the list again and check what changed.`,
+        `That is more than ${MAX_TASKS_PER_ASSIGNMENT.toLocaleString("en-IN")} tasks in one go. Narrow it by place or by salesman.`,
+        "validation",
+      );
+    }
+    if (preview.tasks !== input.expectedCount) {
+      return err(
+        `This would now create ${preview.tasks} tasks, not the ${input.expectedCount} you reviewed. Check who it goes to again.`,
         "conflict",
       );
     }
-    if (!matches.length) {
-      return err("Nothing matches this filter.", "validation");
-    }
+    if (!preview.tasks) return err("Nobody would receive this task.", "validation");
 
-    let created = 0;
-    let skipped = 0;
-    const byAssignee = new Map<string, number>();
-    for (const c of matches) {
-      if (!c.salesmanId) {
-        skipped += 1;
-        continue;
-      }
-      await db.insert(mbosTasks).values({
-        id: gen("mbos_task"),
-        title,
-        description: input.description?.trim() || null,
-        assignedToUserId: c.salesmanId,
-        assignedByUserId: user.id,
-        priority: input.priority ?? "medium",
-        dueDate: input.dueDate,
-        customerId: c.id,
-        status: "open",
-        createdById: user.id,
-        updatedById: user.id,
-      });
-      created += 1;
-      byAssignee.set(c.salesmanId, (byAssignee.get(c.salesmanId) ?? 0) + 1);
-    }
-
-    await db.insert(auditLog).values({
-      id: gen("aud"),
-      actorId: user.id,
-      action: "mbos.task.bulkCreated",
-      entityType: "mbos_task",
-      entityId: null,
-      beforeState: null as never,
-      afterState: { title, dueDate: input.dueDate, created, skipped, filter: input.filter } as never,
+    const placeIds =
+      audience.shops.kind === "filter"
+        ? Object.values(audience.shops.places).flatMap((v) => (v ?? "").split(",")).filter(Boolean)
+        : [];
+    const places = await placeNames(placeIds);
+    const audienceSentence = taskAudienceSentence(audience, {
+      salesman: (id) => resolved.active.get(id) ?? "somebody",
+      place: (id) => places.get(id) ?? "a place",
     });
 
-    for (const [assigneeId, count] of byAssignee) {
+    const campaignId = gen("mbos_taskc");
+    const description = input.description?.trim() || null;
+    const priority = input.priority ?? "medium";
+    await db.transaction(async (tx) => {
+      await tx.insert(mbosTaskCampaigns).values({
+        id: campaignId,
+        title,
+        description,
+        form,
+        audience,
+        audienceSentence,
+        priority,
+        dueDate: input.dueDate,
+        taskCount: preview.tasks,
+        createdById: user.id,
+      });
+      for (let i = 0; i < resolved.pairs.length; i += 500) {
+        await tx.insert(mbosTasks).values(
+          resolved.pairs.slice(i, i + 500).map((p) => ({
+            id: gen("mbos_task"),
+            title,
+            description,
+            assignedToUserId: p.salesmanId,
+            assignedByUserId: user.id,
+            priority,
+            dueDate: input.dueDate,
+            customerId: p.customerId,
+            status: "open" as const,
+            campaignId,
+            sourceType: "campaign",
+            sourceId: campaignId,
+            createdById: user.id,
+            updatedById: user.id,
+          })),
+        );
+      }
+      await tx.insert(auditLog).values({
+        id: gen("aud"),
+        actorId: user.id,
+        action: "mbos.task.campaignCreated",
+        entityType: "mbos_task_campaign",
+        entityId: campaignId,
+        beforeState: null as never,
+        afterState: {
+          title,
+          dueDate: input.dueDate,
+          questions: form.length,
+          tasks: preview.tasks,
+          audience: audienceSentence,
+        } as never,
+      });
+    });
+
+    const asks = form.filter((f) => f.type !== "info").length;
+    for (const s of preview.salesmen) {
       await tell(
-        assigneeId,
-        count === 1 ? "A task was assigned to you" : `${count} tasks were assigned to you`,
-        `${user.name}: "${title}" — due ${input.dueDate}`,
+        s.id,
+        s.count === 1 ? "A task was assigned to you" : `${s.count} tasks were assigned to you`,
+        `${user.name}: "${title}"${asks ? ` — ${plural(asks, "question")} to answer` : ""} — due ${input.dueDate}`,
         "/tasks",
       );
     }
 
     refresh();
+    refreshCampaign(campaignId);
+    const skipped = preview.noCarrier + preview.outsideTeam;
     return ok(
-      { created, skipped },
-      skipped
-        ? `${plural(created, "task")} created. ${skipped} ${skipped === 1 ? "shop has" : "shops have"} nobody to assign to and ${skipped === 1 ? "was" : "were"} skipped.`
-        : `${plural(created, "task")} created.`,
+      { campaignId, created: preview.tasks },
+      `${plural(preview.tasks, "task")} assigned to ${plural(preview.salesmen.length, "salesman", "salesmen")}.` +
+        (skipped ? ` ${plural(skipped, "shop")} had nobody in your field team to do it and ${skipped === 1 ? "was" : "were"} skipped.` : ""),
     );
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * Withdraw what is still open. Answered tasks keep their answers — a reply
+ * somebody gave is a fact about the shop whatever happens to the question.
+ */
+export async function closeTaskCampaign(campaignId: string): Promise<Result<{ cancelled: number }>> {
+  try {
+    const user = await requireSalesAccess(SALES_MANAGER(TASK_MODULE));
+    const scope = await managerScope();
+    const rows = (await db.execute<{ id: string }>(sql`
+      update mbos_tasks t
+         set status = 'cancelled', updated_at = now(), updated_by_id = ${user.id}
+       where t.campaign_id = ${campaignId}
+         and t.status in ('open', 'in_progress')
+         ${onlyMine(scope, "t.assigned_to_user_id")}
+      returning t.id
+    `)) as unknown as { id: string }[];
+    await db
+      .update(mbosTaskCampaigns)
+      .set({ closedAt: new Date(), updatedAt: new Date() })
+      .where(eq(mbosTaskCampaigns.id, campaignId));
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: "mbos.task.campaignClosed",
+      entityType: "mbos_task_campaign",
+      entityId: campaignId,
+      beforeState: null as never,
+      afterState: { cancelled: rows.length } as never,
+    });
+    refresh();
+    refreshCampaign(campaignId);
+    return ok({ cancelled: rows.length }, rows.length ? `${plural(rows.length, "open task")} withdrawn.` : "Nothing was still open.");
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** Nudge everybody who still owes an answer — one bell each, not one a task. */
+export async function remindTaskCampaign(campaignId: string): Promise<Result<{ reminded: number }>> {
+  try {
+    const user = await requireSalesAccess(SALES_MANAGER(TASK_MODULE));
+    const scope = await managerScope();
+    const [head] = await db
+      .select({ title: mbosTaskCampaigns.title })
+      .from(mbosTaskCampaigns)
+      .where(eq(mbosTaskCampaigns.id, campaignId));
+    if (!head) return err("That assignment no longer exists.", "not_found");
+    const rows = (await db.execute<{ userId: string; open: number }>(sql`
+      select t.assigned_to_user_id as "userId", count(*)::int as open
+        from mbos_tasks t
+       where t.campaign_id = ${campaignId}
+         and t.status in ('open', 'in_progress')
+         ${onlyMine(scope, "t.assigned_to_user_id")}
+       group by t.assigned_to_user_id
+    `)) as unknown as { userId: string; open: number }[];
+    for (const r of rows) {
+      await tell(
+        r.userId,
+        "Reminder: a task is waiting on you",
+        `${user.name}: "${head.title}" — ${plural(Number(r.open), "task")} still open`,
+        "/tasks",
+      );
+    }
+    return ok({ reminded: rows.length }, rows.length ? `Reminded ${plural(rows.length, "salesman", "salesmen")}.` : "Nobody owes an answer.");
   } catch (e) {
     return fromThrown(e);
   }
