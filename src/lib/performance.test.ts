@@ -40,11 +40,13 @@ import { addMonths, endOfMonth } from "@/lib/business-date";
 import {
   actualsForPeriod,
   handsetReadingForRange,
+  personPerformance,
   readingsForPeriod,
   recomputeSalesPerformance,
   unattributedForPeriod,
 } from "@/lib/services/performance-service";
 import { buildBootstrap, type MbosPrincipal } from "@/lib/services/mbos-service";
+import { checkRange, presetRange } from "@/lib/performance-range";
 
 /* ------------------------------------------------------------------ harness */
 
@@ -1092,6 +1094,55 @@ describe("a range picked on the handset", () => {
     const range = await handsetReadingForRange(rahul.id, `${PERIOD}-01`, `${PERIOD}-10`);
     assert.equal(range.revenueTargetPaise, Math.round((300_000_00 * 10) / days));
     assert.equal(range.prorated, true);
+  });
+
+  test("THIS MONTH on the phone is the Performance screen's score, on any day of it", async () => {
+    /* The bug: the handset's endpoint clamped the range to today, so October
+       asked on the 7th was 1–7 October, its target cut to 7/31 and the phone
+       several times the dashboard. The range is checked, never clamped. */
+    await targetFor(rahul.id, PERIOD, { revenue: 900_000_00, collectionBp: 5000 });
+    const c = await makeCustomer({ salesAmId: rahul.id });
+    await makeOrder(c.id, [{ product: UNIVERSAL, cans: 10, amountPaise: 150_000_00 }]);
+
+    const checked = checkRange(
+      presetRange("this-month", TODAY).from,
+      presetRange("this-month", TODAY).to,
+      TODAY,
+    );
+    assert.ok(checked.ok);
+    assert.equal(checked.range.to, endOfMonth(PERIOD), "the end is not clamped to today");
+
+    const phone = await handsetReadingForRange(rahul.id, checked.range.from, checked.range.to);
+    const [table] = await readingsForPeriod(PERIOD, TODAY, { userIds: [rahul.id] });
+    assert.equal(phone.totalScoreBp, table.score.totalBp);
+    assert.equal(phone.revenueTargetPaise, 900_000_00, "the whole month's target, not its days so far");
+    assert.equal(phone.prorated, false);
+  });
+
+  test("the person modal reads the same score, and says where it came from", async () => {
+    await targetFor(rahul.id, PERIOD, { revenue: 300_000_00 });
+    const c = await makeCustomer({ salesAmId: rahul.id });
+    await makeOrder(c.id, [{ product: UNIVERSAL, cans: 10, amountPaise: 150_000_00 }]);
+
+    const detail = await personPerformance(rahul.id, `${PERIOD}-01`, endOfMonth(PERIOD), TODAY as never);
+    const [table] = await readingsForPeriod(PERIOD, TODAY, { userIds: [rahul.id] });
+    assert.ok(detail);
+    assert.equal(detail.totalScoreBp, table.score.totalBp);
+    assert.equal(
+      detail.components.reduce((sum, k) => sum + k.pointsBp, 0),
+      detail.totalScoreBp,
+      "the points in the breakdown add up to the score",
+    );
+    assert.equal(detail.topCustomers[0]?.id, c.id);
+    assert.equal(detail.ordersCount, 1);
+    assert.ok(detail.workingDays, "a whole month carries its working days");
+    assert.ok(detail.daily && detail.daily.length === Number(endOfMonth(PERIOD).slice(8, 10)));
+    assert.equal(
+      detail.daily.reduce((sum, d) => sum + d.revenuePaise, 0),
+      detail.revenueActualPaise,
+      "the days add up to the month",
+    );
+    assert.equal(await personPerformance("usr_nobody", `${PERIOD}-01`, endOfMonth(PERIOD), TODAY as never), null);
   });
 
   test("a range with no target in it has no score, rather than a score of nought", async () => {

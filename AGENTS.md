@@ -6129,6 +6129,27 @@ than summed (40% then 60% is about 50%, not 100%), and the mix is held to the
 latest target's bands. The screen says how many months carried a target. A
 year is April to March, because that is the year the bills carry.
 
+**AND A RANGE IS NEVER CLAMPED TO TODAY, which is what made the phone and the
+dashboard disagree.** `/api/mbos/performance` cut the end of every range to
+today, so "this month" asked on the 7th was 1–7 October, its target was cut to
+7/31 of itself, the tasks due later dropped out of the activity base, and the
+handset scored a salesman several times what the Performance screen did. The
+future has no orders or receipts, so reading it changes no actual; what it
+keeps is the whole month's target, which is what the dashboard scores against.
+`lib/performance-range.ts` is the one check both endpoints use (a range that
+has not started is still refused), and a test asserts "this month" on the phone
+equals `readingsForPeriod` on any day of it. Both screens print the score to
+one decimal.
+
+**A NAME ON THE PERFORMANCE TABLE OPENS THE PERSON IN DETAIL**, over any range
+(`person-performance.tsx`, `/api/sales/performance`, gated on
+`sales.performance`). It is `personPerformance`, built on `scoreRange` — the
+same computation as the handset's range — so the modal, the phone and, for a
+whole month, the table are one figure; the breakdown's points add up to the
+score, and a test says so. The table itself fits beside the sidebar at 1280:
+each figure carries its achievement under it rather than beside it, and
+collection is the share of the old debt collected, never the rupees.
+
 **Collection is drawn as the SHARE it is asked as.** The office sets "collect
 half of what was overdue"; the handset showed the rupees, which made the
 target read as an amount somebody had picked. The share leads, the money it is
