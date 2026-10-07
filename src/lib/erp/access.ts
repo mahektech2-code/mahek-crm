@@ -19,6 +19,7 @@ import { levelInApp } from "@/lib/access-control";
 import { listUserApps, listUserModules } from "@/lib/access";
 import { ERP_ALWAYS_OPEN, ERP_SCREENS, erpKeysOf } from "./registry";
 import { ERP_POWERS, type ErpPower } from "./powers";
+import { isDepartmentSeat, type ErpDepartmentSeat } from "./departments";
 
 /* ---------------------------------------------------------------------------
  * Who this person is INSIDE the ERP: their level, their powers, the screens
@@ -56,6 +57,12 @@ export type ErpContext = {
   workingGodown: ErpGodownRef | null;
   /** The ERP designation they hold, by name, for the header. Null where none. */
   designation: string | null;
+  /**
+   * The production department their designation works in — one of the three,
+   * or `head` for all of them (`lib/erp/departments.ts`). Null for anybody
+   * not in one, and always for an administrator: neither is narrowed.
+   */
+  department: ErpDepartmentSeat | null;
 };
 
 type Resolved = Omit<ErpContext, "actor" | "viewingAs">;
@@ -89,7 +96,7 @@ async function resolveFor(user: User): Promise<Resolved> {
       .where(eq(erpGodownStaff.userId, user.id)),
     db.select().from(erpUserSettings).where(eq(erpUserSettings.userId, user.id)).limit(1),
     db
-      .select({ name: erpDesignations.name })
+      .select({ name: erpDesignations.name, department: erpDesignations.department })
       .from(erpUserDesignations)
       .innerJoin(erpDesignations, eq(erpDesignations.id, erpUserDesignations.designationId))
       .where(eq(erpUserDesignations.userId, user.id))
@@ -130,6 +137,7 @@ async function resolveFor(user: User): Promise<Resolved> {
     assignedGodowns: assigned,
     workingGodown,
     designation: designationRow[0]?.name ?? null,
+    department: !administrator && isDepartmentSeat(designationRow[0]?.department) ? designationRow[0].department : null,
   };
 }
 
@@ -192,6 +200,7 @@ async function resolveForDesignation(real: Resolved, id: string): Promise<Resolv
     assignedGodowns: real.assignedGodowns,
     workingGodown: real.workingGodown,
     designation: d.name,
+    department: !administrator && isDepartmentSeat(d.department) ? d.department : null,
   };
 }
 

@@ -17,6 +17,7 @@ import { requirePlatformAdminUser, widestRole, type Role } from "@/lib/access-co
 import { ConsoleNotConfirmedError } from "@/lib/console-confirm";
 import { moduleKeysForApp } from "@/lib/modules";
 import { isErpPower } from "@/lib/erp/powers";
+import { isDepartmentSeat, SEAT_LABEL, type ErpDepartmentSeat } from "@/lib/erp/departments";
 import {
   designationShape,
   draftFor,
@@ -90,6 +91,8 @@ export type DesignationInput = {
   allScreens: boolean;
   modules: string[];
   powers: string[];
+  /** The production department; null or absent for any other job. */
+  department?: ErpDepartmentSeat | null;
 };
 
 export type DesignationSaved = {
@@ -122,6 +125,8 @@ export async function saveErpDesignation(input: DesignationInput): Promise<Resul
   /* An administrator holds every power without a row, so rows on an admin
      designation would be a list nothing reads. */
   const powers = input.level === "admin" ? [] : [...new Set(input.powers)].filter(isErpPower);
+  if (input.department != null && !isDepartmentSeat(input.department)) return fieldErr("department", "Not a department.");
+  const department = input.department ?? null;
 
   const clash = await db
     .select({ id: erpDesignations.id })
@@ -152,7 +157,7 @@ export async function saveErpDesignation(input: DesignationInput): Promise<Resul
     if (before) {
       await tx
         .update(erpDesignations)
-        .set({ name, description: input.description?.trim() || null, level: input.level, allScreens: input.allScreens, updatedAt: new Date(), updatedById: me.id })
+        .set({ name, description: input.description?.trim() || null, level: input.level, allScreens: input.allScreens, department, updatedAt: new Date(), updatedById: me.id })
         .where(eq(erpDesignations.id, id));
     } else {
       const [last] = await tx.select({ n: erpDesignations.sortOrder }).from(erpDesignations).orderBy(desc(erpDesignations.sortOrder)).limit(1);
@@ -162,6 +167,7 @@ export async function saveErpDesignation(input: DesignationInput): Promise<Resul
         description: input.description?.trim() || null,
         level: input.level,
         allScreens: input.allScreens,
+        department,
         sortOrder: (last?.n ?? 0) + 1000,
         updatedById: me.id,
       });
@@ -197,8 +203,8 @@ export async function saveErpDesignation(input: DesignationInput): Promise<Resul
     before ? "access.erp-designation.edit" : "access.erp-designation.create",
     "erp_designation",
     id,
-    before ? { name: before.name, level: before.level, allScreens: before.allScreens, modules: before.modules, powers: before.powers } : null,
-    { name, level: input.level, allScreens: input.allScreens, modules, powers, moved: moving.map(nameOf), leftAlone: leftAlone.map(nameOf) },
+    before ? { name: before.name, level: before.level, allScreens: before.allScreens, modules: before.modules, powers: before.powers, department: before.department ?? null } : null,
+    { name, level: input.level, allScreens: input.allScreens, modules, powers, department: department ? SEAT_LABEL[department] : null, moved: moving.map(nameOf), leftAlone: leftAlone.map(nameOf) },
   );
   for (const userId of moving) {
     await audit(me.id, "set-app-access", "user", userId, null, { detail: `ERP access moved with the ${name} designation` });

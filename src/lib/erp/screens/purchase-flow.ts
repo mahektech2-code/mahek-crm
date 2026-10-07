@@ -20,6 +20,7 @@ import { calendarDate } from "@/lib/business-date";
 import { err, fieldErr, ok, okVoid, type Result } from "@/lib/result";
 import type { ErpContext } from "../access";
 import { refValues } from "../refs";
+import { DEPARTMENT_LABELS, categoriesFor, departmentsOf, requirementRefusal, requirementVisibleTo } from "../departments";
 import { erpLink } from "../registry";
 import { erpAudit, erpId, nextNumber, num, paise, rupeesField, stampLine, text, visibleCols, withoutHidden, type ScreenModule } from "../server";
 import type { ActionSpec, ColSpec, FormSpec, ListRow, ToolResult } from "../ui";
@@ -191,10 +192,11 @@ export function stageOf(v: ReqView, minQuotations: number): Stage {
 }
 
 /** Requirement ids by the work waiting on them — the dashboard tiles and the sidebar badge read these. */
-export async function requirementWork(): Promise<Record<string, { id: string; godown: string }[]>> {
+export async function requirementWork(ctx?: Pick<ErpContext, "department" | "user">): Promise<Record<string, { id: string; godown: string }[]>> {
   const [views, config] = await Promise.all([requirementViews(), getConfig()]);
   const out: Record<string, { id: string; godown: string }[]> = {};
-  for (const v of views) {
+  /* A departmental person counts only the requirements on their own list. */
+  for (const v of views.filter((x) => !ctx || requirementVisibleTo(ctx.department, x.r.department, x.r.createdById === ctx.user.id))) {
     const s = stageOf(v, config["erp.purchase.minQuotations"]).stage;
     (out[s] ??= []).push({ id: v.r.id, godown: v.godown });
   }
@@ -332,7 +334,7 @@ async function presentQuantities() {
  * where it will go before they raise it.
  */
 export async function requisitionForm(ctx: ErpContext, init?: Record<string, string>, editing?: ReqView): Promise<FormSpec> {
-  const [mats, gds, rm, types, departments, sups] = await Promise.all([
+  const [mats, gds, rm, types, deptList, sups] = await Promise.all([
     materials(),
     godownOptions(ctx, { lost: false }),
     rmLots(),
@@ -341,6 +343,11 @@ export async function requisitionForm(ctx: ErpContext, init?: Record<string, str
     db.select({ id: erpSuppliers.id, name: erpSuppliers.name }).from(erpSuppliers),
   ]);
   const supName = new Map(sups.map((s) => [s.id, s.name]));
+  /* A production department asks for its own categories; somebody in one
+     raises for their own department(s) only (`lib/erp/departments.ts`). */
+  const mine = departmentsOf(ctx.department);
+  const departments = mine.length ? mine.map((d) => d.label) : [...new Set([...DEPARTMENT_LABELS, ...deptList])];
+  const typesBy: Record<string, string[]> = Object.fromEntries(departments.map((d) => [d, categoriesFor(d, types)]));
   const map: Record<string, string[]> = {};
   const unitOf: Record<string, string> = {};
   const ruleOf: Record<string, string> = {};
@@ -378,14 +385,22 @@ export async function requisitionForm(ctx: ErpContext, init?: Record<string, str
           priority: r!.priority,
           remarks: r!.remarks ?? "",
         }
-      : { date: today(), godown: ctx.workingGodown?.name ?? "", priority: "Medium", ...init },
+      : { date: today(), godown: ctx.workingGodown?.name ?? "", priority: "Medium", ...(mine.length === 1 ? { department: mine[0].label } : {}), ...init },
     data: { stockOf, unitOf, ruleOf },
     header: [
       { k: "date", l: "Date", t: "date", req: true, sec: "Requirement" },
       { k: "requiredBy", l: "Required by", t: "date", req: true, hint: "The date the department needs the goods in hand." },
-      { k: "department", l: "Department", t: "select", req: true, opts: departments },
+      {
+        k: "department",
+        l: "Department",
+        t: "select",
+        req: true,
+        opts: departments,
+        readOnly: !editing && mine.length === 1,
+        hint: mine.length ? `You raise requirements for ${mine.map((d) => `${d.label} (${d.materialTypes.join(", ").toLowerCase()})`).join(" · ")}.` : undefined,
+      },
       { k: "godown", l: "Deliver to godown", t: "select", req: true, opts: gds.map((g) => g.name) },
-      { k: "type", l: "Category", t: "select", req: true, opts: types, readOnly: !!editing },
+      { k: "type", l: "Category", t: "select", req: true, optsBy: { by: "department", map: typesBy }, when: { k: "department", notEmpty: true }, readOnly: !!editing },
       { k: "item", l: "Item", t: "select", req: true, optsBy: { by: "type", map }, when: { k: "type", notEmpty: true }, readOnly: !!editing },
       { k: "rule", l: "Purchase rule", t: "derived", calc: "requisitions.rule", when: { k: "item", notEmpty: true } },
       { k: "onHand", l: "Available stock", t: "derived", calc: "requisitions.onHand", when: { k: "item", notEmpty: true } },
@@ -473,6 +488,7 @@ const requisitions: ScreenModule = {
       { k: "f", l: "Flags", t: "f" },
     ];
     const out: ListRow[] = views
+      .filter((v) => requirementVisibleTo(ctx.department, v.r.department, v.r.createdById === ctx.user.id))
       .slice()
       .reverse()
       .map((v) => {
@@ -670,6 +686,7 @@ const requisitions: ScreenModule = {
       if (!reason) return fieldErr("reason", "Say why it is cancelled");
       const [v] = await requirementViews({ ids: [id] });
       if (!v) return err("That requirement no longer exists.", "not_found");
+      if (!requirementVisibleTo(ctx.department, v.r.department, v.r.createdById === ctx.user.id)) return err("That requirement belongs to another department.", "not_permitted");
       if (v.r.status === "Cancelled") return err("Already cancelled.", "conflict");
       if (v.po) return err(`It is on ${poLabel(v.po.number)} — cancel or send back the PO first.`, "conflict");
       if (v.r.status === "Received") return err("It has been received.", "conflict");
@@ -697,6 +714,9 @@ async function saveRequirement(ctx: ErpContext, h: Record<string, string>, id?: 
     const [v] = await requirementViews({ ids: [id] });
     if (!v) return err("That requirement no longer exists.", "not_found");
     if (v.po || v.legacy || v.r.status === "Cancelled") return err("A requirement on a PO, received or cancelled is not edited.", "conflict");
+    if (!requirementVisibleTo(ctx.department, v.r.department, v.r.createdById === ctx.user.id)) return err("That requirement belongs to another department.", "not_permitted");
+    const refusedEdit = requirementRefusal(ctx.department, department, v.itemType);
+    if (refusedEdit) return fieldErr(refusedEdit.field, refusedEdit.message);
     const values = { reqDate: date, requiredBy, department, godownId, requiredQty: qty, priority, remarks: text(h.remarks), updatedAt: new Date(), updatedById: ctx.user.id };
     await db.update(erpRequisitions).set(values).where(eq(erpRequisitions.id, id));
     await erpAudit(ctx, "erp.requisition.edit", "erp_requisition", id, v.r, values);
@@ -705,6 +725,8 @@ async function saveRequirement(ctx: ErpContext, h: Record<string, string>, id?: 
   const type = text(h.type);
   /* Finished goods are made, not bought: only the item master's categories may be asked for. */
   if (!type || !(await refValues("materialType")).includes(type)) return fieldErr("type", "Category is required");
+  const refused = requirementRefusal(ctx.department, department, type);
+  if (refused) return fieldErr(refused.field, refused.message);
   const item = text(h.item);
   if (!item) return fieldErr("item", "Item is required");
   const [m] = await db
@@ -1573,7 +1595,7 @@ const purchaseOrders: ScreenModule = {
 
 /** Badge counts for the sidebar: requirements waiting on somebody, and POs waiting on approval or on being sent. */
 export async function purchaseFlowCounts(ctx: ErpContext): Promise<{ requisitions: number; purchaseOrders: number }> {
-  const [work, pos] = await Promise.all([requirementWork(), purchaseOrderViews({ status: ["Pending approval", "Approved"] })]);
+  const [work, pos] = await Promise.all([requirementWork(ctx), purchaseOrderViews({ status: ["Pending approval", "Approved"] })]);
   const buyer = ctx.powers.has("purchaseBuyer");
   const requisitions = REQUIREMENT_ACTION_STAGES.filter((s) => s !== "Buyer decision" || buyer).reduce((n, s) => n + (work[s]?.length ?? 0), 0);
   const approver = ctx.powers.has("approvePurchaseOrder");

@@ -3,12 +3,13 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Badge, Button, Card, CardHeader, Checkbox, EmptyState, Field, Input, Td, Th, Tr, cx } from "@/components/ui/primitives";
+import { Badge, Button, Card, CardHeader, Checkbox, EmptyState, Field, Input, Select, Td, Th, Tr, cx } from "@/components/ui/primitives";
 import { ConfirmDialog, Modal, RowMenu } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { getModule, isAlwaysOpen, moduleGroupsForApp, moduleKeysForApp } from "@/lib/modules";
 import { ERP_POWERS, ERP_POWER_LABEL, type ErpPower } from "@/lib/erp/powers";
 import { describeDiff, grantableModules, type ErpLevel } from "@/lib/erp/designations";
+import { DEPARTMENT_SEATS, SEAT_LABEL, departmentsOf, isDepartmentSeat, type ErpDepartmentSeat } from "@/lib/erp/departments";
 import { deleteErpDesignation, saveErpDesignation } from "@/lib/actions/erp-designations";
 import { erpStartViewAs } from "@/lib/actions/erp";
 import type { DesignationWithMembers } from "@/lib/services/erp-designation-service";
@@ -98,6 +99,11 @@ export function DesignationsScreen({ roster }: { roster: DesignationWithMembers[
                         {d.name}
                       </button>
                       {d.description ? <span className="block text-[13px] leading-[18px] text-muted">{d.description}</span> : null}
+                      {d.department ? (
+                        <span className="mt-1 inline-block">
+                          <Badge tone="brand">{SEAT_LABEL[d.department]} department</Badge>
+                        </span>
+                      ) : null}
                     </Td>
                     <Td className="py-2.5 align-top text-[13px] whitespace-normal">{levelLabel(d.level)}</Td>
                     <Td className="py-2.5 align-top text-[13px] whitespace-normal">
@@ -224,6 +230,7 @@ function DesignationEditor({
   const [allScreens, setAllScreens] = React.useState(designation?.allScreens ?? false);
   const [modules, setModules] = React.useState<string[]>(designation?.modules ?? []);
   const [powers, setPowers] = React.useState<string[]>(designation?.powers ?? []);
+  const [department, setDepartment] = React.useState<ErpDepartmentSeat | null>(designation?.department ?? null);
   const [errors, setErrors] = React.useState<Record<string, string>>({});
   const [saving, setSaving] = React.useState(false);
 
@@ -256,12 +263,14 @@ function DesignationEditor({
       if (removed.length) changeLines.push(`Takes away the power to ${removed.map(powerLabel).join(", ").toLowerCase()}.`);
     }
     if ((before.description ?? "") !== description.trim()) changeLines.push("Description reworded.");
+    if ((before.department ?? null) !== department)
+      changeLines.push(department ? `Works in ${SEAT_LABEL[department]}${before.department ? ` (was ${SEAT_LABEL[before.department]})` : ""}.` : "No longer a production department.");
   }
 
   const save = () => {
     setSaving(true);
     setErrors({});
-    void saveErpDesignation({ id: designation?.id ?? null, name, description, level, allScreens, modules, powers }).then((r) => {
+    void saveErpDesignation({ id: designation?.id ?? null, name, description, level, allScreens, modules, powers, department }).then((r) => {
       setSaving(false);
       if (r.ok) return onSaved(r.message ?? "Saved.");
       if (r.fieldErrors?.length) {
@@ -324,6 +333,28 @@ function DesignationEditor({
               ))}
             </div>
           </div>
+
+          <Field
+            label="Production department"
+            error={errors.department}
+            hint={
+              department
+                ? `Raises purchase requirements for ${departmentsOf(department)
+                    .map((d) => `${d.label} (${d.materialTypes.join(", ").toLowerCase()})`)
+                    .join(" · ")} only, and sees those departments' requirements.`
+                : "Not a production job: nothing it asks to be bought is narrowed."
+            }
+          >
+            <Select value={department ?? ""} onChange={(e) => setDepartment(isDepartmentSeat(e.target.value) ? e.target.value : null)}>
+              <option value="">None</option>
+              {DEPARTMENT_SEATS.map((d) => (
+                <option key={d} value={d}>
+                  {SEAT_LABEL[d]}
+                  {d === "head" ? " — every department" : ""}
+                </option>
+              ))}
+            </Select>
+          </Field>
 
           <div className="overflow-hidden rounded-[4px] border border-line">
             <div className="flex items-center gap-2 bg-canvas px-2.5 py-1.5">

@@ -87,7 +87,7 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
   const purchase: Tile[] = [];
   /* THE PURCHASE FLOW, one tile per step that is waiting on somebody. */
   if (has("requisitions")) {
-    const work = await requirementWork();
+    const work = await requirementWork(ctx);
     const ids = (stage: string) => (work[stage] ?? []).filter((r) => inG(r.godown)).map((r) => r.id);
     const tile = (stage: string, l: string, sub: string, tone: Tone | undefined, always = false) => {
       const list = ids(stage);

@@ -1,6 +1,7 @@
 import { erpContext } from "@/lib/erp/access";
 import { hatForHeader } from "@/lib/hat-for-header";
 import { ERP_POWERS, ERP_POWER_LABEL } from "@/lib/erp/powers";
+import { SEAT_LABEL } from "@/lib/erp/departments";
 import { Badge, Card, CardHeader } from "@/components/ui/primitives";
 import { Page } from "../_ui/page-head";
 import { WorkingLocation } from "./working-location";
@@ -29,7 +30,7 @@ export default async function ErpSettings() {
         <Card>
           <CardHeader
             title={ctx.viewingAs?.kind === "designation" ? ctx.viewingAs.label : ctx.user.name}
-            hint={`${ctx.designation ?? hat.label} · access is set in the MahekOne Admin Console`}
+            hint={`${ctx.designation ?? hat.label}${ctx.department ? ` · ${SEAT_LABEL[ctx.department]} department` : ""} · access is set in the MahekOne Admin Console`}
           />
           <div className="px-5 py-1">
             {ERP_POWERS.map((p) => (
