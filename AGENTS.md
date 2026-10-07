@@ -7477,7 +7477,12 @@ as a low score.
 
 **HIRE'S JOBS ARE ROLES, NOT LEVELS.** Six — recruiter, interviewer, hiring
 manager, onboarding, HR head, admin — in `lib/hire/roles.ts`, stored in
-`hire_user_roles` and set on Hire's Team screen. With no row the app level
+`hire_user_roles` and set on the Admin Console's People → Access screen, as
+"Role in Hire" under the Hire grant — the one place every app is granted, the
+same way an ERP designation or HRMS powers are. Picking a role sets the app
+level it needs (`LEVEL_FOR_ROLE`); taking Hire away takes the role with it.
+Hire had a Team screen of its own and lost it on purpose: two doors to one
+person's access is how the two come to disagree. With no row the app level
 decides, narrowly: admin → Admin, manager → Hiring Manager, associate →
 Interviewer. The app is ONE module (`hire.app`) because the role is the
 narrowing. Scope is SQL — `scopeWhere` in `lib/hire/access.ts` — and an
@@ -7501,11 +7506,9 @@ that act, and nothing else, makes an application `hired`.
 seeds the role blueprints that are missing and gives Hire, as Admin, to every
 platform administrator who lacks it; `deploy:db` runs it as `hire:deploy`
 after the migrations and the catalogue, and it is idempotent. The layout also
-seeds the blueprints the first time Hire opens on an empty database. From
-there Hire is handed out on its own Team screen — `addToHire` is the same
-write the Access screen makes (`grantAppWithDefaultModules`, the level
-re-derived, a platform audit row), so the two cannot disagree; Hire being one
-module is what makes a second door safe. `npm run hire:seed -- --demo --reset`
+seeds the blueprints the first time Hire opens on an empty database. Everybody
+else gets Hire, and their role in it, on the Access screen.
+`npm run hire:seed -- --demo --reset`
 wipes Hire and loads the demo pipeline, development only.
 
 ## Testing

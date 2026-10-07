@@ -10,6 +10,7 @@ import {
   auditLog,
   employees,
   erpDesignations,
+  hireUserRoles,
   erpUserDesignations,
   erpUserPowers,
   hrmsUserPowers,
@@ -26,6 +27,7 @@ import { err as fail, fieldErr, ok, type Result } from "@/lib/result";
 import { requirePlatformAdminUser, widestRole, type Role } from "@/lib/access-control";
 import { ERP_POWERS } from "@/lib/erp/powers";
 import { HRMS_POWERS } from "@/lib/hrms/powers";
+import { HIRE_ROLES, ROLE_LABEL } from "@/lib/hire/roles";
 import {
   employeesForLink,
   listCandidates,
@@ -162,6 +164,12 @@ export type SetAccessInput = {
   /** HRMS's special powers, the whole list, on the same terms as the ERP's. */
   hrmsPowers?: string[] | null;
   /**
+   * Their job inside Hire — recruiter, interviewer, hiring manager,
+   * onboarding, HR head, admin. Absent leaves it as it is; null means the
+   * level decides. It goes with Hire, like the powers go with their apps.
+   */
+  hireRole?: string | null;
+  /**
    * The ERP designation this person holds. Absent leaves it as it is; null
    * takes it away. It is a NAME on their access and the link an edit to the
    * designation follows — the screens, level and powers themselves still
@@ -272,6 +280,26 @@ async function writeHrmsPowers(userId: string, powers: string[], by: string) {
     if (powers.length) await tx.insert(hrmsUserPowers).values(powers.map((power) => ({ userId, power, grantedById: by })));
   });
 }
+
+/**
+ * The Hire role after this save: `undefined` where it does not change, null to
+ * let the level decide. Taking Hire away takes the role with it, so a grant
+ * given back later starts from the level rather than from a forgotten job.
+ */
+function wantedHireRole(input: SetAccessInput, keepsHire: boolean, current: string | null): { next: string | null | undefined; error?: string } {
+  if (!keepsHire) return { next: current ? null : undefined };
+  if (input.hireRole === undefined) return { next: undefined };
+  const role = input.hireRole || null;
+  if (role && !(HIRE_ROLES as readonly string[]).includes(role)) return { next: undefined, error: "That is not a Hire role." };
+  return { next: role === current ? undefined : role };
+}
+
+async function writeHireRole(userId: string, role: string | null, by: string) {
+  await db.delete(hireUserRoles).where(eq(hireUserRoles.userId, userId));
+  if (role) await db.insert(hireUserRoles).values({ userId, role, grantedById: by });
+}
+
+const hireRoleWord = (r: string | null) => (r ? (ROLE_LABEL as Record<string, string>)[r] ?? r : "level default");
 
 /** The powers a person should hold after this save, or null where they do not change. */
 function wantedErpPowers(input: SetAccessInput, keepsErp: boolean, current: string[]): string[] | null {
@@ -411,6 +439,8 @@ export async function setAccess(
 
     const newDesignation = await wantedDesignation(input, wanted.has("erp"), null);
     if (newDesignation.error) return fieldErr("erpDesignation", newDesignation.error);
+    const newHireRole = wantedHireRole(input, wanted.has("hire"), null);
+    if (newHireRole.error) return fieldErr("hireRole", newHireRole.error);
 
     userId = newId("usr");
     personName = employee.name;
@@ -473,6 +503,7 @@ export async function setAccess(
     const newHrmsPowers = wantedHrmsPowers(input, wanted.has("hrms"), []);
     if (newHrmsPowers?.length) await writeHrmsPowers(userId!, newHrmsPowers, me.id);
     if (newDesignation.next) await writeDesignation(userId!, newDesignation.next, me.id);
+    if (newHireRole.next) await writeHireRole(userId!, newHireRole.next, me.id);
 
     await audit(
       me.id,
@@ -485,6 +516,7 @@ export async function setAccess(
         newPowers?.length ? `ERP powers (${newPowers.join(", ")})` : "",
         newHrmsPowers?.length ? `HRMS powers (${newHrmsPowers.join(", ")})` : "",
         newDesignation.next ? `ERP designation ${newDesignation.name}` : "",
+        newHireRole.next ? `Hire role ${hireRoleWord(newHireRole.next)}` : "",
       ]
         .filter(Boolean)
         .join("; "),
@@ -610,6 +642,10 @@ export async function setAccess(
   const designation = await wantedDesignation(input, wanted.has("erp"), currentDesignationRow?.id ?? null);
   if (designation.error) return fieldErr("erpDesignation", designation.error);
 
+  const [currentHireRow] = await db.select({ role: hireUserRoles.role }).from(hireUserRoles).where(eq(hireUserRoles.userId, userId)).limit(1);
+  const hireRole = wantedHireRole(input, wanted.has("hire"), currentHireRow?.role ?? null);
+  if (hireRole.error) return fieldErr("hireRole", hireRole.error);
+
   if (
     !granted.length &&
     !revoked.length &&
@@ -617,7 +653,8 @@ export async function setAccess(
     !releveled.length &&
     !powers &&
     !hrmsPowers &&
-    designation.next === undefined
+    designation.next === undefined &&
+    hireRole.next === undefined
   ) {
     return ok(
       { userId, created: false, resetLinkSent: false, granted: [], revoked: [], changed: [] },
@@ -712,7 +749,10 @@ export async function setAccess(
       ? ""
       : `ERP designation ${currentDesignationRow?.name ?? "none"} → ${designation.next ? designation.name : "none"}`;
 
-  await audit(me.id, "set-app-access", userId, [detail, powerDetail, hrmsPowerDetail, designationDetail].filter(Boolean).join("; "));
+  if (hireRole.next !== undefined) await writeHireRole(userId, hireRole.next, me.id);
+  const hireRoleDetail = hireRole.next === undefined ? "" : `Hire role ${hireRoleWord(currentHireRow?.role ?? null)} → ${hireRoleWord(hireRole.next)}`;
+
+  await audit(me.id, "set-app-access", userId, [detail, powerDetail, hrmsPowerDetail, designationDetail, hireRoleDetail].filter(Boolean).join("; "));
   refresh();
 
   const said = [

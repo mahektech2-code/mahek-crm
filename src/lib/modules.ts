@@ -1005,7 +1005,7 @@ export const APP_MODULES: AppModule[] = [
     label: "Hire",
     group: "Hire",
     href: "/hire",
-    note: "What they can do inside Hire is their Hire role — recruiter, interviewer, hiring manager, onboarding, HR head or admin — set on Hire's Team screen.",
+    note: "What they can do inside Hire is their Hire role — recruiter, interviewer, hiring manager, onboarding, HR head or admin — set below, under Hire.",
   },
   website("products", "Products", "Website", "The catalogue shown on the public site."),
   website("industries", "Industries", "Website", "The industries the public site says Mahek serves."),

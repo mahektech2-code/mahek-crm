@@ -12,15 +12,15 @@ import { SALES_EXECUTIVE, SEED_BLUEPRINTS } from "./seed/blueprints";
  *
  * `installHire` puts in what a deployment needs before anybody can use the
  * app: the seeded role blueprints, and Hire itself for every platform
- * administrator, as Admin, so somebody can open it and hand out the rest from
- * its own Team screen. It is idempotent and runs on every deploy
+ * administrator, as Admin, so somebody can open it; everybody else is given
+ * it, with their Hire role, on the Admin Console's People → Access screen. It is idempotent and runs on every deploy
  * (`npm run deploy:db` → `hire:deploy`). The layout also seeds the blueprints
  * the first time Hire is opened on a database that has none, so a deployment
  * that skipped the step still works rather than showing an empty studio.
  *
  * It never touches a blueprint that exists and never changes a grant that
  * exists: an administrator who was given Hire at another level, or removed
- * from it on the Team screen, keeps that decision only if they still hold the
+ * from it on the Access screen, keeps that decision only if they still hold the
  * app — a platform administrator with NO Hire grant is granted again, because
  * they are the people who can always grant it to themselves anyway.
  * ------------------------------------------------------------------------- */
