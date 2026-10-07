@@ -80,6 +80,7 @@ export function LivePanel({
   isToday,
   olaMapsKey,
   olaKeysSpent,
+  initialSelectedId,
   handsetThresholds,
   nowMs,
   cursorMs,
@@ -118,8 +119,10 @@ export function LivePanel({
   olaMapsKey: string | null;
   /** With no key: whether every key held has run out, or none is set at all. */
   olaKeysSpent: boolean;
+  /** Who is selected on arrival — a link from Today names one salesman. */
+  initialSelectedId?: string | null;
 }) {
-  const [selectedId, setSelectedId] = React.useState<string | null>(null);
+  const [selectedId, setSelectedId] = React.useState<string | null>(initialSelectedId ?? null);
 
   const { frame, mode } = useLiveFeed({
     day,

@@ -4,34 +4,29 @@ import Link from "next/link";
 import { addDays } from "@/lib/business-date";
 import { money } from "@/lib/format";
 import { cx } from "@/components/ui/primitives";
-import type { TeamDay } from "@/lib/services/sales-service";
-import { SalesIcon } from "@/components/console/icons";
-import { Cell, HeadCell, Pill, Row, Table } from "@/components/console/parts";
+import { CardGrid } from "@/components/ui/card-grid";
+import type { SalesmanDay, TeamDay } from "@/lib/services/sales-service";
 
 /* ---------------------------------------------------------------------------
- * Today, from `MBOS Manager Console.dc.html`.
+ * Today — the Sales Dashboard's front door.
  *
- * The design's shape, and it is a good one: a greeting that carries the day's
- * numbers in its subtitle, a band of everything needing attention, then two
- * columns — where the team IS on the left, what is waiting on YOU on the right.
+ * FOUR FIGURES, A CARD PER SALESMAN, AND WHAT IS WAITING. It used to be a
+ * sentence-heavy subtitle, an attention band repeating the right-hand column,
+ * a nine-column table, a footnote about which money is which, and a panel
+ * explaining why it was empty. A manager opening this at nine wants to know
+ * who is out and what needs him; everything else is one click away.
  *
- * Four things ported deliberately rather than approximated:
+ * **A card opens that salesman's day in a new tab** — the Live map focused on
+ * him, with every visit he made that day beneath it (`/sales/live?salesman=`).
+ * A new tab because this screen is the one a manager keeps open and comes back
+ * to; replacing it to look at one man would cost him his place.
  *
- * **The attention band lists only what is non-zero.** A row of counters half
- * of them reading nought is a screen somebody stops scanning.
+ * **Not started is the loud state**, for the reason the old red row edge gave:
+ * nothing is wrong on that card, which is exactly why it is easy to miss.
  *
- * **A salesman who has not started has a red left edge on his row.** The
- * design puts the loudest mark on the quietest fact — nothing is wrong with
- * that row, which is exactly why it is easy to miss.
- *
- * **The money says which kind of money it is.** An order taken in the field is
- * the customer saying yes and nothing more; a collection is money a salesman
- * says he has. Neither has reached the bank, and both are labelled.
- *
- * **"What the numbers say" is absent, not stubbed.** The design has an AI brief
- * panel there. Nothing in MahekOne writes one, and a panel of plausible
- * sentences nobody generated is the fixture problem that emptied half the Admin
- * Console. The column carries what can actually be answered.
+ * **The money still says which kind it is** — on the figure's hover rather
+ * than in a paragraph under the table. Orders are captured, not approved;
+ * collections are reported, not confirmed against the bank.
  * ------------------------------------------------------------------------- */
 
 export function TodayScreen({
@@ -51,378 +46,288 @@ export function TodayScreen({
   waiting: Array<{ href: string; label: string; sub: string; count: number; tone: string }>;
 }) {
   const { totals, people } = data;
-  const notStarted = people.filter((p) => p.active && !p.checkInAt);
-  const unverified = people.reduce((n, p) => n + Number(p.unverifiedVisits), 0);
-
-  /* Only what is non-zero, in the design's order and its own words. */
-  const attention = [
-    { n: notStarted.length, label: "not checked in", tone: "danger", href: "/sales/attendance" },
-    { n: waiting.find((w) => w.href === "/sales/orders")?.count ?? 0, label: "orders over the limit", tone: "danger", href: "/sales/orders" },
-    { n: waiting.find((w) => w.href === "/sales/expenses")?.count ?? 0, label: "expense claims", tone: "amber", href: "/sales/expenses" },
-    { n: waiting.find((w) => w.href === "/sales/samples")?.count ?? 0, label: "samples with no feedback", tone: "amber", href: "/sales/samples" },
-    { n: waiting.find((w) => w.href === "/sales/leave")?.count ?? 0, label: "leave requests", tone: "neutral", href: "/sales/leave" },
-    { n: unverified, label: "visits that could not be verified", tone: "amber", href: "/sales/journeys?tab=visits&show=unverified" },
-  ].filter((x) => x.n > 0);
-
+  const open = waiting.filter((w) => w.count > 0);
   const totalWaiting = waiting.reduce((n, w) => n + w.count, 0);
 
+  /* Who is out first, then who finished, then who never started — the order a
+     manager reads a day in. */
+  const ordered = [...people].sort((a, b) => rank(a) - rank(b));
+
   return (
-    <div className="px-6 py-5">
+    <div className="space-y-5 px-6 py-5">
       {/* ------------------------------------------------------------ heading */}
-      <div className="mb-4 flex items-start justify-between gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-[26px] leading-8 font-semibold text-ink">{greeting}</div>
-          <div className="mt-1 text-[13px] text-muted">
-            {dayLabel}
-            {" · "}
-            {totals.plannedStops
-              ? `${totals.walkedStops} of ${totals.plannedStops} planned stops done`
-              : "no routes planned"}
-            {" · "}
-            {money(totals.collectedPaise)} reported collected
-          </div>
+          <h1 className="text-[22px] leading-7 font-semibold text-ink">{greeting}</h1>
+          <p className="text-[13px] text-muted">{dayLabel}</p>
         </div>
-        <div className="flex flex-none gap-2">
-          <div className="flex items-center gap-1 text-[13px]">
+        <div className="flex flex-none items-center gap-2">
+          <div className="inline-flex h-8 items-stretch overflow-hidden rounded-[4px] border border-line bg-surface text-[13px]">
             <Link
               href={`/sales?day=${addDays(day, -1)}`}
-              className="rounded-[4px] border border-line bg-surface px-2.5 py-1.5 text-body no-underline hover:bg-canvas hover:no-underline"
+              className="inline-flex w-8 items-center justify-center text-body no-underline hover:bg-canvas hover:no-underline"
+              title="The day before"
             >
               ←
             </Link>
             {isToday ? null : (
               <Link
                 href="/sales"
-                className="rounded-[4px] border border-line bg-surface px-2.5 py-1.5 text-body no-underline hover:bg-canvas hover:no-underline"
+                className="inline-flex items-center border-x border-line px-2.5 text-body no-underline hover:bg-canvas hover:no-underline"
               >
                 Today
               </Link>
             )}
             <Link
               href={`/sales?day=${addDays(day, 1)}`}
-              className="rounded-[4px] border border-line bg-surface px-2.5 py-1.5 text-body no-underline hover:bg-canvas hover:no-underline"
+              className={cx(
+                "inline-flex w-8 items-center justify-center text-body no-underline hover:bg-canvas hover:no-underline",
+                isToday ? "border-l border-line" : "",
+              )}
+              title="The day after"
             >
               →
             </Link>
           </div>
+          <Link
+            href="/sales/live"
+            target="_blank"
+            className="inline-flex h-8 items-center rounded-[4px] border border-line bg-surface px-3 text-[13px] text-body no-underline hover:bg-canvas hover:no-underline"
+          >
+            Team map
+          </Link>
           {totalWaiting > 0 ? (
             <Link
               href="/sales/approvals"
-              className="inline-flex h-8.5 items-center rounded-[4px] bg-brand px-3 text-sm font-medium text-white no-underline hover:opacity-90 hover:no-underline"
+              className="inline-flex h-8 items-center rounded-[4px] bg-brand px-3 text-[13px] font-medium text-white no-underline hover:opacity-90 hover:no-underline"
             >
-              Review {totalWaiting} {totalWaiting === 1 ? "approval" : "approvals"}
+              Review {totalWaiting}
             </Link>
           ) : null}
         </div>
       </div>
 
-      {/* ----------------------------------------------------- attention band */}
-      {attention.length ? (
-        <div className="mb-4 flex flex-wrap items-center gap-x-6 gap-y-2 rounded-[6px] border border-line bg-surface px-5 py-3">
-          <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-            Needs you today
-          </span>
-          {attention.map((a) => (
-            <Link
-              key={a.label}
-              href={a.href}
-              className="flex items-center gap-2 text-[13px] text-body no-underline hover:no-underline"
-            >
-              <span
-                className={cx(
-                  "block h-2 w-2 flex-none rounded-full",
-                  a.tone === "danger"
-                    ? "bg-danger"
-                    : a.tone === "amber"
-                      ? "bg-warn"
-                      : "bg-line-strong",
-                )}
-              />
-              <span className="text-[15px] font-semibold text-ink tabular-nums">{a.n}</span>
-              <span>{a.label}</span>
-            </Link>
-          ))}
-        </div>
-      ) : null}
+      {/* ------------------------------------------------------------ figures */}
+      <CardGrid min={170} gap="gap-3">
+        <Stat
+          label={isToday ? "Out now" : "Punched in"}
+          value={`${totals.checkedIn}/${totals.outOf}`}
+          tone={totals.outOf && totals.checkedIn === 0 ? "danger" : undefined}
+        />
+        <Stat
+          label="Visits"
+          value={String(totals.visits)}
+          foot={totals.plannedStops ? `${totals.walkedStops}/${totals.plannedStops} planned stops` : undefined}
+        />
+        <Stat
+          label="Orders"
+          value={String(totals.orders)}
+          foot={totals.orderValuePaise ? money(totals.orderValuePaise) : undefined}
+          title="Captured in the field. Sits at pending approval until accounts decide it."
+        />
+        <Stat
+          label="Collected"
+          value={money(totals.collectedPaise)}
+          title="What salesmen report collecting. It is money the business has seen only once accounts confirm it against the bank."
+        />
+      </CardGrid>
 
-      <div className="grid grid-cols-[minmax(0,1fr)_320px] gap-4">
-        <div className="min-w-0 space-y-4">
-          {/* ------------------------------------------- where the team is */}
-          <section>
-            {/*
-              THE HEADING SITS ABOVE THE TABLE RATHER THAN IN A CARD WITH IT,
-              which is the one structural change this conversion costs.
-
-              `Table` IS the card — it draws the border, the rounding and the
-              surface itself — so left inside the bordered `<section>` this used
-              to be, it would draw a second border a pixel inside the first, and
-              the console's front door would be the only screen in the app
-              wearing a double rule. Every other screen here states its title in
-              plain text above the table and lets the table be the box; this now
-              does the same, so Today looks like the eight screens it links to
-              rather than like a fork of them.
-            */}
-            <header className="mb-1.5 flex items-start justify-between gap-4">
-              <div>
-                <div className="text-[15px] font-semibold text-ink">
-                  Where the team is right now
-                </div>
-                <div className="mt-0.5 text-[13px] text-muted">
-                  {totals.checkedIn} of {totals.outOf} checked in
-                  {notStarted.length
-                    ? ` · ${notStarted.map((p) => p.name).join(", ")} ${notStarted.length === 1 ? "has" : "have"} not started`
-                    : " · everybody is out"}
-                </div>
-              </div>
-              <Link
-                href="/sales/live"
-                className="inline-flex h-8 flex-none items-center rounded-[4px] border border-line bg-surface px-3 text-[13px] text-body no-underline hover:bg-canvas hover:no-underline"
-              >
-                Open the map
-              </Link>
-            </header>
-
-            {people.length === 0 ? (
-              /* The empty state keeps a box of its own: it stands where the
-                 table would have stood, and a sentence floating on the canvas
-                 reads as a section that failed to render rather than as one
-                 with nothing in it. */
-              <p className="rounded-[6px] border border-line bg-surface px-5 py-12 text-center text-[15px] text-muted">
-                Nobody holds the Salesman App yet. The field team is whoever has been granted it —
-                that is what MBOS sign-in checks, so this list and the handsets always agree.
-              </p>
-            ) : (
-              /*
-                The console's own table, not a second one.
-
-                This screen hand-rolled its `<table>` and every `<th>`/`<td>`
-                class, which is how it came to be the one table in the app at
-                14px horizontal padding while the other twenty-odd sat at 16 —
-                a drift nobody introduced deliberately and nobody could see
-                without two screens open side by side. The widths below sum to
-                the 940 this table has always asked for, and every column states
-                one because `Table` is `table-fixed`: a column with no width is
-                a column the browser guesses at, and a guessed-narrow one now
-                CLIPS rather than overflowing, so the guess is silent.
-
-                They are sized to the widest thing each column really holds
-                rather than to its heading: 130 on the second is the `NOT
-                STARTED` pill, which is half again the width of the `08:42` it
-                replaces, and 190 on Where is `Finished 18:30` with the `off
-                site` mark beside it. Visits, Orders and Route are each at their
-                own heading's width, which is what bounds them.
-              */
-              <Table
-                minWidth={940}
-                head={
-                  <>
-                    <HeadCell width={230}>Salesman</HeadCell>
-                    <HeadCell width={130}>Punched in</HeadCell>
-                    <HeadCell width={190}>Where</HeadCell>
-                    <HeadCell align="right" width={85}>
-                      Visits
-                    </HeadCell>
-                    <HeadCell align="right" width={80}>
-                      Orders
-                    </HeadCell>
-                    <HeadCell align="right" width={115}>
-                      Collected
-                    </HeadCell>
-                    <HeadCell width={110}>Route</HeadCell>
-                  </>
-                }
-              >
-                {people.map((p, i) => {
-                  const missing = p.active && !p.checkInAt;
-                  return (
-                    <Row key={p.id} striped={i % 2 === 1}>
-                      {/*
-                        THE RED EDGE ON A ROW THAT HAS NOT STARTED, which is the
-                        one thing here the primitives cannot say for themselves.
-                        `Row` colours its left border for `selected` and for
-                        nothing else, and `selected` means brand — a different
-                        statement altogether, and the wrong one about a salesman
-                        who is not out. So the border is set on the FIRST CELL
-                        instead, which lands in exactly the same place: the table
-                        is `border-collapse`, so the row's own 3px transparent
-                        left border and this one collapse into a single edge, and
-                        the cell's colour wins that contest. Widening `Row` to
-                        take a tone would have been the other answer, and it is
-                        not this file's to make.
-
-                        `h-13` is kept for the reason it was there before: the
-                        two-line name makes the row that tall anyway, so it only
-                        does anything on a row where the second line is short,
-                        and a list of people whose rows change height is one that
-                        reads as broken rather than as sparse.
-                      */}
-                      <Cell className={cx("h-13", missing ? "border-l-[3px] border-l-danger" : "")}>
-                        <Link
-                          href={`/sales/people/${p.id}`}
-                          className="flex items-center gap-2.5 no-underline hover:no-underline"
-                        >
-                          <span
-                            className={cx(
-                              "flex h-7 w-7 flex-none items-center justify-center rounded-full text-[11px] font-semibold",
-                              p.checkInAt ? "bg-brand-soft text-[#5223E0]" : "bg-divider text-muted",
-                            )}
-                          >
-                            {p.initials}
-                          </span>
-                          <span className="min-w-0">
-                            <span className="block truncate text-sm font-medium text-ink">
-                              {p.name}
-                            </span>
-                            <span className="block truncate text-[12px] text-muted">
-                              {p.active ? "Field sales" : "Account closed"}
-                            </span>
-                          </span>
-                        </Link>
-                      </Cell>
-                      <Cell>
-                        {/* The hand-written span here was `Pill` spelled out by
-                            hand, down to the 9px radius — the same copy the
-                            shared control exists to stop being made a
-                            thirteenth time. */}
-                        <Pill tone={p.checkInAt ? "success" : "danger"}>
-                          {p.checkInAt ? clock(p.checkInAt) : "Not started"}
-                        </Pill>
-                      </Cell>
-                      <Cell>
-                        {p.checkInAt ? (
-                          p.checkOutAt ? (
-                            `Finished ${clock(p.checkOutAt)}`
-                          ) : (
-                            "Out now"
-                          )
-                        ) : (
-                          <span className="text-muted">—</span>
-                        )}
-                        {p.withinGeofence === false ? (
-                          <span
-                            className="ml-1.5 text-[12px] text-warn-ink"
-                            title="Punched in outside the permitted radius. Flagged, never blocked — a salesman who cannot mark attendance cannot work."
-                          >
-                            off site
-                          </span>
-                        ) : null}
-                      </Cell>
-                      <Cell align="right">
-                        {p.visits}
-                        {Number(p.unverifiedVisits) > 0 ? (
-                          <span
-                            className="ml-1 text-warn-ink"
-                            title="Saved with the location checklist unsatisfied. The salesman gave a reason — a visit can always be saved."
-                          >
-                            ({p.unverifiedVisits})
-                          </span>
-                        ) : null}
-                      </Cell>
-                      <Cell align="right">{p.orders || <span className="text-muted">—</span>}</Cell>
-                      <Cell align="right">
-                        {Number(p.collectedPaise) ? (
-                          money(p.collectedPaise)
-                        ) : (
-                          <span className="text-muted">—</span>
-                        )}
-                      </Cell>
-                      <Cell>
-                        {p.plannedStops ? (
-                          <span className="tabular-nums">
-                            {p.walkedStops}/{p.plannedStops}
-                          </span>
-                        ) : (
-                          <Link href={`/sales/journeys?salesman=${p.id}`} className="text-[13px]">
-                            Plan a route
-                          </Link>
-                        )}
-                      </Cell>
-                    </Row>
-                  );
-                })}
-              </Table>
-            )}
-          </section>
-
-          <p className="text-[13px] text-pretty text-muted">
-            Order value is what was captured in the field. An MBOS order sits at pending approval
-            until accounts decide it, so nothing here has counted towards a target or an
-            outstanding balance. Money reported is what a salesman says he collected — it becomes
-            money the business has seen when accounts confirm it against the bank.
-          </p>
-        </div>
+      <div className="grid grid-cols-[minmax(0,1fr)_280px] gap-5">
+        {/* ---------------------------------------------------------- team */}
+        <section className="min-w-0">
+          <h2 className="mb-2 text-[15px] font-semibold text-ink">Team</h2>
+          {people.length === 0 ? (
+            <p className="rounded-[6px] border border-line bg-surface px-5 py-10 text-center text-[13px] text-muted">
+              Nobody holds the Salesman App yet.
+            </p>
+          ) : (
+            <CardGrid min={230} gap="gap-3">
+              {ordered.map((p) => (
+                <PersonCard key={p.id} p={p} day={day} isToday={isToday} />
+              ))}
+            </CardGrid>
+          )}
+        </section>
 
         {/* ------------------------------------------------- waiting on you */}
-        <div className="space-y-4">
-          <section className="overflow-hidden rounded-[6px] border border-line bg-surface">
-            <div className="border-b border-line px-4 py-3 text-[15px] font-semibold text-ink">
-              Waiting on you
-            </div>
-            {waiting.every((w) => w.count === 0) ? (
-              <p className="px-4 py-8 text-center text-[13px] text-muted">
-                Nothing is waiting on a decision.
-              </p>
+        <section>
+          <h2 className="mb-2 text-[15px] font-semibold text-ink">Waiting on you</h2>
+          <div className="overflow-hidden rounded-[6px] border border-line bg-surface">
+            {open.length === 0 ? (
+              <p className="px-4 py-6 text-center text-[13px] text-muted">All clear.</p>
             ) : (
-              waiting
-                .filter((w) => w.count > 0)
-                .map((w, i) => (
-                  <Link
-                    key={w.href}
-                    href={w.href}
+              open.map((w, i) => (
+                <Link
+                  key={w.label}
+                  href={w.href}
+                  title={w.sub}
+                  className={cx(
+                    "flex items-center gap-3 px-4 py-2.5 text-[13px] text-body no-underline hover:bg-canvas hover:no-underline",
+                    i ? "border-t border-divider" : "",
+                  )}
+                >
+                  <span
                     className={cx(
-                      "flex w-full items-center gap-3 px-4 py-3 no-underline hover:bg-canvas hover:no-underline",
-                      i ? "border-t border-canvas" : "",
+                      "block size-2 flex-none rounded-full",
+                      w.tone === "danger"
+                        ? "bg-danger"
+                        : w.tone === "amber" || w.tone === "warn"
+                          ? "bg-warn"
+                          : "bg-line-strong",
                     )}
-                  >
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-sm font-medium text-ink">{w.label}</span>
-                      <span className="block text-[12px] text-muted">{w.sub}</span>
-                    </span>
-                    <span
-                      className={cx(
-                        "flex-none text-lg font-semibold tabular-nums",
-                        w.tone === "danger"
-                          ? "text-danger"
-                          : w.tone === "amber"
-                            ? "text-warn-ink"
-                            : "text-ink",
-                      )}
-                    >
-                      {w.count}
-                    </span>
-                  </Link>
-                ))
+                  />
+                  <span className="min-w-0 flex-1 truncate">{w.label}</span>
+                  <span className="flex-none font-semibold text-ink tabular-nums">{w.count}</span>
+                </Link>
+              ))
             )}
-          </section>
-
-          <section className="rounded-[6px] border border-line bg-surface px-4 py-3.5">
-            <div className="mb-1.5 flex items-center gap-2">
-              <span className="text-muted">
-                <SalesIcon name="spark" size={16} />
-              </span>
-              <span className="text-[15px] font-semibold text-ink">What the numbers say</span>
-            </div>
-            <p className="text-[13px] text-pretty text-muted">
-              The design puts a written brief here — three sentences about who is behind and what
-              to do about it. Nothing in MahekOne writes one yet, and a panel of plausible
-              sentences nobody generated is worse than an empty one: it gets believed. It will fill
-              when there is something honest to put in it.
-            </p>
-          </section>
-        </div>
+          </div>
+        </section>
       </div>
     </div>
   );
 }
 
-/** A day either side, without dragging a date library into a client component. */
+/** Out, then finished, then not started, then closed accounts. */
+function rank(p: SalesmanDay): number {
+  if (!p.active) return 3;
+  if (p.checkInAt && !p.checkOutAt) return 0;
+  if (p.checkInAt) return 1;
+  return 2;
+}
+
+function Stat({
+  label,
+  value,
+  foot,
+  tone,
+  title,
+}: {
+  label: string;
+  value: string;
+  foot?: string;
+  tone?: "danger";
+  title?: string;
+}) {
+  return (
+    <div className="rounded-[6px] border border-line bg-surface px-4 py-3" title={title}>
+      <div className="text-[12px] text-muted">{label}</div>
+      <div
+        className={cx(
+          "mt-0.5 text-[22px] leading-7 font-semibold tabular-nums",
+          tone === "danger" ? "text-danger" : "text-ink",
+        )}
+      >
+        {value}
+      </div>
+      {foot ? <div className="text-[12px] text-muted tabular-nums">{foot}</div> : null}
+    </div>
+  );
+}
 
 /**
- * `09:32`, in Asia/Kolkata.
+ * One salesman's day, on a card that opens it.
  *
- * Named rather than left to the browser: this renders on the server too, the
- * server is UTC, and a punch-in at half past nine would print as four in the
- * morning — which reads as a handset writing rows in the night.
+ * The status reads in one word — out, finished, not started — and the three
+ * figures beneath it are the day's work. Everything else about him is on the
+ * page the card opens.
+ */
+function PersonCard({ p, day, isToday }: { p: SalesmanDay; day: string; isToday: boolean }) {
+  const status = !p.active
+    ? { word: "Account closed", dot: "bg-line-strong", text: "text-muted" }
+    : !p.checkInAt
+      ? { word: "Not started", dot: "bg-danger", text: "text-danger" }
+      : p.checkOutAt
+        ? { word: `Finished ${clock(p.checkOutAt)}`, dot: "bg-line-strong", text: "text-muted" }
+        : { word: `Out since ${clock(p.checkInAt)}`, dot: "bg-success", text: "text-success" };
+
+  const unverified = Number(p.unverifiedVisits);
+  const href = `/sales/live?salesman=${p.id}&view=today${isToday ? "" : `&day=${day}`}`;
+
+  return (
+    <Link
+      href={href}
+      target="_blank"
+      rel="noopener"
+      title={`Open ${p.name}'s map and visits in a new tab`}
+      className={cx(
+        "group block rounded-[6px] border bg-surface px-4 py-3 no-underline transition-colors hover:border-brand hover:no-underline",
+        p.active && !p.checkInAt ? "border-danger/40" : "border-line",
+      )}
+    >
+      <div className="flex items-center gap-3">
+        <span
+          className={cx(
+            "flex size-9 flex-none items-center justify-center rounded-full text-[12px] font-semibold",
+            p.checkInAt ? "bg-brand-soft text-[#5223E0]" : "bg-divider text-muted",
+          )}
+        >
+          {p.initials}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium text-ink">{p.name}</span>
+          <span className={cx("flex items-center gap-1.5 text-[12px]", status.text)}>
+            <span className={cx("block size-1.5 flex-none rounded-full", status.dot)} />
+            <span className="truncate">{status.word}</span>
+            {p.withinGeofence === false ? (
+              <span className="text-warn-ink" title="Punched in outside the permitted radius">
+                · off site
+              </span>
+            ) : null}
+          </span>
+        </span>
+        <span className="flex-none text-muted opacity-0 transition-opacity group-hover:opacity-100" aria-hidden>
+          ↗
+        </span>
+      </div>
+
+      <div className="mt-3 grid grid-cols-3 gap-2 border-t border-divider pt-2.5">
+        <Figure
+          label="Visits"
+          value={String(p.visits)}
+          extra={unverified ? `${unverified} unverified` : undefined}
+        />
+        <Figure label="Orders" value={p.orders ? String(p.orders) : "—"} />
+        <Figure
+          label="Collected"
+          value={Number(p.collectedPaise) ? money(p.collectedPaise) : "—"}
+        />
+      </div>
+
+      {p.plannedStops ? (
+        <div className="mt-2.5">
+          <div className="h-1 overflow-hidden rounded-full bg-divider">
+            <div
+              className="h-full rounded-full bg-brand"
+              style={{ width: `${Math.min(100, (p.walkedStops / p.plannedStops) * 100)}%` }}
+            />
+          </div>
+          <div className="mt-1 text-[11px] text-muted tabular-nums">
+            {p.walkedStops} of {p.plannedStops} planned stops
+          </div>
+        </div>
+      ) : (
+        <div className="mt-2.5 text-[11px] text-muted">No route planned</div>
+      )}
+    </Link>
+  );
+}
+
+function Figure({ label, value, extra }: { label: string; value: string; extra?: string }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-[11px] text-muted">{label}</div>
+      <div className="truncate text-sm font-semibold text-ink tabular-nums" title={extra}>
+        {value}
+        {extra ? <span className="ml-1 text-[11px] font-normal text-warn-ink">!</span> : null}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * `09:32`, in Asia/Kolkata — named rather than left to the browser, because
+ * this renders on the server too and the server is UTC.
  */
 function clock(at: Date | string): string {
   return new Intl.DateTimeFormat("en-GB", {

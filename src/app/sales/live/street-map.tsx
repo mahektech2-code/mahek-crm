@@ -1597,6 +1597,15 @@ export function StreetMap({
            lane is the one thing that would make this screen unusable. */
         if (fittedOnce || !points.length) return;
         fittedOnce = true;
+        /* ARRIVING WITH SOMEBODY ALREADY PICKED — a card on Today opens this
+           screen focused on one salesman. The selection effect below ran
+           before the map existed and could not move the camera, so the first
+           frame goes to him here instead of to the whole team. */
+        const focus = pinned.find((r) => r.salesmanId === selectedIdRef.current);
+        if (focus) {
+          built.jumpTo({ center: [focus.lng as number, focus.lat as number], zoom: 15 });
+          return;
+        }
         /* FIT, never fill. One pin gets a sensible zoom instead of a rooftop. */
         const box = points.reduce(
           (b, p) => b.extend(p),
