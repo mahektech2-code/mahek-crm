@@ -649,13 +649,6 @@ export const APP_MODULES: AppModule[] = [
   sales("orders", "Orders", "Commercial", "Orders taken in the field, and the ones over a credit limit."),
   sales("payments", "Payments", "Commercial", "Money collected, and cash still in somebody's pocket."),
   sales("invoices", "Invoices", "Commercial", "What has been billed and what is overdue."),
-  sales("catalogue", "Catalogue & rates", "Commercial", "What is sold and at what price."),
-  sales(
-    "price-lists",
-    "Price lists",
-    "Commercial",
-    "Mahek's price lists end to end: import a PDF, review what it read, publish, say who it applies to, compare months, and see who is billed off-list.",
-  ),
 
   /* ------------------------------------------------- Lead Management, the ten
    *
@@ -814,7 +807,6 @@ export const APP_MODULES: AppModule[] = [
   sales("attendance", "Attendance", "People", "Who started the day, when, and from where."),
   sales("leave", "Leave", "People", "Requests waiting on a decision, and the policy behind them."),
   sales("holidays", "Holidays", "People", "The days nobody is expected to work."),
-  sales("salary", "Salary", "People", "Pay, incentive and deductions. Granted deliberately."),
   sales("expenses", "Expenses & claims", "People", "What the field spent, and what it is owed back."),
   sales(
     "travel",

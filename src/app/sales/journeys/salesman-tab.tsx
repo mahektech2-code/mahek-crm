@@ -77,6 +77,7 @@ export function SalesmanTab({
   facts,
   history,
   cities,
+  stay = "",
 }: {
   salesman: Salesman;
   month: string;
@@ -89,6 +90,8 @@ export function SalesmanTab({
   facts: CalendarFacts;
   history: JourneyEvent[];
   cities: string[];
+  /** Appended to every link back into this screen — `&in=team` keeps it in its panel. */
+  stay?: string;
 }) {
   const router = useRouter();
   const [open, setOpen] = React.useState<string | null>(openDay);
@@ -138,12 +141,21 @@ export function SalesmanTab({
   const area = areaAnswerState(salesman.territories, salesman.areaAnswer);
   const areas = salesman.territories.filter((t) => t.kind !== "region");
   const selected = days.find((d) => d.date === open) ?? null;
-  const base = `/sales/journeys?tab=salesman&salesman=${salesman.id}`;
+  const base = `/sales/journeys?tab=salesman&salesman=${salesman.id}${stay}`;
 
   return (
     <>
       {/* ------------------------------------------------------- who he is */}
-      <section className="mb-4 grid gap-4 rounded-[6px] border border-line bg-surface px-5 py-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_auto]">
+      <section
+        className={
+          "mb-4 grid gap-4 rounded-[6px] border border-line bg-surface px-5 py-4 " +
+          (stay ? "md:grid-cols-[minmax(0,1fr)_auto]" : "md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_auto]")
+        }
+      >
+        {/* Inside his panel the name and phone are already in its header, and
+            Propose days and the visit log are its tabs — so only the areas,
+            the handset and the way to change them stay. */}
+        {stay ? null : (
         <div className="flex min-w-0 items-start gap-3">
           <span className="flex h-10 w-10 flex-none items-center justify-center rounded-full bg-brand-soft text-[13px] font-semibold text-[#5223E0]">
             {salesman.initials}
@@ -168,6 +180,8 @@ export function SalesmanTab({
             </span>
           </span>
         </div>
+
+        )}
 
         <div className="min-w-0">
           <span className="mb-1 block text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
@@ -206,22 +220,35 @@ export function SalesmanTab({
             {salesman.areaAnswer ? ` · ${shortDate(salesman.areaAnswer.at)}` : ""}
             {salesman.areaAnswer?.reason ? ` — “${salesman.areaAnswer.reason}”` : ""}
           </span>
+          {stay ? (
+            <span className="mt-0.5 block text-[12px] text-muted">
+              {salesman.lastSeenAt
+                ? `Handset last spoke ${stamp(salesman.lastSeenAt)}`
+                : salesman.deviceBoundAt
+                  ? "Handset has not spoken since it was bound"
+                  : "Has never signed in on a handset"}
+            </span>
+          ) : null}
         </div>
 
         <div className="flex flex-none flex-col items-stretch gap-1.5">
-          <Link href={`${base}&view=propose`} className="no-underline">
-            <Button tone="primary" size="sm">
-              Propose days
-            </Button>
-          </Link>
+          {stay ? null : (
+            <Link href={`${base}&view=propose`} className="no-underline">
+              <Button tone="primary" size="sm">
+                Propose days
+              </Button>
+            </Link>
+          )}
           <Link href={`/sales/people/${salesman.id}`} className="no-underline">
             <Button size="sm">Change his areas</Button>
           </Link>
-          <Link href={`/sales/journeys?tab=visits&salesman=${salesman.id}`} className="no-underline">
-            <Button size="sm" tone="quiet">
-              Today&rsquo;s visits
-            </Button>
-          </Link>
+          {stay ? null : (
+            <Link href={`/sales/journeys?tab=visits&salesman=${salesman.id}`} className="no-underline">
+              <Button size="sm" tone="quiet">
+                Today&rsquo;s visits
+              </Button>
+            </Link>
+          )}
         </div>
       </section>
 
@@ -367,6 +394,7 @@ export function SalesmanTab({
           history={history}
           onClose={() => setOpen(null)}
           onRefresh={() => router.refresh()}
+          stay={stay}
         />
       ) : null}
     </>
@@ -675,6 +703,7 @@ function DayDrawer({
   history,
   onClose,
   onRefresh,
+  stay,
 }: {
   day: DayInfo;
   today: string;
@@ -683,6 +712,7 @@ function DayDrawer({
   history: JourneyEvent[];
   onClose: () => void;
   onRefresh: () => void;
+  stay: string;
 }) {
   const toast = useToast();
   const actions = useVisitActions();
@@ -921,7 +951,7 @@ function DayDrawer({
 
           {future && plan?.dayState !== "planned" ? (
             <Link
-              href={`/sales/journeys?tab=salesman&salesman=${salesman.id}&view=propose&from=${day.date}&days=1`}
+              href={`/sales/journeys?tab=salesman&salesman=${salesman.id}&view=propose&from=${day.date}&days=1${stay}`}
               className="mt-2 inline-block text-[12px] text-brand no-underline hover:underline"
             >
               Pick the shops yourself from the office →
@@ -1090,7 +1120,7 @@ function DayDrawer({
             His trail on the Live map →
           </Link>
           <Link
-            href={`/sales/journeys?tab=visits&day=${day.date}&salesman=${salesman.id}`}
+            href={`/sales/journeys?tab=visits&day=${day.date}&salesman=${salesman.id}${stay}`}
             className="text-brand no-underline hover:underline"
           >
             This day in the visit log →

@@ -5,6 +5,8 @@ import Link from "next/link";
 import { signOut } from "@/lib/actions/auth";
 import { SalesIcon } from "@/components/console/icons";
 import { AppFrame } from "@/components/shell/app-frame";
+import { NotificationBell } from "@/components/shell/notification-bell";
+import type { Notification } from "@/db/schema";
 import { SalesSidebarNav, type SalesCounts } from "./sidebar-nav";
 import { SalesSearch } from "./search";
 import { AskPanel } from "./ask-panel";
@@ -51,7 +53,7 @@ export function SalesShell({
   scopeDetail,
   liveLine,
   counts,
-  alertCount,
+  notifications,
   allowed,
   switcher,
   feedback,
@@ -76,7 +78,8 @@ export function SalesShell({
   liveLine: string;
   /** Keyed by href. Only what is waiting; a zero is not drawn. */
   counts: SalesCounts;
-  alertCount: number;
+  /** The signed-in person's own notifications — the same box every app draws. */
+  notifications: Notification[];
   allowed: string[];
   switcher: React.ReactNode;
   feedback: React.ReactNode;
@@ -95,7 +98,7 @@ export function SalesShell({
        */
       bleed
       header={
-        <header className="relative z-2 flex h-14 flex-none items-center gap-4 border-b border-line bg-surface px-6">
+        <header className="relative z-30 flex h-14 flex-none items-center gap-4 border-b border-line bg-surface px-6">
           {/*
             THE SWITCHER SITS FIRST, BEFORE THIS APP'S OWN NAME.
 
@@ -164,20 +167,17 @@ export function SalesShell({
 
           {feedback}
 
-          <Link
-            href="/sales/audit"
-            title="Every decision made here, with a name against it"
-            className="flex h-8 w-8 flex-none items-center justify-center rounded-[4px] border border-line bg-surface text-muted no-underline hover:bg-canvas hover:text-body hover:no-underline"
-          >
-            <span className="relative flex">
-              <SalesIcon name="bell" size={16} />
-              {alertCount > 0 ? (
-                <span className="absolute -top-[7px] -right-[7px] h-4 min-w-4 rounded-lg bg-danger px-1 text-center text-[11px] leading-4 font-medium text-white">
-                  {alertCount}
-                </span>
-              ) : null}
-            </span>
-          </Link>
+          {/*
+            THE BELL IS THE NOTIFICATION BOX, as it is in every other app.
+
+            It was a link to the Audit trail wearing the bell, with a red count
+            of the console's waiting queues on it — so pressing it opened the
+            audit log, and nothing anybody sent this person (a decision, a
+            special price asked for, a claim) could be read from this header at
+            all. Those queues are already badged in the sidebar, and the Audit
+            trail has its own sidebar row.
+          */}
+          <NotificationBell notifications={notifications} />
 
           {/*
             THE NAME IS WHAT GIVES WAY, never the sign-out button.

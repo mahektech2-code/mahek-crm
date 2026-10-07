@@ -21,6 +21,6 @@ export async function priceListDoorCanManage(
   user: { id: string; role: string },
   app: PricingApp,
 ): Promise<boolean> {
-  if (app === "crm" || app === "sales") return false;
+  if (app === "crm") return false;
   return canFor(user, "pricelist.manage");
 }
