@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { ColSpec, ListRow, ListSpec, Tone } from "@/lib/erp/ui";
@@ -93,6 +93,7 @@ export function ListScreen({
   tabs,
   toggle,
   above,
+  initialNew,
 }: {
   spec: ListSpec;
   rows: ListRow[];
@@ -111,6 +112,13 @@ export function ListScreen({
   toggle?: { label: string; href: string } | null;
   /** Drawn between the header and the list: a calendar, a chart, a scope switch. */
   above?: React.ReactNode;
+  /**
+   * Open the new-record form on arrival (`?new=1`), with these answers already
+   * in it — the Departments page's "Create chemical requirement" lands here
+   * with the department and the category chosen. Only the form's own fields
+   * are taken; anything else in the query is ignored.
+   */
+  initialNew?: Record<string, string> | null;
 }) {
   const ui = useErpUi();
   const { flags: FLAG, tones: ST_TONE, place } = useKit();
@@ -126,6 +134,21 @@ export function ListScreen({
   const [size, setSize] = useState(25);
   const [sel, setSel] = useState<Record<string, boolean>>({});
   const [openId, setOpenId] = useState<string | null>(initialOpen ?? null);
+  /* Opened once per arrival, then the query is cleared so a reload does not open it again. */
+  const newOpened = useRef(false);
+  useEffect(() => {
+    if (newOpened.current || !initialNew || !spec.newForm || spec.readOnly) return;
+    newOpened.current = true;
+    const form = spec.newForm;
+    const known = new Set(form.header.map((f) => f.k));
+    const preset = Object.fromEntries(Object.entries(initialNew).filter(([k]) => known.has(k)));
+    ui.openForm({ ...form, init: { ...form.init, ...preset } });
+    const q = new URLSearchParams(params.toString());
+    q.delete("new");
+    for (const k of Object.keys(initialNew)) q.delete(k);
+    const qs = q.toString();
+    router.replace(qs ? `${path}?${qs}` : path, { scroll: false });
+  }, [initialNew, spec.newForm, spec.readOnly, ui, params, path, router]);
   /* Clearing a filter or closing a record returns to the same TAB: the tab is
      in the query, and a bare path would open the screen's first one. */
   const tabKey = params.get("view");
