@@ -224,14 +224,89 @@ Two, doing different jobs.
 
 - **DigitalOcean daily backups** snapshot the whole droplet. They restore the
   *machine* — good for "the box is gone", useless for "someone deleted a row".
-- **`backup.sh`** dumps the database nightly at 01:15 IST, keeps a week locally
-  and a month in R2. This restores the *data*.
+  They are also the only copy of `/opt/mahekone/.env` — keep that file in a
+  password manager as well, because a snapshot is a week old at best.
+- **`backup.sh`** dumps the database and restores the *data*:
 
-Install the schedule once:
+| Kind | When (IST) | Droplet keeps | R2 keeps |
+|---|---|---|---|
+| nightly | 02:15 | 7 days | `daily/`, 30 days |
+| daytime | 08:15, 14:15, 20:15 | 2 days | `intraday/`, 7 days |
+| first nightly of the month | 02:15 on the 2nd | — | `monthly/`, ~13 months |
+| verify | Monday 04:00 | restores the newest dump into a scratch database, compares it with the live one, drops it | — |
+
+So the most a disk failure can lose is about six working hours, not a day,
+and a mistake noticed after a month still has a monthly copy to go back to.
+
+Install the schedule (re-run after changing `backup.sh`; it replaces its own
+lines and leaves everything else in the crontab alone):
 
 ```bash
 ssh deploy@<droplet-ip> 'bash /opt/mahekone/backup.sh --install-cron'
 ```
+
+### Setting it up — four things, once
+
+**1. The encryption key.** On YOUR machine, never the droplet:
+
+```bash
+brew install gnupg                     # if gpg is missing
+gpg --quick-gen-key "MahekOne backups" rsa4096 encr never   # set a passphrase
+gpg --armor --export "MahekOne backups"             > backup-public.asc
+gpg --armor --export-secret-keys "MahekOne backups" > backup-private.asc
+```
+
+Put `backup-private.asc` AND its passphrase in the password manager, with a
+second person able to reach them. Lose both and every R2 copy is unreadable
+for ever; that is the price of an intruder not being able to read them either.
+Then send only the public half up:
+
+```bash
+scp backup-public.asc deploy@<droplet-ip>:/opt/mahekone/
+# and in /opt/mahekone/.env:
+BACKUP_GPG_RECIPIENT_FILE=/opt/mahekone/backup-public.asc
+```
+
+**2. The alert.** Create a free check at healthchecks.io — period 6 hours,
+grace 1 hour, email to two people — and set its ping URL as
+`BACKUP_HEALTHCHECK_URL` in `.env`. It emails when a run fails AND when no
+run arrives at all; the second is the one a log file can never report.
+
+**3. Lock the bucket, so the droplet cannot delete its own backups.** The R2
+token in `.env` can delete — `backup.sh` prunes with it — so anybody who gets
+onto the box could otherwise wipe the database and every backup of it in one
+sitting. In Cloudflare: R2 → `mahekone-backups` → Settings → **Bucket lock
+rules**, add one rule per prefix:
+
+| Prefix | Retain for |
+|---|---|
+| `daily/` | 30 days |
+| `intraday/` | 7 days |
+| `monthly/` | 365 days |
+
+A locked object cannot be deleted or overwritten by anybody, this token
+included, until it is that old. `backup.sh`'s own prune is refused until then
+and says nothing about it, which is expected. Add an **Object lifecycle rule**
+per prefix deleting at the same ages plus a day, so the bucket is pruned even
+if the script's prune never succeeds.
+
+**4. Check it.** `bash backup.sh --intraday` then `bash backup.sh --verify`
+by hand. The first should end `uploaded` with a `.gpg` file in
+`restore.sh --list-r2`; the second should list eight tables `ok`, and the
+healthcheck should show both pings.
+
+### Restoring
+
+```bash
+bash restore.sh --list-r2
+bash restore.sh backups/mahekone_<stamp>.sql.gz            # from the droplet: no key
+bash restore.sh --from-r2 daily/<file>.sql.gz.gpg --key /tmp/backup-private.asc
+```
+
+An R2 copy needs the private key. Either scp it to `/tmp` for the restore and
+`shred -u` it straight after, or — better — fetch and decrypt the file on your
+own machine (`gpg --decrypt`) and scp the plain `.sql.gz` across instead, so the
+private key never touches the droplet at all.
 
 ## What the droplet runs on a schedule
 
@@ -243,6 +318,8 @@ The host clock is **UTC**, so the crontab is written in UTC.
 | `:22` hourly | — | `sheet-sync.sh hourly` — the salesman score, the MBOS sweeps and escalations |
 | `20:13` | 01:43 | `sheet-sync.sh nightly` — reconcile, project, then the recomputes |
 | `20:45` | 02:15 | `backup.sh` — dump to R2, after the nightly has settled |
+| `02:45`, `08:45`, `14:45` | 08:15, 14:15, 20:15 | `backup.sh --intraday` — the day's work, so a disk failure loses hours, not a day |
+| `22:30` Sunday | 04:00 Monday | `backup.sh --verify` — restore the newest dump into a scratch database and compare |
 | `04:30` on the 1st | 10:00 on the 1st | `sheet-sync.sh monthly` — the Top customers report for the month just finished |
 
 The hourly row is newer than the other two and a deployment installed before it
