@@ -258,3 +258,32 @@ export async function advanceIfPassed(ctx: HireContext, applicationId: string): 
 }
 
 export const hoursSince = (d: Date | string | null | undefined, now = Date.now()) => (d ? Math.max(0, (now - new Date(d).getTime()) / 3_600_000) : 0);
+
+/**
+ * Record a message on the candidate's Communication tab. Every channel lands
+ * here — a WhatsApp or SMS a person sent from their own phone is `logged`
+ * once they confirm it went, exactly as the CRM treats a copied message.
+ */
+export async function recordMessage(
+  ctx: Pick<HireContext, "user" | "roleLabel"> | null,
+  m: { candidateId: string; applicationId?: string | null; direction: "out" | "in"; channel: "whatsapp" | "sms" | "email" | "portal" | "phone"; language?: string; subject?: string | null; body: string; aiDrafted?: boolean; aiTaskId?: string | null; status?: string },
+): Promise<string> {
+  const { hireMessages } = await import("@/db/schema");
+  const msgId = hid("hms");
+  await db.insert(hireMessages).values({
+    id: msgId,
+    candidateId: m.candidateId,
+    applicationId: m.applicationId ?? null,
+    direction: m.direction,
+    channel: m.channel,
+    language: m.language ?? "English",
+    subject: m.subject ?? null,
+    body: m.body,
+    aiDrafted: Boolean(m.aiDrafted),
+    aiTaskId: m.aiTaskId ?? null,
+    status: m.status ?? "sent",
+    sentById: m.direction === "out" ? (ctx?.user.id ?? null) : null,
+  });
+  await audit(ctx, { applicationId: m.applicationId, candidateId: m.candidateId, entityType: "message", entityId: msgId, eventType: m.direction === "out" ? "message_sent" : "message_received", summary: `${m.direction === "out" ? "Sent" : "Received"} ${m.channel} (${m.language ?? "English"})${m.aiDrafted ? " · AI-drafted, reviewed by a person" : ""}` });
+  return msgId;
+}
