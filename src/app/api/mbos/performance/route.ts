@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { authenticate } from "@/lib/services/mbos-service";
 import { handsetReadingForRange } from "@/lib/services/performance-service";
 import { today } from "@/lib/recompute";
+import { checkRange } from "@/lib/performance-range";
 
 /* ---------------------------------------------------------------------------
  * A salesman's own performance over any range of days — this quarter, last
@@ -22,10 +23,6 @@ import { today } from "@/lib/recompute";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
-/** Five years is every question anybody has asked of this book, and a bound on the work. */
-const MAX_DAYS = 5 * 366;
-
 export async function GET(request: Request) {
   const auth = await authenticate(request);
   if (!auth.ok) {
@@ -35,36 +32,15 @@ export async function GET(request: Request) {
     );
   }
 
+  /* Checked, and NEVER clamped to today — see `lib/performance-range.ts`.
+     Clamping cut this month's target to the days already gone and scored the
+     phone several times higher than the Performance screen. */
   const url = new URL(request.url);
-  const from = url.searchParams.get("from") ?? "";
-  let to = url.searchParams.get("to") ?? "";
-  if (!ISO_DAY.test(from) || !ISO_DAY.test(to) || from > to) {
-    return NextResponse.json(
-      { ok: false, error: "Pick a start date on or before the end date." },
-      { status: 400 },
-    );
+  const checked = checkRange(url.searchParams.get("from"), url.searchParams.get("to"), await today());
+  if (!checked.ok) {
+    return NextResponse.json({ ok: false, error: checked.error }, { status: 400 });
   }
-
-  /* The future has no figures in it. Clamped rather than refused, so "this
-     year" asked on any day means up to today. */
-  const now = await today();
-  if (to > now) to = now;
-  if (from > to) {
-    return NextResponse.json(
-      { ok: false, error: "That range has not started yet." },
-      { status: 400 },
-    );
-  }
-  const span =
-    (Date.UTC(+to.slice(0, 4), +to.slice(5, 7) - 1, +to.slice(8, 10)) -
-      Date.UTC(+from.slice(0, 4), +from.slice(5, 7) - 1, +from.slice(8, 10))) /
-    86_400_000;
-  if (span > MAX_DAYS) {
-    return NextResponse.json(
-      { ok: false, error: "Pick a range of five years or less." },
-      { status: 400 },
-    );
-  }
+  const { from, to } = checked.range;
 
   try {
     const reading = await handsetReadingForRange(auth.principal.user.id, from, to);

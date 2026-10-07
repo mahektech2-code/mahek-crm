@@ -1703,7 +1703,7 @@ export default function Home() {
                 ) : (
                   <CountUp
                     value={month.totalScoreBp / 100}
-                    format={(x) => x.toFixed(0)}
+                    format={(x) => x.toFixed(1)}
                     style={[{ fontSize: 22, lineHeight: 28, color: C.ink }, weight(600), tabular]}
                   />
                 )}

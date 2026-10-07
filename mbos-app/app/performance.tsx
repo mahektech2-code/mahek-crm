@@ -221,7 +221,7 @@ export default function PerformanceScreen() {
                     it moved. */}
                 <CountUp
                   value={current.totalScoreBp / 100}
-                  format={(n) => n.toFixed(0)}
+                  format={(n) => n.toFixed(1)}
                   fromZero
                   duration={800}
                   style={[
@@ -242,7 +242,7 @@ export default function PerformanceScreen() {
               ) : null}
               {previous?.period && previous.totalScoreBp != null ? (
                 <T s="micro" style={{ marginTop: 4 }}>
-                  {monthName(previous.period)} was {(previous.totalScoreBp / 100).toFixed(0)}
+                  {monthName(previous.period)} was {(previous.totalScoreBp / 100).toFixed(1)}
                 </T>
               ) : null}
               {/* A range over several months is scored against the targets

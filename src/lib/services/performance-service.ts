@@ -10,6 +10,7 @@ import { getConfig } from "@/lib/config/store";
 import {
   APP_TIMEZONE,
   addDays,
+  businessDateSql,
   addMonths,
   daysInMonth,
   endOfMonth,
@@ -1046,11 +1047,12 @@ function dayCount(a: string, b: string): number {
   return Math.round((Date.UTC(by, bm - 1, bd) - Date.UTC(ay, am - 1, ad)) / 86_400_000) + 1;
 }
 
-export async function handsetReadingForRange(
-  userId: string,
-  from: string,
-  to: string,
-): Promise<HandsetRangeReading> {
+/**
+ * One person's range, scored — the ONE computation behind the handset's
+ * picked range and the Sales Dashboard's person modal, so the two cannot
+ * score one month two ways.
+ */
+async function scoreRange(userId: string, from: string, to: string) {
   const config = await getConfig();
   const firstMonth = from.slice(0, 7);
   const lastMonth = to.slice(0, 7);
@@ -1118,6 +1120,25 @@ export async function handsetReadingForRange(
   const targetBands = latestWithBands ? bands.get(latestWithBands.id) : undefined;
 
   const { score, mix } = scoreActuals(a, asked, targetBands, config);
+
+  return { config, a, asked, targets, targetBands, score, mix, monthsInRange, prorated };
+}
+
+export async function handsetReadingForRange(
+  userId: string,
+  from: string,
+  to: string,
+): Promise<HandsetRangeReading> {
+  return handsetReadingFrom(await scoreRange(userId, from, to), from, to);
+}
+
+/** The handset's shape, from a scored range. */
+function handsetReadingFrom(
+  core: Awaited<ReturnType<typeof scoreRange>>,
+  from: string,
+  to: string,
+): HandsetRangeReading {
+  const { config, a, asked, targets, score, mix, monthsInRange, prorated } = core;
   const by = (k: string) => score.components.find((c) => c.key === k);
   /* Zero is "nothing asked" to every reader of these; null says it outright. */
   const asTarget = (k: string) => by(k)?.target || null;
@@ -1160,6 +1181,252 @@ export async function handsetReadingForRange(
     monthsTargeted: targets.length,
     prorated,
   };
+}
+
+/* ------------------------------------------------- one person, in detail */
+
+/**
+ * What the Sales Dashboard's person modal draws: the handset's reading of the
+ * same range (so the phone and the modal are one figure), and around it the
+ * parts a manager needs to read the number — what each component earned, the
+ * month-end forecast, the alerts, month by month, day by day and which shops
+ * it came from.
+ *
+ * A WHOLE MONTH is scored exactly as the Performance table scores it: the
+ * table's `readingsForPeriod` and `scoreRange` read the same actuals and the
+ * same published target, and `performance.test.ts` pins that they agree.
+ */
+export type PersonComponent = {
+  key: string;
+  actual: number;
+  target: number;
+  achievementBp: number | null;
+  weight: number;
+  effectiveWeight: number;
+  pointsBp: number;
+};
+
+export type PersonMonth = {
+  period: string;
+  hasTarget: boolean;
+  totalScoreBp: number | null;
+  rating: string | null;
+  revenuePaise: number;
+  millilitres: number;
+  /** `live` for the month in progress, `cache` for a month as last worked out. */
+  source: "live" | "cache";
+};
+
+export type PersonPerformance = HandsetRangeReading & {
+  userId: string;
+  userName: string;
+  components: PersonComponent[];
+  /** Collected as a share of what was overdue when the range opened. */
+  collectionShareBp: number | null;
+  /** Only for a whole month: pace is a statement about a month. */
+  alerts: Alert[];
+  revenueForecast: Forecast | null;
+  volumeForecast: Forecast | null;
+  workingDays: { elapsed: number; total: number } | null;
+  months: PersonMonth[];
+  /** Revenue by day, for ranges of up to 92 days. */
+  daily: { date: string; revenuePaise: number }[] | null;
+  topCustomers: { id: string; name: string; city: string | null; revenuePaise: number; orders: number }[];
+  ordersCount: number;
+};
+
+export async function personPerformance(
+  userId: string,
+  from: string,
+  to: string,
+  todayDate: BusinessDate,
+): Promise<PersonPerformance | null> {
+  const names = await namesFor([userId]);
+  const userName = names.get(userId);
+  if (!userName) return null;
+
+  const core = await scoreRange(userId, from, to);
+  const reading = handsetReadingFrom(core, from, to);
+  const { config, score, mix } = core;
+  const by = (k: string) => score.components.find((c) => c.key === k);
+
+  /* Whole month: the forecast and the alerts the table carries. */
+  const monthKey =
+    from.endsWith("-01") && from.slice(0, 7) === to.slice(0, 7) && to === endOfMonth(from.slice(0, 7))
+      ? from.slice(0, 7)
+      : null;
+  let alerts: Alert[] = [];
+  let revenueForecast: Forecast | null = null;
+  let volumeForecast: Forecast | null = null;
+  let workingDays: { elapsed: number; total: number } | null = null;
+  if (monthKey) {
+    const days = await workingDaysIn(monthKey, todayDate);
+    workingDays = days;
+    if (reading.hasTarget) {
+      alerts = alertsFor(
+        {
+          revenueBp: by("revenue")?.achievementBp ?? null,
+          volumeBp: by("volume")?.achievementBp ?? null,
+          collectionBp: by("collection")?.achievementBp ?? null,
+          activityBp: by("activity")?.achievementBp ?? null,
+          newCustomerActual: reading.newCustomerActual,
+          newCustomerTarget: reading.newCustomerTarget ?? 0,
+          mix,
+          workingDaysElapsed: days.elapsed,
+          workingDaysTotal: days.total,
+        },
+        config,
+      );
+    }
+    revenueForecast = forecast({
+      actual: reading.revenueActualPaise,
+      target: reading.revenueTargetPaise ?? 0,
+      workingDaysElapsed: days.elapsed,
+      workingDaysTotal: days.total,
+    });
+    volumeForecast = forecast({
+      actual: reading.volumeActualMl,
+      target: reading.volumeTargetMl ?? 0,
+      workingDaysElapsed: days.elapsed,
+      workingDaysTotal: days.total,
+    });
+  }
+
+  /* Month by month, where the range holds more than one. The month in
+     progress is read live — exactly as the Performance table reads it — and
+     a closed month as the cache last worked it out. */
+  const months: PersonMonth[] = [];
+  const firstMonth = from.slice(0, 7);
+  const lastMonth = to.slice(0, 7);
+  if (firstMonth !== lastMonth) {
+    const keys: string[] = [];
+    for (let m = firstMonth; m <= lastMonth && keys.length < 24; m = addMonths(m, 1)) keys.push(m);
+    const cached = await db.execute<{
+      period: string;
+      target_id: string | null;
+      total_score_bp: number | null;
+      rating: string | null;
+      revenue_actual_paise: string | null;
+      volume_actual_ml: string | null;
+    }>(sql`
+      select period, target_id, total_score_bp, rating, revenue_actual_paise, volume_actual_ml
+        from sales_performance
+       where user_id = ${userId} and period >= ${firstMonth} and period <= ${lastMonth}
+    `);
+    const byPeriod = new Map(cached.map((r) => [r.period, r]));
+    const current = todayDate.slice(0, 7);
+    for (const key of keys) {
+      if (key > current) break;
+      if (key === current) {
+        const [live] = await readingsForPeriod(key, todayDate, { userIds: [userId] });
+        months.push({
+          period: key,
+          hasTarget: live?.hasTarget ?? false,
+          totalScoreBp: live?.hasTarget ? live.score.totalBp : null,
+          rating: live?.hasTarget ? live.rating : null,
+          revenuePaise: live?.actuals.revenuePaise ?? 0,
+          millilitres: live?.actuals.millilitres ?? 0,
+          source: "live",
+        });
+        continue;
+      }
+      const row = byPeriod.get(key);
+      months.push({
+        period: key,
+        hasTarget: !!row?.target_id,
+        totalScoreBp: row?.target_id ? (row.total_score_bp ?? null) : null,
+        rating: row?.target_id ? row.rating : null,
+        revenuePaise: num(row?.revenue_actual_paise),
+        millilitres: num(row?.volume_actual_ml),
+        source: "cache",
+      });
+    }
+  }
+
+  /* The orders behind the revenue — the same population `actualsForWindow`
+     counts, credited by the same rule. */
+  const windowStart = sql.raw(`'${from} 00:00:00+05:30'::timestamptz`);
+  const windowEnd = sql.raw(`'${to} 23:59:59.999+05:30'::timestamptz`);
+  const credited = creditedToSql("c");
+  const orderValue = sql.raw("coalesce(o.net_amount_paise, o.total_amount, 0)");
+  const [top, daily, count] = await Promise.all([
+    db.execute<{ id: string; name: string; city: string | null; revenue: string; orders: number }>(sql`
+      select c.id, c.name, c.city, sum(${orderValue}) as revenue, count(*)::int as orders
+        from orders o
+        join customers c on c.id = o.customer_id
+       where ${orderCountsSql("o")}
+         and o.ordered_at >= ${windowStart} and o.ordered_at <= ${windowEnd}
+         and ${credited} = ${userId}
+       group by c.id, c.name, c.city
+       order by 4 desc
+       limit 8
+    `),
+    rangeDaysBetween(from, to) <= 92
+      ? db.execute<{ day: string; revenue: string }>(sql`
+          select ${sql.raw(businessDateSql("o.ordered_at"))}::text as day, sum(${orderValue}) as revenue
+            from orders o
+            join customers c on c.id = o.customer_id
+           where ${orderCountsSql("o")}
+             and o.ordered_at >= ${windowStart} and o.ordered_at <= ${windowEnd}
+             and ${credited} = ${userId}
+           group by 1
+        `)
+      : Promise.resolve(null),
+    db.execute<{ n: number }>(sql`
+      select count(*)::int as n
+        from orders o
+        join customers c on c.id = o.customer_id
+       where ${orderCountsSql("o")}
+         and o.ordered_at >= ${windowStart} and o.ordered_at <= ${windowEnd}
+         and ${credited} = ${userId}
+    `),
+  ]);
+
+  let dailySeries: { date: string; revenuePaise: number }[] | null = null;
+  if (daily) {
+    const byDay = new Map(daily.map((r) => [r.day, num(r.revenue)]));
+    dailySeries = [];
+    for (let d = from; d <= to; d = addDays(d as BusinessDate, 1)) {
+      dailySeries.push({ date: d, revenuePaise: byDay.get(d) ?? 0 });
+    }
+  }
+
+  return {
+    ...reading,
+    userId,
+    userName,
+    components: score.components.map((c) => ({
+      key: c.key,
+      actual: c.actual,
+      target: c.target,
+      achievementBp: c.achievementBp,
+      weight: c.weight,
+      effectiveWeight: c.effectiveWeight,
+      pointsBp: c.pointsBp,
+    })),
+    collectionShareBp:
+      reading.collectionBasePaise > 0
+        ? Math.round((reading.collectionActualPaise / reading.collectionBasePaise) * 10_000)
+        : null,
+    alerts,
+    revenueForecast,
+    volumeForecast,
+    workingDays,
+    months,
+    daily: dailySeries,
+    topCustomers: top.map((r) => ({
+      id: r.id,
+      name: r.name,
+      city: r.city,
+      revenuePaise: num(r.revenue),
+      orders: Number(r.orders),
+    })),
+    ordersCount: Number(count[0]?.n ?? 0),
+  };
+}
+
+function rangeDaysBetween(a: string, b: string): number {
+  return dayCount(a, b);
 }
 
 /* ----------------------------------------------------------- the rebuild */
