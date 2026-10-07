@@ -252,7 +252,7 @@ function Campaigns({ rows }: { rows: CampaignSummary[] }) {
       head={
         <>
           <HeadCell>Task</HeadCell>
-          <HeadCell width={110}>Asks</HeadCell>
+          <HeadCell width={140}>Asks</HeadCell>
           <HeadCell width={230}>Progress</HeadCell>
           <HeadCell width={120}>Due</HeadCell>
           <HeadCell width={160}>Set by</HeadCell>

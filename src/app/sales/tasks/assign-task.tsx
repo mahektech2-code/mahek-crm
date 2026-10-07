@@ -1262,7 +1262,7 @@ function AudienceSummary({
       {preview.noCarrier || preview.outsideTeam ? (
         <p className="mt-1 text-[12px] text-warn">
           {preview.noCarrier ? `${preview.noCarrier} shop${preview.noCarrier === 1 ? " has" : "s have"} no salesman and will be skipped. ` : ""}
-          {preview.outsideTeam ? `${preview.outsideTeam} would go to somebody outside your active field team and will be skipped.` : ""}
+          {preview.outsideTeam ? `${preview.outsideTeam} ${preview.outsideTeam === 1 ? "is" : "are"} for somebody who is not an active salesman in your field team (no MBOS app, or not in your team) and will be skipped.` : ""}
         </p>
       ) : null}
       {preview.tooMany ? <p className="mt-1 text-[12px] text-danger">Too many in one go — narrow it down.</p> : null}
