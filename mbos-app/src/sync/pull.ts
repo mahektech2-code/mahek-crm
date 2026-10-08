@@ -1184,23 +1184,32 @@ async function upsertTasks(rows: unknown[] | undefined, now: number): Promise<nu
       snoozedTo?: string | null;
       snoozeReason?: string | null;
       escalatedAt?: string | null;
+      /* The assignment's form and his answers to it — see `engines/task-form`. */
+      campaignId?: string | null;
+      form?: unknown;
+      responses?: unknown;
+      /* The customer record as the linked questions see it. */
+      context?: unknown;
     };
     const status = t.status === 'in_progress' ? 'open' : t.status;
+    const asJson = (v: unknown) => (v == null ? null : typeof v === 'string' ? v : JSON.stringify(v));
     const snoozeHistory = t.snoozedTo
       ? JSON.stringify([{ at: now, to: t.snoozedTo, reason: t.snoozeReason ?? '' }])
       : null;
     await run(
       `INSERT INTO tasks (id, title, description, assigneeId, assignerId, priority, dueDate,
                           customerId, status, completionNote, completionPhotoId, snoozeHistory,
-                          sourceType, sourceId,
+                          sourceType, sourceId, campaignId, form, responses, context,
                           escalated, clientCreatedAt, serverCreatedAt, deviceId, syncState)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'server', 'synced')
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'server', 'synced')
        ON CONFLICT(id) DO UPDATE SET
          title = excluded.title, description = excluded.description,
          priority = excluded.priority, dueDate = excluded.dueDate, customerId = excluded.customerId,
          status = excluded.status, completionNote = excluded.completionNote,
          completionPhotoId = excluded.completionPhotoId, escalated = excluded.escalated,
          sourceType = excluded.sourceType, sourceId = excluded.sourceId,
+         campaignId = excluded.campaignId, form = excluded.form, responses = excluded.responses,
+         context = excluded.context,
          syncState = 'synced'
        WHERE ${noPending('tasks')}`,
       [
@@ -1220,6 +1229,10 @@ async function upsertTasks(rows: unknown[] | undefined, now: number): Promise<nu
         snoozeHistory,
         t.sourceType ?? null,
         t.sourceId ?? null,
+        t.campaignId ?? null,
+        asJson(t.form),
+        asJson(t.responses),
+        asJson(t.context),
         t.escalatedAt ? 1 : 0,
         now,
       ],
