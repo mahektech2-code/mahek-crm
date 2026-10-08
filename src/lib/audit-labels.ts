@@ -59,6 +59,7 @@ export const AUDIT_GROUPS = [
       "payment.",
       "order.",
       "creditnote.",
+      "payout.",
       "pricelist.",
       "followup.",
       "target.",
@@ -342,6 +343,28 @@ const DESCRIBE: Record<string, Describer> = {
     says: ["rejected a reported payment of", strong(rupees(c.a.amount) ?? "an amount"), "from", c.subject(), "— the money was never found"],
     changes: false,
   }),
+  "payout.create": (c) => ({
+    says: ["added a payout of", strong(rupees(c.a.amount) ?? "an amount"), "to", strong(str(c.a.payee) ?? "a vendor")],
+    changes: false,
+  }),
+  "payout.reschedule": (c) => ({
+    says: ["moved the payout to", strong(str(c.a.payee) ?? "a vendor"), "to", strong(shortDate(str(c.a.payOn)))],
+    changes: false,
+  }),
+  "payout.hold": (c) => ({ says: ["held the payout to", strong(str(c.a.payee) ?? "a vendor")], changes: false }),
+  "payout.release": (c) => ({ says: ["released the payout to", strong(str(c.a.payee) ?? "a vendor")], changes: false }),
+  "payout.paid": (c) => ({
+    says: ["marked", strong(rupees(c.a.amount) ?? "a payout"), "to", strong(str(c.a.payee) ?? "a vendor"), "paid"],
+    changes: false,
+  }),
+  "payout.reopen": (c) => ({ says: ["reopened a paid payout to", strong(str(c.a.payee) ?? "a vendor")], changes: false }),
+  "payout.cancel": (c) => ({ says: ["cancelled the payout to", strong(str(c.a.payee) ?? "a vendor")], changes: false }),
+  "payout.note": (c) => ({ says: ["changed the note on the payout to", strong(str(c.a.payee) ?? "a vendor")], changes: false }),
+  "payout.invoice.add": (c) => ({
+    says: ["added", strong(str(c.a.kind) ?? "an invoice"), "to the payout to", strong(str(c.a.payee) ?? "a vendor")],
+    changes: false,
+  }),
+  "payout.invoice.remove": (c) => ({ says: ["removed", strong(str(c.b.kind) ?? "an invoice"), "from a vendor payout"], changes: false }),
   "payment.reverse": (c) => ({
     says: ["reversed a confirmed payment of", strong(rupees(c.a.amount) ?? "an amount"), "from", c.subject(), "— it no longer counts"],
     changes: false,

@@ -5183,6 +5183,61 @@ adding it would put the whole imported order book on a collections list. Its
 balance is drawn as "not stated" rather than as a figure, because rendering an
 unknown beside real balances is the original mistake in different clothes.
 
+**CASH FLOW IS ONE SCREEN, THREE TABS.** Accounts → Cash flow
+(`accounts.cash-flow`, `?view=` overview | in | out): Overview is projected
+inflows against scheduled outflows on one daily axis with the cumulative net;
+Receivables is the collections forecast; Payables is the vendor payouts below.
+The cumulative line is the net FROM TODAY, never a bank balance — MahekOne holds
+none. Overdue items on either side are their own figure and are never folded
+into today. The screen speaks finance (inflows, outflows, receivables,
+payables, days to pay) and keeps explanations behind an `InfoTip`, not on the
+page.
+
+**A RECEIVABLE IS PROJECTED FROM HOW THE CUSTOMER PAYS, NOT FROM THE TERM.**
+`engines/cash-flow.ts`: a customer's average days to pay is the amount-weighted
+days from bill date to confirmed money over `payments.cashflowLookbackMonths`,
+from real receipts only — `sheet_import`, Adjustment and Credit note are not a
+customer paying. Below `payments.cashflowMinPayments` payments the company
+average is used and the row says so. A reported or held receipt is expected on
+its cheque date (else the day reported) and is SUBTRACTED from its bill's
+projection, so the same money is never forecast twice.
+`services/cash-flow-service.ts` reads it; it is not scoped, because Accounts
+sees every book.
+
+**VENDOR PAYOUTS ARE WHAT WE OWE, AND THE ERP REGISTER IS WHERE A PURCHASE IS
+TYPED.** The Payables tab is the one place in
+Accounts about money going OUT. A purchase payout is not entered here: the page
+runs `syncPurchasePayouts` first, which turns the ERP purchase register into one
+payout per supplier per PR number (`purchase_key`), worth the register's own
+`purchaseFigures` summed over the rated lots — a lot with no rate is no debt
+anybody can put a figure on. While unpaid, the sync rewrites its amount, bill
+numbers, PO and due date; a paid one is a record and is never rewritten, and one
+whose lots all vanished is cancelled ("No longer in the purchase register") and
+reopens if they come back. Anything else owed — an advance against a proforma, a
+transporter — is a MANUAL payout, added from a modal. `lib/engines/vendor-payouts.ts`
+is the rule, pure.
+
+**Two dates, two questions.** `due_date` is when the money is owed: the purchase
+date plus the supplier's `credit_days` (else `payments.vendorDefaultCreditDays`).
+`pay_on` is the payment day it is planned for: the first of
+`payments.vendorPayoutDays` (Tuesday to Friday, IST) on or after the due date, or
+on or after today where the due date has gone. Dragging a card on the calendar
+(vendors down, dates across) moves `pay_on` and stamps `pay_on_decided_at`, the
+same "a person decided" mark as `am_decided_at`, so the sync never moves it back.
+Only a payment day that has not gone accepts a drop — `moveRefusal`, asked by the
+calendar and again by `reschedulePayout`. An overdue payout nobody moved STAYS on
+its missed day rather than rolling forward to today, because rolling it would hide
+that it was missed.
+
+**An invoice is a row, because one order collects several.** A proforma before
+the goods, the tax invoice after, a debit note later: `vendor_payout_invoices`,
+each with a free-text kind (the usual ones offered as chips, anything typed) and
+one file under attachment parent `vendor_payout_invoice`, uploaded through
+`/api/accounts/payouts/upload` (a route, not an action — a scanned invoice is
+past the 1 MB action body) and readable by whoever holds the screen. Planning,
+holding and adding are `payment.record`; marking paid, undoing it and cancelling
+are `payment.confirm`, the Accounts manager's, as confirming a receipt is.
+
 **In raw SQL, qualify every column of the outer table.** Drizzle renders
 `${customers.id}` as a bare `"id"`. Inside a correlated subquery that binds to
 the *inner* table and the condition silently becomes false — types and unit

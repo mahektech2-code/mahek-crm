@@ -84,6 +84,8 @@ const files = [
   // and every salesman's answers read back side by side.
   "src/lib/task-campaigns.test.ts",
   "src/lib/accounts.test.ts",
+  // Vendor payouts: the purchase register as payouts, payment days, invoices.
+  "src/lib/vendor-payouts.test.ts",
   "src/lib/bill-paging.test.ts",
   // A call's own reminder is folded onto the call in the All view.
   "src/lib/timeline-fold.test.ts",

@@ -12,6 +12,7 @@ import { pendingReceiptCount } from "@/lib/services/receipt-service";
 import { pendingCreditNoteCount } from "@/lib/services/credit-note-service";
 import { pendingOrderChangeCount } from "@/lib/services/order-change-service";
 import { queueUrgency } from "@/lib/services/accounts-queue-service";
+import { overduePayoutCount } from "@/lib/services/vendor-payout-service";
 import { AccountsShell } from "./accounts-shell";
 
 /**
@@ -40,13 +41,15 @@ export default async function OrdersLayout({
   const modules = await listUserModules(user.id, "accounts");
   if (modules.length === 0) redirect("/apps");
 
-  const [orderCount, paymentCount, creditCount, urgency, config, changeCount] = await Promise.all([
+  const [orderCount, paymentCount, creditCount, urgency, config, changeCount, payoutsOverdue] = await Promise.all([
     pendingOrderCount(),
     pendingReceiptCount(),
     pendingCreditNoteCount(),
     queueUrgency(),
     getConfig(),
     pendingOrderChangeCount(),
+    // Only somebody who can open the screen is shown its badge.
+    modules.some((m) => m.key === "accounts.cash-flow") ? overduePayoutCount() : Promise.resolve(0),
   ]);
   const staleHours = config["payments.confirmationAgeWarningHours"];
   const hat = await hatForHeader(user, "accounts");
@@ -73,6 +76,7 @@ export default async function OrdersLayout({
           paymentsUrgent: urgency.oldestReceiptHours > staleHours,
           credits: creditCount,
           orderChanges: changeCount,
+          payoutsOverdue,
         }}
         allowed={modules.map((m) => m.href)}
         // Drawn for everybody, one app or several: the switcher is also the

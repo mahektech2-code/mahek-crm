@@ -46,6 +46,8 @@ export type NavCounts = {
   paymentsUrgent: boolean;
   credits: number;
   orderChanges: number;
+  /** Vendor payouts planned for a day that has gone and still not paid. */
+  payoutsOverdue: number;
 };
 
 const SHORTCUTS = [
@@ -183,6 +185,19 @@ export function AccountsShell({
         { href: "/accounts/payment-history", label: "Payment history", icon: "clock" },
         { href: "/accounts/outstanding", label: "Outstanding", icon: "wallet" },
         { href: "/accounts/bills", label: "Bills", icon: "bill" },
+        /*
+         * Money in AND out, day by day — the one screen in this group that
+         * also carries what Mahek owes its suppliers. The badge is the out
+         * side's overdue: a payout planned for a payment day that has gone
+         * and still not paid.
+         */
+        {
+          href: "/accounts/cash-flow",
+          label: "Cash flow",
+          icon: "payout",
+          badge: counts.payoutsOverdue,
+          urgent: counts.payoutsOverdue > 0,
+        },
         { href: "/accounts/whatsapp", label: "WhatsApp", icon: "chat" },
         { href: "/accounts/ledger", label: "Customer account", icon: "ledger" },
         { href: "/accounts/on-account", label: "On account", icon: "onaccount" },

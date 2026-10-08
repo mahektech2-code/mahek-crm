@@ -1646,6 +1646,13 @@
       "when": 1792445374442,
       "tag": "0237_erp_traceability",
       "breakpoints": true
+    },
+    {
+      "idx": 235,
+      "version": "7",
+      "when": 1792531774442,
+      "tag": "0238_vendor_payouts",
+      "breakpoints": true
     }
   ]
 }

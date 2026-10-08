@@ -982,6 +982,48 @@ export const SETTINGS = [
     min: 0,
     max: 25,
   },
+  {
+    key: "payments.vendorPayoutDays",
+    type: "structured",
+    category: "payments",
+    label: "Days vendor payments go out",
+    description:
+      "The weekdays accounts pay suppliers on, in IST. A purchase is planned for the first of these on or after its due date, and the Vendor payouts calendar refuses a payout dragged onto any other day. Tuesday to Friday by default - Monday is for reconciling the week before, and nothing is paid at the weekend.",
+    default: ["Tuesday", "Wednesday", "Thursday", "Friday"],
+  },
+  {
+    key: "payments.cashflowLookbackMonths",
+    type: "integer",
+    category: "payments",
+    label: "How far back a customer's paying habit is read",
+    description:
+      "Cash flow predicts when each open bill will be paid from how that customer has actually paid - the average days from bill to confirmed money over this many months - never from the credit term on the bill. Longer is steadier; shorter follows a customer who has changed.",
+    default: 12,
+    min: 1,
+    max: 36,
+  },
+  {
+    key: "payments.cashflowMinPayments",
+    type: "integer",
+    category: "payments",
+    label: "Payments needed before a customer has a habit of their own",
+    description:
+      "Below this many confirmed payments in the window, a customer's bills are predicted from the company's average instead, and every such prediction says so.",
+    default: 3,
+    min: 1,
+    max: 50,
+  },
+  {
+    key: "payments.vendorDefaultCreditDays",
+    type: "integer",
+    category: "payments",
+    label: "Supplier credit days when none is recorded",
+    description:
+      "How many days after the purchase a supplier's bill falls due, where the supplier's own record in the ERP names no credit days. Zero means due on the day of purchase.",
+    default: 30,
+    min: 0,
+    max: 365,
+  },
 
   /* --------------------------------------------------------------- targets */
   {
@@ -5391,6 +5433,19 @@ export function checkConsistency(config: Config): string[] {
     }
   }
 
+  // A payout calendar with no payment day can plan nothing, and a day it does
+  // not recognise is a day nobody can drop a payout on.
+  const payoutDays = config["payments.vendorPayoutDays"];
+  if (!Array.isArray(payoutDays) || payoutDays.length === 0) {
+    problems.push("Vendor payments need at least one weekday to go out on.");
+  } else {
+    const names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+    const unknown = payoutDays.filter((d) => !names.includes(d));
+    if (unknown.length) {
+      problems.push(`These are not weekdays: ${unknown.join(", ")}. Name them in full, as Tuesday or Friday.`);
+    }
+  }
+
   // The quiet a reported payment buys must expire while the customer is still
   // being chased at all. Set beyond the escalation ladder it would silence an
   // account permanently on nothing more than somebody's word.
@@ -5692,6 +5747,10 @@ export type Config = {
   "payments.datedModes": string[];
   "payments.holdStaleDays": number;
   "payments.matchWindowDays": number;
+  "payments.vendorPayoutDays": string[];
+  "payments.vendorDefaultCreditDays": number;
+  "payments.cashflowLookbackMonths": number;
+  "payments.cashflowMinPayments": number;
   "payments.matchTolerancePercent": number;
 
   "targets.defaultMethod": "trailing-average" | "last-month" | "fixed";
