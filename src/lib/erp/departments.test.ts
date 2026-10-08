@@ -3,6 +3,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   DEPARTMENT_SEATS,
+  HEAD_LABEL,
+  REQUIREMENT_DEPARTMENTS,
+  departmentForCategory,
+  requirementDepartmentsFor,
   ERP_DEPARTMENTS,
   categoriesFor,
   departmentByLabel,
@@ -20,7 +24,8 @@ test("each department asks for its own categories, and between them every catego
   assert.deepEqual(categoriesFor("Mixing & Blending", TYPES), ["Chemical"]);
   assert.deepEqual(categoriesFor("Refilling", TYPES), ["Can", "Drum"]);
   assert.deepEqual(categoriesFor("Packing", TYPES), ["Box", "Stationary"]);
-  assert.deepEqual(categoriesFor("Office", TYPES), TYPES, "a department outside production is not narrowed");
+  assert.deepEqual(categoriesFor("Production Head", TYPES), TYPES, "the head asks for everything the three do");
+  assert.deepEqual(categoriesFor("Office", TYPES), [], "a label that is not one of the four offers nothing");
   const covered = new Set(ERP_DEPARTMENTS.flatMap((d) => d.materialTypes));
   for (const t of TYPES) assert.ok(covered.has(t), `${t} belongs to no department`);
 });
@@ -34,7 +39,19 @@ test("the production head works in all three; a department in one; nobody else i
 test("a Mixing & Blending requirement is a chemical one, whoever raises it", () => {
   assert.equal(requirementRefusal(null, "Mixing & Blending", "Chemical"), null);
   assert.equal(requirementRefusal(null, "Mixing & Blending", "Box")?.field, "type");
-  assert.equal(requirementRefusal(null, "Office", "Box"), null, "not a production department");
+  assert.equal(requirementRefusal(null, "Office", "Box")?.field, "department", "only the four teams raise requirements");
+  assert.equal(requirementRefusal(null, "Godown / Store", "Chemical")?.field, "department");
+  assert.equal(requirementRefusal(null, HEAD_LABEL, "Box"), null);
+});
+
+test("a requirement is raised by one of four teams", () => {
+  assert.deepEqual(REQUIREMENT_DEPARTMENTS, ["Mixing & Blending", "Refilling", "Packing", "Production Head"]);
+  assert.deepEqual(requirementDepartmentsFor(null), REQUIREMENT_DEPARTMENTS);
+  assert.deepEqual(requirementDepartmentsFor("head"), REQUIREMENT_DEPARTMENTS);
+  assert.deepEqual(requirementDepartmentsFor("mixing"), ["Mixing & Blending"]);
+  assert.equal(departmentForCategory("Drum"), "Refilling");
+  assert.equal(departmentForCategory("Stationary"), "Packing");
+  assert.equal(departmentForCategory("Something new"), HEAD_LABEL);
 });
 
 test("a department raises for itself only; the head raises for all three", () => {
@@ -43,7 +60,11 @@ test("a department raises for itself only; the head raises for all three", () =>
   assert.equal(requirementRefusal("refilling", "Packing", "Box")?.field, "department");
   assert.equal(requirementRefusal("refilling", "Office", "Can")?.field, "department");
   assert.equal(requirementRefusal("refilling", "Refilling", "Chemical")?.field, "type");
-  for (const d of ERP_DEPARTMENTS) for (const t of d.materialTypes) assert.equal(requirementRefusal("head", d.label, t), null);
+  assert.equal(requirementRefusal("refilling", HEAD_LABEL, "Can")?.field, "department", "the head's label is the head's");
+  for (const d of ERP_DEPARTMENTS) for (const t of d.materialTypes) {
+    assert.equal(requirementRefusal("head", d.label, t), null);
+    assert.equal(requirementRefusal("head", HEAD_LABEL, t), null);
+  }
 });
 
 test("a departmental list shows its departments' requirements and what they raised themselves", () => {
@@ -52,6 +73,8 @@ test("a departmental list shows its departments' requirements and what they rais
   assert.ok(!requirementVisibleTo("mixing", "Production", false));
   assert.ok(requirementVisibleTo("mixing", "Production", true), "their own, whatever it names");
   assert.ok(requirementVisibleTo("head", "Packing", false));
+  assert.ok(requirementVisibleTo("head", "Production Head", false));
+  assert.ok(!requirementVisibleTo("packing", "Production Head", false));
   assert.ok(requirementVisibleTo(null, "Anything", false), "nobody outside a department is narrowed");
 });
 

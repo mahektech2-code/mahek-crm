@@ -250,9 +250,9 @@ describe("re-order levels", () => {
 
   test("a requisition's present quantity is the level's available figure", async () => {
     const ctx = await as(admin);
-    const made = await mod("requisitions").forms!.new(ctx, { date: TODAY, requiredBy: TODAY, department: "Production", godown: "Bhiwandi", type: "Can", item: "Tin can 5L", required: "60", priority: "Urgent" }, []);
+    const made = await mod("requisitions").forms!.new(ctx, { date: TODAY, requiredBy: TODAY, department: "Production Head", godown: "Bhiwandi", type: "Can", item: "Tin can 5L", required: "60", priority: "Urgent" }, []);
     assert.ok(made.ok);
-    const toluene = await mod("requisitions").forms!.new(ctx, { date: TODAY, requiredBy: TODAY, department: "Production", godown: "Bhiwandi", type: "Chemical", item: "Toluene", required: "60", priority: "Urgent" }, []);
+    const toluene = await mod("requisitions").forms!.new(ctx, { date: TODAY, requiredBy: TODAY, department: "Production Head", godown: "Bhiwandi", type: "Chemical", item: "Toluene", required: "60", priority: "Urgent" }, []);
     assert.ok(toluene.ok);
     const { rows } = await mod("requisitions").load(ctx);
     assert.equal(rows.find((r) => r.v.item === "Tin can 5L")?.v.present, 48);
@@ -273,7 +273,7 @@ describe("re-order levels", () => {
     const shown = runCalc("requisitions.onHand", { h: { item: "Toluene", godown }, l: {}, lines: [], i: -1, data: form.data ?? {} });
     for (const l of lots.filter((x) => x.godown === godown)) assert.ok(shown.includes(`Lot ${l.lotNo} ·`), shown);
     assert.match(runCalc("requisitions.onHand", { h: { item: "Toluene", godown: "Nowhere" }, l: {}, lines: [], i: -1, data: form.data ?? {} }), /^None at Nowhere\nElsewhere · /);
-    const fg = await mod("requisitions").forms!.new(ctx, { date: TODAY, requiredBy: TODAY, department: "Production", godown: "Bhiwandi", type: "Finish Good", item: BOXED, required: "5", priority: "Urgent" }, []);
+    const fg = await mod("requisitions").forms!.new(ctx, { date: TODAY, requiredBy: TODAY, department: "Production Head", godown: "Bhiwandi", type: "Finish Good", item: BOXED, required: "5", priority: "Urgent" }, []);
     assert.ok(!fg.ok && fg.fieldErrors?.[0].field === "type", JSON.stringify(fg));
   });
 
