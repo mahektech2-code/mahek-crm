@@ -1,5 +1,6 @@
 "use server";
 
+import { assertLeadInScope } from "@/lib/services/lead-scope";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
@@ -7,7 +8,6 @@ import { z } from "zod";
 import { db } from "@/db";
 import { auditLog, customers } from "@/db/schema";
 import {
-  assertCustomerInScope,
   hatsFor,
   levelInApp,
   requireCapability,
@@ -149,7 +149,7 @@ export async function validateGstin(
 
     /* Seeing it at all is the ordinary scope question, asked before anything
        else so a refusal cannot be used to find out whether a row exists. */
-    await assertCustomerInScope(row);
+    await assertLeadInScope(customerId, row);
 
     if (!row.gstin?.trim()) {
       return err(

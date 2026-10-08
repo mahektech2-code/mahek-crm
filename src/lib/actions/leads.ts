@@ -1,5 +1,6 @@
 "use server";
 
+import { assertLeadInScope } from "@/lib/services/lead-scope";
 import { qualificationCollectorRefusal, requireLeadVerifier } from "@/lib/services/lead-verifier";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
@@ -19,7 +20,6 @@ import {
   users,
 } from "@/db/schema";
 import {
-  assertCustomerInScope,
   canAny,
   requireCapability,
   hatsFor,
@@ -119,7 +119,7 @@ async function reachableLead(
   if (!lead) {
     return { ok: false, refusal: err("That lead is not on MahekOne.", "not_found") };
   }
-  await assertCustomerInScope({
+  await assertLeadInScope(customerId, {
     kind: lead.kind,
     ownerId: lead.ownerId,
     salesAmId: lead.salesAmId,
@@ -749,7 +749,7 @@ export async function saveLeadQualification(
 
 const prospectFieldsSchema = z.object({
   customerType: z
-    .enum(["dealer", "manufacturer", "distributor", "retailer"])
+    .enum(["dealer", "manufacturer", "distributor", "retailer", "private_limited_user"])
     .nullish(),
   monthlyLitres: z.number().int().nonnegative().nullish(),
   potentialPaise: z.number().int().nonnegative().nullish(),

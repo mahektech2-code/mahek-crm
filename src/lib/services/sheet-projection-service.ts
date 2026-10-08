@@ -302,8 +302,21 @@ export async function projectCustomers(
           : {};
       const name = party.name;
       const city = party.area ?? "";
-      const creditTermDays = party.creditDays ?? 30;
-      const creditDays = party.creditDays ?? null;
+      /*
+       * CREDIT DAYS ARE FILLED, NEVER RESTATED.
+       *
+       * This loop wrote the sheet's credit days over every customer whose
+       * figure differed, every thirty minutes — so a term a telecaller changed
+       * in the CRM was put back within the half hour, and reported as "it goes
+       * back to the old number". The Sales Party projection already treats the
+       * field as a person's once anybody has stated it (`creditDays` non-null,
+       * which the CRM edit writes alongside `creditTermDays` for exactly this
+       * reason); this one did not. Now it does the same: the sheet fills an
+       * EMPTY credit term and leaves a stated one alone.
+       */
+      const stated = known.creditDays !== null;
+      const creditTermDays = stated ? known.creditTermDays : party.creditDays ?? 30;
+      const creditDays = stated ? known.creditDays : party.creditDays ?? null;
 
       /*
        * A ROW THE SHEET STILL AGREES WITH IS NOT REWRITTEN.

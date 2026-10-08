@@ -1,12 +1,13 @@
 "use server";
 
+import { assertLeadInScope } from "@/lib/services/lead-scope";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
 import { auditLog, customers } from "@/db/schema";
-import { assertCustomerInScope, requireCapability } from "@/lib/access-control";
+import { requireCapability } from "@/lib/access-control";
 import { requireUser } from "@/lib/auth";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
 import { qualificationAccess } from "@/lib/lead-qualification-access";
@@ -101,7 +102,7 @@ export async function confirmLeadFigures(
     /* Seeing it at all is the ordinary scope question, asked before the
        capability so a refusal cannot be used to find out whether a row
        exists. */
-    await assertCustomerInScope(row);
+    await assertLeadInScope(customerId, row);
 
     /*
      * THERE HAS TO BE A LEAD TO CONFIRM FIGURES ON.

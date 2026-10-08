@@ -565,6 +565,11 @@ const DESCRIBE: Record<string, Describer> = {
   "customer.task.linkSaved": (c) => ({ says: ["saved a field task's answer to the customer record", c.subject()], changes: false }),
   "mbos.document.publish": (c) => ({ says: ["published a document to the field team", ...(str(c.a.title) ? [strong(str(c.a.title)!)] : [])], changes: false }),
   "mbos.document.withdraw": () => ({ says: ["withdrew a document from the field team"], changes: false }),
+  "mbos.document.tag": (c) => {
+    const n = Array.isArray(c.a.visibleToUserIds) ? c.a.visibleToUserIds.length : 0;
+    return { says: ["changed who a document is for:", n ? plural(n, "person", "people") + " by name" : "everybody in the field"], changes: false };
+  },
+  "mbos.document.edit": (c) => ({ says: ["edited a document", ...(str(c.a.title) ? [strong(str(c.a.title)!)] : [])] }),
   "mbos.course.publish": (c) => ({ says: ["published a training course", ...(str(c.a.title) ? [strong(str(c.a.title)!)] : [])], changes: false }),
   "mbos.course.withdraw": () => ({ says: ["withdrew a training course"], changes: false }),
   "mbos.holiday.add": (c) => ({ says: ["added a holiday,", strong(str(c.a.name) ?? ""), "on", strong(shortDate(str(c.a.onDate) ?? ""))], changes: false }),

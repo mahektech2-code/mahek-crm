@@ -1,9 +1,10 @@
 "use server";
 
+import { assertLeadInScope } from "@/lib/services/lead-scope";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
-import { assertCustomerInScope, requireCapability } from "@/lib/access-control";
+import { requireCapability } from "@/lib/access-control";
 import { addDays } from "@/lib/business-date";
 import { getConfig } from "@/lib/config/store";
 import { reopenTarget } from "@/lib/engines/lead-reopen";
@@ -60,7 +61,7 @@ export async function reopenSalesManagerLead(
     const ctx = await requireCapability("lead.verify");
     const lead = await leadRow(p.customerId);
     if (!lead) return err("That lead is not on MahekOne.", "not_found");
-    await assertCustomerInScope({
+    await assertLeadInScope(p.customerId, {
       kind: lead.kind,
       ownerId: lead.ownerId,
       salesAmId: lead.salesAmId,

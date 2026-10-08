@@ -15,8 +15,9 @@ import { fileStorage } from "@/lib/storage";
  * to ask the office for something the office had already published.
  *
  * The question asked here is the one the pull already answered when it sent
- * the row: active, published to this person's level (an empty list is
- * everybody), and — where it names a shop — a shop in this person's book.
+ * the row: active, published to this person's level and — where it is tagged
+ * to named people — to him (an empty list is everybody in both cases), and —
+ * where it names a shop — a shop in this person's book.
  * Asked again rather than trusted, because a URL is not a permission. A
  * document he may not see answers exactly like one that does not exist.
  * ------------------------------------------------------------------------- */
@@ -46,11 +47,13 @@ export async function GET(
       attachmentId: mbosDocuments.attachmentId,
       customerId: mbosDocuments.customerId,
       visibleToRoles: mbosDocuments.visibleToRoles,
+      visibleToUserIds: mbosDocuments.visibleToUserIds,
     })
     .from(mbosDocuments)
     .where(eq(mbosDocuments.id, id));
   if (!doc?.active || !doc.attachmentId) return notFound();
   if (doc.visibleToRoles.length && !doc.visibleToRoles.includes(principal.role)) return notFound();
+  if (doc.visibleToUserIds.length && !doc.visibleToUserIds.includes(principal.user.id)) return notFound();
   if (doc.customerId) {
     const book = await customerIdsInScope(principal);
     if (!book.includes(doc.customerId)) return notFound();

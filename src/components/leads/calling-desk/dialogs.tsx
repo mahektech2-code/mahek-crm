@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { Badge, Button, Input, Select, Textarea, cx } from "@/components/ui/primitives";
+import { VoiceTextarea } from "@/components/ui/dictate";
 import { ProductField } from "@/components/products/product-field";
 import { NO_ANSWER_REASONS } from "@/lib/call-outcomes";
 import { displayAnswer, MESSAGE_KINDS } from "@/lib/calling-desk-labels";
@@ -815,6 +816,9 @@ export function NextActionDialog({
   );
 }
 
+/** Sales Type dropdown value for "Private Limited(User)"; submitted as `direct`. */
+const PRIVATE_LIMITED_USER = "direct_private_limited_user";
+
 /* ---------------------------------------------------------- Request Prospect */
 
 export function RequestDialog({
@@ -1033,7 +1037,7 @@ export function ConvertDialog({
       return;
     }
     if (needsContact && !contactPerson.trim()) {
-      setError("Say who to ask for.");
+      setError("Say who the Contact Person is.");
       return;
     }
     setBusy(true);
@@ -1044,7 +1048,12 @@ export function ConvertDialog({
         customerId: lead.id,
         reasonCode: reason,
         note: note.trim() || undefined,
-        salesType: needsSalesType ? (salesType as "direct" | "third_party") : undefined,
+        /* "Private Limited(User)" is a label for a Direct sale — it climbs the Direct ladder. */
+        salesType: needsSalesType
+          ? salesType === PRIVATE_LIMITED_USER
+            ? "direct"
+            : (salesType as "direct" | "third_party")
+          : undefined,
         customerType: needsType ? (customerType as never) : undefined,
         contactPerson: needsContact ? contactPerson.trim() : undefined,
       });
@@ -1103,6 +1112,7 @@ export function ConvertDialog({
             <option value="">Not Decided — pick one…</option>
             <option value="direct">Direct customer</option>
             <option value="third_party">Third Party Customer</option>
+            <option value={PRIVATE_LIMITED_USER}>Private Limited(User)</option>
           </Select>
           <span className="mt-1 block text-[12px] text-muted">
             How Mahek will sell to this lead. It decides which steps come next.
@@ -1122,17 +1132,18 @@ export function ConvertDialog({
         </FieldLabel>
       ) : null}
       {needsContact ? (
-        <FieldLabel label="Who to ask for" className="mb-3">
+        <FieldLabel label="Contact Person" className="mb-3">
           <Input value={contactPerson} onChange={(e) => setContactPerson(e.target.value)} />
         </FieldLabel>
       ) : null}
 
       <FieldLabel label="What they said" className="mb-3">
-        <Textarea
+        <VoiceTextarea
           rows={2}
           placeholder="Optional — in the customer's words"
           value={note}
           onChange={(e) => setNote(e.target.value)}
+          onDictate={setNote}
         />
       </FieldLabel>
 

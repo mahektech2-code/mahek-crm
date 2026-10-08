@@ -112,7 +112,7 @@ describe("the duties are enforced", () => {
     assert.ok(!(await items(rakesh)).includes("Mix Xylene"));
     assert.ok((await items(rakesh)).includes("Naked 20 Liter"), "an unconfigured item stays open");
     const raise = async (u: typeof users.$inferSelect) =>
-      mod("requisitions").forms!.new(await as(u), { date: TODAY, requiredBy: TODAY, department: "Production", godown: "Bhiwandi", type: "Chemical", item: "Mix Xylene", required: "10", priority: "Medium" }, []);
+      mod("requisitions").forms!.new(await as(u), { date: TODAY, requiredBy: TODAY, department: "Production Head", godown: "Bhiwandi", type: "Chemical", item: "Mix Xylene", required: "10", priority: "Medium" }, []);
     const no = await raise(rakesh);
     assert.ok(!no.ok && no.fieldErrors?.[0].field === "item" && /set to Priya Store/.test(no.fieldErrors[0].message));
     assert.ok((await raise(priya)).ok);
@@ -144,7 +144,7 @@ describe("the duties are enforced", () => {
   test("clearing a duty opens it again", async () => {
     assert.ok((await setDuties(admin, {})).ok);
     assert.equal((await db.select().from(erpMaterialDuties)).length, 0);
-    const r = await mod("requisitions").forms!.new(await as(rakesh), { date: TODAY, requiredBy: TODAY, department: "Production", godown: "Bhiwandi", type: "Chemical", item: "Mix Xylene", required: "5", priority: "Medium" }, []);
+    const r = await mod("requisitions").forms!.new(await as(rakesh), { date: TODAY, requiredBy: TODAY, department: "Production Head", godown: "Bhiwandi", type: "Chemical", item: "Mix Xylene", required: "5", priority: "Medium" }, []);
     assert.ok(r.ok, JSON.stringify(r));
   });
 });

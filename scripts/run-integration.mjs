@@ -43,6 +43,7 @@ const files = [
   "src/lib/journeys.test.ts",
   // A lead is raised inside the salesman's own area, and lands there.
   "src/lib/lead-territory.test.ts",
+  "src/lib/lead-scope.test.ts",
   // Editing a field order before approval, and asking to change it after.
   "src/lib/order-change.test.ts",
   // The ERP: access, powers, working location and the masters.
@@ -82,6 +83,9 @@ const files = [
   // A call's own reminder is folded onto the call in the All view.
   "src/lib/timeline-fold.test.ts",
   "src/lib/feedback.test.ts",
+  // A field document tagged to named salesmen: who gets it, who loses it, and
+  // the file past a megabyte that the old server-action upload refused.
+  "src/lib/document-tagging.test.ts",
   "src/lib/activity-location.test.ts",
   "src/lib/salesman-day.test.ts",
   // The server's end-of-day punch-out reminder: found, claimed, sent once.

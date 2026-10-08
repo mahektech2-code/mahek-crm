@@ -1,4 +1,4 @@
--- MATERIAL DUTIES (0232) — who asks for, raises, approves and tests one material.
+-- MATERIAL DUTIES (0235) — who asks for, raises, approves and tests one material.
 --
 -- One row per person or per department (an ERP designation) per duty. A duty
 -- with no rows is unconfigured and behaves exactly as before, so adding the

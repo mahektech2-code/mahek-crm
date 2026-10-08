@@ -14,12 +14,13 @@
  * department`): the designation already says which screens and powers a job
  * opens, and the department is the one more fact about that job — what it may
  * ASK TO BE BOUGHT. Somebody holding no departmental designation (the office,
- * the store, an administrator) is not narrowed by any of this, so nothing that
- * worked before this landed stopped working.
+ * the store, an administrator) raises for any of the four teams — the three
+ * and the Production Head — but always under one of them, and the team decides
+ * the categories.
  *
- * The requirement's own `department` column carries the LABEL, because it was
- * free text from a reference list before departments were a rule, and every
- * requirement already raised names its department in words.
+ * The requirement's own `department` column carries the LABEL. It was free
+ * text from a reference list before departments were a rule; that list is
+ * retired (0233) and requirements raised under it keep their words.
  *
  * PURE and client-safe: the requirement form narrows its categories in the
  * browser from the same table the server refuses with.
@@ -150,49 +151,84 @@ export function departmentByLabel(label: string | null | undefined): ErpDepartme
   return ERP_DEPARTMENTS.find((d) => d.label.toLowerCase() === l);
 }
 
+/** What a requirement filed by the Production Head says in its `department` column. */
+export const HEAD_LABEL = SEAT_LABEL.head;
+
+/**
+ * THE FOUR A REQUIREMENT IS RAISED FOR, and nothing else. The form offered a
+ * reference list beside the three departments — Production, Godown / Store,
+ * Quality, Dispatch, Office, Maintenance — and every one of those was a way to
+ * ask for anything at all, which is the opposite of what the departments are
+ * for. A requirement is now raised by one of the four teams, and the team
+ * decides the categories it may ask for. Rows raised under the old labels keep
+ * them: an edit that leaves the department alone is not refused.
+ */
+export const REQUIREMENT_DEPARTMENTS: readonly string[] = [...ERP_DEPARTMENTS.map((d) => d.label), HEAD_LABEL];
+
+/** Kept for readers that list the three production departments. */
 export const DEPARTMENT_LABELS: readonly string[] = ERP_DEPARTMENTS.map((d) => d.label);
+
+/** The departments somebody may raise a requirement for: their own, or all four where they hold the head's seat or no seat. */
+export function requirementDepartmentsFor(seat: ErpDepartmentSeat | null | undefined): string[] {
+  if (!seat || seat === "head") return [...REQUIREMENT_DEPARTMENTS];
+  return departmentsOf(seat).map((d) => d.label);
+}
+
+/** The categories a requirement department may ask for. The head asks for every category of the three. */
+export function categoriesForDepartment(departmentLabel: string): string[] {
+  if ((departmentLabel ?? "").trim().toLowerCase() === HEAD_LABEL.toLowerCase()) return [...new Set(ERP_DEPARTMENTS.flatMap((d) => d.materialTypes))];
+  return [...(departmentByLabel(departmentLabel)?.materialTypes ?? [])];
+}
+
+/** The department that asks for a category — the one a store re-order is raised under. */
+export function departmentForCategory(materialType: string): string {
+  return ERP_DEPARTMENTS.find((d) => d.materialTypes.includes(materialType))?.label ?? HEAD_LABEL;
+}
 
 /**
  * Whether a requirement for `materialType`, raised for `departmentLabel`, by
  * somebody in `seat`, is allowed — and if not, the sentence that says why.
  *
- * Two rules, and both apply to everybody:
- *  - a requirement filed under one of the three departments is for that
- *    department's categories (a Mixing requirement is a chemical one);
- *  - a departmental person raises only for their own department(s).
- * Somebody with no seat may raise for any department, and a requirement
- * filed under a non-production department (Office, Maintenance) is not
- * narrowed by category.
+ *  - the department must be one of the four, and one this person raises for
+ *    (a department person raises for their own; the head and anybody outside
+ *    production may pick any of the four);
+ *  - the category must be one that department asks for.
  */
 export function requirementRefusal(seat: ErpDepartmentSeat | null | undefined, departmentLabel: string, materialType: string): { field: "department" | "type"; message: string } | null {
-  const mine = departmentsOf(seat);
-  const dept = departmentByLabel(departmentLabel);
-  if (mine.length && (!dept || !mine.some((d) => d.key === dept.key))) {
-    return { field: "department", message: `You raise requirements for ${mine.map((d) => d.label).join(", ")} only` };
+  const allowed = requirementDepartmentsFor(seat);
+  const label = allowed.find((a) => a.toLowerCase() === (departmentLabel ?? "").trim().toLowerCase());
+  if (!label) {
+    const mine = departmentsOf(seat);
+    return {
+      field: "department",
+      message: seat && seat !== "head" ? `You raise requirements for ${mine.map((d) => d.label).join(", ")} only` : `Pick ${listWords(allowed, "or", false)}`,
+    };
   }
-  if (dept && materialType && !dept.materialTypes.includes(materialType)) {
-    return { field: "type", message: `${dept.label} asks for ${listWords(dept.materialTypes)} only` };
+  const cats = categoriesForDepartment(label);
+  if (materialType && !cats.includes(materialType)) {
+    return { field: "type", message: `${label} asks for ${listWords(cats)} only` };
   }
   return null;
 }
 
-/** The categories somebody may pick for a department: its own, or every category where it is not one of the three. */
+/** The categories somebody may pick for a department, out of the item master's list. A label that is not one of the four offers none. */
 export function categoriesFor(departmentLabel: string, allTypes: readonly string[]): string[] {
-  const dept = departmentByLabel(departmentLabel);
-  return dept ? allTypes.filter((t) => dept.materialTypes.includes(t)) : [...allTypes];
+  const cats = categoriesForDepartment(departmentLabel);
+  return allTypes.filter((t) => cats.includes(t));
 }
 
-/** Whether a requirement belongs on a departmental person's list: one of their departments, or one they raised themselves. */
+/** Whether a requirement belongs on a departmental person's list: one of their departments, or one they raised themselves. The head sees all of production. */
 export function requirementVisibleTo(seat: ErpDepartmentSeat | null | undefined, departmentLabel: string | null, raisedByMe: boolean): boolean {
   const mine = departmentsOf(seat);
   if (!mine.length || raisedByMe) return true;
+  if (seat === "head" && (departmentLabel ?? "").trim().toLowerCase() === HEAD_LABEL.toLowerCase()) return true;
   const dept = departmentByLabel(departmentLabel);
   return !!dept && mine.some((d) => d.key === dept.key);
 }
 
-function listWords(xs: readonly string[]): string {
-  const lower = xs.map((x) => x.toLowerCase());
-  return lower.length <= 1 ? (lower[0] ?? "") : `${lower.slice(0, -1).join(", ")} and ${lower[lower.length - 1]}`;
+function listWords(xs: readonly string[], joiner = "and", lower = true): string {
+  const w = lower ? xs.map((x) => x.toLowerCase()) : [...xs];
+  return w.length <= 1 ? (w[0] ?? "") : `${w.slice(0, -1).join(", ")} ${joiner} ${w[w.length - 1]}`;
 }
 
 /**

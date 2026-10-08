@@ -124,7 +124,7 @@ function zodErr(error: z.ZodError): Err {
  * `captureLead`.
  */
 const SALES_TYPES = ["direct", "distributor", "third_party"] as const;
-const CUSTOMER_TYPES = ["dealer", "manufacturer", "distributor", "retailer"] as const;
+const CUSTOMER_TYPES = ["dealer", "manufacturer", "distributor", "retailer", "private_limited_user"] as const;
 
 /**
  * §24's four answers. A DATE STRING, never a JS `Date`: `lead_next_action_date`

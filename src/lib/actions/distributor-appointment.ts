@@ -1,5 +1,6 @@
 "use server";
 
+import { assertLeadInScope } from "@/lib/services/lead-scope";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
@@ -14,7 +15,6 @@ import {
   notifications,
 } from "@/db/schema";
 import {
-  assertCustomerInScope,
   requireCapability,
 } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
@@ -107,7 +107,7 @@ async function reachableCandidate(customerId: string) {
     .from(customers)
     .where(eq(customers.id, customerId));
   if (!row) return null;
-  await assertCustomerInScope(row);
+  await assertLeadInScope(customerId, row);
   return row;
 }
 

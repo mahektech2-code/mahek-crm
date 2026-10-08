@@ -1,12 +1,13 @@
 "use server";
 
+import { assertLeadInScope } from "@/lib/services/lead-scope";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import { auditLog, calls, customers, users } from "@/db/schema";
-import { assertCustomerInScope, canAny, hatsFor, requireCapability } from "@/lib/access-control";
+import { canAny, hatsFor, requireCapability } from "@/lib/access-control";
 import { approverFor, holdsLeadSeat } from "@/lib/services/lead-verifier";
 import { NO_ANSWER_REASONS } from "@/lib/call-outcomes";
 import { addDays, nextWorkingDay, type BusinessDate } from "@/lib/business-date";
@@ -97,7 +98,7 @@ async function deskRefusal(userId: string): Promise<ReturnType<typeof err> | nul
 
 const gen = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
-const CUSTOMER_TYPES = ["dealer", "manufacturer", "distributor", "retailer"] as const;
+const CUSTOMER_TYPES = ["dealer", "manufacturer", "distributor", "retailer", "private_limited_user"] as const;
 
 /** Every answer optional: a call captures whatever the customer gave. A key not
     listed here — the retired "expected monthly sales" among them — is dropped. */
@@ -199,7 +200,7 @@ class Refusal extends Error {
 async function reachable(customerId: string) {
   const lead = await leadRow(customerId);
   if (!lead) return { ok: false as const, refusal: err("That lead is not on MahekOne.", "not_found") };
-  await assertCustomerInScope({
+  await assertLeadInScope(customerId, {
     kind: lead.kind,
     ownerId: lead.ownerId,
     salesAmId: lead.salesAmId,
