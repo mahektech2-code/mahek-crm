@@ -112,6 +112,20 @@ export type FormSpec = {
   /** Multi-line documents (a PR, an SFG batch, an order). */
   line?: FieldSpec[];
   lineLabel?: string;
+  /**
+   * How the lines are drawn. `cards` (the default) is a block of fields per
+   * line, right for a document of a few lines; `table` is one compact row per
+   * line, for a document that runs to hundreds — a requirement of every item a
+   * department needs. A table starts empty and drops rows left blank.
+   */
+  lineLayout?: "cards" | "table";
+  /**
+   * A table's way to add many lines at once: a search box that adds the item
+   * picked as a new line, and a box to paste a list into ("Toluene, 200" a
+   * row), matched against the same options. `field` is the line field picked
+   * by; `qty` the one a pasted quantity fills.
+   */
+  lineAdd?: { field: string; qty?: string; placeholder?: string; pasteHint?: string };
   /** Data the calculators read (stock maps, rates). */
   data?: Record<string, unknown>;
   /** Initial values when opened from an action ("Add more" keeps the header). */

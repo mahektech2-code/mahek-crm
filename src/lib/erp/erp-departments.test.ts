@@ -162,14 +162,20 @@ describe("each department raises its own requirements", () => {
     assert.deepEqual(f("department").opts, ["Packing"]);
     assert.equal(spec.newForm!.init?.department, "Packing");
     assert.equal(f("department").readOnly, true);
-    assert.deepEqual(f("type").optsBy?.map.Packing, ["Box", "Stationary"]);
+    /* Every item offered to Packing is one of its two categories, across both — one requirement lists them all. */
+    const offered = spec.newForm!.line!.find((x) => x.k === "item")!.optsBy!.map.Packing;
+    const typeOf = spec.newForm!.data!.typeOf as Record<string, string>;
+    assert.ok(offered.length);
+    assert.deepEqual([...new Set(offered.map((i) => typeOf[i]))].sort(), ["Box", "Stationary"]);
     const headForm = (await mod("requisitions").load(await as(head))).spec.newForm!;
     assert.deepEqual(headForm.header.find((x) => x.k === "department")!.opts, ["Mixing & Blending", "Refilling", "Packing", "Production Head"]);
     assert.equal(headForm.init?.department, undefined, "the head chooses");
     const storeForm = (await mod("requisitions").load(await as(store))).spec.newForm!;
     const dept = storeForm.header.find((x) => x.k === "department")!;
     assert.deepEqual(dept.opts, ["Mixing & Blending", "Refilling", "Packing", "Production Head"], "no reference list beside the four");
-    assert.deepEqual(storeForm.header.find((x) => x.k === "type")!.optsBy?.map["Refilling"], ["Can", "Drum"]);
+    const refilling = storeForm.line!.find((x) => x.k === "item")!.optsBy!.map["Refilling"];
+    const storeTypes = storeForm.data!.typeOf as Record<string, string>;
+    assert.deepEqual([...new Set(refilling.map((i) => storeTypes[i]))].sort(), ["Can", "Drum"]);
   });
 });
 

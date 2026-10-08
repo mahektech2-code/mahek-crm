@@ -20,7 +20,7 @@ import { calendarDate } from "@/lib/business-date";
 import { err, fieldErr, ok, okVoid, type Result } from "@/lib/result";
 import type { ErpContext } from "../access";
 import { refValues } from "../refs";
-import { categoriesFor, categoriesForDepartment, departmentsOf, requirementDepartmentsFor, requirementRefusal, requirementVisibleTo } from "../departments";
+import { categoriesFor, categoriesForDepartment, requirementDepartmentsFor, requirementRefusal, requirementVisibleTo } from "../departments";
 import { erpLink } from "../registry";
 import { erpAudit, erpId, nextNumber, num, paise, rupeesField, stampLine, text, visibleCols, withoutHidden, type ScreenModule } from "../server";
 import type { ActionSpec, ColSpec, FormSpec, ListRow, ToolResult } from "../ui";
@@ -31,6 +31,7 @@ import {
   PURCHASE_METHODS,
   RECEIVABLE_PO,
   methodByLabel,
+  itemPickLabels,
   methodLabel,
   poLabel,
   poLineFigures,
@@ -40,6 +41,7 @@ import {
   purchaseUnit,
   quoteExpired,
   rankQuotes,
+  requirementLabel,
   requirementStage,
   type PurchaseMethod,
   type Stage,
@@ -352,72 +354,123 @@ export async function requisitionForm(ctx: ErpContext, init?: Record<string, str
      categories it may ask for; somebody in one team raises for it only
      (`lib/erp/departments.ts`). A requirement raised under an older label
      keeps it while it is edited. */
-  const mine = departmentsOf(ctx.department);
   const offered = requirementDepartmentsFor(ctx.department);
   const legacy = editing?.r.department && !offered.includes(editing.r.department) ? [editing.r.department] : [];
   const departments = [...offered, ...legacy];
   const typesBy: Record<string, string[]> = Object.fromEntries([...offered.map((d) => [d, categoriesFor(d, types)]), ...legacy.map((d) => [d, [editing!.itemType]])]);
+  /* Each item is picked by one label — its name, or "name · category" where two categories share it. */
+  const labels = itemPickLabels(mats);
+  const labelOf = new Map([...labels].map(([l, x]) => [`${x.type}|${x.name}`, l]));
   const map: Record<string, string[]> = {};
   const unitOf: Record<string, string> = {};
   const ruleOf: Record<string, string> = {};
+  const ruleShortOf: Record<string, string> = {};
+  const typeOf: Record<string, string> = {};
   for (const m of mats) {
-    (map[m.materialType] ??= []).push(m.name);
-    unitOf[m.name] = purchaseUnit(m.unit, m.materialType);
+    const label = labelOf.get(`${m.materialType}|${m.name}`)!;
+    (map[m.materialType] ??= []).push(label);
+    unitOf[label] = purchaseUnit(m.unit, m.materialType);
+    typeOf[label] = m.materialType;
     const rule = m.purchaseMethod as PurchaseMethod;
     const vendor = m.preferredSupplierId ? supName.get(m.preferredSupplierId) : null;
-    ruleOf[m.name] =
+    ruleOf[label] =
       rule === "direct"
         ? `Direct purchase${vendor ? ` · ${vendor} is offered as the vendor` : " · a vendor is chosen next"}`
         : rule === "quotation"
           ? "Quotation required · quotations are collected and compared before the PO"
           : "Buyer decision · the buyer chooses direct purchase or quotations";
+    ruleShortOf[label] = rule === "direct" ? `Direct${vendor ? ` · ${vendor}` : ""}` : rule === "quotation" ? "Quotations" : "Buyer decides";
   }
+  /* Every item the department may ask for, across its categories — a requirement lists them all in one table. */
+  const itemsBy: Record<string, string[]> = Object.fromEntries(
+    departments.map((d) => [d, typesBy[d].flatMap((t) => map[t] ?? []).sort((a, b) => a.localeCompare(b))]),
+  );
   const stockOf: Record<string, { lot: string; godown: string; qty: number; unit: string }[]> = {};
-  rm.filter((l) => l.stock > 0).forEach((l) => (stockOf[l.item] ??= []).push({ lot: l.lotNo, godown: l.godown, qty: l.stock, unit: l.unit }));
+  rm.filter((l) => l.stock > 0).forEach((l) => {
+    const label = labelOf.get(`${l.materialType}|${l.item}`) ?? l.item;
+    (stockOf[label] ??= []).push({ lot: l.lotNo, godown: l.godown, qty: l.stock, unit: l.unit });
+  });
+  const data = { stockOf, unitOf, ruleOf, ruleShortOf, typeOf };
   const r = editing?.r;
+  if (editing) {
+    const label = labelOf.get(`${editing.itemType}|${editing.item}`) ?? editing.item;
+    return {
+      screen: "requisitions",
+      id: "edit",
+      recordId: r!.id,
+      title: `Edit ${r!.reqNo ? `${requirementLabel(r!.reqNo)} · ` : ""}${editing.item}`,
+      sub: "One item of the requirement. The item and its purchase rule are fixed once raised; everything else can change until it is on a PO.",
+      submit: "Save item",
+      init: {
+        date: r!.reqDate,
+        requiredBy: r!.requiredBy ?? "",
+        department: r!.department ?? "",
+        godown: editing.godown,
+        type: editing.itemType,
+        item: label,
+        required: String(r!.requiredQty),
+        priority: r!.priority,
+        remarks: r!.remarks ?? "",
+      },
+      data,
+      header: [
+        { k: "date", l: "Date", t: "date", req: true, sec: "Requirement" },
+        { k: "requiredBy", l: "Required by", t: "date", req: true, hint: "The date the department needs the goods in hand." },
+        { k: "department", l: "Department", t: "select", req: true, opts: departments },
+        { k: "godown", l: "Deliver to godown", t: "select", req: true, opts: gds.map((g) => g.name) },
+        { k: "item", l: "Item", t: "select", req: true, opts: [label], readOnly: true, sec: "Item" },
+        { k: "rule", l: "Purchase rule", t: "derived", calc: "requisitions.rule" },
+        { k: "onHand", l: "Available stock", t: "derived", calc: "requisitions.onHand" },
+        { k: "required", l: "Quantity", t: "num", req: true, min: 0.001 },
+        { k: "unit", l: "Unit", t: "derived", calc: "requisitions.unit" },
+        { k: "priority", l: "Priority", t: "select", req: true, opts: ["Urgent", "Medium", "For Stock"] },
+        { k: "remarks", l: "Remarks", t: "area", mic: true },
+      ],
+    };
+  }
+  /* Opened from a re-order level (or the Departments page): the item it names starts as the first line. */
+  const start = init?.item ? labelOf.get(`${init.type ?? ""}|${init.item}`) ?? (labels.has(init.item) ? init.item : null) : null;
+  const headerInit = Object.fromEntries(Object.entries(init ?? {}).filter(([k]) => !["item", "required", "type"].includes(k)));
   return {
     screen: "requisitions",
-    id: editing ? "edit" : "new",
-    recordId: r?.id,
-    title: editing ? `Edit requirement · ${editing.item}` : "New purchase requirement",
-    sub: editing ? "The item and its purchase rule are fixed once raised; everything else can change until it is on a PO." : "Step 1 of the purchase flow. The item's purchase rule decides what happens next.",
-    submit: editing ? "Save requirement" : "Raise requirement",
-    init: editing
-      ? {
-          date: r!.reqDate,
-          requiredBy: r!.requiredBy ?? "",
-          department: r!.department ?? "",
-          godown: editing.godown,
-          type: editing.itemType,
-          item: editing.item,
-          required: String(r!.requiredQty),
-          priority: r!.priority,
-          remarks: r!.remarks ?? "",
-        }
-      : { date: today(), godown: ctx.workingGodown?.name ?? "", priority: "Medium", ...(mine.length === 1 ? { department: mine[0].label } : {}), ...init },
-    data: { stockOf, unitOf, ruleOf },
+    id: "new",
+    title: "New purchase requirement",
+    sub: "Step 1 of the purchase flow. List every item the department needs; each item's purchase rule decides where it goes next.",
+    submit: "Raise requirement",
+    init: { date: today(), godown: ctx.workingGodown?.name ?? "", priority: "Medium", ...(offered.length === 1 ? { department: offered[0] } : {}), ...headerInit },
+    initLines: start ? [{ item: start, required: init?.required ?? "" }] : undefined,
+    data,
     header: [
-      { k: "date", l: "Date", t: "date", req: true, sec: "Requirement" },
-      { k: "requiredBy", l: "Required by", t: "date", req: true, hint: "The date the department needs the goods in hand." },
+      { k: "date", l: "Date", t: "date", req: true },
+      { k: "requiredBy", l: "Required by", t: "date", req: true, hint: "When the department needs the goods in hand." },
       {
         k: "department",
         l: "Department",
         t: "select",
         req: true,
         opts: departments,
-        readOnly: offered.length === 1 && !legacy.length,
+        readOnly: offered.length === 1,
         hint: offered.map((d) => `${d}: ${categoriesForDepartment(d).join(", ").toLowerCase()}`).join(" · "),
       },
-      { k: "godown", l: "Deliver to godown", t: "select", req: true, opts: gds.map((g) => g.name) },
-      { k: "type", l: "Category", t: "select", req: true, optsBy: { by: "department", map: typesBy }, when: { k: "department", notEmpty: true }, readOnly: !!editing },
-      { k: "item", l: "Item", t: "select", req: true, optsBy: { by: "type", map }, when: { k: "type", notEmpty: true }, readOnly: !!editing },
-      { k: "rule", l: "Purchase rule", t: "derived", calc: "requisitions.rule", when: { k: "item", notEmpty: true } },
-      { k: "onHand", l: "Available stock", t: "derived", calc: "requisitions.onHand", when: { k: "item", notEmpty: true } },
-      { k: "required", l: "Quantity", t: "num", req: true, min: 0.001 },
-      { k: "unit", l: "Unit", t: "derived", calc: "requisitions.unit" },
+      { k: "godown", l: "Deliver to", t: "select", req: true, opts: gds.map((g) => g.name) },
       { k: "priority", l: "Priority", t: "select", req: true, opts: ["Urgent", "Medium", "For Stock"] },
       { k: "remarks", l: "Remarks", t: "area", mic: true },
     ],
+    line: [
+      { k: "item", l: "Item", t: "select", req: true, optsBy: { by: "department", map: itemsBy } },
+      { k: "stock", l: "In stock", t: "derived", calc: "requisitions.stockShort" },
+      { k: "required", l: "Quantity", t: "num", req: true, min: 0.001 },
+      { k: "unit", l: "Unit", t: "derived", calc: "requisitions.unit" },
+      { k: "rule", l: "Goes to", t: "derived", calc: "requisitions.ruleShort" },
+    ],
+    lineLabel: "Item",
+    lineLayout: "table",
+    lineAdd: {
+      field: "item",
+      qty: "required",
+      placeholder: "Add an item — type to search",
+      pasteHint: "One item a row, its quantity last: \"Toluene, 200\" or copied straight from Excel.",
+    },
   };
 }
 
@@ -435,6 +488,7 @@ function flowPanel(v: ReqView, st: Stage, money: boolean, minQuotations: number)
       stage: st.stage,
       next: st.next,
       facts: [
+        ...(v.r.reqNo ? [{ l: "Requirement", v: requirementLabel(v.r.reqNo) }] : []),
         { l: "Purchase rule", v: methodLabel(v.rule) },
         { l: "Method", v: v.method ? methodLabel(v.method) : "Waiting for the buyer" },
         ...(v.r.methodNote ? [{ l: "Buyer's note", v: v.r.methodNote }] : []),
@@ -480,6 +534,7 @@ const requisitions: ScreenModule = {
     const poScreen = ctx.screens.has("purchaseOrders");
     const day = today();
     const cols: ColSpec[] = [
+      { k: "reqNo", l: "Requirement", t: "mono" },
       { k: "date", l: "Date", t: "d" },
       { k: "item", l: "Item", t: "b" },
       { k: "type", l: "Category", t: "s" },
@@ -584,6 +639,7 @@ const requisitions: ScreenModule = {
         return {
           id: r.id,
           v: {
+            reqNo: r.reqNo ? requirementLabel(r.reqNo) : null,
             date: r.reqDate,
             item: v.item,
             type: r.materialType,
@@ -602,7 +658,7 @@ const requisitions: ScreenModule = {
           },
           flags,
           title: v.item,
-          header: `${nf(r.requiredQty)} ${r.unit} · ${v.godown}${r.department ? ` · ${r.department}` : ""} · ${st.next}`,
+          header: `${r.reqNo ? `${requirementLabel(r.reqNo)} · ` : ""}${nf(r.requiredQty)} ${r.unit} · ${v.godown}${r.department ? ` · ${r.department}` : ""} · ${st.next}`,
           actions,
           panel: flowPanel(v, st, money, min),
           by: stampLine(v.by, r.createdAt),
@@ -639,8 +695,8 @@ const requisitions: ScreenModule = {
     },
   },
   forms: {
-    async new(ctx, h) {
-      return saveRequirement(ctx, h);
+    async new(ctx, h, lines) {
+      return raiseRequirement(ctx, h, lines ?? []);
     },
     async edit(ctx, h, _l, id) {
       return saveRequirement(ctx, h, id);
@@ -740,54 +796,125 @@ async function saveRequirement(ctx: ErpContext, h: Record<string, string>, id?: 
     await erpAudit(ctx, "erp.requisition.edit", "erp_requisition", id, v.r, values);
     return okVoid("Requirement saved");
   }
-  const type = text(h.type);
-  /* Finished goods are made, not bought: only the item master's categories may be asked for. */
-  if (!type || !(await refValues("materialType")).includes(type)) return fieldErr("type", "Category is required");
-  const refused = requirementRefusal(ctx.department, department, type);
-  if (refused) return fieldErr(refused.field, refused.message);
-  const item = text(h.item);
-  if (!item) return fieldErr("item", "Item is required");
-  const [m] = await db
-    .select()
-    .from(erpRawMaterials)
-    .where(and(eq(erpRawMaterials.name, item), eq(erpRawMaterials.materialType, type), eq(erpRawMaterials.active, true)));
-  if (!m) return fieldErr("item", "Pick an item of this category");
-  const duties = await dutyKit(ctx);
-  if (!duties.allows(m.id, "request")) return fieldErr("item", `${duties.refusal(m, "request") ?? "You may not request this item"}.`);
-  /* CHECK PURCHASE RULE: copied onto the requirement now, so changing the rule later never re-routes it. */
-  const rule = m.purchaseMethod as PurchaseMethod;
-  const method = rule === "buyer" ? null : rule;
-  const preset = rule === "direct" && m.preferredSupplierId ? m.preferredSupplierId : null;
-  const unit = purchaseUnit(m.unit, m.materialType);
-  const newId = erpId("req");
-  await db.insert(erpRequisitions).values({
-    id: newId,
-    reqDate: date,
-    requiredBy,
-    department,
-    godownId,
-    materialType: type,
-    rawMaterialId: m.id,
-    unit,
-    requiredQty: qty,
-    priority,
-    remarks: text(h.remarks),
-    purchaseRule: rule,
-    method,
-    ...(preset ? { supplierId: preset, vendorSelectedAt: new Date(), vendorSelectedById: ctx.user.id } : {}),
-    createdById: ctx.user.id,
-    updatedById: ctx.user.id,
+  return err("A new requirement is raised with its items.", "validation");
+}
+
+/** The requirement's own answers, shared by every item raised on it. */
+function requirementHeader(h: Record<string, string>): Result<{ date: string; requiredBy: string; department: string; priority: string; remarks: string | null }> {
+  const requiredBy = text(h.requiredBy);
+  if (!requiredBy) return fieldErr("requiredBy", "Required by is required");
+  const date = text(h.date) ?? today();
+  if (requiredBy < date) return fieldErr("requiredBy", "Required by cannot be before the requirement's date");
+  const department = text(h.department);
+  if (!department) return fieldErr("department", "Department is required");
+  const priority = text(h.priority) ?? "Medium";
+  if (!["Urgent", "Medium", "For Stock"].includes(priority)) return fieldErr("priority", "Priority is required");
+  return ok({ date, requiredBy, department, priority, remarks: text(h.remarks) });
+}
+
+/**
+ * RAISE A REQUIREMENT: one number, every item the department needs. Each item
+ * is its own row — its method, quotations, vendor and PO line are decided per
+ * item — and all of them are written in ONE transaction under one requirement
+ * number, so a requirement is never half raised. Every line is checked before
+ * anything is written, and a refusal names the line it is about.
+ *
+ * A header that names one item itself (`type`, `item`, `required`) and sends
+ * no lines is a requirement of one item — the shape every caller used before a
+ * requirement could carry several.
+ */
+async function raiseRequirement(ctx: ErpContext, h: Record<string, string>, rawLines: Record<string, string>[]): Promise<Result<unknown>> {
+  const godownId = await godownIdByName(text(h.godown));
+  if (!godownId) return fieldErr("godown", "Godown is required");
+  const head = requirementHeader(h);
+  if (!head.ok) return head;
+  const { date, requiredBy, department, priority, remarks } = head.data;
+
+  const single = !rawLines.some((l) => text(l.item) || text(l.required)) && (text(h.item) || text(h.type));
+  const lines = single ? [{ item: text(h.item) ?? "", required: h.required ?? "", type: text(h.type) ?? "" }] : rawLines.filter((l) => text(l.item) || text(l.required));
+  if (!lines.length) return err("Add at least one item to the requirement.", "validation");
+  const cap = 500;
+  if (lines.length > cap) return err(`A requirement carries at most ${cap} items — split this one in two.`, "validation");
+
+  const [mats, categories, duties] = await Promise.all([materials(), refValues("materialType"), dutyKit(ctx)]);
+  const labels = itemPickLabels(mats);
+  const byKey = new Map(mats.map((m) => [`${m.materialType}|${m.name}`, m]));
+  /* A line's field, as the form knows it: `item` on a single-item header, `l3.item` on line 4. */
+  const at = (i: number, k: string) => (single ? (k === "required" ? "required" : k) : `l${i}.${k}`);
+  const seen = new Map<string, number>();
+  const items: { m: typeof mats[number]; qty: number }[] = [];
+  for (const [i, l] of lines.entries()) {
+    const pick = text(l.item);
+    if (!pick) return fieldErr(at(i, "item"), "Item is required");
+    /* Finished goods are made, not bought: only the item master's categories may be asked for. */
+    const type = "type" in l && l.type ? l.type : labels.get(pick)?.type;
+    if (single && (!type || !categories.includes(type))) return fieldErr("type", "Category is required");
+    const name = labels.get(pick)?.name ?? pick;
+    const m = type ? byKey.get(`${type}|${name}`) : undefined;
+    if (!m) return fieldErr(at(i, "item"), single ? "Pick an item of this category" : `"${pick}" is not an active item`);
+    if (!duties.allows(m.id, "request")) return fieldErr(at(i, "item"), `${duties.refusal(m, "request") ?? "You may not request this item"}.`);
+    const refused = requirementRefusal(ctx.department, department, m.materialType);
+    if (refused) return fieldErr(refused.field === "type" && !single ? at(i, "item") : refused.field, refused.message);
+    const qty = num(l.required);
+    if (qty == null || qty <= 0) return fieldErr(at(i, "required"), qty != null && qty < 0 ? "Minus Quantity Not Allowed" : "Quantity is required");
+    if (seen.has(m.id)) return fieldErr(at(i, "item"), `Already on line ${seen.get(m.id)! + 1} — change that line's quantity instead`);
+    seen.set(m.id, i);
+    items.push({ m, qty });
+  }
+
+  const reqNo = await db.transaction(async (tx) => {
+    const n = await nextNumber(tx, "requirement");
+    for (const { m, qty } of items) {
+      /* CHECK PURCHASE RULE: copied onto the item now, so changing the rule later never re-routes it. */
+      const rule = m.purchaseMethod as PurchaseMethod;
+      const preset = rule === "direct" && m.preferredSupplierId ? m.preferredSupplierId : null;
+      await tx.insert(erpRequisitions).values({
+        id: erpId("req"),
+        reqNo: n,
+        reqDate: date,
+        requiredBy,
+        department,
+        godownId,
+        materialType: m.materialType,
+        rawMaterialId: m.id,
+        unit: purchaseUnit(m.unit, m.materialType),
+        requiredQty: qty,
+        priority,
+        remarks,
+        purchaseRule: rule,
+        method: rule === "buyer" ? null : rule,
+        ...(preset ? { supplierId: preset, vendorSelectedAt: new Date(), vendorSelectedById: ctx.user.id } : {}),
+        createdById: ctx.user.id,
+        updatedById: ctx.user.id,
+      });
+    }
+    return n;
   });
-  await erpAudit(ctx, "erp.requisition.create", "erp_requisition", newId, null, { item, qty, priority, rule });
-  const next =
-    rule === "buyer"
-      ? "the buyer decides how it is bought"
-      : rule === "quotation"
-        ? "collect quotations next"
-        : preset
-          ? "direct purchase from the item's default vendor — raise the PO next"
-          : "direct purchase — select the vendor next";
-  return okVoid(`Requirement raised · ${item} · ${nf(qty)} ${unit} · ${next}`);
+  await erpAudit(ctx, "erp.requisition.create", "erp_requisition", requirementLabel(reqNo), null, {
+    reqNo,
+    items: items.map(({ m, qty }) => ({ item: m.name, qty, rule: m.purchaseMethod })),
+    priority,
+  });
+  if (items.length === 1) {
+    const { m, qty } = items[0];
+    const rule = m.purchaseMethod as PurchaseMethod;
+    const next =
+      rule === "buyer"
+        ? "the buyer decides how it is bought"
+        : rule === "quotation"
+          ? "collect quotations next"
+          : m.preferredSupplierId
+            ? "direct purchase from the item's default vendor — raise the PO next"
+            : "direct purchase — select the vendor next";
+    return okVoid(`${requirementLabel(reqNo)} raised · ${m.name} · ${nf(qty)} ${purchaseUnit(m.unit, m.materialType)} · ${next}`);
+  }
+  const count = (r: string) => items.filter((x) => x.m.purchaseMethod === r).length;
+  const split = [
+    count("direct") ? `${count("direct")} direct` : "",
+    count("quotation") ? `${count("quotation")} for quotations` : "",
+    count("buyer") ? `${count("buyer")} for the buyer` : "",
+  ].filter(Boolean);
+  return okVoid(`${requirementLabel(reqNo)} raised · ${items.length} items · ${split.join(" · ")}`);
 }
 
 /* ============================================================ quotations */

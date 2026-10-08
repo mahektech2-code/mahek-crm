@@ -264,9 +264,10 @@ describe("re-order levels", () => {
     const { spec } = await mod("requisitions").load(ctx);
     const form = spec.newForm!;
     /* The categories are offered per department now; no department is offered a finished good. */
-    const byDept = form.header.find((f) => f.k === "type")!.optsBy!.map;
+    const byDept = form.line!.find((f) => f.k === "item")!.optsBy!.map;
+    const typeOf = form.data!.typeOf as Record<string, string>;
     assert.ok(Object.keys(byDept).length);
-    for (const opts of Object.values(byDept)) assert.ok(!opts.includes("Finish Good"));
+    for (const opts of Object.values(byDept)) assert.ok(opts.every((i) => typeOf[i] !== "Finish Good"));
     const lots = (await rmLots()).filter((l) => l.item === "Toluene" && l.stock > 0);
     assert.ok(lots.length, "the fixture holds Toluene");
     const godown = lots[0].godown;

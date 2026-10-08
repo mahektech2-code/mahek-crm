@@ -107,7 +107,7 @@ describe("setting who does what", () => {
 describe("the duties are enforced", () => {
   test("only the named requester is offered the item and may raise it", async () => {
     const items = async (u: typeof users.$inferSelect) =>
-      Object.values(((await mod("requisitions").load(await as(u))).spec.newForm!.header.find((f) => f.k === "item")!.optsBy!.map) as Record<string, string[]>).flat();
+      Object.values(((await mod("requisitions").load(await as(u))).spec.newForm!.line!.find((f) => f.k === "item")!.optsBy!.map) as Record<string, string[]>).flat();
     assert.ok((await items(priya)).includes("Mix Xylene"));
     assert.ok(!(await items(rakesh)).includes("Mix Xylene"));
     assert.ok((await items(rakesh)).includes("Naked 20 Liter"), "an unconfigured item stays open");

@@ -10,10 +10,44 @@ import { poLineFigures, quoteFigures } from "../engines/purchase-flow";
 const map = (data: Record<string, unknown>, k: string) => (data[k] ?? {}) as Record<string, unknown>;
 
 /* The item's purchase unit — what the requirement, its quotations, the PO and the register all count it in. */
-registerCalc("requisitions.unit", ({ h, data }) => (h.item ? String(map(data, "unitOf")[h.item] ?? "") : ""));
+/* A requirement names its item on each line, or — editing one item — in the header. */
+const reqItem = (h: Record<string, string>, l: Record<string, string>) => l.item || h.item || "";
+
+registerCalc("requisitions.unit", ({ h, l, data }) => (reqItem(h, l) ? String(map(data, "unitOf")[reqItem(h, l)] ?? "") : ""));
 
 /* CHECK PURCHASE RULE: where this requirement will go, read off the item master. */
-registerCalc("requisitions.rule", ({ h, data }) => (h.item ? String(map(data, "ruleOf")[h.item] ?? "") : ""));
+registerCalc("requisitions.rule", ({ h, l, data }) => (reqItem(h, l) ? String(map(data, "ruleOf")[reqItem(h, l)] ?? "") : ""));
+
+/* The same, in the two or three words a table row has room for. */
+registerCalc("requisitions.ruleShort", ({ h, l, data }) => (reqItem(h, l) ? String(map(data, "ruleShortOf")[reqItem(h, l)] ?? "") : ""));
+
+type Lot = { lot: string; godown: string; qty: number; unit: string };
+
+/* A table row's stock: what this godown holds, and how much sits elsewhere. */
+registerCalc("requisitions.stockShort", ({ h, l, data }) => {
+  const item = reqItem(h, l);
+  if (!item) return "";
+  const lots = (map(data, "stockOf")[item] ?? []) as Lot[];
+  const unit = lots[0]?.unit ?? "";
+  const here = lots.filter((x) => x.godown === h.godown).reduce((a, x) => a + x.qty, 0);
+  const there = lots.filter((x) => x.godown !== h.godown).reduce((a, x) => a + x.qty, 0);
+  if (!here && !there) return "None";
+  return [here ? `${fmt(here, 3)} ${unit} here` : "None here", there ? `${fmt(there, 3)} elsewhere` : ""].filter(Boolean).join(" · ");
+});
+
+/* What raising this requirement will set in motion, item by item. */
+registerCalc("requisitions.summary", ({ lines, data }) => {
+  const shortOf = map(data, "ruleShortOf");
+  const picked = lines.filter((x) => x.item);
+  if (!picked.length) return "";
+  const by = new Map<string, number>();
+  picked.forEach((x) => {
+    const r = String(shortOf[x.item] ?? "").split(" · ")[0] || "Unknown item";
+    by.set(r, (by.get(r) ?? 0) + 1);
+  });
+  const parts = [...by].map(([r, c]) => `${c} ${r.toLowerCase()}`);
+  return `ok:${picked.length} item${picked.length === 1 ? "" : "s"} on one requirement · ${parts.join(" · ")}. Each item then goes its own way: a direct purchase picks a vendor, a quotation item collects quotations, and the buyer decides the rest.`;
+});
 
 registerCalc("quotations.landed", ({ h, data }) => {
   const qty = Number(map(data, "qtyOf")[h.requirement] ?? 0);
@@ -62,9 +96,10 @@ registerCalc("inward.pr", ({ h }) => (h.prFixed ? h.prFixed : "Next PR number, o
  * what the other godowns hold, since a transfer may answer the need sooner
  * than a purchase. One line each.
  */
-registerCalc("requisitions.onHand", ({ h, data }) => {
-  if (!h.item) return "";
-  const lots = ((map(data, "stockOf")[h.item] ?? []) as { lot: string; godown: string; qty: number; unit: string }[]).slice();
+registerCalc("requisitions.onHand", ({ h, l, data }) => {
+  const item = reqItem(h, l);
+  if (!item) return "";
+  const lots = ((map(data, "stockOf")[item] ?? []) as Lot[]).slice();
   const here = lots.filter((l) => l.godown === h.godown).sort((a, b) => b.qty - a.qty);
   const there = lots.filter((l) => l.godown !== h.godown);
   const unit = lots[0]?.unit ?? "";

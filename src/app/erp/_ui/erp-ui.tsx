@@ -11,6 +11,7 @@ import { runCalc } from "@/lib/erp/calc";
 import "@/lib/erp/calcs";
 import type { Result } from "@/lib/result";
 import { Field } from "./field";
+import { LineTable } from "./line-table";
 import { ErpVoice } from "./voice";
 import { ERP_KIT, KitContext, useKit, type ScreenKit } from "./kit";
 
@@ -365,8 +366,10 @@ function FormDrawer({
     (spec.line ?? []).forEach((f) => (l[f.k] = f.def ?? ""));
     return l;
   };
+  const table = spec.lineLayout === "table";
+  /* A table starts empty — its lines arrive from the search or a paste — and a card layout starts with one blank card. */
   const [lines, setLines] = useState<Record<string, string>[]>(() =>
-    spec.line ? (spec.initLines?.length ? spec.initLines.map((l) => ({ ...blankLine(), ...l })) : [blankLine()]) : [],
+    spec.line ? (spec.initLines?.length ? spec.initLines.map((l) => ({ ...blankLine(), ...l })) : table ? [] : [blankLine()]) : [],
   );
   const [errs, setErrs] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
@@ -387,7 +390,13 @@ function FormDrawer({
   const visible = (f: FieldSpec, l: Record<string, string> = {}) => whenHolds(f.when, { ...h, ...l }, data);
   const resolved = (f: FieldSpec, l: Record<string, string> = {}) => resolveField(f, { ...h, ...l }, data);
 
+  const current = lines;
   const submit = () => {
+    /* A table row nobody filled in is not a line: it is dropped before anything is checked, so the errors name the rows that are left. */
+    const lines = table
+      ? current.filter((l) => (spec.line ?? []).some((f) => f.t !== "derived" && (l[f.k] ?? "") !== "" && (l[f.k] ?? "") !== (f.def ?? "")))
+      : current;
+    if (lines.length !== current.length) setLines(lines);
     const e: Record<string, string> = {};
     spec.header.filter((f) => visible(f)).map((f) => resolved(f)).forEach((f) => {
       const m = checkField(f, h[f.k] ?? "");
@@ -425,14 +434,14 @@ function FormDrawer({
   const summary = runCalc(`${spec.screen}.summary`, { h, l: {}, lines, i: -1, data });
 
   return (
-    <Drawer open onClose={onClose} width={680} label={spec.title}>
+    <Drawer open onClose={onClose} width={table ? 1040 : 680} label={spec.title}>
       <DrawerHeader onClose={onClose}>
         <div className="text-lg leading-6 font-semibold text-ink">{spec.title}</div>
         {spec.sub ? <div className="mt-0.5 text-[13px] text-muted">{spec.sub}</div> : null}
       </DrawerHeader>
       <div className="grid min-h-0 flex-1 auto-rows-max content-start gap-3.5 overflow-y-auto px-5 py-4">
         {spec.evidence ? <Evidence e={spec.evidence} /> : null}
-        <Block title={spec.line ? "Header" : ""}>
+        <Block title={spec.line ? (table ? "Details" : "Header") : ""}>
           {spec.header
             .filter((f) => visible(f))
             .map((f) => resolved(f))
@@ -467,7 +476,18 @@ function FormDrawer({
               </Fragment>
             ))}
         </Block>
-        {spec.line
+        {spec.line && table ? (
+          <LineTable
+            spec={spec}
+            h={h}
+            lines={lines}
+            setLines={setLines}
+            errs={errs}
+            clearErr={(k) => setErrs((s) => ({ ...s, [k]: "" }))}
+            options={optsFor}
+          />
+        ) : null}
+        {spec.line && !table
           ? lines.map((l, i) => (
               <Block
                 key={i}
@@ -494,7 +514,7 @@ function FormDrawer({
               </Block>
             ))
           : null}
-        {spec.line ? (
+        {spec.line && !table ? (
           <div className="flex flex-wrap items-center gap-3">
             <Button variant="secondary" onClick={() => setLines((s) => [...s, blankLine()])} className="border-dashed text-[#5223E0]">
               + Add more {(spec.lineLabel ?? "line").toLowerCase()}
