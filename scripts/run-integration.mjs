@@ -43,6 +43,7 @@ const files = [
   "src/lib/journeys.test.ts",
   // A lead is raised inside the salesman's own area, and lands there.
   "src/lib/lead-territory.test.ts",
+  "src/lib/lead-scope.test.ts",
   // Editing a field order before approval, and asking to change it after.
   "src/lib/order-change.test.ts",
   // The ERP: access, powers, working location and the masters.
