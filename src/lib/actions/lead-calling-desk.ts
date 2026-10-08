@@ -95,7 +95,7 @@ async function deskRefusal(userId: string): Promise<ReturnType<typeof err> | nul
 
 const gen = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
-const CUSTOMER_TYPES = ["dealer", "manufacturer", "distributor", "retailer"] as const;
+const CUSTOMER_TYPES = ["dealer", "manufacturer", "distributor", "retailer", "private_limited_user"] as const;
 
 /** Every answer optional: a call captures whatever the customer gave. */
 const answersSchema = z.object({

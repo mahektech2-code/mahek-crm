@@ -549,3 +549,9 @@ describe("isCreatedToday — 'Created today', never 'New'", () => {
     assert.equal(isCreatedToday("2026-09-23T19:00:00.000Z", "2026-09-23"), false);
   });
 });
+
+test("Kind of business offers Private Limited(User) beside the existing four", async () => {
+  const { DESK_FIELDS } = await import("./lead-calling-desk");
+  const values = DESK_FIELDS.find((f) => f.key === "customerType")!.options!.map((o) => o.value);
+  assert.deepEqual(values, ["dealer", "manufacturer", "distributor", "retailer", "private_limited_user"]);
+});

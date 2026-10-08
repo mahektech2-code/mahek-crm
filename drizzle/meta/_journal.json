@@ -1303,6 +1303,13 @@
       "when": 1790371018688,
       "tag": "0187_hrms",
       "breakpoints": true
+    },
+    {
+      "idx": 187,
+      "version": "7",
+      "when": 1790371218688,
+      "tag": "0189_customer_type_private_limited_user",
+      "breakpoints": true
     }
   ]
 }

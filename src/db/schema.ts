@@ -1148,6 +1148,7 @@ export const customerTypeEnum = pgEnum("customer_type", [
   "manufacturer",
   "distributor",
   "retailer",
+  "private_limited_user",
 ]);
 
 /** How much this account could be worth, in a salesman's judgement. */

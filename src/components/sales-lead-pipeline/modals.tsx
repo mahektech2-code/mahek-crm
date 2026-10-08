@@ -132,6 +132,7 @@ const CUSTOMER_TYPES = [
   { value: "retailer", label: "Retailer" },
   { value: "dealer", label: "Dealer" },
   { value: "manufacturer", label: "Manufacturer" },
+  { value: "private_limited_user", label: "Private Limited(User)" },
   { value: "distributor", label: "Distributor" },
 ] as const;
 
