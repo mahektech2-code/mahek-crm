@@ -2096,6 +2096,22 @@ export const MIGRATIONS: string[][] = [
     `ALTER TABLE customer_targets ADD COLUMN billsAchieved INTEGER NOT NULL DEFAULT 0;`,
   ],
 
+  /*
+   * A TASK CAN ASK FOR SOMETHING. The office's assignment carries a form —
+   * text, numbers, picks, photos, a birthday — and the answers go back on the
+   * task. `form` is the office's, rewritten on every pull; `responses` is his,
+   * held under the same `noPending` guard every owned row is. JSON text, as
+   * `snoozeHistory` beside them already is.
+   */
+  [
+    `ALTER TABLE tasks ADD COLUMN campaignId TEXT;`,
+    `ALTER TABLE tasks ADD COLUMN form TEXT;`,
+    `ALTER TABLE tasks ADD COLUMN responses TEXT;`,
+    /* What the customer record says about this task's shop, for questions
+       linked to it: shown on each question and used as its first answer. */
+    `ALTER TABLE tasks ADD COLUMN context TEXT;`,
+  ],
+
 ];
 
 /**

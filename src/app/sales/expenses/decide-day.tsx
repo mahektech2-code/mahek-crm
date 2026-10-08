@@ -30,6 +30,7 @@ export function DecideDay({
   claimedPaise,
   eligiblePaise,
   locked,
+  pending = true,
 }: {
   dayId: string;
   who: string;
@@ -37,6 +38,8 @@ export function DecideDay({
   claimedPaise: number;
   eligiblePaise: number;
   locked: boolean;
+  /** Still waiting for a decision. A decided day only offers Reopen. */
+  pending?: boolean;
 }) {
   const router = useRouter();
   const [open, setOpen] = React.useState<null | "decide" | "reopen">(null);
@@ -73,17 +76,19 @@ export function DecideDay({
   return (
     <>
       <div className="flex justify-end gap-1.5">
-        <Button
-          tone="primary"
-          onClick={() => {
-            setAmount(String(Math.round(eligiblePaise / 100)));
-            setNote("");
-            setError(null);
-            setOpen("decide");
-          }}
-        >
-          Decide
-        </Button>
+        {pending ? (
+          <Button
+            tone="primary"
+            onClick={() => {
+              setAmount(String(Math.round(eligiblePaise / 100)));
+              setNote("");
+              setError(null);
+              setOpen("decide");
+            }}
+          >
+            Review
+          </Button>
+        ) : null}
         {locked ? (
           <Button
             tone="quiet"
@@ -108,16 +113,16 @@ export function DecideDay({
           <>
             <div className="mb-3 rounded-[6px] border border-line bg-canvas px-3 py-2.5 text-[13px]">
               <div className="flex justify-between">
-                <span className="text-muted">Claimed</span>
+                <span className="text-muted">Asked for</span>
                 <span className="font-medium text-ink">₹{Math.round(claimedPaise / 100).toLocaleString("en-IN")}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted">Eligible under the policy</span>
+                <span className="text-muted">Policy allows</span>
                 <span className="font-medium text-ink">₹{Math.round(eligiblePaise / 100).toLocaleString("en-IN")}</span>
               </div>
               {claimedPaise > eligiblePaise ? (
                 <div className="mt-1 flex justify-between border-t border-line pt-1">
-                  <span className="text-muted">Over policy</span>
+                  <span className="text-muted">Over the policy</span>
                   <span className="font-medium text-warn-ink">
                     ₹{Math.round((claimedPaise - eligiblePaise) / 100).toLocaleString("en-IN")}
                   </span>
@@ -128,7 +133,7 @@ export function DecideDay({
             <DayClaims dayId={dayId} />
 
             <label className="block">
-              <span className="mb-1 block text-[13px] font-medium text-ink">Allow</span>
+              <span className="mb-1 block text-[13px] font-medium text-ink">Amount to pay (₹)</span>
               <input
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
@@ -136,14 +141,14 @@ export function DecideDay({
                 className="w-full rounded-[4px] border border-line bg-surface px-2.5 py-2 text-sm text-ink outline-none focus:border-brand"
               />
               <span className="mt-1 block text-[12px] text-muted">
-                Rupees. It starts at what the policy allows — changing it is you overriding the
-                policy, which is a thing you may do and which is recorded as such.
+                Starts at what the policy allows. Change it only if you want to pay a different
+                amount.
               </span>
             </label>
 
             <label className="mt-3 block">
               <span className="mb-1 block text-[13px] font-medium text-ink">
-                Note — required if you refuse
+                Note (needed to refuse)
               </span>
               <textarea
                 value={note}
@@ -173,7 +178,7 @@ export function DecideDay({
                 title={asPaise >= claimedPaise ? "This is the whole claim — use Approve." : undefined}
                 onClick={() => decide("partially_approved")}
               >
-                Allow part
+                Pay this amount
               </Button>
               <Button tone="primary" disabled={busy} onClick={() => decide("approved")}>
                 {busy ? "Saving…" : "Approve"}
@@ -192,9 +197,7 @@ export function DecideDay({
         {open === "reopen" ? (
           <>
             <p className="mb-3 text-[13px] text-muted">
-              The salesman will be able to change it again. What he submitted is not erased — a
-              correction is recorded beside the original rather than replacing it, so both stay
-              readable.
+              The salesman can change the day again. What he sent first is kept.
             </p>
             <label className="block">
               <span className="mb-1 block text-[13px] font-medium text-ink">Why</span>

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { money, shortDate, stamp } from "@/lib/format";
+import { money, shortDate } from "@/lib/format";
 import { today } from "@/lib/recompute";
 import { endOfMonth } from "@/lib/business-date";
 import { MonthNav } from "@/components/ui/month-nav";
@@ -27,29 +27,17 @@ import {
 import { readSort, sortHref, sortRows, type SortColumns } from "@/components/console/sort";
 import { plural } from "@/components/console/words";
 
-export const metadata = { title: "Expenses & claims — Sales Dashboard — MahekOne" };
+export const metadata = { title: "Expenses — Sales Dashboard — MahekOne" };
 
 const km = (metres: number) => `${(metres / 1000).toFixed(0)} km`;
 
 /**
- * What the field spent, and what it is owed back.
+ * What the field spent, and what it is owed back — one row a day.
  *
- * **Claimed, Eligible and Approved are three columns, always** — requirement
- * 41 — because they are three different numbers and a screen showing one of
- * them makes the other two unanswerable. Claimed is what the salesman asked
- * for; Eligible is what the policy in force on that date allows; Approved is
- * what a person decided. Where they differ, the difference is the whole story.
- *
- * **The unit is a DAY, not a line.** A day is what is submitted, what is
- * locked, and what `mbos_approvals` names. Deciding line by line is exactly
- * what requirement 45 exists to prevent — a manager asked to approve forty ₹40
- * fares reads none of them, and then the one that mattered goes through with
- * the rest.
- *
- * **Exceeding policy does not block a claim** and never did on the handset
- * either. The salesman spent the money; refusing to record it does not unspend
- * it, it only means nobody finds out. What being over does is put the day in
- * front of somebody.
+ * A DAY is the unit: it is what is sent, locked and decided. "Asked for" is
+ * what he claimed and "Policy allows" what the hard-coded policy pays; the
+ * manager approves the second by default and may change it. Being over the
+ * policy never stops a claim being recorded — the money was already spent.
  */
 export default async function Page({
   searchParams,
@@ -77,21 +65,12 @@ export default async function Page({
   const rows = show === "all" ? all : show === "decided" ? decided : waiting;
 
   const owed = waiting.reduce((n, d) => n + Number(d.eligiblePaise), 0);
-  const overPolicy = all.filter((d) => Number(d.excessPaise) > 0);
-  const autoApproved = decided.filter((d) => d.routeReason === "auto");
-  const escalated = all.filter((d) => d.stepCount > 1);
+  const approvedTotal = decided.reduce((n, d) => n + Number(d.approvedAmountPaise ?? 0), 0);
 
-  /* Sorting is DISPLAY ONLY, over the rows the chip has already cut. The four
-     figures above are counted over the whole month the query returned — what
-     is waiting, what it is eligible for, what is over policy — and not one of
-     them may move when somebody clicks a column: a manager who sorted by
-     Claimed and watched "Eligible, waiting" change would have no way to know
-     which of the two figures to believe.
-
-     BOTH the chip and the month ride on every header link. The month is the
-     more dangerous of the two to drop, because a sort that silently returned
-     him to the current month would look like the claims for March having
-     vanished rather than like a filter having been reset. */
+  /* Sorting is DISPLAY ONLY, over the rows the chip has already cut, so the
+     figures above never move when somebody clicks a column. The chip and the
+     month ride on every header link — a sort that dropped the month would
+     look like March's claims had vanished. */
   const sort = readSort(params, COLUMNS);
   const sorted = sortRows(rows, sort, COLUMNS);
   const head = (key: string, text: string, width?: number, align?: "left" | "right") => (
@@ -109,46 +88,31 @@ export default async function Page({
   return (
     <div className="p-6">
       <ScreenHeader
-        title="Expenses and claims"
-        subtitle="Claimed is what he asked for, Eligible is what the policy in force that day allows, Approved is what you decided. Being over policy never stopped a claim being recorded — the money was already spent, and refusing to write it down would only mean nobody found out."
-        actions={<MonthNav month={month} basePath="/sales/expenses" />}
-      />
-
-      {escalated.length ? (
-        <Banner
-          tone="warn"
-          title={`${plural(escalated.length, "day")} escalated to the owner as well as to you`}
-          body="An escalation is in addition to your decision, never instead of it — you are the person who knows whether that salesman was where he says he was."
-        />
-      ) : null}
-
-      {unsent.length && show !== "unsent" ? (
-        <Banner
-          tone="warn"
-          title={`${plural(unsent.length, "day")} of claims raised and not sent yet`}
-          body="These claims are with us, but the salesman has not closed the day on his phone, so they cannot be priced or decided. Ask him to open More → Close the day and send it."
-          action={
-            <Link href={`/sales/expenses?show=unsent&month=${month}`} className="text-sm font-semibold">
-              See them
+        title="Expenses"
+        subtitle="Each day a salesman sends is worked out against the expense policy. Approve it, or change the amount."
+        actions={
+          <div className="flex items-center gap-3">
+            <Link href="/sales/expense-policy" className="text-sm font-medium">
+              The policy
             </Link>
-          }
-        />
-      ) : null}
+            <MonthNav month={month} basePath="/sales/expenses" />
+          </div>
+        }
+      />
 
       <MetricRow
         metrics={[
-          { label: "Waiting", value: String(waiting.length), tone: waiting.length ? "warn" : undefined },
-          { label: "Eligible, waiting", value: money(owed) },
           {
-            label: "Over policy",
-            value: String(overPolicy.length),
-            sub: overPolicy.length ? money(overPolicy.reduce((n, d) => n + Number(d.excessPaise), 0)) + " above" : undefined,
-            tone: overPolicy.length ? "warn" : undefined,
+            label: "Days to approve",
+            value: String(waiting.length),
+            tone: waiting.length ? "warn" : undefined,
           },
+          { label: "Policy allows", value: money(owed), sub: "on the days to approve" },
+          { label: "Approved this month", value: money(approvedTotal) },
           {
-            label: "Approved automatically",
-            value: String(autoApproved.length),
-            sub: "clean, and under the limit",
+            label: "Not sent yet",
+            value: String(unsent.length),
+            sub: unsent.length ? "the salesman has to close the day" : undefined,
           },
         ]}
       />
@@ -156,9 +120,9 @@ export default async function Page({
       <FilterChips
         current={show}
         options={[
-          { key: "waiting", href: `/sales/expenses?show=waiting&month=${month}`, label: "Waiting", count: waiting.length },
-          { key: "decided", href: `/sales/expenses?show=decided&month=${month}`, label: "Decided", count: decided.length },
-          { key: "all", href: `/sales/expenses?show=all&month=${month}`, label: "Everything", count: all.length },
+          { key: "waiting", href: `/sales/expenses?show=waiting&month=${month}`, label: "To approve", count: waiting.length },
+          { key: "decided", href: `/sales/expenses?show=decided&month=${month}`, label: "Done", count: decided.length },
+          { key: "all", href: `/sales/expenses?show=all&month=${month}`, label: "All", count: all.length },
           { key: "unsent", href: `/sales/expenses?show=unsent&month=${month}`, label: "Not sent yet", count: unsent.length },
         ]}
       />
@@ -167,113 +131,59 @@ export default async function Page({
         <UnsentDays rows={unsent} />
       ) : rows.length === 0 ? (
         <Empty
-          title={show === "waiting" ? "Nothing to decide" : "No days submitted"}
-          body="A salesman closes his day on the handset: the meals are worked out from when he left and got back, the travel from the legs he recorded, and the whole day is priced against the policy in force that date before it reaches you."
+          title={show === "waiting" ? "Nothing to approve" : "No days sent this month"}
+          body="A salesman closes his day on his phone. The day arrives here already worked out against the policy."
         />
       ) : (
         <Table
-          minWidth={1500}
+          minWidth={1080}
           head={
             <>
-              {head("name", "Salesman", 170)}
+              {head("name", "Salesman", 180)}
               {head("day", "Day", 110)}
-              {/* A composed sentence rather than a value — legs, food, hotel
-                  and the rest joined into one line — so there is nothing to
-                  order it by. The state column is the same case one step on:
-                  a set of pills, a decision note and a submission time, whose
-                  one orderable half the chips above already cut. */}
-              <HeadCell width={190}>What it was made of</HeadCell>
-              {/* All THREE money columns sort, because they are three different
-                  numbers and the question is usually about the gap between
-                  them — the biggest claim, the biggest allowance and the
-                  biggest decision are three different days. */}
-              {head("claimed", "Claimed", 120, "right")}
-              {head("eligible", "Eligible", 120, "right")}
-              {head("approved", "Approved", 130, "right")}
-              {head("monthToDate", "This month", 180)}
-              <HeadCell width={190}>State</HeadCell>
-              <HeadCell align="right" width={200} />
+              <HeadCell width={220}>Spent on</HeadCell>
+              {head("claimed", "Asked for", 120, "right")}
+              {head("eligible", "Policy allows", 130, "right")}
+              <HeadCell width={170}>Status</HeadCell>
+              <HeadCell align="right" width={150} />
             </>
           }
         >
           {sorted.map((d, i) => {
-            const excess = Number(d.excessPaise);
+            const claimed = Number(d.claimedPaise);
+            const eligible = Number(d.eligiblePaise);
+            const over = Math.max(0, claimed - eligible);
             const pending = !d.approvalState || d.approvalState === "pending";
             return (
               <Row key={d.dayId} striped={i % 2 === 1}>
-                <Cell truncate={170}>
-                  <EntityLink href={`/sales/people/${d.userId}`}>
-                    {d.userName}
-                  </EntityLink>
+                <Cell truncate={180}>
+                  <EntityLink href={`/sales/people/${d.userId}`}>{d.userName}</EntityLink>
                 </Cell>
+                <Cell>{shortDate(d.day)}</Cell>
                 <Cell>
-                  {shortDate(d.day)}
-                  {d.reopenedAt ? (
-                    <span className="block text-[12px] text-warn-ink">reopened</span>
+                  <span className="text-[13px] text-body">{spentOn(d)}</span>
+                </Cell>
+                <Cell align="right">{money(claimed)}</Cell>
+                <Cell align="right">
+                  {money(eligible)}
+                  {over > 0 ? (
+                    <span className="block text-[12px] text-warn-ink">{money(over)} over</span>
                   ) : null}
                 </Cell>
                 <Cell>
-                  <span className="text-[12px] text-muted">
-                    {[
-                      d.legCount ? `${d.legCount} leg${d.legCount === 1 ? "" : "s"}, ${km(Number(d.metres))}` : null,
-                      Number(d.foodPaise) ? `food ${money(Number(d.foodPaise))}` : null,
-                      Number(d.lodgingPaise) ? `hotel ${money(Number(d.lodgingPaise))}` : null,
-                      Number(d.otherPaise) ? `other ${money(Number(d.otherPaise))}` : null,
-                    ]
-                      .filter(Boolean)
-                      .join(" · ") || "nothing recorded"}
-                  </span>
-                </Cell>
-                <Cell align="right">{money(Number(d.claimedPaise))}</Cell>
-                <Cell align="right">
-                  {money(Number(d.eligiblePaise))}
-                  {excess > 0 ? (
-                    <span className="block text-[12px] text-warn-ink">
-                      {money(excess)} over
-                    </span>
-                  ) : null}
-                </Cell>
-                <Cell align="right">
-                  {d.approvedAmountPaise === null ? (
-                    <span className="text-muted">—</span>
-                  ) : (
-                    money(Number(d.approvedAmountPaise))
-                  )}
-                </Cell>
-                <Cell>
-                  {money(Number(d.monthToDatePaise))}
-                  <span className="block text-[12px] text-muted">claimed to date</span>
-                </Cell>
-                <Cell>
-                  {d.approvalState === "approved" ? (
-                    <Pill tone="success">Approved</Pill>
-                  ) : d.approvalState === "rejected" ? (
-                    <Pill tone="danger">Refused</Pill>
-                  ) : d.approvalState === "partially_approved" ? (
-                    <Pill tone="warn">Part allowed</Pill>
-                  ) : (
-                    <Pill tone="warn">Waiting</Pill>
-                  )}
-                  {d.openExceptions > 0 ? (
-                    <Link href="/sales/exceptions" className="ml-1.5 no-underline">
-                      <Pill tone={d.worstSeverity === "block_route" ? "danger" : "warn"}>
-                        {d.openExceptions} flagged
-                      </Pill>
+                  <Status
+                    state={d.approvalState}
+                    approvedPaise={d.approvedAmountPaise === null ? null : Number(d.approvedAmountPaise)}
+                    auto={d.routeReason === "auto"}
+                  />
+                  {pending && d.openExceptions > 0 ? (
+                    <Link href="/sales/exceptions" className="mt-1 block text-[12px] text-warn-ink">
+                      {plural(d.openExceptions, "thing")} to check
                     </Link>
-                  ) : null}
-                  {d.routeReason === "auto" ? (
-                    <span className="block text-[12px] text-muted">
-                      approved on submission — within policy and under the limit
-                    </span>
                   ) : null}
                   {d.decisionNote ? (
                     <span className="block truncate text-[12px] text-muted" title={d.decisionNote}>
-                      “{d.decisionNote}” {d.decidedByName ? `— ${d.decidedByName}` : ""}
-                    </span>
-                  ) : null}
-                  {d.submittedAt ? (
-                    <span className="block text-[12px] text-muted">
-                      submitted {stamp(d.submittedAt)}
+                      “{d.decisionNote}”
                     </span>
                   ) : null}
                 </Cell>
@@ -283,9 +193,10 @@ export default async function Page({
                       dayId={d.dayId}
                       who={d.userName}
                       what={shortDate(d.day)}
-                      claimedPaise={Number(d.claimedPaise)}
-                      eligiblePaise={Number(d.eligiblePaise)}
+                      claimedPaise={claimed}
+                      eligiblePaise={eligible}
                       locked={d.lockedAt !== null}
+                      pending={pending}
                     />
                   ) : null}
                 </Cell>
@@ -296,6 +207,60 @@ export default async function Page({
       )}
     </div>
   );
+}
+
+/** One line saying what the day's money went on. */
+function spentOn(d: {
+  legCount: number;
+  metres: number | string;
+  foodPaise: number | string;
+  lodgingPaise: number | string;
+  otherPaise: number | string;
+}): string {
+  return (
+    [
+      d.legCount ? `Travel ${km(Number(d.metres))}` : null,
+      Number(d.foodPaise) ? `Meals ${money(Number(d.foodPaise))}` : null,
+      Number(d.lodgingPaise) ? `Hotel ${money(Number(d.lodgingPaise))}` : null,
+      Number(d.otherPaise) ? `Bills ${money(Number(d.otherPaise))}` : null,
+    ]
+      .filter(Boolean)
+      .join(" · ") || "Nothing recorded"
+  );
+}
+
+function Status({
+  state,
+  approvedPaise,
+  auto,
+}: {
+  state: string | null;
+  approvedPaise: number | null;
+  auto: boolean;
+}) {
+  if (state === "approved") {
+    return (
+      <>
+        <Pill tone="success">Approved</Pill>
+        <span className="block text-[12px] text-muted">
+          {approvedPaise !== null ? money(approvedPaise) : null}
+          {auto ? " · automatically" : ""}
+        </span>
+      </>
+    );
+  }
+  if (state === "partially_approved") {
+    return (
+      <>
+        <Pill tone="warn">Part approved</Pill>
+        {approvedPaise !== null ? (
+          <span className="block text-[12px] text-muted">{money(approvedPaise)}</span>
+        ) : null}
+      </>
+    );
+  }
+  if (state === "rejected") return <Pill tone="danger">Refused</Pill>;
+  return <Pill tone="warn">To approve</Pill>;
 }
 
 /**
@@ -352,8 +317,8 @@ function UnsentDays({ rows }: { rows: UnsentClaimDayRow[] }) {
     <>
       <Banner
         tone="info"
-        title="Raised on the phone, not sent yet"
-        body="The salesman pressed Send claim, so each claim reached us — but a claim is decided as part of its day, and the day goes to you only when he closes it on his phone (More → Close the day). Until then it has not been priced against the policy, so there is no Eligible figure and nothing to decide."
+        title="Claims raised, day not closed"
+        body="These claims reached us, but the salesman has not closed the day on his phone (More → Close the day), so they cannot be approved yet."
       />
       <Table
         minWidth={960}
@@ -390,8 +355,8 @@ function UnsentDays({ rows }: { rows: UnsentClaimDayRow[] }) {
               <Pill tone="warn">Day not closed</Pill>
               <span className="block text-[12px] text-muted">
                 {d.returnedAt
-                  ? "He has not sent the day yet"
-                  : "He has not said when he got back, which closing the day needs"}
+                  ? "Waiting for him to send the day"
+                  : "He has not said when he got back"}
               </span>
             </Cell>
           </Row>

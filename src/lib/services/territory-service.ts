@@ -1,4 +1,5 @@
 import "server-only";
+import { rebuildHolidayMembers } from "@/lib/services/holiday-service";
 import { and, eq, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { mbosUserTerritories } from "@/db/schema";
@@ -122,4 +123,8 @@ export async function setWorkingTerritories(
       );
     }
   });
+  /* Where he works decides which state, city and area holidays are his, and
+     the phone hears it through the holiday channel. Never fails the save: the
+     hourly rebuild is the net under it. */
+  await rebuildHolidayMembers().catch((e) => console.error("holiday rebuild after a territory change", e));
 }

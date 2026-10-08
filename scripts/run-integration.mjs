@@ -73,6 +73,9 @@ const files = [
   // The visit assistant: scope, no model, the switch, and the visit writing
   // back what it was really saved as.
   "src/lib/visit-intel.test.ts",
+  // A task with a form: assigned on the dashboard, answered on the handset,
+  // and every salesman's answers read back side by side.
+  "src/lib/task-campaigns.test.ts",
   "src/lib/accounts.test.ts",
   "src/lib/bill-paging.test.ts",
   // A call's own reminder is folded onto the call in the All view.
@@ -114,6 +117,8 @@ const files = [
   "src/lib/place-master.test.ts",
   "src/lib/place-tree-filters.test.ts",
   "src/lib/territory-requests.test.ts",
+  // Who a holiday reaches — company, state, city, named — on the right phones.
+  "src/lib/holidays.test.ts",
   // Price lists: the engines are pure and the reader is pinned against the
   // four real documents, so what is left for a database is publishing,
   // superseding, the hierarchy through the real service, and the refusal.

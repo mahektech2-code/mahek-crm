@@ -44,13 +44,6 @@ export const ADMIN_TABS = {
     { slug: "exceptions", label: "Held & excluded" },
     { slug: "import", label: "Import" },
   ],
-  expensePolicy: [
-    { slug: "rules", label: "Rules" },
-    { slug: "simulate", label: "What it would cost" },
-    { slug: "versions", label: "Versions" },
-    { slug: "grades", label: "Grades" },
-    { slug: "cities", label: "Cities" },
-  ],
   sheets: [
     { slug: "lines", label: "Order lines" },
     { slug: "orders", label: "Orders" },
@@ -106,7 +99,8 @@ export const ADMIN = {
   /** One app's settings. The page id comes from `SETTINGS_PAGES`. */
   settingsFor: (page: string, tab?: string) => withTab(`/admin/settings/${page}`, tab),
   catalogue: (tab?: TabsOf<"catalogue">) => withTab("/admin/catalogue", tab),
-  expensePolicy: (tab?: TabsOf<"expensePolicy">) => withTab("/admin/expense-policy", tab),
+  /* One page, no tabs: the policy is hard-coded and read, not authored. */
+  expensePolicy: () => "/admin/expense-policy",
   sheets: (tab?: TabsOf<"sheets">) => withTab("/admin/sheets", tab),
   deletedLeads: "/admin/deleted-leads",
   integrations: "/admin/integrations",

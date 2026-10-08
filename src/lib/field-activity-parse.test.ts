@@ -2,6 +2,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  detectDateOrder,
   FIELD_ACTIVITY_COL,
   isBlankFieldActivityRow,
   parseFieldActivityDate,
@@ -44,11 +45,57 @@ describe("dates — strict month/day/year, no ambiguous fallback", () => {
     assert.equal(parseFieldActivityDate("   "), null);
   });
 
-  test("a day-first date this tab never actually contains is refused, not reinterpreted", () => {
-    // 25/12/2024 would be Christmas under the order sheet's convention. Here
-    // it is simply not a valid month, and the parser must not fall back to
-    // guessing day-first — it has to say the cell was unreadable instead.
-    assert.equal(parseFieldActivityDate("25/12/2024"), null);
+  test("a cell that contradicts the column's order is refused, not reinterpreted", () => {
+    // 25/12/2024 in a month-first column is not a valid month, and the parser
+    // must not quietly flip it — the COLUMN decides the order, not one cell.
+    assert.equal(parseFieldActivityDate("25/12/2024", "mdy"), null);
+    assert.equal(parseFieldActivityDate("4/25/2024", "dmy"), null);
+  });
+});
+
+describe("dates — a day-first column", () => {
+  test("is read day first", () => {
+    assert.equal(parseFieldActivityDate("10/06/2026", "dmy"), "2026-06-10");
+    assert.equal(parseFieldActivityDate("25/12/2024", "dmy"), "2024-12-25");
+    assert.equal(parseFieldActivityDate("7/10/2026", "dmy"), "2026-10-07");
+  });
+
+  test("a trailing clock time is the same date", () => {
+    assert.equal(parseFieldActivityDate("7/10/2026 14:22:05", "dmy"), "2026-10-07");
+    assert.equal(parseFieldActivityDate("10/7/2026, 2:22 PM", "mdy"), "2026-10-07");
+  });
+
+  test("ISO and named-month cells read the same whatever the order", () => {
+    for (const order of ["mdy", "dmy"] as const) {
+      assert.equal(parseFieldActivityDate("2026-10-07", order), "2026-10-07");
+      assert.equal(parseFieldActivityDate("7-Oct-2026", order), "2026-10-07");
+      assert.equal(parseFieldActivityDate("7 October 2026", order), "2026-10-07");
+    }
+  });
+});
+
+describe("detecting the column's order", () => {
+  test("a first number over 12 can only be a day", () => {
+    assert.equal(detectDateOrder(["1/2/2026", "25/9/2026", "3/4/2026"]), "dmy");
+  });
+
+  test("a second number over 12 can only be a day", () => {
+    assert.equal(detectDateOrder(["1/2/2026", "9/25/2026"]), "mdy");
+  });
+
+  test("a column of nothing over 12 says nothing", () => {
+    // The first week of a month, which is exactly what an append pass reads.
+    assert.equal(detectDateOrder(["1/10/2026", "7/10/2026", "", null, "x"]), null);
+  });
+
+  test("a stray contradiction is outvoted, not obeyed", () => {
+    assert.equal(detectDateOrder(["13/1/2026", "1/14/2026", "1/15/2026", "1/16/2026"]), "mdy");
+  });
+
+  test("the row parser honours the order it is given", () => {
+    const cells = { [FIELD_ACTIVITY_COL.activityId]: "A1", [FIELD_ACTIVITY_COL.date]: "10/06/2026" };
+    assert.equal(parseFieldActivityRow(cells, "dmy").visitDate, "2026-06-10");
+    assert.equal(parseFieldActivityRow(cells, "mdy").visitDate, "2026-10-06");
   });
 });
 

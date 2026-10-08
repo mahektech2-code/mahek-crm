@@ -1864,6 +1864,30 @@ export const SETTINGS = [
    * assistant's confidence floor: "ask when less sure than" is one judgement
    * about how often a person should be asked, not two.
    */
+  /*
+   * THE TASK BRAIN — the Sales Dashboard's AI while a task is being set.
+   * OpenAI only: it drafts a form from a sentence, says which customer field
+   * each question is really asking for, and summarises what came back. Every
+   * suggestion is a suggestion — nothing is assigned or written to a record
+   * until a manager presses the button.
+   */
+  {
+    key: "taskIntel.enabled",
+    type: "boolean",
+    category: "voice",
+    label: "AI on task assignment",
+    description:
+      "On the Sales Dashboard's task builder: draft the questions from a description, suggest which customer field each answer should update, and summarise the answers. Needs an OpenAI key. Off hides every AI button on the Tasks screens.",
+    default: true,
+  },
+  {
+    key: "taskIntel.model",
+    type: "text",
+    category: "voice",
+    label: "Task AI model",
+    description: "The OpenAI model the task builder and the answer summary use.",
+    default: "gpt-5-mini",
+  },
   {
     key: "visitIntel.enabled",
     type: "boolean",
@@ -5867,6 +5891,8 @@ export type Config = {
   "verifyIntel.model": string;
   "intakeIntel.enabled": boolean;
   "intakeIntel.model": string;
+  "taskIntel.enabled": boolean;
+  "taskIntel.model": string;
   "visitIntel.enabled": boolean;
   "visitIntel.model": string;
   "leadScan.enabled": boolean;

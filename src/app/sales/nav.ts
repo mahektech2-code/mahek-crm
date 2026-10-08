@@ -173,9 +173,9 @@ export const SALES_NAV: NavGroup[] = [
       { href: "/sales/attendance", label: "Attendance", icon: "clock" },
       { href: "/sales/leave", label: "Leave", icon: "cal" },
       { href: "/sales/holidays", label: "Holidays", icon: "cal" },
-      { href: "/sales/expenses", label: "Expenses & claims", icon: "receipt" },
-      { href: "/sales/exceptions", label: "Expense exceptions", icon: "shield" },
-      { href: "/sales/expense-policy", label: "Expense policy", icon: "list" },
+      { href: "/sales/expenses", label: "Expenses", icon: "receipt" },
+      { href: "/sales/exceptions", label: "Flagged expenses", icon: "bell" },
+      { href: "/sales/expense-policy", label: "Expense policy", icon: "doc" },
     ],
   },
   {

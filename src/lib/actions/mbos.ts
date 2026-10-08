@@ -2,6 +2,7 @@ import "server-only";
 import { reconcileContacts } from "@/lib/services/customer-contact-service";
 import { createHash, randomUUID } from "node:crypto";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { holidayAppliesSql } from "@/lib/holiday-sql";
 import { z } from "zod";
 import { db } from "@/db";
 import {
@@ -39,6 +40,7 @@ import {
   mbosSamples,
   sampleFeedback,
   mbosSyncReceipts,
+  mbosTaskCampaigns,
   mbosTasks,
   mbosVisits,
   notifications,
@@ -125,6 +127,15 @@ import {
   type LeaveCalendar,
 } from "../engines/leave";
 import { notifyUsers } from "../notify";
+import {
+  cleanTaskAnswers,
+  expandTaskForm,
+  formHasLinks,
+  parseTaskForm,
+  taskAnswerPhotoIds,
+  taskAnswersNote,
+} from "../task-form";
+import { applyLinkedAnswers, linkContexts, settleLinkedTasks } from "../services/task-link-service";
 
 /* ---------------------------------------------------------------------------
  * MBOS — every write the handset makes.
@@ -6053,6 +6064,13 @@ const taskSchema = z.object({
   completionPhotoId: z.string().nullish(),
   snoozedTo: z.string().nullish(),
   snoozeReason: z.string().max(500).nullish(),
+  /**
+   * The answers to the assignment's form, keyed by field id. Taken as any
+   * object and CLEANED against the form the office stored (`cleanTaskAnswers`)
+   * — never trusted for shape, and never refused for an answer owed: an APK
+   * cannot be recalled, and the results screen says what is missing instead.
+   */
+  responses: z.record(z.string(), z.unknown()).nullish(),
   /*
    * A SNOOZE, IN THE ONLY SHAPE THE HANDSET HAS EVER SENT IT.
    *
@@ -6109,8 +6127,15 @@ async function handleTaskUpdate(
   const p = parsed.data;
 
   const [existing] = await db
-    .select({ id: mbosTasks.id, title: mbosTasks.title })
+    .select({
+      id: mbosTasks.id,
+      title: mbosTasks.title,
+      assignedToUserId: mbosTasks.assignedToUserId,
+      customerId: mbosTasks.customerId,
+      form: mbosTaskCampaigns.form,
+    })
     .from(mbosTasks)
+    .leftJoin(mbosTaskCampaigns, eq(mbosTaskCampaigns.id, mbosTasks.campaignId))
     .where(eq(mbosTasks.id, item.entityId))
     .limit(1);
 
@@ -6125,8 +6150,33 @@ async function handleTaskUpdate(
     };
   }
 
+  /* A task with a form is answered by the form. The answers ARE the "how",
+     so they stand in for the note — written out as one, so every screen that
+     reads a completed task's note reads the answers without being taught. */
+  const baseForm = parseTaskForm(existing.form);
+  /* Linked questions are expanded against the shop's record as it stands —
+     one question per contact where the form asked about each — exactly as
+     the handset drew them, so the answers' keys match. */
+  const context =
+    baseForm.length && existing.customerId && formHasLinks(baseForm)
+      ? ((await linkContexts([existing.customerId])).get(existing.customerId) ?? null)
+      : null;
+  const expanded = expandTaskForm(baseForm, context);
+  const form = expanded.fields;
+  const answers =
+    form.length && p.responses != null ? cleanTaskAnswers(form, p.responses) : null;
+  if (answers && !p.completionNote) {
+    const note = taskAnswersNote(form, answers);
+    if (note) p.completionNote = note;
+  }
+
   const config = await getConfig();
-  if (p.status === "done" && config["mbos.tasks.requireCompletionNote"] && !p.completionNote) {
+  if (
+    p.status === "done" &&
+    config["mbos.tasks.requireCompletionNote"] &&
+    !p.completionNote &&
+    !(answers && Object.keys(answers).length)
+  ) {
     return {
       kind: "rejected",
       value: reject(
@@ -6167,8 +6217,41 @@ async function handleTaskUpdate(
     if (p.snoozeReason == null && snooze.reason != null) changed.snoozeReason = snooze.reason;
   }
 
+  if (answers) {
+    changed.responses = answers;
+    changed.respondedAt = new Date();
+    if (p.status === "done") changed.completedVia = "answer";
+  }
+
   await db.update(mbosTasks).set(changed).where(eq(mbosTasks.id, item.entityId));
   await bindMbosMedia(p.completionPhotoId, "mbos_task", item.entityId, principal.user.id);
+  /* Every photograph the form asked for is filed under the task, so the
+     results screen can open it — the media queue uploads them naming the
+     task, and this binds the ones that arrived first under `pending`. */
+  if (answers) {
+    for (const photoId of taskAnswerPhotoIds(form, answers)) {
+      await bindMbosMedia(photoId, "mbos_task", item.entityId, principal.user.id);
+    }
+    /* What the salesman found goes on the record it is about, and any other
+       open task asking the same shop for the same thing is then complete.
+       Neither can fail the task: the answers are already stored. */
+    if (existing.customerId && Object.keys(expanded.links).length) {
+      try {
+        const linkResults = await applyLinkedAnswers({
+          taskId: item.entityId,
+          customerId: existing.customerId,
+          links: expanded.links,
+          fields: form,
+          answers,
+          actorId: principal.user.id,
+        });
+        await db.update(mbosTasks).set({ linkResults }).where(eq(mbosTasks.id, item.entityId));
+        await settleLinkedTasks([existing.customerId]);
+      } catch (e) {
+        console.error("task link write-back failed", e);
+      }
+    }
+  }
 
   return { kind: "accepted", value: { serverId: item.entityId } };
 }
@@ -7227,16 +7310,19 @@ function inclusiveDays(from: string, to: string): number {
  * query is per leave request and a `select *` here would grow with the years
  * rather than with the request.
  *
- * A regionally-scoped holiday counts the same as a universal one: a day the
- * office is shut is a day nobody was going to work, and the handset's own
- * caution about scoped holidays is about which days it may auto-apply, not
- * about what somebody's leave costs them.
+ * Only HIS holidays count — company-wide ones, and the state, district, city,
+ * area or named ones that reach him (`holidayAppliesSql`). A day off in a
+ * state he does not work is a working day for him, and leave across it costs
+ * a day.
  */
-async function leaveCalendarFor(from: string, to: string): Promise<LeaveCalendar> {
+async function leaveCalendarFor(from: string, to: string, userId: string): Promise<LeaveCalendar> {
   const config = await getConfig();
+  /* HIS holidays: a state holiday in Odisha is not a day a man in Nagpur was
+     going to be off, so it must not make his leave cheaper. */
   const rows = await db.execute<{ onDate: string }>(
-    sql`select on_date::text as "onDate" from mbos_holidays
-         where on_date between ${from}::date and ${to}::date`,
+    sql`select h.on_date::text as "onDate" from mbos_holidays h
+         where h.on_date between ${from}::date and ${to}::date
+           and ${holidayAppliesSql("h", sql`${userId}`)}`,
   );
   return {
     workingDays: config["workingDay.workingDays"],
@@ -7369,7 +7455,7 @@ async function handleLeave(principal: MbosPrincipal, item: SyncItem): Promise<Ha
    * spent four days of somebody's balance to be absent for two — and the
    * column's own comment has said "derived from the dates and the working
    * calendar" since the table was written. See `engines/leave.ts`. */
-  const days = leaveWorkingDays(from, to, await leaveCalendarFor(from, to));
+  const days = leaveWorkingDays(from, to, await leaveCalendarFor(from, to, principal.user.id));
   if (days < 1) {
     return {
       kind: "rejected",
