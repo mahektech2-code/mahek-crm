@@ -150,11 +150,12 @@ export function workedMs(sessions: Session[], now = Date.now()): number {
  * Was this calendar day a holiday — the input `deriveStatus` has always
  * wanted and never had.
  *
- * Only a `universal` row answers yes. A regionally-scoped one is real data
- * (see `holidays.scope`) but the phone has no reliable way to match its
- * free-text scope against this salesman's own beat, so it is left for a
- * future screen to LIST rather than trusted to silently flip a working day
- * to Weekly Off on a guess.
+ * Only a `universal` row answers yes, and the OFFICE decides which those are
+ * — per salesman. A holiday carries a level (company, state, district, city,
+ * area, named people) and the office resolves it against where he is
+ * allocated, so `universal` arrives meaning "this one is yours". The phone
+ * never matches a place itself; it reads the answer, which is why a state
+ * holiday reaches the right handsets with no app update.
  */
 export async function isHoliday(day: string): Promise<boolean> {
   const row = await one<{ n: number }>(
@@ -162,6 +163,21 @@ export async function isHoliday(day: string): Promise<boolean> {
     [day],
   );
   return (row?.n ?? 0) > 0;
+}
+
+export type HolidayItem = { id: string; onDate: string; name: string; scope: string | null; universal: number };
+
+/**
+ * One year of the company's calendar, for the Holidays screen — every day,
+ * with `universal` saying which are his. The ones that are not his are listed
+ * too, because "why is the Odisha team off and I am not" is a question he
+ * will ask, and the answer is on the row: it is somebody else's place.
+ */
+export async function listHolidays(year: number): Promise<HolidayItem[]> {
+  return all<HolidayItem>(
+    `SELECT id, onDate, name, scope, universal FROM holidays WHERE onDate >= ? AND onDate <= ? ORDER BY onDate ASC, name ASC`,
+    [`${year}-01-01`, `${year}-12-31`],
+  );
 }
 
 /** Everything on the calendar for one day, universal or not — for display. */

@@ -2,6 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 import { and, eq, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import {
@@ -14,10 +15,12 @@ import {
   mbosDeletions,
   mbosDocuments,
   mbosHolidays,
+  mbosHolidayAssignments,
   mbosLeaveRequests,
   mbosUserTerritories,
   mbosJourneyPlans,
   mbosJourneyStops,
+  mbosTaskCampaigns,
   mbosTasks,
   mbosTravelLegs,
   mbosVisits,
@@ -37,11 +40,11 @@ import { getConfig, updateSettings } from "@/lib/config/store";
 import { bindAttachments } from "@/lib/services/attachment-service";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import {
-  fieldBook,
   LEAD_BULK_CAP,
   leadIdsMatching,
   leadsInScope,
   leadsPage,
+  fieldTeam,
   managerScope,
   onlyMine,
 } from "@/lib/services/sales-service";
@@ -67,6 +70,52 @@ import { repriceDay, rescoreLeg } from "@/lib/services/expense-submit-service";
 import { notifyUsers } from "../notify";
 import { announce } from "@/lib/services/announcement-service";
 import { mirrorToHrms, removeEverywhere } from "@/lib/services/holiday-calendar";
+import {
+  previewAudience,
+  rebuildHolidayMembers,
+  searchPlaces,
+  syncHolidayToHrms,
+  type HolidayPlace,
+} from "@/lib/services/holiday-service";
+import { HOLIDAY_CATEGORIES, isHolidayLevel, placeKindFor } from "@/lib/engines/holiday-audience";
+import { holidayAppliesSql } from "@/lib/holiday-sql";
+import {
+  placeNames,
+  searchShopsForTask,
+  shopsForTarget,
+  taskPlaceOptions,
+  type AudienceShopRow,
+} from "@/lib/services/task-campaign-service";
+import type { PlaceFilterOptions, PlaceFilterValues } from "@/lib/place-filters";
+import {
+  expandTaskAudience,
+  MAX_TASKS_PER_ASSIGNMENT,
+  taskAudienceProblem,
+  taskAudienceSentence,
+  type TaskAudience,
+} from "@/lib/task-audience";
+import {
+  formHasLinks,
+  linkedTaskComplete,
+  MAX_TASK_FIELDS,
+  MAX_TASK_OPTIONS,
+  TASK_FIELD_TYPES,
+  TASK_LINK_TARGET_KEYS,
+  taskFormProblems,
+  tidyTaskForm,
+  type TaskField,
+  type TaskLinkTarget,
+} from "@/lib/task-form";
+import { linkContexts } from "@/lib/services/task-link-service";
+import { taskCampaign } from "@/lib/services/task-campaign-service";
+import {
+  draftTask,
+  suggestLinks,
+  summariseCampaign,
+  type LinkSuggestion,
+  type TaskDraft,
+  type TaskSummary,
+} from "@/lib/services/task-ai-service";
 
 /** Count, noun and verb agree at every value. */
 function plural(n: number, noun: string, pl?: string): string {
@@ -1010,82 +1059,283 @@ export async function answerRefusal(input: {
 /* ═══════════════════════════════════════════════════════════ the holidays */
 
 /**
- * A day nobody is expected to work.
+ * A day nobody is expected to work — or nobody in one state, one district,
+ * one city, one area, or a few named people (`lib/engines/holiday-audience.ts`
+ * says who).
  *
- * Small, and load-bearing in three places: attendance reads as absent for
- * everybody otherwise, leave is measured in working days that nothing else
- * defines, and a journey plan will cheerfully route somebody into a shut
- * market.
+ * Load-bearing in more places than it looks: attendance reads as absent
+ * otherwise, leave is measured in working days, a journey plan will route
+ * somebody into a shut market — and the handset reads all of it through the
+ * pull, so a holiday saved here is on the salesman's phone at its next sync
+ * without anybody updating the app.
  *
- * `scope` is free text — "all beats", "Nagpur East, Nagpur West" — because a
- * holiday is regional in a way the territory model cannot express, and a join
- * table would need maintaining every time a beat is renamed.
+ * The places are PICKED from the reviewed tree rather than typed, which is
+ * what lets a state holiday reach exactly the people allocated that state.
  */
-export async function addHoliday(input: {
+export type HolidayInput = {
+  id?: string | null;
   onDate: string;
   name: string;
-  scope?: string | null;
-}): Promise<Result> {
+  category: string;
+  level: string;
+  placeIds: string[];
+  /** Given the day whatever the place says. */
+  include: string[];
+  /** Not given it whatever the place says. */
+  exclude: string[];
+  note?: string | null;
+  /** Ring the bell on the phones of the people it reaches (default on). */
+  notify?: boolean;
+};
+
+export async function saveHoliday(input: HolidayInput): Promise<Result<{ id: string; reaches: number }>> {
   try {
     const user = await requireSalesAccess(SALES_MANAGER("sales.holidays"));
 
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(input.onDate)) {
-      return err("That is not a date.", "validation");
-    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(input.onDate)) return err("That is not a date.", "validation");
     const name = input.name.trim();
-    if (!name) {
-      return err("Give it a name — a date on its own tells nobody why they are off.", "validation");
+    if (!name) return err("Give it a name — a date on its own tells nobody why they are off.", "validation");
+    if (name.length > 120) return err("Keep the name under 120 characters.", "validation");
+    if (!isHolidayLevel(input.level)) return err("Say who the holiday is for.", "validation");
+    const level = input.level;
+    const category = (HOLIDAY_CATEGORIES as readonly string[]).includes(input.category) ? input.category : "Festival";
+    const include = [...new Set(input.include)];
+    const exclude = [...new Set(input.exclude)].filter((id) => !include.includes(id));
+    const note = input.note?.trim() || null;
+
+    const kind = placeKindFor(level);
+    let placeIds: string[] = [];
+    if (kind) {
+      placeIds = [...new Set(input.placeIds)];
+      if (!placeIds.length) return err(`Pick at least one ${kind} — a ${kind} holiday has to say which.`, "validation");
+      const found = await db.execute<{ id: string }>(sql`
+        select id from places where kind = ${kind}
+           and id in (${sql.join(placeIds.map((id) => sql`${id}`), sql`, `)})
+      `);
+      if (found.length !== placeIds.length)
+        return err(`One of those is not a ${kind} on the place tree any more. Pick again.`, "validation");
+    }
+    if (level === "people" && !include.length)
+      return err("Name at least one person — a holiday for named people with nobody named is nobody's.", "validation");
+
+    const people = [...include, ...exclude];
+    if (people.length) {
+      const known = await db.execute<{ id: string }>(sql`
+        select id from users where id in (${sql.join(people.map((id) => sql`${id}`), sql`, `)})
+      `);
+      if (known.length !== people.length) return err("One of the people named is not on MahekOne.", "validation");
     }
 
-    const scope = input.scope?.trim() || null;
+    const [clash] = (await db.execute<{ id: string; name: string }>(sql`
+      select id, name from mbos_holidays
+       where on_date = ${input.onDate}::date and lower(name) = lower(${name})
+         and id <> ${input.id ?? ""}
+       limit 1
+    `)) as unknown as { id: string; name: string }[];
+    if (clash)
+      return err(`${clash.name} is already on the calendar for that day. Edit that one instead — two entries are two answers to who is off.`, "duplicate");
 
-    const clash = await db
-      .select({ id: mbosHolidays.id, name: mbosHolidays.name })
-      .from(mbosHolidays)
-      .where(
-        and(
-          sql`${mbosHolidays.onDate} = ${input.onDate}::date`,
-          scope ? eq(mbosHolidays.scope, scope) : sql`${mbosHolidays.scope} is null`,
-        ),
-      )
-      .limit(1);
-
-    if (clash.length) {
-      return err(
-        `${clash[0].name} is already recorded for that day and scope. Two entries for one day is two answers to whether anybody is working.`,
-        "duplicate",
-      );
+    let before: Record<string, unknown> | null = null;
+    if (input.id) {
+      const [row] = await db.select().from(mbosHolidays).where(eq(mbosHolidays.id, input.id)).limit(1);
+      if (!row) return err("That day is no longer on the calendar.", "not_found");
+      before = { name: row.name, onDate: row.onDate, level: row.level, placeIds: row.placeIds, category: row.category };
     }
 
-    /* One calendar: the day goes on HRMS's too, under the same id, so payroll
-       and the absentee list know about it (lib/services/holiday-calendar.ts). */
-    const holidayId = gen("mbos_hol");
+    /* Who it reaches BEFORE the write, so only people newly given the day are told. */
+    const reachedBefore = input.id
+      ? new Set(
+          ((await db.execute<{ id: string }>(sql`
+            select u.id from users u join app_access a on a.user_id = u.id and a.app = 'field'
+             where exists (select 1 from mbos_holidays h where h.id = ${input.id}
+                             and h.on_date = ${input.onDate}::date
+                             and ${holidayAppliesSql("h", sql`u.id`)})
+          `)) as unknown as { id: string }[]).map((r) => r.id),
+        )
+      : new Set<string>();
+
+    const holidayId = input.id ?? gen("mbos_hol");
     await db.transaction(async (tx) => {
-      await tx.insert(mbosHolidays).values({
-        id: holidayId,
-        onDate: input.onDate,
-        name,
-        scope,
-        createdById: user.id,
-        updatedById: user.id,
-      });
-      await mirrorToHrms(tx, { id: holidayId, onDate: input.onDate, name, scope }, user);
+      if (input.id) {
+        await tx
+          .update(mbosHolidays)
+          .set({ onDate: input.onDate, name, category, level, placeIds, note, updatedById: user.id, updatedAt: new Date() })
+          .where(eq(mbosHolidays.id, holidayId));
+      } else {
+        await tx.insert(mbosHolidays).values({
+          id: holidayId,
+          onDate: input.onDate,
+          name,
+          category,
+          level,
+          placeIds,
+          note,
+          createdById: user.id,
+          updatedById: user.id,
+        });
+        /* One calendar: the day goes on HRMS's too, under the same id. Who it
+           is for there is kept current by the rebuild below. */
+        await mirrorToHrms(tx, { id: holidayId, onDate: input.onDate, name, scope: level === "company" ? null : "Sales Dashboard" }, user);
+      }
+      await tx.delete(mbosHolidayAssignments).where(eq(mbosHolidayAssignments.holidayId, holidayId));
+      for (const [mode, ids] of [["include", include], ["exclude", exclude]] as const)
+        for (const userId of ids)
+          await tx.insert(mbosHolidayAssignments).values({ id: gen("hola"), holidayId, userId, mode, createdById: user.id });
     });
+
+    await rebuildHolidayMembers();
+    await syncHolidayToHrms(holidayId);
+
+    const reaches = (await db.execute<{ id: string; name: string }>(sql`
+      select u.id, u.name from users u join app_access a on a.user_id = u.id and a.app = 'field'
+       where u.active and exists (select 1 from mbos_holidays h where h.id = ${holidayId}
+                                    and ${holidayAppliesSql("h", sql`u.id`)})
+    `)) as unknown as { id: string; name: string }[];
 
     await db.insert(auditLog).values({
       id: gen("aud"),
       actorId: user.id,
-      action: "mbos.holiday.add",
+      action: input.id ? "mbos.holiday.edit" : "mbos.holiday.add",
       entityType: "mbos_holiday",
-      entityId: input.onDate,
-      afterState: { name, scope, onDate: input.onDate } as never,
+      entityId: holidayId,
+      beforeState: before as never,
+      afterState: { name, onDate: input.onDate, level, category, placeIds, include, exclude, reaches: reaches.length } as never,
     });
 
+    const day = await today();
+    if (input.notify !== false && input.onDate >= day) {
+      const newly = reaches.filter((r) => !reachedBefore.has(r.id));
+      await notifyUsers(
+        newly.map((r) => ({
+          userId: r.id,
+          title: `Holiday: ${name}`,
+          body: `${shortDay(input.onDate)} is a holiday for you${note ? ` — ${note}` : ""}. No punch-in is expected that day.`,
+          kind: "info" as const,
+          href: null,
+          mbosHref: null,
+        })),
+      );
+    }
+
     refresh();
-    return okVoid(`${name} recorded.`);
+    return ok(
+      { id: holidayId, reaches: reaches.length },
+      `${name} ${input.id ? "saved" : "recorded"} — it reaches ${reaches.length} ${reaches.length === 1 ? "person" : "people"} in the field.`,
+    );
   } catch (e) {
     return fromThrown(e);
   }
+}
+
+/** Kept for anything still posting the old three-field form: a company-wide day. */
+export async function addHoliday(input: { onDate: string; name: string; scope?: string | null }): Promise<Result> {
+  const r = await saveHoliday({ onDate: input.onDate, name: input.name, category: "Festival", level: "company", placeIds: [], include: [], exclude: [], note: input.scope ?? null });
+  return r.ok ? okVoid(r.message) : r;
+}
+
+/**
+ * ONE PERSON, ONE HOLIDAY: allocate it to him, take it from him, or put him
+ * back on whatever the holiday's level says. The By-employee view's switch.
+ */
+export async function setHolidayPerson(input: {
+  holidayId: string;
+  userId: string;
+  mode: "include" | "exclude" | "clear";
+  reason?: string | null;
+}): Promise<Result> {
+  try {
+    const user = await requireSalesAccess(SALES_MANAGER("sales.holidays"));
+    const [h] = await db.select().from(mbosHolidays).where(eq(mbosHolidays.id, input.holidayId)).limit(1);
+    if (!h) return err("That day is no longer on the calendar.", "not_found");
+    const [person] = await db.select({ id: users.id, name: users.name }).from(users).where(eq(users.id, input.userId)).limit(1);
+    if (!person) return err("That account is not on MahekOne.", "not_found");
+    const reason = input.reason?.trim() || null;
+    if (input.mode === "exclude" && !reason)
+      return err(`Say why ${person.name} is not getting ${h.name} — he will ask, and so will whoever reads his attendance.`, "validation");
+
+    await db.transaction(async (tx) => {
+      await tx
+        .delete(mbosHolidayAssignments)
+        .where(and(eq(mbosHolidayAssignments.holidayId, h.id), eq(mbosHolidayAssignments.userId, person.id)));
+      if (input.mode !== "clear")
+        await tx.insert(mbosHolidayAssignments).values({ id: gen("hola"), holidayId: h.id, userId: person.id, mode: input.mode, reason, createdById: user.id });
+      /* The phone hears it on the next pull even where the rebuild finds the
+         member set unchanged — a company-wide exclude lists nobody there. */
+      await tx.update(mbosHolidays).set({ updatedAt: new Date(), updatedById: user.id }).where(eq(mbosHolidays.id, h.id));
+    });
+    await rebuildHolidayMembers();
+    await syncHolidayToHrms(h.id);
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: input.mode === "include" ? "mbos.holiday.allocate" : input.mode === "exclude" ? "mbos.holiday.deallocate" : "mbos.holiday.reset",
+      entityType: "mbos_holiday",
+      entityId: h.id,
+      afterState: { name: h.name, onDate: h.onDate, person: person.name, personId: person.id, reason } as never,
+    });
+
+    if (h.onDate >= (await today()) && input.mode !== "clear")
+      await notifyUsers([
+        {
+          userId: person.id,
+          title: input.mode === "include" ? `Holiday: ${h.name}` : `${h.name} is a working day for you`,
+          body:
+            input.mode === "include"
+              ? `${shortDay(h.onDate)} is a holiday for you${reason ? ` — ${reason}` : ""}.`
+              : `${shortDay(h.onDate)} is not a holiday for you: ${reason}. Punch in as usual.`,
+          kind: input.mode === "include" ? "info" : "warn",
+          href: null,
+          mbosHref: null,
+        },
+      ]);
+
+    refresh();
+    return okVoid(
+      input.mode === "include"
+        ? `${h.name} given to ${person.name}.`
+        : input.mode === "exclude"
+          ? `${h.name} taken from ${person.name}.`
+          : `${person.name} is back on the usual rule for ${h.name}.`,
+    );
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** Who a holiday would reach, for the dialog — before anything is saved. */
+export async function previewHolidayAudience(input: {
+  level: string;
+  placeIds: string[];
+  include: string[];
+  exclude: string[];
+}): Promise<Result<{ id: string; name: string; reasons: string[] }[]>> {
+  try {
+    await requireSalesAccess(SALES_MANAGER("sales.holidays"));
+    if (!isHolidayLevel(input.level)) return ok([]);
+    const team = (await fieldTeam()).map((p) => p.id);
+    return ok(await previewAudience({ level: input.level, placeIds: input.placeIds, include: input.include, exclude: input.exclude }, team));
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** Places of one kind for the picker, searched on the server — the tree is thousands. */
+export async function searchHolidayPlaces(kind: string, query: string): Promise<Result<HolidayPlace[]>> {
+  try {
+    await requireSalesAccess(SALES_MANAGER("sales.holidays"));
+    if (!["state", "district", "city", "area"].includes(kind)) return ok([]);
+    return ok(await searchPlaces(kind, query));
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+function shortDay(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(
+    new Date(Date.UTC(y, m - 1, d)),
+  );
 }
 
 /** Taking a day back off the calendar. */
@@ -3307,33 +3557,6 @@ export async function setCoursePublished(input: {
 /* ═══════════════════════════════════════════════════════════ task allocation */
 
 /**
- * What a filter would match, before anybody commits to it.
- *
- * `fieldBook` is a plain read function, not a server action — this is the
- * thinnest possible wrapper, so the count a manager reviews here and the
- * count `bulkAssignTask` re-derives at save time come from the exact same
- * query and cannot drift.
- */
-export async function previewTaskTargets(filter: {
-  salesmanId?: string;
-  beat?: string;
-  missingGpsOnly?: boolean;
-  search?: string;
-}): Promise<Result<{ count: number; names: string[]; unassigned: number }>> {
-  try {
-    await requireSalesAccess({ modules: ["sales.tasks"] });
-    const matches = await fieldBook(filter);
-    return ok({
-      count: matches.length,
-      names: matches.slice(0, 8).map((c) => c.name),
-      unassigned: matches.filter((c) => !c.salesmanId).length,
-    });
-  } catch (e) {
-    return fromThrown(e);
-  }
-}
-
-/**
  * Assigning a task, on the web, to somebody who reads it on a handset.
  *
  * `mbos_tasks` already existed — it is how a rejected order raises "ring back
@@ -3422,101 +3645,433 @@ export async function createTask(input: {
   }
 }
 
+/* ---------------------------------------------------------- tasks with forms */
+
 /**
- * The same task, to whoever carries every shop a filter matches.
+ * ONE ASSIGNMENT, MANY ANSWERS.
  *
- * The pattern `assignSalesManager` already uses for moving accounts in bulk:
- * `expectedCount` is what was reviewed on screen, the filter is re-run here
- * rather than trusted from the client, and a mismatch is refused rather than
- * silently acting on a different set than the one somebody looked at.
- * `fieldBook` is the SAME read the review list itself would page through, so
- * the count cannot drift between the two.
+ * The office picks what to ask (a form of any fields, `lib/task-form.ts`),
+ * which shops it is about and who does it (`lib/task-audience.ts`), and this
+ * writes one `mbos_task_campaigns` row and one task per (salesman, shop) pair.
+ * The handset draws the form on each task; the answers come back on the task
+ * and are read side by side on `/sales/tasks/<campaign>`.
  *
- * One task per matching shop, addressed to whoever actually carries it — a
- * shop with nobody assigned is counted and skipped rather than silently
- * dropped or given to nobody.
+ * The preview and the save run the SAME expansion over the SAME reads, and the
+ * save refuses when the count has moved since it was reviewed — the shape the
+ * bulk tools elsewhere in this product already use, so nothing is written to a
+ * set nobody looked at.
+ *
+ * WHO MAY BE GIVEN WORK is the manager's active field team (`fieldTeam`, which
+ * is already narrowed by `managerScope`). A shop's carrier who holds no field
+ * app — a telecaller, the importer — would receive a task no screen of theirs
+ * can show, so that shop is counted as having nobody to do it.
  */
-export async function bulkAssignTask(input: {
-  filter: {
-    salesmanId?: string;
-    beat?: string;
-    missingGpsOnly?: boolean;
-    search?: string;
+
+const TASK_MODULE = "sales.tasks";
+
+function refreshCampaign(campaignId: string) {
+  try {
+    revalidatePath(`/sales/tasks/${campaignId}`);
+  } catch {
+    /* Outside a request — a job or a test — there is no cache to clear. */
+  }
+}
+
+const taskFieldSchema = z.object({
+  id: z.string().min(1).max(60),
+  type: z.enum(TASK_FIELD_TYPES),
+  label: z.string().max(300),
+  help: z.string().max(1000).optional(),
+  required: z.boolean().optional(),
+  options: z.array(z.string().max(200)).max(MAX_TASK_OPTIONS + 10).optional(),
+  min: z.number().finite().optional(),
+  max: z.number().finite().optional(),
+  unit: z.string().max(40).optional(),
+  showIf: z
+    .object({
+      field: z.string().min(1).max(60),
+      op: z.enum(["is", "is_not", "includes", "answered"]),
+      value: z.string().max(200).optional(),
+    })
+    .optional(),
+  link: z
+    .object({
+      target: z.enum(TASK_LINK_TARGET_KEYS as [TaskLinkTarget, ...TaskLinkTarget[]]),
+      mode: z.enum(["fill", "update"]),
+      scope: z.enum(["primary", "each"]).optional(),
+    })
+    .optional(),
+});
+
+const placesSchema = z.object({
+  state: z.string().max(4000).optional(),
+  district: z.string().max(4000).optional(),
+  city: z.string().max(4000).optional(),
+  area: z.string().max(4000).optional(),
+});
+
+const audienceSchema = z.object({
+  shops: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("none") }),
+    z.object({ kind: z.literal("list"), customerIds: z.array(z.string().min(1)).max(MAX_TASKS_PER_ASSIGNMENT) }),
+    z.object({
+      kind: z.literal("filter"),
+      places: placesSchema,
+      carriedBy: z.array(z.string().min(1)).max(500),
+      accountKinds: z.array(z.enum(["customer", "lead"])).max(2),
+      missingGpsOnly: z.boolean().optional(),
+      search: z.string().max(200).optional(),
+    }),
+  ]),
+  assignees: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("carrier") }),
+    z.object({ kind: z.literal("chosen"), salesmanIds: z.array(z.string().min(1)).max(500) }),
+  ]),
+});
+
+export type TaskAudiencePreview = {
+  tasks: number;
+  shops: number | null;
+  noCarrier: number;
+  outsideTeam: number;
+  tooMany: boolean;
+  /** Shops left out because their record already has everything asked. */
+  alreadyComplete: number;
+  salesmen: { id: string; name: string; count: number }[];
+  sample: string[];
+};
+
+/**
+ * The expansion both the preview and the save run. A task that only collects
+ * customer data (every question a linked FILL question) is not sent to a shop
+ * whose record already holds all of it — that visit would ask for nothing.
+ */
+async function resolveAudience(audience: TaskAudience, form: TaskField[] = []) {
+  const [allShops, team] = await Promise.all([shopsForTarget(audience.shops), fieldTeam()]);
+  const active = new Map(team.filter((s) => s.active).map((s) => [s.id, s.name]));
+  let shops = allShops;
+  let alreadyComplete = 0;
+  if (shops && shops.length && formHasLinks(form)) {
+    const contexts = await linkContexts(shops.map((c) => c.id));
+    const before = shops.length;
+    shops = shops.filter((c) => !linkedTaskComplete(form, contexts.get(c.id) ?? null));
+    alreadyComplete = before - shops.length;
+  }
+  const expanded = expandTaskAudience(
+    shops?.map((c) => ({ id: c.id, carrierId: c.carrierId })) ?? null,
+    audience.assignees,
+    (id) => active.has(id),
+  );
+  return { shops, active, alreadyComplete, ...expanded };
+}
+
+function previewOf(r: Awaited<ReturnType<typeof resolveAudience>>): TaskAudiencePreview {
+  const per = new Map<string, number>();
+  for (const p of r.pairs) per.set(p.salesmanId, (per.get(p.salesmanId) ?? 0) + 1);
+  return {
+    tasks: r.pairs.length,
+    shops: r.shops ? Math.min(r.shops.length, MAX_TASKS_PER_ASSIGNMENT) : null,
+    noCarrier: r.noCarrier,
+    outsideTeam: r.outsideTeam,
+    alreadyComplete: r.alreadyComplete,
+    tooMany: r.pairs.length > MAX_TASKS_PER_ASSIGNMENT || (r.shops?.length ?? 0) > MAX_TASKS_PER_ASSIGNMENT,
+    salesmen: [...per.entries()]
+      .map(([id, count]) => ({ id, name: r.active.get(id) ?? "Somebody", count }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)),
+    sample: (r.shops ?? []).slice(0, 6).map((c) => c.name),
   };
-  expectedCount: number;
+}
+
+/** Who and how many an audience means, before anything is written. */
+export async function previewTaskAudience(
+  input: TaskAudience,
+  formInput: TaskField[] = [],
+): Promise<Result<TaskAudiencePreview>> {
+  try {
+    await requireSalesAccess(SALES_MANAGER(TASK_MODULE));
+    const parsed = audienceSchema.safeParse(input);
+    if (!parsed.success) return err("That selection could not be read. Pick it again.", "validation");
+    const problem = taskAudienceProblem(parsed.data);
+    if (problem) return err(problem, "validation");
+    const formParsed = z.array(taskFieldSchema).max(MAX_TASK_FIELDS).safeParse(formInput ?? []);
+    const form = formParsed.success ? tidyTaskForm(formParsed.data as TaskField[]) : [];
+    return ok(previewOf(await resolveAudience(parsed.data, form)));
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** The shop picker's search. */
+export async function searchTaskShops(query: string): Promise<Result<AudienceShopRow[]>> {
+  try {
+    await requireSalesAccess(SALES_MANAGER(TASK_MODULE));
+    return ok(await searchShopsForTask(String(query ?? "").slice(0, 100)));
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** The four place dropdowns, re-counted as the picks above narrow them. */
+export async function loadTaskPlaceOptions(picks: PlaceFilterValues): Promise<Result<PlaceFilterOptions>> {
+  try {
+    await requireSalesAccess(SALES_MANAGER(TASK_MODULE));
+    const parsed = placesSchema.safeParse(picks ?? {});
+    return ok(await taskPlaceOptions(parsed.success ? parsed.data : {}));
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** Assign a task, with whatever it asks for, to everybody the audience means. */
+export async function assignTaskCampaign(input: {
   title: string;
   description?: string;
   priority?: TaskPriority;
   dueDate: string;
-}): Promise<Result<{ created: number; skipped: number }>> {
+  form: TaskField[];
+  audience: TaskAudience;
+  expectedCount: number;
+  /** The plain-words description the AI drafted the form from, if it did. */
+  aiBrief?: string;
+}): Promise<Result<{ campaignId: string; created: number }>> {
   try {
-    const user = await requireSalesAccess(SALES_MANAGER("sales.tasks"));
-    const title = input.title.trim();
+    const user = await requireSalesAccess(SALES_MANAGER(TASK_MODULE));
+    const title = String(input.title ?? "").trim();
     const problem = validTask(title, input.dueDate, input.priority);
     if (problem) return err(problem, "validation");
 
-    const matches = await fieldBook(input.filter);
-    if (matches.length !== input.expectedCount) {
+    const formParsed = z.array(taskFieldSchema).max(MAX_TASK_FIELDS).safeParse(input.form ?? []);
+    if (!formParsed.success) return err("The form could not be read. Check each question.", "validation");
+    const form = tidyTaskForm(formParsed.data as TaskField[]);
+    const formProblems = taskFormProblems(form);
+    if (formProblems.length) return err(formProblems[0], "validation");
+
+    const audParsed = audienceSchema.safeParse(input.audience);
+    if (!audParsed.success) return err("Who it goes to could not be read. Pick it again.", "validation");
+    const audience = audParsed.data;
+    const audProblem = taskAudienceProblem(audience);
+    if (audProblem) return err(audProblem, "validation");
+
+    const resolved = await resolveAudience(audience, form);
+    const preview = previewOf(resolved);
+    if (preview.tooMany) {
       return err(
-        `This would now create ${matches.length} tasks, not the ${input.expectedCount} you reviewed. Open the list again and check what changed.`,
+        `That is more than ${MAX_TASKS_PER_ASSIGNMENT.toLocaleString("en-IN")} tasks in one go. Narrow it by place or by salesman.`,
+        "validation",
+      );
+    }
+    if (preview.tasks !== input.expectedCount) {
+      return err(
+        `This would now create ${preview.tasks} tasks, not the ${input.expectedCount} you reviewed. Check who it goes to again.`,
         "conflict",
       );
     }
-    if (!matches.length) {
-      return err("Nothing matches this filter.", "validation");
-    }
+    if (!preview.tasks) return err("Nobody would receive this task.", "validation");
 
-    let created = 0;
-    let skipped = 0;
-    const byAssignee = new Map<string, number>();
-    for (const c of matches) {
-      if (!c.salesmanId) {
-        skipped += 1;
-        continue;
-      }
-      await db.insert(mbosTasks).values({
-        id: gen("mbos_task"),
-        title,
-        description: input.description?.trim() || null,
-        assignedToUserId: c.salesmanId,
-        assignedByUserId: user.id,
-        priority: input.priority ?? "medium",
-        dueDate: input.dueDate,
-        customerId: c.id,
-        status: "open",
-        createdById: user.id,
-        updatedById: user.id,
-      });
-      created += 1;
-      byAssignee.set(c.salesmanId, (byAssignee.get(c.salesmanId) ?? 0) + 1);
-    }
-
-    await db.insert(auditLog).values({
-      id: gen("aud"),
-      actorId: user.id,
-      action: "mbos.task.bulkCreated",
-      entityType: "mbos_task",
-      entityId: null,
-      beforeState: null as never,
-      afterState: { title, dueDate: input.dueDate, created, skipped, filter: input.filter } as never,
+    const placeIds =
+      audience.shops.kind === "filter"
+        ? Object.values(audience.shops.places).flatMap((v) => (v ?? "").split(",")).filter(Boolean)
+        : [];
+    const places = await placeNames(placeIds);
+    const audienceSentence = taskAudienceSentence(audience, {
+      salesman: (id) => resolved.active.get(id) ?? "somebody",
+      place: (id) => places.get(id) ?? "a place",
     });
 
-    for (const [assigneeId, count] of byAssignee) {
+    const campaignId = gen("mbos_taskc");
+    const description = input.description?.trim() || null;
+    const priority = input.priority ?? "medium";
+    await db.transaction(async (tx) => {
+      await tx.insert(mbosTaskCampaigns).values({
+        id: campaignId,
+        title,
+        description,
+        form,
+        audience,
+        audienceSentence,
+        priority,
+        dueDate: input.dueDate,
+        taskCount: preview.tasks,
+        skippedComplete: preview.alreadyComplete,
+        aiBrief: input.aiBrief?.trim().slice(0, 4000) || null,
+        createdById: user.id,
+      });
+      for (let i = 0; i < resolved.pairs.length; i += 500) {
+        await tx.insert(mbosTasks).values(
+          resolved.pairs.slice(i, i + 500).map((p) => ({
+            id: gen("mbos_task"),
+            title,
+            description,
+            assignedToUserId: p.salesmanId,
+            assignedByUserId: user.id,
+            priority,
+            dueDate: input.dueDate,
+            customerId: p.customerId,
+            status: "open" as const,
+            campaignId,
+            sourceType: "campaign",
+            sourceId: campaignId,
+            createdById: user.id,
+            updatedById: user.id,
+          })),
+        );
+      }
+      await tx.insert(auditLog).values({
+        id: gen("aud"),
+        actorId: user.id,
+        action: "mbos.task.campaignCreated",
+        entityType: "mbos_task_campaign",
+        entityId: campaignId,
+        beforeState: null as never,
+        afterState: {
+          title,
+          dueDate: input.dueDate,
+          questions: form.length,
+          tasks: preview.tasks,
+          audience: audienceSentence,
+        } as never,
+      });
+    });
+
+    const asks = form.filter((f) => f.type !== "info").length;
+    for (const s of preview.salesmen) {
       await tell(
-        assigneeId,
-        count === 1 ? "A task was assigned to you" : `${count} tasks were assigned to you`,
-        `${user.name}: "${title}" — due ${input.dueDate}`,
+        s.id,
+        s.count === 1 ? "A task was assigned to you" : `${s.count} tasks were assigned to you`,
+        `${user.name}: "${title}"${asks ? ` — ${plural(asks, "question")} to answer` : ""} — due ${input.dueDate}`,
         "/tasks",
       );
     }
 
     refresh();
+    refreshCampaign(campaignId);
+    const skipped = preview.noCarrier + preview.outsideTeam;
     return ok(
-      { created, skipped },
-      skipped
-        ? `${plural(created, "task")} created. ${skipped} ${skipped === 1 ? "shop has" : "shops have"} nobody to assign to and ${skipped === 1 ? "was" : "were"} skipped.`
-        : `${plural(created, "task")} created.`,
+      { campaignId, created: preview.tasks },
+      `${plural(preview.tasks, "task")} assigned to ${plural(preview.salesmen.length, "salesman", "salesmen")}.` +
+        (skipped ? ` ${plural(skipped, "shop")} had nobody in your field team to do it and ${skipped === 1 ? "was" : "were"} skipped.` : "") +
+        (preview.alreadyComplete ? ` ${plural(preview.alreadyComplete, "shop")} already had everything on the customer record and ${preview.alreadyComplete === 1 ? "was" : "were"} left out.` : ""),
     );
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/* ---------------------------------------------------------- the task brain */
+
+/** Draft a whole task — questions, links and targeting — from a description. */
+export async function aiDraftTask(brief: string): Promise<Result<TaskDraft>> {
+  try {
+    await requireSalesAccess(SALES_MANAGER(TASK_MODULE));
+    const text = String(brief ?? "").trim();
+    if (text.length < 8) return err("Say a little more about what you need from the field.", "validation");
+    const draft = await draftTask(text);
+    if (!draft) return err("The AI could not draft this just now. Build it by hand, or try again.", "rule_violation");
+    return ok(draft);
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** Which questions are really the customer record's own fields. */
+export async function aiSuggestLinks(
+  formInput: TaskField[],
+  title: string,
+): Promise<Result<{ suggestions: LinkSuggestion[]; usedAi: boolean }>> {
+  try {
+    await requireSalesAccess(SALES_MANAGER(TASK_MODULE));
+    const parsed = z.array(taskFieldSchema).max(MAX_TASK_FIELDS).safeParse(formInput ?? []);
+    if (!parsed.success) return err("The form could not be read.", "validation");
+    return ok(await suggestLinks(tidyTaskForm(parsed.data as TaskField[]), String(title ?? "").slice(0, 200)));
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** Read everything the field answered, and keep the reading on the assignment. */
+export async function aiSummariseCampaign(campaignId: string): Promise<Result<TaskSummary>> {
+  try {
+    await requireSalesAccess(SALES_MANAGER(TASK_MODULE));
+    const c = await taskCampaign(campaignId, await today());
+    if (!c) return err("That assignment is not one of your team's.", "not_found");
+    if (!c.tasks.some((t) => t.status === "done")) return err("Nothing has been answered yet.", "validation");
+    const summary = await summariseCampaign(c);
+    if (!summary) return err("The AI could not read the answers just now. Try again in a minute.", "rule_violation");
+    await db
+      .update(mbosTaskCampaigns)
+      .set({ aiSummary: JSON.stringify(summary), aiSummaryAt: new Date() })
+      .where(eq(mbosTaskCampaigns.id, campaignId));
+    refreshCampaign(campaignId);
+    return ok(summary);
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * Withdraw what is still open. Answered tasks keep their answers — a reply
+ * somebody gave is a fact about the shop whatever happens to the question.
+ */
+export async function closeTaskCampaign(campaignId: string): Promise<Result<{ cancelled: number }>> {
+  try {
+    const user = await requireSalesAccess(SALES_MANAGER(TASK_MODULE));
+    const scope = await managerScope();
+    const rows = (await db.execute<{ id: string }>(sql`
+      update mbos_tasks t
+         set status = 'cancelled', updated_at = now(), updated_by_id = ${user.id}
+       where t.campaign_id = ${campaignId}
+         and t.status in ('open', 'in_progress')
+         ${onlyMine(scope, "t.assigned_to_user_id")}
+      returning t.id
+    `)) as unknown as { id: string }[];
+    await db
+      .update(mbosTaskCampaigns)
+      .set({ closedAt: new Date(), updatedAt: new Date() })
+      .where(eq(mbosTaskCampaigns.id, campaignId));
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: "mbos.task.campaignClosed",
+      entityType: "mbos_task_campaign",
+      entityId: campaignId,
+      beforeState: null as never,
+      afterState: { cancelled: rows.length } as never,
+    });
+    refresh();
+    refreshCampaign(campaignId);
+    return ok({ cancelled: rows.length }, rows.length ? `${plural(rows.length, "open task")} withdrawn.` : "Nothing was still open.");
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** Nudge everybody who still owes an answer — one bell each, not one a task. */
+export async function remindTaskCampaign(campaignId: string): Promise<Result<{ reminded: number }>> {
+  try {
+    const user = await requireSalesAccess(SALES_MANAGER(TASK_MODULE));
+    const scope = await managerScope();
+    const [head] = await db
+      .select({ title: mbosTaskCampaigns.title })
+      .from(mbosTaskCampaigns)
+      .where(eq(mbosTaskCampaigns.id, campaignId));
+    if (!head) return err("That assignment no longer exists.", "not_found");
+    const rows = (await db.execute<{ userId: string; open: number }>(sql`
+      select t.assigned_to_user_id as "userId", count(*)::int as open
+        from mbos_tasks t
+       where t.campaign_id = ${campaignId}
+         and t.status in ('open', 'in_progress')
+         ${onlyMine(scope, "t.assigned_to_user_id")}
+       group by t.assigned_to_user_id
+    `)) as unknown as { userId: string; open: number }[];
+    for (const r of rows) {
+      await tell(
+        r.userId,
+        "Reminder: a task is waiting on you",
+        `${user.name}: "${head.title}" — ${plural(Number(r.open), "task")} still open`,
+        "/tasks",
+      );
+    }
+    return ok({ reminded: rows.length }, rows.length ? `Reminded ${plural(rows.length, "salesman", "salesmen")}.` : "Nobody owes an answer.");
   } catch (e) {
     return fromThrown(e);
   }

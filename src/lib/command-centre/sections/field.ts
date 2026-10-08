@@ -285,7 +285,7 @@ async function workingDaysIn(from: string, to: string): Promise<number> {
   const hol = await db.execute<{ d: string }>(sql`
     select on_date::text as d from mbos_holidays
      where on_date between ${from}::date and ${to}::date
-       and coalesce(scope, '') = ''
+       and level = 'company'
   `);
   const holidays = new Set(hol.map((h) => h.d));
   let n = 0;

@@ -516,6 +516,8 @@ export async function mbosNightly(): Promise<Counted> {
     await sweepPushFailures(),
     await closeOpenVisits(),
     await markMissedCheckouts(),
+    /* Who each holiday reaches, before anything is judged against it. */
+    await rebuildHolidays(),
     /* AFTER the two closers above, so a day they just closed is judged tonight
        rather than tomorrow night. */
     await rebuildAttendanceVerdicts(),
@@ -561,6 +563,21 @@ async function refreshPerformance(): Promise<Counted> {
  * setting says and what it does is exactly the kind of thing nobody notices
  * until it is the subject of an argument about somebody's pay.
  */
+/**
+ * Field tasks that collect customer data and whose shop's record now has it,
+ * whoever put it there — the CRM, the sheet, another salesman — complete
+ * themselves. Hourly is the net under the contact screens, which settle at
+ * once.
+ */
+async function settleTasksFromRecords(): Promise<Counted> {
+  const { settleLinkedTasks } = await import("./services/task-link-service");
+  const { completed } = await settleLinkedTasks();
+  return {
+    recordsAffected: completed,
+    detail: completed ? `${completed} field tasks completed from the customer record` : "no field task completed from the record",
+  };
+}
+
 async function sweepSelfies(): Promise<Counted> {
   const { sweepAttendanceSelfies } = await import("./services/attachment-service");
   const { swept } = await sweepAttendanceSelfies();
@@ -595,6 +612,18 @@ async function judgeRecentDays(): Promise<Counted> {
   return { recordsAffected: written, detail: `${written} of ${read} recent days re-judged` };
 }
 
+/**
+ * Who each state, district, city, area and named holiday reaches, resolved
+ * again. Every write that can move the answer already rebuilds it; this is the
+ * net under all of them — a salesman granted the field app, or a place tree
+ * re-imported, moves it without passing through a holiday screen.
+ */
+async function rebuildHolidays(): Promise<Counted> {
+  const { rebuildHolidayMembers } = await import("./services/holiday-service");
+  const { holidays, changed } = await rebuildHolidayMembers();
+  return { recordsAffected: changed, detail: `${changed} of ${holidays} holidays re-resolved` };
+}
+
 export async function mbosHourly(): Promise<Counted> {
   const parts = [
     await escalateOverdueTasks(),
@@ -607,9 +636,11 @@ export async function mbosHourly(): Promise<Counted> {
     await chaseSampleReviews(),
     await flagSamplesPastDelivery(),
     await refreshPerformance(),
+    await rebuildHolidays(),
     await judgeRecentDays(),
     await readPushReceipts(),
     await sweepSelfies(),
+    await settleTasksFromRecords(),
   ];
   return {
     recordsAffected: parts.reduce((a, p) => a + p.recordsAffected, 0),

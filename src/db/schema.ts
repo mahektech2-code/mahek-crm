@@ -8263,13 +8263,89 @@ export const mbosHolidays = pgTable(
     id: text("id").primaryKey(),
     onDate: date("on_date").notNull(),
     name: text("name").notNull(),
+    /**
+     * The free-text "where" this table used to carry. Kept, read by nothing
+     * that decides who is off: a row from before levels existed shows it as
+     * "typed as …" so somebody can choose properly. New rows leave it null.
+     */
     scope: text("scope"),
+    /**
+     * WHO IT IS FOR — company · state · district · city · area · people
+     * (`HOLIDAY_LEVELS` in `lib/engines/holiday-audience.ts`). Text, not an
+     * enum, for the reason `places.kind` gives. `company` is the default so
+     * every row that existed went on meaning what the server read it as.
+     */
+    level: text("level").notNull().default("company"),
+    /** National · Festival · Regional · Weekly off · Special. A label only. */
+    category: text("category").notNull().default("Festival"),
+    /** The `places` ids it covers, for the four place levels. */
+    placeIds: jsonb("place_ids").$type<string[]>().notNull().default([]),
+    /**
+     * "Odisha", "Cuttack, Puri", "3 named people" — written on every save and
+     * every rebuild, and what the handset is sent as `scope`. Null is
+     * company-wide.
+     */
+    audienceLabel: text("audience_label"),
+    note: text("note"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     createdById: text("created_by_id"),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     updatedById: text("updated_by_id"),
   },
   (t) => [index("mbos_holidays_date_idx").on(t.onDate)],
+);
+
+/**
+ * A holiday given to, or taken from, ONE person — the allocate and deallocate
+ * on the Holidays screen. A decision, so it is a row somebody wrote and never
+ * a cache. `exclude` wins over everything (see `holiday-audience.ts`).
+ */
+export const mbosHolidayAssignments = pgTable(
+  "mbos_holiday_assignments",
+  {
+    id: text("id").primaryKey(),
+    holidayId: text("holiday_id")
+      .notNull()
+      .references(() => mbosHolidays.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** include · exclude */
+    mode: text("mode").notNull(),
+    reason: text("reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id"),
+  },
+  (t) => [
+    uniqueIndex("mbos_holiday_assignments_key").on(t.holidayId, t.userId),
+    index("mbos_holiday_assignments_user_idx").on(t.userId),
+  ],
+);
+
+/**
+ * WHO A NON-COMPANY HOLIDAY REACHES, resolved. A CACHE, rebuilt by
+ * `rebuildHolidayMembers` after every holiday, assignment or territory write
+ * and hourly — so the attendance verdict, leave and the handset can ask "is
+ * this his day off" with a join instead of re-deriving place matching in SQL.
+ * Company-wide holidays are not listed here: they reach everybody not
+ * excluded, which `holidayAppliesSql` says directly.
+ */
+export const mbosHolidayMembers = pgTable(
+  "mbos_holiday_members",
+  {
+    holidayId: text("holiday_id")
+      .notNull()
+      .references(() => mbosHolidays.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** "Odisha", "Named" — why, joined with " · ". */
+    reason: text("reason").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.holidayId, t.userId] }),
+    index("mbos_holiday_members_user_idx").on(t.userId),
+  ],
 );
 
 export const mbosTours = pgTable(
@@ -8337,6 +8413,52 @@ export const mbosTaskStatusEnum = pgEnum("mbos_task_status", [
 ]);
 
 /**
+ * One ASSIGNMENT from the Sales Dashboard — the thing a manager sets once and
+ * the field answers many times.
+ *
+ * A manager who asks twenty salesmen for a photo of each of their shops writes
+ * one of these and gets one `mbos_tasks` row per (salesman, shop) pair, each
+ * pointing back here. The FORM lives here and nowhere else: what was asked is
+ * one fact, and a copy on each task would be two hundred copies to disagree.
+ * The results screen reads the tasks through this row, so "what did everybody
+ * say" is one query rather than a search for tasks that happen to share a
+ * title.
+ *
+ * The form is a `TaskField[]` (`lib/task-form.ts`) and is never edited after
+ * it is assigned — answers are keyed by field id, and changing a question
+ * under an answer already given would make the answer mean something nobody
+ * said. `audience` is what the manager picked, kept so the header can say it
+ * back; it is not re-run.
+ */
+export const mbosTaskCampaigns = pgTable(
+  "mbos_task_campaigns",
+  {
+    id: text("id").primaryKey(),
+    title: text("title").notNull(),
+    description: text("description"),
+    form: jsonb("form").notNull().default([]),
+    audience: jsonb("audience"),
+    audienceSentence: text("audience_sentence"),
+    priority: mbosTaskPriorityEnum("priority").notNull().default("medium"),
+    dueDate: date("due_date"),
+    taskCount: integer("task_count").notNull().default(0),
+    createdById: text("created_by_id").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    /** Set when the manager withdrew what was still open. */
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    /** The plain-words description the AI drafted the form from, if it did. */
+    aiBrief: text("ai_brief"),
+    /** The last AI reading of the answers, and when it was taken. */
+    aiSummary: text("ai_summary"),
+    aiSummaryAt: timestamp("ai_summary_at", { withTimezone: true }),
+    /** Shops left out because their record already had everything asked. */
+    skippedComplete: integer("skipped_complete").notNull().default(0),
+  },
+  (t) => [index("mbos_task_campaigns_created_idx").on(t.createdAt)],
+);
+
+/**
  * §2.11 — an action item with somebody's name and a date on it.
  *
  * `sourceType`/`sourceId` are how the system assigns itself work: a rejected
@@ -8371,8 +8493,24 @@ export const mbosTasks = pgTable(
     /** Where the system raised it itself: `rejected_order`, `sample`, `visit`. */
     sourceType: text("source_type"),
     sourceId: text("source_id"),
+    /** The assignment this task is one row of. Null for a task the salesman
+        raised himself or the app raised on its own. */
+    campaignId: text("campaign_id").references(() => mbosTaskCampaigns.id, {
+      onDelete: "set null",
+    }),
+    /** The answers to the assignment's form, keyed by field id — see
+        `lib/task-form.ts`. Cleaned on arrival; never typed by the office. */
+    responses: jsonb("responses"),
+    respondedAt: timestamp("responded_at", { withTimezone: true }),
+    /** What became of each linked answer on the record, keyed like `responses`:
+        `saved`, `same`, `kept` (fill mode, record already had one) or a reason. */
+    linkResults: jsonb("link_results"),
+    /** `answer` — the salesman submitted it; `record` — the record already said
+        everything it asked, so it completed itself. */
+    completedVia: text("completed_via"),
   },
   (t) => [
+    index("mbos_tasks_campaign_idx").on(t.campaignId),
     index("mbos_tasks_assignee_idx").on(t.assignedToUserId, t.status, t.dueDate),
     index("mbos_tasks_customer_idx").on(t.customerId),
     index("mbos_tasks_overdue_idx").on(t.status, t.dueDate),
@@ -8758,7 +8896,7 @@ export const mbosDocuments = pgTable(
      * The people it is tagged to, as USER ids — what a handset signs in as.
      * Empty means everybody in the field. Narrows `visibleToRoles`, never
      * widens it. Tagging somebody off writes them a tombstone, because a pull
-     * says what exists and only a tombstone says what stopped (drizzle/0229).
+     * says what exists and only a tombstone says what stopped (drizzle/0232).
      */
     visibleToUserIds: jsonb("visible_to_user_ids").$type<string[]>().notNull().default([]),
     active: boolean("active").notNull().default(true),

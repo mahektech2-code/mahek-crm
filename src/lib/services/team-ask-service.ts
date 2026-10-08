@@ -120,7 +120,8 @@ function describe(views: BuiltView[], enums: Map<string, string[]>): string {
 /** A value as the model should read it: instants in IST, dates as dates. */
 function plain(value: unknown, typeOid: number | undefined): unknown {
   if (value instanceof Date) {
-    if (typeOid === 1082) return calendarDate(value);
+    /* A DATE column: the driver parses it as UTC midnight, so read it back in UTC. */
+    if (typeOid === 1082) return calendarDate(value, "UTC");
     return (
       new Intl.DateTimeFormat("en-CA", {
         timeZone: APP_TIMEZONE,
