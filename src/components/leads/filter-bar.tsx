@@ -389,7 +389,7 @@ export function LeadFilterBar({
               role="dialog"
               aria-label="Narrow this list"
               style={{ top: at.top, left: at.left, width: 560, maxHeight: at.maxHeight }}
-              className="animate-fade-in fixed z-50 flex flex-col overflow-hidden rounded-[6px] border border-line bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
+              className="animate-fade-in fixed z-[95] flex flex-col overflow-hidden rounded-[6px] border border-line bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
             >
               <div className="flex-1 overflow-y-auto px-4 py-3">
                 {GROUPS.map((group) => {
