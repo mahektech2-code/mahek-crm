@@ -236,7 +236,7 @@ export function ComboBox({
               ref={panelRef}
               id="combo-panel"
               style={{ top: at.top, left: at.left, width: at.width }}
-              className="animate-fade-in fixed z-50 flex max-h-[280px] flex-col overflow-hidden rounded-[6px] border border-line bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
+              className="animate-fade-in fixed z-[95] flex max-h-[280px] flex-col overflow-hidden rounded-[6px] border border-line bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
             >
               {matches.length ? (
                 <div ref={rowsRef} role="listbox" aria-label={label} className="overflow-y-auto py-1">

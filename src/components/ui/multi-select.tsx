@@ -172,7 +172,7 @@ export function MultiSelect({
               aria-label={label}
               aria-multiselectable="true"
               style={{ top: at.top, left: at.left, width: at.width }}
-              className="animate-fade-in fixed z-50 flex max-h-[320px] flex-col overflow-hidden rounded-[6px] border border-line bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
+              className="animate-fade-in fixed z-[95] flex max-h-[320px] flex-col overflow-hidden rounded-[6px] border border-line bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
             >
               {options.length > SEARCH_THRESHOLD ? (
                 <input
