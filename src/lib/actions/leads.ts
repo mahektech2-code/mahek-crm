@@ -53,7 +53,7 @@ import {
   applyLeadStageMove,
   evaluateLeadStageMove,
   leadGateInput,
-  leadManagerCandidates,
+  leadManagerCandidatesFor,
   leadRow,
   type LeadRow,
 } from "@/lib/services/lead-service";
@@ -1121,7 +1121,7 @@ export async function assignLeadManager(
 
     let chosen = managerId ?? null;
     if (!chosen) {
-      const candidates = await leadManagerCandidates(lead.territoryRegion);
+      const candidates = await leadManagerCandidatesFor(customerId);
       chosen = candidates[0]?.id ?? null;
       if (!chosen) {
         return err(

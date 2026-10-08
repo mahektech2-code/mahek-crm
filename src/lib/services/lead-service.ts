@@ -1,3 +1,4 @@
+import { stateKey, stateVariants } from "@/lib/india-states";
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
@@ -1339,23 +1340,47 @@ function stageMoveSummary(
  * a permission model that silently narrows what people already hold is one
  * nobody can deploy, and the same is true of a worklist.
  */
-export async function leadManagerCandidates(region: string | null): Promise<
-  { id: string; name: string; national: boolean }[]
-> {
+export async function leadManagerCandidates(
+  region: string | null,
+  city: string | null = null,
+): Promise<{ id: string; name: string; national: boolean }[]> {
   const [managers, territories] = await Promise.all([
     db
       .select({ id: users.id, name: users.name })
       .from(users)
       .where(and(eq(users.role, "manager"), eq(users.active, true))),
     db
-      .select({ userId: mbosUserTerritories.userId, region: mbosUserTerritories.region })
+      .select({
+        userId: mbosUserTerritories.userId,
+        kind: mbosUserTerritories.kind,
+        region: mbosUserTerritories.region,
+        parent: mbosUserTerritories.parent,
+      })
       .from(mbosUserTerritories),
   ]);
 
-  const covered = new Map<string, string[]>();
+  const covered = new Map<string, typeof territories>();
   for (const t of territories) {
-    covered.set(t.userId, [...(covered.get(t.userId) ?? []), t.region]);
+    covered.set(t.userId, [...(covered.get(t.userId) ?? []), t]);
   }
+
+  /* The lead's place, read the way `territoryClause` reads a shop's: a state on
+     every spelling of it, a city plain, trimmed and case-insensitive. The
+     sheet also writes whole postal addresses into `city`, so the first
+     comma-separated field is what is compared. */
+  const leadState = stateKey(region);
+  const leadCity = (city ?? "").split(",")[0].trim().toLowerCase();
+  const covers = (t: (typeof territories)[number]): boolean => {
+    if (t.kind === "state" || t.kind === "region") {
+      return leadState !== "" && stateVariants(t.region).includes(leadState);
+    }
+    if (t.kind === "city") {
+      if (!leadCity || t.region.trim().toLowerCase() !== leadCity) return false;
+      /* A city picked under a state only matches inside it. */
+      return !t.parent?.trim() || (leadState !== "" && stateVariants(t.parent).includes(leadState));
+    }
+    return false;
+  };
 
   const out: { id: string; name: string; national: boolean }[] = [];
   for (const m of managers) {
@@ -1369,9 +1394,11 @@ export async function leadManagerCandidates(region: string | null): Promise<
     const mine = covered.get(m.id);
     /* No rows at all is national. Rows that are all somewhere else is a
        manager who covers a different part of the country, and offering them
-       here would make the default meaningless. */
+       here would make the default meaningless. A state, region or city row is
+       all matched — the lead's real geography, not only `territory_region`,
+       which is empty on most of the book. */
     if (!mine) out.push({ id: m.id, name: m.name, national: true });
-    else if (region && mine.includes(region)) out.push({ id: m.id, name: m.name, national: false });
+    else if (mine.some(covers)) out.push({ id: m.id, name: m.name, national: false });
   }
   /* Whoever names this region sorts above whoever covers everywhere: a
      regional answer is the better default and the picker is read top-down. */
@@ -1400,10 +1427,10 @@ export async function leadManagerCandidatesFor(
   customerId: string,
 ): Promise<{ id: string; name: string; national: boolean }[]> {
   const [row] = await db
-    .select({ region: customers.territoryRegion })
+    .select({ territoryRegion: customers.territoryRegion, region: customers.region, city: customers.city })
     .from(customers)
     .where(eq(customers.id, customerId))
     .limit(1);
   if (!row) return [];
-  return leadManagerCandidates(row.region);
+  return leadManagerCandidates(row.territoryRegion?.trim() || row.region?.trim() || null, row.city);
 }
