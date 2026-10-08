@@ -94,6 +94,8 @@ export type FieldSpec = {
   mic?: boolean;
   /** Field may not be edited (shown for context). */
   readOnly?: boolean;
+  /** Takes the whole row of the form rather than one column. */
+  wide?: boolean;
   /** How sure an AI reading is of this value: high, check, or not found. */
   conf?: "high" | "check" | "not found";
 };

@@ -58,7 +58,7 @@ export function Field({
   const grouped = f.t === "multi" || f.t === "photo" || f.t === "video" || f.t === "suggest" || f.t === "pin";
   const Wrap = grouped ? "div" : "label";
   return (
-    <Wrap className="block min-w-0" {...(grouped ? { role: "group", "aria-label": f.l } : {})}>
+    <Wrap className={cx("block min-w-0", f.wide && "col-span-full")} {...(grouped ? { role: "group", "aria-label": f.l } : {})}>
       <span className="mb-1 flex items-center gap-1.5 text-xs font-medium tracking-[0.04em] text-muted uppercase">
         {f.l}
         {tag ? <span className={cx("rounded-[3px] px-1.5 text-[11px] font-medium tracking-normal normal-case", tagTone)}>{tag}</span> : null}

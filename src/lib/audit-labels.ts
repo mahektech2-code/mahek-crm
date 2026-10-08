@@ -623,6 +623,7 @@ const DESCRIBE: Record<string, Describer> = {
     changes: false,
   }),
   "erp.viewAs.start": (c) => ({ says: ["previewed the ERP as", strong(str(c.a.as) ?? "somebody else")], note: null, changes: false }),
+  "erp.rawMaterial.duties": (c) => ({ says: ["set who requests, raises, approves and tests", c.subject()], note: null, changes: false }),
   "erp.viewAs.stop": (c) => ({ says: ["stopped previewing the ERP as", strong(str(c.b.as) ?? "somebody else")], note: null, changes: false }),
   "provision-user": (c) => ({ says: ["updated the account of", c.user(c.e.entityId), "from the team list"], changes: false }),
   "admin.identity-correction": (c) => ({ says: ["corrected whose account", c.user(c.e.entityId), "is, directly in the database"], changes: false }),

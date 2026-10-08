@@ -49,6 +49,7 @@ const files = [
   "src/lib/erp/erp-foundation.test.ts",
   "src/lib/erp/erp-designations.test.ts",
   "src/lib/erp/erp-purchase.test.ts",
+  "src/lib/erp/erp-material-duties.test.ts",
   // Purchase and production, department by department.
   "src/lib/erp/erp-departments.test.ts",
   "src/lib/erp/erp-production.test.ts",

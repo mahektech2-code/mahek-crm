@@ -439,7 +439,7 @@ function FormDrawer({
             .map((f, i, shown) => (
               <Fragment key={f.k}>
               {f.sec && f.sec !== shown[i - 1]?.sec ? (
-                <div className="mt-1 border-b border-divider pb-1 text-[12px] font-semibold tracking-[0.04em] text-muted uppercase">{f.sec}</div>
+                <div className="col-span-full mt-1 border-b border-divider pb-1 text-[12px] font-semibold tracking-[0.04em] text-muted uppercase">{f.sec}</div>
               ) : null}
               <Field
                 f={f}
