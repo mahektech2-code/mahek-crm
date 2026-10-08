@@ -299,15 +299,17 @@ export async function leaveBalances() {
  * THE OFFICE'S WORKING WEEK AND ITS HOLIDAYS, for counting leave the way the
  * office debits it.
  *
- * Every holiday counts here, scoped or universal — the same reading
- * `leaveCalendarFor` takes on the server, because a day the office is shut is
- * a day nobody was going to work. `workingDay.workingDays` rides down on the
- * pull; Monday to Saturday is the company default if it has not arrived yet.
+ * HIS holidays only — the rows the office marks `universal`, which since
+ * holidays carry a level means "this one reaches you": company-wide, his
+ * state, district, city or area, or given to him by name. It is the reading
+ * `leaveCalendarFor` takes on the server, so the count on the form is the
+ * count the office debits. `workingDay.workingDays` rides down on the pull;
+ * Monday to Saturday is the company default if it has not arrived yet.
  */
 export async function leaveCalendar(): Promise<LeaveCalendar> {
   const { getConfig } = await import('./config');
   const workingDays = await getConfig<number[]>('workingDay.workingDays', [1, 2, 3, 4, 5, 6]);
-  const rows = await all<{ onDate: string }>('SELECT onDate FROM holidays');
+  const rows = await all<{ onDate: string }>('SELECT onDate FROM holidays WHERE universal = 1');
   return {
     workingDays: Array.isArray(workingDays) && workingDays.length ? workingDays : [1, 2, 3, 4, 5, 6],
     holidays: new Set(rows.map((r) => r.onDate)),

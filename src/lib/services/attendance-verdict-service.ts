@@ -1,5 +1,6 @@
 import "server-only";
 import { sql } from "drizzle-orm";
+import { holidayAppliesSql } from "@/lib/holiday-sql";
 import { db } from "@/db";
 import { getConfig } from "@/lib/config/store";
 import {
@@ -135,7 +136,9 @@ export async function recomputeAttendanceVerdicts(
                          and hl.status = 'Approved'
                          and hl.start_date <= d.day
                          and hl.end_date >= d.day) as "onApprovedLeave",
-           exists (select 1 from mbos_holidays h where h.on_date = d.day) as "isHoliday"
+           exists (select 1 from mbos_holidays h
+                    where h.on_date = d.day
+                      and ${holidayAppliesSql("h", sql`d.user_id`)}) as "isHoliday"
       from mbos_attendance_days d
      where true ${scope}
      order by d.day

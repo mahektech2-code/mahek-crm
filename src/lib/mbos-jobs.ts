@@ -516,6 +516,8 @@ export async function mbosNightly(): Promise<Counted> {
     await sweepPushFailures(),
     await closeOpenVisits(),
     await markMissedCheckouts(),
+    /* Who each holiday reaches, before anything is judged against it. */
+    await rebuildHolidays(),
     /* AFTER the two closers above, so a day they just closed is judged tonight
        rather than tomorrow night. */
     await rebuildAttendanceVerdicts(),
@@ -610,6 +612,18 @@ async function judgeRecentDays(): Promise<Counted> {
   return { recordsAffected: written, detail: `${written} of ${read} recent days re-judged` };
 }
 
+/**
+ * Who each state, district, city, area and named holiday reaches, resolved
+ * again. Every write that can move the answer already rebuilds it; this is the
+ * net under all of them — a salesman granted the field app, or a place tree
+ * re-imported, moves it without passing through a holiday screen.
+ */
+async function rebuildHolidays(): Promise<Counted> {
+  const { rebuildHolidayMembers } = await import("./services/holiday-service");
+  const { holidays, changed } = await rebuildHolidayMembers();
+  return { recordsAffected: changed, detail: `${changed} of ${holidays} holidays re-resolved` };
+}
+
 export async function mbosHourly(): Promise<Counted> {
   const parts = [
     await escalateOverdueTasks(),
@@ -622,6 +636,7 @@ export async function mbosHourly(): Promise<Counted> {
     await chaseSampleReviews(),
     await flagSamplesPastDelivery(),
     await refreshPerformance(),
+    await rebuildHolidays(),
     await judgeRecentDays(),
     await readPushReceipts(),
     await sweepSelfies(),

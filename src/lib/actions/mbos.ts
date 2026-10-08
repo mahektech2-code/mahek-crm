@@ -2,6 +2,7 @@ import "server-only";
 import { reconcileContacts } from "@/lib/services/customer-contact-service";
 import { createHash, randomUUID } from "node:crypto";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { holidayAppliesSql } from "@/lib/holiday-sql";
 import { z } from "zod";
 import { db } from "@/db";
 import {
@@ -7309,16 +7310,19 @@ function inclusiveDays(from: string, to: string): number {
  * query is per leave request and a `select *` here would grow with the years
  * rather than with the request.
  *
- * A regionally-scoped holiday counts the same as a universal one: a day the
- * office is shut is a day nobody was going to work, and the handset's own
- * caution about scoped holidays is about which days it may auto-apply, not
- * about what somebody's leave costs them.
+ * Only HIS holidays count — company-wide ones, and the state, district, city,
+ * area or named ones that reach him (`holidayAppliesSql`). A day off in a
+ * state he does not work is a working day for him, and leave across it costs
+ * a day.
  */
-async function leaveCalendarFor(from: string, to: string): Promise<LeaveCalendar> {
+async function leaveCalendarFor(from: string, to: string, userId: string): Promise<LeaveCalendar> {
   const config = await getConfig();
+  /* HIS holidays: a state holiday in Odisha is not a day a man in Nagpur was
+     going to be off, so it must not make his leave cheaper. */
   const rows = await db.execute<{ onDate: string }>(
-    sql`select on_date::text as "onDate" from mbos_holidays
-         where on_date between ${from}::date and ${to}::date`,
+    sql`select h.on_date::text as "onDate" from mbos_holidays h
+         where h.on_date between ${from}::date and ${to}::date
+           and ${holidayAppliesSql("h", sql`${userId}`)}`,
   );
   return {
     workingDays: config["workingDay.workingDays"],
@@ -7451,7 +7455,7 @@ async function handleLeave(principal: MbosPrincipal, item: SyncItem): Promise<Ha
    * spent four days of somebody's balance to be absent for two — and the
    * column's own comment has said "derived from the dates and the working
    * calendar" since the table was written. See `engines/leave.ts`. */
-  const days = leaveWorkingDays(from, to, await leaveCalendarFor(from, to));
+  const days = leaveWorkingDays(from, to, await leaveCalendarFor(from, to, principal.user.id));
   if (days < 1) {
     return {
       kind: "rejected",

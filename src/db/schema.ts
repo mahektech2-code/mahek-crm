@@ -8263,13 +8263,89 @@ export const mbosHolidays = pgTable(
     id: text("id").primaryKey(),
     onDate: date("on_date").notNull(),
     name: text("name").notNull(),
+    /**
+     * The free-text "where" this table used to carry. Kept, read by nothing
+     * that decides who is off: a row from before levels existed shows it as
+     * "typed as …" so somebody can choose properly. New rows leave it null.
+     */
     scope: text("scope"),
+    /**
+     * WHO IT IS FOR — company · state · district · city · area · people
+     * (`HOLIDAY_LEVELS` in `lib/engines/holiday-audience.ts`). Text, not an
+     * enum, for the reason `places.kind` gives. `company` is the default so
+     * every row that existed went on meaning what the server read it as.
+     */
+    level: text("level").notNull().default("company"),
+    /** National · Festival · Regional · Weekly off · Special. A label only. */
+    category: text("category").notNull().default("Festival"),
+    /** The `places` ids it covers, for the four place levels. */
+    placeIds: jsonb("place_ids").$type<string[]>().notNull().default([]),
+    /**
+     * "Odisha", "Cuttack, Puri", "3 named people" — written on every save and
+     * every rebuild, and what the handset is sent as `scope`. Null is
+     * company-wide.
+     */
+    audienceLabel: text("audience_label"),
+    note: text("note"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     createdById: text("created_by_id"),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     updatedById: text("updated_by_id"),
   },
   (t) => [index("mbos_holidays_date_idx").on(t.onDate)],
+);
+
+/**
+ * A holiday given to, or taken from, ONE person — the allocate and deallocate
+ * on the Holidays screen. A decision, so it is a row somebody wrote and never
+ * a cache. `exclude` wins over everything (see `holiday-audience.ts`).
+ */
+export const mbosHolidayAssignments = pgTable(
+  "mbos_holiday_assignments",
+  {
+    id: text("id").primaryKey(),
+    holidayId: text("holiday_id")
+      .notNull()
+      .references(() => mbosHolidays.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** include · exclude */
+    mode: text("mode").notNull(),
+    reason: text("reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id"),
+  },
+  (t) => [
+    uniqueIndex("mbos_holiday_assignments_key").on(t.holidayId, t.userId),
+    index("mbos_holiday_assignments_user_idx").on(t.userId),
+  ],
+);
+
+/**
+ * WHO A NON-COMPANY HOLIDAY REACHES, resolved. A CACHE, rebuilt by
+ * `rebuildHolidayMembers` after every holiday, assignment or territory write
+ * and hourly — so the attendance verdict, leave and the handset can ask "is
+ * this his day off" with a join instead of re-deriving place matching in SQL.
+ * Company-wide holidays are not listed here: they reach everybody not
+ * excluded, which `holidayAppliesSql` says directly.
+ */
+export const mbosHolidayMembers = pgTable(
+  "mbos_holiday_members",
+  {
+    holidayId: text("holiday_id")
+      .notNull()
+      .references(() => mbosHolidays.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** "Odisha", "Named" — why, joined with " · ". */
+    reason: text("reason").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.holidayId, t.userId] }),
+    index("mbos_holiday_members_user_idx").on(t.userId),
+  ],
 );
 
 export const mbosTours = pgTable(

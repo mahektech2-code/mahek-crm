@@ -117,6 +117,8 @@ const files = [
   "src/lib/place-master.test.ts",
   "src/lib/place-tree-filters.test.ts",
   "src/lib/territory-requests.test.ts",
+  // Who a holiday reaches — company, state, city, named — on the right phones.
+  "src/lib/holidays.test.ts",
   // Price lists: the engines are pure and the reader is pinned against the
   // four real documents, so what is left for a database is publishing,
   // superseding, the hierarchy through the real service, and the refusal.

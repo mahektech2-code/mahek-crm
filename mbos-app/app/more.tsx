@@ -122,6 +122,7 @@ function groupsFor(n: Counts): { label: string; items: Item[] }[] {
       items: [
         { label: 'Attendance', badge: '', route: 'attendance' },
         { label: 'Leave', badge: '', route: 'leave' },
+        { label: 'Holidays', badge: '', route: 'holidays' },
         { label: 'Salary', badge: '', route: 'salary' },
         { label: "Today's travel", badge: n.legsToday ? String(n.legsToday) : '', route: 'travel' },
         { label: 'Close the day', badge: n.daySent ? 'sent' : '', route: 'eod' },
