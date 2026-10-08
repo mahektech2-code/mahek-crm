@@ -3,7 +3,7 @@
 import * as React from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { C, DesignStyles, EASE, Hov, Icon } from "../(command)/ui";
-import { ASK_BUTTON, crumbFor, DeskTabs, FounderHeader, FounderSidebar, QUICK_BUTTON, SEARCH_BOX, tabIsOn, TITLES, TitleBlock, WHATSAPP_TABS } from "../(command)/chrome";
+import { ASK_BUTTON, crumbFor, DeskTabs, FounderHeader, FounderSidebar, QUICK_BUTTON, SEARCH_BOX, tabIsOn, TITLES, TitleBlock, useFounderSidebar, WHATSAPP_TABS } from "../(command)/chrome";
 import { AppFrame } from "@/components/shell/app-frame";
 import type { ShellChrome } from "@/lib/command-centre/shell";
 import type { SectionKey } from "@/lib/command-centre/types";
@@ -41,6 +41,7 @@ export function DeskFrame({
   const pathname = usePathname();
   const router = useRouter();
   const [q, setQ] = React.useState("");
+  const [collapsed, toggleSidebar] = useFounderSidebar();
 
   // A printed price sheet is the paper and nothing else.
   if (pathname.endsWith("/print")) return <>{children}</>;
@@ -65,6 +66,8 @@ export function DeskFrame({
           <div className="fcc-root fcc-chrome" style={{ display: "contents" }}>
             <FounderHeader
               switcherApps={chrome.switcherApps}
+              collapsed={collapsed}
+              onToggleSidebar={toggleSidebar}
               user={chrome.user}
               liveCount={chrome.liveCount}
               onBell={() => go("inbox")}
@@ -107,7 +110,7 @@ export function DeskFrame({
         }
         sidebar={
           <div className="fcc-root fcc-chrome" style={{ display: "flex", flex: "none", minHeight: 0 }}>
-            <FounderSidebar active={desk} allowed={allowed} navCounts={chrome.navCounts} freshness={chrome.freshness} onGo={go} />
+            <FounderSidebar active={desk} allowed={allowed} navCounts={chrome.navCounts} freshness={chrome.freshness} onGo={go} collapsed={collapsed} />
           </div>
         }
       >

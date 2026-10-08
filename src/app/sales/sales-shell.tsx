@@ -1,11 +1,13 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
 import { signOut } from "@/lib/actions/auth";
 import { SalesIcon } from "@/components/console/icons";
 import { AppFrame } from "@/components/shell/app-frame";
+import { HeaderLead } from "@/components/shell/header-lead";
 import { NotificationBell } from "@/components/shell/notification-bell";
+import { cx } from "@/components/ui/primitives";
+import type { AppDefinition } from "@/lib/apps";
 import type { Notification } from "@/db/schema";
 import { SalesSidebarNav, type SalesCounts } from "./sidebar-nav";
 import { SalesSearch } from "./search";
@@ -55,7 +57,7 @@ export function SalesShell({
   counts,
   notifications,
   allowed,
-  switcher,
+  apps,
   feedback,
   children,
 }: {
@@ -81,10 +83,14 @@ export function SalesShell({
   /** The signed-in person's own notifications — the same box every app draws. */
   notifications: Notification[];
   allowed: string[];
-  switcher: React.ReactNode;
+  /** Every web app this person opens, for the switcher — drawn always. */
+  apps: AppDefinition[];
   feedback: React.ReactNode;
   children: React.ReactNode;
 }) {
+  /* The sidebar narrows to an icon rail; the toggle is HeaderLead's ☰. */
+  const [collapsed, setCollapsed] = React.useState(false);
+
   return (
     // The 1100px floor, the scroll model and the arrival animation are the
     // frame's — see `components/shell/app-frame.tsx`. This app carried the
@@ -115,20 +121,14 @@ export function SalesShell({
             rather than opening with a name and hiding the way out beside the
             sign-out button.
           */}
-          <span className="flex flex-none items-center gap-2">
-            {switcher}
-            <Link
-              href="/sales"
-              className="flex flex-none items-center gap-2 no-underline hover:no-underline"
-            >
-              <span className="flex h-4 w-4 flex-none items-center justify-center rounded-[3px] bg-brand">
-                <span className="block h-1.5 w-1.5 rounded-[1px] bg-brand-lime" />
-              </span>
-              <span className="text-[15px] font-semibold whitespace-nowrap text-ink">
-                MBOS <span className="text-brand">MANAGER</span>
-              </span>
-            </Link>
-          </span>
+          <HeaderLead
+            apps={apps}
+            current="sales"
+            collapsed={collapsed}
+            onToggleSidebar={() => setCollapsed((c) => !c)}
+            href="/sales"
+            label="MBOS MANAGER"
+          />
 
           <span className="h-[22px] w-px flex-none bg-divider" />
           {/*
@@ -222,18 +222,33 @@ export function SalesShell({
         </header>
       }
       sidebar={
-          <aside className="flex w-[232px] flex-none flex-col border-r border-line bg-surface">
-            <SalesSidebarNav allowed={allowed} counts={counts} />
+          <aside
+            className={cx(
+              "flex flex-none flex-col border-r border-line bg-surface transition-[width] duration-150",
+              collapsed ? "w-14" : "w-[232px]",
+            )}
+          >
+            <SalesSidebarNav allowed={allowed} counts={counts} railed={collapsed} />
 
-            <div className="flex-none border-t border-divider px-3 py-2.5">
-              <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                Live now
+            {/* Railed, Live now keeps only its pulsing dot; the line is on hover. */}
+            {collapsed ? (
+              <div
+                className="flex flex-none justify-center border-t border-divider py-3"
+                title={`Live now — ${liveLine}`}
+              >
+                <span className="block h-[7px] w-[7px] animate-pulse rounded-full bg-success" />
               </div>
-              <div className="mt-1.5 flex items-center gap-2">
-                <span className="block h-[7px] w-[7px] flex-none animate-pulse rounded-full bg-success" />
-                <span className="text-[13px] text-ink">{liveLine}</span>
+            ) : (
+              <div className="flex-none border-t border-divider px-3 py-2.5">
+                <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                  Live now
+                </div>
+                <div className="mt-1.5 flex items-center gap-2">
+                  <span className="block h-[7px] w-[7px] flex-none animate-pulse rounded-full bg-success" />
+                  <span className="text-[13px] text-ink">{liveLine}</span>
+                </div>
               </div>
-            </div>
+            )}
           </aside>
       }
     >
