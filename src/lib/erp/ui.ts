@@ -136,6 +136,14 @@ export type FormSpec = {
   confirm?: string;
   /** Lines to start with (an AI draft, a copied document). */
   initLines?: Record<string, string>[];
+  /**
+   * Lines that a header field brings with it: picking `by` replaces the lines
+   * with `map[value]`, the way picking an SFG product lays out its recipe. Lines
+   * nobody has touched are replaced without a word; lines somebody typed into
+   * are replaced only after a confirm. `set` fills header fields still empty
+   * (one batch) when a list is laid out. A value with no entry leaves the lines.
+   */
+  linesFrom?: { by: string; map: Record<string, Record<string, string>[]>; set?: Record<string, string> };
   /** What an AI reading was read from, shown beside the proposed values. */
   evidence?: { images?: string[]; text?: string; flags?: { tone: Tone; text: string }[]; note?: string };
 };

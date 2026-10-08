@@ -374,6 +374,8 @@ function FormDrawer({
   const [errs, setErrs] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [topError, setTopError] = useState("");
+  /* The lines a `linesFrom` pick (or the opening recipe) laid out, so a later pick knows whether anybody has touched them. */
+  const [laidOut, setLaidOut] = useState<string | null>(() => (spec.initLines?.length ? JSON.stringify(spec.initLines.map((l) => ({ ...blankLine(), ...l }))) : null));
   const data = spec.data ?? {};
 
   /* A line's `fillBy` fields, refreshed after `changed` moved — header or line. */
@@ -468,8 +470,22 @@ function FormDrawer({
                     const x = g.fillBy.map[g.fillBy.by.map((k) => nh[k] ?? "").join("|")];
                     if (x != null) nh = { ...nh, [g.k]: x };
                   }
+                  /* A pick that brings its own lines (an SFG product its recipe). */
+                  const from = spec.linesFrom?.by === f.k ? spec.linesFrom.map[v] : undefined;
+                  if (from?.length) {
+                    for (const [k, x] of Object.entries(spec.linesFrom!.set ?? {})) if (!nh[k]) nh = { ...nh, [k]: x };
+                    const next = from.map((l) => ({ ...blankLine(), ...l }));
+                    const blank = JSON.stringify(blankLine());
+                    const untouched = lines.every((l) => JSON.stringify(l) === blank) || JSON.stringify(lines) === laidOut;
+                    const lay = () => {
+                      setLines(next);
+                      setLaidOut(JSON.stringify(next));
+                    };
+                    if (untouched) lay();
+                    else confirm(`Replace these lines with ${v}'s ${from.length === 1 ? "line" : `${from.length} lines`}? What you have entered on them is cleared.`, lay);
+                  }
                   setH(nh);
-                  if (spec.line?.some((x) => x.fillBy?.by.includes(f.k))) setLines((s) => s.map((x) => fillLine(x, nh, f.k)));
+                  if (!from?.length && spec.line?.some((x) => x.fillBy?.by.includes(f.k))) setLines((s) => s.map((x) => fillLine(x, nh, f.k)));
                   setErrs((s) => ({ ...s, [`h.${f.k}`]: "" }));
                 }}
               />
