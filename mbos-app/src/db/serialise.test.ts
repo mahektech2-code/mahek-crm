@@ -48,23 +48,31 @@ test('two transactions started at once do not overlap', async () => {
   assert.deepEqual(db.log, ['begin', 'commit', 'begin', 'commit']);
 });
 
-test('a nested transaction joins the outer one instead of opening a second', async () => {
+test('an unrelated write arriving mid-transaction waits instead of joining it', async () => {
+  /* The pull's long transaction, and a save that lands while it is open. The
+     save used to run INSIDE the pull's transaction, so a pull that rolled back
+     took a save the screen had already called saved with it. */
   const db = fakeDb();
   const s = createSerialiser();
+  const order: string[] = [];
 
-  await s.run(async () => {
-    /* A helper that also wants a transaction. Opening one here is what threw. */
-    await s.run(async () => { await tick(); }, db.wrap);
+  const pull = s.run(async () => {
+    order.push('pull:start');
+    await tick();
+    await tick();
+    order.push('pull:end');
+    throw new Error('the pull failed');
+  }, db.wrap);
+  await tick();
+  const save = s.run(async () => {
+    order.push('save');
+    return 'saved';
   }, db.wrap);
 
-  assert.deepEqual(db.log, ['begin', 'commit'], 'exactly one transaction');
-});
-
-test('a nested call returns its value to the caller', async () => {
-  const db = fakeDb();
-  const s = createSerialiser();
-  const out = await s.run(async () => s.run(async () => 42, db.wrap), db.wrap);
-  assert.equal(out, 42);
+  await assert.rejects(pull, /the pull failed/);
+  assert.equal(await save, 'saved');
+  assert.deepEqual(order, ['pull:start', 'pull:end', 'save']);
+  assert.deepEqual(db.log, ['begin', 'rollback', 'begin', 'commit'], 'the save had its own transaction');
 });
 
 test('the result of a transaction is not lost on the way out', async () => {

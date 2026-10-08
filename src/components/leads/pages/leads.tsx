@@ -1,22 +1,28 @@
-import { type LeadWorkspace } from "@/lib/lead-workspace";
+import {
+  leadHref,
+  leadModuleKey,
+  leadSection,
+  OTHER_DESK_SLUGS,
+  type LeadWorkspace,
+} from "@/lib/lead-workspace";
 import { requireUser } from "@/lib/auth";
-import { canOpenModule, requireModule } from "@/lib/access";
+import { canFor } from "@/lib/access-control";
+import { canOpenModule, listUserModules, requireModule } from "@/lib/access";
 import { getConfig } from "@/lib/config/store";
 import { today } from "@/lib/recompute";
 import {
   archivedLeadsCount,
   leadFilterOptions,
-  leadPlaceTree,
+  leadPlaceOptions,
   leadsPage,
   LEADS_PER_PAGE,
 } from "@/lib/services/sales-service";
 import { splitFilter, type LeadFilters } from "@/lib/lead-filters";
 import { viewFromParam } from "@/lib/lead-views";
-import { leadTileCounts } from "@/lib/services/lead-views-service";
+import { leadTileCounts, leadWorklistCounts } from "@/lib/services/lead-views-service";
 import {
   appointmentQueue,
   canLead,
-  leadsWithoutNextAction,
   verificationQueue,
 } from "@/lib/services/lead-console-service";
 import { vantageViewer } from "@/lib/services/lead-vantage-service";
@@ -112,10 +118,12 @@ export async function Body({
     source: params.source,
     stage: params.stage,
     salesType: params.salesType,
-    /* WHERE THE SHOP IS — state, city or area, as `,`-separated paths.
-       See `lib/lead-places.ts` for why a place is a path and why each one is
-       escaped before it joins a comma-separated parameter. */
-    place: params.place,
+    /* WHERE THE SHOP IS — state, district, city and area off the reviewed
+       location tree, each a `,`-separated list of place ids. */
+    state: params.state,
+    district: params.district,
+    city: params.city,
+    area: params.area,
     potential: params.potential,
     priority: params.priority,
     next: params.next,
@@ -124,12 +132,32 @@ export async function Body({
   };
 
   const day = await today();
+
+  /*
+   * THE DESKS THAT HAVE LEFT THE SIDEBAR, for whoever still holds them.
+   *
+   * Six sections stopped being navigation rows and became views of this list or
+   * links from it (see `NavItem.legacy`). The views are reachable by anybody on
+   * this screen; what is not is the REST of those sections — the verification
+   * queue, the checklist desk, the sample desk, the commitment lists, the
+   * nurture schedule and the communication log. They are linked from here, and
+   * only the ones this person holds: a link to a screen they were never given
+   * reads as a broken one.
+   */
+  const heldKeys = new Set((await listUserModules(user.id, workspace)).map((m) => m.key));
+  const otherDesks = OTHER_DESK_SLUGS.flatMap((slug) => {
+    const section = leadSection(slug);
+    return section && heldKeys.has(leadModuleKey(workspace, section))
+      ? [{ label: section.label, href: leadHref(workspace, section.path) }]
+      : [];
+  });
+
   const [
     page,
     config,
     archivedCount,
     verification,
-    exceptions,
+    worklists,
     appointments,
     options,
     viewer,
@@ -146,7 +174,10 @@ export async function Body({
       getConfig(),
       archivedLeadsCount(),
       verificationQueue(day, { limit: 1 }),
-      leadsWithoutNextAction(day, { limit: 1 }),
+      /* The four worklists, counted with the SAME scope and clause the list runs
+         when one of them is opened — so "Nobody is working these 14" and the 14
+         rows behind it cannot disagree. */
+      leadWorklistCounts(day),
       appointmentQueue(),
       leadFilterOptions(showArchived),
       /*
@@ -174,14 +205,18 @@ export async function Body({
         ? null
         : leadTileCounts(day, { archived: false, filters }),
       /*
-       * The place tree, counted over THIS list rather than over the whole
-       * book. It rides in the same `Promise.all` as everything else, so the
-       * Where picker costs the screen no round trip of its own — and it is
-       * fetched with the page rather than on the first press of the filter
-       * button, because a picker that has to reach a server before it can
-       * offer anything is one that offers nothing exactly when it is opened.
+       * The four place filters, counted over THIS list rather than over the
+       * whole book and narrowed under whatever is picked above each. Fetched
+       * with the page rather than on the first press of the filter button,
+       * because a picker that has to reach a server before it can offer
+       * anything offers nothing exactly when it is opened.
        */
-      leadPlaceTree(showArchived),
+      leadPlaceOptions(showArchived, {
+        state: filters.state,
+        district: filters.district,
+        city: filters.city,
+        area: filters.area,
+      }),
     ]);
 
   return (
@@ -206,7 +241,10 @@ export async function Body({
         source: splitFilter(filters.source),
         salesType: splitFilter(filters.salesType),
         stage: splitFilter(filters.stage),
-        place: splitFilter(filters.place),
+        state: splitFilter(filters.state),
+        district: splitFilter(filters.district),
+        city: splitFilter(filters.city),
+        area: splitFilter(filters.area),
         potential: splitFilter(filters.potential),
         priority: splitFilter(filters.priority),
         next: splitFilter(filters.next),
@@ -236,6 +274,9 @@ export async function Body({
          may not make about his own work", which is this act exactly — see the
          action for why `lead.override` and `lead.work` were the wrong two. */
       canPrioritise={await canLead(user, "lead.verify")}
+      /* Deleting moves a lead to the trash — a manager's, checked again in
+         `trashLeads`. Restoring is the Admin Console's alone. */
+      canTrash={await canFor(user, "lead.trash")}
       /* WORDS, never rights. See `lib/lead-vantage.ts` — this decides which
          instruction each row prints and nothing whatever about what may be
          done to the lead, which every action goes on checking for itself. */
@@ -243,8 +284,12 @@ export async function Body({
       desks={{
         verification: verification.total,
         verificationMine: verification.mine,
-        noNextAction: exceptions.total,
+        noNextAction: worklists.unworked,
         appointments: appointments.length,
+        suspectDecisions: worklists.decide,
+        parked: worklists.parked,
+        handovers: worklists.handover,
+        otherDesks,
       }}
     />
   );

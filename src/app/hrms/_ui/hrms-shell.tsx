@@ -8,6 +8,7 @@ import { AccountMenu } from "@/components/shell/account-menu";
 import { AppSwitcher } from "@/components/shell/app-switcher";
 import { CollapsibleNav, isRowActive, type NavRowGroup, type NavRowItem } from "@/components/shell/collapsible-nav";
 import { FeedbackButton } from "@/components/shell/feedback-button";
+import { HeaderLead } from "@/components/shell/header-lead";
 import { Icon as ShellIcon } from "@/components/shell/icons";
 import { NotificationBell } from "@/components/shell/notification-bell";
 import { cx } from "@/components/ui/primitives";
@@ -29,7 +30,7 @@ import { HIcon, hasHIcon } from "./icons";
  * person opens every day (the design's bottom navigation).
  * ------------------------------------------------------------------------- */
 
-export type NavScreen = { key: string; label: string; href: string; count?: number; bottom?: boolean };
+export type NavScreen = { key: string; label: string; nav?: string; short?: string; icon: string; href: string; count?: number; bottom?: boolean };
 export type NavGroup = { id: string; label: string; icon: string; screens: NavScreen[] };
 
 const SHELL_ICONS = new Set(["dashboard", "phone", "bell", "history", "wallet", "doc", "person", "people", "chart", "clipboard", "check", "clock", "settings", "lock", "mail"]);
@@ -58,11 +59,11 @@ export function HrmsShell({
   const [drawer, setDrawer] = useState(false);
   const pathname = usePathname();
 
-  const toRow = (s: NavScreen, icon: string): NavRowItem => ({ href: s.href, label: s.label, icon, exact: s.href === "/hrms" });
-  const pinned: NavRowItem[] = nav.filter((g) => g.id === "home").flatMap((g) => g.screens.map((s) => toRow(s, g.icon)));
-  const groups: NavRowGroup[] = nav.filter((g) => g.id !== "home").map((g) => ({ label: g.label, icon: g.icon, items: g.screens.map((s) => toRow(s, g.icon)) }));
+  const toRow = (s: NavScreen): NavRowItem => ({ href: s.href, label: s.nav ?? s.label, icon: s.icon, exact: s.href === "/hrms" });
+  const pinned: NavRowItem[] = nav.filter((g) => g.id === "home").flatMap((g) => g.screens.map((s) => toRow(s)));
+  const groups: NavRowGroup[] = nav.filter((g) => g.id !== "home").map((g) => ({ label: g.label, icon: g.icon, items: g.screens.map((s) => toRow(s)) }));
   const counts = new Map(nav.flatMap((g) => g.screens.map((s) => [s.href, s.count ?? 0] as const)));
-  const bottom = nav.flatMap((g) => g.screens.filter((s) => s.bottom).map((s) => ({ ...s, icon: g.icon })));
+  const bottom = nav.flatMap((g) => g.screens.filter((s) => s.bottom));
 
   const sidebar = (
     <CollapsibleNav
@@ -91,23 +92,23 @@ export function HrmsShell({
                 >
                   <HIcon n="menu" />
                 </button>
-                {apps.length > 1 ? <span className="hidden lg:block"><AppSwitcher apps={apps} current="hrms" /></span> : null}
-                <button
-                  onClick={() => setCollapsed((c) => !c)}
-                  title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-                  aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-                  className="hidden h-7 w-7 cursor-pointer items-center justify-center rounded-[4px] text-muted hover:bg-canvas hover:text-body lg:flex"
-                >
-                  <ShellIcon name="menu" size={18} />
-                </button>
-                <Link href="/hrms" className="flex items-center gap-2 no-underline hover:no-underline">
-                  <span className="flex h-4 w-4 flex-none items-center justify-center rounded-[3px] bg-brand">
-                    <span className="block h-1.5 w-1.5 rounded-[1px] bg-brand-lime" />
-                  </span>
+                {/* Phones get the drawer and a compact wordmark; from `lg:` up the
+                    header starts with the same three controls as every app. */}
+                <Link href="/hrms" className="flex items-center gap-2 no-underline hover:no-underline lg:hidden">
                   <span className="text-[15px] font-semibold tracking-[-0.01em] whitespace-nowrap text-ink">
                     MAHEK <span className="text-brand">HRMS</span>
                   </span>
                 </Link>
+                <div className="hidden lg:flex">
+                  <HeaderLead
+                    apps={apps}
+                    current="hrms"
+                    collapsed={collapsed}
+                    onToggleSidebar={() => setCollapsed((c) => !c)}
+                    href="/hrms"
+                    label="MAHEK HRMS"
+                  />
+                </div>
               </div>
               <div className="hidden min-w-0 md:block">
                 <HrmsSearch />
@@ -148,7 +149,7 @@ export function HrmsShell({
                 <span className="text-[15px] font-semibold text-ink">
                   MAHEK <span className="text-brand">HRMS</span>
                 </span>
-                {apps.length > 1 ? <AppSwitcher apps={apps} current="hrms" /> : null}
+                <AppSwitcher apps={apps} current="hrms" />
               </div>
               <div className="border-b border-divider p-3">
                 <HrmsSearch />
@@ -172,7 +173,7 @@ export function HrmsShell({
                     {renderIcon(b.icon, 20)}
                     {b.count ? <span className="absolute -top-1.5 -right-2.5 rounded-full bg-warn px-1 text-[10px] leading-4 text-white">{b.count}</span> : null}
                   </span>
-                  {b.label}
+                  {b.short ?? b.label}
                 </Link>
               );
             })}

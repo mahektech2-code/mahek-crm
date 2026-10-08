@@ -1,38 +1,37 @@
 "use client";
 
+import * as React from "react";
 import Link from "next/link";
 import { addDays } from "@/lib/business-date";
 import { money } from "@/lib/format";
 import { cx } from "@/components/ui/primitives";
-import type { TeamDay } from "@/lib/services/sales-service";
-import { SalesIcon } from "@/components/console/icons";
-import { Cell, HeadCell, Pill, Row, Table } from "@/components/console/parts";
+import { CardGrid } from "@/components/ui/card-grid";
+import { SalesIcon, type SalesIconName } from "@/components/console/icons";
+import type { SalesmanDay, TeamDay } from "@/lib/services/sales-service";
+import { avatarTone } from "./avatar-tone";
 
 /* ---------------------------------------------------------------------------
- * Today, from `MBOS Manager Console.dc.html`.
+ * Today — the Sales Dashboard's front door.
  *
- * The design's shape, and it is a good one: a greeting that carries the day's
- * numbers in its subtitle, a band of everything needing attention, then two
- * columns — where the team IS on the left, what is waiting on YOU on the right.
+ * FOUR FIGURES, WHAT IS WAITING, AND THE TEAM AS ONE TABLE. A manager opening
+ * this at nine wants to know who is out and what needs him; everything else is
+ * one click away. The team was a card per salesman, which is a wall at a
+ * hundred; it is a table now that scrolls down inside its own box and never
+ * across — see `TeamTable`.
  *
- * Four things ported deliberately rather than approximated:
+ * **A row opens that salesman's whole day in a new tab** — his map and a
+ * timeline of every punch, leg, stop, visit and act (`/sales/live/[id]`). A
+ * new tab because this screen is the one a manager keeps open and comes back
+ * to; replacing it to look at one man would cost him his place.
  *
- * **The attention band lists only what is non-zero.** A row of counters half
- * of them reading nought is a screen somebody stops scanning.
- *
- * **A salesman who has not started has a red left edge on his row.** The
- * design puts the loudest mark on the quietest fact — nothing is wrong with
- * that row, which is exactly why it is easy to miss.
- *
- * **The money says which kind of money it is.** An order taken in the field is
- * the customer saying yes and nothing more; a collection is money a salesman
- * says he has. Neither has reached the bank, and both are labelled.
- *
- * **"What the numbers say" is absent, not stubbed.** The design has an AI brief
- * panel there. Nothing in MahekOne writes one, and a panel of plausible
- * sentences nobody generated is the fixture problem that emptied half the Admin
- * Console. The column carries what can actually be answered.
+ * **The money still says which kind it is** — on the figure's hover rather
+ * than in a paragraph under the table. Orders are captured, not approved;
+ * collections are reported, not confirmed against the bank.
  * ------------------------------------------------------------------------- */
+
+const CARD = "rounded-[10px] border border-line bg-surface shadow-[0_1px_2px_rgba(16,24,40,0.04)]";
+const BUTTON =
+  "inline-flex h-9 items-center gap-1.5 rounded-[8px] border border-line bg-surface px-3 text-[13px] font-medium text-body no-underline shadow-[0_1px_2px_rgba(16,24,40,0.04)] hover:bg-canvas hover:no-underline";
 
 export function TodayScreen({
   day,
@@ -47,382 +46,532 @@ export function TodayScreen({
   isToday: boolean;
   greeting: string;
   data: TeamDay;
-  /** The right-hand column: what is waiting on this manager, and where. */
+  /** What is waiting on this manager, and where. */
   waiting: Array<{ href: string; label: string; sub: string; count: number; tone: string }>;
 }) {
   const { totals, people } = data;
-  const notStarted = people.filter((p) => p.active && !p.checkInAt);
-  const unverified = people.reduce((n, p) => n + Number(p.unverifiedVisits), 0);
-
-  /* Only what is non-zero, in the design's order and its own words. */
-  const attention = [
-    { n: notStarted.length, label: "not checked in", tone: "danger", href: "/sales/attendance" },
-    { n: waiting.find((w) => w.href === "/sales/orders")?.count ?? 0, label: "orders over the limit", tone: "danger", href: "/sales/orders" },
-    { n: waiting.find((w) => w.href === "/sales/expenses")?.count ?? 0, label: "expense claims", tone: "amber", href: "/sales/expenses" },
-    { n: waiting.find((w) => w.href === "/sales/samples")?.count ?? 0, label: "samples with no feedback", tone: "amber", href: "/sales/samples" },
-    { n: waiting.find((w) => w.href === "/sales/leave")?.count ?? 0, label: "leave requests", tone: "neutral", href: "/sales/leave" },
-    { n: unverified, label: "visits that could not be verified", tone: "amber", href: "/sales/visits" },
-  ].filter((x) => x.n > 0);
-
+  const open = waiting.filter((w) => w.count > 0);
   const totalWaiting = waiting.reduce((n, w) => n + w.count, 0);
+  const outShare = totals.outOf ? Math.round((totals.checkedIn / totals.outOf) * 100) : 0;
 
   return (
-    <div className="px-6 py-5">
+    <div className="space-y-6 px-6 py-6">
       {/* ------------------------------------------------------------ heading */}
-      <div className="mb-4 flex items-start justify-between gap-4">
+      <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-[26px] leading-8 font-semibold text-ink">{greeting}</div>
-          <div className="mt-1 text-[13px] text-muted">
-            {dayLabel}
-            {" · "}
-            {totals.plannedStops
-              ? `${totals.walkedStops} of ${totals.plannedStops} planned stops done`
-              : "no routes planned"}
-            {" · "}
-            {money(totals.collectedPaise)} reported collected
-          </div>
+          <p className="text-[12px] font-medium tracking-[0.06em] text-muted uppercase">{dayLabel}</p>
+          <h1 className="mt-0.5 text-[24px] leading-8 font-semibold tracking-[-0.01em] text-heading">{greeting}</h1>
         </div>
-        <div className="flex flex-none gap-2">
-          <div className="flex items-center gap-1 text-[13px]">
+        <div className="flex flex-none items-center gap-2">
+          <div className="inline-flex h-9 items-stretch overflow-hidden rounded-[8px] border border-line bg-surface text-[13px] shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
             <Link
               href={`/sales?day=${addDays(day, -1)}`}
-              className="rounded-[4px] border border-line bg-surface px-2.5 py-1.5 text-body no-underline hover:bg-canvas hover:no-underline"
+              className="inline-flex w-9 items-center justify-center text-body no-underline hover:bg-canvas hover:no-underline"
+              title="The day before"
+              aria-label="The day before"
             >
-              ←
+              <SalesIcon name="chevron" size={16} className="rotate-180" />
             </Link>
-            {isToday ? null : (
-              <Link
-                href="/sales"
-                className="rounded-[4px] border border-line bg-surface px-2.5 py-1.5 text-body no-underline hover:bg-canvas hover:no-underline"
-              >
-                Today
-              </Link>
-            )}
+            <Link
+              href="/sales"
+              className={cx(
+                "inline-flex items-center border-x border-line px-3 font-medium no-underline hover:bg-canvas hover:no-underline",
+                isToday ? "text-ink" : "text-brand",
+              )}
+            >
+              {isToday ? "Today" : "Back to today"}
+            </Link>
             <Link
               href={`/sales?day=${addDays(day, 1)}`}
-              className="rounded-[4px] border border-line bg-surface px-2.5 py-1.5 text-body no-underline hover:bg-canvas hover:no-underline"
+              className="inline-flex w-9 items-center justify-center text-body no-underline hover:bg-canvas hover:no-underline"
+              title="The day after"
+              aria-label="The day after"
             >
-              →
+              <SalesIcon name="chevron" size={16} />
             </Link>
           </div>
+          <Link href="/sales/live" target="_blank" className={BUTTON}>
+            <SalesIcon name="pin" size={16} />
+            Team map
+          </Link>
           {totalWaiting > 0 ? (
             <Link
               href="/sales/approvals"
-              className="inline-flex h-8.5 items-center rounded-[4px] bg-brand px-3 text-sm font-medium text-white no-underline hover:opacity-90 hover:no-underline"
+              className="inline-flex h-9 items-center gap-2 rounded-[8px] bg-brand px-3.5 text-[13px] font-medium text-white no-underline shadow-[0_1px_2px_rgba(16,24,40,0.08)] hover:bg-brand-hover hover:no-underline"
             >
-              Review {totalWaiting} {totalWaiting === 1 ? "approval" : "approvals"}
+              Review
+              <span className="rounded-full bg-white/20 px-1.5 text-[12px] tabular-nums">{totalWaiting}</span>
             </Link>
           ) : null}
         </div>
       </div>
 
-      {/* ----------------------------------------------------- attention band */}
-      {attention.length ? (
-        <div className="mb-4 flex flex-wrap items-center gap-x-6 gap-y-2 rounded-[6px] border border-line bg-surface px-5 py-3">
-          <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-            Needs you today
-          </span>
-          {attention.map((a) => (
-            <Link
-              key={a.label}
-              href={a.href}
-              className="flex items-center gap-2 text-[13px] text-body no-underline hover:no-underline"
-            >
-              <span
+      {/* ------------------------------------------------------------ figures */}
+      <CardGrid min={200} gap="gap-4">
+        <Stat
+          icon="people"
+          tint="brand"
+          label={isToday ? "Out now" : "Punched in"}
+          value={
+            <>
+              {totals.checkedIn}
+              <span className="text-[16px] font-medium text-muted"> / {totals.outOf}</span>
+            </>
+          }
+          foot={
+            <span className="flex items-center gap-2">
+              <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-divider">
+                <span
+                  className={cx("block h-full rounded-full", outShare ? "bg-brand" : "bg-danger")}
+                  style={{ width: `${Math.max(outShare, 2)}%` }}
+                />
+              </span>
+              <span className="tabular-nums">{outShare}%</span>
+            </span>
+          }
+        />
+        <Stat
+          icon="visit"
+          tint="success"
+          label="Visits"
+          value={String(totals.visits)}
+          foot={totals.plannedStops ? `${totals.walkedStops} of ${totals.plannedStops} planned stops` : "No routes planned"}
+        />
+        <Stat
+          icon="order"
+          tint="info"
+          label="Orders"
+          value={String(totals.orders)}
+          foot={totals.orderValuePaise ? `${money(totals.orderValuePaise)} captured` : "None yet"}
+          title="Captured in the field. Sits at pending approval until accounts decide it."
+        />
+        <Stat
+          icon="money"
+          tint="warn"
+          label="Collected"
+          value={money(totals.collectedPaise)}
+          foot="Reported, not yet confirmed"
+          title="What salesmen report collecting. It is money the business has seen only once accounts confirm it against the bank."
+        />
+      </CardGrid>
+
+      {/* ------------------------------------------------- waiting on you */}
+      {open.length ? (
+        <section>
+          <h2 className="mb-3 text-[15px] font-semibold text-heading">Waiting on you</h2>
+          <CardGrid min={240} gap="gap-3">
+            {open.map((w) => (
+              <Link
+                key={w.label}
+                href={w.href}
                 className={cx(
-                  "block h-2 w-2 flex-none rounded-full",
-                  a.tone === "danger"
-                    ? "bg-danger"
-                    : a.tone === "amber"
-                      ? "bg-warn"
-                      : "bg-line-strong",
+                  CARD,
+                  "group flex items-center gap-3 px-4 py-3 no-underline transition-colors hover:border-brand/50 hover:no-underline",
                 )}
-              />
-              <span className="text-[15px] font-semibold text-ink tabular-nums">{a.n}</span>
-              <span>{a.label}</span>
-            </Link>
-          ))}
-        </div>
+              >
+                <span
+                  className={cx(
+                    "flex size-9 flex-none items-center justify-center rounded-[8px] text-[14px] font-semibold tabular-nums",
+                    w.tone === "danger"
+                      ? "bg-danger-soft text-danger"
+                      : w.tone === "amber" || w.tone === "warn"
+                        ? "bg-warn-soft text-warn-ink"
+                        : "bg-canvas text-body",
+                  )}
+                >
+                  {w.count}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px] font-medium text-ink">{w.label}</span>
+                  <span className="block truncate text-[12px] text-muted">{w.sub}</span>
+                </span>
+                <SalesIcon
+                  name="chevron"
+                  size={16}
+                  className="text-faint transition-transform group-hover:translate-x-0.5 group-hover:text-brand"
+                />
+              </Link>
+            ))}
+          </CardGrid>
+        </section>
       ) : null}
 
-      <div className="grid grid-cols-[minmax(0,1fr)_320px] gap-4">
-        <div className="min-w-0 space-y-4">
-          {/* ------------------------------------------- where the team is */}
-          <section>
-            {/*
-              THE HEADING SITS ABOVE THE TABLE RATHER THAN IN A CARD WITH IT,
-              which is the one structural change this conversion costs.
-
-              `Table` IS the card — it draws the border, the rounding and the
-              surface itself — so left inside the bordered `<section>` this used
-              to be, it would draw a second border a pixel inside the first, and
-              the console's front door would be the only screen in the app
-              wearing a double rule. Every other screen here states its title in
-              plain text above the table and lets the table be the box; this now
-              does the same, so Today looks like the eight screens it links to
-              rather than like a fork of them.
-            */}
-            <header className="mb-1.5 flex items-start justify-between gap-4">
-              <div>
-                <div className="text-[15px] font-semibold text-ink">
-                  Where the team is right now
-                </div>
-                <div className="mt-0.5 text-[13px] text-muted">
-                  {totals.checkedIn} of {totals.outOf} checked in
-                  {notStarted.length
-                    ? ` · ${notStarted.map((p) => p.name).join(", ")} ${notStarted.length === 1 ? "has" : "have"} not started`
-                    : " · everybody is out"}
-                </div>
-              </div>
-              <Link
-                href="/sales/live"
-                className="inline-flex h-8 flex-none items-center rounded-[4px] border border-line bg-surface px-3 text-[13px] text-body no-underline hover:bg-canvas hover:no-underline"
-              >
-                Open the map
-              </Link>
-            </header>
-
-            {people.length === 0 ? (
-              /* The empty state keeps a box of its own: it stands where the
-                 table would have stood, and a sentence floating on the canvas
-                 reads as a section that failed to render rather than as one
-                 with nothing in it. */
-              <p className="rounded-[6px] border border-line bg-surface px-5 py-12 text-center text-[15px] text-muted">
-                Nobody holds the Salesman App yet. The field team is whoever has been granted it —
-                that is what MBOS sign-in checks, so this list and the handsets always agree.
-              </p>
-            ) : (
-              /*
-                The console's own table, not a second one.
-
-                This screen hand-rolled its `<table>` and every `<th>`/`<td>`
-                class, which is how it came to be the one table in the app at
-                14px horizontal padding while the other twenty-odd sat at 16 —
-                a drift nobody introduced deliberately and nobody could see
-                without two screens open side by side. The widths below sum to
-                the 940 this table has always asked for, and every column states
-                one because `Table` is `table-fixed`: a column with no width is
-                a column the browser guesses at, and a guessed-narrow one now
-                CLIPS rather than overflowing, so the guess is silent.
-
-                They are sized to the widest thing each column really holds
-                rather than to its heading: 130 on the second is the `NOT
-                STARTED` pill, which is half again the width of the `08:42` it
-                replaces, and 190 on Where is `Finished 18:30` with the `off
-                site` mark beside it. Visits, Orders and Route are each at their
-                own heading's width, which is what bounds them.
-              */
-              <Table
-                minWidth={940}
-                head={
-                  <>
-                    <HeadCell width={230}>Salesman</HeadCell>
-                    <HeadCell width={130}>Punched in</HeadCell>
-                    <HeadCell width={190}>Where</HeadCell>
-                    <HeadCell align="right" width={85}>
-                      Visits
-                    </HeadCell>
-                    <HeadCell align="right" width={80}>
-                      Orders
-                    </HeadCell>
-                    <HeadCell align="right" width={115}>
-                      Collected
-                    </HeadCell>
-                    <HeadCell width={110}>Route</HeadCell>
-                  </>
-                }
-              >
-                {people.map((p, i) => {
-                  const missing = p.active && !p.checkInAt;
-                  return (
-                    <Row key={p.id} striped={i % 2 === 1}>
-                      {/*
-                        THE RED EDGE ON A ROW THAT HAS NOT STARTED, which is the
-                        one thing here the primitives cannot say for themselves.
-                        `Row` colours its left border for `selected` and for
-                        nothing else, and `selected` means brand — a different
-                        statement altogether, and the wrong one about a salesman
-                        who is not out. So the border is set on the FIRST CELL
-                        instead, which lands in exactly the same place: the table
-                        is `border-collapse`, so the row's own 3px transparent
-                        left border and this one collapse into a single edge, and
-                        the cell's colour wins that contest. Widening `Row` to
-                        take a tone would have been the other answer, and it is
-                        not this file's to make.
-
-                        `h-13` is kept for the reason it was there before: the
-                        two-line name makes the row that tall anyway, so it only
-                        does anything on a row where the second line is short,
-                        and a list of people whose rows change height is one that
-                        reads as broken rather than as sparse.
-                      */}
-                      <Cell className={cx("h-13", missing ? "border-l-[3px] border-l-danger" : "")}>
-                        <Link
-                          href={`/sales/people/${p.id}`}
-                          className="flex items-center gap-2.5 no-underline hover:no-underline"
-                        >
-                          <span
-                            className={cx(
-                              "flex h-7 w-7 flex-none items-center justify-center rounded-full text-[11px] font-semibold",
-                              p.checkInAt ? "bg-brand-soft text-[#5223E0]" : "bg-divider text-muted",
-                            )}
-                          >
-                            {p.initials}
-                          </span>
-                          <span className="min-w-0">
-                            <span className="block truncate text-sm font-medium text-ink">
-                              {p.name}
-                            </span>
-                            <span className="block truncate text-[12px] text-muted">
-                              {p.active ? "Field sales" : "Account closed"}
-                            </span>
-                          </span>
-                        </Link>
-                      </Cell>
-                      <Cell>
-                        {/* The hand-written span here was `Pill` spelled out by
-                            hand, down to the 9px radius — the same copy the
-                            shared control exists to stop being made a
-                            thirteenth time. */}
-                        <Pill tone={p.checkInAt ? "success" : "danger"}>
-                          {p.checkInAt ? clock(p.checkInAt) : "Not started"}
-                        </Pill>
-                      </Cell>
-                      <Cell>
-                        {p.checkInAt ? (
-                          p.checkOutAt ? (
-                            `Finished ${clock(p.checkOutAt)}`
-                          ) : (
-                            "Out now"
-                          )
-                        ) : (
-                          <span className="text-muted">—</span>
-                        )}
-                        {p.withinGeofence === false ? (
-                          <span
-                            className="ml-1.5 text-[12px] text-warn-ink"
-                            title="Punched in outside the permitted radius. Flagged, never blocked — a salesman who cannot mark attendance cannot work."
-                          >
-                            off site
-                          </span>
-                        ) : null}
-                      </Cell>
-                      <Cell align="right">
-                        {p.visits}
-                        {Number(p.unverifiedVisits) > 0 ? (
-                          <span
-                            className="ml-1 text-warn-ink"
-                            title="Saved with the location checklist unsatisfied. The salesman gave a reason — a visit can always be saved."
-                          >
-                            ({p.unverifiedVisits})
-                          </span>
-                        ) : null}
-                      </Cell>
-                      <Cell align="right">{p.orders || <span className="text-muted">—</span>}</Cell>
-                      <Cell align="right">
-                        {Number(p.collectedPaise) ? (
-                          money(p.collectedPaise)
-                        ) : (
-                          <span className="text-muted">—</span>
-                        )}
-                      </Cell>
-                      <Cell>
-                        {p.plannedStops ? (
-                          <span className="tabular-nums">
-                            {p.walkedStops}/{p.plannedStops}
-                          </span>
-                        ) : (
-                          <Link href={`/sales/journeys?salesman=${p.id}`} className="text-[13px]">
-                            Plan a route
-                          </Link>
-                        )}
-                      </Cell>
-                    </Row>
-                  );
-                })}
-              </Table>
-            )}
-          </section>
-
-          <p className="text-[13px] text-pretty text-muted">
-            Order value is what was captured in the field. An MBOS order sits at pending approval
-            until accounts decide it, so nothing here has counted towards a target or an
-            outstanding balance. Money reported is what a salesman says he collected — it becomes
-            money the business has seen when accounts confirm it against the bank.
-          </p>
-        </div>
-
-        {/* ------------------------------------------------- waiting on you */}
-        <div className="space-y-4">
-          <section className="overflow-hidden rounded-[6px] border border-line bg-surface">
-            <div className="border-b border-line px-4 py-3 text-[15px] font-semibold text-ink">
-              Waiting on you
-            </div>
-            {waiting.every((w) => w.count === 0) ? (
-              <p className="px-4 py-8 text-center text-[13px] text-muted">
-                Nothing is waiting on a decision.
-              </p>
-            ) : (
-              waiting
-                .filter((w) => w.count > 0)
-                .map((w, i) => (
-                  <Link
-                    key={w.href}
-                    href={w.href}
-                    className={cx(
-                      "flex w-full items-center gap-3 px-4 py-3 no-underline hover:bg-canvas hover:no-underline",
-                      i ? "border-t border-canvas" : "",
-                    )}
-                  >
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-sm font-medium text-ink">{w.label}</span>
-                      <span className="block text-[12px] text-muted">{w.sub}</span>
-                    </span>
-                    <span
-                      className={cx(
-                        "flex-none text-lg font-semibold tabular-nums",
-                        w.tone === "danger"
-                          ? "text-danger"
-                          : w.tone === "amber"
-                            ? "text-warn-ink"
-                            : "text-ink",
-                      )}
-                    >
-                      {w.count}
-                    </span>
-                  </Link>
-                ))
-            )}
-          </section>
-
-          <section className="rounded-[6px] border border-line bg-surface px-4 py-3.5">
-            <div className="mb-1.5 flex items-center gap-2">
-              <span className="text-muted">
-                <SalesIcon name="spark" size={16} />
-              </span>
-              <span className="text-[15px] font-semibold text-ink">What the numbers say</span>
-            </div>
-            <p className="text-[13px] text-pretty text-muted">
-              The design puts a written brief here — three sentences about who is behind and what
-              to do about it. Nothing in MahekOne writes one yet, and a panel of plausible
-              sentences nobody generated is worse than an empty one: it gets believed. It will fill
-              when there is something honest to put in it.
-            </p>
-          </section>
-        </div>
-      </div>
+      {/* ---------------------------------------------------------- team */}
+      <TeamTable people={people} day={day} isToday={isToday} />
     </div>
   );
 }
 
-/** A day either side, without dragging a date library into a client component. */
+const TINT = {
+  brand: "bg-brand-soft text-brand",
+  success: "bg-success-soft text-success",
+  info: "bg-info-soft text-info",
+  warn: "bg-warn-soft text-warn-ink",
+} as const;
+
+function Stat({
+  icon,
+  tint,
+  label,
+  value,
+  foot,
+  title,
+}: {
+  icon: SalesIconName;
+  tint: keyof typeof TINT;
+  label: string;
+  value: React.ReactNode;
+  foot?: React.ReactNode;
+  title?: string;
+}) {
+  return (
+    <div className={cx(CARD, "px-5 py-4")} title={title}>
+      <div className="flex items-center gap-2.5">
+        <span className={cx("flex size-8 flex-none items-center justify-center rounded-[8px]", TINT[tint])}>
+          <SalesIcon name={icon} size={17} />
+        </span>
+        <span className="text-[13px] font-medium text-muted">{label}</span>
+      </div>
+      <div className="mt-3 text-[28px] leading-8 font-semibold tracking-[-0.02em] text-ink tabular-nums">{value}</div>
+      {foot ? <div className="mt-1.5 text-[12px] text-muted">{foot}</div> : null}
+    </div>
+  );
+}
+
+/* --------------------------------------------------------------- the team */
+
+type Status = "out" | "done" | "notIn" | "closed";
+type Filter = "all" | Status;
+type SortKey = "status" | "name" | "visits" | "orders" | "value" | "collected" | "route";
+
+const FILTERS: { key: Filter; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "out", label: "Out now" },
+  { key: "done", label: "Finished" },
+  { key: "notIn", label: "Not started" },
+  { key: "closed", label: "Closed" },
+];
+
+function statusOf(p: SalesmanDay): Status {
+  if (!p.active) return "closed";
+  if (!p.checkInAt) return "notIn";
+  return p.checkOutAt ? "done" : "out";
+}
+
+/** The page that opens for one man: his map and his whole day, in a new tab. */
+function dayHref(p: SalesmanDay, day: string, isToday: boolean): string {
+  return `/sales/live/${p.id}${isToday ? "" : `?day=${day}`}`;
+}
 
 /**
- * `09:32`, in Asia/Kolkata.
+ * THE TEAM, AS A TABLE THAT SCROLLS DOWN AND NEVER ACROSS.
  *
- * Named rather than left to the browser: this renders on the server too, the
- * server is UTC, and a punch-in at half past nine would print as four in the
- * morning — which reads as a handset writing rows in the night.
+ * It was a card per salesman, which reads well at seven and is a wall at seven
+ * hundred: every card the same size whatever it has to say, three to a row,
+ * and no way to find one man but to read them all. A table is the shape a
+ * list of hundreds takes — one line each, searchable, filtered by status with
+ * the count on every tab, sortable by any figure — and it lives in a box of
+ * its own height so the page above it stays put while it scrolls. Narrow
+ * columns, so it fits beside the sidebar at 1280 with no sideways scroll.
+ *
+ * A row opens that salesman's whole day in a NEW TAB, because this is the
+ * screen a manager keeps open and comes back to.
+ */
+function TeamTable({ people, day, isToday }: { people: SalesmanDay[]; day: string; isToday: boolean }) {
+  const [query, setQuery] = React.useState("");
+  const [filter, setFilter] = React.useState<Filter>("all");
+  const [sort, setSort] = React.useState<{ key: SortKey; desc: boolean }>({ key: "status", desc: false });
+
+  const counts: Record<Filter, number> = { all: people.length, out: 0, done: 0, notIn: 0, closed: 0 };
+  for (const p of people) counts[statusOf(p)] += 1;
+
+  const q = query.trim().toLowerCase();
+  const shown = people
+    .filter((p) => (filter === "all" || statusOf(p) === filter) && (!q || p.name.toLowerCase().includes(q)))
+    .sort((a, b) => {
+      const d = compare(a, b, sort.key);
+      return (sort.desc ? -d : d) || byName(a, b);
+    });
+
+  const head = (key: SortKey, text: string, align: "left" | "right" = "left") => {
+    const on = sort.key === key;
+    return (
+      <th
+        className={cx(
+          "sticky top-0 z-[1] border-b border-line bg-[#F9FAFB] px-4 py-2.5 text-[12px] font-medium whitespace-nowrap",
+          align === "right" ? "text-right" : "text-left",
+          on ? "text-ink" : "text-muted",
+        )}
+        aria-sort={on ? (sort.desc ? "descending" : "ascending") : "none"}
+      >
+        <button
+          type="button"
+          onClick={() => setSort(on ? { key, desc: !sort.desc } : { key, desc: key !== "name" && key !== "status" })}
+          className={cx(
+            "group inline-flex cursor-pointer items-center gap-1 border-0 bg-transparent p-0 font-medium hover:text-ink",
+            align === "right" ? "flex-row-reverse" : "",
+          )}
+          title="Sort by this column"
+        >
+          {text}
+          <SalesIcon
+            name="chevron"
+            size={12}
+            className={cx(
+              "transition-transform",
+              on ? (sort.desc ? "rotate-90 text-brand" : "-rotate-90 text-brand") : "rotate-90 opacity-0 group-hover:opacity-60",
+            )}
+          />
+        </button>
+      </th>
+    );
+  };
+
+  return (
+    <section className={cx(CARD, "min-w-0 overflow-hidden")}>
+      {/* The toolbar is part of the card, so the list reads as one thing. */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
+        <div className="flex items-center gap-2">
+          <h2 className="text-[15px] font-semibold text-heading">Team</h2>
+          <span className="rounded-full bg-canvas px-2 py-0.5 text-[12px] font-medium text-muted tabular-nums">
+            {people.length}
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <div className="inline-flex rounded-[8px] bg-canvas p-0.5">
+            {FILTERS.filter((f) => f.key === "all" || counts[f.key] > 0 || filter === f.key).map((f) => {
+              const on = filter === f.key;
+              return (
+                <button
+                  key={f.key}
+                  type="button"
+                  onClick={() => setFilter(f.key)}
+                  className={cx(
+                    "inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-[6px] border-0 px-2.5 text-[12px] font-medium whitespace-nowrap transition-colors",
+                    on ? "bg-surface text-ink shadow-[0_1px_2px_rgba(16,24,40,0.1)]" : "bg-transparent text-muted hover:text-ink",
+                  )}
+                >
+                  {f.label}
+                  <span className={cx("tabular-nums", on ? "text-brand" : "text-faint")}>{counts[f.key]}</span>
+                </button>
+              );
+            })}
+          </div>
+          <label className="relative block">
+            <SalesIcon
+              name="search"
+              size={15}
+              className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-faint"
+            />
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search salesmen"
+              aria-label="Search salesmen"
+              className="h-8 w-[220px] rounded-[8px] border border-line bg-surface pr-2.5 pl-8 text-[13px] text-ink placeholder:text-faint focus:border-brand focus:shadow-[0_0_0_3px_var(--color-brand-soft)] focus:outline-none"
+            />
+          </label>
+        </div>
+      </div>
+
+      {people.length === 0 ? (
+        <p className="px-5 py-14 text-center text-[13px] text-muted">Nobody holds the Salesman App yet.</p>
+      ) : (
+        <div className="max-h-[calc(100vh-300px)] min-h-[320px] overflow-y-auto">
+          <table className="w-full table-fixed border-collapse text-[13px]">
+            <colgroup>
+              <col />
+              <col className="w-[170px]" />
+              <col className="w-[76px]" />
+              <col className="w-[76px]" />
+              <col className="w-[112px]" />
+              <col className="w-[112px]" />
+              <col className="w-[150px]" />
+              <col className="w-[40px]" />
+            </colgroup>
+            <thead>
+              <tr>
+                {head("name", "Salesman")}
+                {head("status", "Status")}
+                {head("visits", "Visits", "right")}
+                {head("orders", "Orders", "right")}
+                {head("value", "Order value", "right")}
+                {head("collected", "Collected", "right")}
+                {head("route", "Planned route")}
+                <th className="sticky top-0 z-[1] border-b border-line bg-[#F9FAFB]" />
+              </tr>
+            </thead>
+            <tbody>
+              {shown.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="px-4 py-12 text-center text-muted">
+                    Nobody matches that.
+                  </td>
+                </tr>
+              ) : (
+                shown.map((p) => <PersonRow key={p.id} p={p} href={dayHref(p, day, isToday)} />)
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {people.length ? (
+        <div className="border-t border-line bg-[#F9FAFB] px-4 py-2 text-[12px] text-muted">
+          Showing {shown.length} of {people.length} · click a row to open that salesman&rsquo;s day in a new tab
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function compare(a: SalesmanDay, b: SalesmanDay, key: SortKey): number {
+  switch (key) {
+    case "status":
+      return rank(a) - rank(b);
+    case "name":
+      return byName(a, b);
+    case "visits":
+      return Number(a.visits) - Number(b.visits);
+    case "orders":
+      return Number(a.orders) - Number(b.orders);
+    case "value":
+      return Number(a.orderValuePaise) - Number(b.orderValuePaise);
+    case "collected":
+      return Number(a.collectedPaise) - Number(b.collectedPaise);
+    case "route":
+      return ratio(a) - ratio(b);
+  }
+}
+
+/** "Person 2" before "Person 10" — names carry numbers often enough to matter. */
+const byName = (a: SalesmanDay, b: SalesmanDay) =>
+  a.name.localeCompare(b.name, "en-IN", { numeric: true, sensitivity: "base" });
+const ratio = (p: SalesmanDay) => (p.plannedStops ? p.walkedStops / p.plannedStops : -1);
+
+/** Out, then finished, then not started, then closed accounts. */
+function rank(p: SalesmanDay): number {
+  if (!p.active) return 3;
+  if (p.checkInAt && !p.checkOutAt) return 0;
+  if (p.checkInAt) return 1;
+  return 2;
+}
+
+function PersonRow({ p, href }: { p: SalesmanDay; href: string }) {
+  const status = !p.active
+    ? { word: "Account closed", pill: "bg-canvas text-muted", dot: "bg-faint" }
+    : !p.checkInAt
+      ? { word: "Not started", pill: "bg-danger-soft text-danger", dot: "bg-danger" }
+      : p.checkOutAt
+        ? { word: `Finished ${clock(p.checkOutAt)}`, pill: "bg-canvas text-body", dot: "bg-faint" }
+        : { word: `Out since ${clock(p.checkInAt)}`, pill: "bg-success-soft text-success", dot: "bg-success" };
+  const unverified = Number(p.unverifiedVisits);
+  const pct = p.plannedStops ? Math.min(100, Math.round((p.walkedStops / p.plannedStops) * 100)) : 0;
+
+  return (
+    <tr
+      onClick={(e) => {
+        /* The name is a real link (middle-click, copy address); the rest of
+           the row is a convenience that does the same. */
+        if ((e.target as HTMLElement).closest("a")) return;
+        window.open(href, "_blank", "noopener");
+      }}
+      className="group cursor-pointer border-b border-divider transition-colors last:border-b-0 hover:bg-[#F7F5FF]"
+      title={`Open ${p.name}'s day in a new tab`}
+    >
+      <td className="px-4 py-2.5">
+        <span className="flex min-w-0 items-center gap-3">
+          <span
+            className={cx(
+              "flex size-8 flex-none items-center justify-center rounded-full text-[11px] font-semibold",
+              p.active ? avatarTone(p.name) : "bg-canvas text-faint",
+            )}
+          >
+            {p.initials}
+          </span>
+          <a
+            href={href}
+            target="_blank"
+            rel="noopener"
+            className="min-w-0 truncate font-medium text-ink no-underline group-hover:text-brand hover:underline"
+          >
+            {p.name}
+          </a>
+        </span>
+      </td>
+      <td className="px-4 py-2.5">
+        <span
+          className={cx(
+            "inline-flex max-w-full items-center gap-1.5 rounded-full px-2 py-0.5 text-[12px] font-medium",
+            status.pill,
+          )}
+        >
+          <span className={cx("block size-1.5 flex-none rounded-full", status.dot)} />
+          <span className="truncate">{status.word}</span>
+        </span>
+        {p.withinGeofence === false ? (
+          <span className="mt-0.5 block text-[11px] text-warn-ink" title="Punched in outside the permitted radius">
+            Punched in off site
+          </span>
+        ) : null}
+      </td>
+      <td className="px-4 py-2.5 text-right tabular-nums">
+        <span className={p.visits ? "font-medium text-ink" : "text-faint"}>{p.visits}</span>
+        {unverified ? (
+          <span className="block text-[11px] text-warn-ink" title="Visits saved without the checks passing">
+            {unverified} unverified
+          </span>
+        ) : null}
+      </td>
+      <td className="px-4 py-2.5 text-right tabular-nums">
+        <span className={p.orders ? "font-medium text-ink" : "text-faint"}>{p.orders || "—"}</span>
+      </td>
+      <td className="truncate px-4 py-2.5 text-right tabular-nums" title="Captured in the field, before accounts approve it">
+        <span className={Number(p.orderValuePaise) ? "text-ink" : "text-faint"}>
+          {Number(p.orderValuePaise) ? money(p.orderValuePaise) : "—"}
+        </span>
+      </td>
+      <td
+        className="truncate px-4 py-2.5 text-right tabular-nums"
+        title="Reported by the salesman; confirmed only once accounts find it in the bank"
+      >
+        <span className={Number(p.collectedPaise) ? "text-ink" : "text-faint"}>
+          {Number(p.collectedPaise) ? money(p.collectedPaise) : "—"}
+        </span>
+      </td>
+      <td className="px-4 py-2.5">
+        {p.plannedStops ? (
+          <span className="flex items-center gap-2" title={`${p.walkedStops} of ${p.plannedStops} planned stops`}>
+            <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-divider">
+              <span
+                className={cx("block h-full rounded-full", pct >= 100 ? "bg-success" : "bg-brand")}
+                style={{ width: `${pct}%` }}
+              />
+            </span>
+            <span className="flex-none text-[12px] text-muted tabular-nums">
+              {p.walkedStops}/{p.plannedStops}
+            </span>
+          </span>
+        ) : (
+          <span className="text-[12px] text-faint">No route</span>
+        )}
+      </td>
+      <td className="px-3 py-2.5">
+        <span className="flex justify-end">
+          <SalesIcon
+            name="chevron"
+            size={16}
+            className="text-line-strong transition-transform group-hover:translate-x-0.5 group-hover:text-brand"
+          />
+        </span>
+      </td>
+    </tr>
+  );
+}
+
+/**
+ * `09:32`, in Asia/Kolkata — named rather than left to the browser, because
+ * this renders on the server too and the server is UTC.
  */
 function clock(at: Date | string): string {
   return new Intl.DateTimeFormat("en-GB", {

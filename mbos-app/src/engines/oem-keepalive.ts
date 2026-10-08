@@ -56,24 +56,6 @@ export type Oem =
   | 'huawei'
   | 'other';
 
-export type KeepAliveStep = {
-  /** Stable, so "has he done this one" survives a reworded label. */
-  key: 'battery' | 'autostart';
-  title: string;
-  /** What to tap once the screen opens. Named because we cannot do it for him. */
-  detail: string;
-  /**
-   * Whether the system can actually GRANT this, or only show the screen.
-   *
-   * The difference is the whole of what the screen must not lie about.
-   * Battery optimisation comes back granted or not; autostart is a page we
-   * open and a sentence we print, and the handset has no way to learn what he
-   * did there. Marking both "done" the same way would be the app claiming
-   * something it cannot know.
-   */
-  grantable: boolean;
-};
-
 /**
  * The manufacturer, folded to the ones whose settings differ.
  *
@@ -192,16 +174,16 @@ const OEM_WORDS: Record<Oem, OemWords | null> = {
 /**
  * That phone's words, or the honest generic ones.
  *
- * READ BY BOTH SCREENS — `app/tracking-setup.tsx` through `keepAliveSteps`
- * below, and the start-of-day gate through `engines/phone-readiness.ts`, which
- * imports this rather than keeping the second copy it used to.
+ * READ BY EVERY SETUP SCREEN — the shared step list in `engines/setup-walkthrough.ts`
+ * and the start-of-day gate's check in `engines/phone-readiness.ts` both take
+ * their autostart words from here, through `autostartWhere`.
  */
 export function oemWords(oem: Oem): OemWords {
   return (
     OEM_WORDS[oem] ?? {
       label: `Let ${APP_LABEL} run in the background`,
       path:
-        'Open your phone Settings and look for Battery, then for anything about background apps, ' +
+        'Open your phone Settings and look for Battery. Then look for background apps, ' +
         `app launch or autostart. Set ${APP_LABEL} so the phone never stops it.`,
       also: null,
     }
@@ -209,45 +191,21 @@ export function oemWords(oem: Oem): OemWords {
 }
 
 /**
- * What this handset needs doing, in the order to do it.
+ * Where the autostart switch is on this phone, as one sentence or two.
  *
- * Battery first, always: it is the one that can be granted in a single tap
- * and the one that is the same on every phone, so it is the step most likely
- * to be finished. Asking somebody to walk a six-level OEM menu before that is
- * how a setup screen gets abandoned half way.
+ * THE STEP IS ALWAYS OFFERED, and these words are what change. It used to be
+ * dropped entirely on a handset whose make nobody had mapped — the honest half
+ * of that was refusing to print a guessed menu path, and the dishonest half was
+ * that the screen then implied there was nothing else to do. `oemWords`
+ * answers with a real path or with generic wording that admits it is generic.
  *
- * A handset with no OEM quirk we know of gets the battery step alone. Printing
- * an autostart path we are guessing at would send somebody looking for a menu
- * that is not there, and the honest answer to "we do not know where it is on
- * your phone" is to not claim to.
+ * This replaces `keepAliveSteps`, Keep tracking on's own two-step list. That
+ * screen now draws the shared list every setup screen draws — see
+ * `engines/setup-steps.ts` — so the words live here and the list lives there.
  */
-export function keepAliveSteps(oem: Oem): KeepAliveStep[] {
+export function autostartWhere(oem: Oem): string {
   const words = oemWords(oem);
-  return [
-    {
-      key: 'battery',
-      title: `Let ${APP_LABEL} run in the background`,
-      detail:
-        'Android stops apps it thinks are using battery. This one has to keep recording while your ' +
-        'day is open. Tap Allow on the box that appears.',
-      grantable: true,
-    },
-    {
-      /* THE STEP IS ALWAYS OFFERED NOW, and the words are what change.
-         
-         It used to be dropped entirely on a handset whose make nobody had
-         mapped — the honest half of that was refusing to print a guessed menu
-         path, and the dishonest half was that the screen then showed one step
-         and implied there was nothing else to do. `oemWords` answers with a
-         real path or with generic wording that admits it is generic, so the
-         step can stand either way and the salesman is never told a setting he
-         has to find does not exist. */
-      key: 'autostart',
-      title: words.label,
-      detail: words.path + (words.also ? ' ' + words.also : ''),
-      grantable: false,
-    },
-  ];
+  return words.path + (words.also ? ' ' + words.also : '');
 }
 
 /**
@@ -326,8 +284,8 @@ export function shouldOfferSetup(args: {
  * twice this week needs to be told it was never the step.
  */
 export const RESTART_ANSWER =
-  'You do not need to restart your phone. The battery setting works the moment you allow it, and ' +
-  'the autostart one is read the next time your day starts.';
+  'You do not need to restart your phone. The battery setting works as soon as you allow it. ' +
+  'The autostart setting works from the next time you start your day.';
 
 
 /**
@@ -371,9 +329,9 @@ export function trackingVerdict(i: {
   if (i.capture === 'service' || i.capture === 'background') {
     return {
       tone: 'good',
-      title: 'Your route is being recorded',
+      title: 'Your route is being saved',
       detail:
-        'It keeps going with the phone in your pocket, and it stops the moment you check out. ' +
+        'It keeps going with the phone in your pocket. It stops when you punch out. ' +
         'Nothing else to do.',
       action: null,
     };
@@ -388,15 +346,15 @@ export function trackingVerdict(i: {
   if (i.capture === 'floor') {
     return {
       tone: 'act',
-      title: 'Only recording while the app is open',
+      title: 'Route saved only when the app is open',
       detail:
         (i.exemption === 'optimised'
-          ? 'Your phone is still stopping MahekOne in the background — do the battery step above first. '
-          : 'Your phone stopped MahekOne in the background earlier today. ') +
+          ? 'Your phone still stops Mahek MBOS when the app is closed. Do the battery step above first. '
+          : 'Your phone stopped Mahek MBOS earlier today when the app was closed. ') +
         (i.canRestart
-          ? 'Restart MahekOne and it will try again. Nothing saved on this phone is lost by that.'
-          : 'Close MahekOne completely and open it again, and it will try again. Nothing saved on ' +
-            'this phone is lost by that.'),
+          ? 'Restart Mahek MBOS and it will try again. You will not lose anything saved on this phone.'
+          : 'Close Mahek MBOS completely and open it again. It will try again. You will not lose ' +
+            'anything saved on this phone.'),
       action: i.canRestart ? 'restart_app' : null,
     };
   }
@@ -410,13 +368,13 @@ export function trackingVerdict(i: {
    */
   return {
     tone: 'idle',
-    title: 'Nothing to record yet',
+    title: 'Nothing to save yet',
     detail:
       (i.exemption === 'optimised'
-        ? 'Battery saving is still switched on for MahekOne — do the step above, or your route will ' +
-          'have holes in it. '
+        ? 'Battery saver is still on for Mahek MBOS. Do the step above, or your route will ' +
+          'have gaps. '
         : '') +
-      'Recording starts when you start your day and stops when you check out.',
+      'Your route is saved from when you start your day until you punch out.',
     action: 'recheck',
   };
 }

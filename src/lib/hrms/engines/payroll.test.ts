@@ -117,7 +117,7 @@ test("attendance count and the days reconciliation", () => {
   /* 20 + 2 + 3 + 4 − 1 − 1 of 30 */
   assert.equal(f.accounted, 27);
   assert.equal(f.missingDays, 3);
-  assert.equal(salaryBlock(f), "Kindly Check Count Leave/Attendance 3 Days Missing");
+  assert.equal(salaryBlock(f), "3 days of 30 are not covered by attendance, leave or holidays. Check the month's attendance and leave before preparing the salary.");
   assert.equal(f.basicPaise, 2500000);
   assert.equal(f.specialPaise, 100000, "one compensation day paid as special allowance");
 });
@@ -126,7 +126,10 @@ test("a month that reconciles is not blocked; a pending check-out is", () => {
   const whole = computeSalary(input({ fullDays: 26, officialHolidays: 4 }), CFG);
   assert.equal(whole.missingDays, 0);
   assert.equal(salaryBlock(whole), null);
-  assert.equal(salaryBlock(computeSalary(input({ pendingCheckouts: 2 }), CFG)), "Your Pending Checkout Count is 2");
+  assert.equal(
+    salaryBlock(computeSalary(input({ pendingCheckouts: 2 }), CFG)),
+    "2 days this month have a check-in with no check-out. Add the check-outs before preparing the salary.",
+  );
 });
 
 test("gross, deductions and in hand; other payment sits beside in hand (A10)", () => {

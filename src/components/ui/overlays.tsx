@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { Button, cx } from "./primitives";
 import { DictateButton, joinDictation } from "./dictate";
 import { Modal, useEscape } from "./modal";
+import { BodyPortal } from "@/components/ui/body-portal";
 
 /*
  * Both moved to `modal.tsx` so that `dictate.tsx` — which the confirm dialog
@@ -28,19 +29,21 @@ export function Drawer({
   width?: number;
   label?: string;
 }) {
-  useEscape(onClose);
+  useEscape(onClose, open);
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[60] flex justify-end" role="dialog" aria-label={label}>
-      <div onClick={onClose} className="flex-1 bg-[rgba(22,22,22,0.2)]" />
-      <div
-        style={{ width }}
-        className="animate-drawer-in flex flex-col bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
-      >
-        {children}
+    <BodyPortal>
+      <div className="fixed inset-0 z-[60] flex justify-end" role="dialog" aria-label={label}>
+        <div onClick={onClose} className="flex-1 bg-[rgba(22,22,22,0.2)]" />
+        <div
+          style={{ width }}
+          className="animate-drawer-in flex flex-col bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
+        >
+          {children}
+        </div>
       </div>
-    </div>
+    </BodyPortal>
   );
 }
 

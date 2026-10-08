@@ -4,10 +4,14 @@ import { ExportMenu } from "@/components/ui/export-menu";
 import { monthName } from "@/components/ui/month";
 import { money, moneyShort } from "@/lib/format";
 import {
-  activitySub,
-  collectionSub,
+  activityLine,
+  bpPercent,
+  collectionLine,
   NOTHING_OVERDUE,
+  shareBp,
 } from "@/lib/performance-labels";
+import { PersonPerformanceButton } from "./person-performance";
+import { ratingTone } from "./rating-tone";
 import { today } from "@/lib/recompute";
 import { BP } from "@/lib/engines/performance";
 import {
@@ -62,7 +66,6 @@ export default async function Page({
     unattributedForPeriod(month),
   ]);
 
-  const scored = rows.filter((r) => r.hasTarget);
   const totals = rows.reduce(
     (a, r) => ({
       revenue: a.revenue + r.actuals.revenuePaise,
@@ -84,7 +87,7 @@ export default async function Page({
     <div className="p-6">
       <ScreenHeader
         title="Performance"
-        subtitle={`${monthName(month)} — revenue, litres, product mix, new customers, collection and activity, scored out of 100.`}
+        subtitle={`${monthName(month)} · scored out of 100 · click a name for detail`}
         actions={
           <div className="flex items-center gap-1 text-[13px]">
             <Link
@@ -109,6 +112,8 @@ export default async function Page({
                     "Mix achieved (%)",
                     "New customers",
                     "Collected (Rs)",
+                    "Overdue at start (Rs)",
+                    "Collected of overdue (%)",
                     "Collection achieved (%)",
                     "Activity",
                     "Activity achieved (%)",
@@ -130,6 +135,10 @@ export default async function Page({
                       r.mix.achievementBp === null ? "" : Math.round(r.mix.achievementBp / 100),
                       r.actuals.newCustomers,
                       Math.round(r.actuals.collectionPaise / 100),
+                      Math.round(r.actuals.overdueAtStartPaise / 100),
+                      r.actuals.overdueAtStartPaise > 0
+                        ? Math.round((r.actuals.collectionPaise / r.actuals.overdueAtStartPaise) * 100)
+                        : "",
                       by("collection"),
                       r.actuals.activity,
                       by("activity"),
@@ -151,15 +160,13 @@ export default async function Page({
               ? `${priceRisk[0].userName} is at target on revenue but not on volume`
               : `${priceRisk.length} people are at target on revenue but not on volume`
           }
-          body="Revenue can rise on a price revision alone. Where volume has not risen with it, the month is a price effect rather than more selling — the litres column is the one to read."
         />
       ) : null}
 
       {orphaned.revenuePaise > 0 ? (
         <Banner
           tone="info"
-          title={`${money(orphaned.revenuePaise)} is not counted towards anybody`}
-          body={`${orphaned.customers} ${orphaned.customers === 1 ? "customer has" : "customers have"} neither a salesperson nor a back office person, so their orders belong to no one's target. Setting either seat on the customer record fixes it — nothing here guesses.`}
+          title={`${money(orphaned.revenuePaise)} from ${orphaned.customers} ${orphaned.customers === 1 ? "customer" : "customers"} with no salesperson counts towards nobody`}
         />
       ) : null}
 
@@ -170,17 +177,17 @@ export default async function Page({
             label: "Volume",
             value: litres(totals.millilitres),
             sub: totals.unmatched
-              ? `${money(totals.unmatched)} on unrecognised products`
+              ? `${moneyShort(totals.unmatched)} unmatched`
               : undefined,
           },
           {
-            label: "Collected",
-            value: money(totals.collected),
-            // Against the team's own old debt, which is what the component is
-            // a share of — "confirmed only" said which receipts counted and
-            // never what the figure was measured against.
+            // A SHARE, because that is what collection is asked as: the old
+            // debt the team worked down, of what was overdue when the month
+            // opened. The rupees are the line under it.
+            label: "Collection",
+            value: bpPercent(shareBp({ done: totals.collected, base: totals.overdue })),
             sub: totals.overdue > 0
-              ? `${collectionSub({ done: totals.collected, base: totals.overdue }, money)}, confirmed only`
+              ? collectionLine({ done: totals.collected, base: totals.overdue }, moneyShort)
               : NOTHING_OVERDUE,
           },
           { label: "New customers", value: String(totals.newCustomers) },
@@ -194,114 +201,144 @@ export default async function Page({
       {rows.length === 0 ? (
         <Empty
           title="Nobody to score yet"
-          body="Nobody holds a published target for this month and nothing has been sold against a customer with a salesperson or a back office person."
+          body="No published targets and no sales this month."
         />
       ) : (
         <>
+          {/*
+            FITS BESIDE THE SIDEBAR AT 1280, with no sideways scroll. It was
+            eleven columns over 1,324px, so on a laptop the alert column —
+            the one this screen exists to show — sat off the right-hand edge.
+            Each figure now carries its achievement UNDER it rather than beside
+            it, the rating sits under the score, and what wants attention sits
+            under the name, where it is read with the person it is about.
+          */}
           <Table
-            minWidth={1324}
+            minWidth={936}
             head={
               <>
-                <HeadCell width={170}>Person</HeadCell>
-                <HeadCell align="right" width={90}>Score</HeadCell>
-                <HeadCell width={130}>Rating</HeadCell>
-                <HeadCell align="right" width={160}>Revenue excl. GST</HeadCell>
-                <HeadCell align="right" width={150}>Volume</HeadCell>
-                <HeadCell align="right" width={90}>Mix</HeadCell>
-                <HeadCell align="right" width={100}>New</HeadCell>
-                <HeadCell align="right" width={110}>Collection</HeadCell>
-                <HeadCell align="right" width={100}>Activity</HeadCell>
-                <HeadCell width={180}>Wants attention</HeadCell>
-                <HeadCell width={44} />
+                <HeadCell width={230}>Person</HeadCell>
+                <HeadCell align="right" width={100}>Score</HeadCell>
+                <HeadCell align="right" width={130}>Revenue</HeadCell>
+                <HeadCell align="right" width={100}>Volume</HeadCell>
+                <HeadCell align="right" width={64}>Mix</HeadCell>
+                <HeadCell align="right" width={64}>New</HeadCell>
+                <HeadCell align="right" width={100}>Collection</HeadCell>
+                <HeadCell align="right" width={84}>Tasks</HeadCell>
+                <HeadCell width={64} />
               </>
             }
           >
             {rows.map((r, i) => {
-              const by = (k: string) =>
-                r.score.components.find((c) => c.key === k)?.achievementBp ?? null;
+              const comp = (k: string) => r.score.components.find((c) => c.key === k);
+              const by = (k: string) => comp(k)?.achievementBp ?? null;
               const revenue = by("revenue");
               const volume = by("volume");
               const diverging =
                 revenue !== null && volume !== null && revenue >= BP && volume < BP;
+              /* Collection is asked as a SHARE of the old debt, so it is
+                 shown as one: collected ÷ overdue when the month opened, with
+                 the share that was asked under it. */
+              const base = r.actuals.overdueAtStartPaise;
+              const collectedBp = shareBp({ done: r.actuals.collectionPaise, base });
+              const collectionAsk = comp("collection")?.target ?? 0;
+              const askedBp = base > 0 && collectionAsk > 0 ? Math.round((collectionAsk * BP) / base) : null;
+              const tasksBp = shareBp({ done: r.actuals.activity, base: r.actuals.activityAssigned });
+              const tasksAsk = comp("activity")?.target ?? 0;
+              const tasksAskedBp =
+                r.actuals.activityAssigned > 0 && tasksAsk > 0
+                  ? Math.round((tasksAsk * BP) / r.actuals.activityAssigned)
+                  : null;
 
               return (
                 <Row key={r.userId} striped={i % 2 === 1}>
-                  <Cell truncate={170}>
-                    <span className="font-medium text-ink">{r.userName}</span>
+                  <Cell>
+                    <PersonPerformanceButton
+                      userId={r.userId}
+                      name={r.userName}
+                      month={month}
+                      today={now}
+                    />
+                    {r.alerts.length ? (
+                      <span
+                        className="block truncate text-[12px] text-warn-ink"
+                        title={r.alerts.map((a) => a.message).join("\n")}
+                      >
+                        {r.alerts[0].message}
+                        {r.alerts.length > 1 ? ` (+${r.alerts.length - 1})` : ""}
+                      </span>
+                    ) : null}
                   </Cell>
                   <Cell align="right">
                     {r.hasTarget ? (
-                      <span className="font-medium text-ink tabular-nums">
-                        {(r.score.totalBp / 100).toFixed(1)}
-                      </span>
-                    ) : (
-                      <span className="text-muted">—</span>
-                    )}
-                  </Cell>
-                  <Cell>
-                    {r.hasTarget ? (
-                      <Pill tone={ratingTone(r.score.totalBp)}>{r.rating}</Pill>
+                      <>
+                        <span className="block font-medium text-ink tabular-nums">
+                          {(r.score.totalBp / 100).toFixed(1)}
+                        </span>
+                        <Pill tone={ratingTone(r.score.totalBp)}>{r.rating}</Pill>
+                      </>
                     ) : (
                       <span
                         className="text-[12px] text-muted"
                         title="Nothing has been asked of this person for this month, so there is nothing to score them against."
                       >
-                        no target set
+                        no target
                       </span>
                     )}
                   </Cell>
                   <Cell align="right">
-                    <Achieved
-                      actual={money(r.actuals.revenuePaise)}
-                      bp={revenue}
-                      emphasise={diverging}
+                    <Stacked
+                      value={moneyShort(r.actuals.revenuePaise)}
+                      title={money(r.actuals.revenuePaise)}
+                      sub={bpOf(revenue)}
+                      tone={subTone(revenue, diverging)}
                     />
                   </Cell>
                   <Cell align="right">
-                    <Achieved
-                      actual={litres(r.actuals.millilitres)}
-                      bp={volume}
-                      emphasise={diverging}
+                    <Stacked
+                      value={litres(r.actuals.millilitres)}
+                      sub={bpOf(volume)}
+                      tone={subTone(volume, diverging)}
                     />
                   </Cell>
-                  <Cell align="right">{pct(r.mix.achievementBp)}</Cell>
                   <Cell align="right">
-                    <Achieved actual={String(r.actuals.newCustomers)} bp={by("newCustomers")} />
+                    <Stacked value={bpPercent(r.mix.achievementBp)} />
                   </Cell>
                   <Cell align="right">
-                    <Achieved
-                      actual={moneyShort(r.actuals.collectionPaise)}
-                      bp={by("collection")}
-                      sub={collectionSub(
-                        {
-                          done: r.actuals.collectionPaise,
-                          base: r.actuals.overdueAtStartPaise,
-                        },
-                        moneyShort,
+                    <Stacked
+                      value={String(r.actuals.newCustomers)}
+                      sub={bpOf(by("newCustomers"))}
+                      tone={subTone(by("newCustomers"), false)}
+                    />
+                  </Cell>
+                  <Cell align="right">
+                    <Stacked
+                      value={collectedBp === null ? "—" : bpPercent(collectedBp)}
+                      title={collectionLine(
+                        { done: r.actuals.collectionPaise, base },
+                        money,
                       )}
+                      sub={
+                        askedBp !== null
+                          ? `target ${bpPercent(askedBp)}`
+                          : base > 0
+                            ? `of ${moneyShort(base)}`
+                            : "none overdue"
+                      }
+                      tone={askedBp !== null ? subTone(by("collection"), false) : "muted"}
                     />
                   </Cell>
                   <Cell align="right">
-                    <Achieved
-                      actual={String(r.actuals.activity)}
-                      bp={by("activity")}
-                      sub={activitySub({
-                        done: r.actuals.activity,
-                        base: r.actuals.activityAssigned,
-                      })}
+                    <Stacked
+                      value={tasksBp === null ? "—" : bpPercent(tasksBp)}
+                      title={activityLine({ done: r.actuals.activity, base: r.actuals.activityAssigned })}
+                      sub={
+                        r.actuals.activityAssigned > 0
+                          ? `${r.actuals.activity} of ${r.actuals.activityAssigned}`
+                          : "none set"
+                      }
+                      tone={tasksAskedBp !== null ? subTone(by("activity"), false) : "muted"}
                     />
-                  </Cell>
-                  <Cell truncate={180}>
-                    {r.alerts.length ? (
-                      <span
-                        className="text-[12px] text-warn-ink"
-                        title={r.alerts.map((a) => a.message).join("\n")}
-                      >
-                        {r.alerts[0].message}
-                      </span>
-                    ) : (
-                      <span className="text-muted">—</span>
-                    )}
                   </Cell>
                   <Cell align="right">
                     <RowMenu
@@ -317,21 +354,6 @@ export default async function Page({
             })}
           </Table>
 
-          <p className="mt-3 max-w-[860px] text-[13px] text-pretty text-muted">
-            A customer&rsquo;s figures count towards their salesperson, and where an
-            account has none, towards the back office person who works it — one person
-            per customer, never both, so these rows add up to the company rather than
-            past it. Revenue is orders accounts have accepted; collection is money
-            accounts have confirmed against the bank. Litres are known only for order
-            lines whose product could be matched to the catalogue
-            {totals.unmatched
-              ? `, and ${money(totals.unmatched)} this month could not be`
-              : ""}
-            .{" "}
-            {scored.length < rows.length
-              ? `${rows.length - scored.length} of these people have no published target for ${monthName(month)}.`
-              : ""}
-          </p>
         </>
       )}
     </div>
@@ -339,57 +361,51 @@ export default async function Page({
 }
 
 /**
- * A figure and what it is against.
+ * A figure and, under it, what it is against.
  *
- * Both, always. The percentage alone hides that somebody's target was tiny,
- * and the rupees alone hide that they missed it — a manager comparing two
- * people needs the pair.
+ * Stacked rather than side by side so every column stays narrow enough for
+ * the table to fit beside the sidebar. The second line is the achievement
+ * against what was asked — or, for the two shares, what the share is of.
  */
-function Achieved({
-  actual,
-  bp,
+function Stacked({
+  value,
   sub,
-  emphasise,
+  title,
+  tone = "muted",
 }: {
-  actual: string;
-  bp: number | null;
-  /*
-   * WHAT THE FIGURE IS A SHARE OF, for the two components where it is one.
-   * Collection and activity are a numerator over a base somebody else's book
-   * decides, and the base was never drawn — "₹2.4L · 73%" left a manager with
-   * no way to know 73% of what. It is a second line rather than a longer first
-   * one so the column still scans as a column.
-   */
+  value: string;
   sub?: string;
-  emphasise?: boolean;
+  title?: string;
+  tone?: "success" | "warn" | "muted";
 }) {
   return (
-    <span className="tabular-nums">
-      <span className="text-ink">{actual}</span>
-      {bp === null ? null : (
+    <span className="block tabular-nums" title={title}>
+      <span className="block text-ink">{value}</span>
+      {sub ? (
         <span
           className={
-            emphasise
-              ? "ml-1.5 text-[12px] font-medium text-warn-ink"
-              : bp >= BP
-                ? "ml-1.5 text-[12px] text-success"
-                : "ml-1.5 text-[12px] text-muted"
+            tone === "success"
+              ? "block text-[11px] text-success"
+              : tone === "warn"
+                ? "block text-[11px] font-medium text-warn-ink"
+                : "block text-[11px] text-muted"
           }
         >
-          {(bp / 100).toFixed(0)}%
+          {sub}
         </span>
-      )}
-      {sub ? <span className="block text-[11px] text-muted">{sub}</span> : null}
+      ) : null}
     </span>
   );
 }
 
-function pct(bp: number | null) {
-  return bp === null ? (
-    <span className="text-muted">—</span>
-  ) : (
-    <span className="tabular-nums text-ink">{(bp / 100).toFixed(0)}%</span>
-  );
+/** Achievement against target as "64%", or nothing where nothing was asked. */
+function bpOf(bp: number | null): string | undefined {
+  return bp === null ? undefined : `${(bp / 100).toFixed(0)}%`;
+}
+
+function subTone(bp: number | null, emphasise: boolean): "success" | "warn" | "muted" {
+  if (emphasise) return "warn";
+  return bp !== null && bp >= BP ? "success" : "muted";
 }
 
 /** Millilitres are what is stored; litres are what anybody says out loud. */
@@ -397,12 +413,3 @@ function litres(ml: number): string {
   if (!ml) return "0 L";
   return `${Math.round(ml / 1000).toLocaleString("en-IN")} L`;
 }
-
-function ratingTone(bp: number): "success" | "brand" | "warn" | "danger" {
-  const score = bp / 100;
-  if (score >= 90) return "success";
-  if (score >= 80) return "brand";
-  if (score >= 60) return "warn";
-  return "danger";
-}
-

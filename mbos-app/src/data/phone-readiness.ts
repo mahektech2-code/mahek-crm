@@ -4,6 +4,7 @@ import * as Location from 'expo-location';
 import { all, getKv } from '../db';
 import { batteryExemption } from '../native/phone-setup';
 import {
+  hadTrailSince,
   phoneReadiness,
   type BatteryExemption,
   type PermissionState,
@@ -41,6 +42,19 @@ export const ACK_KEY = 'phone-setup.acknowledged';
  */
 const LAST_KEPT_KEY = 'trailLastKeptAt';
 
+/**
+ * …AND THE MARK EVERY RECORDER MOVES, which is the one that matters now.
+ *
+ * `trailLastKeptAt` is written by the expo task alone. Once our own service
+ * took capture over it stopped moving, and every Android salesman was told
+ * each morning that yesterday "saved no movement at all" — and blocked from
+ * punching in until he had walked to the autostart screen again. `sync/trail.ts`
+ * moves this one from the task, the drain and the service's own report alike.
+ * Both are read and the later wins, so a handset still on the old path loses
+ * nothing.
+ */
+const TRAIL_ALIVE_KEY = 'trailAliveAt';
+
 function permissionOf(status: string, granted: boolean): PermissionState {
   if (granted || status === 'granted') return 'granted';
   return status === 'undetermined' ? 'undetermined' : 'denied';
@@ -72,11 +86,10 @@ async function previousWorkedDay(userId: string): Promise<{ day: string; hadTrai
   const prev = rows[0];
   if (!prev || prev.checkInAt == null) return null;
 
-  const raw = await getKv(LAST_KEPT_KEY);
-  const lastKeptAt = raw ? Number(raw) : 0;
+  const marks = await Promise.all([getKv(LAST_KEPT_KEY), getKv(TRAIL_ALIVE_KEY)]);
   return {
     day: prev.day,
-    hadTrail: Number.isFinite(lastKeptAt) && lastKeptAt >= prev.checkInAt,
+    hadTrail: hadTrailSince(prev.checkInAt, marks.map((raw) => (raw ? Number(raw) : null))),
   };
 }
 

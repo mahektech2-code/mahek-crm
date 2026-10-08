@@ -23,7 +23,8 @@ import { nf } from "../ui";
 import { fgReorderPercent, rmReorderPercent, rmRequired } from "../engines/production";
 import { fgLevelAvailable, fgLots, lockLot, packLots, rmLevelAvailable, rmLots, sfgLots, type Ex } from "../stock";
 import { godownIdByName, godownOptions, inTx, materials, pair, refuse, today, type Tx } from "./common";
-import { requisitionForm } from "./purchase";
+import { requisitionForm } from "./purchase-flow";
+import { departmentForCategory, requirementDepartmentsFor } from "../departments";
 import { levelSuggestions } from "../suggest";
 import type { LevelSuggestion } from "../engines/production";
 
@@ -381,8 +382,7 @@ function rmLevelList(key: "rmLevels" | "reorderRm"): ScreenModule {
       async raise(ctx, id) {
         const [r] = (await rmLevelRows()).filter((x) => x.id === id);
         if (!r) return null;
-        const type = ["Chemical", "Can", "Box", "Stationary"].includes(r.type) ? r.type : "Chemical";
-        return requisitionForm(ctx, { godown: r.godown, type, item: r.item, required: r.required == null ? "" : String(r.required), priority: "For Stock" });
+        return requisitionForm(ctx, { godown: r.godown, type: r.type, item: r.item, required: r.required == null ? "" : String(r.required), priority: "For Stock", department: reorderDepartment(ctx, r.type) });
       },
       ...(key === "rmLevels"
         ? {
@@ -616,3 +616,9 @@ function fgLevelList(key: "fgLevels" | "reorderFg"): ScreenModule {
 }
 
 export const MOVEMENT_SCREENS: ScreenModule[] = [transfers, rmLevelList("rmLevels"), fgLevelList("fgLevels"), rmLevelList("reorderRm"), fgLevelList("reorderFg")];
+
+/** The team a re-order from the store is raised under: the one that asks for the category, or the person's own where they raise for one team only. */
+function reorderDepartment(ctx: ErpContext, materialType: string): string {
+  const offered = requirementDepartmentsFor(ctx.department);
+  return offered.length === 1 ? offered[0] : departmentForCategory(materialType);
+}

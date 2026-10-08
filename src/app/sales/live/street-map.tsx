@@ -713,6 +713,10 @@ export function StreetMap({
      reason the book is: `drawOverlays` runs again on every Map/Satellite
      switch and reads it imperatively. */
   const [showVisits, setShowVisits] = React.useState(true);
+  /* Whether the legend card is open. It folds to one button so a manager
+     reading a dense street can take it off the map without losing the
+     switches inside it. */
+  const [legendOpen, setLegendOpen] = React.useState(true);
   const showVisitsRef = React.useRef(true);
   /* Which shop's record is open. The same drawer Territory's map opens. */
   const [selectedShopId, setSelectedShopId] = React.useState<string | null>(null);
@@ -1593,6 +1597,15 @@ export function StreetMap({
            lane is the one thing that would make this screen unusable. */
         if (fittedOnce || !points.length) return;
         fittedOnce = true;
+        /* ARRIVING WITH SOMEBODY ALREADY PICKED — a card on Today opens this
+           screen focused on one salesman. The selection effect below ran
+           before the map existed and could not move the camera, so the first
+           frame goes to him here instead of to the whole team. */
+        const focus = pinned.find((r) => r.salesmanId === selectedIdRef.current);
+        if (focus) {
+          built.jumpTo({ center: [focus.lng as number, focus.lat as number], zoom: 15 });
+          return;
+        }
         /* FIT, never fill. One pin gets a sensible zoom instead of a rooftop. */
         const box = points.reduce(
           (b, p) => b.extend(p),
@@ -1970,8 +1983,8 @@ export function StreetMap({
           </p>
           <p className="mt-1 max-w-[420px] text-[13px] text-muted">
             {keysSpent
-              ? "Ola has refused every key held for quota, so there are no streets to draw until one of them resets at the start of the month or another is added in Admin Console → Platform → Maps."
-              : "Add an Ola Maps key in Admin Console → Platform → Maps to draw the streets under this."}{" "}
+              ? "Ola has refused every key held for quota, so there are no streets to draw until one of them resets at the start of the month or another is added in Admin Console → Integrations."
+              : "Add an Ola Maps key in Admin Console → Integrations to draw the streets under this."}{" "}
             The team list beside this still shows everything that is known —
             nobody&rsquo;s position is lost, only the picture of it.
           </p>
@@ -2033,63 +2046,83 @@ export function StreetMap({
         </div>
       ) : null}
       <OlaMapsStyleSwitcher mode={styleMode} onChange={setStyleMode} />
-      {/* The catchment's own legend, stacked under the style switcher rather
-          than beside it — both anchored top-left read as one cluster of map
-          controls, and MapLibre's zoom sits top-right. Drawn only once there
-          is something to say: an empty legend beside an empty map is
-          furniture.
+      {/* THE LEGEND IS A CARD IN THE BOTTOM-LEFT CORNER, one entry per line.
+          It used to be a bar under the style switcher that wrapped across the
+          whole width of the map, ran under MapLibre's zoom control and covered
+          the top of every street — the part of a wide map with the most on it.
+          A narrow stacked card reads as a key rather than a banner, and it
+          folds away to one button. Drawn only once there is something to say:
+          an empty legend beside an empty map is furniture.
+
+          THE VISITS FIRST, because they are the day and the shops are the
+          ground it is read against. The count is what is PINNED: a visit made
+          where the handset could get no fix is on no map, and a legend
+          claiming otherwise would have somebody counting dots against the
+          Visits screen and finding one missing.
 
           IT NAMES THE RADIUS, because a count on its own invites the wrong
           reading. "412 shops" beside a map reads as the book; "within 10 km
-          of the team" says what it actually is, which is the half somebody
-          would otherwise have to be told. */}
+          of the team" says what it actually is. */}
       {book.length || visits.length ? (
-        <div className="absolute top-11 left-2 z-10 flex max-w-[calc(100%-1rem)] flex-wrap items-center gap-x-3 gap-y-1.5 rounded-[6px] border border-line bg-surface/95 px-3 py-2 text-[12px] text-ink shadow-[0_1px_4px_rgba(22,22,22,0.15)]">
-          {/* THE VISITS FIRST, because they are the day and the shops are the
-              ground it is read against. The count is what is PINNED: a visit
-              made where the handset could get no fix is on no map, and a legend
-              claiming otherwise would have somebody counting dots against the
-              Visits screen and finding one missing. */}
-          {visits.length ? (
-            <label className="flex cursor-pointer items-center gap-1.5">
-              <input
-                type="checkbox"
-                checked={showVisits}
-                onChange={(e) => setShowVisits(e.target.checked)}
-              />
-              <span
-                className="inline-flex h-4 w-4 flex-none items-center justify-center rounded-full text-[9px] font-semibold text-white"
-                style={{ background: "#5223E0" }}
-                aria-hidden
-              >
-                1
-              </span>
-              Visits pinned ({visits.length})
-            </label>
+        <div className="absolute bottom-8 left-2 z-10 w-[232px] overflow-hidden rounded-[6px] border border-line bg-surface/95 text-[12px] text-ink shadow-[0_1px_4px_rgba(22,22,22,0.15)] backdrop-blur-sm">
+          <button
+            type="button"
+            onClick={() => setLegendOpen((on) => !on)}
+            aria-expanded={legendOpen}
+            className="flex w-full items-center justify-between px-3 py-1.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase hover:bg-canvas"
+          >
+            On the map
+            <span aria-hidden>{legendOpen ? "\u25BE" : "\u25B4"}</span>
+          </button>
+          {legendOpen ? (
+            <div className="flex flex-col gap-1.5 border-t border-divider px-3 py-2">
+              {visits.length ? (
+                <label className="flex cursor-pointer items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={showVisits}
+                    onChange={(e) => setShowVisits(e.target.checked)}
+                  />
+                  <span
+                    className="inline-flex h-4 w-4 flex-none items-center justify-center rounded-full text-[9px] font-semibold text-white"
+                    style={{ background: "#5223E0" }}
+                    aria-hidden
+                  >
+                    1
+                  </span>
+                  <span className="min-w-0 flex-1">Visits pinned</span>
+                  <span className="text-muted tabular-nums">{visits.length}</span>
+                </label>
+              ) : null}
+              {book.length ? (
+                <label className="flex cursor-pointer items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={showBook}
+                    onChange={(e) => setShowBook(e.target.checked)}
+                  />
+                  <span className="min-w-0 flex-1">
+                    {radiusKm ? `Shops within ${radiusKm} km` : "Nearby shops"}
+                  </span>
+                  <span className="text-muted tabular-nums">{book.length}</span>
+                </label>
+              ) : null}
+              {book.length && showBook
+                ? (["customer", "lead", "third", "closed"] as BookPinTone[])
+                    .filter((tone) => bookCounts[tone] > 0)
+                    .map((tone) => (
+                      <span key={tone} className="flex items-center gap-2 pl-[22px] text-muted">
+                        <span
+                          className="inline-block h-2.5 w-2.5 flex-none rounded-full"
+                          style={{ background: BOOK_PIN_COLOUR[tone] }}
+                        />
+                        <span className="min-w-0 flex-1 truncate">{BOOK_PIN_LABEL[tone]}</span>
+                        <span className="tabular-nums">{bookCounts[tone]}</span>
+                      </span>
+                    ))
+                : null}
+            </div>
           ) : null}
-          {book.length ? (
-          <label className="flex cursor-pointer items-center gap-1.5">
-            <input
-              type="checkbox"
-              checked={showBook}
-              onChange={(e) => setShowBook(e.target.checked)}
-            />
-            {radiusKm
-              ? `Within ${radiusKm} km of the team (${book.length})`
-              : `Nearby shops (${book.length})`}
-          </label>
-          ) : null}
-          {(["customer", "lead", "third", "closed"] as BookPinTone[])
-            .filter((tone) => bookCounts[tone] > 0)
-            .map((tone) => (
-              <span key={tone} className="flex items-center gap-1.5 text-muted">
-                <span
-                  className="inline-block h-2.5 w-2.5 rounded-full"
-                  style={{ background: BOOK_PIN_COLOUR[tone] }}
-                />
-                {BOOK_PIN_LABEL[tone]} ({bookCounts[tone]})
-              </span>
-            ))}
         </div>
       ) : null}
       {/* The same drawer Territory's map opens, from the same two reads the
@@ -2103,12 +2136,11 @@ export function StreetMap({
 /**
  * One shape for the map and the state that replaces it.
  *
- * **Fullscreen is a HEIGHT here and a layout in `live-panel.tsx`.** The panel
- * is what takes the window; this only has to stop imposing a height on itself,
- * because the fixed `calc(100vh-280px)` is subtracting a header, a banner and a
- * paragraph that are not on the screen any more. `min-h` goes with it — a
- * minimum taller than the window is a map you have to scroll to see the bottom
- * of, which is the opposite of what the button was pressed for.
+ * **The height is the PANEL's, in and out of fullscreen.** This used to set
+ * its own `calc(100vh-280px)`, guessing at the height of a header, banners and
+ * a footnote it could not see — wrong whenever the banners changed, and the
+ * reason the map came out short. `page.tsx` makes the page the height of the
+ * window and `live-panel.tsx` hands the map what is left; this fills it.
  */
 function Frame({
   children,
@@ -2122,15 +2154,12 @@ function Frame({
   return (
     <div
       className={
-        "relative overflow-hidden border border-line bg-surface " +
-        (fullscreen ? "h-full rounded-none" : "rounded-[6px]")
+        "relative h-full min-h-0 overflow-hidden border border-line bg-surface " +
+        (fullscreen ? "rounded-none" : "rounded-[6px]")
       }
     >
       <div
-        className={
-          "relative bg-[#F0F2F6] " +
-          (fullscreen ? "h-full" : "h-[calc(100vh-280px)] min-h-[480px]")
-        }
+        className="relative h-full bg-[#F0F2F6]"
       >
         {children}
         {/* BOTTOM-RIGHT, on its own. The style switcher and the legend are one

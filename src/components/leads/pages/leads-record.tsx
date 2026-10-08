@@ -1,9 +1,11 @@
+import { canValidateGstById, canVerifyLeadById } from "@/lib/services/lead-verifier";
 import { type LeadWorkspace } from "@/lib/lead-workspace";
 import { qualificationAccess } from "@/lib/lead-qualification-access";
 import { canOpenModule } from "@/lib/access";
 import { DESK_MODULE, deskHolders } from "@/lib/services/lead-desk-assignment-service";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
+import { canFor } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
 import { nowMs } from "@/lib/format";
 import { today } from "@/lib/recompute";
@@ -29,6 +31,7 @@ import {
   leadPanelCounts,
   leadSamplesFor,
   leadTimelinePage,
+  leadPhotoIds,
   leadVisitsFor,
   parkedFrom,
 } from "@/lib/services/lead-record-service";
@@ -128,6 +131,7 @@ export async function Body({
     park,
     config,
     leadManagers,
+    photoIds,
   ] = await Promise.all([
     leadTransitions(id),
     managerCalls(id),
@@ -152,6 +156,7 @@ export async function Body({
     isParked(record.stage) ? parkedFrom(id) : Promise.resolve(null),
     getConfig(),
     leadManagerCandidatesFor(id),
+    leadPhotoIds(id),
   ]);
 
   /*
@@ -184,8 +189,8 @@ export async function Body({
    * The sentence travels with the answer, so the disabled control's hover says
    * the same thing the action would have said.
    */
-  const gstSeatOrCapability =
-    record.backOfficeAmId === user.id || (await canLead(user, "lead.gstValidate"));
+  /* The responsible Sales Manager validates GST (`validateGstin` says so). */
+  const gstSeatOrCapability = await canValidateGstById(user, id);
   const gstNotYet = qualificationAccess(record.stage);
   const gstBeforeQualification = ["suspect", "new", "prospect", "contacted"].includes(record.stage);
   const canValidateGst = gstSeatOrCapability && !gstBeforeQualification;
@@ -250,7 +255,7 @@ export async function Body({
    * sub-states a parcel is in decides who is being waited on, and what the
    * customer thought of it is the GATE's question, asked one file over.
    */
-  const mustDecide = mustDecideSuspect(gateInput, config["leads.suspectMaxVisits"]);
+  const mustDecide = mustDecideSuspect(gateInput, config["mbos.leads.maxSuspectVisits"]);
   const gateFacts: LeadGateActionFacts = {
     stage: record.stage,
     salesType: record.salesType,
@@ -266,6 +271,7 @@ export async function Body({
   return (
     <LeadRecordScreen workspace={workspace}
       record={record}
+      photoIds={photoIds}
       tab={single(query.tab)}
       ladder={ladder}
       /* -1 for a lead standing off its own ladder, which is what a parked one
@@ -304,8 +310,9 @@ export async function Body({
       holdReasons={config["leads.holdReasons"]}
       discountThresholdPercent={config["leads.distributorDiscountApprovalPercent"]}
       creditLimitThresholdPaise={config["leads.distributorCreditLimitApprovalPaise"]}
-      canVerify={await canLead(user, "lead.verify")}
+      canVerify={await canVerifyLeadById(user, id)}
       canWork={await canLead(user, "lead.work")}
+      canTrash={await canFor(user, "lead.trash")}
       /* §22 — naming who RUNS the relationship, which moves no revenue and no
          target and is therefore a manager's. Moving the sales seat is the
          other act, stays accounts' and admin's under `customer.reassign`, and

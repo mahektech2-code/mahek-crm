@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLog } from "@/db/schema";
-import { requireCapability } from "@/lib/access-control";
+import { isPlatformAdmin, requireCapability } from "@/lib/access-control";
 import { runJob, type JobResult } from "@/lib/jobs";
 import {
   ageWords,
@@ -432,9 +432,18 @@ export const provider: SectionProvider = {
     if (act === "dry" && !s.dryRun) return { ok: false, error: `${s.label} has no dry run — it writes whenever it runs.` };
 
     try {
-      // The same gate the Admin Console's `triggerJob` applies before `runJob`.
+      /* The same gate the Admin Console's `triggerJob` applies before
+         `runJob`: a run that WRITES is the platform administrator's, because
+         it rewrites figures for everybody. A dry run writes nothing, so it
+         stays with whoever may write configuration. */
       const cap = await requireCapability("config.write");
       const dry = act === "dry";
+      if (!dry && !(await isPlatformAdmin(cap.user))) {
+        return {
+          ok: false,
+          error: "Running a job for real is an administrator's — it rewrites figures for everybody. A dry run is yours.",
+        };
+      }
       const results: JobResult[] = await runJob(s.job, cap.user.id ?? ctx.userId, { ...(s.jobOptions ?? {}), dryRun: dry || undefined });
       const touched = results.reduce((a, r) => a + r.recordsAffected, 0);
       const said =

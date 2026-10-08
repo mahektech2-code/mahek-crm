@@ -98,7 +98,7 @@ test('a warning threshold equal to the cap means no warning, and is allowed', ()
 test('On hold asks for a reason, and for the opposite reason to Lost', () => {
   assert.equal(
     stageRefusal('On hold', ''),
-    'Say what you are waiting for — that is what tells anybody when to pick it up again.',
+    'Say what you are waiting for. This tells everyone when to start again.',
   );
   assert.equal(stageRefusal('On hold', 'Back after Diwali'), null);
   /* Lost still asks, and everything else still does not. */
@@ -343,13 +343,13 @@ test('the sentence names WHICH of the three days it is', () => {
     owedLabel(leadOwed(owing(bits), '2026-09-20'), (iso) => iso);
   /* Three late leads, three different mornings. A chip that caught all three
      over one sentence would be a count nobody could act on. */
-  assert.equal(said({ nextActionDate: '2026-09-14' }), 'Late \u2014 this was due on 2026-09-14');
+  assert.equal(said({ nextActionDate: '2026-09-14' }), 'Late. This was due on 2026-09-14');
   assert.equal(
     said({ nextFollowUpDate: '2026-09-14' }),
-    'Late \u2014 you said you would go back on 2026-09-14',
+    'Late. You said you would go back on 2026-09-14',
   );
   assert.equal(
     said({ holdResumeDate: '2026-09-14', funnelStage: 'on_hold' }),
-    'Late \u2014 back off hold since 2026-09-14',
+    'Late. Hold ended on 2026-09-14',
   );
 });

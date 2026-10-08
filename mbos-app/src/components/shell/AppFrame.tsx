@@ -1,24 +1,30 @@
 import React from 'react';
-import { View, Text, Pressable, Platform, ScrollView, StyleSheet } from 'react-native';
+import { View, Text, Pressable, Platform, RefreshControl, ScrollView, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { router, useLocalSearchParams, usePathname } from 'expo-router';
+import { router, useGlobalSearchParams, useLocalSearchParams, useNavigation, usePathname } from 'expo-router';
 import { color as C, HIT, type, weight } from '../../theme/tokens';
 import { Header, StatusStrip, TabBar, TabBarAction, type StripTone, type TabKey } from './Chrome';
-import { ActionSheet, ConfirmSheet, Toast } from '../ui/overlays';
+import { ActionSheet, ConfirmSheet, StoreToast } from '../ui/overlays';
+import { useTopSheet } from '../ui/sheet-stack';
+import { backTarget, fromQuery, isTabRoot, screenOf } from './routes';
 import { Icon } from '../ui/Icon';
-import { useKeyboardHeight } from '../ui/keyboard';
+import { useKeyboardHeight, useRevealFocusedField } from '../ui/keyboard';
 import { useTicker } from '../ui/use-ticker';
-import { Appear } from '../ui/motion';
-import { useCustomer, useDaysToAgreeCount, usePendingCount, useStore, useUnreadCount } from '../../state/store';
+import { Appear, Presence } from '../ui/motion';
+import { feedback } from '../ui/feedback';
+import { useCustomer, useDaysToAgreeCount, usePendingCount, useStore, useUnreadCountOrNull } from '../../state/store';
 import { TravelGate } from './TravelGate';
+import { refreshEverything } from '../../native/refresh';
 import { useBoot } from '../../state/boot';
-import { todayRow } from '../../data/attendance';
+import { dayState, type Session } from '../../data/attendance';
 import { hhmm, plural } from '../../lib/format';
 import { elapsedLabel } from '../../lib/visit';
 import { gpsVerdict, type GpsHealth } from '../../engines/gps-health';
 import { gpsSignal } from '../../native/where';
 import { hasPermission } from '../../native/location';
 import { getConfig } from '../../data/config';
+import { noteScreen } from '../../native/reload-guard';
+import { noteCrashScreen } from '../../native/crash-log';
 
 /**
  * The GPS light, from the radio rather than from a flag.
@@ -88,13 +94,14 @@ export const FROM_LABEL: Record<string, string> = {
   customers: 'Customers',
   home: 'Home',
   journey: 'Journey',
+  journeys: 'Your journeys',
   customer: 'Customer',
   visit: 'Visit',
   order: 'Order',
   pay: 'Payment',
   tasks: 'Tasks',
   samples: 'Samples',
-  sync: 'Sync',
+  sync: 'Waiting to send',
   attendance: 'Attendance',
   leave: 'Leave',
   salary: 'Salary',
@@ -113,16 +120,57 @@ export const FROM_LABEL: Record<string, string> = {
   maps: 'Offline maps',
   pick: 'Pick your shops',
   nearby: 'Near me',
+  accounts: 'Customer accounts',
+  account: 'Account',
+  profile: 'Profile',
+  policy: 'Allowances',
+  eod: 'Close the day',
+  collections: 'Collections',
+  orders: 'Orders',
+  travel: 'Today’s travel',
+  rejections: 'Not accepted',
+  validate: 'Check call',
+  'tracking-setup': 'Keep tracking on',
+  'phone-setup': 'Phone setup',
 };
 
-/** Reads the recorded entry route, so the label and the destination agree. */
+/**
+ * Reads the recorded entry route, so the label and the destination agree.
+ *
+ * THREE THINGS IT GOT WRONG, and each was a way back that was not one:
+ *
+ * - It went to the screen's NAME, `/lead`, with none of what the screen was
+ *   showing — so back from the bell, opened on a lead, said "This lead is not
+ *   on this phone". The full address now rides as `back` (see `routes.ts`).
+ * - It went to whatever word it was given. Two screens fall back to `day`,
+ *   and there is no `day` screen; that is now refused for one that exists.
+ * - It always REPLACED, so More → Tasks → "‹ More" left the stack holding
+ *   More twice, and Android's own Back walked through a copy of every screen
+ *   he had come back from. Where the screen underneath IS the one being gone
+ *   back to, it is popped instead — which also keeps its scroll and its
+ *   filters — and a tab root is returned to rather than stacked again.
+ *
+ * `from` is still the bare screen name, because several screens ask it "did I
+ * come from a visit?".
+ */
 export function useCameFrom(fallback = 'more') {
-  const params = useLocalSearchParams<{ from?: string }>();
-  const from = params.from || fallback;
+  const params = useLocalSearchParams<{ from?: string; back?: string }>();
+  const navigation = useNavigation();
+  const target = backTarget(params, fallback);
+  const from = screenOf(target) ?? 'home';
   return {
     from,
     label: FROM_LABEL[from] ?? from.charAt(0).toUpperCase() + from.slice(1),
-    go: () => router.replace(`/${from === 'home' ? 'home' : from}`),
+    go: () => {
+      const state = navigation.getState?.();
+      const below = state && state.index > 0 ? state.routes[state.index - 1] : null;
+      if (below && below.name === from && router.canGoBack()) {
+        router.back();
+        return;
+      }
+      if (isTabRoot(target) && !target.includes('?')) router.dismissTo(target as never);
+      else router.replace(target as never);
+    },
   };
 }
 
@@ -187,20 +235,33 @@ export function AppFrame({
    */
   const pathname = usePathname();
   const here = (pathname ?? '').replace(/^\/+/, '').split('/')[0] || 'home';
-  const fromHere = `?from=${here}`;
+  /* The NAME of this screen, and — where it is showing one record — the
+     address of that record, so coming back lands on it. See `routes.ts`. */
+  const searchParams = useGlobalSearchParams();
+  const fromHere = fromQuery(pathname ?? '/home', searchParams);
+  /* An update may reload only on a screen where nothing can be half done —
+     see `reload-guard.ts`. Every screen draws this frame, so it is the one
+     place that always knows where he is. */
+  React.useEffect(() => {
+    noteScreen(pathname ?? null);
+    /* And so an error can say which screen it happened on. */
+    noteCrashScreen(pathname ?? null);
+  }, [pathname]);
+  /* A sheet draws its own toast while it is open — see `sheet-stack.ts`. */
+  const topSheet = useTopSheet();
   const keyboardHeight = useKeyboardHeight();
+  const reveal = useRevealFocusedField(keyboardHeight);
   const [footerHeight, setFooterHeight] = React.useState(0);
-  const unread = useUnreadCount();
+  const unreadOrNull = useUnreadCountOrNull();
+  const unread = unreadOrNull ?? 0;
   const waiting = usePendingCount();
   const daysToAgree = useDaysToAgreeCount();
-  const checkInAt = useCheckInTime();
+  const clock = useDayClock();
+  const checkInAt = clock.checkInAt;
   const checkedIn = checkInAt != null;
   /* From the radio, not from `store.gps` — see `useGpsHealth` above, and
      `engines/gps-health.ts` for why that field cannot answer this question. */
   const gps = useGpsHealth();
-  const toast = useStore((s) => s.toast);
-  const toastTone = useStore((s) => s.toastTone);
-  const clearToast = useStore((s) => s.clearToast);
   const sheet = useStore((s) => s.sheet);
   const set = useStore((s) => s.set);
   const askTravel = useStore((s) => s.askTravel);
@@ -212,6 +273,27 @@ export function AppFrame({
   const confirmReason = useStore((s) => s.confirmReason);
   const confirmErr = useStore((s) => s.confirmErr);
   const closeConfirm = useStore((s) => s.closeConfirm);
+  const offerUpdate = useStore((s) => s.offerUpdate);
+  const [refreshing, setRefreshing] = React.useState(false);
+
+  /* The top-bar refresh. A new version wins the screen; otherwise the toast
+     says what the sync did, so the press is never silent. */
+  const refresh = React.useCallback(async (opts: { offerUpdates?: boolean } = {}) => {
+    setRefreshing(true);
+    try {
+      const verdict = await refreshEverything();
+      /* Only the BUTTON may raise the update prompt. A pull can happen by
+         accident at the top of a half-filled order form, and a modal asking to
+         restart the app is the last thing that should land on it then. */
+      if (verdict.offer && opts.offerUpdates !== false) offerUpdate(verdict.offer);
+      /* A note, not a confirmation: the summary is as often "No signal" or
+         "3 entries were not accepted" as it is good news, and a success buzz
+         on either would say the opposite of the sentence. */
+      else notify(verdict.summary, 'info');
+    } finally {
+      setRefreshing(false);
+    }
+  }, [notify, offerUpdate]);
 
   const strip: { key: string; label: string; tone: StripTone; onPress: () => void }[] = [
     {
@@ -278,20 +360,20 @@ export function AppFrame({
     {
       glyph: 'visit',
       label: 'Start visit',
-      sub: 'How you travel, then GPS and photos',
+      sub: 'Pick how you travel, then GPS and photos',
       run: () => {
         /* One shop at a time. See the bar below: a salesman standing outside a
            shop he has arrived at is not about to set off for another, and
            letting him would leave an arrival nobody could ever close. */
         if (arrival && arrival.checkedInAt == null) {
-          return notify(`Check in at ${arrival.customerName} first — you arrived there at ${hhmm(arrival.arrivedAt)}.`);
+          return notify(`Check in at ${arrival.customerName} first. You reached there at ${hhmm(arrival.arrivedAt)}.`, 'error');
         }
         /* And one visit at a time: the one he is in has to be checked out of,
            with its questions answered, before another can begin. */
         if (arrival && arrival.checkedInAt != null) {
-          return notify(`Check out of ${arrival.customerName} first — you are still in that visit.`);
+          return notify(`Check out of ${arrival.customerName} first. You are still in that visit.`, 'error');
         }
-        if (!custId) return notify('Choose the shop first, then start the visit.');
+        if (!custId) return notify('Choose the shop first, then start the visit.', 'error');
         askTravel({ customerId: custId, customerName: customer?.name ?? 'this shop' });
       },
     },
@@ -300,7 +382,7 @@ export function AppFrame({
     /* The form is asked for here and opened by the Leads screen, so the shop
        he is standing outside is typed in rather than found for a second time. */
     { glyph: 'add', label: 'Add lead', sub: 'A shop you just walked past', run: () => { set({ sheet: 'leadForm' }); router.push(`/leads${fromHere}`); } },
-    { glyph: 'camera', label: 'Log expense', sub: 'Photograph the bill', run: () => router.push(`/expenses${fromHere}`) },
+    { glyph: 'camera', label: 'Add expense', sub: 'Take a photo of the bill', run: () => router.push(`/expenses${fromHere}`) },
     { glyph: 'task', label: 'Create task', sub: 'For you or for someone else', run: () => router.push(`/tasks${fromHere}`) },
     { glyph: 'sample', label: 'Request sample', sub: 'Sent for approval', run: () => router.push(`/samples${fromHere}`) },
   ];
@@ -314,12 +396,31 @@ export function AppFrame({
    */
   const body = scroll ? (
     <ScrollView
+      ref={reveal.ref}
+      onScroll={reveal.onScroll}
+      scrollEventThrottle={16}
       style={{ flex: 1 }}
       contentContainerStyle={[contentStyle, keyboardHeight > 0 && { paddingBottom: keyboardHeight + 24 }]}
       keyboardShouldPersistTaps="handled"
       keyboardDismissMode="interactive"
       automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
-      showsVerticalScrollIndicator={false}>
+      showsVerticalScrollIndicator={false}
+      /* PULL DOWN TO REFRESH runs the same thing as the header's refresh
+         button — send, fetch, look for a new version — because pulling a list
+         down is the gesture every phone has taught people for "get me the
+         latest", and the button in the corner is the one they never find. */
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={() => {
+            feedback('tap');
+            void refresh({ offerUpdates: false });
+          }}
+          colors={[C.primary]}
+          tintColor={C.primary}
+          progressBackgroundColor={C.surface}
+        />
+      }>
       {/* The quieter half of the transition: the screen has arrived, and this
           is it settling. It also covers the frame or two where SQLite has not
           answered yet, so data reads as arriving rather than popping in. */}
@@ -335,9 +436,16 @@ export function AppFrame({
     <View style={{ flex: 1, backgroundColor: C.canvas, paddingTop: insets.top }}>
       <View style={s.chrome}>
         <Header
-          title={title}
+          /* Twelve screens passed "MBOS" as their title, so the bar said the
+             app's name on Profile, Salary, Orders and the rest and never where
+             you were. Those screens get their own name from the one table the
+             back links already read. */
+          title={title === 'MBOS' && FROM_LABEL[here] ? FROM_LABEL[here] : title}
           onBack={onBack}
           unread={unread}
+          unreadLoaded={unreadOrNull !== null}
+          onRefresh={() => void refresh()}
+          refreshing={refreshing}
           /* No bell on the notifications screen. A control whose whole job is
              to bring you here is furniture once you have arrived, and tapping
              it stacked a second copy of the page. */
@@ -357,6 +465,10 @@ export function AppFrame({
         rather than something to dismiss. Hidden on the visit screen itself,
         where the same question is already the whole page.
       */}
+      {/* Each of these three bars rises into place and sinks out of it rather
+          than blinking — a bar that appears in one frame over the bottom of a
+          list reads as the list being cut off. */}
+      <Presence show={!!arrival && arrival.checkedInAt == null && here !== 'visit'} distance={12}>
       {arrival && arrival.checkedInAt == null && here !== 'visit' ? (
         <ArrivedBar
           name={arrival.customerName}
@@ -367,6 +479,7 @@ export function AppFrame({
           }}
         />
       ) : null}
+      </Presence>
 
       {/*
         AND ONCE HE IS INSIDE, THE VISIT FOLLOWS HIM TOO.
@@ -377,32 +490,61 @@ export function AppFrame({
         the app, or whether Android reaped it, can stop it. Tapping the bar is
         the way back to the check-out.
       */}
+      <Presence show={!!arrival && arrival.checkedInAt != null && here !== 'visit'} distance={12}>
       {arrival && arrival.checkedInAt != null && here !== 'visit' ? (
         <InVisitBar
           name={arrival.customerName}
           since={arrival.checkedInAt}
+          leftAt={arrival.leftShopAt ?? null}
           onPress={() => {
             set({ custId: arrival.customerId });
             router.push('/visit');
           }}
         />
       ) : null}
+      </Presence>
+
+      {/*
+        NO PUNCH-OUT BAR ON OTHER SCREENS. One sat above the tab bar on every
+        screen from the prompt hour, and that is exactly where a thumb reaching
+        for a tab lands — a misclick there opens the camera to end somebody's
+        day. Punching out is the main button on Home in the evening, and the
+        reminder notification opens Home at it (`?punchOut=1`).
+      */}
 
       {/* Measured rather than guessed, so the toast can sit above whatever the
           screen pinned here — see `Toast`. A screen with no footer measures 0
           and nothing moves. */}
       {footer ? (
-        <View onLayout={(e) => setFooterHeight(e.nativeEvent.layout.height)}>{footer}</View>
+        /* The tab bar it now replaces is what kept the bottom of the screen
+           clear of the gesture bar, so the action bar carries that inset
+           itself — on the same white as the bars it sits on. */
+        <View
+          onLayout={(e) => setFooterHeight(e.nativeEvent.layout.height)}
+          style={{ backgroundColor: C.surface, paddingBottom: keyboardHeight === 0 ? insets.bottom : 0 }}>
+          {footer}
+        </View>
       ) : null}
 
       {/* The tab bar is hidden while typing. Left in place it floats over the
-          keyboard on Android, covering the top row of keys. */}
-      {keyboardHeight === 0 ? (
+          keyboard on Android, covering the top row of keys.
+
+          AND ON A SCREEN WITH ITS OWN ACTION BAR. Picking a day's shops and a
+          visit pin their one decision to the bottom, and the tab bar's raised
+          + sat on top of it — over "Not now" on the shop picker, so a thumb
+          meant for one landed on the other — and the two bars together left
+          room for two and a half shops. Those screens are a task with a way
+          back at the top; the tabs return the moment he leaves. */}
+      {keyboardHeight === 0 && !footer ? (
         <>
           <TabBar
             active={activeTab}
             bottomInset={insets.bottom}
-            onTab={(k) => router.replace(`/${k}`)}
+            /* BACK to a tab rather than another copy of it on top. `dismissTo`
+               pops to it where it is already in the stack and replaces this
+               screen with it where it is not — so the stack never holds Home
+               twice, and Android's Back from a tab leaves the app. */
+            onTab={(k) => router.dismissTo(`/${k}`)}
             /* The office proposes a day and waits on the answer to plan a week.
                The Journey screen has always listed those days at the top; what
                it could not do was say so from anywhere else in the app, so being
@@ -435,12 +577,21 @@ export function AppFrame({
         error={confirmErr}
         onCancel={closeConfirm}
         onConfirm={() => {
-          if (!confirm) return;
-          const r = confirmReason.trim();
+          /* Read from the store, not the render: a second tap arrives before
+             the re-render that clears `confirm`, and ran the action twice —
+             two receipts for one payment. Closed BEFORE it runs, so the second
+             tap finds nothing, and an action that opens the next dialog is not
+             closed by this one. */
+          const live = useStore.getState().confirm;
+          if (!live) return;
+          const r = useStore.getState().confirmReason.trim();
           /* A reason that was asked for and not given stops the action, not the dialog. */
-          if (confirm.reasonLabel && !r) return set({ confirmErr: true });
-          confirm.run(r);
+          if (live.reasonLabel && !r) {
+            feedback('warning');
+            return set({ confirmErr: true });
+          }
           closeConfirm();
+          live.run(r);
         }}
       />
 
@@ -449,7 +600,7 @@ export function AppFrame({
           would be four gates, and three of them would be right. */}
       <TravelGate />
 
-      <Toast message={toast} tone={toastTone} onDone={clearToast} lift={footerHeight} />
+      {topSheet == null ? <StoreToast lift={footerHeight} /> : null}
     </View>
   );
 }
@@ -499,9 +650,20 @@ function ArrivedBar({ name, at, onPress }: { name: string; at: number; onPress: 
  * moment it comes back (`useTicker`), because the figure is a subtraction from
  * the check-in instant rather than a counter — there is nothing to pause.
  */
-function InVisitBar({ name, since, onPress }: { name: string; since: number; onPress: () => void }) {
+function InVisitBar({
+  name,
+  since,
+  leftAt,
+  onPress,
+}: {
+  name: string;
+  since: number;
+  /** When the trail saw him walk away without checking out. The clock stops there. */
+  leftAt: number | null;
+  onPress: () => void;
+}) {
   const now = useTicker(1_000);
-  const spent = elapsedLabel(Math.max(0, Math.floor((now - since) / 1000)));
+  const spent = elapsedLabel(Math.max(0, Math.floor(((leftAt ?? now) - since) / 1000)));
   return (
     <Pressable
       onPress={onPress}
@@ -519,10 +681,12 @@ function InVisitBar({ name, since, onPress }: { name: string; since: number; onP
       <Icon name="shop" size={18} color="#FFFFFF" strokeWidth={1.8} />
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text numberOfLines={1} style={[{ fontSize: 14, color: '#FFFFFF' }, weight(600)]}>
-          {'In ' + name}
+          {(leftAt != null ? 'You left ' : 'In ') + name}
         </Text>
         <Text numberOfLines={1} style={{ fontSize: 12, lineHeight: 16, color: 'rgba(255,255,255,0.85)' }}>
-          {'Checked in ' + hhmm(since) + ' · ' + spent}
+          {leftAt != null
+            ? 'Not checked out · left about ' + hhmm(leftAt)
+            : 'Checked in ' + hhmm(since) + ' · ' + spent}
         </Text>
       </View>
       <Text style={[{ fontSize: 14, color: '#FFFFFF' }, weight(600)]}>Check out</Text>
@@ -531,16 +695,21 @@ function InVisitBar({ name, since, onPress }: { name: string; since: number; onP
 }
 
 /**
- * When the day started, from the attendance row rather than from a flag.
+ * The day as the frame needs it: when it started, whether a session is open,
+ * and the sessions behind it.
  *
- * The strip is on every screen including the ones opened after a restart, so a
- * boolean held in memory would read "Not checked in" to somebody who has been
- * working since nine.
+ * From the attendance row rather than from a flag. The strip is on every
+ * screen including the ones opened after a restart, so a boolean held in
+ * memory would read "Not checked in" to somebody who has been working since
+ * nine.
  */
-function useCheckInTime(): number | null {
+function useDayClock(): { checkInAt: number | null; sessions: Session[] } {
   const boot = useBoot();
   const userId = boot.session?.user.id ?? null;
-  const [at, setAt] = React.useState<number | null>(null);
+  const [state, setState] = React.useState<{ checkInAt: number | null; sessions: Session[] }>({
+    checkInAt: null,
+    sessions: [],
+  });
 
   React.useEffect(() => {
     let live = true;
@@ -548,9 +717,13 @@ function useCheckInTime(): number | null {
        frame is unmounted the moment somebody signs out. */
     if (!userId) return;
     const tick = () => {
-      void todayRow(userId).then((row) => {
-        if (live) setAt(row?.checkInAt ?? null);
-      });
+      void dayState(userId)
+        .then((day) => {
+          if (!live) return;
+          setState({ checkInAt: day.firstInAt, sessions: day.sessions });
+        })
+        /* A status read may not break a screen; the next tick tries again. */
+        .catch(() => {});
     };
     tick();
     const t = setInterval(tick, 10_000);
@@ -560,7 +733,7 @@ function useCheckInTime(): number | null {
     };
   }, [userId]);
 
-  return at;
+  return state;
 }
 
 

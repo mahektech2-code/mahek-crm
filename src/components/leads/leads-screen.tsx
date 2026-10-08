@@ -8,7 +8,7 @@ import Link from "next/link";
 import { money, shortDate, stamp } from "@/lib/format";
 import { Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
-import { ExportButton } from "@/app/reports/export-button";
+import { ExportButton } from "@/components/ui/export-button";
 import {
   archiveLead,
   bulkArchiveLeads,
@@ -21,6 +21,7 @@ import {
 } from "@/lib/actions/sales";
 import { assignDeskLead, bulkAssignDeskLeads } from "@/lib/actions/lead-desk-assignment";
 import { bulkAdvanceLeadStage } from "@/lib/actions/leads";
+import { trashLeads } from "@/lib/actions/lead-trash";
 import { healthView } from "@/lib/customer-health";
 import { cx } from "@/components/ui/primitives";
 import { pinnedCell, pinnedHead } from "@/components/ui/pinned";
@@ -38,7 +39,7 @@ import {
   type LeadFilterColumn,
   type LeadFilterOptions,
 } from "@/components/leads/filter-bar";
-import type { PlaceTree } from "@/lib/services/sales-service";
+import type { PlaceFilterOptions } from "@/lib/place-filters";
 import {
   LEAD_PRIORITIES,
   priorityLabel,
@@ -108,6 +109,9 @@ type Acting =
   | { kind: "reassign"; lead: LeadRow }
   | { kind: "archive"; lead: LeadRow }
   | { kind: "restore"; lead: LeadRow }
+  /* Deleting: the lead goes to the trash, off every screen, until an
+     administrator brings it back from the Admin Console. */
+  | { kind: "trash"; lead: LeadRow }
   /* §4.1 — setting the priority from the list, which is where a manager is
      actually standing when they form the judgement: fifteen leads in front of
      them, with the potential, the stage and the age of each one on the row.
@@ -115,8 +119,8 @@ type Acting =
      use the field once, which is how a field nobody fills in happens. */
   | { kind: "priority"; lead: LeadRow };
 
-/** The five things a selection can be put through. */
-type Bulk = "reassign" | "stage" | "archive" | "restore" | "chase";
+/** The six things a selection can be put through. */
+type Bulk = "reassign" | "stage" | "archive" | "restore" | "chase" | "trash";
 
 /**
  * The interactive half of the Leads screen: the funnel and the table are
@@ -151,9 +155,15 @@ export function LeadsScreen({
   desks,
   canPrioritise,
   canReassign,
+  canTrash,
   viewer,
   places,
 }: {
+  /**
+   * Whether this person may delete leads — move them to the trash. A
+   * manager's or an admin's (`lead.trash`), checked again in the action.
+   */
+  canTrash: boolean;
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
   workspace: LeadWorkspace;
   /**
@@ -190,7 +200,7 @@ export function LeadsScreen({
    * this screen: a dropdown that has to reach a server before it can offer
    * anything is one that offers nothing on the first press.
    */
-  places: PlaceTree;
+  places: PlaceFilterOptions;
   /**
    * §8.4 — WHICH CUT OF THE BOOK THIS IS, off the URL.
    *
@@ -219,12 +229,20 @@ export function LeadsScreen({
   /** At or above this a score reads as strong. */
   healthStrongAtOrAbove: number;
   team: Array<{ id: string; name: string }>;
-  /** What is waiting on the three desks this screen is the way in to. */
+  /** What is waiting on the desks and worklists this screen is the way in to. */
   desks: {
     verification: number;
     verificationMine: number;
     noNextAction: number;
     appointments: number;
+    /** Suspects at or past the visit warning, undecided. Opens `?view=decide`. */
+    suspectDecisions: number;
+    /** Leads on hold. Opens `?view=parked`. */
+    parked: number;
+    /** Converted accounts with nobody named to run them. Opens `?view=handover`. */
+    handovers: number;
+    /** The desks that left the sidebar, only those this person holds. */
+    otherDesks: Array<{ label: string; href: string }>;
   };
   /**
    * §4.1 — whether this person may say how hard to push a lead.
@@ -463,9 +481,11 @@ export function LeadsScreen({
             ? await bulkAdvanceLeadStage({ customerIds: leadIds, to: stage })
             : bulk === "archive"
               ? await bulkArchiveLeads({ leadIds, reason })
-              : bulk === "restore"
-                ? await bulkRestoreLeads({ leadIds })
-                : await bulkChaseLeadOwners({ leadIds });
+              : bulk === "trash"
+                ? await trashLeads({ ids: leadIds, reason })
+                : bulk === "restore"
+                  ? await bulkRestoreLeads({ leadIds })
+                  : await bulkChaseLeadOwners({ leadIds });
 
       if (!result.ok) {
         setError(result.error);
@@ -520,6 +540,8 @@ export function LeadsScreen({
           ? await assignDeskLead({ customerId: acting.lead.id, ownerId: salesmanId })
           : acting.kind === "archive"
             ? await archiveLead({ leadId: acting.lead.id, reason })
+            : acting.kind === "trash"
+              ? await trashLeads({ ids: [acting.lead.id], reason })
             : acting.kind === "priority"
               ? await setLeadPriority({
                   customerId: acting.lead.id,
@@ -694,6 +716,7 @@ export function LeadsScreen({
               onClear={() => setPicked(new Set())}
               onSelectEverything={() => void selectEverything()}
               canReassign={canReassign}
+              canTrash={canTrash}
               onAct={beginBulk}
             />
           ) : null}
@@ -977,6 +1000,15 @@ export function LeadsScreen({
                                 : "Nobody is working this lead — reassign it first.",
                             },
                             { label: "Archive it", danger: true, run: () => begin(l, "archive") },
+                            {
+                              label: "Delete — move to trash",
+                              danger: true,
+                              run: () => begin(l, "trash"),
+                              disabled: !canTrash,
+                              title: canTrash
+                                ? "Off every screen until an administrator restores it from the Admin Console's Deleted leads."
+                                : "Deleting a lead is a manager's. Yours is not one of the hats that carries it.",
+                            },
                           ]}
                         />
                       )}
@@ -1022,7 +1054,9 @@ export function LeadsScreen({
               ? "Move the stage"
               : bulk === "archive"
                 ? "Archive these leads"
-                : bulk === "restore"
+                : bulk === "trash"
+                  ? "Delete these leads"
+                  : bulk === "restore"
                   ? "Restore these leads"
                   : "Chase the owners"
         }
@@ -1092,6 +1126,25 @@ export function LeadsScreen({
           </label>
         ) : null}
 
+        {bulk === "trash" ? (
+          <label className="block">
+            <span className="mb-1 block text-[13px] font-medium text-ink">Why · required</span>
+            <textarea
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              rows={3}
+              placeholder="e.g. Duplicate of another lead, test entry, not a real business"
+              className="w-full rounded-[4px] border border-line bg-surface px-2.5 py-2 text-sm text-ink outline-none focus:border-brand"
+            />
+            <span className="mt-1 block text-[12px] text-muted">
+              They leave every screen — lists, the calling queue, search, reports and the salesmen&rsquo;s
+              phones. Nothing is lost: an administrator can restore them from the Admin Console&rsquo;s
+              Deleted leads with all their history. Anything that is not a lead, or not in your book, is left
+              alone and named back to you.
+            </span>
+          </label>
+        ) : null}
+
         {bulk === "restore" ? (
           <p className="text-[13px] text-body">
             They go back to their owners&rsquo; working lists.
@@ -1112,9 +1165,11 @@ export function LeadsScreen({
             Cancel
           </Button>
           <Button
-            tone={bulk === "archive" ? "danger" : "primary"}
+            tone={bulk === "archive" || bulk === "trash" ? "danger" : "primary"}
             disabled={
-              busy || (bulk === "reassign" && !salesmanId) || (bulk === "archive" && !reason.trim())
+              busy ||
+              (bulk === "reassign" && !salesmanId) ||
+              ((bulk === "archive" || bulk === "trash") && reason.trim().length < 3)
             }
             onClick={() => void submitBulk()}
           >
@@ -1137,6 +1192,25 @@ export function LeadsScreen({
         reason={reason}
         onReasonChange={setReason}
         confirmLabel="Archive"
+        busy={busy}
+        error={error}
+        onConfirm={() => void submit()}
+      />
+
+      <ReasonModal
+        open={acting?.kind === "trash"}
+        onClose={() => setActing(null)}
+        title="Delete this lead"
+        subject={acting?.lead.name}
+        subjectDetail={
+          acting
+            ? [acting.lead.companyName, acting.lead.city].filter(Boolean).join(" · ") || undefined
+            : undefined
+        }
+        fieldLabel="Why · required — e.g. duplicate, test entry, not a real business"
+        reason={reason}
+        onReasonChange={setReason}
+        confirmLabel="Move to trash"
         busy={busy}
         error={error}
         onConfirm={() => void submit()}
@@ -1965,6 +2039,10 @@ function DeskLine({
     verificationMine: number;
     noNextAction: number;
     appointments: number;
+    suspectDecisions: number;
+    parked: number;
+    handovers: number;
+    otherDesks: Array<{ label: string; href: string }>;
   };
 }) {
   const items = [
@@ -1978,10 +2056,28 @@ function DeskLine({
           : `Yours, of ${desks.verification} waiting on anybody.`,
     },
     {
-      href: leadHref(workspace, "leads/actions/none"),
+      href: `${leadHref(workspace, "leads")}?view=unworked`,
       label: "Nobody is working these",
       value: desks.noNextAction,
       title: "No next action, or one whose day has gone.",
+    },
+    {
+      href: `${leadHref(workspace, "leads")}?view=decide`,
+      label: "Suspect decisions",
+      value: desks.suspectDecisions,
+      title: "Suspects visited as often as the warning allows and still undecided.",
+    },
+    {
+      href: `${leadHref(workspace, "leads")}?view=parked`,
+      label: "On hold",
+      value: desks.parked,
+      title: "Paused leads, by the day each comes back.",
+    },
+    {
+      href: `${leadHref(workspace, "leads")}?view=handover`,
+      label: "Handovers",
+      value: desks.handovers,
+      title: "Converted accounts with nobody named to run them.",
     },
     {
       href: leadHref(workspace, "leads/appointments"),
@@ -2021,6 +2117,23 @@ function DeskLine({
           ) : null}
         </Link>
       ))}
+      {desks.otherDesks.length ? (
+        <span
+          className="flex flex-wrap items-center gap-x-3 border-l border-line pl-4"
+          title="Screens that have left the sidebar. Their lists are views above; the rest of each is here."
+        >
+          <span className="text-muted">Other desks</span>
+          {desks.otherDesks.map((d) => (
+            <Link
+              key={d.href}
+              href={d.href}
+              className="text-muted no-underline hover:text-ink hover:underline"
+            >
+              {d.label}
+            </Link>
+          ))}
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -2049,6 +2162,7 @@ function BulkBar({
   onClear,
   onSelectEverything,
   canReassign,
+  canTrash,
   onAct,
 }: {
   count: number;
@@ -2058,6 +2172,7 @@ function BulkBar({
   onClear: () => void;
   onSelectEverything: () => void;
   canReassign: boolean;
+  canTrash: boolean;
   onAct: (kind: Bulk) => void;
 }) {
   return (
@@ -2119,6 +2234,13 @@ function BulkBar({
               { label: "Change stage", run: () => onAct("stage") },
               { label: "Chase the owners", run: () => onAct("chase") },
               { label: "Archive them", run: () => onAct("archive"), danger: true },
+              {
+                label: "Delete them — move to trash",
+                run: () => onAct("trash"),
+                danger: true,
+                disabled: !canTrash,
+                title: canTrash ? undefined : "Deleting leads is a manager's. Yours is not one of the hats that carries it.",
+              },
             ]}
           />
         </>

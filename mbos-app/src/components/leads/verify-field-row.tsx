@@ -56,9 +56,9 @@ export type { FieldCheck, VerifyAnswer, VerifyVerdict };
  */
 
 const VERDICTS: readonly { v: VerifyVerdict; label: string; sub: string }[] = [
-  { v: 'confirmed', label: 'Confirm', sub: 'Still right' },
+  { v: 'confirmed', label: 'Confirm', sub: 'It is right' },
   { v: 'corrected', label: 'Correct', sub: 'It has changed' },
-  { v: 'unverified', label: 'Could not verify', sub: 'Nobody would say' },
+  { v: 'unverified', label: 'Could not check', sub: 'Nobody told us' },
 ];
 
 const EDGE: Record<VerifyVerdict, string> = {
@@ -112,7 +112,7 @@ export function VerifyFieldRow({
         gap: 10,
       }}>
       <View>
-        <T s="caption">{'Already recorded · ' + (label ?? findingLabel(field))}</T>
+        <T s="caption">{'Already saved · ' + (label ?? findingLabel(field))}</T>
         <T style={[{ fontSize: 17, lineHeight: 23, color: C.ink, marginTop: 2 }, weight(600)]}>
           {reported}
         </T>
@@ -132,7 +132,7 @@ export function VerifyFieldRow({
       </View>
 
       {answer.verdict === null ? (
-        <T s="caption">Not asked yet — leaving it alone keeps what is written above.</T>
+        <T s="caption">Not asked yet. If you skip it, the answer above stays.</T>
       ) : null}
 
       {answer.verdict === 'corrected' ? (
@@ -141,7 +141,7 @@ export function VerifyFieldRow({
             renderCorrected()
           ) : (
             <View>
-              <T s="caption" style={{ marginBottom: 6 }}>What it actually is</T>
+              <T s="caption" style={{ marginBottom: 6 }}>What it is now</T>
               <Input
                 value={answer.corrected}
                 onChangeText={(t) => onChange({ corrected: t })}
@@ -151,11 +151,11 @@ export function VerifyFieldRow({
             </View>
           )}
           <View>
-            <T s="caption" style={{ marginBottom: 6 }}>Why it differs — required</T>
+            <T s="caption" style={{ marginBottom: 6 }}>Why it changed (needed)</T>
             <Input
               value={answer.reason}
               onChangeText={(t) => onChange({ reason: t })}
-              placeholder="They switched in June; the earlier figure was the owner guessing"
+              placeholder="They changed brand in June. The old figure was a guess."
             />
           </View>
         </View>
@@ -166,11 +166,11 @@ export function VerifyFieldRow({
           {/* Optional, and stored WITH the answer rather than instead of it.
               "The proprietor was out" is worth having and is not worth
               refusing the record over — the answer itself is the fact. */}
-          <T s="caption" style={{ marginBottom: 6 }}>Why not — if it is worth saying</T>
+          <T s="caption" style={{ marginBottom: 6 }}>Why not (optional)</T>
           <Input
             value={answer.reason}
             onChangeText={(t) => onChange({ reason: t })}
-            placeholder="The proprietor was out"
+            placeholder="The owner was out"
           />
         </View>
       ) : null}

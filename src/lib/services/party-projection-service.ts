@@ -4,6 +4,10 @@ import { db } from "@/db";
 import { randomUUID } from "node:crypto";
 import { customers, sheetPartyRows, syncConflicts, users } from "@/db/schema";
 import { partyNameKey } from "@/lib/sheet-parse";
+import {
+  customersWithDecidedContacts,
+  reconcileContacts,
+} from "@/lib/services/customer-contact-service";
 
 /* ---------------------------------------------------------------------------
  * The customer master → the customers the CRM already has.
@@ -141,6 +145,13 @@ export async function projectParties(
     .from(customers);
   const byKey = new Map(existing.map((c) => [partyNameKey(c.name), c]));
 
+  /*
+   * Customers whose contacts a person has written. Their WhatsApp number is a
+   * choice somebody made on the contacts panel — including the choice of NO
+   * separate WhatsApp number — and a blank there is not a blank to fill.
+   */
+  const contactsDecided = await customersWithDecidedContacts();
+
   // People named on the sheet, matched to accounts by name where one exists.
   const team = await db.select({ id: users.id, name: users.name }).from(users);
   const userByName = new Map(team.map((u) => [normal(u.name)!, u.id]));
@@ -205,7 +216,8 @@ export async function projectParties(
     // Only ever fills a blank. A number somebody typed after speaking to the
     // customer beats a number a spreadsheet has not been asked about.
     const fillPhone = !customer.phone.trim() && party.mobileNo;
-    const fillWhatsapp = !customer.whatsappPhone?.trim() && party.whatsappNo;
+    const fillWhatsapp =
+      !customer.whatsappPhone?.trim() && party.whatsappNo && !contactsDecided.has(customer.id);
     if (fillPhone) report.phonesFilled++;
     if (fillWhatsapp) report.whatsappFilled++;
 
@@ -394,6 +406,12 @@ export async function projectParties(
         db.update(customers).set(u.values).where(eq(customers.id, u.id)),
       ),
     );
+  }
+
+  // A number the sheet just filled in goes onto the contacts list too, so the
+  // panel and the senders name the same number. Only the rows that gained one.
+  for (const u of updates) {
+    if (u.values.phone || u.values.whatsappPhone) await reconcileContacts(u.id);
   }
 
   // Customers the master does not mention. Reported rather than touched: a

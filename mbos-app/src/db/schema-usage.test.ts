@@ -118,6 +118,10 @@ test('every table a query names exists in the schema', () => {
         const table = m[1];
         if (KNOWN.has(table)) continue;
         if (SQL_KEYWORDS.has(table.toLowerCase())) continue;
+        /* SQLite's own catalogue — read by the wipe a new person's sign-in
+           does, so a table added next month is emptied without anybody
+           remembering to list it. */
+        if (table === 'sqlite_master') continue;
         bad.push({ file: file.replace(ROOT, 'src'), detail: table });
       }
     }

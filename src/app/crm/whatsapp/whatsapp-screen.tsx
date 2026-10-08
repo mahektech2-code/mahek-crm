@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   Badge,
   Button,
@@ -11,7 +12,6 @@ import {
   Field,
   Input,
   MetricStrip,
-  PageHeader,
   Progress,
   SectionLabel,
   Select,
@@ -21,7 +21,7 @@ import {
   Tr,
   cx,
 } from "@/components/ui/primitives";
-import { Drawer, DrawerHeader, Modal, Tabs } from "@/components/ui/overlays";
+import { Drawer, DrawerHeader, Modal } from "@/components/ui/overlays";
 import { VoiceTextarea } from "@/components/ui/dictate";
 import { useToast } from "@/components/ui/toast";
 import {
@@ -45,6 +45,8 @@ import {
 import { applyMerge, fieldLabel, mergeValues, missingFields, usedFields } from "@/lib/merge";
 import { deliveryRoute } from "@/lib/whatsapp-delivery";
 import type { MessagePreview } from "@/lib/services/whatsapp-service";
+import type { Conversation } from "@/lib/services/whatsapp-chat-service";
+import { ChatTab } from "./chat-tab";
 import { toCsv, downloadCsv } from "@/lib/csv";
 import { money, phoneDisplay, stamp } from "@/lib/format";
 import { CardGrid } from "@/components/ui/card-grid";
@@ -124,6 +126,8 @@ type Message = {
   copiedAt: string | null;
   confirmedSentAt: string | null;
   failureReason: string | null;
+  /** Sent by this person (or their team) — the banner's subject. See `listMessages`. */
+  sentInScope: boolean;
 };
 
 /** The message lifecycle, in the words a telecaller would use. */
@@ -175,9 +179,22 @@ type Run = {
   } | null;
 };
 
-type Tab = "send" | "run" | "templates" | "log";
+type Tab = "send" | "run" | "templates" | "log" | "replies";
+
+/** The unread count already shows on every row; nothing outside the screen reads it. */
+const IGNORE_COUNT = () => {};
 
 export function WhatsappScreen(props: {
+  /** Which app is drawing it — decides where "Open record" goes. */
+  app: "crm" | "accounts";
+  /**
+   * The Write level, in this app. Without it the screen is the chats and the
+   * message log, and nothing on it can reply, send, run or edit — the actions
+   * refuse as well, so this is the courtesy half.
+   */
+  canWrite: boolean;
+  /** Whether a typed reply's review step can offer to improve the wording. */
+  canPolish: boolean;
   scopeLabel: string;
   isManager: boolean;
   /** `automatic` = the founder has switched API sending on and a key exists. */
@@ -185,6 +202,12 @@ export function WhatsappScreen(props: {
   /** Why nothing can go through the API, when `mode` is manual. */
   apiOffReason: string | null;
   sendingFailing: boolean;
+  /**
+   * Customers WhatsApp cannot deliver to on the number we hold (Meta 131026).
+   * Not a sending failure: listed so somebody corrects the number, and the
+   * automatic rule stops trying them meanwhile.
+   */
+  undeliverable: Array<{ customerId: string; name: string; number: string }>;
   initialCustomerId: string;
   initialTab: Tab;
   customers: Customer[];
@@ -201,12 +224,23 @@ export function WhatsappScreen(props: {
   unconfirmedCount: number;
   followUpCounts: { stage1: number; slow: number; over60: number };
   followUpIds: { stage1: string[]; slow: string[]; over60: string[] };
+  /** The business date, for "Today, 10:42 am" — the clock is not read during render. */
+  today: string;
+  /** The server's clock at render, for the 24-hour window. */
+  now: number;
+  /** Conversations with customers in this book, for the Chats tab's first paint. */
+  chats: { rows: Conversation[]; openCount: number; seesUnknown: boolean; capped: boolean };
+  /** A conversation named in the URL (`?chat=`), opened on arrival. */
+  initialChat: string | null;
 }) {
   const {
+    app,
+    canWrite,
     scopeLabel,
     isManager,
     mode,
     sendingFailing,
+    undeliverable,
     customers,
     templates,
     messages,
@@ -224,153 +258,160 @@ export function WhatsappScreen(props: {
   const router = useRouter();
   const { run: act } = useToast();
 
-  const [tab, setTab] = React.useState<Tab>(props.initialTab);
   const [connOpen, setConnOpen] = React.useState(false);
   const [groupOpen, setGroupOpen] = React.useState(false);
   const [editingTpl, setEditingTpl] = React.useState<Template | null>(null);
 
   // Copied but never confirmed. Counted from the server's own sweep for
-  // managers; telecallers see their own copies still sitting unconfirmed.
-  const unconfirmed = messages.filter((m) => m.status === "copied");
+  // managers; telecallers see their own copies still sitting unconfirmed —
+  // their OWN: the log now carries every message to their customers, and a
+  // copy somebody else made is not theirs to confirm.
+  const unconfirmed = messages.filter((m) => m.status === "copied" && m.sentInScope);
+
+  // The figures that used to sit above the tabs. They describe the log, so
+  // they open with it rather than standing between a telecaller and a chat.
+  const figures = (
+    <MetricStrip
+      metrics={[
+        { label: "Sent today", value: String(messagesToday) },
+        {
+          label: "Copied, never confirmed",
+          value: String(isManager ? unconfirmedCount : unconfirmed.length),
+          tone: (isManager ? unconfirmedCount : unconfirmed.length) ? "danger" : "ink",
+          sub: (isManager ? unconfirmedCount : unconfirmed.length)
+            ? "each one may or may not have been sent"
+            : undefined,
+        },
+        { label: "Replies to action", value: String(replies.length), tone: replies.length ? "danger" : "ink" },
+        { label: "Templates live", value: String(templates.filter((t) => !t.archived).length) },
+        {
+          label: "Messages logged",
+          value: messageTotal.toLocaleString("en-IN"),
+          sub: messageTotal > messages.length ? `newest ${messages.length} shown in the log` : undefined,
+        },
+      ]}
+    />
+  );
 
   return (
-    <div className="px-6 pt-6 pb-10">
-      <PageHeader
-        title={
-          <span className="flex items-center gap-3">
-            WhatsApp
-            <button
-              onClick={() => setConnOpen(true)}
-              title="WhatsApp connection settings"
-              className="inline-flex h-7 cursor-pointer items-center gap-2 rounded-[4px] border border-line bg-surface px-2.5"
-            >
-              <span
-                className={cx(
-                  "block h-2 w-2 rounded-full",
-                  mode === "automatic" ? "bg-success" : "bg-warn",
-                )}
-              />
-              <span className="text-[13px] font-medium text-ink">
-                {mode === "automatic" ? "WhatsApp API on" : "Manual sending"}
-              </span>
-              <span className="text-[13px] font-normal text-muted">
-                {mode === "automatic" ? "linked templates send directly" : "copy and paste"}
-              </span>
-            </button>
-          </span>
+    <>
+      <ChatTab
+        canWrite={canWrite}
+        canPolish={props.canPolish}
+        recordHref={(id) => (app === "accounts" ? `/accounts/ledger?customer=${id}` : `/crm/customers/${id}`)}
+        initial={props.chats}
+        initialKey={props.initialChat}
+        initialTool={
+          props.initialTab === "replies" || (!canWrite && props.initialTab !== "log") ? null : props.initialTab
         }
-        subtitle={`${scopeLabel} · every message is logged against the customer record, whichever way it is sent.`}
-      />
-
-      {/* Automatic sending is on but not working. Said plainly, and paired
-          with the reassurance that the manual flow below still works - the
-          screen is not blocked, only one route through it is. */}
-      {sendingFailing ? (
-        <Callout tone="danger">
-          <span className="text-sm text-ink">
-            Some messages sent through the WhatsApp API in the last day
-            failed - the Log tab says why for each one. The manual flow below
-            is ready to use, so nothing is blocked.
-          </span>
-          <span className="flex-1" />
-          <Button size="sm" variant="secondary" onClick={() => setConnOpen(true)}>
-            Check connection
-          </Button>
-        </Callout>
-      ) : null}
-
-      {/* A copy waiting on confirmation, surfaced at screen level — it is easy
-          to send the message and walk away from the step that records it. */}
-      {unconfirmed.length ? (
-        <Callout tone="warn">
-          <span className="text-sm font-medium text-warn-ink">
-            {unconfirmed.length} awaiting confirmation
-          </span>
-          <span className="text-[13px] text-body">
-            The call log will not hold them back until this is confirmed.
-          </span>
-          <span className="flex-1" />
-          <Button
-            size="sm"
-            variant="primary"
-            onClick={async () => {
-              const r = await act(confirmMessageSent(unconfirmed[0].id));
-              if (r.ok) router.refresh();
-            }}
+        today={props.today}
+        now={props.now}
+        scopeLabel={scopeLabel}
+        showAssignee={isManager}
+        onOpenCount={IGNORE_COUNT}
+        headerExtra={
+          <button
+            onClick={() => setConnOpen(true)}
+            title="WhatsApp connection settings"
+            className="inline-flex cursor-pointer items-center gap-1.5 text-[12px] text-[#667781] hover:text-[#111b21]"
           >
-            Confirm sent
-          </Button>
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={async () => {
-              const r = await act(cancelMessage(unconfirmed[0].id));
-              if (r.ok) router.refresh();
-            }}
-          >
-            Discard
-          </Button>
-        </Callout>
-      ) : null}
-
-      <MetricStrip
-        metrics={[
-          { label: "Sent today", value: String(messagesToday) },
-          {
-            label: "Copied, never confirmed",
-            value: String(isManager ? unconfirmedCount : unconfirmed.length),
-            tone: (isManager ? unconfirmedCount : unconfirmed.length) ? "danger" : "ink",
-            sub: (isManager ? unconfirmedCount : unconfirmed.length)
-              ? "each one may or may not have been sent"
-              : undefined,
-          },
-          { label: "Replies to action", value: String(replies.length), tone: replies.length ? "danger" : "ink" },
-          { label: "Templates live", value: String(templates.filter((t) => !t.archived).length) },
-          {
-            label: "Messages logged",
-            value: messageTotal.toLocaleString("en-IN"),
-            sub:
-              messageTotal > messages.length
-                ? `newest ${messages.length} shown in the log`
-                : undefined,
-          },
-        ]}
-      />
-
-      <Tabs
-        value={tab}
-        onChange={setTab}
-        className="mb-4"
-        tabs={[
-          { key: "send", label: "Send a message" },
-          { key: "run", label: "Send run", count: run ? run.recipients.length : undefined },
-          { key: "templates", label: "Templates", count: templates.length },
-          { key: "log", label: "Log", count: messageTotal },
-        ]}
-      />
-
-      {tab === "send" ? (
-        <SendTab
-          {...props}
-          onOpenGroup={() => setGroupOpen(true)}
-          onSent={() => router.refresh()}
-        />
-      ) : null}
-
-      {tab === "run" ? (
-        <RunTab
-          run={run}
-          mode={mode}
-          elapsedMinutes={runElapsedMinutes}
-          previewTime={props.previewTime}
-          templates={templates.filter((t) => !t.archived)}
-          customers={customers}
-          counts={followUpCounts}
-          recipientIds={followUpIds}
-        />
-      ) : null}
-
-      {tab === "templates" ? (
+            <span className={cx("block h-1.5 w-1.5 rounded-full", mode === "automatic" ? "bg-[#25d366]" : "bg-warn")} />
+            {mode === "automatic" ? "API on" : "Manual — copy and paste"}
+          </button>
+        }
+        notices={
+          <>
+            {/* Automatic sending is on but not working. Said plainly, and
+                paired with the reassurance that the manual flow still works. */}
+            {sendingFailing ? (
+              <div className="flex flex-none items-center gap-2 border-b border-danger-line bg-danger-soft px-4 py-2 text-[12.5px] text-ink">
+                <span className="min-w-0 flex-1">Some API sends in the last day failed — the Message log says why. Copy and paste still works.</span>
+                <button onClick={() => setConnOpen(true)} className="flex-none cursor-pointer font-medium text-danger">
+                  Check
+                </button>
+              </div>
+            ) : null}
+            {/* Numbers WhatsApp cannot reach. Quiet rather than red: sending
+                works, these numbers do not, and the fix is a better number. */}
+            {undeliverable.length ? (
+              <details className="flex-none border-b border-warn-line bg-warn-soft px-4 py-2 text-[12.5px] text-warn-ink">
+                <summary className="cursor-pointer font-medium">
+                  {undeliverable.length === 1
+                    ? `${undeliverable[0].name} can't receive WhatsApp on their number`
+                    : `${undeliverable.length} customers can't receive WhatsApp on their number`}
+                </summary>
+                <p className="mt-1 text-ink">
+                  WhatsApp refused these as undeliverable — the number is usually not on WhatsApp. Automatic
+                  messages to them have stopped; correcting the number on the record starts them again.
+                </p>
+                <ul className="mt-1 space-y-0.5">
+                  {undeliverable.map((u) => (
+                    <li key={u.customerId} className="flex gap-2">
+                      <Link
+                        href={app === "accounts" ? `/accounts/ledger?customer=${u.customerId}` : `/crm/customers/${u.customerId}`}
+                        className="font-medium text-[#008069] hover:underline"
+                      >
+                        {u.name}
+                      </Link>
+                      <span className="text-[#667781]">{phoneDisplay(u.number)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
+            {/* A copy waiting on confirmation — easy to send the message and
+                walk away from the step that records it. */}
+            {unconfirmed.length && canWrite ? (
+              <div className="flex flex-none items-center gap-2 border-b border-warn-line bg-warn-soft px-4 py-2 text-[12.5px] text-warn-ink">
+                <span
+                  className="min-w-0 flex-1 truncate font-medium"
+                  title="Copied to paste and never confirmed. The Call Log will not hold these customers back until each is confirmed."
+                >
+                  {unconfirmed.length} copied, not confirmed
+                </span>
+                <button
+                  className="flex-none cursor-pointer font-medium text-[#008069]"
+                  onClick={async () => {
+                    const r = await act(confirmMessageSent(unconfirmed[0].id));
+                    if (r.ok) router.refresh();
+                  }}
+                >
+                  Confirm sent
+                </button>
+                <button
+                  className="flex-none cursor-pointer text-muted"
+                  onClick={async () => {
+                    const r = await act(cancelMessage(unconfirmed[0].id));
+                    if (r.ok) router.refresh();
+                  }}
+                >
+                  Discard
+                </button>
+              </div>
+            ) : null}
+          </>
+        }
+        renderTool={(tool, customerId) =>
+          !canWrite && tool !== "log" ? null : tool === "send" ? (
+            <SendTab
+              key={customerId ?? "any"}
+              {...props}
+              initialCustomerId={customerId ?? props.initialCustomerId}
+              onOpenGroup={() => setGroupOpen(true)}
+              onSent={() => router.refresh()}
+            />
+          ) : tool === "run" ? (
+            <RunTab
+              run={run}
+              mode={mode}
+              elapsedMinutes={runElapsedMinutes}
+              previewTime={props.previewTime}
+              templates={templates.filter((t) => !t.archived)}
+              customers={customers}
+              counts={followUpCounts}
+              recipientIds={followUpIds}
+            />
+          ) : tool === "templates" ? (
         <Card className="overflow-hidden">
           {templates.length ? (
             <div className="overflow-auto">
@@ -434,16 +475,14 @@ export function WhatsappScreen(props: {
             />
           )}
         </Card>
-      ) : null}
-
-      {tab === "log" ? (
-        <LogTab
-          messages={messages}
-          total={messageTotal}
-          limit={messageLimit}
-          isManager={isManager}
-        />
-      ) : null}
+          ) : (
+            <>
+              {figures}
+              <LogTab messages={messages} total={messageTotal} limit={messageLimit} isManager={isManager} />
+            </>
+          )
+        }
+      />
 
       <ConnectionModal
         open={connOpen}
@@ -485,7 +524,7 @@ export function WhatsappScreen(props: {
           }
         }}
       />
-    </div>
+    </>
   );
 }
 
@@ -1098,7 +1137,7 @@ function SendComposer({
                       router.refresh();
                     }}
                   >
-                    Action
+                    Mark handled
                   </Button>
                 </div>
               </div>
@@ -1590,7 +1629,7 @@ function LogTab({
 
   // Copied but never confirmed. Counted from the server's own sweep for
   // managers; telecallers see their own copies still sitting unconfirmed.
-  const unconfirmed = messages.filter((m) => m.status === "copied");
+  const unconfirmed = messages.filter((m) => m.status === "copied" && m.sentInScope);
 
   const filtered = messages.filter((m) => {
     const q = query.trim().toLowerCase();

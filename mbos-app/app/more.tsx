@@ -5,18 +5,19 @@ import { AppFrame } from '../src/components/shell/AppFrame';
 import { SectionLabel, T } from '../src/components/ui/primitives';
 import { Icon } from '../src/components/ui/Icon';
 import { color as C, weight } from '../src/theme/tokens';
-import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
-import { signOut as signOutReal } from '../src/data/session';
+import { useSignOut } from '../src/state/sign-out';
 import { bucketOf, listOpenTasks } from '../src/data/tasks';
-import { leaveBalances, listExpenses, listSamples } from '../src/data/requests';
+import { listExpenses, listSamples } from '../src/data/requests';
 import { priceDay } from '../src/data/travel';
 import { cashInHand } from '../src/data/payments';
 import { overdueSamples } from '../src/data/lead-samples';
 import { openLeadCount } from '../src/data/leads';
 import { pendingCount, queueCounts } from '../src/sync/queue';
 import { savedMaps } from '../src/data/offline-maps';
+import { bookMoney } from '../src/data/customer-account';
 import { isoDate, plural } from '../src/lib/format';
+import { Pop, Stagger } from '../src/components/ui/motion';
 
 /**
  * Everything the four tabs do not carry.
@@ -36,14 +37,13 @@ type Counts = {
   lateSamples: number;
   overdueTasks: number;
   openLeads: number;
-  leaveLeft: number;
   pendingExpenses: number;
-  dayOpen: boolean;
   daySent: boolean;
   legsToday: number;
   openSamples: number;
   toSend: number;
   rejected: number;
+  owing: number;
 };
 
 const EMPTY: Counts = {
@@ -52,14 +52,13 @@ const EMPTY: Counts = {
   lateSamples: 0,
   overdueTasks: 0,
   openLeads: 0,
-  leaveLeft: 0,
   pendingExpenses: 0,
-  dayOpen: false,
   daySent: false,
   legsToday: 0,
   openSamples: 0,
   toSend: 0,
   rejected: 0,
+  owing: 0,
 };
 
 function groupsFor(n: Counts): { label: string; items: Item[] }[] {
@@ -86,13 +85,23 @@ function groupsFor(n: Counts): { label: string; items: Item[] }[] {
            nobody has promised anything about at all. No badge, because Home
            already carries the two figures and a third statement of them here
            is a number somebody has to reconcile rather than read. */
-        { label: 'What is owed', badge: '', route: 'lead-actions' },
+        { label: 'Pending actions', badge: '', route: 'lead-actions' },
         /* These two named a LIST and opened a capture form — the only two
            rows here that did. Punching an order and taking money both start
            at the + button, like every other capture; what was missing was
            anywhere to see what he had already done. */
         { label: 'Orders', badge: '', route: 'orders' },
         { label: 'Payments', badge: n.toBank ? plural(n.toBank, 'to bank', 'to bank') : '', route: 'collections' },
+        /* The book as the Accounts app reads it: who owes what, every bill,
+           every payment and where it went. Read-only — the office decides
+           about money; this is so he can answer for it at the counter. The
+           badge is how many of his shops owe money, from the office's own
+           outstanding on the pull. */
+        {
+          label: 'Customer accounts',
+          badge: n.owing ? plural(n.owing, 'owes', 'owe') : '',
+          route: 'accounts',
+        },
         /* LATE beats OPEN. Both are true, only one is a thing to do
            today, and a badge that is lit whenever anything is open is a badge
            that stops meaning anything. */
@@ -112,12 +121,9 @@ function groupsFor(n: Counts): { label: string; items: Item[] }[] {
       label: 'Me',
       items: [
         { label: 'Attendance', badge: '', route: 'attendance' },
-        { label: 'Leave', badge: n.leaveLeft ? n.leaveLeft + ' left' : '', route: 'leave' },
+        { label: 'Leave', badge: '', route: 'leave' },
+        { label: 'Holidays', badge: '', route: 'holidays' },
         { label: 'Salary', badge: '', route: 'salary' },
-        /* The day comes before the claims that hang off it: the meal
-           allowance is worked out from the times on it, so a salesman who
-           never opens this screen is a salesman never paid for his food. */
-        { label: 'Your day', badge: n.dayOpen ? '' : 'not started', route: 'day' },
         { label: "Today's travel", badge: n.legsToday ? String(n.legsToday) : '', route: 'travel' },
         { label: 'Close the day', badge: n.daySent ? 'sent' : '', route: 'eod' },
         { label: 'Expenses', badge: n.pendingExpenses ? n.pendingExpenses + ' pending' : '', route: 'expenses' },
@@ -130,7 +136,10 @@ function groupsFor(n: Counts): { label: string; items: Item[] }[] {
       items: [
         { label: 'Product catalogue', badge: '', route: 'catalogue' },
         { label: 'Documents', badge: '', route: 'docs' },
-        { label: 'Knowledge centre', badge: '', route: 'knowledge' },
+        /* The Knowledge centre is not listed. Its modules cannot be opened or
+           finished on the phone yet — every tap raised an error — and a row
+           that leads only to "not yet" is a row that should not be drawn. It
+           comes back when a course can actually be taken here. */
         /* The badge counts what is ON THE PHONE, not how many places could be
            saved. "3 saved" is a fact; "9 available" would be an advertisement
            for a several-hundred-megabyte download in a menu. */
@@ -148,22 +157,18 @@ function groupsFor(n: Counts): { label: string; items: Item[] }[] {
     {
       label: 'Settings',
       items: [
-        { label: 'Profile', badge: '', route: 'profile' },
-        /* The Preferences card lives on the profile screen — this used to toast
-         rather than open the thing it names. */
-      { label: 'App preferences', badge: '', route: 'profile' },
-        { label: 'Sync', badge: n.toSend ? n.toSend + ' to send' : '', route: 'sync' },
+        /* Profile carries the preferences too, so "App preferences" — a second
+           row opening the same screen — is gone. */
+        { label: 'Profile and preferences', badge: '', route: 'profile' },
+        { label: 'Send to office', badge: n.toSend ? n.toSend + ' to send' : '', route: 'sync' },
         /* The walkthrough opens on its own once per build; this is the way back
            to it for somebody who pressed "Do this later". */
         { label: 'Set up your phone', badge: '', route: 'setup' },
         /* A refusal has its own row: it is not something waiting to go out, it
            is something the office has already said no to. */
         { label: 'Not accepted', badge: n.rejected ? String(n.rejected) : '', route: 'rejections' },
-        /* `attendance` IS the sign-in log — one row per person per day, which is
-         exactly what this asks for. MahekOne is careful that it is NOT a record
-         of hours worked, so the destination is named for the day rather than
-         for the login. */
-      { label: 'Your days', badge: '', route: 'attendance' },
+        /* "Your days" opened Attendance, which is already listed under Me. One
+           screen, one row. */
         { label: 'Sign out', badge: '' },
       ],
     },
@@ -171,9 +176,8 @@ function groupsFor(n: Counts): { label: string; items: Item[] }[] {
 }
 
 export default function MoreScreen() {
-  const notify = useStore((s) => s.notify);
-  const signOut = useStore((s) => s.signOut);
   const boot = useBoot();
+  const askSignOut = useSignOut();
 
   const [counts, setCounts] = React.useState<Counts>(EMPTY);
 
@@ -191,7 +195,6 @@ export default function MoreScreen() {
       void Promise.all([
         listOpenTasks(),
         openLeadCount(),
-        leaveBalances(),
         listExpenses(),
         listSamples(),
         pendingCount(),
@@ -202,24 +205,29 @@ export default function MoreScreen() {
            a rupee amount in a menu badge reads as something owed to him. */
         cashInHand(userId),
         overdueSamples(today),
-      ]).then(([tasks, openLeads, balances, expenses, samples, toSend, queue, today_, maps, cash, late]) => {
-        if (!live) return;
-        setCounts({
-          savedMaps: maps.length,
-          toBank: cash.carried.length,
-          lateSamples: late.length,
-          overdueTasks: tasks.filter((t) => bucketOf(t.dueDate, today) === 'Overdue').length,
-          openLeads,
-          leaveLeft: Math.round(balances.reduce((a, b) => a + b.available, 0)),
-          pendingExpenses: expenses.filter((e) => e.state === 'Pending').length,
-          openSamples: samples.filter((s) => s.state !== 'Converted' && s.state !== 'Rejected').length,
-          toSend,
-          rejected: queue.rejected ?? 0,
-          dayOpen: today_.day != null,
-          daySent: today_.day?.lockedAt != null,
-          legsToday: today_.legs.length,
-        });
-      });
+        bookMoney().catch(() => null),
+      ])
+        .then(([tasks, openLeads, expenses, samples, toSend, queue, today_, maps, cash, late, money]) => {
+          if (!live) return;
+          setCounts({
+            savedMaps: maps.length,
+            toBank: cash.carried.length,
+            lateSamples: late.length,
+            overdueTasks: tasks.filter((t) => bucketOf(t.dueDate, today) === 'Overdue').length,
+            openLeads,
+            pendingExpenses: expenses.filter((e) => e.state === 'Pending').length,
+            openSamples: samples.filter((s) => s.state !== 'Converted' && s.state !== 'Rejected').length,
+            toSend,
+            rejected: queue.rejected ?? 0,
+            daySent: today_.day?.lockedAt != null,
+            legsToday: today_.legs.length,
+            owing: money?.owing ?? 0,
+          });
+        })
+        /* One read failing used to leave every badge blank and an unhandled
+           rejection behind. The rows still work; only the counts are missing,
+           and the next visit to this screen asks again. */
+        .catch(() => undefined);
       return () => {
         live = false;
       };
@@ -230,23 +238,20 @@ export default function MoreScreen() {
 
   const open = (i: Item) => {
     if (i.route) return router.push(`/${i.route}?from=more`);
-    if (i.label === 'Sign out') {
-      /* The outbox survives it — signing out clears the session and the
-         tokens, never the work this phone has not sent yet. */
-      void signOutReal().then(() => {
-        signOut();
-        boot.setSession(null);
-        router.replace('/');
-      });
-      return;
-    }
-    notify(i.label + ' — next to build');
+    /* The only row with no route. It asks first, like Profile does — see
+       `useSignOut`. */
+    askSignOut();
   };
 
   return (
     <AppFrame title="More" activeTab="more" contentStyle={{ paddingTop: 12, paddingBottom: 24 }}>
-      {GROUPS.map((g) => (
-        <View key={g.label} style={{ marginBottom: 20 }}>
+      {/* The GROUPS settle in one after another, not the rows: thirty rows
+          cascading down a menu is a wait, and five groups is a glance.
+          The rows keep the tint they press with rather than scaling — a
+          full-width row shrinking inside its bordered group pulls away from
+          the edges, which reads as the list coming loose, not as a press. */}
+      {GROUPS.map((g, gi) => (
+        <Stagger key={g.label} index={gi} style={{ marginBottom: 20 }}>
           <SectionLabel style={{ paddingHorizontal: 16, paddingBottom: 8 }}>{g.label}</SectionLabel>
           <View
             style={{
@@ -273,16 +278,20 @@ export default function MoreScreen() {
                   pressed && { backgroundColor: C.wash },
                 ]}>
                 <T style={{ flex: 1, minWidth: 0, fontSize: 15, color: C.ink }}>{i.label}</T>
+                {/* Pops when its count CHANGES — "2 to send" becoming "1 to
+                    send" after a sync is the news this screen exists for. */}
                 {i.badge ? (
-                  <View style={{ backgroundColor: C.warnEdge, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 }}>
-                    <T style={[{ fontSize: 12, color: C.warnInk }, weight(500)]}>{i.badge}</T>
-                  </View>
+                  <Pop trigger={i.badge}>
+                    <View style={{ backgroundColor: C.warnEdge, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 }}>
+                      <T style={[{ fontSize: 12, color: C.warnInk }, weight(500)]}>{i.badge}</T>
+                    </View>
+                  </Pop>
                 ) : null}
                 <Icon name="forward" size={20} color={C.faint} strokeWidth={1.5} />
               </Pressable>
             ))}
           </View>
-        </View>
+        </Stagger>
       ))}
     </AppFrame>
   );

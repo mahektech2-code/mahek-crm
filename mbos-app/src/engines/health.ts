@@ -133,12 +133,12 @@ export type HealthThresholds = {
 };
 
 const LABELS: Record<HealthComponentKey, string> = {
-  recency: 'Order recency',
+  recency: 'Last order',
   consistency: 'Ordering pattern',
-  value_trend: 'Value trend',
-  payment: 'Payment behaviour',
-  outstanding: 'Outstanding pressure',
-  coverage: 'Visit coverage',
+  value_trend: 'Buying more or less',
+  payment: 'How they pay',
+  outstanding: 'Outstanding vs limit',
+  coverage: 'Visits done',
   complaints: 'Open complaints',
 };
 
@@ -206,7 +206,7 @@ function recency(
       ...base,
       score: neutral,
       unknown: true,
-      sentence: `Last ordered ${i.daysSinceLastOrder} days ago — not enough orders yet to know their cycle.`,
+      sentence: `Last order ${i.daysSinceLastOrder} days ago. Not enough orders yet to know how often they buy.`,
     };
   }
   const ratio = i.daysSinceLastOrder / i.cycleDays;
@@ -217,8 +217,8 @@ function recency(
     unknown: false,
     sentence:
       ratio <= t.recency.onTimeRatio
-        ? `Ordered ${i.daysSinceLastOrder} days into a ${i.cycleDays}-day cycle — on time.`
-        : `${i.daysSinceLastOrder} days since the last order on a ${i.cycleDays}-day cycle — overdue.`,
+        ? `Last order ${i.daysSinceLastOrder} days ago. They buy every ${i.cycleDays} days. On time.`
+        : `Last order ${i.daysSinceLastOrder} days ago. They buy every ${i.cycleDays} days. Late.`,
   };
 }
 
@@ -234,7 +234,7 @@ function consistency(
       ...base,
       score: neutral,
       unknown: true,
-      sentence: 'Not enough orders yet to see a pattern.',
+      sentence: 'Not enough orders yet to see how often they buy.',
     };
   }
   const mean = gaps.reduce((a, b) => a + b, 0) / gaps.length;
@@ -249,8 +249,8 @@ function consistency(
     unknown: false,
     sentence:
       cv <= t.consistency.steadyCoefficient
-        ? `Orders come in steadily, about every ${Math.round(mean)} days.`
-        : `Ordering is irregular — gaps averaging ${Math.round(mean)} days but jumping about.`,
+        ? `They order regularly, about every ${Math.round(mean)} days.`
+        : `They do not order regularly. Gap is about ${Math.round(mean)} days, but it changes a lot.`,
   };
 }
 
@@ -265,7 +265,7 @@ function valueTrend(
       ...base,
       score: neutral,
       unknown: true,
-      sentence: 'Not enough billing history to compare one period against the last.',
+      sentence: 'Not enough bills yet to compare with the time before.',
     };
   }
   const change = (i.recentValuePaise - i.priorValuePaise) / i.priorValuePaise;
@@ -279,8 +279,8 @@ function valueTrend(
     unknown: false,
     sentence:
       change >= 0
-        ? `Buying ${pct}% more than the period before — ${inrFromPaise(i.recentValuePaise)} against ${inrFromPaise(i.priorValuePaise)}.`
-        : `Buying ${Math.abs(pct)}% less than the period before — ${inrFromPaise(i.recentValuePaise)} against ${inrFromPaise(i.priorValuePaise)}.`,
+        ? `Buying ${pct}% more than before. ${inrFromPaise(i.recentValuePaise)} now, ${inrFromPaise(i.priorValuePaise)} before.`
+        : `Buying ${Math.abs(pct)}% less than before. ${inrFromPaise(i.recentValuePaise)} now, ${inrFromPaise(i.priorValuePaise)} before.`,
   };
 }
 
@@ -296,7 +296,7 @@ function payment(
       ...base,
       score: neutral,
       unknown: true,
-      sentence: 'Too few settled bills to judge how they pay.',
+      sentence: 'Too few paid bills to know how they pay.',
     };
   }
   const score = clamp((i.paymentsOnTime / settled) * 100, 0, 100);
@@ -325,7 +325,7 @@ function outstanding(
       ...base,
       score: neutral,
       unknown: true,
-      sentence: `${inrFromPaise(i.outstandingPaise)} outstanding, with no credit limit on file to judge it against.`,
+      sentence: `${inrFromPaise(i.outstandingPaise)} outstanding. No credit limit is set to compare with.`,
     };
   }
   const utilisation = i.outstandingPaise / i.creditLimitPaise;
@@ -338,7 +338,7 @@ function outstanding(
     ...base,
     score,
     unknown: false,
-    sentence: `${inrFromPaise(i.outstandingPaise)} outstanding — ${Math.round(utilisation * 100)}% of their limit.`,
+    sentence: `${inrFromPaise(i.outstandingPaise)} outstanding. That is ${Math.round(utilisation * 100)}% of their limit.`,
   };
 }
 
@@ -359,15 +359,15 @@ function coverage(i: HealthInputs, neutral: number): Omit<HealthComponent, 'weig
     unknown: false,
     sentence:
       i.visitsMade >= i.visitsExpected
-        ? `Visited ${i.visitsMade} times against a plan of ${i.visitsExpected}.`
-        : `Visited ${i.visitsMade} of the ${i.visitsExpected} times planned — this one is being missed.`,
+        ? `Visited ${i.visitsMade} times. Plan was ${i.visitsExpected}.`
+        : `Visited ${i.visitsMade} of ${i.visitsExpected} planned times. This shop is being missed.`,
   };
 }
 
 function complaints(i: HealthInputs, t: HealthThresholds): Omit<HealthComponent, 'weight'> {
   const base = { key: 'complaints' as const, label: LABELS.complaints };
   if (i.openComplaints <= 0) {
-    return { ...base, score: 100, unknown: false, sentence: 'Nothing open against this shop.' };
+    return { ...base, score: 100, unknown: false, sentence: 'No open complaints for this shop.' };
   }
   // Age counts as much as count. One complaint open for two months does more
   // damage to a relationship than three raised this week, and a score that only
@@ -384,7 +384,7 @@ function complaints(i: HealthInputs, t: HealthThresholds): Omit<HealthComponent,
     unknown: false,
     sentence:
       age > 0
-        ? `${i.openComplaints} open, the oldest ${age} days old.`
+        ? `${i.openComplaints} open. The oldest is ${age} days old.`
         : `${i.openComplaints} open.`,
   };
 }

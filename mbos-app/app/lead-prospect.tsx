@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Card, Choice, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../src/components/ui/primitives';
+import { skuText, useSkus } from '../src/components/ui/sku';
 import { NextActionSheet } from '../src/components/leads/next-action-sheet';
 import { ReasonSheet } from '../src/components/leads/reason-sheet';
 import {
@@ -25,8 +26,10 @@ import { searchProducts } from '../src/data/customers';
 import { currentSession } from '../src/data/session';
 import { PROSPECT_CONDITIONS, labelOf, stageLabel } from '../src/engines/funnel';
 import { pretty } from '../src/lib/format';
+import { CUSTOMER_TYPES, gstinRefusal, normaliseGstin } from '../src/engines/leads';
 import { useStore } from '../src/state/store';
-import { productLines } from '../src/lib/product-lines';
+import { Swap } from '../src/components/ui/motion';
+import { skuLines } from '../src/lib/sku-lines';
 
 /**
  * §5 §6 — the eight answers a Suspect owes, on ONE screen.
@@ -77,11 +80,11 @@ import { productLines } from '../src/lib/product-lines';
  */
 const CHECKED: readonly { field: string; label: string }[] = [
   { field: 'monthly_litres', label: 'Litres a month' },
-  { field: 'potential', label: 'What they could be worth' },
-  { field: 'competitor', label: 'Whose product they are on' },
-  { field: 'required_product', label: 'Which of ours they need' },
-  { field: 'contact_person', label: 'Who we ask for' },
-  { field: 'decision_maker', label: 'Who signs off a purchase' },
+  { field: 'potential', label: 'How much they can buy' },
+  { field: 'competitor', label: 'Which brand they use now' },
+  { field: 'required_product', label: 'Which of our products they need' },
+  { field: 'contact_person', label: 'Who to ask for' },
+  { field: 'decision_maker', label: 'Who decides to buy' },
 ];
 
 const CHECKED_LABELS: Record<string, string> = Object.fromEntries(
@@ -97,12 +100,8 @@ const CHECKED_LABELS: Record<string, string> = Object.fromEntries(
  * the whole lead update would be refused on it — so the code is what is
  * stored and the label is only what a salesman reads.
  */
-const CUSTOMER_TYPES: readonly { code: string; label: string; hint: string }[] = [
-  { code: 'retailer', label: 'Shop', hint: 'Sells over a counter' },
-  { code: 'dealer', label: 'Dealer', hint: 'Sells on, in volume' },
-  { code: 'manufacturer', label: 'Manufacturer', hint: 'Uses it in what they make' },
-  { code: 'distributor', label: 'Distributor', hint: 'Stocks and supplies others' },
-];
+/* `CUSTOMER_TYPES` is the engine's list — the same one the New lead form
+   draws, so a code never reads as two different words on two screens. */
 
 /**
  * The schema's own ceiling on `fieldChecks`, restated here because this is the
@@ -143,8 +142,9 @@ export default function ProspectForm() {
   const [potential, setPotential] = React.useState('');
   const [competitor, setCompetitor] = React.useState('');
   const [product, setProduct] = React.useState<{ id: string; name: string } | null>(null);
+  const productSku = useSkus([product?.id]);
   const [productQuery, setProductQuery] = React.useState('');
-  const [hits, setHits] = React.useState<{ id: string; name: string; formulation: string | null }[]>([]);
+  const [hits, setHits] = React.useState<{ id: string; name: string; formulation: string | null; sku: string | null }[]>([]);
   const [contact, setContact] = React.useState('');
   const [decisionMaker, setDecisionMaker] = React.useState('');
   const [creditDays, setCreditDays] = React.useState('');
@@ -236,7 +236,7 @@ export default function ProspectForm() {
       return;
     }
     void searchProducts(productQuery, 8).then((r) => {
-      if (live) setHits(r.map((p) => ({ id: p.id, name: p.name, formulation: p.formulation })));
+      if (live) setHits(r.map((p) => ({ id: p.id, name: p.name, formulation: p.formulation, sku: p.sku })));
     });
     return () => {
       live = false;
@@ -294,7 +294,11 @@ export default function ProspectForm() {
     /* `PrimaryButton` keeps a button with a `whyDisabled` PRESSABLE and hands
        the press to us, so this is where the refusal is actually spoken — the
        same shape `collect()` in pay.tsx uses. */
-    if (refusal) return notify(refusal);
+    if (refusal) return notify(refusal, 'warn');
+    /* Checked before anything is saved, so the number he is reading off the
+       certificate is still in front of him when the phone says it is wrong. */
+    const gstWrong = gstinRefusal(gstin);
+    if (gstWrong) return notify(gstWrong, 'warn');
     saving.current = true;
     try {
       /*
@@ -328,10 +332,10 @@ export default function ProspectForm() {
         decisionMaker: decisionMakerNow || null,
         creditDaysWanted: creditDays.trim() ? Number(creditDays.replace(/[^\d]/g, '')) : null,
         application: application.trim() || null,
-        gstin: gstin.trim() || null,
+        gstin: normaliseGstin(gstin) || null,
         prospectReasonCode: reasonCode ?? lead.prospectReasonCode ?? null,
       }, [...backlog, ...rows]);
-      if (!r.ok) return notify(r.message);
+      if (!r.ok) return notify(r.message, 'warn');
 
       /*
        * AND THE BACKLOG IS FORGOTTEN, now that it has been sent.
@@ -390,10 +394,16 @@ export default function ProspectForm() {
     }
   };
 
-  const productField = () =>
+  /* Picked and searching are one field in two states, so the one replaces the
+     other in place rather than the form jumping by the height of a list. */
+  const productField = () => (
+    <Swap id={product ? 'picked' : 'search'}>{productFieldState()}</Swap>
+  );
+  const productFieldState = () =>
     product ? (
       <Choice
         label={product.name}
+        sub={skuText(productSku.get(product.id)) ?? undefined}
         selected
         onPress={() => pickProduct(null)}
         style={{ alignItems: 'flex-start', paddingHorizontal: 14 }}
@@ -405,19 +415,17 @@ export default function ProspectForm() {
           {hits.map((p) => (
             <Choice
               key={p.id}
-              /* The formulation leads and the SKU sits under it — the same
-                 rule the order form runs, in `src/lib/product-lines.ts`.
-                 What is PICKED is unchanged: the id and the product's own
-                 name, never the liquid's. */
-              label={productLines({ displayName: p.name, subtitle: p.formulation }).lead}
-              sub={productLines({ displayName: p.name, subtitle: p.formulation }).detail ?? undefined}
+              /* The SKU's own name leads and the formulation sits under
+                 it — the rule the order form runs, in `src/lib/sku-lines.ts`. */
+              label={skuLines({ name: p.name, formulation: p.formulation }).lead}
+              sub={[skuText(p.sku), skuLines({ name: p.name, formulation: p.formulation }).detail].filter(Boolean).join(' · ') || undefined}
               selected={false}
               onPress={() => pickProduct({ id: p.id, name: p.name })}
               style={{ alignItems: 'flex-start', paddingHorizontal: 14 }}
             />
           ))}
           {productQuery.trim() && hits.length === 0 ? (
-            <T s="caption">Nothing in the catalogue matches that.</T>
+            <T s="caption">No product matches that.</T>
           ) : null}
         </View>
       </>
@@ -457,7 +465,7 @@ export default function ProspectForm() {
           {lead.company?.trim() || lead.name}
         </T>
         <T s="caption" style={{ marginTop: 2 }}>
-          {stageLabel(input.stage) + ' · everything on this page in one go'}
+          {stageLabel(input.stage) + ' · fill everything on this page'}
         </T>
       </Card>
 
@@ -466,11 +474,11 @@ export default function ProspectForm() {
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
           {CUSTOMER_TYPES.map((t) => (
             <Choice
-              key={t.code}
+              key={t.value}
               label={t.label}
               sub={t.hint}
-              selected={customerType === t.code}
-              onPress={() => setCustomerType(t.code)}
+              selected={customerType === t.value}
+              onPress={() => setCustomerType(t.value)}
               style={{ paddingHorizontal: 14 }}
             />
           ))}
@@ -492,11 +500,11 @@ export default function ProspectForm() {
         ) : (
           <Input value={litres} onChangeText={setLitres} placeholder="200" keyboardType="number-pad" />
         )}
-        <T s="caption" style={{ marginTop: 6 }}>What they actually get through, of everything — not just ours.</T>
+        <T s="caption" style={{ marginTop: 6 }}>How much they use in total. Not only ours.</T>
       </View>
 
       <View style={{ marginTop: 14 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>What they could be worth a month</SectionLabel>
+        <SectionLabel style={{ marginBottom: 6 }}>How much they can buy a month</SectionLabel>
         {originals.potential ? (
           <VerifyFieldRow
             field="potential"
@@ -510,11 +518,11 @@ export default function ProspectForm() {
         ) : (
           <Input value={potential} onChangeText={setPotential} placeholder="40000" keyboardType="number-pad" />
         )}
-        <T s="caption" style={{ marginTop: 6 }}>In rupees, roughly.</T>
+        <T s="caption" style={{ marginTop: 6 }}>In rupees, about.</T>
       </View>
 
       <View style={{ marginTop: 14 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>Whose product are they on now</SectionLabel>
+        <SectionLabel style={{ marginBottom: 6 }}>Which brand they use now</SectionLabel>
         {originals.competitor ? (
           <VerifyFieldRow
             field="competitor"
@@ -530,7 +538,7 @@ export default function ProspectForm() {
       </View>
 
       <View style={{ marginTop: 14 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>Which of ours do they need</SectionLabel>
+        <SectionLabel style={{ marginBottom: 6 }}>Which of our products they need</SectionLabel>
         {originals.required_product ? (
           <VerifyFieldRow
             field="required_product"
@@ -555,7 +563,7 @@ export default function ProspectForm() {
             }}
             renderCorrected={() => (
               <View>
-                <T s="caption" style={{ marginBottom: 6 }}>Which of ours they actually need</T>
+                <T s="caption" style={{ marginBottom: 6 }}>Which of our products they need</T>
                 {productField()}
               </View>
             )}
@@ -566,7 +574,7 @@ export default function ProspectForm() {
       </View>
 
       <View style={{ marginTop: 14 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>Who we ask for when we ring</SectionLabel>
+        <SectionLabel style={{ marginBottom: 6 }}>Who to ask for when we call</SectionLabel>
         {originals.contact_person ? (
           <VerifyFieldRow
             field="contact_person"
@@ -586,7 +594,7 @@ export default function ProspectForm() {
           IS one of the twelve at qualification, so it is asked here where the
           salesman is already standing in front of the man. */}
       <View style={{ marginTop: 14 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>Who actually signs off a purchase</SectionLabel>
+        <SectionLabel style={{ marginBottom: 6 }}>Who decides to buy</SectionLabel>
         {originals.decision_maker ? (
           <VerifyFieldRow
             field="decision_maker"
@@ -594,32 +602,32 @@ export default function ProspectForm() {
             reported={originals.decision_maker}
             answer={checks.decision_maker ?? BLANK_VERIFY}
             onChange={(patch) => patchCheck('decision_maker', patch)}
-            placeholder="The proprietor, his son"
+            placeholder="The owner, his son"
           />
         ) : (
-          <Input value={decisionMaker} onChangeText={setDecisionMaker} placeholder="Optional — the proprietor, his son" />
+          <Input value={decisionMaker} onChangeText={setDecisionMaker} placeholder="Optional. The owner, his son" />
         )}
       </View>
 
       <View style={{ marginTop: 14 }}>
         <SectionLabel style={{ marginBottom: 6 }}>Credit they want, in days</SectionLabel>
-        <Input value={creditDays} onChangeText={setCreditDays} placeholder="Optional — 30" keyboardType="number-pad" />
+        <Input value={creditDays} onChangeText={setCreditDays} placeholder="Optional. Example: 30" keyboardType="number-pad" />
       </View>
 
       <View style={{ marginTop: 14 }}>
         <SectionLabel style={{ marginBottom: 6 }}>What they will use it on</SectionLabel>
-        <Input value={application} onChangeText={setApplication} placeholder="Optional — furniture polish, spray booth" />
+        <Input value={application} onChangeText={setApplication} placeholder="Optional. Furniture polish, spray booth" />
       </View>
 
       <View style={{ marginTop: 14 }}>
         <SectionLabel style={{ marginBottom: 6 }}>GST number</SectionLabel>
-        <Input value={gstin} onChangeText={setGstin} placeholder="Optional here — required before a sample goes out" autoCapitalize="characters" />
+        <Input value={gstin} onChangeText={setGstin} placeholder="Optional now. Needed before a sample" autoCapitalize="characters" />
       </View>
 
       {/* -------------------------------------------------- §24 and §5 */}
       <View style={{ marginTop: 18, gap: 10 }}>
         <SecondaryButton
-          label={lead.nextAction ? 'Next: ' + lead.nextAction : 'Say what happens next'}
+          label={lead.nextAction ? 'Next: ' + lead.nextAction : 'Set next action'}
           onPress={() => setNextOpen(true)}
         />
         {lead.nextActionDate ? <T s="caption">{pretty(lead.nextActionDate)}</T> : null}
@@ -628,13 +636,17 @@ export default function ProspectForm() {
           label={
             lead.prospectReasonCode
               ? 'Why: ' + labelOf(config.prospectReasons, lead.prospectReasonCode)
-              : 'Say why this is worth pursuing'
+              : 'Say why to follow up'
           }
           onPress={() => setReasonOpen(true)}
         />
       </View>
 
-      {/* What the gate is still waiting on, in the gate's own words. */}
+      {/* What the gate is still waiting on, in the gate's own words. The last
+          answer swaps the list for the all-answered line in place — the one
+          moment on this page that changes what the page is telling him. No
+          buzz: nothing is saved yet, and Save confirms with its own toast. */}
+      <Swap id={outstanding.length ? 'open' : 'done'}>
       {outstanding.length ? (
         <View
           style={{
@@ -646,7 +658,7 @@ export default function ProspectForm() {
             padding: 12,
             gap: 6,
           }}>
-          <T s="caption">Still to answer before this can be a Prospect</T>
+          <T s="caption">Answer these to make it a Prospect</T>
           {outstanding.map((c) => (
             <T key={c.id} style={{ fontSize: 15, lineHeight: 21, color: C.ink }}>{'· ' + c.says}</T>
           ))}
@@ -654,10 +666,11 @@ export default function ProspectForm() {
       ) : (
         <View style={{ marginTop: 16 }}>
           <T style={[{ fontSize: 15, lineHeight: 21, color: C.success }, weight(500)]}>
-            All eight answered. Save, then move it up from the record.
+            All answered. Save, then move it up on the lead page.
           </T>
         </View>
       )}
+      </Swap>
 
       {/*
         SAID PLAINLY, because he has just typed a sentence for somebody to
@@ -669,13 +682,12 @@ export default function ProspectForm() {
       */}
       {Object.values(checks).some((a) => a.verdict === 'corrected') ? (
         <T s="caption" style={{ marginTop: 14 }}>
-          The office gets the corrected answer. Why it changed is kept on this phone until their side
-          can hold it.
+          The office gets the corrected answer. The reason stays on this phone for now.
         </T>
       ) : null}
 
       <PrimaryButton
-        label="Save the details"
+        label="Save details"
         onPress={() => save()}
         disabled={Boolean(refusal)}
         whyDisabled={refusal ?? undefined}
@@ -691,10 +703,10 @@ export default function ProspectForm() {
         key={reasonOpen ? 'why-open' : 'why-shut'}
         open={reasonOpen}
         onClose={() => setReasonOpen(false)}
-        title="Why is this worth pursuing?"
-        body="Ten answers, and none of them is a text box — this is the question that stops a shop somebody walked past becoming a prospect."
+        title="Why follow up this shop?"
+        body="Choose one reason. A shop becomes a Prospect only with a real reason."
         options={config.prospectReasons}
-        confirmLabel="That is why"
+        confirmLabel="Save reason"
         onConfirm={(code) => {
           setReasonOpen(false);
           void save(code);
@@ -711,7 +723,7 @@ export default function ProspectForm() {
         onSave={(n) => {
           setNextOpen(false);
           void setNextAction(lead.id, n).then((r) => {
-            if (!r.ok) return notify(r.message);
+            if (!r.ok) return notify(r.message, 'warn');
             load();
             notify('Next: ' + n.action);
           });

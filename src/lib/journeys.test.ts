@@ -48,6 +48,7 @@ import {
   notifications,
   syncConflicts,
   sheetTakenOrderRows,
+  mbosDeletions,
 } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { customerStatusLabel } from "@/lib/format";
@@ -74,7 +75,7 @@ import {
   recomputeSalesPeople,
   recomputeSalesManagers,
 } from "@/lib/recompute";
-import { addDays } from "@/lib/business-date";
+import { addDays, addMonths } from "@/lib/business-date";
 import { updateAccountManagers } from "@/lib/actions/account-manager";
 import { assignSalesManager } from "@/lib/actions/sales-manager";
 import { projectParties } from "@/lib/services/party-projection-service";
@@ -96,6 +97,7 @@ import {
 } from "@/lib/services/delivery-party-service";
 import { customerRecordDetail } from "@/lib/services/customer-record-service";
 import { saveInteraction } from "@/lib/services/interaction-service";
+import { logQualificationCall } from "@/lib/actions/lead-calling-desk";
 import { seedCatalogue } from "@/db/seed-catalogue";
 import {
   products as productsTable,
@@ -105,6 +107,7 @@ import {
   quickNotes as quickNotesTable,
   interactionProductLines,
   appAccess,
+  appModuleAccess,
   queueSnapshots as queueSnapshotsTable,
 } from "@/db/schema";
 import { importCatalogue } from "@/lib/services/catalogue-import";
@@ -183,12 +186,17 @@ import {
   listReminders,
   listTargets,
   listTargetsPage,
+  resolveTargetCustomerIds,
+  setTargetsBulk,
+  targetCandidates,
   recordWatchOutcome,
   setTarget,
 } from "@/lib/services/worklist-services";
 import {
   approveOrder,
   declineOrder,
+  orderLines,
+  pendingOrders,
 } from "@/lib/services/order-approval-service";
 import {
   customerTimeline,
@@ -224,6 +232,18 @@ let priya: typeof users.$inferSelect;
 let rakesh: typeof users.$inferSelect;
 let deepa: typeof users.$inferSelect;
 
+/*
+ * A fixture's work number is UNIQUE BY CONSTRUCTION, not by luck.
+ *
+ * It was a fresh random draw from a million per user, and `users.phone` is
+ * unique — so every so often two users in one test drew the same number and
+ * the whole test failed in its setup with `users_phone_key`, on a change that
+ * had nothing to do with users. A counter from a random start cannot repeat
+ * inside a run, and the start still keeps two processes from lining up.
+ */
+let phoneSeq = Math.floor(Math.random() * 900_000);
+const nextPhone = () => String(9820000000 + (phoneSeq++ % 1_000_000));
+
 async function makeUser(
   name: string,
   role: "associate" | "manager" | "admin",
@@ -242,7 +262,7 @@ async function makeUser(
       id: id("usr"),
       name,
       email: `${name.toLowerCase()}@test.local`,
-      phone: String(9820000000 + Math.floor(Math.random() * 999999)),
+      phone: nextPhone(),
       passwordHash: "x",
       role,
       initials: name.slice(0, 2).toUpperCase(),
@@ -983,6 +1003,119 @@ describe("Journey 4 - the EOD gate", () => {
     assert.equal(fresh.status, "pending");
   });
 
+  test("a next action dated today is not closed by the call that set it", async () => {
+    const customer = await makeCustomer(priya.id);
+    await updateSetting("reminders.rollForwardOnNonWorkingDays", false, manager.id);
+
+    // An older promise, due today, which this call keeps.
+    const owed = await createReminder({
+      customerId: customer.id,
+      dueDate: TODAY,
+      note: "Ring about the quotation",
+    });
+    assert.ok(owed.ok);
+
+    const call = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "inbound_call",
+      callerRole: "purchase",
+      callReason: "price_quotation",
+      reasonDetail: { product: "Nano Thinner 20L" },
+      nextActions: ["send_quotation"],
+      nextActionDate: TODAY,
+      /* AND a call-back for later in the week, so this call writes TWO
+         reminders — the case a single excluded id could not cover. */
+      outcome: "follow_up",
+      outcomeDetail: { followUpReason: "call_next_week" },
+      followUpDate: addDays(TODAY, 3),
+      idempotencyKey: randomUUID(),
+    });
+    assert.ok(call.ok, call.ok ? "" : call.error);
+
+    const rows = await db
+      .select()
+      .from(reminders)
+      .where(eq(reminders.customerId, customer.id));
+    assert.equal(rows.length, 3);
+    const old = rows.find((r) => r.id === owed.data.id)!;
+    assert.equal(old.status, "completed", "the promise that was due is kept by the call");
+    for (const fresh of rows.filter((r) => r.id !== owed.data.id)) {
+      assert.equal(
+        fresh.status,
+        "pending",
+        `"${fresh.note}" was written by this call and must survive it`,
+      );
+    }
+  });
+
+  test("a call from the calling desk closes the lead's due reminder, and a no-answer does not", async () => {
+    await updateSetting("reminders.rollForwardOnNonWorkingDays", false, manager.id);
+    await db.insert(appModuleAccess).values({
+      id: id("amd"),
+      userId: priya.id,
+      app: "crm",
+      module: "crm.lead-calling-desk",
+    });
+    const lead = await makeCustomer(priya.id, { kind: "lead", leadStage: "new" });
+
+    const created = await createReminder({
+      customerId: lead.id,
+      dueDate: TODAY,
+      note: "Call back about their monthly requirement",
+    });
+    assert.ok(created.ok);
+
+    const missed = await logQualificationCall({
+      customerId: lead.id,
+      outcome: "no_answer",
+      noAnswerReason: "no_response",
+      next: { kind: "call", text: "", date: addDays(TODAY, 1) },
+    });
+    assert.ok(missed.ok, missed.ok ? "" : missed.error);
+    const [afterMiss] = await db.select().from(reminders).where(eq(reminders.id, created.data.id));
+    assert.equal(afterMiss.status, "pending", "nobody answered, so the conversation is still owed");
+
+    const spoke = await logQualificationCall({
+      customerId: lead.id,
+      outcome: "spoke_callback",
+      notes: "Busy today, asked us to ring next week",
+      next: { kind: "call", text: "", date: addDays(TODAY, 5) },
+    });
+    assert.ok(spoke.ok, spoke.ok ? "" : spoke.error);
+    assert.equal(spoke.data.remindersClosed, 1);
+
+    const [afterCall] = await db.select().from(reminders).where(eq(reminders.id, created.data.id));
+    assert.equal(afterCall.status, "completed");
+    assert.equal(afterCall.closedBy, "call");
+    assert.ok(afterCall.closedBySourceId, "it names the desk call that closed it");
+  });
+
+  test("the reminders list says when an open reminder was rung about and nobody answered", async () => {
+    const customer = await makeCustomer(priya.id);
+    await updateSetting("reminders.rollForwardOnNonWorkingDays", false, manager.id);
+    const created = await createReminder({
+      customerId: customer.id,
+      dueDate: TODAY,
+      note: "Chase the order confirmation",
+    });
+    assert.ok(created.ok);
+
+    let [row] = (await listReminders()).filter((r) => r.id === created.data.id);
+    assert.equal(row.lastCall, null, "nobody has rung them since it was set");
+
+    await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "no_answer",
+      outcomeDetail: { whyNoAnswer: "no_response" },
+      idempotencyKey: randomUUID(),
+    });
+    [row] = (await listReminders()).filter((r) => r.id === created.data.id);
+    assert.equal(row.status, "pending");
+    assert.equal(row.lastCall?.answered, false);
+    assert.equal(row.lastCall?.on, TODAY);
+  });
+
   test("a reminder is dismissed, never deleted, and stays on the record", async () => {
     const customer = await makeCustomer(priya.id);
     const created = await createReminder({
@@ -1667,18 +1800,36 @@ describe("who may see a customer's target", () => {
       "nor does a shop somebody else bills",
     );
 
-    // The paged read is a second query over the same rule, and the two
-    // disagreeing is exactly what pagination must not introduce.
-    const page = await listTargetsPage(undefined, {});
-    const pagedIds = page.rows.map((r) => r.customerId);
-    assert.ok(pagedIds.includes(direct.id));
-    assert.equal(pagedIds.includes(lead.id), false);
-    assert.equal(pagedIds.includes(shop.id), false);
+    // The paged read is the TABLE, and the table is the allocated targets:
+    // a direct customer with nothing allocated is counted, not listed.
+    const before = await listTargetsPage(undefined, {});
     assert.equal(
-      page.bookTotal,
+      before.rows.some((r) => r.customerId === direct.id),
+      false,
+      "a direct customer with no target is not on the table",
+    );
+    assert.equal(before.allocation.unallocated, 1, "it is counted as waiting for one");
+    assert.equal(
+      before.bookTotal,
       1,
       "and the book total counts the book this screen shows",
     );
+
+    // The allocate dialog offers the direct customer and nobody else.
+    const candidates = await targetCandidates({});
+    const candidateIds = candidates.map((c) => c.customerId);
+    assert.deepEqual(candidateIds, [direct.id], "only a direct customer can be given a target");
+
+    const allocated = await setTarget(direct.id, 500000);
+    assert.ok(allocated.ok, allocated.ok ? "" : allocated.error);
+    const page = await listTargetsPage(undefined, {});
+    const pagedIds = page.rows.map((r) => r.customerId);
+    assert.ok(pagedIds.includes(direct.id), "once allocated it is on the table");
+    assert.equal(pagedIds.includes(lead.id), false);
+    assert.equal(pagedIds.includes(shop.id), false);
+    assert.equal(page.allocation.allocated, 1);
+    assert.equal(page.allocation.hand, 1, "and it reads as set by hand");
+    assert.equal(page.allocation.unallocated, 0);
 
     // A server action is a URL, so the rule is checked there too rather than
     // only by what the list draws.
@@ -1686,6 +1837,148 @@ describe("who may see a customer's target", () => {
     assert.equal(refusedLead.ok, false, "a target cannot be set on a lead");
     const refusedShop = await setTarget(shop.id, 500000);
     assert.equal(refusedShop.ok, false, "nor on a third-party shop");
+  });
+
+  test("the table splits by Behind and Met, and a bulk uplift gives the unallocated a target from what they bought", async () => {
+    const manager = await makeUser("Targets Manager", "manager");
+    const telecaller = await makeUser("Their Telecaller", "associate", manager.id);
+    const month = TODAY.slice(0, 7);
+
+    const met = await makeCustomer(telecaller.id, { name: "Met Paints" });
+    const behind = await makeCustomer(telecaller.id, { name: "Behind Paints" });
+    const waiting = await makeCustomer(telecaller.id, { name: "Waiting Paints" });
+
+    // Met: ordered more than its target this month.
+    await db.insert(orders).values({
+      id: id("ord"),
+      customerId: met.id,
+      userId: telecaller.id,
+      orderedAt: new Date(`${TODAY}T09:00:00+05:30`),
+      totalAmount: 1_20_000_00,
+      status: "confirmed",
+    });
+    // Waiting: bought last month, nothing allocated this one.
+    await db.insert(orders).values({
+      id: id("ord"),
+      customerId: waiting.id,
+      userId: telecaller.id,
+      orderedAt: new Date(`${addMonths(month, -1)}-15T09:00:00+05:30`),
+      totalAmount: 90_000_00,
+      status: "confirmed",
+    });
+
+    setTestUser(manager);
+    assert.ok((await setTarget(met.id, 1_00_000_00, month)).ok);
+    assert.ok((await setTarget(behind.id, 1_00_000_00, month)).ok);
+
+    const all = await listTargetsPage(month, {});
+    assert.deepEqual(
+      all.rows.map((r) => r.customerId).sort(),
+      [behind.id, met.id].sort(),
+      "the table is the two allocated targets",
+    );
+    assert.equal(all.totals.customers, 2);
+    assert.equal(all.totals.behind, 1);
+    assert.equal(all.allocation.unallocated, 1);
+
+    const onlyBehind = await listTargetsPage(month, { progress: "behind" });
+    assert.deepEqual(onlyBehind.rows.map((r) => r.customerId), [behind.id]);
+    assert.equal(onlyBehind.total, 1);
+    assert.equal(onlyBehind.totals.customers, 2, "the summary does not move with the tab");
+    const onlyMet = await listTargetsPage(month, { progress: "met" });
+    assert.deepEqual(onlyMet.rows.map((r) => r.customerId), [met.id]);
+    const defaults = await listTargetsPage(month, { source: "default" });
+    assert.equal(defaults.total, 0, "nothing here is an auto default");
+
+    // The unallocated are reached by the same filters, and an uplift on
+    // "nothing" starts from their own average month rather than from zero.
+    const ids = await resolveTargetCustomerIds(month, {}, "unallocated");
+    assert.deepEqual(ids, [waiting.id]);
+    const bulk = await setTargetsBulk(ids, "uplift", 10, month);
+    assert.ok(bulk.ok && bulk.data.updated === 1, "the waiting customer was given a target");
+
+    const n = Math.max(1, (await getConfig())["targets.trailingMonths"]);
+    const [row] = await db
+      .select({ amount: monthlyTargets.targetAmount, isDefault: monthlyTargets.isDefault })
+      .from(monthlyTargets)
+      .where(eq(monthlyTargets.customerId, waiting.id));
+    assert.equal(row.amount, Math.round(Math.round(90_000_00 / n) * 1.1));
+    assert.equal(row.isDefault, false, "a bulk allocation is somebody's decision");
+
+    const after = await listTargetsPage(month, {});
+    assert.equal(after.allocation.unallocated, 0);
+    assert.equal(after.total, 3);
+  });
+
+  test("a bill target is counted off the bills ledger, can stand alone, and is behind until both are met", async () => {
+    const manager = await makeUser("Bills Manager", "manager");
+    const telecaller = await makeUser("Bills Telecaller", "associate", manager.id);
+    const month = TODAY.slice(0, 7);
+    const last = addMonths(month, -1);
+
+    const both = await makeCustomer(telecaller.id, { name: "Both Paints" });
+    const billsOnly = await makeCustomer(telecaller.id, { name: "Count Paints" });
+
+    // Both: the rupees are met by an order, the count is not.
+    await db.insert(orders).values({
+      id: id("ord"),
+      customerId: both.id,
+      userId: telecaller.id,
+      orderedAt: new Date(`${TODAY}T09:00:00+05:30`),
+      totalAmount: 2_00_000_00,
+      status: "confirmed",
+    });
+    const bill = (customerId: string, billDate: string) =>
+      db.insert(bills).values({
+        id: id("bil"),
+        customerId,
+        billNo: `MMI/${randomUUID().slice(0, 8)}`,
+        billDate,
+        amount: 10_000_00,
+      });
+    await bill(both.id, `${month}-01`);
+    await bill(both.id, `${month}-01`);
+    await bill(billsOnly.id, `${month}-01`);
+    // Last month's bills are context in the dialog, never this month's count.
+    for (let i = 0; i < 4; i++) await bill(billsOnly.id, `${last}-10`);
+
+    setTestUser(manager);
+    assert.ok((await setTarget(both.id, 1_00_000_00, month, 5)).ok);
+    assert.ok((await setTarget(billsOnly.id, 0, month, 3)).ok, "a count alone is a target");
+    const refused = await setTarget(billsOnly.id, 0, month, null);
+    assert.equal(refused.ok, false, "a target asking for nothing is refused");
+
+    const page = await listTargetsPage(month, {});
+    const byId = new Map(page.rows.map((r) => [r.customerId, r]));
+    assert.equal(page.total, 2, "a bills-only target is on the table");
+    assert.equal(byId.get(both.id)?.billsAchieved, 2);
+    assert.equal(byId.get(both.id)?.billGap, 3);
+    assert.equal(byId.get(both.id)?.gap, 0, "the rupees are met");
+    assert.equal(byId.get(billsOnly.id)?.billsAchieved, 1);
+    assert.equal(page.totals.behind, 2, "behind on bills is behind");
+    assert.equal(page.totals.billTargeted, 2);
+    assert.equal(page.totals.billTarget, 8);
+    assert.equal(page.totals.billsAchieved, 3);
+
+    // A rupee change that does not mention bills keeps the count.
+    assert.ok((await setTarget(both.id, 1_50_000_00, month)).ok);
+    const [kept] = await db
+      .select({ billTarget: monthlyTargets.billTarget })
+      .from(monthlyTargets)
+      .where(eq(monthlyTargets.customerId, both.id));
+    assert.equal(kept.billTarget, 5);
+
+    // Met once both are: two more bills this month for the first shop.
+    await bill(both.id, `${month}-01`);
+    await bill(both.id, `${month}-01`);
+    await bill(both.id, `${month}-01`);
+    const met = await listTargetsPage(month, { progress: "met" });
+    assert.deepEqual(met.rows.map((r) => r.customerId), [both.id]);
+
+    const [ctx] = await targetCandidates({ period: month, customerId: billsOnly.id });
+    assert.equal(ctx.billTarget, 3);
+    assert.equal(ctx.bills, 1);
+    assert.deepEqual(ctx.trailingBills, [4, 0, 0]);
   });
 
   test("a filter narrows the population and never answers who may see it", async () => {
@@ -2081,18 +2374,91 @@ describe("Journey 8 - the interaction log", () => {
     );
   });
 
-  test("follow-up needs a date; inbound payment promise needs one; outbound does not", async () => {
+  test("an order taken or received needs no products, reaches accounts with zero lines, and can be approved", async () => {
+    const taken = await makeCustomer(priya.id);
+    const received = await makeCustomer(priya.id);
+
+    const t = await saveInteraction({
+      customerId: taken.id,
+      interactionType: "outbound_call",
+      outcome: "order_taken",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(t.ok, true, !t.ok ? t.error : "");
+    const r = await saveInteraction({
+      customerId: received.id,
+      interactionType: "order_received",
+      orderDate: TODAY,
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(r.ok, true, !r.ok ? r.error : "");
+
+    for (const [cust, res] of [
+      [taken, t],
+      [received, r],
+    ] as const) {
+      const [row] = await db
+        .select({ orderId: calls.orderId })
+        .from(calls)
+        .where(eq(calls.id, res.data!.interactionId));
+      assert.ok(row.orderId, "the order is still written");
+      assert.equal((await orderLines(row.orderId!)).length, 0, "no lines were invented");
+      const pending = (await pendingOrders()).find((o) => o.orderId === row.orderId);
+      assert.ok(pending, "it is in the approval queue");
+      assert.equal(pending.lineCount, 0);
+      assert.equal(pending.customerId, cust.id);
+
+      setTestUser(deepa);
+      const approved = await approveOrder(row.orderId!);
+      setTestUser(priya);
+      assert.equal(approved.ok, true, !approved.ok ? approved.error : "");
+    }
+
+    /* What IS given is still checked. */
+    const bad = await saveInteraction({
+      customerId: taken.id,
+      interactionType: "outbound_call",
+      outcome: "order_taken",
+      productQuantities: { nope: 1.5 },
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(bad.ok, false);
+
+    /* Order Taken no longer takes a next action at all. */
+    const withAction = await saveInteraction({
+      customerId: taken.id,
+      interactionType: "outbound_call",
+      outcome: "order_taken",
+      nextActions: ["follow_up_payment"],
+      nextActionDate: addDays(TODAY, 2),
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(withAction.ok, false);
+    assert.equal(withAction.fieldErrors?.[0].field, "nextActions");
+  });
+
+  test("follow-up and pay promise with no date are dated by default and still write their reminder", async () => {
     const customer = await makeCustomer(priya.id);
 
+    /* The form no longer asks for a follow-up date. Saved with none, the call
+       is given the configured default day, so the customer is not left with a
+       follow-up nobody is reminded of. */
+    const undated = await makeCustomer(priya.id);
     const noDate = await saveInteraction({
-      customerId: customer.id,
+      customerId: undated.id,
       interactionType: "outbound_call",
       outcome: "follow_up",
       outcomeDetail: { followUpReason: "call_next_week" },
       idempotencyKey: randomUUID(),
     });
-    assert.equal(noDate.ok, false);
-    assert.equal(noDate.fieldErrors?.[0].field, "followUpDate");
+    assert.equal(noDate.ok, true, !noDate.ok ? noDate.error : "");
+    const defaulted = await db
+      .select()
+      .from(reminders)
+      .where(eq(reminders.callId, noDate.data.interactionId));
+    assert.equal(defaulted.length, 1, "a follow-up always leaves a reminder");
+    assert.equal(defaulted[0].type, "call_back");
+    assert.ok(defaulted[0].dueDate > TODAY, "defaults to a day ahead, never today or past");
 
     const past = await saveInteraction({
       customerId: customer.id,
@@ -2115,16 +2481,26 @@ describe("Journey 8 - the interaction log", () => {
       outcome: "payment_promised",
       idempotencyKey: randomUUID(),
     });
-    assert.equal(inbound.ok, false);
-    assert.equal(inbound.fieldErrors?.[0].field, "paymentPromiseDate");
-
+    /* The form no longer asks for the promised date. A promise saved with none,
+       inbound or outbound, is dated by the configured default — so it still
+       writes its payment reminder and its collections attempt. */
+    assert.equal(inbound.ok, true, !inbound.ok ? inbound.error : "");
     const outbound = await saveInteraction({
       customerId: customer.id,
       interactionType: "outbound_call",
       outcome: "payment_promised",
       idempotencyKey: randomUUID(),
     });
-    assert.equal(outbound.ok, true, "outbound may promise without a date");
+    assert.equal(outbound.ok, true, !outbound.ok ? outbound.error : "");
+    for (const res of [inbound, outbound]) {
+      const rems = await db
+        .select()
+        .from(reminders)
+        .where(eq(reminders.callId, res.data!.interactionId));
+      assert.equal(rems.length, 1);
+      assert.equal(rems[0].type, "payment_promise");
+      assert.ok(rems[0].dueDate > TODAY, "dated ahead, never today or past");
+    }
   });
 
   test("quick notes are stored as references and accumulate in the text", async () => {
@@ -2195,21 +2571,23 @@ describe("Journey 8 - the interaction log", () => {
     assert.match(r.error, /does not belong/i);
   });
 
-  test("Order Taken with no quantities is refused, and with them writes lines", async () => {
+  test("Order Taken with no quantities saves without lines, and with them writes lines", async () => {
     const customer = await makeCustomer(priya.id);
     const product = await firstProduct();
 
+    /* Products are optional now: the call is the record that they ordered. */
     const empty = await saveInteraction({
       customerId: customer.id,
       interactionType: "outbound_call",
       outcome: "order_taken",
       idempotencyKey: randomUUID(),
     });
-    assert.equal(
-      empty.ok,
-      false,
-      "an order with nothing ordered is not an order",
-    );
+    assert.equal(empty.ok, true, empty.ok ? "" : empty.error);
+    const emptyLines = await db
+      .select()
+      .from(interactionProductLines)
+      .where(eq(interactionProductLines.interactionId, empty.data.interactionId));
+    assert.equal(emptyLines.length, 0);
 
     const r = await saveInteraction({
       customerId: customer.id,
@@ -4350,6 +4728,11 @@ describe("Who the Call Log puts in front of a telecaller", () => {
       .from(customers)
       .where(eq(customers.id, lead.id));
     assert.equal(afterFirst.kind, "lead", "one order is a trial, not a relationship");
+    assert.equal(
+      (await db.select().from(mbosDeletions).where(eq(mbosDeletions.entityId, lead.id))).length,
+      0,
+      "a lead still climbing stays on the handsets that hold it",
+    );
 
     /* Accounts accept the first one. Until they do it is the customer saying
        yes rather than the business, and `lib/order-status.ts` is what says so:
@@ -4380,6 +4763,19 @@ describe("Who the Call Log puts in front of a telecaller", () => {
       after.backOfficeAmId,
       null,
       "back office is a decision, not a guess on conversion",
+    );
+
+    /* The leads channel stops sending a won lead, and a pull only says what
+       exists — so without a tombstone the handset kept its lead row for ever,
+       listed under Leads at its last rung. `leads` only: the shop stays. */
+    const tombstones = await db
+      .select()
+      .from(mbosDeletions)
+      .where(eq(mbosDeletions.entityId, lead.id));
+    assert.deepEqual(
+      tombstones.map((t) => [t.entity, t.userId, t.reason]),
+      [["leads", null, "lead_converted"]],
+      "every handset holding the lead is told it is one no longer",
     );
 
     // And the Information tab stops hiding the purchase history it just began.
@@ -5336,10 +5732,10 @@ describe("The product master — importing it, and what an import must not touch
              (select count(*)::int from finished_goods) as goods,
              (select count(*)::int from products where finished_good_id is not null) as skus
     `);
-    assert.equal(levels.formulations, 19);
-    assert.equal(levels.brands, 32);
-    assert.equal(levels.goods, 107);
-    assert.equal(levels.skus, 213);
+    assert.equal(levels.formulations, 20);
+    assert.equal(levels.brands, 33);
+    assert.equal(levels.goods, 110);
+    assert.equal(levels.skus, 219);
 
     const again = await importCatalogue();
     assert.equal(again.created, 0, "a second run must create nothing");
@@ -5448,14 +5844,33 @@ describe("The product master — importing it, and what an import must not touch
     assert.ok(results.every((r) => r.subtitle));
   });
 
+  /* The seed no longer holds anything back — the document's three were named
+     from Mahek Plus — so these tests bring their own held and excluded rows. */
+  async function heldRow(kind: "held" | "excluded", externalId: number) {
+    const [row] = await db
+      .insert(catalogueExceptionsTable)
+      .values({ id: `cex_test_${externalId}`, externalId, kind, label: `Row #${externalId}`, reason: "test" })
+      .returning();
+    return row;
+  }
+
+  test("the import closes a held row once the seed sells its Product ID", async () => {
+    // #234 is a SKU in the seed; a database that still holds it from an older
+    // seed must see the row answered rather than left asking for a name.
+    await heldRow("held", 234);
+    await importCatalogue();
+    const [row] = await db
+      .select()
+      .from(catalogueExceptionsTable)
+      .where(eq(catalogueExceptionsTable.externalId, 234));
+    assert.ok(row.resolvedAt, "an answered row must not stay open");
+    const [sku] = await db.select().from(productsTable).where(eq(productsTable.id, row.resolvedProductId!));
+    assert.equal(sku.name, "PU Thinner M16 Plain Can - 20 Liter (02 Can/Box)");
+  });
+
   test("a held legacy row cannot be ordered until somebody names it", async () => {
     setTestUser(manager);
-    const exceptions = await db.select().from(catalogueExceptionsTable);
-    const held = exceptions.filter((e) => e.kind === "held");
-    const excluded = exceptions.filter((e) => e.kind === "excluded");
-
-    assert.equal(held.length, 2, "IDs 76 and 77 have packing but no sellable name");
-    assert.equal(excluded.length, 1, "the empty drum is packaging, not a product");
+    const held = [await heldRow("held", 9001)];
     for (const e of held) assert.equal(e.resolvedAt, null);
 
     // Naming one is what turns it into something a telecaller can pick.
@@ -5478,10 +5893,7 @@ describe("The product master — importing it, and what an import must not touch
 
   test("excluded packaging cannot be named into a product", async () => {
     setTestUser(manager);
-    const [drum] = await db
-      .select()
-      .from(catalogueExceptionsTable)
-      .where(eq(catalogueExceptionsTable.kind, "excluded"));
+    const drum = await heldRow("excluded", 9002);
     const [good] = await db.select().from(finishedGoodsTable).limit(1);
 
     const refused = await nameHeldRow(drum.id, {
@@ -5841,25 +6253,24 @@ describe("An imported customer reaches the calling queue", () => {
     );
   });
 
-  test("a sales bill is the order, and nobody has said whether it is paid", async () => {
+  test("a sales bill is the order, and owed until somebody says it was paid", async () => {
     // The Order Details tab carries the bill number and the amount on every
-    // line and a payment status on NONE. It used to be read as "paid", on the
-    // reasoning that assuming the opposite invents the entire order book as
-    // debt. Both readings are inventions; this one marked all the customers
-    // and all the bills settled on a spreadsheet's authority.
+    // line and a payment status on NONE. It was read as "paid", then as
+    // "unsaid"; Mahek's rule since October 2026 is that a bill nobody has
+    // spoken for is owed — and the sheet still writes no money to say so.
     await stageSheetRows("Shree Paints", "SO-1001", addDays(TODAY, -40));
     const report = await projectSheet({ assignToUserId: priya.id });
 
     assert.equal(report.bills.skipped, false, "bills are no longer opt-in");
     assert.equal(report.bills.created, 1, "one order is one bill");
-    assert.equal(report.bills.unstated, 1, "and it is waiting on a person");
+    assert.equal(report.bills.unstated, 0, "nothing is held back as unsaid");
     assert.equal(report.bills.payments, 0, "the sheet writes no money, ever");
 
     const [bill] = await db.select().from(bills);
     // Two lines at 1180.00 each — the value is the SUM, never one line's.
     assert.equal(bill.amount, 2360_00);
     assert.equal(bill.paidAmount, 0, "nothing has been received that we know of");
-    assert.equal(bill.paymentPosition, "unstated", "and nobody has said either way");
+    assert.equal(bill.paymentPosition, "stated", "an unspoken-for bill is owed");
     assert.ok(bill.orderId, "the bill records which order it came from");
 
     // Not a receipt anywhere. This is the whole point.
@@ -5869,14 +6280,13 @@ describe("An imported customer reaches the calling queue", () => {
       "the projection wrote a receipt",
     );
 
-    // And it is not debt either: unstated counts as NEITHER, so nobody is
-    // chased for it and the collections list stays empty.
+    // And it IS debt: the whole amount joins outstanding on the projection's
+    // own recompute, so collections sees it the day it lands.
     const [customer] = await db
       .select()
       .from(customers)
       .where(eq(customers.name, "Shree Paints"));
-    assert.equal(customer.outstanding, 0, "an unsaid bill is not outstanding");
-    assert.equal((await db.select().from(followUpStates)).length, 0);
+    assert.equal(customer.outstanding, 2360_00, "the bill is outstanding in full");
   });
 
   test("a second pass never re-states a bill somebody has spoken for", async () => {
@@ -5900,20 +6310,18 @@ describe("An imported customer reaches the calling queue", () => {
     assert.equal(after.paidAmount, bill.amount, "and it moved the money too");
   });
 
-  test("recording a payment in the app is what states a bill", async () => {
-    // The other direction: an unstated bill is invisible to outstanding until
-    // somebody speaks, and recording money against it is speaking.
+  test("recording a payment in the app is what reduces an imported bill", async () => {
     await stageSheetRows("Shree Paints", "SO-1001", addDays(TODAY, -40));
     await projectSheet({ assignToUserId: priya.id });
 
     const [bill] = await db.select().from(bills);
-    assert.equal(bill.paymentPosition, "unstated");
+    assert.equal(bill.paymentPosition, "stated");
 
     const [customer] = await db
       .select()
       .from(customers)
       .where(eq(customers.id, bill.customerId));
-    assert.equal(customer.outstanding, 0, "unstated contributes nothing");
+    assert.equal(customer.outstanding, 2360_00, "owed in full until money is recorded");
 
     // Half of it arrives. Accounts recording it IS the confirmation.
     setTestUser(deepa);
@@ -5933,15 +6341,15 @@ describe("An imported customer reaches the calling queue", () => {
     setTestUser(priya);
 
     const [stated] = await db.select().from(bills).where(eq(bills.id, bill.id));
-    assert.equal(stated.paymentPosition, "stated", "recording money states the bill");
-    assert.ok(stated.paymentDecidedAt, "and marks when it was decided");
+    assert.equal(stated.paymentPosition, "stated");
+    assert.ok(stated.paymentDecidedAt, "and marks when a person decided");
 
-    // Now it counts — and it counts as the REMAINDER, not the whole amount.
+    // Outstanding falls to the REMAINDER.
     const [after] = await db
       .select()
       .from(customers)
       .where(eq(customers.id, bill.customerId));
-    assert.equal(after.outstanding, 1180_00, "the balance joins outstanding once stated");
+    assert.equal(after.outstanding, 1180_00, "only the remainder is still owed");
   });
 
   test("a bill number already taken does not bring the whole import down", async () => {
@@ -5989,7 +6397,7 @@ describe("An imported customer reaches the calling queue", () => {
     const rows = await db.select().from(bills);
     assert.equal(rows.length, 1, "one bill, not two");
     assert.equal(rows[0].paidAmount, 0, "and no money either time");
-    assert.equal(rows[0].paymentPosition, "unstated");
+    assert.equal(rows[0].paymentPosition, "stated");
     assert.equal((await db.select().from(paymentReceipts)).length, 0);
   });
 
@@ -6071,50 +6479,64 @@ describe("An imported customer reaches the calling queue", () => {
     await recomputeAllOutstanding();
   }
 
-  test("the Payment Status tab saying Pending still writes no money", async () => {
-    // This tab genuinely knows something — it is the one place in the workbook
-    // that carries received/not-received. It is still a spreadsheet cell, and
-    // a receipt is the assertion that money reached the bank, so the tab
-    // informs a person rather than writing the ledger itself. The bill is
-    // recorded; what happened to the money is left unsaid.
+  test("the Payment Status tab saying Pending: owed, and still no money written", async () => {
     await stageSheetRows("Shree Paints", "SO-1001", addDays(TODAY, -40));
     await stagePaymentRow("SO-1001", "Shree Paints", "Pending");
 
     const report = await projectSheet({ assignToUserId: priya.id });
     assert.equal(report.bills.created, 1, "the bill is still written");
-    assert.equal(report.bills.unstated, 1, "and its position is unsaid");
+    assert.equal(report.bills.unstated, 0);
 
     const [bill] = await db.select().from(bills);
     assert.equal(bill.paidAmount, 0);
-    assert.equal(bill.paymentPosition, "unstated");
+    assert.equal(bill.paymentPosition, "stated");
     assert.equal(
       (await db.select().from(paymentReceipts)).length,
       0,
       "no receipt was invented in either direction",
     );
 
-    // NOT claimed as debt either, which is the change from before: the tab
-    // saying Pending is evidence for a person to act on, not a person acting.
     const [customer] = await db
       .select()
       .from(customers)
       .where(eq(customers.name, "Shree Paints"));
-    assert.equal(customer.outstanding, 0, "a cell is not somebody vouching for a debt");
+    assert.equal(customer.outstanding, 2360_00, "an unpaid bill is outstanding");
   });
 
-  test("a blank status is unsaid, exactly like every other status", async () => {
-    // "Not yet paid" and "nobody has updated this" wear the same blank. It
-    // used to be read as settled; it is now read as what it is, which is the
-    // same answer the tab's non-blank rows now get.
+  test("the Payment Status tab saying Received holds the bill back from collections", async () => {
+    // The one exception: the office has written down that this money came.
+    // Chasing it would be chasing money we have a record of — but a cell is
+    // still not a receipt, so nothing is written to the ledger either.
     await stageSheetRows("Shree Paints", "SO-1001", addDays(TODAY, -40));
-    await stagePaymentRow("SO-1001", "Shree Paints", "   ");
+    await stagePaymentRow("SO-1001", "Shree Paints", "Received");
 
     const report = await projectSheet({ assignToUserId: priya.id });
     assert.equal(report.bills.unstated, 1);
 
     const [bill] = await db.select().from(bills);
-    assert.equal(bill.paidAmount, 0);
     assert.equal(bill.paymentPosition, "unstated");
+    assert.equal(bill.paidAmount, 0);
+    assert.equal((await db.select().from(paymentReceipts)).length, 0);
+
+    const [customer] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.name, "Shree Paints"));
+    assert.equal(customer.outstanding, 0, "money the tab says arrived is not chased");
+  });
+
+  test("a blank status is owed, like every status that is not Received", async () => {
+    // "Not yet paid" and "nobody has updated this" wear the same blank, and a
+    // bill nobody has spoken for is owed.
+    await stageSheetRows("Shree Paints", "SO-1001", addDays(TODAY, -40));
+    await stagePaymentRow("SO-1001", "Shree Paints", "   ");
+
+    const report = await projectSheet({ assignToUserId: priya.id });
+    assert.equal(report.bills.unstated, 0);
+
+    const [bill] = await db.select().from(bills);
+    assert.equal(bill.paidAmount, 0);
+    assert.equal(bill.paymentPosition, "stated");
   });
 
   test("the revert gives back the outstanding a settled run wrote over", async () => {
@@ -8518,7 +8940,11 @@ describe("the call list is settled once a day", () => {
     assert.equal(stillSettled.entries.length, before.entries.length);
 
     const admin = await makeUser("Console Admin", "admin");
-    await db.insert(appAccess).values({ id: id("aca"), userId: admin.id, app: "admin" });
+    // At the admin LEVEL: a grant with no level of its own is an associate's,
+    // and only the Admin Console held as admin is a platform administrator.
+    await db
+      .insert(appAccess)
+      .values({ id: id("aca"), userId: admin.id, app: "admin", role: "admin" });
     setTestUser(admin);
     const rebuilt = await rebuildQueues([priya.id]);
     assert.equal(rebuilt.ok, true, rebuilt.ok ? "" : rebuilt.error);
@@ -8562,7 +8988,11 @@ describe("the call list is settled once a day", () => {
     assert.ok(rakeshBefore, "rakesh had no list to leave alone");
 
     const admin = await makeUser("Narrow Admin", "admin");
-    await db.insert(appAccess).values({ id: id("aca"), userId: admin.id, app: "admin" });
+    // At the admin LEVEL: a grant with no level of its own is an associate's,
+    // and only the Admin Console held as admin is a platform administrator.
+    await db
+      .insert(appAccess)
+      .values({ id: id("aca"), userId: admin.id, app: "admin", role: "admin" });
     setTestUser(admin);
     assert.equal((await rebuildQueues([priya.id])).ok, true);
 
@@ -9360,10 +9790,13 @@ describe("a person wears several hats", () => {
     assert.equal(canAny(hats, "creditnote.issue"), false, "an associate issued a credit note");
   });
 
-  test("a grant with no hat of its own means the account's level", async () => {
-    // What every grant meant before this column existed, and what
-    // `npm run app:grant` still writes — a terminal that knows nothing about
-    // roles has to go on granting an app that works.
+  test("a grant with no level of its own is an associate's", async () => {
+    // It used to mean the account's level — what every grant meant before
+    // this column existed. That let a `manager` account carry manager powers
+    // into any app it was handed with no level written down, and an `admin`
+    // account carry everything everywhere. A grant now says nothing more than
+    // it says: `npm run app:grant` and the provisioning endpoint, which know
+    // nothing about levels, still grant an app that OPENS — at its base level.
     const deepa = await makeUser("Inherits", "manager", undefined, null);
     await db.insert(appAccess).values({
       id: id("aca"),
@@ -9375,10 +9808,15 @@ describe("a person wears several hats", () => {
     const hats = await hatsFor(deepa);
     assert.deepEqual(
       hats.map((h) => `${h.app ?? "-"}:${h.role}`).sort(),
-      ["-:manager", "accounts:manager"],
+      ["-:manager", "accounts:associate"],
     );
-    assert.equal(canAny(hats, "order.approve"), true);
-    assert.equal(canAny(hats, "customer.classify"), true, "an accounts manager did not classify");
+    assert.equal(canAny(hats, "payment.record"), true, "the app did not open at its base level");
+    assert.equal(canAny(hats, "order.approve"), false, "an unlevelled grant approved an order");
+    assert.equal(
+      canAny(hats, "customer.classify"),
+      false,
+      "an unlevelled grant borrowed the account's manager level",
+    );
   });
 
   test("THE ACCOUNT'S OWN LEVEL IS NOT A GRANT", async () => {
@@ -9451,18 +9889,31 @@ describe("a person wears several hats", () => {
     assert.equal(narrow.scope.kind, "own", "an associate saw more than their own book");
   });
 
-  test("the primary role is the widest hat, so scope follows the grant", async () => {
+  test("the primary role is derived from the hats, and admin means the platform", async () => {
     /*
      * `users.role` decides mine/team/all through `isManager`, read by
      * thirty-one screens. Rather than teach every one of them about a list it
      * is a cache of the hats — and granting somebody the manager hat in the
      * CRM has to give them their team on the day it is granted, which is what
      * whoever granted it expects.
+     *
+     * It is no longer simply the WIDEST hat. Admin of an app is admin of that
+     * app, so administering the CRM reads `manager` on the account; only the
+     * Admin Console held at the admin level reads `admin`, because that is the
+     * one grant that means the platform. An account-level hat (no app) is not
+     * a grant and moves nothing.
      */
     const hat = (app: string | null, role: "associate" | "manager" | "admin") =>
       ({ app, role }) as Parameters<typeof widestRole>[0][number];
     assert.equal(widestRole([hat("crm", "associate"), hat("crm", "manager")]), "manager");
-    assert.equal(widestRole([hat("crm", "manager"), hat(null, "admin")]), "admin");
+    assert.equal(widestRole([hat("crm", "admin")]), "manager", "admin of the CRM became a platform admin");
+    assert.equal(widestRole([hat("crm", "manager"), hat("admin", "admin")]), "admin");
+    assert.equal(widestRole([hat("admin", "associate")]), "associate");
+    assert.equal(
+      widestRole([hat("crm", "manager"), hat(null, "admin")]),
+      "manager",
+      "the account's own level was read as a grant",
+    );
     assert.equal(widestRole([hat("crm", "associate")]), "associate");
   });
 
@@ -9470,43 +9921,66 @@ describe("a person wears several hats", () => {
     // The matrix keeps approving orders away from managers on purpose. At nine
     // people the same person does have to do both — so it is allowed, said in
     // words where it is granted, and recorded on every action taken under it.
+    //
+    // ONE warning for the CRM against the ledger desk, where there used to be
+    // three for one pair of grants: three warnings about one decision is how
+    // people learn to scroll past the box.
     const both = conflictsFor([
       { app: "crm", role: "manager" },
       { app: "accounts", role: "manager" },
     ]);
-    assert.equal(both.length, 3, "the CRM manager / Accounts manager pair lost its warnings");
+    assert.equal(both.length, 1, "the CRM / Accounts manager pair lost its warning, or grew extra");
     assert.match(
       both.map((c) => c.sentence).join(" "),
-      /should not sign off the orders that hit it/i,
+      /approve the orders that hit their own target/i,
     );
 
-    // An associate at the desk decides nothing, so there is nothing to clash.
-    assert.deepEqual(
+    // An Accounts associate is not the harmless clerk this once assumed: the
+    // price list is edited at BOTH levels, so the person quoting prices on a
+    // call and setting them is a pair worth naming.
+    assert.match(
       conflictsFor([
         { app: "crm", role: "associate" },
         { app: "accounts", role: "associate" },
-      ]),
-      [],
-      "an Accounts associate who cannot confirm a payment was warned about anyway",
+      ])
+        .map((c) => c.sentence)
+        .join(" "),
+      /price lists/i,
+      "quoting a price and setting it was not named",
     );
 
-    // Reporting money and then confirming it is the classic one.
+    // Reporting money and then confirming it is the classic one — and it is the
+    // same single CRM / ledger-desk rule, not a second warning beside it.
     assert.equal(
       conflictsFor([
         { app: "crm", role: "associate" },
         { app: "accounts", role: "manager" },
       ]).length,
-      2,
-      "reporting money and confirming it is one conflict; carrying a target and setting one is a second",
+      1,
+      "a telecaller who also decides at the ledger desk drew the wrong number of warnings",
     );
 
-    // Two levels of one app is not a conflict, and neither is an admin —
-    // four warnings on every administrator is four warnings nobody reads.
+    // Two levels of one app is not a conflict.
     assert.deepEqual(conflictsFor([{ app: "crm", role: "manager" }]), []);
-    assert.deepEqual(
+
+    // Admin of an app is admin OF THAT APP, so it clashes like the manager of
+    // it would — it no longer silences every warning.
+    assert.equal(
       conflictsFor([
         { app: "crm", role: "admin" },
         { app: "accounts", role: "admin" },
+      ]).length,
+      1,
+      "an app administrator was waved through as though they held the platform",
+    );
+
+    // A PLATFORM administrator holds everything everywhere, so every pair is
+    // true of them — five warnings on every administrator is five nobody reads.
+    assert.deepEqual(
+      conflictsFor([
+        { app: "admin", role: "admin" },
+        { app: "crm", role: "manager" },
+        { app: "accounts", role: "manager" },
       ]),
       [],
     );

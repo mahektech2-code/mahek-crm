@@ -30,6 +30,7 @@ const PATHS: Record<string, string> = {
   scan: "M4 7V5a1 1 0 0 1 1-1h2M17 4h2a1 1 0 0 1 1 1v2M20 17v2a1 1 0 0 1-1 1h-2M7 20H5a1 1 0 0 1-1-1v-2M7 12h10",
   grid: "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z",
   pin: "M12 21s7-6.4 7-11a7 7 0 0 0-14 0c0 4.6 7 11 7 11zM12 12a2 2 0 1 0 0-4 2 2 0 0 0 0 4",
+  locate: "M12 2v3M12 19v3M2 12h3M19 12h3M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM12 11a1 1 0 1 0 0 2 1 1 0 0 0 0-2",
   dl: "M12 3v12M7 10l5 5 5-5M4 21h16",
   plus: "M12 5v14M5 12h14",
   lock: "M6 11h12v10H6zM8 11V7a4 4 0 0 1 8 0v4",

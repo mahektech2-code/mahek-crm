@@ -1,5 +1,6 @@
 import { all, newId, one, run } from '../db';
 import { isoDate } from '../lib/format';
+import { accountType } from '../lib/account-label';
 import { enqueue } from '../sync/queue';
 import { pickOrigin } from '../engines/route';
 import { haversineMetres } from '../engines/geo';
@@ -27,6 +28,9 @@ export type JourneyStop = {
   /* Joined from the customer, because a stop with no name is not a stop. */
   customerName: string;
   area: string | null;
+  /** The town, for Navigate on an unpinned shop: `area` is empty on most of
+      an imported book, and a maps search on the bare name lands anywhere. */
+  city: string | null;
   gpsLat: number | null;
   gpsLng: number | null;
   outstandingPaise: number;
@@ -38,7 +42,7 @@ export function today(): string {
 
 export async function todayStops(planDate = today()): Promise<JourneyStop[]> {
   return all<JourneyStop>(
-    `SELECT j.*, COALESCE(c.name, 'Unknown customer') AS customerName, c.area,
+    `SELECT j.*, COALESCE(c.name, 'Unknown customer') AS customerName, c.area, c.city,
             c.gpsLat, c.gpsLng, COALESCE(c.outstandingPaise, 0) AS outstandingPaise
        FROM journey_stops j LEFT JOIN customers c ON c.id = j.customerId
       WHERE j.planDate = ?
@@ -54,15 +58,41 @@ export async function nextStop(planDate = today()): Promise<JourneyStop | null> 
 }
 
 /**
- * Write a new walking order.
+ * Write a new walking order — HERE AND AT THE OFFICE.
  *
  * The sequence is rewritten from the array's own order, so a reorder that
  * dropped or duplicated a stop could not silently produce two stop 3s.
+ *
+ * It used to stop there. Nothing was queued, so the manager never saw the new
+ * order, the planned times stayed attached to the old one, and the first
+ * office change to any single stop came back with its ORIGINAL `seq` — two
+ * stops numbered 3 and a scrambled list. The day's shops now go up as the same
+ * `plan_stops` answer picking sends, in the new order: the office re-sequences
+ * what is still planned and works the times out again, and keeps what has
+ * already been visited.
  */
 export async function saveStopOrder(orderedIds: string[]): Promise<void> {
   for (let i = 0; i < orderedIds.length; i++) {
     await run('UPDATE journey_stops SET seq = ? WHERE id = ?', [i + 1, orderedIds[i]]);
   }
+  if (!orderedIds.length) return;
+  const head = await one<{ planDate: string }>('SELECT planDate FROM journey_stops WHERE id = ?', [orderedIds[0]]);
+  if (!head) return;
+  const day = await one<{ id: string }>('SELECT id FROM journey_days WHERE planDate = ? LIMIT 1', [head.planDate]);
+  if (!day) return;
+  const stops = await all<{ customerId: string; status: string }>(
+    `SELECT customerId, status FROM journey_stops WHERE planDate = ? ORDER BY seq`,
+    [head.planDate],
+  );
+  const customerIds = stops.filter((x) => x.status === 'planned').map((x) => x.customerId);
+  if (!customerIds.length) return;
+  await enqueue({
+    entityType: 'plan_stops',
+    entityId: day.id,
+    op: 'update',
+    location: false,
+    payload: { id: day.id, customerIds },
+  });
 }
 
 export async function stopCounts(planDate = today()): Promise<{ total: number; done: number }> {
@@ -89,6 +119,54 @@ export async function stopCountsSince(from: string): Promise<Record<string, { to
 }
 
 
+/**
+ * How far back the Journeys screen reads. Must match `PLAN_HISTORY_DAYS` in
+ * the server's `mbos-service.ts`, or the screen asks for days the pull never
+ * sent and reads their absence as days nothing happened.
+ */
+export const JOURNEY_HISTORY_DAYS = 60;
+
+/** One day of the plan with what happened on it, for the list and the calendar. */
+export type JourneyDay = PlanDay & {
+  stops: number;
+  visited: number;
+  skipped: number;
+};
+
+/**
+ * Every day from `from` onwards — past and future — with its stop counts.
+ *
+ * Counted in SQL from the stops rather than trusted from `picked`, because
+ * `picked` is how many he chose and this is what became of them.
+ */
+export async function journeyDays(from: string): Promise<JourneyDay[]> {
+  return all<JourneyDay>(
+    `SELECT d.*,
+            (SELECT COUNT(*) FROM journey_stops s WHERE s.planDate = d.planDate) AS stops,
+            (SELECT COUNT(*) FROM journey_stops s WHERE s.planDate = d.planDate AND s.status = 'visited') AS visited,
+            (SELECT COUNT(*) FROM journey_stops s WHERE s.planDate = d.planDate AND s.status = 'skipped') AS skipped,
+            (SELECT c.city FROM journey_stops s JOIN customers c ON c.id = s.customerId
+              WHERE s.planDate = d.planDate AND TRIM(COALESCE(c.city, '')) <> ''
+              GROUP BY c.city ORDER BY COUNT(*) DESC, c.city LIMIT 1) AS shopCity
+       FROM journey_days d
+      WHERE d.planDate >= ?
+      ORDER BY d.planDate ASC`,
+    [from],
+  );
+}
+
+/** Every stop of one day, in walking order, with its shop — the day in full. */
+export async function stopsOn(planDate: string): Promise<(JourneyStop & { city: string | null })[]> {
+  return all<JourneyStop & { city: string | null }>(
+    `SELECT j.*, COALESCE(c.name, 'Unknown customer') AS customerName, c.area, c.city,
+            c.gpsLat, c.gpsLng, COALESCE(c.outstandingPaise, 0) AS outstandingPaise
+       FROM journey_stops j LEFT JOIN customers c ON c.id = j.customerId
+      WHERE j.planDate = ?
+      ORDER BY j.seq`,
+    [planDate],
+  );
+}
+
 /* ══════════════════════════════════════════════════════ the days themselves */
 
 export type PlanDay = {
@@ -107,7 +185,20 @@ export type PlanDay = {
      `setEntityState`. The card reads it, because "the shops were not accepted"
      with no reason attached sends somebody back to pick the same ones. */
   syncMessage: string | null;
+  /**
+   * Where the day's shops are, most shops first — READ, never stored. A day
+   * the office arranged before it named a city carries none, and "No city"
+   * above shops plainly in Ambernath tells him nothing. Display only: `city`
+   * is the chosen city and the pick list hard-filters by it, so this must
+   * never stand in for it there. `whereOf` is the one reader.
+   */
+  shopCity?: string | null;
 };
+
+/** Where a day is, for a label: the chosen city, else where its shops are. */
+export function whereOf(d: { city: string | null; shopCity?: string | null } | null | undefined): string | null {
+  return d?.city ?? d?.shopCity ?? null;
+}
 
 /**
  * Where the office has asked you to work, and what you have said about it.
@@ -122,7 +213,11 @@ export type PlanDay = {
  */
 export async function planDays(from = today()): Promise<PlanDay[]> {
   return all<PlanDay>(
-    `SELECT * FROM journey_days WHERE planDate >= ? ORDER BY planDate ASC`,
+    `SELECT d.*,
+            (SELECT c.city FROM journey_stops s JOIN customers c ON c.id = s.customerId
+              WHERE s.planDate = d.planDate AND TRIM(COALESCE(c.city, '')) <> ''
+              GROUP BY c.city ORDER BY COUNT(*) DESC, c.city LIMIT 1) AS shopCity
+       FROM journey_days d WHERE d.planDate >= ? ORDER BY d.planDate ASC`,
     [from],
   );
 }
@@ -167,10 +262,10 @@ export async function createDay(
 ): Promise<{ ok: true; id: string } | { ok: false; message: string }> {
   const where = city.trim();
   if (!where) {
-    return { ok: false, message: 'Which city are you working? The shop list is filtered by it.' };
+    return { ok: false, message: 'Which city are you working in? The shop list shows only that city.' };
   }
   if (planDate < today()) {
-    return { ok: false, message: 'That day has already gone. Pick today or a day ahead.' };
+    return { ok: false, message: 'That day is over. Pick today or a later day.' };
   }
 
   /* One row per day, here as well as on the server's unique index: a second
@@ -230,7 +325,7 @@ export async function refuseDay(
   if (!said) {
     return {
       ok: false,
-      message: 'Say why it will not work — without it your manager has nothing to go on.',
+      message: 'Say why it will not work. Your manager needs a reason.',
     };
   }
   await answer(id, { answer: 'refused', reason: said, counterCity: counterCity?.trim() || null });
@@ -397,11 +492,22 @@ export async function pickCandidates(
   const q = query.trim().toLowerCase();
   const here = (city ?? '').trim().toLowerCase();
 
+  /*
+   * IN THE TOWN, not spelled exactly as the town. `customers.city` holds
+   * whatever the sheet typed, and much of it is a whole postal address —
+   * "06, Mahadev Towers, LBS Marg, Thane, Maharashtra, 400602" — so an exact
+   * match left those shops out of a Thane day. The town as one of the
+   * address's comma-separated parts, or as the shop's area, counts too.
+   */
+  const inTown = `(lower(trim(COALESCE(city,''))) = ? OR lower(trim(COALESCE(area,''))) = ?
+       OR (',' || replace(lower(COALESCE(city,'')), ', ', ',') || ',') LIKE ?)`;
+  const townArgs = here ? [here, here, `%,${here},%`] : [];
+
   const clauses: string[] = [];
   const args: (string | number)[] = [];
   if (here) {
-    clauses.push(`lower(trim(COALESCE(city,''))) = ?`);
-    args.push(here);
+    clauses.push(inTown);
+    args.push(...townArgs);
   }
   if (q) {
     clauses.push(`(lower(name) LIKE ? OR lower(COALESCE(area,'')) LIKE ?)`);
@@ -418,8 +524,8 @@ export async function pickCandidates(
     `SELECT AVG(gpsLat) AS lat, AVG(gpsLng) AS lng
        FROM customers
       WHERE gpsLat IS NOT NULL AND gpsLng IS NOT NULL
-            ${here ? `AND lower(trim(COALESCE(city,''))) = ?` : ''}`,
-    here ? [here] : [],
+            ${here ? `AND ${inTown}` : ''}`,
+    townArgs,
   );
 
   const origin = pickOrigin({
@@ -490,6 +596,22 @@ export async function pickCandidates(
  * shops chosen in a doorway had to be chosen again.
  */
 export async function pickedFor(planDayId: string): Promise<string[]> {
+  /*
+   * AN EDIT NOT YET SENT IS THE NEWER ANSWER. `pickShops` writes the list to
+   * `pickedIds` and queues it; the stop rows below are what the office last
+   * sent and stay as they were until the next pull. Reading them first meant
+   * reopening a day he had just changed showed the shops he had just taken
+   * off — so on a queued day the list he sent wins.
+   */
+  const queued = await one<{ pickedIds: string | null }>(
+    "SELECT pickedIds FROM journey_days WHERE id = ? AND syncState = 'queued' AND pickedIds IS NOT NULL",
+    [planDayId],
+  );
+  if (queued?.pickedIds) {
+    const ids = parseIds(queued.pickedIds);
+    if (ids) return ids;
+  }
+
   /* Stops are keyed by the DATE here rather than by the day's id — the handset
      table came down flat, one row per stop with its `planDate`, and adding a
      plan id to it would be a second way of saying the same thing. */
@@ -506,14 +628,277 @@ export async function pickedFor(planDayId: string): Promise<string[]> {
     [planDayId],
   );
   if (!day?.pickedIds) return [];
+  /* A row nobody can parse is a row nobody picked. Losing the ticks is bad;
+     failing the screen that would let somebody re-tick them is worse. */
+  return parseIds(day.pickedIds) ?? [];
+}
+
+function parseIds(raw: string): string[] | null {
   try {
-    const parsed: unknown = JSON.parse(day.pickedIds);
-    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : [];
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : null;
   } catch {
-    /* A row nobody can parse is a row nobody picked. Losing the ticks is bad;
-       failing the screen that would let somebody re-tick them is worse. */
-    return [];
+    return null;
   }
+}
+
+/** The shops picked for a day, in order, with what the screen needs to name them. */
+export async function pickedShops(
+  planDayId: string,
+): Promise<{ customerId: string; name: string; area: string | null; outstandingPaise: number }[]> {
+  const ids = await pickedFor(planDayId);
+  if (!ids.length) return [];
+  const rows = await all<{ id: string; name: string; area: string | null; city: string | null; outstandingPaise: number | null }>(
+    `SELECT id, name, area, city, outstandingPaise FROM customers WHERE id IN (${ids.map(() => '?').join(',')})`,
+    ids,
+  );
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  return ids.map((id) => {
+    const c = byId.get(id);
+    return {
+      customerId: id,
+      /* A shop that has left his book since he picked it keeps its line; the
+         server drops it and says so. Naming it "a shop" is the honest answer. */
+      name: c?.name ?? 'A shop no longer in your list',
+      area: c?.area ?? c?.city ?? null,
+      outstandingPaise: c?.outstandingPaise ?? 0,
+    };
+  });
+}
+
+/* ------------------------------------------------------------ a day, looked back on */
+
+export type ShopDay = {
+  stopId: string;
+  customerId: string;
+  name: string;
+  area: string | null;
+  seq: number;
+  status: string;
+  plannedAt: string | null;
+  arrivedAt: number | null;
+  skipReason: string | null;
+  visit: {
+    checkInAt: number | null;
+    checkOutAt: number | null;
+    durationSeconds: number | null;
+    outcome: string | null;
+    notes: string | null;
+  } | null;
+  orders: {
+    id: string;
+    valuePaise: number | null;
+    lines: number | null;
+    orderNo: string | null;
+    /** What was on it, where this phone took it — the office's copy carries a count, not the lines. */
+    items: { name: string; cans: number }[];
+    at: number | null;
+  }[];
+  payments: { id: string; amountPaise: number; mode: string | null; at: number | null }[];
+  /** Everything else the timeline holds for this shop on this day. */
+  other: { id: string; summary: string; at: number }[];
+  /** Customer, Lead or Third party — null where the row cannot say. */
+  accountType: string | null;
+  /** A shop he walked into that was on no route that day. */
+  offRoute: boolean;
+};
+
+/* What kind of account a row is, read the way the Customers tab reads it. */
+const SHOP_FACTS = `c.name, c.area, c.city, c.kind, c.thirdParty,
+            (EXISTS (SELECT 1 FROM leads l WHERE l.id = c.id AND l.archived = 0
+              AND COALESCE(l.funnelStage, '') <> 'won' AND COALESCE(l.stage, '') <> 'Converted')
+             AND COALESCE(c.kind, 'lead') <> 'customer') AS isLead`;
+
+type ShopFacts = {
+  name: string | null;
+  area: string | null;
+  city: string | null;
+  kind: string | null;
+  thirdParty: number | null;
+  isLead: number | null;
+};
+
+/**
+ * What happened at each shop on one day — the stop, the visit, the order, the
+ * money, and anything else the timeline knows about that shop that day.
+ *
+ * TWO SOURCES FOR ORDERS AND MONEY, de-duplicated by id: what this phone
+ * took itself (`orders`, `payments`) and the office's copy
+ * (`customer_orders`, `customer_payments`). Either alone misses half — a
+ * phone reinstalled last week has none of its own, and an order taken this
+ * morning has not reached the office's copy yet.
+ *
+ * Days are compared as DATES. The office sends its order and receipt dates
+ * already as Kolkata dates; the phone's own instants are turned into local
+ * dates here with `isoDate`, never by slicing an ISO string, which answers in
+ * UTC and files a 2am order on the day before.
+ */
+export async function dayHistory(planDate: string): Promise<ShopDay[]> {
+  const stops = await all<
+    {
+      id: string;
+      customerId: string;
+      seq: number;
+      status: string;
+      plannedAt: string | null;
+      actualAt: number | null;
+      skipReason: string | null;
+    } & ShopFacts
+  >(
+    `SELECT s.id, s.customerId, s.seq, s.status, s.plannedAt, s.actualAt, s.skipReason,
+            ${SHOP_FACTS}
+       FROM journey_stops s
+       LEFT JOIN customers c ON c.id = s.customerId
+      WHERE s.planDate = ?
+      ORDER BY s.seq`,
+    [planDate],
+  );
+
+  /* A window a day wider at each end, narrowed to the date in JS — the SQL
+     never has to know what zone the phone is in. */
+  const from = new Date(`${planDate}T00:00:00`).getTime() - 86_400_000;
+  const to = from + 3 * 86_400_000;
+  const onDay = (ms: number | null) => ms != null && isoDate(new Date(ms)) === planDate;
+
+  /*
+   * THE SHOPS HE WALKED INTO THAT NO ROUTE NAMED.
+   *
+   * This read the route and nothing else, so a visit to a shop off it — a
+   * customer who rang, a door on the way past — never appeared when he looked
+   * back at the day, and a day with no route at all read "no shops were
+   * picked" over a day of visits. They are listed after the route, marked.
+   */
+  const routed = new Set(stops.map((s) => s.customerId));
+  const loose = (
+    await all<{ customerId: string; checkInAt: number | null } & ShopFacts>(
+      `SELECT v.customerId, v.checkInAt, ${SHOP_FACTS}
+         FROM visits v
+         LEFT JOIN customers c ON c.id = v.customerId
+        WHERE v.checkInAt BETWEEN ? AND ?
+        ORDER BY v.checkInAt`,
+      [from, to],
+    )
+  ).filter((v) => onDay(v.checkInAt) && !routed.has(v.customerId));
+  const extra = [...new Map(loose.map((v) => [v.customerId, v])).values()];
+
+  if (!stops.length && !extra.length) return [];
+
+  const ids = [...stops.map((s) => s.customerId), ...extra.map((v) => v.customerId)];
+  const marks = ids.map(() => '?').join(',');
+
+  const [visits, ownOrders, officeOrders, ownPayments, officePayments, timeline] = await Promise.all([
+    all<{ customerId: string; checkInAt: number | null; checkOutAt: number | null; durationSeconds: number | null; outcome: string | null; notes: string | null }>(
+      `SELECT customerId, checkInAt, checkOutAt, durationSeconds, outcome, notes FROM visits
+        WHERE customerId IN (${marks}) AND checkInAt BETWEEN ? AND ? ORDER BY checkInAt`,
+      [...ids, from, to],
+    ),
+    all<{ id: string; customerId: string; orderedAt: number; netTotalPaise: number | null; orderNumber: string | null }>(
+      `SELECT id, customerId, orderedAt, netTotalPaise, orderNumber FROM orders
+        WHERE customerId IN (${marks}) AND orderedAt BETWEEN ? AND ?`,
+      [...ids, from, to],
+    ),
+    all<{ id: string; customerId: string; valuePaise: number | null; lines: number | null; orderNo: string | null }>(
+      `SELECT id, customerId, valuePaise, lines, orderNo FROM customer_orders
+        WHERE customerId IN (${marks}) AND orderedAt = ?`,
+      [...ids, planDate],
+    ),
+    all<{ id: string; customerId: string; amountPaise: number; mode: string | null; collectedAt: number }>(
+      `SELECT id, customerId, amountPaise, mode, collectedAt FROM payments
+        WHERE customerId IN (${marks}) AND collectedAt BETWEEN ? AND ?`,
+      [...ids, from, to],
+    ),
+    all<{ id: string; customerId: string; amountPaise: number | null; mode: string | null }>(
+      `SELECT id, customerId, amountPaise, mode FROM customer_payments
+        WHERE customerId IN (${marks}) AND substr(receivedAt, 1, 10) = ?`,
+      [...ids, planDate],
+    ),
+    all<{ id: string; customerId: string; eventType: string; summary: string; occurredAt: number }>(
+      `SELECT id, customerId, eventType, summary, occurredAt FROM timeline_events
+        WHERE customerId IN (${marks}) AND occurredAt BETWEEN ? AND ? ORDER BY occurredAt`,
+      [...ids, from, to],
+    ),
+  ]);
+
+  const ownOrderIds = ownOrders.map((o) => o.id);
+  const lineRows = ownOrderIds.length
+    ? await all<{ orderId: string; productName: string; cans: number }>(
+        `SELECT orderId, productName, cans FROM order_lines WHERE orderId IN (${ownOrderIds.map(() => '?').join(',')})`,
+        ownOrderIds,
+      )
+    : [];
+  const itemsOf = (orderId: string) =>
+    lineRows.filter((l) => l.orderId === orderId).map((l) => ({ name: l.productName, cans: l.cans }));
+
+  const rows = [
+    ...stops.map((s) => ({ ...s, offRoute: false })),
+    ...extra.map((v, i) => ({
+      id: 'visit:' + v.customerId,
+      customerId: v.customerId,
+      seq: stops.length + i + 1,
+      status: 'visited',
+      plannedAt: null,
+      actualAt: v.checkInAt,
+      skipReason: null,
+      name: v.name,
+      area: v.area,
+      city: v.city,
+      kind: v.kind,
+      thirdParty: v.thirdParty,
+      isLead: v.isLead,
+      offRoute: true,
+    })),
+  ];
+
+  return rows.map((s) => {
+    const visit = visits.find((v) => v.customerId === s.customerId && onDay(v.checkInAt)) ?? null;
+    const orders = new Map<string, ShopDay['orders'][number]>();
+    for (const o of ownOrders) {
+      if (o.customerId === s.customerId && onDay(o.orderedAt)) {
+        const items = itemsOf(o.id);
+        orders.set(o.id, { id: o.id, valuePaise: o.netTotalPaise, lines: items.length || null, orderNo: o.orderNumber, items, at: o.orderedAt });
+      }
+    }
+    for (const o of officeOrders) {
+      if (o.customerId === s.customerId && !orders.has(o.id)) {
+        orders.set(o.id, { id: o.id, valuePaise: o.valuePaise, lines: o.lines, orderNo: o.orderNo, items: [], at: null });
+      }
+    }
+    const payments = new Map<string, ShopDay['payments'][number]>();
+    for (const p of ownPayments) {
+      if (p.customerId === s.customerId && onDay(p.collectedAt)) {
+        payments.set(p.id, { id: p.id, amountPaise: p.amountPaise, mode: p.mode, at: p.collectedAt });
+      }
+    }
+    for (const p of officePayments) {
+      if (p.customerId === s.customerId && !payments.has(p.id) && p.amountPaise != null) {
+        payments.set(p.id, { id: p.id, amountPaise: p.amountPaise, mode: p.mode, at: null });
+      }
+    }
+    /* The timeline restates visits, orders and payments too; those are drawn
+       from their own rows above, so only what is left is listed here. */
+    const other = timeline
+      .filter((t) => t.customerId === s.customerId && onDay(t.occurredAt) && !/visit|order|payment|receipt|bill/i.test(t.eventType))
+      .map((t) => ({ id: t.id, summary: t.summary, at: t.occurredAt }));
+    return {
+      stopId: s.id,
+      customerId: s.customerId,
+      name: s.name ?? 'A shop no longer in your list',
+      area: s.area ?? s.city,
+      seq: s.seq,
+      status: s.status,
+      plannedAt: s.plannedAt,
+      arrivedAt: s.actualAt,
+      skipReason: s.skipReason,
+      visit: visit
+        ? { checkInAt: visit.checkInAt, checkOutAt: visit.checkOutAt, durationSeconds: visit.durationSeconds, outcome: visit.outcome, notes: visit.notes }
+        : null,
+      orders: [...orders.values()],
+      payments: [...payments.values()],
+      other,
+      accountType: accountType({ kind: s.kind, thirdParty: Number(s.thirdParty ?? 0), isLead: Number(s.isLead ?? 0) }),
+      offRoute: s.offRoute,
+    };
+  });
 }
 
 export async function planDay(id: string): Promise<PlanDay | null> {
@@ -535,18 +920,14 @@ export async function pickShops(
   planDayId: string,
   customerIds: string[],
 ): Promise<{ ok: boolean; message?: string }> {
-  if (!customerIds.length) {
-    return {
-      ok: false,
-      message: 'Pick at least one shop. A day with nothing on it is not a route.',
-    };
-  }
-
+  /* AN EMPTY PICK CLEARS THE DAY. The office takes it — the day goes back to
+     agreed — and the picker used to refuse it, so a day planned by mistake
+     could not be emptied from the phone at all. */
   await run(
     `UPDATE journey_days
-        SET dayState = 'planned', picked = ?, pickedIds = ?, syncState = 'queued'
+        SET dayState = ?, picked = ?, pickedIds = ?, syncState = 'queued'
       WHERE id = ?`,
-    [customerIds.length, JSON.stringify(customerIds), planDayId],
+    [customerIds.length ? 'planned' : 'agreed', customerIds.length, JSON.stringify(customerIds), planDayId],
   );
 
   await enqueue({

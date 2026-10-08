@@ -1,22 +1,22 @@
-import { all, newId, one, run, tx } from '../db';
-import { enqueue } from '../sync/queue';
-import { insertAndQueue, insertLocal, stamp, updateAndQueue } from './write';
+import { all, one, run } from '../db';
+import { insertAndQueue, stamp, updateAndQueue } from './write';
 import { getConfig } from './config';
 import { isoDate } from '../lib/format';
-import { wireNotes, wireSource, wireStage } from '../lib/wire';
+import { wireNotes, wireSource } from '../lib/wire';
 import {
+  capStageOf,
   matchDuplicate,
   normaliseMobile,
-  stageRefusal,
   followUpRefusal,
   viewMatch,
   type DuplicateMatch,
   type LeadThresholds,
   type VisitCapThresholds,
 } from '../engines/leads';
-import { leadBookQuery, rungCountsQuery, type LeadBookFilter } from './lead-query';
+import { LEAD_PAGE, leadBookQuery, leadCountQuery, rungCountsQuery, type LeadBookFilter } from './lead-query';
 
 export type { LeadBookFilter };
+export { LEAD_PAGE };
 
 /**
  * Leads — a shop that is not yet on the book.
@@ -81,6 +81,12 @@ export type Lead = {
   competitorName: string | null;
   /** As the office counts it. `visitsHere()` adds what has not synced yet. */
   visitCount: number;
+  /**
+   * Visits this phone has recorded and not yet sent — filled by the lead
+   * book's own query and absent everywhere else, so the card can count the way
+   * the visit screen counts (`visitsHere`) without a read per row.
+   */
+  pendingVisits?: number;
   /** Why it is not moving. Set for On hold, and for a Suspect kept past the cap. */
   holdReason: string | null;
   /**
@@ -238,7 +244,16 @@ export type Lead = {
 
 export type LeadNote = { at: number; text: string };
 
-export type LeadResult<T> = { ok: true; value: T } | { ok: false; message: string; duplicate?: DuplicateMatch };
+export type LeadResult<T> =
+  | { ok: true; value: T }
+  | {
+      ok: false;
+      message: string;
+      duplicate?: DuplicateMatch;
+      /** What a shut gate still wants, one sentence each — present only when
+          the refusal is a gate, so a screen can send him to fill it in. */
+      missing?: string[];
+    };
 
 /* ------------------------------------------------------------------ reads */
 
@@ -251,6 +266,51 @@ export type LeadResult<T> = { ok: true; value: T } | { ok: false; message: strin
 export async function listLeads(filter: LeadBookFilter = {}, query = ''): Promise<Lead[]> {
   const q = leadBookQuery(filter, query);
   return all<Lead>(q.sql, q.params);
+}
+
+/**
+ * One page of the book, and how many match. The list asks for these; the
+ * whole-book `listLeads` above is for the callers that count or pick from it.
+ * A later page reuses the first page's total rather than counting again.
+ */
+export async function listLeadsPage(
+  filter: LeadBookFilter,
+  query: string,
+  offset: number,
+  knownTotal?: number,
+): Promise<{ rows: Lead[]; total: number; hasMore: boolean }> {
+  const page = leadBookQuery(filter, query, { limit: LEAD_PAGE, offset });
+  const rows = await all<Lead>(page.sql, page.params);
+  let total = knownTotal;
+  if (total == null) {
+    const c = leadCountQuery(filter, query);
+    total = (await one<{ n: number }>(c.sql, c.params))?.n ?? 0;
+  }
+  return { rows, total, hasMore: offset + rows.length < total };
+}
+
+/**
+ * How many leads stand under each stage chip, over the same search and the
+ * same "when". One COUNT per chip, each served by `idx_leads_book`; the counts
+ * describe the book, not the picked chip, so picking one never zeroes the rest.
+ */
+export async function leadViewCounts(
+  views: readonly LeadBookFilter['view'][],
+  base: Omit<LeadBookFilter, 'view' | 'rung'>,
+  query: string,
+): Promise<Record<string, number>> {
+  const out: Record<string, number> = {};
+  for (const view of views) {
+    const c = leadCountQuery({ ...base, view }, query);
+    out[view ?? 'all'] = (await one<{ n: number }>(c.sql, c.params))?.n ?? 0;
+  }
+  return out;
+}
+
+/** How many leads a search finds, without reading them. */
+export async function countLeads(filter: LeadBookFilter, query: string): Promise<number> {
+  const c = leadCountQuery(filter, query);
+  return (await one<{ n: number }>(c.sql, c.params))?.n ?? 0;
 }
 
 /** The rungs under the picked band. The statement is `rungCountsQuery`. */
@@ -385,12 +445,20 @@ export async function visitsHere(leadId: string, serverCount: number): Promise<n
 export async function suspectFor(
   customerId: string,
 ): Promise<{ stage: string; visits: number } | null> {
-  const row = await one<{ stage: string; visitCount: number }>(
-    'SELECT stage, visitCount FROM leads WHERE id = ? AND archived = 0',
+  const row = await one<{
+    stage: string;
+    funnelStage: string | null;
+    suspectDecidedAt: number | null;
+    thirdParty: number | null;
+    visitCount: number;
+  }>(
+    'SELECT stage, funnelStage, suspectDecidedAt, thirdParty, visitCount FROM leads WHERE id = ? AND archived = 0',
     [customerId],
   );
   if (!row) return null;
-  return { stage: row.stage, visits: await visitsHere(customerId, row.visitCount ?? 0) };
+  /* `capStageOf`, not `row.stage` — see there for the Prospect that was asked
+     to be decided all over again. */
+  return { stage: capStageOf(row), visits: await visitsHere(customerId, row.visitCount ?? 0) };
 }
 
 /* ------------------------------------------------------------- duplicates */
@@ -426,6 +494,12 @@ export async function createLead(args: {
   company?: string | null;
   mobile: string;
   city?: string | null;
+  /* The locality, where the area he picked was a beat. */
+  area?: string | null;
+  /* The state the shop is in, from the area he picked. Not a column here — it
+     travels to the office, which files the lead under it so that it lands in
+     his territory (`handleLead`). */
+  state?: string | null;
   source?: string | null;
   /* WHAT "OTHER" HAS TO SAY, and it used to ride in the note.
      `customers.lead_source_detail` is the server's column and `handleLead`
@@ -448,6 +522,11 @@ export async function createLead(args: {
   decisionMaker?: string | null;
   shopPhotoId?: string | null;
   competitorName?: string | null;
+  /* The person, where the lead's name is the shop's — `customers.contact_person`
+     at the far end. Not a column here: the row's `name` already carries it. */
+  contactPerson?: string | null;
+  /* Optional at capture; asked for at the qualify step whatever happens here. */
+  gstin?: string | null;
   today?: string;
   /**
    * §2 — which of the three ladders this lead climbs.
@@ -474,7 +553,7 @@ export async function createLead(args: {
       duplicate,
       message:
         duplicate.kind === 'customer'
-          ? duplicate.name + ' already has this number — they are on your book.'
+          ? duplicate.name + ' already has this number. This customer is already in your list.'
           : duplicate.name + ' is already a lead on this number.',
     };
   }
@@ -538,6 +617,8 @@ export async function createLead(args: {
          were mended. See `wireSource`. */
       source: wireSource(args.source),
       sourceDetail: args.sourceDetail?.trim() || undefined,
+      state: args.state?.trim() || undefined,
+      contactPerson: args.contactPerson?.trim() || undefined,
     },
     row: {
       ...base,
@@ -545,6 +626,7 @@ export async function createLead(args: {
       company: args.company?.trim() || null,
       mobile: mobile || null,
       city: args.city?.trim() || null,
+      area: args.area?.trim() || null,
       source: args.source ?? null,
       sourceDetail: args.sourceDetail?.trim() || null,
       estimatedPotentialPaise: args.estimatedPotentialPaise ?? null,
@@ -561,7 +643,7 @@ export async function createLead(args: {
       archived: 0,
       address: args.address?.trim() || null,
       customerType: args.customerType ?? null,
-      gstin: null,
+      gstin: args.gstin?.trim() || null,
       requirement: args.requirement?.trim() || null,
       monthlyVolumeLitres: args.monthlyVolumeLitres ?? null,
       decisionMaker: args.decisionMaker?.trim() || null,
@@ -586,44 +668,11 @@ export async function createLead(args: {
   return { ok: true, value: id };
 }
 
-/**
- * Moving a lead along, or ending it.
- *
- * Lost asks why and everything else does not, which is the whole rule. The
- * activity date moves with it either way — a stage change is contact, and
- * staleness is measured from the last thing that happened.
- */
-export async function setStage(
-  id: string,
-  stage: string,
-  reason?: string | null,
-  today = isoDate(new Date()),
-): Promise<LeadResult<null>> {
-  const refusal = stageRefusal(stage, reason);
-  if (refusal) return { ok: false, message: refusal };
-
-  const lead = await getLead(id);
-  if (!lead) return { ok: false, message: 'That lead is no longer on this phone.' };
-
-  const notes = notesOf(lead);
-  const said = reason?.trim();
-  if (said) notes.push({ at: Date.now(), text: stage + ' — ' + said });
-
-  await updateAndQueue({
-    table: 'leads',
-    entityType: 'lead',
-    id,
-    patch: {
-      stage,
-      lostReason: stage === 'Lost' ? (said ?? null) : lead.lostReason,
-      notes,
-      lastActivityDate: today,
-    },
-    payloadExtras: { stage: wireStage(stage), notes: wireNotes(notes) },
-  });
-
-  return { ok: true, value: null };
-}
+/* `setStage` was here — the six-word ladder's own move, written before the
+   funnel and called by nothing since `advanceStage` and `markLost` replaced it.
+   It survived only because `reachable.test.ts` matches names, and the sign-in
+   screen happens to have a state setter called `setStage`. Deleted, with
+   `stageRefusal` behind it, rather than left looking like a second way in. */
 
 /** A sentence somebody typed about this shop. Appended; nothing overwrites. */
 export async function addNote(id: string, text: string, today = isoDate(new Date())): Promise<LeadResult<null>> {
@@ -646,22 +695,10 @@ export async function addNote(id: string, text: string, today = isoDate(new Date
   return { ok: true, value: null };
 }
 
-export async function setFollowUp(
-  id: string,
-  date: string,
-  today = isoDate(new Date()),
-): Promise<LeadResult<null>> {
-  const late = followUpRefusal(date, today);
-  if (late) return { ok: false, message: late };
-
-  await updateAndQueue({
-    table: 'leads',
-    entityType: 'lead',
-    id,
-    patch: { nextFollowUpDate: date, lastActivityDate: today },
-  });
-  return { ok: true, value: null };
-}
+/* `setFollowUp` was here, behind the record's own "Next follow-up on" picker.
+   The picker is gone — `setNextAction` already makes the next action's day the
+   follow-up day, and a second control setting one date without the other is
+   how the two came apart — and nothing else called it. */
 
 /**
  * Out of the way, not gone.
@@ -698,102 +735,20 @@ export async function touchLead(id: string, today = isoDate(new Date())): Promis
 
 /* ---------------------------------------------------------------- convert */
 
-/**
- * The lead becomes a customer, and stays a lead.
+/*
+ * `convertToCustomer` was here, and it is DELETED rather than fixed.
  *
- * The customer is written locally with a client id, which is what lets the
- * salesman punch an order against a shop that exists on nothing but this
- * handset. Its notes and its whole activity trail move onto the shared
- * timeline, because the story of how the account was won is worth more to
- * whoever inherits it than the lead row it was kept in.
+ * It was offered on every live lead, a Suspect included, so one tap stepped
+ * over every rung §28 exists to hold — and it minted a customer under a fresh
+ * id this handset made up, while the office promoted the EXISTING lead row and
+ * answered with the lead's own id, which nothing here read. So the customer
+ * the salesman was sent to take orders from existed on his phone and nowhere
+ * else: every order and visit against it was refused as "not on MahekOne", and
+ * the lead update waiting behind it could retry for ever.
  *
- * The lead is NOT deleted. It goes to `Converted`, keeps its history and
- * carries `convertedCustomerId` permanently — that link is the only thing that
- * can answer "where did this account come from" a year from now.
- *
- * Order matters on the way out: the customer depends on nothing, the lead's
- * update depends on the customer, so the office never sees a lead pointing at
- * an account that has not arrived.
+ * Nothing replaces it, because nothing needs to. A lead takes an order as it
+ * stands, the office turns it into a customer on that order, and the ladder
+ * carries its own `first_order`, `second_order` and `customer` rungs for what
+ * the relationship has become. A button that does the same thing by skipping
+ * the gates is the one way round them.
  */
-export async function convertToCustomer(
-  lead: Lead,
-  today = isoDate(new Date()),
-): Promise<LeadResult<string>> {
-  if (lead.convertedCustomerId) {
-    return { ok: false, message: lead.name + ' was already converted. Open the customer instead.' };
-  }
-
-  const customerId = newId('customer');
-  const notes = notesOf(lead);
-  const now = Date.now();
-
-  const customerRow = {
-    id: customerId,
-    name: lead.company?.trim() || lead.name,
-    contactPerson: lead.name,
-    phone: lead.mobile,
-    city: lead.city,
-    /* Health, credit and outstanding are the office's to decide. A new account
-       arrives with none of them rather than with a confident zero. */
-    lastSyncedAt: 0,
-  };
-
-  await tx(async () => {
-    await insertLocal('customers', customerRow);
-
-    await insertLocal('timeline_events', {
-      id: newId('tl'),
-      customerId,
-      eventType: 'lead',
-      sourceApp: 'mbos',
-      sourceRecordId: lead.id,
-      occurredAt: now,
-      actor: 'You',
-      summary:
-        'Converted from a lead' + (lead.source ? ' · ' + lead.source : '') + (lead.city ? ' · ' + lead.city : ''),
-    });
-
-    /* The activity, oldest first, so the account opens on the conversation
-       that won it rather than on an empty timeline. */
-    for (let i = 0; i < notes.length; i++) {
-      const n = notes[i];
-      await insertLocal('timeline_events', {
-        id: newId('tl'),
-        customerId,
-        eventType: 'lead',
-        sourceApp: 'mbos',
-        sourceRecordId: lead.id,
-        occurredAt: n.at || now - (notes.length - i),
-        actor: 'You',
-        summary: n.text,
-      });
-    }
-
-    await run(
-      `UPDATE leads SET stage = 'Converted', convertedCustomerId = ?, lastActivityDate = ?, syncState = 'queued' WHERE id = ?`,
-      [customerId, today, lead.id],
-    );
-  });
-
-  await enqueue({
-    entityType: 'customer',
-    entityId: customerId,
-    op: 'create',
-    payload: { ...customerRow, fromLeadId: lead.id, estimatedPotentialPaise: lead.estimatedPotentialPaise },
-  });
-
-  await enqueue({
-    entityType: 'lead',
-    entityId: lead.id,
-    op: 'update',
-    payload: {
-      id: lead.id,
-      stage: wireStage('Converted'),
-      convertedCustomerId: customerId,
-      lastActivityDate: today,
-    },
-    dependsOn: [customerId],
-  });
-
-  return { ok: true, value: customerId };
-}

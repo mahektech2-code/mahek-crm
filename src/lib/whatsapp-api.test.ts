@@ -40,6 +40,7 @@ import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { setWhatsappService } from "@/lib/services/whatsapp-switch-service";
 import { setWhatsappDnd } from "@/lib/services/whatsapp-dnd-service";
 import { applyWatiEvent, prepareMessage, sendNow } from "@/lib/services/whatsapp-service";
+import { sendChatMessage } from "@/lib/services/whatsapp-chat-service";
 import { parseWatiEvent } from "@/lib/whatsapp-delivery";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
@@ -48,6 +49,8 @@ const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
 const WATI_TEMPLATE = "payment_reminder_v1";
 let sends: Array<Record<string, unknown>> = [];
+/** Free-text session messages Wati was asked to send. */
+let texts: Array<{ target: string; text: string }> = [];
 let refuseNext: string | null = null;
 const realFetch = globalThis.fetch;
 
@@ -58,6 +61,11 @@ function stubWati() {
     if (!url.startsWith("https://live-mt-server.wati.io/")) return realFetch(input, init);
     const json = (body: unknown) =>
       new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+    if (url.includes("/conversations/messages/text")) {
+      const body = JSON.parse(String(init?.body));
+      texts.push(body);
+      return json({ ok: true, message: { whatsappMessageId: `wamid.T${texts.length}`, text: body.text } });
+    }
     if (url.includes("/messageTemplates/send")) {
       const body = JSON.parse(String(init?.body));
       sends.push(body);
@@ -168,6 +176,7 @@ beforeEach(async () => {
   invalidateConfig();
   await seedConfig();
   sends = [];
+  texts = [];
   refuseNext = null;
 
   founder = await makeUser("Founder", "manager", [{ app: "founder", role: "manager" }]);
@@ -284,14 +293,24 @@ test("an unlinked template is refused rather than sent as something else", async
   assert.equal(sends.length, 0);
 });
 
-test("a number shared by three shops is a placeholder and is refused", async () => {
+test("a number shared by several companies still gets each company's reminder", async () => {
   await switchOn();
+  // One owner, three shops, one mobile.
   await makeShop("Second", "9820011001");
   await makeShop("Third", "+91 9820011001");
   const r = await send();
+  assert.equal(r.ok, true, r.ok ? "" : r.error);
+  assert.equal(sends.length, 1);
+});
+
+test("a number that belongs to somebody who works at Mahek is refused — it is not the customer's", async () => {
+  await switchOn();
+  const salesman = await makeUser("Rahul", "associate", [{ app: "crm", role: "associate" }]);
+  await db.update(users).set({ phone: "+91 98200 11001" }).where(eq(users.id, salesman.id));
+  const r = await send();
   assert.equal(r.ok, false);
   if (r.ok) return;
-  assert.match(r.error, /placeholder/);
+  assert.match(r.error, /Rahul's, who works at Mahek/);
   assert.equal(sends.length, 0);
 });
 
@@ -560,4 +579,100 @@ test("a telecaller cannot put anybody on DND", async () => {
   setTestUser(caller);
   await assert.rejects(() => setWhatsappDnd({ customerIds: [shop.id], dnd: true, reason: "no" }));
   assert.equal((await db.select().from(whatsappDndEvents)).length, 0);
+});
+
+/* ------------------------------------------------- chatting from MahekOne */
+
+async function incoming(customerId: string | null, waId: string, hoursAgo: number) {
+  const rid = id("war");
+  await db.insert(waReplies).values({
+    id: rid, customerId, message: "Already paid", waId,
+    receivedAt: new Date(Date.now() - hoursAgo * 3_600_000),
+  });
+  return rid;
+}
+const chat = (key: string, text: string) => sendChatMessage({ key, text, idempotencyKey: randomUUID() });
+
+test("a message typed in the chat inside 24 hours goes from the business number and lands in the log", async () => {
+  await switchOn();
+  const rid = await incoming(shop.id, "919820011001", 2);
+  const r = await chat(shop.id, "  Thank you — we will check the bank and confirm.  ");
+  assert.equal(r.ok, true, r.ok ? "" : r.error);
+  assert.deepEqual(texts, [{ target: "919820011001", text: "Thank you — we will check the bank and confirm." }]);
+
+  const [logged] = await db.select().from(waMessages).where(eq(waMessages.inReplyToId, rid));
+  assert.equal(logged.customerId, shop.id);
+  assert.equal(logged.status, "sent");
+  assert.equal(logged.providerRef, "wamid.T1");
+  const [reply] = await db.select().from(waReplies).where(eq(waReplies.id, rid));
+  assert.equal(reply.actioned, true, "answering is handling");
+  assert.equal(reply.actionedById, caller.id);
+  const [c] = await db.select().from(customers).where(eq(customers.id, shop.id));
+  assert.ok(c.lastConfirmedWhatsappDate, "the customer counts as messaged");
+
+  // Its ticks arrive keyed on WhatsApp's id alone.
+  const applied = await applyWatiEvent(parseWatiEvent({ eventType: "sentMessageDELIVERED_v2", whatsappMessageId: "wamid.T1" }));
+  assert.equal(applied, "sent -> delivered");
+
+  // A chat is a chat: a second message goes too.
+  assert.equal((await chat(shop.id, "Also, the bill number please?")).ok, true);
+  assert.equal(texts.length, 2);
+});
+
+test("the same compose key sends once, however many times it is pressed", async () => {
+  await switchOn();
+  await incoming(shop.id, "919820011001", 1);
+  const key = randomUUID();
+  const [a, b] = await Promise.all([
+    sendChatMessage({ key: shop.id, text: "Hello", idempotencyKey: key }),
+    sendChatMessage({ key: shop.id, text: "Hello", idempotencyKey: key }),
+  ]);
+  assert.equal([a.ok, b.ok].filter(Boolean).length, 1);
+  assert.equal(texts.length, 1);
+});
+
+test("after 24 hours WhatsApp allows only a template, so the chat refuses before Wati is called", async () => {
+  await switchOn();
+  await incoming(shop.id, "919820011001", 30);
+  const r = await chat(shop.id, "Hello");
+  assert.equal(r.ok, false);
+  if (r.ok) return;
+  assert.match(r.error, /24 hours/);
+  assert.equal(texts.length, 0);
+});
+
+test("a customer who never wrote cannot be sent free text at all", async () => {
+  await switchOn();
+  const r = await chat(shop.id, "Hello");
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.match(r.error, /approved template/);
+});
+
+test("nothing is sent with the founder's switch off, and nobody chats outside their book", async () => {
+  await incoming(shop.id, "919820011001", 1);
+  const off = await chat(shop.id, "Hello");
+  assert.equal(off.ok, false);
+  if (!off.ok) assert.match(off.error, /switched off/);
+
+  await switchOn();
+  const other = await makeUser("Rakesh", "associate", [{ app: "crm", role: "associate" }]);
+  setTestUser(other);
+  await assert.rejects(() => chat(shop.id, "Hello"));
+  await incoming(null, "919811122233", 1);
+  assert.equal((await chat("n:9811122233", "Hello")).ok, false, "a telecaller cannot answer a number on nobody's book");
+  assert.equal(texts.length, 0);
+});
+
+test("an admin answers an unknown number once per message it sends", async () => {
+  await switchOn();
+  const boss = await makeUser("Boss", "admin", [{ app: "crm", role: "admin" }]);
+  setTestUser(boss);
+  const stranger = await incoming(null, "919811122233", 1);
+  const r = await chat("n:9811122233", "Yes, we supply in Nashik.");
+  assert.equal(r.ok, true, r.ok ? "" : r.error);
+  assert.equal(texts[0].target, "919811122233");
+  const [reply] = await db.select().from(waReplies).where(eq(waReplies.id, stranger));
+  assert.equal(reply.answerStatus, "sent");
+  const again = await chat("n:9811122233", "And the rate list?");
+  assert.equal(again.ok, false, "put the number on a customer to keep chatting");
 });

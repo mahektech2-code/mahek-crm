@@ -59,6 +59,7 @@ import {
   setLeadNextAction,
 } from "@/lib/actions/leads";
 import { reviewLeadQualification } from "@/lib/actions/lead-qualification-review";
+import { QUALIFICATION_ANSWERS } from "@/lib/qualification-fixtures";
 import { decideSample, dispatchSample, requestSample } from "@/lib/actions/lead-samples";
 import {
   agreeCommercialTerms,
@@ -172,7 +173,7 @@ async function qualifiedLead(over: Partial<typeof customers.$inferInsert> = {}) 
     leadCreditDaysWanted: 30,
     leadBuyer: "Ganesh's brother",
     leadFiguresConfirmedAt: new Date(),
-    leadQualification: { price_discussed: true, delivery_discussed: true, agrees_to_test: true, next_step_agreed: true },
+    leadQualification: { ...QUALIFICATION_ANSWERS },
     /* THE MANAGER'S REVIEW IS MANDATORY FOR SAMPLE/TRIAL, so a lead that is
        "ready for a sample" carries a verified one. Tests about the review itself
        override these. */
@@ -360,13 +361,16 @@ describe("R — the reads are counted in the database", () => {
   });
 
   test("a checklist that is short says which conditions, from the engine, and draws the checklist button", async () => {
-    const lead = await qualifiedLead({ leadQualification: { price_discussed: true }, gstVerified: false });
+    const lead = await qualifiedLead({ leadQualification: { willing_to_test: "yes" }, gstVerified: false });
     const l = (await pipelineLead(lead.id, DAY))!.lead;
     assert.equal(l.gate.kind, "qualify");
     assert.ok(l.qualItems.some((q) => !q.done));
     const gst = l.qualItems.find((q) => q.id === "gst_verified")!;
     assert.equal(gst.tickable, false, "a value on the record is never a box to tick");
-    assert.equal(l.qualItems.find((q) => q.id === "price_discussed")!.tickable, true);
+    assert.ok(l.qualItems.every((q) => !q.tickable), "the Sales Manager reads answers; nothing on her checklist is a tick");
+    assert.equal(l.qualItems.find((q) => q.id === "trial_plan")!.done, false);
+    assert.equal(l.qualItems.find((q) => q.id === "willing_to_test")!.answer, "yes", "what was answered is shown, for the read-through");
+    assert.equal(l.gstState, "unchecked", "entered, nobody has validated it");
   });
 
   test("a regional manager cannot open a lead outside the patch, and the list does not draw it", async () => {
@@ -593,16 +597,17 @@ describe("M — every mutation persists, and the screen is told what the databas
   });
 
   test("qualification: ticks persist and merge, and the manager's review is recorded and holds the lead", async () => {
-    const lead = await qualifiedLead({ leadQualification: { price_discussed: true } });
+    const lead = await qualifiedLead({ leadQualification: { willing_to_test: "yes" } });
     const before = (await pipelineLead(lead.id, DAY))!.lead;
-    assert.equal(before.qualItems.find((q) => q.id === "delivery_discussed")!.done, false);
+    assert.equal(before.qualItems.find((q) => q.id === "delivery_workable")!.done, false);
 
-    const saved = await saveLeadQualification(lead.id, { delivery_discussed: true, agrees_to_test: true, next_step_agreed: true });
+    const rest = Object.fromEntries(Object.entries(QUALIFICATION_ANSWERS).filter(([k]) => k !== "willing_to_test"));
+    const saved = await saveLeadQualification(lead.id, rest);
     assert.equal(saved.ok, true, saved.ok ? "" : saved.error);
     assert.deepEqual(
       Object.keys((await row(lead.id)).leadQualification ?? {}).sort(),
-      ["agrees_to_test", "delivery_discussed", "next_step_agreed", "price_discussed"],
-      "a patch merges — it does not erase last week's ticks",
+      Object.keys(QUALIFICATION_ANSWERS).sort(),
+      "a patch merges — it does not erase last week's answers",
     );
     const after = (await pipelineLead(lead.id, DAY))!.lead;
     assert.ok(after.qualItems.every((q) => q.done));
@@ -1076,24 +1081,24 @@ describe("A — authorisation is the existing model, asked in the existing order
     assert.equal((await pipelineLead(lead.id, DAY))!.lead.caps.canApproveDistributor, true);
   });
 
-  test("READ SCOPE AND WRITE SCOPE DISAGREE for a Sales Dashboard ASSOCIATE — a clear refusal, reported and not fixed", async () => {
-    /* `managerScope` (what every screen here reads through) is NATIONAL for
-       anybody with no region row, and it does not ask the LEVEL: an associate
-       who was granted the Sales Dashboard sees every lead. `assertCustomerInScope`
-       (what every action writes through) resolves scope by level, and an
-       associate's is their own book. So a lead somebody else owns is visible
-       and not workable: the capability flag is true (`lead.work` is every
-       associate's), the action refuses, nothing changes, and the screen shows
-       the refusal. Neither side is weakened by this suite — the brief forbids
-       changing either — and a manager on the Sales Dashboard does not hit it,
-       because their write scope is as wide as their read scope. */
+  test("READ SCOPE AND WRITE SCOPE AGREE for a Sales Dashboard ASSOCIATE — neither shows another person's lead", async () => {
+    /* This used to be reported here as a known disagreement, and not fixed:
+       `managerScope` (what every screen here reads through) was NATIONAL for
+       anybody with no region row and never asked the LEVEL, so an associate
+       granted the Sales Dashboard saw every lead in the company, while
+       `assertCustomerInScope` (what every action writes through) resolved
+       scope by level and refused them. A lead was visible and not workable.
+
+       `managerScope` now reads the level first: an associate's scope is their
+       own book on the read side too. So a lead somebody else owns is not on
+       their screen at all, and the write side still refuses it — the two
+       answer the same question the same way. */
     const assoc = await makeUser("Sales Associate", "associate", [{ app: "sales", role: "associate" }]);
     const lead = await makeLead({ leadStage: "prospect", ...fullProspectFields() });
     setTestUser(assoc);
 
     const visible = await pipelineLead(lead.id, DAY);
-    assert.ok(visible, "the read side shows it");
-    assert.equal(visible.lead.caps.canWork, true, "and the screen has every reason to draw the controls");
+    assert.equal(visible, null, "the read side no longer shows another person's lead to an associate");
 
     const refused = await setLeadNextAction(lead.id, { action: "Try to change it", date: NEXT_WEEK, ownerId: salesA.id });
     assert.equal(refused.ok, false, "the write side keeps its own check");

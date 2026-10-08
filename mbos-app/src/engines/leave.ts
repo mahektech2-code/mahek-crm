@@ -60,8 +60,86 @@ function inclusiveDays(from: string, to: string): number {
   return Math.floor((b - a) / MS_PER_DAY) + 1;
 }
 
-export function leaveDays(request: LeaveRequestSpan): LeaveDaysResult {
-  if (request.span === 'single' || request.from === request.to) {
+/**
+ * WHICH DAYS SOMEBODY WOULD HAVE WORKED — the office's own calendar, sent down
+ * on the pull. ISO weekdays, Monday 1 … Sunday 7, and every holiday date.
+ */
+export type LeaveCalendar = {
+  workingDays: readonly number[];
+  holidays: ReadonlySet<string>;
+};
+
+/** ISO weekday of a `YYYY-MM-DD` date, Monday 1 … Sunday 7. */
+function isoWeekday(day: string): number {
+  const d = new Date(
+    Date.UTC(Number(day.slice(0, 4)), Number(day.slice(5, 7)) - 1, Number(day.slice(8, 10))),
+  ).getUTCDay();
+  return d === 0 ? 7 : d;
+}
+
+function nextDay(day: string): string {
+  const t = Date.UTC(Number(day.slice(0, 4)), Number(day.slice(5, 7)) - 1, Number(day.slice(8, 10)));
+  return new Date(t + MS_PER_DAY).toISOString().slice(0, 10);
+}
+
+/** The same bound the office uses — a request longer than this is refused there. */
+const MAX_SPAN_DAYS = 400;
+
+/**
+ * Working days in a span, both ends counted — `leaveWorkingDays` on the
+ * server, the number a balance is actually debited by.
+ */
+export function workingDaysIn(from: string, to: string, calendar: LeaveCalendar): number {
+  if (to < from) return 0;
+  let count = 0;
+  let cursor = from;
+  for (let i = 0; i < MAX_SPAN_DAYS && cursor <= to; i++) {
+    if (!calendar.holidays.has(cursor) && calendar.workingDays.includes(isoWeekday(cursor))) count++;
+    cursor = nextDay(cursor);
+  }
+  return count;
+}
+
+/**
+ * How many days a request is worth.
+ *
+ * WITH A CALENDAR IT COUNTS WORKING DAYS, which is what the office debits.
+ * This counted calendar days: Friday to Monday read "4 days" on the phone,
+ * was checked against the balance as four, and the office took two — and a
+ * request for a Sunday alone was accepted here and refused there. Without a
+ * calendar (an older caller) it keeps the calendar-day count it always had.
+ */
+export function leaveDays(request: LeaveRequestSpan, calendar?: LeaveCalendar): LeaveDaysResult {
+  const single = request.span === 'single' || request.from === request.to;
+  if (calendar) {
+    const worked = workingDaysIn(request.from, single ? request.from : request.to, calendar);
+    if (worked < 1) {
+      return {
+        days: 0,
+        sentence: single
+          ? 'That day is a holiday or a day off, so there is no leave to take.'
+          : 'Every day in that range is a holiday or a day off, so there is no leave to take.',
+        note: null,
+      };
+    }
+    if (single) {
+      return request.half
+        ? { days: 0.5, sentence: 'Half a day.', note: null }
+        : { days: 1, sentence: '1 day.', note: null };
+    }
+    const skipped = Math.max(0, inclusiveDays(request.from, request.to) - worked);
+    return {
+      days: worked,
+      sentence: `${worked} ${worked === 1 ? 'working day' : 'working days'}.`,
+      note: request.half
+        ? 'Half day works only for one day. So all these days are counted as full days.'
+        : skipped > 0
+          ? `${skipped} ${skipped === 1 ? 'holiday or day off is' : 'holidays or days off are'} not counted.`
+          : null,
+    };
+  }
+
+  if (single) {
     if (request.half) {
       return {
         days: 0.5,
@@ -80,7 +158,7 @@ export function leaveDays(request: LeaveRequestSpan): LeaveDaysResult {
     // are whole days whatever it says — so it is dropped and the form is told,
     // rather than being silently honoured on one end nobody chose.
     note: request.half
-      ? 'A half day only applies to a single-day request, so the whole range is counted as full days.'
+      ? 'Half day works only for one day. So all these days are counted as full days.'
       : null,
   };
 }

@@ -1,5 +1,6 @@
 "use server";
 
+import { assertLeadInScope } from "@/lib/services/lead-scope";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
@@ -14,7 +15,6 @@ import {
   sampleFeedback,
 } from "@/db/schema";
 import {
-  assertCustomerInScope,
   requireCapability,
 } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
@@ -172,7 +172,7 @@ async function loadForTransition(
     .where(eq(mbosSamples.id, sampleId));
 
   if (!row) return { ok: false, error: err("That sample no longer exists.", "not_found") };
-  await assertCustomerInScope(row.customer);
+  await assertLeadInScope(row.customer.id, row.customer);
 
   if (to) {
     const from = row.sample.state as SampleState;
@@ -252,7 +252,7 @@ export async function requestSample(
       .from(customers)
       .where(eq(customers.id, customerId));
     if (!customer) return err("That customer no longer exists.", "not_found");
-    await assertCustomerInScope(customer);
+    await assertLeadInScope(customerId, customer);
 
     /*
      * A SAMPLE IS ASKED FOR ONLY WHEN THE LEAD MAY ENTER SAMPLE / TRIAL.

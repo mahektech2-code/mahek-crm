@@ -1,14 +1,15 @@
 import React from 'react';
 import { View, Text, Pressable } from 'react-native';
-import { router, useFocusEffect } from 'expo-router';
-import { color as C, HIT, radius, shadow, type, weight, tabular } from '../src/theme/tokens';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { color as C, radius, shadow, type, weight, tabular } from '../src/theme/tokens';
 import { Icon } from '../src/components/ui/Icon';
+import { CountUp, PressableScale, Stagger, Swap } from '../src/components/ui/motion';
 import { Card, PrimaryButton, SecondaryButton, T } from '../src/components/ui/primitives';
 import { promptsForExpenses } from '../src/lib/travel-leg';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
-import { compactInrFromPaise, inrFromPaise, isoDate, plural } from '../src/lib/format';
+import { compactInrFromPaise, dmy, hhmm, inrFromPaise, isoDate, plural } from '../src/lib/format';
 import { DASH_CARDS, DAY_AHEAD } from '../src/data/fixtures';
 import {
   checkIn,
@@ -22,10 +23,12 @@ import {
   type Session,
 } from '../src/data/attendance';
 import { useTicker } from '../src/components/ui/use-ticker';
-import { collectionDue } from '../src/data/customers';
-import { listPerformance, shortfalls, type PerformanceMonth } from '../src/data/performance';
+import { collectionDue, followUpsOwed } from '../src/data/customers';
+import { listPerformance, shortfalls, type SyncedMonth } from '../src/data/performance';
 import { getConfig } from '../src/data/config';
 import { mayOpenDay } from '../src/data/day-gate';
+import { punchOutDue } from '../src/engines/punch-out';
+import { syncPunchOutReminders } from '../src/native/punch-out-reminder';
 import { ordersToday } from '../src/data/orders';
 import { cashInHand } from '../src/data/payments';
 import { bucketOf, listOpenTasks } from '../src/data/tasks';
@@ -36,27 +39,33 @@ import {
   rowsFor,
   type LeadActionCounts,
 } from '../src/engines/lead-worklist';
-import { followUpCounts, visitsToday } from '../src/data/visits';
+import { visitsToday } from '../src/data/visits';
 import { stopCounts } from '../src/data/journey';
 import { lastPullAt } from '../src/sync/api';
 import { stalledAt } from '../src/sync/trail';
 import { lastAskedAt } from '../src/native/keepalive';
 import { shouldOfferSetup } from '../src/engines/oem-keepalive';
 import { withinGeofence } from '../src/engines/geo';
-import { fixOf, getFix } from '../src/native/location';
+import { fixOf, getFix, type Fix } from '../src/native/location';
 import { ensureLocationPermission } from '../src/native/permissions';
 import { walkthroughDue } from '../src/data/setup-walkthrough';
 import { queueOdometerPhoto, queueSelfie } from '../src/native/capture';
+import { discardQueuedMedia } from '../src/sync/media';
 import { SelfieCamera, type SelfieResult } from '../src/components/ui/selfie-camera';
 import { OdometerCamera, type OdometerResult } from '../src/components/ui/odometer-camera';
 import { BottomSheet } from '../src/components/ui/overlays';
 import { TravelModeList } from '../src/components/ui/travel-mode-list';
 import {
+  addLateClosingReading,
+  dismissUnpaidMeterDay,
   endSession,
   openSessionLeg,
+  todayOpeningKm,
+  unpaidMeterDay,
   startSession,
   travelModesFor,
   type TravelMode,
+  type UnpaidMeter,
 } from '../src/data/travel';
 
 /**
@@ -68,6 +77,64 @@ import {
  * the network, so it renders the same in a basement as it does on Wi-Fi.
  */
 
+/**
+ * One of the day card's two buttons. Same height, corners and type whether it
+ * is the filled one or not, so the pair reads as a pair; `tint` is a closed
+ * day's "Punch in again", which is an offer rather than the main action.
+ */
+function DayAction({
+  icon,
+  label,
+  filled,
+  tint = false,
+  disabled = false,
+  onPress,
+}: {
+  icon: 'route' | 'camera';
+  label: string;
+  filled: boolean;
+  tint?: boolean;
+  disabled?: boolean;
+  onPress: () => void;
+}) {
+  const fg = filled ? '#FFFFFF' : tint ? C.primaryDeep : C.body;
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={({ pressed }) => ({
+        flex: 1,
+        minHeight: 52,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        paddingHorizontal: 12,
+        borderRadius: radius.lg,
+        borderWidth: filled ? 0 : 1,
+        borderColor: tint ? C.primaryEdge : C.border,
+        backgroundColor: filled
+          ? pressed
+            ? C.primaryDeep
+            : C.primary
+          : pressed
+            ? C.wash
+            : tint
+              ? C.primaryTint
+              : C.surface,
+        boxShadow: filled ? shadow.primaryLift : undefined,
+        opacity: disabled ? 0.6 : 1,
+      })}>
+      <Icon name={icon} size={18} color={fg} />
+      <Text numberOfLines={1} style={[{ fontSize: 15, color: fg }, weight(600)]}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
 type Day = {
   stops: number;
   stopsDone: number;
@@ -75,6 +142,7 @@ type Day = {
   collectCustomers: number;
   followUps: number;
   followUpsToday: number;
+  followUpsMissed: number;
   orders: number;
   orderValuePaise: number;
   orderValueUnknown: boolean;
@@ -99,6 +167,7 @@ const EMPTY: Day = {
   collectCustomers: 0,
   followUps: 0,
   followUpsToday: 0,
+  followUpsMissed: 0,
   orders: 0,
   orderValuePaise: 0,
   orderValueUnknown: false,
@@ -151,6 +220,12 @@ function asAt(iso: string): string {
   }).format(at);
 }
 
+/* What the tiles count in. Rounded before formatting, because a count passes
+   through fractions of a paisa on its way and `inrFromPaise` should only ever
+   be handed whole ones. */
+const rupees = (x: number) => inrFromPaise(Math.round(x));
+const whole = (x: number) => String(Math.round(x));
+
 export default function Home() {
   const boot = useBoot();
   const userId = boot.session?.user.id ?? null;
@@ -180,7 +255,7 @@ export default function Home() {
   /* `undefined` is still reading, `null` is read and there is nothing. Two
      different sentences, and collapsing them shows "no target" for a frame to
      somebody who has one. */
-  const [month, setMonth] = React.useState<PerformanceMonth | null | undefined>(undefined);
+  const [month, setMonth] = React.useState<SyncedMonth | null | undefined>(undefined);
   /*
    * Nothing has ever come down from the office onto this handset.
    *
@@ -218,6 +293,13 @@ export default function Home() {
   /* The day's mode, held while the after-punch-out prompt is up. Null is no
      prompt. See `promptsForExpenses`. */
   const [claimPrompt, setClaimPrompt] = React.useState<{ modeLabel: string | null } | null>(null);
+  /* The hour punching out becomes the main button. Null until read, and read
+     as "not yet" — a prompt that flashes on and off as config lands is worse
+     than one that arrives a frame late. */
+  const [punchOutHour, setPunchOutHour] = React.useState<number | null>(null);
+  /* `?punchOut=1` is the punch-out reminder notification, and the close-the-day
+     screen, sending him here to do exactly that. See the effect beside `endDay`. */
+  const params = useLocalSearchParams<{ punchOut?: string }>();
 
   /*
    * The clock, as state and ticked — never read during render.
@@ -279,10 +361,31 @@ export default function Home() {
    * morning, before the day that will or will not be recorded.
    */
   const [offerSetup, setOfferSetup] = React.useState(false);
+  /* A metered day closed by the app with no punch-out — its km are not paid,
+     and he hears it here rather than from the claim. See `closeStaleSessions`. */
+  const [unpaidMeter, setUnpaidMeter] = React.useState<UnpaidMeter | null>(null);
+  const [savingLateMeter, setSavingLateMeter] = React.useState(false);
+  useFocusEffect(
+    React.useCallback(() => {
+      let live = true;
+      void unpaidMeterDay()
+        .then((d) => live && setUnpaidMeter(d))
+        .catch(() => {});
+      return () => {
+        live = false;
+      };
+    }, [setUnpaidMeter]),
+  );
 
   const load = React.useCallback(() => {
     if (!userId) return;
     const iso = isoDate(new Date());
+
+    /* The evening reminders follow the day. Every punch-in and punch-out on
+       this screen ends in `load()`, and so does every return to Home, so one
+       reconcile here keeps them right through all of it — including a setting
+       changed in the office since the morning. It never throws. */
+    void syncPunchOutReminders(userId);
 
     /*
      * Its own read, deliberately not in the `Promise.all` below: that one
@@ -308,7 +411,7 @@ export default function Home() {
     void Promise.all([
       stopCounts(),
       collectionDue(),
-      followUpCounts(userId, iso),
+      followUpsOwed(iso),
       ordersToday(userId),
       visitsToday(userId),
       cashInHand(userId),
@@ -344,8 +447,9 @@ export default function Home() {
         stopsDone: stops.done,
         collectPaise: due.totalPaise,
         collectCustomers: due.customers,
-        followUps: follow.open,
+        followUps: follow.owed,
         followUpsToday: follow.dueToday,
+        followUpsMissed: follow.missed,
         orders: orders.count,
         orderValuePaise: orders.valuePaise,
         orderValueUnknown: orders.valueUnavailable,
@@ -369,13 +473,22 @@ export default function Home() {
          stale list of leads under a sentence saying the read failed is the
          screen arguing with itself. */
       setLeads(undefined);
-      setReadErr('Your day could not be read on this phone. Close MBOS and open it again.');
+      setReadErr('Your day did not load. Close MBOS and open it again.');
     });
   }, [userId]);
 
   useFocusEffect(load);
 
+  React.useEffect(() => {
+    void getConfig<number>('mbos.attendance.punchOutPromptHour', 18)
+      .then(setPunchOutHour)
+      .catch(() => setPunchOutHour(18));
+  }, []);
+
   const checkedIn = !!day && day.sessionCount > 0;
+  /* See `engines/punch-out.ts`: loud only when it is the right thing to press. */
+  const punchOutLoud =
+    !!day && punchOutHour != null && punchOutDue({ running: day.running, nowMs: now, promptHour: punchOutHour });
 
   const today = new Date(now);
   const dateLine = `${WEEKDAYS[today.getDay()]}, ${today.getDate()} ${MONTHS[today.getMonth()]}`;
@@ -395,8 +508,14 @@ export default function Home() {
   /* The same rule one section down: a handset nothing has reached has no lead
      book either, so its three figures are empty rather than nought. */
   const leadsPending = !leads || neverPulled;
-  const dashValues: { v: string; s: string; small?: boolean }[] = !day
-    ? DASH_CARDS.map(() => ({ v: '—', s: readErr ? 'Not read' : 'Reading…' }))
+  /*
+   * `n` is the same figure as a NUMBER, where there is one, so the tile can
+   * count to it. `fmt` draws it exactly as `v` would have — the count is how
+   * the figure arrives, never a second way of writing it. A tile without `n`
+   * (a dash, "Not known yet", "3 of 5") is drawn as text and does not move.
+   */
+  const dashValues: { v: string; s: string; small?: boolean; n?: number; fmt?: (x: number) => string }[] = !day
+    ? DASH_CARDS.map(() => ({ v: '—', s: readErr ? 'Did not load' : 'Loading…' }))
     : neverPulled
       ? DASH_CARDS.map(() => ({ v: '—', s: 'Nothing here yet' }))
       : [
@@ -408,6 +527,7 @@ export default function Home() {
       v: day.orderValueUnknown ? 'Not known yet' : inrFromPaise(day.orderValuePaise),
       s: plural(day.orders, 'order'),
       small: day.orderValueUnknown,
+      ...(day.orderValueUnknown ? {} : { n: day.orderValuePaise, fmt: rupees }),
     },
     {
       /* THE NUMERATOR IS STOPS DONE, not visits. `visitsToday` counts every
@@ -419,12 +539,24 @@ export default function Home() {
          here; they are the subtitle now. With no plan at all there is no
          denominator to print, so the count stands on its own. */
       v: day.stops ? `${day.stopsDone} of ${day.stops}` : String(day.visits),
-      s: day.stops ? plural(day.visits, 'visit') + ' logged' : 'No plan today',
+      /* And the subtitle says what the number IS. It read "0 visits done"
+         under "2 of 6" — a second count of a different thing, contradicting
+         the first in the same tile. The walk-ins are what the visits add, so
+         that is the only part of them worth a line. */
+      s: day.stops
+        ? 'shops done' + (day.visits > day.stopsDone ? ' · ' + (day.visits - day.stopsDone) + ' off the plan' : '')
+        : 'No plan today',
     },
-    { v: inrFromPaise(day.collectPaise), s: plural(day.collectCustomers, 'customer') },
-    { v: inrFromPaise(day.cashPaise), s: day.cashSentence || 'Nothing to deposit' },
-    { v: String(day.tasks), s: day.tasksOverdue ? plural(day.tasksOverdue, 'overdue') : 'None overdue' },
-    { v: String(day.followUps), s: `${day.followUpsToday} today` },
+    { v: inrFromPaise(day.collectPaise), s: plural(day.collectCustomers, 'customer'), n: day.collectPaise, fmt: rupees },
+    { v: inrFromPaise(day.cashPaise), s: day.cashSentence || 'Nothing to deposit', n: day.cashPaise, fmt: rupees },
+    /* "overdue" is not a noun, so it does not take an s: "49 overdue". */
+    { v: String(day.tasks), s: day.tasksOverdue ? day.tasksOverdue + ' overdue' : 'None overdue', n: day.tasks, fmt: whole },
+    {
+      v: String(day.followUps),
+      s: day.followUpsMissed ? day.followUpsMissed + ' missed' : day.followUpsToday ? day.followUpsToday + ' today' : 'None due',
+      n: day.followUps,
+      fmt: whole,
+    },
   ];
 
   /* Same rule, on the strip under the Start day button: a dash where there is
@@ -445,7 +577,7 @@ export default function Home() {
   const [selfieOpen, setSelfieOpen] = React.useState(false);
   const [selfieWords, setSelfieWords] = React.useState({
     title: 'Punch in',
-    subtitle: 'A photo of you goes with the punch-in.',
+    subtitle: 'Take a photo of yourself to punch in.',
     cancelLabel: 'Cancel the punch-in',
   });
   const answerSelfie = React.useRef<((r: SelfieResult) => void) | null>(null);
@@ -544,7 +676,7 @@ export default function Home() {
     try {
       return { km: shot.km, photoId: await queueOdometerPhoto(shot.uri, 'pending') };
     } catch {
-      notify('The photo could not be saved on this phone, so nothing was recorded. Try again.');
+      notify('Photo not saved. Nothing was recorded. Try again.', 'error');
       return false;
     }
   };
@@ -576,7 +708,7 @@ export default function Home() {
         odometer: meter,
       });
     } catch {
-      notify('Punched in. The travel for this session could not be started — add it on Travel.');
+      notify('Punched in. Travel did not start. Add it on Travel.', 'warn');
     }
   };
 
@@ -601,9 +733,51 @@ export default function Home() {
     } catch {
       return {
         ok: false,
-        why: 'The photo could not be saved on this phone, so nothing was recorded. Try again.',
+        why: 'Photo not saved. Nothing was recorded. Try again.',
       };
     }
+  };
+
+  /**
+   * LET GO OF PHOTOGRAPHS FOR A PUNCH THAT DID NOT HAPPEN.
+   *
+   * The selfie and the meter are queued the moment the camera closes, against
+   * `'pending'`, because the row they belong to does not exist yet. Backing out
+   * at the vehicle question or the meter left them in the queue all the same,
+   * and they went up with no parent: a photograph of an employee held for a
+   * punch nobody made, until the orphan sweep found it a day later.
+   */
+  const dropShots = (...ids: (string | null | undefined)[]) => {
+    for (const id of ids) if (id) void discardQueuedMedia(id).catch(() => {});
+  };
+
+  /**
+   * Away from base: the day is open either way, and the reason is asked after.
+   * One function for both doors — the afternoon's punch-in used to pass no base
+   * at all, so a session opened anywhere was never asked about.
+   */
+  const askWhyAwayFromBase = (
+    dayId: string,
+    fix: Fix | null,
+    base: { lat: number; lng: number } | null,
+    radiusM: number,
+    okWords: string,
+  ) => {
+    const geo = base && fix ? withinGeofence(fix, base, radiusM) : null;
+    if (geo && !geo.inside) {
+      askConfirm({
+        title: 'You are not at base',
+        body: 'Your day has started. Your manager will see your reason.',
+        reasonLabel: 'Why · needed',
+        confirmLabel: 'Send reason',
+        run: (reason) => {
+          void setOverrideReason(dayId, reason);
+          notify('Sent to your manager');
+        },
+      });
+      return;
+    }
+    notify(okWords + (fix ? ' · GPS found' : ' · saved without location'), fix ? 'success' : 'warn');
   };
 
   /**
@@ -656,14 +830,14 @@ export default function Home() {
          write, and not the other way round. */
       const selfie = await captureSelfie({
         title: 'Punch in',
-        subtitle: 'A photo of you goes with the punch-in.',
+        subtitle: 'Take a photo of yourself to punch in.',
         cancelLabel: 'Cancel the punch-in',
       });
       if (!selfie.ok) {
         /* Nothing has been written, so there is nothing to undo. The fix is
            abandoned with it — a location for a check-in that did not happen is
            a record of somewhere somebody stood while nothing happened. */
-        if (selfie.why) notify(selfie.why);
+        if (selfie.why) notify(selfie.why, 'error');
         return;
       }
 
@@ -677,14 +851,20 @@ export default function Home() {
        * the whole of the day's mileage.
        */
       const answer = await askMode();
-      if (!answer.ok) return;
+      if (!answer.ok) {
+        dropShots(selfie.id);
+        return;
+      }
       const mode = answer.mode;
       const meter = mode ? await meterFor(mode, {
         title: 'Photograph the meter',
-        subtitle: 'Before you set off — this is where the day is measured from.',
+        subtitle: 'Before you start. Today’s km are counted from this reading.',
         cancelLabel: 'Cancel the punch-in',
       }, null) : null;
-      if (meter === false) return;
+      if (meter === false) {
+        dropShots(selfie.id);
+        return;
+      }
 
       const fix = fixOf(await fixing);
 
@@ -701,26 +881,21 @@ export default function Home() {
          at a day id or open a second one. It cannot fail the punch-in — the
          mark is the thing a salesman is paid on, and losing it over a travel
          leg would be the wrong way round. */
+      /* Already running — a second tap that raced the first. Nothing new was
+         opened, so the photographs taken for it belong to nothing. */
+      if (row.alreadyRunning) {
+        dropShots(selfie.id, meter ? meter.photoId : null);
+        load();
+        notify('You are already punched in.', 'info');
+        return;
+      }
+
       if (mode) await openSessionFor(mode, fix, meter);
 
       set({ gps: fix ? 'locked' : 'off' });
       load();
 
-      const geo = base && fix ? withinGeofence(fix, base, radius) : null;
-      if (geo && !geo.inside) {
-        askConfirm({
-          title: 'You are not at base',
-          body: 'The day has started. Your manager sees the reason you give.',
-          reasonLabel: 'Why · required',
-          confirmLabel: 'Send the reason',
-          run: (reason) => {
-            void setOverrideReason(row.id, reason);
-            notify('Sent to your manager');
-          },
-        });
-      } else {
-        notify('Day started' + (fix ? ' · GPS locked' : ' · saved without a location'));
-      }
+      askWhyAwayFromBase(row.id, fix, base, radius, 'Day started');
     } finally {
       setStarting(false);
     }
@@ -746,11 +921,11 @@ export default function Home() {
          they stopped, which is the half that decides the hours. */
       const selfie = await captureSelfie({
         title: 'Punch out',
-        subtitle: 'A photo of you goes with the punch-out.',
-        cancelLabel: 'Stay on the clock',
+        subtitle: 'Take a photo of yourself to punch out.',
+        cancelLabel: 'Stay punched in',
       });
       if (!selfie.ok) {
-        if (selfie.why) notify(selfie.why);
+        if (selfie.why) notify(selfie.why, 'error');
         return;
       }
 
@@ -775,19 +950,27 @@ export default function Home() {
               sessionMode,
               {
                 title: 'Photograph the meter',
-                subtitle: 'Before you punch out — this is where the day is measured to.',
-                cancelLabel: 'Stay on the clock',
+                subtitle: 'Before you punch out. Today’s km are counted up to this reading.',
+                cancelLabel: 'Stay punched in',
               },
               session.odometerStartKm,
             )
           : null;
-      if (closing === false) return;
+      if (closing === false) {
+        dropShots(selfie.id);
+        return;
+      }
 
       const fix = fixOf(await fixing);
       const out = await checkOut(userId, fix, selfie.id);
+      /* NOTHING WAS CLOSED, so nothing else may be. The travel session used
+         to be ended here whatever the punch-out said — so a punch-out refused
+         after midnight still closed the day's meter at the closing reading,
+         and the photographs went up for a mark that was never written. */
+      if (!out.ok) dropShots(selfie.id, closing ? closing.photoId : null);
       /* After the mark, and unable to undo it. Same order, same reason as the
          punch-in: the session is a journey belonging to a day. */
-      if (session) {
+      if (session && out.ok) {
         try {
           await endSession({
             legId: session.id,
@@ -795,14 +978,15 @@ export default function Home() {
             odometer: closing,
           });
         } catch {
-          notify('Punched out. The travel for this session could not be closed — check Travel.');
+          notify('Punched out. Travel did not close. Check Travel.', 'warn');
         }
       }
       load();
       notify(
         out.ok
           ? `Punched out · ${durationLabel(out.workedMinutes)} worked`
-          : (out.reason ?? 'The day was already closed.'),
+          : (out.reason ?? 'Your day was already closed.'),
+        out.ok ? 'success' : 'error',
       );
       /* Not on a meter day — the readings are the claim. On every other day
          the fares only reach the office if he raises them, so he is asked
@@ -851,11 +1035,11 @@ export default function Home() {
          the same act. */
       const selfie = await captureSelfie({
         title: 'Punch in again',
-        subtitle: 'A photo of you goes with every punch-in.',
-        cancelLabel: 'Stay off the clock',
+        subtitle: 'Take a photo of yourself to punch in.',
+        cancelLabel: 'Stay punched out',
       });
       if (!selfie.ok) {
-        if (selfie.why) notify(selfie.why);
+        if (selfie.why) notify(selfie.why, 'error');
         return;
       }
 
@@ -869,28 +1053,66 @@ export default function Home() {
        * the whole of the day's mileage.
        */
       const answer = await askMode();
-      if (!answer.ok) return;
+      if (!answer.ok) {
+        dropShots(selfie.id);
+        return;
+      }
       const mode = answer.mode;
       const meter = mode ? await meterFor(mode, {
         title: 'Photograph the meter',
-        subtitle: 'Before you set off — this is where the day is measured from.',
+        subtitle: 'Before you start. Today’s km are counted from this reading.',
         cancelLabel: 'Cancel the punch-in',
       }, null) : null;
-      if (meter === false) return;
+      if (meter === false) {
+        dropShots(selfie.id);
+        return;
+      }
 
+      const radius = await getConfig<number>('mbos.attendance.geofenceRadiusM', 200);
+      const base = await getConfig<{ lat: number; lng: number } | null>('mbos.attendance.baseLocation', null);
       const fix = fixOf(await fixing);
-      await checkIn({ userId, fix, selfieMediaId: selfie.id, mayOpen: gate.gate, homeLocation: null });
+      const row = await checkIn({ userId, fix, selfieMediaId: selfie.id, mayOpen: gate.gate, homeLocation: base });
+      if (row.alreadyRunning) {
+        dropShots(selfie.id, meter ? meter.photoId : null);
+        load();
+        notify('You are already punched in.', 'info');
+        return;
+      }
       /* ASKED AGAIN, and that is deliberate: he can bike in the morning and
          take the bus after lunch, and a session that inherited the morning's
          vehicle would quietly claim per-km on a day he spent on buses. */
       if (mode) await openSessionFor(mode, fix, meter);
       set({ gps: fix ? 'locked' : 'off' });
       load();
-      notify('Punched back in');
+      askWhyAwayFromBase(row.id, fix, base, radius, 'Punched back in');
     } finally {
       setStarting(false);
     }
   };
+
+  /*
+   * THE BAR'S TAP LANDS HERE AND OPENS THE CAMERA. "Punch out" pressed on the
+   * visit screen that only moved him to Home would be a second press for the
+   * same decision, at the end of a day. Once, and only once the day has been
+   * read and is still running — a param left behind must not open a camera
+   * on somebody who has already punched out. The param is cleared first, so a
+   * back-and-forth to Home cannot fire it twice.
+   */
+  const punchOutAsked = React.useRef(false);
+  React.useEffect(() => {
+    /* Re-armed once the param is gone, because Home is a tab root and stays
+       mounted: without this a second tap on the bar or the reminder, later
+       the same evening, would land here and do nothing. */
+    if (params.punchOut !== '1') {
+      punchOutAsked.current = false;
+      return;
+    }
+    if (punchOutAsked.current || !day) return;
+    punchOutAsked.current = true;
+    router.setParams({ punchOut: undefined });
+    if (day.running) void endDay();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- endDay is recreated every render; the ref is the guard
+  }, [params.punchOut, day]);
 
   return (
     <AppFrame title="Home" activeTab="home" contentStyle={{ paddingHorizontal: 16, paddingTop: 14, paddingBottom: 92 }}>
@@ -945,16 +1167,22 @@ export default function Home() {
           "Start day", and pressing it in that window opens a SECOND session
           against his own record. Neither of the two answers is drawn until
           there is one. */}
+      {/* ONE PLACE, FOUR STATES — not read yet, not started, on the road,
+          closed — and each replaces the last where it stood. Punching in or
+          out is the moment the card changes, so it settles into its new state
+          rather than cutting; no buzz of its own, because every punch already
+          ends in a toast that carries one. */}
+      <Swap id={!day ? 'loading' : !checkedIn ? 'out' : day.running ? 'running' : 'closed'}>
       {!day ? (
         <Card style={{ marginTop: 14, padding: 14 }}>
           <Text style={type.label}>Your day</Text>
           <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 4 }}>
-            {readErr ?? 'Reading…'}
+            {readErr ?? 'Loading…'}
           </Text>
         </Card>
       ) : !checkedIn ? (
         <View style={{ marginTop: 14 }}>
-          <Pressable
+          <PressableScale
             onPress={startDay}
             disabled={starting}
             style={{ flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16, backgroundColor: C.primary, borderRadius: radius.card, boxShadow: shadow.primaryDeep, opacity: starting ? 0.7 : 1 }}>
@@ -966,11 +1194,11 @@ export default function Home() {
                 {starting ? 'Punching in…' : 'Punch in'}
               </Text>
               <Text style={{ fontSize: 13, lineHeight: 18, color: 'rgba(255,255,255,0.82)', marginTop: 2 }}>
-                Takes your photo, marks attendance, starts the timer
+                Takes your photo, marks attendance, starts timer
               </Text>
             </View>
             <Text style={{ fontSize: 20, color: 'rgba(255,255,255,0.6)' }}>›</Text>
-          </Pressable>
+          </PressableScale>
 
           <View style={{ flexDirection: 'row', backgroundColor: C.surface, borderWidth: 1, borderColor: C.hairline, borderRadius: radius.xl, marginTop: 10, overflow: 'hidden' }}>
             {DAY_AHEAD.map((d, i) => (
@@ -984,66 +1212,107 @@ export default function Home() {
           </View>
         </View>
       ) : (
-        <Card style={{ marginTop: 14, padding: 14 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
-            <View style={{ minWidth: 0, flex: 1 }}>
-              <Text style={type.label}>{day.running ? 'On the road' : 'Day closed'}</Text>
-              <Text style={[{ fontSize: 15, color: C.ink }, weight(500)]}>
-                {workedLabel(workedSoFarMs, day.running) + ' · ' + day.stopsDone + ' of ' + day.stops + ' done'}
-              </Text>
-              {/* Two stretches of work is a fact about the day, and this is the
-                  only place it is visible before payroll asks about it. */}
-              {day.sessionCount > 1 ? (
-                <Text style={[type.caption, { marginTop: 2 }]}>{plural(day.sessionCount, 'session')} today</Text>
-              ) : null}
-            </View>
-            {/* NAMED FOR WHERE IT GOES. It read "Navigate", which is the word
-                `NavigateButton` uses two taps away on the journey and visit
-                screens — and that one launches turn-by-turn in Google Maps.
-                One word, two things, pressed on a bike. This opens the list,
-                so it is called what the list is called. */}
-            <Pressable
-              onPress={() => router.push('/journey')}
-              accessibilityRole="button"
-              style={{ height: HIT, paddingHorizontal: 16, borderRadius: radius.xl, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center' }}>
-              <Text numberOfLines={1} style={[{ fontSize: 15, color: '#FFFFFF' }, weight(500)]}>
-                Today’s route
-              </Text>
-            </Pressable>
+        <Card style={{ marginTop: 14, padding: 16 }}>
+          {/* ---- where the day stands ----
+
+              The worked time is the number this card exists for, so it is the
+              large one; the status, the punch-in time and a second stretch of
+              work sit above it as a line rather than competing with it. Two
+              stretches of work is a fact about the day, and this is the only
+              place it is visible before payroll asks about it. */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <View
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: 4,
+                backgroundColor: day.running ? C.success : C.faint,
+              }}
+            />
+            <Text style={[{ fontSize: 13, color: day.running ? C.success : C.muted }, weight(600)]}>
+              {day.running ? 'On the road' : 'Day closed'}
+            </Text>
+            {day.running && day.checkedInAt ? (
+              <Text style={type.caption}>{'since ' + hhmm(day.checkedInAt)}</Text>
+            ) : null}
+            <View style={{ flex: 1 }} />
+            {day.sessionCount > 1 ? <Text style={type.caption}>{plural(day.sessionCount, 'punch-in')}</Text> : null}
           </View>
 
+          <Text
+            style={[
+              { fontSize: 32, lineHeight: 38, letterSpacing: -0.6, color: C.ink, marginTop: 6 },
+              weight(600),
+              tabular,
+            ]}>
+            {workedLabel(workedSoFarMs, day.running)}
+          </Text>
+          <Text style={type.caption}>worked today</Text>
+
+          {/* Shops, and only when there are some. "0 of 0 done" was printed on
+              every unplanned day — a fraction of nothing, read as a failure. */}
+          {day.stops > 0 ? (
+            <View style={{ marginTop: 12 }}>
+              <View style={{ height: 6, borderRadius: 3, backgroundColor: C.hairline, overflow: 'hidden' }}>
+                <View
+                  style={{
+                    width: `${Math.min(100, Math.round((day.stopsDone / day.stops) * 100))}%`,
+                    height: 6,
+                    borderRadius: 3,
+                    backgroundColor: C.primary,
+                  }}
+                />
+              </View>
+              <Text style={[type.caption, { marginTop: 6 }]}>
+                {day.stopsDone + ' of ' + plural(day.stops, 'shop') + ' done'}
+              </Text>
+            </View>
+          ) : (
+            <Text style={[type.caption, { marginTop: 10 }]}>No shops planned today.</Text>
+          )}
+
           {/*
-            Ending the day is the other half of starting it, and it was missing
-            from the design entirely. It is not destructive: a day can be
-            started again afterwards, and the second stretch is ADDED to the
-            first rather than replacing it.
+            TWO ACTIONS, ONE SHAPE, ONE OF THEM FILLED.
+
+            They used to be two different controls — a pill beside the timer and
+            a full-width bar below it, with different corners, heights and type
+            sizes — so the card read as two cards. Now they are a pair, and the
+            only thing that changes between morning and evening is which one is
+            filled. From `mbos.attendance.punchOutPromptHour` it is punching
+            out: every forgotten punch-out is a regularisation for the office
+            and a day with no closing photo, and the grey outline it used to be
+            all day was the quietest control on the screen.
+
+            "Today's route" is NAMED FOR WHERE IT GOES — it opens the list, not
+            turn-by-turn, which is what `NavigateButton` two taps away does.
+            The camera icon says what pressing Punch out does: the camera
+            opens. Ending the day is not destructive — a second punch-in adds a
+            stretch rather than replacing the first.
           */}
-          <Pressable
-            onPress={day.running ? endDay : resumeDay}
-            disabled={starting}
-            style={({ pressed }) => ({
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 8,
-              height: HIT,
-              marginTop: 12,
-              borderRadius: radius.md,
-              borderWidth: 1,
-              borderColor: day.running ? C.border : C.primary,
-              backgroundColor: pressed ? C.wash : day.running ? C.surface : C.primaryTint,
-              opacity: starting ? 0.6 : 1,
-            })}>
-            {/* `camera`, not the clock: what happens when this is pressed is
-                that the camera opens, and the icon that says so is worth more
-                here than the one restating the label. */}
-            <Icon name="camera" size={18} color={day.running ? C.body : C.primaryDeep} />
-            <Text style={[{ fontSize: 15, color: day.running ? C.body : C.primaryDeep }, weight(500)]}>
-              {day.running ? 'Punch out · photo' : 'Punch in again · photo'}
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
+            <DayAction
+              icon="route"
+              label="Today’s route"
+              filled={!punchOutLoud}
+              onPress={() => router.push('/journey')}
+            />
+            <DayAction
+              icon="camera"
+              label={day.running ? 'Punch out' : 'Punch in again'}
+              filled={punchOutLoud}
+              tint={!day.running}
+              disabled={starting}
+              onPress={day.running ? endDay : resumeDay}
+            />
+          </View>
+          {punchOutLoud ? (
+            <Text style={[type.caption, { marginTop: 10, textAlign: 'center' }]}>
+              Done for the day? Punch out so your hours count. It takes your photo.
             </Text>
-          </Pressable>
+          ) : null}
         </Card>
       )}
+      </Swap>
 
       {/* ---- whether this phone will record the day at all ----
 
@@ -1060,17 +1329,81 @@ export default function Home() {
           of that is a prompt he learns to swipe past. It is drawn quietly for
           the same reason — the danger colour belongs to the tracker having
           actually stopped, which is the Sync card's sentence, not this one's. */}
+      {unpaidMeter ? (
+        <Card style={{ marginTop: 12, padding: 14, backgroundColor: C.warnBg }}>
+          <T s="small" style={[{ color: C.ink }, weight(600)]}>
+            {`${dmy(unpaidMeter.day)}: your vehicle km were not counted`}
+          </T>
+          <T s="caption" style={{ color: C.ink, marginTop: 4 }}>
+            You did not punch out, so the app closed the day at its opening reading. If the vehicle has not moved since, photograph the meter now and that day’s km are counted. Your manager will see it was added this morning.
+          </T>
+          <PrimaryButton
+            label={savingLateMeter ? 'Saving…' : 'Add the closing reading'}
+            disabled={savingLateMeter}
+            style={{ marginTop: 10 }}
+            onPress={() => {
+              /* The ride today starts where yesterday ended, so a reading
+                 taken after setting off is not yesterday's. Today's opening
+                 reading, where there is one, is the ceiling. */
+              void (async () => {
+                if (!userId) return;
+                setSavingLateMeter(true);
+                try {
+                  const startOfToday = new Date();
+                  startOfToday.setHours(0, 0, 0, 0);
+                  const ceiling = await todayOpeningKm(userId, startOfToday.getTime());
+                  const shot = await askMeter(
+                    {
+                      title: `Meter for ${dmy(unpaidMeter.day)}`,
+                      subtitle: 'Before you ride today. This becomes that day’s closing reading.',
+                      cancelLabel: 'Not now',
+                    },
+                    unpaidMeter.startKm,
+                  );
+                  if (!shot) return;
+                  const photoId = await queueOdometerPhoto(shot.uri, unpaidMeter.legId);
+                  const saved = await addLateClosingReading({
+                    legId: unpaidMeter.legId,
+                    km: shot.km,
+                    photoId,
+                    todayOpeningKm: ceiling,
+                  });
+                  if (!saved.ok) {
+                    notify(saved.reason, 'error');
+                    return;
+                  }
+                  setUnpaidMeter(null);
+                  notify(`Reading saved. ${dmy(unpaidMeter.day)} will be paid on it.`);
+                } catch {
+                  notify('The reading was not saved. Try again.', 'error');
+                } finally {
+                  setSavingLateMeter(false);
+                }
+              })();
+            }}
+          />
+          <SecondaryButton
+            label="Leave it at 0 km"
+            style={{ marginTop: 8 }}
+            onPress={() => {
+              setUnpaidMeter(null);
+              void dismissUnpaidMeterDay().catch(() => {});
+            }}
+          />
+        </Card>
+      ) : null}
+
       {offerSetup ? (
-        <Pressable
+        <PressableScale
           onPress={() => router.push('/tracking-setup?from=home')}
           accessibilityRole="button"
+          outerStyle={{ marginTop: 12 }}
           style={{
             flexDirection: 'row',
             alignItems: 'center',
             gap: 12,
             minHeight: 56,
             paddingHorizontal: 16,
-            marginTop: 12,
             borderWidth: 1,
             borderColor: C.border,
             backgroundColor: C.surface,
@@ -1083,41 +1416,25 @@ export default function Home() {
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>Keep tracking on</Text>
             <T s="caption" style={{ color: C.muted }}>
-              Two settings on your phone decide whether your route is recorded. Takes a minute.
+              Two phone settings decide if your route is saved. Takes a minute.
             </T>
           </View>
           <Icon name="forward" size={20} color={C.muted} strokeWidth={1.5} />
-        </Pressable>
+        </PressableScale>
       ) : null}
 
 
       {/* ---- the six numbers ---- */}
       <Card padded={false} style={{ marginTop: 22, overflow: 'hidden' }}>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-          {DASH_CARDS.map((d, i) => (
-            <Pressable
-              key={d.l}
-              disabled={!d.route}
-              onPress={() => d.route && router.push(`/${d.route}?from=home`)}
-              style={{
-                width: '50%',
-                padding: 14,
-                minHeight: 84,
-                borderTopWidth: i > 1 ? 1 : 0,
-                borderTopColor: C.wash,
-                borderLeftWidth: i % 2 ? 1 : 0,
-                borderLeftColor: C.wash,
-              }}>
-              <Text numberOfLines={1} style={type.label}>{d.l}</Text>
-              <Text
-                numberOfLines={1}
-                style={[
+          {DASH_CARDS.map((d, i) => {
+            const figureStyle = [
                   /* The line height does not move with the size, so a tile
                      saying a sentence is exactly as tall as one saying a
                      number and the grid cannot jump. */
                   /* A tile's tone belongs to its FIGURE. Left on, the em-dash
                      standing in for a figure nobody has yet read drew in red
-                     under "Collection due" — an alarm about a number that does
+                     under "Outstanding" — an alarm about a number that does
                      not exist. */
                   {
                     fontSize: dashValues[i].small ? 15 : 20,
@@ -1133,12 +1450,38 @@ export default function Home() {
                   },
                   weight(600),
                   tabular,
-                ]}>
-                {dashValues[i].v}
-              </Text>
-              <Text numberOfLines={1} style={{ fontSize: 12, color: C.muted }}>{dashValues[i].s}</Text>
-            </Pressable>
-          ))}
+                ];
+            const figure = dashValues[i];
+            return (
+            <PressableScale
+              key={d.l}
+              disabled={!d.route}
+              onPress={() => d.route && router.push(`/${d.route}${d.route.includes('?') ? '&' : '?'}from=home`)}
+              outerStyle={{ width: '50%' }}
+              style={{
+                padding: 14,
+                minHeight: 84,
+                borderTopWidth: i > 1 ? 1 : 0,
+                borderTopColor: C.wash,
+                borderLeftWidth: i % 2 ? 1 : 0,
+                borderLeftColor: C.wash,
+              }}>
+              <Text numberOfLines={1} style={type.label}>{d.l}</Text>
+              {/* A real figure counts to its new value when it MOVES — an order
+                  taken, a collection made — and simply stands there the first
+                  time it is drawn: `CountUp` mounts with the read, not before
+                  it, and a figure that is not news should not perform. */}
+              {figure.n != null && figure.fmt ? (
+                <CountUp value={figure.n} format={figure.fmt} numberOfLines={1} style={figureStyle} />
+              ) : (
+                <Text numberOfLines={1} style={figureStyle}>
+                  {figure.v}
+                </Text>
+              )}
+              <Text numberOfLines={1} style={{ fontSize: 12, color: C.muted }}>{figure.s}</Text>
+            </PressableScale>
+            );
+          })}
         </View>
       </Card>
 
@@ -1154,11 +1497,11 @@ export default function Home() {
       */}
       {day && neverPulled ? (
         <Card style={{ marginTop: 12, padding: 14 }}>
-          <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>Your book has not arrived</Text>
+          <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>Your customers have not come yet</Text>
           <Text style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 4 }}>
-            Nothing has come down from the office onto this phone yet, so these figures are empty
-            rather than nought. Find some signal and leave MBOS open for a minute — your customers,
-            today&rsquo;s plan and your tasks all arrive together.
+            Nothing has come from the office to this phone yet. That is why these boxes are empty.
+            Go where there is signal. Keep MBOS open for a minute. Your customers,
+            today&rsquo;s plan and your tasks will all come together.
           </Text>
         </Card>
       ) : null}
@@ -1191,7 +1534,7 @@ export default function Home() {
       <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8, marginTop: 22 }}>
         <Text style={[type.label, { flex: 1 }]}>Your leads</Text>
         <Pressable onPress={() => router.push('/lead-actions?from=home')} accessibilityRole="button">
-          <Text style={[{ fontSize: 13, color: C.primaryDeep }, weight(600)]}>What is owed ›</Text>
+          <Text style={[{ fontSize: 13, color: C.primaryDeep }, weight(600)]}>Pending actions ›</Text>
         </Pressable>
       </View>
 
@@ -1227,37 +1570,33 @@ export default function Home() {
           { l: 'Overdue', v: leads?.counts.overdue, href: '/lead-actions?view=overdue&from=home', tone: C.danger },
           { l: 'Due today', v: leads?.counts.today, href: '/lead-actions?view=today&from=home', tone: C.ink },
         ] as const).map((stat, i) => (
-          <Pressable
+          <PressableScale
             key={stat.l}
             onPress={() => router.push(stat.href)}
             accessibilityRole="button"
+            outerStyle={{ flex: 1 }}
             style={{
-              flex: 1,
               paddingVertical: 12,
               paddingHorizontal: 8,
               alignItems: 'center',
               borderLeftWidth: i ? 1 : 0,
               borderLeftColor: C.hairline,
             }}>
-            <Text
-              style={[
-                {
-                  fontSize: 19,
-                  lineHeight: 24,
-                  color:
-                    leadsPending || stat.v === undefined
-                      ? C.muted
-                      : stat.v > 0
-                        ? stat.tone
-                        : C.ink,
-                },
-                weight(600),
-                tabular,
-              ]}>
-              {leadsPending || stat.v === undefined ? '—' : String(stat.v)}
-            </Text>
+            {leadsPending || stat.v === undefined ? (
+              <Text style={[{ fontSize: 19, lineHeight: 24, color: C.muted }, weight(600), tabular]}>—</Text>
+            ) : (
+              <CountUp
+                value={stat.v}
+                format={whole}
+                style={[
+                  { fontSize: 19, lineHeight: 24, color: stat.v > 0 ? stat.tone : C.ink },
+                  weight(600),
+                  tabular,
+                ]}
+              />
+            )}
             <Text style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{stat.l}</Text>
-          </Pressable>
+          </PressableScale>
         ))}
       </View>
 
@@ -1271,30 +1610,32 @@ export default function Home() {
       */}
       {readErr ? (
         <Card style={{ marginTop: 10, padding: 14 }}>
-          <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted }}>Not read on this phone.</Text>
+          <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted }}>Did not load on this phone.</Text>
         </Card>
       ) : !leads ? (
         <Card style={{ marginTop: 10, padding: 14 }}>
-          <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted }}>Reading…</Text>
+          <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted }}>Loading…</Text>
         </Card>
       ) : neverPulled ? null /* the card above already says it, in full */ : leads.counts.working === 0 ? (
         <Card style={{ marginTop: 10, padding: 14 }}>
           <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted }}>
-            No leads being worked. A shop you walk past is how a new one starts.
+            No open leads. Add a new shop you see as a lead.
           </Text>
         </Card>
       ) : leads.dueToday.length === 0 ? (
         <Card style={{ marginTop: 10, padding: 14 }}>
           <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted }}>
             {leads.counts.overdue
-              ? 'Nothing owed today — but ' + plural(leads.counts.overdue, 'lead') + ' past its day.'
-              : 'Nothing owed on a lead today.'}
+              ? 'Nothing pending today. ' + plural(leads.counts.overdue, 'lead') + ' overdue.'
+              : 'No lead actions pending today.'}
           </Text>
         </Card>
       ) : (
         <View style={{ gap: 10, marginTop: 10 }}>
-          {leads.dueToday.map((lead) => (
-            <LeadActionCard key={lead.id} lead={lead} meId={userId} from="home" />
+          {leads.dueToday.map((lead, i) => (
+            <Stagger key={lead.id} index={i}>
+              <LeadActionCard lead={lead} meId={userId} from="home" />
+            </Stagger>
           ))}
           {/* A capped list says what it is a slice of. Six cards over a due
               count of nineteen with nothing saying so is a screen quietly
@@ -1304,7 +1645,7 @@ export default function Home() {
               onPress={() => router.push('/lead-actions?view=today&from=home')}
               accessibilityRole="button">
               <Text style={[type.caption, { textAlign: 'center' }]}>
-                {'Showing ' + leads.dueToday.length + ' of ' + leads.counts.today + ' — tap for the rest'}
+                {'Showing ' + leads.dueToday.length + ' of ' + leads.counts.today + '. Tap to see all.'}
               </Text>
             </Pressable>
           ) : null}
@@ -1327,23 +1668,23 @@ export default function Home() {
           A sentence that was honest when it was written became the one place
           in the app that contradicted the rest of it, on the screen a salesman
           sees first. It reads the same cache that screen does. */}
-      <Pressable
+      <PressableScale
         onPress={() => router.push('/performance?from=home')}
-        style={{ marginTop: 12 }}>
+        outerStyle={{ marginTop: 12 }}>
         <Card style={{ padding: 14 }}>
           <Text style={type.label}>Your target</Text>
           {readErr ? (
             /* The read failed, and "the office has not set one" would be a
                claim about the office rather than about this phone. */
             <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 6 }}>
-              Not read on this phone.
+              Did not load on this phone.
             </Text>
           ) : month === undefined ? (
-            <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 6 }}>Reading…</Text>
+            <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 6 }}>Loading…</Text>
           ) : month === null || !month.hasTarget ? (
             <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 6 }}>
-              The office has not set one. Today&rsquo;s orders, visits and collections are in the six
-              figures above.
+              The office has not set a target yet. Today&rsquo;s orders, visits and collections
+              are in the boxes above.
             </Text>
           ) : (
             <>
@@ -1354,16 +1695,25 @@ export default function Home() {
                   somebody would otherwise be congratulated for. The score is
                   the office's and is printed, never recomputed here. */}
               <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8, marginTop: 2 }}>
-                <Text style={[{ fontSize: 22, lineHeight: 28, color: C.ink }, weight(600), tabular]}>
-                  {month.totalScoreBp == null ? '—' : (month.totalScoreBp / 100).toFixed(0)}
-                </Text>
+                {/* The office recomputes this hourly; when it has moved since
+                    the last look it counts there, which is the only way a
+                    64 becoming 72 reads as progress rather than as a number. */}
+                {month.totalScoreBp == null ? (
+                  <Text style={[{ fontSize: 22, lineHeight: 28, color: C.ink }, weight(600), tabular]}>—</Text>
+                ) : (
+                  <CountUp
+                    value={month.totalScoreBp / 100}
+                    format={(x) => x.toFixed(1)}
+                    style={[{ fontSize: 22, lineHeight: 28, color: C.ink }, weight(600), tabular]}
+                  />
+                )}
                 <Text style={{ fontSize: 13, color: C.muted }}>out of 100</Text>
                 {month.rating ? (
                   <Text style={{ fontSize: 13, color: C.muted }}>{'· ' + month.rating}</Text>
                 ) : null}
               </View>
               <Text style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 4 }}>
-                {shortfalls(month)[0] ?? 'You are at or above every target set for you.'}
+                {shortfalls(month)[0] ?? 'You have reached every target set for you.'}
               </Text>
               {/*
                 WHICH MONTH, AND WHEN IT WAS WORKED OUT.
@@ -1382,12 +1732,12 @@ export default function Home() {
               <Text style={[type.caption, { marginTop: 4 }]}>
                 {monthLabel(month.period) +
                   (month.computedAt ? ' · as at ' + asAt(month.computedAt) : '') +
-                  ' · tap for the rest'}
+                  ' · tap to see more'}
               </Text>
             </>
           )}
         </Card>
-      </Pressable>
+      </PressableScale>
 
       <SelfieCamera
         open={selfieOpen}
@@ -1422,7 +1772,7 @@ export default function Home() {
             How are you travelling today?
           </T>
           <T s="small" style={{ marginTop: 4 }}>
-            Asked once, for this session. You are not asked again at each shop.
+            Asked once for this check-in. Not asked again at each shop.
           </T>
 
           <TravelModeList
@@ -1458,7 +1808,7 @@ export default function Home() {
             {(claimPrompt?.modeLabel
               ? `You travelled by ${claimPrompt.modeLabel.toLowerCase()} today. `
               : '') +
-              'Fares, food and anything else you spent reach the office only if you add them — with a photo or PDF of each bill. It takes a minute now.'}
+              'The office pays fares, food and other costs only if you add them. Add a photo or PDF of each bill. It takes a minute.'}
           </T>
           <View style={{ marginTop: 14 }}>
             <PrimaryButton
@@ -1482,6 +1832,8 @@ export default function Home() {
         cancelLabel={meterWords.cancelLabel}
         previousKm={meterFrom}
         maxLegKilometres={maxLegKm}
+        /* Home only ever reads the meter at the two ends of the day. */
+        span="day"
         onDone={(result) => {
           setMetering(false);
           answerMeter.current?.(result);

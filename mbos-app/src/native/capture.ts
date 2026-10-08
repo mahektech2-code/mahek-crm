@@ -66,7 +66,7 @@ export async function pickPhotos(args: {
   kind: MediaKind;
   max: number;
 }): Promise<{ ok: true; picked: Picked[] } | { ok: false; reason: string }> {
-  if (args.max <= 0) return { ok: false, reason: 'No more files can be attached to this claim.' };
+  if (args.max <= 0) return { ok: false, reason: 'You cannot add more files to this claim.' };
   const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
   if (!perm.granted) return { ok: false, reason: 'Photo library permission is off.' };
   const result = await ImagePicker.launchImageLibraryAsync({
@@ -103,7 +103,7 @@ export async function pickDocuments(args: {
   max: number;
   maxSizeMb: number;
 }): Promise<{ ok: true; picked: Picked[]; refused: string[] } | { ok: false; reason: string }> {
-  if (args.max <= 0) return { ok: false, reason: 'No more files can be attached to this claim.' };
+  if (args.max <= 0) return { ok: false, reason: 'You cannot add more files to this claim.' };
   /*
    * LOADED HERE, NOT AT THE TOP OF THE FILE, and that is what lets this
    * JavaScript run on an older APK.
@@ -121,7 +121,7 @@ export async function pickDocuments(args: {
   } catch {
     return {
       ok: false,
-      reason: 'Attaching PDFs needs the latest MBOS app. Take a photo of the bill instead, or ask for the update.',
+      reason: 'To add PDFs, you need the latest MBOS app. Take a photo of the bill instead, or ask for the update.',
     };
   }
   const result = await DocumentPicker.getDocumentAsync({
@@ -134,7 +134,7 @@ export async function pickDocuments(args: {
   const refused: string[] = [];
   for (const asset of result.assets) {
     if (picked.length >= args.max) {
-      refused.push(`${asset.name} — this claim already has as many files as it can take`);
+      refused.push(`${asset.name}: this claim already has the most files it can take`);
       continue;
     }
     const mime = asset.mimeType ?? '';
@@ -149,12 +149,12 @@ export async function pickDocuments(args: {
       continue;
     }
     if (mime !== 'application/pdf') {
-      refused.push(`${asset.name} — only PDFs and photographs can be attached`);
+      refused.push(`${asset.name}: you can add only PDFs and photos`);
       continue;
     }
     const mb = (asset.size ?? 0) / (1024 * 1024);
     if (mb > args.maxSizeMb) {
-      refused.push(`${asset.name} is ${mb.toFixed(1)} MB and the limit is ${args.maxSizeMb} MB`);
+      refused.push(`${asset.name} is ${mb.toFixed(1)} MB. The limit is ${args.maxSizeMb} MB`);
       continue;
     }
     const mediaId = await queueFile({
@@ -248,17 +248,6 @@ export async function prepareMicrophone(): Promise<
   }
 
   return { ok: true };
-}
-
-/**
- * The recorder hook the visit screen uses.
- *
- * `expo-audio` owns the recorder object; this only wraps the queueing, so
- * stopping a recording writes it to the media queue and hands back an id the
- * visit can hold on to.
- */
-export function useVoiceRecorder() {
-  return useAudioRecorder(DICTATION);
 }
 
 export async function queueRecording(uri: string, parentType: string, parentId: string): Promise<string> {

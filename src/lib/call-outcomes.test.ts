@@ -15,7 +15,12 @@ import {
   outcomeFieldsFor,
   outcomeFieldsVisible,
 } from "@/lib/call-outcomes";
-import { nextActionsFor, reminderTypeFor, wantsDate } from "@/lib/call-reasons";
+import {
+  NEXT_ACTION_LABEL,
+  nextActionsFor,
+  reminderTypeFor,
+  wantsDate,
+} from "@/lib/call-reasons";
 
 /* ---------------------------------------------------------------------------
  * WHAT EACH OUTCOME ASKS FOR.
@@ -121,23 +126,52 @@ test("what the customer wants done is what routes it", () => {
  * ------------------------------------------------------------------------- */
 
 test("the outcome's list wins over the reason's", () => {
-  /* Somebody who rang to ask a price and ended up ordering needs chasing for
-     payment, not sending a quotation. */
-  const codes = nextActionsFor("price_quotation", "order_taken").map((a) => a.code);
-  assert.deepEqual(codes, [
-    "no_follow_up",
+  /* Order Taken asks nothing next, and that holds even on a call whose REASON
+     has a list of its own: somebody who rang to ask a price and ended up
+     ordering must not be offered a quotation to send. An empty list from the
+     outcome is an answer, not a gap to fall through. */
+  assert.deepEqual(nextActionsFor("price_quotation", "order_taken"), []);
+  /* Pay Promise offers the chase on the promised date, or nothing further. */
+  assert.deepEqual(
+    nextActionsFor("price_quotation", "payment_promised").map((a) => a.code),
+    ["follow_up_on_promise", "no_follow_up"],
+  );
+});
+
+test("an outbound order is asked nothing, same as an inbound one", () => {
+  assert.deepEqual(nextActionsFor(null, "order_taken"), []);
+  assert.deepEqual(nextActionsFor("place_order", "order_taken"), []);
+});
+
+test("retired next-action codes are never offered, and still read", () => {
+  /* Calls and reminders already saved carry these. They must keep their label,
+     their date rule and their reminder type — only the picker lost them. */
+  const retired = [
     "follow_up_payment",
     "follow_up_dispatch",
     "follow_up_after_delivery",
-  ]);
-});
-
-test("an outbound order is asked the same four as an inbound one", () => {
-  /* No reason to look up — the goods and the money do not care who dialled. */
-  assert.deepEqual(
-    nextActionsFor(null, "order_taken").map((a) => a.code),
-    nextActionsFor("place_order", "order_taken").map((a) => a.code),
+    "follow_up_before_promise",
+  ];
+  const offered = new Set(
+    ["order_taken", "payment_promised"].flatMap((o) =>
+      nextActionsFor("place_order", o).map((a) => a.code),
+    ),
   );
+  for (const code of retired) {
+    assert.ok(!offered.has(code), `${code} is still offered`);
+    assert.ok(NEXT_ACTION_LABEL[code], `${code} lost its label`);
+  }
+  assert.equal(
+    NEXT_ACTION_LABEL.follow_up_before_promise,
+    "Follow up before the promised date",
+  );
+  assert.equal(reminderTypeFor(["follow_up_before_promise"]), "payment_promise");
+  assert.equal(NEXT_ACTION_LABEL.no_follow_up, "No further follow-up required");
+  assert.equal(reminderTypeFor(["follow_up_payment"]), "payment_promise");
+  assert.equal(reminderTypeFor(["follow_up_after_delivery"]), "call_back");
+  assert.equal(wantsDate(["follow_up_payment"]), true);
+  assert.equal(wantsDate(["follow_up_dispatch"]), true);
+  assert.equal(wantsDate(["follow_up_after_delivery"]), true);
 });
 
 test("no order and follow-up each offer a way out and a way on", () => {

@@ -1,4 +1,5 @@
 import * as Updates from 'expo-updates';
+import { reloadIsSafe } from './reload-guard';
 import * as Application from 'expo-application';
 
 /**
@@ -73,8 +74,10 @@ export async function fetchUpdateInBackground(): Promise<'none' | 'ready' | 'app
        under somebody mid-visit, with a half-filled order form on screen, would
        lose work to deliver the change. It is already downloaded; the next time
        he opens the app it is what runs. Every saved record is in SQLite, so a
-       reload inside the window loses nothing. */
-    if (Date.now() - LOADED_AT <= APPLY_WINDOW_MS) {
+       reload inside the window loses nothing — and `reloadIsSafe` is what
+       makes that true rather than assumed: an open camera or sheet, or any
+       screen past Home, holds it off. See `reload-guard.ts`. */
+    if (Date.now() - LOADED_AT <= APPLY_WINDOW_MS && reloadIsSafe()) {
       await Updates.reloadAsync();
       return 'applied';
     }
@@ -83,6 +86,33 @@ export async function fetchUpdateInBackground(): Promise<'none' | 'ready' | 'app
     /* No signal, the update server down, a bundle that will not verify. The
        app is running perfectly on the bundle it has, and there is nothing for
        the salesman to do about any of it. */
+    return 'failed';
+  }
+}
+
+/**
+ * FETCH A NEW BUNDLE BECAUSE HE ASKED, and never apply it under him.
+ *
+ * The refresh button's half of `fetchUpdateInBackground`. That one may reload
+ * inside the first seconds of a cold start; this one never reloads at all,
+ * because it runs on a press from whatever screen he is on — possibly with an
+ * order half typed. `ready` means a bundle newer than the one running is on the
+ * phone, and the caller offers a restart that `restartApp` performs only when
+ * he says yes.
+ *
+ * `checkForUpdateAsync` compares against the RUNNING bundle, so a bundle the
+ * background check already downloaded still answers available here — and the
+ * fetch then costs nothing, because it is already on disk. That is the case the
+ * button exists for: downloaded days ago, never launched.
+ */
+export async function downloadUpdate(): Promise<'none' | 'ready' | 'off' | 'failed'> {
+  if (!Updates.isEnabled) return 'off';
+  try {
+    const check = await Updates.checkForUpdateAsync();
+    if (!check.isAvailable) return 'none';
+    await Updates.fetchUpdateAsync();
+    return 'ready';
+  } catch {
     return 'failed';
   }
 }

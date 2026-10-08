@@ -7,10 +7,13 @@ import {
   Badge,
   Button,
   Card,
+  Checkbox,
   EmptyState,
   Field,
   Input,
   MetricStrip,
+  MoneyInput,
+  Textarea,
   PageHeader,
   Select,
   SlowPayerBadge,
@@ -27,8 +30,24 @@ import {
   Modal,
   RowMenu,
   SelectionBar,
+  Tabs,
 } from "@/components/ui/overlays";
+import { CustomerContactsPanel } from "@/components/customers/customer-contacts-panel";
+import { birthdaySentence, type UpcomingBirthday } from "@/lib/customer-contacts";
+import {
+  loadCustomerEditor,
+  type CustomerEditorData,
+} from "@/lib/actions/customer-contacts";
 import { MultiSelect } from "@/components/ui/multi-select";
+import { PlaceCell, PlaceFilterSelects } from "@/components/ui/place-filter-selects";
+import {
+  PLACE_FILTER_KINDS,
+  PLACE_FILTER_LABELS,
+  placePickPatch,
+  type PlaceFilterOptions,
+  type PlaceFilterValues,
+  type PlaceNames,
+} from "@/lib/place-filters";
 import { useToast } from "@/components/ui/toast";
 import { AccountManagerDialog } from "@/components/crm/account-manager-dialog";
 import { SalesManagerDialog } from "@/components/crm/sales-manager-dialog";
@@ -68,6 +87,8 @@ export type Row = {
   contactPerson: string | null;
   phone: string;
   city: string;
+  /** Where the shop is on the reviewed location tree; null where it is not placed. */
+  place: PlaceNames | null;
   ownerId: string | null;
   /**
    * Whose book it is, for a CUSTOMER. Not the same column as the owner, and
@@ -118,6 +139,8 @@ export type Row = {
   reactivationReason: string | null;
   /** The next call, as of the last call logged. Null where nobody has called. */
   nextStep: StoredNextStep | null;
+  /** Contacts with a birthday inside the heads-up window, soonest first. */
+  birthdays?: UpcomingBirthday[];
 };
 
 /**
@@ -161,7 +184,7 @@ export function CustomersScreen({
   amReasons,
   amSearchThreshold,
   amOptions,
-  cityOptions,
+  placeOptions,
   team,
   backOfficePeople,
   salesManagerPeople,
@@ -213,18 +236,10 @@ export function CustomersScreen({
   /** The names each filter offers — the ones the column actually shows. */
   amOptions: { sales: string[]; salesManager: string[]; backOffice: string[] };
   /**
-   * EVERY CITY IN THE BOOK, read on the server each time this page loads —
-   * see `listCityFilterOptions`.
-   *
-   * A list rather than a set of names like `amOptions`, because these carry
-   * their shop count in the label and are ordered by it: `customers.city` is
-   * whatever the sheet typed, several hundred values on the real book with
-   * whole postal addresses among them, and alphabetical order buries the
-   * places somebody actually means. The `MultiSelect` draws its own search
-   * box past eight options and scrolls internally, so the long tail costs
-   * nothing to carry.
+   * State, district, city and area, counted over this book and narrowed by
+   * whatever is picked above each — see `listPlaceFilterOptions`.
    */
-  cityOptions: { value: string; label: string }[];
+  placeOptions: PlaceFilterOptions;
   team: Array<{ id: string; name: string; role?: string }>;
   /** Accounts plus the current HRMS employees — the back office seat only. */
   backOfficePeople: Array<{ id: string; name: string; role?: string }>;
@@ -250,7 +265,7 @@ export function CustomersScreen({
     salesAm: string;
     salesManager: string;
     backOfficeAm: string;
-    city: string;
+    places: PlaceFilterValues;
     /** The type filter's own word, or empty for all of them. */
     accountType: string;
     /** "column:asc"/"column:desc", or empty — see lib/sort-param.ts. */
@@ -308,7 +323,7 @@ export function CustomersScreen({
   const salesAm = filters.salesAm || "";
   const salesManager = filters.salesManager || "";
   const backOfficeAm = filters.backOfficeAm || "";
-  const city = filters.city || "";
+  const places = filters.places;
   const accountTypeFilter = filters.accountType || "";
   const perPage = filters.perPage;
   const { page, pageCount, total, bookTotal } = pageInfo;
@@ -463,12 +478,14 @@ export function CustomersScreen({
           clear: () => navigate({ party: undefined }),
         }
       : null,
-    city
-      ? {
-          label: `City: ${describeMulti(city, cityOptions)}`,
-          clear: () => navigate({ city: undefined }),
-        }
-      : null,
+    ...PLACE_FILTER_KINDS.map((kind) =>
+      places[kind]
+        ? {
+            label: `${PLACE_FILTER_LABELS[kind]}: ${describeMulti(places[kind] ?? "", placeOptions[kind])}`,
+            clear: () => navigate(placePickPatch(kind, [])),
+          }
+        : null,
+    ),
     query ? { label: `Search: ${query}`, clear: () => { setDraft(""); navigate({ q: undefined }); } } : null,
   ].filter(Boolean) as Array<{ label: string; clear: () => void }>;
 
@@ -487,7 +504,10 @@ export function CustomersScreen({
       salesmanager: undefined,
       backoffice: undefined,
       party: undefined,
+      state: undefined,
+      district: undefined,
       city: undefined,
+      area: undefined,
     });
   }
 
@@ -512,7 +532,11 @@ export function CustomersScreen({
           "Customer",
           "Contact",
           "Phone",
+          "Area",
           "City",
+          "District",
+          "State",
+          "City (as typed)",
           "Type",
           "Deliveries received on another's bill",
           "Third-party customers billed for",
@@ -526,11 +550,16 @@ export function CustomersScreen({
           "Outstanding (₹)",
           "Next call",
           "Next call said on",
+          "Birthdays coming up",
         ],
         subset.map((r) => [
           r.name,
           r.contactPerson,
           r.phone,
+          r.place?.area ?? "",
+          r.place?.city ?? "",
+          r.place?.district ?? "",
+          r.place?.state ?? "",
           r.city,
           accountType(r),
           r.deliveredOrders,
@@ -549,6 +578,7 @@ export function CustomersScreen({
             ? (r.nextStep.date ?? NEXT_STEP_LABELS[r.nextStep.kind].short)
             : "",
           r.nextStep?.toldOn ?? "",
+          (r.birthdays ?? []).map(birthdaySentence).join("; "),
         ]),
       ),
       [
@@ -565,7 +595,11 @@ export function CustomersScreen({
         accountTypeFilter
           ? `Type: ${describeMulti(accountTypeFilter, accountTypeOptions)}`
           : null,
-        city ? `City: ${describeMulti(city, cityOptions)}` : null,
+        ...PLACE_FILTER_KINDS.map((kind) =>
+          places[kind]
+            ? `${PLACE_FILTER_LABELS[kind]}: ${describeMulti(places[kind] ?? "", placeOptions[kind])}`
+            : null,
+        ),
         query || null,
       ],
     );
@@ -690,7 +724,7 @@ export function CustomersScreen({
         ]}
       />
 
-      <Card className="mb-0 flex items-center gap-2.5 rounded-b-none border-b-0 px-4 py-3">
+      <Card className="mb-0 flex flex-wrap items-center gap-2.5 rounded-b-none border-b-0 px-4 py-3">
         <div className="relative w-[300px]">
           <Icon
             name="search"
@@ -778,21 +812,14 @@ export function CustomersScreen({
           onChange={(next) => navigate({ backoffice: next.join(",") || undefined })}
         />
         {/*
-          WHERE THE SHOP IS. Last in the bar because it is the widest list by a
-          long way and the one most often left alone — the four before it are
-          short, closed sets, and this is the book's own free text.
-
-          Nothing special is needed to make it usable: `MultiSelect` already
-          draws a search box past eight options and scrolls its list inside a
-          fixed panel, so a few hundred cities behave exactly like the five
-          statuses beside them.
+          WHERE THE SHOP IS — state, district, city and area off the reviewed
+          location tree. Last in the bar because they are the widest lists;
+          each narrows the ones after it.
         */}
-        <MultiSelect
-          label="City"
-          placeholder="All cities"
-          options={cityOptions}
-          selected={asList(city)}
-          onChange={(next) => navigate({ city: next.join(",") || undefined })}
+        <PlaceFilterSelects
+          options={placeOptions}
+          values={places}
+          onChange={(patch) => navigate(patch)}
         />
         {chips.length ? (
           <button
@@ -888,7 +915,7 @@ export function CustomersScreen({
                   direction={sort?.direction ?? "asc"}
                   onSort={() => sortBy("city")}
                 >
-                  City
+                  Location
                 </SortableTh>
                 <Th align="right" className={pinnedHead("right")}>
                   Actions
@@ -948,6 +975,15 @@ export function CustomersScreen({
                       >
                         {r.name}
                       </Link>
+                      {r.birthdays?.length ? (
+                        <span
+                          className="ml-2 inline-flex shrink-0 text-brand"
+                          title={r.birthdays.map(birthdaySentence).join("\n")}
+                          aria-label={r.birthdays.map(birthdaySentence).join("; ")}
+                        >
+                          <Icon name="gift" size={14} />
+                        </span>
+                      ) : null}
                       {r.slowPayer ? (
                         <span className="ml-2 shrink-0">
                           <SlowPayerBadge />
@@ -1146,7 +1182,9 @@ export function CustomersScreen({
                   <Td>
                     <NextCallCell step={r.nextStep} today={todayIso} />
                   </Td>
-                  <Td>{r.city}</Td>
+                  <Td>
+                    <PlaceCell place={r.place} typed={r.city} />
+                  </Td>
                   {/*
                     Pinned, because the table is wide enough to scroll and the
                     way to act on a row must not depend on where it happens to
@@ -2040,6 +2078,97 @@ type CustomerFormProps = {
   onSubmit: (values: Record<string, unknown>) => Promise<boolean>;
 };
 
+/** A tab not on screen stays mounted, so nothing typed in it is lost. */
+const HIDDEN: React.CSSProperties = { display: "none" };
+
+type EditTab = "details" | "contacts" | "address" | "commercial" | "managers";
+
+/** The extra fields as the inputs hold them — strings, and two switches. */
+type DetailValues = {
+  externalCode: string;
+  customerType: string;
+  potential: string;
+  potentialMonthly: string;
+  rating: string;
+  segmentation: string;
+  dealerCode: string;
+  customerSince: string;
+  specialInstructions: string;
+  email: string;
+  whatsappDest: string;
+  whatsappGroupName: string;
+  address: string;
+  region: string;
+  area: string;
+  beat: string;
+  territoryRegion: string;
+  visitFrequencyDays: string;
+  creditLimit: string;
+  creditBlocked: boolean;
+  creditBlockReason: string;
+  priceTag: string;
+  freightTerm: string;
+  deliveryType: string;
+  doNotContact: boolean;
+};
+
+const rupeesOf = (paise: number | null) => (paise === null ? "" : String(paise / 100));
+
+export function detailValuesOf(c: CustomerEditorData["customer"]): DetailValues {
+  return {
+    externalCode: c.externalCode ?? "",
+    customerType: c.customerType ?? "",
+    potential: c.potential ?? "",
+    potentialMonthly: rupeesOf(c.potentialMonthlyPaise),
+    rating: c.rating ?? "",
+    segmentation: c.segmentation ?? "",
+    dealerCode: c.dealerCode ?? "",
+    customerSince: c.customerSince ?? "",
+    specialInstructions: c.specialInstructions ?? "",
+    email: c.email ?? "",
+    whatsappDest: c.whatsappDest,
+    whatsappGroupName: c.whatsappGroupName ?? "",
+    address: c.address ?? "",
+    region: c.region ?? "",
+    area: c.area ?? "",
+    beat: c.beat ?? "",
+    territoryRegion: c.territoryRegion ?? "",
+    visitFrequencyDays: c.visitFrequencyDays === null ? "" : String(c.visitFrequencyDays),
+    creditLimit: rupeesOf(c.creditLimitPaise),
+    creditBlocked: c.creditBlocked,
+    creditBlockReason: c.creditBlockReason ?? "",
+    priceTag: c.priceTag ?? "",
+    freightTerm: c.freightTerm ?? "",
+    deliveryType: c.deliveryType ?? "",
+    doNotContact: c.doNotContact,
+  };
+}
+
+/** Rupees typed in a box to paise, or null for a blank. Never a guess. */
+function paiseOf(rupees: string): number | null {
+  const v = rupees.replace(/[,\s₹]/g, "");
+  if (!v) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.round(n * 100) : null;
+}
+
+/**
+ * What the server should be told: only the fields that MOVED, in the shape
+ * `updateCustomer` takes. Pure, so the count under the form and the payload
+ * cannot disagree.
+ */
+export function detailChanges(before: DetailValues, after: DetailValues): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const k of Object.keys(after) as Array<keyof DetailValues>) {
+    if (before[k] === after[k]) continue;
+    if (k === "potentialMonthly") out.potentialMonthlyPaise = paiseOf(after.potentialMonthly);
+    else if (k === "creditLimit") out.creditLimitPaise = paiseOf(after.creditLimit);
+    else if (k === "visitFrequencyDays") out.visitFrequencyDays = after.visitFrequencyDays ? Number(after.visitFrequencyDays) : null;
+    else out[k] = typeof after[k] === "string" ? (after[k] as string).trim() : after[k];
+  }
+  return out;
+}
+
 /** Keyed on the customer so editing one never leaks fields into the next. */
 function CustomerForm(props: CustomerFormProps) {
   if (!props.open) return null;
@@ -2066,8 +2195,10 @@ function CustomerFormBody({
   const [busy, setBusy] = React.useState(false);
   const [values, setValues] = React.useState<Record<string, string>>({
     name: initial?.name ?? "",
-    contactPerson: initial?.contactPerson ?? "",
-    phone: initial?.phone ?? "",
+    // No phone and no contact person here any more: those are the CONTACTS
+    // tab, which writes them as mirrors of the primary contact. Sending the
+    // row's copy back on every save would re-assert a number the contacts
+    // list may have just moved.
     city: initial?.city ?? "",
     /*
      * The ASSIGNED person, which for a customer is the sales AM and only
@@ -2123,6 +2254,46 @@ function CustomerFormBody({
       setValues((v) => ({ ...v, [k]: e.target.value }));
 
   /*
+   * EVERYTHING ELSE ON THE RECORD, read fresh when the form opens. The list
+   * row carries a dozen columns and this form edits thirty, so the rest is
+   * asked for here rather than shipped on every row of every page.
+   *
+   * Only what MOVED is sent on Save (`detailChanges`), so opening the form and
+   * pressing Save writes nothing it did not have to — and a credit limit the
+   * clerk cannot change is never sent back for the server to refuse.
+   */
+  const [tab, setTab] = React.useState<EditTab>("details");
+  const [editor, setEditor] = React.useState<CustomerEditorData | null>(null);
+  const [editorError, setEditorError] = React.useState<string | null>(null);
+  const [detail, setDetail] = React.useState<DetailValues | null>(null);
+  const customerId = initial?.id;
+  React.useEffect(() => {
+    if (!customerId) return;
+    let alive = true;
+    loadCustomerEditor(customerId).then(
+      (r) => {
+        if (!alive) return;
+        if (r.ok) {
+          setEditor(r.data);
+          setDetail(detailValuesOf(r.data.customer));
+        } else setEditorError(r.error);
+      },
+      () => alive && setEditorError("Could not read the rest of this record."),
+    );
+    return () => {
+      alive = false;
+    };
+  }, [customerId]);
+  const setD =
+    (k: keyof DetailValues) =>
+    (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
+      setDetail((d) => (d ? { ...d, [k]: e.target.value } : d));
+  const setFlag = (k: "creditBlocked" | "doNotContact") => (on: boolean) =>
+    setDetail((d) => (d ? { ...d, [k]: on } : d));
+  const changes = editor && detail ? detailChanges(detailValuesOf(editor.customer), detail) : {};
+  const changedCount = Object.keys(changes).length;
+
+  /*
    * Whether either account manager actually moved, compared against what the
    * record held when the form opened. This is what decides whether a reason is
    * asked for and whether the audited action is called at all — saving a form
@@ -2160,7 +2331,7 @@ function CustomerFormBody({
       open={open}
       onClose={onClose}
       title={title}
-      width={560}
+      width={780}
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>
@@ -2172,7 +2343,7 @@ function CustomerFormBody({
             onClick={async () => {
               setBusy(true);
               try {
-                await onSubmit(values);
+                await onSubmit({ ...values, ...changes });
               } finally {
                 setBusy(false);
               }
@@ -2183,7 +2354,27 @@ function CustomerFormBody({
         </>
       }
     >
-      <div className="grid grid-cols-2 gap-3">
+      <Tabs
+        className="-mx-5 -mt-4 mb-4 px-3"
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { key: "details", label: "Details" },
+          { key: "contacts", label: "Contacts", ...(editor ? { count: editor.contacts.length } : {}) },
+          { key: "address", label: "Address & area" },
+          { key: "commercial", label: "Commercial" },
+          { key: "managers", label: "Account managers" },
+        ]}
+      />
+      {editorError ? (
+        <div className="mb-3 rounded-[4px] border border-danger-soft bg-danger-soft px-3 py-2 text-[13px] text-danger">
+          {editorError} The name, city and managers can still be saved.
+        </div>
+      ) : null}
+
+      {/* One height for every tab, so the dialog does not jump as you move. */}
+      <div className="min-h-[440px]">
+      <div className="grid grid-cols-2 gap-3" style={tab === "details" ? undefined : HIDDEN}>
         <Field label="Business name · required" className="col-span-2">
           <Input
             value={values.name ?? ""}
@@ -2191,23 +2382,252 @@ function CustomerFormBody({
             placeholder="As it appears on the bill"
           />
         </Field>
-        <Field label="Contact person">
-          <Input
-            value={values.contactPerson ?? ""}
-            onChange={set("contactPerson")}
-          />
-        </Field>
-        <Field label="Telephone · required" hint="10 digits, no country code">
-          <Input
-            value={values.phone ?? ""}
-            onChange={set("phone")}
-            inputMode="numeric"
-            maxLength={10}
-          />
-        </Field>
+        {detail ? (
+          <>
+            <Field label="Customer code" hint="The code on the sheet or in Tally.">
+              <Input value={detail.externalCode} onChange={setD("externalCode")} />
+            </Field>
+            <Field label="Dealer code">
+              <Input value={detail.dealerCode} onChange={setD("dealerCode")} />
+            </Field>
+            <Field label="Type of business">
+              <Select value={detail.customerType} onChange={setD("customerType")}>
+                <option value="">Not stated</option>
+                <option value="dealer">Dealer</option>
+                <option value="retailer">Retailer</option>
+                <option value="distributor">Distributor</option>
+                <option value="manufacturer">Manufacturer</option>
+              </Select>
+            </Field>
+            <Field label="Customer since">
+              <Input type="date" value={detail.customerSince} onChange={setD("customerSince")} />
+            </Field>
+            <Field label="Potential">
+              <Select value={detail.potential} onChange={setD("potential")}>
+                <option value="">Not judged</option>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+              </Select>
+            </Field>
+            <Field label="Could buy a month (₹)" hint="An estimate — saved with your name and today's date.">
+              <MoneyInput value={detail.potentialMonthly} onChange={setD("potentialMonthly")} />
+            </Field>
+            <Field label="Rating">
+              <Input value={detail.rating} onChange={setD("rating")} placeholder="How valuable back office rates it" />
+            </Field>
+            <Field label="Segment">
+              <Input value={detail.segmentation} onChange={setD("segmentation")} />
+            </Field>
+            <Field label="Email">
+              <Input type="email" value={detail.email} onChange={setD("email")} placeholder="For statements and invoices" />
+            </Field>
+            <div className="flex items-end pb-1.5">
+              <Checkbox
+                label="Do not contact — never call or message"
+                checked={detail.doNotContact}
+                onChange={(e) => setFlag("doNotContact")(e.target.checked)}
+              />
+            </div>
+            <Field label="What to remember when calling" className="col-span-2">
+              <Textarea rows={3} value={detail.specialInstructions} onChange={setD("specialInstructions")} />
+            </Field>
+          </>
+        ) : !editorError ? (
+          <div className="col-span-2 py-3 text-[13px] text-muted">Reading the rest of the record…</div>
+        ) : null}
+        {/*
+          Where a lead came from is READ ONLY. It is set once, when the record
+          is created, and it is the only thing that explains a lead months
+          later — a field somebody can quietly retype is not an origin, it is
+          whatever the last person thought it should say.
+        */}
+        {isLead ? (
+          isNew ? (
+            <Field
+              label="Source"
+              hint="Where they came from. It is the only thing that explains a lead months later, which is also why it cannot be retyped afterwards."
+              className="col-span-2"
+            >
+              <Input
+                value={values.leadSource ?? ""}
+                onChange={set("leadSource")}
+                list="lead-sources"
+                placeholder="Walk-in, referral, exhibition…"
+              />
+              <datalist id="lead-sources">
+                {LEAD_SOURCES.map((source) => (
+                  <option key={source} value={source} />
+                ))}
+              </datalist>
+            </Field>
+          ) : (
+            <Field label="Source" className="col-span-2">
+              <p className="text-[13px] text-body">
+                {initial?.leadSource || (
+                  <span className="text-muted">Not recorded</span>
+                )}
+              </p>
+            </Field>
+          )
+        ) : null}
+
+      </div>
+
+      <div style={tab === "contacts" ? undefined : HIDDEN}>
+        {editor && customerId ? (
+          <>
+            <p className="mb-3 text-[13px] text-muted">
+              Everybody at this shop worth having a number for, with their birthday where you know
+              it. Mark who we ring, where WhatsApp goes and where payment reminders go — each
+              change is saved as you make it.
+            </p>
+            <CustomerContactsPanel
+              customerId={customerId}
+              initial={editor.contacts}
+              today={editor.today}
+              birthdayHeadsUpDays={editor.birthdayHeadsUpDays}
+              onChange={(contacts) => setEditor((e) => (e ? { ...e, contacts } : e))}
+            />
+            {detail ? (
+              <div className="mt-4 grid grid-cols-2 gap-3 border-t border-divider pt-4">
+                <Field label="WhatsApp goes to" hint="A group reaches everybody at the shop; it is pasted by hand, never sent automatically.">
+                  <Select value={detail.whatsappDest} onChange={setD("whatsappDest")}>
+                    <option value="personal">Their number</option>
+                    <option value="group">A WhatsApp group</option>
+                    <option value="both">Both — their number and a group</option>
+                  </Select>
+                </Field>
+                <Field label={detail.whatsappDest === "personal" ? "Group name" : "Group name · required"}>
+                  <Input value={detail.whatsappGroupName} onChange={setD("whatsappGroupName")} placeholder="Exactly as it appears in WhatsApp" />
+                </Field>
+              </div>
+            ) : null}
+          </>
+        ) : (
+          <div className="py-3 text-[13px] text-muted">{editorError ?? "Reading the contacts…"}</div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 gap-3" style={tab === "address" ? undefined : HIDDEN}>
+        {detail ? (
+          <Field label="Address" className="col-span-2">
+            <Textarea rows={2} value={detail.address} onChange={setD("address")} />
+          </Field>
+        ) : null}
         <Field label="City · required">
           <Input value={values.city ?? ""} onChange={set("city")} />
         </Field>
+        {detail ? (
+          <>
+            <Field label="State">
+              <Input value={detail.region} onChange={setD("region")} />
+            </Field>
+            <Field label="Area">
+              <Input value={detail.area} onChange={setD("area")} />
+            </Field>
+            <Field label="Beat">
+              <Input value={detail.beat} onChange={setD("beat")} />
+            </Field>
+            <Field label="Territory region">
+              <Input value={detail.territoryRegion} onChange={setD("territoryRegion")} />
+            </Field>
+          </>
+        ) : null}
+        <Field label="Route">
+          <Input value={values.route ?? ""} onChange={set("route")} />
+        </Field>
+        {detail ? (
+          <Field label="Visit every (days)" hint="How often a salesman should call in.">
+            <Input type="number" min={1} max={365} value={detail.visitFrequencyDays} onChange={setD("visitFrequencyDays")} />
+          </Field>
+        ) : null}
+        <p className="col-span-2 text-[12px] text-muted">
+          The state and area also place the shop on the location tree. A place somebody reviewed by
+          hand is never moved by an edit here.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3" style={tab === "commercial" ? undefined : HIDDEN}>
+        <Field label="GSTIN">
+          <Input value={values.gstin ?? ""} onChange={set("gstin")} />
+        </Field>
+        <Field label="Credit terms (days)">
+          <Input
+            type="number"
+            value={values.creditTermDays ?? ""}
+            onChange={set("creditTermDays")}
+          />
+        </Field>
+        {detail && editor ? (
+          <>
+            <Field
+              label="Credit limit (₹)"
+              hint={editor.canDecideCredit ? "Blank means no limit." : "Set by whoever confirms payments in Accounts."}
+            >
+              <MoneyInput
+                value={detail.creditLimit}
+                onChange={setD("creditLimit")}
+                disabled={!editor.canDecideCredit}
+              />
+            </Field>
+            <Field label="Price list tag" hint="Which price list applies, as the sheet names it.">
+              <Input value={detail.priceTag} onChange={setD("priceTag")} />
+            </Field>
+            <Field label="Freight">
+              <Select value={detail.freightTerm} onChange={setD("freightTerm")}>
+                <option value="">Not stated</option>
+                <option value="paid">Paid — built into the price</option>
+                <option value="to_pay">To pay — the shop pays on delivery</option>
+              </Select>
+            </Field>
+            <Field label="Delivery">
+              <Select value={detail.deliveryType} onChange={setD("deliveryType")}>
+                <option value="">Not stated</option>
+                <option value="Door Delivery">Door delivery</option>
+                <option value="Godown Delivery">Godown delivery</option>
+                {detail.deliveryType && !["Door Delivery", "Godown Delivery"].includes(detail.deliveryType) ? (
+                  <option value={detail.deliveryType}>{detail.deliveryType}</option>
+                ) : null}
+              </Select>
+            </Field>
+            <div className="col-span-2 rounded-[4px] border border-line px-3 py-2.5">
+              <Checkbox
+                label="Stop supply to this customer"
+                checked={detail.creditBlocked}
+                disabled={!editor.canDecideCredit}
+                title={editor.canDecideCredit ? undefined : "Decided by whoever confirms payments in Accounts."}
+                onChange={(e) => setFlag("creditBlocked")(e.target.checked)}
+              />
+              {detail.creditBlocked ? (
+                <Field label="Why · required" className="mt-2">
+                  <Input
+                    value={detail.creditBlockReason}
+                    onChange={setD("creditBlockReason")}
+                    disabled={!editor.canDecideCredit}
+                    placeholder="The salesman reads this at the counter"
+                  />
+                </Field>
+              ) : null}
+            </div>
+          </>
+        ) : null}
+        {/*
+          The buying cycle is GONE from this form, not merely hidden.
+
+          It is measured from the intervals between a customer's own orders and
+          rebuilt by `recomputeAllBuyingCycles()` on every nightly pass, so a
+          number typed here survives until that runs and is then silently
+          replaced. The same is true of outstanding, the last order and the
+          health score, which is why none of them are on this form either.
+        */}
+        <p className="col-span-2 text-[12px] text-muted">
+          Outstanding, the buying cycle and the last order are worked out from the ledger and are
+          not edited here.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3" style={tab === "managers" ? undefined : HIDDEN}>
         {/*
           The two account managers, named as the roles they are.
 
@@ -2393,66 +2813,6 @@ function CustomerFormBody({
         )}
 
         {/*
-          Where a lead came from is READ ONLY. It is set once, when the record
-          is created, and it is the only thing that explains a lead months
-          later — a field somebody can quietly retype is not an origin, it is
-          whatever the last person thought it should say.
-        */}
-        {isLead ? (
-          isNew ? (
-            <Field
-              label="Source"
-              hint="Where they came from. It is the only thing that explains a lead months later, which is also why it cannot be retyped afterwards."
-              className="col-span-2"
-            >
-              <Input
-                value={values.leadSource ?? ""}
-                onChange={set("leadSource")}
-                list="lead-sources"
-                placeholder="Walk-in, referral, exhibition…"
-              />
-              <datalist id="lead-sources">
-                {LEAD_SOURCES.map((source) => (
-                  <option key={source} value={source} />
-                ))}
-              </datalist>
-            </Field>
-          ) : (
-            <Field label="Source" className="col-span-2">
-              <p className="text-[13px] text-body">
-                {initial?.leadSource || (
-                  <span className="text-muted">Not recorded</span>
-                )}
-              </p>
-            </Field>
-          )
-        ) : null}
-
-        <Field label="GSTIN">
-          <Input value={values.gstin ?? ""} onChange={set("gstin")} />
-        </Field>
-        <Field label="Route">
-          <Input value={values.route ?? ""} onChange={set("route")} />
-        </Field>
-        <Field label="Credit terms (days)">
-          <Input
-            type="number"
-            value={values.creditTermDays ?? ""}
-            onChange={set("creditTermDays")}
-          />
-        </Field>
-        {/*
-          The buying cycle is GONE from this form, not merely hidden.
-
-          It is measured from the intervals between a customer's own orders and
-          rebuilt by `recomputeAllBuyingCycles()` on every nightly pass, so a
-          number typed here survives until that runs and is then silently
-          replaced. A field that accepts a value and discards it overnight is
-          worse than no field: somebody sets it, sees it take, and trusts a
-          figure that is about to change back.
-        */}
-
-        {/*
           The reason, asked only when a manager actually changed.
 
           Not a field somebody fills in on every edit — a reason attached to a
@@ -2472,6 +2832,12 @@ function CustomerFormBody({
           </Field>
         ) : null}
       </div>
+      </div>
+      {changedCount ? (
+        <div className="mt-3 text-[12px] text-muted">
+          {changedCount} detail{changedCount === 1 ? "" : "s"} changed — saved with the rest when you press Save.
+        </div>
+      ) : null}
     </Modal>
   );
 }

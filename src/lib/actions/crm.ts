@@ -1,6 +1,11 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { placeShopsNow } from "@/lib/services/place-tree-service";
+import {
+  reconcileContacts,
+  renamePrimaryContact,
+} from "@/lib/services/customer-contact-service";
 import { cookies } from "next/headers";
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
@@ -18,6 +23,7 @@ import {
   createAttachment,
 } from "@/lib/services/attachment-service";
 import {
+  canFor,
   requireCapability,
   resolveScope,
   assertCustomerInScope,
@@ -25,11 +31,16 @@ import {
   scopedUserIds,
 } from "@/lib/access-control";
 import { SCOPE_COOKIE_NAME } from "@/lib/scope";
+import { requireUser } from "@/lib/auth";
+import { whatsappLevel } from "@/lib/access";
 import {
   updateSetting,
   updateSettings,
 } from "@/lib/config/store";
 import { saveInteraction } from "@/lib/services/interaction-service";
+import { setOpportunityStatus } from "@/lib/services/opportunity-service";
+import { canOpenModule } from "@/lib/access";
+import type { CallDetailView } from "@/lib/call-detail";
 import { createComplaint } from "@/lib/services/complaint-create";
 import type { NextStep } from "@/lib/engines/next-step";
 import {
@@ -54,8 +65,15 @@ import {
   setTarget as setTargetService,
   setTargetsBulk as setTargetsBulkService,
   resolveTargetCustomerIds,
+  targetCandidates as targetCandidatesService,
+  type TargetCandidate,
   type TargetListFilters,
 } from "@/lib/services/worklist-services";
+import {
+  markThreadHandled as markThreadHandledService,
+  sendChatMessage as sendChatMessageService,
+  polishChatReply as polishChatReplyService,
+} from "@/lib/services/whatsapp-chat-service";
 import {
   actionReply as actionReplyService,
   advanceRun as advanceRunService,
@@ -77,6 +95,7 @@ import {
   recomputeLastContact,
   today,
 } from "@/lib/recompute";
+import { ADMIN } from "@/lib/admin-routes";
 import {
   customerTimeline,
   type TimelineCursor,
@@ -97,6 +116,7 @@ const SHARED = [
   "/crm/call-log",
   "/crm/reminders",
   "/crm/history",
+  "/crm/opportunities",
   "/crm/payments",
   "/crm/bills",
   "/crm/customers",
@@ -120,7 +140,7 @@ const SHARED = [
  */
 function refreshAdmin() {
   try {
-    revalidatePath("/admin");
+    revalidatePath(ADMIN.home, "layout");
   } catch {
     /* no request context — see refreshAll */
   }
@@ -195,6 +215,8 @@ export type SaveInteractionActionInput = {
     estimatedValueRupees?: number;
     expectedOrderDate?: string;
   };
+  /** "no" — asked, and there was none. See the service. */
+  opportunityAnswer?: "yes" | "no";
   complaintCategory?: string;
   complaintDescription?: string;
   complaintRequestCn?: boolean;
@@ -253,6 +275,7 @@ export async function saveInteractionAction(
       nextActions: raw.nextActions ?? [],
       nextActionDate: raw.nextActionDate,
       opportunity: raw.opportunity,
+      opportunityAnswer: raw.opportunityAnswer,
       complaintCategory: raw.complaintCategory as never,
       complaintDescription: raw.complaintDescription,
       complaintRequestCn: raw.complaintRequestCn ?? false,
@@ -604,6 +627,56 @@ const customerSchema = z.object({
   backOfficeAmId: z.string().optional(),
 });
 
+/*
+ * EVERY OTHER DETAIL OF A CUSTOMER, for the full edit form — the Accounts
+ * desk's in particular, which is where a record is corrected end to end.
+ *
+ * Optional one by one, and an empty string means "clear it": a field the form
+ * did not send is not touched. What is NOT here is as deliberate as what is:
+ * the account-manager seats (Reassign, audited), the status (deactivation is a
+ * decision with its own flow), and every DERIVED cache — outstanding, the
+ * buying cycle, last order and contact, health — which a typed value would be
+ * silently overwritten on the next recompute. Numbers live on the contacts
+ * list, which writes `phone`, `whatsapp_phone` and the rest as its mirrors.
+ */
+const blankable = (max: number) => z.string().trim().max(max).optional();
+const customerDetailSchema = z.object({
+  externalCode: blankable(60),
+  customerType: z.enum(["dealer", "manufacturer", "distributor", "retailer", ""]).optional(),
+  potential: z.enum(["high", "medium", "low", ""]).optional(),
+  potentialMonthlyPaise: z.number().int().min(0).max(1_000_000_000_000).nullable().optional(),
+  rating: blankable(60),
+  segmentation: blankable(60),
+  dealerCode: blankable(60),
+  customerSince: z
+    .string()
+    .trim()
+    .refine((v) => v === "" || /^\d{4}-\d{2}-\d{2}$/.test(v), "Enter the date as YYYY-MM-DD.")
+    .optional(),
+  specialInstructions: blankable(1000),
+  email: z
+    .string()
+    .trim()
+    .max(200)
+    .refine((v) => v === "" || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), "That email address does not look complete.")
+    .optional(),
+  whatsappDest: z.enum(["personal", "group", "both"]).optional(),
+  whatsappGroupName: blankable(200),
+  address: blankable(500),
+  region: blankable(120),
+  area: blankable(120),
+  beat: blankable(120),
+  territoryRegion: blankable(120),
+  visitFrequencyDays: z.coerce.number().int().min(1).max(365).nullable().optional(),
+  creditLimitPaise: z.number().int().min(0).max(1_000_000_000_000).nullable().optional(),
+  creditBlocked: z.boolean().optional(),
+  creditBlockReason: blankable(300),
+  priceTag: blankable(120),
+  freightTerm: z.enum(["paid", "to_pay", ""]).optional(),
+  deliveryType: blankable(60),
+  doNotContact: z.boolean().optional(),
+});
+
 export async function createCustomer(
   raw: Record<string, unknown>,
 ): Promise<Result<{ id: string; duplicateOf?: string }>> {
@@ -655,6 +728,7 @@ export async function createCustomer(
       createdById: ctx.user.id,
       updatedById: ctx.user.id,
     });
+    await placeShopsNow([customerId]);
 
     refreshAll();
     return ok({ id: customerId }, `${parsed.data.name} added`);
@@ -669,7 +743,7 @@ export async function updateCustomer(
 ): Promise<Result> {
   try {
     const ctx = await resolveScope();
-    const parsed = customerSchema.partial().safeParse(raw);
+    const parsed = customerSchema.partial().merge(customerDetailSchema).safeParse(raw);
     if (!parsed.success) {
       const issue = parsed.error.issues[0];
       return err(issue.message, "validation", [
@@ -706,6 +780,77 @@ export async function updateCustomer(
         "Account managers are changed from Reassign, not from the customer form - that is the one path that records who decided and why.",
         "not_permitted",
       );
+    }
+
+    /*
+     * THE CREDIT LIMIT AND THE SUPPLY STOP ARE MONEY DECISIONS, and they are
+     * the ledger desk's — the person confirming payments, not whoever can open
+     * the record. Asked only where the value actually MOVES, so a form that
+     * sends every field back unchanged is not refused for a field nobody
+     * touched.
+     */
+    const d = parsed.data;
+    const creditMoving =
+      (d.creditLimitPaise !== undefined && d.creditLimitPaise !== (existing.creditLimitPaise === null ? null : Number(existing.creditLimitPaise))) ||
+      (d.creditBlocked !== undefined && d.creditBlocked !== existing.creditBlocked) ||
+      (d.creditBlockReason !== undefined && (d.creditBlockReason || null) !== existing.creditBlockReason);
+    if (creditMoving && !(await canFor(ctx.user, "payment.confirm"))) {
+      return err(
+        "The credit limit and stopping supply are decided by Accounts — ask whoever confirms payments.",
+        "not_permitted",
+      );
+    }
+    const blockedAfter = d.creditBlocked ?? existing.creditBlocked;
+    const blockReasonAfter = d.creditBlockReason !== undefined ? d.creditBlockReason || null : existing.creditBlockReason;
+    if (blockedAfter && !blockReasonAfter) {
+      return err("Say why supply is stopped — the salesman reads it at the counter.", "validation", [
+        { field: "creditBlockReason", message: "Required while supply is stopped." },
+      ]);
+    }
+    const blank = (v: string | undefined) => (v === undefined ? undefined : v || null);
+    const detail: Partial<typeof customers.$inferInsert> = {};
+    const put = <K extends keyof typeof customers.$inferInsert>(k: K, v: (typeof customers.$inferInsert)[K] | undefined) => {
+      if (v !== undefined) detail[k] = v;
+    };
+    put("externalCode", blank(d.externalCode));
+    put("customerType", d.customerType === undefined ? undefined : d.customerType || null);
+    put("potential", d.potential === undefined ? undefined : d.potential || null);
+    if (
+      d.potentialMonthlyPaise !== undefined &&
+      d.potentialMonthlyPaise !== (existing.potentialMonthlyPaise === null ? null : Number(existing.potentialMonthlyPaise))
+    ) {
+      // A judgement, stamped with who made it and when — the handset's rule.
+      detail.potentialMonthlyPaise = d.potentialMonthlyPaise;
+      detail.potentialEstimatedAt = new Date();
+      detail.potentialEstimatedById = ctx.user.id;
+    }
+    put("rating", blank(d.rating));
+    put("segmentation", blank(d.segmentation));
+    put("dealerCode", blank(d.dealerCode));
+    put("customerSince", blank(d.customerSince));
+    put("specialInstructions", blank(d.specialInstructions));
+    put("email", blank(d.email));
+    put("whatsappDest", d.whatsappDest);
+    put("whatsappGroupName", blank(d.whatsappGroupName));
+    put("address", blank(d.address));
+    put("region", blank(d.region));
+    put("area", blank(d.area));
+    put("beat", blank(d.beat));
+    put("territoryRegion", blank(d.territoryRegion));
+    put("visitFrequencyDays", d.visitFrequencyDays);
+    put("creditLimitPaise", d.creditLimitPaise);
+    put("creditBlocked", d.creditBlocked);
+    put("creditBlockReason", blank(d.creditBlockReason));
+    put("priceTag", blank(d.priceTag));
+    put("freightTerm", d.freightTerm === undefined ? undefined : d.freightTerm || null);
+    put("deliveryType", blank(d.deliveryType));
+    put("doNotContact", d.doNotContact);
+    const whatsappDestAfter = d.whatsappDest ?? existing.whatsappDest;
+    const groupAfter = d.whatsappGroupName !== undefined ? d.whatsappGroupName || null : existing.whatsappGroupName;
+    if (whatsappDestAfter !== "personal" && !groupAfter) {
+      return err("Name the WhatsApp group, or send to their own number.", "validation", [
+        { field: "whatsappGroupName", message: "Required for a group." },
+      ]);
     }
 
     /* A CHANGED GSTIN IS NOT THE NUMBER ANYBODY VALIDATED — here as everywhere it
@@ -765,10 +910,21 @@ export async function updateCustomer(
         ...(parsed.data.route !== undefined
           ? { route: parsed.data.route || null }
           : {}),
+        ...detail,
         updatedAt: new Date(),
         updatedById: ctx.user.id,
       })
       .where(eq(customers.id, customerId));
+
+    /* A phone or a contact person sent here — an older caller, the sales
+       manager's edit — is folded into the contacts list rather than left as a
+       column the panel does not know. */
+    if (parsed.data.phone || parsed.data.contactPerson !== undefined) {
+      await reconcileContacts(customerId, ctx.user.id);
+      if (parsed.data.contactPerson !== undefined) {
+        await renamePrimaryContact(customerId, parsed.data.contactPerson || null, ctx.user.id);
+      }
+    }
 
     if (voided && before) await recordReviewVoid(db, { lead: before, voided, actorId: ctx.user.id });
 
@@ -778,9 +934,16 @@ export async function updateCustomer(
       action: "customer.update",
       entityType: "customer",
       entityId: customerId,
-      beforeState: { name: existing.name, phone: existing.phone } as never,
+      beforeState: Object.fromEntries(
+        Object.keys(parsed.data).map((k) => [k, (existing as Record<string, unknown>)[k] ?? null]),
+      ) as never,
       afterState: parsed.data as never,
     });
+    // A new town re-places a shop the tree was matching from its text; a
+    // reviewed or hand-picked place is left alone by the resolver itself.
+    if (parsed.data.city || parsed.data.region !== undefined || parsed.data.area !== undefined) {
+      await placeShopsNow([customerId]);
+    }
 
     refreshAll();
     return okVoid("Customer updated");
@@ -836,6 +999,7 @@ export async function loadCustomerTimeline(
         actor: e.actor,
         content: e.content,
         meta: e.meta ?? null,
+        detail: e.detail ?? null,
       })),
       cursor: page.cursor,
       more: page.more,
@@ -852,6 +1016,7 @@ type SerialisedEntry = {
   actor: string;
   content: string;
   meta: string | null;
+  detail: CallDetailView | null;
 };
 
 export async function requestDeactivation(
@@ -1384,12 +1549,30 @@ export async function setTarget(
   customerId: string,
   amount: string,
   period?: string,
+  /**
+   * Sales bills asked for in the month, as typed. Omitted leaves the stored
+   * count alone; an empty box clears it.
+   */
+  bills?: string,
 ): Promise<Result> {
   try {
-    const paise = parseRupees(amount);
+    // An empty amount is a bills-only target; the service refuses a row that
+    // asks for neither, with the sentence that says so.
+    const paise = /^[\s₹0.,]*$/.test(amount) ? 0 : parseRupees(amount);
     if (paise === null)
       return err("Enter the monthly target in rupees.", "validation");
-    const r = await setTargetService(customerId, paise, period);
+    let billTarget: number | null | undefined;
+    if (bills !== undefined) {
+      const typed = bills.trim();
+      if (!typed) billTarget = null;
+      else {
+        const n = Number(typed);
+        if (!Number.isInteger(n) || n <= 0)
+          return err("Enter the number of bills as a whole number.", "validation");
+        billTarget = n;
+      }
+    }
+    const r = await setTargetService(customerId, paise, period, billTarget);
     refreshAll();
     return r;
   } catch (e) {
@@ -1405,7 +1588,12 @@ export async function setTargetsBulk(input: {
    * of one page of it. See `targetFilterClause`.
    */
   filters: TargetListFilters;
-  onlyDefault: boolean;
+  /**
+   * Which of the customers those filters reach: the rows on the table, only
+   * the listed ones still on the auto-applied default, or the direct
+   * customers the table does not show because nothing is allocated yet.
+   */
+  population: "listed" | "defaults" | "unallocated";
   mode: "amount" | "uplift";
   value: string;
   period?: string;
@@ -1421,7 +1609,7 @@ export async function setTargetsBulk(input: {
     const customerIds = await resolveTargetCustomerIds(
       input.period,
       input.filters,
-      input.onlyDefault,
+      input.population,
     );
     const r = await setTargetsBulkService(
       customerIds,
@@ -1436,7 +1624,46 @@ export async function setTargetsBulk(input: {
   }
 }
 
+/**
+ * The direct customers a target can be allocated to, with what each bought
+ * lately — read for the allocate dialog's search, and with `customerId` for
+ * the context the edit dialog shows. `target.set` is checked in the service.
+ */
+export async function findTargetCandidates(input: {
+  period?: string;
+  query?: string;
+  customerId?: string;
+}): Promise<Result<TargetCandidate[]>> {
+  try {
+    return ok(await targetCandidatesService(input));
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
 /* --------------------------------------------------------------- whatsapp */
+
+/**
+ * READ-ONLY IS CHECKED HERE, not by hiding the composer. A server action is a
+ * URL, and a box that is not drawn is a statement to the browser.
+ *
+ * `chat` is for what only the WhatsApp screen offers — replying in a thread,
+ * marking it handled — and asks for Write outright. `send` is for what other
+ * screens offer too: the payment panel and the command centre send reminders
+ * to people who were never given the chats, and they always could, so it
+ * refuses only somebody deliberately narrowed to Read. See `whatsappLevel`.
+ */
+async function whatsappRefusal(kind: "chat" | "send"): Promise<Result<never> | null> {
+  const user = await requireUser();
+  const level = await whatsappLevel(user.id);
+  if (level === "write" || (kind === "send" && level === "none")) return null;
+  return err(
+    level === "read"
+      ? "Your WhatsApp access is read only — you can read the chats but not reply or send. Ask for Write on the Access screen."
+      : "You do not have the WhatsApp screen.",
+    "not_permitted",
+  );
+}
 
 /**
  * Prepare and send one payment reminder or template message through Wati, in
@@ -1448,6 +1675,8 @@ export async function sendWhatsAppNow(input: {
   templateId: string;
 }): Promise<Result<{ messageId: string }>> {
   try {
+    const refused = await whatsappRefusal("send");
+    if (refused) return refused;
     const r = await sendNow({ ...input, idempotencyKey: randomUUID() });
     refreshAll();
     return r;
@@ -1474,6 +1703,8 @@ export async function sendRunThroughApi(
   runId: string,
 ): Promise<Result<{ sent: number; left: number; problems: string[] }>> {
   try {
+    const refused = await whatsappRefusal("send");
+    if (refused) return refused;
     const r = await sendRunViaApi(runId);
     refreshAll();
     return r;
@@ -1488,7 +1719,15 @@ export async function setCustomerGroup(
   dest?: "personal" | "group" | "both",
 ): Promise<Result> {
   try {
+    const refused = await whatsappRefusal("send");
+    if (refused) return refused;
     const ctx = await resolveScope();
+    /* The customer has to be one this caller may work. It took an id and
+       wrote, so anybody signed in could redirect another book's reminders to
+       a group of their choosing. */
+    const [customer] = await db.select().from(customers).where(eq(customers.id, customerId));
+    if (!customer) return err("That customer no longer exists.", "not_found");
+    await assertCustomerInScope(customer);
     const named = groupName.trim();
     // Without a group there is nowhere for the other legs to go, so clearing
     // the name always returns the customer to their own number.
@@ -1527,6 +1766,8 @@ export async function queueMessage(input: {
   }>
 > {
   try {
+    const refused = await whatsappRefusal("send");
+    if (refused) return refused;
     if (!input.templateId) return err("Pick a template.", "validation");
     const prepared = await prepareLegs({
       customerId: input.customerId,
@@ -1566,6 +1807,8 @@ export async function queueMessage(input: {
 /** The copy step of a run: records it without claiming the message was sent. */
 export async function markMessageCopied(messageId: string): Promise<Result> {
   try {
+    const refused = await whatsappRefusal("send");
+    if (refused) return refused;
     const r = await markCopied(messageId);
     refreshAll();
     return r;
@@ -1576,6 +1819,8 @@ export async function markMessageCopied(messageId: string): Promise<Result> {
 
 export async function confirmMessageSent(messageId: string): Promise<Result> {
   try {
+    const refused = await whatsappRefusal("send");
+    if (refused) return refused;
     const r = await confirmSent(messageId);
     refreshAll();
     return r;
@@ -1586,6 +1831,8 @@ export async function confirmMessageSent(messageId: string): Promise<Result> {
 
 export async function sendMessageAutomatic(messageId: string): Promise<Result> {
   try {
+    const refused = await whatsappRefusal("send");
+    if (refused) return refused;
     const r = await sendAutomatic(messageId);
     refreshAll();
     return r;
@@ -1596,6 +1843,8 @@ export async function sendMessageAutomatic(messageId: string): Promise<Result> {
 
 export async function cancelMessage(messageId: string): Promise<Result> {
   try {
+    const refused = await whatsappRefusal("send");
+    if (refused) return refused;
     const r = await cancelMessageService(messageId);
     refreshAll();
     return r;
@@ -1604,9 +1853,60 @@ export async function cancelMessage(messageId: string): Promise<Result> {
   }
 }
 
-export async function actionReply(replyId: string): Promise<Result> {
+export async function sendChatMessage(input: {
+  key: string;
+  text: string;
+  idempotencyKey: string;
+}): Promise<Result> {
   try {
-    const r = await actionReplyService(replyId);
+    const refused = await whatsappRefusal("chat");
+    if (refused) return refused;
+    return await sendChatMessageService({
+      key: String(input?.key ?? ""),
+      text: String(input?.text ?? ""),
+      idempotencyKey: String(input?.idempotencyKey ?? ""),
+    });
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** The review step's rewrite. Write level only: it exists to be sent. */
+export async function polishChatReply(input: {
+  key: string;
+  draft: string;
+  mode: "enhance" | "rewrite";
+  instruction?: string;
+}): Promise<Result<{ text: string }>> {
+  try {
+    const refused = await whatsappRefusal("chat");
+    if (refused) return refused;
+    return await polishChatReplyService({
+      key: String(input?.key ?? ""),
+      draft: String(input?.draft ?? ""),
+      mode: input?.mode === "rewrite" ? "rewrite" : "enhance",
+      instruction: input?.instruction ? String(input.instruction) : undefined,
+    });
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+export async function markThreadHandled(key: string, handled = true): Promise<Result> {
+  try {
+    const refused = await whatsappRefusal("chat");
+    if (refused) return refused;
+    return await markThreadHandledService(String(key ?? ""), handled === true);
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+export async function actionReply(replyId: string, handled = true): Promise<Result> {
+  try {
+    const refused = await whatsappRefusal("chat");
+    if (refused) return refused;
+    const r = await actionReplyService(replyId, handled === true);
     refreshAll();
     return r;
   } catch (e) {
@@ -1622,6 +1922,8 @@ export async function saveTemplate(input: {
   appliesTo: "personal" | "group" | "both";
 }): Promise<Result> {
   try {
+    const refused = await whatsappRefusal("send");
+    if (refused) return refused;
     const r = await saveTemplateService({
       id: input.id,
       name: input.name,
@@ -1641,6 +1943,8 @@ export async function archiveTemplate(
   archived: boolean,
 ): Promise<Result> {
   try {
+    const refused = await whatsappRefusal("send");
+    if (refused) return refused;
     await requireCapability("whatsapp.template.write");
     await db.execute(
       sql`update wa_templates set active = ${!archived}, updated_at = now() where id = ${templateId}`,
@@ -1658,6 +1962,8 @@ export async function startRun(input: {
   filterKey: string;
 }): Promise<Result<{ runId: string }>> {
   try {
+    const refused = await whatsappRefusal("send");
+    if (refused) return refused;
     const r = await createRun(input);
     refreshAll();
     return r.ok ? ok({ runId: r.data.runId }, r.message) : r;
@@ -1672,6 +1978,8 @@ export async function advanceRun(
   outcome: "sent" | "skipped",
 ): Promise<Result> {
   try {
+    const refused = await whatsappRefusal("send");
+    if (refused) return refused;
     const r = await advanceRunService(runId, messageId, outcome);
     refreshAll();
     return r;
@@ -1685,6 +1993,8 @@ export async function pauseRun(
   paused: boolean,
 ): Promise<Result> {
   try {
+    const refused = await whatsappRefusal("send");
+    if (refused) return refused;
     const r = await setRunStatus(runId, paused ? "paused" : "active");
     refreshAll();
     return r;
@@ -1695,6 +2005,8 @@ export async function pauseRun(
 
 export async function clearRun(runId: string): Promise<Result> {
   try {
+    const refused = await whatsappRefusal("send");
+    if (refused) return refused;
     const r = await setRunStatus(runId, "completed");
     refreshAll();
     return r;
@@ -1777,15 +2089,64 @@ export async function markNotificationsRead(): Promise<Result> {
 export async function markNotificationRead(
   notificationId: string,
 ): Promise<Result> {
-  await resolveScope();
+  const ctx = await resolveScope();
+  /* Only your own: an id is a string anybody can post to this action. */
   await db
     .update(notifications)
     .set({ read: true })
-    .where(eq(notifications.id, notificationId));
+    .where(and(eq(notifications.id, notificationId), eq(notifications.userId, ctx.user.id)));
   return okVoid();
 }
 
 /* ------------------------------------------------------------ configuration */
+
+/**
+ * `config.write`, AND A STANDING IN THE APP WHOSE SETTINGS THESE ARE.
+ *
+ * The capability is a union over hats and is carried by the manager level of
+ * several apps — so a manager of the Sales Dashboard could post a change to the
+ * CRM's collections thresholds, the HRMS payroll rules or the platform's
+ * sign-in settings, by URL, although the console would never have drawn them
+ * that page. The console decides which pages somebody may OPEN from
+ * `SETTINGS_PAGES[].owners`; the write now asks the same question of every key
+ * it is handed: the platform administrator writes anything, and anybody else
+ * only keys whose page is owned by an app they hold at manager or admin level.
+ * A page with no owners — the platform's own settings — and a key the
+ * presentation marks admin-only are the platform administrator's alone. A key
+ * that sits on no page is refused, because a setting nobody can find is not
+ * one to be changing by id.
+ */
+async function requireConfigWriteFor(keys: string[]) {
+  const ctx = await requireCapability("config.write");
+  const { isPlatformAdmin, hatsFor, NotPermittedError } = await import("@/lib/access-control");
+  if (await isPlatformAdmin(ctx.user)) {
+    // Every key, including the sign-in limits themselves — so the console's
+    // password check applies here too. A manager's write is narrowed to their
+    // own apps' pages below and may come from that app's own settings screen,
+    // so it is not asked.
+    const { requireConsoleConfirmed } = await import("@/lib/console-confirm");
+    await requireConsoleConfirmed();
+    return ctx;
+  }
+
+  const { placeSetting } = await import("@/lib/config/settings-placement");
+  const { settingsPage } = await import("@/lib/config/settings-pages");
+  const { PRESENTATION } = await import("@/lib/config/presentation");
+  const managed = new Set(
+    (await hatsFor(ctx.user))
+      .filter((h) => h.app !== null && h.role !== "associate")
+      .map((h) => h.app as string),
+  );
+  for (const key of keys) {
+    const pageId = key.startsWith("hrms.") ? "hrms" : placeSetting(key)?.page;
+    const owners = pageId ? (settingsPage(pageId)?.owners ?? []) : [];
+    const adminOnly = PRESENTATION[key]?.adminOnly === true;
+    if (adminOnly || !owners.some((a) => managed.has(a))) {
+      throw new NotPermittedError("config.write");
+    }
+  }
+  return ctx;
+}
 
 /**
  * A whole section, saved as one change set. The Admin Console edits several
@@ -1797,7 +2158,7 @@ export async function updateConfigSettings(
   entries: Array<{ key: string; value: unknown }>,
 ): Promise<Result<{ warnings: string[] }>> {
   try {
-    const ctx = await requireCapability("config.write");
+    const ctx = await requireConfigWriteFor(entries.map((e) => e.key));
     const r = await updateSettings(entries, ctx.user.id);
     if (!r.ok) return err(r.error, "validation", r.fields);
     refreshAll();
@@ -1818,7 +2179,7 @@ export async function updateConfigSetting(
   value: unknown,
 ): Promise<Result<{ warnings: string[] }>> {
   try {
-    const ctx = await requireCapability("config.write");
+    const ctx = await requireConfigWriteFor([key]);
     const r = await updateSetting(key, value, ctx.user.id);
     if (!r.ok)
       return err(r.error, "validation", [{ field: key, message: r.error }]);
@@ -1859,9 +2220,8 @@ export async function rebuildQueues(
 ): Promise<Result<{ users: number; cleared: number; written: number }>> {
   try {
     const ctx = await resolveScope();
-    const { listUserApps } = await import("@/lib/access");
-    const apps = await listUserApps(ctx.user.id);
-    if (!apps.includes("admin")) {
+    const { isPlatformAdmin } = await import("@/lib/access-control");
+    if (!(await isPlatformAdmin(ctx.user))) {
       return err(
         "Rebuilding a call list is an administrator's - it reorders somebody else's day.",
         "not_permitted",
@@ -1910,11 +2270,38 @@ export async function triggerJob(
     | "sheet-payments"
     | "project-sheet"
     | "backfill-timeline"
-    | "link-delivery-parties",
+    | "wa-reply-media"
+    | "link-delivery-parties"
+    | "field-activity-reparse",
   options: { owner?: string; bills?: boolean } = {},
 ): Promise<Result<{ ran: string[] }>> {
   try {
-    const ctx = await requireCapability("config.write");
+    /*
+     * THE PLATFORM ADMINISTRATOR'S, like rebuilding a queue above. It was
+     * `config.write`, which every CRM and Sales manager carries — and a job
+     * here is the nightly rebuild of every cache, a full sheet reconcile or a
+     * projection that writes customers, orders and bills for the whole
+     * company. None of that is a manager's to start in the middle of a day.
+     */
+    /*
+     * THE SHEET PASSES ARE THE EXCEPTION, and they are `sheet.import`'s: the
+     * accounts desk is who notices Sales Bills is empty, and on a deploy with
+     * no shell this screen is the only door (AGENTS.md, "The import has to be
+     * runnable from the screen"). Every other job stays the administrator's.
+     */
+    const ctx = await resolveScope();
+    const { isPlatformAdmin } = await import("@/lib/access-control");
+    const sheetJob = job === "sheet-reconcile" || job === "sheet-payments" || job === "project-sheet";
+    const allowed =
+      (await isPlatformAdmin(ctx.user)) || (sheetJob && (await canFor(ctx.user, "sheet.import")));
+    if (!allowed) {
+      return err(
+        sheetJob
+          ? "Running the order sheet import needs the sheet import permission (Accounts manager, or a CRM or Sales manager)."
+          : "Running a scheduled job by hand is an administrator's - it rewrites figures for everybody.",
+        "not_permitted",
+      );
+    }
     const { runJob } = await import("@/lib/jobs");
     const results = await runJob(job, ctx.user.id, options);
     refreshAll();
@@ -1923,6 +2310,31 @@ export async function triggerJob(
       { ran: results.map((r) => `${r.job}: ${r.detail}`) },
       `${job} finished - ${results.reduce((a, r) => a + r.recordsAffected, 0)} records touched`,
     );
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/* ---------------------------------------------------- opportunities worked */
+
+/**
+ * Working an opportunity a call turned up. The module is asked here as well as
+ * on the route — a hidden screen is not a withheld one, and this is a URL — and
+ * the service then asks whether the row is on THIS person's list.
+ */
+export async function setOpportunityStatusAction(input: {
+  id: string;
+  status: string;
+  note?: string;
+}): Promise<Result<{ status: string }>> {
+  try {
+    const ctx = await resolveScope();
+    if (!(await canOpenModule(ctx.user.id, "crm.opportunities"))) {
+      return err("Opportunities are not part of your access.", "not_permitted");
+    }
+    const result = await setOpportunityStatus(input);
+    if (result.ok) refreshAll();
+    return result;
   } catch (e) {
     return fromThrown(e);
   }

@@ -1,14 +1,16 @@
 import "server-only";
+import { notConverted } from "@/lib/lead-action-window";
 
 import { sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import { canFor } from "@/lib/access-control";
+import { approverNameFor, canVerifyLeadById } from "@/lib/services/lead-verifier";
 import { requireUser } from "@/lib/auth";
 import { getConfig } from "@/lib/config/store";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { gateAction } from "@/lib/engines/lead-gate-action";
-import { gateForNext, gateTo, mustDecideSuspect, checklistFor } from "@/lib/engines/lead-gates";
+import { gateForNext, gateTo, mustDecideSuspect, checklistFor, qualificationAnswerSummary, type LeadGateInput } from "@/lib/engines/lead-gates";
 import { isParked } from "@/lib/engines/lead-ladder";
 import { isReopenTransition, reopenTarget } from "@/lib/engines/lead-reopen";
 import { isRecentLead } from "@/lib/lead-recent";
@@ -30,6 +32,7 @@ import {
   leadRecord,
   leadTransitions,
   managerCalls,
+  nurtureSchedule,
   publishedDocuments,
   sampleDesk,
   verificationQueue,
@@ -421,7 +424,20 @@ export async function pipelineFunnel(day: string): Promise<PipelineFunnelData & 
 
 /* ══════════════════════════════════════════════════════════════════ list */
 
-const VIEWS = new Set<LeadView>(["all", "mine", "today", "overdue", "expected", "lost30"]);
+/* `handover` is deliberately absent: converted accounts have left the Sales Manager seat
+   (it is released at conversion), so the view would always read empty here — and an empty
+   worklist reads as "nothing is waiting", which is the wrong thing to say. */
+const VIEWS = new Set<LeadView>([
+  "all",
+  "mine",
+  "today",
+  "overdue",
+  "expected",
+  "lost30",
+  "decide",
+  "parked",
+  "unworked",
+]);
 
 export type ListParams = {
   q?: string;
@@ -488,6 +504,7 @@ export async function pipelineSidebar(day: string): Promise<SidebarCounts> {
         from customers c
        where c.lead_stage is not null
          and c.lead_archived = false
+         and ${notConverted()}
          ${leadsVisible(scope)}
     `),
   ]);
@@ -503,6 +520,9 @@ type Extra = {
   notes: string | null;
   prospectRequestState: string | null;
   holdReason: string | null;
+  /** `customers.gst_verified` as stored: true validated, false REFUSED (with a date), null never checked. */
+  gstVerifiedRaw: boolean | null;
+  gstVerifiedAt: string | null;
   /** IST calendar days since the lead was raised, worked out in SQL like `leadsPage`'s `ageDays`. */
   ageDays: number;
 };
@@ -544,6 +564,7 @@ async function recordExtras(id: string, day: string): Promise<Extra | null> {
     select c.created_at as "createdAt", c.address, c.email, c.lead_notes as notes,
            c.prospect_request_state as "prospectRequestState",
            c.lead_hold_reason as "holdReason",
+           c.gst_verified as "gstVerifiedRaw", c.gst_verified_at as "gstVerifiedAt",
            (${day}::date - (c.created_at at time zone ${sql.raw(`'${APP_TIMEZONE}'`)})::date)::int as "ageDays"
       from customers c
      where c.id = ${id}
@@ -552,19 +573,17 @@ async function recordExtras(id: string, day: string): Promise<Extra | null> {
   return rows[0] ?? null;
 }
 
-const CONDITION_TICKABLE = new Set(["price_discussed", "delivery_discussed", "agrees_to_test", "next_step_agreed", "buyer_confirmed"]);
-
 /** The eight (or, on a distributor, thirty) conditions the REAL gate reads, each with whether it is met. */
-function qualItemsFor(record: LeadRecord, missingIds: Set<string>): QualItem[] {
+function qualItemsFor(record: LeadRecord, missingIds: Set<string>, input: LeadGateInput): QualItem[] {
   return checklistFor(record.salesType, "qualification").map((c) => ({
     id: c.id,
     says: c.says,
     done: !missingIds.has(c.id),
-    /* A buyer NAMED on the record satisfies `buyer_confirmed` by value, so a tick beside it would be a box that changes nothing. */
-    tickable:
-      record.salesType !== "distributor" &&
-      CONDITION_TICKABLE.has(c.id) &&
-      !(c.id === "buyer_confirmed" && Boolean(record.buyer)),
+    /* Nothing on a shop's checklist is a tick any more: the Salesman's answers
+       are stored values and the Sales Manager READS them. A distributor's thirty
+       are answered on the distributor profile, never ticked here either. */
+    tickable: false,
+    answer: record.salesType === "distributor" ? undefined : qualificationAnswerSummary(c.id, input) || undefined,
   }));
 }
 
@@ -1021,6 +1040,7 @@ export async function pipelineLead(
     canCaptureOrder,
     canDistributorTerms,
     canApproveDistributor,
+    canReopenLost,
   ] = await Promise.all([
     getConfig(),
     recordExtras(id, day),
@@ -1035,11 +1055,12 @@ export async function pipelineLead(
     distributor ? leadApprovalChain(id) : Promise.resolve([] as ApprovalStep[]),
     distributor ? distributorProfileFor(id) : Promise.resolve(null),
     canFor(user, "lead.work"),
-    canFor(user, "lead.verify"),
+    canVerifyLeadById(user, id),
     canFor(user, "sample.approve"),
     canFor(user, "order.capture"),
     canFor(user, "distributor.terms"),
     canFor(user, "distributor.approve"),
+    canFor(user, "lead.verify"),
   ]);
 
   const caps: Caps = {
@@ -1049,12 +1070,12 @@ export async function pipelineLead(
     canCaptureOrder,
     canDistributorTerms,
     canApproveDistributor,
-    canReopen: canVerify,
+    canReopen: canReopenLost,
   };
 
   const freshDays = config["leads.figuresFreshDays"];
   const input = gateInputFor(record, freshDays);
-  const mustDecide = mustDecideSuspect(input, config["leads.suspectMaxVisits"]);
+  const mustDecide = mustDecideSuspect(input, config["mbos.leads.maxSuspectVisits"]);
   const deskRequest =
     ["awaiting", "followup"].includes(extra?.prospectRequestState ?? "") &&
     ["new", "suspect", "contacted"].includes(record.stage);
@@ -1138,12 +1159,20 @@ export async function pipelineLead(
     creditDaysWanted: record.creditDaysWanted ?? undefined,
     buyer: clean(record.buyer),
     visits: record.suspectVisitCount,
-    suspectCap: config["leads.suspectMaxVisits"],
+    suspectCap: config["mbos.leads.maxSuspectVisits"],
     mustDecide,
     conversionReason: conversion?.reasonCode ?? undefined,
     verification,
     verificationCorrections: corrections.length ? corrections : undefined,
-    qualItems: qualItemsFor(record, missingIds),
+    approverName: (await approverNameFor(id)) ?? undefined,
+    qualItems: qualItemsFor(record, missingIds, input),
+    gstState: !clean(record.gstin)
+      ? "none"
+      : extra?.gstVerifiedRaw === true
+        ? "valid"
+        : extra?.gstVerifiedRaw === false && extra.gstVerifiedAt
+          ? "refused"
+          : "unchecked",
     qualReview: record.qualificationReview
       ? {
           verdict: record.qualificationReview,
@@ -1269,13 +1298,15 @@ async function everyPage(day: string, view: LeadView): Promise<{ rows: PageRow[]
 export async function pipelineDesk(day: string): Promise<DeskData> {
   const user = await requireUser();
 
-  const [book, overdue, verify, samples, open, slipped] = await Promise.all([
+  const [book, overdue, verify, samples, open, slipped, nurture] = await Promise.all([
     everyPage(day, "all"),
     everyPage(day, "overdue"),
     verificationQueue(day, { limit: 500 }),
     sampleDesk(day, { limit: 500 }),
     commitments(day, "open", { limit: 500 }),
     commitments(day, "slipped", { limit: 500 }),
+    /* The nurture sequence's own reader, already narrowed by this seat's book. */
+    nurtureSchedule(day, { limit: 500 }),
   ]);
 
   const live = book.rows.filter((r) => r.stage !== "lost");
@@ -1283,15 +1314,34 @@ export async function pipelineDesk(day: string): Promise<DeskData> {
 
   const sets: Record<Exclude<DeskQueue, "review">, Set<string>> = {
     verify: new Set(verify.rows.map((r) => r.customerId)),
-    /* Waiting on the manager's approval, or in the shop's hands with nobody's
-       verdict on it — the two halves of "a sample needs you". */
+    /* "A sample needs you", in the four places it can be waiting: a REQUEST to
+       approve, an APPROVED one nobody has dispatched, one ON THE ROAD to chase
+       (a sample stuck in transit never gets reviewed), and one in the shop's
+       hands with nobody's verdict on it. The first and last were all this queue
+       held; the middle two were the dispatch desk's, which this queue now
+       replaces — so a Sales Manager no longer has to leave the desk to find out
+       what is waiting to be sent. */
     sample: new Set(
       samples
-        .filter((s) => s.state === "requested" || ((s.state === "received" || s.state === "trial_done") && !s.feedbackRecorded))
+        .filter(
+          (s) =>
+            s.state === "requested" ||
+            s.state === "approved" ||
+            s.state === "dispatched" ||
+            ((s.state === "received" || s.state === "trial_done") && !s.feedbackRecorded),
+        )
         .map((s) => s.customerId),
     ),
     order: new Set([...open.rows, ...slipped.rows].map((r) => r.customerId)),
     overdue: new Set(overdue.rows.map((r) => r.id)),
+    /* A nurture task is a promise the sequence made on somebody's behalf. What
+       belongs on a desk is the ones that have come DUE — today, or past it — not
+       the ones weeks ahead. */
+    nurture: new Set(
+      [...nurture.overdue, ...nurture.today]
+        .map((t) => t.customerId)
+        .filter((id): id is string => Boolean(id)),
+    ),
   };
 
   const rows: DeskRow[] = live.map((r) => {
@@ -1302,6 +1352,7 @@ export async function pipelineDesk(day: string): Promise<DeskData> {
     if (sets.sample.has(r.id)) queues.push("sample");
     if (sets.order.has(r.id)) queues.push("order");
     if (sets.overdue.has(r.id)) queues.push("overdue");
+    if (sets.nurture.has(r.id)) queues.push("nurture");
     return { ...toRow(r, extra, recentDays), ownerId: r.salesmanId, queues };
   });
 

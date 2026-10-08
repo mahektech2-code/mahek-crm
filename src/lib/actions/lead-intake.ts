@@ -1,14 +1,18 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { placeShopsNow } from "@/lib/services/place-tree-service";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { auditLog, customerDistributors, customers, notifications, users } from "@/db/schema";
+import { auditLog, customerDistributors, customers, notifications, products, users } from "@/db/schema";
 import { canFor, requireCapability } from "@/lib/access-control";
 import { canOpenModule } from "@/lib/access";
+import { approverFor } from "@/lib/services/lead-verifier";
 import { LEAD_PRIORITIES } from "@/lib/lead-priority";
+import { sourcesFor } from "@/lib/lead-source-scope";
+import { isSalesManagerSeat } from "@/lib/services/lead-source-access";
 import { getConfig } from "@/lib/config/store";
 import { today } from "@/lib/recompute";
 import { MBOS_EVENT, writeTimelineEvent } from "@/lib/timeline";
@@ -179,6 +183,16 @@ const captureSchema = z.object({
    * nothing saying so. `leadRequirement` is the column for this.
    */
   requirement: z.string().trim().max(500).optional(),
+  /**
+   * A product the person CHOSE from the catalogue to say what they want, rather
+   * than typing it. It changes nothing about where the answer lives: the server
+   * checks the product is real and active and writes ITS NAME into
+   * `leadRequirement` — the browser's own spelling is never trusted — and it
+   * is never written to `lead_required_product_id`, which is the Calling Desk's
+   * and Qualification's own Product answer and has to stay independent of it.
+   * Where this is sent it replaces any `requirement` text on the same request.
+   */
+  requirementProductId: z.string().min(1).nullable().optional(),
   application: z.string().trim().max(200).optional(),
 
   /** Who it belongs to. Absent means UNASSIGNED, which is a real answer. */
@@ -338,7 +352,14 @@ export async function captureLead(
       );
     }
 
-    const sources = config["leads.sources"];
+    /* A source only the Sales Manager intake offers (`lead-source-scope.ts`) is
+       accepted from somebody explicitly granted that module and from nobody else — the
+       form's `workspace` field is the browser's claim and is not consulted. An
+       enquiry conversion sets its own source and gets no extras. */
+    const sources = sourcesFor(
+      config["leads.sources"],
+      !v.fromEnquiry && (await isSalesManagerSeat(ctx.user.id)),
+    );
     if (!sources.some((o) => o.code === v.source)) {
       return err(
         `"${v.source}" is not one of the sources we record. Pick one from the list.`,
@@ -439,6 +460,32 @@ export async function captureLead(
       }
     }
 
+    /*
+     * A CATALOGUE CHOICE IS CHECKED, AND ITS NAME COMES FROM THE CATALOGUE.
+     * The picker only ever offers active products, but a server action is a
+     * URL — a stale tab or a hand-built request can name a retired SKU or one
+     * that never existed — so the product is read here and refused if it is not
+     * a live one. What is stored is `products.name`, the same text a
+     * telecaller would have typed, in the same `lead_requirement` column; no id
+     * is kept, which is what stops this answering the Calling Desk's Product
+     * question on that desk's behalf.
+     */
+    if (v.requirementProductId) {
+      const [p] = await db
+        .select({ id: products.id, name: products.name, active: products.active })
+        .from(products)
+        .where(eq(products.id, v.requirementProductId))
+        .limit(1);
+      if (!p || !p.active) {
+        return err(
+          "That product is not in the active catalogue. Pick another, or type what they want in your own words.",
+          "validation",
+          [{ field: "requirementProductId", message: "Not in the active catalogue." }],
+        );
+      }
+      v = { ...v, requirement: p.name };
+    }
+
     let existing: ExistingAccount | null = null;
     if (!v.allowDuplicate) {
       existing = await phoneAlreadyOnTheBook(v.phone);
@@ -483,6 +530,15 @@ export async function captureLead(
     const seatsCreator =
       ctx.user.role !== "admin" && (await canOpenModule(ctx.user.id, SALES_MANAGER_MODULE));
 
+    /* A LEAD SHE RAISES HERSELF IS APPROVED BY THE PERSON MAHEK DESIGNATES (`leads.
+       selfRaisedVerifierEmail`), so that person is seated on it at once: the
+       coordinating seat is what lets them see and act on it. Only where she is
+       its owner or nobody is — a lead she raises FOR a Salesman is the Salesman's
+       and follows the ordinary rule. Nobody designated, nothing seated. */
+    const selfRaisedApprover = seatsCreator
+      ? await approverFor({ ownerId: v.ownerId ?? null, salesManagerId: ctx.user.id })
+      : null;
+
     await db.transaction(async (tx) => {
       await tx.insert(customers).values({
         id: customerId,
@@ -504,6 +560,7 @@ export async function captureLead(
         ownerId: v.ownerId ?? null,
 
         ...(seatsCreator ? { salesManagerId: ctx.user.id, salesManagerDecidedAt: new Date() } : {}),
+        ...(selfRaisedApprover ? { leadManagerId: selfRaisedApprover.id } : {}),
 
         leadSalesType: v.salesType ?? null,
         leadStage: foot,
@@ -667,6 +724,7 @@ export async function captureLead(
       }
     }
 
+    await placeShopsNow([customerId]);
     refresh(customerId);
     return ok(
       { customerId, stage: foot },
@@ -971,6 +1029,7 @@ export async function captureLeadBatch(
         });
     }
 
+    if (summary.created) await placeShopsNow();
     refresh();
     return ok(
       summary,

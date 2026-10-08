@@ -2,7 +2,7 @@
  * Leave rules (spec §7), PURE.
  * ------------------------------------------------------------------------- */
 
-import { daysBetweenISO, datesBetween, monthOf } from "../time";
+import { daysBetweenISO, monthOf } from "../time";
 
 export type LeaveType = "Leave" | "Half Day";
 
@@ -14,7 +14,7 @@ export function leaveDays(type: LeaveType, start: string, end: string): number {
 
 export type RequestCheck = { field: string; message: string } | null;
 
-/** The apply-form validations (spec §7.1), in the source's words. */
+/** The apply-form validations (spec §7.1). */
 export function checkRequest(x: {
   type: LeaveType;
   start: string;
@@ -22,11 +22,11 @@ export function checkRequest(x: {
   /** Another request of the same employee that overlaps (not rejected), if any. */
   clash: { type: string; status: string } | null;
 }): RequestCheck {
-  if (x.clash) return { field: "start", message: `This Date Is already added ! Request Type ${x.clash.type} ${x.clash.status}` };
+  if (x.clash) return { field: "start", message: `You already have a request on these dates: ${x.clash.type}, ${x.clash.status}` };
   if (x.type === "Leave") {
-    if (x.end < x.start) return { field: "end", message: "Please select valid leave end date" };
+    if (x.end < x.start) return { field: "end", message: "The end date must be on or after the start date" };
     if (monthOf(x.end) !== monthOf(x.start))
-      return { field: "end", message: "Please Select leave End Date of Same Month! For Next Month apply Separate Leave" };
+      return { field: "end", message: "The end date must be in the same month as the start. Apply for next month’s days as a separate request." };
   }
   return null;
 }
@@ -57,11 +57,13 @@ export function balances(x: {
   return { paid: round(Math.max(0, credit - paidUsed)), unpaid: round(Math.max(0, (x.yearlyMax ?? 0) - unpaidUsed)) };
 }
 
+const dayWord = (n: number) => `${n} day${n === 1 ? "" : "s"}`;
+
 /** The approval's split, and why it may not stand. */
 export function checkApproval(days: number, paid: number, b: Balances): string | null {
-  if (!Number.isFinite(paid) || paid < 0 || paid > days) return "INVALID";
-  if (paid > b.paid) return "Insufficient Paid Leave";
-  if (days - paid > b.unpaid) return "Insufficient Unpaid Leave";
+  if (!Number.isFinite(paid) || paid < 0 || paid > days) return `Paid leave must be between 0 and ${days} days`;
+  if (paid > b.paid) return `Not enough paid leave: ${dayWord(b.paid)} available this month, ${dayWord(paid)} asked`;
+  if (days - paid > b.unpaid) return `Not enough unpaid leave: ${dayWord(b.unpaid)} left this year, ${dayWord(Math.round((days - paid) * 100) / 100)} needed`;
   return null;
 }
 
@@ -77,7 +79,3 @@ export function holidaysInside(holidays: HolidayRef[], employeeId: string, offic
   return holidays.filter((h) => h.date >= start && h.date <= end && holidayApplies(h, employeeId, office)).length;
 }
 
-/** Every date a request covers. */
-export function requestDates(start: string, end: string): string[] {
-  return datesBetween(start, end);
-}

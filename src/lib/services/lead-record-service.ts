@@ -612,3 +612,23 @@ export async function leadVisitsFor(
      limit ${limit}
   `) as unknown as LeadVisitRow[];
 }
+
+/**
+ * THE SHOP FRONT THE SALESMAN PHOTOGRAPHED WHILE RAISING THE LEAD.
+ *
+ * The handset files it under `mbos_lead` with the lead's own customer id, and
+ * no web screen ever drew it — so the one picture of a prospect anybody has was
+ * on a phone and nowhere else. Read access is checked per file by
+ * `/api/attachments/[id]`; this only says which files exist.
+ */
+export async function leadPhotoIds(customerId: string): Promise<string[]> {
+  const rows = (await db.execute<{ id: string }>(sql`
+    select f.id
+      from attachments f
+     where f.parent_type = 'mbos_lead' and f.parent_id = ${customerId}
+       and f.status = 'available'
+     order by f.uploaded_at desc
+     limit 6
+  `)) as unknown as { id: string }[];
+  return rows.map((r) => r.id);
+}

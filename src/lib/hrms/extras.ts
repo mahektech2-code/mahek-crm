@@ -25,6 +25,13 @@ export type HrmsExtras = {
   notice?: { text: string; href?: string; tone?: Tone };
   /** A date or period the screen was read for, with the parameter that changes it. */
   period?: { label: string; params: { k: string; l: string; v: string; type: "date" | "month" }[] };
+  /**
+   * A list too long to send whole: the server searches and pages it, and the
+   * list below filters and sorts only the page it was sent — so the strip
+   * says which page and of how many, rather than letting a page pass for
+   * the book.
+   */
+  paged?: { q: string; page: number; pages: number; total: number; from: number; to: number; placeholder: string };
 };
 
 export type HrmsListSpec = ListSpec & { hrms?: HrmsExtras };

@@ -7,6 +7,7 @@ import { DictateButton, joinDictation } from "@/components/ui/dictate";
 import { Icon } from "./icons";
 import { ErpVoice } from "./voice";
 import { useKit } from "./kit";
+import { PinField } from "./pin-field";
 
 /* ---------------------------------------------------------------------------
  * One form field, drawn as the CRM draws every field: an uppercase label (with
@@ -54,7 +55,7 @@ export function Field({
   /* A control with several buttons inside cannot sit in a <label>: every
      button would take the whole label as its name, and a click on the label
      text would press the first one. Those fields are a named group instead. */
-  const grouped = f.t === "multi" || f.t === "photo" || f.t === "video" || f.t === "suggest";
+  const grouped = f.t === "multi" || f.t === "photo" || f.t === "video" || f.t === "suggest" || f.t === "pin";
   const Wrap = grouped ? "div" : "label";
   return (
     <Wrap className="block min-w-0" {...(grouped ? { role: "group", "aria-label": f.l } : {})}>
@@ -92,11 +93,13 @@ function Control({
   onUseSuggestion?: (v: string) => void;
 }) {
   const voice = useContext(ErpVoice);
+  if (f.t === "pin") return <PinField value={value} error={error} onChange={onChange} />;
   if (f.t === "derived") {
     return (
       <span
         className={cx(
-          "flex min-h-8.5 items-center rounded-[4px] border border-dashed bg-canvas px-2.5 text-sm tabular-nums",
+          /* pre-line: a calculation may list several lines, one per lot. */
+          "flex min-h-8.5 items-center whitespace-pre-line rounded-[4px] border border-dashed bg-canvas px-2.5 py-1.5 text-sm tabular-nums",
           error ? "border-danger" : "border-line",
           derived ? "text-ink" : "text-line-strong",
         )}

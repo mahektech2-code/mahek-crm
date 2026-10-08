@@ -6,6 +6,12 @@ import { Modal } from "@/components/ui/modal";
 import { ProductField } from "@/components/products/product-field";
 import { RadioCard, FindingFieldRow, FindingFieldInput, SalesmanFindingsCard, initialFindingState, type FindingRowState } from "./radio-card";
 import { useLeadPipeline } from "./provider";
+import { VerifyAssistant } from "./verify-assistant";
+import { ConvertAssistant } from "./convert-assistant";
+import type { ConvertApplyContext, ConvertItem } from "@/lib/engines/convert-intel-decide";
+import type { ConvertFieldKey } from "@/lib/convert-intel-schema";
+import type { ApplyContext } from "@/lib/engines/verify-intel-decide";
+import type { VerifyAnswerKey, VerifyFindingKey } from "@/lib/verify-intel-schema";
 
 /**
  * A dialog's width: the Sales Dashboard's own, or the prototype's where the
@@ -141,7 +147,7 @@ const CONVERSION_FIELDS = SALESMAN_FINDING_FIELDS.filter((f) => CONVERSION_FIELD
 /* ------------------------------------------------------------- convert */
 
 function ConvertModal({ lead, onClose }: ModalProps) {
-  const { doConvert, refs } = useLeadPipeline();
+  const { doConvert, refs, workspace } = useLeadPipeline();
   const [reason, setReason] = React.useState("");
   const [showAll, setShowAll] = React.useState(false);
   const [customerType, setCustomerType] = React.useState(lead.customerType ?? "");
@@ -150,6 +156,50 @@ function ConvertModal({ lead, onClose }: ModalProps) {
     Object.fromEntries(CONVERSION_FIELDS.map((f) => [f.key, initialFindingState(f.get(lead) ?? "")])),
   );
   const [freeEntry, setFreeEntry] = React.useState<Record<string, string>>({});
+
+  /* WHICH FACTS THE MANAGER HAS CHANGED BY HAND, or that voice has already
+     applied. The voice assistant may fill a fact nobody has touched and never one
+     somebody has, and `convertProspect` keeps no record of what a Convert
+     overwrites — so a fact the manager changed is theirs for the rest of the
+     dialog, whatever it now holds. */
+  const [touched, setTouched] = React.useState<ReadonlySet<string>>(new Set());
+  const touch = (key: string) => setTouched((t) => (t.has(key) ? t : new Set(t).add(key)));
+  /* The picker shows the name it was MOUNTED with, so a product applied from
+     outside has to remount it under the new name. */
+  const [voiceProductName, setVoiceProductName] = React.useState<string | null>(null);
+
+  /* What the assistant is allowed to do to this dialog: put a value into a fact
+     the lead has nothing for (applyConvertFill), or switch a fact the lead already
+     has to Correct with the customer's value (markConvertCorrected). Neither
+     writes anything; neither chooses the conversion reason or any
+     Confirm / Unable To Verify. */
+  const applyConvertFill = (item: ConvertItem) => {
+    if (item.applyValue === null) return;
+    const key: ConvertFieldKey = item.key;
+    if (key === "customerType") setCustomerType(item.applyValue);
+    else if (key === "product") {
+      setProductId(item.applyValue);
+      setVoiceProductName(item.productName ?? null);
+    } else setFreeEntry((r) => ({ ...r, [key]: item.applyValue ?? "" }));
+    touch(key);
+  };
+  const markConvertCorrected = (item: ConvertItem) => {
+    if (item.applyValue === null) return;
+    const key: ConvertFieldKey = item.key;
+    if (key === "customerType") setCustomerType(item.applyValue);
+    else if (key === "product") {
+      setProductId(item.applyValue);
+      setVoiceProductName(item.productName ?? null);
+    } else setRows((r) => (r[key] ? { ...r, [key]: { ...r[key], choice: "correct", value: item.applyValue ?? "" } } : r));
+    touch(key);
+  };
+  const convertVoiceContext: ConvertApplyContext = {
+    touched,
+    customerType,
+    productId,
+    rows: rows as ConvertApplyContext["rows"],
+    freeEntry: freeEntry as ConvertApplyContext["freeEntry"],
+  };
 
   /* What to send for ONE field: nothing where the salesman's value is confirmed
      (the gate already reads it), the new value where it was corrected or
@@ -165,7 +215,11 @@ function ConvertModal({ lead, onClose }: ModalProps) {
   if (!reason) missing.push("a reason");
   if (!customerType) missing.push("the customer type");
   for (const f of CONVERSION_FIELDS) {
-    if (f.key === "decisionMaker") continue;
+    /* Neither is needed for a Prospect: the decision maker is asked if known,
+       and the rupee estimate is no longer a question — the monthly requirement
+       in litres is the one monthly figure the gate wants. Both stay on the card
+       to confirm or correct where somebody recorded them. */
+    if (f.key === "decisionMaker" || f.key === "potentialPaise") continue;
     if (f.key === "product") {
       if (!productId) missing.push(f.label);
     } else if (!f.get(lead) && !valueFor(f)) missing.push(f.label);
@@ -208,9 +262,27 @@ function ConvertModal({ lead, onClose }: ModalProps) {
       footer={<Footer onClose={onClose} label="Convert to Prospect" onSave={save} disabled={missing.length > 0} />}
     >
       <FormError />
+      {/* The assistant belongs to the CRM Sales Manager workspace only. This
+          dialog is shared with the Sales Dashboard's pipeline, which does not
+          draw it — and the action refuses a request from there as well. */}
+      {workspace === "crm" ? (
+        <ConvertAssistant
+          customerId={lead.id}
+          context={convertVoiceContext}
+          onFile={{ customerType: lead.customerType ?? null, productId: lead.productId ?? null }}
+          onFill={applyConvertFill}
+          onCorrect={markConvertCorrected}
+        />
+      ) : null}
       <div>
         <Field label="Customer type" className="mb-3.5">
-          <Select value={customerType} onChange={(e) => setCustomerType(e.target.value)}>
+          <Select
+            value={customerType}
+            onChange={(e) => {
+              setCustomerType(e.target.value);
+              touch("customerType");
+            }}
+          >
             <option value="">Choose…</option>
             {CUSTOMER_TYPES.map((t) => (
               <option key={t.value} value={t.value}>{t.label}</option>
@@ -225,11 +297,15 @@ function ConvertModal({ lead, onClose }: ModalProps) {
               <div key={f.key} className="mb-3.5">
                 <div className="mb-1 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">{f.label}</div>
                 <ProductField
+                  key={voiceProductName ?? "lead"}
                   customerId={lead.id}
                   productId={productId}
-                  productName={lead.product ?? null}
+                  productName={voiceProductName ?? lead.product ?? null}
                   disabled={false}
-                  onPick={setProductId}
+                  onPick={(id) => {
+                    setProductId(id);
+                    touch("product");
+                  }}
                 />
               </div>
             );
@@ -240,14 +316,20 @@ function ConvertModal({ lead, onClose }: ModalProps) {
               label={f.label}
               onFile={onFile}
               state={rows[f.key]}
-              onChange={(next) => setRows((r) => ({ ...r, [f.key]: next }))}
+              onChange={(next) => {
+                setRows((r) => ({ ...r, [f.key]: next }));
+                touch(f.key);
+              }}
             />
           ) : (
             <FindingFieldInput
               key={f.key}
               label={f.label}
               value={freeEntry[f.key] ?? ""}
-              onChange={(v) => setFreeEntry((r) => ({ ...r, [f.key]: v }))}
+              onChange={(v) => {
+                setFreeEntry((r) => ({ ...r, [f.key]: v }));
+                touch(f.key);
+              }}
             />
           );
         })}
@@ -313,7 +395,7 @@ const RESULTS: { code: string; label: string }[] = [
 ];
 
 function VerifyModal({ lead, onClose }: ModalProps) {
-  const { doVerify, refs } = useLeadPipeline();
+  const { doVerify, refs, workspace } = useLeadPipeline();
   const findingFields = SALESMAN_FINDING_FIELDS.filter((f) => f.get(lead));
   const [rows, setRows] = React.useState<Record<string, FindingRowState>>(() =>
     Object.fromEntries(findingFields.map((f) => [f.key, initialFindingState(f.get(lead) ?? "")])),
@@ -333,6 +415,48 @@ function VerifyModal({ lead, onClose }: ModalProps) {
   const [result, setResult] = React.useState("verified");
   const [note, setNote] = React.useState("");
   const [failure, setFailure] = React.useState("");
+
+  /* WHICH ANSWERS THE MANAGER HAS ANSWERED. The dialog starts with the salesman
+     having visited and explained and the shop interested, so a Yes sitting in a
+     box is a default and not an answer until somebody touches it. The voice
+     assistant may set an untouched answer and never a touched one. */
+  const [touched, setTouched] = React.useState<ReadonlySet<string>>(new Set());
+  const touch = (key: string) => setTouched((s) => (s.has(key) ? s : new Set(s).add(key)));
+  const answer = (key: string, set: (v: boolean) => void) => (v: boolean) => {
+    set(v);
+    touch(key);
+  };
+
+  /* What the assistant is allowed to do to this dialog: set an answer, or switch
+     a finding row to Correct with the shop's value. The reason on that row, the
+     result, the failure reason and every note are written by the manager. */
+  const applyVoiceAnswer = (key: VerifyAnswerKey, value: boolean | string) => {
+    switch (key) {
+      case "visited": setVisited(value === true); break;
+      case "explained": setExplained(value === true); break;
+      case "genuineInterest": setGenuineInterest(value === true); break;
+      case "priceConcern": setPriceConcern(value === true); break;
+      case "qualityConcern": setQualityConcern(value === true); break;
+      case "creditConcern": setCreditConcern(value === true); break;
+      case "serviceConcern": setServiceConcern(value === true); break;
+      case "competitorConcern": setCompetitorConcern(value === true); break;
+      case "readyForTrial": setReadyForTrial(value === true); break;
+      case "readyForCommercial": setReadyForCommercial(value === true); break;
+      case "readyForOrder": setReadyForOrder(value === true); break;
+      case "impression": if (typeof value === "string") setImpression(value); break;
+    }
+    touch(key);
+  };
+  const markVoiceCorrected = (key: VerifyFindingKey, value: string) =>
+    setRows((r) => (r[key] ? { ...r, [key]: { ...r[key], choice: "correct", value } } : r));
+  const voiceContext: ApplyContext = {
+    touched,
+    current: {
+      visited, explained, impression, genuineInterest, priceConcern, qualityConcern, creditConcern,
+      serviceConcern, competitorConcern, readyForTrial, readyForCommercial, readyForOrder,
+    },
+    rows: rows as ApplyContext["rows"],
+  };
 
   const corrected = findingFields.filter((f) => rows[f.key].choice === "correct" && rows[f.key].value.trim() && f.findingId);
   const unable = findingFields.filter((f) => rows[f.key].choice === "unable");
@@ -411,6 +535,17 @@ function VerifyModal({ lead, onClose }: ModalProps) {
       footer={<Footer onClose={onClose} label="Save verification" onSave={doSave} disabled={Boolean(problem)} />}
     >
       <FormError />
+      {/* The assistant belongs to the CRM Sales Manager workspace only. This
+          dialog is shared with the Sales Dashboard's pipeline, which does not
+          draw it — and the action refuses a request from there as well. */}
+      {workspace === "crm" ? (
+        <VerifyAssistant
+          customerId={lead.id}
+          context={voiceContext}
+          onAnswer={applyVoiceAnswer}
+          onCorrect={markVoiceCorrected}
+        />
+      ) : null}
       <SalesmanFindingsCard lead={lead} fields={SALESMAN_FINDING_FIELDS} />
 
       <div className="mb-2 text-xs font-medium tracking-[0.04em] text-muted uppercase">Confirm salesman findings</div>
@@ -427,29 +562,29 @@ function VerifyModal({ lead, onClose }: ModalProps) {
         ))}
 
       <div className="mt-4.5 mb-2 text-xs font-medium tracking-[0.04em] text-muted uppercase">A. Salesman verification</div>
-      <YesNo label="Did the salesman visit?" value={visited} onChange={setVisited} />
-      <YesNo label="Did the salesman explain Mahek properly?" value={explained} onChange={setExplained} />
+      <YesNo label="Did the salesman visit?" value={visited} onChange={answer("visited", setVisited)} />
+      <YesNo label="Did the salesman explain Mahek properly?" value={explained} onChange={answer("explained", setExplained)} />
       <Field label="Customer's impression of the salesman?" className="mb-3">
         <Input placeholder="Free notes" value={impression} onChange={(e) => setImpression(e.target.value)} />
       </Field>
 
       <div className="mb-2 text-xs font-medium tracking-[0.04em] text-muted uppercase">B. Opportunity verification</div>
-      <YesNo label="Is the customer genuinely interested in trying it?" value={genuineInterest} onChange={setGenuineInterest} />
+      <YesNo label="Is the customer genuinely interested in trying it?" value={genuineInterest} onChange={answer("genuineInterest", setGenuineInterest)} />
 
       <div className="mb-2 text-xs font-medium tracking-[0.04em] text-muted uppercase">C. Objections</div>
       <div className="mb-3 flex flex-wrap gap-3.5">
-        <CheckField label="Price concern" checked={priceConcern} onChange={setPriceConcern} />
-        <CheckField label="Quality concern" checked={qualityConcern} onChange={setQualityConcern} />
-        <CheckField label="Credit concern" checked={creditConcern} onChange={setCreditConcern} />
-        <CheckField label="Delivery / service concern" checked={serviceConcern} onChange={setServiceConcern} />
-        <CheckField label="Competitor concern" checked={competitorConcern} onChange={setCompetitorConcern} />
+        <CheckField label="Price concern" checked={priceConcern} onChange={answer("priceConcern", setPriceConcern)} />
+        <CheckField label="Quality concern" checked={qualityConcern} onChange={answer("qualityConcern", setQualityConcern)} />
+        <CheckField label="Credit concern" checked={creditConcern} onChange={answer("creditConcern", setCreditConcern)} />
+        <CheckField label="Delivery / service concern" checked={serviceConcern} onChange={answer("serviceConcern", setServiceConcern)} />
+        <CheckField label="Competitor concern" checked={competitorConcern} onChange={answer("competitorConcern", setCompetitorConcern)} />
       </div>
 
       <div className="mb-2 text-xs font-medium tracking-[0.04em] text-muted uppercase">D. Readiness</div>
       <div className="mb-3 flex flex-wrap gap-3.5">
-        <CheckField label="Ready for trial" checked={readyForTrial} onChange={setReadyForTrial} />
-        <CheckField label="Ready for commercial discussion" checked={readyForCommercial} onChange={setReadyForCommercial} />
-        <CheckField label="Ready for order discussion" checked={readyForOrder} onChange={setReadyForOrder} />
+        <CheckField label="Ready for trial" checked={readyForTrial} onChange={answer("readyForTrial", setReadyForTrial)} />
+        <CheckField label="Ready for commercial discussion" checked={readyForCommercial} onChange={answer("readyForCommercial", setReadyForCommercial)} />
+        <CheckField label="Ready for order discussion" checked={readyForOrder} onChange={answer("readyForOrder", setReadyForOrder)} />
       </div>
 
       <div className="mt-4 mb-2 text-xs font-medium tracking-[0.04em] text-muted uppercase">Verification result</div>
@@ -490,18 +625,21 @@ function VerifyModal({ lead, onClose }: ModalProps) {
 /* ------------------------------------------------------- qualification */
 
 function QualifyModal({ lead, onClose }: ModalProps) {
-  const width = useProtoWidth(580, 560);
-  const { doSaveChecklist, doReviewChecklist, busy } = useLeadPipeline();
+  const width = useProtoWidth(620, 580);
+  const { doReviewChecklist, doValidateGst, busy } = useLeadPipeline();
   const status = qualificationStatus(lead);
-  const tickable = lead.qualItems.filter((c) => c.tickable);
-  const [ticks, setTicks] = React.useState<Record<string, boolean>>(() =>
-    Object.fromEntries(tickable.map((c) => [c.id, c.done])),
-  );
   const [verdict, setVerdict] = React.useState<"verified" | "incomplete" | "clarification">(lead.qualReview?.verdict ?? "verified");
   const [note, setNote] = React.useState("");
-  const dirty = tickable.some((c) => ticks[c.id] !== c.done);
+  const [gstNote, setGstNote] = React.useState("");
+  const [refusing, setRefusing] = React.useState(false);
   const reviewOpen = lead.stage === "qualification" || lead.stage === "qualified";
   const noteMissing = verdict !== "verified" && !note.trim();
+  const gst = lead.gstState ?? "none";
+  /* A "verified" verdict needs every answer in AND the GST number validated; the
+     server refuses it otherwise and names what is missing, so the button only
+     asks the screen to say the same thing first. */
+  const gstOk = gst === "valid";
+  const verifyBlocked = verdict === "verified" && (!status.allDone || !gstOk);
 
   return (
     <Modal
@@ -510,65 +648,74 @@ function QualifyModal({ lead, onClose }: ModalProps) {
       width={width}
       title={
         <div>
-          <div>Qualification checklist</div>
-          <div className="mt-0.5 text-[13px] font-normal text-muted">{lead.name} · every condition unlocks Sample / Trial</div>
+          <div>Qualification review</div>
+          <div className="mt-0.5 text-[13px] font-normal text-muted">{lead.name} · what the Salesman collected, for you to read and approve</div>
         </div>
       }
-      footer={
-        <>
-          <Button variant="secondary" onClick={onClose}>Close</Button>
-          {tickable.length ? (
-            <Button variant="primary" disabled={busy || !dirty || !lead.caps.canWork} onClick={() => void doSaveChecklist(ticks)}>
-              {busy ? "Saving…" : "Save ticks"}
-            </Button>
-          ) : null}
-        </>
-      }
+      footer={<Button variant="secondary" onClick={onClose}>Close</Button>}
     >
       <FormError />
       <Callout tone={status.allDone ? "brand" : "warn"}>
-        {status.done} of {status.total} conditions met{status.allDone ? " — ready for Sample / Trial." : "."}
+        {status.done} of {status.total} answered{status.allDone ? " — ready for your decision." : "."}
       </Callout>
       <div className="mt-3 flex flex-col gap-2">
-        {lead.qualItems.map((c) => {
-          const done = c.tickable ? ticks[c.id] : c.done;
-          const box = (
+        {lead.qualItems.map((c) => (
+          <div key={c.id} className="flex items-start gap-2.5 rounded-[4px] border border-divider bg-canvas px-3 py-2 text-sm">
             <span
               className={
                 "mt-0.5 flex h-4.5 w-4.5 flex-none items-center justify-center rounded-[3px] border " +
-                (done ? "border-brand bg-brand text-white" : "border-line-strong bg-surface")
+                (c.done ? "border-brand bg-brand text-white" : "border-line-strong bg-surface")
               }
             >
-              {done ? "✓" : ""}
+              {c.done ? "✓" : ""}
             </span>
-          );
-          return c.tickable ? (
-            <button
-              key={c.id}
-              type="button"
-              onClick={() => setTicks((t) => ({ ...t, [c.id]: !t[c.id] }))}
-              className="flex items-start gap-2.5 rounded-[4px] border border-line px-3 py-2 text-left text-sm hover:bg-canvas"
-            >
-              {box}
-              <span className={done ? "text-body" : "text-ink"}>{c.says}</span>
-            </button>
-          ) : (
-            <div key={c.id} className="flex items-start gap-2.5 rounded-[4px] border border-divider bg-canvas px-3 py-2 text-sm">
-              {box}
-              <span className={done ? "text-body" : "text-ink"}>
-                {c.says}
-                <span className="block text-[12px] text-muted">
-                  {done ? "Answered on the record." : "Answered by a value on the record, not a tick — it is filled in from the lead's own details."}
-                </span>
-              </span>
-            </div>
-          );
-        })}
+            <span className={c.done ? "text-body" : "text-ink"}>
+              {c.says}
+              {c.answer ? <span className="block text-[13px] font-medium text-ink">{c.answer}</span> : null}
+              {!c.done && !c.answer ? <span className="block text-[12px] text-muted">Not answered yet.</span> : null}
+            </span>
+          </div>
+        ))}
       </div>
 
       {reviewOpen ? (
         <div className="mt-5 border-t border-divider pt-4">
-          <div className="mb-1 text-xs font-medium tracking-[0.04em] text-muted uppercase">Manager review</div>
+          <div className="mb-1 text-xs font-medium tracking-[0.04em] text-muted uppercase">GST number</div>
+          <p className="mb-2 text-[13px] text-body">
+            {gst === "none"
+              ? "The Salesman has not entered a GST number yet."
+              : gst === "valid"
+                ? `${lead.gstin} — you have validated it.`
+                : gst === "refused"
+                  ? `${lead.gstin} — you refused it. The Salesman has been told what to correct.`
+                  : `${lead.gstin} — entered by the Salesman. Check it, then validate or refuse it. You cannot verify the Qualification until it is validated.`}
+          </p>
+          {lead.caps.canVerify && gst !== "none" ? (
+            refusing ? (
+              <div className="space-y-2">
+                <Field label="What is wrong with it?">
+                  <Textarea rows={2} value={gstNote} onChange={(e) => setGstNote(e.target.value)} />
+                </Field>
+                <div className="flex gap-2">
+                  <Button variant="secondary" size="sm" disabled={busy || !gstNote.trim()} onClick={() => void doValidateGst(false, gstNote).then((ok) => ok && setRefusing(false))}>
+                    Refuse the number
+                  </Button>
+                  <Button variant="secondary" size="sm" onClick={() => setRefusing(false)}>Cancel</Button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex gap-2">
+                <Button variant="primary" size="sm" disabled={busy || gst === "valid"} onClick={() => void doValidateGst(true, "")}>
+                  {gst === "valid" ? "Validated" : "Validate the number"}
+                </Button>
+                <Button variant="secondary" size="sm" disabled={busy || gst === "refused"} onClick={() => setRefusing(true)}>
+                  Refuse it
+                </Button>
+              </div>
+            )
+          ) : null}
+
+          <div className="mb-1 mt-5 text-xs font-medium tracking-[0.04em] text-muted uppercase">Your review</div>
           {lead.qualReview ? (
             <p className="mb-2 text-[13px] text-body">
               Last review: <b>{lead.qualReview.verdict}</b>
@@ -576,28 +723,37 @@ function QualifyModal({ lead, onClose }: ModalProps) {
               {lead.qualReview.note ? ` — ${lead.qualReview.note}` : ""}
             </p>
           ) : (
-            <p className="mb-2 text-[13px] text-muted">The salesman completes the checklist; you review it. An unreviewed checklist does not hold the lead.</p>
+            <p className="mb-2 text-[13px] text-muted">The Salesman completes the answers; you review them. An unreviewed checklist does not hold the lead.</p>
           )}
           {lead.caps.canVerify ? (
             <>
               <div className="flex flex-col gap-1.5">
-                <RadioCard name="qrv" label="Verified — it is complete" checked={verdict === "verified"} onChange={() => setVerdict("verified")} />
-                <RadioCard name="qrv" label="Incomplete — hold the lead here" checked={verdict === "incomplete"} onChange={() => setVerdict("incomplete")} />
-                <RadioCard name="qrv" label="Needs clarification" checked={verdict === "clarification"} onChange={() => setVerdict("clarification")} />
+                <RadioCard name="qrv" label="Verified — complete, GST validated, ready for a sample" checked={verdict === "verified"} onChange={() => setVerdict("verified")} />
+                <RadioCard name="qrv" label="Incomplete — something is missing or too thin" checked={verdict === "incomplete"} onChange={() => setVerdict("incomplete")} />
+                <RadioCard name="qrv" label="Needs clarification — it is there but I need it explained" checked={verdict === "clarification"} onChange={() => setVerdict("clarification")} />
               </div>
               {verdict !== "verified" ? (
-                <Field label="What does he need to do?" className="mt-2">
+                <Field label="What does the Salesman need to do?" className="mt-2">
                   <Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} />
                 </Field>
+              ) : verifyBlocked ? (
+                <p className="mt-2 text-[12.5px] text-muted">
+                  {!status.allDone ? "Every answer has to be in before you can verify. " : ""}
+                  {!gstOk ? "The GST number has to be validated first." : ""}
+                </p>
               ) : null}
               <div className="mt-2">
-                <Button variant="secondary" size="sm" disabled={busy || noteMissing} onClick={() => void doReviewChecklist(verdict, note)}>
+                <Button variant="secondary" size="sm" disabled={busy || noteMissing || verifyBlocked} onClick={() => void doReviewChecklist(verdict, note)}>
                   Record review
                 </Button>
               </div>
             </>
           ) : (
-            <p className="text-[12.5px] text-muted">Reviewing a checklist is a sales manager&rsquo;s. Yours is not a hat that carries it.</p>
+            <p className="text-[12.5px] text-muted">
+              {lead.approverName
+                ? `You raised this lead yourself, so ${lead.approverName} validates its GST number and reviews it. You collect the answers.`
+                : "Reviewing a Qualification is for the Sales Manager the lead is under."}
+            </p>
           )}
         </div>
       ) : null}

@@ -1,6 +1,8 @@
 "use client";
 
 import * as React from "react";
+import { areasSignature } from "@/lib/territory-signature";
+import { APP_TIMEZONE } from "@/lib/business-date";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/toast";
 import { Modal } from "@/components/ui/overlays";
@@ -520,5 +522,46 @@ export function WorksCell({ salesman }: { salesman: Salesman }) {
 
   /* The stored rows are the LEAVES, so a city already implies its state and
      printing both would read as two places. */
-  return <>{list.map((t) => t.value).join(", ")}</>;
+  return (
+    <>
+      {list.map((t) => t.value).join(", ")}
+      <AreaAnswer salesman={salesman} />
+    </>
+  );
+}
+
+/**
+ * What he said about these areas on his handset.
+ *
+ * An acceptance only counts for the allocation he was shown — the signature
+ * is compared with the allocation as it stands now, and a stale one says so
+ * rather than reading as a yes to cities he never saw.
+ */
+function AreaAnswer({ salesman }: { salesman: Salesman }) {
+  const a = salesman.areaAnswer;
+  if (!a) {
+    return <span className="block text-xs text-muted">Not yet accepted on the handset</span>;
+  }
+  const on = new Date(a.at).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    timeZone: APP_TIMEZONE,
+  });
+  if (a.kind === "accept") {
+    const current = a.signature === areasSignature(salesman.territories ?? []);
+    return current ? (
+      <span className="block text-xs text-success">Accepted on {on}</span>
+    ) : (
+      <span className="block text-xs text-muted" title="The areas have changed since he accepted them">
+        Accepted an earlier allocation on {on}
+      </span>
+    );
+  }
+  const verdict =
+    a.state === "approved" ? "approved" : a.state === "rejected" ? "declined" : "waiting on Approvals";
+  return (
+    <span className="block text-xs text-warn-ink" title={a.reason ?? undefined}>
+      Asked for {a.requested.join(", ")} on {on} · {verdict}
+    </span>
+  );
 }

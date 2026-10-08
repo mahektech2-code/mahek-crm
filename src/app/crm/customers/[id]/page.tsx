@@ -5,7 +5,7 @@ import { orderCountsSql } from "@/lib/order-status";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { orders, payments } from "@/db/schema";
-import { isManager, requireUser } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import {
   assertCustomerInScope,
   NotPermittedError,
@@ -26,7 +26,7 @@ import {
   distributorsFor,
   suggestedDistributors,
 } from "@/lib/services/distributor-service";
-import { canFor } from "@/lib/access-control";
+import { canFor, levelInApp } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
 import { popularProducts } from "@/lib/services/product-service";
 import {
@@ -44,6 +44,7 @@ import { categoryLabel, categoryValue } from "@/lib/complaint-labels";
 import { TIMELINE_PAGE } from "@/lib/timeline-kinds";
 import { addDays, calendarDate } from "@/lib/business-date";
 import { RecordScreen } from "./record-screen";
+import { listCustomerContacts } from "@/lib/services/customer-contact-service";
 
 export async function generateMetadata({
   params,
@@ -193,7 +194,8 @@ export default async function CustomerRecordPage({
    * lead nobody has converted yet, whose order history already shows goods
    * arriving on somebody's bill.
    */
-  const [distributors, deliveryAddresses, suggestions] = await Promise.all([
+  const [contacts, distributors, deliveryAddresses, suggestions] = await Promise.all([
+    listCustomerContacts(id),
     distributorsFor(id),
     deliveryAddressesFor(id),
     customer.kind === "lead" && !customer.thirdParty
@@ -234,7 +236,13 @@ export default async function CustomerRecordPage({
         name: customer.name,
         contactPerson: customer.contactPerson,
         phone: customer.phone,
+        // What the contacts list does not hold: where the shop is, the
+        // WhatsApp group its staff read, and on a lead who signs.
+        address: customer.address,
+        whatsappGroupName: customer.whatsappGroupName,
+        decisionMaker: customer.leadDecisionMaker,
         city: customer.city,
+        place: customer.place ?? null,
         ownerName: customer.ownerName,
         kind: customer.kind,
         leadSource: customer.leadSource,
@@ -295,6 +303,9 @@ export default async function CustomerRecordPage({
         reactivationReason: customer.reactivationReason,
         deactivationReason: customer.deactivationReason,
       }}
+      contacts={contacts}
+      businessDay={day}
+      birthdayHeadsUpDays={config["customers.birthdayHeadsUpDays"]}
       distributors={distributors}
       deliveryAddresses={deliveryAddresses}
       distributorSuggestions={suggestions}
@@ -318,8 +329,9 @@ export default async function CustomerRecordPage({
          because a ceiling that only exists in a browser is not a ceiling; the
          save re-checks it against the same two settings. */
       discountAuthority={{
-        level:
-          user.role === "admin" ? "admin" : isManager(user) ? "manager" : "associate",
+        /* The CRM level, the same function the save asks — not the widest
+           level held anywhere. See `interaction-service.ts`. */
+        level: (await levelInApp(user, "crm")) ?? "associate",
         associateMaxBp: config["pricing.associateMaxDiscountBp"],
         managerMaxBp: config["pricing.managerMaxDiscountBp"],
       }}
@@ -356,6 +368,8 @@ export default async function CustomerRecordPage({
         achieved: Number(stats?.thisMonth ?? 0),
         isDefault: target?.isDefault ?? true,
         shareOfBook: target?.shareOfBookPercent ?? null,
+        billTarget: target?.billTarget ?? null,
+        billsAchieved: target?.billsAchieved ?? 0,
       }}
       openComplaint={
         openComplaint
@@ -414,6 +428,7 @@ export default async function CustomerRecordPage({
         actor: t.actor,
         content: t.content,
         meta: t.meta ?? null,
+        detail: t.detail ?? null,
       }))}
       timelineCursor={timeline.cursor}
       timelineMore={timeline.more}

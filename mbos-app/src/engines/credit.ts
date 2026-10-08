@@ -114,7 +114,7 @@ export function assessOrder(inputs: CreditInputs): CreditAssessment {
   if (inputs.creditBlocked) {
     return {
       decision: 'blocked',
-      reason: 'This customer is credit-blocked. Accounts have to lift it before an order can be taken.',
+      reason: 'This customer is credit-blocked. Accounts must remove the block before you can take an order.',
       availablePaise,
       overByPaise,
       checked,
@@ -130,8 +130,8 @@ export function assessOrder(inputs: CreditInputs): CreditAssessment {
       decision: 'ok',
       reason:
         availablePaise == null
-          ? 'No credit limit on file for this customer, so the limit was not checked.'
-          : 'This order cannot be valued yet, so it was not checked against the credit limit.',
+          ? 'No credit limit on file for this customer. The limit was not checked.'
+          : 'This order has no price yet. It was not checked against the credit limit.',
       availablePaise,
       overByPaise: 0,
       checked: false,
@@ -145,7 +145,7 @@ export function assessOrder(inputs: CreditInputs): CreditAssessment {
       reason:
         overByPaise === 0
           ? 'Within the credit limit.'
-          : 'Just past the credit limit, inside the allowance — no approval needed.',
+          : 'A little over the credit limit, but within the allowed extra. No approval needed.',
       availablePaise,
       overByPaise,
       checked: true,
@@ -163,8 +163,8 @@ export function assessOrder(inputs: CreditInputs): CreditAssessment {
     decision: 'needs_approval',
     reason:
       approverTier === 'senior'
-        ? 'This goes well past the credit limit — it needs the senior desk to approve before it ships.'
-        : 'This goes past the credit limit — it needs your manager to approve before it ships.',
+        ? 'This is far over the credit limit. A senior must approve it before it is sent.'
+        : 'This is over the credit limit. Your manager must approve it before it is sent.',
     availablePaise,
     overByPaise,
     checked: true,

@@ -30,9 +30,12 @@ import {
 import { setTestUser } from "@/lib/auth";
 import { erpContext } from "@/lib/erp/access";
 import { screenModule } from "@/lib/erp/screens";
+import { approvedPoLine } from "@/lib/erp/po-fixture";
 import { fgLots, packLots, rmLots, rmLotStock, sfgLots } from "@/lib/erp/stock";
 import { runErpAlerts } from "@/lib/erp/alerts";
 import { erpNavCounts } from "@/lib/erp/counts";
+import "@/lib/erp/calcs";
+import { runCalc } from "@/lib/erp/calc";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const TODAY = "2026-09-20";
@@ -79,7 +82,8 @@ let fgId = "";
 
 async function purchase(item: string, qty: string, unit: string, rate: string) {
   const ctx = await as(admin);
-  const r = await mod("register").forms!.new(ctx, { date: TODAY, supplier: "Asian Solvents", item, qty, unit, rate, gst: "18", company: "Mahek Marketing India", godown: "Bhiwandi" }, []);
+  const po = await approvedPoLine("Asian Solvents", item, Number(qty));
+  const r = await mod("register").forms!.new(ctx, { date: TODAY, po: po.po, poLine: po.poLine, qty, unit, rate, gst: "18", company: "Mahek Marketing India", godown: "Bhiwandi" }, []);
   assert.ok(r.ok, JSON.stringify(r));
 }
 
@@ -246,13 +250,31 @@ describe("re-order levels", () => {
 
   test("a requisition's present quantity is the level's available figure", async () => {
     const ctx = await as(admin);
-    const made = await mod("requisitions").forms!.new(ctx, { date: TODAY, godown: "Bhiwandi", type: "Can", item: "Tin can 5L", required: "60", priority: "Urgent" }, []);
+    const made = await mod("requisitions").forms!.new(ctx, { date: TODAY, requiredBy: TODAY, department: "Production Head", godown: "Bhiwandi", type: "Can", item: "Tin can 5L", required: "60", priority: "Urgent" }, []);
     assert.ok(made.ok);
-    const toluene = await mod("requisitions").forms!.new(ctx, { date: TODAY, godown: "Bhiwandi", type: "Chemical", item: "Toluene", required: "60", priority: "Urgent" }, []);
+    const toluene = await mod("requisitions").forms!.new(ctx, { date: TODAY, requiredBy: TODAY, department: "Production Head", godown: "Bhiwandi", type: "Chemical", item: "Toluene", required: "60", priority: "Urgent" }, []);
     assert.ok(toluene.ok);
     const { rows } = await mod("requisitions").load(ctx);
     assert.equal(rows.find((r) => r.v.item === "Tin can 5L")?.v.present, 48);
     assert.equal(rows.find((r) => r.v.item === "Toluene")?.v.present, "no level set");
+  });
+
+  test("the requisition form shows each lot on hand, at this godown and elsewhere, and offers no finished goods", async () => {
+    const ctx = await as(admin);
+    const { spec } = await mod("requisitions").load(ctx);
+    const form = spec.newForm!;
+    /* The categories are offered per department now; no department is offered a finished good. */
+    const byDept = form.header.find((f) => f.k === "type")!.optsBy!.map;
+    assert.ok(Object.keys(byDept).length);
+    for (const opts of Object.values(byDept)) assert.ok(!opts.includes("Finish Good"));
+    const lots = (await rmLots()).filter((l) => l.item === "Toluene" && l.stock > 0);
+    assert.ok(lots.length, "the fixture holds Toluene");
+    const godown = lots[0].godown;
+    const shown = runCalc("requisitions.onHand", { h: { item: "Toluene", godown }, l: {}, lines: [], i: -1, data: form.data ?? {} });
+    for (const l of lots.filter((x) => x.godown === godown)) assert.ok(shown.includes(`Lot ${l.lotNo} ·`), shown);
+    assert.match(runCalc("requisitions.onHand", { h: { item: "Toluene", godown: "Nowhere" }, l: {}, lines: [], i: -1, data: form.data ?? {} }), /^None at Nowhere\nElsewhere · /);
+    const fg = await mod("requisitions").forms!.new(ctx, { date: TODAY, requiredBy: TODAY, department: "Production Head", godown: "Bhiwandi", type: "Finish Good", item: BOXED, required: "5", priority: "Urgent" }, []);
+    assert.ok(!fg.ok && fg.fieldErrors?.[0].field === "type", JSON.stringify(fg));
   });
 
   test("a boxed SKU's level reads packing stock", async () => {

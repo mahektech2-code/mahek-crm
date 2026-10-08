@@ -1,13 +1,13 @@
 import React from 'react';
 import { Pressable, View } from 'react-native';
-import { router } from 'expo-router';
 
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Card, ListCard, SecondaryButton, T, Toggle } from '../src/components/ui/primitives';
-import { openPasswordReset, signOut as signOutReal } from '../src/data/session';
-import { pendingCount } from '../src/sync/queue';
-import { plural } from '../src/lib/format';
+import { feedback, primeSounds } from '../src/components/ui/feedback';
+import { setFeedbackPref, useFeedbackPrefs } from '../src/data/feedback-prefs';
+import { openPasswordReset } from '../src/data/session';
 import { useStore } from '../src/state/store';
+import { useSignOut } from '../src/state/sign-out';
 import { useBoot } from '../src/state/boot';
 import { color as C, radius, weight } from '../src/theme/tokens';
 import { canOffer, isOn as lockIsOn, setOn as rememberLockChoice } from '../src/data/app-lock';
@@ -35,65 +35,22 @@ import { pushStatus, registerForPush, type PushReadiness } from '../src/native/p
  */
 
 /**
- * TWO SWITCHES THAT MOVE AND CHANGE NOTHING, AND ONE THAT NOW DOES.
+ * THE SWITCHES HERE ALL DO SOMETHING.
  *
- * `pfPrefs` is written by these toggles and read by NOTHING — not the sync, not
- * the push registration. It is not even persisted, so a switch somebody set
- * went back the next time the app started. Settings that looked like settings.
- *
- * Push is the one that was reported, and it is the one that cannot simply be
- * wired up: `registerForPush` needs an EAS project id in `app.json`
- * (`extra.eas.projectId`) to ask Expo's service for a token, `extra` is empty,
- * and so nine handsets have registered zero tokens between them. No token means
- * nothing to push TO, which is why a test push arrived nowhere. That needs an
- * Expo account and `eas init`, not a code change.
- *
- * A switch that cannot do anything is worse than no switch: it is where
- * somebody goes to fix the problem, and it tells them they already have. So
- * each one says whether it works, and the ones that do not are shown off and
- * unpressable with the reason underneath.
- *
- * THE FINGERPRINT IS NO LONGER ONE OF THEM. It sat here reading "Not built —
- * sign in with your password", which was true of the dead toggle it described
- * and is now false: it is a real app lock, with its own row beneath this list,
- * because it has state a static entry cannot carry — whether the phone has a
- * sensor, whether a finger is enrolled on it, and whether this handset has the
- * lock switched on. Leaving it here as "not built" would be the same lie in the
- * other direction.
+ * "Send on Wi-Fi only" was drawn off and unpressable with "Not ready yet"
+ * under it — a switch for a feature that does not exist, which is where
+ * somebody goes to save data and is told nothing they can use. It is gone
+ * until the sync can honour it. Push, the app lock, vibration and sounds are
+ * each real, and each says whether it is working on THIS phone.
  */
-type Pref = { k: 'wifi'; l: string; s: string; blocked?: string };
-
-const PREFS: Pref[] = [
-  {
-    k: 'wifi',
-    l: 'Sync on Wi-Fi only',
-    s: 'Saves data when you are on mobile',
-    blocked: 'Not built — the sync runs on whatever connection there is.',
-  },
-];
 
 export default function ProfileScreen() {
   const back = useCameFrom('more');
   const notify = useStore((s) => s.notify);
-  const askConfirm = useStore((s) => s.askConfirm);
-  const signOut = useStore((s) => s.signOut);
-  const pfPrefs = useStore((s) => s.pfPrefs);
-  const set = useStore((s) => s.set);
+  const askSignOut = useSignOut();
 
   const boot = useBoot();
   const me = boot.session?.user ?? null;
-
-  const [waiting, setWaiting] = React.useState(0);
-
-  React.useEffect(() => {
-    let live = true;
-    void pendingCount().then((n) => {
-      if (live) setWaiting(n);
-    });
-    return () => {
-      live = false;
-    };
-  }, []);
 
   /*
    * The app lock, which is a property of THIS HANDSET rather than of the
@@ -115,6 +72,7 @@ export default function ProfileScreen() {
   const [pushBusy, setPushBusy] = React.useState(false);
 
   const [lockOn, setLockOn] = React.useState(false);
+  const feedbackPrefs = useFeedbackPrefs();
   const [lockOffer, setLockOffer] = React.useState<{ ok: boolean; why: string; label: string } | null>(null);
   const [lockBusy, setLockBusy] = React.useState(false);
 
@@ -147,14 +105,14 @@ export default function ProfileScreen() {
       const wanted = !lockOn;
       const outcome = await promptBiometric(wanted ? 'Turn the app lock on' : 'Turn the app lock off');
       if (!outcome.ok) {
-        if (outcome.kind !== 'cancelled') notify(outcome.message);
+        if (outcome.kind !== 'cancelled') notify(outcome.message, 'error');
         return;
       }
       await rememberLockChoice(wanted);
       setLockOn(wanted);
       notify(
         wanted
-          ? 'App lock on — MBOS will ask for your fingerprint when you come back to it'
+          ? 'App lock on. MBOS will ask for your fingerprint when you open it.'
           : 'App lock off',
       );
     } finally {
@@ -162,26 +120,24 @@ export default function ProfileScreen() {
     }
   };
 
-  /* Four facts about him, READ from the session the office issued. The
-     emergency contact and the address are not on the wire at all, so they are
-     drawn as "Not set" rather than left blank — the office holding no
-     emergency contact for him is the fact worth knowing, and an empty row
-     says nothing at all. */
+  /* What the office holds for him, READ from the session it issued.
+     "Emergency contact" and "Address" were drawn here as well, always reading
+     "Not set" — not because the office has none, but because neither is sent
+     to the phone at all. A row that claims the office holds nothing, when HR
+     may hold both, is worse than no row. */
   const PF_FIELDS: { k: string; label: string; value: string; hint?: string }[] = [
     { k: 'mobile', label: 'Mobile', value: me?.phone ?? '', hint: 'You sign in with this' },
     { k: 'email', label: 'Email', value: me?.email ?? '' },
-    { k: 'emg', label: 'Emergency contact', value: '' },
-    { k: 'addr', label: 'Address', value: '' },
   ];
 
   const PF_WORK = [
     { l: 'Reports to', v: me?.reportsToName ?? '' },
-    { l: 'Territory', v: me?.territory ?? '' },
+    { l: 'Area', v: me?.territory ?? '' },
     { l: 'Employee code', v: me?.employeeCode ?? '' },
   ].filter((w) => w.v);
 
   return (
-    <AppFrame title="MBOS" activeTab={null} contentStyle={{ padding: 16, paddingBottom: 24 }}>
+    <AppFrame title="Profile" activeTab={null} contentStyle={{ padding: 16, paddingBottom: 24 }}>
       <BackLink label={back.label} onPress={back.go} />
 
       <Card style={{ marginTop: 4, flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 20 }}>
@@ -229,8 +185,8 @@ export default function ProfileScreen() {
         ))}
       </ListCard>
       <T s="caption" style={{ marginTop: 8 }}>
-        This is what the office holds for you. Ask your manager to change any of it — a correction typed
-        here would not reach them.
+        This is what the office has for you. To change anything, ask your manager.
+        You cannot change it here.
       </T>
 
       <T s="label" style={{ marginTop: 20, marginBottom: 8 }}>
@@ -256,44 +212,13 @@ export default function ProfileScreen() {
         ))}
       </ListCard>
       <T s="caption" style={{ marginTop: 8 }}>
-        Your territory and reporting line are set by the office. Ask your manager if either is wrong.
+        The office sets your area and your manager. If either is wrong, ask your manager.
       </T>
 
       <T s="label" style={{ marginTop: 20, marginBottom: 8 }}>
         Preferences
       </T>
       <ListCard>
-        {PREFS.map((p, i) => (
-          <View
-            key={p.k}
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 16,
-              paddingHorizontal: 16,
-              paddingVertical: 14,
-              borderTopWidth: i ? 1 : 0,
-              borderTopColor: C.wash,
-            }}>
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <T style={{ fontSize: 16, lineHeight: 22, color: C.ink, opacity: p.blocked ? 0.5 : 1 }}>{p.l}</T>
-              <T s="caption" style={{ marginTop: 1 }}>
-                {p.blocked ?? p.s}
-              </T>
-            </View>
-            {p.blocked ? (
-              /* Off and unpressable, rather than absent: the setting is a real
-                 thing somebody expects to find, and a switch that has quietly
-                 disappeared reads as a bug of its own. */
-              <View style={{ opacity: 0.35 }}>
-                <Toggle size="sm" on={false} onPress={() => {}} />
-              </View>
-            ) : (
-              <Toggle size="sm" on={pfPrefs[p.k]} onPress={() => set({ pfPrefs: { ...pfPrefs, [p.k]: !pfPrefs[p.k] } })} />
-            )}
-          </View>
-        ))}
-
         {/*
           Push, and whether it can actually reach this phone.
 
@@ -310,8 +235,6 @@ export default function ProfileScreen() {
             gap: 16,
             paddingHorizontal: 16,
             paddingVertical: 14,
-            borderTopWidth: 1,
-            borderTopColor: C.wash,
           }}>
           <View style={{ flex: 1, minWidth: 0 }}>
             <T style={{ fontSize: 16, lineHeight: 22, color: C.ink, opacity: push?.ok ? 1 : 0.5 }}>
@@ -321,7 +244,7 @@ export default function ProfileScreen() {
               {push == null
                 ? 'Checking…'
                 : push.ok
-                  ? 'On. Decisions reach you without opening the app.'
+                  ? 'On. Office replies reach you even when the app is closed.'
                   : push.why}
             </T>
           </View>
@@ -334,7 +257,7 @@ export default function ProfileScreen() {
                 void registerForPush()
                   .then((r) => {
                     setPush(r);
-                    if (!r.ok) notify(r.why);
+                    if (!r.ok) notify(r.why, 'error');
                   })
                   .finally(() => setPushBusy(false));
               }}
@@ -370,49 +293,71 @@ export default function ProfileScreen() {
             <T s="caption" style={{ marginTop: 1 }}>
               {lockOffer && !lockOffer.ok
                 ? lockOffer.why
-                : 'Asked for when you come back to the app. Your day keeps syncing while it is locked.'}
+                : 'Asked when you open the app. Your work keeps sending while it is locked.'}
             </T>
           </View>
           {lockOffer?.ok ? (
             <Toggle size="sm" on={lockOn} onPress={() => void toggleLock()} />
           ) : null}
         </View>
+
+        {/*
+          VIBRATION AND SOUNDS — what the phone does, besides draw, when
+          something is saved, refused or arrives. Both are kept on this phone
+          (see `data/feedback-prefs.ts`) and both take effect on the next tap.
+
+          Sounds are OFF until somebody turns them on: this is used in other
+          people's shops, and a phone that chimes at every order is not a
+          default anybody should have to find a switch to undo. Turning them
+          on plays one, so the choice is made having heard it.
+        */}
+        <FeedbackRow
+          label="Vibrate on actions"
+          sub="A short buzz when something is saved, refused or arrives."
+          on={feedbackPrefs.haptics}
+          onToggle={() => {
+            const next = !feedbackPrefs.haptics;
+            void setFeedbackPref('haptics', next).then(() => {
+              if (next) feedback('success');
+            });
+          }}
+        />
+        <FeedbackRow
+          label="Sounds"
+          sub="A soft tone with the buzz. Silent when your phone is on silent or vibrate."
+          on={feedbackPrefs.sounds}
+          onToggle={() => {
+            const next = !feedbackPrefs.sounds;
+            void setFeedbackPref('sounds', next).then(() => {
+              if (next) {
+                primeSounds();
+                feedback('success');
+              }
+            });
+          }}
+        />
       </ListCard>
 
+      {/* It opens MahekOne's reset page, so it is named for what that page
+          does. "Change password" promised a form here that asks for the old
+          one, and there is none. */}
       <SecondaryButton
-        label="Change password"
+        label="Reset your password"
         style={{ marginTop: 16 }}
         onPress={async () => {
           const opened = await openPasswordReset();
           notify(
             opened
-              ? 'Opening the reset page. It emails a link to your work address.'
-              : 'Could not open the browser. Ask your manager to send you a reset link.',
+              ? 'Opening the reset page. Use your work email, or an OTP if it offers one.'
+              : 'Could not open the browser. Ask your manager to reset your password.',
+            opened ? 'info' : 'error',
           );
         }}
       />
 
       <Pressable
         accessibilityRole="button"
-        onPress={() =>
-          askConfirm({
-            title: 'Sign out?',
-            body: waiting
-              ? plural(waiting, 'record') +
-                ' have not been sent yet. They stay on this phone and go up when you sign in again.'
-              : 'Everything you have saved has gone up already.',
-            confirmLabel: 'Sign out',
-            run: () => {
-              /* The outbox is kept. Clearing it here would make the sentence
-                 above a lie, and the work is genuinely unrecoverable. */
-              void signOutReal().then(() => {
-                signOut();
-                boot.setSession(null);
-                router.replace('/');
-              });
-            },
-          })
-        }
+        onPress={askSignOut}
         style={{
           width: '100%',
           minHeight: 52,
@@ -427,5 +372,28 @@ export default function ProfileScreen() {
         <T style={[{ fontSize: 16, color: C.danger }, weight(600)]}>Sign out</T>
       </Pressable>
     </AppFrame>
+  );
+}
+
+function FeedbackRow({ label, sub, on, onToggle }: { label: string; sub: string; on: boolean; onToggle: () => void }) {
+  return (
+    <View
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 16,
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+        borderTopWidth: 1,
+        borderTopColor: C.wash,
+      }}>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <T style={{ fontSize: 16, lineHeight: 22, color: C.ink }}>{label}</T>
+        <T s="caption" style={{ marginTop: 1 }}>
+          {sub}
+        </T>
+      </View>
+      <Toggle size="sm" on={on} onPress={onToggle} />
+    </View>
   );
 }

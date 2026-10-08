@@ -1,13 +1,20 @@
 import React from 'react';
-import { Animated, Easing, View, Text, Pressable, Modal, ScrollView, StyleSheet, useWindowDimensions } from 'react-native';
+import { Animated, Easing, View, Text, Pressable, Modal, PanResponder, ScrollView, StyleSheet, useWindowDimensions, type NativeSyntheticEvent, type NativeScrollEvent } from 'react-native';
 import { color as C, HIT, radius, shadow, type, weight, tabular } from '../../theme/tokens';
 import { Icon } from './Icon';
 import { Input, PrimaryButton, SecondaryButton } from './primitives';
 import { isoDate, monthName } from '../../lib/format';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { TAB_BAR_HEIGHT } from '../shell/Chrome';
-import { useKeyboardHeight } from './keyboard';
-import { useReduceMotion } from './motion';
+import { useKeyboardHeight, useRevealFocusedField } from './keyboard';
+import { useReduceMotion, EASE, Presence } from './motion';
+import { feedback } from './feedback';
+import { useModalOpen } from '../../state/push-banner';
+import { useStore } from '../../state/store';
+import type { FeedbackKind } from '../../engines/feedback';
+import { useSheetTicket, useTopSheet } from './sheet-stack';
+import { makeFeltOnce, toastDwellMs } from './toast-timing';
+import { BAR_FONT_CAP } from './font-scale';
 
 /**
  * Everything that floats above a screen. All of it goes through `Modal` so it
@@ -18,31 +25,144 @@ import { useReduceMotion } from './motion';
 
 /* ------------------------------------------------------------------ scrim */
 
-function Scrim({
-  onPress,
+/**
+ * The modal every sheet floats in: the screen stays where it is and DIMS, and
+ * only the sheet rises.
+ *
+ * It used to be `animationType="slide"` on the `Modal` itself, which slides the
+ * modal's whole window — the dim layer included. So pressing `+` dropped a dark
+ * pane over the screen from below, and on edge-to-edge Android the window
+ * behind it was drawn black for a frame before the scrim arrived: the page
+ * flickered and the sheet appeared to open on black rather than on the screen
+ * somebody was looking at. The `Modal` now does no animation at all; the scrim
+ * fades and the sheet translates, each on its own value.
+ *
+ * Closing plays the same motion backwards before the `Modal` goes, which is why
+ * `shown` lags `open` on the way out — a sheet that blinks off reads as the app
+ * dropping a frame.
+ */
+function SheetModal({
+  open,
+  onClose,
   children,
-  align = 'flex-end',
-  tone = 'dark',
 }: {
-  onPress: () => void;
+  open: boolean;
+  onClose: () => void;
   children: React.ReactNode;
-  align?: 'flex-end' | 'center';
-  tone?: 'dark' | 'light';
 }) {
+  const reduce = useReduceMotion();
+  const progress = React.useRef(new Animated.Value(0)).current;
+  const [shown, setShown] = React.useState(open);
+  const [sheetHeight, setSheetHeight] = React.useState(480);
+
+  /**
+   * DRAGGED DOWN, IT GOES. The grabber has always been drawn on these sheets
+   * and has never done anything: it is the universal sign for "pull me", and a
+   * sign that does nothing teaches people the app ignores them. Only the top
+   * strip listens (`grab`), never the body — the body is a ScrollView full of
+   * forms, and a sheet that closed when somebody scrolled up through a reason
+   * they were typing would lose the reason.
+   *
+   * Past a third of its own height, or flicked, it closes; anything less
+   * springs back. Plain `PanResponder` rather than gesture-handler, which was
+   * removed to keep the APK lean and is not needed for one vertical drag.
+   */
+  const drag = React.useRef(new Animated.Value(0)).current;
+  const closeRef = React.useRef(onClose);
+  const heightRef = React.useRef(sheetHeight);
+  React.useEffect(() => {
+    closeRef.current = onClose;
+    heightRef.current = sheetHeight;
+  });
+  const grab = React.useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: (_e, g) => Math.abs(g.dy) > 4,
+        onPanResponderMove: (_e, g) => drag.setValue(Math.max(0, g.dy)),
+        onPanResponderRelease: (_e, g) => {
+          if (g.dy > heightRef.current / 3 || g.vy > 0.9) {
+            feedback('tap');
+            closeRef.current();
+            /* Let the close animation carry on from where the finger left it. */
+            Animated.timing(drag, { toValue: 0, duration: 200, delay: 180, useNativeDriver: true }).start();
+          } else {
+            Animated.spring(drag, { toValue: 0, useNativeDriver: true, speed: 24, bounciness: 4 }).start();
+          }
+        },
+        onPanResponderTerminate: () => {
+          Animated.spring(drag, { toValue: 0, useNativeDriver: true, speed: 24, bounciness: 4 }).start();
+        },
+      }),
+    [drag],
+  );
+
+  /* Adjusted during render rather than in an effect, so the Modal is mounted on
+     the same pass `open` turns true. */
+  if (open && !shown) setShown(true);
+  /* A Modal is its own window over the app, so a push banner drawn under it
+     would never be seen — while one is up, the system shows pushes instead. */
+  useModalOpen(shown);
+  /* The toast is drawn by whichever window is on top — see `sheet-stack.ts`. */
+  const ticket = useSheetTicket(shown);
+  const top = useTopSheet();
+
+  React.useEffect(() => {
+    if (!shown) return;
+    if (reduce) {
+      progress.setValue(open ? 1 : 0);
+      if (!open) setShown(false);
+      return;
+    }
+    const anim = Animated.timing(progress, {
+      toValue: open ? 1 : 0,
+      duration: open ? 240 : 180,
+      easing: open ? Easing.bezier(0.2, 0, 0, 1) : Easing.bezier(0.4, 0, 1, 1),
+      useNativeDriver: true,
+    });
+    anim.start(({ finished }) => {
+      if (finished && !open) setShown(false);
+    });
+    return () => anim.stop();
+  }, [open, shown, reduce, progress]);
+
   return (
-    <Pressable
-      onPress={onPress}
-      style={{
-        flex: 1,
-        backgroundColor: tone === 'dark' ? C.scrim : C.scrimLight,
-        justifyContent: align,
-        paddingHorizontal: align === 'center' ? 20 : 0,
-      }}>
-      {/* Swallowing the press is what keeps a tap inside the sheet from closing it. */}
-      <Pressable onPress={(e) => e.stopPropagation()} style={align === 'center' ? { width: '100%', maxWidth: 320, alignSelf: 'center' } : undefined}>
-        {children}
-      </Pressable>
-    </Pressable>
+    <Modal
+      visible={shown}
+      transparent
+      animationType="none"
+      onRequestClose={onClose}
+      statusBarTranslucent
+      navigationBarTranslucent>
+      <View style={{ flex: 1, justifyContent: 'flex-end' }}>
+        <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: C.scrim, opacity: progress }]}>
+          <Pressable style={{ flex: 1 }} onPress={onClose} accessibilityLabel="Close" />
+        </Animated.View>
+        <Animated.View
+          onLayout={(e) => setSheetHeight(e.nativeEvent.layout.height)}
+          style={{
+            transform: [
+              {
+                translateY: Animated.add(
+                  progress.interpolate({ inputRange: [0, 1], outputRange: [sheetHeight, 0] }),
+                  drag,
+                ),
+              },
+            ],
+          }}>
+          {children}
+          {/* The grab strip: the 160 × 32 points around the grabber and
+              nowhere else, so a close button or a title in a sheet's top
+              corner still takes its own taps. */}
+          <View
+            {...grab.panHandlers}
+            accessibilityLabel="Drag down to close"
+            style={{ position: 'absolute', top: 0, left: '50%', marginLeft: -80, width: 160, height: 32 }}
+          />
+        </Animated.View>
+        {ticket != null && ticket === top ? <StoreToast placement="top" /> : null}
+      </View>
+    </Modal>
   );
 }
 
@@ -83,39 +203,78 @@ function Scrim({
  * touches at all, so it is never left `pointerEvents="none"` over a button the
  * person is trying to press.
  */
-export type ToastTone = 'success' | 'warn';
+export type ToastTone = 'success' | 'info' | 'warn' | 'error';
 
-/* How long each tone sits there. A refusal is a sentence to read; a
-   confirmation is a word to glimpse. */
-const DWELL: Record<ToastTone, number> = { success: 2400, warn: 5200 };
+/**
+ * WHAT EACH TONE LOOKS LIKE, in one place.
+ *
+ * The toast used to be a dark purple slab with white text, the same slab for a
+ * saved order and a refused one, and only a refusal could be closed. It is a
+ * white card now, the same surface as every other card in the app, so it reads
+ * as part of the screen rather than as a banner pasted over it — and the TONE
+ * is carried by an edge, an icon and its tint, never by flooding the whole card
+ * with colour. A red card shouts; a red edge on a white card tells.
+ */
+const TONE: Record<
+  ToastTone,
+  { accent: string; tint: string; icon: 'tick' | 'bell' | 'alert'; label: string; feel: FeedbackKind | null }
+> = {
+  success: { accent: C.success, tint: C.successBg, icon: 'tick', label: 'Done', feel: 'success' },
+  info: { accent: C.primary, tint: C.primaryTint, icon: 'bell', label: 'Note', feel: null },
+  warn: { accent: C.warn, tint: C.warnBg, icon: 'alert', label: 'Check this', feel: 'warning' },
+  error: { accent: C.danger, tint: C.dangerBg, icon: 'alert', label: 'Not done', feel: 'error' },
+};
+
+/* How long each notice stays is `toastDwellMs` — a refusal is held long
+   enough to be read, a "Saved" is not. The × closes any of them sooner. */
+const feltOnce = makeFeltOnce(1500);
+
+/**
+ * The toast as the store has it, for the window on top. `AppFrame` draws one
+ * for the screen while no sheet is open; the top sheet draws this one.
+ */
+export function StoreToast({ lift = 0, placement = 'bottom' }: { lift?: number; placement?: 'bottom' | 'top' }) {
+  const toast = useStore((s) => s.toast);
+  const toastTone = useStore((s) => s.toastTone);
+  const clearToast = useStore((s) => s.clearToast);
+  return <Toast message={toast} tone={toastTone} onDone={clearToast} lift={lift} placement={placement} />;
+}
 
 export function Toast({
   message,
   onDone,
   lift = 0,
-  /** Defaults to the confirmation this has always drawn, so no caller has to change. */
   tone = 'success',
+  placement = 'bottom',
 }: {
   message: string | null;
   onDone: () => void;
   lift?: number;
   tone?: ToastTone;
+  /**
+   * `top` inside a sheet: the bottom of the window is the sheet itself, and a
+   * notice about the form must not cover the form's own buttons.
+   */
+  placement?: 'bottom' | 'top';
 }) {
   const insets = useSafeAreaInsets();
+  /* Over the keyboard rather than behind it. Android runs edge-to-edge and
+     does not resize for the keyboard, so a refusal raised while typing — "set
+     a quantity on every line" — was drawn under the keys. */
+  const keyboardHeight = useKeyboardHeight();
   const reduce = useReduceMotion();
   const progress = React.useRef(new Animated.Value(0)).current;
-  const [showing, setShowing] = React.useState<string | null>(null);
-  const warn = tone === 'warn';
+  const [showing, setShowing] = React.useState<{ message: string; tone: ToastTone } | null>(null);
 
   React.useEffect(() => {
-    if (message) setShowing(message);
-  }, [message]);
+    if (message) setShowing({ message, tone });
+  }, [message, tone]);
 
   /* ONE way out, whether it is the timer or a thumb that ends it. Held apart
      from the effect below because a tap has to be able to run it too, and two
      copies of "animate out, then tell the store" is how one of them forgets to
      clear `showing` — which is exactly what the reduce-motion path did, leaving
-     the pill on screen for good. */
+     the card on screen for good. */
   const leave = React.useCallback(() => {
     if (reduce) {
       progress.setValue(0);
@@ -134,13 +293,69 @@ export function Toast({
     });
   }, [onDone, progress, reduce]);
 
+  /**
+   * THE TOAST IS WHERE MOST OUTCOMES ARE ANNOUNCED, so it is where most of them
+   * are FELT. Every save in the app that confirms itself does it through
+   * `notify()`, and every refusal too — so one line here gives an order, a
+   * payment, a leave request and forty other saves the same buzz, and a
+   * refusal the same "no", without any of those screens learning that a
+   * motor exists. `info` stays silent: a note is not an outcome.
+   */
   React.useEffect(() => {
     if (!message) return;
-    const dwell = DWELL[tone];
+    const feel = (TONE[tone] ?? TONE.info).feel;
+    if (feel && feltOnce(message, Date.now())) feedback(feel);
+  }, [message, tone]);
+
+  /* Swiped sideways, it goes — the way every notification on the phone does. */
+  const swipe = React.useRef(new Animated.Value(0)).current;
+  const leaveRef = React.useRef<() => void>(() => {});
+  /* The dwell timer, so a swipe that ends the toast also ends the timer — or
+     the timer would fire a second `onDone` and clear the NEXT toast. */
+  const dwellTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pan = React.useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_e, g) => Math.abs(g.dx) > 8 && Math.abs(g.dx) > Math.abs(g.dy),
+        onPanResponderMove: (_e, g) => swipe.setValue(g.dx),
+        onPanResponderRelease: (_e, g) => {
+          if (Math.abs(g.dx) > 90 || Math.abs(g.vx) > 0.8) {
+            Animated.timing(swipe, {
+              toValue: g.dx > 0 ? 420 : -420,
+              duration: 160,
+              easing: EASE,
+              useNativeDriver: true,
+            }).start(() => {
+              if (dwellTimer.current) clearTimeout(dwellTimer.current);
+              leaveRef.current();
+              swipe.setValue(0);
+            });
+          } else {
+            Animated.spring(swipe, { toValue: 0, useNativeDriver: true, speed: 24, bounciness: 4 }).start();
+          }
+        },
+        onPanResponderTerminate: () => {
+          Animated.spring(swipe, { toValue: 0, useNativeDriver: true }).start();
+        },
+      }),
+    [swipe],
+  );
+  React.useEffect(() => {
+    leaveRef.current = () => {
+      progress.setValue(0);
+      setShowing(null);
+      onDone();
+    };
+  });
+
+  React.useEffect(() => {
+    if (!message) return;
+    const dwell = toastDwellMs(tone, message);
 
     if (reduce) {
       progress.setValue(1);
       const t = setTimeout(leave, dwell);
+      dwellTimer.current = t;
       return () => clearTimeout(t);
     }
 
@@ -155,6 +370,7 @@ export function Toast({
     /* Leave BEFORE telling the store, so the exit is seen rather than cut off
        by the message being cleared out from under it. */
     const t = setTimeout(leave, dwell);
+    dwellTimer.current = t;
 
     return () => {
       enter.stop();
@@ -163,30 +379,54 @@ export function Toast({
   }, [message, tone, leave, progress, reduce]);
 
   if (!showing) return null;
+  /* An unknown tone draws as a plain note rather than taking the screen down
+     — a toast is never worth a crash. */
+  const look = TONE[showing.tone] ?? TONE.info;
   return (
     <Animated.View
-      /* Only a refusal takes touches, and only so it can be dismissed. A
-         confirmation that could swallow a tap would be covering the next thing
-         somebody meant to press. */
-      pointerEvents={warn ? 'box-none' : 'none'}
+      /* The card takes touches only on itself, never on the space around it,
+         so it cannot swallow a tap meant for the screen underneath. */
+      pointerEvents="box-none"
+      accessibilityLiveRegion={look === TONE.error ? 'assertive' : 'polite'}
       style={[
         st.toast,
+        placement === 'top'
+          ? { top: insets.top + 12 }
+          : keyboardHeight > 0
+            ? /* The tab bar hides while typing, so the keyboard is the floor. */
+              { bottom: keyboardHeight + 12 }
+            : /* 28 clears the raised + button, which sits 20 above the bar. */
+              { bottom: TAB_BAR_HEIGHT + insets.bottom + 28 + lift },
         {
-          bottom: TAB_BAR_HEIGHT + insets.bottom + 12 + lift,
           opacity: progress,
-          transform: [{ translateY: progress.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) }],
+          transform: [
+            {
+              translateY: progress.interpolate({
+                inputRange: [0, 1],
+                outputRange: [placement === 'top' ? -16 : 16, 0],
+              }),
+            },
+            { translateX: swipe },
+          ],
         },
-      ]}>
+      ]}
+      {...pan.panHandlers}>
+      <View style={[st.toastAccent, { backgroundColor: look.accent }]} />
+      <View style={[st.toastIcon, { backgroundColor: look.tint }]}>
+        <Icon name={look.icon} size={16} color={look.accent} strokeWidth={2.4} />
+      </View>
+      <Text
+        accessibilityLabel={look.label + '. ' + showing.message}
+        style={[{ flex: 1, fontSize: 14, lineHeight: 20, color: C.ink, paddingVertical: 2 }, weight(500)]}>
+        {showing.message}
+      </Text>
       <Pressable
-        onPress={warn ? leave : undefined}
-        disabled={!warn}
-        accessibilityRole={warn ? 'button' : undefined}
-        accessibilityLabel={warn ? showing + '. Tap to dismiss.' : undefined}
-        style={st.toastBody}>
-        <View style={[st.toastChip, warn && st.toastChipWarn]}>
-          <Icon name={warn ? 'alert' : 'tick'} size={14} color={warn ? C.warn : C.lime} strokeWidth={2.6} />
-        </View>
-        <Text style={[{ flex: 1, fontSize: 14, lineHeight: 20, color: '#FFFFFF' }, weight(500)]}>{showing}</Text>
+        onPress={leave}
+        accessibilityRole="button"
+        accessibilityLabel="Close"
+        hitSlop={10}
+        style={st.toastClose}>
+        <Icon name="close" size={16} color={C.muted} strokeWidth={2.2} />
       </Pressable>
     </Animated.View>
   );
@@ -199,14 +439,43 @@ export function BottomSheet({
   onClose,
   children,
   scroll = false,
+  page,
 }: {
   open: boolean;
   onClose: () => void;
   children: React.ReactNode;
   scroll?: boolean;
+  /**
+   * Which of several views the sheet is showing, where one sheet swaps its
+   * content for another — the lead form and its area picker. Each page keeps
+   * its own scroll position: a new page opens at its top rather than wherever
+   * the last one was scrolled to, and going back lands where he left off.
+   */
+  page?: string;
 }) {
   const keyboardHeight = useKeyboardHeight();
   const { height: screenHeight } = useWindowDimensions();
+  const reveal = useRevealFocusedField(keyboardHeight);
+  const scrollY = React.useRef(0);
+  const pageOffsets = React.useRef<Record<string, number>>({});
+  const shownPage = React.useRef(page);
+  React.useEffect(() => {
+    if (page === shownPage.current) return;
+    pageOffsets.current[shownPage.current ?? ''] = scrollY.current;
+    shownPage.current = page;
+    const y = pageOffsets.current[page ?? ''] ?? 0;
+    /* A frame later, so the new page has been laid out and is tall enough to
+       scroll to where it was. */
+    const frame = requestAnimationFrame(() => reveal.ref.current?.scrollTo({ y, animated: false }));
+    return () => cancelAnimationFrame(frame);
+  }, [page, reveal.ref]);
+  const onScroll = React.useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      scrollY.current = e.nativeEvent.contentOffset.y;
+      reveal.onScroll(e);
+    },
+    [reveal],
+  );
 
   /**
    * The sheet sits ON the keyboard, on BOTH platforms.
@@ -226,31 +495,47 @@ export function BottomSheet({
    * behind the keyboard is the form being unusable, not merely awkward.
    */
   const available = Math.max(200, screenHeight - keyboardHeight - 80);
-  const pad = { padding: 20, paddingBottom: 24 };
+  /*
+   * CLEAR OF THE NAVIGATION BAR. The modal is drawn edge-to-edge
+   * (`navigationBarTranslucent`), so on a phone with the three-button bar —
+   * most of the budget handsets this runs on — the last 48 points of every
+   * sheet sat under Back, Home and Recents: Cancel and Confirm half-covered,
+   * and a thumb aimed at Confirm landing on Home. While the keyboard is up it
+   * is the floor instead, and the inset is not added twice.
+   */
+  const insets = useSafeAreaInsets();
+  const bottomInset = keyboardHeight > 0 ? 0 : insets.bottom;
+  const pad = { padding: 20, paddingBottom: 24 + bottomInset };
 
   return (
-    <Modal visible={open} transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
-      <Scrim onPress={onClose}>
-        <View style={[st.sheet, keyboardHeight > 0 && { marginBottom: keyboardHeight }]}>
-          {scroll ? (
-            <ScrollView
-              style={{ maxHeight: available }}
-              keyboardShouldPersistTaps="handled"
-              keyboardDismissMode="interactive"
-              showsVerticalScrollIndicator={false}>
-              <View style={pad}>{children}</View>
-            </ScrollView>
-          ) : (
-            <ScrollView
-              style={{ maxHeight: available }}
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}>
-              <View style={pad}>{children}</View>
-            </ScrollView>
-          )}
-        </View>
-      </Scrim>
-    </Modal>
+    <SheetModal open={open} onClose={onClose}>
+      <View style={[st.sheet, keyboardHeight > 0 && { marginBottom: keyboardHeight }]}>
+        {/* The grabber says the sheet can be pulled down — and now it can. */}
+        <View style={[st.grabber, { marginTop: 8, marginBottom: -4 }]} />
+        {scroll ? (
+          <ScrollView
+            ref={reveal.ref}
+            onScroll={onScroll}
+            scrollEventThrottle={16}
+            style={{ maxHeight: available }}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="interactive"
+            showsVerticalScrollIndicator={false}>
+            <View style={pad}>{children}</View>
+          </ScrollView>
+        ) : (
+          <ScrollView
+            ref={reveal.ref}
+            onScroll={onScroll}
+            scrollEventThrottle={16}
+            style={{ maxHeight: available }}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}>
+            <View style={pad}>{children}</View>
+          </ScrollView>
+        )}
+      </View>
+    </SheetModal>
   );
 }
 
@@ -275,34 +560,43 @@ export function ActionSheet({
   onClose: () => void;
 }) {
   const keyboardHeight = useKeyboardHeight();
+  /* Clear of the navigation bar — see `BottomSheet`. */
+  const insets = useSafeAreaInsets();
+  const bottomInset = keyboardHeight > 0 ? 0 : insets.bottom;
   return (
-    <Modal visible={open} transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
-      <Scrim onPress={onClose}>
-        <View style={[st.sheet, keyboardHeight > 0 && { marginBottom: keyboardHeight }, { borderTopLeftRadius: radius.card, borderTopRightRadius: radius.card, paddingTop: 8, paddingBottom: 24, boxShadow: shadow.sheet }]}>
-          <View style={st.grabber} />
-          <Text style={[{ fontSize: 15, color: C.ink, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 }, weight(600)]}>
-            {title}
-          </Text>
-          {items.map((i) => (
-            <Pressable
-              key={i.label}
-              onPress={() => {
-                onClose();
-                i.run();
-              }}
-              style={({ pressed }) => [st.sheetRow, pressed && { backgroundColor: C.wash }]}>
-              <View style={st.sheetGlyph}>
-                <Icon name={i.glyph} size={18} color={C.body} />
-              </View>
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={[{ fontSize: 15, color: C.ink }, weight(500)]}>{i.label}</Text>
-                <Text style={type.caption}>{i.sub}</Text>
-              </View>
-            </Pressable>
-          ))}
-        </View>
-      </Scrim>
-    </Modal>
+    <SheetModal open={open} onClose={onClose}>
+      <View style={[st.sheet, keyboardHeight > 0 && { marginBottom: keyboardHeight }, { borderTopLeftRadius: radius.card, borderTopRightRadius: radius.card, paddingTop: 8, paddingBottom: 24 + bottomInset, boxShadow: shadow.sheet }]}>
+        <View style={st.grabber} />
+        <Text
+          accessibilityRole="header"
+          style={[{ fontSize: 15, color: C.ink, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 }, weight(600)]}>
+          {title}
+        </Text>
+        {items.map((i) => (
+          <Pressable
+            key={i.label}
+            onPress={() => {
+              onClose();
+              i.run();
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={i.label + '. ' + i.sub}
+            style={({ pressed }) => [st.sheetRow, pressed && { backgroundColor: C.wash }]}>
+            <View style={st.sheetGlyph}>
+              <Icon name={i.glyph} size={18} color={C.body} />
+            </View>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text maxFontSizeMultiplier={BAR_FONT_CAP} style={[{ fontSize: 15, color: C.ink }, weight(500)]}>
+                {i.label}
+              </Text>
+              <Text maxFontSizeMultiplier={BAR_FONT_CAP} style={type.caption}>
+                {i.sub}
+              </Text>
+            </View>
+          </Pressable>
+        ))}
+      </View>
+    </SheetModal>
   );
 }
 
@@ -354,7 +648,7 @@ export function ConfirmSheet({
             placeholder="Tell your manager what happened"
             style={{ minHeight: 80, borderRadius: radius.md, fontSize: 15 }}
           />
-          {error ? <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>A reason is required.</Text> : null}
+          {error ? <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Please write a reason.</Text> : null}
         </View>
       ) : null}
       <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
@@ -381,6 +675,11 @@ export type CalendarProps = {
 };
 
 export function Calendar({ selected, onPick, rangeFrom, rangeTo, disabledReason, fixedWeeks = true }: CalendarProps) {
+  /* THE PHONE'S OWN ZONE, deliberately. A calendar is a picture of the days on
+     the wall where he is standing, and every handset this ships to is set to
+     India time; `isoDate` reads the same zone, so a cell and the ISO day it
+     hands back can never disagree. Anything stored against a business day is
+     converted by the caller, which is where `Asia/Kolkata` is named. */
   const today = React.useMemo(() => {
     const d = new Date();
     d.setHours(0, 0, 0, 0);
@@ -388,6 +687,32 @@ export function Calendar({ selected, onPick, rangeFrom, rangeTo, disabledReason,
   }, []);
   const [offset, setOffset] = React.useState(0);
   const shown = new Date(today.getFullYear(), today.getMonth() + offset, 1);
+  /*
+   * WHY A DAY CANNOT BE PICKED, said where the tap was.
+   *
+   * Callers have always passed a sentence for each refused day — "Last day
+   * cannot be before the first day", "That day has passed." — and the grid used
+   * it only as a yes/no: the cell went grey and a tap on it did nothing. Nine
+   * screens wrote reasons nobody ever saw, and a dead tap reads as a frozen
+   * phone. The sentence is shown under the grid instead — not as a toast,
+   * because this grid lives in a sheet and a sheet is exactly where a toast
+   * used to go unseen.
+   */
+  const [refused, setRefused] = React.useState<string | null>(null);
+
+  /* A month change SLIDES the way it went — next month comes in from the
+     right, the previous from the left — so it reads as paging through time
+     rather than as the grid being redrawn with different numbers. */
+  const reduce = useReduceMotion();
+  const slide = React.useRef(new Animated.Value(0)).current;
+  const page = (by: number) => {
+    feedback('select');
+    setRefused(null);
+    setOffset(offset + by);
+    if (reduce) return;
+    slide.setValue(by * 24);
+    Animated.timing(slide, { toValue: 0, duration: 220, easing: EASE, useNativeDriver: true }).start();
+  };
   const todayIso = isoDate(today);
 
   /* Weeks start on Monday, which is how a working week is read here. */
@@ -410,13 +735,13 @@ export function Calendar({ selected, onPick, rangeFrom, rangeTo, disabledReason,
   return (
     <View>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-        <Pressable onPress={() => setOffset(offset - 1)} accessibilityLabel="Previous month" style={st.calNav}>
+        <Pressable onPress={() => page(-1)} accessibilityRole="button" accessibilityLabel="Previous month" style={st.calNav}>
           <Text style={{ fontSize: 20, color: C.body }}>‹</Text>
         </Pressable>
         <Text style={[{ flex: 1, textAlign: 'center', fontSize: 16, color: C.ink }, weight(600)]}>
           {monthName(shown.getMonth()) + ' ' + shown.getFullYear()}
         </Text>
-        <Pressable onPress={() => setOffset(offset + 1)} accessibilityLabel="Next month" style={st.calNav}>
+        <Pressable onPress={() => page(1)} accessibilityRole="button" accessibilityLabel="Next month" style={st.calNav}>
           <Text style={{ fontSize: 20, color: C.body }}>›</Text>
         </Pressable>
       </View>
@@ -429,7 +754,13 @@ export function Calendar({ selected, onPick, rangeFrom, rangeTo, disabledReason,
         ))}
       </View>
 
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+      <Animated.View
+        style={{
+          flexDirection: 'row',
+          flexWrap: 'wrap',
+          opacity: slide.interpolate({ inputRange: [-24, 0, 24], outputRange: [0.2, 1, 0.2] }),
+          transform: [{ translateX: slide }],
+        }}>
         {cells.map((d, i) => {
           if (!d) return <View key={i} style={{ width: `${100 / 7}%`, height: 44 }} />;
           const key = isoDate(d);
@@ -442,9 +773,19 @@ export function Calendar({ selected, onPick, rangeFrom, rangeTo, disabledReason,
           return (
             <Pressable
               key={i}
-              onPress={() => !off && onPick(key)}
-              disabled={off}
+              onPress={() => {
+                if (off) {
+                  feedback('warning');
+                  setRefused(refusal);
+                  return;
+                }
+                setRefused(null);
+                if (!picked) feedback('select');
+                onPick(key);
+              }}
               accessibilityRole="button"
+              accessibilityLabel={d.getDate() + ' ' + monthName(d.getMonth())}
+              accessibilityHint={refusal ?? undefined}
               accessibilityState={{ selected: picked, disabled: off }}
               style={{
                 width: `${100 / 7}%`,
@@ -478,7 +819,12 @@ export function Calendar({ selected, onPick, rangeFrom, rangeTo, disabledReason,
             </Pressable>
           );
         })}
-      </View>
+      </Animated.View>
+      <Presence show={!!refused}>
+        <Text accessibilityLiveRegion="polite" style={{ fontSize: 13, lineHeight: 18, color: C.danger, marginTop: 8, textAlign: 'center' }}>
+          {refused}
+        </Text>
+      </Presence>
     </View>
   );
 }
@@ -502,7 +848,10 @@ const st = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
-    height: 60,
+    /* At least 60, and taller when a large font wraps the sub-line rather
+       than cutting it off. */
+    minHeight: 60,
+    paddingVertical: 6,
     paddingHorizontal: 16,
   },
   sheetGlyph: {
@@ -521,38 +870,39 @@ const st = StyleSheet.create({
     /* `bottom` is set on the element — see the note on `Toast`. */
     zIndex: 50,
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-    backgroundColor: C.primaryDark,
-    borderRadius: radius.xl,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    boxShadow: shadow.toast,
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: C.surface,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: C.hairline,
+    paddingLeft: 18,
+    paddingRight: 8,
+    paddingVertical: 10,
+    minHeight: 56,
+    overflow: 'hidden',
+    boxShadow: '0 10px 28px -10px rgba(22,22,22,0.28), 0 2px 6px rgba(22,22,22,0.06)',
   },
-  /* The row inside the pill. It is its own element because a warn toast is
-     PRESSABLE — a refusal somebody half-read should be dismissable rather than
-     expiring on a fixed timer — and the press target has to be the whole row,
-     not the pill's padding. */
-  toastBody: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
+  /* The tone, said by an edge rather than by flooding the card. */
+  toastAccent: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 4,
   },
-  toastChip: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: 'rgba(198,255,52,0.20)',
+  toastIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 1,
   },
-  /* A REFUSAL IS NOT A CONFIRMATION. `notify()` is the app's only error
-     channel, and every message it carried — "No number on this customer",
-     "…is billed to somebody who is not on your book" — arrived under a green
-     tick. A refusal marked with a tick reads as the opposite of itself. */
-  toastChipWarn: {
-    backgroundColor: 'rgba(183,123,8,0.22)',
+  toastClose: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

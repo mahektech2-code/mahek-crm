@@ -145,3 +145,66 @@ export function agoOrNull(seconds: number): number | null {
 export function countOrNull(n: number): number | null {
   return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
 }
+
+/* ------------------------------------------------- the day's own deadline */
+
+/** The shape `attendance_days` keeps, as much of it as this needs. */
+export type DayRowForTracking = {
+  sessions: string | null;
+  checkInAt: number | null;
+  checkOutAt: number | null;
+};
+
+/**
+ * When the session tracking belongs to was opened, or null where none is open.
+ *
+ * READ OFF THE NEWEST ROW ONLY, and the newest rather than today's, because a
+ * session can be open on a row that is not today's — evening calls that run
+ * past midnight belong to yesterday's row and are still being worked. Only the
+ * newest, because a day punched in and out this morning must not fall through
+ * to a session forgotten open the night before and carry on tracking on its
+ * strength. A row with no `sessions` list was written before the handset kept
+ * sessions, and its two marks are the answer.
+ */
+export function openSessionStart(rows: readonly DayRowForTracking[]): number | null {
+  const row = rows[0];
+  if (!row) return null;
+  if (row.sessions) {
+    try {
+      const list = JSON.parse(row.sessions) as { inAt?: unknown; outAt?: unknown }[];
+      const open = Array.isArray(list)
+        ? list.find((s) => typeof s?.inAt === 'number' && s.outAt == null)
+        : undefined;
+      return open ? (open.inAt as number) : null;
+    } catch {
+      /* An unreadable list says nothing about an open session. */
+      return null;
+    }
+  }
+  return row.checkInAt != null && row.checkOutAt == null ? row.checkInAt : null;
+}
+
+/**
+ * HOW LONG TRACKING MAY STILL RUN, measured from the punch-in and never from
+ * the last time anybody asked.
+ *
+ * It used to be "sixteen hours from now", re-sent on every flush — and a flush
+ * happens on every sync pass, the background sync worker included, so a man who
+ * forgot to punch out at six had a deadline that moved forward all evening and
+ * all night: the trail followed him home, the server stored it, and the day was
+ * then closed at his last position at 23:58. A deadline anybody can push out is
+ * not a deadline.
+ *
+ * So it is ABSOLUTE: the open session's punch-in plus the configured ceiling.
+ * Re-sending it repeats the same instant rather than extending it, and nothing
+ * open means zero, which stops the recorder. A clock that reads earlier than
+ * the punch-in (corrected backwards) gets the whole ceiling rather than a
+ * negative number — stopping somebody's tracking because the phone's time was
+ * fixed is the wrong failure.
+ */
+export function trackingSecondsLeft(args: { openedAt: number | null; hours: number; now: number }): number {
+  if (args.openedAt == null) return 0;
+  const ceiling = trackingDeadlineSeconds(args.hours);
+  const elapsed = Math.max(0, Math.round((args.now - args.openedAt) / 1000));
+  return Math.max(0, ceiling - elapsed);
+}

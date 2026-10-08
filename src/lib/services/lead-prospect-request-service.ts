@@ -1,9 +1,10 @@
+import { requireLeadVerifier } from "@/lib/services/lead-verifier";
 import "server-only";
 import { revalidatePath } from "next/cache";
 import { desc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { customers, mbosLeadValidations } from "@/db/schema";
-import { assertCustomerInScope, requireCapability } from "@/lib/access-control";
+import { assertCustomerInScope } from "@/lib/access-control";
 import { notifyUser } from "@/lib/notify";
 import { today } from "@/lib/recompute";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
@@ -77,7 +78,7 @@ export async function settleProspectRequest(
   outcome: "verified" | "follow_up" | "not_qualified",
 ): Promise<Result<{ promoted: boolean }>> {
   try {
-    const ctx = await requireCapability("lead.verify");
+    const ctx = await requireLeadVerifier(customerId);
     const lead = await leadRow(customerId);
     if (!lead) return err("That lead is not on MahekOne.", "not_found");
     await assertCustomerInScope({

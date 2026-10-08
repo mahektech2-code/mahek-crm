@@ -19,6 +19,14 @@ import { readSecret } from "./secrets";
 const DEFAULT_BASE = "https://live-mt-server.wati.io";
 const TIMEOUT_MS = 15_000;
 
+/**
+ * Mahek's Wati ACCOUNT, for the v1 endpoints that are addressed by it. An id
+ * names an account; it does not open one — the key does, and stays a secret —
+ * so it is written here like the HR workbook's id, with `WATI_TENANT_ID` to
+ * point a staging deploy at another account.
+ */
+const WATI_TENANT = process.env.WATI_TENANT_ID?.trim() || "10225208";
+
 export type WatiConfig = { base: string; token: string };
 
 export async function watiConfig(): Promise<WatiConfig | null> {
@@ -81,6 +89,44 @@ async function call<T>(
     return { ok: false, status: res.status, error: why };
   }
   return { ok: true, data: json as T };
+}
+
+/* ------------------------------------------------------------ their files */
+
+export type WatiFile =
+  | { ok: true; bytes: ArrayBuffer; contentType: string }
+  | { ok: false; status: number | null; error: string };
+
+/**
+ * A file a customer sent, read from Wati by its path (`data/images/….jpg`).
+ *
+ * The path must be one `watiMediaPath` accepted — it is checked again here,
+ * because this is the call that would fetch whatever it was handed. Nothing is
+ * stored: the bytes go straight to the person who asked, so a payment slip
+ * lives in one place, Wati's, and MahekOne is only ever the door to it.
+ */
+export async function fetchWatiMedia(path: string): Promise<WatiFile> {
+  if (!/^data\/[a-z]+\/[A-Za-z0-9._-]+$/.test(path) || path.includes("..")) {
+    return { ok: false, status: 400, error: "Not a Wati file path." };
+  }
+  const cfg = await watiConfig();
+  if (!cfg) return { ok: false, status: null, error: "No Wati key is configured." };
+  let res: Response;
+  try {
+    res = await fetch(`${cfg.base}/${WATI_TENANT}/api/v1/getMedia?fileName=${encodeURIComponent(path)}`, {
+      headers: { Authorization: `Bearer ${cfg.token}` },
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+      cache: "no-store",
+    });
+  } catch {
+    return { ok: false, status: null, error: "Wati could not be reached." };
+  }
+  if (!res.ok) return { ok: false, status: res.status, error: `Wati answered ${res.status}.` };
+  return {
+    ok: true,
+    bytes: await res.arrayBuffer(),
+    contentType: res.headers.get("content-type") ?? "application/octet-stream",
+  };
 }
 
 /* -------------------------------------------------------------- templates */
@@ -227,6 +273,100 @@ export async function sendWatiTemplate(input: {
     };
   }
   return { ok: true, broadcastId: r.data?.broadcast_id ?? null };
+}
+
+/**
+ * A free-text WhatsApp message — a SESSION message — to one number.
+ *
+ * Only possible inside the 24 hours after the customer last wrote to us;
+ * outside it WhatsApp accepts nothing but an approved template, and the caller
+ * checks that window before calling here (Wati would refuse it anyway, but
+ * after the person had typed it). Wati's answer carries WhatsApp's id for the
+ * message under one of a few names depending on the version; whichever is
+ * there is returned, because the delivery webhooks for a session message are
+ * matched on it — they carry no id of ours.
+ */
+export async function sendWatiText(input: {
+  phone: string;
+  text: string;
+}): Promise<{ ok: true; providerRef: string | null } | { ok: false; error: string; uncertain: boolean }> {
+  const cfg = await watiConfig();
+  if (!cfg) return { ok: false, error: "No Wati key is configured.", uncertain: false };
+  const r = await call<Record<string, unknown> | null>(cfg, "/api/ext/v3/conversations/messages/text", {
+    method: "POST",
+    body: { target: input.phone, text: input.text },
+  });
+  if (!r.ok) return { ok: false, error: r.error, uncertain: r.status === null };
+  const d = (r.data ?? {}) as Record<string, unknown>;
+  if (d.result === false || d.success === false) {
+    const why = typeof d.info === "string" ? d.info : typeof d.message === "string" ? d.message : null;
+    return { ok: false, error: why ?? "Wati did not accept the message.", uncertain: false };
+  }
+  const inner = (typeof d.message === "object" && d.message ? d.message : d) as Record<string, unknown>;
+  const ref = [inner.whatsappMessageId, inner.whatsapp_message_id, inner.message_id, inner.id, d.id].find(
+    (v): v is string => typeof v === "string" && v.length > 0,
+  );
+  return { ok: true, providerRef: ref ?? null };
+}
+
+/* -------------------------------------------- reading back what happened */
+
+
+export type WatiContact = { waId: string; name: string | null; lastUpdated: string | null };
+
+/** Every contact the business number has, a page at a time. */
+export async function listWatiContacts(): Promise<{ ok: true; contacts: WatiContact[] } | { ok: false; error: string }> {
+  const cfg = await watiConfig();
+  if (!cfg) return { ok: false, error: "No Wati key is configured." };
+  const out: WatiContact[] = [];
+  for (let page = 1; page <= 100; page++) {
+    const r = await call<{ contact_list?: Array<{ wa_id?: string; name?: string; last_updated?: string }> }>(
+      cfg,
+      `/api/ext/v3/contacts?page_size=100&page_number=${page}`,
+    );
+    if (!r.ok) return { ok: false, error: r.error };
+    const list = r.data?.contact_list ?? [];
+    for (const c of list) {
+      if (c.wa_id) out.push({ waId: c.wa_id, name: c.name?.trim() || null, lastUpdated: c.last_updated ?? null });
+    }
+    if (list.length < 100) break;
+  }
+  return { ok: true, contacts: out };
+}
+
+/** One item of a conversation as Wati's v1 history returns it — only what we read. */
+export type WatiHistoryItem = {
+  id: string;
+  eventType: string;
+  /** False: the customer wrote it. True: we did (an agent in Wati, or MahekOne). */
+  owner?: boolean;
+  type?: string;
+  text?: string | null;
+  created: string;
+  /** WhatsApp's own id — the same one the webhook files a reply under. */
+  whatsappMessageId?: string | null;
+  /** Wati's path to the file, where the message is a photograph, a PDF, a voice note. */
+  data?: string | null;
+  /** How far one of OURS got: SENT, DELIVERED, READ, FAILED. */
+  statusString?: string | null;
+  /** A template message's words as they went — `text` is empty on those. */
+  finalText?: string | null;
+};
+
+/** A page of one number's conversation, newest first. */
+export async function watiHistoryPage(
+  waId: string,
+  page: number,
+  pageSize = 100,
+): Promise<{ ok: true; items: WatiHistoryItem[] } | { ok: false; error: string }> {
+  const cfg = await watiConfig();
+  if (!cfg) return { ok: false, error: "No Wati key is configured." };
+  const r = await call<{ messages?: { items?: WatiHistoryItem[] } }>(
+    cfg,
+    `/${WATI_TENANT}/api/v1/getMessages/${encodeURIComponent(waId)}?pageSize=${pageSize}&pageNumber=${page}`,
+  );
+  if (!r.ok) return { ok: false, error: r.error };
+  return { ok: true, items: r.data?.messages?.items ?? [] };
 }
 
 /* ------------------------------------------------------ connection health */

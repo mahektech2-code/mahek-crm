@@ -1,5 +1,8 @@
 import "server-only";
-import { and, eq, or, sql, type AnyColumn, type SQL } from "drizzle-orm";
+import { taskContextSql } from "@/lib/services/task-link-service";
+import { notConverted } from "../lead-action-window";
+import { and, eq, isNull, or, sql, type AnyColumn, type SQL } from "drizzle-orm";
+import { holidayAppliesSql } from "@/lib/holiday-sql";
 import { db } from "@/db";
 import {
   appAccess,
@@ -14,10 +17,13 @@ import {
   scopeForUser,
   scopedUserIds,
   type DataScope, scopedToUsers,} from "../access-control";
+import type { Role } from "../role-levels";
 import { getConfig } from "../config/store";
 import { liveOlaKey } from "./ola-key-service";
 import { dictationAvailability } from "../dictation-requests";
 import { visitAssistAvailability } from "../visit-assist-availability";
+import { leadVoiceAvailability } from "../lead-voice-availability";
+import { leadScanAvailability } from "../lead-scan-availability";
 import {
   territoriesFor,
   territoryClause,
@@ -26,10 +32,11 @@ import {
 import { policyForDate, resolveSubject } from "./expense-policy-service";
 import { describeRule } from "../expense-rule-forms";
 import { verifyPassword } from "../password";
-import { verifyOtp } from "./otp-service";
+import { findAccount, verifyOtp } from "./otp-service";
 import { bearerFrom, verifyToken, signingKeyPresent } from "../mbos/token";
 import { today } from "../recompute";
-import { addDays, asDate, APP_TIMEZONE, type BusinessDate } from "../business-date";
+import { addDays, addMonths, asDate, APP_TIMEZONE, monthKey, type BusinessDate } from "../business-date";
+import { customerTargetsCreditedTo } from "./worklist-services";
 import { bandFor } from "../engines/inactivity";
 import {
   leaveBalances as computeLeaveBalances,
@@ -41,14 +48,22 @@ import {
   type PullDelta,
   type TerritoryState,
 } from "../mbos/types";
-import { employeeJoinOn } from "../employee-link";
+import { employeeLateral } from "../employee-link";
 /* The Accounts ledger's own read. See `customerBills` — the handset must not
    have a second opinion about what a shop owes. */
 import { listBills } from "./payment-service";
+import {
+  accountKey,
+  clearSignInFailures,
+  clientAddress,
+  recordSignInFailure,
+  signInRefusal,
+} from "./sign-in-throttle";
 /* What "did we sell anything" means, everywhere. See lib/order-status.ts: the
    eight money queries read it and a status list typed into a query is the half
    that drifts. */
 import { orderCountsSql, orderDeliveredSql } from "../order-status";
+import { nextPullCursorAt } from "../mbos/pull-cursor";
 /* §3.4 — a commitment is a day AND a size, in one place. */
 import { confirmedCommitmentSql } from "../lead-commitment";
 
@@ -112,6 +127,17 @@ export type LoginCheckSuccess = { ok: true; user: User };
 /** Minimum password length. A field handset types this on a phone keypad. */
 const MIN_PASSWORD_LENGTH = 8;
 
+/**
+ * ONE ANSWER for "no such number" and "wrong password", word for word and
+ * step for step. They used to differ — "No MahekOne account uses 98…" against
+ * "That password is not right" — which made this screen a way to find out
+ * which numbers belong to staff, the exact thing the WhatsApp-code endpoint
+ * was written to refuse. `unknown_user` stays in the type for an older
+ * handset that still names it.
+ */
+const NO_MATCH =
+  "That number and password do not match an account that can use Mahek MBOS. Check both, or use Forgot password.";
+
 export async function runLoginChecks(input: {
   mobile: string;
   password?: string;
@@ -121,21 +147,27 @@ export async function runLoginChecks(input: {
   const identifier = input.mobile.trim();
 
   /* 1 — is this anybody? Work number OR email, because a salesman knows their
-   * phone and the office knows their address, and one field takes both. */
-  const [user] = await db
-    .select()
-    .from(users)
-    .where(
-      sql`lower(${users.email}) = lower(${identifier}) or ${users.phone} = ${identifier}`,
-    )
-    .limit(1);
+   * phone and the office knows their address, and one field takes both.
+   *
+   * THE SAME LOOKUP THE WHATSAPP CODE USES. This compared `users.phone` to the
+   * typed digits exactly, while the code endpoint matched the last ten digits
+   * of a normalised number — so an account stored as "+91 98200 11006" was
+   * sent a code and then told by this function that no account used the
+   * number it had just messaged. One lookup, `findAccount`, for both doors. */
+  /* A password too short to be anybody's is refused BEFORE the account is
+   * looked up, so its answer cannot depend on whether the account exists. */
+  if (!input.otp && (input.password ?? "").length < MIN_PASSWORD_LENGTH) {
+    return { ok: false, step: "bad_password", error: NO_MATCH };
+  }
 
+  const user = await findAccount(identifier);
+
+  /* NOT FOUND AND NOT ALLOWED READ THE SAME, as they already do on the code
+   * endpoint: a sign-in screen that answers "no account uses this number" for
+   * one and "wrong password" for another is a way to find out which numbers
+   * belong to staff. */
   if (!user) {
-    return {
-      ok: false,
-      step: "unknown_user",
-      error: `No MahekOne account uses ${identifier}. Check the number, or ask your manager to have one created.`,
-    };
+    return { ok: false, step: "bad_password", error: NO_MATCH };
   }
 
   /* 2 — does the password verify? */
@@ -147,20 +179,17 @@ export async function runLoginChecks(input: {
     if (!verified.ok) return { ok: false, step: "bad_otp", error: verified.error };
   } else {
   const password = input.password ?? "";
-  if (password.length < MIN_PASSWORD_LENGTH) {
-    return {
-      ok: false,
-      step: "bad_password",
-      error: `A password is at least ${MIN_PASSWORD_LENGTH} characters. That one is shorter, so it cannot be the right one.`,
-    };
-  }
+  // The same count the web sign-in keeps, keyed on the same account: a phone
+  // is not a second door with its own fresh allowance of guesses.
+  const account = accountKey(user.id, identifier);
+  const address = await clientAddress();
+  const refused = await signInRefusal(account, address);
+  if (refused) return { ok: false, step: "bad_password", error: refused };
   if (!(await verifyPassword(password, user.passwordHash))) {
-    return {
-      ok: false,
-      step: "bad_password",
-      error: "That password is not right. Try again, or use Forgot password on the web app to set a new one.",
-    };
+    await recordSignInFailure(account, address);
+    return { ok: false, step: "bad_password", error: NO_MATCH };
   }
+  await clearSignInFailures(account);
   }
 
   /* 3 — is the account still open? Named separately from the password, because
@@ -170,14 +199,14 @@ export async function runLoginChecks(input: {
     return {
       ok: false,
       step: "inactive",
-      error: `${user.name}'s MahekOne account has been closed. Your manager or the Admin Console team can reopen it — nothing on this handset is lost in the meantime.`,
+      error: `${user.name}'s MahekOne account has been closed. Ask your manager to reopen it — nothing on this handset is lost in the meantime.`,
     };
   }
 
   /* 4 — assigned territory. A salesman with no `field` grant has no book: the
    * app would open on an empty customer list with nothing saying why. */
   const [grant] = await db
-    .select({ id: appAccess.id })
+    .select({ id: appAccess.id, role: appAccess.role })
     .from(appAccess)
     .where(and(eq(appAccess.userId, user.id), eq(appAccess.app, "field")))
     .limit(1);
@@ -186,7 +215,7 @@ export async function runLoginChecks(input: {
     return {
       ok: false,
       step: "no_app_access",
-      error: `${user.name} has a MahekOne account but has not been given the field app, so there is no territory to load. Ask your manager to grant it.`,
+      error: `${user.name} has a MahekOne account but has not been given Mahek MBOS. Ask your manager to grant it.`,
     };
   }
 
@@ -272,11 +301,23 @@ export async function checkDeviceBinding(
   const onePerPerson = (await getConfig())["mbos.devices.onePerPerson"];
 
   const conflicting = otherActive.filter((d) => d.deviceId !== deviceId);
-  if (onePerPerson && conflicting.length && !existingForDevice) {
+  /*
+   * ONLY HIS OWN ACTIVE HANDSET IS EXEMPT.
+   *
+   * The exemption was "any handset that already has a row", which takes in a
+   * phone an admin RELEASED and another employee's old phone — so the rule
+   * was bypassed by signing in on any handset that had ever been bound to
+   * anybody, and the upsert below reactivated it beside the one he already
+   * held. Re-signing in on the phone he is actively bound to is the only case
+   * that is not a second handset.
+   */
+  const alreadyHisActive =
+    !!existingForDevice && existingForDevice.active && existingForDevice.userId === userId;
+  if (onePerPerson && conflicting.length && !alreadyHisActive) {
     return {
       ok: false,
       error:
-        "You are already signed in on another handset. One device per person — ask an admin to release the old one, or have them allow more than one handset in the Sales Dashboard settings.",
+        "You are already signed in on another phone. Ask your manager to release the old one, then sign in here.",
     };
   }
 
@@ -306,7 +347,7 @@ export async function authenticate(
       status: 503,
       code: "not_configured",
       error:
-        "MBOS_JWT_SECRET is not set on this deployment, so the field app cannot be signed in to.",
+        "Mahek MBOS sign-in is not switched on yet. Tell your manager — the office has to finish setting it up.",
     };
   }
 
@@ -325,7 +366,64 @@ export async function authenticate(
 
   const principal = await loadPrincipal(verified.claims.sub, verified.claims.did);
   if (!principal.ok) return principal;
+  await recordHeartbeat(verified.claims.did, reportedVersion(request));
   return principal;
+}
+
+/**
+ * The build a handset says it is running, from `x-mbos-app-version` — the same
+ * label the sign-in sends ("1.15.0 (21) · a1b2c3d4"). Null where the build is
+ * too old to send it, or sent something that is not a label: it is free text
+ * from a device, so it is trimmed, capped and stripped before it is stored.
+ */
+export function reportedVersion(request: Request): string | null {
+  const header = request.headers.get("x-mbos-app-version");
+  if (!header) return null;
+  /* Percent-encoded since SDK 57, whose fetch refuses the label's middle dot
+     in a header; a build before that sends it raw, and a raw label has no
+     `%` in it, so decoding leaves it exactly as it was. */
+  let raw = header;
+  try {
+    raw = decodeURIComponent(header);
+  } catch {
+    /* A stray `%` from a device — store what it sent. */
+  }
+  const clean = raw.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 80);
+  return clean || null;
+}
+
+/**
+ * EVERY HANDSET REQUEST IS A HEARTBEAT, and it carries the build.
+ *
+ * The version used to be written at sign-in and nowhere else, so a phone that
+ * took a new APK or an over-the-air update went on showing the build it signed
+ * in with until somebody signed out — which nobody does. The handset now sends
+ * its label on every request and syncs the moment it launches, so the first
+ * sync after an upgrade is what moves `app_version`, and
+ * `app_version_changed_at` says when.
+ *
+ * Throttled to one write per device per 15 seconds unless the version moved:
+ * a busy handset makes several requests a minute and the row only needs to be
+ * right to the quarter-minute. It never fails the request it rides on — a
+ * heartbeat that could refuse a sync would cost the work to record a time.
+ */
+export async function recordHeartbeat(deviceId: string, version: string | null): Promise<void> {
+  try {
+    await db.execute(sql`
+      update mbos_devices set
+        last_request_at = now(),
+        app_version_reported_at = case when ${version}::text is null then app_version_reported_at else now() end,
+        app_version_changed_at = case
+          when ${version}::text is not null and app_version is distinct from ${version}::text then now()
+          else app_version_changed_at end,
+        app_version = coalesce(${version}::text, app_version)
+      where device_id = ${deviceId}
+        and (last_request_at is null
+             or last_request_at < now() - interval '15 seconds'
+             or (${version}::text is not null and app_version is distinct from ${version}::text))`);
+  } catch (e) {
+    console.warn("[mbos] heartbeat not recorded", e);
+  }
 }
 
 export async function loadPrincipal(
@@ -346,7 +444,7 @@ export async function loadPrincipal(
   }
 
   const [grant] = await db
-    .select({ id: appAccess.id })
+    .select({ id: appAccess.id, role: appAccess.role })
     .from(appAccess)
     .where(and(eq(appAccess.userId, user.id), eq(appAccess.app, "field")))
     .limit(1);
@@ -355,7 +453,7 @@ export async function loadPrincipal(
       ok: false,
       status: 403,
       code: "no_app_access",
-      error: "The field app is no longer granted to this account, so there is no territory to load.",
+      error: "Mahek MBOS has been taken off this account. Ask your manager.",
     };
   }
 
@@ -370,7 +468,7 @@ export async function loadPrincipal(
       status: 403,
       code: "device_released",
       error:
-        "This handset is no longer bound to your account. Sign in again — an admin may have released it.",
+        "This phone has been released from your account. Sign in again.",
     };
   }
 
@@ -398,7 +496,22 @@ export async function loadPrincipal(
    * what "mine" means. `accounts` is unaffected: that branch answers `all`
    * before any preference is read, and no accounts user holds `field`.
    */
-  const ctx = await scopeForUser(user, "mine");
+  /*
+   * AND THE `field` HAT, not the widest level the account holds anywhere.
+   *
+   * With no hat `scopeForUser` falls back to `users.role`, which is the widest
+   * level held in ANY app — so a salesman made a manager of Reports, or of
+   * the CRM, signed into his handset as a manager: `territoryExempt` waved him
+   * past the allocation rule and handed him the whole book, and the document
+   * library opened what is tagged for managers. The handset is the field app
+   * and nothing else, so the level is the one on THAT grant — the same reading
+   * `levelInApp` gives, from the row already in hand. A grant with no level is
+   * an associate's.
+   */
+  const ctx = await scopeForUser(user, "mine", {
+    app: "field",
+    role: (grant.role ?? "associate") as Role,
+  });
   return {
     ok: true,
     principal: { user, deviceId, role: ctx.role, scope: ctx.scope },
@@ -458,7 +571,26 @@ export async function mbosConfigPayload(): Promise<Record<string, unknown>> {
      */
     if (key.startsWith("mbos.") || key.startsWith("leads.")) out[key] = value;
   }
+  /* ONE CAP, under both names — `leads.suspectMaxVisits` is retired and the
+     handset's lead record still reads it by that name. */
+  out["leads.suspectMaxVisits"] = config["mbos.leads.maxSuspectVisits"];
   out["products.priceSource"] = config["products.priceSource"];
+  /* The working week, so the leave form counts the days the balance is
+     debited by. Without it the phone counted calendar days: Friday to Monday
+     read as four there and was debited as two here. */
+  out["workingDay.workingDays"] = config["workingDay.workingDays"];
+  /* How money is received, so the collection form offers the office's list
+     rather than four literals typed into a screen — a mode accounts add is one
+     a salesman can record the same day. Which modes carry a date written on
+     the instrument rides with it, so the form asks for a date exactly where
+     accounts will want one. Which modes demand a reference goes too, for the
+     form to say so — never to refuse, since that rule is for whoever asserts
+     the money ARRIVED, and a salesman is repeating what a customer said (see
+     `payments.referenceRequiredModes`). The phone drops the two desk-only modes
+     itself (`DESK_ONLY_MODES`), because the list is the office's whole one. */
+  out["payments.modes"] = config["payments.modes"];
+  out["payments.datedModes"] = config["payments.datedModes"];
+  out["payments.referenceRequiredModes"] = config["payments.referenceRequiredModes"];
   /* The upload ceiling, so a PDF too large to accept is refused at the moment
      it is picked — with the salesman looking — rather than failing in the
      media queue hours later where nobody will ever see why. */
@@ -537,6 +669,23 @@ export async function mbosConfigPayload(): Promise<Record<string, unknown>> {
    */
   const visitAssist = await visitAssistAvailability().catch(() => null);
   out["mbos.ai.visitAssistant"] = { available: visitAssist?.available === true };
+
+  /*
+   * WHETHER TO DRAW THE SCAN BUTTON on the New lead form, and how many photos
+   * it takes — an answer, like the two above, and caught for the same reason.
+   */
+  const leadScan = await leadScanAvailability().catch(() => null);
+  out["mbos.ai.leadScan"] =
+    leadScan?.available === true
+      ? { available: true, maxImages: leadScan.maxImages }
+      : { available: false };
+
+  /*
+   * WHETHER TO OFFER "SPEAK ABOUT THE SHOP" on the same form — an answer like
+   * the three above, and caught for the same reason.
+   */
+  const leadVoice = await leadVoiceAvailability().catch(() => null);
+  out["mbos.ai.leadVoice"] = { available: leadVoice?.available === true };
 
   return out;
 }
@@ -649,11 +798,28 @@ function namedByUsers(ids: string[]) {
   )`;
 }
 
+/**
+ * WHOSE BOOK, AS A CLAUSE — the security half of `customerIdsInScope`, for a
+ * caller asking about one customer rather than listing them all.
+ *
+ * Exported for the sync handlers' `scopedCustomer`, which used to ask
+ * `scopedToUsers` alone. The pull sends the shops `namedByUsers` adds — the
+ * ones the customer master names this salesman on, as text — and the write
+ * path refused every one of them, so a salesman could see a shop on his phone,
+ * walk in, take an order, and have it come back "not in your territory". One
+ * clause, so what a handset is sent and what it may write cannot disagree.
+ *
+ * Undefined is unrestricted, exactly as `scopedToUsers(null)` is.
+ */
+export function principalBookClause(principal: MbosPrincipal): SQL | undefined {
+  const ids = scopedUserIds(principal.scope);
+  return ids === null ? undefined : or(scopeIn(ids), namedByUsers(ids));
+}
+
 /** The customer ids this principal may see. Every other query filters on it. */
 export async function customerIdsInScope(
   principal: MbosPrincipal,
 ): Promise<string[]> {
-  const ids = scopedUserIds(principal.scope);
   /*
    * WHO MAY SEE IT, AND WHERE HE WORKS — two clauses doing two different jobs,
    * and they are ANDed rather than folded together.
@@ -675,7 +841,7 @@ export async function customerIdsInScope(
    * `and(undefined, undefined)` is undefined, so an admin with no territory is
    * still unrestricted. Both null-handling rules survive the pairing.
    */
-  const visible = ids === null ? undefined : or(scopeIn(ids), namedByUsers(ids));
+  const visible = principalBookClause(principal);
 
   /*
    * NO TERRITORY, NO BOOK — and the short-circuit is here rather than in the
@@ -687,24 +853,44 @@ export async function customerIdsInScope(
    * handset is not walking a beat — the console is oversight, their scope has
    * already answered the question, and emptying their phone for want of an
    * allocation nobody would think to make reads as a broken sync rather than
-   * as a rule. `role` is the derived widest role, so this is the same answer
-   * `scopeForUser` gave a line earlier rather than a second reading of it.
+   * as a rule. `role` is the level on the FIELD grant (see `loadPrincipal`) —
+   * a manager of some other app walking a beat is a salesman here — so this
+   * is the same answer `scopeForUser` gave a line earlier rather than a second
+   * reading of it.
    *
    * The emptiness is NAMED, never silent: `mbosTerritoryState` puts the reason
    * on the handset and the team screen counts who it has switched off. An
    * empty book that says why is a question; one that does not is a fortnight
    * of somebody assuming the sync is broken.
    */
-  const exempt = principal.role === "admin" || principal.role === "manager";
+  const exempt = territoryExempt(principal);
   const territories = await territoriesFor(principal.user.id);
   if (!exempt && !territories.length) return [];
 
-  const territory = territories.length ? territoryClause(territories) : undefined;
+  /*
+   * HIS OWN FIELD-CREATED SHOPS STAY IN HIS BOOK whatever their address says.
+   *
+   * A shop added from the handset arrives with whatever town he typed and, on
+   * older builds, no state at all — so under a state-or-city allocation it
+   * matched nothing, the pull's `bookIds` left it out, and the handset's
+   * reconcile deleted the shop he had created thirty seconds earlier, with his
+   * orders still pointing at it. The territory is a narrowing and never a
+   * permission (see above), so letting the creator keep the row he created
+   * widens nobody's sight beyond what `visible` already allows.
+   */
+  const territory = territories.length
+    ? or(
+        territoryClause(territories),
+        and(eq(customers.leadSource, "mbos"), eq(customers.ownerId, principal.user.id)),
+      )
+    : undefined;
 
+  // A lead in the trash is in nobody's book — on top of both clauses above,
+  // because the "named by" arm can admit what the scope arm leaves out.
   const rows = await db
     .select({ id: customers.id })
     .from(customers)
-    .where(and(visible, territory));
+    .where(and(isNull(customers.deletedAt), visible, territory));
   return rows.map((r) => r.id);
 }
 
@@ -728,15 +914,25 @@ export async function territoryStateFor(
   return mbosTerritoryState(principal, await territoriesFor(principal.user.id));
 }
 
+/**
+ * WHO TERRITORY DOES NOT NARROW WHEN NOTHING IS ALLOCATED — a manager or an
+ * admin. One definition, read by the book, the state the handset is sent and
+ * the lead gate, so the three cannot disagree about one person.
+ */
+export function territoryExempt(principal: MbosPrincipal): boolean {
+  return principal.role === "admin" || principal.role === "manager";
+}
+
 export function mbosTerritoryState(
   principal: MbosPrincipal,
   territories: Territory[],
 ): TerritoryState {
-  const exempt = principal.role === "admin" || principal.role === "manager";
+  const exempt = territoryExempt(principal);
   const working = territories.filter((t) => t.kind !== "region");
   return {
     allocated: working.length > 0,
     exempt,
+    areas: territories.map((t) => ({ kind: t.kind, value: t.value, parent: t.parent ?? null })),
     /* The narrowest name of each branch, which is what somebody recognises:
        "Pune" rather than "Maharashtra, Pune" on a chip a phone has to fit. */
     places: [...new Set(working.map((t) => t.value))].sort((a, b) => a.localeCompare(b)),
@@ -759,7 +955,7 @@ export async function bookIdsIgnoringTerritory(userId: string): Promise<string[]
   const rows = await db
     .select({ id: customers.id })
     .from(customers)
-    .where(or(scopeIn([userId]), namedByUsers([userId])));
+    .where(and(isNull(customers.deletedAt), or(scopeIn([userId]), namedByUsers([userId]))));
   return rows.map((r) => r.id);
 }
 
@@ -845,7 +1041,7 @@ export type BootstrapPayload = {
    * `restoreAttendance` on the other side for why it may only ever fill a gap.
    */
   attendanceToday: unknown | null;
-  /** This year's and last's. See `holidaysFor` for why only `universal` ones bind. */
+  /** This year's and last's; `universal` is "this one is his". See `holidaysFor`. */
   holidays: unknown[];
   documents: unknown[];
   courses: unknown[];
@@ -860,6 +1056,8 @@ export type BootstrapPayload = {
    * unconditionally.
    */
   performance: unknown[];
+  /** His customers' targets, this month and last. See `customerTargetsFor`. */
+  customerTargets: unknown[];
   /** This month's and last's. See `salaryFor` — read-only, nothing here writes it. */
   salary: unknown[];
   /**
@@ -870,6 +1068,12 @@ export type BootstrapPayload = {
    * a product list typed into a screen.
    */
   travelModes: unknown[];
+  /** His own field orders, as the office now stands on them. See `myOrderStates`. */
+  myOrders: unknown[];
+  /** The changes he asked for on approved orders, and their answers. */
+  orderChanges: unknown[];
+  /** What he said about his allocated areas, and the office's answer. See `myTerritoryRequests`. */
+  territoryRequests: unknown[];
   /**
    * The expense policy in force, resolved for THIS person, as rules the
    * handset's own copy of the engine reads.
@@ -894,6 +1098,14 @@ export type BootstrapPayload = {
     /** In English, for the "what am I allowed" screen. */
     sentences: string[];
   } | null;
+  /**
+   * His own leave, claims, tours and the approvals behind them — see
+   * `ownHistory`. The handset only ever fills gaps with these.
+   */
+  myLeaveRequests: unknown[];
+  myExpenses: unknown[];
+  myTours: unknown[];
+  myApprovals: unknown[];
   config: Record<string, unknown>;
 };
 
@@ -927,10 +1139,16 @@ const HISTORY_PER_CUSTOMER = 10;
  * `operator does not exist: date >= integer`. The cast pins the type before
  * Postgres has to guess. Confirmed by reproducing the exact failure with a
  * plain `PREPARE` carrying no parameter types, and confirming the cast alone
- * fixes it; a literal `15` typed into the query text never hits this, because
+ * fixes it; a literal number typed into the query text never hits this, because
  * a literal is not an unresolved parameter.
  */
-const PLAN_HISTORY_DAYS = 15;
+/*
+ * Sixty days back, not fifteen: the handset's Journeys screen shows past days
+ * as a list and a calendar with every stop's outcome, and a fortnight is not
+ * enough history to see a month of work in. `JOURNEY_HISTORY_DAYS` on the
+ * handset must match it, or that screen asks for days the pull never sent.
+ */
+const PLAN_HISTORY_DAYS = 60;
 
 export async function buildBootstrap(
   principal: MbosPrincipal,
@@ -943,8 +1161,8 @@ export async function buildBootstrap(
      return type to carry a screen's sentence is how a boundary picks up a
      second job. Two cheap reads of one indexed table beat that. */
   const territories = await territoriesFor(principal.user.id);
-  /* A fortnight either side of today, matching `PLAN_HISTORY_DAYS` and the
-     manager's own MAX_PLAN_DAYS (31) forward cap — so a fresh sign-in shows
+  /* `PLAN_HISTORY_DAYS` back and the manager's own MAX_PLAN_DAYS (31)
+     forward cap — so a fresh sign-in shows
      the whole relevant window immediately rather than waiting for it to
      trickle in through the delta over the following days. */
   const planFrom = addDays(day, -PLAN_HISTORY_DAYS);
@@ -1003,8 +1221,8 @@ export async function buildBootstrap(
     customerBills(principal, ids, { from: statementStart }),
     leaveBalances(principal.user.id, Number(day.slice(0, 4))),
     attendanceToday(principal.user.id, day),
-    holidaysFor(),
-    visibleDocuments(principal.role, ids),
+    holidaysFor(principal.user.id),
+    visibleDocuments(principal.role, principal.user.id, ids),
     coursesFor(principal.user.id),
     unreadNotifications(principal.user.id),
     // The epoch, so the cache's own `computed_at` gate lets everything through.
@@ -1012,10 +1230,13 @@ export async function buildBootstrap(
     salaryFor(principal.user.id),
     mbosConfigPayload(),
   ]);
+  const own = await ownHistory(principal.user.id);
 
   return {
     serverTime: now.getTime(),
-    cursor: encodeCursor(now),
+    /* Stepped back like every delta cursor, so an office write that was
+       still committing while this was built arrives on the first sync. */
+    cursor: encodeCursor(nextPullCursorAt(now, [])),
     territory: mbosTerritoryState(principal, territories),
     user: {
       id: principal.user.id,
@@ -1049,11 +1270,19 @@ export async function buildBootstrap(
     holidays: holidayRows,
     documents: documentRows,
     courses: courseRows,
-    notifications: notificationRows,
+    notifications: notificationsForWire(notificationRows),
     performance: performanceRows,
+    customerTargets: await customerTargetsFor(principal.user.id),
     salary: salaryRows,
     travelModes: await travelModeRows(),
+    myOrders: await myOrderStates(principal.user.id),
+    orderChanges: await myOrderChanges(principal.user.id),
+    territoryRequests: await myTerritoryRequests(principal.user.id),
     expensePolicy: await expensePolicyFor(principal.user.id, await today()),
+    myLeaveRequests: own.myLeaveRequests,
+    myExpenses: own.myExpenses,
+    myTours: own.myTours,
+    myApprovals: own.myApprovals,
     config,
   };
 }
@@ -1122,17 +1351,25 @@ export async function buildBootstrap(
  * `customersForDevice` then returns them in does not matter, because the
  * handset upserts them.
  */
+const CUSTOMERS_PER_PULL = 2000;
+
 async function changedCustomersForDevice(ids: string[], sinceIso: string) {
-  if (!ids.length) return [];
+  if (!ids.length) return { rows: [] as Record<string, unknown>[], lastAt: null as Date | null };
   const idList = sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`;
-  const changed = await db.execute<{ id: string }>(sql`
-    select c.id
+  const changed = await db.execute<{ id: string; updatedAt: Date | string }>(sql`
+    select c.id, c.updated_at as "updatedAt"
       from customers c
      where c.id in ${idList} and c.updated_at > ${sinceIso}
      order by c.updated_at asc
-     limit 2000
+     limit ${CUSTOMERS_PER_PULL}
   `);
-  return customersForDevice(changed.map((r) => r.id));
+  /* A FULL PAGE HOLDS THE CURSOR — see `nextPullCursorAt`. The comment above
+     says the cap takes the oldest changes first "or the ones it drops are never
+     asked for again"; with the cursor moving to now they were never asked for
+     again anyway. */
+  const lastAt =
+    changed.length === CUSTOMERS_PER_PULL ? asDate(changed[changed.length - 1].updatedAt) : null;
+  return { rows: await customersForDevice(changed.map((r) => r.id)), lastAt };
 }
 
 async function customersForDevice(ids: string[]) {
@@ -1215,25 +1452,129 @@ async function customersForDevice(ids: string[]) {
 }
 
 /**
+ * HIS OWN FIELD ORDERS, AS THE OFFICE NOW STANDS ON THEM.
+ *
+ * An accounts decision never reached the handset: the phone learned an
+ * order's fate only through `mbos_approvals`, which accounts do not write, so
+ * every field order read "Sent" or "With the office" for ever and a declined
+ * one carried no reason. This is the order's own row — status, the reason, and
+ * the lines as they now stand, because an edit or an accepted change rewrites
+ * them at the office. One function for the bootstrap and the delta; the
+ * bootstrap reaches back ninety days, the delta whatever moved since.
+ */
+async function myOrderStates(userId: string, sinceIso?: string) {
+  return db.execute<Record<string, unknown>>(sql`
+    select o.id, o.status::text as status, o.decline_reason as "declineReason",
+           o.order_no as "orderNo", o.total_amount::double precision as "totalAmountPaise",
+           o.line_items as "lineItems",
+           (extract(epoch from o.approved_at) * 1000)::double precision as "decidedAt"
+      from orders o
+     where o.user_id = ${userId}
+       and o.source = 'mbos'
+       and ${sinceIso ? sql`o.updated_at > ${sinceIso}` : sql`o.created_at > now() - interval '90 days'`}
+     order by o.updated_at asc
+     limit 500
+  `);
+}
+
+/** The changes he asked for on approved orders, and what accounts said. */
+async function myOrderChanges(userId: string, sinceIso?: string) {
+  return db.execute<Record<string, unknown>>(sql`
+    select r.id, r.order_id as "orderId", r.status::text as status, r.note,
+           r.decision_note as "decisionNote",
+           r.total_amount_paise::double precision as "totalAmountPaise",
+           r.line_items as "lineItems",
+           (extract(epoch from r.created_at) * 1000)::double precision as "requestedAt",
+           (extract(epoch from r.decided_at) * 1000)::double precision as "decidedAt"
+      from order_change_requests r
+     where r.requested_by_id = ${userId}
+       and ${sinceIso ? sql`r.updated_at > ${sinceIso}` : sql`r.created_at > now() - interval '90 days'`}
+     order by r.updated_at asc
+     limit 500
+  `);
+}
+
+/**
+ * What he said about his areas, newest last, with the office's answer.
+ *
+ * An acceptance needs no answer and reads `accepted`. A change request is
+ * decided on the Approvals queue, so its state is the approval's — which is
+ * also why the delta asks whether the APPROVAL moved, not only the request:
+ * deciding one touches `mbos_approvals` and nothing here.
+ */
+async function myTerritoryRequests(userId: string, sinceIso?: string) {
+  return db.execute<Record<string, unknown>>(sql`
+    select t.id, t.kind, t.current_places as "currentPlaces",
+           t.requested_places as "requestedPlaces", t.reason, t.signature,
+           case when t.kind = 'accept' then 'accepted'
+                else coalesce(ap.state::text, 'pending') end as state,
+           ap.decision_note as "decisionNote",
+           (extract(epoch from ap.decided_at) * 1000)::double precision as "decidedAt",
+           (extract(epoch from t.client_created_at) * 1000)::double precision as "clientCreatedAt",
+           (extract(epoch from t.server_created_at) * 1000)::double precision as "serverCreatedAt"
+      from mbos_territory_requests t
+      left join lateral (
+        select a.state, a.decision_note, a.decided_at, a.updated_at
+          from mbos_approvals a
+         where a.subject_id = t.id and a.subject_type = 'territory_request'
+         order by a.requested_at desc
+         limit 1
+      ) ap on true
+     where t.user_id = ${userId}
+       and ${
+         sinceIso
+           ? sql`(t.updated_at > ${sinceIso} or ap.updated_at > ${sinceIso})`
+           : sql`t.server_created_at > now() - interval '180 days'`
+       }
+     order by t.server_created_at asc
+     limit 100
+  `);
+}
+
+/**
  * The catalogue, and only what can actually be ordered: a SKU is the only
  * level `interaction_product_lines` may point at, so offering anything above
  * it puts a line on an order that cannot be saved.
  */
 async function activeCatalogue() {
+  return catalogueRows();
+}
+
+/**
+ * THE CATALOGUE ROWS, for the bootstrap and the delta alike.
+ *
+ * Two queries until now, and they had drifted the way AGENTS.md says every
+ * pair of them does: the delta sent no brand and no formulation — the line
+ * that tells two SKUs of one liquid apart — and no status filter, so a SKU
+ * held for a duplicate decision would have reached the phone as orderable the
+ * moment it was touched. A delta row and a bootstrap row are now the same
+ * columns. On the delta, `active` is the ORDERABLE answer rather than the
+ * column, so a SKU that stops being orderable is switched off on the phone
+ * instead of being left behind.
+ */
+async function catalogueRows(sinceIso?: string) {
   return db.execute<Record<string, unknown>>(sql`
     select p.id, p.name, p.raw_name as "rawName", p.pack_size as "packSize",
            p.packing, p.millilitres_per_can as "millilitresPerCan",
-           p.cans_per_box as "cansPerBox", p.active,
+           p.cans_per_box as "cansPerBox", (p.active and p.status = 'ok') as active,
            -- brand and formulation are what the catalogue and the order
            -- form read for the subtitle under a SKU -- one liquid sells as
            -- Nano, Astar Nano and M5x4 Thinner, and that line is what tells
            -- them apart mid-call.
-           b.name as brand, f.name as formulation
+           b.name as brand, f.name as formulation,
+           -- The SKU code: the legacy Product ID, what a salesman and a
+           -- shopkeeper call a product by.
+           nullif(trim(p.external_code), '') as sku
       from products p
       left join product_brands b on b.id = p.brand_id
       left join product_formulations f on f.id = p.formulation_id
-     where p.active = true and p.status = 'ok'
-     order by p.display_order asc, p.name asc
+     where ${
+       sinceIso
+         ? sql`p.updated_at > ${sinceIso}`
+         : sql`p.active = true and p.status = 'ok'`
+     }
+     order by ${sinceIso ? sql`p.updated_at asc` : sql`p.display_order asc, p.name asc`}
+     ${sinceIso ? sql`limit 2000` : sql``}
   `);
 }
 
@@ -1340,8 +1681,19 @@ async function openTasks(userId: string) {
            t.completion_note as "completionNote",
            t.completion_photo_id as "completionPhotoId",
            t.escalated_at as "escalatedAt",
+           -- The form the office asked him to fill, and what he has answered.
+           -- The form lives on the assignment and only there; the answers are
+           -- sent back so a pull never writes NULL over a reply he gave.
+           t.campaign_id as "campaignId",
+           k.form as "form",
+           t.responses as "responses",
+           -- What the customer record says, for the questions linked to it:
+           -- the handset shows it and starts each answer from it.
+           case when t.campaign_id is null or t.customer_id is null then null
+                else ${taskContextSql("t.customer_id")} end as "context",
            t.updated_at as "updatedAt"
       from mbos_tasks t
+      left join mbos_task_campaigns k on k.id = t.campaign_id
      where t.assigned_to_user_id = ${userId}
        and t.status in ('open', 'in_progress')
      order by t.due_date asc nulls last
@@ -1372,8 +1724,19 @@ async function tasksSince(userId: string, sinceIso: string) {
            t.completion_note as "completionNote",
            t.completion_photo_id as "completionPhotoId",
            t.escalated_at as "escalatedAt",
+           -- The form the office asked him to fill, and what he has answered.
+           -- The form lives on the assignment and only there; the answers are
+           -- sent back so a pull never writes NULL over a reply he gave.
+           t.campaign_id as "campaignId",
+           k.form as "form",
+           t.responses as "responses",
+           -- What the customer record says, for the questions linked to it:
+           -- the handset shows it and starts each answer from it.
+           case when t.campaign_id is null or t.customer_id is null then null
+                else ${taskContextSql("t.customer_id")} end as "context",
            t.updated_at as "updatedAt"
       from mbos_tasks t
+      left join mbos_task_campaigns k on k.id = t.campaign_id
      where t.assigned_to_user_id = ${userId}
        and t.updated_at > ${sinceIso}
      order by t.updated_at asc
@@ -1810,11 +2173,27 @@ async function openLeads(userId: string, since?: string | null) {
      where (c.owner_id = ${userId} or c.lead_manager_id = ${userId})
        and c.lead_stage is not null
        and c.lead_archived = false
+       -- Not in the lead trash. A trashed lead's tombstone takes it off the
+       -- phone; this is what stops the next pull sending it straight back.
+       and c.deleted_at is null
        -- on_hold is deliberately NOT excluded. A held lead is a live
        -- prospect with a reason it is not moving, and taking it off the
        -- handset would make "on hold" mean "gone" — which is exactly the
        -- conflation the status exists to end.
        and c.lead_stage not in ('won', 'lost')
+       -- Nor anything else that has become a customer: the same clause the
+       -- office's own Leads lists leave out, so a desk and a phone agree on
+       -- what a lead is. The handset removes such a row on every pass
+       -- (releaseConvertedLeads); sending it would only put it back.
+       and ${notConverted()}
+       -- A THIRD-PARTY SHOP IS A CUSTOMER, not a lead. A distributor we bill
+       -- buys from us and sells on to it, and the salesman visits it to take
+       -- orders for that distributor. Most of them were CRM leads before they
+       -- were marked, and they kept their old stage, so without this line they
+       -- came down as leads: listed under Leads, opened on the funnel, and
+       -- asked to be qualified as Suspects. They reach the handset through the
+       -- customers channel, like every other shop in his book.
+       and not c.third_party
        ${since ? sql`and c.updated_at > ${since}` : sql``}
      order by c.lead_next_follow_up_date asc nulls last
   `);
@@ -1929,6 +2308,7 @@ async function leadValidations(userId: string, since?: string | null) {
       -- not arrive for a lead this handset does not hold, or it lands against a
       -- customerId nothing on the phone can resolve.
      where (c.owner_id = ${userId} or c.lead_manager_id = ${userId})
+       and c.deleted_at is null
        ${since ? sql`and k.updated_at > ${since}` : sql``}
      order by k.called_at desc
      limit 500
@@ -1975,6 +2355,7 @@ async function leadFieldChecks(userId: string, since?: string | null) {
       from lead_verification_corrections x
       join customers c on c.id = x.customer_id
      where (c.owner_id = ${userId} or c.lead_manager_id = ${userId})
+       and c.deleted_at is null
        ${since ? sql`and x.changed_at > ${since}` : sql``}
      order by x.changed_at desc
      limit 500
@@ -2003,8 +2384,21 @@ async function leadFieldChecks(userId: string, since?: string | null) {
  * the catalogue to value a line — `products.priceSource` is still unset, and a
  * confident wrong figure on a customer's record is worse than no figure.
  */
-async function recentOrders(ids: string[], perCustomer: number) {
+async function recentOrders(ids: string[], perCustomer: number, changedSince?: string) {
   if (!ids.length) return [];
+  const idList = sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`;
+  /* ONLY THE SHOPS WHOSE ORDERS MOVED, on a delta. It sent every shop's ten
+     on every pull — twenty-six thousand rows a minute for a book of 2,587 —
+     because an eleventh order displaces a row rather than changing one. The
+     answer to that is to send the CURRENT ten for any shop with an order that
+     moved since the cursor, and let the handset prune to ten; a shop with no
+     order touched has nothing new to say. */
+  const onlyChanged = changedSince
+    ? sql`and o.customer_id in (
+              select oc.customer_id from orders oc
+               where oc.customer_id in ${idList} and oc.updated_at > ${changedSince}
+            )`
+    : sql``;
   return db.execute<Record<string, unknown>>(sql`
     select id, "customerId", "orderedAt", status, "valuePaise", lines, "orderNo"
       from (
@@ -2018,7 +2412,8 @@ async function recentOrders(ids: string[], perCustomer: number) {
                  partition by o.customer_id order by o.ordered_at desc, o.id desc
                ) as rn
           from orders o
-         where o.customer_id in ${sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`}
+         where o.customer_id in ${idList}
+           ${onlyChanged}
       ) ranked
      where rn <= ${perCustomer}
      order by "customerId" asc, "orderedAt" desc
@@ -2190,7 +2585,7 @@ async function customerBills(
 }
 
 /** One line of a bill, as the shop would read it off the invoice. */
-type BillLine = { product: string; qty: number; amountPaise: number | null };
+export type BillLine = { product: string; qty: number; amountPaise: number | null };
 
 /**
  * WHAT WAS ACTUALLY ON EACH BILL, from the two places a line can live.
@@ -2216,7 +2611,7 @@ type BillLine = { product: string; qty: number; amountPaise: number | null };
  * product master holds no prices (`canValueOrders()` still answers no), and a
  * quantity times nothing is not a figure to put in front of a customer.
  */
-async function billLines(billIds: string[]): Promise<Map<string, BillLine[]>> {
+export async function billLines(billIds: string[]): Promise<Map<string, BillLine[]>> {
   const out = new Map<string, BillLine[]>();
   if (!billIds.length) return out;
   const ids = sql`(${sql.join(billIds.map((i) => sql`${i}`), sql`, `)})`;
@@ -2310,6 +2705,145 @@ async function recentTimeline(ids: string[], perCustomer: number) {
      where rn <= ${perCustomer}
      order by "customerId" asc, "occurredAt" desc
   `);
+}
+
+const TIMELINE_PER_PULL = 2000;
+
+/**
+ * THE TIMELINE ON A DELTA, in the bootstrap's shape.
+ *
+ * It was a second spelling inside `buildPull` that sent `occurred_at` as a
+ * timestamp — the very string `recentTimeline` above explains SQLite stores as
+ * TEXT in an INTEGER column, so every event after sign-in rendered as a date
+ * of NaN and sorted after every event the phone wrote. Same columns as
+ * `recentTimeline`, same epoch milliseconds, and the WIRE test covers it.
+ *
+ * `createdAt` is the order and the cursor's clamp, and is taken off before the
+ * row is sent — see `buildPull`.
+ */
+async function timelineSince(ids: string[], sinceIso: string) {
+  if (!ids.length) return { rows: [] as Record<string, unknown>[], lastAt: null as Date | null };
+  const rows = await db.execute<Record<string, unknown> & { createdAt: Date | string }>(sql`
+    select t.id, t.customer_id as "customerId", t.event_type as "eventType",
+           t.source_app as "sourceApp", t.source_record_id as "sourceRecordId",
+           (extract(epoch from t.occurred_at) * 1000)::double precision as "occurredAt",
+           t.actor_user_id as actor,
+           t.summary,
+           t.created_at as "createdAt"
+      from timeline_events t
+     where t.customer_id in ${sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`}
+       and t.created_at > ${sinceIso}
+     order by t.created_at asc
+     limit ${TIMELINE_PER_PULL}
+  `);
+  const lastAt = rows.length === TIMELINE_PER_PULL ? asDate(rows[rows.length - 1].createdAt) : null;
+  return { rows: rows.map((r) => without(r, "createdAt")), lastAt };
+}
+
+/**
+ * HIS OWN REQUESTS, for a phone that holds none of them — a reinstall, a new
+ * handset.
+ *
+ * Leave, expense claims, tours and the approvals behind them are OWNED and were
+ * never sent down at all, by the rule that a sync must not write over what
+ * somebody authored offline. So a salesman who changed phones saw nothing he
+ * had asked for, and an approval decided afterwards landed on no row. The
+ * handset only ever fills a GAP with these (`fillOwnHistory`), so a request
+ * saved a minute ago without signal still wins.
+ *
+ * In the HANDSET'S column names — a pulled row is a local row — and with the
+ * state those screens read, derived from the request's latest approval
+ * exactly as `applyApprovals` derives it on the way down.
+ */
+const OWN_HISTORY_DAYS = 180;
+
+async function ownHistory(userId: string) {
+  const verdict = (subject: string, idCol: SQL) => sql`(
+    select case ap.state::text
+             when 'approved' then 'Approved'
+             when 'partially_approved' then 'Approved'
+             when 'rejected' then 'Rejected'
+             else 'Pending' end
+      from mbos_approvals ap
+     where ap.subject_type = ${subject} and ap.subject_id = ${idCol}
+     order by ap.updated_at desc
+     limit 1
+  )`;
+
+  const [leave, expenses, tours, approvals] = await Promise.all([
+    db.execute<Record<string, unknown>>(sql`
+      select l.id, l.user_id as "userId", l.leave_type::text as kind,
+             l.from_date::text as "fromDate", l.to_date::text as "toDate",
+             l.days, coalesce(l.reason, '') as reason,
+             case when l.cancelled_at is not null then 'Withdrawn'
+                  else coalesce(${verdict("leave", sql`l.id`)}, 'Pending') end as state,
+             (extract(epoch from coalesce(l.client_created_at, l.server_created_at)) * 1000)::double precision as "clientCreatedAt",
+             (extract(epoch from l.server_created_at) * 1000)::double precision as "serverCreatedAt"
+        from mbos_leave_requests l
+       where l.user_id = ${userId}
+         and l.to_date >= (now() at time zone ${APP_TIMEZONE})::date - ${OWN_HISTORY_DAYS}::int
+    `),
+    db.execute<Record<string, unknown>>(sql`
+      select e.id, e.user_id as "userId", e.expense_date::text as "spentOn",
+             e.category::text as category, e.amount_paise as "amountPaise",
+             e.remarks, e.kind,
+             coalesce(${verdict("expense", sql`e.id`)}, 'Pending') as state,
+             (extract(epoch from coalesce(e.client_created_at, e.server_created_at)) * 1000)::double precision as "clientCreatedAt",
+             (extract(epoch from e.server_created_at) * 1000)::double precision as "serverCreatedAt"
+        from mbos_expenses e
+       where e.user_id = ${userId}
+         and e.expense_date >= (now() at time zone ${APP_TIMEZONE})::date - ${OWN_HISTORY_DAYS}::int
+    `),
+    db.execute<Record<string, unknown>>(sql`
+      select t.id, t.user_id as "userId", t.start_date::text as "startDate",
+             t.end_date::text as "endDate", t.cities, t.purpose,
+             t.estimated_cost_paise as "estimatedCostPaise", t.notes,
+             coalesce(${verdict("tour", sql`t.id`)}, 'Pending') as state,
+             (extract(epoch from coalesce(t.client_created_at, t.server_created_at)) * 1000)::double precision as "clientCreatedAt",
+             (extract(epoch from t.server_created_at) * 1000)::double precision as "serverCreatedAt"
+        from mbos_tours t
+       where t.user_id = ${userId}
+         and t.end_date >= (now() at time zone ${APP_TIMEZONE})::date - ${OWN_HISTORY_DAYS}::int
+    `),
+    db.execute<Record<string, unknown>>(sql`
+      select ap.id, ap.type::text as type, ap.subject_type as "subjectType",
+             ap.subject_id as "subjectId", ap.reason,
+             (extract(epoch from ap.requested_at) * 1000)::double precision as "requestedAt",
+             d.name as "approverName", ap.state::text as state,
+             (extract(epoch from ap.decided_at) * 1000)::double precision as "decidedAt",
+             ap.decision_note as "decisionNote",
+             ap.approved_amount_paise as "approvedAmountPaise",
+             (extract(epoch from coalesce(ap.client_created_at, ap.requested_at)) * 1000)::double precision as "clientCreatedAt"
+        from mbos_approvals ap
+        left join users d on d.id = ap.approver_user_id
+       where ap.requested_by_user_id = ${userId}
+         and ap.requested_at >= now() - (${OWN_HISTORY_DAYS}::int * interval '1 day')
+    `),
+  ]);
+
+  return { myLeaveRequests: leave, myExpenses: expenses, myTours: tours, myApprovals: approvals };
+}
+
+/** A row with one key taken off — what a channel ordered or clamped on but
+    the handset has no column for. */
+function without<T extends Record<string, unknown>>(row: T, key: string): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...row };
+  delete out[key];
+  return out;
+}
+
+/**
+ * NOTIFICATIONS SEND THEIR TIME AS EPOCH MILLISECONDS — the handset's column is
+ * `INTEGER NOT NULL` and its own rows are written with `Date.now()`. Sent as a
+ * Date they became ISO strings stored as TEXT beside integers, and SQLite sorts
+ * all text above all integers: every office notification sat above every one
+ * the phone raised, whatever their times, and a fresh "Order not accepted"
+ * could fall past the hundred-row limit.
+ */
+function notificationsForWire<T extends { createdAt?: unknown }>(rows: T[]): T[] {
+  return rows.map((n) =>
+    n.createdAt == null ? n : { ...n, createdAt: asDate(n.createdAt)?.getTime() ?? Date.now() },
+  );
 }
 
 /**
@@ -2448,11 +2982,16 @@ function leaveBalanceRows(
 /**
  * The library, filtered by role and by book.
  *
- * `visible_to_roles` empty means everybody — a price list nobody tagged is
+ * `visible_to_roles` empty means everybody, and so does `visible_to_user_ids` — a price list nobody tagged is
  * still a price list the field team needs, and an empty list read as "nobody"
  * would produce a document section that is silently blank on every handset.
  */
-async function visibleDocuments(role: string, customerIds: string[], since?: string | null) {
+async function visibleDocuments(
+  role: string,
+  userId: string,
+  customerIds: string[],
+  since?: string | null,
+) {
   const scoped = customerIds.length
     ? sql`(d.customer_id is null or d.customer_id in ${sql`(${sql.join(customerIds.map((i) => sql`${i}`), sql`, `)})`})`
     : sql`d.customer_id is null`;
@@ -2466,6 +3005,10 @@ async function visibleDocuments(role: string, customerIds: string[], since?: str
      where d.active = true
        and (jsonb_array_length(d.visible_to_roles) = 0
             or d.visible_to_roles ? ${role})
+       -- Tagged to named people narrows further; empty is everybody, for the
+       -- same reason an empty role list is.
+       and (jsonb_array_length(d.visible_to_user_ids) = 0
+            or d.visible_to_user_ids ? ${userId})
        and ${scoped}
        ${since ? sql`and d.updated_at > ${since}` : sql``}
      order by d.category asc, d.title asc
@@ -2498,17 +3041,23 @@ async function coursesFor(userId: string, since?: string | null) {
  * telling us its own working-day horizon, which is exactly the kind of
  * two-projections-that-disagree this codebase keeps getting bitten by.
  *
- * `scope` is free text on the server (see the schema comment) and the handset
- * has no reliable way to match it against a salesman's own territory, so only
- * a NULL-scope (everywhere) row is sent as `universal: true` — the one signal
- * the attendance engine may act on automatically. A regionally-scoped holiday
- * still goes down, `universal: false`, so it can be shown in a list, but
- * nothing here pretends to know it applies to any one salesman.
+ * PER PERSON. `universal` used to mean "the row names no place", because a
+ * free-text place could not be matched to anybody. Places are picked from the
+ * tree now and resolved per salesman (`holidayAppliesSql`), so `universal` is
+ * "this is HIS day off" — which is exactly what the handset's attendance
+ * engine and leave form already read it as. A holiday that does not reach him
+ * still goes down, `universal: false`, so his phone can list the company's
+ * calendar and say which days are not his. `scope` carries where it applies,
+ * in words ("Odisha", "2 named people"); null is company-wide.
+ *
+ * A change in who a holiday reaches — an allocation, a territory, a new place
+ * — moves the holiday's `updated_at` (`rebuildHolidayMembers`), so the delta
+ * carries it with no app update and no new column on the wire.
  */
-async function holidaysFor(since?: string | null) {
+async function holidaysFor(userId: string, since?: string | null) {
   return db.execute<Record<string, unknown>>(sql`
-    select h.id, h.on_date::text as "onDate", h.name, h.scope,
-           (h.scope is null) as "universal"
+    select h.id, h.on_date::text as "onDate", h.name, h.audience_label as scope,
+           ${holidayAppliesSql("h", sql`${userId}`)} as "universal"
       from mbos_holidays h
      where extract(year from h.on_date) >= extract(year from (now() at time zone ${APP_TIMEZONE})) - 1
        ${since ? sql`and h.updated_at > ${since}` : sql``}
@@ -2518,13 +3067,50 @@ async function holidaysFor(since?: string | null) {
 }
 
 /**
+ * HIS CUSTOMERS' TARGETS, this month and last — the shops behind his number.
+ *
+ * `customerTargetsCreditedTo` is the Targets screen's own reading of the
+ * month, narrowed to the customers whose orders count towards him, so the
+ * figure on the phone and the figure on the office screen for one shop are
+ * one figure. Two months for the reason `performanceFor` sends two: on the
+ * 2nd, the month somebody is still asking about is the one that just closed.
+ *
+ * DERIVED PER PULL rather than cached, unlike the score. It reads his own
+ * book and nobody else's, and `achieved` and `pending` move the moment
+ * accounts decide an order — a cache would have him reading a shop as short
+ * an hour after the order that met it was approved.
+ */
+async function customerTargetsFor(userId: string): Promise<Record<string, unknown>[]> {
+  const current = monthKey(await today());
+  const periods = [current, addMonths(current, -1)];
+  const computedAt = new Date().toISOString();
+  const read = await Promise.all(periods.map((p) => customerTargetsCreditedTo(userId, p)));
+  /* Mapped as one object literal on purpose: mbos-wire.test.ts reads these
+     keys as the columns the handset's customer_targets table has to hold. */
+  return periods.flatMap((period, i) =>
+    read[i].map((r) => ({
+      period: period,
+      customerId: r.customerId,
+      targetPaise: r.target,
+      achievedPaise: r.achieved,
+      pendingPaise: r.pending,
+      isDefault: r.isDefault,
+      carriedForward: r.carriedForward,
+      billTarget: r.billTarget,
+      billsAchieved: r.billsAchieved,
+      computedAt: computedAt,
+    })),
+  );
+}
+
+/**
  * His own pay, this month and last — the channel `app/salary.tsx` on the
  * handset was built to read and never had.
  *
- * A per-user narrowing of `payForPeriod` (the web Sales Dashboard's team-wide
- * version), not a second implementation of it — same columns, same
- * employee-record join by email-then-mobile, same "no incentive column"
- * shape AGENTS.md already settled: MahekOne sets no monthly target for a
+ * Only ever HIS: pay is HRMS's to manage, and the Sales Dashboard's
+ * team-wide salary screen was removed so that no sales manager reads what his
+ * salesmen earn. The handset keeps this because a man reading his own payslip
+ * is a different thing. Same "no incentive column" shape AGENTS.md settled: MahekOne sets no monthly target for a
  * field salesman, so a number computed from one would be an invention on the
  * one screen where a wrong figure is least forgivable.
  *
@@ -2573,7 +3159,7 @@ async function salaryFor(userId: string): Promise<Record<string, unknown>[]> {
          file, so the figure on a handset and the figure in the office cannot
          come from two different readings of who this person is. See
          lib/employee-link.ts. */
-      left join employees e on ${employeeJoinOn("u", "e")}
+      ${employeeLateral("u", "e")}
      order by p."from" desc
   `);
 }
@@ -2585,7 +3171,8 @@ async function unreadNotifications(userId: string) {
       title: notifications.title,
       body: notifications.body,
       kind: notifications.kind,
-      href: notifications.href,
+      /* The HANDSET route, never the web one — see `notifications.mbosHref`. */
+      href: notifications.mbosHref,
       createdAt: notifications.createdAt,
     })
     .from(notifications)
@@ -2787,13 +3374,20 @@ async function performanceFor(
   `);
 }
 
+const NOTIFICATIONS_PER_PULL = 200;
+const APPROVALS_PER_PULL = 500;
+
+/** At most this many shops sent whole because the handset asked for them. */
+const MISSING_PER_PULL = 300;
+
 export async function buildPull(
   principal: MbosPrincipal,
   cursor: string | null | undefined,
+  opts: { missingIds?: string[] } = {},
 ): Promise<PullDelta> {
   const now = new Date();
   const since = decodeCursor(cursor);
-  const nextCursor = encodeCursor(now);
+  const nextCursor = encodeCursor(nextPullCursorAt(now, []));
 
   if (!since) {
     return {
@@ -2807,6 +3401,9 @@ export async function buildPull(
       transcripts: [],
       journeyStops: [],
       approvals: [],
+      myOrders: [],
+      orderChanges: [],
+      territoryRequests: [],
       performance: [],
       tasks: [],
       planDays: [],
@@ -2818,7 +3415,10 @@ export async function buildPull(
       courses: [],
       salary: [],
       travelModes: [],
-      expensePolicy: null,
+      /* ABSENT, not null. The handset reads null as "no policy covers today"
+         and deletes the one the bootstrap delivered a second earlier; this
+         reply sends no rows of anything, and says nothing about policy. */
+      expensePolicy: undefined,
       leads: [],
       leadValidations: [],
       leadFieldChecks: [],
@@ -2852,9 +3452,24 @@ export async function buildPull(
   const sinceIso = since.toISOString();
 
   const ids = await customerIdsInScope(principal);
-  const idList = ids.length
-    ? sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`
-    : null;
+
+  /*
+   * SHOPS THAT ARE NEWLY HIS, asked for by id.
+   *
+   * Everything below sends what CHANGED since the cursor. A shop that became
+   * his this morning — a territory allocated, an account moved — has not
+   * changed, so it reached his phone on no pass at all: under "no territory
+   * means no book" that is every newly allocated salesman, starting empty and
+   * staying empty until he signed out. The handset knows the difference
+   * between the book's ids (sent on every pass) and what it holds, and asks for
+   * the gap; this sends those shops whole, with the history the bootstrap
+   * would have sent. Only ids inside his scope — a request is not a
+   * permission.
+   */
+  const inScope = new Set(ids);
+  const missing = [...new Set(opts.missingIds ?? [])]
+    .filter((id) => typeof id === "string" && inScope.has(id))
+    .slice(0, MISSING_PER_PULL);
   /* The same window the bootstrap used. It MOVES with the day, which is the
      half worth stating: a bill inside it yesterday and outside it today simply
      stops being sent, and the handset prunes by the same date rather than
@@ -2897,34 +3512,16 @@ export async function buildPull(
     billChanges,
   ] = await Promise.all([
       changedCustomersForDevice(ids, sinceIso),
-      db.execute<Record<string, unknown>>(sql`
-        select p.id, p.name, p.pack_size as "packSize", p.packing,
-               p.millilitres_per_can as "millilitresPerCan",
-               p.cans_per_box as "cansPerBox", p.active
-          from products p
-         where p.updated_at > ${sinceIso}
-         order by p.updated_at asc
-         limit 2000
-      `),
-      idList
-        ? db.execute<Record<string, unknown>>(sql`
-            select t.id, t.customer_id as "customerId", t.event_type as "eventType",
-                   t.source_app as "sourceApp", t.source_record_id as "sourceRecordId",
-                   t.occurred_at as "occurredAt", t.actor_user_id as actor,
-                   t.summary
-              from timeline_events t
-             where t.customer_id in ${idList} and t.created_at > ${sinceIso}
-             order by t.created_at asc
-             limit 2000
-          `)
-        : Promise.resolve([]),
+      catalogueRows(sinceIso),
+      timelineSince(ids, sinceIso),
       db
         .select({
           id: notifications.id,
           title: notifications.title,
           body: notifications.body,
           kind: notifications.kind,
-          href: notifications.href,
+          /* The HANDSET route, never the web one — see `notifications.mbosHref`. */
+          href: notifications.mbosHref,
           createdAt: notifications.createdAt,
         })
         .from(notifications)
@@ -2935,7 +3532,7 @@ export async function buildPull(
           ),
         )
         .orderBy(sql`${notifications.createdAt} asc`)
-        .limit(200),
+        .limit(NOTIFICATIONS_PER_PULL),
 
       /* What the voice note said.
        *
@@ -2996,13 +3593,14 @@ export async function buildPull(
                (extract(epoch from ap.decided_at) * 1000)::double precision as "decidedAt",
                ap.decision_note as "decisionNote",
                ap.approved_amount_paise as "approvedAmountPaise",
-               d.name as "approverName"
+               d.name as "approverName",
+               ap.updated_at as "updatedAt"
           from mbos_approvals ap
           left join users d on d.id = ap.approver_user_id
          where ap.requested_by_user_id = ${principal.user.id}
            and ap.updated_at > ${sinceIso}
          order by ap.updated_at asc
-         limit 500
+         limit ${APPROVALS_PER_PULL}
       `),
 
       /* The days themselves, and how far each has got in being agreed.
@@ -3027,7 +3625,7 @@ export async function buildPull(
        * catch, and the cheapest way to pass it is to have one query. */
       leaveBalances(principal.user.id, deltaYear),
 
-      holidaysFor(sinceIso),
+      holidaysFor(principal.user.id, sinceIso),
 
       /* What the customer pays.
        *
@@ -3043,7 +3641,7 @@ export async function buildPull(
       /* The library and the training, narrowed exactly as the bootstrap
        * narrows them — same functions, so a document a salesman could not see
        * at sign-in cannot arrive an hour later through the delta. */
-      visibleDocuments(principal.role, ids, sinceIso),
+      visibleDocuments(principal.role, principal.user.id, ids, sinceIso),
       coursesFor(principal.user.id, sinceIso),
 
       /* Not `since`-gated — see `salaryFor`. Two small rows, one join each,
@@ -3071,12 +3669,10 @@ export async function buildPull(
 
       openSamples(principal.user.id, ids, sinceIso),
 
-      /* Not `since`-gated. Orders are capped at ten a customer and the cap is
-         what a delta would have to re-derive anyway: an eleventh order does
-         not CHANGE a row, it displaces one, and no `updated_at` on any row
-         says so. Sending the current ten is both correct and smaller than the
-         query that would work out which ten changed. */
-      recentOrders(ids, HISTORY_PER_CUSTOMER),
+      /* The current ten for every shop with an order that moved, and only
+         those — see `recentOrders`. The handset prunes to ten, which is what
+         lets a displaced order leave. */
+      recentOrders(ids, HISTORY_PER_CUSTOMER, sinceIso),
 
       /* THE OTHER TWO ARE `since`-GATED NOW, and dropping the cap is what
          made that honest.
@@ -3094,21 +3690,51 @@ export async function buildPull(
       customerBills(principal, ids, { from: statementStart, updatedSince: since ?? undefined }),
     ]);
 
+  /* The newly-his shops, whole — see the top of this function. The same
+     functions the bootstrap calls, so a shop arriving this way looks exactly
+     like one that came at sign-in. */
+  const [missingCustomers, missingTimeline, missingOrders, missingPayments, missingBills] = missing.length
+    ? await Promise.all([
+        customersForDevice(missing),
+        recentTimeline(missing, TIMELINE_PER_CUSTOMER),
+        recentOrders(missing, HISTORY_PER_CUSTOMER),
+        recentPayments(missing, { from: statementStart }),
+        customerBills(principal, missing, { from: statementStart }),
+      ])
+    : [[], [], [], [], []];
+
+  const notificationLastAt =
+    freshNotifications.length === NOTIFICATIONS_PER_PULL
+      ? asDate(freshNotifications[freshNotifications.length - 1].createdAt)
+      : null;
+  const approvalLastAt =
+    approvalRows.length === APPROVALS_PER_PULL
+      ? asDate((approvalRows[approvalRows.length - 1] as { updatedAt?: unknown }).updatedAt)
+      : null;
+
   return {
-    /* CLAMPED where a full page of tombstones was cut short — see
-       `deletionsSince`. Everything else is re-sent from that instant and is
-       idempotent; a tombstone that fell behind the cursor is a shop nobody can
-       get off the phone. */
-    cursor: deletionRows.lastAt ? encodeCursor(deletionRows.lastAt) : nextCursor,
+    /* CLAMPED wherever a capped page came back full, and stepped back a
+       little always — see `nextPullCursorAt`. Everything is re-sent from that
+       instant and is idempotent; a row that fell behind the cursor is a row
+       nobody can get onto the phone. */
+    cursor: encodeCursor(
+      nextPullCursorAt(now, [
+        deletionRows.lastAt,
+        changedCustomers.lastAt,
+        newTimeline.lastAt,
+        notificationLastAt,
+        approvalLastAt,
+      ]),
+    ),
     territory: await territoryStateFor(principal),
-    customers: changedCustomers as unknown[],
+    customers: [...changedCustomers.rows, ...missingCustomers] as unknown[],
     products: changedProducts as unknown[],
-    timeline: newTimeline as unknown[],
+    timeline: [...newTimeline.rows, ...missingTimeline] as unknown[],
     config: await mbosConfigPayload(),
-    notifications: freshNotifications as unknown[],
+    notifications: notificationsForWire(freshNotifications) as unknown[],
     transcripts: newTranscripts as unknown[],
     journeyStops: journeyRows as unknown[],
-    approvals: approvalRows as unknown[],
+    approvals: approvalRows.map((r) => without(r, "updatedAt")) as unknown[],
     planDays: planDayRows as unknown[],
     leaveBalances: leaveBalanceRows as unknown[],
     holidays: holidayRows as unknown[],
@@ -3117,7 +3743,15 @@ export async function buildPull(
     documents: documentChanges as unknown[],
     courses: courseChanges as unknown[],
     deletions: deletionRows.groups,
+    myOrders: await myOrderStates(principal.user.id, sinceIso),
+    orderChanges: await myOrderChanges(principal.user.id, sinceIso),
+    territoryRequests: await myTerritoryRequests(principal.user.id, sinceIso),
     performance: await performanceFor(principal.user.id, sinceIso),
+    /* NOT `since`-gated, and the same function the bootstrap calls. What a
+       shop has achieved moves when an order is approved, which touches no row
+       this channel could carry a cursor on — and the handset replaces the
+       table wholesale, so a shop that left his book leaves the screen too. */
+    customerTargets: await customerTargetsFor(principal.user.id),
     tasks: taskChanges as unknown[],
     salary: salaryRows as unknown[],
     travelModes: await travelModeRows(),
@@ -3130,9 +3764,9 @@ export async function buildPull(
     leadValidations: validationChanges as unknown[],
     leadFieldChecks: fieldCheckChanges as unknown[],
     samples: sampleChanges as unknown[],
-    customerOrders: orderHistoryChanges as unknown[],
-    customerPayments: paymentHistoryChanges as unknown[],
-    customerBills: billChanges as unknown[],
+    customerOrders: [...orderHistoryChanges, ...missingOrders] as unknown[],
+    customerPayments: [...paymentHistoryChanges, ...missingPayments] as unknown[],
+    customerBills: [...billChanges, ...missingBills] as unknown[],
     statementFrom: statementStart,
     /* The same list every channel above was built from — including the empty
        one an unallocated salesman gets, which is exactly the answer his

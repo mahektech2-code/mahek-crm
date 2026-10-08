@@ -47,6 +47,12 @@ export function checkOdometer(args: {
   typed: string;
   previousKm: number | null;
   maxLegKilometres: number;
+  /**
+   * What the two readings bracket. The punch-out reading covers the whole
+   * day's riding, and "one trip can be at most 400 km" read to a man closing
+   * his day described something he had not done.
+   */
+  span?: 'trip' | 'day';
 }): OdometerVerdict {
   const raw = args.typed.trim();
   if (!raw) return { ok: false, why: 'Type what the meter reads.' };
@@ -56,17 +62,17 @@ export function checkOdometer(args: {
      part nobody is paid for — so it is accepted and dropped, rather than
      rejected on a full stop. */
   if (!/^\d{1,7}(\.\d+)?$/.test(raw)) {
-    return { ok: false, why: 'Type the number only — no commas, no letters.' };
+    return { ok: false, why: 'Type the number only. No commas, no letters.' };
   }
   const km = Math.floor(Number(raw));
-  if (!Number.isFinite(km)) return { ok: false, why: 'That is not a reading this app can store.' };
+  if (!Number.isFinite(km)) return { ok: false, why: 'This reading is not valid. Check it and type again.' };
 
   if (args.previousKm == null) return { ok: true, km, distanceKm: null };
 
   if (km < args.previousKm) {
     return {
       ok: false,
-      why: `You set off on ${args.previousKm.toLocaleString('en-IN')} km and a meter does not run backwards. It is usually a digit dropped from the front — look again.`,
+      why: `You started at ${args.previousKm.toLocaleString('en-IN')} km. The meter cannot go back. Maybe a digit dropped from the front. Look again.`,
     };
   }
 
@@ -74,7 +80,10 @@ export function checkOdometer(args: {
   if (distanceKm > args.maxLegKilometres) {
     return {
       ok: false,
-      why: `That would be ${distanceKm.toLocaleString('en-IN')} km for one trip, and the most a single journey can be recorded as is ${args.maxLegKilometres.toLocaleString('en-IN')} km. Check the reading.`,
+      why:
+        args.span === 'day'
+          ? `That is ${distanceKm.toLocaleString('en-IN')} km for one day. One day can be at most ${args.maxLegKilometres.toLocaleString('en-IN')} km. Check the reading.`
+          : `That is ${distanceKm.toLocaleString('en-IN')} km for one trip. One trip can be at most ${args.maxLegKilometres.toLocaleString('en-IN')} km. Check the reading.`,
     };
   }
 
@@ -98,10 +107,10 @@ export function checkFare(typed: string): FareVerdict {
   const raw = typed.trim().replace(/,/g, '');
   if (!raw) return { ok: false, why: 'Type what the ticket cost.' };
   if (!/^\d{1,6}(\.\d{1,2})?$/.test(raw)) {
-    return { ok: false, why: 'Type the rupees only — 40, or 40.50.' };
+    return { ok: false, why: 'Type the rupees only. For example 40, or 40.50.' };
   }
   const paise = Math.round(Number(raw) * 100);
-  if (paise <= 0) return { ok: false, why: 'A ticket that cost nothing is not a ticket to claim.' };
+  if (paise <= 0) return { ok: false, why: 'The ticket amount must be more than ₹0.' };
   return { ok: true, paise };
 }
 
@@ -138,14 +147,14 @@ export function arrivalPrompt(leg: {
     return {
       line:
         leg.odometerStartKm == null
-          ? 'Read the meter now that you are here.'
-          : `You set off on ${leg.odometerStartKm.toLocaleString('en-IN')} km. Read the meter again now that you are here.`,
-      button: 'I am here — photograph the meter',
+          ? 'You are here. Read the meter now.'
+          : `You started at ${leg.odometerStartKm.toLocaleString('en-IN')} km. You are here. Read the meter again.`,
+      button: 'I am here. Take meter photo',
     };
   }
   return {
-    line: 'The visit starts when you tell it you have arrived.',
-    button: 'I am here — start the visit',
+    line: 'The visit starts when you tap that you have arrived.',
+    button: 'I am here. Start the visit',
   };
 }
 
@@ -210,7 +219,7 @@ export function navigationLine(args: {
   fixAgeSeconds: number | null;
   staleAfterSeconds: number;
 }): string | null {
-  if (!args.hasPin) return 'No pin on this shop — maps will search for its name and town.';
+  if (!args.hasPin) return 'This shop has no pin. Maps will search for its name and town.';
 
   const away = distanceLabel(args.metresAway);
   /* No reading yet. The button still works and the header already says the GPS
@@ -222,7 +231,7 @@ export function navigationLine(args: {
   const stale = age != null && age > args.staleAfterSeconds;
   if (!stale) return `${away} away`;
 
-  return `${away} away, from your last fix ${travellingFor(0, (age ?? 0) * 1000)} ago`;
+  return `${away} away, from your last location ${travellingFor(0, (age ?? 0) * 1000)} ago`;
 }
 
 /* ═══════════════════════════════ what the session has already answered */
@@ -275,7 +284,7 @@ export function visitLegPlan(session: SessionFacts, umbrellaKey = 'public_transp
       record: true,
       modeKey: session.modeKey,
       claimExcluded: true,
-      reason: 'Counted in the meter readings taken at the punch-in and the punch-out.',
+      reason: 'Counted in the meter readings at punch-in and punch-out.',
     };
   }
   if (session.modeKey === umbrellaKey) {
@@ -283,7 +292,7 @@ export function visitLegPlan(session: SessionFacts, umbrellaKey = 'public_transp
       record: true,
       modeKey: session.modeKey,
       claimExcluded: true,
-      reason: 'Fares on a public-transport day are claimed in Expenses.',
+      reason: 'On a bus or train day, claim fares in Expenses.',
     };
   }
   /* Walking, a customer's vehicle: nothing is priced either way, and a

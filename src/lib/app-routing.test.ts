@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { NextRequest } from "next/server";
-import { appFor, APP_HEADER, CRM_SALES_MANAGER_WORKSPACE, proxy, WORKSPACE_HEADER, workspaceFor } from "@/proxy";
+import { appFor, appForApi, APP_HEADER, CRM_SALES_MANAGER_WORKSPACE, proxy, WORKSPACE_HEADER, workspaceFor } from "@/proxy";
 import { APP_IDS } from "@/lib/apps";
 
 /**
@@ -100,4 +100,50 @@ test("the workspace header is written by the proxy alone, and a client-supplied 
   /* On the workspace the proxy writes it itself. */
   const inside = proxy(new NextRequest("http://localhost/crm/leads/sales-manager/list"));
   assert.equal(inside.headers.get(`x-middleware-request-${WORKSPACE_HEADER}`), CRM_SALES_MANAGER_WORKSPACE);
+});
+
+/*
+ * A SHARED API ROUTE NAMES NO APP OF ITS OWN, so the page that called it does.
+ * Only a same-origin referrer is believed, only under /api/, and anything the
+ * proxy cannot read names nothing — which is the old fallback, not a guess.
+ */
+test("an API call is in the app of the same-host page that made it", () => {
+  const origin = "https://one.mahekindia.com";
+  const host = "one.mahekindia.com";
+  assert.equal(appForApi("/api/search", `${origin}/crm/customers?q=a`, host), "crm");
+  assert.equal(appForApi("/api/payments/open-bills", `${origin}/accounts/payments`, host), "accounts");
+  assert.equal(appForApi("/api/search", `${origin}/apps`, host), null);
+});
+
+test("a cross-host, missing or malformed referrer names no app", () => {
+  const host = "one.mahekindia.com";
+  assert.equal(appForApi("/api/search", "https://evil.example/crm", host), null);
+  /* Behind Caddy the app sees http while the browser says https: same host, same app. */
+  assert.equal(appForApi("/api/search", "http://one.mahekindia.com/crm", host), "crm");
+  assert.equal(appForApi("/api/search", "https://one.mahekindia.com/crm", null), null);
+  assert.equal(appForApi("/api/search", null, host), null);
+  assert.equal(appForApi("/api/search", "not a url", host), null);
+});
+
+test("the referrer is read only for API routes", () => {
+  const origin = "https://one.mahekindia.com";
+  const host = "one.mahekindia.com";
+  assert.equal(appForApi("/crm/customers", `${origin}/accounts`, host), null);
+  assert.equal(appForApi("/apps", `${origin}/crm`, host), null);
+});
+
+test("the proxy writes the referrer's app on an API request, and still strips a forged header", () => {
+  const res = proxy(
+    new NextRequest("http://localhost/api/search?q=x", {
+      headers: { referer: "http://localhost/crm/call-log", [APP_HEADER]: "admin" },
+    }),
+  );
+  assert.equal(res.headers.get(`x-middleware-request-${APP_HEADER}`), "crm");
+
+  const foreign = proxy(
+    new NextRequest("http://localhost/api/search?q=x", {
+      headers: { referer: "http://elsewhere.test/crm", [APP_HEADER]: "admin" },
+    }),
+  );
+  assert.equal(foreign.headers.get(`x-middleware-request-${APP_HEADER}`), null);
 });

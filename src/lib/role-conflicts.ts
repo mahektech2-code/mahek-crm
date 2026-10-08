@@ -32,9 +32,11 @@ export type ConflictApp = string;
  * One side of a conflict: an app, and optionally the level that makes it bite.
  *
  * `level` omitted means any level of that app. It is named on the Accounts
- * side of every rule below because the decisions that clash — approving an
- * order, confirming a payment, setting a target — are the Accounts MANAGER's,
- * and an Accounts associate who only records and reads clashes with nothing.
+ * side because most of the decisions that clash — approving an order,
+ * confirming a payment, setting a target — are the Accounts MANAGER's. Not
+ * all: editing a price list is held at BOTH Accounts levels, so the associate
+ * clashes with whoever quotes prices. A level names exactly that level, so the
+ * associate rule and the manager rules do not double up on one person.
  */
 export type ConflictHat = { app: ConflictApp; level?: "associate" | "manager" };
 
@@ -45,51 +47,77 @@ export type RoleConflict = {
 };
 
 export const ROLE_CONFLICTS: RoleConflict[] = [
-  {
-    hats: [{ app: "crm", level: "manager" }, { app: "accounts", level: "manager" }],
-    sentence:
-      "Approves orders and confirms payments, while carrying a sales target and setting the team's. The person chasing a target should not sign off the orders that hit it.",
-  },
-  {
-    hats: [{ app: "crm" }, { app: "accounts", level: "manager" }],
-    sentence:
-      "Records payments in the CRM and confirms them in Accounts, so one person can report that money arrived and then be the one who says it did.",
-  },
+  /*
+   * The CRM against the ledger desk. One rule where there used to be three: a
+   * CRM manager who was also an Accounts manager drew all three on the review
+   * page for one pair of grants, and three warnings about one decision is how
+   * people learn to scroll past the box.
+   */
   {
     hats: [{ app: "crm" }, { app: "accounts", level: "manager" }],
     sentence:
-      "Carries a sales target in the CRM and sets targets in Accounts, so one person could set their own number and then be measured against it.",
+      "Works the calling book and decides at the ledger desk — can approve the orders that hit their own target, confirm the payments they recorded on a call, and set the targets they are measured against.",
   },
   {
     /*
-     * The handset half of the one above. A field salesman records payments at
-     * a counter exactly as a telecaller records them on a call, and the same
-     * person confirming them at the desk is the same problem — it was missing
-     * only because `field` had no role of its own to name.
+     * The handset half. A field salesman collects money at a counter exactly
+     * as a telecaller records it on a call.
      */
     hats: [{ app: "field" }, { app: "accounts", level: "manager" }],
     sentence:
       "Collects payments in the field and confirms them in Accounts, so one person can bring money in and then be the one who says it arrived.",
+  },
+  {
+    /*
+     * The Sales Dashboard was missing entirely: its manager runs the field
+     * team's figures and decides their claims, and the Accounts manager writes
+     * the expense policy and sets the targets those figures are judged by.
+     */
+    hats: [{ app: "sales" }, { app: "accounts", level: "manager" }],
+    sentence:
+      "Runs the field team and decides at the ledger desk — can set the team's targets, write the expense policy their claims are paid on, and approve the orders that hit those targets.",
+  },
+  {
+    /*
+     * THE PRICE DESK. `pricelist.manage` is held at BOTH levels of Accounts, so
+     * an Accounts associate is not the harmless clerk this file once assumed.
+     * The person quoting a price on a call must not also be the person setting
+     * it — the reason the CRM and Sales Dashboard only read price lists.
+     */
+    hats: [{ app: "crm" }, { app: "accounts", level: "associate" }],
+    sentence:
+      "Quotes prices on calls and edits the price lists in Accounts, so one person can set the price their own orders are measured in.",
+  },
+  {
+    hats: [{ app: "sales" }, { app: "founder" }],
+    sentence:
+      "Runs the field team and edits price lists from the Founder desk, so one person can set the price their team's orders are measured in.",
   },
 ];
 
 /** What somebody holds, in the shape this file compares against. */
 export type HeldHat = { app: string | null; role: string };
 
+/* Admin of an app holds that app's manager list, so a rule naming the manager
+   level is true of its administrator too. */
+function levelMatches(want: ConflictHat["level"], role: string): boolean {
+  if (!want) return true;
+  return want === "manager" ? role === "manager" || role === "admin" : role === want;
+}
+
 function matches(hat: ConflictHat, held: readonly HeldHat[]): boolean {
-  return held.some(
-    (h) => h.app === hat.app && (!hat.level || h.role === hat.level),
-  );
+  return held.some((h) => h.app === hat.app && levelMatches(hat.level, h.role));
 }
 
 /** The conflicts a set of hats produces. Empty for almost everybody. */
 export function conflictsFor(held: readonly HeldHat[]): RoleConflict[] {
-  /* An admin holds everything everywhere, so every pair below is true of
-     them. Saying so on the review page would put four warnings on every
+  /* A PLATFORM administrator holds everything everywhere, so every pair below
+     is true of them, and saying so would put five warnings on every
      administrator and teach people to scroll past all of them — the thing to
-     weigh when granting admin is that it is admin, which the screen already
-     says in its own words. */
-  if (held.some((h) => h.role === "admin")) return [];
+     weigh when granting that is that it is the platform, which the screen
+     says in its own words. Admin of ONE app is not that: it holds that app
+     alone, so it is checked like any other hat. */
+  if (held.some((h) => h.app === "admin" && h.role === "admin")) return [];
 
   return ROLE_CONFLICTS.filter(
     (c) => matches(c.hats[0], held) && matches(c.hats[1], held),

@@ -1481,13 +1481,23 @@ export function VoiceTextarea({
   onDictate,
   dictateTitle,
   className,
+  hideMic = false,
   ...props
 }: React.TextareaHTMLAttributes<HTMLTextAreaElement> & {
   invalid?: boolean;
   onDictate: (value: string) => void;
   dictateTitle?: string;
+  /**
+   * Leave the corner microphone off. For a box that sits under a control which
+   * already offers the fuller microphone — the call panel's assistant speaks
+   * the call AND fills the form, so a plain transcriber beside it is a second
+   * microphone doing less. Default false: every other box keeps its own.
+   */
+  hideMic?: boolean;
 }) {
   const current = typeof props.value === "string" ? props.value : "";
+
+  if (hideMic) return <Textarea {...props} className={className} />;
 
   return (
     <span className="relative block">

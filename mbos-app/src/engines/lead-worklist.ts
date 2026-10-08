@@ -110,23 +110,23 @@ export const LEAD_ACTION_VIEWS = ['today', 'overdue', 'parked', 'none'] as const
 export const VIEW_TEXT: Record<LeadActionView, { chip: string; title: string; sub: string }> = {
   today: {
     chip: 'Due today',
-    title: 'Owed today',
-    sub: 'A next action falling due, and a lead whose hold ends today.',
+    title: 'Pending today',
+    sub: 'Next actions due today, and leads whose hold ends today.',
   },
   overdue: {
     chip: 'Overdue',
-    title: 'Past its day',
-    sub: 'The day has gone and nobody has written down what happened.',
+    title: 'Late',
+    sub: 'The day has passed and nothing is written down yet.',
   },
   parked: {
     chip: 'On hold',
-    title: 'Parked, not lost',
-    sub: 'Put away until a day somebody named. They come back here by themselves.',
+    title: 'Paused, not lost',
+    sub: 'Paused until a set day. They come back here on their own.',
   },
   none: {
-    chip: 'Nothing owed',
-    title: 'Nobody owes anything',
-    sub: 'Live leads with no next action on them at all. Each one needs a day and a person.',
+    chip: 'Nothing pending',
+    title: 'No pending actions',
+    sub: 'Open leads with no next action. Each one needs a day and a person.',
   },
 };
 
@@ -296,7 +296,7 @@ export function missingAnswers(lead: WorklistLead): string[] {
   const missing: string[] = [];
   if (!lead.nextAction?.trim()) missing.push('what will be done');
   if (!lead.nextActionDate) missing.push('the day');
-  if (!lead.nextActionOwnerId) missing.push('who is doing it');
-  if (!lead.nextActionOutcome?.trim()) missing.push('what they come back with');
+  if (!lead.nextActionOwnerId) missing.push('who will do it');
+  if (!lead.nextActionOutcome?.trim()) missing.push('what result to bring back');
   return missing;
 }

@@ -1,10 +1,11 @@
 import { all, newId, one, run } from '../db';
 import { getConfig } from './config';
-import { getLead, notesOf, type Lead, type LeadResult } from './leads';
+import { getLead, notesOf, visitsHere, type Lead, type LeadResult } from './leads';
 import { updateAndQueue } from './write';
 import { isoDate, plural } from '../lib/format';
 import { legacyStageFor, stageOf, wireFunnelStage, wireNotes } from '../lib/wire';
 import type { FieldCheck } from '../engines/field-check';
+import { gateAsRun } from '../engines/leads';
 import {
   gateForNext,
   gateTo,
@@ -45,17 +46,11 @@ import {
  * differ. `stage` is always one of those: the local column holds this app's
  * six words and the wire carries the specification's rung.
  *
- * TODO(integration): what this file records and the office cannot yet hear.
- * `distributorProfile` (§11's thirty) and the third-party link (§23) are
- * workstream B's. §5.5's commitment is struck off with the two before it: the
- * QUANTITY and the BLOCKER had no column on this phone and no field on
- * `leadSchema`, so they were kept in `kv` and deliberately not sent — a field
- * the office has not promised to hold must not be put on the wire on the
- * chance that it one day will, because zod strips an undeclared one in silence
- * and the salesman sees "saved" over a column that stays null for ever. Both
- * ends landed together, so they are now ordinary fields on the patch and the
- * `kv` key is gone. There was nothing to migrate: a commitment is RESTATED
- * rather than accumulated, and the next one written is the whole answer.
+ * Everything here now has somewhere to land on `leadSchema`: the
+ * distributor's thirty (§11), the third-party link (§23) and §5.5's
+ * commitment all reach the office as ordinary fields. The one exception is
+ * the distributor salesman's NAME, which travels beside his id and is not
+ * yet stored — see `setLeadParties`.
  */
 
 /* ------------------------------------------------------------- the config */
@@ -93,7 +88,16 @@ export async function funnelConfig(): Promise<FunnelConfig> {
     holdReasons,
     orderBlockers,
   ] = await Promise.all([
-    getConfig<number>('leads.suspectMaxVisits'),
+    /* THE VISIT SCREEN'S NUMBER, not its twin. Two settings say how many
+       visits a Suspect gets — `mbos.leads.maxSuspectVisits`, which the visit
+       screen and the office's visit handler read, and `leads.suspectMaxVisits`,
+       which this page read — and nothing kept them equal. A manager changing
+       one made this page and the visit screen disagree about the same shop.
+       This page reads the one the office enforces at the door; the other is
+       only a fallback for a phone that has never been sent the first. */
+    getConfig<number>('mbos.leads.maxSuspectVisits').then(
+      (n) => n ?? getConfig<number>('leads.suspectMaxVisits'),
+    ),
     getConfig<boolean>('leads.requireNextAction'),
     getConfig<CodedOption[]>('leads.prospectReasons'),
     getConfig<CodedOption[]>('leads.sampleReasons'),
@@ -149,18 +153,18 @@ export function salesTypeOf(lead: Lead): LeadSalesType | null {
 export { stageOf };
 
 /**
- * How many times somebody has been to this shop.
+ * How many times somebody has been to this shop — the office's count plus
+ * whatever this phone has not sent yet, which is `visitsHere` and nothing else.
  *
- * Counted from the visits table rather than kept as a number on the lead, for
- * the reason the server states about its own column: a count drifts the first
- * time a visit arrives late from another handset or is recorded against the
- * shop from the customer list instead. `visits.customerId` holds the LEAD's id
- * for a lead, because one lead is one `customers` row on the office side and
- * the id a visit names is the same id either way.
+ * It used to count this phone's `visits` table alone. Visits are never pulled,
+ * so that was "visits made on this install": after a reinstall, or for a visit
+ * another handset made, the record page read "Visit 1 of 3" while the visit
+ * screen — which already asked `visitsHere` — demanded the decision, and the
+ * forced Prospect-or-not answer on this page never fired at all. Three screens,
+ * three counts, one lead. There is one now.
  */
-export async function visitCount(leadId: string): Promise<number> {
-  const row = await one<{ n: number }>('SELECT COUNT(*) AS n FROM visits WHERE customerId = ?', [leadId]);
-  return row?.n ?? 0;
+export async function visitCount(lead: Pick<Lead, 'id' | 'visitCount'>): Promise<number> {
+  return visitsHere(lead.id, lead.visitCount ?? 0);
 }
 
 /**
@@ -172,7 +176,7 @@ export async function visitCount(leadId: string): Promise<number> {
  */
 export async function leadGateInput(lead: Lead): Promise<LeadGateInput> {
   const [visits, sample, figuresFreshDays] = await Promise.all([
-    visitCount(lead.id),
+    visitCount(lead),
     one<{ state: string; trialOutcome: string | null; feedback: number }>(
       `SELECT s.state, s.trialOutcome,
               (SELECT COUNT(*) FROM sample_feedback f WHERE f.sampleId = s.id) AS feedback
@@ -250,7 +254,15 @@ export async function leadGateInput(lead: Lead): Promise<LeadGateInput> {
       ? {
           state: wireSampleState(sample.state),
           trialOutcome: sample.trialOutcome ?? 'pending',
-          feedbackRecorded: (sample.feedback ?? 0) > 0,
+          /* The seven answers live in `sample_feedback`, which no pull
+             fills — so a review the office recorded, or one written before a
+             reinstall, counted as missing here, and "Move up to Negotiation"
+             stayed shut on the phone while the office would have allowed it.
+             A sample the office has stamped reviewed WITH a verdict is a
+             reviewed sample, whoever wrote the answers down. */
+          feedbackRecorded:
+            (sample.feedback ?? 0) > 0 ||
+            (sample.state === 'Reviewed' && !!sample.trialOutcome && sample.trialOutcome !== 'pending'),
         }
       : null,
 
@@ -372,11 +384,11 @@ export async function leadFunnelView(id: string): Promise<LeadFunnelView | null>
   const [input, config, visits] = await Promise.all([
     leadGateInput(lead),
     funnelConfig(),
-    visitCount(id),
+    visitCount(lead),
   ]);
   const salesType = salesTypeOf(lead);
   const stage = stageOf(lead);
-  const gate = gateForNext(input);
+  const gate = gateAsRun(gateForNext(input), input, config);
   return {
     lead,
     input,
@@ -551,7 +563,7 @@ export async function setSalesType(
   await addEvent({
     leadId: id,
     kind: 'sales_type',
-    summary: 'Sales type set — ' + salesType.replace('_', ' '),
+    summary: 'Sales type set: ' + salesType.replace('_', ' '),
     detail: reason?.trim() || null,
     fromStage: was,
     toStage: stage,
@@ -671,7 +683,7 @@ export async function saveQualification(
   await addEvent({
     leadId: id,
     kind: 'qualification',
-    summary: groupName ? 'Qualification saved — ' + groupName : 'Qualification saved',
+    summary: groupName ? 'Qualification saved: ' + groupName : 'Qualification saved',
     detail: Object.keys(answers).length + ' answered',
   });
   return ok;
@@ -693,15 +705,16 @@ export async function saveDistributorProfile(
     table: 'leads',
     entityType: 'lead',
     id,
-    /* TODO(integration): `distributorProfile` is not on `leadSchema` yet, so
-       this reaches the office and is stripped. It is complete on the phone. */
+    /* `leadSchema.distributorProfile` takes this, and the office MERGES it into
+       `distributor_profiles` rather than writing over the commercial half it
+       fills itself. */
     patch: { distributorProfile: merged, lastActivityDate: today },
   });
 
   await addEvent({
     leadId: id,
     kind: 'distributor_profile',
-    summary: groupName ? 'Distributor details saved — ' + groupName : 'Distributor details saved',
+    summary: groupName ? 'Distributor details saved: ' + groupName : 'Distributor details saved',
   });
   return ok;
 }
@@ -718,8 +731,8 @@ export async function setNextAction(
   next: { action: string; date: string; ownerId: string; outcome?: string | null },
 ): Promise<LeadResult<null>> {
   if (!next.action.trim()) return { ok: false, message: 'Say what happens next.' };
-  if (!next.date) return { ok: false, message: 'Pick the day it happens on.' };
-  if (!next.ownerId) return { ok: false, message: 'Say who is doing it.' };
+  if (!next.date) return { ok: false, message: 'Pick the day it happens.' };
+  if (!next.ownerId) return { ok: false, message: 'Say who will do it.' };
 
   const today = isoDate(new Date());
   await updateAndQueue({
@@ -794,9 +807,57 @@ export async function decideSuspect(
     return {
       ok: false,
       message: decision.prospect
-        ? 'Say why this is worth pursuing.'
-        : 'Say why it is not — nobody comes back to this shop after this.',
+        ? 'Say why this lead is worth following up.'
+        : 'Say why not. Nobody will come back to this shop after this.',
     };
+  }
+
+  const [input, config] = await Promise.all([leadGateInput(lead), funnelConfig()]);
+
+  /*
+   * ON A FUNNEL LEAD THE CODE IS NOT OPTIONAL, because the office does not
+   * treat it as optional. `evaluateLeadStageMove` refuses a move to Prospect
+   * without one of `leads.prospectReasons` and a loss without one of
+   * `leads.lostReasons`; the sentence-only answer this function accepted was
+   * saved here and refused there, leaving the forced screen gone on the phone
+   * and the lead still a Suspect at the office. Where the office has emptied
+   * the list there is nothing to pick, and the sentence stays the answer —
+   * the note above about an emptied list is still true for that case.
+   */
+  const codes = decision.prospect ? config.prospectReasons : config.lostReasons;
+  if (salesTypeOf(lead) && codes.length > 0 && !decision.reasonCode) {
+    return {
+      ok: false,
+      message: decision.prospect
+        ? 'Pick why this lead is worth following up. The office counts these.'
+        : 'Pick why not. The office counts these.',
+    };
+  }
+
+  /*
+   * §6 — "YES, MAKE IT A PROSPECT" IS A MOVE, AND MOVES ARE GATED.
+   *
+   * Past the cap this screen collapses to two buttons, and the yes wrote
+   * `prospect` straight onto the lead without asking the gate the other eight
+   * answers the office reads — customer type, litres, potential, competitor,
+   * the product, the contact, the next action. The office ran the full gate
+   * and refused, so the phone showed a Prospect, the office kept a Suspect, and
+   * the forced question this screen exists for was gone from the phone. The
+   * reason being given IS the ninth answer, so it is counted as given.
+   */
+  if (decision.prospect) {
+    const verdict = gateAsRun(
+      gateTo({ ...input, prospectReasonRecorded: true }, 'prospect'),
+      input,
+      config,
+    );
+    if (!verdict.open) {
+      return {
+        ok: false,
+        message: 'Not yet. ' + verdict.missing.map((c) => c.says).join('. ') + '.',
+        missing: verdict.missing.map((c) => c.says),
+      };
+    }
   }
 
   const today = isoDate(new Date());
@@ -843,7 +904,7 @@ export async function decideSuspect(
   await addEvent({
     leadId: id,
     kind: 'suspect_decision',
-    summary: decision.prospect ? 'Worth pursuing — now a Prospect' : 'Not a prospect',
+    summary: decision.prospect ? 'Worth following up. Now a Prospect' : 'Not a prospect',
     detail: said || decision.reasonCode,
     fromStage: 'suspect',
     toStage: stage,
@@ -866,13 +927,13 @@ export async function advanceStage(
   const lead = await getLead(id);
   if (!lead) return { ok: false, message: 'That lead is no longer on this phone.' };
 
-  const input = await leadGateInput(lead);
-  const verdict = gateTo(input, to);
+  const [input, config] = await Promise.all([leadGateInput(lead), funnelConfig()]);
+  const verdict = gateAsRun(gateTo(input, to), input, config);
   if (!verdict.open) {
     return {
       ok: false,
       message:
-        'Not yet — ' + verdict.missing.map((c) => c.says.toLowerCase()).join('; ') + '.',
+        'Not yet. ' + verdict.missing.map((c) => c.says).join('. ') + '.',
     };
   }
 
@@ -927,7 +988,7 @@ export async function markLost(
      and why neither is. The code is still what gets counted; the sentence is
      what a lost lead is left with where the office has configured no codes. */
   if (!reasonCode && !said) {
-    return { ok: false, message: 'Say why — nobody rings this shop again after this.' };
+    return { ok: false, message: 'Say why. Nobody will call this shop again after this.' };
   }
   const lead = await getLead(id);
   if (!lead) return { ok: false, message: 'That lead is no longer on this phone.' };
@@ -1004,17 +1065,13 @@ export async function markLost(
  * exactly that reason, and filing a parked Negotiation lead under New would be
  * a guess printed on a chip. `On hold` is a chip the list already has.
  *
- * TODO(schema): the handset's `leads` table has `holdReason` and no
- * `holdReasonCode` or `holdResumeDate` — both exist on the office side
- * (`0151`) and neither has a column here or a place on the pull. So the CODE
- * travels up and is not kept down here, and the local sentence carries the
- * picked reason's LABEL where the salesman wrote no remark of his own. That is
- * a sentence in a sentence column and not a label where a code belongs — the
- * countable answer goes to `lead_hold_reason_code` — but it does mean a park
- * made on this phone reads back in the words the list used ON THE DAY, and a
- * park made at a desk arrives with no code the phone can resolve at all. The
- * resume date rides `nextFollowUpDate`, which is the honest half of the trade:
- * see below.
+ * The CODE and the resume day are kept here as well as sent: the handset's
+ * `leads` table gained `holdReasonCode` and `holdResumeDate` and the pull
+ * fills them, so a park made on this phone reads back exactly as one made at a
+ * desk. `holdReason` still carries a sentence — the remark where he wrote one,
+ * the reason's label where he did not — and the resume date also rides
+ * `nextFollowUpDate`, which is what brings the lead back to his list: see
+ * below.
  */
 export async function putOnHold(
   id: string,
@@ -1035,20 +1092,19 @@ export async function putOnHold(
   /* Checked here as well as in the sheet, because a sheet is a screen and this
      is the function every caller reaches — the same reason the server checks
      it again after both of them. */
-  if (!code) return { ok: false, message: 'Pick why it is stopping — it is what gets counted afterwards.' };
+  if (!code) return { ok: false, message: 'Pick why it is on hold. This reason is counted later.' };
   if (code === REASON_CODE_NEEDING_REMARKS && !said) {
-    return { ok: false, message: 'You picked Other — say in words what it actually is.' };
+    return { ok: false, message: 'You picked Other. Write the reason in words.' };
   }
-  if (!hold.resumeDate) return { ok: false, message: 'Name the day it comes back.' };
+  if (!hold.resumeDate) return { ok: false, message: 'Pick the day it comes back.' };
   if (!hold.next.action.trim() || !hold.next.date || !hold.next.ownerId) {
-    return { ok: false, message: 'Say what happens when it comes back, on what day, and who is doing it.' };
+    return { ok: false, message: 'Say what happens when it comes back, on which day, and who will do it.' };
   }
 
   const today = isoDate(new Date());
   const from = stageOf(lead);
   /* The sentence the record reads back. The remark where he wrote one, and the
-     list's own words where he did not — see the TODO above for why this column
-     carries words rather than the code. */
+     list's own words where he did not; the code beside it is what is counted. */
   const sentence = said ?? labelOf(holdReasons, code);
   const notes = notesOf(lead);
   notes.push({ at: Date.now(), text: 'On hold until ' + hold.resumeDate + ' — ' + sentence });
@@ -1063,6 +1119,8 @@ export async function putOnHold(
       stage: 'On hold',
       stageSince: today,
       holdReason: sentence,
+      holdReasonCode: code,
+      holdResumeDate: hold.resumeDate,
       notes,
       nextAction: hold.next.action.trim(),
       nextActionDate: hold.next.date,
@@ -1115,7 +1173,7 @@ export async function putOnHold(
   await addEvent({
     leadId: id,
     kind: 'hold',
-    summary: 'On hold — ' + labelOf(holdReasons, code),
+    summary: 'On hold: ' + labelOf(holdReasons, code),
     detail: [said, 'Back on ' + hold.resumeDate].filter(Boolean).join(' · '),
     fromStage: from,
     toStage: 'on_hold',
@@ -1143,7 +1201,7 @@ export async function setLeadParties(
   },
 ): Promise<LeadResult<null>> {
   if (parties.thirdParty && !parties.distributorCustomerId) {
-    return { ok: false, message: 'Say which distributor invoices this shop.' };
+    return { ok: false, message: 'Say which distributor bills this shop.' };
   }
 
   const today = isoDate(new Date());
@@ -1159,10 +1217,10 @@ export async function setLeadParties(
       distributorSalesmanName: parties.distributorSalesmanName ?? null,
       lastActivityDate: today,
     },
-    /* TODO(integration): none of the four is on `leadSchema`, so they travel
-       and are stripped. The name is sent beside the id deliberately for when
-       it does land — most of these people have no row anywhere yet, and
-       `createDistributorSalesman` is the office's to run. */
+    /* `thirdParty`, `distributorCustomerId` and `distributorSalesmanId` are on
+       `leadSchema`. The salesman's NAME is not yet — most of these people have
+       no row anywhere, and creating one is the office's — so it is kept here
+       and sent beside the id for the day the office takes it. */
   });
 
   await addEvent({
@@ -1170,20 +1228,14 @@ export async function setLeadParties(
     kind: 'parties',
     summary: parties.thirdParty
       ? 'Billed by ' + (parties.distributorName ?? 'a distributor')
-      : 'We invoice this shop ourselves',
+      : 'We bill this shop ourselves',
     detail: parties.distributorSalesmanName ?? null,
   });
   return ok;
 }
 
 /**
- * §18 — what they said when somebody asked for the order.
- *
- * A date and, where they gave one, a figure. "Interested" is not an answer and
- * there is nowhere on this form to type it.
- */
-/**
- * §5.5 §9 — THE COMMITMENT: a day, a size, and what is stopping it.
+ * §18 §5.5 §9 — THE COMMITMENT: a day, a size, and what is stopping it.
  *
  * IT IS A FORECAST AND NOT A SALE, and that is the whole shape of it: nothing
  * here moves the lead a rung. §9 says so in as many words and it is the right
@@ -1229,9 +1281,9 @@ export async function recordExpectedOrder(
     blockerCode?: string | null;
   },
 ): Promise<LeadResult<null>> {
-  if (!args.expectedDate) return { ok: false, message: 'Ask when they will place it.' };
+  if (!args.expectedDate) return { ok: false, message: 'Ask when they will place the order.' };
   if (!args.expectedQuantityCans || args.expectedQuantityCans <= 0) {
-    return { ok: false, message: 'Ask how many cans. A promise with no size on it cannot be planned around.' };
+    return { ok: false, message: 'Ask how many cans. We cannot plan without the size.' };
   }
   const today = isoDate(new Date());
   const blocker = args.blockerCode?.trim() || 'no_blocker';
@@ -1260,24 +1312,35 @@ export async function recordExpectedOrder(
     leadId: id,
     kind: 'expected_order',
     summary: plural(args.expectedQuantityCans, 'can') + ' expected ' + args.expectedDate,
-    detail: blocker === 'no_blocker' ? null : 'Blocked on ' + labelOf(ORDER_BLOCKERS, blocker),
+    detail: blocker === 'no_blocker' ? null : 'Held up by: ' + labelOf(ORDER_BLOCKERS, blocker),
   });
   return ok;
 }
 
 /* -------------------------------------------------------- the shops we bill
  *
- * A distributor is an unmarked account we invoice — the CRM's own rule, and
- * the picker obeys it rather than offering the whole book. The handset's
- * `customers` table holds only accounts, so everything in it qualifies; what
- * it cannot do is offer a lead, which is exactly right.
+ * A distributor is an unmarked account we INVOICE — the CRM's own rule. This
+ * picker used to offer every row of `customers`, on the reasoning that the
+ * handset's table held only accounts; it does not. A lead IS a `customers`
+ * row here, and so is a third-party shop, and picking either wrote the
+ * third-party mark while the office dropped the link — a shop marked as billed
+ * by somebody, with nobody billing it, which is the one state the arrangement
+ * must never be in. So the picker asks what the office asks: an account we
+ * bill (`kind` customer, or no kind from an older pull), not marked third
+ * party itself, and not a lead.
+ *
+ * `%` and `_` are escaped, because a shop called "A_1 Paints" is a name and
+ * not a pattern.
  */
 export async function distributorCandidates(query: string): Promise<{ id: string; name: string; city: string | null }[]> {
-  const q = `%${query.trim()}%`;
+  const q = `%${query.trim().replace(/[\\%_]/g, (c) => '\\' + c)}%`;
   return all<{ id: string; name: string; city: string | null }>(
-    `SELECT id, name, city FROM customers
-      WHERE (? = '%%' OR name LIKE ? OR city LIKE ?)
-      ORDER BY name LIMIT 30`,
+    `SELECT c.id, c.name, c.city FROM customers c
+      WHERE COALESCE(c.kind, 'customer') = 'customer'
+        AND c.thirdParty = 0
+        AND NOT EXISTS (SELECT 1 FROM leads l WHERE l.id = c.id AND l.archived = 0)
+        AND (? = '%%' OR c.name LIKE ? ESCAPE '\\' OR c.city LIKE ? ESCAPE '\\')
+      ORDER BY c.name LIMIT 30`,
     [q, q, q],
   );
 }

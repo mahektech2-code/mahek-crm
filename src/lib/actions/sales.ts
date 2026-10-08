@@ -2,43 +2,49 @@
 
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { and, eq, inArray, isNotNull, sql, type SQL } from "drizzle-orm";
+import { z } from "zod";
+import { and, eq, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import {
   appAccess,
+  attachments,
   auditLog,
   customers,
   mbosApprovals,
   mbosCourses,
   mbosDeletions,
-  mbosDevices,
   mbosDocuments,
   mbosHolidays,
+  mbosHolidayAssignments,
   mbosLeaveRequests,
   mbosUserTerritories,
   mbosJourneyPlans,
   mbosJourneyStops,
-  mbosPriceList,
-  mbosSchemes,
+  mbosTaskCampaigns,
   mbosTasks,
   mbosTravelLegs,
   mbosVisits,
-  notifications,
   users,
 } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
-import { canOpenModule, listUserApps } from "@/lib/access";
-import { assertCustomerInScope } from "@/lib/access-control";
+import { canOpenModule } from "@/lib/access";
+import {
+  assertCustomerInScope,
+  isPlatformAdmin,
+  levelInApp,
+  requireCapability,
+} from "@/lib/access-control";
+import { salesGateRefusal, scopeCovers } from "@/lib/sales-gate";
 import { inCrmSalesManagerWorkspace } from "@/lib/services/crm-sales-manager-scope";
 import { getConfig, updateSettings } from "@/lib/config/store";
-import { bindAttachments, createAttachment } from "@/lib/services/attachment-service";
-import { APP_TIMEZONE, calendarDate } from "@/lib/business-date";
+import { bindAttachments } from "@/lib/services/attachment-service";
+import { APP_TIMEZONE } from "@/lib/business-date";
 import {
-  fieldBook,
   LEAD_BULK_CAP,
   leadIdsMatching,
   leadsInScope,
   leadsPage,
+  fieldTeam,
   managerScope,
   onlyMine,
 } from "@/lib/services/sales-service";
@@ -49,6 +55,7 @@ import type { LeadView } from "@/lib/lead-views";
 import { today } from "@/lib/recompute";
 import type { DocumentCategory } from "@/lib/mbos/library-labels";
 import { err, fromThrown, ok, okVoid, type Result } from "@/lib/result";
+import { releaseHandsetBinding } from "@/lib/services/handset-release";
 import {
   PARENT_KIND,
   setWorkingTerritories,
@@ -61,6 +68,54 @@ import {
 import { bookIdsIgnoringTerritory } from "@/lib/services/mbos-service";
 import { repriceDay, rescoreLeg } from "@/lib/services/expense-submit-service";
 import { notifyUsers } from "../notify";
+import { announce } from "@/lib/services/announcement-service";
+import { mirrorToHrms, removeEverywhere } from "@/lib/services/holiday-calendar";
+import {
+  previewAudience,
+  rebuildHolidayMembers,
+  searchPlaces,
+  syncHolidayToHrms,
+  type HolidayPlace,
+} from "@/lib/services/holiday-service";
+import { HOLIDAY_CATEGORIES, isHolidayLevel, placeKindFor } from "@/lib/engines/holiday-audience";
+import { holidayAppliesSql } from "@/lib/holiday-sql";
+import {
+  placeNames,
+  searchShopsForTask,
+  shopsForTarget,
+  taskPlaceOptions,
+  type AudienceShopRow,
+} from "@/lib/services/task-campaign-service";
+import type { PlaceFilterOptions, PlaceFilterValues } from "@/lib/place-filters";
+import {
+  expandTaskAudience,
+  MAX_TASKS_PER_ASSIGNMENT,
+  taskAudienceProblem,
+  taskAudienceSentence,
+  type TaskAudience,
+} from "@/lib/task-audience";
+import {
+  formHasLinks,
+  linkedTaskComplete,
+  MAX_TASK_FIELDS,
+  MAX_TASK_OPTIONS,
+  TASK_FIELD_TYPES,
+  TASK_LINK_TARGET_KEYS,
+  taskFormProblems,
+  tidyTaskForm,
+  type TaskField,
+  type TaskLinkTarget,
+} from "@/lib/task-form";
+import { linkContexts } from "@/lib/services/task-link-service";
+import { taskCampaign } from "@/lib/services/task-campaign-service";
+import {
+  draftTask,
+  suggestLinks,
+  summariseCampaign,
+  type LinkSuggestion,
+  type TaskDraft,
+  type TaskSummary,
+} from "@/lib/services/task-ai-service";
 
 /** Count, noun and verb agree at every value. */
 function plural(n: number, noun: string, pl?: string): string {
@@ -70,11 +125,16 @@ function plural(n: number, noun: string, pl?: string): string {
 /* ---------------------------------------------------------------------------
  * Every write the Sales Dashboard makes.
  *
- * **Holding the app is the permission.** That is this app's own rule and not
- * the capability matrix's: `access-control.ts` answers questions about roles,
- * and what a sales manager may do here was decided as "whoever is given the
- * Sales Dashboard", so the guard is the grant. It is checked in every action
- * and not merely by the layout, because a server action is a URL.
+ * **Holding the app USED to be the permission**, and it is not any more. The
+ * grant is asked first, then — for a decision — the LEVEL held on that grant,
+ * then the module the act belongs to; see `requireSalesAccess`. The grant
+ * alone let an associate given the app to read the team's day decide
+ * anything on it, and let a module withheld on the Access screen stay
+ * writable by URL. Where a write lands on a PERSON or a LEAD it is also asked
+ * whether that person or lead is in the caller's own scope — the same
+ * narrowing the screen ran — because the lists were narrowed and the writes
+ * behind them were not. All of it is checked in the action and not merely by
+ * the layout, because a server action is a URL.
  *
  * **One decision this app deliberately does NOT make.** An `order` approval is
  * accounts', by an explicit rule in AGENTS.md: the person chasing the target
@@ -86,29 +146,16 @@ function plural(n: number, noun: string, pl?: string): string {
 
 const gen = (prefix: string) => `${prefix}_${randomUUID().slice(0, 12)}`;
 
-/** Whoever holds the app. Checked here, not only in the layout. */
-async function requireSales() {
-  const user = await requireUser();
-  const apps = await listUserApps(user.id);
-  if (!apps.includes("sales")) {
-    throw Object.assign(new Error("The Sales Dashboard has not been granted to you."), {
-      name: "NotPermittedError",
-    });
-  }
-  return user;
-}
-
 /**
- * `requireSales`, or — inside the CRM Sales Manager workspace only — the
- * module that workspace answers to.
+ * The Sales Dashboard's lead door (`requireSalesAccess` on the lead modules),
+ * or — inside the CRM Sales Manager workspace only — the module that
+ * workspace answers to.
  *
  * Reassigning a lead is a Sales Manager action, and the CRM's Sales Manager
- * holds `crm.sales-manager`, not the Sales Dashboard. Everywhere else this is
- * `requireSales` unchanged, so the Sales Dashboard's own door is exactly what
- * it was.
+ * holds `crm.sales-manager`, not the Sales Dashboard.
  */
 async function requireSalesOrCrmSalesManager() {
-  if (!(await inCrmSalesManagerWorkspace())) return requireSales();
+  if (!(await inCrmSalesManagerWorkspace())) return requireSalesAccess({ modules: LEAD_MODULES });
   const user = await requireUser();
   if (!(await canOpenModule(user.id, "crm.sales-manager"))) {
     throw Object.assign(new Error("The CRM Sales Manager workspace has not been granted to you."), {
@@ -117,6 +164,95 @@ async function requireSalesOrCrmSalesManager() {
   }
   return user;
 }
+
+/* ---------------------------------------------------------------------------
+ * THE GRANT IS NOT THE WHOLE PERMISSION, and these are the rest of it.
+ *
+ * The grant answers "were you given the Sales Dashboard", and for most of
+ * this file's life that was the only question asked. It is the wrong one for a
+ * decision: an associate given the app to read the team's day could approve
+ * leave, release a handset, redraw a manager's patch or publish a document to
+ * every phone in the field. And the MODULE was asked by the layout alone —
+ * unticking Holidays took the screen away and left the action that writes a
+ * holiday one POST away for anybody holding the app.
+ *
+ * `requireSalesAccess` asks all three: the grant, the LEVEL in the Sales
+ * Dashboard where the act is a decision (`levelInApp`, the level ON THE GRANT,
+ * never the widest one held anywhere), and the module the act belongs to. The
+ * rule itself is `salesGateRefusal` in `sales-gate.ts`, pure and tested; this
+ * is where it is wired to the session.
+ *
+ * WHAT IS A DECISION: answering a request, territory, handsets, holidays, leave
+ * entitlements, publishing to the field, tasks, journeys, lead batches,
+ * verdicts on visits and evidence, and messages to the field. What is NOT:
+ * reading, and the single-lead moves whose own scope check already limits an
+ * associate to the leads in their own book.
+ * ------------------------------------------------------------------------- */
+
+type SalesGate = {
+  /** Any ONE of these opens it. Empty asks no module — for a check that has
+      to read the record before it knows which screen the record belongs to. */
+  modules: readonly string[];
+  /** A manager or administrator of the Sales Dashboard. */
+  manager?: boolean;
+};
+
+function notPermitted(message: string) {
+  return Object.assign(new Error(message), { name: "NotPermittedError" });
+}
+
+async function requireSalesAccess(gate: SalesGate) {
+  const user = await requireUser();
+  const [level, platformAdmin, held] = await Promise.all([
+    levelInApp(user, "sales"),
+    isPlatformAdmin(user),
+    Promise.all(gate.modules.map((k) => canOpenModule(user.id, k))),
+  ]);
+  const refusal = salesGateRefusal({
+    level,
+    platformAdmin,
+    needManager: gate.manager === true,
+    modulesAsked: gate.modules,
+    modulesHeld: gate.modules.filter((_, i) => held[i]),
+  });
+  if (refusal) throw notPermitted(refusal);
+  return user;
+}
+
+/** Shorthand for the commonest shape: a manager's act on one screen. */
+const SALES_MANAGER = (...modules: string[]): SalesGate => ({ modules, manager: true });
+
+/**
+ * IS THIS PERSON IN MY TEAM — asked of the person a write lands on.
+ *
+ * The lists are narrowed by `managerScope` and the writes behind them were
+ * not: a regional manager could plan a route for, set the leave of, or move the
+ * patch of a salesman in another region by posting his id, because nothing
+ * between the screen and the table asked whether he was theirs. It is the same
+ * narrowing the screen ran, read through `scopeCovers` so the CRM Sales
+ * Manager seat's null is never taken for "everybody".
+ */
+async function salesmanOutsideScope(salesmanId: string): Promise<boolean> {
+  return !scopeCovers(await managerScope(), salesmanId);
+}
+
+const NOT_YOUR_TEAM = "That person is not in your team, so this is not yours to change.";
+
+/**
+ * ONE LEAD, ASKED THE QUESTION A BATCH ALREADY ASKS.
+ *
+ * The bulk actions read their ids through `leadsInScope` — "WHAT MAY BE TOUCHED
+ * IS ASKED OF THE DATABASE, never taken from the payload" — and the single-lead
+ * versions beside them asked nothing at all, so a regional manager could
+ * archive, restore, chase or reassign any lead in the company one id at a time.
+ * Same narrowing, one id.
+ */
+async function leadOutsideScope(leadId: string): Promise<boolean> {
+  return (await leadsInScope([leadId])).length === 0;
+}
+
+/** The screens a lead is worked from — either one opens a lead action. */
+const LEAD_MODULES = ["sales.leads", "sales.lead-pipeline"] as const;
 
 function refresh() {
   try {
@@ -130,8 +266,6 @@ function refresh() {
     revalidatePath("/sales/knowledge");
     revalidatePath("/sales/tasks");
     revalidatePath("/sales/leads");
-    revalidatePath("/sales/visits");
-    revalidatePath("/sales/catalogue");
     revalidatePath("/sales/notify");
     revalidatePath("/apps");
   } catch {
@@ -147,11 +281,37 @@ function refresh() {
  * the href points at MBOS's own approvals screen rather than at a MahekOne
  * route he cannot open.
  */
-async function tell(userId: string, title: string, body: string) {
+async function tell(userId: string, title: string, body: string, mbosHref: string | null) {
   /* The row and the push are one act, and `notifyUsers` is where that act
      lives now — this function used to do its own device lookup, which is
-     exactly the copy fourteen other callers never made. */
-  await notifyUsers([{ userId, title, body, mbosHref: "/rejections" }]).catch(() => {});
+     exactly the copy fourteen other callers never made.
+
+     WHERE A TAP LANDS IS THE CALLER'S TO SAY. This used to hard-code
+     `/rejections` for every caller, so "a task was assigned to you" and "your
+     route for Tuesday" both opened the handset's list of records the office
+     REFUSED — a screen that by construction cannot contain either. Null is the
+     honest default and falls through to `/notifications`. */
+  await notifyUsers([{ userId, title, body, mbosHref }]).catch(() => {});
+}
+
+/** The handset screen an approval's decision is about. */
+function approvalHref(type: string): string | null {
+  switch (type) {
+    case "leave":
+      return "/leave";
+    case "expense_claim":
+      return "/expenses";
+    case "sample":
+      return "/samples";
+    case "order":
+      return "/orders";
+    case "tour":
+      return "/journeys";
+    case "attendance_regularisation":
+      return "/attendance";
+    default:
+      return null;
+  }
 }
 
 /* ══════════════════════════════════════════════════════════ the decisions */
@@ -182,7 +342,9 @@ export async function decideApproval(input: {
   approvedAmountPaise?: number;
 }): Promise<Result> {
   try {
-    const user = await requireSales();
+    /* A manager's act, before anything is read: an associate is not told
+       whether the id exists. The screen is asked once the type is known. */
+    const user = await requireSalesAccess({ modules: [], manager: true });
 
     const [approval] = await db
       .select()
@@ -191,6 +353,67 @@ export async function decideApproval(input: {
       .limit(1);
 
     if (!approval) return err("That request no longer exists.", "not_found");
+
+    /*
+     * THREE KINDS HAVE A DESK OF THEIR OWN, and answering them here skipped it.
+     *
+     * A sample, a distributor appointment and a priced expense day each carry
+     * rules this generic answer knows nothing about — the sample machine and
+     * its `sample.approve`, the two-step chain whose second step is
+     * management's `distributor.approve`, and the expense day's partial
+     * amounts and escalations under `order.approve`. Deciding one here wrote
+     * `approved` on the row and went round every one of those rules, so the
+     * cheapest door to each was this one. Refused, with the way to the right
+     * door, rather than decided badly.
+     */
+    if (approval.type === "sample") {
+      return err(
+        "A sample is decided on the samples desk, where the approval checks the stock and the lead — Lead Management → Samples & trials.",
+        "not_permitted",
+      );
+    }
+    if (approval.type === "distributor_appointment") {
+      return err(
+        "Appointing a distributor is a two-step decision with its own screen — Lead Management → Distributor appointments.",
+        "not_permitted",
+      );
+    }
+    if (approval.subjectType === "mbos_expense_days") {
+      return err(
+        "A day's expenses are priced and decided on Expenses & claims, where the policy and the part amounts are.",
+        "not_permitted",
+      );
+    }
+
+    /* The screen this kind belongs to, or the Approvals queue that collects
+       them all. Withholding Leave from somebody must also withhold deciding it. */
+    const owning: Record<string, string> = {
+      leave: "sales.leave",
+      expense_claim: "sales.expenses",
+      tour: "sales.expenses",
+      attendance_regularisation: "sales.attendance",
+      territory: "sales.territory",
+    };
+    await requireSalesAccess({
+      modules: owning[approval.type] ? ["sales.approvals", owning[approval.type]] : ["sales.approvals"],
+      manager: true,
+    });
+
+    /* NOBODY ANSWERS THEIR OWN REQUEST. A manager who also carries a handset
+       raises leave and expenses like anybody else, and the queue he decides is
+       the one his own requests land in. */
+    if (approval.requestedByUserId === user.id) {
+      return err(
+        "This is your own request. Somebody else has to answer it — that is what makes it an approval.",
+        "not_permitted",
+      );
+    }
+
+    /* And only for their own team, the same narrowing `pendingApprovals` ran
+       to draw the row. A queue is a screen and a screen is not a permission. */
+    if (await salesmanOutsideScope(approval.requestedByUserId)) {
+      return err("That request is from somebody outside your team.", "not_permitted");
+    }
 
     if (approval.state !== "pending") {
       return err(
@@ -310,6 +533,7 @@ export async function decideApproval(input: {
       approval.requestedByUserId,
       `Your ${approval.type.replace(/_/g, " ")} request was ${words}`,
       note || `${user.name} ${words} it.`,
+      approvalHref(approval.type),
     );
 
     refresh();
@@ -335,6 +559,13 @@ export type PlannedDay = {
   /** `YYYY-MM-DD`. */
   planDate: string;
   beat?: string | null;
+  /**
+   * The city the office chose before picking the shops. Saved onto the day so
+   * every screen, the handset included, says where it is — a day arranged with
+   * no city read "No city named" above shops plainly in one town. Absent leaves
+   * whatever city the day already carries.
+   */
+  city?: string | null;
   /** In the order they are to be walked. An empty day CLEARS that day. */
   customerIds: string[];
   startTime?: string;
@@ -363,7 +594,8 @@ export async function saveJourneyPeriod(input: {
   minutesPerStop?: number;
 }): Promise<Result<{ saved: number; cleared: number; skipped: string[] }>> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess(SALES_MANAGER("sales.journeys"));
+    if (await salesmanOutsideScope(input.salesmanId)) return err(NOT_YOUR_TEAM, "not_permitted");
 
     if (!input.days.length) {
       return err("There are no days in that period.", "validation");
@@ -471,6 +703,11 @@ export async function saveJourneyPeriod(input: {
             skipped.push(day.planDate);
             continue;
           }
+          const gone = await tx
+            .delete(mbosJourneyStops)
+            .where(eq(mbosJourneyStops.planId, existing.id))
+            .returning({ id: mbosJourneyStops.id });
+          await tombstoneStops(tx, gone, input.salesmanId);
           await tx.delete(mbosJourneyPlans).where(eq(mbosJourneyPlans.id, existing.id));
           cleared += 1;
           continue;
@@ -484,6 +721,7 @@ export async function saveJourneyPeriod(input: {
             .update(mbosJourneyPlans)
             .set({
               beat: day.beat ?? null,
+              ...(day.city?.trim() ? { city: day.city.trim() } : {}),
               estimatedTravelMinutes: perStop * Math.max(0, day.customerIds.length - 1),
               updatedAt: new Date(),
               updatedById: user.id,
@@ -495,6 +733,7 @@ export async function saveJourneyPeriod(input: {
             userId: input.salesmanId,
             planDate: day.planDate,
             beat: day.beat ?? null,
+            city: day.city?.trim() || null,
             status: "active",
             estimatedTravelMinutes: perStop * Math.max(0, day.customerIds.length - 1),
             createdById: user.id,
@@ -502,14 +741,16 @@ export async function saveJourneyPeriod(input: {
           });
         }
 
-        await tx
+        const replaced = await tx
           .delete(mbosJourneyStops)
           .where(
             and(
               eq(mbosJourneyStops.planId, planId),
               sql`${mbosJourneyStops.status} = 'planned'`,
             ),
-          );
+          )
+          .returning({ id: mbosJourneyStops.id });
+        await tombstoneStops(tx, replaced, input.salesmanId);
 
         const fresh = day.customerIds.filter((id) => !untouchable.has(id));
         if (fresh.length) {
@@ -561,6 +802,7 @@ export async function saveJourneyPeriod(input: {
       `${user.name} planned ${saved === 1 ? "a day" : `${saved} days`}${
         cleared ? ` and cleared ${cleared}` : ""
       }. It will be on your handset at the next sync.`,
+      "/journey",
     );
 
     refresh();
@@ -597,7 +839,8 @@ export async function proposeJourneyDays(input: {
   days: Array<{ planDate: string; city: string }>;
 }): Promise<Result<{ proposed: number; leftAlone: string[] }>> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess(SALES_MANAGER("sales.journeys"));
+    if (await salesmanOutsideScope(input.salesmanId)) return err(NOT_YOUR_TEAM, "not_permitted");
 
     if (!input.days.length) return err("There are no days to propose.", "validation");
     if (input.days.length > MAX_PLAN_DAYS) {
@@ -697,6 +940,7 @@ export async function proposeJourneyDays(input: {
         input.salesmanId,
         `${plural(proposed, "day")} proposed for you`,
         `${user.name} has proposed where you work. Open your plan to agree, or say why a day will not work and what you want instead.`,
+        "/journey",
       );
     }
 
@@ -731,7 +975,7 @@ export async function answerRefusal(input: {
   city?: string;
 }): Promise<Result> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess(SALES_MANAGER("sales.journeys"));
 
     const [plan] = await db
       .select()
@@ -739,6 +983,7 @@ export async function answerRefusal(input: {
       .where(eq(mbosJourneyPlans.id, input.planId))
       .limit(1);
     if (!plan) return err("That day is no longer on the plan.", "not_found");
+    if (await salesmanOutsideScope(plan.userId)) return err(NOT_YOUR_TEAM, "not_permitted");
     if (plan.dayState !== "refused") {
       return err(
         `That day is ${plan.dayState}, not refused — there is nothing to answer.`,
@@ -797,6 +1042,7 @@ export async function answerRefusal(input: {
       input.take === "counter"
         ? `${user.name} took your suggestion. Pick the shops when you are ready.`
         : `${user.name} has proposed ${city} instead. Agree, or say why it will not work.`,
+      "/journey",
     );
 
     refresh();
@@ -813,82 +1059,289 @@ export async function answerRefusal(input: {
 /* ═══════════════════════════════════════════════════════════ the holidays */
 
 /**
- * A day nobody is expected to work.
+ * A day nobody is expected to work — or nobody in one state, one district,
+ * one city, one area, or a few named people (`lib/engines/holiday-audience.ts`
+ * says who).
  *
- * Small, and load-bearing in three places: attendance reads as absent for
- * everybody otherwise, leave is measured in working days that nothing else
- * defines, and a journey plan will cheerfully route somebody into a shut
- * market.
+ * Load-bearing in more places than it looks: attendance reads as absent
+ * otherwise, leave is measured in working days, a journey plan will route
+ * somebody into a shut market — and the handset reads all of it through the
+ * pull, so a holiday saved here is on the salesman's phone at its next sync
+ * without anybody updating the app.
  *
- * `scope` is free text — "all beats", "Nagpur East, Nagpur West" — because a
- * holiday is regional in a way the territory model cannot express, and a join
- * table would need maintaining every time a beat is renamed.
+ * The places are PICKED from the reviewed tree rather than typed, which is
+ * what lets a state holiday reach exactly the people allocated that state.
  */
-export async function addHoliday(input: {
+export type HolidayInput = {
+  id?: string | null;
   onDate: string;
   name: string;
-  scope?: string | null;
-}): Promise<Result> {
+  category: string;
+  level: string;
+  placeIds: string[];
+  /** Given the day whatever the place says. */
+  include: string[];
+  /** Not given it whatever the place says. */
+  exclude: string[];
+  note?: string | null;
+  /** Ring the bell on the phones of the people it reaches (default on). */
+  notify?: boolean;
+};
+
+export async function saveHoliday(input: HolidayInput): Promise<Result<{ id: string; reaches: number }>> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess(SALES_MANAGER("sales.holidays"));
 
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(input.onDate)) {
-      return err("That is not a date.", "validation");
-    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(input.onDate)) return err("That is not a date.", "validation");
     const name = input.name.trim();
-    if (!name) {
-      return err("Give it a name — a date on its own tells nobody why they are off.", "validation");
+    if (!name) return err("Give it a name — a date on its own tells nobody why they are off.", "validation");
+    if (name.length > 120) return err("Keep the name under 120 characters.", "validation");
+    if (!isHolidayLevel(input.level)) return err("Say who the holiday is for.", "validation");
+    const level = input.level;
+    const category = (HOLIDAY_CATEGORIES as readonly string[]).includes(input.category) ? input.category : "Festival";
+    const include = [...new Set(input.include)];
+    const exclude = [...new Set(input.exclude)].filter((id) => !include.includes(id));
+    const note = input.note?.trim() || null;
+
+    const kind = placeKindFor(level);
+    let placeIds: string[] = [];
+    if (kind) {
+      placeIds = [...new Set(input.placeIds)];
+      if (!placeIds.length) return err(`Pick at least one ${kind} — a ${kind} holiday has to say which.`, "validation");
+      const found = await db.execute<{ id: string }>(sql`
+        select id from places where kind = ${kind}
+           and id in (${sql.join(placeIds.map((id) => sql`${id}`), sql`, `)})
+      `);
+      if (found.length !== placeIds.length)
+        return err(`One of those is not a ${kind} on the place tree any more. Pick again.`, "validation");
+    }
+    if (level === "people" && !include.length)
+      return err("Name at least one person — a holiday for named people with nobody named is nobody's.", "validation");
+
+    const people = [...include, ...exclude];
+    if (people.length) {
+      const known = await db.execute<{ id: string }>(sql`
+        select id from users where id in (${sql.join(people.map((id) => sql`${id}`), sql`, `)})
+      `);
+      if (known.length !== people.length) return err("One of the people named is not on MahekOne.", "validation");
     }
 
-    const scope = input.scope?.trim() || null;
+    const [clash] = (await db.execute<{ id: string; name: string }>(sql`
+      select id, name from mbos_holidays
+       where on_date = ${input.onDate}::date and lower(name) = lower(${name})
+         and id <> ${input.id ?? ""}
+       limit 1
+    `)) as unknown as { id: string; name: string }[];
+    if (clash)
+      return err(`${clash.name} is already on the calendar for that day. Edit that one instead — two entries are two answers to who is off.`, "duplicate");
 
-    const clash = await db
-      .select({ id: mbosHolidays.id, name: mbosHolidays.name })
-      .from(mbosHolidays)
-      .where(
-        and(
-          sql`${mbosHolidays.onDate} = ${input.onDate}::date`,
-          scope ? eq(mbosHolidays.scope, scope) : sql`${mbosHolidays.scope} is null`,
-        ),
-      )
-      .limit(1);
-
-    if (clash.length) {
-      return err(
-        `${clash[0].name} is already recorded for that day and scope. Two entries for one day is two answers to whether anybody is working.`,
-        "duplicate",
-      );
+    let before: Record<string, unknown> | null = null;
+    if (input.id) {
+      const [row] = await db.select().from(mbosHolidays).where(eq(mbosHolidays.id, input.id)).limit(1);
+      if (!row) return err("That day is no longer on the calendar.", "not_found");
+      before = { name: row.name, onDate: row.onDate, level: row.level, placeIds: row.placeIds, category: row.category };
     }
 
-    await db.insert(mbosHolidays).values({
-      id: gen("mbos_hol"),
-      onDate: input.onDate,
-      name,
-      scope,
-      createdById: user.id,
-      updatedById: user.id,
+    /* Who it reaches BEFORE the write, so only people newly given the day are told. */
+    const reachedBefore = input.id
+      ? new Set(
+          ((await db.execute<{ id: string }>(sql`
+            select u.id from users u join app_access a on a.user_id = u.id and a.app = 'field'
+             where exists (select 1 from mbos_holidays h where h.id = ${input.id}
+                             and h.on_date = ${input.onDate}::date
+                             and ${holidayAppliesSql("h", sql`u.id`)})
+          `)) as unknown as { id: string }[]).map((r) => r.id),
+        )
+      : new Set<string>();
+
+    const holidayId = input.id ?? gen("mbos_hol");
+    await db.transaction(async (tx) => {
+      if (input.id) {
+        await tx
+          .update(mbosHolidays)
+          .set({ onDate: input.onDate, name, category, level, placeIds, note, updatedById: user.id, updatedAt: new Date() })
+          .where(eq(mbosHolidays.id, holidayId));
+      } else {
+        await tx.insert(mbosHolidays).values({
+          id: holidayId,
+          onDate: input.onDate,
+          name,
+          category,
+          level,
+          placeIds,
+          note,
+          createdById: user.id,
+          updatedById: user.id,
+        });
+        /* One calendar: the day goes on HRMS's too, under the same id. Who it
+           is for there is kept current by the rebuild below. */
+        await mirrorToHrms(tx, { id: holidayId, onDate: input.onDate, name, scope: level === "company" ? null : "Sales Dashboard" }, user);
+      }
+      await tx.delete(mbosHolidayAssignments).where(eq(mbosHolidayAssignments.holidayId, holidayId));
+      for (const [mode, ids] of [["include", include], ["exclude", exclude]] as const)
+        for (const userId of ids)
+          await tx.insert(mbosHolidayAssignments).values({ id: gen("hola"), holidayId, userId, mode, createdById: user.id });
     });
+
+    await rebuildHolidayMembers();
+    await syncHolidayToHrms(holidayId);
+
+    const reaches = (await db.execute<{ id: string; name: string }>(sql`
+      select u.id, u.name from users u join app_access a on a.user_id = u.id and a.app = 'field'
+       where u.active and exists (select 1 from mbos_holidays h where h.id = ${holidayId}
+                                    and ${holidayAppliesSql("h", sql`u.id`)})
+    `)) as unknown as { id: string; name: string }[];
 
     await db.insert(auditLog).values({
       id: gen("aud"),
       actorId: user.id,
-      action: "mbos.holiday.add",
+      action: input.id ? "mbos.holiday.edit" : "mbos.holiday.add",
       entityType: "mbos_holiday",
-      entityId: input.onDate,
-      afterState: { name, scope, onDate: input.onDate } as never,
+      entityId: holidayId,
+      beforeState: before as never,
+      afterState: { name, onDate: input.onDate, level, category, placeIds, include, exclude, reaches: reaches.length } as never,
     });
 
+    const day = await today();
+    if (input.notify !== false && input.onDate >= day) {
+      const newly = reaches.filter((r) => !reachedBefore.has(r.id));
+      await notifyUsers(
+        newly.map((r) => ({
+          userId: r.id,
+          title: `Holiday: ${name}`,
+          body: `${shortDay(input.onDate)} is a holiday for you${note ? ` — ${note}` : ""}. No punch-in is expected that day.`,
+          kind: "info" as const,
+          href: null,
+          mbosHref: null,
+        })),
+      );
+    }
+
     refresh();
-    return okVoid(`${name} recorded.`);
+    return ok(
+      { id: holidayId, reaches: reaches.length },
+      `${name} ${input.id ? "saved" : "recorded"} — it reaches ${reaches.length} ${reaches.length === 1 ? "person" : "people"} in the field.`,
+    );
   } catch (e) {
     return fromThrown(e);
   }
 }
 
+/** Kept for anything still posting the old three-field form: a company-wide day. */
+export async function addHoliday(input: { onDate: string; name: string; scope?: string | null }): Promise<Result> {
+  const r = await saveHoliday({ onDate: input.onDate, name: input.name, category: "Festival", level: "company", placeIds: [], include: [], exclude: [], note: input.scope ?? null });
+  return r.ok ? okVoid(r.message) : r;
+}
+
+/**
+ * ONE PERSON, ONE HOLIDAY: allocate it to him, take it from him, or put him
+ * back on whatever the holiday's level says. The By-employee view's switch.
+ */
+export async function setHolidayPerson(input: {
+  holidayId: string;
+  userId: string;
+  mode: "include" | "exclude" | "clear";
+  reason?: string | null;
+}): Promise<Result> {
+  try {
+    const user = await requireSalesAccess(SALES_MANAGER("sales.holidays"));
+    const [h] = await db.select().from(mbosHolidays).where(eq(mbosHolidays.id, input.holidayId)).limit(1);
+    if (!h) return err("That day is no longer on the calendar.", "not_found");
+    const [person] = await db.select({ id: users.id, name: users.name }).from(users).where(eq(users.id, input.userId)).limit(1);
+    if (!person) return err("That account is not on MahekOne.", "not_found");
+    const reason = input.reason?.trim() || null;
+    if (input.mode === "exclude" && !reason)
+      return err(`Say why ${person.name} is not getting ${h.name} — he will ask, and so will whoever reads his attendance.`, "validation");
+
+    await db.transaction(async (tx) => {
+      await tx
+        .delete(mbosHolidayAssignments)
+        .where(and(eq(mbosHolidayAssignments.holidayId, h.id), eq(mbosHolidayAssignments.userId, person.id)));
+      if (input.mode !== "clear")
+        await tx.insert(mbosHolidayAssignments).values({ id: gen("hola"), holidayId: h.id, userId: person.id, mode: input.mode, reason, createdById: user.id });
+      /* The phone hears it on the next pull even where the rebuild finds the
+         member set unchanged — a company-wide exclude lists nobody there. */
+      await tx.update(mbosHolidays).set({ updatedAt: new Date(), updatedById: user.id }).where(eq(mbosHolidays.id, h.id));
+    });
+    await rebuildHolidayMembers();
+    await syncHolidayToHrms(h.id);
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: input.mode === "include" ? "mbos.holiday.allocate" : input.mode === "exclude" ? "mbos.holiday.deallocate" : "mbos.holiday.reset",
+      entityType: "mbos_holiday",
+      entityId: h.id,
+      afterState: { name: h.name, onDate: h.onDate, person: person.name, personId: person.id, reason } as never,
+    });
+
+    if (h.onDate >= (await today()) && input.mode !== "clear")
+      await notifyUsers([
+        {
+          userId: person.id,
+          title: input.mode === "include" ? `Holiday: ${h.name}` : `${h.name} is a working day for you`,
+          body:
+            input.mode === "include"
+              ? `${shortDay(h.onDate)} is a holiday for you${reason ? ` — ${reason}` : ""}.`
+              : `${shortDay(h.onDate)} is not a holiday for you: ${reason}. Punch in as usual.`,
+          kind: input.mode === "include" ? "info" : "warn",
+          href: null,
+          mbosHref: null,
+        },
+      ]);
+
+    refresh();
+    return okVoid(
+      input.mode === "include"
+        ? `${h.name} given to ${person.name}.`
+        : input.mode === "exclude"
+          ? `${h.name} taken from ${person.name}.`
+          : `${person.name} is back on the usual rule for ${h.name}.`,
+    );
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** Who a holiday would reach, for the dialog — before anything is saved. */
+export async function previewHolidayAudience(input: {
+  level: string;
+  placeIds: string[];
+  include: string[];
+  exclude: string[];
+}): Promise<Result<{ id: string; name: string; reasons: string[] }[]>> {
+  try {
+    await requireSalesAccess(SALES_MANAGER("sales.holidays"));
+    if (!isHolidayLevel(input.level)) return ok([]);
+    const team = (await fieldTeam()).map((p) => p.id);
+    return ok(await previewAudience({ level: input.level, placeIds: input.placeIds, include: input.include, exclude: input.exclude }, team));
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** Places of one kind for the picker, searched on the server — the tree is thousands. */
+export async function searchHolidayPlaces(kind: string, query: string): Promise<Result<HolidayPlace[]>> {
+  try {
+    await requireSalesAccess(SALES_MANAGER("sales.holidays"));
+    if (!["state", "district", "city", "area"].includes(kind)) return ok([]);
+    return ok(await searchPlaces(kind, query));
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+function shortDay(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(
+    new Date(Date.UTC(y, m - 1, d)),
+  );
+}
+
 /** Taking a day back off the calendar. */
 export async function removeHoliday(id: string): Promise<Result> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess(SALES_MANAGER("sales.holidays"));
 
     const [row] = await db
       .select()
@@ -897,11 +1350,11 @@ export async function removeHoliday(id: string): Promise<Result> {
       .limit(1);
     if (!row) return err("That day is no longer on the calendar.", "not_found");
 
-    await db.delete(mbosHolidays).where(eq(mbosHolidays.id, id));
-    /* Reference data, gone. Without a tombstone the deleted row simply has no
-       `updated_at` for the delta to notice, and every phone that already
-       pulled it keeps treating that date as a day off for good. */
-    await tombstone("holidays", id, "Holiday removed");
+    /* Reference data, gone — from HRMS's calendar as well, and tombstoned:
+       without one the deleted row simply has no `updated_at` for the delta to
+       notice, and every phone that already pulled it keeps treating that date
+       as a day off for good. */
+    await db.transaction((tx) => removeEverywhere(tx, id));
 
     await db.insert(auditLog).values({
       id: gen("aud"),
@@ -940,7 +1393,7 @@ export async function sendFieldNotification(input: {
   body: string;
 }): Promise<Result> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess(SALES_MANAGER("sales.notify"));
 
     const title = input.title.trim();
     const body = input.body.trim();
@@ -958,7 +1411,11 @@ export async function sendFieldNotification(input: {
               .from(users)
               .innerJoin(appAccess, and(eq(appAccess.userId, users.id), eq(appAccess.app, "field")))
               .where(and(inArray(users.id, ids), eq(users.active, true)));
-            return rows.map((r) => r.id);
+            /* Picked people are narrowed exactly as "everybody" is. The picker
+               offered only this manager's team, and a POST naming somebody
+               else's salesman must not reach his phone with this manager's
+               name on it. */
+            return rows.map((r) => r.id).filter((id) => scopeCovers(scope, id));
           })()
         : await (async () => {
             const mine = (col: string) => onlyMine(scope, col);
@@ -980,239 +1437,30 @@ export async function sendFieldNotification(input: {
       );
     }
 
-    await notifyUsers(targets.map((userId) => ({ userId, title, body })));
+    /* The same sender HRMS's Announcements uses, so the message is on record
+       beside the office's, with exactly who it went to, and the bell is its
+       only read state (lib/services/announcement-service.ts). */
+    const { id: announcementId } = await announce({
+      senderUserId: user.id,
+      fromName: user.name,
+      toLabel: input.audience === "all" ? "The field team" : plural(targets.length, "person in the field team", "people in the field team"),
+      title,
+      text: body,
+      recipients: targets,
+      source: "sales",
+    });
 
     await db.insert(auditLog).values({
       id: gen("aud"),
       actorId: user.id,
       action: "mbos.notification.send",
       entityType: "notification_broadcast",
-      entityId: gen("bcast"),
+      entityId: announcementId,
       afterState: { title, body, audience: input.audience, recipientCount: targets.length } as never,
     });
 
     refresh();
     return okVoid(`Sent to ${plural(targets.length, "person", "people")}.`);
-  } catch (e) {
-    return fromThrown(e);
-  }
-}
-
-/* ═══════════════════════════════════════════════ what a customer pays */
-
-/**
- * Setting a rate.
- *
- * Keyed on the PRICE TAG, not the customer — see the schema comment on
- * `mbosPriceList`: every dealer on the "DEALER" tag gets the dealer rate, so
- * a row here is one line for the whole tier rather than one per account.
- *
- * **A superseded rate is dated out, never deleted.** An order taken last
- * month priced against last month's rate is a fact about last month; deleting
- * the row would make that order's own value unexplainable later. So an
- * existing OPEN-ENDED row for the same tag and product is closed the day
- * before the new one starts, and the new row is inserted beside it — the
- * handset's own pull already reads only what is in force today, so nothing
- * downstream has to know two rows exist.
- *
- * This does NOT flip `products.priceSource` to `"pricelist"` — that switch is
- * the CRM's own order-valuation path, a separate decision by design (see the
- * schema comment: "a half-populated price list is worse than none, and
- * switching the source has to be somebody's deliberate act"). This screen
- * only fills the table the handset's own order form reads from.
- */
-export async function setPriceListRate(input: {
-  customerPriceTag: string;
-  productId: string;
-  ratePaise: number;
-  validFrom?: string;
-}): Promise<Result> {
-  try {
-    const user = await requireSales();
-
-    const tag = input.customerPriceTag.trim();
-    if (!tag) return err("A rate needs a price tag — DEALER, DISTRIBUTOR, and so on.", "validation");
-    if (!input.productId) return err("Pick a product.", "validation");
-    if (!Number.isFinite(input.ratePaise) || input.ratePaise <= 0) {
-      return err("The rate has to be a positive amount.", "validation");
-    }
-    const validFrom = input.validFrom || calendarDate(new Date());
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(validFrom)) return err("That is not a date.", "validation");
-
-    await db.transaction(async (tx) => {
-      const [superseded] = await tx
-        .select({ id: mbosPriceList.id })
-        .from(mbosPriceList)
-        .where(
-          and(
-            eq(mbosPriceList.customerPriceTag, tag),
-            eq(mbosPriceList.productId, input.productId),
-            sql`${mbosPriceList.validTo} is null`,
-          ),
-        )
-        .limit(1);
-
-      if (superseded) {
-        await tx
-          .update(mbosPriceList)
-          .set({ validTo: sql`${validFrom}::date - 1`, updatedById: user.id, updatedAt: new Date() })
-          .where(eq(mbosPriceList.id, superseded.id));
-      }
-
-      await tx.insert(mbosPriceList).values({
-        id: gen("mbos_price"),
-        customerPriceTag: tag,
-        productId: input.productId,
-        ratePaise: input.ratePaise,
-        validFrom,
-        createdById: user.id,
-        updatedById: user.id,
-      });
-    });
-
-    await db.insert(auditLog).values({
-      id: gen("aud"),
-      actorId: user.id,
-      action: "mbos.priceList.set",
-      entityType: "mbos_price_list",
-      entityId: `${tag}:${input.productId}`,
-      afterState: { customerPriceTag: tag, productId: input.productId, ratePaise: input.ratePaise, validFrom } as never,
-    });
-
-    refresh();
-    return okVoid("Rate saved. It reaches every handset on that tag on the next sync.");
-  } catch (e) {
-    return fromThrown(e);
-  }
-}
-
-/** Withdrawing a rate without deleting it — the row stays for what it once explained. */
-export async function endPriceListRate(id: string): Promise<Result> {
-  try {
-    const user = await requireSales();
-
-    const [row] = await db.select().from(mbosPriceList).where(eq(mbosPriceList.id, id)).limit(1);
-    if (!row) return err("That rate is no longer on the list.", "not_found");
-    if (row.validTo) return err("That rate has already been withdrawn.", "validation");
-
-    await db
-      .update(mbosPriceList)
-      .set({ validTo: sql`current_date`, updatedById: user.id, updatedAt: new Date() })
-      .where(eq(mbosPriceList.id, id));
-
-    await db.insert(auditLog).values({
-      id: gen("aud"),
-      actorId: user.id,
-      action: "mbos.priceList.end",
-      entityType: "mbos_price_list",
-      entityId: id,
-      beforeState: { customerPriceTag: row.customerPriceTag, productId: row.productId, ratePaise: row.ratePaise } as never,
-    });
-
-    refresh();
-    return okVoid("Withdrawn. It drops off every handset on the next sync.");
-  } catch (e) {
-    return fromThrown(e);
-  }
-}
-
-/**
- * A promotion, as data.
- *
- * `eligibility` and `benefit` are JSON exactly as the handset's own scheme
- * engine (`mbos-app/src/engines/schemes.ts`) reads them. Nothing here
- * interprets either, the same way `mbos-service.ts` ships them down unread:
- * expressing a scheme as a rule engine's input is what lets one be added for
- * a festival without a deploy.
- *
- * **The two columns carry five fields between them, not two.** `benefit` is
- * exactly a `SchemeBenefit` — `{"kind":"free_quantity","perCans":10,
- * "freeCans":1}`, `{"kind":"percent_discount","percent":5}` or
- * `{"kind":"flat_discount","amountPaise":50000}`. `eligibility` carries
- * everything else the engine needs and this table has no column for:
- * `{"level":"line","priority":0,"stackable":false,"when":{"field":"skuId",
- * "op":"eq","value":"prod_xyz"}}` — `when` is the actual predicate
- * (`Predicate` in the same file), `level` is `"line"` or `"order"`, and a
- * missing `when` is read on the handset as `{"any":[]}`, which never
- * matches — a blank predicate fails CLOSED rather than discounting
- * everything nobody asked it to.
- */
-export async function addScheme(input: {
-  name: string;
-  description?: string;
-  eligibility: Record<string, unknown>;
-  benefit: Record<string, unknown>;
-  validFrom?: string;
-  validTo?: string;
-}): Promise<Result> {
-  try {
-    const user = await requireSales();
-
-    const name = input.name.trim();
-    if (!name) return err("A scheme needs a name — it is what a salesman sees on the order form.", "validation");
-
-    const id = gen("mbos_scheme");
-    await db.insert(mbosSchemes).values({
-      id,
-      name,
-      description: input.description?.trim() || null,
-      eligibility: input.eligibility,
-      benefit: input.benefit,
-      validFrom: input.validFrom || null,
-      validTo: input.validTo || null,
-      createdById: user.id,
-      updatedById: user.id,
-    });
-
-    await db.insert(auditLog).values({
-      id: gen("aud"),
-      actorId: user.id,
-      action: "mbos.scheme.add",
-      entityType: "mbos_scheme",
-      entityId: id,
-      afterState: { name, eligibility: input.eligibility, benefit: input.benefit } as never,
-    });
-
-    refresh();
-    return okVoid(`${name} added. It reaches every handset on the next sync.`);
-  } catch (e) {
-    return fromThrown(e);
-  }
-}
-
-/**
- * Withdrawing a scheme.
- *
- * `active = false` takes it off the handsets that have not pulled it yet;
- * the tombstone is what tells a handset that ALREADY has it to take it down —
- * a scheme, unlike the price list, is upserted rather than replaced wholesale
- * on the phone, so without this a withdrawn scheme stays offered for ever on
- * any handset that already saw it.
- */
-export async function withdrawScheme(id: string): Promise<Result> {
-  try {
-    const user = await requireSales();
-
-    const [row] = await db.select().from(mbosSchemes).where(eq(mbosSchemes.id, id)).limit(1);
-    if (!row) return err("That scheme is no longer on the list.", "not_found");
-
-    await db
-      .update(mbosSchemes)
-      .set({ active: false, updatedById: user.id, updatedAt: new Date() })
-      .where(eq(mbosSchemes.id, id));
-    await tombstone("schemes", id, "Scheme withdrawn");
-
-    await db.insert(auditLog).values({
-      id: gen("aud"),
-      actorId: user.id,
-      action: "mbos.scheme.withdraw",
-      entityType: "mbos_scheme",
-      entityId: id,
-      beforeState: { name: row.name } as never,
-    });
-
-    refresh();
-    return okVoid(`${row.name} withdrawn.`);
   } catch (e) {
     return fromThrown(e);
   }
@@ -1292,7 +1540,10 @@ export async function setSalesmanTerritories(input: {
   territories: { kind: string; value: string; parent?: string }[];
 }): Promise<Result<void>> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess(SALES_MANAGER("sales.people", "sales.territory"));
+    /* His book is redrawn by this, so he has to be somebody this manager
+       oversees — the same narrowing the Salesmen list ran to offer him. */
+    if (await salesmanOutsideScope(input.salesmanId)) return err(NOT_YOUR_TEAM, "not_permitted");
 
     const [person] = await db
       .select({ id: users.id, name: users.name })
@@ -1390,6 +1641,7 @@ export async function setSalesmanTerritories(input: {
       wanted.length
         ? `Your handset now shows your customers in ${wanted.map((t) => t.value).join(", ")}. Everything else is still yours — it is just not on this list.`
         : "No area is set for you, so your customer list will be empty until the office sets one. Nothing of yours is lost.",
+      "/customers",
     );
 
     revalidatePath("/sales/people");
@@ -1411,7 +1663,35 @@ export async function setManagerTerritories(input: {
   regions: string[];
 }): Promise<Result> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess(SALES_MANAGER("sales.people", "sales.territory"));
+
+    /*
+     * NOBODY DRAWS THEIR OWN PATCH. An empty list here means national, so a
+     * regional manager allowed to edit his own row could make himself national
+     * in one click — every salesman's trail and photographs — and the
+     * notification about it would be addressed to himself.
+     */
+    if (input.managerId === user.id) {
+      return err(
+        "These are your own regions. Somebody else has to set them — an empty list here is the whole country.",
+        "not_permitted",
+      );
+    }
+
+    /*
+     * AND ONLY A NATIONAL MANAGER DRAWS ANYBODY'S. A regional manager setting
+     * somebody else's regions could hand them a region he does not cover
+     * himself, or — with an empty list — the whole country, which is wider
+     * than anything he holds. Allocating oversight is the act of somebody
+     * who already oversees everything; a platform administrator is national
+     * by construction, so this asks one question for both.
+     */
+    if (!(await managerScope()).national) {
+      return err(
+        "Regions are allocated by a manager who covers the whole country. Yours is a regional patch, so this is not yours to change.",
+        "not_permitted",
+      );
+    }
 
     const [manager] = await db
       .select({ id: users.id, name: users.name })
@@ -1480,6 +1760,7 @@ export async function setManagerTerritories(input: {
       wanted.length
         ? `${user.name} set your regions to ${wanted.join(", ")}. Your console shows those and nothing else.`
         : `${user.name} removed your regional limits. Your console shows the whole country.`,
+      null,
     );
 
     refresh();
@@ -1524,68 +1805,17 @@ export async function releaseDevice(input: {
   reason: string;
 }): Promise<Result> {
   try {
-    const user = await requireSales();
-
-    const reason = input.reason.trim();
-    if (reason.length < 3) {
-      return err(
-        "Say why this handset is being released — somebody reading the row in six months has only this sentence.",
-        "validation",
-      );
-    }
-
-    const [row] = await db
-      .select()
-      .from(mbosDevices)
-      .where(eq(mbosDevices.deviceId, input.deviceId))
-      .limit(1);
-    if (!row) return err("That handset is not registered to anybody.", "not_found");
-    if (!row.active) {
-      return err("That handset has already been released.", "validation");
-    }
-
-    const [owner] = await db
-      .select({ name: users.name })
-      .from(users)
-      .where(eq(users.id, row.userId))
-      .limit(1);
-
-    await db
-      .update(mbosDevices)
-      .set({
-        active: false,
-        releasedAt: new Date(),
-        releaseReason: reason,
-        updatedById: user.id,
-        updatedAt: new Date(),
-      })
-      .where(eq(mbosDevices.id, row.id));
-
-    await db.insert(auditLog).values({
-      id: gen("aud"),
-      actorId: user.id,
-      action: "mbos.device.release",
-      entityType: "mbos_device",
-      entityId: row.id,
-      beforeState: { deviceId: row.deviceId, model: row.model, active: true } as never,
-      afterState: { active: false, releaseReason: reason } as never,
+    const user = await requireSalesAccess(SALES_MANAGER("sales.people", "sales.logins"));
+    /* Releasing signs somebody out mid-day, so it is for their own manager. */
+    const result = await releaseHandsetBinding({
+      actor: user,
+      deviceId: input.deviceId,
+      reason: input.reason,
+      outsideScope: salesmanOutsideScope,
+      refusedOutsideScope: NOT_YOUR_TEAM,
     });
-
-    /* The salesman finds out from the handset — it stops syncing on the next
-       call — so he is told here as well, with the reason, rather than being
-       left to discover it in a market with a phone that has stopped working. */
-    await db.insert(notifications).values({
-      id: gen("ntf"),
-      userId: row.userId,
-      kind: "neutral",
-      title: "Your handset was released",
-      body: `${user.name} released the phone you were signed in on — ${reason}. Sign in again on the handset you are using now.`,
-    });
-
-    refresh();
-    return okVoid(
-      `${owner?.name ?? "That salesman"} can sign in on a new handset now.`,
-    );
+    if (result.ok) refresh();
+    return result;
   } catch (e) {
     return fromThrown(e);
   }
@@ -1653,6 +1883,12 @@ export async function reassignLead(input: {
         salesAmId: lead.salesAmId,
         salesManagerId: lead.salesManagerId,
       });
+    } else if (await leadOutsideScope(input.leadId)) {
+      /* Everywhere else, the narrowing `bulkReassignLeads` already runs on
+         every id it is handed — see `leadOutsideScope`. Answered as missing,
+         the same words the batch uses, so an id outside the book says nothing
+         about whether it exists. */
+      return err("That lead is no longer here, or not yours to change.", "not_found");
     }
     if (lead.leadArchived) {
       return err(
@@ -1713,12 +1949,14 @@ export async function reassignLead(input: {
       input.salesmanId,
       `${leadLabel(lead)} is now yours`,
       `${user.name} assigned you this lead${lead.city ? ` in ${lead.city}` : ""}. It is on your handset at the next sync.`,
+      `/lead?id=${encodeURIComponent(input.leadId)}`,
     );
     if (previousOwner) {
       await tell(
         previousOwner.id,
         `${leadLabel(lead)} was moved`,
         `${user.name} reassigned it to ${salesman.name}.`,
+        null,
       );
     }
 
@@ -1763,7 +2001,10 @@ export async function exportLeadRows(input: {
   view?: LeadView;
 }): Promise<Result<{ rows: Array<Array<string | number>> }>> {
   try {
-    await requireSales();
+    await requireSalesAccess({ modules: LEAD_MODULES });
+    /* A whole filtered book leaving the building in a file is `customer.export`,
+       which the matrix keeps at the manager level for exactly this. */
+    await requireCapability("customer.export");
     const day = await today();
     const first = await leadsPage(day, {
       archived: input.archived,
@@ -1867,10 +2108,13 @@ export async function chaseLeadOwner(input: {
   note?: string;
 }): Promise<Result> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess({ modules: LEAD_MODULES });
 
     const lead = await requireLead(input.leadId);
     if (!lead) return err("That lead is no longer here.", "not_found");
+    if (await leadOutsideScope(input.leadId)) {
+      return err("That lead is no longer here, or not yours to change.", "not_found");
+    }
     if (lead.leadArchived) {
       return err("That lead is archived, so there is nobody actively working it.", "validation");
     }
@@ -1883,6 +2127,7 @@ export async function chaseLeadOwner(input: {
       lead.ownerId,
       `Chase — ${leadLabel(lead)}`,
       note || `${user.name} asked you to follow up on ${leadLabel(lead)}.`,
+      `/lead?id=${encodeURIComponent(lead.id)}`,
     );
 
     refresh();
@@ -1904,7 +2149,7 @@ export async function chaseLeadOwner(input: {
  */
 export async function archiveLead(input: { leadId: string; reason: string }): Promise<Result> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess({ modules: LEAD_MODULES });
 
     const reason = input.reason.trim();
     if (!reason) {
@@ -1913,6 +2158,9 @@ export async function archiveLead(input: { leadId: string; reason: string }): Pr
 
     const lead = await requireLead(input.leadId);
     if (!lead) return err("That lead is no longer here.", "not_found");
+    if (await leadOutsideScope(input.leadId)) {
+      return err("That lead is no longer here, or not yours to change.", "not_found");
+    }
     if (lead.leadArchived) return ok(undefined, "Already archived.");
 
     await db
@@ -1938,6 +2186,7 @@ export async function archiveLead(input: { leadId: string; reason: string }): Pr
         lead.ownerId,
         `${leadLabel(lead)} was archived`,
         `${user.name} filed it away — ${reason}`,
+        null,
       );
     }
 
@@ -1951,10 +2200,13 @@ export async function archiveLead(input: { leadId: string; reason: string }): Pr
 /** The way back. */
 export async function restoreLead(input: { leadId: string }): Promise<Result> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess({ modules: LEAD_MODULES });
 
     const lead = await requireLead(input.leadId);
     if (!lead) return err("That lead is no longer here.", "not_found");
+    if (await leadOutsideScope(input.leadId)) {
+      return err("That lead is no longer here, or not yours to change.", "not_found");
+    }
     if (!lead.leadArchived) return ok(undefined, "Not archived.");
 
     await db
@@ -1997,7 +2249,7 @@ export async function restoreLead(input: { leadId: string }): Promise<Result> {
  * saying forty, not forty messages.
  *
  * WHAT MAY BE TOUCHED IS ASKED OF THE DATABASE, never taken from the payload.
- * `requireSales` answers "do you hold the Sales Dashboard", which every
+ * The grant answers "do you hold the Sales Dashboard", which every
  * regional manager does — it is not the same question as "may you move this
  * lead". `leadsInScope` runs `leadsVisible`, the same narrowing the list that
  * offered the selection ran, so a batch can only reach what the screen could
@@ -2076,7 +2328,7 @@ export async function leadIdsForSelection(input: {
   view?: LeadView;
 }): Promise<Result<{ ids: string[]; capped: boolean }>> {
   try {
-    await requireSales();
+    await requireSalesAccess({ modules: LEAD_MODULES });
     const day = await today();
     return ok(
       await leadIdsMatching(day, {
@@ -2102,7 +2354,7 @@ export async function bulkReassignLeads(input: {
   salesmanId: string;
 }): Promise<Result<BulkOutcome>> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess({ modules: LEAD_MODULES, manager: true });
 
     const [salesman] = await db
       .select({ id: users.id, name: users.name, active: users.active })
@@ -2156,6 +2408,7 @@ export async function bulkReassignLeads(input: {
         input.salesmanId,
         `${plural(moving.length, "lead")} ${moving.length === 1 ? "is" : "are"} now yours`,
         `${user.name} assigned them to you. They are on your handset at the next sync.`,
+        "/leads",
       );
 
       /* One message per person who lost work, not one per lead. */
@@ -2168,6 +2421,7 @@ export async function bulkReassignLeads(input: {
           ownerId,
           `${plural(n, "lead")} moved`,
           `${user.name} reassigned ${n === 1 ? "it" : "them"} to ${salesman.name}.`,
+          null,
         );
       }
     }
@@ -2186,7 +2440,7 @@ export async function bulkArchiveLeads(input: {
   reason: string;
 }): Promise<Result<BulkOutcome>> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess({ modules: LEAD_MODULES, manager: true });
 
     const reason = input.reason.trim();
     if (!reason) return err("Say why — this is what a manager reads later.", "validation");
@@ -2233,6 +2487,7 @@ export async function bulkArchiveLeads(input: {
           ownerId,
           `${plural(n, "lead")} archived`,
           `${user.name} filed ${n === 1 ? "it" : "them"} away — ${reason}`,
+          null,
         );
       }
     }
@@ -2250,7 +2505,7 @@ export async function bulkRestoreLeads(input: {
   leadIds: string[];
 }): Promise<Result<BulkOutcome>> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess({ modules: LEAD_MODULES, manager: true });
 
     const { leads, missing } = await bulkLeads(input.leadIds);
     if (!leads.length && !missing.length) return err("Nothing selected.", "validation");
@@ -2303,7 +2558,7 @@ export async function bulkChaseLeadOwners(input: {
   note?: string;
 }): Promise<Result<BulkOutcome>> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess({ modules: LEAD_MODULES, manager: true });
 
     const { leads, missing } = await bulkLeads(input.leadIds);
     if (!leads.length && !missing.length) return err("Nothing selected.", "validation");
@@ -2333,6 +2588,7 @@ export async function bulkChaseLeadOwners(input: {
         ownerId,
         `Chase — ${plural(held.length, "lead")}`,
         note || `${user.name} asked you to follow up on ${names}${more}.`,
+        "/leads",
       );
       done += held.length;
     }
@@ -2360,7 +2616,7 @@ export async function bulkChaseLeadOwners(input: {
  */
 export async function acceptVisit(input: { visitId: string }): Promise<Result> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess(SALES_MANAGER("sales.journeys"));
 
     const [visit] = await db
       .select({
@@ -2372,6 +2628,12 @@ export async function acceptVisit(input: { visitId: string }): Promise<Result> {
       .where(eq(mbosVisits.id, input.visitId))
       .limit(1);
     if (!visit) return err("That visit is no longer here.", "not_found");
+    /* Standing behind a visit is a verdict on somebody's day, so it is never
+       one's own day and always one's own team's. */
+    if (visit.salesmanId === user.id) {
+      return err("That is your own visit. Somebody else has to accept it.", "not_permitted");
+    }
+    if (await salesmanOutsideScope(visit.salesmanId)) return err(NOT_YOUR_TEAM, "not_permitted");
     if (visit.verified) return ok(undefined, "Already verified.");
 
     await db
@@ -2427,12 +2689,13 @@ export async function decidePinCorrection(input: {
   accept: boolean;
 }): Promise<Result> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess(SALES_MANAGER("sales.journeys"));
 
     const [visit] = await db
       .select({
         id: mbosVisits.id,
         customerId: mbosVisits.customerId,
+        salesmanId: mbosVisits.salesmanId,
         pinCorrection: mbosVisits.pinCorrection,
         checkInLat: mbosVisits.checkInLat,
         checkInLng: mbosVisits.checkInLng,
@@ -2442,6 +2705,13 @@ export async function decidePinCorrection(input: {
       .where(eq(mbosVisits.id, input.visitId))
       .limit(1);
     if (!visit) return err("That visit is no longer here.", "not_found");
+    /* Accepting moves the shop's pin to where HE stood, and the radius then
+       stops refusing him there — so the man who asked is the one man who may
+       not answer. */
+    if (visit.salesmanId === user.id) {
+      return err("You asked for this pin to be moved. Somebody else has to decide it.", "not_permitted");
+    }
+    if (await salesmanOutsideScope(visit.salesmanId)) return err(NOT_YOUR_TEAM, "not_permitted");
     if (visit.pinCorrection !== "requested") {
       return err(
         visit.pinCorrection
@@ -2530,7 +2800,7 @@ export async function askAboutVisit(input: {
   question: string;
 }): Promise<Result> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess(SALES_MANAGER("sales.journeys"));
 
     const question = input.question.trim();
     if (!question) {
@@ -2543,6 +2813,7 @@ export async function askAboutVisit(input: {
       .where(eq(mbosVisits.id, input.visitId))
       .limit(1);
     if (!visit) return err("That visit is no longer here.", "not_found");
+    if (await salesmanOutsideScope(visit.salesmanId)) return err(NOT_YOUR_TEAM, "not_permitted");
 
     await db.insert(auditLog).values({
       id: gen("aud"),
@@ -2553,7 +2824,7 @@ export async function askAboutVisit(input: {
       afterState: { question } as never,
     });
 
-    await tell(visit.salesmanId, "A question about a visit", `${user.name} asked: ${question}`);
+    await tell(visit.salesmanId, "A question about a visit", `${user.name} asked: ${question}`, null);
 
     refresh();
     return okVoid("Asked. It reaches their handset on the next sync.");
@@ -2578,7 +2849,11 @@ export async function saveFieldSettings(
   entries: Array<{ key: string; value: unknown }>,
 ): Promise<Result<{ warnings: string[] }>> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess({ modules: ["sales.prefs"] });
+    /* The SAME capability the Admin Console's settings save asks for. These
+       keys change what every handset in the field does, and holding the app —
+       which used to be the whole check — is not a licence to reconfigure it. */
+    await requireCapability("config.write");
 
     const foreign = entries.filter((e) => !e.key.startsWith("mbos."));
     if (foreign.length) {
@@ -2649,6 +2924,31 @@ function clockOn(isoDate: string, minutes: number): Date {
  * ------------------------------------------------------------------------- */
 
 /**
+ * Stops the office replaced or cleared, said to the handset that holds them.
+ *
+ * A replan deletes the planned stops and writes new ones under new ids, and a
+ * pull only carries rows that EXIST — so without a tombstone each old stop sat
+ * on the phone beside its replacement for ever: the day's list doubled, shops
+ * somebody had taken off it stayed on it, and "x of N done" counted both.
+ */
+async function tombstoneStops(
+  tx: Pick<typeof db, "insert">,
+  stops: { id: string }[],
+  salesmanId: string,
+): Promise<void> {
+  if (!stops.length) return;
+  await tx.insert(mbosDeletions).values(
+    stops.map((s) => ({
+      id: gen("del"),
+      entity: "journey_stops",
+      entityId: s.id,
+      userId: salesmanId,
+      reason: "replanned",
+    })),
+  );
+}
+
+/**
  * The tombstone.
  *
  * `entity` is the HANDSET's own table name, because a pull row is a local row
@@ -2667,6 +2967,142 @@ async function tombstone(entity: string, entityId: string, reason: string, userI
 
 const MAX_TITLE = 160;
 
+/* ---------------------------------------------------------------------------
+ * WHO A DOCUMENT IS FOR, BY NAME.
+ *
+ * `visible_to_user_ids` is the people a document is tagged to; empty is
+ * everybody in the field. Tagging is a narrowing of the role list, never a way
+ * round it, and the people offered are exactly the people `fieldTeam` lists —
+ * holding the `field` app IS being in the field, because it is what MBOS
+ * sign-in checks.
+ * ------------------------------------------------------------------------- */
+
+/** Everybody who could hold a document on a handset — the field grant. */
+async function fieldUserIds(): Promise<string[]> {
+  const rows = await db
+    .select({ id: appAccess.userId })
+    .from(appAccess)
+    .where(eq(appAccess.app, "field"));
+  return [...new Set(rows.map((r) => r.id))];
+}
+
+/**
+ * The tagged list as it will be stored: de-duplicated, and every id somebody
+ * in the field. Asked of the database rather than trusted from the dialog,
+ * because a server action is a URL — and an id that names nobody on a handset
+ * would make a document that reaches nobody while reading as tagged.
+ */
+async function taggedPeople(ids: readonly string[] | undefined): Promise<Result<string[]>> {
+  const wanted = [...new Set((ids ?? []).map((i) => i.trim()).filter(Boolean))];
+  if (!wanted.length) return ok([]);
+  const field = new Set(await fieldUserIds());
+  const strangers = wanted.filter((i) => !field.has(i));
+  if (strangers.length) {
+    return err(
+      strangers.length === 1
+        ? "One of the people tagged is not in the field any more, so a handset could never show it to them. Open Tag employees again and save."
+        : `${strangers.length} of the people tagged are not in the field any more. Open Tag employees again and save.`,
+      "validation",
+      [{ field: "people", message: "Not in the field." }],
+    );
+  }
+  return ok(wanted);
+}
+
+/**
+ * What moving a document's tags does to the phones.
+ *
+ * A PULL SAYS WHAT EXISTS AND ONLY A TOMBSTONE SAYS WHAT STOPPED. Untagging a
+ * salesman removes the row from what his next pull sends — and leaves the copy
+ * he already has on his phone for ever, because nothing tells it to go. So
+ * everybody who could see it before and cannot now is written a tombstone of
+ * their own (`user_id` set, so nobody else's handset is touched).
+ *
+ * The other direction has a trap in it. The handset applies a pull's upserts
+ * BEFORE its tombstones, so somebody untagged and tagged back between two of
+ * his syncs would receive the row and then delete it in the same breath.
+ * Re-adding somebody therefore withdraws any tombstone still standing against
+ * them for this document, and the `updated_at` bump carries the row back to a
+ * handset that had already applied it.
+ *
+ * Returns who gained it, for the notification.
+ */
+async function applyTagChange(
+  documentId: string,
+  before: readonly string[],
+  after: readonly string[],
+): Promise<string[]> {
+  const field = before.length && after.length ? [] : await fieldUserIds();
+  const sawBefore = new Set(before.length ? before : field);
+  const seesAfter = new Set(after.length ? after : field);
+
+  const lost = [...sawBefore].filter((u) => !seesAfter.has(u));
+  const gained = [...seesAfter].filter((u) => !sawBefore.has(u));
+
+  if (lost.length) {
+    await db.insert(mbosDeletions).values(
+      lost.map((userId) => ({
+        id: gen("del"),
+        entity: "documents",
+        entityId: documentId,
+        userId,
+        reason: "untagged",
+      })),
+    );
+  }
+  if (gained.length) {
+    await db
+      .delete(mbosDeletions)
+      .where(
+        and(
+          eq(mbosDeletions.entity, "documents"),
+          eq(mbosDeletions.entityId, documentId),
+          inArray(mbosDeletions.userId, gained),
+        ),
+      );
+  }
+  return gained;
+}
+
+/**
+ * Telling the people a document was tagged TO that it is there.
+ *
+ * Only named people, and only a published document: "everybody in the field"
+ * is the ordinary case and a bell on every phone for every price list is a bell
+ * people learn to ignore. A tag is somebody deciding THIS person needs THIS
+ * file, which is worth saying. Never fails the write it follows.
+ */
+async function tellTagged(userIds: readonly string[], title: string) {
+  if (!userIds.length) return;
+  await notifyUsers(
+    userIds.map((userId) => ({
+      userId,
+      title: "A document was shared with you",
+      body: `${title} is in your Documents. It downloads on your next sync.`,
+      mbosHref: "/docs",
+    })),
+  ).catch(() => {});
+}
+
+function checkTitle(raw: string): Result<string> {
+  const title = raw.trim();
+  if (!title) {
+    return err("A document needs a title — it is what the handset lists it by.", "validation", [
+      { field: "title", message: "Required." },
+    ]);
+  }
+  if (title.length > MAX_TITLE) {
+    return err(`A title is at most ${MAX_TITLE} characters.`, "validation", [
+      { field: "title", message: "Too long." },
+    ]);
+  }
+  return ok(title);
+}
+
+function peopleSentence(n: number): string {
+  return n === 0 ? "every handset" : n === 1 ? "the one person tagged" : `the ${n} people tagged`;
+}
+
 export async function publishDocument(input: {
   title: string;
   category: DocumentCategory;
@@ -2674,21 +3110,15 @@ export async function publishDocument(input: {
   customerId?: string | null;
   /** Empty means everybody in the field, which is what the handset reads too. */
   visibleToRoles?: string[];
+  /** The people it is tagged to. Empty means everybody in the field. */
+  visibleToUserIds?: string[];
 }): Promise<Result<{ id: string }>> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess(SALES_MANAGER("sales.documents"));
 
-    const title = input.title.trim();
-    if (!title) {
-      return err("A document needs a title — it is what the handset lists it by.", "validation", [
-        { field: "title", message: "Required." },
-      ]);
-    }
-    if (title.length > MAX_TITLE) {
-      return err(`A title is at most ${MAX_TITLE} characters.`, "validation", [
-        { field: "title", message: "Too long." },
-      ]);
-    }
+    const titled = checkTitle(input.title);
+    if (!titled.ok) return titled;
+    const title = titled.data;
 
     /* A document with no file is a title, and a title is not something anybody
      * can open. Refused here rather than published empty, because the failure
@@ -2701,6 +3131,9 @@ export async function publishDocument(input: {
       );
     }
 
+    const people = await taggedPeople(input.visibleToUserIds);
+    if (!people.ok) return people;
+
     const documentId = gen("mdoc");
     await db.insert(mbosDocuments).values({
       id: documentId,
@@ -2709,6 +3142,7 @@ export async function publishDocument(input: {
       attachmentId: input.attachmentId,
       customerId: input.customerId ?? null,
       visibleToRoles: input.visibleToRoles ?? [],
+      visibleToUserIds: people.data,
       active: true,
       createdById: user.id,
       updatedById: user.id,
@@ -2732,13 +3166,192 @@ export async function publishDocument(input: {
       action: "mbos.document.publish",
       entityType: "mbos_document",
       entityId: documentId,
-      afterState: { title, category: input.category } as never,
+      afterState: { title, category: input.category, visibleToUserIds: people.data } as never,
     });
+
+    await tellTagged(people.data, title);
 
     refresh();
     return ok(
       { id: documentId },
-      `${title} published. Handsets pick it up on their next sync.`,
+      `${title} published to ${peopleSentence(people.data.length)}. Handsets pick it up on their next sync.`,
+    );
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * Who a document is tagged to — the whole list, every time.
+ *
+ * The WHOLE list rather than a difference, for the reason `plan_stops` is: a
+ * shorter list is how somebody is untagged, and a merge could never express
+ * that. Adding, removing and clearing are one act with one review.
+ */
+export async function setDocumentPeople(input: {
+  documentId: string;
+  /** Empty means everybody in the field. */
+  userIds: string[];
+}): Promise<Result> {
+  try {
+    const user = await requireSalesAccess(SALES_MANAGER("sales.documents"));
+
+    const [doc] = await db
+      .select({
+        id: mbosDocuments.id,
+        title: mbosDocuments.title,
+        active: mbosDocuments.active,
+        visibleToUserIds: mbosDocuments.visibleToUserIds,
+      })
+      .from(mbosDocuments)
+      .where(eq(mbosDocuments.id, input.documentId));
+    if (!doc) return err("That document is not here any more.", "not_found");
+
+    const people = await taggedPeople(input.userIds);
+    if (!people.ok) return people;
+
+    const before = doc.visibleToUserIds ?? [];
+    const same =
+      before.length === people.data.length && before.every((u) => people.data.includes(u));
+    if (same) return okVoid("Nothing changed — the same people are tagged.");
+
+    await db
+      .update(mbosDocuments)
+      .set({ visibleToUserIds: people.data, updatedById: user.id, updatedAt: new Date() })
+      .where(eq(mbosDocuments.id, input.documentId));
+
+    /* A withdrawn document is on nobody's phone, so moving its tags moves
+     * nothing there; the list is kept for the day it is published again. */
+    const gained = doc.active ? await applyTagChange(doc.id, before, people.data) : [];
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: "mbos.document.tag",
+      entityType: "mbos_document",
+      entityId: doc.id,
+      beforeState: { visibleToUserIds: before } as never,
+      afterState: { visibleToUserIds: people.data } as never,
+    });
+
+    if (people.data.length) await tellTagged(gained, doc.title);
+
+    refresh();
+    return okVoid(
+      people.data.length
+        ? `${doc.title} is now for ${peopleSentence(people.data.length)}.${doc.active ? " Their handsets update on the next sync." : ""}`
+        : `${doc.title} is now for everybody in the field.`,
+    );
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * The title, the kind, and the file behind it.
+ *
+ * REPLACING THE FILE KEEPS THE DOCUMENT. A price list revised in September is
+ * the same entry the field already knows, with the same people tagged to it;
+ * withdrawing and publishing a second one would leave two rows on every handset
+ * for a day and lose the tags. The old file is marked removed — a status, not a
+ * delete, so the retention window still decides when its bytes go — and the
+ * handset fetches the new one because its stored copy is named after the file
+ * it came from (`heldFile`), not after the document.
+ */
+export async function updateDocument(input: {
+  documentId: string;
+  title: string;
+  category: DocumentCategory;
+  /** A newly uploaded file to put behind it. Absent or the same id keeps the file. */
+  attachmentId?: string | null;
+}): Promise<Result> {
+  try {
+    const user = await requireSalesAccess(SALES_MANAGER("sales.documents"));
+
+    const titled = checkTitle(input.title);
+    if (!titled.ok) return titled;
+    const title = titled.data;
+
+    const [doc] = await db
+      .select({
+        id: mbosDocuments.id,
+        title: mbosDocuments.title,
+        category: mbosDocuments.category,
+        attachmentId: mbosDocuments.attachmentId,
+      })
+      .from(mbosDocuments)
+      .where(eq(mbosDocuments.id, input.documentId));
+    if (!doc) return err("That document is not here any more.", "not_found");
+
+    const replacing = !!input.attachmentId && input.attachmentId !== doc.attachmentId;
+    if (!replacing && title === doc.title && input.category === doc.category) {
+      return okVoid("Nothing changed.");
+    }
+
+    if (replacing) {
+      const [file] = await db
+        .select({ id: attachments.id, parentId: attachments.parentId, status: attachments.status })
+        .from(attachments)
+        .where(eq(attachments.id, input.attachmentId!));
+      if (!file || file.parentId || file.status !== "available") {
+        return err(
+          "That file is not available to attach any more. Choose it again.",
+          "conflict",
+          [{ field: "file", message: "Choose it again." }],
+        );
+      }
+    }
+
+    await db.transaction(async (tx) => {
+      if (replacing) {
+        if (doc.attachmentId) {
+          await tx
+            .update(attachments)
+            .set({
+              status: "removed",
+              parentType: null,
+              parentId: null,
+              removedAt: new Date(),
+              updatedAt: new Date(),
+            })
+            .where(eq(attachments.id, doc.attachmentId));
+        }
+        await tx
+          .update(attachments)
+          .set({ parentType: "mbos_document", parentId: doc.id, updatedAt: new Date() })
+          .where(and(eq(attachments.id, input.attachmentId!), isNull(attachments.parentId)));
+      }
+      await tx
+        .update(mbosDocuments)
+        .set({
+          title,
+          category: input.category,
+          ...(replacing ? { attachmentId: input.attachmentId! } : {}),
+          updatedById: user.id,
+          updatedAt: new Date(),
+        })
+        .where(eq(mbosDocuments.id, doc.id));
+    });
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: "mbos.document.edit",
+      entityType: "mbos_document",
+      entityId: doc.id,
+      beforeState: { title: doc.title, category: doc.category, attachmentId: doc.attachmentId } as never,
+      afterState: {
+        title,
+        category: input.category,
+        attachmentId: replacing ? input.attachmentId : doc.attachmentId,
+      } as never,
+    });
+
+    refresh();
+    return okVoid(
+      replacing
+        ? `${title} saved with its new file. Handsets fetch it on their next sync.`
+        : `${title} saved.`,
     );
   } catch (e) {
     return fromThrown(e);
@@ -2749,14 +3362,16 @@ export async function publishDocument(input: {
  * Take it back, or put it back.
  *
  * Withdrawing writes the tombstone; republishing does not need one, because the
- * ordinary pull carries a row that exists.
+ * ordinary pull carries a row that exists. It DOES have to lift the withdrawal's
+ * tombstone: a handset applies upserts before tombstones, so one that slept
+ * through both would receive the row and delete it in the same pull.
  */
 export async function setDocumentPublished(input: {
   documentId: string;
   published: boolean;
 }): Promise<Result> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess(SALES_MANAGER("sales.documents"));
 
     const [doc] = await db
       .select({ id: mbosDocuments.id, title: mbosDocuments.title, active: mbosDocuments.active })
@@ -2774,6 +3389,16 @@ export async function setDocumentPublished(input: {
 
     if (!input.published) {
       await tombstone("documents", input.documentId, "withdrawn");
+    } else {
+      await db
+        .delete(mbosDeletions)
+        .where(
+          and(
+            eq(mbosDeletions.entity, "documents"),
+            eq(mbosDeletions.entityId, input.documentId),
+            eq(mbosDeletions.reason, "withdrawn"),
+          ),
+        );
     }
 
     await db.insert(auditLog).values({
@@ -2810,7 +3435,7 @@ export async function publishCourse(input: {
   dueDate?: string | null;
 }): Promise<Result<{ id: string }>> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess(SALES_MANAGER("sales.knowledge"));
 
     const title = input.title.trim();
     if (!title) {
@@ -2885,7 +3510,7 @@ export async function setCoursePublished(input: {
   published: boolean;
 }): Promise<Result> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess(SALES_MANAGER("sales.knowledge"));
 
     const [course] = await db
       .select({ id: mbosCourses.id, title: mbosCourses.title, active: mbosCourses.active })
@@ -2929,60 +3554,7 @@ export async function setCoursePublished(input: {
   }
 }
 
-/**
- * Store one file, unparented, and hand back its id.
- *
- * §4 — an attachment is created before its parent exists, so the publish form
- * uploads as soon as the file is chosen and binds when it saves. An abandoned
- * form leaves an orphan, which the nightly sweep is for.
- */
-export async function uploadPublishFile(form: FormData): Promise<Result<{ id: string; filename: string }>> {
-  try {
-    await requireSales();
-    const file = form.get("file");
-    if (!(file instanceof File)) {
-      return err("No file arrived.", "validation");
-    }
-    const created = await createAttachment({
-      filename: file.name,
-      bytes: new Uint8Array(await file.arrayBuffer()),
-      declaredType: file.type,
-    });
-    if (!created.ok) return created;
-    return ok({ id: created.data.id, filename: file.name });
-  } catch (e) {
-    return fromThrown(e);
-  }
-}
-
 /* ═══════════════════════════════════════════════════════════ task allocation */
-
-/**
- * What a filter would match, before anybody commits to it.
- *
- * `fieldBook` is a plain read function, not a server action — this is the
- * thinnest possible wrapper, so the count a manager reviews here and the
- * count `bulkAssignTask` re-derives at save time come from the exact same
- * query and cannot drift.
- */
-export async function previewTaskTargets(filter: {
-  salesmanId?: string;
-  beat?: string;
-  missingGpsOnly?: boolean;
-  search?: string;
-}): Promise<Result<{ count: number; names: string[]; unassigned: number }>> {
-  try {
-    await requireSales();
-    const matches = await fieldBook(filter);
-    return ok({
-      count: matches.length,
-      names: matches.slice(0, 8).map((c) => c.name),
-      unassigned: matches.filter((c) => !c.salesmanId).length,
-    });
-  } catch (e) {
-    return fromThrown(e);
-  }
-}
 
 /**
  * Assigning a task, on the web, to somebody who reads it on a handset.
@@ -2990,8 +3562,8 @@ export async function previewTaskTargets(filter: {
  * `mbos_tasks` already existed — it is how a rejected order raises "ring back
  * about it" for the salesman who took it — but nothing let a MANAGER write one
  * for somebody else. This is that, and it is deliberately Sales Dashboard's
- * own action: `requireSales()`, the same as everything else in this file, not
- * a new capability. Reaching the handset needs `buildPull`'s own `tasks`
+ * own action: a Sales Dashboard MANAGER holding Tasks (`requireSalesAccess`),
+ * not a new capability. Reaching the handset needs `buildPull`'s own `tasks`
  * channel, added alongside this — a task minted here and never pulled would
  * be a manager's word that never left the office.
  */
@@ -3022,7 +3594,8 @@ export async function createTask(input: {
   dueDate: string;
 }): Promise<Result<{ taskId: string }>> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess(SALES_MANAGER("sales.tasks"));
+    if (await salesmanOutsideScope(input.assignedToUserId)) return err(NOT_YOUR_TEAM, "not_permitted");
     const title = input.title.trim();
     const problem = validTask(title, input.dueDate, input.priority);
     if (problem) return err(problem, "validation");
@@ -3062,6 +3635,7 @@ export async function createTask(input: {
       input.assignedToUserId,
       "A task was assigned to you",
       `${user.name}: ${title} — due ${input.dueDate}`,
+      "/tasks",
     );
 
     refresh();
@@ -3071,207 +3645,435 @@ export async function createTask(input: {
   }
 }
 
+/* ---------------------------------------------------------- tasks with forms */
+
 /**
- * The same task, to whoever carries every shop a filter matches.
+ * ONE ASSIGNMENT, MANY ANSWERS.
  *
- * The pattern `assignSalesManager` already uses for moving accounts in bulk:
- * `expectedCount` is what was reviewed on screen, the filter is re-run here
- * rather than trusted from the client, and a mismatch is refused rather than
- * silently acting on a different set than the one somebody looked at.
- * `fieldBook` is the SAME read the review list itself would page through, so
- * the count cannot drift between the two.
+ * The office picks what to ask (a form of any fields, `lib/task-form.ts`),
+ * which shops it is about and who does it (`lib/task-audience.ts`), and this
+ * writes one `mbos_task_campaigns` row and one task per (salesman, shop) pair.
+ * The handset draws the form on each task; the answers come back on the task
+ * and are read side by side on `/sales/tasks/<campaign>`.
  *
- * One task per matching shop, addressed to whoever actually carries it — a
- * shop with nobody assigned is counted and skipped rather than silently
- * dropped or given to nobody.
+ * The preview and the save run the SAME expansion over the SAME reads, and the
+ * save refuses when the count has moved since it was reviewed — the shape the
+ * bulk tools elsewhere in this product already use, so nothing is written to a
+ * set nobody looked at.
+ *
+ * WHO MAY BE GIVEN WORK is the manager's active field team (`fieldTeam`, which
+ * is already narrowed by `managerScope`). A shop's carrier who holds no field
+ * app — a telecaller, the importer — would receive a task no screen of theirs
+ * can show, so that shop is counted as having nobody to do it.
  */
-export async function bulkAssignTask(input: {
-  filter: {
-    salesmanId?: string;
-    beat?: string;
-    missingGpsOnly?: boolean;
-    search?: string;
+
+const TASK_MODULE = "sales.tasks";
+
+function refreshCampaign(campaignId: string) {
+  try {
+    revalidatePath(`/sales/tasks/${campaignId}`);
+  } catch {
+    /* Outside a request — a job or a test — there is no cache to clear. */
+  }
+}
+
+const taskFieldSchema = z.object({
+  id: z.string().min(1).max(60),
+  type: z.enum(TASK_FIELD_TYPES),
+  label: z.string().max(300),
+  help: z.string().max(1000).optional(),
+  required: z.boolean().optional(),
+  options: z.array(z.string().max(200)).max(MAX_TASK_OPTIONS + 10).optional(),
+  min: z.number().finite().optional(),
+  max: z.number().finite().optional(),
+  unit: z.string().max(40).optional(),
+  showIf: z
+    .object({
+      field: z.string().min(1).max(60),
+      op: z.enum(["is", "is_not", "includes", "answered"]),
+      value: z.string().max(200).optional(),
+    })
+    .optional(),
+  link: z
+    .object({
+      target: z.enum(TASK_LINK_TARGET_KEYS as [TaskLinkTarget, ...TaskLinkTarget[]]),
+      mode: z.enum(["fill", "update"]),
+      scope: z.enum(["primary", "each"]).optional(),
+    })
+    .optional(),
+});
+
+const placesSchema = z.object({
+  state: z.string().max(4000).optional(),
+  district: z.string().max(4000).optional(),
+  city: z.string().max(4000).optional(),
+  area: z.string().max(4000).optional(),
+});
+
+const audienceSchema = z.object({
+  shops: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("none") }),
+    z.object({ kind: z.literal("list"), customerIds: z.array(z.string().min(1)).max(MAX_TASKS_PER_ASSIGNMENT) }),
+    z.object({
+      kind: z.literal("filter"),
+      places: placesSchema,
+      carriedBy: z.array(z.string().min(1)).max(500),
+      accountKinds: z.array(z.enum(["customer", "lead"])).max(2),
+      missingGpsOnly: z.boolean().optional(),
+      search: z.string().max(200).optional(),
+    }),
+  ]),
+  assignees: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("carrier") }),
+    z.object({ kind: z.literal("chosen"), salesmanIds: z.array(z.string().min(1)).max(500) }),
+  ]),
+});
+
+export type TaskAudiencePreview = {
+  tasks: number;
+  shops: number | null;
+  noCarrier: number;
+  outsideTeam: number;
+  tooMany: boolean;
+  /** Shops left out because their record already has everything asked. */
+  alreadyComplete: number;
+  salesmen: { id: string; name: string; count: number }[];
+  sample: string[];
+};
+
+/**
+ * The expansion both the preview and the save run. A task that only collects
+ * customer data (every question a linked FILL question) is not sent to a shop
+ * whose record already holds all of it — that visit would ask for nothing.
+ */
+async function resolveAudience(audience: TaskAudience, form: TaskField[] = []) {
+  const [allShops, team] = await Promise.all([shopsForTarget(audience.shops), fieldTeam()]);
+  const active = new Map(team.filter((s) => s.active).map((s) => [s.id, s.name]));
+  let shops = allShops;
+  let alreadyComplete = 0;
+  if (shops && shops.length && formHasLinks(form)) {
+    const contexts = await linkContexts(shops.map((c) => c.id));
+    const before = shops.length;
+    shops = shops.filter((c) => !linkedTaskComplete(form, contexts.get(c.id) ?? null));
+    alreadyComplete = before - shops.length;
+  }
+  const expanded = expandTaskAudience(
+    shops?.map((c) => ({ id: c.id, carrierId: c.carrierId })) ?? null,
+    audience.assignees,
+    (id) => active.has(id),
+  );
+  return { shops, active, alreadyComplete, ...expanded };
+}
+
+function previewOf(r: Awaited<ReturnType<typeof resolveAudience>>): TaskAudiencePreview {
+  const per = new Map<string, number>();
+  for (const p of r.pairs) per.set(p.salesmanId, (per.get(p.salesmanId) ?? 0) + 1);
+  return {
+    tasks: r.pairs.length,
+    shops: r.shops ? Math.min(r.shops.length, MAX_TASKS_PER_ASSIGNMENT) : null,
+    noCarrier: r.noCarrier,
+    outsideTeam: r.outsideTeam,
+    alreadyComplete: r.alreadyComplete,
+    tooMany: r.pairs.length > MAX_TASKS_PER_ASSIGNMENT || (r.shops?.length ?? 0) > MAX_TASKS_PER_ASSIGNMENT,
+    salesmen: [...per.entries()]
+      .map(([id, count]) => ({ id, name: r.active.get(id) ?? "Somebody", count }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)),
+    sample: (r.shops ?? []).slice(0, 6).map((c) => c.name),
   };
-  expectedCount: number;
+}
+
+/** Who and how many an audience means, before anything is written. */
+export async function previewTaskAudience(
+  input: TaskAudience,
+  formInput: TaskField[] = [],
+): Promise<Result<TaskAudiencePreview>> {
+  try {
+    await requireSalesAccess(SALES_MANAGER(TASK_MODULE));
+    const parsed = audienceSchema.safeParse(input);
+    if (!parsed.success) return err("That selection could not be read. Pick it again.", "validation");
+    const problem = taskAudienceProblem(parsed.data);
+    if (problem) return err(problem, "validation");
+    const formParsed = z.array(taskFieldSchema).max(MAX_TASK_FIELDS).safeParse(formInput ?? []);
+    const form = formParsed.success ? tidyTaskForm(formParsed.data as TaskField[]) : [];
+    return ok(previewOf(await resolveAudience(parsed.data, form)));
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** The shop picker's search. */
+export async function searchTaskShops(query: string): Promise<Result<AudienceShopRow[]>> {
+  try {
+    await requireSalesAccess(SALES_MANAGER(TASK_MODULE));
+    return ok(await searchShopsForTask(String(query ?? "").slice(0, 100)));
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** The four place dropdowns, re-counted as the picks above narrow them. */
+export async function loadTaskPlaceOptions(picks: PlaceFilterValues): Promise<Result<PlaceFilterOptions>> {
+  try {
+    await requireSalesAccess(SALES_MANAGER(TASK_MODULE));
+    const parsed = placesSchema.safeParse(picks ?? {});
+    return ok(await taskPlaceOptions(parsed.success ? parsed.data : {}));
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** Assign a task, with whatever it asks for, to everybody the audience means. */
+export async function assignTaskCampaign(input: {
   title: string;
   description?: string;
   priority?: TaskPriority;
   dueDate: string;
-}): Promise<Result<{ created: number; skipped: number }>> {
+  form: TaskField[];
+  audience: TaskAudience;
+  expectedCount: number;
+  /** The plain-words description the AI drafted the form from, if it did. */
+  aiBrief?: string;
+}): Promise<Result<{ campaignId: string; created: number }>> {
   try {
-    const user = await requireSales();
-    const title = input.title.trim();
+    const user = await requireSalesAccess(SALES_MANAGER(TASK_MODULE));
+    const title = String(input.title ?? "").trim();
     const problem = validTask(title, input.dueDate, input.priority);
     if (problem) return err(problem, "validation");
 
-    const matches = await fieldBook(input.filter);
-    if (matches.length !== input.expectedCount) {
+    const formParsed = z.array(taskFieldSchema).max(MAX_TASK_FIELDS).safeParse(input.form ?? []);
+    if (!formParsed.success) return err("The form could not be read. Check each question.", "validation");
+    const form = tidyTaskForm(formParsed.data as TaskField[]);
+    const formProblems = taskFormProblems(form);
+    if (formProblems.length) return err(formProblems[0], "validation");
+
+    const audParsed = audienceSchema.safeParse(input.audience);
+    if (!audParsed.success) return err("Who it goes to could not be read. Pick it again.", "validation");
+    const audience = audParsed.data;
+    const audProblem = taskAudienceProblem(audience);
+    if (audProblem) return err(audProblem, "validation");
+
+    const resolved = await resolveAudience(audience, form);
+    const preview = previewOf(resolved);
+    if (preview.tooMany) {
       return err(
-        `This would now create ${matches.length} tasks, not the ${input.expectedCount} you reviewed. Open the list again and check what changed.`,
+        `That is more than ${MAX_TASKS_PER_ASSIGNMENT.toLocaleString("en-IN")} tasks in one go. Narrow it by place or by salesman.`,
+        "validation",
+      );
+    }
+    if (preview.tasks !== input.expectedCount) {
+      return err(
+        `This would now create ${preview.tasks} tasks, not the ${input.expectedCount} you reviewed. Check who it goes to again.`,
         "conflict",
       );
     }
-    if (!matches.length) {
-      return err("Nothing matches this filter.", "validation");
-    }
+    if (!preview.tasks) return err("Nobody would receive this task.", "validation");
 
-    let created = 0;
-    let skipped = 0;
-    const byAssignee = new Map<string, number>();
-    for (const c of matches) {
-      if (!c.salesmanId) {
-        skipped += 1;
-        continue;
-      }
-      await db.insert(mbosTasks).values({
-        id: gen("mbos_task"),
-        title,
-        description: input.description?.trim() || null,
-        assignedToUserId: c.salesmanId,
-        assignedByUserId: user.id,
-        priority: input.priority ?? "medium",
-        dueDate: input.dueDate,
-        customerId: c.id,
-        status: "open",
-        createdById: user.id,
-        updatedById: user.id,
-      });
-      created += 1;
-      byAssignee.set(c.salesmanId, (byAssignee.get(c.salesmanId) ?? 0) + 1);
-    }
-
-    await db.insert(auditLog).values({
-      id: gen("aud"),
-      actorId: user.id,
-      action: "mbos.task.bulkCreated",
-      entityType: "mbos_task",
-      entityId: null,
-      beforeState: null as never,
-      afterState: { title, dueDate: input.dueDate, created, skipped, filter: input.filter } as never,
+    const placeIds =
+      audience.shops.kind === "filter"
+        ? Object.values(audience.shops.places).flatMap((v) => (v ?? "").split(",")).filter(Boolean)
+        : [];
+    const places = await placeNames(placeIds);
+    const audienceSentence = taskAudienceSentence(audience, {
+      salesman: (id) => resolved.active.get(id) ?? "somebody",
+      place: (id) => places.get(id) ?? "a place",
     });
 
-    for (const [assigneeId, count] of byAssignee) {
+    const campaignId = gen("mbos_taskc");
+    const description = input.description?.trim() || null;
+    const priority = input.priority ?? "medium";
+    await db.transaction(async (tx) => {
+      await tx.insert(mbosTaskCampaigns).values({
+        id: campaignId,
+        title,
+        description,
+        form,
+        audience,
+        audienceSentence,
+        priority,
+        dueDate: input.dueDate,
+        taskCount: preview.tasks,
+        skippedComplete: preview.alreadyComplete,
+        aiBrief: input.aiBrief?.trim().slice(0, 4000) || null,
+        createdById: user.id,
+      });
+      for (let i = 0; i < resolved.pairs.length; i += 500) {
+        await tx.insert(mbosTasks).values(
+          resolved.pairs.slice(i, i + 500).map((p) => ({
+            id: gen("mbos_task"),
+            title,
+            description,
+            assignedToUserId: p.salesmanId,
+            assignedByUserId: user.id,
+            priority,
+            dueDate: input.dueDate,
+            customerId: p.customerId,
+            status: "open" as const,
+            campaignId,
+            sourceType: "campaign",
+            sourceId: campaignId,
+            createdById: user.id,
+            updatedById: user.id,
+          })),
+        );
+      }
+      await tx.insert(auditLog).values({
+        id: gen("aud"),
+        actorId: user.id,
+        action: "mbos.task.campaignCreated",
+        entityType: "mbos_task_campaign",
+        entityId: campaignId,
+        beforeState: null as never,
+        afterState: {
+          title,
+          dueDate: input.dueDate,
+          questions: form.length,
+          tasks: preview.tasks,
+          audience: audienceSentence,
+        } as never,
+      });
+    });
+
+    const asks = form.filter((f) => f.type !== "info").length;
+    for (const s of preview.salesmen) {
       await tell(
-        assigneeId,
-        count === 1 ? "A task was assigned to you" : `${count} tasks were assigned to you`,
-        `${user.name}: "${title}" — due ${input.dueDate}`,
+        s.id,
+        s.count === 1 ? "A task was assigned to you" : `${s.count} tasks were assigned to you`,
+        `${user.name}: "${title}"${asks ? ` — ${plural(asks, "question")} to answer` : ""} — due ${input.dueDate}`,
+        "/tasks",
       );
     }
 
     refresh();
+    refreshCampaign(campaignId);
+    const skipped = preview.noCarrier + preview.outsideTeam;
     return ok(
-      { created, skipped },
-      skipped
-        ? `${plural(created, "task")} created. ${skipped} ${skipped === 1 ? "shop has" : "shops have"} nobody to assign to and ${skipped === 1 ? "was" : "were"} skipped.`
-        : `${plural(created, "task")} created.`,
+      { campaignId, created: preview.tasks },
+      `${plural(preview.tasks, "task")} assigned to ${plural(preview.salesmen.length, "salesman", "salesmen")}.` +
+        (skipped ? ` ${plural(skipped, "shop")} had nobody in your field team to do it and ${skipped === 1 ? "was" : "were"} skipped.` : "") +
+        (preview.alreadyComplete ? ` ${plural(preview.alreadyComplete, "shop")} already had everything on the customer record and ${preview.alreadyComplete === 1 ? "was" : "were"} left out.` : ""),
     );
   } catch (e) {
     return fromThrown(e);
   }
 }
 
-/* --------------------------------------------------- leave, for one person */
+/* ---------------------------------------------------------- the task brain */
+
+/** Draft a whole task — questions, links and targeting — from a description. */
+export async function aiDraftTask(brief: string): Promise<Result<TaskDraft>> {
+  try {
+    await requireSalesAccess(SALES_MANAGER(TASK_MODULE));
+    const text = String(brief ?? "").trim();
+    if (text.length < 8) return err("Say a little more about what you need from the field.", "validation");
+    const draft = await draftTask(text);
+    if (!draft) return err("The AI could not draft this just now. Build it by hand, or try again.", "rule_violation");
+    return ok(draft);
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** Which questions are really the customer record's own fields. */
+export async function aiSuggestLinks(
+  formInput: TaskField[],
+  title: string,
+): Promise<Result<{ suggestions: LinkSuggestion[]; usedAi: boolean }>> {
+  try {
+    await requireSalesAccess(SALES_MANAGER(TASK_MODULE));
+    const parsed = z.array(taskFieldSchema).max(MAX_TASK_FIELDS).safeParse(formInput ?? []);
+    if (!parsed.success) return err("The form could not be read.", "validation");
+    return ok(await suggestLinks(tidyTaskForm(parsed.data as TaskField[]), String(title ?? "").slice(0, 200)));
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** Read everything the field answered, and keep the reading on the assignment. */
+export async function aiSummariseCampaign(campaignId: string): Promise<Result<TaskSummary>> {
+  try {
+    await requireSalesAccess(SALES_MANAGER(TASK_MODULE));
+    const c = await taskCampaign(campaignId, await today());
+    if (!c) return err("That assignment is not one of your team's.", "not_found");
+    if (!c.tasks.some((t) => t.status === "done")) return err("Nothing has been answered yet.", "validation");
+    const summary = await summariseCampaign(c);
+    if (!summary) return err("The AI could not read the answers just now. Try again in a minute.", "rule_violation");
+    await db
+      .update(mbosTaskCampaigns)
+      .set({ aiSummary: JSON.stringify(summary), aiSummaryAt: new Date() })
+      .where(eq(mbosTaskCampaigns.id, campaignId));
+    refreshCampaign(campaignId);
+    return ok(summary);
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
 
 /**
- * Give somebody terms of their own, or put them back on everybody's.
- *
- * `mbos.leave.annualEntitlementDays` is what a person gets unless a row in
- * `mbos_leave_balances` says otherwise. That override already worked and there
- * was NO WAY TO WRITE ONE — nothing in MahekOne created such a row, so it was
- * a mechanism with no door, and a salesman hired on different terms could not
- * be given them from any screen.
- *
- * NULL CLEARS rather than sets zero, and the two are genuinely different: a
- * cleared kind falls back to the company figure, and a stored zero is somebody
- * deciding this person gets none — which is a real answer for a probationer.
- * Clearing DELETES the row rather than storing a sentinel, because the engine
- * reads a present row as an override and the absence of one as "use the
- * default"; a row meaning "no override" would be a third state nothing reads.
- *
- * `used_days` is never touched. What somebody has taken is counted from their
- * approved requests, and a column that could be edited here would let days be
- * handed back by typing over the record of them being taken.
+ * Withdraw what is still open. Answered tasks keep their answers — a reply
+ * somebody gave is a fact about the shop whatever happens to the question.
  */
-export async function setLeaveEntitlement(input: {
-  userId: string;
-  year: number;
-  /** Kind to days, or null to fall back to the company figure. */
-  days: Record<string, number | null>;
-}): Promise<Result> {
+export async function closeTaskCampaign(campaignId: string): Promise<Result<{ cancelled: number }>> {
   try {
-    const me = await requireSales();
-
-    const [person] = await db
-      .select({ id: users.id, name: users.name })
-      .from(users)
-      .where(eq(users.id, input.userId))
-      .limit(1);
-    if (!person) return err("That account no longer exists.", "not_found");
-
-    if (!Number.isInteger(input.year) || input.year < 2000 || input.year > 2100) {
-      return err("That is not a year.", "validation");
-    }
-
-    for (const [kind, value] of Object.entries(input.days)) {
-      if (value === null) continue;
-      if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
-        return err(`${kind} has to be a number of days, and not a negative one.`, "validation");
-      }
-      /* Half days, because leave is taken in them — and nothing finer, because
-         a quarter day is not a thing anybody applies for and would print as a
-         balance nobody could act on. */
-      if (value * 2 !== Math.round(value * 2)) {
-        return err(`${kind} has to be a whole number of days or a half.`, "validation");
-      }
-      if (value > 365) return err(`${kind} cannot be more than a year.`, "validation");
-    }
-
-    await db.transaction(async (tx) => {
-      for (const [kind, value] of Object.entries(input.days)) {
-        /* Loss of pay is what leave BECOMES when a balance runs out. There is
-           no balance of unpaid days to hold, so there is nothing to override. */
-        if (kind === "loss_of_pay") continue;
-
-        if (value === null) {
-          await tx.execute(sql`
-            delete from mbos_leave_balances
-             where user_id = ${person.id} and year = ${input.year}
-               and leave_type = ${kind}::mbos_leave_type
-          `);
-          continue;
-        }
-
-        await tx.execute(sql`
-          insert into mbos_leave_balances
-            (id, user_id, year, leave_type, entitled_days, used_days,
-             created_at, updated_at, created_by_id, updated_by_id)
-          values (${gen("mbos_lbal")}, ${person.id}, ${input.year},
-                  ${kind}::mbos_leave_type, ${value}, 0, now(), now(), ${me.id}, ${me.id})
-          on conflict (user_id, year, leave_type) do update
-            set entitled_days = excluded.entitled_days,
-                updated_at = now(),
-                updated_by_id = ${me.id}
-        `);
-      }
-    });
-
+    const user = await requireSalesAccess(SALES_MANAGER(TASK_MODULE));
+    const scope = await managerScope();
+    const rows = (await db.execute<{ id: string }>(sql`
+      update mbos_tasks t
+         set status = 'cancelled', updated_at = now(), updated_by_id = ${user.id}
+       where t.campaign_id = ${campaignId}
+         and t.status in ('open', 'in_progress')
+         ${onlyMine(scope, "t.assigned_to_user_id")}
+      returning t.id
+    `)) as unknown as { id: string }[];
+    await db
+      .update(mbosTaskCampaigns)
+      .set({ closedAt: new Date(), updatedAt: new Date() })
+      .where(eq(mbosTaskCampaigns.id, campaignId));
     await db.insert(auditLog).values({
       id: gen("aud"),
-      actorId: me.id,
-      action: "leave.entitlement.set",
-      entityType: "user",
-      entityId: person.id,
-      afterState: { year: input.year, days: input.days } as never,
+      actorId: user.id,
+      action: "mbos.task.campaignClosed",
+      entityType: "mbos_task_campaign",
+      entityId: campaignId,
+      beforeState: null as never,
+      afterState: { cancelled: rows.length } as never,
     });
-
     refresh();
-    revalidatePath("/sales/leave");
-    return ok(
-      undefined,
-      `${person.name}'s leave for ${input.year} is set. It reaches their handset on the next sync.`,
-    );
+    refreshCampaign(campaignId);
+    return ok({ cancelled: rows.length }, rows.length ? `${plural(rows.length, "open task")} withdrawn.` : "Nothing was still open.");
   } catch (e) {
-    return err(e instanceof Error ? e.message : "That did not work.", "not_permitted");
+    return fromThrown(e);
+  }
+}
+
+/** Nudge everybody who still owes an answer — one bell each, not one a task. */
+export async function remindTaskCampaign(campaignId: string): Promise<Result<{ reminded: number }>> {
+  try {
+    const user = await requireSalesAccess(SALES_MANAGER(TASK_MODULE));
+    const scope = await managerScope();
+    const [head] = await db
+      .select({ title: mbosTaskCampaigns.title })
+      .from(mbosTaskCampaigns)
+      .where(eq(mbosTaskCampaigns.id, campaignId));
+    if (!head) return err("That assignment no longer exists.", "not_found");
+    const rows = (await db.execute<{ userId: string; open: number }>(sql`
+      select t.assigned_to_user_id as "userId", count(*)::int as open
+        from mbos_tasks t
+       where t.campaign_id = ${campaignId}
+         and t.status in ('open', 'in_progress')
+         ${onlyMine(scope, "t.assigned_to_user_id")}
+       group by t.assigned_to_user_id
+    `)) as unknown as { userId: string; open: number }[];
+    for (const r of rows) {
+      await tell(
+        r.userId,
+        "Reminder: a task is waiting on you",
+        `${user.name}: "${head.title}" — ${plural(Number(r.open), "task")} still open`,
+        "/tasks",
+      );
+    }
+    return ok({ reminded: rows.length }, rows.length ? `Reminded ${plural(rows.length, "salesman", "salesmen")}.` : "Nobody owes an answer.");
+  } catch (e) {
+    return fromThrown(e);
   }
 }
 
@@ -3346,7 +4148,7 @@ export async function reviewDayEvidence(input: {
   correctedKm?: number | null;
 }): Promise<Result> {
   try {
-    const user = await requireSales();
+    const user = await requireSalesAccess({ modules: [], manager: true });
 
     const ref = parseEvidenceRef(String(input.ref ?? ""));
     if (!ref) return err("That is not a photograph this screen knows about.", "validation");
@@ -3442,8 +4244,21 @@ export async function reviewDayEvidence(input: {
     /* The SAME narrowing every list on this dashboard runs. A manager may
        answer for his own patch and nobody else's, checked here rather than
        inferred from the fact that the screen drew the row. */
-    const scope = await managerScope();
-    if (scope.salesmanIds !== null && !scope.salesmanIds.includes(ownerId)) {
+    /* The screen this photograph is shown on: a selfie on Attendance, a meter
+       on the Travel ledger or the Expenses desk that prices it. */
+    await requireSalesAccess({
+      modules: ref.kind === "attendance_selfie" ? ["sales.attendance"] : ["sales.travel", "sales.expenses"],
+      manager: true,
+    });
+
+    /* A verdict on one's own day is no verdict. */
+    if (ownerId === user.id) {
+      return err("That is your own day. Somebody else has to review it.", "not_permitted");
+    }
+
+    /* `scopeCovers` and not `salesmanIds === null`: the CRM Sales Manager
+       seat leaves that null meaning "no list of people", never "everybody". */
+    if (!scopeCovers(await managerScope(), ownerId)) {
       return err("That salesman is not in your team.", "not_permitted");
     }
 

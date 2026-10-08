@@ -163,7 +163,7 @@ describe("Call 1 → Call 2 → Call 3 continuity, through the unmodified save p
     const call1 = await logQualificationCall({
       customerId: lead.id,
       outcome: "spoke_collected",
-      answers: { monthlyLitres: 400, requiredProductId: productId, competitor: "Asian Paints" },
+      answers: { monthlyLitres: 400, competitor: "Asian Paints" },
     });
     assert.equal(call1.ok, true, call1.ok ? "" : call1.error);
     assert.equal(call1.ok && call1.data.result, "next");
@@ -176,25 +176,24 @@ describe("Call 1 → Call 2 → Call 3 continuity, through the unmodified save p
       customerType: afterCall1.customerType,
       decisionMaker: afterCall1.leadDecisionMaker,
       monthlyLitres: afterCall1.leadMonthlyVolumeLitres,
-      potentialPaise: afterCall1.leadEstimatedPotentialPaise,
       requiredProductId: afterCall1.leadRequiredProductId,
       competitor: afterCall1.leadCompetitor,
       application: afterCall1.leadApplication,
     };
     const askNow2 = questionsForCall(valuesAfterCall1, 2).askNow.map((f) => f.key);
     assert.ok(!askNow2.includes("monthlyLitres"), "Call 1's answer is never re-asked on Call 2");
-    assert.ok(!askNow2.includes("requiredProductId"));
     assert.ok(!askNow2.includes("competitor"));
+    assert.ok(askNow2.includes("requiredProductId"), "Product was left blank on Call 1 and is still worth asking");
     assert.ok(askNow2.includes("decisionMaker"), "Call 2's own question is still owed");
-    assert.ok(askNow2.includes("potentialPaise"));
+    assert.ok(!askNow2.includes("potentialPaise" as never), "the rupee estimate is no longer a question");
 
     const call2 = await logQualificationCall({
       customerId: lead.id,
       outcome: "spoke_collected",
-      answers: { decisionMaker: "Suresh, the owner", potentialPaise: 6_000_000 },
+      answers: { decisionMaker: "Suresh, the owner", requiredProductId: productId },
     });
     assert.equal(call2.ok, true, call2.ok ? "" : call2.error);
-    assert.equal(call2.ok && call2.data.result, "ready", "all five required answers are in after Call 2");
+    assert.equal(call2.ok && call2.data.result, "ready", "everything a Prospect needs is in after Call 2");
 
     /* CALL 3 is never owed here — `questionsForCall` on the final values has
        nothing required left, which is the same engine Call 3's own voice
@@ -202,7 +201,7 @@ describe("Call 1 → Call 2 → Call 3 continuity, through the unmodified save p
        needed. */
     const afterCall2 = await stageOf(lead.id);
     assert.equal(afterCall2.leadDecisionMaker, "Suresh, the owner");
-    assert.equal(afterCall2.leadEstimatedPotentialPaise, 6_000_000);
+    assert.equal(afterCall2.leadEstimatedPotentialPaise, null, "no rupee estimate is asked or invented");
   });
 
   test("Call 3 forces every still-missing required field regardless of its own suggestCall", async () => {
@@ -225,9 +224,9 @@ describe("Call 1 → Call 2 → Call 3 continuity, through the unmodified save p
       competitor: row.leadCompetitor,
     };
     const askNow3 = questionsForCall(values, 3).askNow.map((f) => f.key);
-    /* `requiredProductId` and `decisionMaker` are required and still missing,
-       and suggestCall 1 and 2 respectively — Call 3 asks for them anyway,
-       because it is the last chance. This is exactly the set a Call 3 voice
+    /* `requiredProductId` (needed for a Prospect) and `decisionMaker` (optional,
+       asked if known) are still missing, and suggestCall 1 and 2 respectively —
+       Call 3 asks for them anyway, because it is the last chance. This is exactly the set a Call 3 voice
        assistant must be built from, read live rather than hand-written. */
     assert.ok(askNow3.includes("requiredProductId"));
     assert.ok(askNow3.includes("decisionMaker"));

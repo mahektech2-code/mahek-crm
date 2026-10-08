@@ -1,7 +1,24 @@
 /* ---------------------------------------------------------------------------
- * The HRMS's screens, grouped the way its sidebar draws them (the design's
- * MODS). ONE LIST for three readers: the sidebar, the module guard (via
- * `lib/modules.ts`) and the Access screen. Module key = `hrms.<key>`.
+ * The HRMS's screens, grouped the way its sidebar draws them. ONE LIST for
+ * three readers: the sidebar, the module guard (via `lib/modules.ts`) and the
+ * Access screen. Module key = `hrms.<key>`.
+ *
+ * A SCREEN IS A JOB, AND ITS LISTS ARE TABS. The first build copied Mahek EMP
+ * 2.0 one AppSheet view at a time, so one table drawn three ways — leave
+ * requests, the approvals queue and the leave calendar — was three sidebar
+ * entries, three modules and three grants, with the same five actions on each.
+ * It had 41 screens. A tab is that list again, reached from its screen rather
+ * than the sidebar: it keeps its own server module (its rows, its actions,
+ * its forms) under its own key, and it is opened by holding the SCREEN. It is
+ * never a module of its own, so it can never be granted apart from it — the
+ * same rule the ERP's tabs follow (`lib/erp/registry.ts`).
+ *
+ * The keys did not change. Every tab is drawn by the module that drew the old
+ * screen, so every action, notification link and stored landing that names
+ * `approvals` or `pendingOut` still resolves — `hrmsPlace` turns a key into
+ * the screen and tab it now lives on. `feature-ledger.ts` records where every
+ * one of the old screens' actions went, and its test fails the build if one
+ * goes missing.
  *
  * Every function has ONE screen (PRD §3.2): what a person sees on it is their
  * scope, never a second copy of the screen.
@@ -13,8 +30,20 @@ export type HrmsIcon =
   | "clock" | "check" | "cal" | "file" | "wallet" | "receipt" | "list" | "chart"
   | "phone" | "people" | "building" | "box" | "help" | "doc" | "bell" | "gear";
 
-/** How a screen is drawn: the generic list, or one of the design's other views above it. */
+/** How a list is drawn: the generic list, or one of the design's other views above it. */
 export type HrmsView = "list" | "home" | "calendar" | "chart" | "perf" | "custom";
+
+/** A TAB of a screen: a list of its own, opened by holding the screen. */
+export type HrmsTab = {
+  /** The server module key that draws this tab. Never renamed — links and stored landings name it. */
+  key: string;
+  label: string;
+  /** The sentence under the title while this tab is open. */
+  sub: string;
+  view: HrmsView;
+  /** A tab behind a setting that is off in the source (Overtime). */
+  flag?: "ot";
+};
 
 export type HrmsScreen = {
   /** Stable key; the module key is `hrms.<key>`. Never renamed — it is a grant. */
@@ -22,150 +51,184 @@ export type HrmsScreen = {
   /** URL segment under /hrms. Home is the app root. */
   slug: string;
   label: string;
+  icon: HrmsIcon;
+  /** The sentence under the title, for a screen with no tabs. */
   sub: string;
   view: HrmsView;
-  /** A screen behind a setting that is off in the source (Overtime). */
-  flag?: "ot";
   /** Drawn on phones in the bottom bar. */
   bottom?: boolean;
+  /** The sidebar's word, where the title does not fit beside a badge. */
+  nav?: string;
+  /** The bottom bar's word: a phone gives each item a fifth of its width. */
+  short?: string;
+  /** Tabs, the first being what the screen opens on. Absent: the screen is one list, its own key. */
+  views?: HrmsTab[];
 };
 
 export type HrmsGroup = { id: string; label: string; icon: HrmsIcon; screens: HrmsScreen[] };
 
-const s = (key: string, slug: string, label: string, sub: string, view: HrmsView = "list", extra: Partial<HrmsScreen> = {}): HrmsScreen => ({
+const s = (key: string, slug: string, label: string, icon: HrmsIcon, sub: string, extra: Partial<HrmsScreen> = {}): HrmsScreen => ({
   key,
   slug,
   label,
+  icon,
   sub,
-  view,
+  view: "list",
   ...extra,
 });
 
+const t = (key: string, label: string, sub: string, view: HrmsView = "list", extra: Partial<HrmsTab> = {}): HrmsTab => ({ key, label, sub, view, ...extra });
+
 export const HRMS_GROUPS: HrmsGroup[] = [
-  { id: "home", label: "Check in", icon: "clock", screens: [s("home", "", "Check in", "", "home", { bottom: true })] },
+  { id: "home", label: "Check in", icon: "clock", screens: [s("home", "", "Check in", "clock", "", { view: "home", bottom: true })] },
   {
-    id: "att",
-    label: "Attendance",
+    id: "day",
+    label: "My work",
     icon: "check",
     screens: [
-      s("attendance", "attendance", "Attendance", "Every check-in and check-out, newest first. Heads see their team, HR and admin see everyone."),
-      s("pendingOut", "pending-check-outs", "Pending check-outs", "Days with a check-in and no check-out. A pending check-out blocks that month’s salary."),
-      s("absentees", "absentees", "Absentees", "Active employees with no attendance, not on a holiday tagged to them and not on leave."),
-      s("attChart", "attendance-chart", "Attendance chart", "People present per day with a trend. Tap a row to open that person’s days.", "chart"),
-    ],
-  },
-  {
-    id: "leave",
-    label: "Leave & Holidays",
-    icon: "cal",
-    screens: [
-      s("leave", "leave", "Leave requests", "Every leave and half-day request. You see yours; HR and admin see everyone’s.", "list", { bottom: true }),
-      s("approvals", "leave-approvals", "Leave approvals", "Requests waiting for a decision, grouped by employee. Approving sets how many days are paid."),
-      s("leaveCal", "leave-calendar", "Leave calendar", "One bar per request. Approved in green, waiting in amber.", "calendar"),
-      s("leaveSetup", "leave-setup", "Leave setup", "Monthly paid-leave credits, created automatically on the 1st of each month."),
-      s("holidays", "holidays", "Holidays", "Weekly offs, festivals, national and weather closures, and who they apply to."),
-    ],
-  },
-  { id: "ot", label: "Overtime", icon: "clock", screens: [s("overtime", "overtime", "Overtime", "One record per employee per date, above the shortest overtime.", "list", { flag: "ot" })] },
-  { id: "monthly", label: "Monthly reports", icon: "file", screens: [s("monthly", "monthly-reports", "Monthly reports", "Per employee per month. Missing dates must be cleared before that month’s salary.")] },
-  {
-    id: "pay",
-    label: "Payroll",
-    icon: "wallet",
-    screens: [
-      s("payroll", "payroll", "Salaries", "Prepared, approved and paid salaries by month. Employees see their own paid payslips here."),
-      s("advances", "advances", "Advances", "Salary advances and what is still to be recovered."),
-    ],
-  },
-  { id: "exp", label: "Expenses", icon: "receipt", screens: [s("expenses", "expenses", "Expenses", "Claims and payments per employee, with the monthly and total balance.")] },
-  {
-    id: "tasks",
-    label: "Tasks",
-    icon: "list",
-    screens: [
-      s("checklist", "checklists", "Checklists", "Today’s tasks, what is still blank this week, and every checklist before.", "list", { bottom: true }),
-      s("todos", "to-dos", "To-dos", "Work given to you and by you. The giver verifies it once it is done."),
-      s("buddy", "buddy-tasks", "Buddy tasks", "One of today’s tasks shared with a colleague, who accepts it and marks it done."),
-      s("templates", "task-templates", "Task templates", "Daily, weekly and monthly tasks. Take my task copies today’s into your checklist."),
+      s("attendance", "attendance", "Attendance", "check", "", {
+        views: [
+          t("attendance", "Register", "Every check-in and check-out, newest first. Heads see their team; HR and admin see everyone."),
+          t("pendingOut", "Not checked out", "Days with a check-in and no check-out. A day left open holds up that month’s salary."),
+          t("absentees", "Absent", "Active people with no attendance on the day, who are not on leave or on a holiday that applies to them."),
+          t("monthly", "Monthly summary", "Per person per month. Days nobody can account for must be cleared before that month’s salary."),
+          t("attChart", "Chart", "People present each day, with the trend. Pick a row to open that person’s days.", "chart"),
+          t("overtime", "Overtime", "One record per person per day, for time worked beyond the shortest overtime.", "list", { flag: "ot" }),
+        ],
+      }),
+      s("leave", "leave", "Leave & holidays", "cal", "", {
+        bottom: true,
+        nav: "Leave",
+        short: "Leave",
+        views: [
+          t("leave", "Requests", "Every leave and half-day request. You see your own; HR and admin see everyone’s."),
+          t("approvals", "To decide", "Requests waiting for a decision, by person. Approving sets how many of the days are paid."),
+          t("leaveCal", "Calendar", "One bar per request — approved in green, waiting in amber — with the month’s holidays.", "calendar"),
+          t("holidays", "Holidays", "Weekly offs, festivals, national and weather closures, and who each one applies to."),
+          t("leaveSetup", "Monthly credits", "Paid leave credited to each person each month — automatically on the 1st, or by hand."),
+        ],
+      }),
+      s("checklist", "tasks", "Tasks", "list", "", {
+        bottom: true,
+        views: [
+          t("checklist", "Checklist", "Today’s tasks, what is still open this week, and every checklist before."),
+          t("todos", "To-dos", "Work given to you and by you. Whoever gave it checks it once it is done."),
+          t("buddy", "Buddy tasks", "One of today’s tasks handed to a colleague, who accepts it and marks it done."),
+          t("templates", "Templates", "Your daily, weekly and monthly tasks. Take my task copies today’s into your checklist."),
+        ],
+      }),
+      s("payroll", "pay", "Pay", "wallet", "", {
+        views: [
+          t("payroll", "Salaries", "Salaries prepared, approved and paid, by month. Everyone sees their own payslips once paid."),
+          t("advances", "Advances", "Salary advances, and how much of each is still to be recovered."),
+          t("expenses", "Expenses", "Claims and payments per person, with the month’s balance and the running balance."),
+        ],
+      }),
     ],
   },
   {
     id: "perf",
-    label: "Performance",
+    label: "Results",
     icon: "chart",
     screens: [
-      s("kpi", "kpi", "KPI KRA", "Daily sales entries. Visits, km and litres come from MBOS and punch times from attendance; all stay editable."),
-      s("salesPerf", "sales-performance", "Sales performance", "A daily score out of 100 from nine components against each salesman’s targets.", "perf"),
-      s("staffPerf", "staff-performance", "Staff performance", "Monthly working hours, punctuality, tasks, to-dos and buddy tasks."),
-      s("eom", "employee-of-the-month", "Employee of the month", "Everyone at the Employee of the Month mark or above overall."),
-      s("points", "performance-points", "Performance points", "Counts and points for a period, with the review form and PDF report."),
+      s("kpi", "performance", "Performance", "chart", "", {
+        views: [
+          t("kpi", "Daily sales entries", "Each salesman’s day: visits, km, litres, sales and outstanding. Visits are filled in from the field app."),
+          t("salesPerf", "Sales score", "A daily score out of 100, from nine parts measured against each salesman’s targets.", "perf"),
+          t("staffPerf", "Staff month", "Each month’s working hours, punctuality, tasks, to-dos and buddy tasks."),
+          t("eom", "Employee of the month", "Everyone at the Employee of the Month mark or above, overall."),
+          t("points", "Period review", "Points for any period, with the review questions and a PDF report."),
+        ],
+      }),
+      s("customers", "sales-desk", "Sales desk", "phone", "", {
+        views: [
+          t("customers", "Customers", "Customers by status, with how often they have been called and visited."),
+          t("calling", "Calling", "Your area’s calling list. Log each call; if nobody picks up you are asked what happens next."),
+          t("activity", "Sales activity", "Meetings and calls by salesmen, with the time given to each area."),
+          t("journey", "Journey planner", "Where each salesman plans to be, by date.", "calendar"),
+        ],
+      }),
     ],
   },
   {
-    id: "sales",
-    label: "Sales desk",
-    icon: "phone",
-    screens: [
-      s("customers", "customers", "Customers", "Customers by status, with their calls and sales activity inside each record."),
-      s("calling", "calling", "Calling", "Your area-wise calling list. Log each call; a second status is asked when the call is not picked up."),
-      s("activity", "sales-activity", "Sales activity", "Meetings and calls by salesmen, with time given per area."),
-      s("journey", "journey-planner", "Journey planner", "Where each salesman plans to be, by date.", "calendar"),
-    ],
-  },
-  {
-    id: "emp",
-    label: "Employees",
+    id: "team",
+    label: "Company",
     icon: "people",
     screens: [
-      s("employees", "employees", "Employees", "The directory, by status. Your own record is your profile."),
-      s("idCards", "id-cards", "ID cards", "Every employee’s ID card image."),
-      s("org", "org", "Org chart", "Who reports to whom.", "custom"),
+      s("employees", "people", "People", "people", "", {
+        views: [
+          t("employees", "Directory", "Everyone, by status. Your own record is your profile."),
+          t("idCards", "ID cards", "Every person’s ID card."),
+          t("timings", "Working hours", "Each person’s start and finish time for every day of the week."),
+        ],
+      }),
+      /* Its own screen, not a tab of People: moving a reporting line moves
+         who the CRM names as an account's sales manager, which is a grant
+         somebody may be given without the directory's addresses, or the
+         directory without it. */
+      s("org", "org", "Org chart", "people", "Who reports to whom.", { view: "custom" }),
+      s("offices", "offices", "Offices", "building", "Where people check in: the map pin, how close they must be, and the opening hours."),
+      s("assetStock", "assets", "Assets", "box", "", {
+        views: [
+          t("assetStock", "Stock", "What the company owns, and how much of each is still in stock."),
+          t("assignments", "With people", "Who holds what, and what has come back."),
+        ],
+      }),
     ],
   },
   {
-    id: "office",
-    label: "Offices & timings",
-    icon: "building",
+    id: "talk",
+    label: "Messages",
+    icon: "bell",
     screens: [
-      s("offices", "offices", "Offices", "Where people check in: the map pin, the radius and the opening hours."),
-      s("timings", "staff-timings", "Staff timings", "Each person’s in and out time per weekday."),
+      s("help", "requests", "Help & grievances", "help", "", {
+        views: [
+          t("help", "Help requests", "Attendance corrections and other help. Problems with the app itself go to Tell us at the top."),
+          t("grievances", "Grievances", "Raised to the CEO, HR, the company or a named person, and closed with an answer."),
+        ],
+      }),
+      s("documents", "documents", "Documents", "doc", "Policies, forms and videos. You see what is meant for you."),
+      s("notifications", "announcements", "Announcements", "bell", "Messages sent to one person or to everyone. Each one also arrives in the bell.", { bottom: true, short: "Notices" }),
     ],
   },
-  {
-    id: "assets",
-    label: "Assets",
-    icon: "box",
-    screens: [
-      s("assetStock", "asset-stock", "Asset stock", "What the company owns and how much is still in stock."),
-      s("assignments", "asset-assignments", "Asset assignments", "Who holds what, and what has come back."),
-    ],
-  },
-  {
-    id: "help",
-    label: "Help & grievance",
-    icon: "help",
-    screens: [
-      s("help", "help-requests", "Help requests", "Attendance issues and other help. Admin approves; app problems go to MahekOne Tell us."),
-      s("grievances", "grievances", "Grievances", "Raised to the CEO, HR, the company or a named person, and closed with a solution."),
-    ],
-  },
-  { id: "docs", label: "Documents", icon: "doc", screens: [s("documents", "documents", "Documents", "Policies, forms and videos. You see what is tagged to you.")] },
-  { id: "notif", label: "Notifications", icon: "bell", screens: [s("notifications", "notifications", "Notifications", "Messages you sent and received. Received ones also arrive in the MahekOne bell.", "list", { bottom: true })] },
   {
     id: "settings",
     label: "Settings",
     icon: "gear",
     screens: [
-      s("settings", "settings", "HRMS settings", "", "custom"),
-      s("refLists", "reference-lists", "Reference lists", "The value lists every form picks from."),
+      s("settings", "settings", "Settings", "gear", "", {
+        views: [
+          t("settings", "Rules", "The rules HRMS runs on, and who changes them.", "custom"),
+          t("refLists", "Pick lists", "The values every form picks from."),
+        ],
+      }),
     ],
   },
 ];
 
 export const HRMS_SCREENS: HrmsScreen[] = HRMS_GROUPS.flatMap((g) => g.screens);
 
+/** Every list a module draws: each screen's tabs, or the screen itself. */
+export const HRMS_TABS: { screen: HrmsScreen; tab: HrmsTab }[] = HRMS_SCREENS.flatMap((sc) =>
+  sc.views ? sc.views.map((tab) => ({ screen: sc, tab })) : [{ screen: sc, tab: { key: sc.key, label: sc.label, sub: sc.sub, view: sc.view } }],
+);
+
+/**
+ * Where a module key is drawn: the screen it is on, and the tab (null when it
+ * is the screen's first tab or the screen has none). Every link goes through
+ * this, so a notification sent last month naming `approvals` lands on Leave &
+ * holidays · To decide rather than on a page that no longer exists.
+ */
+export function hrmsPlace(key: string): { screen: HrmsScreen; tab: HrmsTab; view: string | null } | undefined {
+  const hit = HRMS_TABS.find((x) => x.tab.key === key);
+  if (!hit) return undefined;
+  const first = hit.screen.views?.[0]?.key;
+  return { screen: hit.screen, tab: hit.tab, view: first && first !== key ? key : null };
+}
+
+/** The screen a key is drawn on — its own, or the one it is a tab of. */
 export function hrmsScreen(key: string): HrmsScreen | undefined {
-  return HRMS_SCREENS.find((x) => x.key === key);
+  return hrmsPlace(key)?.screen;
 }
 
 export function hrmsScreenBySlug(slug: string): HrmsScreen | undefined {
@@ -173,18 +236,32 @@ export function hrmsScreenBySlug(slug: string): HrmsScreen | undefined {
 }
 
 export function hrmsHref(screen: HrmsScreen | string): string {
-  const sc = typeof screen === "string" ? hrmsScreen(screen) : screen;
-  if (!sc) return "/hrms";
-  return sc.slug ? `/hrms/${sc.slug}` : "/hrms";
+  if (typeof screen === "string") return hrmsLink(screen);
+  return screen.slug ? `/hrms/${screen.slug}` : "/hrms";
 }
 
-/** A link to a screen by key, opening a record or pre-filtering. */
+/** A link to a list by its key, opening a record or pre-filtering. */
 export function hrmsLink(key: string, query: Record<string, string | null | undefined> = {}): string {
-  const base = hrmsHref(key);
+  const place = hrmsPlace(key);
+  if (!place) return "/hrms";
+  const base = place.screen.slug ? `/hrms/${place.screen.slug}` : "/hrms";
   const q = new URLSearchParams();
+  if (place.view) q.set("view", place.view);
   for (const [k, v] of Object.entries(query)) if (v) q.set(k, v);
   const qs = q.toString();
   return qs ? `${base}?${qs}` : base;
+}
+
+/** What a list is called wherever it is named on its own: "Leave & holidays · To decide". */
+export function hrmsListLabel(key: string): string {
+  const place = hrmsPlace(key);
+  if (!place) return key;
+  return place.screen.views ? `${place.screen.label} · ${place.tab.label}` : place.screen.label;
+}
+
+/** Every module key a screen's holder may use: its own and its tabs'. */
+export function hrmsKeysOf(screen: HrmsScreen): string[] {
+  return [...new Set([screen.key, ...(screen.views ?? []).map((x) => x.key)])];
 }
 
 /**
@@ -192,3 +269,45 @@ export function hrmsLink(key: string, query: Record<string, string | null | unde
  * is the reason almost everybody holds the app at all.
  */
 export const HRMS_ALWAYS_OPEN = new Set(["home"]);
+
+/**
+ * The first build's URLs, and the list each now lives on. `next.config.ts`
+ * redirects through it: a slug lives in bookmarks and in notifications long
+ * after it has changed in the code.
+ */
+export const HRMS_RETIRED_SLUGS: Record<string, string> = {
+  "pending-check-outs": "pendingOut",
+  absentees: "absentees",
+  "attendance-chart": "attChart",
+  "leave-approvals": "approvals",
+  "leave-calendar": "leaveCal",
+  "leave-setup": "leaveSetup",
+  holidays: "holidays",
+  overtime: "overtime",
+  "monthly-reports": "monthly",
+  payroll: "payroll",
+  advances: "advances",
+  expenses: "expenses",
+  checklists: "checklist",
+  "to-dos": "todos",
+  "buddy-tasks": "buddy",
+  "task-templates": "templates",
+  kpi: "kpi",
+  "sales-performance": "salesPerf",
+  "staff-performance": "staffPerf",
+  "employee-of-the-month": "eom",
+  "performance-points": "points",
+  customers: "customers",
+  calling: "calling",
+  "sales-activity": "activity",
+  "journey-planner": "journey",
+  employees: "employees",
+  "id-cards": "idCards",
+  "staff-timings": "timings",
+  "asset-stock": "assetStock",
+  "asset-assignments": "assignments",
+  "help-requests": "help",
+  grievances: "grievances",
+  notifications: "notifications",
+  "reference-lists": "refLists",
+};

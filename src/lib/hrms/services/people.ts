@@ -20,6 +20,7 @@ export type Person = {
   reportsTo: string | null;
   status: string;
   dateOfLeaving: string | null;
+  dateOfJoining: string | null;
   gender: string | null;
   email: string | null;
   area: string | null;
@@ -35,6 +36,7 @@ const PICK = {
   reportsTo: employees.reportsTo,
   status: employees.status,
   dateOfLeaving: employees.dateOfLeaving,
+  dateOfJoining: employees.dateOfJoining,
   gender: employees.gender,
   email: employees.email,
   area: employees.areaAllocated,
@@ -57,16 +59,14 @@ export function byId(people: Person[]): Map<string, Person> {
 
 /**
  * Which employees a list shows for this person: the ids, or null for all.
- * `team` is the employees whose Report To is my position, plus me.
+ * `team` is my reports (`HrmsContext.team`: the org chart, with the Report To
+ * job title for anybody the chart has not placed), plus me.
  */
-export function visibleIds(ctx: HrmsContext, scope: Scope, people: Person[]): Set<string> | null {
+export function visibleIds(ctx: HrmsContext, scope: Scope): Set<string> | null {
   if (scope === "all") return null;
   const me = ctx.employee?.id;
   const ids = new Set<string>(me ? [me] : []);
-  if (scope === "team" && ctx.employee?.position) {
-    const pos = ctx.employee.position.trim().toLowerCase();
-    for (const p of people) if ((p.reportsTo ?? "").trim().toLowerCase() === pos) ids.add(p.id);
-  }
+  if (scope === "team") for (const id of ctx.team) ids.add(id);
   return ids;
 }
 
@@ -78,14 +78,22 @@ export function markableStaff(ctx: HrmsContext, people: Person[], wide: boolean)
   );
 }
 
-export async function offices() {
-  return db.select().from(hrmsOffices).orderBy(asc(hrmsOffices.name));
+/**
+ * Whose day a head may act on — check out, remark on — when the power to do so
+ * came with their position rather than a grant: their team and the staff of
+ * their office they could mark. Null means anyone, for somebody granted the
+ * power or HR's, or an HRMS administrator. The server checks this; a button
+ * that is drawn only for the right rows is not a permission.
+ */
+export function staffInReach(ctx: HrmsContext, people: Person[], power: "checkoutStaff" | "markStaff"): Set<string> | null {
+  if (ctx.administrator || ctx.granted.has(power) || ctx.granted.has("hr") || ctx.granted.has("editAtt")) return null;
+  const ids = visibleIds(ctx, "team") ?? new Set<string>();
+  for (const p of markableStaff(ctx, people, false)) ids.add(p.id);
+  return ids;
 }
 
-export async function officeByName(name: string | null | undefined) {
-  if (!name) return null;
-  const [o] = await db.select().from(hrmsOffices).where(eq(hrmsOffices.name, name)).limit(1);
-  return o ?? null;
+export async function offices() {
+  return db.select().from(hrmsOffices).orderBy(asc(hrmsOffices.name));
 }
 
 /** Every timing row, keyed "employeeId|Weekday". */

@@ -1,21 +1,34 @@
 import React from 'react';
-import { View, ScrollView, Pressable, TextInput } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { View, Pressable, TextInput } from 'react-native';
+import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Card, Input, ListCard, PrimaryButton, SectionLabel, T } from '../src/components/ui/primitives';
 import { Icon } from '../src/components/ui/Icon';
-import { color as C, radius, shadow, tabular, type, weight } from '../src/theme/tokens';
+import { Appear, CountUp, FillBar, Presence, animateLayout } from '../src/components/ui/motion';
+import { feedback } from '../src/components/ui/feedback';
+import { isOnline } from '../src/sync/engine';
+import { SkuChip } from '../src/components/ui/sku';
+import { color as C, radius, tabular, type, weight } from '../src/theme/tokens';
 import { inr, inrFromPaise, plural } from '../src/lib/format';
-import { productLines } from '../src/lib/product-lines';
+import { skuLines } from '../src/lib/sku-lines';
 import {
   billingChoicesFor,
-  frequentProducts,
+  listCustomersPage,
   productsByIds,
   searchProducts,
-  starterProducts,
   type BillingChoice,
+  type Customer,
 } from '../src/data/customers';
-import { assessCart, saveOrder, type CartLine, type OrderAssessment } from '../src/data/orders';
+import { freshSuggestions, rememberedSuggestions, type OrderSuggestions } from '../src/data/order-suggestions';
+import {
+  assessCart,
+  editOrder,
+  orderForChange,
+  requestOrderChange,
+  saveOrder,
+  type CartLine,
+  type OrderAssessment,
+} from '../src/data/orders';
 import { lastOrderLines, ratesForTag, type ReorderLine } from '../src/data/pricing';
 import { useCustomer, useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
@@ -59,6 +72,8 @@ const SEARCH_LIMIT = 20;
 type Product = {
   id: string;
   name: string;
+  /** The SKU code — the legacy Product ID everybody calls it by. */
+  sku?: string | null;
   packSize?: string | null;
   cansPerBox?: number | null;
   millilitresPerCan?: number | null;
@@ -76,13 +91,72 @@ export default function OrderScreen() {
   const set = useStore((s) => s.set);
   const setQty = useStore((s) => s.setQty);
   const dropLine = useStore((s) => s.dropLine);
+  /*
+   * A LINE ARRIVING OR LEAVING MOVES THE ORDER UNDER IT. Adding a product puts
+   * a card into "On this order" and pushes the total down; taking one off
+   * pulls everything up. Without the layout animation both happen in a frame,
+   * and the thing he was about to tap is somewhere else. The state change is
+   * made first-class here so every door — the row's Add, the cross, the
+   * stepper going below one, a quantity typed down to nothing — moves the
+   * same way.
+   */
+  const addLine = (id: string) => {
+    animateLayout();
+    setQty(id, '1');
+  };
+  const removeLine = (id: string) => {
+    animateLayout();
+    dropLine(id);
+  };
+  /* One can more or less is a choice moving one notch, felt as a tick — he is
+     counting cans with his thumb while the shopkeeper talks, eyes on the
+     shelf. Typing a number does not tick: the keyboard already clicks. */
+  const stepQty = (id: string, next: number) => {
+    feedback('select');
+    if (next < 1) removeLine(id);
+    else setQty(id, String(next));
+  };
   const notify = useStore((s) => s.notify);
   const markVisitDone = useStore((s) => s.markVisitDone);
 
   /* Every product this panel has been shown, by id. A cart line whose product
      fell out of the last search still has a name, a pack and a rate. */
   const [known, setKnown] = React.useState<Record<string, Product>>({});
-  const [frequent, setFrequent] = React.useState<Product[]>([]);
+  const [suggested, setSuggested] = React.useState<OrderSuggestions | null>(null);
+
+  /*
+   * WHICH SHOP, asked rather than assumed.
+   *
+   * `custId` is whichever shop was opened last, and the + sheet's "Punch order"
+   * opened this form on it without a word — so the order went to the last shop
+   * he had looked at, which on one handset was a lead called OM Enterprises
+   * every time. Arriving from a shop's own record or from a visit, the shop is
+   * the one he is on. Inside a visit he has checked in to, it is that visit's
+   * shop. From anywhere else he says which, and the shop is drawn large enough
+   * to be noticed and changed.
+   */
+  const params = useLocalSearchParams<{ from?: string; edit?: string; change?: string }>();
+  const arrival = useStore((s) => s.arrival);
+  const inVisit = arrival?.checkedInAt != null ? arrival : null;
+  /*
+   * CHANGING AN ORDER ALREADY TAKEN. `edit` is one accounts have not decided —
+   * he rewrites it himself. `change` is one they approved — what he builds here
+   * goes to them as a request, with his reason, and the order stays as approved
+   * until they answer. Either way the shop is the order's and is not changed.
+   */
+  const editId = params.edit ?? null;
+  const changeId = params.change ?? null;
+  const changingId = editId ?? changeId;
+  const [changing, setChanging] = React.useState<Awaited<ReturnType<typeof orderForChange>>>(null);
+  const [changeNote, setChangeNote] = React.useState('');
+  const shopIsGiven = params.from === 'customer' || params.from === 'visit' || !!inVisit || !!changingId;
+  const [picking, setPicking] = React.useState(!shopIsGiven);
+  React.useEffect(() => {
+    if (changingId) return;
+    if (inVisit && params.from !== 'customer' && useStore.getState().custId !== inVisit.customerId) {
+      set({ custId: inVisit.customerId });
+    }
+  }, [inVisit, params.from, set, changingId]);
   const [results, setResults] = React.useState<Product[]>([]);
   /** Which query the rows in `results` answer. Anything else is stale. */
   const [resultsFor, setResultsFor] = React.useState<string | null>(null);
@@ -117,6 +191,11 @@ export default function OrderScreen() {
    * the customer is billed for both.
    */
   const [busy, setBusy] = React.useState(false);
+  /* The lock itself. `busy` is read from the closure of the render that drew
+     the button — the render where it was still false — so a second fast tap
+     ran the whole handler again. A ref is set synchronously; `busy` is only
+     what the button is drawn from. */
+  const busyRef = React.useRef(false);
 
   const remember = React.useCallback((rows: Product[]) => {
     setKnown((prev) => {
@@ -127,6 +206,25 @@ export default function OrderScreen() {
   }, []);
 
   const custId = c?.id ?? null;
+
+  /* The order being changed: its shop, and its lines back in the cart. */
+  React.useEffect(() => {
+    if (!changingId) return;
+    let live = true;
+    void orderForChange(changingId).then(async (o) => {
+      if (!live || !o) return;
+      /* The shop the goods go to — the billing choice below picks the biller. */
+      set({ custId: o.deliveryCustomerId ?? o.customerId });
+      const found = await productsByIds(o.lines.map((l) => l.productId));
+      if (!live) return;
+      remember(found);
+      set({ cart: Object.fromEntries(o.lines.map((l) => [l.productId, String(l.cans)])) });
+      setChanging(o);
+    });
+    return () => {
+      live = false;
+    };
+  }, [changingId, set, remember]);
 
   /* The arrangement, read once per customer. It came down with the pull, so
      this is a local read and works with no signal. */
@@ -151,6 +249,11 @@ export default function OrderScreen() {
     };
   }, [c]);
 
+  /* An order being changed keeps the biller it was taken against. */
+  React.useEffect(() => {
+    if (changing && billingOptions?.some((o) => o.id === changing.customerId)) setBilling(changing.customerId);
+  }, [changing, billingOptions]);
+
   /** Who is being invoiced. Every credit figure on this screen is theirs. */
   const biller = billingOptions?.find((o) => o.id === billing) ?? null;
   /** Where the goods go, when that is not where the bill goes. */
@@ -166,14 +269,17 @@ export default function OrderScreen() {
          frequent nor a starter. Without this the line sat in the cart
          undrawn, counted by nothing on the screen. */
       const inCartIds = Object.keys(useStore.getState().cart);
-      void Promise.all([
-        frequentProducts(custId),
-        starterProducts(),
-        productsByIds(inCartIds),
-      ]).then(([f, starter, inCart]) => {
+      /* What was last known first — instant, and all there is with no signal —
+         then the office's answer over it. */
+      void Promise.all([rememberedSuggestions(custId), productsByIds(inCartIds)]).then(([known, inCart]) => {
         if (!live) return;
-        setFrequent(f);
-        remember([...f, ...starter, ...inCart]);
+        setSuggested(known);
+        remember([...known.usual, ...known.starter, ...inCart]);
+      });
+      void freshSuggestions(custId).then((today) => {
+        if (!live || !today) return;
+        setSuggested(today);
+        remember([...today.usual, ...today.starter]);
       });
       return () => {
         live = false;
@@ -252,16 +358,18 @@ export default function OrderScreen() {
     };
   }, [billing, lines]);
 
-  if (!c) {
+  if (picking || !c) {
     return (
       <AppFrame title="New order" activeTab={null} onBack={back.go} contentStyle={{ padding: 16 }}>
         <BackLink label={back.label} onPress={back.go} />
-        <Card style={{ paddingVertical: 32, alignItems: 'center' }}>
-          <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>Open a customer first</T>
-          <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 6 }}>
-            An order belongs to a shop. Pick one from Customers.
-          </T>
-        </Card>
+        <ShopPicker
+          current={c}
+          onPick={(id) => {
+            /* Setting a different shop clears the draft — see `draftMovedShop`. */
+            set({ custId: id });
+            setPicking(false);
+          }}
+        />
       </AppFrame>
     );
   }
@@ -303,7 +411,9 @@ export default function OrderScreen() {
   const blank = inCart.some((l) => !l.cans);
   const canSubmit = inCart.length > 0 && !blank && !blocked && !!billing;
 
-  const frequentOffered = frequent.filter((k) => !cart[k.id]);
+  const usual = suggested?.usual ?? [];
+  const starter = suggested?.starter ?? [];
+  const totalCans = inCart.reduce((n, l) => n + l.cans, 0);
 
   /* This account's own list rate, summed — a SEPARATE figure from "Order
      value" above, which stays tied to products.priceSource and reads "Not
@@ -316,15 +426,17 @@ export default function OrderScreen() {
 
   const reorder = async () => {
     const found = await productsByIds(lastOrder.map((l) => l.productId));
-    if (!found.length) return notify('Nothing from that order is still offered.');
+    if (!found.length) return notify('No product from that order is sold now.', 'error');
     remember(found);
+    animateLayout();
     const byId = new Map(lastOrder.map((l) => [l.productId, l.cans]));
-    for (const p of found) setQty(p.id, String(byId.get(p.id) ?? 1));
+    for (const p of found) setQty(p.id, String(Math.max(1, byId.get(p.id) ?? 1)));
     const dropped = lastOrder.length - found.length;
     notify(
-      `${plural(found.length, 'line')} from the last order, added` +
-        (dropped ? ` — ${plural(dropped, 'line')} no longer offered` : '') +
-        ' — check quantities before sending.',
+      `${plural(found.length, 'line')} from the last order, added.` +
+        (dropped ? ` ${plural(dropped, 'line')} not sold now.` : '') +
+        ' Check quantities before sending.',
+      'warn',
     );
   };
 
@@ -332,42 +444,95 @@ export default function OrderScreen() {
     /* `whyDisabled` keeps this button pressable so the handler can refuse in
        words, which means the in-flight lock has to be checked here as well as
        drawn on the button. */
-    if (busy) return notify('Still sending the last one…');
-    if (!inCart.length) return notify('Add something first');
-    if (blank) return notify('Every line needs a quantity');
-    if (!assessment || blocked) return notify(assessment?.blockReason ?? 'This customer cannot be ordered for');
+    if (busyRef.current) return notify('Still sending the last order…', 'info');
+    if (!inCart.length) return notify('Add a product first', 'error');
+    if (blank) return notify('Set a quantity on every line', 'error');
+    if (!assessment || blocked) return notify(assessment?.blockReason ?? 'You cannot take an order for this customer', 'error');
     /* Said while he is standing in the shop rather than by a refusal at sync
        hours later: the arrangement names a distributor who is not his. */
     if (!billing || !biller) {
       return notify(
-        `${c.name} is billed to ${billingOptions?.[0]?.name ?? 'somebody'}, who is not on your book. Ask the office to move the account or bill the shop direct.`,
+        `${c.name} is billed to ${billingOptions?.[0]?.name ?? 'someone'}, who is not in your list. Ask the office to move the account, or bill the shop direct.`,
+        'error',
       );
     }
 
+    if (changingId) {
+      if (!changing) return notify('Still reading the order…', 'info');
+      if (changeId && changeNote.trim().length < 3) return notify('Say why it needs to change. Accounts decide on that.', 'error');
+      busyRef.current = true;
+      setBusy(true);
+      try {
+        const r = editId
+          ? await editOrder({ orderId: changing.id, lines: inCart, assessment })
+          : await requestOrderChange({ orderId: changing.id, lines: inCart, assessment, note: changeNote });
+        if (!r.ok) return notify(r.message, 'error');
+        set({ cart: {} });
+        notify(
+          editId
+            ? 'Order updated · syncs when you have signal'
+            : 'Change sent to accounts · you will see their answer on Your orders',
+        );
+        back.go();
+      } catch {
+        notify('That could not be saved on this phone. Nothing was sent. Try again.', 'error');
+      } finally {
+        busyRef.current = false;
+        setBusy(false);
+      }
+      return;
+    }
+
+    /*
+     * THIS VISIT'S ORDER, or somebody else's.
+     *
+     * The + button opens this form from anywhere, and inside a visit it opened
+     * on the visit's shop — but the shop can be changed, and an order for a
+     * different shop was still marking the visit's own "order" as done, which
+     * let the visit check out claiming an order it never produced. Only an
+     * order whose goods or bill are this visit's shop belongs to the visit.
+     */
+    const forVisit =
+      !!inVisit && (c.id === inVisit.customerId || biller.id === inVisit.customerId);
+
+    busyRef.current = true;
     setBusy(true);
     try {
-      const { needsApproval: sentForApproval } = await saveOrder({
+      const { orderId, needsApproval: sentForApproval } = await saveOrder({
         customerId: biller.id,
         customerName: biller.name,
         deliveryCustomerId: deliverTo?.id ?? null,
         deliveryCustomerName: deliverTo?.name ?? null,
         userId: boot.session?.user.id ?? '',
+        /* Named from the moment it is taken — see `Arrival.visitId`. */
+        visitId: forVisit ? inVisit?.visitId ?? null : null,
         lines: inCart,
         assessment,
       });
 
-      markVisitDone(
-        'order',
-        plural(inCart.length, 'line') + (valueUnavailable ? '' : ' · ' + inr(cartTotal)),
-      );
+      if (forVisit) {
+        const linked = useStore.getState().visitLinked;
+        set({ visitLinked: { ...linked, orderIds: [...(linked.orderIds ?? []), orderId] } });
+        markVisitDone(
+          'order',
+          plural(inCart.length, 'line') + (valueUnavailable ? '' : ' · ' + inr(cartTotal)),
+        );
+      }
       set({ cart: {} });
       notify(
         sentForApproval
-          ? 'Sent to your manager · queued until approved'
-          : 'Order placed · queued, syncs when you have signal',
+          ? 'Sent to your manager · waiting for approval'
+          : (await isOnline())
+            ? 'Order saved · sending to the office now'
+            : 'Order saved · will send when you have signal',
       );
       back.go();
+    } catch {
+      /* Said, rather than the button going quiet: a save that threw has
+         written nothing, and he is standing in front of the customer. */
+      notify('The order could not be saved on this phone. Nothing was sent. Try again.', 'error');
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   };
@@ -379,15 +544,80 @@ export default function OrderScreen() {
       {/* The owing figure is the BILLER's, so it is named. Reading "nothing
           owing" under a shop's name while the distributor paying for it is
           over their limit is the misreading this line exists to prevent. */}
-      <T s="caption">
-        {(biller?.name ?? c.name) +
-          ' · ' +
-          (credit === null
-            ? 'checking what they owe'
-            : dues
-              ? inr(dues) + ' already owing'
-              : 'nothing owing')}
-      </T>
+      <Card style={{ marginTop: 4 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <T s="micro" style={{ color: changingId ? C.warnInk : C.muted }}>
+              {editId
+                ? 'EDITING ORDER ' + (changing?.orderNumber ?? '')
+                : changeId
+                  ? 'CHANGE REQUEST · ORDER ' + (changing?.orderNumber ?? '')
+                  : inVisit
+                    ? 'ORDER FOR THIS VISIT'
+                    : 'ORDER FOR'}
+            </T>
+            <T style={[{ fontSize: 17, lineHeight: 23, color: C.ink, marginTop: 2 }, weight(600)]} numberOfLines={2}>
+              {c.name}
+            </T>
+            <T s="caption" style={{ marginTop: 2 }}>
+              {[c.area, c.city].filter(Boolean).join(', ') || 'No town saved'}
+              {c.isLead ? ' · Lead' : ''}
+            </T>
+          </View>
+          {/* A visit's order belongs to the visit's shop; anywhere else the
+              shop can be changed, and changing it clears the draft. */}
+          {inVisit || params.from === 'visit' || changingId ? null : (
+            <Pressable
+              onPress={() => setPicking(true)}
+              accessibilityRole="button"
+              hitSlop={8}
+              style={({ pressed }) => [
+                {
+                  paddingHorizontal: 14,
+                  paddingVertical: 8,
+                  borderRadius: radius.md,
+                  borderWidth: 1,
+                  borderColor: C.primaryEdge,
+                  backgroundColor: C.primaryTint,
+                },
+                pressed && { opacity: 0.85 },
+              ]}>
+              <T style={[{ fontSize: 14, color: C.primaryDeep }, weight(600)]}>Change</T>
+            </Pressable>
+          )}
+        </View>
+        {/* The owing figure is the BILLER's, so it is named. */}
+        <T s="caption" style={{ marginTop: 10, color: dues ? C.ink : C.muted }}>
+          {(biller && biller.id !== c.id ? biller.name + ' · ' : '') +
+            (credit === null
+              ? 'Checking what they owe…'
+              : dues
+                ? inr(dues) + ' already owing' + (limit != null ? ' of ' + inr(limit) + ' credit' : '')
+                : 'Nothing owing')}
+        </T>
+      </Card>
+
+      {changeId ? (
+        <View
+          style={{
+            marginTop: 12,
+            borderWidth: 1,
+            borderColor: C.warnEdge,
+            backgroundColor: C.warnBg,
+            borderRadius: radius.card,
+            paddingHorizontal: 14,
+            paddingVertical: 12,
+          }}>
+          <T style={{ fontSize: 13, lineHeight: 19, color: C.warnInk }}>
+            Accounts already approved this order, so you cannot change it directly. Make the order as it should be and
+            say why. Accounts will accept or decline. You will see their answer in Your orders.
+          </T>
+        </View>
+      ) : editId ? (
+        <T s="caption" style={{ marginTop: 10 }}>
+          Accounts have not decided on this order yet. Your changes will replace it.
+        </T>
+      ) : null}
 
       {/* --------------------------------------------- who pays, who receives
           Drawn ONLY where the two differ or there is somebody else in the
@@ -406,12 +636,12 @@ export default function OrderScreen() {
           on the screen saying so. */}
       {billingOptions && (deliverTo || billingOptions.length > 1) ? (
         <Card style={{ marginTop: 12 }}>
-          <SectionLabel style={{ marginBottom: 8 }}>Who pays for this</SectionLabel>
+          <SectionLabel style={{ marginBottom: 8 }}>Who gets the bill</SectionLabel>
 
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <View style={{ flex: 1, minWidth: 0 }}>
               <T s="body" style={weight(500)}>
-                {'Bill to ' + (biller?.name ?? 'nobody on your book')}
+                {'Bill to ' + (biller?.name ?? 'no one in your list')}
               </T>
               <T s="caption" style={{ color: C.muted }}>
                 {deliverTo ? 'Deliver to ' + deliverTo.name : 'Delivered to them'}
@@ -455,7 +685,7 @@ export default function OrderScreen() {
                   <T s="body">{o.name}</T>
                   <T s="caption" style={{ color: C.muted }}>
                     {!o.onBook
-                      ? 'Not on your book — you cannot bill them'
+                      ? 'Not in your list. You cannot bill them'
                       : o.id === c.id
                         ? 'Bill the shop direct'
                         : o.isPrimary
@@ -476,9 +706,9 @@ export default function OrderScreen() {
               through to the shop on its own. */}
           {!!c.thirdParty && biller?.id === c.id ? (
             <T s="caption" style={{ color: C.danger, marginTop: 8 }}>
-              {'The office has this shop billed to ' +
-                (billingOptions.find((o) => o.id !== c.id)?.name ?? 'somebody else') +
-                '. This order invoices the shop itself — check with the office if that is wrong.'}
+              {'The office bills this shop to ' +
+                (billingOptions.find((o) => o.id !== c.id)?.name ?? 'someone else') +
+                '. This order bills the shop itself. Ask the office if that is wrong.'}
             </T>
           ) : null}
 
@@ -488,8 +718,8 @@ export default function OrderScreen() {
           {!biller ? (
             <T s="caption" style={{ color: C.danger, marginTop: 8 }}>
               {'Billed to ' +
-                (billingOptions[0]?.name ?? 'somebody') +
-                ', who is not on your book. Ask the office to move the account, or bill the shop direct.'}
+                (billingOptions[0]?.name ?? 'someone') +
+                ', who is not in your list. Ask the office to move the account, or bill the shop direct.'}
             </T>
           ) : null}
         </Card>
@@ -508,7 +738,7 @@ export default function OrderScreen() {
             paddingVertical: 16,
             marginTop: 16,
           }}>
-          <T style={[{ fontSize: 15, color: C.danger }, weight(600)]}>No order can be taken here</T>
+          <T style={[{ fontSize: 15, color: C.danger }, weight(600)]}>You cannot take an order here</T>
           <T style={{ fontSize: 13, lineHeight: 19, color: C.ink, marginTop: 6 }}>
             {assessment?.blockReason ?? assessment?.reason ?? ''}
           </T>
@@ -521,7 +751,7 @@ export default function OrderScreen() {
               being built would silently overwrite what he just typed, and
               there is no honest way to merge "put the last order back" with
               "add three more of these" as one tap. */}
-          {lastOrder.length > 0 && inCart.length === 0 ? (
+          {lastOrder.length > 0 && inCart.length === 0 && !changingId ? (
             <Pressable
               onPress={() => void reorder()}
               accessibilityRole="button"
@@ -541,115 +771,101 @@ export default function OrderScreen() {
                 pressed && { opacity: 0.9 },
               ]}>
               <View style={{ flex: 1, minWidth: 0 }}>
-                <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>Put back the last order</T>
+                <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>Repeat the last order</T>
                 <T s="caption" style={{ marginTop: 2 }}>
-                  {plural(lastOrder.length, 'line')} — check quantities before sending
+                  {plural(lastOrder.length, 'line')}. Check quantities before sending
                 </T>
               </View>
               <T style={[{ fontSize: 15, color: C.primaryDeep }, weight(500)]}>Add all</T>
             </Pressable>
           ) : null}
 
-          {frequentOffered.length > 0 ? (
+          {/* WHAT TO OFFER BEFORE ANYTHING IS TYPED. The office's answer — this
+              shop's own history, then the best sellers for a shop with none —
+              remembered per shop, so it is there with no signal. Hidden while a
+              search is open: one list at a time. */}
+          {!query && usual.length > 0 ? (
             <View style={{ marginTop: 16 }}>
-              <SectionLabel style={{ marginBottom: 10 }}>What they usually buy</SectionLabel>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                style={{ marginHorizontal: -16 }}
-                contentContainerStyle={{ gap: 12, paddingHorizontal: 16, paddingBottom: 4 }}>
-                {frequentOffered.map((k) => (
-                  <Pressable
+              <SectionLabel style={{ marginBottom: 8 }}>What they usually buy</SectionLabel>
+              <ListCard>
+                {usual.map((k, i) => (
+                  <ProductRow
                     key={k.id}
-                    onPress={() => setQty(k.id, '1')}
-                    accessibilityRole="button"
-                    style={({ pressed }) => [
-                      {
-                        width: 180,
-                        backgroundColor: C.surface,
-                        borderWidth: 1,
-                        borderColor: C.hairline,
-                        borderRadius: radius.xl,
-                        padding: 14,
-                        boxShadow: shadow.soft,
-                      },
-                      pressed && { opacity: 0.9 },
-                    ]}>
-                    {/* THE FORMULATION LEADS — `src/lib/product-lines.ts`, the
-                        same rule the CRM's order form runs. The SKU moves down a
-                        line rather than off the card: two tiles can now headline
-                        one liquid and the pack is what tells them apart. The
-                        brand is the fallback where no formulation is filed, as
-                        before. */}
-                    <T style={[{ fontSize: 15, color: C.ink }, weight(500)]}>
-                      {productLines({ displayName: k.name, subtitle: k.formulation ?? k.brand }).lead}
-                    </T>
-                    <T s="caption" style={{ marginTop: 2 }}>
-                      {productLines({ displayName: k.name, subtitle: k.formulation ?? k.brand }).detail ?? ''}
-                    </T>
-                    <T style={[{ fontSize: 15, color: C.primaryDeep, marginTop: 10 }, weight(500)]}>+ Add</T>
-                  </Pressable>
+                    p={k}
+                    first={i === 0}
+                    on={!!cart[k.id]}
+                    qty={cart[k.id]}
+                    onQty={(v) => setQty(k.id, v)}
+                    onDrop={() => removeLine(k.id)}
+                    note={
+                      'Ordered ' +
+                      plural(k.orderCount, 'time') +
+                      (k.lastPurchaseDate ? ' · last ' + shortDate(k.lastPurchaseDate) : '')
+                    }
+                    onAdd={() => addLine(k.id)}
+                  />
                 ))}
-              </ScrollView>
+              </ListCard>
             </View>
+          ) : null}
+
+          {!query && starter.length > 0 ? (
+            <View style={{ marginTop: 16 }}>
+              <SectionLabel style={{ marginBottom: 8 }}>
+                {usual.length ? 'Best sellers' : 'Best sellers — nothing on record for this shop yet'}
+              </SectionLabel>
+              <ListCard>
+                {starter.map((k, i) => (
+                  <ProductRow
+                    key={k.id}
+                    p={k}
+                    first={i === 0}
+                    on={!!cart[k.id]}
+                    qty={cart[k.id]}
+                    onQty={(v) => setQty(k.id, v)}
+                    onDrop={() => removeLine(k.id)}
+                    onAdd={() => addLine(k.id)}
+                  />
+                ))}
+              </ListCard>
+            </View>
+          ) : null}
+
+          {!query && suggested && !usual.length && !starter.length ? (
+            <T s="caption" style={{ marginTop: 16 }}>
+              {suggested.fresh
+                ? 'Nothing to suggest for this shop yet — search for the product below.'
+                : 'Suggestions arrive the first time this shop is opened with signal. Search below meanwhile.'}
+            </T>
           ) : null}
 
           <Input
             value={oQ}
             onChangeText={(v) => set({ oQ: v })}
-            placeholder="Search products by name or code"
+            placeholder="Search product by name, pack size or code"
             style={{ marginTop: 16, borderRadius: radius.md, fontSize: 15 }}
           />
 
           {query ? (
             <ListCard style={{ marginTop: 10 }}>
-              {shown.map((k, i) => {
-                const on = !!cart[k.id];
-                return (
-                  <Pressable
+              {shown.map((k, i) => (
+                <ProductRow
                     key={k.id}
-                    onPress={() => {
-                      if (!on) setQty(k.id, '1');
-                    }}
-                    disabled={on}
-                    accessibilityRole="button"
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      gap: 12,
-                      paddingHorizontal: 16,
-                      paddingVertical: 14,
-                      borderTopWidth: i ? 1 : 0,
-                      borderTopColor: C.wash,
-                      backgroundColor: on ? C.primaryTint : C.surface,
-                    }}>
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <T style={{ fontSize: 15, color: C.ink }}>
-                        {productLines({ displayName: k.name, subtitle: k.formulation ?? k.brand }).lead}
-                      </T>
-                      <T s="caption">
-                        {[
-                          /* The SKU and its pack, which is what separates two
-                             rows headlining one liquid — so it is no longer the
-                             optional half of this line. The rate rides with it
-                             exactly as before. */
-                          productLines({ displayName: k.name, subtitle: k.formulation ?? k.brand }).detail,
-                          k.sellingPricePaise != null ? inrFromPaise(k.sellingPricePaise) + ' / can' : null,
-                        ]
-                          .filter(Boolean)
-                          .join(' · ')}
-                      </T>
-                    </View>
-                    <T style={[{ fontSize: 15, color: C.primaryDeep }, weight(500)]}>{on ? 'Added' : 'Add'}</T>
-                  </Pressable>
-                );
-              })}
+                    p={k}
+                    first={i === 0}
+                    on={!!cart[k.id]}
+                    qty={cart[k.id]}
+                    onQty={(v) => setQty(k.id, v)}
+                    onDrop={() => removeLine(k.id)}
+                    onAdd={() => addLine(k.id)}
+                  />
+              ))}
               {/* Three different empty states, and they must never look alike:
                   still looking, nothing matched, nothing offered yet. */}
               {shown.length === 0 ? (
                 <View style={{ paddingHorizontal: 16, paddingVertical: 24 }}>
                   <T style={{ fontSize: 15, color: C.muted, textAlign: 'center' }}>
-                    {searching ? 'Looking…' : 'Nothing matches. Try the pack size, or the code.'}
+                    {searching ? 'Searching…' : 'No product found. Try the pack size or the code.'}
                   </T>
                 </View>
               ) : null}
@@ -664,7 +880,7 @@ export default function OrderScreen() {
                     borderTopColor: C.wash,
                   }}>
                   <T s="caption">
-                    {'Showing the first ' + SEARCH_LIMIT + ' — narrow it with the pack size, or the code.'}
+                    {'Showing the first ' + SEARCH_LIMIT + '. Add the pack size or code to find more.'}
                   </T>
                 </View>
               ) : null}
@@ -688,7 +904,7 @@ export default function OrderScreen() {
                   paddingVertical: 24,
                 }}>
                 <T s="small" style={{ color: C.muted, textAlign: 'center' }}>
-                  Tap something they usually buy, or search for it.
+                  Tap a product they usually buy, or search for it.
                 </T>
               </View>
             ) : null}
@@ -730,25 +946,29 @@ export default function OrderScreen() {
                       .filter(Boolean)
                       .join(' · ');
                 return (
-                  <Card key={line.productId} padded={false} style={{ paddingHorizontal: 16, paddingVertical: 14 }}>
+                  /* The new line settles in where the layout animation has
+                     opened room for it — the card arriving, not appearing. */
+                  <Appear key={line.productId}>
+                  <Card padded={false} style={{ paddingHorizontal: 16, paddingVertical: 14 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
                       <View style={{ flex: 1, minWidth: 0 }}>
-                        {/* THE CART LINE LEADS ON THE FORMULATION TOO, and the
-                            SKU is drawn rather than folded away: this is the
-                            list a salesman reads back at a counter before
-                            saving, and two lines of one order can now headline
-                            the same liquid. A SCHEME NOTE still wins the caption
-                            where there is one — it is a live statement about
-                            this line's price and outranks a restatement of what
-                            the line is. */}
+                        {/* THE CART LINE LEADS ON THE SKU, as every row on
+                            this screen does — see `src/lib/sku-lines.ts`. This
+                            is the list a salesman reads back at a counter
+                            before saving, and two packs of one liquid have to
+                            read as two different lines. A SCHEME NOTE still
+                            wins the caption where there is one — it is a live
+                            statement about this line's price and outranks a
+                            restatement of what the line is. */}
                         {(() => {
-                          const row = productLines({
-                            displayName: line.productName,
-                            subtitle: known[line.productId]?.formulation,
+                          const row = skuLines({
+                            name: line.productName,
+                            formulation: known[line.productId]?.formulation,
                           });
                           const caption = priced?.schemeNote ?? row.detail ?? '';
                           return (
                             <>
+                              <SkuChip sku={known[line.productId]?.sku} />
                               <T style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(600)]}>
                                 {row.lead}
                               </T>
@@ -760,7 +980,7 @@ export default function OrderScreen() {
                         })()}
                       </View>
                       <Pressable
-                        onPress={() => dropLine(line.productId)}
+                        onPress={() => removeLine(line.productId)}
                         accessibilityRole="button"
                         accessibilityLabel="Remove this line"
                         /* The design draws this at 36, and 36 is under the
@@ -785,10 +1005,11 @@ export default function OrderScreen() {
                           overflow: 'hidden',
                         }}>
                         <Pressable
-                          onPress={() => setQty(line.productId, String(Math.max(0, qty - 1)))}
-                          disabled={qty === 0}
+                          /* A line is never at nought: one less than one takes it
+                             off the order, the same as the cross above it. */
+                          onPress={() => stepQty(line.productId, qty - 1)}
                           accessibilityRole="button"
-                          accessibilityLabel="One less"
+                          accessibilityLabel={qty <= 1 ? 'Take off the order' : 'One less'}
                           /* 44 is under the 48 floor, on the one control that
                              changes what is ordered — and it sits flush against
                              a text field, so a thumb that misses opens a
@@ -797,11 +1018,16 @@ export default function OrderScreen() {
                              stays, the thumb gets the area. */
                           hitSlop={4}
                           style={{ width: 44, height: 48, alignItems: 'center', justifyContent: 'center', backgroundColor: C.wash }}>
-                          <T style={{ fontSize: 20, lineHeight: 20, color: qty > 0 ? C.primaryDeep : C.faint }}>−</T>
+                          <T style={{ fontSize: 20, lineHeight: 20, color: C.primaryDeep }}>−</T>
                         </Pressable>
                         <TextInput
                           value={cart[line.productId] || ''}
                           onChangeText={(v) => setQty(line.productId, v.replace(/[^0-9]/g, ''))}
+                          /* Empty is allowed while he types a new number; left at
+                             nought or empty, the line comes off the order. */
+                          onEndEditing={() => {
+                            if (!(parseInt(useStore.getState().cart[line.productId] ?? '', 10) > 0)) removeLine(line.productId);
+                          }}
                           placeholder="0"
                           placeholderTextColor={C.faint}
                           keyboardType="number-pad"
@@ -823,7 +1049,7 @@ export default function OrderScreen() {
                           ]}
                         />
                         <Pressable
-                          onPress={() => setQty(line.productId, String(qty + 1))}
+                          onPress={() => stepQty(line.productId, qty + 1)}
                           accessibilityRole="button"
                           accessibilityLabel="One more"
                           hitSlop={4}
@@ -833,6 +1059,7 @@ export default function OrderScreen() {
                       </View>
                     </View>
                   </Card>
+                  </Appear>
                 );
               })}
             </View>
@@ -844,7 +1071,19 @@ export default function OrderScreen() {
               {/* An unvalued order is not an order worth nothing. Until a rate
                   source is confirmed the screen says so rather than showing a
                   confident zero. */}
-              <T style={[type.h2, tabular]}>{valueUnavailable ? 'Not known yet' : inr(cartTotal)}</T>
+              {/* The total runs to its new figure as cans are stepped, so the
+                  eye sees the order grow with each tap rather than a number
+                  replaced. Not from zero — opening the screen is not news. */}
+              {valueUnavailable ? (
+                <T style={[type.h2, tabular]}>Not known yet</T>
+              ) : (
+                <CountUp
+                  value={assessment?.valuePaise ?? 0}
+                  format={(n) => inrFromPaise(Math.round(n))}
+                  duration={320}
+                  style={[type.h2, tabular]}
+                />
+              )}
             </View>
             {/* A second, narrower figure: this account's own `mbos_price_list`
                 rate, summed. It is not the office's order value above — that
@@ -854,18 +1093,25 @@ export default function OrderScreen() {
             {listValuePaise != null ? (
               <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, marginTop: 6 }}>
                 <T s="caption">List value{priceTag ? ' · ' + priceTag : ''}</T>
-                <T s="body" style={[weight(500), tabular]}>{inrFromPaise(listValuePaise)}</T>
+                <CountUp
+                  value={listValuePaise}
+                  format={(n) => inrFromPaise(Math.round(n))}
+                  duration={320}
+                  style={[type.body, weight(500), tabular]}
+                />
               </View>
             ) : null}
             {limit != null ? (
               <>
-                <View style={{ height: 8, backgroundColor: C.hairline, borderRadius: 4, marginTop: 12, overflow: 'hidden' }}>
-                  <View
-                    style={{
-                      width: `${Math.min(100, Math.round((wouldBe / limit) * 100))}%`,
-                      height: '100%',
-                      backgroundColor: needsApproval ? C.danger : C.primary,
-                    }}
+                {/* The credit track eases to what the order would bring the
+                    balance to, so stepping a line up visibly eats into the
+                    limit. A row, so FillBar's flex takes the width. */}
+                <View style={{ flexDirection: 'row', marginTop: 12 }}>
+                  <FillBar
+                    pct={limit > 0 ? Math.round((wouldBe / limit) * 100) : 100}
+                    height={8}
+                    track={C.hairline}
+                    fill={needsApproval ? C.danger : C.primary}
                   />
                 </View>
                 <T s="caption" style={{ marginTop: 8 }}>
@@ -878,13 +1124,16 @@ export default function OrderScreen() {
             {valueUnavailable && inCart.length ? (
               <T s="caption" style={{ marginTop: 6 }}>
                 {listValuePaise != null
-                  ? 'The office order value waits on a setting nobody has switched on yet — see List value above for what this account actually pays.'
+                  ? 'The office has not turned on order value yet. See List value above for what this account pays.'
                   : priceTag
-                    ? `No rate is set for ${priceTag} on every line here yet, so neither figure can be shown.`
-                    : 'This account carries no price tag yet, so there is no rate list to check it against.'}
+                    ? `Some lines have no rate for ${priceTag} yet. So no value can be shown.`
+                    : 'This account has no price list yet. So there are no rates to check.'}
               </T>
             ) : null}
-            {needsApproval && assessment ? (
+            {/* The approval note opens in place as the order crosses the line,
+                rather than shoving the button down in the frame his thumb is
+                heading for it. */}
+            <Presence show={needsApproval && !!assessment}>
               <View
                 style={{
                   borderWidth: 1,
@@ -895,19 +1144,48 @@ export default function OrderScreen() {
                   paddingVertical: 12,
                   marginTop: 12,
                 }}>
-                <T style={{ fontSize: 13, lineHeight: 19, color: C.warnInk }}>{assessment.reason}</T>
+                <T style={{ fontSize: 13, lineHeight: 19, color: C.warnInk }}>{assessment?.reason}</T>
               </View>
-            ) : null}
+            </Presence>
           </Card>
 
+          {changeId ? (
+            <View style={{ marginTop: 16 }}>
+              <SectionLabel style={{ marginBottom: 6 }}>Why it needs to change</SectionLabel>
+              <Input
+                value={changeNote}
+                onChangeText={setChangeNote}
+                placeholder="Shop wants 10 more cans of the 20 L — rang this morning"
+                multiline
+                style={{ minHeight: 72, textAlignVertical: 'top', borderRadius: radius.md, fontSize: 15 }}
+              />
+            </View>
+          ) : null}
+
+          {inCart.length ? (
+            <T s="caption" style={{ marginTop: 16, textAlign: 'center' }}>
+              {plural(inCart.length, 'product') + ' · ' + plural(totalCans, 'can') + ' · for ' + c.name}
+            </T>
+          ) : null}
+
           <PrimaryButton
-            label={busy ? 'Sending…' : needsApproval ? 'Send for approval' : 'Submit order'}
+            label={
+              busy
+                ? 'Sending…'
+                : editId
+                  ? 'Save changes'
+                  : changeId
+                    ? 'Send change request to accounts'
+                    : needsApproval
+                      ? 'Send for approval'
+                      : 'Submit order'
+            }
             onPress={submit}
             disabled={!canSubmit || busy}
             whyDisabled={
               busy
-                ? 'The last one is still being sent.'
-                : 'Add a product and set a quantity on every line first.'
+                ? 'The last order is still sending.'
+                : 'Add a product and set a quantity on every line.'
             }
             tone={needsApproval ? 'warn' : 'primary'}
             style={{ marginTop: 16 }}
@@ -916,5 +1194,214 @@ export default function OrderScreen() {
       ) : null}
       <View style={{ height: 8 }} />
     </AppFrame>
+  );
+}
+
+/* ------------------------------------------------------------------ parts */
+
+/** "12 Sep" from an ISO date — a last purchase reads as a day, not a timestamp. */
+function shortDate(iso: string): string {
+  const d = new Date(iso.slice(0, 10) + 'T00:00:00');
+  return Number.isNaN(d.getTime())
+    ? iso
+    : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' });
+}
+
+/** One product to add: the SKU, the liquid, the pack, and one tap. */
+function ProductRow({
+  p,
+  on,
+  first,
+  note,
+  qty,
+  onAdd,
+  onQty,
+  onDrop,
+}: {
+  p: Product;
+  on: boolean;
+  first: boolean;
+  note?: string;
+  /** What is on the order for it, as typed. Drawn as a stepper once added. */
+  qty?: string;
+  onAdd: () => void;
+  onQty?: (v: string) => void;
+  onDrop?: () => void;
+}) {
+  const n = parseInt(qty ?? '', 10) || 0;
+  const row = skuLines({ name: p.name, formulation: p.formulation ?? p.brand });
+  return (
+    <Pressable
+      onPress={() => {
+        if (!on) onAdd();
+      }}
+      disabled={on}
+      accessibilityRole="button"
+      accessibilityLabel={(on ? 'Added: ' : 'Add ') + p.name}
+      style={({ pressed }) => ({
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+        borderTopWidth: first ? 0 : 1,
+        borderTopColor: C.wash,
+        backgroundColor: on ? C.primaryTint : pressed ? C.wash : C.surface,
+      })}>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <SkuChip sku={p.sku} />
+        <T style={[{ fontSize: 15, lineHeight: 20, color: C.ink }, weight(500)]}>{row.lead}</T>
+        <T s="caption" numberOfLines={2}>
+          {[row.detail, p.sellingPricePaise != null ? inrFromPaise(p.sellingPricePaise) + ' / can' : null, note]
+            .filter(Boolean)
+            .join(' · ')}
+        </T>
+      </View>
+      {/* THE QUANTITY ON THE ROW, once it is on the order — the CRM's order
+          form takes it on the product card itself, and sending him down to
+          the cart to say how many is a scroll per product. The cart below
+          stays the place to read the whole order back. */}
+      {on && onQty ? (
+        <View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            borderWidth: 1,
+            borderColor: C.primaryEdge,
+            borderRadius: radius.md,
+            overflow: 'hidden',
+            backgroundColor: C.surface,
+          }}>
+          <Pressable
+            onPress={() => {
+              feedback('select');
+              if (n <= 1) onDrop?.();
+              else onQty(String(n - 1));
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={n <= 1 ? 'Take it off the order' : 'One less'}
+            hitSlop={4}
+            style={{ width: 40, height: 40, alignItems: 'center', justifyContent: 'center', backgroundColor: C.wash }}>
+            <T style={{ fontSize: 18, lineHeight: 18, color: C.primaryDeep }}>−</T>
+          </Pressable>
+          <TextInput
+            value={qty ?? ''}
+            onChangeText={(v) => onQty(v.replace(/[^0-9]/g, ''))}
+            placeholder="0"
+            placeholderTextColor={C.faint}
+            keyboardType="number-pad"
+            accessibilityLabel={'Cans of ' + p.name}
+            style={[
+              { width: 46, height: 40, fontSize: 15, textAlign: 'center', color: C.ink, paddingHorizontal: 2 },
+              weight(600),
+              tabular,
+            ]}
+          />
+          <Pressable
+            onPress={() => {
+              feedback('select');
+              onQty(String(n + 1));
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="One more"
+            hitSlop={4}
+            style={{ width: 40, height: 40, alignItems: 'center', justifyContent: 'center', backgroundColor: C.wash }}>
+            <T style={{ fontSize: 18, lineHeight: 18, color: C.primaryDeep }}>+</T>
+          </Pressable>
+        </View>
+      ) : (
+        <View
+          style={{
+            minWidth: 64,
+            alignItems: 'center',
+            paddingHorizontal: 12,
+            paddingVertical: 8,
+            borderRadius: radius.md,
+            backgroundColor: on ? 'transparent' : C.primary,
+          }}>
+          <T style={[{ fontSize: 14, color: on ? C.primaryDeep : C.surface }, weight(600)]}>{on ? '✓ Added' : 'Add'}</T>
+        </View>
+      )}
+    </Pressable>
+  );
+}
+
+/**
+ * WHICH SHOP THIS ORDER IS FOR, asked when nothing on the way here said.
+ * Searches his own book on the phone — no signal needed — by name, town or
+ * number, and puts the shop he last opened first, because that is usually the
+ * one he means and is never assumed.
+ */
+function ShopPicker({ current, onPick }: { current: Customer | null; onPick: (id: string) => void }) {
+  const [q, setQ] = React.useState('');
+  const [rows, setRows] = React.useState<Customer[]>([]);
+  const [total, setTotal] = React.useState<number | null>(null);
+
+  React.useEffect(() => {
+    let live = true;
+    const t = setTimeout(() => {
+      void listCustomersPage({ query: q.trim(), limit: 30 }).then((page) => {
+        if (!live) return;
+        setRows(page.rows);
+        setTotal(page.total);
+      });
+    }, 150);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+  }, [q]);
+
+  const list = !q.trim() && current ? [current, ...rows.filter((r) => r.id !== current.id)] : rows;
+
+  return (
+    <>
+      <T style={[{ fontSize: 17, color: C.ink, marginTop: 4 }, weight(600)]}>Which shop is this order for?</T>
+      <T s="caption" style={{ marginTop: 4 }}>Search your book by name, town or mobile.</T>
+      <Input
+        value={q}
+        onChangeText={setQ}
+        placeholder="Shop name, town or mobile"
+        autoFocus
+        style={{ marginTop: 12, borderRadius: radius.md, fontSize: 15 }}
+      />
+      <ListCard style={{ marginTop: 10 }}>
+        {list.map((r, i) => (
+          <Pressable
+            key={r.id}
+            onPress={() => onPick(r.id)}
+            accessibilityRole="button"
+            style={({ pressed }) => ({
+              paddingHorizontal: 16,
+              paddingVertical: 12,
+              borderTopWidth: i ? 1 : 0,
+              borderTopColor: C.wash,
+              backgroundColor: pressed ? C.wash : C.surface,
+            })}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <T style={[{ flex: 1, fontSize: 15, color: C.ink }, weight(500)]} numberOfLines={1}>
+                {r.name}
+              </T>
+              {!q.trim() && current && r.id === current.id ? (
+                <T s="micro" style={{ color: C.primaryDeep }}>LAST OPENED</T>
+              ) : null}
+            </View>
+            <T s="caption" numberOfLines={1}>
+              {[[r.area, r.city].filter(Boolean).join(', '), r.isLead ? 'Lead' : null, r.phone].filter(Boolean).join(' · ')}
+            </T>
+          </Pressable>
+        ))}
+        {list.length === 0 ? (
+          <View style={{ paddingHorizontal: 16, paddingVertical: 24 }}>
+            <T style={{ fontSize: 15, color: C.muted, textAlign: 'center' }}>
+              {total === null ? 'Looking…' : 'No shop on your book matches that.'}
+            </T>
+          </View>
+        ) : null}
+      </ListCard>
+      {total != null && total > list.length && !q.trim() ? (
+        <T s="caption" style={{ marginTop: 8 }}>{'Showing ' + list.length + ' of ' + total + ' — search to narrow it.'}</T>
+      ) : null}
+    </>
   );
 }

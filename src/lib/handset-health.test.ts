@@ -614,6 +614,8 @@ describe("a wedged uploader is named, and nothing else is", () => {
     const stuck = sending({
       deviceStateAt: new Date(NOW - 60_000),
       locationServiceLastUploadAt: new Date(NOW - 60_000 - 2 * 3_600_000),
+      /* And nothing is reaching the trail by any other path either. */
+      trailSeenAt: new Date(NOW - 60_000 - 2 * 3_600_000),
     });
     const note = handsetNotes(stuck, T, NOW).find((n) => /nothing sent for/.test(n.text));
     assert.ok(note, "the wedged uploader has to be named");
@@ -624,6 +626,19 @@ describe("a wedged uploader is named, and nothing else is", () => {
        written to avoid. */
     assert.match(note.text, /nothing sent for 2 hr/);
     assert.match(note.text, /read 1 min ago/);
+  });
+
+  test("says nothing while the trail is arriving through the app instead", () => {
+    /* The recorder stamps its upload mark only when IT posts, and it posts
+       only what it still holds. Once the app has drained the buffer, the mark
+       freezes and the fixes reach us anyway — Sanjay's route was on the Live
+       map to the minute under "nothing sent for 1 hr 58 min". */
+    const viaApp = sending({
+      deviceStateAt: new Date(NOW - 60_000),
+      locationServiceLastUploadAt: new Date(NOW - 60_000 - 2 * 3_600_000),
+      trailSeenAt: new Date(NOW - 2 * 60_000),
+    });
+    assert.ok(!handsetNotes(viaApp, T, NOW).some((n) => /nothing sent for/.test(n.text)));
   });
 
   test("measures the gap at the PHONE's end, so an old report is not an accusation", () => {
@@ -729,6 +744,7 @@ describe("the silence window is derived, never a number of its own", () => {
       locationServiceRunning: true,
       deviceStateAt: new Date(NOW - 60_000),
       locationServiceLastUploadAt: new Date(NOW - 60_000 - 15 * 60_000),
+      trailSeenAt: new Date(NOW - 16 * 60_000),
     });
     assert.ok(!texts(stuck).some((x) => /nothing sent for/.test(x)));
     const loud = { ...T, quietMinutes: 10 };

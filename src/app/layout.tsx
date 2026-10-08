@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { NotificationCenter } from "@/components/shell/notification-center";
 
 export const metadata: Metadata = {
   title: "MahekOne - CRM",
@@ -25,11 +26,15 @@ export default function RootLayout({
         */}
         {/* eslint-disable-next-line @next/next/no-page-custom-font */}
         <link
-          href="https://fonts.googleapis.com/css2?family=Google+Sans+Flex:opsz,wght@9..144,100..1000&family=IBM+Plex+Mono:wght@400;500&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Google+Sans+Flex:opsz,wght@9..144,100..1000&family=IBM+Plex+Mono:wght@400;500&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500&display=swap"
           rel="stylesheet"
         />
       </head>
-      <body>{children}</body>
+      <body>
+        {children}
+        {/* The live bell: polls, pops and chimes in every app. */}
+        <NotificationCenter />
+      </body>
     </html>
   );
 }

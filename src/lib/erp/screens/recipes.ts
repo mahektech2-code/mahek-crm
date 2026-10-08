@@ -18,13 +18,18 @@ import { sfgForm } from "./production";
  * godown), and the SFG batches list flags a line that used more than the
  * recipe allows. Writing one is a production decision, so it needs the ERP's
  * manager level; reading it is open to whoever holds the screen.
+ *
+ * A recipe is in LITRES, whatever unit the raw material is bought in. It is
+ * compared against SFG batch lines and prefills them, and those are litres —
+ * so a recipe line shown in the material's own Kg would be a number in one
+ * unit flagged against a number in another.
  * ------------------------------------------------------------------------- */
 
-type Row = { r: typeof erpRecipes.$inferSelect; product: string; item: string; unit: string; by: string | null };
+type Row = { r: typeof erpRecipes.$inferSelect; product: string; item: string; by: string | null };
 
 async function recipeRows(): Promise<Row[]> {
   return db
-    .select({ r: erpRecipes, product: productFormulations.name, item: erpRawMaterials.name, unit: erpRawMaterials.unit, by: users.name })
+    .select({ r: erpRecipes, product: productFormulations.name, item: erpRawMaterials.name, by: users.name })
     .from(erpRecipes)
     .innerJoin(productFormulations, eq(productFormulations.id, erpRecipes.formulationId))
     .innerJoin(erpRawMaterials, eq(erpRawMaterials.id, erpRecipes.rawMaterialId))
@@ -36,6 +41,12 @@ async function recipeRows(): Promise<Row[]> {
 export async function recipeMap(): Promise<Map<string, number>> {
   const rows = await db.select().from(erpRecipes);
   return new Map(rows.map((r) => [`${r.formulationId}|${r.rawMaterialId}`, Number(r.qtyPerBatch)]));
+}
+
+/** Litres per batch keyed `product name|raw material name` — what a new SFG batch line fills its quantity from. */
+export async function recipeQtyByName(): Promise<Record<string, string>> {
+  const rows = await recipeRows();
+  return Object.fromEntries(rows.map((r) => [`${r.product}|${r.item}`, String(Number(r.r.qtyPerBatch))]));
 }
 
 const mayWrite = (ctx: { administrator: boolean; level: string | null }) => ctx.administrator || ctx.level === "manager";
@@ -53,8 +64,7 @@ export const recipesScreen: ScreenModule = {
     const cols: ColSpec[] = [
       { k: "product", l: "SFG product", t: "b" },
       { k: "item", l: "Raw material", t: "t" },
-      { k: "qty", l: "Per batch", t: "n" },
-      { k: "unit", l: "Unit", t: "t" },
+      { k: "qty", l: "Per batch (Ltr)", t: "n" },
       { k: "note", l: "Note", t: "t" },
     ];
     const byProduct = new Map<string, Row[]>();
@@ -71,38 +81,38 @@ export const recipesScreen: ScreenModule = {
               screen: "recipes",
               id: "new",
               title: "Set a recipe",
-              sub: "What one batch of the product takes. Saving a raw material the product already has replaces its quantity.",
+              sub: "What one batch of the product takes, in litres — every raw material, including one bought in Kg. Saving a raw material the product already has replaces its quantity.",
               submit: "Save recipe",
-              lineLabel: "Raw material",
+              lineLabel: "Raw material (litres)",
               header: [{ k: "product", l: "SFG product", t: "select", req: true, opts: forms.map((f) => f.name) }],
               line: [
-                { k: "item", l: "Raw material", t: "select", req: true, opts: mats.filter((m) => m.type !== "Can" && m.type !== "Box").map((m) => m.name) },
-                { k: "qty", l: "Quantity per batch", t: "num", req: true, min: 0.001 },
+                { k: "item", l: "Raw material", t: "select", req: true, hint: "Quantities on a recipe are always litres.", opts: mats.filter((m) => m.type !== "Can" && m.type !== "Box").map((m) => m.name) },
+                { k: "qty", l: "Quantity per batch (litres)", t: "num", req: true, min: 0.001 },
                 { k: "note", l: "Note", t: "text" },
               ],
             }
           : undefined,
         newLabel: "Set a recipe",
-        noDataLine: "No recipes yet. A recipe lists what one batch of an SFG product takes, so a batch can start from it and a heavy one is noticed.",
+        noDataLine: "No recipes yet. A recipe lists, in litres, what one batch of an SFG product takes, so a batch can start from it and a heavy one is noticed.",
       },
       rows: rows.map(
         (x): ListRow => ({
           id: x.r.id,
-          v: { product: x.product, item: x.item, qty: Number(x.r.qtyPerBatch), unit: x.unit === "Kg" ? "Kg" : x.unit === "Unit" ? "Pcs" : "Ltr", note: x.r.note },
+          v: { product: x.product, item: x.item, qty: Number(x.r.qtyPerBatch), note: x.r.note },
           flags: [],
           title: `${x.product} · ${x.item}`,
-          header: `${nf(Number(x.r.qtyPerBatch))} per batch`,
+          header: `${nf(Number(x.r.qtyPerBatch))} Ltr per batch`,
           actions: [
             { id: "start", l: "Start a batch", primary: true, loadsForm: true },
             {
               id: "qty",
               l: "Change quantity",
               why,
-              prompt: { title: "Quantity per batch", sub: `${x.product} · ${x.item}`, submit: "Save", fields: [{ k: "qty", l: "Quantity per batch", t: "num", req: true, min: 0.001 }], init: { qty: String(x.r.qtyPerBatch) } },
+              prompt: { title: "Quantity per batch (litres)", sub: `${x.product} · ${x.item} · in litres`, submit: "Save", fields: [{ k: "qty", l: "Quantity per batch (litres)", t: "num", req: true, min: 0.001 }], init: { qty: String(x.r.qtyPerBatch) } },
             },
             { id: "remove", l: "Remove from recipe", why, confirm: `Take ${x.item} out of ${x.product}'s recipe?` },
           ],
-          fields: [{ l: "The whole recipe", v: (byProduct.get(x.product) ?? []).map((y) => `${y.item} ${nf(Number(y.r.qtyPerBatch))}`).join(" · ") }],
+          fields: [{ l: "Unit", v: "Litres (Ltr)" }, { l: "The whole recipe (litres per batch)", v: (byProduct.get(x.product) ?? []).map((y) => `${y.item} ${nf(Number(y.r.qtyPerBatch))} Ltr`).join(" · ") }],
           by: stampLine(x.by, x.r.updatedAt).replace(/^Created/, "Set"),
         }),
       ),
@@ -118,7 +128,7 @@ export const recipesScreen: ScreenModule = {
       return {
         ...base,
         title: `New SFG batch · ${x.product}`,
-        sub: "From the recipe. Pick the lot for each raw material from what is at the godown; change a quantity if this batch is different.",
+        sub: "From the recipe, in litres. Pick the lot for each raw material from what is at the godown; change a quantity if this batch is different.",
         init: { ...base.init, product: x.product, batches: "1" },
         initLines: lines.map((r) => ({ item: r.item, qty: String(r.r.qtyPerBatch) })),
       };
@@ -136,7 +146,7 @@ export const recipesScreen: ScreenModule = {
         const m = mats.find((x) => x.name === ls[i].item);
         if (!m) return fieldErr(`l${i}.item`, "Pick a raw material");
         const qty = num(ls[i].qty);
-        if (qty == null || qty <= 0) return fieldErr(`l${i}.qty`, "Quantity per batch is required");
+        if (qty == null || qty <= 0) return fieldErr(`l${i}.qty`, "Quantity per batch, in litres, is required");
         parsed.push({ id: m.id, qty, note: text(ls[i].note) });
       }
       await db.transaction(async (tx) => {
@@ -147,18 +157,18 @@ export const recipesScreen: ScreenModule = {
             .onConflictDoUpdate({ target: [erpRecipes.formulationId, erpRecipes.rawMaterialId], set: { qtyPerBatch: p.qty, note: p.note, updatedAt: new Date(), updatedById: ctx.user.id } });
       });
       await erpAudit(ctx, "erp.recipe.set", "erp_recipe", f.id, null, { product: h.product, lines: parsed.length });
-      return okVoid(`Recipe for ${h.product} saved · ${parsed.length} raw material${parsed.length === 1 ? "" : "s"}`);
+      return okVoid(`Recipe for ${h.product} saved in litres · ${parsed.length} raw material${parsed.length === 1 ? "" : "s"}`);
     },
   },
   actions: {
     async qty(ctx, id, v) {
       if (!mayWrite(ctx)) return err("A manager sets a recipe.", "not_permitted");
       const qty = num(v.qty);
-      if (qty == null || qty <= 0) return fieldErr("qty", "Quantity per batch is required");
+      if (qty == null || qty <= 0) return fieldErr("qty", "Quantity per batch, in litres, is required");
       const res = await db.update(erpRecipes).set({ qtyPerBatch: qty, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpRecipes.id, id)).returning({ id: erpRecipes.id });
       if (!res.length) return err("That recipe line no longer exists.", "not_found");
       await erpAudit(ctx, "erp.recipe.qty", "erp_recipe", id, null, { qty });
-      return okVoid("Recipe updated");
+      return okVoid(`Recipe updated · ${nf(qty)} Ltr per batch`);
     },
     async remove(ctx, id) {
       if (!mayWrite(ctx)) return err("A manager sets a recipe.", "not_permitted");

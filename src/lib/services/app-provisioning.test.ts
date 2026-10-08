@@ -134,16 +134,16 @@ describe("grantAppWithDefaultModules", () => {
   });
 
   test("an app with no offByDefault modules writes no rows at all — unchanged, zero-row behaviour", async () => {
-    const person = await makeUser("Reports Only");
-    await grantAppWithDefaultModules(db, { userId: person.id, app: "reports", grantedById: null });
+    const person = await makeUser("Enquiries Only");
+    await grantAppWithDefaultModules(db, { userId: person.id, app: "enquiries", grantedById: null });
     const rows = await db
       .select()
       .from(appModuleAccess)
       .where(eq(appModuleAccess.userId, person.id));
     assert.equal(rows.length, 0, "no offByDefault module on this app, so nothing needed narrowing");
     // Zero rows still means every module — moduleAllowed's own rule, untouched.
-    for (const m of modulesForApp("reports")) {
-      assert.equal(moduleAllowed(m.key, [], "reports"), true);
+    for (const m of modulesForApp("enquiries")) {
+      assert.equal(moduleAllowed(m.key, [], "enquiries"), true);
     }
   });
 });
@@ -169,7 +169,7 @@ describe("provisionUser (the provisioning API path)", () => {
       { id: id("mod"), userId: person.id, app: "crm", module: "crm.lead-calling-desk", grantedById: null },
     ]);
 
-    await provisionUser({ user: person.email!, addApps: ["reports"] });
+    await provisionUser({ user: person.email!, addApps: ["enquiries"] });
 
     const rows = await grantedModules(person.id, "crm");
     assert.deepEqual(rows.sort(), ["crm.dashboard", "crm.lead-calling-desk"].sort(), "the existing CRM rows were not touched by granting a different app");

@@ -553,11 +553,22 @@ export function handsetNotes(
        is the ordinary state wherever the office posts from the app instead —
        `serviceUploadEverySeconds` at zero — and there is no age to print
        beside one either way. */
+    /* AND IT IS NEVER SAID OVER A TRAIL THAT IS ARRIVING. `lastUpload` is
+       stamped only when the RECORDER posts a batch, and the recorder posts only
+       what it is still holding — so once the app has taken the queue back
+       (`chooseSender`), or simply drained the buffer while open, the recorder
+       has nothing to send and its stamp freezes, while every fix reaches us
+       through the app. The note then accused a phone whose route was on the
+       Live map to the minute. The trail is the outcome the note exists to
+       protect; where it is fresh, nothing is being held. */
+    const trail = ms(f.trailSeenAt);
+    const trailArriving = trail !== null && nowMs - trail <= uploaderSilenceMs(t);
     if (
       t.serviceUploadEverySeconds > 0 &&
       lastUpload !== null &&
       said !== null &&
-      said - lastUpload > uploaderSilenceMs(t)
+      said - lastUpload > uploaderSilenceMs(t) &&
+      !trailArriving
     ) {
       notes.push({
         tone: "warn",

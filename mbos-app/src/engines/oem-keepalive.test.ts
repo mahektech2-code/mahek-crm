@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   APP_LABEL,
-  keepAliveSteps,
+  autostartWhere,
   oemOf,
   oemWords,
   RESTART_ANSWER,
@@ -10,8 +10,28 @@ import {
   trackingVerdict,
   type Oem,
 } from './oem-keepalive';
+import { setupSteps, type SetupFacts } from './setup-walkthrough';
 
 /** Every make this app knows the words for, plus the one it does not. */
+/** A fresh Android install on a Xiaomi, nothing yet allowed. */
+const FACTS: SetupFacts = {
+  android: true,
+  manufacturer: 'Xiaomi',
+  locationServicesEnabled: true,
+  foreground: 'granted',
+  foregroundCanAsk: true,
+  background: 'granted',
+  backgroundCanAsk: true,
+  notifications: 'granted',
+  notificationsCanAsk: true,
+  camera: 'granted',
+  cameraCanAsk: true,
+  microphone: 'granted',
+  microphoneCanAsk: true,
+  batteryExemption: 'optimised',
+  autostartConfirmedAt: null,
+};
+
 const ALL_OEMS: Oem[] = [
   'xiaomi',
   'oppo',
@@ -49,7 +69,7 @@ describe('which handset this is', () => {
   it('keeps the ColorOS family apart, because the menus differ', () => {
     const paths = new Set(
       (['oppo', 'oneplus', 'realme'] as const).map(
-        (o) => keepAliveSteps(o).find((s) => s.key === 'autostart')?.detail,
+        (o) => autostartWhere(o),
       ),
     );
     assert.equal(paths.size, 2, 'OnePlus reads differently from Oppo and Realme');
@@ -57,10 +77,11 @@ describe('which handset this is', () => {
 });
 
 describe('what a handset is asked to do', () => {
-  it('always asks for battery first', () => {
-    for (const oem of ALL_OEMS) {
-      assert.equal(keepAliveSteps(oem)[0].key, 'battery');
-    }
+  /* The one-tap battery step comes before the maker's six-level menu on the
+     shared list every setup screen draws — see `engines/setup-steps.ts`. */
+  it('always asks for battery before autostart', () => {
+    const keys = setupSteps(FACTS).map((s) => s.key);
+    assert.ok(keys.indexOf('battery') < keys.indexOf('autostart'));
   });
 
   /*
@@ -77,10 +98,10 @@ describe('what a handset is asked to do', () => {
    * consolidation is about.
    */
   it('offers the step on a handset nobody has mapped, without inventing a path', () => {
-    const autostart = keepAliveSteps('other').find((s) => s.key === 'autostart');
-    assert.ok(autostart, 'an unmapped handset is told there is one thing to do');
-    assert.doesNotMatch(autostart.detail, /Settings →/, 'a menu path was invented');
-    assert.match(autostart.detail, /look for Battery/);
+    const autostart = setupSteps({ ...FACTS, manufacturer: 'Nothing' }).find((s) => s.key === 'autostart');
+    assert.ok(autostart && autostart.state === 'todo', 'an unmapped handset is told there is one thing to do');
+    assert.doesNotMatch(autostartWhere('other'), /Settings →/, 'a menu path was invented');
+    assert.match(autostartWhere('other'), /look for Battery/);
   });
 
   /*
@@ -91,10 +112,10 @@ describe('what a handset is asked to do', () => {
    * nothing tells the app what was tapped there. Marking both done the same
    * way would be the app asserting something it has no way to learn.
    */
-  it('says which steps can actually be granted', () => {
-    const steps = keepAliveSteps('xiaomi');
-    assert.equal(steps.find((s) => s.key === 'battery')?.grantable, true);
-    assert.equal(steps.find((s) => s.key === 'autostart')?.grantable, false);
+  it('never ticks autostart without his word for it', () => {
+    const exempt = setupSteps({ ...FACTS, batteryExemption: 'exempt' });
+    assert.equal(exempt.find((s) => s.key === 'battery')?.state, 'done', 'the phone answered');
+    assert.equal(exempt.find((s) => s.key === 'autostart')?.state, 'todo', 'nothing can read it');
   });
 
   /*
@@ -109,7 +130,7 @@ describe('what a handset is asked to do', () => {
    */
   it('names the app the way the settings list on the phone does', () => {
     for (const oem of ALL_OEMS) {
-      const detail = keepAliveSteps(oem).find((s) => s.key === 'autostart')!.detail;
+      const detail = autostartWhere(oem);
       assert.ok(detail.includes(APP_LABEL), `${oem} path does not say which app to look for`);
     }
   });
@@ -120,7 +141,7 @@ describe('what a handset is asked to do', () => {
   it('is the same words the start-of-day gate prints', () => {
     for (const oem of ALL_OEMS) {
       const words = oemWords(oem);
-      const detail = keepAliveSteps(oem).find((s) => s.key === 'autostart')!.detail;
+      const detail = autostartWhere(oem);
       assert.ok(detail.startsWith(words.path), `${oem} draws a path of its own`);
     }
   });
@@ -241,7 +262,7 @@ describe('and then what', () => {
   it('drops the button and keeps the instruction where it cannot restart', () => {
     const v = trackingVerdict({ capture: 'floor', exemption: 'exempt', canRestart: false });
     assert.equal(v.action, null);
-    assert.match(v.detail, /[Cc]lose MahekOne completely/);
+    assert.match(v.detail, /[Cc]lose Mahek MBOS completely/);
   });
 
   /* The battery step is the readable half, so it is named where it is still

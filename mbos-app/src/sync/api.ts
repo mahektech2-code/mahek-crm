@@ -4,9 +4,17 @@ import * as Device from 'expo-device';
 import * as Application from 'expo-application';
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
+import { File } from 'expo-file-system';
 import { getKv, setKv } from '../db';
 import { buildLabel } from '../native/updates';
 import { readDeviceState } from './device-state';
+import {
+  authLostReasonFor,
+  authLostSentence,
+  noAnswerSentence,
+  unreadableAnswerSentence,
+  type AuthLostReason,
+} from '../engines/sign-in';
 
 /**
  * The one place a request leaves this app.
@@ -34,6 +42,79 @@ export const BASE =
 export class ApiError extends Error {
   status = 0;
   step: string | null = null;
+  /** On a 429: how long the server asked us to wait. */
+  retryInSeconds: number | null = null;
+}
+
+/**
+ * NO ANSWER AT ALL — and which kind.
+ *
+ * It used to be one plain `Error` for both, and the sign-in screen read every
+ * plain error as "no signal" and went down the offline path. A request that
+ * timed out reached a server that was busy building a large book, so saying
+ * "no internet" to him was wrong and sent him looking for signal he already
+ * had. `kind` keeps the two apart for every caller that needs to know.
+ */
+export class NoAnswerError extends Error {
+  constructor(public kind: 'offline' | 'timeout') {
+    super(noAnswerSentence(kind));
+  }
+}
+
+/**
+ * THIS SESSION IS OVER, which is different from "this request was refused".
+ *
+ * Raised for a refresh token the server will not renew, and for the three 403s
+ * that stay true until a person acts: a released handset, a closed account, a
+ * field app taken away. It is an `ApiError` — the server DID answer, so the
+ * sign-in screen must never read it as offline — and it leaves a mark in `kv`
+ * the moment it is raised, so the banner that sends him back to sign in does
+ * not depend on any one screen having caught it.
+ *
+ * THE ENGINE'S HALF: an item that fails with this should not have its attempt
+ * counted, because nothing about the item was wrong. `isAuthLost(e)` is what
+ * the sync loop asks.
+ */
+export class AuthLostError extends ApiError {
+  constructor(public reason: AuthLostReason, message: string) {
+    super(message);
+  }
+}
+
+export function isAuthLost(e: unknown): e is AuthLostError {
+  return e instanceof AuthLostError;
+}
+
+const AUTH_LOST_KEY = 'mbos.authLost';
+
+async function markAuthLost(reason: AuthLostReason): Promise<void> {
+  try {
+    await setKv(AUTH_LOST_KEY, JSON.stringify({ reason, at: Date.now() }));
+    authLostListener?.();
+  } catch {
+    /* The banner is a courtesy; the refusal itself still reaches the caller. */
+  }
+}
+
+/** Why this phone can no longer send, or null where it can. */
+export async function authLost(): Promise<{ reason: AuthLostReason; at: number } | null> {
+  try {
+    const raw = await getKv(AUTH_LOST_KEY);
+    return raw ? (JSON.parse(raw) as { reason: AuthLostReason; at: number }) : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function clearAuthLost(): Promise<void> {
+  await setKv(AUTH_LOST_KEY, '');
+  authLostListener?.();
+}
+
+let authLostListener: (() => void) | null = null;
+/** One listener — the banner — told the moment the mark moves. */
+export function onAuthLostChange(fn: (() => void) | null): void {
+  authLostListener = fn;
 }
 
 const ACCESS_KEY = 'mbos.accessToken';
@@ -90,6 +171,21 @@ export async function deviceId(): Promise<string> {
   return resolved;
 }
 
+/**
+ * The build label as a header value, percent-encoded.
+ *
+ * The label carries a middle dot ("1.15.1 (22) · embedded"), and since SDK 57
+ * the global `fetch` is `expo/fetch`, which refuses a header value that is not
+ * ASCII — the whole request fails as "NativeRequest.start has been rejected",
+ * before a byte leaves the phone, and every sign-in and sync read as "No
+ * internet". React Native's own fetch stripped the character, which is why
+ * builds before SDK 57 never showed it. The body of a sign-in still carries
+ * the label as written; `reportedVersion` decodes this one.
+ */
+export function versionHeader(): string {
+  return encodeURIComponent(buildLabel());
+}
+
 export async function deviceLabel(): Promise<string> {
   return [Device.manufacturer, Device.modelName].filter(Boolean).join(' ') || 'Unknown handset';
 }
@@ -113,6 +209,21 @@ export async function deviceLabel(): Promise<string> {
 export async function setTokens(access: string, refresh: string): Promise<void> {
   await setSecret(ACCESS_KEY, access);
   await setSecret(REFRESH_KEY, refresh);
+  /*
+   * READ BACK, because the keychain can say yes and keep nothing.
+   *
+   * Android invalidates its keystore when the lock screen changes, and
+   * `setSecret` swallows the failure so the app can still open. Unchecked, a
+   * sign-in "succeeded" with no token stored: the session was persisted, every
+   * request went out unauthenticated, and every sync read "signed out" with
+   * nothing anywhere naming the cause. Saying it at the sign-in is the one
+   * moment somebody can do something about it.
+   */
+  if ((await getSecret(ACCESS_KEY)) !== access || (await getSecret(REFRESH_KEY)) !== refresh) {
+    throw new Error(
+      'This phone could not store your sign-in. Restart the phone and try again. If it keeps happening, tell your manager.',
+    );
+  }
   await mirrorCredentials(access, refresh);
 }
 
@@ -166,6 +277,9 @@ async function request<T>(
   const headers: Record<string, string> = {
     'content-type': 'application/json',
     'x-mbos-device': await deviceId(),
+    /* The build on every request, so the office sees an upgrade on the first
+       sync after it rather than at the next sign-in, which nobody does. */
+    'x-mbos-app-version': versionHeader(),
     ...(init.headers as Record<string, string> | undefined),
   };
 
@@ -176,73 +290,214 @@ async function request<T>(
 
   /* A hung socket is worse than a refused one: it holds a queue item in
      `syncing` until the app is killed. Twenty seconds, then give up — unless
-     the caller is waiting on a language model, which is slower by nature. */
+     the caller is waiting on a language model, which is slower by nature.
+
+     THE CLOCK RUNS UNTIL THE BODY IS READ, not until the headers arrive. It
+     used to be cleared the moment `fetch` resolved, and on 2G the body is the
+     slow half — a stalled one held `syncNow` at "Already sending" for the
+     life of the process. */
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), init.timeoutMs ?? 20_000);
 
-  let res: Response;
   try {
-    const { timeoutMs: _t, auth: _a, ...rest } = init;
-    res = await fetch(`${BASE}${path}`, { ...rest, headers, signal: controller.signal });
-  } catch (e) {
-    throw new Error(e instanceof Error && e.name === 'AbortError' ? 'MahekOne did not answer in time' : 'No connection to MahekOne');
+    let res: Response;
+    try {
+      const { timeoutMs: _t, auth: _a, ...rest } = init;
+      res = await fetch(`${BASE}${path}`, { ...rest, headers, signal: controller.signal });
+    } catch {
+      /* `expo/fetch` reports an abort as a FetchError, never an AbortError, so
+         ask the signal whether it was us that gave up. */
+      throw new NoAnswerError(controller.signal.aborted ? 'timeout' : 'offline');
+    }
+
+    if (res.status === 401 && init.auth !== false) {
+      const refreshed = await tryRefresh();
+      if (refreshed === 'ok') return await request<T>(path, init);
+      /* A refresh that never got an answer is a dead tower, not a sign-out:
+         reporting it as one wrote "You have been signed out" onto every queued
+         item whenever the token lapsed in a lane with no signal. */
+      if (refreshed === 'unreachable') throw new NoAnswerError('offline');
+      throw await lost('expired');
+    }
+
+    if (!res.ok) {
+      return await refusal(res, init.auth !== false);
+    }
+
+    try {
+      return (await res.json()) as T;
+    } catch {
+      throw new NoAnswerError(controller.signal.aborted ? 'timeout' : 'offline');
+    }
   } finally {
     clearTimeout(timeout);
   }
-
-  if (res.status === 401 && init.auth !== false) {
-    const refreshed = await tryRefresh();
-    if (refreshed) return request<T>(path, init);
-    throw new Error('Your session has ended. Sign in again.');
-  }
-
-  if (!res.ok) {
-    /*
-     * A REFUSAL KEEPS ITS SHAPE.
-     *
-     * This used to `throw new Error(body.slice(0, 200))` — the whole JSON
-     * document flattened into a string — and the sign-in screen was left to
-     * work out what had happened by running a regex over the English inside
-     * it. MahekOne names the reason in `step`, one of six, each of which sends
-     * the person somewhere different; none of that survived the trip, so every
-     * refusal the regex did not recognise was treated as "no answer at all"
-     * and reported as a ten-digit mobile number not having ten digits.
-     *
-     * The status and the server's own words are carried on the error instead.
-     * Anything unparseable still throws, because a body we cannot read is a
-     * different thing from a refusal we can.
-     */
-    const body = await res.text().catch(() => '');
-    let parsed: { step?: string; code?: string; error?: string } | null = null;
-    try {
-      parsed = JSON.parse(body) as { step?: string; code?: string; error?: string };
-    } catch {
-      parsed = null;
-    }
-    const err = new ApiError(
-      parsed?.error || body.slice(0, 200) || `MahekOne answered ${res.status}`,
-    );
-    err.status = res.status;
-    err.step = parsed?.step ?? parsed?.code ?? null;
-    throw err;
-  }
-
-  return res.json() as Promise<T>;
 }
 
-async function tryRefresh(): Promise<boolean> {
-  const refresh = await getSecret(REFRESH_KEY);
-  if (!refresh) return false;
+async function lost(reason: AuthLostReason, message?: string): Promise<AuthLostError> {
+  await markAuthLost(reason);
+  const err = new AuthLostError(reason, message || authLostSentence(reason));
+  err.status = reason === 'expired' ? 401 : 403;
+  err.step = reason;
+  return err;
+}
+
+/**
+ * A server answer that is not a success, turned into the error it means.
+ *
+ * Shared by `request` and the three form uploads, which used to carry their
+ * own copies — and the 1.16.0 header fix had to be made in four places
+ * because of it.
+ */
+async function refusal(res: Response, authed: boolean): Promise<never> {
+  /*
+   * A REFUSAL KEEPS ITS SHAPE.
+   *
+   * This used to `throw new Error(body.slice(0, 200))` — the whole JSON
+   * document flattened into a string — and the sign-in screen was left to
+   * work out what had happened by running a regex over the English inside
+   * it. MahekOne names the reason in `step`, one of six, each of which sends
+   * the person somewhere different; none of that survived the trip, so every
+   * refusal the regex did not recognise was treated as "no answer at all"
+   * and reported as a ten-digit mobile number not having ten digits.
+   *
+   * The status and the server's own words are carried on the error instead.
+   * Anything unparseable still throws, because a body we cannot read is a
+   * different thing from a refusal we can.
+   */
+  const body = await res.text().catch(() => '');
+  type Refusal = { step?: string; code?: string; error?: string; retryInSeconds?: number | null };
+  let parsed: Refusal | null = null;
   try {
-    const out = await request<{ accessToken: string; refreshToken: string }>('/api/mbos/auth/refresh', {
-      method: 'POST',
-      auth: false,
-      body: JSON.stringify({ refreshToken: refresh }),
-    });
-    await setTokens(out.accessToken, out.refreshToken);
-    return true;
+    parsed = JSON.parse(body) as Refusal;
   } catch {
-    return false;
+    parsed = null;
+  }
+  const step = parsed?.step ?? parsed?.code ?? null;
+
+  if (authed) {
+    const reason = authLostReasonFor(res.status, step);
+    if (reason) throw await lost(reason, parsed?.error);
+  }
+
+  /* ONLY THE SERVER'S OWN SENTENCE, never the raw body. A proxy answering
+     during a deploy sends an HTML page, and the first 200 characters of
+     `<html><head><title>502 Bad Gateway` used to be printed under the
+     mobile number as though it were advice. */
+  const err = new ApiError(parsed?.error || unreadableAnswerSentence(res.status));
+  err.status = res.status;
+  err.step = step ?? (res.status >= 500 ? 'server_down' : null);
+  err.retryInSeconds = typeof parsed?.retryInSeconds === 'number' ? parsed.retryInSeconds : null;
+  throw err;
+}
+
+/**
+ * Renew the access token, and say which of three things happened.
+ *
+ * It answered a boolean, and `false` covered both "the server refused" and
+ * "the server could not be reached" — so a lapsed token in a lane with no
+ * signal was reported to the salesman, and written onto every queued item,
+ * as being signed out.
+ *
+ * ONE AT A TIME. A sync, a media upload and a dictation can all hit their 401
+ * in the same second, and three refreshes racing each other rotate the pair
+ * three times with the last writer winning a token the other two do not hold.
+ */
+let refreshing: Promise<'ok' | 'refused' | 'unreachable'> | null = null;
+
+async function tryRefresh(): Promise<'ok' | 'refused' | 'unreachable'> {
+  if (refreshing) return refreshing;
+  refreshing = (async () => {
+    const refresh = await getSecret(REFRESH_KEY);
+    if (!refresh) return 'refused' as const;
+    try {
+      const out = await request<{ accessToken: string; refreshToken: string; user?: SessionUser }>(
+        '/api/mbos/auth/refresh',
+        {
+          method: 'POST',
+          auth: false,
+          body: JSON.stringify({ refreshToken: refresh }),
+        },
+      );
+      await setTokens(out.accessToken, out.refreshToken);
+      if (out.user) userRefreshListener?.(out.user);
+      return 'ok' as const;
+    } catch (e) {
+      if (e instanceof NoAnswerError) return 'unreachable' as const;
+      return 'refused' as const;
+    }
+  })();
+  try {
+    return await refreshing;
+  } finally {
+    refreshing = null;
+  }
+}
+
+/**
+ * The person as the office now has them, delivered with every refresh.
+ *
+ * The session user was written once at sign-in and never again, and a session
+ * never expires — so a promotion, a new area or a new manager reached the
+ * Profile screen only if he signed out, which nobody does. `data/session.ts`
+ * listens and rewrites the stored session.
+ */
+let userRefreshListener: ((user: SessionUser) => void) | null = null;
+export function onUserRefreshed(fn: ((user: SessionUser) => void) | null): void {
+  userRefreshListener = fn;
+}
+
+/**
+ * A multipart request with the same manners as `request`: the device and
+ * build headers, the bearer token, a deadline that covers the body, and ONE
+ * refresh-and-retry on a lapsed token. The form is rebuilt for the retry
+ * rather than resent, because a stream that has been read cannot be.
+ *
+ * Media upload, dictation and the card scan each carried their own copy of
+ * this, and none of the copies agreed: two had no refresh (a dictation after
+ * an idle hour was answered "This sign-in has expired. The app will refresh
+ * it" and nothing did), and the media upload had no deadline at all, so one
+ * hung socket stalled every photograph behind it.
+ */
+async function authedForm<T>(
+  path: string,
+  build: () => FormData,
+  timeoutMs: number,
+  retried = false,
+): Promise<T> {
+  const token = await accessToken();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    let res: Response;
+    try {
+      res = await fetch(`${BASE}${path}`, {
+        method: 'POST',
+        headers: {
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+          'x-mbos-device': await deviceId(),
+          'x-mbos-app-version': versionHeader(),
+        },
+        body: build(),
+        signal: controller.signal,
+      });
+    } catch {
+      throw new NoAnswerError(controller.signal.aborted ? 'timeout' : 'offline');
+    }
+    if (res.status === 401 && !retried) {
+      const refreshed = await tryRefresh();
+      if (refreshed === 'ok') return await authedForm<T>(path, build, timeoutMs, true);
+      if (refreshed === 'unreachable') throw new NoAnswerError('offline');
+      throw await lost('expired');
+    }
+    if (!res.ok) return await refusal(res, true);
+    try {
+      return (await res.json()) as T;
+    } catch {
+      throw new NoAnswerError(controller.signal.aborted ? 'timeout' : 'offline');
+    }
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -276,6 +531,11 @@ export async function login(args: { mobile: string; password?: string; otp?: str
   return request('/api/mbos/auth/login', {
     method: 'POST',
     auth: false,
+    /* The server builds the whole book before it sends a byte, so the time to
+       the first byte IS the time to build a large book — routinely past the
+       twenty seconds a record gets. At twenty, a big territory could never
+       sign in at all, and the timeout was reported as "no internet". */
+    timeoutMs: 120_000,
     /* `platform` and `appVersion` have been accepted by the login since MBOS
        shipped and were never sent, so `mbos_devices` recorded neither for any
        handset — and those are the two columns somebody reaches for the moment
@@ -318,6 +578,13 @@ export type TerritoryState = {
   allocated: boolean;
   exempt: boolean;
   places: string[];
+  /**
+   * Where a lead may be raised — see `src/lib/mbos/types.ts`. Absent from an
+   * older server, which the lead form reads as "no rule to apply here" rather
+   * than as "nowhere": refusing every lead because a field did not arrive is
+   * the wire failing silently in the worst direction.
+   */
+  areas?: { kind: string; value: string; parent: string | null }[];
 };
 
 export type PullPayload = {
@@ -394,8 +661,20 @@ export type PullPayload = {
    */
   holidays?: unknown[];
   approvals?: unknown[];
+  /** His own field orders as the office stands on them — status, reason, lines. */
+  myOrders?: unknown[];
+  /** Changes he asked for on approved orders, and their answers. */
+  orderChanges?: unknown[];
+  /** What he said about his allocated areas, and the office's answer. */
+  territoryRequests?: unknown[];
   /** His own month, scored by the office. Reference only — nothing here writes it. */
   performance?: unknown[];
+  /**
+   * His customers' monthly targets, this month and last — target, achieved,
+   * and what is waiting for approval. Replaced wholesale; ABSENT changes
+   * nothing, which is how an older server and the cursorless reply look.
+   */
+  customerTargets?: unknown[];
   /** His own pay, current month and last. Reference only, same as performance. */
   salary?: unknown[];
   /** The modes a leg may name. Upserted by key. */
@@ -421,8 +700,15 @@ export type PullPayload = {
   deletions?: { entity: string; ids: string[] }[];
 };
 
+/**
+ * The whole book again, on the token the phone already holds — taken by the
+ * sync loop when the installed build differs from the one that last took it
+ * (`engines/rebootstrap.ts`). It runs behind the screen on whatever signal
+ * there is, so it gets far longer than the twenty seconds a request the
+ * salesman is waiting on is allowed; the route itself allows 120.
+ */
 export async function bootstrap(): Promise<PullPayload> {
-  return request('/api/mbos/bootstrap', { method: 'GET' });
+  return request('/api/mbos/bootstrap', { method: 'GET', timeoutMs: 90_000 });
 }
 
 /* ------------------------------------------------------------------- sync */
@@ -464,10 +750,33 @@ export async function postSync(body: { cursor: string; items: WireItem[] }): Pro
   return request('/api/mbos/sync', {
     method: 'POST',
     body: JSON.stringify({ ...body, deviceId: await deviceId() }),
+    /* The route is allowed five minutes, and its own comment says a fifty-item
+       batch is not a ten-second job. Giving up at twenty abandoned batches the
+       server went on to save, and the resend then came back "duplicate". */
+    timeoutMs: 120_000,
   });
 }
 
 /* ------------------------------------------------------------------ media */
+
+/**
+ * A file on the phone, as a FormData part `expo/fetch` can send.
+ *
+ * SDK 57 replaced the global `fetch` with `expo/fetch`, and that one cannot
+ * send React Native's `{ uri, name, type }` file literal — `convertFormData`
+ * throws "Unsupported FormDataPart implementation" on it, which is what every
+ * photo and every dictation hit after the upgrade. It accepts any part with a
+ * `bytes()` and keeps its `name` and `type` as the filename and content type,
+ * so the server receives exactly what it did before. The bytes are read when
+ * the request is built, not when the form is.
+ */
+function filePart(uri: string, name: string, type: string): Blob {
+  return {
+    name,
+    type,
+    bytes: async () => new Uint8Array(await new File(uri).arrayBuffer()),
+  } as unknown as Blob;
+}
 
 export async function uploadMedia(args: {
   clientId: string;
@@ -477,29 +786,24 @@ export async function uploadMedia(args: {
   uri: string;
   mimeType: string;
 }): Promise<{ remoteRef: string }> {
-  const form = new FormData();
-  form.append('clientId', args.clientId);
-  form.append('parentType', args.parentType);
-  form.append('parentId', args.parentId);
-  form.append('kind', args.kind);
-  /* React Native's FormData takes this shape for a file; it is not a Blob. */
-  form.append('file', {
-    uri: args.uri,
-    name: `${args.clientId}.${args.mimeType.split('/')[1] ?? 'bin'}`,
-    type: args.mimeType,
-  } as unknown as Blob);
-
-  const token = await accessToken();
-  const res = await fetch(`${BASE}/api/mbos/media`, {
-    method: 'POST',
-    headers: {
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-      'x-mbos-device': await deviceId(),
+  const out = await authedForm<{ remoteRef?: string; attachmentId?: string }>(
+    '/api/mbos/media',
+    () => {
+      const form = new FormData();
+      form.append('clientId', args.clientId);
+      form.append('parentType', args.parentType);
+      form.append('parentId', args.parentId);
+      form.append('kind', args.kind);
+      form.append('file', filePart(args.uri, `${args.clientId}.${args.mimeType.split('/')[1] ?? 'bin'}`, args.mimeType));
+      return form;
     },
-    body: form,
-  });
-  if (!res.ok) throw new Error(`Upload failed (${res.status})`);
-  return res.json() as Promise<{ remoteRef: string }>;
+    /* A photograph up a 2G link takes a while; a socket that never answers
+       must not hold the whole media queue for ever. */
+    120_000,
+  );
+  /* The server names the stored file `attachmentId`; `remoteRef` was read
+     here and never sent, so every queue row recorded `undefined`. */
+  return { remoteRef: out.remoteRef ?? out.attachmentId ?? args.clientId };
 }
 
 /* -------------------------------------------------------------- dictation */
@@ -532,54 +836,37 @@ export async function dictateTranscribe(args: {
   /** Recorded seconds — PAUSED time excluded. The server routes on it. */
   seconds: number;
 }): Promise<DictationHeard | { ok: false; error: string }> {
-  const form = new FormData();
-  /* React Native's FormData takes this shape for a file; it is not a Blob.
-     The name is cosmetic — the server sniffs the bytes. */
-  form.append('audio', {
-    uri: args.uri,
-    name: 'dictation.m4a',
-    type: 'audio/m4a',
-  } as unknown as Blob);
-  form.append('seconds', String(Math.round(args.seconds)));
-
-  const token = await accessToken();
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 90_000);
-
-  let res: Response;
   try {
-    res = await fetch(`${BASE}/api/mbos/dictate/transcribe`, {
-      method: 'POST',
-      headers: {
-        ...(token ? { authorization: `Bearer ${token}` } : {}),
-        'x-mbos-device': await deviceId(),
+    const body = await authedForm<DictationHeard | { ok: false; error?: string }>(
+      '/api/mbos/dictate/transcribe',
+      () => {
+        const form = new FormData();
+        /* The name is cosmetic — the server sniffs the bytes. */
+        form.append('audio', filePart(args.uri, 'dictation.m4a', 'audio/m4a'));
+        form.append('seconds', String(Math.round(args.seconds)));
+        return form;
       },
-      body: form,
-      signal: controller.signal,
-    });
+      90_000,
+    );
+    if (!body || !body.ok) {
+      return { ok: false, error: (body as { error?: string } | null)?.error ?? 'No answer came back. Try recording again.' };
+    }
+    return body;
   } catch (e) {
-    return {
-      ok: false,
-      error:
-        e instanceof Error && e.name === 'AbortError'
-          ? 'That took too long to send. Your recording is still here — try again.'
-          : 'No connection to MahekOne. Type the note instead.',
-    };
-  } finally {
-    clearTimeout(timeout);
+    /* The server's own sentence, every time it sent one. It knows which of the
+       six things went wrong and each one sends the person somewhere different;
+       a generic message here would throw all of that away. */
+    if (e instanceof NoAnswerError) {
+      return {
+        ok: false,
+        error:
+          e.kind === 'timeout'
+            ? 'That took too long to send. Your recording is still here. Try again.'
+            : 'No internet. Type the note instead.',
+      };
+    }
+    return { ok: false, error: e instanceof Error && e.message ? e.message : 'No answer came back. Try recording again.' };
   }
-
-  const body = (await res.json().catch(() => null)) as
-    | (DictationHeard | { ok: false; error?: string })
-    | null;
-
-  /* The server's own sentence, every time it sent one. It knows which of the
-     six things went wrong and each one sends the person somewhere different;
-     a generic message here would throw all of that away. */
-  if (!body || !body.ok) {
-    return { ok: false, error: body?.error ?? 'That did not come back. Try recording again.' };
-  }
-  return body;
 }
 
 export async function dictateRefine(args: {
@@ -594,7 +881,7 @@ export async function dictateRefine(args: {
     });
     return out;
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : 'That did not come back.' };
+    return { ok: false, error: e instanceof Error ? e.message : 'No answer came back. Try again.' };
   }
 }
 
@@ -635,6 +922,178 @@ export async function visitAssist(args: {
         e instanceof Error && e.message
           ? e.message
           : 'The assistant did not answer. Fill the visit as usual.',
+    };
+  }
+}
+
+/**
+ * What MahekOne read off a visiting card, shop board or bill head — the
+ * server's `LeadScanResult`, restated, because the two cannot import each
+ * other. Every field may be null; none is a guess.
+ */
+export type LeadScanFound = {
+  businessName: string | null;
+  contactPerson: string | null;
+  mobile: string | null;
+  otherNumbers: string[];
+  city: string | null;
+  state: string | null;
+  address: string | null;
+  gstin: string | null;
+  gstinCheck: 'valid' | 'corrected' | 'invalid' | null;
+  note: string | null;
+};
+
+/**
+ * Photographs in, the New lead form's details back, and NOTHING queued or
+ * kept — the photos are read and dropped at the far end. Not queued for the
+ * reason dictation is not: the answer is only worth anything while he is still
+ * holding the card, so it fails without signal and he types instead.
+ *
+ * The uris are files this phone has already resized and compressed.
+ */
+export async function scanLead(
+  uris: string[],
+): Promise<({ ok: true } & LeadScanFound) | { ok: false; error: string }> {
+  try {
+    const body = await authedForm<({ ok: true } & LeadScanFound) | { ok: false; error?: string }>(
+      '/api/mbos/lead-scan',
+      () => {
+        const form = new FormData();
+        /* The names are cosmetic — the server sniffs the bytes. */
+        uris.forEach((uri, i) => form.append('image', filePart(uri, `scan-${i + 1}.jpg`, 'image/jpeg')));
+        return form;
+      },
+      90_000,
+    );
+    if (!body || !body.ok) {
+      return { ok: false, error: (body as { error?: string } | null)?.error ?? 'No answer came back. Try again, or type the details.' };
+    }
+    return body;
+  } catch (e) {
+    if (e instanceof NoAnswerError) {
+      return {
+        ok: false,
+        error:
+          e.kind === 'timeout'
+            ? 'That took too long to send. Your photos are still here. Try again.'
+            : 'No internet. Type the details instead.',
+      };
+    }
+    return { ok: false, error: e instanceof Error && e.message ? e.message : 'No answer came back. Try again, or type the details.' };
+  }
+}
+
+/**
+ * What MahekOne heard in a salesman's description of a shop — every answer on
+ * the New lead form it could place, for him to check. See
+ * `components/leads/lead-voice.tsx`.
+ *
+ * NOT QUEUED, for the card scan's reason: the answer is only worth anything
+ * while the form is open. The TEXT goes, not the recording — the dictation
+ * sheet has already turned his voice into words he has read and corrected.
+ */
+export async function leadVoice(args: {
+  text: string;
+  spoken: string;
+}): Promise<({ ok: true } & import('../engines/lead-voice').LeadVoiceFound) | { ok: false; error: string }> {
+  try {
+    return await request('/api/mbos/lead-voice', {
+      method: 'POST',
+      body: JSON.stringify(args),
+      /* One model call at the far end, and a second if the first does not answer. */
+      timeoutMs: 100_000,
+    });
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error && e.message ? e.message : 'No answer came back. Try again, or type the details.',
+    };
+  }
+}
+
+/**
+ * What to offer on the order form: this shop's usual products, from the
+ * office's whole order history, and the best sellers to start a new shop from.
+ *
+ * NOT QUEUED: it is a suggestion, worth something only while the form is open.
+ * `data/order-suggestions.ts` keeps the last answer per shop, so a counter this
+ * phone has served before is offered the same list with no signal.
+ */
+export async function orderProducts(customerId: string): Promise<
+  | {
+      ok: true;
+      usual: { productId: string; orderCount: number; lastPurchaseDate: string | null }[];
+      starter: string[];
+    }
+  | { ok: false; error: string }
+> {
+  try {
+    return await request('/api/mbos/order-products', {
+      method: 'POST',
+      body: JSON.stringify({ customerId }),
+      timeoutMs: 15_000,
+    });
+  } catch (e) {
+    return { ok: false, error: e instanceof Error && e.message ? e.message : 'No answer.' };
+  }
+}
+
+/* -------------------------------------------------------- customer account */
+
+/**
+ * One customer's whole account as the Accounts app holds it — statement,
+ * bills, receipts and where they went, aging, credit notes.
+ *
+ * NOT QUEUED: it is a reading. `data/customer-account.ts` keeps the last
+ * answer per shop and falls back on the thirteen months the pull carries, so
+ * an account opened with no signal still says something true — and says which
+ * one it is.
+ */
+export async function customerAccount(
+  customerId: string,
+): Promise<{ ok: true; account: unknown } | { ok: false; error: string }> {
+  try {
+    return await request('/api/mbos/customer-account', {
+      method: 'POST',
+      body: JSON.stringify({ customerId }),
+      /* A long-standing account is a few thousand rows read on the far side. */
+      timeoutMs: 30_000,
+    });
+  } catch (e) {
+    return { ok: false, error: e instanceof Error && e.message ? e.message : 'No answer.' };
+  }
+}
+
+/* ------------------------------------------------------------- performance */
+
+/**
+ * His own performance over a range the sync does not carry — a quarter, a
+ * financial year, days he picked.
+ *
+ * NOT QUEUED and not cached: it is a reading, the answer is only wanted while
+ * he is looking at it, and the two months the sync does carry are what the
+ * screen falls back on without signal. The server decides WHOSE figures from
+ * the device token, so there is no user to pass.
+ */
+export async function performanceForRange(
+  from: string,
+  to: string,
+): Promise<{ ok: true; reading: unknown } | { ok: false; error: string }> {
+  try {
+    return await request(
+      `/api/mbos/performance?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+      /* A year of the ledger is read on the far side. */
+      { method: 'GET', timeoutMs: 45_000 },
+    );
+  } catch (e) {
+    /* A server from before this route answers 404 with a page, not a sentence. */
+    if (e instanceof ApiError && e.status === 404) {
+      return { ok: false, error: 'MahekOne has not been updated for this yet.' };
+    }
+    return {
+      ok: false,
+      error: e instanceof Error && e.message ? e.message : 'No connection to MahekOne',
     };
   }
 }
@@ -743,4 +1202,14 @@ export async function reportLocationPermission(backgroundGranted: boolean): Prom
     method: 'POST',
     body: JSON.stringify({ backgroundGranted, ...state }),
   });
+}
+
+/**
+ * What went wrong on this phone, for the office. See `native/crash-log.ts`.
+ * Answers with the ids the server has, which are the ones safe to forget.
+ */
+export async function postClientErrors(
+  errors: { id: string; kind: string; message: string; stack: string | null; screen: string | null; at: number }[],
+): Promise<{ ok: boolean; received: string[] }> {
+  return request('/api/mbos/errors', { method: 'POST', body: JSON.stringify({ errors }) });
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
+import { DeleteLead } from "./delete-lead";
 import * as React from "react";
 import Link from "next/link";
 import { money, shortDate, stamp } from "@/lib/format";
@@ -292,6 +293,7 @@ export function LeadRecordScreen({
   canReassign,
   canOverride,
   canPrioritise,
+  canTrash,
   canValidateGst,
   gstBlockedReason,
   figuresStale,
@@ -301,9 +303,12 @@ export function LeadRecordScreen({
   actionFacts,
   gateFacts,
   nowMs,
+  photoIds = [],
 }: {
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
   workspace: LeadWorkspace;
+  /** The shop front photographed on the handset when the lead was raised. */
+  photoIds?: string[];
   record: LeadRecord;
   /** Raw off the URL. Resolved below, because a URL is not a promise. */
   tab: string | null;
@@ -394,6 +399,8 @@ export function LeadRecordScreen({
    * is addressed to.
    */
   canPrioritise: boolean;
+  /** May move this lead to the trash (`lead.trash`) — checked again in the action. */
+  canTrash: boolean;
   /**
    * §11.6 — whether this person may answer the GST check on THIS lead.
    *
@@ -499,6 +506,16 @@ export function LeadRecordScreen({
                 canMigrate={canMigrate}
               />
             ) : null}
+            {/* Only a lead can be deleted: once it has reached the book it is an
+                account we invoice, and the ledger needs it. */}
+            {record.stage === "customer" || record.stage === "active_distributor" ? null : (
+              <DeleteLead
+                customerId={record.customerId}
+                name={record.name}
+                canTrash={canTrash}
+                backHref={leadHref(workspace, "leads")}
+              />
+            )}
             {CLOSED_STAGES.has(record.stage) ? null : (
               <MarkLost
                 customerId={record.customerId}
@@ -511,6 +528,22 @@ export function LeadRecordScreen({
           </>
         }
       />
+      {photoIds.length ? (
+        <div className="-mt-2 mb-4 flex items-center gap-2 text-[12px] text-muted">
+          <span>From the shop:</span>
+          {photoIds.map((pid) => (
+            <a key={pid} href={`/api/attachments/${pid}`} target="_blank" rel="noreferrer" title="Open the full photograph">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={`/api/attachments/${pid}`}
+                alt={`${record.name}, photographed in the field`}
+                loading="lazy"
+                className="h-14 w-14 rounded-[4px] border border-line object-cover hover:border-brand"
+              />
+            </a>
+          ))}
+        </div>
+      ) : null}
 
       {/* ---------------------------------------------------------- header */}
 
@@ -1532,13 +1565,30 @@ function QualificationPanel({
 }) {
   const conditions = checklistFor(record.salesType, "qualification");
   /* What each condition SHOWS beside it. Display only: it decides nothing. */
+  const said = (key: string) => {
+    const v = record.qualification?.[key];
+    return typeof v === "string" ? v.trim() : "";
+  };
+  const join = (parts: Array<string | null | undefined>) => parts.filter((p) => p && String(p).trim()).join(" · ");
   const shown: Record<string, string | number | null> = {
     gst_verified: record.gstin
-      ? `${record.gstin}${record.gstVerified ? " · validated" : " · not validated"}`
+      ? `${record.gstin}${record.gstVerified ? " · validated by the Sales Manager" : " · not yet validated"}`
       : null,
-    credit_days: record.creditDaysWanted,
-    buyer_confirmed: record.buyer ?? record.decisionMaker,
     application_understood: record.application,
+    trial_plan: join([said("trial_product"), said("trial_pack"), said("trial_quantity"), said("trial_tester"), said("trial_duration")]),
+    people_identified: join([
+      record.decisionMaker ? `decides: ${record.decisionMaker}` : "",
+      record.buyer ? `orders: ${record.buyer}` : said("buyer_name") ? `orders: ${said("buyer_name")}` : said("buyer_same") === "yes" ? "orders: the same person" : "",
+      said("payer") ? `pays: ${said("payer")}` : said("payer_same") === "yes" ? "pays: the same person" : "",
+    ]),
+    price_and_credit: join([
+      said("price_range"),
+      record.creditDaysWanted != null ? `credit ${record.creditDaysWanted} days` : "",
+      said("price_reaction"),
+    ]),
+    delivery_workable: join([said("delivery_location"), said("delivery_lead_time"), said("delivery_suits") ? `suits them: ${said("delivery_suits")}` : ""]),
+    willing_to_test: said("willing_to_test"),
+    next_step_dated: join([said("next_step"), said("next_step_date")]),
   };
 
   if (!conditions.length) {

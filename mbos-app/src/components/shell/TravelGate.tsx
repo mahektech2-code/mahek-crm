@@ -4,6 +4,7 @@ import { router } from 'expo-router';
 
 import { BottomSheet } from '../ui/overlays';
 import { SecondaryButton, T } from '../ui/primitives';
+import { feedback } from '../ui/feedback';
 import { color as C, weight } from '../../theme/tokens';
 import { useStore } from '../../state/store';
 import { useBoot } from '../../state/boot';
@@ -56,6 +57,14 @@ export function TravelGate() {
    */
   const outstanding = arrival && arrival.checkedInAt == null ? arrival : null;
 
+  /* The sheet below is a refusal — the journey he asked for does not start —
+     with its reason on the sheet, so it gets the refusal buzz as it opens.
+     Keyed on the boolean so a re-render of an open sheet does not buzz again. */
+  const blocked = !!to && !!outstanding;
+  React.useEffect(() => {
+    if (blocked) feedback('warning');
+  }, [blocked]);
+
   const goCheckIn = () => {
     if (!outstanding) return;
     set({ travelTo: null, custId: outstanding.customerId });
@@ -90,14 +99,14 @@ export function TravelGate() {
           /* A journey that could not be written must not cost the visit: he
              is going to that shop either way. The form opens as it did before
              journeys existed, and the office flags the check-in distance. */
-          if (!out.ok) notify(out.reason);
+          if (!out.ok) notify(out.reason, 'warn');
         }
         beginVisit(to.customerId);
         set({ travelTo: null, gps });
         router.push('/visit');
       } catch {
         set({ travelTo: null });
-        notify('That visit could not be started on this phone. Nothing has been lost — try again.');
+        notify('Could not start this visit. Nothing is lost. Try again.', 'error');
       } finally {
         starting.current = false;
       }
@@ -115,8 +124,8 @@ export function TravelGate() {
           </T>
           <T s="small" style={{ marginTop: 6 }}>
             {same
-              ? 'You have arrived. All that is left is to check in when you go inside.'
-              : 'One shop at a time — check in there, or save the visit, before setting off again.'}
+              ? 'You have reached. Check in when you go inside.'
+              : 'One shop at a time. Check in there, or save that visit, before you go to the next shop.'}
           </T>
           <View style={{ marginTop: 14 }}>
             <SecondaryButton label={`Check in at ${outstanding.customerName}`} onPress={goCheckIn} />

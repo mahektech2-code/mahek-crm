@@ -203,7 +203,7 @@ export function optimiseRoute<S extends RouteInput>(
       travelMinutes: null,
       cumulativeMinutes: null,
       located: false,
-      flag: 'No location on file — fit this one in yourself, and drop a pin while you are there.',
+      flag: 'No location saved for this shop. Fit it in yourself. Checking in there saves its pin.',
     });
   });
 

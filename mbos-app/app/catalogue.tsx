@@ -7,9 +7,15 @@ import { color as C, type, weight } from '../src/theme/tokens';
 import { inrFromPaise, plural } from '../src/lib/format';
 import { searchProducts } from '../src/data/customers';
 import { useStore } from '../src/state/store';
-import { productLines } from '../src/lib/product-lines';
+import { SkuChip } from '../src/components/ui/sku';
+import { skuLines } from '../src/lib/sku-lines';
+import { Stagger } from '../src/components/ui/motion';
+import { STAGGER_CAP } from '../src/components/ui/route-motion';
 
 type Row = Awaited<ReturnType<typeof searchProducts>>[number];
+
+/** How many rows the screen draws; past this the count says it is a slice. */
+const CAP = 200;
 
 /**
  * The rate card, searchable.
@@ -42,6 +48,7 @@ export default function CatalogueScreen() {
   const set = useStore((s) => s.set);
 
   const [rows, setRows] = React.useState<Row[]>([]);
+  const [more, setMore] = React.useState(false);
   /*
    * READING, COULD NOT READ, AND NOTHING THERE are three different facts, and
    * this screen drew the third for all three. `rows` starts empty, so a
@@ -74,10 +81,12 @@ export default function CatalogueScreen() {
   useFocusEffect(
     React.useCallback(() => {
       let live = true;
-      void searchProducts(catQ || '', 200)
+      /* One past the cap, so the count can say when it is a slice. */
+      void searchProducts(catQ || '', CAP + 1)
         .then((r) => {
           if (!live) return;
-          setRows(r);
+          setMore(r.length > CAP);
+          setRows(r.slice(0, CAP));
           setFailed(false);
           setLoaded(true);
         })
@@ -94,7 +103,13 @@ export default function CatalogueScreen() {
 
   const asked = catQ.trim();
 
-  const renderRow = ({ item: x }: { item: Row }) => (
+  /* Only the rows the first paint shows cascade in. A FlatList mounts the rest
+     as they scroll into view, and a row that fades in under a moving thumb
+     reads as the list lagging rather than arriving. */
+  const renderRow = ({ item, index }: { item: Row; index: number }) =>
+    index < STAGGER_CAP ? <Stagger index={index}>{row(item)}</Stagger> : row(item);
+
+  const row = (x: Row) => (
     /* NOT PRESSABLE. Every row used to be a button whose whole effect was a
        2.4-second toast at the far end of the screen, `pointerEvents="none"`,
        restating four things already printed on the row — so it read as a
@@ -110,18 +125,17 @@ export default function CatalogueScreen() {
         paddingVertical: 14,
       }}>
       <View style={{ flex: 1, minWidth: 0 }}>
-        {/* THE FORMULATION LEADS, the same rule as the order form's rows —
-            `src/lib/product-lines.ts`. Depot stock is still not in the payload,
-            so what the second line carries is the SKU and its packing rather
-            than a confident "In stock" nothing has checked; with the liquid
-            headlining, that SKU is also the only thing separating two rows read
-            out mid-conversation, so it is drawn rather than optional. */}
+        {/* THE SKU LEADS, the same rule as the order form's rows —
+            `src/lib/sku-lines.ts`. Depot stock is still not in the payload,
+            so what the second line carries is the formulation and the packing
+            rather than a confident "In stock" nothing has checked. */}
+        <SkuChip sku={x.sku} />
         <T style={[{ fontSize: 15, color: C.ink }, weight(500)]}>
-          {productLines({ displayName: x.name, subtitle: x.formulation ?? x.brand }).lead}
+          {skuLines({ name: x.name, formulation: x.formulation ?? x.brand }).lead}
         </T>
         <T style={{ fontSize: 13, color: C.muted }}>
           {[
-            productLines({ displayName: x.name, subtitle: x.formulation ?? x.brand }).detail,
+            skuLines({ name: x.name, formulation: x.formulation ?? x.brand }).detail,
             x.cansPerBox ? x.cansPerBox + ' per box' : null,
           ]
             .filter(Boolean)
@@ -137,16 +151,16 @@ export default function CatalogueScreen() {
   /* Nothing terminal until the read has answered, and a catalogue that never
      arrived is a different sentence from a word that matched nothing. */
   const blank = !loaded ? (
-    <Line>Reading the catalogue…</Line>
+    <Line>Loading products…</Line>
   ) : failed ? (
     <Line>
-      {'Could not read the catalogue off this phone. Leave the screen and come back, and if it keeps happening tell the office.'}
+      {'Could not load products. Go back and open it again. If this keeps happening, tell the office.'}
     </Line>
   ) : asked ? (
-    <Line>{'Nothing matches that. Try the grade, like "epoxy".'}</Line>
+    <Line>{'No product found. Try a type, like "epoxy".'}</Line>
   ) : (
     <Line>
-      {'The product list has not reached this phone yet. It arrives with a sync — open Sync from the More tab when you have signal.'}
+      {'Products have not come to this phone yet. They come with the next office update. Wait until you have signal.'}
     </Line>
   );
 
@@ -164,14 +178,18 @@ export default function CatalogueScreen() {
       <Input
         value={typed}
         onChangeText={setTyped}
-        placeholder="Search a product or pack size"
+        placeholder="Search a product, pack size or SKU code"
         style={{ marginTop: 12 }}
       />
       {/* The count is a count of what came back. Silent until the read has
           answered, because "0 products" about a query still running is the
           same false verdict in a shorter sentence. */}
       <T s="caption" style={{ marginTop: 8 }}>
-        {loaded && !failed ? plural(rows.length, 'product') : ' '}
+        {loaded && !failed
+          ? more
+            ? 'Showing the first ' + CAP + '. Search to find the rest.'
+            : plural(rows.length, 'product')
+          : ' '}
       </T>
 
       {rows.length === 0 ? (

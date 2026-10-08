@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { ColSpec, ListRow, ListSpec, Tone } from "@/lib/erp/ui";
@@ -32,7 +32,46 @@ import { useKit } from "./kit";
 const MAX_TABS = 7;
 
 /** A tab of a screen with several lists (`views` in the registry): a link, because each tab is its own server read. */
-export type ListTab = { key: string; label: string; href: string; active: boolean };
+export type ListTab = {
+  key: string;
+  label: string;
+  href: string;
+  active: boolean;
+  /** Work waiting on this tab for the person looking — the sidebar badge, per tab. */
+  count?: number;
+};
+
+/**
+ * A screen's tabs. Exported because a screen can have a tab that is not a
+ * list (HRMS Settings' rules), and that page draws the same strip so moving
+ * between the two does not change the furniture under somebody's thumb.
+ */
+export function ListTabs({ label, tabs, toggle }: { label: string; tabs: ListTab[]; toggle?: { label: string; href: string } | null }) {
+  return (
+    <nav aria-label={`${label} lists`} className="mb-4 flex items-center overflow-x-auto border-b border-line">
+      {tabs.map((t) => (
+        <Link
+          key={t.key}
+          href={t.href}
+          aria-current={t.active ? "page" : undefined}
+          className={cx(
+            "-mb-px flex items-center gap-1.5 border-b-2 px-4 py-2.5 text-sm whitespace-nowrap",
+            t.active ? "border-brand font-medium text-ink" : "border-transparent text-muted hover:text-body",
+          )}
+        >
+          {t.label}
+          {t.count ? <span className="rounded-full bg-warn px-1.5 text-[11px] leading-[18px] font-medium text-white">{t.count}</span> : null}
+        </Link>
+      ))}
+      <span className="flex-1" />
+      {toggle ? (
+        <Link href={toggle.href} className="px-2 py-2.5 text-[13px] font-medium text-[#5223E0] hover:underline">
+          {toggle.label}
+        </Link>
+      ) : null}
+    </nav>
+  );
+}
 
 /** The coloured edge a flagged row carries, in the CRM's tokens. */
 const EDGE: Partial<Record<Tone, string>> = {
@@ -54,6 +93,7 @@ export function ListScreen({
   tabs,
   toggle,
   above,
+  initialNew,
 }: {
   spec: ListSpec;
   rows: ListRow[];
@@ -72,6 +112,13 @@ export function ListScreen({
   toggle?: { label: string; href: string } | null;
   /** Drawn between the header and the list: a calendar, a chart, a scope switch. */
   above?: React.ReactNode;
+  /**
+   * Open the new-record form on arrival (`?new=1`), with these answers already
+   * in it — the Departments page's "Create chemical requirement" lands here
+   * with the department and the category chosen. Only the form's own fields
+   * are taken; anything else in the query is ignored.
+   */
+  initialNew?: Record<string, string> | null;
 }) {
   const ui = useErpUi();
   const { flags: FLAG, tones: ST_TONE, place } = useKit();
@@ -87,6 +134,21 @@ export function ListScreen({
   const [size, setSize] = useState(25);
   const [sel, setSel] = useState<Record<string, boolean>>({});
   const [openId, setOpenId] = useState<string | null>(initialOpen ?? null);
+  /* Opened once per arrival, then the query is cleared so a reload does not open it again. */
+  const newOpened = useRef(false);
+  useEffect(() => {
+    if (newOpened.current || !initialNew || !spec.newForm || spec.readOnly) return;
+    newOpened.current = true;
+    const form = spec.newForm;
+    const known = new Set(form.header.map((f) => f.k));
+    const preset = Object.fromEntries(Object.entries(initialNew).filter(([k]) => known.has(k)));
+    ui.openForm({ ...form, init: { ...form.init, ...preset } });
+    const q = new URLSearchParams(params.toString());
+    q.delete("new");
+    for (const k of Object.keys(initialNew)) q.delete(k);
+    const qs = q.toString();
+    router.replace(qs ? `${path}?${qs}` : path, { scroll: false });
+  }, [initialNew, spec.newForm, spec.readOnly, ui, params, path, router]);
   /* Clearing a filter or closing a record returns to the same TAB: the tab is
      in the query, and a bare path would open the screen's first one. */
   const tabKey = params.get("view");
@@ -257,29 +319,7 @@ export function ListScreen({
         }
       />
 
-      {tabs && tabs.length > 1 ? (
-        <nav aria-label={`${label} lists`} className="mb-4 flex flex-wrap items-center border-b border-line">
-          {tabs.map((t) => (
-            <Link
-              key={t.key}
-              href={t.href}
-              aria-current={t.active ? "page" : undefined}
-              className={cx(
-                "-mb-px border-b-2 px-4 py-2.5 text-sm whitespace-nowrap",
-                t.active ? "border-brand font-medium text-ink" : "border-transparent text-muted hover:text-body",
-              )}
-            >
-              {t.label}
-            </Link>
-          ))}
-          <span className="flex-1" />
-          {toggle ? (
-            <Link href={toggle.href} className="px-2 py-2.5 text-[13px] font-medium text-[#5223E0] hover:underline">
-              {toggle.label}
-            </Link>
-          ) : null}
-        </nav>
-      ) : null}
+      {tabs && tabs.length > 1 ? <ListTabs label={label} tabs={tabs} toggle={toggle} /> : null}
 
       {above}
       {metrics ? <MetricStrip metrics={metrics} /> : null}
@@ -396,6 +436,39 @@ export function ListScreen({
           />
         ) : (
           <>
+            {spec.cards ? (
+              <div className="grid grid-cols-2 gap-3 p-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+                {pageRows.map((r) => {
+                  const src = String(r.v[spec.cards!.img] ?? "");
+                  return (
+                    <button
+                      key={r.id}
+                      onClick={() => setOpenId(r.id)}
+                      className="flex cursor-pointer flex-col overflow-hidden rounded-[6px] border border-line bg-surface text-left hover:border-brand"
+                    >
+                      <span className="flex aspect-[3/2] items-center justify-center bg-canvas">
+                        {src ? (
+                          // eslint-disable-next-line @next/next/no-img-element -- a private attachment, read through the scoped endpoint
+                          <img src={src} alt={String(r.v[spec.cards!.title] ?? "")} className="h-full w-full object-cover" loading="lazy" />
+                        ) : (
+                          <span className="px-3 text-center text-[12px] text-muted">{spec.cards!.empty}</span>
+                        )}
+                      </span>
+                      <span className="grid gap-0.5 px-3 py-2">
+                        <span className="truncate text-[14px] font-semibold text-ink">{String(r.v[spec.cards!.title] ?? "")}</span>
+                        {spec.cards!.lines.map((k) =>
+                          r.v[k] ? (
+                            <span key={k} className="truncate text-[12px] text-muted">
+                              {String(r.v[k])}
+                            </span>
+                          ) : null,
+                        )}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
@@ -498,6 +571,7 @@ export function ListScreen({
                 </tbody>
               </table>
             </div>
+            )}
             <Pager
               total={total}
               page={pg}

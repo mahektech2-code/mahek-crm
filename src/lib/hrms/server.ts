@@ -111,7 +111,7 @@ export async function inTx(fn: (tx: Tx) => Promise<Result<unknown>>): Promise<Re
   }
 }
 
-/** The first name, the way the design addresses people ("Pooja Wait For Admin Approval"). */
+/** The first name, the way the design addresses people ("Priya, your leave is approved"). */
 export function first(name: string | null | undefined): string {
   return String(name ?? "").trim().split(/\s+/)[0] ?? "";
 }

@@ -12,6 +12,7 @@ export const HRMS_KIT: ScreenKit = {
   loadForm: hrmsLoadForm,
   runTool: hrmsRunTool,
   uploadUrl: "/api/hrms/attachments",
+  mapKeyUrl: "/api/hrms/map-key",
   flags: HRMS_FLAGS,
   tones: HRMS_TONES,
   place: { one: "office", many: "offices" },

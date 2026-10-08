@@ -15,6 +15,8 @@ import {
 import { checklistFor, stageLabel, type Condition } from '../src/engines/funnel';
 import { plural } from '../src/lib/format';
 import { useStore } from '../src/state/store';
+import { Pop, Stagger, animateLayout } from '../src/components/ui/motion';
+import { QualificationForm } from '../src/components/leads/qualification-form';
 
 /**
  * §9 §11 — the checklist, and it is two different sizes of question.
@@ -47,10 +49,13 @@ import { useStore } from '../src/state/store';
 type FieldKind = 'text' | 'number' | 'money' | 'yesno' | 'confirm' | 'date';
 
 const DISTRIBUTOR_FIELDS: Record<string, { field: string; kind: FieldKind; hint?: string }> = {
-  gst_verified: { field: 'gstVerified', kind: 'confirm' },
-  pan_verified: { field: 'panVerified', kind: 'confirm' },
+  /* A tick here is HIS word that he has seen the certificate, and the hint
+     says so — the office checks the number itself before the appointment, so
+     the tick is never mistaken for that check. */
+  gst_verified: { field: 'gstVerified', kind: 'confirm', hint: 'Tick once you have seen their GST certificate. The office checks the number too' },
+  pan_verified: { field: 'panVerified', kind: 'confirm', hint: 'Tick once you have seen their PAN card' },
   address_verified: { field: 'businessAddressVerified', kind: 'confirm' },
-  business_type: { field: 'businessType', kind: 'text', hint: 'Proprietor, partnership, private limited' },
+  business_type: { field: 'businessType', kind: 'text', hint: 'Owner, partnership, private limited' },
   years_in_business: { field: 'yearsInBusiness', kind: 'number' },
   decision_maker: { field: 'decisionMaker', kind: 'text' },
 
@@ -88,10 +93,10 @@ const DISTRIBUTOR_FIELDS: Record<string, { field: string; kind: FieldKind; hint?
 
 const GROUP_TITLE: Record<string, string> = {
   legal: 'Business and legal',
-  capability: 'Distribution capability',
-  commercial: 'Commercial capability',
-  territory: 'Territory',
-  commitment: 'What they commit to',
+  capability: 'Supply and stock',
+  commercial: 'Money and buying',
+  territory: 'Area',
+  commitment: 'What they promise',
 };
 
 /**
@@ -132,10 +137,10 @@ const SHOP_COLUMNS: Record<
     where: 'GST number, on Prospect details',
     note: (v) =>
       !v.lead.gstin?.trim()
-        ? 'Add the GST number under Prospect details — the back office checks it'
+        ? 'Add the GST number in Prospect details. The back office will check it.'
         : v.lead.gstVerified === 1
           ? 'Checked by the back office'
-          : 'With the back office — they check the number against the portal',
+          : 'With the back office. They will check the number online.',
   },
   /* Both columns, for the two that have two. The capture form writes what he
      was told in the shop into `monthlyVolumeLitres`/`competitorName` and the
@@ -146,14 +151,14 @@ const SHOP_COLUMNS: Record<
     reads: (v) => (v.lead.monthlyLitres ?? v.lead.monthlyVolumeLitres) != null,
     where: 'Litres a month, on Prospect details',
   },
-  monthly_potential: { reads: (v) => v.lead.estimatedPotentialPaise != null, where: 'What they could be worth, on Prospect details' },
-  required_product: { reads: (v) => Boolean(v.lead.requiredProductId), where: 'Which of ours, on Prospect details' },
+  monthly_potential: { reads: (v) => v.lead.estimatedPotentialPaise != null, where: 'How much they can buy, on Prospect details' },
+  required_product: { reads: (v) => Boolean(v.lead.requiredProductId), where: 'Which of our products, on Prospect details' },
   competitor_identified: {
     reads: (v) => Boolean(v.lead.competitor?.trim() || v.lead.competitorName?.trim()),
-    where: 'Whose product now, on Prospect details',
+    where: 'Which brand they use now, on Prospect details',
   },
   credit_days: { reads: (v) => v.lead.creditDaysWanted != null, where: 'Credit they want, on Prospect details' },
-  decision_maker: { reads: (v) => Boolean(v.lead.decisionMaker?.trim()), where: 'Who signs off, on Prospect details' },
+  decision_maker: { reads: (v) => Boolean(v.lead.decisionMaker?.trim()), where: 'Who decides to buy, on Prospect details' },
   application_understood: { reads: (v) => Boolean(v.lead.application?.trim()), where: 'What they use it on, on Prospect details' },
 };
 
@@ -236,6 +241,18 @@ export default function QualifyScreen() {
   const { lead, salesType } = view;
   const conditions = checklistFor(salesType, 'qualification');
   const isDistributor = salesType === 'distributor';
+
+  /* A SHOP'S QUALIFICATION IS THE SALESMAN'S EIGHT QUESTIONS, each a stored
+     answer — see `QualificationForm`. The distributor's thirty keep the screen
+     below, untouched. */
+  if (!isDistributor && conditions.length > 0) {
+    return (
+      <AppFrame title="Qualification" activeTab={null} onBack={goBack} contentStyle={{ padding: 16, paddingBottom: 24 }}>
+        <BackLink label={back.label} onPress={goBack} />
+        <QualificationForm key={lead.id} view={view} onSaved={load} />
+      </AppFrame>
+    );
+  }
 
   /*
    * Whether one condition is answered, asked the same way the gate asks it.
@@ -322,9 +339,9 @@ export default function QualifyScreen() {
          and "saved — Territory" against a row that carried all five groups is
          a line somebody would read back as a partial save. */
       const r = await saveDistributorProfile(lead.id, patch);
-      if (!r.ok) return notify(r.message);
+      if (!r.ok) return notify(r.message, 'warn');
       load();
-      return notify('Saved — every answer on this checklist');
+      return notify('Saved. All answers on this checklist.');
     }
 
     const answers: Record<string, boolean | string> = {};
@@ -340,7 +357,7 @@ export default function QualifyScreen() {
       if (typed) answers[c.id] = typed;
     }
     const r = await saveQualification(lead.id, answers);
-    if (!r.ok) return notify(r.message);
+    if (!r.ok) return notify(r.message, 'warn');
     load();
     notify('Qualification saved');
   };
@@ -359,18 +376,22 @@ export default function QualifyScreen() {
         </T>
         <T s="caption" style={{ marginTop: 2 }}>{stageLabel(view.stage)}</T>
         <Divider style={{ marginVertical: 12 }} />
-        {/* A count, never a bar. */}
-        <T style={[{ fontSize: 20, lineHeight: 26, color: C.ink }, weight(600)]}>
-          {done + ' of ' + conditions.length + ' answered'}
-        </T>
+        {/* A count, never a bar. It pops when a save moves it — the count
+            reads the RECORD, so this is the moment an answer actually counts,
+            not the moment a switch was flipped. */}
+        <Pop trigger={done} from={0.85} style={{ alignSelf: 'flex-start' }}>
+          <T style={[{ fontSize: 20, lineHeight: 26, color: C.ink }, weight(600)]}>
+            {done + ' of ' + conditions.length + ' answered'}
+          </T>
+        </Pop>
         {/* KEPT, not typed. The count is what the phone is holding, so it does
             not move until Save has been pressed — and Save writes the whole
             checklist, not the group on the screen. */}
         <T s="caption" style={{ marginTop: 2 }}>
           {done === conditions.length
-            ? 'All of them, saved. The rung above is open from the record.'
+            ? 'All saved. You can move it to the next stage on the lead page.'
             : plural(conditions.length - done, 'question') +
-              ' still to go. This counts what is saved — press Save and it keeps the lot.'}
+              ' left. Only saved answers count. Press Save to keep them all.'}
         </T>
       </Card>
 
@@ -389,7 +410,12 @@ export default function QualifyScreen() {
                 label={GROUP_TITLE[g]}
                 sub={got + '/' + inGroup.length}
                 selected={group === g}
-                onPress={() => setGroup(g)}
+                onPress={() => {
+                  /* A different group is a different set of cards; the old
+                     ones fade as the new ones settle in below. */
+                  if (g !== group) animateLayout();
+                  setGroup(g);
+                }}
                 style={{ paddingHorizontal: 14 }}
               />
             );
@@ -398,7 +424,7 @@ export default function QualifyScreen() {
       ) : null}
 
       <View style={{ marginTop: 16, gap: 12 }}>
-        {shown.map((c) => {
+        {shown.map((c, i) => {
           const col = isDistributor ? undefined : SHOP_COLUMNS[c.id];
           const f = isDistributor ? DISTRIBUTOR_FIELDS[c.id] : undefined;
           /* The ROW reads the boxes on the screen — a switch that did not move
@@ -407,7 +433,8 @@ export default function QualifyScreen() {
           const met = answeredIn(c, true);
 
           return (
-            <Card key={c.id}>
+            <Stagger key={c.id} index={i}>
+            <Card>
               <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <T style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(500)]}>{c.says}</T>
@@ -417,8 +444,8 @@ export default function QualifyScreen() {
                       {col.note
                         ? col.note(view)
                         : met
-                          ? 'Answered — ' + col.where
-                          : 'Answer it under ' + col.where}
+                          ? 'Answered: ' + col.where
+                          : 'Answer it at: ' + col.where}
                     </T>
                   ) : null}
                 </View>
@@ -428,9 +455,13 @@ export default function QualifyScreen() {
                     that switch was the lie, because the fact the gate reads is
                     written at a desk in the office and by nobody here. */}
                 {col ? (
-                  <T style={[{ fontSize: 14, color: met ? C.success : C.muted }, weight(600)]}>
-                    {met ? 'Done' : 'Not yet'}
-                  </T>
+                  /* Pops on the change only — a row that was already Done
+                     when the screen opened is not news. */
+                  <Pop trigger={met}>
+                    <T style={[{ fontSize: 14, color: met ? C.success : C.muted }, weight(600)]}>
+                      {met ? 'Done' : 'Not yet'}
+                    </T>
+                  </Pop>
                 ) : f && (f.kind === 'text' || f.kind === 'number' || f.kind === 'money' || f.kind === 'date') ? null : f?.kind === 'yesno' ? (
                   <View style={{ flexDirection: 'row', gap: 6 }}>
                     <Choice
@@ -465,6 +496,7 @@ export default function QualifyScreen() {
                 />
               ) : null}
             </Card>
+            </Stagger>
           );
         })}
       </View>
@@ -472,15 +504,14 @@ export default function QualifyScreen() {
       {conditions.length === 0 ? (
         <Card style={{ marginTop: 16, paddingVertical: 28 }}>
           <T style={{ fontSize: 15, lineHeight: 21, color: C.muted, textAlign: 'center' }}>
-            There is no checklist on this ladder. A lead raised before the funnel existed climbs the six rungs it
-            started on.
+            No checklist for this lead. It is an old lead. It uses the old six stages.
           </T>
         </Card>
       ) : (
         /* One button, and it saves the WHOLE checklist however many groups are
            half filled in. It used to name the group it was standing on, which
            was an honest label for a save that dropped the other four. */
-        <PrimaryButton label="Save the checklist" onPress={saveGroup} style={{ marginTop: 18 }} />
+        <PrimaryButton label="Save checklist" onPress={saveGroup} style={{ marginTop: 18 }} />
       )}
 
       <SecondaryButton
@@ -491,8 +522,7 @@ export default function QualifyScreen() {
 
       <View style={{ marginTop: 14, borderRadius: radius.lg, backgroundColor: C.wash, padding: 12 }}>
         <T s="caption">
-          Everything here is saved on the phone first and goes up when there is signal. Nothing on this screen needs a
-          connection.
+          All of this is saved on the phone first. It is sent when there is signal. You do not need internet here.
         </T>
       </View>
     </AppFrame>

@@ -1,5 +1,7 @@
 import React from 'react';
-import { View } from 'react-native';
+import { Animated, View } from 'react-native';
+import { Presence, useShake } from '../ui/motion';
+import { feedback } from '../ui/feedback';
 import { Choice, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../ui/primitives';
 import { BottomSheet } from '../ui/overlays';
 import { color as C, radius, weight } from '../../theme/tokens';
@@ -93,14 +95,24 @@ export function ReasonSheet({
   const codeDemandsNote = noteRequiredForCode !== undefined && code === noteRequiredForCode;
   const missing =
     codeDemandsNote && !note.trim()
-      ? 'Say what happened — “Other” with nothing behind it is the one answer nobody can act on.'
+      ? 'You chose “Other”. Write what happened.'
       : null;
 
+  /* One buzz per refusal: where `missing` is set the button is disabled-with-
+     a-reason and shakes and buzzes itself, so only the other refusals buzz
+     here. The box shakes either way — it is where the sentence is. */
+  const refusal = useShake(null);
+  const refuse = (message: string) => {
+    setErr(message);
+    if (!missing) feedback('warning');
+    refusal.shake();
+  };
+
   const confirm = () => {
-    if (!code && !nothingToPick) return setErr('Pick one — it is what gets counted afterwards.');
-    if (missing) return setErr(missing);
+    if (!code && !nothingToPick) return refuse('Choose one reason.');
+    if (missing) return refuse(missing);
     if ((requireNote || nothingToPick) && !note.trim()) {
-      return setErr('A sentence, so whoever reads this next knows what happened.');
+      return refuse('Write one line about what happened.');
     }
     onConfirm(code ?? '', note.trim());
   };
@@ -113,8 +125,7 @@ export function ReasonSheet({
       {nothingToPick ? (
         <View style={{ marginTop: 14, backgroundColor: C.wash, borderRadius: radius.lg, padding: 12 }}>
           <T style={{ fontSize: 14, lineHeight: 20, color: C.body }}>
-            Your office has not set any reasons to pick from yet — tell them. Write what happened below and this will
-            still save.
+            The office has not set any reasons yet. Tell them. Write what happened below. It will still save.
           </T>
         </View>
       ) : (
@@ -133,7 +144,7 @@ export function ReasonSheet({
 
       <View style={{ marginTop: 14 }}>
         <SectionLabel style={{ marginBottom: 6 }}>
-          {(noteLabel ?? 'Anything to add') + (codeDemandsNote ? ' · required' : '')}
+          {(noteLabel ?? 'Anything to add') + (codeDemandsNote ? ' · needed' : '')}
         </SectionLabel>
         <Input
           value={note}
@@ -141,17 +152,18 @@ export function ReasonSheet({
           placeholder={
             nothingToPick || codeDemandsNote
               ? 'What happened, in your own words'
-              : notePlaceholder ?? 'Optional — what they actually said'
+              : notePlaceholder ?? 'Optional. What they said'
           }
           multiline
         />
       </View>
 
-      {err ? (
-        <View style={{ marginTop: 12, backgroundColor: C.dangerBg, borderRadius: radius.lg, padding: 12 }}>
+      <Presence show={!!err}>
+        <Animated.View
+          style={[{ marginTop: 12, backgroundColor: C.dangerBg, borderRadius: radius.lg, padding: 12 }, refusal.style]}>
           <T style={[{ fontSize: 14, lineHeight: 20, color: C.danger }, weight(500)]}>{err}</T>
-        </View>
-      ) : null}
+        </Animated.View>
+      </Presence>
 
       <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
         <SecondaryButton label="Cancel" onPress={onClose} style={{ flex: 1, borderRadius: radius.xl }} />

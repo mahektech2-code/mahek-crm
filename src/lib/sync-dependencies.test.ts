@@ -53,6 +53,7 @@ const NEVER_A_DEPENDENCY: Record<string, string> = {
   notif: "notifications come down and never go up",
   line: "an order line rides inside its order",
   lcm: "a lead communication is sent, and nothing is ever sent against it",
+  ochg: "an order change request is decided by accounts, and nothing is ever filed against it",
 };
 
 function handsetFiles(dir: string): string[] {

@@ -95,7 +95,9 @@ export type SettingCategory =
   /** The ERP as an operations system: whether it is where orders are taken. */
   | "erp"
   /** HRMS: attendance, leave, payroll, performance and tasks (docs/hrms spec §24). */
-  | "hrms";
+  | "hrms"
+  /** Hire: the AI layer's models, thresholds and budget, and the pipeline's review windows. */
+  | "hire";
 
 export type SettingDefinition = {
   key: string;
@@ -500,6 +502,20 @@ export const SETTINGS = [
     max: 365,
   },
 
+  /* --------------------------------------------------------- top customers */
+  {
+    key: "topCustomers.count",
+    type: "integer",
+    category: "targets",
+    label: "How many top customers",
+    description:
+      "The length of the Top customers list, ranked across the WHOLE company. A telecaller sees the ones of these that are in their own book, never a top list of their own book - so a name on it means the same thing on every screen it appears on. The report itself is generated on the 1st of every month at 10:00 IST for 3, 6 and 12 whole months; this only decides how many of it are listed.",
+    default: 60,
+    min: 5,
+    max: 500,
+  },
+
+
   /* ------------------------------------------------------------ escalation */
   {
     key: "escalation.stage1Days",
@@ -667,6 +683,17 @@ export const SETTINGS = [
     max: 60,
   },
   {
+    key: "payments.paidCoolingDays",
+    type: "integer",
+    category: "payments",
+    label: "Cooling days after a customer pays",
+    description:
+      "Days after the day a customer pays (any amount, against any bill) on which they get no payment reminder message and no payment call - automated or from the collections list. At 1, somebody who pays on Monday is left alone on Monday and Tuesday and is chased again from Wednesday if anything is still overdue. Counts money reported, held or confirmed by its received date; credit notes and adjustments are not the customer paying and buy nothing. 0 switches it off.",
+    default: 1,
+    min: 0,
+    max: 30,
+  },
+  {
     key: "payments.allowOnAccountRemainder",
     type: "boolean",
     category: "payments",
@@ -713,6 +740,51 @@ export const SETTINGS = [
     max: 100,
   },
   /* -------------------------------------------------------------- sign-in */
+  /*
+   * Passwords and the Admin Console. A password could be guessed as fast as
+   * somebody could post the form; the console, which can sign in as anybody
+   * and grant anybody anything, opened for any session up to thirty days old.
+   */
+  {
+    key: "auth.password.maxFailures",
+    type: "integer",
+    category: "auth",
+    label: "Wrong passwords before an account pauses",
+    description: "How many wrong passwords one account tolerates inside the window below before sign-in is refused for it until the window passes. The pause is on the account, not the person: somebody locked out can still sign in with a WhatsApp code, which has its own limits.",
+    default: 5,
+    min: 3,
+    max: 20,
+  },
+  {
+    key: "auth.password.failureWindowMinutes",
+    type: "integer",
+    category: "auth",
+    label: "Window for counting wrong passwords",
+    description: "Minutes over which wrong passwords are counted, for one account and for one network address. It is also how long a paused account waits.",
+    default: 15,
+    min: 5,
+    max: 240,
+  },
+  {
+    key: "auth.password.maxFailuresPerAddress",
+    type: "integer",
+    category: "auth",
+    label: "Wrong passwords from one address",
+    description: "How many wrong passwords one network address may send across every account inside the window. The per-account limit stops somebody guessing one password; this stops them guessing one common password against everybody. An office shares one address, so it is set well above the per-account figure.",
+    default: 30,
+    min: 10,
+    max: 500,
+  },
+  {
+    key: "auth.console.confirmMinutes",
+    type: "integer",
+    category: "auth",
+    label: "Admin Console: ask for the password again after",
+    description: "Minutes a session may sit idle before the Admin Console asks for the password again. 0 means never: switching to the console from another app opens it straight away, on the strength of the sign-in alone. Every console page opened moves it forward, so somebody working in the console is not interrupted. The rest of MahekOne is unaffected; a session stays signed in for thirty days, and only the console asks.",
+    default: 0,
+    min: 0,
+    max: 240,
+  },
   /*
    * NOTHING READS THESE YET, and a reader should know it before tuning one.
    * They were written for a sign-in where a work number and a code sent to it
@@ -1313,6 +1385,28 @@ export const SETTINGS = [
     max: 100000,
   },
   {
+    key: "interactions.followUpDefaultDays",
+    type: "integer",
+    category: "queue",
+    label: "Follow-up call back after",
+    description:
+      "A Follow-up call no longer asks the telecaller for a date. It becomes a call-back reminder this many days ahead, moved on to the next working day if that lands on a day off - so the customer is never left with a follow-up nobody is reminded of. A date the customer actually named, supplied by the call assistant or the Command Centre, is used as given.",
+    default: 1,
+    min: 0,
+    max: 30,
+  },
+  {
+    key: "interactions.paymentPromiseDefaultDays",
+    type: "integer",
+    category: "queue",
+    label: "Promised payment date when none is given",
+    description:
+      "A Pay Promise no longer asks the telecaller for a payment date. Saved with none, the promise is dated this many days ahead (moved on to the next working day), so it still writes its payment reminder and still holds the customer back from collections until it passes. It is a stand-in, not something the customer said: a date they actually named, supplied by the call assistant or the Command Centre, is used as given.",
+    default: 3,
+    min: 1,
+    max: 30,
+  },
+  {
     key: "customers.defaultCreditDays",
     type: "integer",
     category: "bills",
@@ -1322,6 +1416,17 @@ export const SETTINGS = [
     default: 30,
     min: 0,
     max: 180,
+  },
+  {
+    key: "customers.birthdayHeadsUpDays",
+    type: "integer",
+    category: "interactions",
+    label: "Birthday heads-up",
+    description:
+      "How many days ahead a contact's birthday is called out on the customer record, the call drawer and the customer list. 0 shows it on the day only.",
+    default: 7,
+    min: 0,
+    max: 60,
   },
   {
     key: "dashboard.reminderOverdueFlagDays",
@@ -1759,6 +1864,30 @@ export const SETTINGS = [
    * assistant's confidence floor: "ask when less sure than" is one judgement
    * about how often a person should be asked, not two.
    */
+  /*
+   * THE TASK BRAIN — the Sales Dashboard's AI while a task is being set.
+   * OpenAI only: it drafts a form from a sentence, says which customer field
+   * each question is really asking for, and summarises what came back. Every
+   * suggestion is a suggestion — nothing is assigned or written to a record
+   * until a manager presses the button.
+   */
+  {
+    key: "taskIntel.enabled",
+    type: "boolean",
+    category: "voice",
+    label: "AI on task assignment",
+    description:
+      "On the Sales Dashboard's task builder: draft the questions from a description, suggest which customer field each answer should update, and summarise the answers. Needs an OpenAI key. Off hides every AI button on the Tasks screens.",
+    default: true,
+  },
+  {
+    key: "taskIntel.model",
+    type: "text",
+    category: "voice",
+    label: "Task AI model",
+    description: "The OpenAI model the task builder and the answer summary use.",
+    default: "gpt-5-mini",
+  },
   {
     key: "visitIntel.enabled",
     type: "boolean",
@@ -1775,6 +1904,66 @@ export const SETTINGS = [
     label: "Visit assistant model",
     description:
       "The OpenAI model that reads a visit. Where OpenAI cannot answer, Sarvam is asked instead; where neither can, the salesman fills the visit as usual.",
+    default: "gpt-5-mini",
+  },
+  /*
+   * READING A VISITING CARD — the New lead form's scan button on the MBOS
+   * handset. OpenAI only: reading a photograph needs a model that can see, so
+   * unlike the assistants above there is no Sarvam fallback, and without an
+   * OpenAI key the button is simply not drawn.
+   */
+  {
+    key: "leadScan.enabled",
+    type: "boolean",
+    category: "voice",
+    label: "Read a visiting card",
+    description:
+      "On the MBOS handset's New lead form, let a salesman photograph a visiting card, shop board or bill head and have the shop name, contact person, mobile, town, address and GSTIN filled in for him to check. The photographs are read and discarded, never stored. Off removes the button from every handset on its next sync.",
+    default: true,
+  },
+  {
+    key: "leadScan.model",
+    type: "text",
+    category: "voice",
+    label: "Visiting card model",
+    description:
+      "The OpenAI model that reads the photographs. It must accept images.",
+    default: "gpt-5-mini",
+  },
+  {
+    key: "leadScan.maxImages",
+    type: "integer",
+    category: "voice",
+    label: "Photos per scan",
+    description:
+      "How many photographs a salesman may send in one scan — a card's front and back and the shop board are three views of one business, read together.",
+    default: 3,
+    min: 1,
+    max: 6,
+  },
+  /*
+   * FILLING A LEAD BY VOICE — the New lead form's "Speak about the shop" on
+   * the MBOS handset. Reading words needs no eyes, so unlike the card scan it
+   * takes the OpenAI-then-Sarvam ladder the visit assistant uses. How long a
+   * recording may run is NOT here: it is `voice.maxSeconds`, the one ceiling
+   * every microphone on the handset shares.
+   */
+  {
+    key: "leadVoice.enabled",
+    type: "boolean",
+    category: "voice",
+    label: "Fill a lead by voice",
+    description:
+      "On the MBOS handset's New lead form, let a salesman say everything he learned about a shop, in any language, and have every answer on the form filled in for him to check — the shop, the person, the number, the town, what they buy and how much, who they buy from, when to come back. Nothing is saved until he presses Add lead, and what he said is not stored. Off removes the button from every handset on its next sync.",
+    default: true,
+  },
+  {
+    key: "leadVoice.model",
+    type: "text",
+    category: "voice",
+    label: "Lead by voice model",
+    description:
+      "The OpenAI model that reads what the salesman said into the form. Where OpenAI cannot answer, Sarvam is asked instead; where neither can, he fills the form as usual.",
     default: "gpt-5-mini",
   },
   {
@@ -1811,6 +2000,85 @@ export const SETTINGS = [
     label: "Lead calling desk assistant model",
     description:
       "The OpenAI model that reads a Call 1/2/3 conversation. Where OpenAI cannot answer, Sarvam is asked instead; where neither can, the telecaller fills the call as usual.",
+    default: "gpt-5-mini",
+  },
+  /*
+   * THE LEAD INTAKE FORM'S OWN ASSISTANT — the Calling Desk assistant's
+   * counterpart for a lead that does not exist yet. Its own switch, because a
+   * team may want one without the other. It reads a call into the Intake form's
+   * boxes and proposes; it saves nothing, and the sales type is never one of
+   * the things it proposes. It shares the call assistant's confidence floor
+   * (`callIntel.confirmBelowPercent`) rather than a third number.
+   */
+  /*
+   * THE MANAGER VERIFICATION DIALOG'S OWN ASSISTANT — the Sales Manager's
+   * counterpart to the Calling Desk's. It reads what the manager says about the
+   * verification call into the dialog's answers and the shop's own figures, and
+   * proposes; it never chooses a verification result, a failure reason, a note
+   * or a correction's reason, and saves nothing. Its own switch, because a team
+   * may want one assistant without the others. It shares the call assistant's
+   * confidence floor (`callIntel.confirmBelowPercent`).
+   */
+  {
+    key: "verifyIntel.enabled",
+    type: "boolean",
+    category: "voice",
+    label: "Understand the verification call",
+    description:
+      "After a Sales Manager speaks or types about a verification call in the CRM Sales Manager workspace, suggest answers for the Manager verification dialog and mark where the shop's figures differ from the salesman's. The manager reviews and applies each one and still chooses the result, writes every reason and note, and presses Save verification. Needs a language model key like the other assistants; without one the dialog works as usual.",
+    default: true,
+  },
+  {
+    key: "verifyIntel.model",
+    type: "text",
+    category: "voice",
+    label: "Verification call assistant model",
+    description:
+      "The OpenAI model that reads a verification call. Where OpenAI cannot answer, Sarvam is asked instead; where neither can, the manager fills the dialog in as usual.",
+    default: "gpt-5-mini",
+  },
+  /*
+   * THE CONVERT-TO-PROSPECT DIALOG'S OWN ASSISTANT. It reads what a Sales Manager
+   * says about a shop into the facts the dialog asks, and proposes: it fills
+   * only what the lead has nothing for, flags anything the lead already holds as
+   * a conflict for the manager to resolve, and never chooses the conversion
+   * reason or converts. Its own switch, separate from the verification
+   * assistant's, because the two do different jobs and a team may want one.
+   */
+  {
+    key: "convertIntel.enabled",
+    type: "boolean",
+    category: "voice",
+    label: "Understand the Convert to Prospect conversation",
+    description:
+      "After a Sales Manager speaks or types about a shop in the CRM Sales Manager workspace's Convert to Prospect dialog, suggest values for the facts it asks. It fills only what the lead has nothing for, shows anything different from the salesman's entry as a conflict for the manager to resolve, and never replaces his value, chooses the reason or converts. Needs a language model key like the other assistants; without one the dialog works as usual.",
+    default: true,
+  },
+  {
+    key: "convertIntel.model",
+    type: "text",
+    category: "voice",
+    label: "Convert to Prospect assistant model",
+    description:
+      "The OpenAI model that reads a Convert to Prospect conversation. Where OpenAI cannot answer, Sarvam is asked instead; where neither can, the manager fills the dialog in as usual.",
+    default: "gpt-5-mini",
+  },
+  {
+    key: "intakeIntel.enabled",
+    type: "boolean",
+    category: "voice",
+    label: "Understand the lead intake call",
+    description:
+      "After a telecaller speaks or types about the call on the Lead Intake form, suggest values for the form's boxes. A person reviews and applies each one, and the existing Raise the lead button is still the only thing that creates a lead. It never suggests or changes the sales type. Needs a language model key like the other assistants; without one the form works as usual.",
+    default: true,
+  },
+  {
+    key: "intakeIntel.model",
+    type: "text",
+    category: "voice",
+    label: "Lead intake assistant model",
+    description:
+      "The OpenAI model that reads a lead intake call. Where OpenAI cannot answer, Sarvam is asked instead; where neither can, the telecaller fills the form in as usual.",
     default: "gpt-5-mini",
   },
   {
@@ -1894,7 +2162,7 @@ export const SETTINGS = [
     category: "mbos-location",
     label: "Usable GPS accuracy",
     description:
-      "Metres. A fix the handset itself rates worse than this is not evidence of where anybody was standing — a visit captured on one is still saved, but it is not marked verified and it never counts as a location mismatch. Refusing the check-in instead would lose a real visit to a cloudy afternoon indoors.",
+      "Metres. A fix the handset itself rates worse than this is not evidence of where anybody was standing, so the handset refuses to start a check-in on one — he steps outside and tries again. A visit that arrives from an older handset on such a fix is still saved, but it is not marked verified and it never counts as a location mismatch.",
     default: 50,
     min: 5,
     max: 1000,
@@ -1908,6 +2176,17 @@ export const SETTINGS = [
       "Metres between the salesman and the shop's own pin. Inside it the check-in goes ahead; outside it the handset refuses, and he can only pass by saying in writing that the pin is wrong — which reaches you as an unverified visit. It is ALSO the distance a saved visit is flagged at, because the distance a check-in is refused at and the distance one is questioned at are one fact. Keep it comfortably larger than the accuracy above: a fix that is itself 50 m wide cannot tell a doorway from the tea shop across the road, and every refusal it produces falls on somebody standing in the right place.",
     default: 100,
     min: 20,
+    max: 5000,
+  },
+  {
+    key: "mbos.visit.forgotCheckoutMetres",
+    type: "integer",
+    category: "mbos-location",
+    label: "Remind to check out past",
+    description:
+      "Metres from where he checked in. When the trail shows a salesman this far from a shop he is still checked into, his phone asks — once, with a sound — whether he forgot to check out, and tapping it opens the check-out for that shop with no distance check. The visit closes at the time he was seen leaving. Measured after taking off the reading's own error, so a vague fix never raises it while he is still at the counter.",
+    default: 500,
+    min: 200,
     max: 5000,
   },
   {
@@ -2255,6 +2534,17 @@ export const SETTINGS = [
     default: 6,
     min: 2,
     max: 120,
+  },
+  {
+    key: "mbos.location.liveSpeedMinKmh",
+    type: "integer",
+    category: "mbos-location",
+    label: "Slowest speed the Live map prints",
+    description:
+      "km/h. The Live map prints how fast a salesman is moving beside his name, worked out from his last minute of positions \u2014 and prints nothing below this. Walking pace and standing still are where GPS noise lives: a man at a counter drifts tens of metres between fixes, and a figure of 3 km/h about him would be the noise, not the man. Above it the figure is real; below it the row says nothing rather than something false.",
+    default: 5,
+    min: 1,
+    max: 60,
   },
   {
     key: "mbos.location.liveTeamSeconds",
@@ -2681,6 +2971,39 @@ export const SETTINGS = [
     default: 22,
     min: 0,
     max: 23,
+  },
+  {
+    key: "mbos.attendance.punchOutPromptHour",
+    type: "integer",
+    category: "mbos-attendance",
+    label: "Hour the handset asks for a punch-out",
+    description:
+      "From this local hour, a salesman still punched in sees Punch out as the main button on Home and a bar across every other screen asking him to close the day. Before it, Punch out stays a quiet secondary button, because a prompt shown all day stops being read.",
+    default: 18,
+    min: 0,
+    max: 23,
+  },
+  {
+    key: "mbos.attendance.punchOutSecondReminderMinutes",
+    type: "integer",
+    category: "mbos-attendance",
+    label: "Second punch-out reminder, minutes after the first",
+    description:
+      "A salesman still punched in gets a phone notification at the punch-out prompt hour, and a second one this many minutes later. Zero sends only the first. There is no third: a reminder that repeats until midnight gets its notifications switched off.",
+    default: 90,
+    min: 0,
+    max: 360,
+  },
+  {
+    key: "mbos.attendance.missedPunchOutWindowDays",
+    type: "integer",
+    category: "mbos-attendance",
+    label: "Days counted for missed punch-outs",
+    description:
+      "How far back the attendance screen and the salesman's own handset count days he punched in to and never punched out of. One number for both, so the manager and the salesman see the same figure.",
+    default: 30,
+    min: 7,
+    max: 90,
   },
   {
     key: "mbos.attendance.selfieRequired",
@@ -3248,9 +3571,9 @@ export const SETTINGS = [
     key: "leads.suspectMaxVisits",
     type: "integer",
     category: "mbos-leads",
-    label: "Visits before a Suspect must be decided",
+    label: "Visits before a Suspect must be decided (retired)",
     description:
-      "§4. A salesman gets this many visits to work out whether there is a genuine opportunity, and then the lead turns into a single question: Prospect or not. The specification's normal target is two and its absolute maximum is three. Nothing is refused when the cap is reached - a decision is DEMANDED, which is the opposite gesture, and the lead cannot be quietly left in the drawer instead.",
+      "No longer read. The cap is \"Suspect decision required at\" (mbos.leads.maxSuspectVisits) — there were two settings for one number, the handset's visit screen and the office's sync read one while the lead record and the command centre read this, and a manager who changed either made the two ends disagree about the same lead. Every reader now uses the other key, and the handset is sent its value under this name too. Kept so a stored value still resolves.",
     default: 3,
     min: 1,
     max: 10,
@@ -3393,6 +3716,15 @@ export const SETTINGS = [
     default: 2,
     min: 1,
     max: 30,
+  },
+  {
+    key: "leads.selfRaisedVerifierEmail",
+    type: "text",
+    category: "mbos-leads",
+    label: "Who approves a lead its own Sales Manager raised",
+    description:
+      "The work email of the person who verifies the Prospect, validates the GST number and reviews the Qualification on a lead a Sales Manager raised herself — one she holds the seat on and owns, or that nobody owns. She still collects its answers; the approvals are theirs, so nobody approves their own work. Blank switches the rule off and the Sales Manager approves her own leads as before. A name that matches no active account does the same, so a typo cannot lock a lead.",
+    default: "",
   },
   {
     key: "leads.figuresFreshDays",
@@ -3589,7 +3921,7 @@ export const SETTINGS = [
     category: "hrms",
     label: "Late check-in grace",
     description:
-      "Minutes after the official in-time that still count as on time for the late / early remark. Past it, an ordinary check-in is refused with “Late Punch-in, Today Unpaid Leave. Contact Admin” (spec §6.2).",
+      "Minutes after the official in-time that still count as on time for the late / early remark. Past it, an ordinary check-in is refused as too late, and the day counts as unpaid leave (spec §6.2).",
     default: 30,
     min: 0,
     max: 240,
@@ -3684,7 +4016,7 @@ export const SETTINGS = [
     category: "hrms",
     label: "Shortest overtime",
     description:
-      "Overtime of this many minutes or fewer is refused with “OT not Applicable”.",
+      "Overtime of this many minutes or fewer is refused as not overtime.",
     default: 10,
     min: 0,
     max: 240,
@@ -3814,19 +4146,10 @@ export const SETTINGS = [
     key: "hrms.performance.financialYearStart",
     type: "text",
     category: "hrms",
-    label: "Financial year start (daily score)",
+    label: "Financial year start",
     description:
-      "The date the daily score's total sale and payment days are counted from (the source used 2023-04-01).",
+      "The date sales and payment days are counted from, for the daily sales score and for period review points alike. The source kept two dates for one question (2023-04-01 for the score, 2024-04-01 for the points); there is one now.",
     default: "2023-04-01",
-  },
-  {
-    key: "hrms.performance.pointsFinancialDate",
-    type: "text",
-    category: "hrms",
-    label: "Financial date (performance points)",
-    description:
-      "The date performance points count outstanding from (the source defaulted to 2024-04-01).",
-    default: "2024-04-01",
   },
   {
     key: "hrms.performance.gstPercent",
@@ -3887,7 +4210,7 @@ export const SETTINGS = [
     category: "hrms",
     label: "Suggestion: deactivate above",
     description:
-      "Where calls − factor × orders is at or below this, the suggestion is Do FollowUp; above it, Do Deactivate This Customer.",
+      "Where calls − factor × orders is at or below this, the suggestion is “Keep following up”; above it, “Consider deactivating”.",
     default: 7,
     min: 0,
     max: 1000,
@@ -3987,6 +4310,39 @@ export const SETTINGS = [
     default: { time: [180, 90], description: [25, 15] },
   },
   {
+    key: "erp.purchase.ownVehicleRatePerKmPaise",
+    type: "integer",
+    category: "erp",
+    label: "Own vehicle rate per km",
+    description:
+      "Paise per kilometre. A purchase inward brought in on Mahek's own vehicle is costed at kilometres × this rate, so nobody prices our own tempo by hand. The rate is copied onto each inward as it is saved, so changing it later never reprices a journey already made. Zero means no rate is approved yet, and an own-vehicle inward is refused until one is.",
+    default: 0,
+    min: 0,
+    max: 100000,
+  },
+  {
+    key: "erp.purchase.minQuotations",
+    type: "integer",
+    category: "erp",
+    label: "Quotations needed before one is selected",
+    description:
+      "For an item whose purchase rule is Quotation (or a requirement the buyer sent for quotations): how many vendors' quotations must be in before one can be selected and the PO raised. One means a single quotation is enough; two or more is a real comparison.",
+    default: 2,
+    min: 1,
+    max: 10,
+  },
+  {
+    key: "erp.purchase.receiptTolerancePercent",
+    type: "integer",
+    category: "erp",
+    label: "Receipt above the PO quantity",
+    description:
+      "How far above a PO line's quantity goods may be received against it, in percent of what was ordered — drums never weigh exactly what was ordered. Beyond it the receipt is refused and a new requirement and PO are needed for the extra.",
+    default: 5,
+    min: 0,
+    max: 50,
+  },
+  {
     key: "erp.production.recipeTolerancePercent",
     type: "integer",
     category: "erp",
@@ -3996,6 +4352,26 @@ export const SETTINGS = [
     default: 5,
     min: 0,
     max: 100,
+  },
+  {
+    key: "erp.location.autoDetect",
+    type: "boolean",
+    category: "erp",
+    label: "Find the working godown by location",
+    description:
+      "On: when somebody opens the ERP with location allowed in their browser, and they are standing inside the fence of a godown they are assigned to, it becomes their working location by itself. Only godowns with a map pin can be found, a fix too vague to tell is ignored, and a godown picked by hand stays picked for the rest of that tab. Off: the working location is only ever chosen from the header.",
+    default: true,
+  },
+  {
+    key: "erp.location.godownRadiusM",
+    type: "integer",
+    category: "erp",
+    label: "Godown fence radius",
+    description:
+      "Metres from a godown's map pin within which somebody counts as working there. Wide enough to cover the yard and the gate, narrow enough that two godowns in one industrial estate do not both claim the same person — where fences overlap the nearer pin wins.",
+    default: 300,
+    min: 25,
+    max: 5000,
   },
   {
     key: "erp.orders.live",
@@ -4404,6 +4780,211 @@ export const SETTINGS = [
       "An OpenAI text model that reads order messages and complaint descriptions, and answers questions.",
     default: "gpt-5-mini",
   },
+  /* ---------------------------------------------- ask about the team
+   *
+   * The Sales Dashboard's "Ask about the team" drawer. OpenAI writes its own
+   * read-only queries against views narrowed to what the asker may see; these
+   * decide which model, how long it may take, and how long answers are
+   * remembered so a repeated question does not touch the database again.
+   */
+  {
+    key: "salesAsk.enabled",
+    type: "boolean",
+    category: "performance",
+    label: "Ask about the team",
+    description:
+      "Let managers ask the Sales Dashboard anything about their team — attendance, leave, visits, routes, orders, collections, targets — and have it answered from the data they are allowed to see. Off hides the answers immediately.",
+    default: true,
+  },
+  {
+    key: "salesAsk.model",
+    type: "text",
+    category: "performance",
+    label: "Ask about the team · model",
+    description:
+      "The OpenAI model that reads the question and writes the queries. A faster model answers sooner; a stronger one handles harder questions.",
+    default: "gpt-5-mini",
+  },
+  {
+    key: "salesAsk.reasoningEffort",
+    type: "text",
+    category: "performance",
+    label: "Ask about the team · thinking effort",
+    description:
+      "How long a reasoning model thinks before answering: minimal, low, medium or high. Lower is faster. Ignored by models that do not reason.",
+    default: "low",
+  },
+  {
+    key: "salesAsk.maxQueries",
+    type: "integer",
+    category: "performance",
+    label: "Ask about the team · queries per question",
+    description: "The most database reads one question may make before it has to answer with what it has.",
+    default: 6,
+    min: 1,
+    max: 15,
+  },
+  {
+    key: "salesAsk.timeoutSeconds",
+    type: "integer",
+    category: "performance",
+    label: "Ask about the team · time limit",
+    description: "Seconds before a question is given up on and the manager is asked to narrow it.",
+    default: 75,
+    min: 10,
+    max: 240,
+  },
+  {
+    key: "salesAsk.queryTimeoutSeconds",
+    type: "integer",
+    category: "performance",
+    label: "Ask about the team · one query's time limit",
+    description: "Seconds a single database read may run. A slower one is stopped and the model is told to ask for less.",
+    default: 8,
+    min: 1,
+    max: 60,
+  },
+  {
+    key: "salesAsk.resultCacheSeconds",
+    type: "integer",
+    category: "performance",
+    label: "Ask about the team · remember a query for",
+    description:
+      "Seconds a query's rows are remembered, for anybody who can see exactly the same rows. The same read inside this window is answered from memory, not the database. 0 turns it off.",
+    default: 60,
+    min: 0,
+    max: 3600,
+  },
+  {
+    key: "salesAsk.answerCacheSeconds",
+    type: "integer",
+    category: "performance",
+    label: "Ask about the team · remember an answer for",
+    description:
+      "Seconds a fresh question's answer is remembered. The same question asked again inside this window — by the same person or anybody who sees the same rows — is answered instantly. Follow-up questions are always worked out again. 0 turns it off.",
+    default: 120,
+    min: 0,
+    max: 3600,
+  },
+  {
+    key: "salesAsk.contextCacheSeconds",
+    type: "integer",
+    category: "performance",
+    label: "Ask about the team · remember a person's access for",
+    description:
+      "Seconds a person's access and territory are remembered between questions. A change on the Access or Territory screen reaches the panel within this window.",
+    default: 300,
+    min: 0,
+    max: 3600,
+  },
+  /* ------------------------------------------------------------------ hire */
+  {
+    key: "hire.ai.enabled",
+    type: "boolean",
+    category: "hire",
+    label: "AI assistance in Hire",
+    description:
+      "Off, every AI step in Hire takes its manual path: interviewers score by hand, CVs are typed in, messages go out as templates. The pipeline never stops for want of a model; it runs slower and says so.",
+    default: true,
+  },
+  {
+    key: "hire.ai.reasoningModel",
+    type: "text",
+    category: "hire",
+    label: "Reasoning model",
+    description: "Rubric scoring, consistency checks, ranking, blueprint generation and committee briefs.",
+    default: "gpt-5",
+  },
+  {
+    key: "hire.ai.fastModel",
+    type: "text",
+    category: "hire",
+    label: "Fast model",
+    description: "CV parsing, message drafting, summaries and the copilot's suggestions.",
+    default: "gpt-5-mini",
+  },
+  {
+    key: "hire.ai.visionModel",
+    type: "text",
+    category: "hire",
+    label: "Vision model",
+    description: "Reads identity documents, bank statements, certificates and payslips.",
+    default: "gpt-4o",
+  },
+  {
+    key: "hire.ai.transcriptionModel",
+    type: "text",
+    category: "hire",
+    label: "Transcription model",
+    description: "Interview and voice-screen recordings into text.",
+    default: "gpt-4o-transcribe",
+  },
+  {
+    key: "hire.ai.realtimeModel",
+    type: "text",
+    category: "hire",
+    label: "Realtime speech model",
+    description: "The AI voice screener, speech to speech.",
+    default: "gpt-realtime",
+  },
+  {
+    key: "hire.ai.minConfidence",
+    type: "decimal",
+    category: "hire",
+    label: "Confidence below which a person scores",
+    description:
+      "An AI score below this confidence is shown as Low, greyed, with \"Human scoring recommended\" — it is never accepted by default either way.",
+    default: 0.55,
+    min: 0,
+    max: 1,
+  },
+  {
+    key: "hire.ai.monthlyBudgetPaise",
+    type: "integer",
+    category: "hire",
+    label: "Monthly AI budget (paise)",
+    description: "Past this the AI usage screen and the bell say so. It alerts; it never blocks a hire.",
+    default: 1000000,
+    min: 0,
+    max: 1000000000,
+  },
+  {
+    key: "hire.rejection.reviewDays",
+    type: "integer",
+    category: "hire",
+    label: "Days to confirm a proposed rejection",
+    description:
+      "A score below a stage's floor PROPOSES a rejection. It waits this long in Decisions for a named person to confirm or dismiss it; nothing is rejected by the system alone.",
+    default: 2,
+    min: 1,
+    max: 30,
+  },
+  {
+    key: "hire.languages",
+    type: "text",
+    category: "hire",
+    label: "Candidate languages",
+    description: "Languages messages are drafted in and the voice screen speaks, comma-separated.",
+    default: "English, Hindi, Marathi, Gujarati",
+  },
+  {
+    key: "hire.voice.callWindow",
+    type: "text",
+    category: "hire",
+    label: "Voice screen call window",
+    description: "When the AI screener may call a candidate, in IST.",
+    default: "10:00-19:00",
+  },
+  {
+    key: "hire.voice.maxAttempts",
+    type: "integer",
+    category: "hire",
+    label: "Voice screen attempts",
+    description: "Unanswered after this many, the screen falls back to scheduling a person.",
+    default: 3,
+    min: 1,
+    max: 10,
+  },
 ] as const satisfies readonly SettingDefinition[];
 
 export type SettingKey = (typeof SETTINGS)[number]["key"];
@@ -4523,6 +5104,12 @@ export function validateSetting(key: string, raw: unknown): ValidationResult {
  */
 export function checkConsistency(config: Config): string[] {
   const problems: string[] = [];
+
+  /* The effort is passed to OpenAI as written, and a word it does not know is
+     a refused request on every question rather than a slower answer. */
+  if (!["minimal", "low", "medium", "high"].includes(config["salesAsk.reasoningEffort"])) {
+    problems.push("Ask about the team's thinking effort must be minimal, low, medium or high.");
+  }
 
   /* A suggested minimum at or above the suggested maximum is a level nobody can hold. */
   if (config["erp.ai.reorder.minCoverDays"] >= config["erp.ai.reorder.maxCoverDays"]) {
@@ -4814,6 +5401,15 @@ export function checkConsistency(config: Config): string[] {
     );
   }
 
+  // A reminder that he has left, raised inside the distance he was allowed to
+  // check in from, would fire at the counter of the shop he is still in.
+  const forgotAt = config["mbos.visit.forgotCheckoutMetres"];
+  if (forgotAt <= mismatch * 2) {
+    problems.push(
+      `The "forgot to check out" reminder fires ${forgotAt}m from the check-in, but a check-in is allowed up to ${mismatch}m from the shop. Keep the reminder at least twice the check-in radius, or somebody still standing in the shop is asked whether he has left.`,
+    );
+  }
+
   // Two approval tiers that are one tier. The second approver would never be
   // asked, and the screen would say they were.
   const tier1 = config["mbos.orders.approvalThresholdPaise"];
@@ -5048,11 +5644,16 @@ export type Config = {
   "bills.creditDayOptions": number[];
 
   "payments.reportedQuietDays": number;
+  "payments.paidCoolingDays": number;
   "payments.allowOnAccountRemainder": boolean;
   "people.amChangeReasons": string[];
   "people.companyName": string;
   "people.pickerSearchThreshold": number;
 
+  "auth.password.maxFailures": number;
+  "auth.password.failureWindowMinutes": number;
+  "auth.password.maxFailuresPerAddress": number;
+  "auth.console.confirmMinutes": number;
   "auth.otp.codeLength": number;
   "auth.otp.ttlMinutes": number;
   "auth.otp.maxVerifyAttempts": number;
@@ -5124,7 +5725,10 @@ export type Config = {
   "dashboard.complaintUnresolvedFlagDays": number;
   "complaints.defaultSeverity": "low" | "medium" | "high" | "critical";
   "interactions.maxNotesLength": number;
+  "interactions.followUpDefaultDays": number;
+  "interactions.paymentPromiseDefaultDays": number;
   "customers.defaultCreditDays": number;
+  "customers.birthdayHeadsUpDays": number;
 
   "attachments.maxSizeMb": number;
   "attachments.acceptedTypes": string[];
@@ -5137,6 +5741,7 @@ export type Config = {
   "products.frequentCount": number;
   "products.frequentRanking": "orders" | "recency";
   "products.starterListCount": number;
+  "topCustomers.count": number;
   "products.priceSource": "unset" | "manual" | "product" | "pricelist";
   "products.searchOnOrderForms": boolean;
   "products.searchMinChars": number;
@@ -5176,7 +5781,6 @@ export type Config = {
   "hrms.performance.periodDivisor": number;
   "hrms.performance.standardHours": number;
   "hrms.performance.financialYearStart": string;
-  "hrms.performance.pointsFinancialDate": string;
   "hrms.performance.gstPercent": number;
   "hrms.performance.employeeOfMonthPercent": number;
   "hrms.tasks.eodWhatsappNumber": string;
@@ -5194,7 +5798,12 @@ export type Config = {
   "hrms.performance.outstandingBands": [number, number, number];
   "hrms.performance.pointBands": { time: [number, number]; description: [number, number] };
 
+  "erp.location.autoDetect": boolean;
+  "erp.location.godownRadiusM": number;
   "erp.orders.live": boolean;
+  "erp.purchase.ownVehicleRatePerKmPaise": number;
+  "erp.purchase.minQuotations": number;
+  "erp.purchase.receiptTolerancePercent": number;
   "erp.production.recipeTolerancePercent": number;
   "erp.ai.voice.enabled": boolean;
   "erp.ai.alerts.enabled": boolean;
@@ -5234,6 +5843,27 @@ export type Config = {
   "erp.ai.complaints.monthlyCap": number;
   "erp.ai.visionModel": string;
   "erp.ai.textModel": string;
+  "salesAsk.enabled": boolean;
+  "salesAsk.model": string;
+  "salesAsk.reasoningEffort": string;
+  "salesAsk.maxQueries": number;
+  "salesAsk.timeoutSeconds": number;
+  "salesAsk.queryTimeoutSeconds": number;
+  "salesAsk.resultCacheSeconds": number;
+  "salesAsk.answerCacheSeconds": number;
+  "salesAsk.contextCacheSeconds": number;
+  "hire.ai.enabled": boolean;
+  "hire.ai.reasoningModel": string;
+  "hire.ai.fastModel": string;
+  "hire.ai.visionModel": string;
+  "hire.ai.transcriptionModel": string;
+  "hire.ai.realtimeModel": string;
+  "hire.ai.minConfidence": number;
+  "hire.ai.monthlyBudgetPaise": number;
+  "hire.rejection.reviewDays": number;
+  "hire.languages": string;
+  "hire.voice.callWindow": string;
+  "hire.voice.maxAttempts": number;
   "voice.enabled": boolean;
   "voice.maxSeconds": number;
   "voice.maxSizeMb": number;
@@ -5255,12 +5885,26 @@ export type Config = {
   "callIntel.trainingMonths": number;
   "leadCallIntel.enabled": boolean;
   "leadCallIntel.model": string;
+  "convertIntel.enabled": boolean;
+  "convertIntel.model": string;
+  "verifyIntel.enabled": boolean;
+  "verifyIntel.model": string;
+  "intakeIntel.enabled": boolean;
+  "intakeIntel.model": string;
+  "taskIntel.enabled": boolean;
+  "taskIntel.model": string;
   "visitIntel.enabled": boolean;
   "visitIntel.model": string;
+  "leadScan.enabled": boolean;
+  "leadScan.model": string;
+  "leadScan.maxImages": number;
+  "leadVoice.enabled": boolean;
+  "leadVoice.model": string;
 
   /* ------------------------------------------------- MBOS — field sales */
   "mbos.location.gpsAccuracyThresholdM": number;
   "mbos.location.visitMismatchM": number;
+  "mbos.visit.forgotCheckoutMetres": number;
   "mbos.location.routeDeviationM": number;
   "mbos.location.unplannedVisitsPerDay": number;
   "mbos.location.trackWhileWorking": boolean;
@@ -5291,6 +5935,7 @@ export type Config = {
   "mbos.location.noTrailMinutes": number;
   "mbos.location.lowBatteryPercent": number;
   "mbos.location.livePushSeconds": number;
+  "mbos.location.liveSpeedMinKmh": number;
   "mbos.location.liveTeamSeconds": number;
   "mbos.location.liveStreamMinutes": number;
   "mbos.location.livePollSeconds": number;
@@ -5333,6 +5978,9 @@ export type Config = {
   "mbos.attendance.fullDayHours": number;
   "mbos.attendance.halfDayHours": number;
   "mbos.attendance.autoCheckOutHour": number;
+  "mbos.attendance.punchOutPromptHour": number;
+  "mbos.attendance.punchOutSecondReminderMinutes": number;
+  "mbos.attendance.missedPunchOutWindowDays": number;
   "mbos.attendance.selfieRequired": boolean;
   "mbos.attendance.selfieRetentionHours": number;
 
@@ -5404,6 +6052,7 @@ export type Config = {
   "leads.orderBlockers": { code: string; label: string }[];
   "leads.sampleReviewChaseDays": number[];
   "leads.verificationDueDays": number;
+  "leads.selfRaisedVerifierEmail": string;
   "leads.figuresFreshDays": number;
   "leads.sources": { code: string; label: string }[];
   "leads.distributorDiscountApprovalPercent": number;

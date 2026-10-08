@@ -90,8 +90,8 @@ export async function closeOpenVisits(): Promise<Counted> {
  * attendance screen and the day counts all believed it.
  *
  * **THE CLOSING TIME IS EVIDENCE, NEVER A GUESS.** It is the latest moment
- * MahekOne can show he was working: his last reported position, the last
- * activity he filed, or the last visit he closed. Picking an hour instead —
+ * MahekOne can show he was working: the last activity he filed or the last
+ * visit he closed, and his last reported position only where he did neither. Picking an hour instead —
  * six o'clock, or the end of the configured day — would be inventing
  * attendance, and attendance is the one place in this app where an invented
  * figure is least forgivable: somebody is paid against it.
@@ -109,23 +109,61 @@ export async function markMissedCheckouts(): Promise<Counted> {
   /* Raw, because the closing time is the greatest of three subqueries and
      Drizzle's builder cannot say that without three round trips. No JS Date
      is bound anywhere here — every timestamp is a column or `now()`. */
+  /*
+   * WORK FIRST, THE PHONE ONLY WHERE THERE IS NO WORK.
+   *
+   * This took the greatest of all three, and a raw position is evidence that
+   * the PHONE was on, not that he was working: a forgotten punch-out leaves
+   * the tracker recording through the evening at home, so the day was closed
+   * at 23:58 and the record pay is read against claimed a sixteen-hour shift.
+   * The last thing he DID — an activity filed, a visit closed — is the
+   * closing time wherever there is one. A position stands in only for a day
+   * with no activity at all, which is the case it was there for.
+   *
+   * AND THE OPEN SESSION IS CLOSED WITH THE DAY. Current handsets send a day
+   * as `sessions`, and this used to set `check_out_at` while leaving the last
+   * session at `outAt: null` — so `workedSecondsOf` read the day as still
+   * running, the verdict job skipped it as unjudged every night for ever, and
+   * a nine-hour day read Absent with no hours. The session is closed at the
+   * same instant and marked `autoClosed`, so nothing mistakes it for a
+   * punch-out somebody pressed.
+   */
   const closed = await db.execute<{ id: string; closed: boolean }>(sql`
     update mbos_attendance_days d
        set check_out_at = ev.last_seen,
            auto_checked_out = true,
+           sessions = case
+             when ev.last_seen is null
+               or d.sessions is null
+               or jsonb_typeof(d.sessions) <> 'array'
+               or jsonb_array_length(d.sessions) = 0
+             then d.sessions
+             else (
+               select jsonb_agg(
+                        case when s.e->>'outAt' is null
+                             then s.e || jsonb_build_object(
+                                    'outAt', (extract(epoch from ev.last_seen) * 1000)::bigint,
+                                    'autoClosed', true)
+                             else s.e end
+                        order by s.ord)
+                 from jsonb_array_elements(d.sessions) with ordinality as s(e, ord)
+             )
+           end,
            updated_at = now()
       from (
         select a.id,
-               greatest(
+               coalesce(
+                 greatest(
+                   (select max(l.captured_at) from mbos_activity_locations l
+                     where l.user_id = a.user_id
+                       and (l.captured_at at time zone ${APP_TIMEZONE})::date = a.day),
+                   (select max(coalesce(v.check_out_at, v.check_in_at)) from mbos_visits v
+                     where v.salesman_id = a.user_id
+                       and (v.check_in_at at time zone ${APP_TIMEZONE})::date = a.day)
+                 ),
                  (select max(p.at) from mbos_positions p
                    where p.user_id = a.user_id
-                     and (p.at at time zone ${APP_TIMEZONE})::date = a.day),
-                 (select max(l.captured_at) from mbos_activity_locations l
-                   where l.user_id = a.user_id
-                     and (l.captured_at at time zone ${APP_TIMEZONE})::date = a.day),
-                 (select max(coalesce(v.check_out_at, v.check_in_at)) from mbos_visits v
-                   where v.salesman_id = a.user_id
-                     and (v.check_in_at at time zone ${APP_TIMEZONE})::date = a.day)
+                     and (p.at at time zone ${APP_TIMEZONE})::date = a.day)
                ) as last_seen
           from mbos_attendance_days a
          where a.check_in_at is not null
@@ -208,6 +246,7 @@ export async function ageLeads(): Promise<Counted> {
     .where(
       and(
         eq(customers.kind, "lead"),
+        isNull(customers.deletedAt),
         isNotNull(customers.leadStage),
         eq(customers.leadArchived, false),
         lt(customers.leadLastActivityDate, sql`${TODAY} - ${archiveDays}::int`),
@@ -224,6 +263,7 @@ export async function ageLeads(): Promise<Counted> {
     .where(
       and(
         eq(customers.kind, "lead"),
+        isNull(customers.deletedAt),
         isNotNull(customers.leadStage),
         eq(customers.leadArchived, false),
         lt(customers.leadLastActivityDate, sql`${TODAY} - ${staleDays}::int`),
@@ -298,7 +338,7 @@ export async function escalateOverdueTasks(): Promise<Counted> {
         userId: t.assignedToUserId,
         title: "Task overdue",
         body: `${t.title} is past its date and your manager has been told.`,
-        kind: "warning",
+        kind: "warn",
         href: "/field/tasks",
         // The handset's own task list. `/field/tasks` is a MahekOne route the
         // salesman this is addressed to has no app to open.
@@ -476,6 +516,8 @@ export async function mbosNightly(): Promise<Counted> {
     await sweepPushFailures(),
     await closeOpenVisits(),
     await markMissedCheckouts(),
+    /* Who each holiday reaches, before anything is judged against it. */
+    await rebuildHolidays(),
     /* AFTER the two closers above, so a day they just closed is judged tonight
        rather than tomorrow night. */
     await rebuildAttendanceVerdicts(),
@@ -521,6 +563,21 @@ async function refreshPerformance(): Promise<Counted> {
  * setting says and what it does is exactly the kind of thing nobody notices
  * until it is the subject of an argument about somebody's pay.
  */
+/**
+ * Field tasks that collect customer data and whose shop's record now has it,
+ * whoever put it there — the CRM, the sheet, another salesman — complete
+ * themselves. Hourly is the net under the contact screens, which settle at
+ * once.
+ */
+async function settleTasksFromRecords(): Promise<Counted> {
+  const { settleLinkedTasks } = await import("./services/task-link-service");
+  const { completed } = await settleLinkedTasks();
+  return {
+    recordsAffected: completed,
+    detail: completed ? `${completed} field tasks completed from the customer record` : "no field task completed from the record",
+  };
+}
+
 async function sweepSelfies(): Promise<Counted> {
   const { sweepAttendanceSelfies } = await import("./services/attachment-service");
   const { swept } = await sweepAttendanceSelfies();
@@ -555,6 +612,18 @@ async function judgeRecentDays(): Promise<Counted> {
   return { recordsAffected: written, detail: `${written} of ${read} recent days re-judged` };
 }
 
+/**
+ * Who each state, district, city, area and named holiday reaches, resolved
+ * again. Every write that can move the answer already rebuilds it; this is the
+ * net under all of them — a salesman granted the field app, or a place tree
+ * re-imported, moves it without passing through a holiday screen.
+ */
+async function rebuildHolidays(): Promise<Counted> {
+  const { rebuildHolidayMembers } = await import("./services/holiday-service");
+  const { holidays, changed } = await rebuildHolidayMembers();
+  return { recordsAffected: changed, detail: `${changed} of ${holidays} holidays re-resolved` };
+}
+
 export async function mbosHourly(): Promise<Counted> {
   const parts = [
     await escalateOverdueTasks(),
@@ -567,9 +636,11 @@ export async function mbosHourly(): Promise<Counted> {
     await chaseSampleReviews(),
     await flagSamplesPastDelivery(),
     await refreshPerformance(),
+    await rebuildHolidays(),
     await judgeRecentDays(),
     await readPushReceipts(),
     await sweepSelfies(),
+    await settleTasksFromRecords(),
   ];
   return {
     recordsAffected: parts.reduce((a, p) => a + p.recordsAffected, 0),
@@ -1054,6 +1125,8 @@ export async function runNurturePass(): Promise<Counted> {
       and(
         isNotNull(customers.leadStage),
         isNotNull(customers.leadManagerId),
+        // Nobody is nurtured from the trash.
+        isNull(customers.deletedAt),
         isNotNull(customers.lastOrderDate),
         eq(customers.cycleIsDefault, false),
       ),

@@ -23,6 +23,9 @@ import type { NextRequest } from "next/server";
  * A server action POSTs to the URL it was rendered from, so it lands in the
  * same app as the screen that offered it — which is what makes this correct for
  * writes and not only for reads.
+ *
+ * A route under `/api/` is shared and its own path names no app, so there the
+ * answer is the same-host page that made the call — see `appForApi`.
  * ------------------------------------------------------------------------- */
 
 /** The header the app id travels on. Read by `requestAppId()`. */
@@ -45,12 +48,14 @@ const APP_ROUTES: ReadonlyArray<readonly [string, string]> = [
      associate on the Sales Dashboard reading (and writing) as a manager. */
   ["/sales-lead-pipeline", "sales"],
   ["/people", "people"],
-  ["/reports", "reports"],
+  ["/reports", "reports"], // retired — next.config redirects it to /apps
   ["/hrms", "hrms"],
   ["/admin", "admin"],
   ["/founder", "founder"],
   ["/enquiries", "enquiries"],
   ["/erp", "erp"],
+  ["/website", "website"],
+  ["/hire", "hire"],
 ];
 
 /**
@@ -81,8 +86,58 @@ export function appFor(pathname: string): string | null {
   return null;
 }
 
+/**
+ * THE APP AN API CALL IS MADE FROM, which its own URL cannot say.
+ *
+ * `/api/search`, `/api/customer-info`, `/api/payment-panel` and the rest are
+ * shared by several apps, so their path names none — and with no header,
+ * `resolveScope` fell back to `users.role`, the WIDEST level held anywhere. A
+ * telecaller who was also made a manager of Reports searched the CRM's book as
+ * a manager, from the CRM's own search box, which is precisely the widening
+ * the per-app header exists to prevent; it simply had not reached the API.
+ *
+ * The screen that made the call is in the `Referer`, and the browser writes
+ * it. Only a SAME-ORIGIN referrer is believed: a page on another site has no
+ * business naming which of our apps a request is in, and a malformed or
+ * missing one names nothing, which is the old fallback exactly.
+ *
+ * Why it is safe to take from the request at all, when this header is
+ * otherwise stripped precisely because the internet sends it: naming an app
+ * grants nothing. `requestHat` still requires a real grant in that app and
+ * reads its level off `app_access`, so a forged referrer can only select
+ * between hats the caller genuinely wears. The one place an app widens SEEING
+ * — the ledger desk and the Founder Command Centre see every book — is a
+ * place the caller could already read in full by opening that app.
+ */
+export function appForApi(
+  pathname: string,
+  referer: string | null,
+  /** The host the request arrived for — the Host header, which Caddy passes through. */
+  host: string | null,
+): string | null {
+  if (!pathname.startsWith("/api/")) return null;
+  if (!referer || !host) return null;
+  let from: URL;
+  try {
+    from = new URL(referer);
+  } catch {
+    return null;
+  }
+  /* HOST, not origin. Behind Caddy the app sees plain http while the browser's
+     Referer says https, so comparing whole origins would refuse every real
+     request in production and quietly fall back to the widest level. */
+  if (from.host !== host) return null;
+  return appFor(from.pathname);
+}
+
 export function proxy(request: NextRequest) {
-  const app = appFor(request.nextUrl.pathname);
+  const app =
+    appFor(request.nextUrl.pathname) ??
+    appForApi(
+      request.nextUrl.pathname,
+      request.headers.get("referer"),
+      request.headers.get("host") ?? request.nextUrl.host,
+    );
 
   const headers = new Headers(request.headers);
   /*

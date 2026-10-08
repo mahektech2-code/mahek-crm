@@ -5,6 +5,8 @@ import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFram
 import { Badge, Bar, Card, ListCard, SectionLabel, T } from '../src/components/ui/primitives';
 import { ConfirmSheet } from '../src/components/ui/overlays';
 import { Icon } from '../src/components/ui/Icon';
+import { Presence, Pulse, Swap } from '../src/components/ui/motion';
+import { feedback } from '../src/components/ui/feedback';
 import { color as C, HIT, radius, weight } from '../src/theme/tokens';
 import { dataSize, isoDate, plural, pretty } from '../src/lib/format';
 import { useStore } from '../src/state/store';
@@ -56,6 +58,7 @@ export default function MapsScreen() {
   const notify = useStore((s) => s.notify);
 
   const [listing, setListing] = React.useState<AreaListing | null>(null);
+  const [listFailed, setListFailed] = React.useState(false);
   /*
    * WHEN the listing was read. "Saved 3 days ago" needs a clock and reading
    * one during render is impure — the React Compiler rules this app runs under
@@ -107,12 +110,18 @@ export default function MapsScreen() {
 
   const load = React.useCallback(() => {
     let alive = true;
-    void listAreas().then(async (l) => {
-      if (!alive) return;
-      setListing(l);
-      setReadAt(Date.now());
-      setBlocked(await downloadBlockedBecause(l.settings));
-    });
+    setListFailed(false);
+    /* A read that throws used to leave "Finding places to save…" up for good. */
+    void listAreas()
+      .then(async (l) => {
+        if (!alive) return;
+        setListing(l);
+        setReadAt(Date.now());
+        setBlocked(await downloadBlockedBecause(l.settings));
+      })
+      .catch(() => {
+        if (alive) setListFailed(true);
+      });
     return () => {
       alive = false;
     };
@@ -187,7 +196,7 @@ export default function MapsScreen() {
           forget([id]);
           load();
         })
-        .catch(() => notify('That download would not stop. Try again in a moment.'));
+        .catch(() => notify('The download did not stop. Try again in a minute.', 'error'));
     },
     [forget, load, notify],
   );
@@ -201,10 +210,10 @@ export default function MapsScreen() {
     const reason = await downloadBlockedBecause(listing.settings);
     if (reason) {
       setBlocked(reason);
-      return notify(reason);
+      return notify(reason, 'error');
     }
     setBlocked(null);
-    if (area.tooBig) return notify(tooBigSentence(area, listing));
+    if (area.tooBig) return notify(tooBigSentence(area, listing), 'error');
 
     clearFailure(area.id);
     try {
@@ -220,13 +229,13 @@ export default function MapsScreen() {
            rather than in a toast he has already looked away from. */
         () => setFailed((f) => ({ ...f, [area.id]: true })),
       );
-      notify(`Saving ${area.label} — you can leave this screen.`);
+      notify(`Saving ${area.label}. You can leave this screen.`, 'info');
       load();
     } catch {
       /* A refusal from MapLibre, a style that would not load, storage that is
          full. The reason is not worth quoting at somebody in a market; what is
          worth saying is that nothing was saved and the button still works. */
-      notify('Could not start the download. Try again on a better connection.');
+      notify('Could not start the download. Try again on a better connection.', 'error');
     }
   };
 
@@ -284,8 +293,8 @@ export default function MapsScreen() {
         if (!alive || !state.isConnected || state.type === 'wifi') return;
         const ids = downloadingRef.current;
         if (!ids.length) return;
-        setBlocked('Map downloads are set to Wi-Fi only, and this phone is on mobile data.');
-        notify('Paused the map download — this phone is on mobile data.');
+        setBlocked('Map downloads are set to Wi-Fi only. This phone is on mobile data.');
+        notify('Map download paused. This phone is on mobile data.', 'warn');
         /* `network`, not the salesman: this one is meant to pick up again the
            moment there is Wi-Fi, and a pause recorded as his own would never be
            resumed by anything. */
@@ -313,11 +322,11 @@ export default function MapsScreen() {
 
       <Card>
         <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>
-          Save the streets before you need them
+          Save maps before you need them
         </T>
         <T s="small" style={{ color: C.muted, marginTop: 4 }}>
-          A saved map draws with no signal at all. Save the places you work once,
-          on Wi-Fi, and the market lanes are there when the phone has nothing.
+          A saved map works with no signal. Save the places you work once, on Wi-Fi.
+          Then the streets show even when there is no signal.
         </T>
         {blocked ? (
           <View
@@ -340,7 +349,9 @@ export default function MapsScreen() {
 
       {listing === null ? (
         <T s="caption" style={{ marginTop: 16, textAlign: 'center' }}>
-          Working out what is worth saving…
+          {listFailed
+            ? 'Your areas could not be read off this phone. Go back and open this screen again.'
+            : 'Finding places to save…'}
         </T>
       ) : null}
 
@@ -348,8 +359,8 @@ export default function MapsScreen() {
         <Card style={{ marginTop: 12 }}>
           <T s="small" style={{ color: C.muted }}>
             {listing.unpinned
-              ? `None of your ${listing.unpinned} shops has a location on it yet, so there is nowhere to save a map of. Capture a location while you are standing in one and its area appears here.`
-              : 'There are no shops on this phone yet. Sync, and the places you work appear here.'}
+              ? `None of your ${listing.unpinned} shops has a location yet. So there is no map to save. Checking in at a shop saves its pin, and its area will show here.`
+              : 'There are no shops on this phone yet. Connect to the internet. Your places will show here.'}
           </T>
         </Card>
       ) : null}
@@ -383,7 +394,7 @@ export default function MapsScreen() {
                 onRefresh={() => {
                   if (!area.saved) return;
                   void refreshMap(area.saved.id).then(() => {
-                    notify('Checking the saved map against the server');
+                    notify('Checking for map changes', 'info');
                     load();
                   });
                 }}
@@ -403,14 +414,14 @@ export default function MapsScreen() {
           explanation reads as a broken list. */}
       {listing?.unpinned ? (
         <T s="caption" style={{ marginTop: 10 }}>
-          {`${plural(listing.unpinned, 'shop')} in your book has no location on it, so it is in none of these areas.`}
+          {`No location yet: ${plural(listing.unpinned, 'shop')}. These shops are not in any area above.`}
         </T>
       ) : null}
 
       {listing?.orphans.length ? (
         <>
           <SectionLabel style={{ marginTop: 24, marginBottom: 8 }}>
-            Saved, but not for anywhere you work now
+            Saved, but you do not work here now
           </SectionLabel>
           <ListCard>
             {listing.orphans.map((pack, i) => (
@@ -441,22 +452,22 @@ export default function MapsScreen() {
             ))}
           </ListCard>
           <T s="caption" style={{ marginTop: 8 }}>
-            No shop in your book is inside these any more. Nothing has been
-            deleted — the space comes back when you remove one.
+            None of your shops are in these places now. Nothing is deleted.
+            Remove one to free the space.
           </T>
         </>
       ) : null}
 
       {settings ? (
         <T s="caption" style={{ marginTop: 24, textAlign: 'center' }}>
-          {`Saved down to zoom ${settings.maxZoom} — close enough to read a lane name. Sizes are estimates.`}
+          {`Maps are saved to zoom ${settings.maxZoom}. You can read lane names. Sizes are about right, not exact.`}
         </T>
       ) : null}
 
       <ConfirmSheet
         open={confirm !== null}
         title={`Remove ${confirm?.label ?? ''}?`}
-        body="The streets stop drawing there without signal. Nothing else changes — your shops, visits and orders are untouched, and you can save it again on Wi-Fi."
+        body="The map of this place will not show without signal. Your shops, visits and orders stay safe. You can save it again on Wi-Fi."
         confirmLabel="Remove"
         reason=""
         onReason={() => {}}
@@ -525,6 +536,21 @@ function AreaRow({
    */
   const stopped = failed && !complete;
 
+  /*
+   * A DOWNLOAD FINISHING IS FELT, because it is the one outcome on this screen
+   * nobody is watching for. It runs for twenty minutes; he has put the phone
+   * down or gone to another screen and come back, and nothing else marks the
+   * moment several hundred megabytes became a map. Only the transition buzzes —
+   * a row that opens already saved is not news — and it is written in an
+   * effect, with the ref updated there, so a render never fires it.
+   */
+  const wasDownloading = React.useRef(downloading);
+  React.useEffect(() => {
+    if (wasDownloading.current && !downloading && complete) feedback('success');
+    wasDownloading.current = downloading;
+  }, [downloading, complete]);
+  const rowState = stopped ? 'stopped' : downloading ? 'saving' : complete ? 'saved' : 'none';
+
   const ageDays =
     saved?.savedAt != null ? Math.floor((readAt - saved.savedAt) / 86_400_000) : null;
   const stale = ageDays != null && ageDays > staleAfterDays;
@@ -546,12 +572,26 @@ function AreaRow({
             {complete && area.coverage.state === 'full' ? <Badge tone="success">Saved</Badge> : null}
             {complete && area.coverage.state === 'partial' ? <Badge tone="amber">Part saved</Badge> : null}
             {stopped ? <Badge tone="danger">Stopped</Badge> : null}
-            {downloading && !stopped ? <Badge tone="info">Saving</Badge> : null}
+            {/* Breathing while bytes are actually arriving, still once paused —
+                the difference between "it is working" and "it is waiting for
+                you" is the one this badge alone cannot say in a word. */}
+            {downloading && !stopped ? (
+              <Pulse active={running}>
+                <Badge tone="info">Saving</Badge>
+              </Pulse>
+            ) : null}
             {complete && stale ? <Badge tone="amber">Old</Badge> : null}
           </View>
-          <T s="caption">
-            {describe(area, status, ageDays)}
-          </T>
+          {/* Keyed on the row's STATE, not on the text: the estimate becoming
+              "x of about y" becoming "saved, 312 MB" is the row changing what
+              it is, and settles in. The byte count ticking during a download
+              changes the text without changing the state, and must not flicker
+              on every progress event. */}
+          <Swap id={rowState}>
+            <T s="caption">
+              {describe(area, status, ageDays)}
+            </T>
+          </Swap>
         </View>
 
         {/* ONE action on the row, and it is the obvious one for the state it
@@ -581,7 +621,11 @@ function AreaRow({
         )}
       </View>
 
-      {downloading && status ? (
+      {/* The track opens under the row when a download starts and closes
+          when it finishes, rather than the row jumping a line taller. The fill
+          itself already eases to each new percentage (Bar is a FillBar). */}
+      <Presence show={downloading && !!status}>
+        {status ? (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 10 }}>
           {/* A bar in the primary colour reads as a download in progress. What
               is left of a stopped one is how far it got, which is a different
@@ -591,7 +635,8 @@ function AreaRow({
             {Math.round(status.percentage)}%
           </T>
         </View>
-      ) : null}
+        ) : null}
+      </Presence>
 
       {/* WHY IT CANNOT BE SAVED, on the row rather than in a toast somebody
           has already looked away from. A disabled control with no reason is
@@ -620,10 +665,10 @@ function AreaRow({
                    a market — the same judgement `start` makes. What is worth
                    saying is that it stopped, that the part already saved is
                    still there, and that trying again costs only what is left. */
-                'The download stopped before it finished. What it has already saved is kept — try again on a better connection.'
+                'The download stopped before it finished. The part already saved is kept. Try again on a better connection.'
               : running
-                ? 'Saving now. Removing it stops the download and gives the space back.'
-                : 'Paused. It picks up where it stopped.'
+                ? 'Saving now. Remove it to stop the download and free the space.'
+                : 'Paused. It will continue from where it stopped.'
           }
           label="Remove"
           note={stopped ? 'warn' : 'plain'}
@@ -636,7 +681,7 @@ function AreaRow({
           somebody would otherwise discover by finding a blank patch. */}
       {complete && area.coverage.state === 'partial' ? (
         <Secondary
-          sentence={`${plural(area.coverage.outside, 'shop')} here fell outside what was saved — the book has grown since.`}
+          sentence={`Not in the saved map: ${plural(area.coverage.outside, 'shop')}. You got new shops after you saved it.`}
           label="Save again"
           tone="primary"
           note="warn"
@@ -650,7 +695,7 @@ function AreaRow({
           worth offering at all. */}
       {complete && stale ? (
         <Secondary
-          sentence="Roads change slowly, and a refresh only fetches what actually changed."
+          sentence="Roads change slowly. Refresh downloads only what changed."
           label="Refresh"
           onPress={onRefresh}
         />
@@ -693,7 +738,7 @@ function describe(
  */
 function tooBigSentence(area: OfflineArea, listing: AreaListing | null): string {
   const ceiling = listing ? dataSize(listing.settings.maxPackBytes) : null;
-  return `About ${dataSize(area.estimatedBytes)}, which is over the ${ceiling ?? 'limit'} a map may take on this phone. Ask the office to split this area or to save one zoom level less.`;
+  return `About ${dataSize(area.estimatedBytes)}. This is over the ${ceiling ?? 'limit'} allowed for one map on this phone. Ask the office to make this area smaller.`;
 }
 
 /**

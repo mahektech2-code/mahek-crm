@@ -316,6 +316,51 @@ export async function searchProducts(
   }));
 }
 
+/**
+ * EVERY ACTIVE PRODUCT, for a picker that has to show the whole catalogue.
+ *
+ * `searchProducts` needs a query, and the order forms rightly never ship the
+ * catalogue to the browser. The lead-intake field is different: it is one box
+ * that offers all of Mahek's products and narrows as somebody types, so it has
+ * to be handed the list. It is small — a name, the formulation and the brand
+ * per row, a couple of hundred rows — and it is fetched when the box is first
+ * opened rather than with the page.
+ *
+ * The same rule as the search: `active` and nothing more, in the order a
+ * manager arranged the catalogue. A retired product is never offered, and the
+ * server re-checks the one that is chosen before it is stored.
+ */
+export async function listActiveProducts(): Promise<
+  Array<{
+    productId: string;
+    name: string;
+    displayName: string;
+    subtitle: string | null;
+    brand: string | null;
+  }>
+> {
+  const rows = await db.execute<{
+    product_id: string;
+    name: string;
+    formulation: string | null;
+    brand: string | null;
+  }>(sql`
+    select p.id as product_id, p.name, f.name as formulation, b.name as brand
+      from products p
+      left join product_formulations f on f.id = p.formulation_id
+      left join product_brands b on b.id = p.brand_id
+     where p.active = true
+     order by p.display_order, p.name
+  `);
+  return rows.map((r) => ({
+    productId: r.product_id,
+    name: r.name,
+    displayName: r.name,
+    subtitle: r.formulation,
+    brand: r.brand,
+  }));
+}
+
 function display(name: string, packSize: string | null): string {
   return packSize ? `${name} - ${packSize}` : name;
 }

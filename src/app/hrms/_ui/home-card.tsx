@@ -43,6 +43,8 @@ export type HomeState = {
     fullDayPercent: number;
     distance: string;
     worked: string;
+    /** Checked in on the field app: checked out there too. */
+    field?: boolean;
   } | null;
 };
 
@@ -141,7 +143,7 @@ export function HomeCard({ state, wait, canHelp }: { state: HomeState; wait: Wai
   async function sendLate() {
     const res = await hrmsRaiseLateHelp(lateText);
     if (!res.ok) return toast.push(res.error, "error");
-    toast.push(res.message ?? "Sent");
+    toast.push(res.message ?? "Request sent");
     setLateText("");
     setRefused(null);
     router.refresh();
@@ -160,9 +162,9 @@ export function HomeCard({ state, wait, canHelp }: { state: HomeState; wait: Wai
         {state.linked ? (
           <div className="mt-2 flex flex-wrap gap-2 text-[12px]">
             <span className={cx("rounded-full px-2 py-0.5 font-medium", t ? (t.out ? "bg-success-soft text-success" : "bg-brand-soft text-brand") : "bg-canvas text-body")}>
-              {t ? (t.out ? "Checked out" : t.status) : "Not checked in"}
+              {t ? (t.out ? "Checked out" : t.status === "Working" ? "Checked in" : t.status) : "Not checked in"}
             </span>
-            <span className="text-muted">Official {state.official || "timing not set"}</span>
+            <span className="text-muted">Office hours {state.official || "not set"}</span>
             {state.office ? <span className="text-muted">· {state.office}</span> : null}
           </div>
         ) : null}
@@ -170,7 +172,7 @@ export function HomeCard({ state, wait, canHelp }: { state: HomeState; wait: Wai
         <div className="mt-5 grid gap-3">
           {!state.linked ? (
             <div className="rounded-[6px] border border-warn-line bg-warn-soft px-3.5 py-3 text-[13px] text-warn-ink">
-              Your MahekOne account is not linked to an employee record yet, so there is nothing to check in to. Ask HR to link it — the Access screen in the Admin Console matches accounts to employees.
+              Your MahekOne account is not linked to an employee record yet, so you cannot check in. Ask HR to link it on the Access screen in the Admin Console.
             </div>
           ) : null}
 
@@ -191,7 +193,7 @@ export function HomeCard({ state, wait, canHelp }: { state: HomeState; wait: Wai
                     value={lateText}
                     onChange={(e) => setLateText(e.target.value)}
                     rows={2}
-                    placeholder="What happened? Admin decides and sets your check-in time."
+                    placeholder="What happened? The person who resolves help requests decides and sets your check-in time."
                     className="w-full rounded-[4px] border border-line bg-surface px-2.5 py-2 text-[13px]"
                   />
                   <div className="flex gap-2">
@@ -243,7 +245,7 @@ export function HomeCard({ state, wait, canHelp }: { state: HomeState; wait: Wai
                   </div>
                 ) : (
                   <button onClick={() => setQrOpen(true)} className="h-9 rounded-[4px] border border-line bg-surface text-[13px] font-medium text-body">
-                    Scan office QR instead
+                    Enter the office QR code instead
                   </button>
                 )
               ) : null}
@@ -260,8 +262,8 @@ export function HomeCard({ state, wait, canHelp }: { state: HomeState; wait: Wai
               </div>
               <div>
                 <div className="flex justify-between text-[12px] text-body">
-                  <span>Working {workedLabel}</span>
-                  <span className="text-muted">{pct != null ? `${pct}% of target · full day at ${t.fullDayPercent}%` : "No target set"}</span>
+                  <span>{t.out ? "Worked" : "Working"} {workedLabel}</span>
+                  <span className="text-muted">{pct != null ? `${pct}% of target · full day at ${t.fullDayPercent}%` : "No target hours set"}</span>
                 </div>
                 <div className="mt-1 h-2 overflow-hidden rounded-full bg-canvas">
                   <div className={cx("h-full rounded-full", pct != null && pct >= t.fullDayPercent ? "bg-success" : "bg-brand")} style={{ width: `${pct ?? 0}%` }} />
@@ -275,6 +277,8 @@ export function HomeCard({ state, wait, canHelp }: { state: HomeState; wait: Wai
                 <div className="text-[13px] text-body">
                   Day: <span className="font-semibold">{t.workDay}</span>
                 </div>
+              ) : t.field ? (
+                <div className="text-[13px] text-body">You checked in on the field app today, so you check out there too.</div>
               ) : outConfirm ? (
                 <div className="rounded-[6px] border border-line bg-canvas p-3">
                   <div className="text-[13px] text-body">Check out now? Your location is read once and compared with the office radius.</div>
@@ -298,7 +302,7 @@ export function HomeCard({ state, wait, canHelp }: { state: HomeState; wait: Wai
             </div>
           ) : null}
           {state.linked && state.officeHasPin === false ? (
-            <div className="text-[12px] text-muted">Your office has no location pin yet, so a check-in cannot be measured — HR sets it on the Offices screen.</div>
+            <div className="text-[12px] text-muted">Your office has no location pin yet, so your distance cannot be measured. HR sets it on the Offices screen.</div>
           ) : null}
         </div>
       </section>

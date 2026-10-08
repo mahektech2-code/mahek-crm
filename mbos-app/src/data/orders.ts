@@ -1,11 +1,12 @@
-import { all, newId, one, run, tx } from '../db';
+import { all, getKv, newId, one, run, tx } from '../db';
 import { enqueue } from '../sync/queue';
-import { insertLocal, stamp } from './write';
+import { insertAndQueue, insertLocal, stamp, updateAndQueue } from './write';
 import { getConfig } from './config';
 import { assessOrder } from '../engines/credit';
 import { canValueOrders, derivedQuantities, lineValuePaise, type PriceSource } from '../engines/order';
 import { applySchemes, type Predicate, type Scheme } from '../engines/schemes';
 import { isoDate } from '../lib/format';
+import { ratesForTag } from './pricing';
 
 /**
  * Punching an order.
@@ -52,9 +53,20 @@ export type OrderAssessment = {
      an order that comfortably fits, and saying so is the whole point. */
   availablePaise: number | null;
   overByPaise: number;
+  /**
+   * The price list the lines were priced against, where they were — sent so
+   * the office can tell a rate that moved since the phone last synced from a
+   * rate the salesman invented. Null where nothing was priced off a list.
+   */
+  priceTag: string | null;
+  /** What the phone believed the biller owed, and as of when — see the payload. */
+  outstandingAsOfPaise: number;
+  outstandingAsOf: number | null;
   lines: {
     line: CartLine;
     cans: number; boxes: number; looseCans: number; litres: number | null;
+    /** The rate this line is worth per can, wherever it came from. */
+    ratePaise: number | null;
     valuePaise: number | null;
     schemeNote: string | null;
   }[];
@@ -114,7 +126,7 @@ export async function assessCart(billingCustomerId: string, lines: CartLine[]): 
   const customer = await one<{
     creditBlocked: number; creditBlockReason: string | null;
     creditLimitPaise: number | null; outstandingPaise: number; submittedNotInvoicedPaise: number;
-    customerType: string | null;
+    customerType: string | null; priceTag: string | null;
   }>('SELECT * FROM customers WHERE id = ?', [billingCustomerId]);
 
   const priceSource = await getConfig<PriceSource>('products.priceSource', 'unset');
@@ -125,15 +137,43 @@ export async function assessCart(billingCustomerId: string, lines: CartLine[]): 
     'SELECT * FROM schemes WHERE active = 1',
   );
 
+  /*
+   * THE BILLER'S OWN PRICE LIST, where that is the source the office chose.
+   *
+   * `lineValuePaise`'s `pricelist` branch takes the figure as typed, because
+   * the engine is ported from MahekOne and looks nothing up — and nothing on
+   * this screen ever typed one, so every order went up valued at ₹0 beside a
+   * real "List value" the same screen had just drawn from the same rates. The
+   * rate is looked up HERE, off the BILLER's tag — a shop served through a
+   * distributor pays what the distributor's list says — and handed to the
+   * engine as the line's figure, which is exactly what the server's half of
+   * the rule expects to be told.
+   */
+  const priceTag = priceSource === 'pricelist' ? customer?.priceTag ?? null : null;
+  const listRates = priceTag ? await ratesForTag(priceTag) : new Map<string, number>();
+
   const priced = lines.map((line) => {
     const q = derivedQuantities(line.cans, line.cansPerBox ?? 1, line.millilitresPerCan ?? 0);
+    const listRate = priceSource === 'pricelist' ? listRates.get(line.productId) ?? null : null;
+    const ratePaise =
+      priceSource === 'pricelist'
+        ? listRate
+        : priceSource === 'product'
+          ? line.sellingPricePaise
+          : priceSource === 'manual'
+            ? line.typedRatePaise ?? null
+            : null;
     const valuePaise = lineValuePaise(
       priceSource,
       line.cans,
       { sellingPricePaise: line.sellingPricePaise },
-      line.typedRatePaise ?? null,
+      priceSource === 'pricelist'
+        ? listRate == null ? null : line.cans * listRate
+        : priceSource === 'manual' && line.typedRatePaise != null
+          ? line.cans * line.typedRatePaise
+          : null,
     );
-    return { line, ...q, valuePaise, schemeNote: null as string | null };
+    return { line, ...q, ratePaise, valuePaise, schemeNote: null as string | null };
   });
 
   /* Only a SKU can be ordered, so the scheme engine keys on `skuId` — the same
@@ -181,6 +221,9 @@ export async function assessCart(billingCustomerId: string, lines: CartLine[]): 
     reason: verdict.reason,
     availablePaise: verdict.availablePaise,
     overByPaise: verdict.overByPaise,
+    priceTag: priced.some((p) => p.ratePaise != null) ? priceTag : null,
+    outstandingAsOfPaise: customer?.outstandingPaise ?? 0,
+    outstandingAsOf: Number((await getKv('lastPullAt')) ?? 0) || null,
     lines: priced,
   };
 }
@@ -243,7 +286,7 @@ export async function saveOrder(args: {
         `INSERT INTO order_lines (id, orderId, productId, productName, cans, boxes, litres, ratePaise, schemeApplied, lineTotalPaise)
          VALUES (?,?,?,?,?,?,?,?,?,?)`,
         [newId('line'), base.id, p.line.productId, p.line.productName, p.cans, p.boxes, p.litres,
-         p.line.sellingPricePaise ?? p.line.typedRatePaise ?? null, p.schemeNote, p.valuePaise],
+         p.ratePaise, p.schemeNote, p.valuePaise],
       );
     }
 
@@ -324,15 +367,24 @@ export async function saveOrder(args: {
       totalAmountPaise: args.assessment.valuePaise ?? 0,
       valueUnavailable: args.assessment.valueUnavailable,
       creditDays: args.paymentTermDays ?? undefined,
+      /* What the phone priced and believed, so the office can say "the rate
+         moved" or "the balance moved under you" rather than a bare refusal —
+         two different conversations with two different people. */
+      priceTag: args.assessment.priceTag ?? undefined,
+      outstandingAsOfPaise: args.assessment.outstandingAsOfPaise,
+      outstandingAsOf: args.assessment.outstandingAsOf ?? undefined,
       lines: args.assessment.lines.map((p) => ({
         productId: p.line.productId,
         quantityCans: p.cans,
-        ratePaise: p.line.sellingPricePaise ?? p.line.typedRatePaise ?? undefined,
+        ratePaise: p.ratePaise ?? undefined,
       })),
       deviceId: base.deviceId,
       clientCreatedAt: base.clientCreatedAt,
     },
-    dependsOn: args.visitId ? [args.visitId] : [],
+    /* NOT behind the visit. The visit's id is minted at the door and the
+       visit itself is saved at check-out — or never, if the trip is called
+       off — so waiting on it held a customer's order in the outbox for the
+       length of the visit at best and for ever at worst. */
   });
 
   return { orderId: base.id, needsApproval };
@@ -344,6 +396,10 @@ export async function saveOrder(args: {
  * `valueUnavailable` is carried rather than folded into a zero: until a price
  * source is confirmed an order is worth what the salesman typed, and a
  * confident ₹0 on the home screen is worse than a blank.
+ *
+ * ONLY ORDERS THAT ARE STILL ORDERS. It counted everything but `cancelled`,
+ * so an order accounts declined and one the office refused at sync both went
+ * on reading as sold today — on the home screen, where he judges his day.
  */
 export async function ordersToday(userId: string, from = startOfToday()): Promise<{
   count: number;
@@ -354,7 +410,9 @@ export async function ordersToday(userId: string, from = startOfToday()): Promis
     `SELECT COUNT(*) AS n, COALESCE(SUM(netTotalPaise), 0) AS total,
             SUM(CASE WHEN valueUnavailable = 1 OR netTotalPaise IS NULL THEN 1 ELSE 0 END) AS unknown
        FROM orders
-      WHERE userId = ? AND orderedAt >= ? AND status <> 'cancelled'`,
+      WHERE userId = ? AND orderedAt >= ?
+        AND status IN ('submitted','pending_approval','approved','dispatched','in_transit','delivered')
+        AND COALESCE(syncState, '') NOT IN ('rejected','blocked')`,
     [userId, from],
   );
   return {
@@ -416,6 +474,8 @@ export async function listOrders(customerId?: string): Promise<PunchedOrder[]> {
 export type PunchedLine = {
   id: string;
   productName: string;
+  /** The SKU code, off the catalogue on the phone. */
+  sku: string | null;
   cans: number;
   litres: number | null;
   lineTotalPaise: number | null;
@@ -424,7 +484,185 @@ export type PunchedLine = {
 /** What was on it. Opened a row at a time, so the list itself stays cheap. */
 export async function orderLines(orderId: string): Promise<PunchedLine[]> {
   return all<PunchedLine>(
-    'SELECT id, productName, cans, litres, lineTotalPaise FROM order_lines WHERE orderId = ?',
+    `SELECT ol.id, ol.productName, p.sku, ol.cans, ol.litres, ol.lineTotalPaise
+       FROM order_lines ol LEFT JOIN products p ON p.id = ol.productId
+      WHERE ol.orderId = ?`,
     [orderId],
   );
+}
+
+/* ------------------------------------------------------ changing an order */
+
+/**
+ * What a change has to wait behind: the order's own create, while it is still
+ * in the outbox. Once the order has synced there is nothing to wait for — and
+ * naming it anyway would hold the change for ever once that queue row is pruned.
+ */
+async function waitBehindOrder(orderId: string): Promise<string[]> {
+  const row = await one<{ syncState: string }>('SELECT syncState FROM orders WHERE id = ?', [orderId]);
+  return row && row.syncState !== 'synced' ? [orderId] : [];
+}
+
+
+/** Whether he may still edit it himself: until accounts decide it, and no further. */
+export function editableStatus(status: string): boolean {
+  return status === 'submitted' || status === 'pending_approval';
+}
+
+/** The order and its lines, to put back in the cart for an edit or a change. */
+export async function orderForChange(orderId: string): Promise<{
+  id: string;
+  customerId: string;
+  deliveryCustomerId: string | null;
+  orderNumber: string | null;
+  status: string;
+  lines: { productId: string; cans: number }[];
+} | null> {
+  const order = await one<{
+    id: string; customerId: string; deliveryCustomerId: string | null; orderNumber: string | null; status: string;
+  }>('SELECT id, customerId, deliveryCustomerId, orderNumber, status FROM orders WHERE id = ?', [orderId]);
+  if (!order) return null;
+  const lines = await all<{ productId: string; cans: number }>(
+    'SELECT productId, cans FROM order_lines WHERE orderId = ? AND productId <> ?',
+    [orderId, ''],
+  );
+  return { ...order, lines };
+}
+
+/**
+ * EDIT AN ORDER BEFORE ACCOUNTS DECIDE IT.
+ *
+ * The lines are rewritten here and the change goes up as an update the office
+ * re-checks against the same bar as a new order — and refuses if accounts have
+ * decided it meanwhile, in which case the refusal says to send a change request.
+ * An order still in the outbox is edited the same way; the update waits behind
+ * its create.
+ */
+export async function editOrder(args: {
+  orderId: string;
+  lines: CartLine[];
+  assessment: OrderAssessment;
+}): Promise<{ ok: true } | { ok: false; message: string }> {
+  const order = await one<{ status: string; netTotalPaise: number | null; customerId: string }>(
+    'SELECT status, netTotalPaise, customerId FROM orders WHERE id = ?',
+    [args.orderId],
+  );
+  if (!order) return { ok: false, message: 'That order is not on this phone.' };
+  if (!editableStatus(order.status)) {
+    return { ok: false, message: 'Accounts have already decided this order. Send a change request instead.' };
+  }
+  const total = args.assessment.valuePaise ?? 0;
+  const dependsOn = await waitBehindOrder(args.orderId);
+
+  await tx(async () => {
+    await run('DELETE FROM order_lines WHERE orderId = ?', [args.orderId]);
+    for (const p of args.assessment.lines) {
+      await run(
+        `INSERT INTO order_lines (id, orderId, productId, productName, cans, boxes, litres, ratePaise, schemeApplied, lineTotalPaise)
+         VALUES (?,?,?,?,?,?,?,?,?,?)`,
+        [newId('line'), args.orderId, p.line.productId, p.line.productName, p.cans, p.boxes, p.litres,
+         p.ratePaise, p.schemeNote, p.valuePaise],
+      );
+    }
+    await run('UPDATE customers SET submittedNotInvoicedPaise = MAX(0, submittedNotInvoicedPaise + ?) WHERE id = ?', [
+      total - (order.netTotalPaise ?? 0),
+      order.customerId,
+    ]);
+  });
+
+  await updateAndQueue({
+    table: 'orders',
+    entityType: 'order',
+    id: args.orderId,
+    patch: { netTotalPaise: args.assessment.valuePaise, valueUnavailable: args.assessment.valueUnavailable },
+    payloadExtras: {
+      totalAmountPaise: total,
+      lines: args.assessment.lines.map((p) => ({
+        productId: p.line.productId,
+        quantityCans: p.cans,
+        ratePaise: p.ratePaise ?? undefined,
+      })),
+    },
+    dependsOn,
+  });
+  return { ok: true };
+}
+
+export type ChangeRequest = {
+  id: string;
+  orderId: string;
+  status: 'pending' | 'accepted' | 'declined';
+  note: string | null;
+  decisionNote: string | null;
+  totalAmountPaise: number | null;
+  requestedAt: number | null;
+  decidedAt: number | null;
+  syncState: string;
+  syncMessage: string | null;
+};
+
+/** The newest change request on each order he has asked about. */
+export async function latestChangeRequests(): Promise<Map<string, ChangeRequest>> {
+  const rows = await all<ChangeRequest>(
+    'SELECT * FROM order_change_requests ORDER BY COALESCE(requestedAt, clientCreatedAt) DESC',
+  );
+  const map = new Map<string, ChangeRequest>();
+  for (const r of rows) if (!map.has(r.orderId)) map.set(r.orderId, r);
+  return map;
+}
+
+/**
+ * ASK ACCOUNTS TO CHANGE AN ORDER THEY HAVE APPROVED.
+ *
+ * Nothing about the order moves on the phone: it stays what accounts approved
+ * until they accept, and then the office's lines come back on the next pull.
+ * The note is required — accounts decide on the reason as much as the lines.
+ */
+export async function requestOrderChange(args: {
+  orderId: string;
+  lines: CartLine[];
+  assessment: OrderAssessment;
+  note: string;
+}): Promise<{ ok: true } | { ok: false; message: string }> {
+  const order = await one<{ status: string }>('SELECT status FROM orders WHERE id = ?', [args.orderId]);
+  if (!order) return { ok: false, message: 'That order is not on this phone.' };
+  if (editableStatus(order.status)) {
+    return { ok: false, message: 'Accounts have not decided this order yet — edit it directly instead.' };
+  }
+  if (order.status !== 'approved') {
+    return { ok: false, message: 'This order has moved past approval, so a change cannot be requested. Ring accounts.' };
+  }
+  const waiting = (await latestChangeRequests()).get(args.orderId);
+  if (waiting?.status === 'pending' && waiting.syncState !== 'rejected') {
+    return { ok: false, message: 'A change to this order is already waiting for accounts.' };
+  }
+  if (args.note.trim().length < 3) return { ok: false, message: 'Say why it needs to change — accounts decide on that.' };
+
+  const base = await stamp('ochg');
+  const total = args.assessment.valuePaise ?? 0;
+  await insertAndQueue({
+    table: 'order_change_requests',
+    entityType: 'order_change_request',
+    row: {
+      ...base,
+      orderId: args.orderId,
+      status: 'pending',
+      note: args.note.trim(),
+      totalAmountPaise: total,
+      linesJson: JSON.stringify(args.assessment.lines.map((p) => ({ productId: p.line.productId, product: p.line.productName, quantity: p.cans }))),
+      requestedAt: base.clientCreatedAt,
+    },
+    payloadExtras: {
+      orderId: args.orderId,
+      totalAmountPaise: total,
+      note: args.note.trim(),
+      lines: args.assessment.lines.map((p) => ({
+        productId: p.line.productId,
+        quantityCans: p.cans,
+        ratePaise: p.ratePaise ?? undefined,
+      })),
+    },
+    dependsOn: await waitBehindOrder(args.orderId),
+  });
+  return { ok: true };
 }

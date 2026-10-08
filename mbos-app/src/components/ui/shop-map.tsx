@@ -3,9 +3,12 @@ import { ActivityIndicator, View, Text, Pressable } from 'react-native';
 import { router, usePathname } from 'expo-router';
 import {
   Camera,
+  GeoJSONSource,
+  Layer,
   Map,
   Marker,
   type CameraRef,
+  type GeoJSONSourceRef,
   type LngLatBounds,
   type MapRef,
 } from '@maplibre/maplibre-react-native';
@@ -131,6 +134,19 @@ const SQUARE = {
  */
 const TARGET = { ...SQUARE, backgroundColor: 'transparent' } as const;
 
+/*
+ * PAST THIS MANY PINS, THE MAP CLUSTERS ON THE NATIVE SIDE.
+ *
+ * Every pin was a React view handed across the bridge as a native annotation,
+ * and the Customers map is fed every row loaded so far — which grows with
+ * every scroll. A few dozen is fine; a few hundred stutters on the handsets
+ * this book runs on. Above the limit the shops go down as ONE GeoJSON source
+ * drawn by circle layers, clustered by MapLibre itself, and a tapped cluster
+ * zooms in to its shops. Below it the hand-drawn markers stay, with the 48dp
+ * targets the comment beside them argues for.
+ */
+const MARKER_LIMIT = 80;
+
 /** A control that stands on its own, rather than one half of the zoom pair. */
 const CONTROL = {
   ...SQUARE,
@@ -163,6 +179,7 @@ export function ShopMap({
   const [locateNote, setLocateNote] = React.useState<string | null>(null);
 
   const mapRef = React.useRef<MapRef>(null);
+  const sourceRef = React.useRef<GeoJSONSourceRef>(null);
   const cameraRef = React.useRef<CameraRef>(null);
   /* Where the last press was GOING. A second press inside the first one's
      animation has to count from there rather than from wherever the map
@@ -227,6 +244,23 @@ export function ShopMap({
   const placed = React.useMemo(
     () => pins.filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng)),
     [pins],
+  );
+
+  const clustered = placed.length > MARKER_LIMIT;
+  const byId = React.useMemo(() => new globalThis.Map(placed.map((p) => [p.id, p])), [placed]);
+  const shape = React.useMemo<GeoJSON.FeatureCollection>(
+    () => ({
+      type: 'FeatureCollection',
+      features: clustered
+        ? placed.map((p) => ({
+            type: 'Feature',
+            id: p.id,
+            properties: { pinId: p.id, kind: p.picked ? 'picked' : p.isLead ? 'lead' : 'shop' },
+            geometry: { type: 'Point', coordinates: [p.lng, p.lat] },
+          }))
+        : [],
+    }),
+    [placed, clustered],
   );
 
   const box = React.useMemo(() => {
@@ -331,8 +365,8 @@ export function ShopMap({
          refusals, two ways out. */
       setLocateNote(
         result.status === 'denied'
-          ? 'Location is switched off for MBOS. Turn it on in the phone’s settings to see where you are on the map.'
-          : 'The phone could not get a location. It usually comes quicker outside, away from a roof.');
+          ? 'Location is off for MBOS. Turn it on in phone Settings to see yourself on the map.'
+          : 'Could not find your location. Go outside, away from a roof, and try again.');
       return;
     }
 
@@ -376,8 +410,8 @@ export function ShopMap({
     return (
       <Frame height={height}>
         <Note>
-          No map is set up yet. The office adds a maps key in the Admin Console,
-          and this screen starts working on the next sync.
+          The map is not set up yet. The office must set it up first.
+          Then the map will show here.
         </Note>
       </Frame>
     );
@@ -388,7 +422,7 @@ export function ShopMap({
       <Frame height={height}>
         <Note>
           {pins.length
-            ? `None of these ${pins.length} shops has been pinned yet. Capture a location while you are standing in one and it appears here.`
+            ? `None of these ${pins.length} shops has a location yet. Checking in at a shop saves its pin, and it will show here.`
             : 'No shops to show.'}
         </Note>
       </Frame>
@@ -402,7 +436,7 @@ export function ShopMap({
   if (!online && coverage.state === 'none') {
     return (
       <Frame height={height}>
-        <Note>No signal, and no map saved for here.</Note>
+        <Note>No signal. No map is saved for this place.</Note>
         <Pressable
           onPress={() => router.push(`/maps?from=${here}`)}
           accessibilityRole="button"
@@ -421,7 +455,7 @@ export function ShopMap({
           </Text>
         </Pressable>
         <Text style={{ fontSize: 13, lineHeight: 19, marginTop: 10, color: C.muted, textAlign: 'center' }}>
-          Do it once on Wi-Fi and the streets are there whether or not you have
+          Save once on Wi-Fi. Then the streets show even with no
           signal.
         </Text>
       </Frame>
@@ -436,7 +470,65 @@ export function ShopMap({
             <Camera ref={cameraRef} bounds={bounds} maxZoom={closest} padding={FIT_PADDING} />
           ) : null}
 
-          {placed.map((p) => (
+          {clustered ? (
+            <GeoJSONSource
+              ref={sourceRef}
+              id="shops"
+              data={shape}
+              cluster
+              clusterRadius={44}
+              clusterMaxZoom={15}
+              hitbox={{ top: 16, bottom: 16, left: 16, right: 16 }}
+              onPress={(e) => {
+                const f = e.nativeEvent.features[0];
+                if (!f) return;
+                const props = (f.properties ?? {}) as { cluster?: boolean; cluster_id?: number; pinId?: string };
+                if (props.cluster && props.cluster_id != null && f.geometry.type === 'Point') {
+                  const centre = f.geometry.coordinates as [number, number];
+                  void sourceRef.current
+                    ?.getClusterExpansionZoom(props.cluster_id)
+                    .then((zoom) =>
+                      cameraRef.current?.easeTo({ center: centre, zoom: Math.min(zoom, closest ?? zoom), duration: reduce ? 0 : ZOOM_MS }),
+                    )
+                    .catch(() => undefined);
+                  return;
+                }
+                const pin = props.pinId ? byId.get(props.pinId) : undefined;
+                if (pin) onPress(pin);
+              }}>
+              <Layer
+                type="circle"
+                id="shop-clusters"
+                filter={['has', 'point_count']}
+                paint={{
+                  'circle-color': C.primary,
+                  'circle-radius': ['step', ['get', 'point_count'], 16, 20, 20, 100, 26],
+                  'circle-stroke-width': 2,
+                  'circle-stroke-color': '#ffffff',
+                }}
+              />
+              <Layer
+                type="symbol"
+                id="shop-cluster-count"
+                filter={['has', 'point_count']}
+                layout={{ 'text-field': ['get', 'point_count_abbreviated'], 'text-size': 13, 'text-allow-overlap': true }}
+                paint={{ 'text-color': '#ffffff' }}
+              />
+              <Layer
+                type="circle"
+                id="shop-points"
+                filter={['!', ['has', 'point_count']]}
+                paint={{
+                  'circle-color': ['match', ['get', 'kind'], 'picked', C.primary, 'lead', C.warn, C.ink],
+                  'circle-radius': ['match', ['get', 'kind'], 'picked', 11, 8],
+                  'circle-stroke-width': 2,
+                  'circle-stroke-color': '#ffffff',
+                }}
+              />
+            </GeoJSONSource>
+          ) : null}
+
+          {(clustered ? [] : placed).map((p) => (
             <Marker key={p.id} id={p.id} lngLat={[p.lng, p.lat]} onPress={() => onPress(p)}>
               {/* THE DOT IS 16dp AND THE TARGET IS NOT.
                   A Marker's touch area is exactly its child, and React Native
@@ -572,7 +664,7 @@ export function ShopMap({
 
       {!online && coverage.state === 'partial' ? (
         <Text style={[{ fontSize: 13, lineHeight: 19, marginTop: 8, color: C.warnInk }]}>
-          {`No signal. ${plural(coverage.outside, 'shop')} of these are outside the maps saved on this phone, so the streets around them will be blank.`}
+          {`No signal. Outside your saved maps: ${plural(coverage.outside, 'shop')}. The streets near them will be blank.`}
         </Text>
       ) : null}
 

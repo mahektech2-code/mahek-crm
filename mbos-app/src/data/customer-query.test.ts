@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { MIGRATIONS } from '../db/schema';
 import {
+  ACCOUNT_SUMMARY_SQL,
+  accountCountQuery,
+  accountPageQuery,
   CUSTOMER_PAGE,
   cityOriginsQuery,
   customerCountQuery,
@@ -244,4 +247,90 @@ test('a view and a search narrow together, and the distance sort survives both',
   });
   const rows = db.prepare(q.sql).all(...q.params) as { id: string }[];
   assert.deepEqual(rows.map((r) => r.id), ['c1']);
+});
+
+/* ------------------------------------------------------- customer accounts */
+
+function seedMoney(db: DatabaseSync) {
+  const ins = db.prepare(
+    `INSERT INTO customers (id, name, city, creditBlocked, creditLimitPaise,
+                            outstandingPaise, submittedNotInvoicedPaise,
+                            thirdParty, distributors, lastSyncedAt)
+     VALUES (?, ?, 'Nagpur', ?, ?, ?, 0, ?, '[]', 1)`,
+  );
+  /* id, name, blocked, limit, owed, thirdParty */
+  ins.run('a', 'Alpha Paints', 0, 100_000, 50_000, 0);
+  ins.run('b', 'Bravo Hardware', 0, 100_000, 150_000, 0);
+  ins.run('c', 'Charlie Colours', 1, null, 300_000, 0);
+  ins.run('d', 'Delta Traders', 0, null, 0, 1);
+  ins.run('lead', 'Echo Prospect', 0, null, 0, 0);
+  db.prepare(
+    `INSERT INTO leads (id, name, archived, clientCreatedAt, deviceId) VALUES ('lead', 'Echo Prospect', 0, 1, 'dev')`,
+  ).run();
+}
+
+test('accounts list the customers only, most owed first, and a lead is never one', () => {
+  const db = handset();
+  seedMoney(db);
+  const rows = run(db, accountPageQuery({ filter: 'all', sort: 'owed', offset: 0, limit: 10 }));
+  assert.deepEqual(rows.map((r) => r.id), ['c', 'b', 'a', 'd']);
+  const [{ n }] = run(db, accountCountQuery('', 'all'));
+  assert.equal(n, 4);
+  db.close();
+});
+
+test('each money chip narrows to what it names, and search narrows with it', () => {
+  const db = handset();
+  seedMoney(db);
+  const ids = (q: { sql: string; params: (string | number)[] }) => run(db, q).map((r) => r.id);
+  const page = (filter: 'owing' | 'over' | 'blocked' | 'third', query = '') =>
+    ids(accountPageQuery({ query, filter, sort: 'name', offset: 0, limit: 10 }));
+  assert.deepEqual(page('owing'), ['a', 'b', 'c']);
+  assert.deepEqual(page('over'), ['b'], 'a shop with no limit is never over it');
+  assert.deepEqual(page('blocked'), ['c']);
+  assert.deepEqual(page('third'), ['d']);
+  assert.deepEqual(page('owing', 'bravo'), ['b']);
+  db.close();
+});
+
+test("the book's money adds up the office's figures and leaves leads out", () => {
+  const db = handset();
+  seedMoney(db);
+  const [row] = db.prepare(ACCOUNT_SUMMARY_SQL).all() as Record<string, number>[];
+  assert.equal(row.accounts, 4);
+  assert.equal(row.owedPaise, 500_000);
+  assert.equal(row.owing, 3);
+  assert.equal(row.over, 1);
+  assert.equal(row.blocked, 1);
+  db.close();
+});
+
+/* A number typed the way the shopkeeper says it found nothing, because the
+   book stores it with spaces and a +91. The phone is compared on digits. */
+test('a typed phone number is searched on its digits', async () => {
+  const { phoneNeedle } = await import('./customer-query');
+  assert.equal(phoneNeedle('+91 98220 11002'), '9822011002');
+  assert.equal(phoneNeedle('098220'), '98220');
+  assert.equal(phoneNeedle('Sai 50%'), 'Sai 50\\%');
+});
+
+/* A lead that has ordered is listed under Customers, not frozen under Leads
+   at its last rung — the office's `kind` is the ledger's word on it. */
+test('a lead the office has made a customer is a customer', () => {
+  const db = handset();
+  seed(db, [
+    ['c-lead', 'Still A Lead', null, null],
+    ['c-won', 'Ordered Lead', null, null],
+  ]);
+  db.exec(`UPDATE customers SET kind = 'customer' WHERE id = 'c-won'`);
+  db.exec(`UPDATE customers SET kind = 'lead' WHERE id = 'c-lead'`);
+  for (const id of ['c-lead', 'c-won']) {
+    db.exec(
+      `INSERT INTO leads (id, name, archived, clientCreatedAt, deviceId) VALUES ('${id}', '${id}', 0, 1, 'dev')`,
+    );
+  }
+  const leads = run(db, customerPageQuery({ view: 'leads', limit: 50 })).map((r) => r.id);
+  const customers = run(db, customerPageQuery({ view: 'customers', limit: 50 })).map((r) => r.id);
+  assert.deepEqual(leads, ['c-lead']);
+  assert.deepEqual(customers, ['c-won']);
 });

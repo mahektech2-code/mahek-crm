@@ -84,6 +84,14 @@ export async function logisticsCounts() {
 export async function erpNavCounts(ctx: ErpContext): Promise<Record<string, number>> {
   const out: Record<string, number> = {};
   const jobs: Promise<void>[] = [];
+  if (ctx.screens.has("requisitions") || ctx.screens.has("purchaseOrders"))
+    jobs.push(
+      import("./screens/purchase-flow").then(async ({ purchaseFlowCounts }) => {
+        const c = await purchaseFlowCounts(ctx);
+        if (ctx.screens.has("requisitions")) out.requisitions = c.requisitions;
+        if (ctx.screens.has("purchaseOrders")) out.purchaseOrders = c.purchaseOrders;
+      }),
+    );
   if (ctx.screens.has("inward")) jobs.push(inwardAwaitingIds().then((x) => void (out.inward = x.length)));
   if (ctx.screens.has("testing")) jobs.push(testsAwaitingIds().then((x) => void (out.testing = x.length)));
   if (ctx.screens.has("register") && ctx.powers.has("viewPurchaseMoney"))

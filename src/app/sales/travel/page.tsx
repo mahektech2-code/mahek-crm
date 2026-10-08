@@ -268,6 +268,14 @@ export default async function Page({
                       <Pill tone="success">Photo</Pill>
                     </span>
                   ) : null}
+                  {/* A reading supplied after the fact is still a reading, and
+                      it is still paid on — but whoever approves the day should
+                      know nobody looked at the meter at the time. */}
+                  {r.manualReason ? (
+                    <span className="ml-1.5" title={r.manualReason}>
+                      <Pill tone="warn">Added later</Pill>
+                    </span>
+                  ) : null}
                 </Cell>
                 <Cell align="right">
                   {r.gpsMetres === null ? (

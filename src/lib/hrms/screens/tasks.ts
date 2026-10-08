@@ -1,9 +1,8 @@
 import "server-only";
 import { and, asc, desc, eq, gte, inArray, isNotNull, lte, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
-import { hrmsBuddyTasks, hrmsChecklist, hrmsTaskTemplates, hrmsTodos, users } from "@/db/schema";
+import { hrmsBuddyTasks, hrmsChecklist, hrmsTaskTemplates, hrmsTodos } from "@/db/schema";
 import { getConfig } from "@/lib/config/store";
-import { notifyUsers } from "@/lib/notify";
 import type { ActionSpec, ColSpec, FieldSpec, FormSpec, ListRow, RowField, ToolResult, ToolSpec } from "@/lib/erp/ui";
 import type { Err } from "@/lib/result";
 import { has, type HrmsContext } from "../access";
@@ -35,6 +34,8 @@ import {
 } from "../engines/tasks";
 import { addDaysISO, fdShort, hm, monthOf, weekdayOf, WEEKDAYS } from "../time";
 import { hrmsLink } from "../registry";
+import { BUDDY_DONE, CHECKLIST_NA } from "../values";
+import { tell, usersOfEmployees } from "../services/notify";
 
 /* ---------------------------------------------------------------------------
  * Tasks (spec §13): templates, the daily checklist they are copied into, the
@@ -52,6 +53,11 @@ type Checklist = typeof hrmsChecklist.$inferSelect;
 type Todo = typeof hrmsTodos.$inferSelect;
 type Buddy = typeof hrmsBuddyTasks.$inferSelect;
 
+/** The giver stored on a to-do copied from a monthly template (a stored value: `assignerOf` compares against it). */
+const MONTHLY_FROM = "Monthly Task";
+/** Who gave a to-do, as a screen shows it. */
+const fromShown = (label: string) => (label === MONTHLY_FROM ? "Monthly template" : label);
+
 const NOT_LINKED = "Your account is not linked to an employee record yet. Ask HR to link it on the Access screen.";
 
 /** Manages everyone's tasks: the power, or HRMS administration. */
@@ -66,12 +72,7 @@ const when = (at: Date | null) => (at ? stampLine(null, at).replace(/^Created\s*
 async function notifyEmployees(employeeIds: string[], title: string, body: string, href: string): Promise<void> {
   const ids = [...new Set(employeeIds.filter(Boolean))];
   if (!ids.length) return;
-  try {
-    const us = await db.select({ id: users.id }).from(users).where(and(inArray(users.employeeId, ids), eq(users.active, true)));
-    await notifyUsers(us.map((u) => ({ userId: u.id, title, body, href })));
-  } catch (e) {
-    console.error("hrms tasks: notification failed", e);
-  }
+  await tell((await usersOfEmployees(ids)).map((userId) => ({ userId, title, body, href })));
 }
 
 /** Serialises Take my task / Take monthly task per person, so a double click cannot copy twice. */
@@ -139,7 +140,7 @@ const TOOLS: NonNullable<HrmsScreenModule["tools"]> = {
       if (taken) return refuse(err("This month’s tasks are already in your to-dos", "conflict"));
       const mine = await tx.select().from(hrmsTaskTemplates).where(eq(hrmsTaskTemplates.employeeId, me.id)).orderBy(asc(hrmsTaskTemplates.serial));
       const tk = monthlyTemplates(mine);
-      if (!tk.length) return refuse(err("You have no monthly tasks", "rule_violation"));
+      if (!tk.length) return refuse(err("You have no monthly task templates", "rule_violation"));
       await tx.insert(hrmsTodos).values(
         tk.map((x) => {
           const d = monthlyTodoDates(m, x.dayOfMonth, x.beforeDay);
@@ -148,7 +149,7 @@ const TOOLS: NonNullable<HrmsScreenModule["tools"]> = {
             forDate: d.forDate,
             tillDate: d.tillDate,
             fromEmployeeId: null,
-            fromLabel: "Monthly Task",
+            fromLabel: MONTHLY_FROM,
             toEmployeeId: me.id,
             category: x.category,
             task: x.task,
@@ -210,7 +211,7 @@ const TEMPLATE_COLS: ColSpec[] = [
   { k: "freq", l: "Frequency", t: "s" },
   { k: "weekdays", l: "Weekdays", t: "t" },
   { k: "dom", l: "Day of month", t: "n" },
-  { k: "before", l: "Before", t: "n" },
+  { k: "before", l: "Complete before", t: "n" },
   { k: "category", l: "Category", t: "t" },
   { k: "start", l: "Start", t: "t" },
   { k: "end", l: "End", t: "t" },
@@ -276,9 +277,9 @@ function templateRow(ctx: HrmsContext, r: Template, p: Person | undefined, peopl
   const actions: ActionSpec[] = [];
   /* Add more copies the row into a fresh form, task left blank: the next task for the same person and rhythm. */
   const copy = templateForm(ctx, people, { ...templateInit(r, p), task: "" });
-  if (copy) actions.push({ id: "addMore", l: "Add more", primary: true, form: copy, why: own || admin ? undefined : "Only tasks admin adds templates for somebody else" });
-  actions.push({ id: "edit", l: "Edit", loadsForm: true, why: admin ? undefined : "Only tasks admin edits a template" });
-  actions.push({ id: "delete", l: "Delete", confirm: `Delete the template “${r.task}”?`, why: admin ? undefined : "Only tasks admin deletes a template" });
+  if (copy) actions.push({ id: "addMore", l: "Add more", primary: true, form: copy, why: own || admin ? undefined : "Adding a template for someone else needs the “Manage everyone's tasks” power" });
+  actions.push({ id: "edit", l: "Edit", loadsForm: true, why: admin ? undefined : "Editing a template needs the “Manage everyone's tasks” power" });
+  actions.push({ id: "delete", l: "Delete", confirm: `Delete the template “${r.task}”?`, why: admin ? undefined : "Deleting a template needs the “Manage everyone's tasks” power" });
   return {
     id: r.id,
     v: {
@@ -311,7 +312,7 @@ const templates: HrmsScreenModule = {
   async load(ctx, q) {
     const people = await allPeople();
     const { scope, options } = scopeFor(ctx, q, "tasksAdmin");
-    const ids = visibleIds(ctx, scope, people);
+    const ids = visibleIds(ctx, scope);
     const where = ids ? (ids.size ? inArray(hrmsTaskTemplates.employeeId, [...ids]) : sql`false`) : undefined;
     const rows = await db.select().from(hrmsTaskTemplates).where(where).orderBy(asc(hrmsTaskTemplates.serial));
     const pb = byId(people);
@@ -344,14 +345,14 @@ const templates: HrmsScreenModule = {
   forms: {
     async template(ctx, h, _lines, recordId) {
       const admin = taskAdmin(ctx);
-      if (recordId && !admin) return err("Only tasks admin edits a template", "not_permitted");
+      if (recordId && !admin) return err("Editing a template needs the “Manage everyone's tasks” power", "not_permitted");
       const people = await allPeople();
       const p = personFrom(h.emp, people);
-      if (!p) return fieldErr("emp", "invalid Name");
-      if (!admin && p.id !== ctx.employee?.id) return err("Only tasks admin adds templates for somebody else", "not_permitted");
-      if (!recordId && !isActive(p)) return fieldErr("emp", "invalid Name");
+      if (!p) return fieldErr("emp", "Pick an employee from the list");
+      if (!admin && p.id !== ctx.employee?.id) return err("Adding a template for someone else needs the “Manage everyone's tasks” power", "not_permitted");
+      if (!recordId && !isActive(p)) return fieldErr("emp", `${p.name} is not an active employee`);
       const task = text(h.task);
-      if (!task) return fieldErr("task", "Task is required");
+      if (!task) return fieldErr("task", "Enter the task");
       const frequency = String(h.freq ?? "");
       const monthly = frequency === "Monthly";
       const input = {
@@ -363,7 +364,7 @@ const templates: HrmsScreenModule = {
         startTime: text(h.start),
         endTime: text(h.end),
       };
-      if (monthly && !input.category) return fieldErr("category", "Category is required");
+      if (monthly && !input.category) return fieldErr("category", "Pick a category");
       const bad = checkTemplate(input);
       if (bad) return fieldErr(bad.field, bad.message);
       const values = { ...input, employeeId: p.id, task, weekdays: storedWeekdays(frequency, input.weekdays) };
@@ -389,7 +390,7 @@ const templates: HrmsScreenModule = {
   },
   actions: {
     async delete(ctx, id) {
-      if (!taskAdmin(ctx)) return err("Only tasks admin deletes a template", "not_permitted");
+      if (!taskAdmin(ctx)) return err("Deleting a template needs the “Manage everyone's tasks” power", "not_permitted");
       const [r] = await db.select().from(hrmsTaskTemplates).where(eq(hrmsTaskTemplates.id, id));
       if (!r) return err("That template no longer exists.", "not_found");
       await db.delete(hrmsTaskTemplates).where(eq(hrmsTaskTemplates.id, id));
@@ -422,13 +423,13 @@ function checklistActions(ctx: HrmsContext, r: Checklist, t: string): ActionSpec
   const isToday = r.date === t;
   const a: ActionSpec[] = [];
   if (own && r.status !== "Done")
-    a.push({ id: "done", l: "Done", primary: true, confirm: "Are You Sure! Your Task Is Done", why: isToday ? undefined : expiredMessage(r.task, r.date) });
-  if (own && isToday && (r.status === "Done" || r.status === "N/A")) a.push({ id: "notDone", l: "Not done" });
+    a.push({ id: "done", l: "Done", primary: true, confirm: "Mark this task as done?", why: isToday ? undefined : expiredMessage(r.task, r.date) });
+  if (own && isToday && (r.status === "Done" || r.status === CHECKLIST_NA)) a.push({ id: "notDone", l: "Not done" });
   if (own && isToday && checklistOpen(r.status))
     a.push({
       id: "na",
-      l: "N/A",
-      prompt: { title: "Not applicable today", sub: r.task, submit: "Mark N/A", fields: [{ k: "reason", l: "Remark / Not Applicable Reason", t: "area", req: true, mic: true }] },
+      l: "Not applicable",
+      prompt: { title: "Not applicable today", sub: r.task, submit: "Mark not applicable", fields: [{ k: "reason", l: "Why it does not apply today", t: "area", req: true, mic: true }] },
     });
   if (own || taskAdmin(ctx))
     a.push({
@@ -446,7 +447,7 @@ function checklistRow(ctx: HrmsContext, r: Checklist, p: Person | undefined, t: 
   const flags: string[] = [];
   if (r.status === "Done") flags.push("done");
   if (bucket === "Not done this week") flags.push("blank");
-  if (r.status === "N/A") flags.push("naReason");
+  if (r.status === CHECKLIST_NA) flags.push("naReason");
   const fields: RowField[] = [
     { l: "Frequency", v: r.frequency ?? "" },
     { l: "Day", v: r.weekday ?? weekdayOf(r.date) },
@@ -493,7 +494,7 @@ const checklist: HrmsScreenModule = {
     const t = today();
     const people = await allPeople();
     const { scope, options } = scopeFor(ctx, q, "tasksAdmin");
-    const ids = visibleIds(ctx, scope, people);
+    const ids = visibleIds(ctx, scope);
     const from = isISO(q.from) ? q.from : addDaysISO(t, -30);
     const where: SQL[] = [gte(hrmsChecklist.date, from)];
     if (isISO(q.to)) where.push(lte(hrmsChecklist.date, q.to));
@@ -556,29 +557,29 @@ const checklist: HrmsScreenModule = {
     async na(ctx, id, v) {
       const got = await ownTodayItem(ctx, id);
       if ("refusal" in got) return got.refusal;
-      if (!checklistOpen(got.row.status)) return err("Mark it not done first.");
+      if (!checklistOpen(got.row.status)) return err("This task is already marked. Mark it not done first.");
       const reason = text(v.reason);
-      if (!reason) return fieldErr("reason", "Remark / Not Applicable Reason is required");
+      if (!reason) return fieldErr("reason", "Say why it does not apply today");
       const at = now();
       await db
         .update(hrmsChecklist)
-        .set({ status: "N/A", naReason: reason, workingTime: at, stampedAt: new Date(), updatedAt: new Date(), updatedById: ctx.user.id })
+        .set({ status: CHECKLIST_NA, naReason: reason, workingTime: at, stampedAt: new Date(), updatedAt: new Date(), updatedById: ctx.user.id })
         .where(eq(hrmsChecklist.id, id));
-      await hrmsAudit(ctx, "hrms.tasks.checklist.na", "hrms_checklist", id, { status: got.row.status }, { status: "N/A", naReason: reason });
+      await hrmsAudit(ctx, "hrms.tasks.checklist.na", "hrms_checklist", id, { status: got.row.status }, { status: CHECKLIST_NA, naReason: reason });
       return okVoid("Marked not applicable");
     },
     async remark(ctx, id, v) {
       const [r] = await db.select().from(hrmsChecklist).where(eq(hrmsChecklist.id, id));
       if (!r) return err("That task no longer exists.", "not_found");
-      if (!(r.employeeId === ctx.employee?.id || taskAdmin(ctx))) return err("Not yours to remark on.", "not_permitted");
+      if (!(r.employeeId === ctx.employee?.id || taskAdmin(ctx))) return err("Only the person whose task it is, or someone with the “Manage everyone's tasks” power, can write a remark on it.", "not_permitted");
       const remark = text(v.remark);
-      if (!remark) return fieldErr("remark", "Remark is required");
+      if (!remark) return fieldErr("remark", "Enter the remark");
       await db.update(hrmsChecklist).set({ remark, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(hrmsChecklist.id, id));
       await hrmsAudit(ctx, "hrms.tasks.checklist.remark", "hrms_checklist", id, { remark: r.remark }, { remark });
       return okVoid("Remark saved");
     },
     async delete(ctx, id) {
-      if (!taskAdmin(ctx)) return err("Only tasks admin deletes a checklist item", "not_permitted");
+      if (!taskAdmin(ctx)) return err("Deleting a checklist item needs the “Manage everyone's tasks” power", "not_permitted");
       const [r] = await db.select().from(hrmsChecklist).where(eq(hrmsChecklist.id, id));
       if (!r) return err("That task no longer exists.", "not_found");
       await db.delete(hrmsChecklist).where(eq(hrmsChecklist.id, id));
@@ -620,7 +621,7 @@ const TODO_COLS: ColSpec[] = [
   { k: "task", l: "Task", t: "b" },
   { k: "category", l: "Category", t: "t" },
   { k: "status", l: "Status", t: "s" },
-  { k: "recheck", l: "Recheck", t: "s" },
+  { k: "recheck", l: "Verification", t: "s" },
   { k: "daysTaken", l: "Days taken", t: "n" },
   { k: "f", l: "Flags", t: "f" },
 ];
@@ -630,7 +631,7 @@ const TODO_COLS: ColSpec[] = [
  * their own template — so its assignee stands in: otherwise nobody but tasks
  * admin could ever verify it or send it back.
  */
-const assignerOf = (r: Todo): string | null => r.fromEmployeeId ?? (r.fromLabel === "Monthly Task" ? r.toEmployeeId : null);
+const assignerOf = (r: Todo): string | null => r.fromEmployeeId ?? (r.fromLabel === MONTHLY_FROM ? r.toEmployeeId : null);
 
 function todoActions(ctx: HrmsContext, r: Todo, t: string): ActionSpec[] {
   const me = ctx.employee?.id;
@@ -644,16 +645,16 @@ function todoActions(ctx: HrmsContext, r: Todo, t: string): ActionSpec[] {
       id: "done",
       l: "Done",
       primary: true,
-      confirm: "Are You Sure! Your Task Is Done",
+      confirm: "Mark this to-do as done?",
       why: r.tillDate && todoExpired(r.tillDate, t) ? expiredMessage(r.task, r.tillDate) : undefined,
     });
   if (r.status === "Done" && r.recheck !== "Verified" && party) a.push({ id: "notDone", l: "Not done" });
-  if (r.status === "Done" && r.recheck !== "Verified" && (assigner || admin)) a.push({ id: "verify", l: "Verified", primary: true });
+  if (r.status === "Done" && r.recheck !== "Verified" && (assigner || admin)) a.push({ id: "verify", l: "Verify", primary: true });
   if (r.status === "Done" && (party || admin))
     a.push({
       id: "pending",
       l: "Pending",
-      why: assigner ? undefined : "Only the person who gave it sends it back",
+      why: assigner ? undefined : "Only the person who gave this to-do can send it back",
       prompt: { title: "Send back as pending", sub: r.task, submit: "Send back", fields: [{ k: "remark", l: "What is still missing", t: "area", req: true, mic: true }] },
     });
   if (party || admin)
@@ -669,7 +670,7 @@ function todoActions(ctx: HrmsContext, r: Todo, t: string): ActionSpec[] {
 function todoRow(ctx: HrmsContext, r: Todo, pb: Map<string, Person>, t: string, avg: number | null): ListRow {
   const me = ctx.employee?.id;
   const to = pb.get(r.toEmployeeId);
-  const from = r.fromEmployeeId ? (pb.get(r.fromEmployeeId)?.name ?? r.fromLabel) : r.fromLabel;
+  const from = r.fromEmployeeId ? (pb.get(r.fromEmployeeId)?.name ?? r.fromLabel) : fromShown(r.fromLabel);
   const flags: string[] = [];
   if (me && r.toEmployeeId === me) flags.push("toMe");
   else if (me && r.fromEmployeeId === me) flags.push("byMe");
@@ -705,7 +706,7 @@ function todoRow(ctx: HrmsContext, r: Todo, pb: Map<string, Person>, t: string, 
       { l: "Office", v: to?.office ?? "" },
     ],
     actions: todoActions(ctx, r, t),
-    by: stampLine(r.fromLabel, r.createdAt),
+    by: stampLine(fromShown(r.fromLabel), r.createdAt),
   };
 }
 
@@ -740,7 +741,7 @@ const todos: HrmsScreenModule = {
     const t = today();
     const people = await allPeople();
     const { scope, options } = scopeFor(ctx, q, "tasksAdmin");
-    const ids = visibleIds(ctx, scope, people);
+    const ids = visibleIds(ctx, scope);
     const list = ids ? [...ids] : null;
     /* A to-do belongs to both ends: the person given it and the person who gave it. */
     const where = list ? (list.length ? or(inArray(hrmsTodos.toEmployeeId, list), inArray(hrmsTodos.fromEmployeeId, list)) : sql`false`) : undefined;
@@ -780,16 +781,16 @@ const todos: HrmsScreenModule = {
       if (!ctx.employee && !taskAdmin(ctx)) return err(NOT_LINKED, "not_permitted");
       const people = await allPeople();
       const p = personFrom(h.to, people);
-      if (!p || !isActive(p)) return fieldErr("to", "invalid Name");
+      if (!p || !isActive(p)) return fieldErr("to", "Pick an active employee from the list");
       const forDate = text(h.forDate);
-      if (!isISO(forDate)) return fieldErr("forDate", "INVALID");
+      if (!isISO(forDate)) return fieldErr("forDate", "Enter a valid for date");
       const tillDate = text(h.tillDate);
-      if (tillDate && !isISO(tillDate)) return fieldErr("tillDate", "INVALID");
-      if (tillDate && tillDate <= forDate) return fieldErr("tillDate", "Before Date should Be Greater Than For Date!");
+      if (tillDate && !isISO(tillDate)) return fieldErr("tillDate", "Enter a valid till date");
+      if (tillDate && tillDate <= forDate) return fieldErr("tillDate", "The till date must be after the for date");
       const category = text(h.category);
-      if (!category || !(TASK_CATEGORIES as readonly string[]).includes(category)) return fieldErr("category", "Category is required");
+      if (!category || !(TASK_CATEGORIES as readonly string[]).includes(category)) return fieldErr("category", "Pick a category from the list");
       const task = text(h.task);
-      if (!task) return fieldErr("task", "Task is required");
+      if (!task) return fieldErr("task", "Enter the task");
       const id = hrmsId("htd");
       const fromLabel = ctx.employee?.name ?? ctx.user.name;
       const values = {
@@ -818,7 +819,7 @@ const todos: HrmsScreenModule = {
       const r = await todoFor(id);
       if (!r) return err("That to-do no longer exists.", "not_found");
       const me = ctx.employee?.id;
-      if (!me || (r.toEmployeeId !== me && assignerOf(r) !== me)) return err("Only the person it was given to, or who gave it, marks it done.", "not_permitted");
+      if (!me || (r.toEmployeeId !== me && assignerOf(r) !== me)) return err("Only the person who gave this to-do, or the person it was given to, can mark it done.", "not_permitted");
       if (r.status !== "Open") return err("Already done.");
       const t = today();
       if (r.tillDate && todoExpired(r.tillDate, t)) return err(expiredMessage(r.task, r.tillDate), "rule_violation");
@@ -827,13 +828,13 @@ const todos: HrmsScreenModule = {
         .set({ status: "Done", recheck: "", doneAt: new Date(), doneOn: t, updatedAt: new Date(), updatedById: ctx.user.id })
         .where(eq(hrmsTodos.id, id));
       await hrmsAudit(ctx, "hrms.tasks.todo.done", "hrms_todos", id, { status: r.status }, { status: "Done", doneOn: t });
-      return okVoid(r.fromEmployeeId && r.fromEmployeeId !== me ? `Done · ${first(r.fromLabel)} verifies it` : "Done");
+      return okVoid(r.fromEmployeeId && r.fromEmployeeId !== me ? `Done · ${first(r.fromLabel)} will verify it` : "Done");
     },
     async notDone(ctx, id) {
       const r = await todoFor(id);
       if (!r) return err("That to-do no longer exists.", "not_found");
       const me = ctx.employee?.id;
-      if (!me || (r.toEmployeeId !== me && assignerOf(r) !== me)) return err("Only the person it was given to, or who gave it, changes it.", "not_permitted");
+      if (!me || (r.toEmployeeId !== me && assignerOf(r) !== me)) return err("Only the person who gave this to-do, or the person it was given to, can change it.", "not_permitted");
       if (r.status !== "Done") return err("It is not done yet.");
       if (r.recheck === "Verified") return err("It is already verified.");
       await db
@@ -846,7 +847,7 @@ const todos: HrmsScreenModule = {
     async verify(ctx, id) {
       const r = await todoFor(id);
       if (!r) return err("That to-do no longer exists.", "not_found");
-      if (!(assignerOf(r) === ctx.employee?.id || taskAdmin(ctx))) return err("Only the person who gave it, or tasks admin, verifies it.", "not_permitted");
+      if (!(assignerOf(r) === ctx.employee?.id || taskAdmin(ctx))) return err("Only the person who gave this to-do, or someone with the “Manage everyone's tasks” power, can verify it.", "not_permitted");
       if (r.status !== "Done") return err("It is not done yet.");
       if (r.recheck === "Verified") return err("Already verified.");
       await db.update(hrmsTodos).set({ recheck: "Verified", updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(hrmsTodos.id, id));
@@ -858,10 +859,10 @@ const todos: HrmsScreenModule = {
       const r = await todoFor(id);
       if (!r) return err("That to-do no longer exists.", "not_found");
       const me = ctx.employee;
-      if (!me || assignerOf(r) !== me.id) return err("Only the person who gave it sends it back", "not_permitted");
+      if (!me || assignerOf(r) !== me.id) return err("Only the person who gave this to-do can send it back", "not_permitted");
       if (r.status !== "Done") return err("It is not done yet.");
       const remark = text(v.remark);
-      if (!remark) return fieldErr("remark", "What is still missing is required");
+      if (!remark) return fieldErr("remark", "Say what is still missing");
       await db
         .update(hrmsTodos)
         .set({ status: "Open", recheck: "Pending", doneAt: null, doneOn: null, remark, updatedAt: new Date(), updatedById: ctx.user.id })
@@ -875,9 +876,9 @@ const todos: HrmsScreenModule = {
       const r = await todoFor(id);
       if (!r) return err("That to-do no longer exists.", "not_found");
       const me = ctx.employee?.id;
-      if (!((me && (r.toEmployeeId === me || assignerOf(r) === me)) || taskAdmin(ctx))) return err("Not yours to remark on.", "not_permitted");
+      if (!((me && (r.toEmployeeId === me || assignerOf(r) === me)) || taskAdmin(ctx))) return err("Only the people on this to-do, or someone with the “Manage everyone's tasks” power, can write a remark on it.", "not_permitted");
       const remark = text(v.remark);
-      if (!remark) return fieldErr("remark", "Remark is required");
+      if (!remark) return fieldErr("remark", "Enter the remark");
       await db.update(hrmsTodos).set({ remark, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(hrmsTodos.id, id));
       await hrmsAudit(ctx, "hrms.tasks.todo.remark", "hrms_todos", id, { remark: r.remark }, { remark });
       return okVoid("Remark saved");
@@ -885,7 +886,7 @@ const todos: HrmsScreenModule = {
     async delete(ctx, id) {
       const r = await todoFor(id);
       if (!r) return err("That to-do no longer exists.", "not_found");
-      if (!(assignerOf(r) === ctx.employee?.id || taskAdmin(ctx))) return err("Only admin or the person who gave it deletes a to-do", "not_permitted");
+      if (!(assignerOf(r) === ctx.employee?.id || taskAdmin(ctx))) return err("Only the person who gave this to-do, or someone with the “Manage everyone's tasks” power, can delete it", "not_permitted");
       await db.delete(hrmsTodos).where(eq(hrmsTodos.id, id));
       await hrmsAudit(ctx, "hrms.tasks.todo.delete", "hrms_todos", id, r, null);
       return okVoid("To-do deleted");
@@ -912,12 +913,12 @@ function buddyRow(ctx: HrmsContext, r: Buddy, pb: Map<string, Person>, t: string
   const sender = !!me && r.fromEmployeeId === me;
   const actions: ActionSpec[] = [];
   if (r.status === "Shared" && isBuddy) actions.push({ id: "accept", l: "Accept", primary: true });
-  if (r.status === "Accepted" && isBuddy) actions.push({ id: "done", l: "Task done", primary: true, confirm: "Are You Sure! Your Task Is Done" });
+  if (r.status === "Accepted" && isBuddy) actions.push({ id: "done", l: "Mark done", primary: true, confirm: "Mark this task as done?" });
   if (sender || taskAdmin(ctx)) actions.push({ id: "delete", l: "Delete", confirm: `Delete the shared task “${r.task}”?` });
   const flags: string[] = [];
   if (isBuddy) flags.push("toMe");
   else if (sender) flags.push("byMe");
-  if (r.status === "Task done") flags.push("done");
+  if (r.status === BUDDY_DONE) flags.push("done");
   return {
     id: r.id,
     v: {
@@ -935,7 +936,7 @@ function buddyRow(ctx: HrmsContext, r: Buddy, pb: Map<string, Person>, t: string
     header: `${from?.name ?? ""} → ${to?.name ?? ""} · ${fdShort(r.date)}`,
     fields: [
       { l: "Day", v: weekdayOf(r.date), der: true },
-      { l: "Buddy status", v: r.status === "Shared" ? "Pending" : "Task Accepted" },
+      { l: "Status", v: r.status === "Shared" ? "Waiting to be accepted" : r.status === BUDDY_DONE ? "Done" : "Accepted" },
       { l: "Accepted at", v: when(r.acceptedAt) },
       { l: "Done at", v: when(r.doneAt) },
       { l: "Note", v: r.note ?? "" },
@@ -985,7 +986,7 @@ const buddy: HrmsScreenModule = {
     const t = today();
     const people = await allPeople();
     const { scope, options } = scopeFor(ctx, q, "tasksAdmin");
-    const ids = visibleIds(ctx, scope, people);
+    const ids = visibleIds(ctx, scope);
     const list = ids ? [...ids] : null;
     const where = list ? (list.length ? or(inArray(hrmsBuddyTasks.toEmployeeId, list), inArray(hrmsBuddyTasks.fromEmployeeId, list)) : sql`false`) : undefined;
     const rows = await db.select().from(hrmsBuddyTasks).where(where).orderBy(desc(hrmsBuddyTasks.date));
@@ -1013,9 +1014,9 @@ const buddy: HrmsScreenModule = {
       if (!me) return err(NOT_LINKED, "not_permitted");
       const people = await allPeople();
       const p = personFrom(h.to, people);
-      if (!p || !isActive(p) || p.id === me.id) return fieldErr("to", "invalid Name");
+      if (!p || !isActive(p) || p.id === me.id) return fieldErr("to", "Pick an active colleague from the list. You can’t share a task with yourself.");
       const task = text(h.task);
-      if (!task) return fieldErr("task", "Task is required");
+      if (!task) return fieldErr("task", "Enter the task");
       const id = hrmsId("hbt");
       const values = { id, date: today(), fromEmployeeId: me.id, toEmployeeId: p.id, task, note: text(h.note), createdById: ctx.user.id };
       await db.insert(hrmsBuddyTasks).values(values);
@@ -1027,7 +1028,7 @@ const buddy: HrmsScreenModule = {
     async accept(ctx, id) {
       const r = await buddyFor(id);
       if (!r) return err("That task no longer exists.", "not_found");
-      if (r.toEmployeeId !== ctx.employee?.id) return err("Only the buddy accepts it.", "not_permitted");
+      if (r.toEmployeeId !== ctx.employee?.id) return err("Only the buddy it was shared with can accept it.", "not_permitted");
       if (r.status !== "Shared") return err("Already accepted.");
       await db
         .update(hrmsBuddyTasks)
@@ -1039,22 +1040,22 @@ const buddy: HrmsScreenModule = {
     async done(ctx, id) {
       const r = await buddyFor(id);
       if (!r) return err("That task no longer exists.", "not_found");
-      if (r.toEmployeeId !== ctx.employee?.id) return err("Only the buddy marks it done.", "not_permitted");
+      if (r.toEmployeeId !== ctx.employee?.id) return err("Only the buddy it was shared with can mark it done.", "not_permitted");
       if (r.status !== "Accepted") return err(r.status === "Shared" ? "Accept it first." : "Already done.");
       await db
         .update(hrmsBuddyTasks)
-        .set({ status: "Task done", doneAt: new Date(), updatedAt: new Date(), updatedById: ctx.user.id })
+        .set({ status: BUDDY_DONE, doneAt: new Date(), updatedAt: new Date(), updatedById: ctx.user.id })
         .where(eq(hrmsBuddyTasks.id, id));
-      await hrmsAudit(ctx, "hrms.tasks.buddy.done", "hrms_buddy_tasks", id, { status: r.status }, { status: "Task done" });
+      await hrmsAudit(ctx, "hrms.tasks.buddy.done", "hrms_buddy_tasks", id, { status: r.status }, { status: BUDDY_DONE });
       /* §18.5: the person who shared it is told it is done. */
       await notifyEmployees([r.fromEmployeeId], "Your buddy task is done", `${ctx.employee?.name ?? ""}: ${r.task}`, hrmsLink("buddy"));
       const sender = byId(await allPeople()).get(r.fromEmployeeId);
-      return okVoid(`Done · ${first(sender?.name)} is told`);
+      return okVoid(`Done · ${first(sender?.name)} has been told`);
     },
     async delete(ctx, id) {
       const r = await buddyFor(id);
       if (!r) return err("That task no longer exists.", "not_found");
-      if (!(r.fromEmployeeId === ctx.employee?.id || taskAdmin(ctx))) return err("Only admin or the person who shared it deletes it", "not_permitted");
+      if (!(r.fromEmployeeId === ctx.employee?.id || taskAdmin(ctx))) return err("Only the person who shared this task, or someone with the “Manage everyone's tasks” power, can delete it", "not_permitted");
       await db.delete(hrmsBuddyTasks).where(eq(hrmsBuddyTasks.id, id));
       await hrmsAudit(ctx, "hrms.tasks.buddy.delete", "hrms_buddy_tasks", id, r, null);
       return okVoid("Shared task deleted");

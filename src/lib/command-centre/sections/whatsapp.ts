@@ -22,6 +22,7 @@ import {
   type TableQuery,
 } from "../provider";
 import type { Bar, Callout, FigureDrawer, Metric, RecordView, Result, Row, SectionPayload, TableDef, TablePage, Tone } from "../types";
+import { replyText } from "@/lib/whatsapp-delivery";
 
 /* ---------------------------------------------------------------------------
  * WHATSAPP (PRD §18) — the founder's switch, the rules, and whether anything
@@ -459,7 +460,7 @@ export const provider: SectionProvider = {
       rowsLabel: "Latest unmatched replies",
       rows: replies.map((r) => ({
         a: r.senderName ? `${r.senderName}${r.waId ? ` · +${r.waId}` : ""}` : r.waId ? `+${r.waId}` : "Unknown number",
-        b: r.message.length > 90 ? r.message.slice(0, 89) + "…" : r.message,
+        b: ((m) => (m.length > 90 ? m.slice(0, 89) + "…" : m))(replyText(r.message, r.mediaType ?? null)),
         c: stampIST(r.receivedAt),
       })),
       noRowsLine: replies.length ? undefined : "Every reply so far came from a number on a customer.",

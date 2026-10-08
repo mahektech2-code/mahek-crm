@@ -1980,6 +1980,138 @@ export const MIGRATIONS: string[][] = [
     `ALTER TABLE lead_validations ADD COLUMN readyForOrder TEXT;`,
   ],
 
+  /*
+   * THE SKU CODE, which is what a salesman and a shopkeeper both call a
+   * product by. `products.external_code` at the office — the legacy Product ID
+   * every active SKU carries — and the one thing that tells "Mahek Enamel
+   * Thinner 800Ml (Loose)" from its 44-can box at a glance. The order form
+   * prints it on every row and searches it.
+   */
+  [`ALTER TABLE products ADD COLUMN sku TEXT;`],
+
+  /*
+   * A CHANGE TO AN APPROVED ORDER, asked for rather than made. Until accounts
+   * decide an order he edits it directly; after that the change goes to them
+   * as a request, and this row is how he follows it — sent, then accepted or
+   * declined with the reason. Office-written fields arrive on `orderChanges`.
+   */
+  [
+    `CREATE TABLE IF NOT EXISTS order_change_requests (
+      id TEXT PRIMARY KEY,
+      orderId TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      note TEXT,
+      decisionNote TEXT,
+      totalAmountPaise INTEGER,
+      linesJson TEXT,
+      requestedAt INTEGER,
+      decidedAt INTEGER,
+      clientCreatedAt INTEGER,
+      serverCreatedAt INTEGER,
+      deviceId TEXT,
+      syncState TEXT NOT NULL DEFAULT 'queued',
+      syncMessage TEXT
+    );`,
+    `CREATE INDEX IF NOT EXISTS idx_order_change_requests_order ON order_change_requests(orderId);`,
+  ],
+
+  /*
+   * WHAT HE SAID ABOUT WHERE HE WORKS. The office allocates his cities and
+   * areas; from the Journeys screen he accepts them or asks for different
+   * ones. `signature` is the allocation he was looking at (see
+   * `lib/territory-signature.ts`), so an acceptance stops counting the moment
+   * the office changes his areas. A change request's verdict arrives on the
+   * approvals channel and on `territoryRequests`.
+   */
+  [
+    `CREATE TABLE IF NOT EXISTS territory_requests (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      currentPlaces TEXT NOT NULL DEFAULT '[]',
+      requestedPlaces TEXT NOT NULL DEFAULT '[]',
+      reason TEXT,
+      signature TEXT NOT NULL DEFAULT '',
+      state TEXT NOT NULL DEFAULT 'pending',
+      decisionNote TEXT,
+      decidedAt INTEGER,
+      clientCreatedAt INTEGER NOT NULL,
+      serverCreatedAt INTEGER,
+      deviceId TEXT NOT NULL,
+      syncState TEXT NOT NULL DEFAULT 'local',
+      syncMessage TEXT
+    );`,
+  ],
+
+  /*
+   * HIS CUSTOMERS' OWN MONTHLY TARGETS, this month and last.
+   *
+   * The person target on Performance says how far he is from his month; this
+   * says which of his shops the rest would come from. Pure reference, like
+   * `performance`: nothing on the phone sets a target or adds to what a shop
+   * achieved. `key` is `period|customerId`, stamped on arrival, because a
+   * shop carries one row per month. `pendingPaise` is what is still waiting
+   * for accounts and is never part of `achievedPaise`.
+   */
+  [
+    `CREATE TABLE IF NOT EXISTS customer_targets (
+      key TEXT PRIMARY KEY,
+      period TEXT NOT NULL,
+      customerId TEXT NOT NULL,
+      targetPaise INTEGER NOT NULL DEFAULT 0,
+      achievedPaise INTEGER NOT NULL DEFAULT 0,
+      pendingPaise INTEGER NOT NULL DEFAULT 0,
+      isDefault INTEGER NOT NULL DEFAULT 1,
+      carriedForward INTEGER NOT NULL DEFAULT 0,
+      computedAt TEXT,
+      lastSyncedAt INTEGER NOT NULL DEFAULT 0
+    );`,
+    `CREATE INDEX IF NOT EXISTS idx_customer_targets_period ON customer_targets(period);`,
+  ],
+
+  /*
+   * THE BOOK'S TWO LISTS, at ten thousand shops.
+   *
+   * `idx_customers_name` sorts by `name` under BINARY, and the Customers tab
+   * orders by `name COLLATE NOCASE, id` — a different collation, so SQLite
+   * could not walk that index and sorted the whole table on every page. With
+   * this one an A–Z page walks the index in order and stops after the page it
+   * was asked for.
+   *
+   * `idx_leads_book` serves the lead book's own narrowing, which always opens
+   * on `archived` and most often on a rung.
+   */
+  [
+    `CREATE INDEX IF NOT EXISTS idx_customers_name_nocase ON customers(name COLLATE NOCASE, id);`,
+    `CREATE INDEX IF NOT EXISTS idx_leads_book ON leads(archived, funnelStage);`,
+  ],
+
+  /*
+   * A SHOP'S TARGET CAN BE A NUMBER OF BILLS as well as rupees. Null is "no
+   * count asked", never zero — a zero would read as met on a shop nobody set
+   * one for. The table is replaced wholesale on every pull, so an older
+   * phone simply starts receiving the two columns the pull after it updates.
+   */
+  [
+    `ALTER TABLE customer_targets ADD COLUMN billTarget INTEGER;`,
+    `ALTER TABLE customer_targets ADD COLUMN billsAchieved INTEGER NOT NULL DEFAULT 0;`,
+  ],
+
+  /*
+   * A TASK CAN ASK FOR SOMETHING. The office's assignment carries a form —
+   * text, numbers, picks, photos, a birthday — and the answers go back on the
+   * task. `form` is the office's, rewritten on every pull; `responses` is his,
+   * held under the same `noPending` guard every owned row is. JSON text, as
+   * `snoozeHistory` beside them already is.
+   */
+  [
+    `ALTER TABLE tasks ADD COLUMN campaignId TEXT;`,
+    `ALTER TABLE tasks ADD COLUMN form TEXT;`,
+    `ALTER TABLE tasks ADD COLUMN responses TEXT;`,
+    /* What the customer record says about this task's shop, for questions
+       linked to it: shown on each question and used as its first answer. */
+    `ALTER TABLE tasks ADD COLUMN context TEXT;`,
+  ],
+
 ];
 
 /**
@@ -2002,7 +2134,7 @@ export const SCHEMA_VERSION = MIGRATIONS.length;
 export const OWNED_TABLES = [
   'visits', 'orders', 'order_lines', 'payments', 'attendance_days', 'tasks',
   'leads', 'samples', 'complaints', 'expenses', 'leave_requests', 'tours',
-  'competitor_records', 'approvals',
+  'competitor_records', 'approvals', 'order_change_requests', 'territory_requests',
   /* The funnel's two. A lead's timeline is written here as it happens and the
      office keeps its own — a sync never deletes a line of it, because what a
      salesman recorded about a shop is the record even where the office's own
@@ -2021,7 +2153,7 @@ export const OWNED_TABLES = [
 export const REFERENCE_TABLES = [
   'customers', 'products', 'price_list', 'schemes', 'timeline_events',
   'journey_stops', 'leave_balances', 'holidays', 'documents', 'courses',
-  'notifications', 'performance', 'salary',
+  'notifications', 'performance', 'salary', 'customer_targets',
   'customer_orders', 'customer_payments', 'customer_bills',
   /* The record of who checked a finding and what came of it. Written only by
      the office — a salesman's own checks go up through the lead save and come

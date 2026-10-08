@@ -1,4 +1,5 @@
 import { registerCalc } from "@/lib/erp/calc";
+import { OFFICE_ALL_HOURS } from "../values";
 
 /* ---------------------------------------------------------------------------
  * The People group's form calculators (offices, staff timings, asset
@@ -18,11 +19,11 @@ export function hmText(min: number): string {
 
 /** Closing − opening, or "24 h" for a round-the-clock office (spec §5.1). */
 export function officeDuration(open: string | undefined, close: string | undefined, timing: string | undefined): string {
-  if (timing === "24*7") return "24 h";
+  if (timing === OFFICE_ALL_HOURS) return "24 h";
   const a = mins(open);
   const b = mins(close);
   if (a == null || b == null) return "";
-  return b > a ? hmText(b - a) : "Closing must be after opening";
+  return b > a ? hmText(b - a) : "Closing time must be after opening time";
 }
 
 /** Out − in (spec §5.2, A38). */

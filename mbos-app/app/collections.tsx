@@ -1,9 +1,9 @@
 import React from 'react';
 import { Pressable, View } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
-import { Badge, Card, ListCard, T } from '../src/components/ui/primitives';
+import { Badge, Card, ListCard, PrimaryButton, T } from '../src/components/ui/primitives';
 import { Icon } from '../src/components/ui/Icon';
 import {
   cashInHand,
@@ -17,6 +17,7 @@ import { dmy, inrFromPaise, isoDate } from '../src/lib/format';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { color as C, radius, tabular, weight, type BadgeTone } from '../src/theme/tokens';
+import { CountUp, Stagger, animateLayoutFor } from '../src/components/ui/motion';
 
 /**
  * What he has collected, and the two things he can say about it afterwards.
@@ -37,20 +38,31 @@ import { color as C, radius, tabular, weight, type BadgeTone } from '../src/them
  *
  * NEITHER ACTION MOVES THE LEDGER. A deposit is the salesman's half of a
  * two-step: he says he banked it with a slip to prove it, and the back office
- * confirms it on the statement. A bounce puts the amount back on the customer,
- * which is the one thing here that changes a balance — so it asks first, and
- * `markBounced` refuses to run twice.
+ * confirms it on the statement. A bounce tells the office and raises the call
+ * to make; it does not touch what the shop owes, because a field receipt never
+ * reduced that in the first place — see `markBounced`.
  */
+
+/**
+ * The office would not take it. Not money he is carrying and not money the
+ * office has: the receipt never landed, so it has to be taken again — and it
+ * says so here rather than sitting under "On you" for ever.
+ */
+function refused(p: CollectedPayment): boolean {
+  return p.syncState === 'rejected' || p.syncState === 'blocked';
+}
 
 /** What the row is doing, in one word, and how to draw it. */
 function stateOf(p: CollectedPayment): { label: string; tone: BadgeTone } {
+  if (refused(p)) return { label: 'Not accepted', tone: 'danger' };
   if (p.bounced) return { label: 'Bounced', tone: 'danger' };
-  if (p.deposited) return { label: 'Banked', tone: 'success' };
+  if (p.deposited) return { label: p.mode === 'Cheque' ? 'Handed in' : 'Banked', tone: 'success' };
   if (p.mode === 'Cash') return { label: 'On you', tone: 'amber' };
-  /* A cheque is an instrument with somebody's name on it and a transfer was in
-     the company's account before he left the shop. Neither is money he is
-     carrying, so neither is chased — but a cheque can still come back. */
-  return { label: 'Sent', tone: 'neutral' };
+  /* A cheque is paper in his bag until he hands it in or banks it — "Sent"
+     said it had gone somewhere. A transfer was in the company's account
+     before he left the shop. */
+  if (p.mode === 'Cheque') return { label: 'With you', tone: 'neutral' };
+  return { label: 'Paid to bank', tone: 'neutral' };
 }
 
 export default function CollectionsScreen() {
@@ -75,11 +87,14 @@ export default function CollectionsScreen() {
    */
   const [nowMs, setNowMs] = React.useState(() => Date.now());
 
-  const load = React.useCallback(() => {
+  /* `animate` after banking or a bounce: the row grows a line and loses its
+     buttons, and the rows under it should slide rather than jump. */
+  const load = React.useCallback((animate?: boolean) => {
     let live = true;
     if (!userId) return;
     void Promise.all([listPayments(), cashInHand(userId)]).then(([p, c]) => {
       if (!live) return;
+      if (animate === true) animateLayoutFor(p.length);
       setNowMs(Date.now());
       setRows(p);
       setCash({ totalPaise: c.totalPaise, sentence: c.sentence });
@@ -89,7 +104,7 @@ export default function CollectionsScreen() {
     };
   }, [userId]);
 
-  useFocusEffect(load);
+  useFocusEffect(React.useCallback(() => load(), [load]));
 
   /**
    * Banking it, with the slip.
@@ -104,31 +119,48 @@ export default function CollectionsScreen() {
    * Refusing the mark over a cancelled camera would leave him carrying money
    * on every screen in the app because a permission dialog went the wrong way.
    */
-  const deposit = (p: CollectedPayment) => {
+  /*
+   * ONE SLIP FOR MANY ROWS, because that is how cash is banked.
+   *
+   * A day's cash goes in on one deposit slip, and the screen offered a button
+   * per collection with a slip photograph each — five photographs of the same
+   * slip, or four rows left "On you" because he gave up. `markDeposited` has
+   * always taken a list. A cheque handed to the office is the same act for a
+   * cheque: it leaves his bag, and the label says which.
+   */
+  const deposit = (ps: CollectedPayment[]) => {
+    if (!ps.length) return;
+    const total = ps.reduce((n, p) => n + p.amountPaise, 0);
+    const cheque = ps.every((p) => p.mode === 'Cheque');
     askConfirm({
-      title: 'Banked ' + inrFromPaise(p.amountPaise) + '?',
-      body:
-        'This says you have paid it in. The office still checks it against the bank statement — ' +
-        'you are recording your half of it, not closing it.',
-      confirmLabel: 'Yes, I banked it',
+      title: cheque
+        ? 'Handed in the cheque for ' + inrFromPaise(total) + '?'
+        : 'Banked ' + inrFromPaise(total) + (ps.length > 1 ? ' on one slip?' : '?'),
+      body: cheque
+        ? 'This says the cheque has left you — banked, or given to the office. The office still checks it with the bank.'
+        : 'This says you have put it in the bank. Take a photo of the slip next. The office will still check it with the bank.',
+      confirmLabel: cheque ? 'Yes, handed in' : 'Yes, I banked it',
       run: () => {
         void (async () => {
-          setBusy(p.id);
+          setBusy(ps[0].id);
           try {
             const shot = await takePhoto({
               parentType: 'payment',
-              parentId: p.id,
+              parentId: ps[0].id,
               kind: 'deposit_proof',
               source: 'camera',
             });
             const proofId = shot.ok ? shot.mediaId : null;
-            await markDeposited([p.id], proofId);
-            load();
+            await markDeposited(ps.map((p) => p.id), proofId);
+            load(true);
             notify(
               proofId
-                ? 'Banked · slip attached'
-                : 'Banked · no slip attached, so the office has only your word for it',
+                ? (cheque ? 'Handed in' : 'Banked') + ' · slip photo added'
+                : (cheque ? 'Handed in' : 'Banked') + ' · no slip photo. The office has only your word.',
+              proofId ? 'success' : 'warn',
             );
+          } catch {
+            notify('That could not be saved on this phone. Try again.', 'error');
           } finally {
             setBusy(null);
           }
@@ -150,19 +182,20 @@ export default function CollectionsScreen() {
     askConfirm({
       title: 'Did this cheque bounce?',
       body:
-        inrFromPaise(p.amountPaise) +
-        ' goes back onto ' +
-        (p.customerName ?? 'the customer') +
-        ", and you get a task to ring them. They believe they have already paid, so this is a call worth preparing for.",
-      reasonLabel: 'What the bank said · required',
+        'The office is told, and you get a task to call ' +
+        (p.customerName ?? 'the shop') +
+        '. They think they have paid, so be ready for that call.',
+      reasonLabel: 'What the bank said · needed',
       confirmLabel: 'Yes, it bounced',
       run: (reason) => {
         void (async () => {
           setBusy(p.id);
           try {
             await markBounced(p.id, reason);
-            load();
-            notify('Recorded · ' + inrFromPaise(p.amountPaise) + ' is back on their account');
+            load(true);
+            notify('Saved · the office is told, and a call is on your tasks');
+          } catch {
+            notify('That could not be saved on this phone. Try again.', 'error');
           } finally {
             setBusy(null);
           }
@@ -172,13 +205,18 @@ export default function CollectionsScreen() {
   };
 
   const today = isoDate(new Date(nowMs));
+  /* The cash he can bank in one go — the rows the per-row button would have
+     banked one slip at a time. */
+  const cashOnHim = (rows ?? []).filter(
+    (p) => p.mode === 'Cash' && !p.deposited && !p.bounced && !refused(p),
+  );
 
   return (
-    <AppFrame title="MBOS" activeTab={null} contentStyle={{ padding: 16, paddingBottom: 24 }}>
+    <AppFrame title="Money you collected" activeTab={null} contentStyle={{ padding: 16, paddingBottom: 24 }}>
       <BackLink label={back.label} onPress={back.go} />
       <T s="h1">Money you collected</T>
       <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-        What you wrote down at the counter. The office confirms it against the bank separately.
+        What you noted at the shop. The office will check it with the bank.
       </T>
 
       {/* ---- what he is carrying ----
@@ -194,17 +232,37 @@ export default function CollectionsScreen() {
           borderLeftColor: cash?.totalPaise ? C.warn : C.border,
         }}>
         <T s="label">Cash on you</T>
-        <T style={[{ fontSize: 26, lineHeight: 32, color: C.ink, marginTop: 2 }, weight(600), tabular]}>
-          {inrFromPaise(cash?.totalPaise ?? 0)}
-        </T>
+        {/* Mounted only once the figure is read, so opening the screen shows
+            it standing still; banking cash then counts it DOWN, which is the
+            moment the number is actually news. */}
+        {cash ? (
+          <CountUp
+            value={cash.totalPaise}
+            format={(n) => inrFromPaise(Math.round(n))}
+            style={[{ fontSize: 26, lineHeight: 32, color: C.ink, marginTop: 2 }, weight(600), tabular]}
+          />
+        ) : (
+          <T style={[{ fontSize: 26, lineHeight: 32, color: C.ink, marginTop: 2 }, weight(600), tabular]}>
+            {inrFromPaise(0)}
+          </T>
+        )}
         <T s="small" style={{ color: cash?.totalPaise ? C.warnInk : C.muted, marginTop: 2 }}>
-          {cash?.sentence ?? 'Reading…'}
+          {cash?.sentence ?? 'Loading…'}
         </T>
+        {cashOnHim.length > 1 ? (
+          <PrimaryButton
+            label={'Bank all ' + cashOnHim.length + ' on one slip'}
+            onPress={() => deposit(cashOnHim)}
+            disabled={busy != null}
+            whyDisabled="Still saving the last one."
+            style={{ marginTop: 12 }}
+          />
+        ) : null}
       </Card>
 
       {rows === null ? (
         <T s="small" style={{ color: C.muted, marginTop: 16 }}>
-          Reading…
+          Loading…
         </T>
       ) : rows.length === 0 ? (
         <Card style={{ marginTop: 16, paddingVertical: 28 }}>
@@ -212,7 +270,7 @@ export default function CollectionsScreen() {
             You have not collected anything yet.
           </T>
           <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 6 }}>
-            Money you take shows up here, and this is where you say you have banked it.
+            Money you collect shows here. Mark it here when you bank it.
           </T>
         </Card>
       ) : (
@@ -221,12 +279,14 @@ export default function CollectionsScreen() {
             const state = stateOf(p);
             const late = !p.deposited && !p.bounced && p.depositSlaDueAt != null && p.depositSlaDueAt <= nowMs;
             /* Only a cheque can bounce, and only one that has not already. */
-            const canBounce = p.mode === 'Cheque' && !p.bounced;
-            const canDeposit = !p.deposited && !p.bounced && p.mode === 'Cash';
+            const no = refused(p);
+            const canBounce = p.mode === 'Cheque' && !p.bounced && !no;
+            const canDeposit = !p.deposited && !p.bounced && !no && (p.mode === 'Cash' || p.mode === 'Cheque');
 
             return (
-              <View
+              <Stagger
                 key={p.id}
+                index={i}
                 style={{ paddingHorizontal: 16, paddingVertical: 14, borderTopWidth: i ? 1 : 0, borderTopColor: C.wash }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                   <T
@@ -244,7 +304,7 @@ export default function CollectionsScreen() {
                   {[
                     p.mode,
                     dmy(isoDate(new Date(p.collectedAt))),
-                    p.chequeNumber ? 'no. ' + p.chequeNumber : null,
+                    p.chequeNumber ? (p.mode === 'Cheque' ? 'no. ' : 'ref ') + p.chequeNumber : null,
                     /* The date written ACROSS a cheque, which decides when it
                        can be banked at all — not the day it was handed over. */
                     p.chequeDate ? 'dated ' + dmy(p.chequeDate) : null,
@@ -261,23 +321,32 @@ export default function CollectionsScreen() {
                   {p.syncState === 'queued' ? ' · not sent yet' : ''}
                 </T>
 
-                {late ? (
+                {no ? (
+                  <Pressable accessibilityRole="button" onPress={() => router.push('/rejections?from=collections')}>
+                    <T style={{ fontSize: 13, lineHeight: 19, color: C.danger, marginTop: 4 }}>
+                      {(p.syncMessage ?? 'The office did not accept this receipt.') +
+                        ' It is not counted as collected. Open Not accepted to take it again.'}
+                    </T>
+                  </Pressable>
+                ) : null}
+
+                {late && !no ? (
                   <T style={{ fontSize: 13, lineHeight: 19, color: C.danger, marginTop: 4 }}>
-                    Past the deposit deadline — bank it today.
+                    Bank deadline is over. Bank it today.
                   </T>
                 ) : null}
 
                 {p.bounced ? (
                   <T style={{ fontSize: 13, lineHeight: 19, color: C.danger, marginTop: 4 }}>
-                    Came back{p.bouncedAt ? ' on ' + dmy(isoDate(new Date(p.bouncedAt))) : ''} · the amount is back on
-                    their account
+                    Bounced{p.bouncedAt ? ' on ' + dmy(isoDate(new Date(p.bouncedAt))) : ''} · the office is told
                   </T>
                 ) : null}
 
                 {p.deposited ? (
                   <T style={{ fontSize: 13, lineHeight: 19, color: C.muted, marginTop: 4 }}>
-                    Banked{p.depositedAt ? ' on ' + dmy(isoDate(new Date(p.depositedAt))) : ''} · the office checks the
-                    statement
+                    {p.mode === 'Cheque' ? 'Handed in' : 'Banked'}
+                    {p.depositedAt ? ' on ' + dmy(isoDate(new Date(p.depositedAt))) : ''} · the office will check it
+                    with the bank
                   </T>
                 ) : null}
 
@@ -287,7 +356,7 @@ export default function CollectionsScreen() {
                       <Pressable
                         accessibilityRole="button"
                         disabled={busy === p.id}
-                        onPress={() => deposit(p)}
+                        onPress={() => deposit([p])}
                         style={({ pressed }) => ({
                           flexDirection: 'row',
                           alignItems: 'center',
@@ -302,7 +371,9 @@ export default function CollectionsScreen() {
                           opacity: busy === p.id ? 0.6 : 1,
                         })}>
                         <Icon name="camera" size={17} color={C.primaryDeep} />
-                        <T style={[{ fontSize: 14, color: C.primaryDeep }, weight(500)]}>I banked it</T>
+                        <T style={[{ fontSize: 14, color: C.primaryDeep }, weight(500)]}>
+                          {p.mode === 'Cheque' ? 'I handed it in' : 'I banked it'}
+                        </T>
                       </Pressable>
                     ) : null}
 
@@ -327,14 +398,14 @@ export default function CollectionsScreen() {
                     ) : null}
                   </View>
                 ) : null}
-              </View>
+              </Stagger>
             );
           })}
         </ListCard>
       )}
 
       <T s="caption" style={{ marginTop: 12 }}>
-        {'Showing what you have collected, newest first, as at ' + dmy(today) + '.'}
+        {'Your collections, newest first, as on ' + dmy(today) + '.'}
       </T>
     </AppFrame>
   );

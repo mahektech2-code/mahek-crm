@@ -16,6 +16,7 @@
 
 import * as React from "react";
 import { cx } from "@/components/ui/primitives";
+import { BodyPortal } from "@/components/ui/body-portal";
 
 export function WorkspaceModal({
   title,
@@ -60,49 +61,51 @@ export function WorkspaceModal({
   }, [onRequestClose]);
 
   return (
-    <div
-      className="animate-fade-in fixed inset-0 z-[70] flex items-center justify-center bg-[rgba(22,22,22,0.42)] p-3 sm:p-5"
-      role="dialog"
-      aria-modal="true"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onRequestClose();
-      }}
-    >
+    <BodyPortal>
       <div
-        style={{ maxWidth }}
-        className="flex h-[94vh] w-full flex-col overflow-hidden rounded-[8px] bg-surface whitespace-normal shadow-[0_16px_48px_rgba(22,22,22,0.22)]"
+        className="animate-fade-in fixed inset-0 z-[70] flex items-center justify-center bg-[rgba(22,22,22,0.42)] p-3 sm:p-5"
+        role="dialog"
+        aria-modal="true"
+        onMouseDown={(e) => {
+          if (e.target === e.currentTarget) onRequestClose();
+        }}
       >
-        <div className="flex flex-none items-start justify-between gap-4 border-b border-divider px-5 pt-4 pb-3">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2.5">
-              <h2 className="truncate text-lg font-semibold text-ink">{title}</h2>
-              {badge}
+        <div
+          style={{ maxWidth }}
+          className="flex h-[94vh] w-full flex-col overflow-hidden rounded-[8px] bg-surface whitespace-normal shadow-[0_16px_48px_rgba(22,22,22,0.22)]"
+        >
+          <div className="flex flex-none items-start justify-between gap-4 border-b border-divider px-5 pt-4 pb-3">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2.5">
+                <h2 className="truncate text-lg font-semibold text-ink">{title}</h2>
+                {badge}
+              </div>
+              {subtitle ? <div className="mt-0.5 text-[13px] text-muted">{subtitle}</div> : null}
             </div>
-            {subtitle ? <div className="mt-0.5 text-[13px] text-muted">{subtitle}</div> : null}
+            <div className="flex flex-none items-center gap-2">
+              {actions}
+              <button
+                type="button"
+                onClick={onRequestClose}
+                aria-label="Close"
+                className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-[4px] text-muted hover:bg-canvas hover:text-ink"
+              >
+                <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+                  <path d="M2 2l10 10M12 2L2 12" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                </svg>
+              </button>
+            </div>
           </div>
-          <div className="flex flex-none items-center gap-2">
-            {actions}
-            <button
-              type="button"
-              onClick={onRequestClose}
-              aria-label="Close"
-              className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-[4px] text-muted hover:bg-canvas hover:text-ink"
-            >
-              <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
-                <path d="M2 2l10 10M12 2L2 12" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-              </svg>
-            </button>
-          </div>
+          {tabs ? <div className="flex-none px-5">{tabs}</div> : null}
+          <div className={cx("min-h-0 flex-1 overflow-auto", bodyClassName ?? "px-5 py-4")}>{children}</div>
+          {footer ? (
+            <div className="flex flex-none flex-wrap items-center justify-between gap-2.5 border-t border-divider bg-canvas/60 px-5 py-3">
+              {footer}
+            </div>
+          ) : null}
         </div>
-        {tabs ? <div className="flex-none px-5">{tabs}</div> : null}
-        <div className={cx("min-h-0 flex-1 overflow-auto", bodyClassName ?? "px-5 py-4")}>{children}</div>
-        {footer ? (
-          <div className="flex flex-none flex-wrap items-center justify-between gap-2.5 border-t border-divider bg-canvas/60 px-5 py-3">
-            {footer}
-          </div>
-        ) : null}
       </div>
-    </div>
+    </BodyPortal>
   );
 }
 

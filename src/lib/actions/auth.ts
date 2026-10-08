@@ -1,20 +1,19 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { and, eq, isNull, or } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { appAccess, passwordResets, sessions, users } from "@/db/schema";
+import { passwordResets, sessions, users } from "@/db/schema";
 import {
   createSession,
   destroySession,
   getCurrentUser,
   hashPassword,
-  requireManager,
   verifyPassword,
 } from "@/lib/auth";
 import { listUserApps, recordSignIn, recordSignOut } from "@/lib/access";
-import { APP_IDS, webApps, type AppId } from "@/lib/apps";
+import { webApps } from "@/lib/apps";
 import { randomUUID } from "node:crypto";
 import { auditLog } from "@/db/schema";
 import {
@@ -31,6 +30,13 @@ import {
   sendOtp,
   verifyOtp,
 } from "@/lib/services/otp-service";
+import {
+  accountKey,
+  clearSignInFailures,
+  clientAddress,
+  recordSignInFailure,
+  signInRefusal,
+} from "@/lib/services/sign-in-throttle";
 import {
   appOrigin,
   findLiveReset,
@@ -57,7 +63,6 @@ async function audit(
     afterState: detail ? ({ detail } as never) : null,
   });
 }
-import { initialsOf } from "@/lib/format";
 
 /* ---------------------------------------------------------------------------
  * One sign-in for all of MahekOne. Where it lands you depends on what you can
@@ -68,19 +73,10 @@ const credentials = z.object({
   identifier: z
     .string()
     .trim()
-    .min(1, "Enter your work number or email address."),
+    .min(1, "Enter your mobile number or email address."),
   password: z.string().min(1, "Enter your password."),
   remember: z.boolean().default(true),
 });
-
-/** Telecallers know their phone number; office staff know their email. */
-function normalise(identifier: string) {
-  const digits = identifier.replace(/\D/g, "");
-  return {
-    email: identifier.toLowerCase(),
-    phone: digits.length >= 10 ? digits.slice(-10) : null,
-  };
-}
 
 export async function signIn(
   _prev: ActionResult | null,
@@ -95,21 +91,26 @@ export async function signIn(
     return fail(parsed.error.issues[0].message);
   }
 
-  const { email, phone } = normalise(parsed.data.identifier);
+  /* The one lookup every sign-in uses — email, work number, or the personal
+     mobile in HRMS. A second copy here is how the web and the handset came
+     to accept different numbers for the same person. */
+  const user = await findAccount(parsed.data.identifier);
 
-  const [user] = await db
-    .select()
-    .from(users)
-    .where(phone ? or(eq(users.email, email), eq(users.phone, phone)) : eq(users.email, email))
-    .limit(1);
+  // Counted before the password is checked, so a paused account answers the
+  // same whether or not this guess was right. See `services/sign-in-throttle`.
+  const account = accountKey(user?.id ?? null, parsed.data.identifier);
+  const address = await clientAddress();
+  const refused = await signInRefusal(account, address);
+  if (refused) return fail(refused);
 
   // Same message either way — never reveal which half was wrong.
   const wrong =
     "That did not match an account. Check the spelling, or ask your manager to reset it.";
-  if (!user || !user.active) return fail(wrong);
-  if (!(await verifyPassword(parsed.data.password, user.passwordHash))) {
+  if (!user || !user.active || !(await verifyPassword(parsed.data.password, user.passwordHash))) {
+    await recordSignInFailure(account, address);
     return fail(wrong);
   }
+  await clearSignInFailures(account);
 
   return completeSignIn(user, parsed.data.remember, "sign-in");
 }
@@ -124,7 +125,7 @@ async function completeSignIn(
   remember: boolean,
   action: "sign-in" | "sign-in-code",
 ): Promise<ActionResult> {
-  await createSession(user.id, remember);
+  await createSession(user.id, remember, true);
   await recordSignIn(user.id, newId("att"));
   // Nothing wrote this column, so every screen that asked when somebody last
   // signed in answered "never" — including the console's list of accounts
@@ -300,104 +301,6 @@ export async function resetPassword(
   redirect("/login?reset=1");
 }
 
-/* ------------------------------------------------------------- accounts */
-
-const newUser = z.object({
-  name: z.string().trim().min(2, "Enter the person's full name."),
-  email: z.string().trim().toLowerCase().email("Enter a valid email address."),
-  phone: z
-    .string()
-    .trim()
-    .optional()
-    .transform((v) => (v ? v.replace(/\D/g, "").slice(-10) : undefined)),
-  password: z.string().min(8, "Passwords must be at least 8 characters."),
-  role: z.enum(["associate", "manager"]),
-  apps: z.array(z.enum(APP_IDS)).min(1, "Give them at least one app."),
-});
-
-/** Managers create accounts — there is no self-signup on an internal tool. */
-export async function createTeamMember(
-  _prev: ActionResult | null,
-  formData: FormData,
-): Promise<ActionResult> {
-  let manager;
-  try {
-    manager = await requireManager();
-  } catch {
-    return fail("Only a manager can add team members.");
-  }
-
-  const parsed = newUser.safeParse({
-    name: formData.get("name"),
-    email: formData.get("email"),
-    phone: formData.get("phone"),
-    password: formData.get("password"),
-    role: formData.get("role"),
-    apps: formData.getAll("apps"),
-  });
-  if (!parsed.success) return fail(parsed.error.issues[0].message);
-
-  const existing = await db
-    .select({ id: users.id })
-    .from(users)
-    .where(eq(users.email, parsed.data.email))
-    .limit(1);
-  if (existing.length) return fail("Somebody already uses that email address.");
-
-  const id = newId("usr");
-  await db.transaction(async (tx) => {
-    await tx.insert(users).values({
-      id,
-      name: parsed.data.name,
-      email: parsed.data.email,
-      phone: parsed.data.phone || null,
-      passwordHash: await hashPassword(parsed.data.password),
-      role: parsed.data.role,
-      initials: initialsOf(parsed.data.name),
-    });
-    await tx.insert(appAccess).values(
-      parsed.data.apps.map((app) => ({
-        id: newId("acc"),
-        userId: id,
-        app,
-        grantedById: manager.id,
-      })),
-    );
-  });
-
-  await audit(manager, "create", "user", id, parsed.data.name);
-  return ok(`${parsed.data.name} can now sign in.`);
-}
-
-export async function setAppAccess(
-  userId: string,
-  apps: AppId[],
-): Promise<ActionResult> {
-  let manager;
-  try {
-    manager = await requireManager();
-  } catch {
-    return fail("Only a manager can change app access.");
-  }
-
-  await db.transaction(async (tx) => {
-    await tx.delete(appAccess).where(eq(appAccess.userId, userId));
-    if (apps.length) {
-      await tx.insert(appAccess).values(
-        apps.map((app) => ({
-          id: newId("acc"),
-          userId,
-          app,
-          grantedById: manager.id,
-        })),
-      );
-    }
-  });
-
-  await audit(manager, "set-app-access", "user", userId, apps.join(", "));
-  return ok("App access updated");
-}
-
 /* ------------------------------------------------ WhatsApp one-time codes */
 
 const WRONG_ACCOUNT = "That did not match an account. Check the spelling, or ask your manager to reset it.";
@@ -408,8 +311,7 @@ export async function codesOffered(): Promise<boolean> {
 }
 
 /**
- * Step one of signing in with a code: send it to the work number on the
- * account. The screen shows the masked number so the person knows where to look.
+ * Step one of signing in with a code: send it to the personal mobile in HRMS. The screen shows the masked number so the person knows where to look.
  */
 export async function requestSignInCode(
   identifier: string,
@@ -417,15 +319,15 @@ export async function requestSignInCode(
 ): Promise<ActionResult<{ sentTo: string; expiresInMinutes: number }>> {
   const user = identifier.trim() ? await findAccount(identifier) : null;
   if (!user || !user.active) return fail(WRONG_ACCOUNT);
-  const sent = await sendOtp(user.id, purpose);
+  const sent = await sendOtp(user.id, purpose, { surface: "web", requestedWith: identifier });
   if (!sent.ok) return fail(sent.error);
   await audit(user, purpose === "login" ? "sign-in-code-sent" : "reset-code-sent", "user", user.id);
   return ok2({ sentTo: sent.sentTo, expiresInMinutes: sent.expiresInMinutes }, `Code sent to ${sent.sentTo} on WhatsApp`);
 }
 
 const codeSignIn = z.object({
-  identifier: z.string().trim().min(1, "Enter your work number or email address."),
-  code: z.string().trim().min(4, "Enter the code from WhatsApp."),
+  identifier: z.string().trim().min(1, "Enter your mobile number or email address."),
+  code: z.string().trim().min(4, "Enter the OTP."),
   remember: z.boolean().default(true),
 });
 
@@ -449,8 +351,8 @@ export async function signInWithCode(
 
 const codeReset = z
   .object({
-    identifier: z.string().trim().min(1, "Enter your work number or email address."),
-    code: z.string().trim().min(4, "Enter the code from WhatsApp."),
+    identifier: z.string().trim().min(1, "Enter your mobile number or email address."),
+    code: z.string().trim().min(4, "Enter the OTP."),
     password: z.string().min(8, "Passwords must be at least 8 characters."),
     confirm: z.string(),
   })

@@ -1,12 +1,10 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Icon } from "./icons";
 import { GlobalSearch } from "./global-search";
 import { FeedbackButton } from "./feedback-button";
-import { AppSwitcher } from "./app-switcher";
+import { HeaderLead } from "./header-lead";
 import { cx } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/overlays";
 import { setScope } from "@/lib/actions/crm";
@@ -31,6 +29,7 @@ export function Header({
   scope,
   notifications,
   apps,
+  collapsed,
   onToggleSidebar,
 }: {
   user: User;
@@ -41,6 +40,8 @@ export function Header({
   notifications: Notification[];
   /** Every app this account opens — the switcher lists them. */
   apps: AppDefinition[];
+  /** Whether the sidebar is the narrow rail — the collapse control says which. */
+  collapsed: boolean;
   onToggleSidebar: () => void;
 }) {
   const router = useRouter();
@@ -66,24 +67,17 @@ export function Header({
 
   return (
     <header className="z-30 flex h-14 flex-none items-center gap-5 border-b border-line bg-surface px-4">
-      <div className="flex w-[216px] flex-none items-center gap-2">
-        {apps.length > 1 ? <AppSwitcher apps={apps} current="crm" /> : null}
-        <button
-          onClick={onToggleSidebar}
-          title="Collapse sidebar"
-          aria-label="Collapse sidebar"
-          className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[4px] text-muted hover:bg-canvas hover:text-body"
-        >
-          <Icon name="menu" size={18} />
-        </button>
-        <Link href="/crm/dashboard" className="flex items-center gap-2 no-underline hover:no-underline">
-          <span className="flex h-4 w-4 flex-none items-center justify-center rounded-[3px] bg-brand">
-            <span className="block h-1.5 w-1.5 rounded-[1px] bg-brand-lime" />
-          </span>
-          <span className="text-[15px] font-semibold tracking-[-0.01em] text-ink">
-            MAHEK CRM
-          </span>
-        </Link>
+      {/* The switcher, the collapse and the wordmark are `HeaderLead`'s, as in
+          every app. The fixed width keeps the search box where it was. */}
+      <div className="flex w-[216px] flex-none items-center">
+        <HeaderLead
+          apps={apps}
+          current="crm"
+          collapsed={collapsed}
+          onToggleSidebar={onToggleSidebar}
+          href="/crm/dashboard"
+          label="MAHEK CRM"
+        />
       </div>
 
       <GlobalSearch />

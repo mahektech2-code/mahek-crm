@@ -1,4 +1,5 @@
 import "server-only";
+import { convertedOff, notConverted } from "../lead-action-window";
 import { bandFor, type HealthBand } from "../engines/inactivity";
 import {
   LEGACY_SALES_TYPE,
@@ -15,27 +16,26 @@ import type { LeadPriority } from "../lead-priority";
 import type { BusinessDate } from "../business-date";
 import { cache } from "react";
 import { crmSalesManagerScopeFor, inCrmSalesManagerWorkspace } from "./crm-sales-manager-scope";
+import { isPlatformAdmin, levelInApp, requestAppId } from "../access-control";
+import { scopeStanding } from "../sales-gate";
 import { sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { APP_TIMEZONE } from "../business-date";
 import { today } from "../recompute";
-import { employeeJoinOn, employeeLinkKindSql } from "@/lib/employee-link";
 import {
   TERRITORY_BEAT_SQL,
   TERRITORY_REGION_SQL,
   qualify,
   stateKeySql,
 } from "@/lib/territory-sql";
-import { territoryClause, type Territory } from "@/lib/territory-rules";
-import { decodePlaces } from "@/lib/lead-places";
+import { placeFilterOptions, placeFilterSql, placeNameSql } from "@/lib/services/place-filter-service";
+import type { PlaceFilterOptions, PlaceFilterValues } from "@/lib/place-filters";
+import { rankShopCities } from "@/lib/journey-days";
 import { canonicalState, stateKey, stateVariants } from "@/lib/india-states";
 import { metresBetween } from "@/lib/geo";
+import { NOBODY, type TerritorySeat } from "@/lib/territory-seats";
 import { dropInaccurateFixes } from "../engines/trail-gaps";
-import {
-  leaveBalances as leaveBalancesFor,
-  leaveDebitDays,
-  type LeaveBalance,
-} from "@/lib/engines/leave";
+import { leaveDebitDays } from "@/lib/engines/leave";
 
 /* ---------------------------------------------------------------------------
  * Every read the Sales Dashboard makes.
@@ -107,6 +107,12 @@ export type ManagerScope = {
    * screen's scope moved.
    */
   salesManagerId?: string;
+  /**
+   * SET ONLY FOR AN ASSOCIATE (`scopeStanding` = "own"): their book and nothing
+   * else. It exists so `seatVisible` can leave out the "nobody owns it" arm,
+   * which was written for managers — see `leadsVisible`.
+   */
+  own?: boolean;
 };
 
 /**
@@ -119,9 +125,10 @@ export type ManagerScope = {
  * session inside the service means there is no call site that can get it
  * wrong.
  *
- * **No territory rows means national.** That is what let the hierarchy ship
- * without changing what a single existing grant meant, and it is the same rule
- * `app_module_access` uses for modules.
+ * **No territory rows means national — FOR A MANAGER.** That is what let the
+ * hierarchy ship without changing what a single existing grant meant, and it
+ * is the same rule `app_module_access` uses for modules. An associate never
+ * reaches it: see the level check at the top of the function.
  *
  * Cached per request: the sidebar asks, then every query on the screen asks
  * again, and it is two round trips either way.
@@ -129,15 +136,53 @@ export type ManagerScope = {
 const baseManagerScope = cache(async function managerScope(): Promise<ManagerScope> {
   const { requireUser } = await import("../auth");
 
-  let userId: string;
+  let user: Awaited<ReturnType<typeof requireUser>>;
   try {
-    userId = (await requireUser()).id;
+    user = await requireUser();
   } catch {
     /* No request to read a session from — a script, a job or a test. There is
      * no manager to scope to, so nothing is narrowed. Every caller in that
      * situation is trusted code rather than a browser. */
     return { national: true, regions: [], salesmanIds: null };
   }
+  const userId = user.id;
+
+  /*
+   * THE LEVEL FIRST, and only then the territory.
+   *
+   * This function read no level at all, and "no region rows means national" is
+   * a rule about MANAGERS — the people a region is ever allocated to. Applied
+   * to everybody, it answered national for every associate in the building: a
+   * telecaller on `/crm/leads` was shown every lead in the company, and a
+   * salesman given the Sales Dashboard to read his own day could open any
+   * colleague's trail, and — through `canReadAttendanceSelfie` — any
+   * colleague's check-in photograph by id. It failed OPEN, silently, for
+   * exactly the people the narrowing was never written for.
+   *
+   * `scopeStanding` (in `sales-gate.ts`, pure and tested) decides how far this
+   * person looks before a single territory row is read. An associate sees
+   * their own book; a manager or app administrator gets the regional rule
+   * below, unchanged; a platform administrator and the founder's desk are
+   * national. The level is read for the app the REQUEST is in — the CRM or the
+   * Sales Dashboard — and where the request names no app (`/api/sales/*`, the
+   * launcher badge, `/api/attachments`) it is read against the Sales Dashboard,
+   * which is the only app whose screens this scope draws.
+   *
+   * It can only NARROW: nobody who is a manager anywhere this is asked loses a
+   * row, and the arm that widens — platform administrator — was already
+   * national through `placeScope` on the one screen that asked.
+   */
+  const requestApp = await requestAppId();
+  const [platformAdmin, levelInRequestApp, levelInSales] = await Promise.all([
+    isPlatformAdmin(user),
+    requestApp === "crm" || requestApp === "sales" || requestApp === "founder"
+      ? levelInApp(user, requestApp)
+      : Promise.resolve(null),
+    levelInApp(user, "sales"),
+  ]);
+  const standing = scopeStanding({ platformAdmin, requestApp, levelInRequestApp, levelInSales });
+  if (standing === "national") return { national: true, regions: [], salesmanIds: null };
+  if (standing === "own") return { national: false, regions: [], salesmanIds: [userId], own: true };
 
   const rows = await db.execute<{ region: string }>(sql`
     -- REGIONS ONLY. The table also holds a salesman's working cities now, and
@@ -252,6 +297,24 @@ export async function managerScope(): Promise<ManagerScope> {
  * It can only ADD rows, so no manager loses sight of anything they see today.
  */
 export function leadsVisible(scope: ManagerScope, column = "c.owner_id") {
+  return sql`${notTrashed(column)} ${seatVisible(scope, column)}`;
+}
+
+/**
+ * NOT IN THE TRASH, on the table the caller's column names. Every lead list,
+ * count and record loader comes through `leadsVisible`, so a deleted lead
+ * leaves all of them here — for every viewer, including the national ones the
+ * seat narrowing below says nothing to. The alias is read off the column the
+ * caller already passes: `c.owner_id`, `a.owner_id`, `customers.owner_id`, or
+ * one of the book-of-account expressions written over `c`.
+ */
+function notTrashed(column: string) {
+  const plain = /^\s*(\w+)\.owner_id\s*$/.exec(column);
+  const alias = plain ? plain[1] : /\bc\./.test(column) ? "c" : null;
+  return alias ? sql.raw(`and ${alias}.deleted_at is null`) : sql``;
+}
+
+function seatVisible(scope: ManagerScope, column: string) {
   /* The CRM Sales Manager's book: their seat, exactly. Unowned leads and leads
      with an owner but no Sales Manager are deliberately NOT included — they are
      nobody's until somebody names a Sales Manager, and `assertCustomerInScope`
@@ -266,8 +329,58 @@ export function leadsVisible(scope: ManagerScope, column = "c.owner_id") {
   }
   if (scope.salesmanIds === null) return sql``;
   const ids = scope.salesmanIds.length ? scope.salesmanIds : [""];
-  return sql`and (${sql.raw(column)} in (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})
+  const inIds = sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`;
+  /* A LEAD A SALES MANAGER HAS TAKEN INTO THEIR BOOK IS NOT "NOBODY'S". The
+     "unowned" arm below is for leads no one holds (a website enquiry waiting to
+     be assigned). A lead a Sales Manager raised carries no owner by default but
+     does carry their seat, and showing it to every Telecaller put a manager's
+     lead on the whole desk. For an associate, an unowned lead is therefore
+     visible only while no Sales Manager holds it — or when the associate is
+     that Sales Manager. It reaches a Telecaller by being assigned to them, and
+     then the owner column says so. Managers keep the whole arm: they assign.
+     Only an owner column has a sibling seat to compare; any other column keeps
+     the old rule rather than guess. */
+  if (scope.own && /owner_id$/.test(column)) {
+    const seat = sql.raw(column.replace(/owner_id$/, "sales_manager_id"));
+    return sql`and (${sql.raw(column)} in ${inIds}
+                or (${sql.raw(column)} is null and (${seat} is null or ${seat} in ${inIds})))`;
+  }
+  return sql`and (${sql.raw(column)} in ${inIds}
               or ${sql.raw(column)} is null)`;
+}
+
+/**
+ * WHOSE BOOK A CONVERTED ACCOUNT IS IN, spelled for the alias these queries use.
+ *
+ * `ASSIGNED_TO_SQL` is the authority and says the same thing about the table
+ * called `customers`; the lead-list reads cannot use it because they alias. It
+ * is the sales seat once somebody has decided, and the sales seat falling back
+ * to the owner before anybody did — the lead arm is deliberately absent, since a
+ * converted account is by construction no longer a lead. Exported so the
+ * Handovers screen and the `handover` view read ONE definition.
+ */
+export const BOOK_OF_ACCOUNT_SQL = `case when c.am_decided_at is not null
+                        then c.sales_am_id
+                        else coalesce(c.sales_am_id, c.owner_id) end`;
+
+/**
+ * THE SCOPE A VIEW IS NARROWED BY, which is the owner column for every view but
+ * one.
+ *
+ * `handover` is about CONVERTED ACCOUNTS, whose book is the sales seat rather
+ * than the lead's owner — the rule the Handovers screen has always applied, so
+ * the view and the screen show a manager the same accounts. Everything else is
+ * `leadsVisible` exactly as before.
+ *
+ * (A Sales Manager seat reads `sales_manager_id`, a sibling of the OWNER column
+ * only; `leadsVisible` answers false for any other column rather than guess, so
+ * the `handover` view is empty inside that seat. That is the same answer the
+ * Handovers screen gives there: the seat is released at conversion.)
+ */
+export function scopeNarrowing(scope: ManagerScope, view?: LeadView) {
+  return view === "handover"
+    ? leadsVisible(scope, BOOK_OF_ACCOUNT_SQL)
+    : leadsVisible(scope);
 }
 
 /**
@@ -408,6 +521,21 @@ export type Salesman = {
    */
   /** Where he works. `parent` is the state a city sits in — see `PARENT_KIND`. */
   territories: { kind: string; value: string; parent: string }[];
+  /**
+   * His latest answer to that allocation, from the handset — accepted, or a
+   * request for different cities with the Approvals queue's verdict. Null
+   * where he has never answered. `signature` is the allocation he was looking
+   * at; compare it with `areasSignature(territories)` to know whether an
+   * acceptance still stands.
+   */
+  areaAnswer: {
+    kind: "accept" | "change";
+    at: string;
+    signature: string;
+    requested: string[];
+    reason: string | null;
+    state: string;
+  } | null;
 };
 
 /**
@@ -453,7 +581,18 @@ export async function fieldTeam(): Promise<Salesman[]> {
                              order by t.parent, t.kind, t.region)
                from mbos_user_territories t
               where t.user_id = u.id and t.kind <> 'region'
-           ), '[]'::json) as "territories"
+           ), '[]'::json) as "territories",
+           (select json_build_object(
+                     'kind', r.kind, 'at', r.server_created_at, 'signature', r.signature,
+                     'requested', r.requested_places, 'reason', r.reason,
+                     'state', case when r.kind = 'accept' then 'accepted' else coalesce(
+                       (select a.state::text from mbos_approvals a
+                         where a.subject_id = r.id and a.subject_type = 'territory_request'
+                         order by a.requested_at desc limit 1), 'pending') end)
+              from mbos_territory_requests r
+             where r.user_id = u.id
+             order by r.server_created_at desc
+             limit 1) as "areaAnswer"
       from users u
       join app_access a on a.user_id = u.id and a.app = 'field'
      where true ${onlyMine(scope, "u.id")}
@@ -596,8 +735,6 @@ export type ConsoleCounts = {
   samples: number;
   leave: number;
   expenses: number;
-  /** Everything the bell would raise, added up. */
-  alerts: number;
 };
 
 /**
@@ -754,13 +891,6 @@ export async function consoleCounts(
     samples: n("samples"),
     leave: n("leave"),
     expenses: n("expenses"),
-    alerts:
-      n("orders") +
-      n("samples") +
-      n("leave") +
-      n("expenses") +
-      n("refused") +
-      (team - n("live") > 0 ? 1 : 0),
   };
 }
 
@@ -805,12 +935,38 @@ export async function pendingApprovals(): Promise<PendingApproval[]> {
            u.name as "requestedByName",
 
            case ap.type
+             -- A CLAIM IS RAISED ON THE DAY NOW, not on one expense: since
+             -- the expense submit flow, subject_type is 'mbos_expense_days'
+             -- and subject_id a day id, so the old lookup by expense id
+             -- matched nothing and every claim read "cannot find". Both
+             -- shapes are read, because approvals raised before still exist.
              when 'expense_claim' then
                coalesce(
-                 (select e.category || ' — ' || to_char(e.amount_paise / 100.0, 'FM99,99,999') ||
-                         ' on ' || to_char(e.expense_date, 'DD Mon')
-                    from mbos_expenses e where e.id = ap.subject_id),
+                 case when ap.subject_type = 'mbos_expense_days' then
+                   (select 'Expenses for ' || to_char(d.day, 'DD Mon') ||
+                           coalesce(' — ' || nullif(
+                             (select count(*) from mbos_expenses e
+                               where e.expense_day_id = d.id
+                                 and e.superseded_by_id is null), 0)::text || ' claimed', '') ||
+                           coalesce(', ' || d.destination_city, '')
+                      from mbos_expense_days d where d.id = ap.subject_id)
+                 else
+                   (select e.category || ' — ' || to_char(e.amount_paise / 100.0, 'FM99,99,999') ||
+                           ' on ' || to_char(e.expense_date, 'DD Mon')
+                      from mbos_expenses e where e.id = ap.subject_id)
+                 end,
                  'An expense claim the office cannot find')
+             when 'tour' then
+               coalesce(
+                 (select 'Tour to ' || coalesce((select string_agg(x, ', ')
+                                     from jsonb_array_elements_text(t.cities) x), 'somewhere unnamed') ||
+                         ', ' || to_char(t.start_date, 'DD Mon') ||
+                         case when t.end_date > t.start_date
+                              then ' to ' || to_char(t.end_date, 'DD Mon') else '' end ||
+                         coalesce(' — ' || t.purpose, '')
+                    from mbos_tours t where t.id = ap.subject_id),
+                 'A tour the office cannot find')
+             when 'distributor_appointment' then 'Appointing a distributor'
              when 'leave' then
                coalesce(
                  (select l.leave_type::text || ' leave, ' ||
@@ -838,12 +994,32 @@ export async function pendingApprovals(): Promise<PendingApproval[]> {
                  (select 'The day of ' || to_char(d.day, 'DD Mon')
                     from mbos_attendance_days d where d.id = ap.subject_id),
                  'A day the office cannot find')
+             when 'territory' then
+               coalesce(
+                 (select 'Wants to work ' ||
+                         coalesce((select string_agg(x, ', ')
+                                     from jsonb_array_elements_text(t.requested_places) x), 'elsewhere') ||
+                         coalesce(' instead of ' ||
+                                  (select string_agg(x, ', ')
+                                     from jsonb_array_elements_text(t.current_places) x), '')
+                    from mbos_territory_requests t where t.id = ap.subject_id),
+                 'A request for different cities the office cannot find')
              else ap.subject_type
            end as summary,
 
            case ap.type
              when 'expense_claim' then
-               (select e.amount_paise from mbos_expenses e where e.id = ap.subject_id)
+               case when ap.subject_type = 'mbos_expense_days' then
+                 coalesce(
+                   (select d.submitted_claimed_paise from mbos_expense_days d
+                     where d.id = ap.subject_id),
+                   (select sum(e.amount_paise) from mbos_expenses e
+                     where e.expense_day_id = ap.subject_id and e.superseded_by_id is null))
+               else
+                 (select e.amount_paise from mbos_expenses e where e.id = ap.subject_id)
+               end
+             when 'tour' then
+               (select t.estimated_cost_paise from mbos_tours t where t.id = ap.subject_id)
              when 'order' then
                (select o.total_amount from orders o where o.id = ap.subject_id)
              else null
@@ -869,10 +1045,20 @@ export async function pendingApprovals(): Promise<PendingApproval[]> {
 }
 
 /** For the sidebar badge and the launcher tile. */
+/*
+ * NARROWED EXACTLY AS THE LIST IS. The badge counted the whole company's queue
+ * while `pendingApprovals` beneath it showed a regional manager their own
+ * patch, so the sidebar said 31 over a list of four — the number people trust
+ * is the one on the badge, and it was the one that was wrong. It also said, to
+ * anybody holding the app, how much was waiting across every team they could
+ * not see.
+ */
 export async function pendingApprovalCount(): Promise<number> {
+  const scope = await managerScope();
   const rows = await db.execute<{ n: number }>(
     sql`select count(*)::int as n from mbos_approvals ap
-         where ap.state = 'pending' ${NOT_WITHDRAWN}`,
+         where ap.state = 'pending' ${NOT_WITHDRAWN}
+           ${onlyMine(scope, "ap.requested_by_user_id")}`,
   );
   return Number(rows[0]?.n ?? 0);
 }
@@ -885,12 +1071,15 @@ export async function pendingApprovalCount(): Promise<number> {
  * the oldest one has been sitting there.
  */
 export async function oldestApprovalHours(): Promise<number> {
+  /* The same narrowing as the count beside it, for the same reason. */
+  const scope = await managerScope();
   const rows = await db.execute<{ hours: number }>(sql`
     select coalesce(
              floor(extract(epoch from (now() - min(ap.requested_at))) / 3600), 0
            )::int as hours
       from mbos_approvals ap
      where ap.state = 'pending' ${NOT_WITHDRAWN}
+       ${onlyMine(scope, "ap.requested_by_user_id")}
   `);
   return Number(rows[0]?.hours ?? 0);
 }
@@ -942,6 +1131,8 @@ export type TaskRow = {
   createdAt: Date;
   /** Days past due. Zero where it is not late. */
   overdueDays: number;
+  /** The assignment it is one row of, where the office set it with a form. */
+  campaignId: string | null;
 };
 
 /**
@@ -964,13 +1155,15 @@ export async function tasksList(day: string): Promise<TaskRow[]> {
            t.completion_note as "completionNote",
            b.name as "raisedBy",
            t.server_created_at as "createdAt",
-           greatest(0, ${day}::date - t.due_date)::int as "overdueDays"
+           greatest(0, ${day}::date - t.due_date)::int as "overdueDays",
+           t.campaign_id as "campaignId"
       from mbos_tasks t
       join users u on u.id = t.assigned_to_user_id
       join app_access a on a.user_id = u.id and a.app = 'field'
       left join customers c on c.id = t.customer_id
       left join users b on b.id = t.assigned_by_user_id
-     where true ${onlyMine(scope, "u.id")}
+     -- A trashed lead's tasks wait with it, and come back if it does.
+     where (c.id is null or c.deleted_at is null) ${onlyMine(scope, "u.id")}
      order by
        case t.status when 'open' then 0 when 'in_progress' then 1 else 2 end,
        t.due_date asc nulls last
@@ -978,9 +1171,25 @@ export async function tasksList(day: string): Promise<TaskRow[]> {
   `) as unknown as TaskRow[];
 }
 
+export type VisitCompetitor = {
+  competitorName: string;
+  productName: string | null;
+  pricePaise: number | null;
+  rateNote: string | null;
+  creditTerms: string | null;
+  creditDays: number | null;
+  deliveryNote: string | null;
+  strengths: string | null;
+  weaknesses: string | null;
+};
+
 export type VisitRow = {
   id: string;
   salesmanId: string;
+  /** The business day it was made on, in Asia/Kolkata. */
+  day: string | null;
+  /** The planned stop it answered. Null on an off-plan visit. */
+  journeyPlanStopId: string | null;
   salesmanName: string;
   initials: string;
   /**
@@ -993,6 +1202,11 @@ export type VisitRow = {
    */
   customerId: string;
   customerName: string;
+  /** `customer` or `lead`, and the third-party mark beside it — what kind of door it was. */
+  customerKind: string;
+  customerThirdParty: boolean;
+  /** Where the shop is, from the place tree where it has one. */
+  customerCity: string | null;
   checkInAt: Date | null;
   durationSeconds: number | null;
   outcome: string;
@@ -1008,6 +1222,23 @@ export type VisitRow = {
   photos: number;
   notes: string | null;
   transcript: string | null;
+  /**
+   * WHAT THE HANDSET BROUGHT BACK FROM THE SHOP, which this screen used to
+   * reduce to a count. The two photographs and the voice note are attachment
+   * ids, read through `/api/attachments/[id]`; the competitors are the
+   * `mbos_competitor_records` the salesman filed on this visit, which no web
+   * screen read at all.
+   */
+  shopPhotoId: string | null;
+  custPhotoId: string | null;
+  voiceNoteId: string | null;
+  transcriptIsAi: boolean | null;
+  nextFollowUpDate: string | null;
+  checkOutAt: Date | null;
+  tookPayment: boolean;
+  raisedComplaint: boolean;
+  gaveSample: boolean;
+  competitors: VisitCompetitor[];
   orderValuePaise: number;
   /** Where the check-in and check-out actually landed — for a manager who
    * wants to see the point itself rather than read the mismatch sentence. */
@@ -1040,10 +1271,31 @@ export type VisitRow = {
  * column a manager actually reads.
  */
 export async function visitsList(day: string): Promise<VisitRow[]> {
+  return visitsBetween({ from: day, to: day });
+}
+
+/**
+ * Every visit in a window, optionally one salesman's — the same columns as a
+ * day's list, so the Visits tab and a salesman's calendar read one row shape.
+ *
+ * The cap is per call: a day for the team is 400, a month for one salesman
+ * rarely comes near it, and `limit` lets the calendar ask for more.
+ */
+export async function visitsBetween(filter: {
+  from: string;
+  to: string;
+  salesmanId?: string;
+  limit?: number;
+}): Promise<VisitRow[]> {
   const scope = await managerScope();
+  const who = filter.salesmanId ? sql`and v.salesman_id = ${filter.salesmanId}` : sql``;
   return db.execute<VisitRow>(sql`
-    select v.id, v.salesman_id as "salesmanId", u.name as "salesmanName", u.initials,
-           c.name as "customerName",
+    select v.id, v.salesman_id as "salesmanId",
+           (v.check_in_at ${IST_DAY})::date::text as "day",
+           v.journey_plan_stop_id as "journeyPlanStopId", u.name as "salesmanName", u.initials,
+           c.id as "customerId", c.name as "customerName",
+           c.kind::text as "customerKind", c.third_party as "customerThirdParty",
+           ${placeNameSql("c", "city", "city")} as "customerCity",
            v.check_in_at as "checkInAt", v.duration_seconds as "durationSeconds",
            v.outcome::text as outcome, v.verified,
            v.location_mismatch as "locationMismatch",
@@ -1062,14 +1314,37 @@ export async function visitsList(day: string): Promise<VisitRow[]> {
            v.check_out_accuracy_m as "checkOutAccuracyM",
            v.check_in_override_reason as "checkInOverrideReason",
            v.pin_correction::text as "pinCorrection",
-           v.pin_correction_decided_at as "pinCorrectionDecidedAt"
+           v.pin_correction_decided_at as "pinCorrectionDecidedAt",
+           v.shop_photo_id as "shopPhotoId", v.cust_photo_id as "custPhotoId",
+           v.voice_note_id as "voiceNoteId", v.transcript_is_ai as "transcriptIsAi",
+           v.next_follow_up_date::text as "nextFollowUpDate",
+           v.check_out_at as "checkOutAt",
+           (v.linked_payment_id is not null) as "tookPayment",
+           (v.linked_complaint_id is not null) as "raisedComplaint",
+           (v.linked_sample_id is not null) as "gaveSample",
+           coalesce((
+             select jsonb_agg(jsonb_build_object(
+                      'competitorName', cr.competitor_name,
+                      'productName', cr.product_name,
+                      'pricePaise', cr.price_paise,
+                      'rateNote', cr.rate_note,
+                      'creditTerms', cr.credit_terms,
+                      'creditDays', cr.credit_days,
+                      'deliveryNote', cr.delivery_note,
+                      'strengths', cr.strengths,
+                      'weaknesses', cr.weaknesses
+                    ) order by cr.competitor_name)
+               from mbos_competitor_records cr
+              where cr.visit_id = v.id
+           ), '[]'::jsonb) as "competitors"
       from mbos_visits v
       join users u on u.id = v.salesman_id
       join customers c on c.id = v.customer_id
-     where (v.check_in_at ${IST_DAY})::date = ${day}::date
+     where (v.check_in_at ${IST_DAY})::date between ${filter.from}::date and ${filter.to}::date
+       ${who}
        ${onlyMine(scope, "u.id")}
      order by v.check_in_at desc nulls last
-     limit 400
+     limit ${filter.limit ?? 400}
   `) as unknown as VisitRow[];
 }
 
@@ -1092,16 +1367,40 @@ export type FieldActivityRow = {
   location: string | null;
   customerMatchStatus: "pending" | "matched" | "ambiguous" | "unmatched";
   matchNote: string | null;
+
+  /* What the detail view reads — every row carries it, because a page is two
+     hundred rows and a second round trip per click buys nothing. */
+  activityId: string;
+  rowNumber: number;
+  reminderDate: string | null;
+  moodRaw: string | null;
+  salesmanMatchStatus: "pending" | "matched" | "ambiguous" | "unmatched";
+  /** The MahekOne sign-in, where the name matched one. */
+  salesmanAccountActive: boolean | null;
+  /** HRMS, through the account's employee link — the cross-check on a date. */
+  employmentStatus: string | null;
+  dateOfJoining: string | null;
+  dateOfLeaving: string | null;
+  customerCity: string | null;
+  /** Every cell exactly as the sheet gave it, in the sheet's column order. */
+  raw: Record<string, string>;
+  issues: { column: string; value: string; problem: string }[];
+  /** When this row was last read from the sheet, in IST, already worded. */
+  readAt: string;
 };
 
 export type FieldActivityFilter = {
   from: string;
   to: string;
-  salesmanId?: string;
+  /** The name exactly as the sheet writes it — most have no MahekOne account. */
+  salesmanName?: string;
   matchStatus?: "matched" | "ambiguous" | "unmatched";
+  /** 1-based. Every row in range is reachable a page at a time. */
+  page?: number;
+  perPage?: number;
 };
 
-const FIELD_ACTIVITY_LIMIT = 200;
+const FIELD_ACTIVITY_PER_PAGE = 50;
 
 /**
  * A capped, filtered slice of the imported "Mahek EMP 2.0" activity history
@@ -1147,7 +1446,8 @@ export async function fieldActivityHistory(
 ): Promise<{
   rows: FieldActivityRow[];
   total: number;
-  capped: boolean;
+  page: number;
+  perPage: number;
   /** Rows in the staging table regardless of filter — see the note below. */
   everInTable: number;
 }> {
@@ -1155,8 +1455,8 @@ export async function fieldActivityHistory(
   const matchClause = filter.matchStatus
     ? sql`and f.customer_match_status = ${filter.matchStatus}`
     : sql``;
-  const salesmanClause = filter.salesmanId
-    ? sql`and f.matched_salesman_id = ${filter.salesmanId}`
+  const salesmanClause = filter.salesmanName
+    ? sql`and f.employee_name = ${filter.salesmanName}`
     : sql``;
 
   const counted = await db.execute<{ n: number }>(sql`
@@ -1170,6 +1470,9 @@ export async function fieldActivityHistory(
        ${salesmanClause}
   `);
   const total = counted[0]?.n ?? 0;
+  const perPage = filter.perPage ?? FIELD_ACTIVITY_PER_PAGE;
+  // A page past the end (filters narrowed under it) lands on the last one.
+  const page = Math.min(Math.max(1, filter.page ?? 1), Math.max(1, Math.ceil(total / perPage)));
 
   const rows = await db.execute<FieldActivityRow>(sql`
     select f.id, f.visit_date as "visitDate",
@@ -1181,17 +1484,28 @@ export async function fieldActivityHistory(
            f.meeting_type as "meetingType", f.meeting_purpose as "meetingPurpose",
            f.meeting_note as "meetingNote", f.issue_note as "issueNote",
            f.location, f.customer_match_status as "customerMatchStatus",
-           f.match_note as "matchNote"
+           f.match_note as "matchNote",
+           f.activity_id as "activityId", f.row_number as "rowNumber",
+           f.reminder_date as "reminderDate", f.mood_raw as "moodRaw",
+           f.salesman_match_status as "salesmanMatchStatus",
+           u.active as "salesmanAccountActive",
+           e.status::text as "employmentStatus",
+           e.date_of_joining::text as "dateOfJoining",
+           e.date_of_leaving::text as "dateOfLeaving",
+           c.city as "customerCity",
+           f.raw, f.issues,
+           to_char(f.updated_at ${IST_DAY}, 'DD Mon YYYY, HH24:MI') as "readAt"
       from sheet_field_activity_rows f
       left join users u on u.id = f.matched_salesman_id
+      left join employees e on e.id = u.employee_id
       left join customers c on c.id = f.matched_customer_id
      where f.status = 'present'
        and f.visit_date between ${filter.from}::date and ${filter.to}::date
        ${mineOrNobodys(scope, "u.id")}
        ${matchClause}
        ${salesmanClause}
-     order by f.visit_date desc nulls last, f.id desc
-     limit ${FIELD_ACTIVITY_LIMIT}
+     order by f.visit_date desc nulls last, f.row_number desc, f.id desc
+     limit ${perPage} offset ${(page - 1) * perPage}
   `) as unknown as FieldActivityRow[];
 
   /*
@@ -1216,22 +1530,31 @@ export async function fieldActivityHistory(
   return {
     rows,
     total,
-    capped: total > FIELD_ACTIVITY_LIMIT,
+    page,
+    perPage,
     everInTable: everything ? (everything[0]?.n ?? 0) : total,
   };
 }
 
-/** Distinct salesmen the imported activity actually resolved to, for a filter. */
-export async function fieldActivitySalesmen(): Promise<{ id: string; name: string }[]> {
+/**
+ * Every salesman NAME the imported activity carries, for the filter.
+ *
+ * Read off the sheet's own column rather than off the matched accounts: most of
+ * these men never had a MahekOne sign-in, so a list of accounts offered two
+ * names out of twenty and the rest of the book could not be narrowed at all.
+ */
+export async function fieldActivitySalesmen(): Promise<{ name: string; rows: number }[]> {
   const scope = await managerScope();
-  return db.execute<{ id: string; name: string }>(sql`
-    select distinct u.id, u.name
+  return db.execute<{ name: string; rows: number }>(sql`
+    select f.employee_name as name, count(*)::int as rows
       from sheet_field_activity_rows f
-      join users u on u.id = f.matched_salesman_id
+      left join users u on u.id = f.matched_salesman_id
      where f.status = 'present'
+       and f.employee_name is not null
        ${mineOrNobodys(scope, "u.id")}
-     order by u.name
-  `) as unknown as { id: string; name: string }[];
+     group by f.employee_name
+     order by f.employee_name
+  `) as unknown as { name: string; rows: number }[];
 }
 
 /**
@@ -1243,8 +1566,8 @@ export async function fieldActivityMatchCounts(
   filter: Omit<FieldActivityFilter, "matchStatus">,
 ): Promise<{ all: number; matched: number; ambiguous: number; unmatched: number }> {
   const scope = await managerScope();
-  const salesmanClause = filter.salesmanId
-    ? sql`and f.matched_salesman_id = ${filter.salesmanId}`
+  const salesmanClause = filter.salesmanName
+    ? sql`and f.employee_name = ${filter.salesmanName}`
     : sql``;
 
   const rows = await db.execute<{ status: string; n: number }>(sql`
@@ -1274,8 +1597,11 @@ export type LeadRow = {
   name: string;
   companyName: string | null;
   mobile: string | null;
+  /** The reviewed tree's city, or what the sheet typed where the tree has none. */
   city: string | null;
   area: string | null;
+  district: string | null;
+  state: string | null;
   source: string;
   estimatedPotentialPaise: number | null;
   /**
@@ -1433,12 +1759,13 @@ export type LeadRow = {
 /*
  * ONE LEAD, so this reads `customers`.
  *
- * The screen shows anything that has ever been a lead — `lead_stage is not
- * null` — rather than `kind = 'lead'`. Winning one now moves `kind` to
- * `customer` on the SAME row, and filtering on the kind would drop it out of
- * the funnel at the moment it succeeded, which is the one band a manager most
- * wants to see. The stage survives the conversion; `lead_converted_at` is what
- * says it happened.
+ * The screen reads `lead_stage is not null` rather than `kind = 'lead'`, and
+ * leaves out what has CONVERTED through `notConverted` — Mahek's rule is that
+ * a lead that became a customer is no longer on a Leads list. Not `kind`
+ * either way: `kind` flips at an order, while a ladder can end on a winning
+ * rung or a shop be marked third-party without one. The funnel and the
+ * Handovers view still read converted leads; `lead_converted_at` is what says
+ * it happened.
  *
  * The customer-health columns used to come from a join to the converted
  * record. There is no second record now, so they are this row's own, shown
@@ -1447,7 +1774,10 @@ export type LeadRow = {
  */
 const LEAD_ROW_SELECT = sql`
     select c.id, c.name, c.company_name as "companyName", c.phone as mobile,
-           c.city, c.area,
+           ${placeNameSql("c", "city", "city")} as city,
+           ${placeNameSql("c", "area", "area")} as area,
+           ${placeNameSql("c", "district")} as district,
+           ${placeNameSql("c", "state")} as state,
            /* COALESCED, and NO BACKTICKS in this comment: it sits inside a
             * sql template literal, and one backtick ends the literal.
             *
@@ -1590,6 +1920,7 @@ export async function leadsList(day: string): Promise<LeadRow[]> {
       left join products rp on rp.id = c.lead_required_product_id
      where c.lead_stage is not null
        and c.lead_archived = false
+       and ${notConverted()}
        ${onlyMine(scope, "c.owner_id")}
      ${LEADS_ORDER_SQL}
      limit 400
@@ -1640,6 +1971,36 @@ const OWED_DATE_SQL: SQL = sql`least(
  */
 const LEADS_ORDER_SQL: SQL = sql`order by ${OWED_DATE_SQL} asc nulls last,
                      c.lead_last_activity_date asc nulls last, c.id desc`;
+
+/**
+ * THE ORDER A WORKLIST VIEW READS IN, which is the order the screen it replaces
+ * always had — a worklist is ordered by what is worst, not by what is owed.
+ *
+ *   - `parked`: by the day it comes back, NO DAY FIRST. A park with no day named
+ *     is the one nothing will ever make due, so it leads rather than hides.
+ *   - `unworked`: NO PLAN AT ALL before a plan whose day has gone, then oldest.
+ *   - `handover`: longest-waiting first.
+ *
+ * Every other view keeps the default. A tiebreaker closes each, or a paged list
+ * shows one row on two pages.
+ */
+function leadsOrderFor(view: LeadView | undefined): SQL {
+  switch (view) {
+    case "parked":
+      return sql`order by (c.lead_hold_resume_date is null) desc,
+                         c.lead_hold_resume_date asc, c.id asc`;
+    case "unworked":
+      return sql`order by case when c.lead_next_action is null
+                                or c.lead_next_action_date is null
+                                or c.lead_next_action_owner_id is null then 0 else 1 end,
+                         c.lead_next_action_date asc nulls first,
+                         c.lead_stage_since asc nulls first, c.id asc`;
+    case "handover":
+      return sql`order by c.lead_converted_at asc nulls last, c.id asc`;
+    default:
+      return LEADS_ORDER_SQL;
+  }
+}
 
 /**
  * WHAT THE FILTER BAR MEANS, IN SQL — one clause, built from the same option
@@ -1777,33 +2138,15 @@ export function leadFilterClause(
   }
 
   /*
-   * WHERE THE SHOP IS, AND IT IS THE TERRITORY CLAUSE RATHER THAN A SECOND
-   * READING OF THE SAME COLUMNS.
-   *
-   * A manager narrowing the list to Nagpur and a salesman allocated Nagpur are
-   * asking one question, and answering it twice is how two screens come to
-   * disagree about one shop: the sheet spells a state twenty-four ways
-   * (Gujrat 97 beside Gujarat 31) and a city three, and every one of those
-   * folds lives in `territory-rules.ts`. Re-deriving it here would be a copy
-   * that drifts the first time somebody teaches that file a new spelling —
-   * and the half that drifts would be this one, because a filter returning
-   * slightly too few rows looks exactly like a filter that worked.
-   *
-   * A PICK IS A PATH, so a city is matched AND-ed with its state and two picks
-   * are OR-ed. `territoryClause` is told the alias because this statement
-   * selects `from customers c` while every territory caller selects it plain.
+   * WHERE THE SHOP IS — state, district, city and area off the reviewed
+   * location tree, the same clause the customer list runs. See
+   * `lib/place-filters.ts`.
    */
-  const places = decodePlaces(splitFilter(filters.place));
-  if (places.length) {
-    const territories: Territory[] = places.map((p) =>
-      p.beat
-        ? { kind: "beat", value: p.beat, parent: p.city ?? "" }
-        : p.city
-          ? { kind: "city", value: p.city, parent: p.state }
-          : { kind: "state", value: p.state },
-    );
-    parts.push(sql`and ${territoryClause(territories, "c")}`);
-  }
+  const placed = placeFilterSql(
+    { state: filters.state, district: filters.district, city: filters.city, area: filters.area },
+    "c",
+  );
+  if (placed) parts.push(sql`and ${placed}`);
 
   anyOf(splitFilter(filters.potential), (v) => {
     const p = sql`coalesce(c.lead_estimated_potential_paise, 0)`;
@@ -1978,7 +2321,8 @@ export async function leadsPage(
   const where = sql`
      where c.lead_stage is not null
        and c.lead_archived = ${archived}
-       ${leadsVisible(scope)}
+       ${convertedOff(options.view)}
+       ${scopeNarrowing(scope, options.view)}
        ${await viewNarrowing(options.view, day)}`;
   const narrowed = leadFilterClause(filters, day, {
     atRiskBelow: config["mbos.health.atRiskBelow"],
@@ -2060,7 +2404,7 @@ export async function leadsPage(
       */
      ${archived
        ? sql`order by c.lead_archived_at desc nulls last, c.id desc`
-       : LEADS_ORDER_SQL}
+       : leadsOrderFor(options.view)}
      limit ${perPage} offset ${(page - 1) * perPage}
   `) as unknown as LeadRow[];
 
@@ -2119,7 +2463,8 @@ export async function leadIdsMatching(
       from customers c
      where c.lead_stage is not null
        and c.lead_archived = ${archived}
-       ${leadsVisible(scope)}
+       ${convertedOff(options.view)}
+       ${scopeNarrowing(scope, options.view)}
        ${await viewNarrowing(options.view, day)}
        ${leadFilterClause(options.filters ?? {}, day, {
          atRiskBelow: config["mbos.health.atRiskBelow"],
@@ -2127,7 +2472,7 @@ export async function leadIdsMatching(
        })}
      ${archived
        ? sql`order by c.lead_archived_at desc nulls last, c.id desc`
-       : LEADS_ORDER_SQL}
+       : leadsOrderFor(options.view)}
      limit ${cap + 1}
   `);
   return { ids: rows.slice(0, cap).map((r) => r.id), capped: rows.length > cap };
@@ -2193,6 +2538,7 @@ export async function leadFilterOptions(
   const where = sql`
      where c.lead_stage is not null
        and c.lead_archived = ${archived}
+       and ${notConverted()}
        ${leadsVisible(scope)}`;
 
   const [owners, sources, stages] = await Promise.all([
@@ -2314,6 +2660,23 @@ export type FieldOrder = {
   cans: number;
   /** Hours since it was captured. What "waiting" is measured in. */
   waitingHours: number;
+  /**
+   * WHAT WAS ORDERED, and what happened to it after — the half of a field
+   * order this screen used to reduce to "3 lines". The lines are the handset's
+   * own `orders.line_items`, product named as text. The confirmations are the
+   * shop's word, written by the handset's order-progress update and read by
+   * no web screen until now: a goods-short report from a shop is the one thing
+   * about an order a manager most needs to see.
+   */
+  lineItems: { product: string; quantity: number; unitPrice: number; amount: number }[];
+  deliveryShopName: string | null;
+  expectedDispatch: string | null;
+  creditDays: number | null;
+  declineReason: string | null;
+  customerConfirmedAt: Date | null;
+  customerConfirmedNote: string | null;
+  deliveryConfirmedAt: Date | null;
+  deliveryDiscrepancy: string | null;
 };
 
 /**
@@ -2433,9 +2796,19 @@ export async function fieldOrders(
            coalesce((select sum((x->>'quantity')::int)
                        from jsonb_array_elements(coalesce(o.line_items, '[]'::jsonb)) x), 0)::int
              as "cans",
-           floor(extract(epoch from (now() - o.created_at)) / 3600)::int as "waitingHours"
+           floor(extract(epoch from (now() - o.created_at)) / 3600)::int as "waitingHours",
+           coalesce(o.line_items, '[]'::jsonb) as "lineItems",
+           ds.name as "deliveryShopName",
+           o.expected_dispatch::text as "expectedDispatch",
+           o.credit_days as "creditDays",
+           o.decline_reason as "declineReason",
+           o.customer_confirmed_at as "customerConfirmedAt",
+           o.customer_confirmed_note as "customerConfirmedNote",
+           o.delivery_confirmed_at as "deliveryConfirmedAt",
+           o.delivery_discrepancy as "deliveryDiscrepancy"
       from orders o
       join customers c on c.id = o.customer_id
+      left join customers ds on ds.id = o.delivery_customer_id and ds.id <> o.customer_id
       left join users u on u.id = o.created_by_id
      where o.source = 'mbos' ${only} ${onlyMine(scope, "o.created_by_id")}
      order by o.ordered_at desc
@@ -2469,6 +2842,9 @@ export type FieldReceipt = {
   note: string | null;
   /** Days since it was collected. The deposit window is counted in these. */
   heldDays: number;
+  /** Photographs filed under the receipt — the cheque, and the deposit slip. */
+  photoIds: string[];
+  depositProofId: string | null;
 };
 
 /**
@@ -2516,7 +2892,15 @@ const RECEIPT_COLUMNS = sql`
            r.status::text as status,
            r.deposited_at as "depositedAt",
            r.note,
-           (current_date - r.received_at)::int as "heldDays"
+           (current_date - r.received_at)::int as "heldDays",
+           -- The cheque and the deposit slip, which the handset uploads under
+           -- the receipt. Only Accounts' review drawer ever drew them.
+           coalesce((select array_agg(f.id order by f.uploaded_at)
+                       from attachments f
+                      where f.status = 'available'
+                        and (   (f.parent_type = 'payment_receipt' and f.parent_id = r.id)
+                             or f.id = r.deposit_proof_id)), '{}') as "photoIds",
+           r.deposit_proof_id as "depositProofId"
       from payment_receipts r
       join customers c on c.id = r.customer_id
       left join users u on u.id = r.reported_by_id
@@ -2900,121 +3284,6 @@ export async function fieldSamples(): Promise<FieldSamples> {
   };
 }
 
-export type CatalogueRow = {
-  id: string;
-  name: string;
-  rawName: string | null;
-  packSize: string | null;
-  packing: string | null;
-  cansPerBox: number | null;
-  millilitresPerCan: number | null;
-  active: boolean;
-  status: string;
-  formulation: string | null;
-  brand: string | null;
-  orderedCans: number;
-};
-
-/**
- * What the app offers, and how much of it has actually been ordered.
- *
- * No prices. `products.priceSource` is `unset` and the product master carries
- * none at all, so the design's Retail / Dealer / Distributor columns have
- * nothing behind them — and reaching for the packing cost because it is the
- * only number on the row would put believable wrong figures on a rate card.
- * The screen says that rather than showing three zeroes.
- */
-export async function catalogueRows(search?: string): Promise<CatalogueRow[]> {
-  const where = search
-    ? sql`and (p.name ilike ${"%" + search + "%"}
-            or coalesce(f.name, '') ilike ${"%" + search + "%"}
-            or coalesce(br.name, '') ilike ${"%" + search + "%"})`
-    : sql``;
-
-  return db.execute<CatalogueRow>(sql`
-    select p.id, p.name, p.raw_name as "rawName",
-           p.pack_size as "packSize", p.packing,
-           p.cans_per_box as "cansPerBox",
-           p.millilitres_per_can as "millilitresPerCan",
-           p.active, p.status::text as status,
-           f.name as formulation, br.name as brand,
-           coalesce((select sum((x->>'quantity')::int)
-                       from orders o,
-                            jsonb_array_elements(coalesce(o.line_items, '[]'::jsonb)) x
-                      where o.source = 'mbos' and x->>'product' = p.name), 0)::int
-             as "orderedCans"
-      from products p
-      left join finished_goods fg on fg.id = p.finished_good_id
-      left join product_brands br on br.id = fg.brand_id
-      left join product_formulations f on f.id = br.formulation_id
-     where true ${where}
-     order by p.active desc, p.display_order asc nulls last, p.name asc
-     limit 400
-  `) as unknown as CatalogueRow[];
-}
-
-export type PriceListRow = {
-  id: string;
-  customerPriceTag: string;
-  productId: string;
-  productName: string;
-  ratePaise: number;
-  validFrom: string | null;
-  validTo: string | null;
-};
-
-/**
- * Every rate ever set, current and superseded alike.
- *
- * A superseded row (`validTo` in the past) is shown rather than hidden — it
- * is what explains an order priced last month, and hiding it the moment it
- * expires would make that explanation unreachable the day after it mattered.
- * The screen is the one that decides how much of the past to draw.
- */
-export async function priceListEntries(): Promise<PriceListRow[]> {
-  return db.execute<PriceListRow>(sql`
-    select pl.id, pl.customer_price_tag as "customerPriceTag", pl.product_id as "productId",
-           p.name as "productName", pl.rate_paise as "ratePaise",
-           pl.valid_from::text as "validFrom", pl.valid_to::text as "validTo"
-      from mbos_price_list pl
-      join products p on p.id = pl.product_id
-     order by (pl.valid_to is not null) asc, pl.customer_price_tag asc, p.name asc, pl.valid_from desc
-     limit 2000
-  `) as unknown as PriceListRow[];
-}
-
-/** Every price tag the Sales Party tab actually uses — a dropdown, not a guess. */
-export async function priceTagOptions(): Promise<string[]> {
-  const rows = await db.execute<{ tag: string }>(sql`
-    select distinct tag_pricelist as tag
-      from sheet_party_rows
-     where tag_pricelist is not null and tag_pricelist <> ''
-     order by 1
-  `);
-  return rows.map((r) => r.tag);
-}
-
-export type SchemeRow = {
-  id: string;
-  name: string;
-  description: string | null;
-  active: boolean;
-  eligibility: unknown;
-  benefit: unknown;
-  validFrom: string | null;
-  validTo: string | null;
-};
-
-export async function schemeEntries(): Promise<SchemeRow[]> {
-  return db.execute<SchemeRow>(sql`
-    select s.id, s.name, s.description, s.active, s.eligibility, s.benefit,
-           s.valid_from::text as "validFrom", s.valid_to::text as "validTo"
-      from mbos_schemes s
-     order by s.active desc, s.valid_from desc nulls last, s.name asc
-     limit 500
-  `) as unknown as SchemeRow[];
-}
-
 /* ═══════════════════════════════════════════════════════════════════ people */
 
 export type AttendanceRow = {
@@ -3033,6 +3302,15 @@ export type AttendanceRow = {
   autoCheckedOut: boolean;
   workedSeconds: number | null;
   visits: number;
+  /**
+   * Of the days he punched in over the window before this one, how many he
+   * never punched out of — closed by the nightly sweep, or still open. The
+   * window is `mbos.attendance.missedPunchOutWindowDays`, the same number the
+   * handset counts its own figure over, so the two cannot disagree about one
+   * man's month.
+   */
+  missedPunchOuts: number;
+  punchedDays: number;
   /**
    * Every arrival and departure of the day, with the photograph taken at each.
    *
@@ -3077,6 +3355,8 @@ export type AttendanceRow = {
  */
 export async function attendanceForDay(day: string): Promise<AttendanceRow[]> {
   const scope = await managerScope();
+  const { getConfig } = await import("../config/store");
+  const windowDays = (await getConfig())["mbos.attendance.missedPunchOutWindowDays"];
   return db.execute<AttendanceRow>(sql`
     select coalesce(d.id, u.id) as id,
            ${day}::text as day,
@@ -3092,6 +3372,17 @@ export async function attendanceForDay(day: string): Promise<AttendanceRow[]> {
            (select count(*)::int from mbos_visits v
              where v.salesman_id = u.id
                and (v.check_in_at ${IST_DAY})::date = ${day}::date) as "visits",
+           /* The window ENDS the day before the one on screen: today is still
+              being worked, and counting its open session would mark everybody
+              down every afternoon. The parameter is typed, because an untyped
+              one beside a date resolves as date minus date. */
+           (select count(*)::int from mbos_attendance_days w
+             where w.user_id = u.id and w.check_in_at is not null
+               and w.day >= ${day}::date - ${windowDays}::int and w.day < ${day}::date
+               and (w.auto_checked_out or w.check_out_at is null)) as "missedPunchOuts",
+           (select count(*)::int from mbos_attendance_days w
+             where w.user_id = u.id and w.check_in_at is not null
+               and w.day >= ${day}::date - ${windowDays}::int and w.day < ${day}::date) as "punchedDays",
            /* The day as the handset reported it. Null on a row written before
               sessions existed, which the screen falls back from rather than
               drawing an empty list. */
@@ -3131,6 +3422,7 @@ export type LeaveRow = {
   approvalState: string | null;
   decisionNote: string | null;
   approverName: string | null;
+  decidedAt: Date | null;
   requestedAt: Date | null;
   /** Somebody else in the field off on an overlapping day. */
   clashesWith: string | null;
@@ -3189,6 +3481,7 @@ export async function leaveRequests(): Promise<LeaveRequests> {
            ap.state::text as "approvalState",
            ap.decision_note as "decisionNote",
            d.name as "approverName",
+           ap.decided_at as "decidedAt",
            ap.requested_at as "requestedAt",
            /* Who ELSE is off on these days.
             *
@@ -4027,121 +4320,194 @@ export async function locationOf(
   return rows[0] ?? null;
 }
 
-export type TerritoryRow = {
-  region: string | null;
-  city: string;
-  beat: string | null;
-  salesmanId: string | null;
-  salesmanName: string | null;
-  shops: number;
-  withGps: number;
-  outstandingPaise: number;
-};
+/* ════════════════════════════════════════════════ territory, by seat */
 
 /**
- * Which states, cities and beats belong to whom.
- *
- * Grouped rather than listed: a territory screen answers "who covers Nagpur"
- * and "how much of Karnataka has nobody", and a thousand customer rows answers
- * neither. The customer list itself is a screen away.
+ * The column a seat is read through. Field sales keeps the fall-through the
+ * Territory screen always grouped by; the other three are their own columns.
  */
-export async function territory(): Promise<TerritoryRow[]> {
-  const scope = await placeScope();
-  return db.execute<TerritoryRow>(sql`
-    select c.territory_region as region, c.city, c.beat,
-           coalesce(c.sales_am_id, c.owner_id) as "salesmanId",
-           u.name as "salesmanName",
-           count(*)::int as shops,
-           count(*) filter (where c.gps_lat is not null and c.gps_lng is not null)::int as "withGps",
-           coalesce(sum(c.outstanding), 0) as "outstandingPaise"
-      from customers c
-      left join users u on u.id = coalesce(c.sales_am_id, c.owner_id)
-     where c.status = 'active' and c.kind = 'customer'
-       ${mineByPlace(scope, "coalesce(c.sales_am_id, c.owner_id)", "c")}
-     group by c.territory_region, c.city, c.beat, coalesce(c.sales_am_id, c.owner_id), u.name
-     order by c.territory_region asc nulls last, c.city asc, c.beat asc nulls last
-     /* A CAP ON GROUPS, AND IT SITS ON THE BOUNDARY.
-        The group key is (region, city, beat, salesman), and this book produces
-        exactly 500 of them — so one new beat truncates the tiles silently, and
-        the rows that go are the ones sorting LAST, which nulls-last makes
-        precisely the shops with no region recorded. Raised rather than removed:
-        the screen groups rather than lists because a thousand rows answers
-        nothing, and an unbounded query on a book that keeps growing is the
-        other way to be wrong. */
-     limit 5000
-  `) as unknown as TerritoryRow[];
+function seatColumn(seat: TerritorySeat): string {
+  switch (seat) {
+    case "field":
+      return "coalesce(c.sales_am_id, c.owner_id)";
+    case "sales_am":
+      return "c.sales_am_id";
+    case "back_office":
+      return "c.back_office_am_id";
+    case "sales_manager":
+      return "c.sales_manager_id";
+  }
 }
 
-export type TeamRegionRow = {
-  salesmanId: string;
-  salesmanName: string;
+/** Narrow to one person in a seat, to nobody in it, or not at all. */
+function seatPersonClause(seat: TerritorySeat, person: string | null): SQL {
+  if (!person) return sql``;
+  const col = sql.raw(seatColumn(seat));
+  return person === NOBODY ? sql`and ${col} is null` : sql`and ${col} = ${person}`;
+}
+
+/** The book Territory counts: live accounts, customers and leads both. */
+const TERRITORY_BOOK = sql`c.deleted_at is null and c.status = 'active' and c.kind in ('customer', 'lead')`;
+
+export type TerritoryPerson = {
+  id: string;
+  name: string;
   initials: string;
-  active: boolean;
-  /** The region most of this salesman's own book sits in. Null where they
-   * cover no active customers yet. */
-  region: string | null;
-  cities: string[];
-  shopCount: number;
-  checkedInToday: boolean;
-  onLeaveToday: boolean;
-  reportsToId: string | null;
-  reportsToName: string | null;
+  customers: number;
+  leads: number;
+  /** No field GPS fix — an address-only geocode does not count. */
+  unpinned: number;
+  outstandingPaise: number;
+  cityCount: number;
+  /** The cities with the most of this person's book, biggest first. */
+  topCities: string[];
 };
 
 /**
- * The field team, each person's own region, and who they report to —
- * everything the Territory screen groups by.
+ * Everybody holding a seat, and the book they hold in it.
  *
- * A salesman has no region of his own in this schema, only a book of
- * customers that each carry one; `region` here is the one his book has the
- * MOST of, which is the honest answer to "where does this person work"
- * without inventing a field nothing else in MahekOne has. `reportsToId` is
- * the general reporting line every user carries (`access-control.ts` already
- * reads it for scope), not something built for this screen.
+ * Field sales lists every active Salesman App holder, a book of none
+ * included — a salesman with nothing named against him opens his handset on
+ * an empty book, and that has to be visible here rather than absent.
  */
-export async function teamByRegion(day: string): Promise<TeamRegionRow[]> {
-  const scope = await managerScope();
-  return db.execute<TeamRegionRow>(sql`
-    with counts as (
-      select coalesce(c.sales_am_id, c.owner_id) as salesman_id,
-             c.territory_region as region,
-             count(*) as n
+export async function territorySeatPeople(seat: TerritorySeat): Promise<TerritoryPerson[]> {
+  const scope = await placeScope();
+  const team = await managerScope();
+  const col = sql.raw(seatColumn(seat));
+  const inScope = mineByPlace(scope, "coalesce(c.sales_am_id, c.owner_id)", "c");
+  const city = placeNameSql("c", "city", "city");
+  const joinBook =
+    seat === "field"
+      ? sql`join app_access a on a.user_id = u.id and a.app = 'field'
+            left join book b on b.uid = u.id`
+      : sql`join book b on b.uid = u.id`;
+  const onlyTeam = seat === "field" ? sql`and u.active ${onlyMine(team, "u.id")}` : sql``;
+
+  return db.execute<TerritoryPerson>(sql`
+    with book as (
+      select ${col} as uid,
+             count(*) filter (where c.kind = 'customer')::int as customers,
+             count(*) filter (where c.kind = 'lead')::int as leads,
+             count(*) filter (where c.gps_lat is null or c.gps_lng is null)::int as unpinned,
+             coalesce(sum(c.outstanding) filter (where c.kind = 'customer'), 0)::bigint as outstanding
         from customers c
-       where c.status = 'active' and c.kind = 'customer'
-         and coalesce(c.sales_am_id, c.owner_id) is not null
-       group by coalesce(c.sales_am_id, c.owner_id), c.territory_region
+       where ${TERRITORY_BOOK} and ${col} is not null ${inScope}
+       group by 1
     ),
-    top_region as (
-      select distinct on (salesman_id) salesman_id, region
-        from counts
-       order by salesman_id, n desc nulls last
-    ),
-    book as (
-      select coalesce(c.sales_am_id, c.owner_id) as salesman_id,
-             coalesce(array_agg(distinct c.city order by c.city), '{}') as cities,
-             count(*)::int as shop_count
-        from customers c
-       where c.status = 'active' and c.kind = 'customer'
-       group by coalesce(c.sales_am_id, c.owner_id)
+    by_city as (
+      select uid, count(*)::int as city_count,
+             (array_agg(city order by n desc, city))[1:6] as top_cities
+        from (
+          select ${col} as uid, ${city} as city, count(*) as n
+            from customers c
+           where ${TERRITORY_BOOK} and ${col} is not null ${inScope}
+           group by 1, 2
+        ) x
+       where city is not null and city <> ''
+       group by uid
     )
-    select u.id as "salesmanId", u.name as "salesmanName", u.initials, u.active,
-           tr.region,
-           coalesce(b.cities, '{}') as cities,
-           coalesce(b.shop_count, 0) as "shopCount",
-           (d.check_in_at is not null) as "checkedInToday",
-           (d.status = 'on_leave') as "onLeaveToday",
-           u.reports_to_id as "reportsToId",
-           m.name as "reportsToName"
+    select u.id, u.name, u.initials,
+           coalesce(b.customers, 0) as customers,
+           coalesce(b.leads, 0) as leads,
+           coalesce(b.unpinned, 0) as unpinned,
+           coalesce(b.outstanding, 0) as "outstandingPaise",
+           coalesce(bc.city_count, 0) as "cityCount",
+           coalesce(bc.top_cities, '{}') as "topCities"
       from users u
-      join app_access a on a.user_id = u.id and a.app = 'field'
-      left join top_region tr on tr.salesman_id = u.id
-      left join book b on b.salesman_id = u.id
-      left join mbos_attendance_days d on d.user_id = u.id and d.day = ${day}::date
-      left join users m on m.id = u.reports_to_id
-     where u.active
-       ${onlyMine(scope, "u.id")}
-     order by u.name asc
-  `) as unknown as TeamRegionRow[];
+      ${joinBook}
+      left join by_city bc on bc.uid = u.id
+     where true ${onlyTeam}
+     order by coalesce(b.customers, 0) + coalesce(b.leads, 0) desc, u.name asc
+  `) as unknown as TerritoryPerson[];
+}
+
+export type TerritoryCity = {
+  state: string | null;
+  city: string | null;
+  customers: number;
+  leads: number;
+  unpinned: number;
+  outstandingPaise: number;
+  /** Who holds this city's accounts in the chosen seat, most accounts first. */
+  holders: string[];
+  /** Accounts here nobody holds in the chosen seat. */
+  unassigned: number;
+};
+
+/**
+ * The same book as `territorySeatPeople`, cut by place instead of by person —
+ * "who covers Nagpur" rather than "where does Priya work".
+ */
+export async function territoryCities(
+  seat: TerritorySeat,
+  person: string | null,
+): Promise<TerritoryCity[]> {
+  const scope = await placeScope();
+  const col = sql.raw(seatColumn(seat));
+  return db.execute<TerritoryCity>(sql`
+    with rows as (
+      select ${placeNameSql("c", "state", "region")} as state,
+             ${placeNameSql("c", "city", "city")} as city,
+             c.kind, c.outstanding,
+             (c.gps_lat is null or c.gps_lng is null) as unpinned,
+             ${col} as uid
+        from customers c
+       where ${TERRITORY_BOOK}
+         ${seatPersonClause(seat, person)}
+         ${mineByPlace(scope, "coalesce(c.sales_am_id, c.owner_id)", "c")}
+    ),
+    holders as (
+      select state, city, array_agg(name order by n desc, name) as names
+        from (
+          select r.state, r.city, u.name, count(*) as n
+            from rows r join users u on u.id = r.uid
+           group by r.state, r.city, u.name
+        ) x
+       group by state, city
+    )
+    select r.state, r.city,
+           count(*) filter (where r.kind = 'customer')::int as customers,
+           count(*) filter (where r.kind = 'lead')::int as leads,
+           count(*) filter (where r.unpinned)::int as unpinned,
+           coalesce(sum(r.outstanding) filter (where r.kind = 'customer'), 0)::bigint as "outstandingPaise",
+           count(*) filter (where r.uid is null)::int as unassigned,
+           coalesce(h.names, '{}') as holders
+      from rows r
+      left join holders h on h.state is not distinct from r.state and h.city is not distinct from r.city
+     group by r.state, r.city, h.names
+     order by count(*) desc, r.city asc nulls last
+     limit 1000
+  `) as unknown as TerritoryCity[];
+}
+
+export type TerritoryTotals = {
+  customers: number;
+  leads: number;
+  cities: number;
+  unpinned: number;
+  /** Accounts nobody holds in the chosen seat. */
+  unassigned: number;
+};
+
+/** The figures above the map, for the whole book or one person's part of it. */
+export async function territoryTotals(
+  seat: TerritorySeat,
+  person: string | null,
+): Promise<TerritoryTotals> {
+  const scope = await placeScope();
+  const col = sql.raw(seatColumn(seat));
+  const [row] = (await db.execute<TerritoryTotals>(sql`
+    select count(*) filter (where c.kind = 'customer')::int as customers,
+           count(*) filter (where c.kind = 'lead')::int as leads,
+           count(distinct ${placeNameSql("c", "city", "city")})::int as cities,
+           count(*) filter (where c.gps_lat is null or c.gps_lng is null)::int as unpinned,
+           count(*) filter (where ${col} is null)::int as unassigned
+      from customers c
+     where ${TERRITORY_BOOK}
+       ${seatPersonClause(seat, person)}
+       ${mineByPlace(scope, "coalesce(c.sales_am_id, c.owner_id)", "c")}
+  `)) as unknown as TerritoryTotals[];
+  return row ?? { customers: 0, leads: 0, cities: 0, unpinned: 0, unassigned: 0 };
 }
 
 export type PerformanceRow = {
@@ -4396,26 +4762,83 @@ export type DocumentRow = {
   contentType: string | null;
   sizeBytes: number | null;
   visibleToRoles: string[];
+  /** The people it is tagged to, as user ids. Empty is everybody in the field. */
+  visibleToUserIds: string[];
+  /**
+   * The same people with their names, in name order — read here rather than
+   * looked up in the picker's roster, because somebody tagged and since taken
+   * off the field must still be NAMED on the screen that can untag them.
+   */
+  tagged: { id: string; name: string; initials: string; inField: boolean }[];
   customerName: string | null;
+  /** True for a document HR published from HRMS; it lives in the same table. */
+  fromHrms: boolean;
   active: boolean;
+  createdByName: string | null;
+  createdAt: Date;
+  updatedByName: string | null;
   updatedAt: Date;
 };
 
-/** The library a handset can open. Read-only here; HR and the office own it. */
+/** The library a handset can open, with who each document is for. */
 export async function documents(): Promise<DocumentRow[]> {
   return db.execute<DocumentRow>(sql`
     select d.id, d.title, d.category::text as category,
            d.attachment_id as "attachmentId",
            a.filename, a.content_type as "contentType", a.size_bytes as "sizeBytes",
            d.visible_to_roles as "visibleToRoles",
+           d.visible_to_user_ids as "visibleToUserIds",
+           coalesce((
+             select json_agg(json_build_object(
+                      'id', u.id, 'name', u.name, 'initials', u.initials,
+                      'inField', exists (select 1 from app_access x
+                                          where x.user_id = u.id and x.app = 'field')
+                    ) order by u.name)
+               from users u
+              where d.visible_to_user_ids ? u.id
+           ), '[]'::json) as "tagged",
            c.name as "customerName",
-           d.active, d.updated_at as "updatedAt"
+           (d.audience is not null) as "fromHrms",
+           d.active,
+           cu.name as "createdByName", d.server_created_at as "createdAt",
+           uu.name as "updatedByName", d.updated_at as "updatedAt"
       from mbos_documents d
       left join attachments a on a.id = d.attachment_id
       left join customers c on c.id = d.customer_id
+      left join users cu on cu.id = d.created_by_id
+      left join users uu on uu.id = d.updated_by_id
      order by d.active desc, d.updated_at desc
      limit 200
   `) as unknown as DocumentRow[];
+}
+
+export type DocumentPerson = {
+  id: string;
+  name: string;
+  initials: string;
+  /** Where he works — the cities and beats allocated to him — to tell two Rahuls apart. */
+  places: string | null;
+};
+
+/**
+ * Who a document can be tagged to: everybody holding the field app, signed-in
+ * accounts only. The same definition `fieldTeam` uses — it is what MBOS sign-in
+ * checks — and NOT narrowed by `managerScope`: the library is the company's,
+ * publishing it is not narrowed either, and a regional manager editing a
+ * document tagged to somebody outside his region must not silently drop him on
+ * save because the picker could not show him.
+ */
+export async function documentPeople(): Promise<DocumentPerson[]> {
+  return db.execute<DocumentPerson>(sql`
+    select u.id, u.name, u.initials,
+           (select string_agg(distinct t.region, ', ')
+              from mbos_user_territories t
+             where t.user_id = u.id and t.kind <> 'region') as places
+      from users u
+      join app_access a on a.user_id = u.id and a.app = 'field'
+     where u.active
+     order by u.name asc
+  `) as unknown as DocumentPerson[];
 }
 
 export type CourseRow = {
@@ -4489,6 +4912,23 @@ export type PlanStop = {
   gpsLng: number | null;
   outstandingPaise: number;
   lastVisitDate: string | null;
+  /** Where the shop is, for a day drawer listing a route. */
+  city: string | null;
+  kind: string;
+  thirdParty: boolean;
+  /**
+   * THE VISIT THAT ANSWERED THIS STOP, where one did.
+   *
+   * `mbos_visits.journey_plan_stop_id` is the link, and the newest visit wins
+   * where a shop was walked into twice. Null on a stop nobody visited — which
+   * is the whole of "allocated against visited", read off one row.
+   */
+  visitId: string | null;
+  visitCheckInAt: Date | null;
+  visitOutcome: string | null;
+  visitDurationSeconds: number | null;
+  visitVerified: boolean | null;
+  visitOrderValuePaise: number;
 };
 
 export type JourneyPlan = {
@@ -4508,7 +4948,15 @@ export type JourneyPlan = {
   counterCity: string | null;
   proposedAt: Date | null;
   respondedAt: Date | null;
+  /** True where he started the day himself rather than answering the office. */
+  selfPlanned: boolean;
+  /** Who in the office proposed it. Null on a self-planned day. */
+  proposedByName: string | null;
+  notes: string | null;
+  estimatedTravelMinutes: number | null;
   stops: PlanStop[];
+  /** The stops' cities, most shops first — where a day with no agreed city is. */
+  shopCities: string[];
 };
 
 /** Every plan for a day, with its stops. */
@@ -4535,20 +4983,23 @@ export async function journeyPlansBetween(
   const scope = await managerScope();
   const who = userId ? sql`and p.user_id = ${userId}` : sql``;
 
-  const plans = (await db.execute<Omit<JourneyPlan, "stops">>(sql`
+  const plans = (await db.execute<Omit<JourneyPlan, "stops" | "shopCities">>(sql`
     select p.id, p.user_id as "userId", u.name as "userName",
            p.plan_date::text as "planDate", p.beat, p.area,
            p.status::text as status,
            p.started_at as "startedAt", p.completed_at as "completedAt",
            p.day_state::text as "dayState", p.city,
            p.refusal_reason as "refusalReason", p.counter_city as "counterCity",
-           p.proposed_at as "proposedAt", p.responded_at as "respondedAt"
+           p.proposed_at as "proposedAt", p.responded_at as "respondedAt",
+           p.self_planned as "selfPlanned", pb.name as "proposedByName",
+           p.notes, p.estimated_travel_minutes as "estimatedTravelMinutes"
       from mbos_journey_plans p
       join users u on u.id = p.user_id
+      left join users pb on pb.id = p.proposed_by_id
      where p.plan_date between ${fromDay}::date and ${toDay}::date ${who}
        ${onlyMine(scope, "p.user_id")}
      order by p.plan_date asc, u.name asc
-  `)) as unknown as Array<Omit<JourneyPlan, "stops">>;
+  `)) as unknown as Array<Omit<JourneyPlan, "stops" | "shopCities">>;
 
   if (!plans.length) return [];
 
@@ -4560,19 +5011,33 @@ export async function journeyPlansBetween(
            (c.gps_lat is not null and c.gps_lng is not null) as "hasGps",
            c.gps_lat as "gpsLat", c.gps_lng as "gpsLng",
            coalesce(c.outstanding, 0) as "outstandingPaise",
-           c.last_visit_date::text as "lastVisitDate"
+           c.last_visit_date::text as "lastVisitDate",
+           ${placeNameSql("c", "city", "city")} as city,
+           c.kind::text as kind, c.third_party as "thirdParty",
+           v.id as "visitId", v.check_in_at as "visitCheckInAt",
+           v.outcome::text as "visitOutcome",
+           v.duration_seconds as "visitDurationSeconds",
+           v.verified as "visitVerified",
+           coalesce((select o.total_amount from orders o where o.id = v.linked_order_id), 0)
+             as "visitOrderValuePaise"
       from mbos_journey_stops s
       join mbos_journey_plans p on p.id = s.plan_id
       join customers c on c.id = s.customer_id
+      left join lateral (
+        select v.* from mbos_visits v
+         where v.journey_plan_stop_id = s.id
+         order by v.check_in_at desc nulls last
+         limit 1
+      ) v on true
      where p.plan_date between ${fromDay}::date and ${toDay}::date ${who}
        ${onlyMine(scope, "p.user_id")}
      order by p.plan_date asc, s.sequence asc
   `)) as unknown as Array<PlanStop & { planId: string }>;
 
-  return plans.map((p) => ({
-    ...p,
-    stops: stops.filter((s) => s.planId === p.id),
-  }));
+  return plans.map((p) => {
+    const own = stops.filter((s) => s.planId === p.id);
+    return { ...p, stops: own, shopCities: rankShopCities(own.map((s) => s.city)) };
+  });
 }
 
 /**
@@ -4675,7 +5140,10 @@ export async function fieldBook(filter?: {
     : sql``;
 
   const rows = (await db.execute<BookCustomer>(sql`
-    select c.id, c.name, c.city, c.area, c.beat, c.phone,
+    select c.id, c.name,
+           ${placeNameSql("c", "city", "city")} as city,
+           ${placeNameSql("c", "area", "area")} as area,
+           c.beat, c.phone,
            coalesce(c.sales_am_id, c.owner_id) as "salesmanId",
            u.name as "salesmanName",
            (c.gps_lat is not null and c.gps_lng is not null) as "hasGps",
@@ -4696,7 +5164,7 @@ export async function fieldBook(filter?: {
         which between them are most of what he actually walks to. Third party
         was never excluded by name; it is a MARK on a customer rather than a
         kind, and it came through already. The lead is what was missing. */
-     where c.status = 'active' and c.kind in ('customer', 'lead')
+     where c.status = 'active' and c.kind in ('customer', 'lead') and c.deleted_at is null
        ${onlyMine(scope, "coalesce(c.sales_am_id, c.owner_id)")}
        ${salesman} ${beat} ${gps} ${search}
      order by c.name asc
@@ -4720,26 +5188,6 @@ export async function fieldBook(filter?: {
         config,
       )?.band ?? null,
   }));
-}
-
-/** How much of the book has no coordinates. A count, and then a decision. */
-export async function gpsGap(): Promise<{ missing: number; total: number }> {
-  /* SCOPED LIKE EVERYTHING ELSE ON THE SCREEN. It was the one unscoped read
-     here, so a regional manager got a national "Without a pin" figure sitting
-     beside a "Shops" tile counting only his own — two numbers from one row of
-     tiles that could not be reconciled, on the screen somebody opens when they
-     suspect data is missing. Being national made it look like the gap, which
-     is exactly the wrong direction for a tile whose job is to say how much
-     work is left. */
-  const scope = await placeScope();
-  const rows = await db.execute<{ missing: number; total: number }>(sql`
-    select count(*) filter (where c.gps_lat is null or c.gps_lng is null)::int as missing,
-           count(*)::int as total
-      from customers c
-     where c.status = 'active' and c.kind = 'customer'
-       ${mineByPlace(scope, "coalesce(c.sales_am_id, c.owner_id)", "c")}
-  `);
-  return { missing: Number(rows[0]?.missing ?? 0), total: Number(rows[0]?.total ?? 0) };
 }
 
 /** The beats somebody has actually written down, for the filter. */
@@ -4842,6 +5290,8 @@ export type ShopPin = {
  * screen measure with, so one distance is never phrased two ways.
  */
 export async function shopPins(options?: {
+  /** One person in one seat, or nobody in it — the Territory filter. */
+  seat?: { seat: TerritorySeat; person: string | null };
   near?: {
     /** Where the team is. An EMPTY list is not "everywhere" — see below. */
     centres: Array<{ lat: number; lng: number }>;
@@ -4884,7 +5334,10 @@ export async function shopPins(options?: {
     : sql``;
 
   const rows = (await db.execute<ShopPin>(sql`
-    select c.id, c.name, c.city, c.area, c.beat,
+    select c.id, c.name,
+           ${placeNameSql("c", "city", "city")} as city,
+           ${placeNameSql("c", "area", "area")} as area,
+           c.beat,
            /* Both columns, because the WORD for an account is decided from
               the pair and lib/account-types.ts is the one place that
               decision lives — the mark wins over the kind. */
@@ -4911,8 +5364,10 @@ export async function shopPins(options?: {
         A map that quietly omits three quarters of the pins is one somebody
         plans a day from and is wrong. */
      where coalesce(c.gps_lat, c.geocoded_lat) is not null
+       and c.deleted_at is null
        and coalesce(c.gps_lng, c.geocoded_lng) is not null
        ${box}
+       ${options?.seat ? seatPersonClause(options.seat.seat, options.seat.person) : sql``}
        ${mineByPlace(scope, "coalesce(c.sales_am_id, c.owner_id)", "c")}
   `)) as unknown as ShopPin[];
 
@@ -5126,97 +5581,6 @@ export async function fieldSettings(): Promise<
   return groups;
 }
 
-/* ══════════════════════════════════════════════════════════════════ pay */
-
-export type PayRow = {
-  salesmanId: string;
-  salesmanName: string;
-  active: boolean;
-  employeeCode: string | null;
-  /**
-   * Whether that employee was CHOSEN or merely matched.
-   *
-   * `guessed` means nobody has linked this account and the old email-or-mobile
-   * heuristic found the row — which on this book is rare and, where it does
-   * fire, is matching an account against whichever of two same-named payroll
-   * rows happened to share a number. A pay figure arrived at that way is worth
-   * saying out loud rather than printing beside a chosen one as though the two
-   * were the same kind of fact.
-   */
-  employeeMatch: "linked" | "guessed";
-  employeeStatus: string | null;
-  netSalaryPaise: number | null;
-  conveyancePaise: number | null;
-  otherSalaryPaise: number | null;
-  pfEsicApplicable: boolean | null;
-  dateOfJoining: string | null;
-  /** Days worked in the window. What a month's pay is actually against. */
-  daysWorked: number;
-  daysOnLeave: number;
-  /** Expenses approved in the window — reimbursed, not salary. */
-  reimbursedPaise: number;
-};
-
-/**
- * What each salesman is paid, read from the employee master.
- *
- * `DECISIONS.md` settled this before MBOS shipped: **salary is read-only and
- * reads what payroll publishes.** HR maintains the employee workbook, HRMS
- * mirrors it hash-for-hash, and this reads that mirror — nothing here writes a
- * figure and no MBOS table holds one.
- *
- * The match is email then company mobile, the same rule the Access screen uses
- * to find a person's employee record. Two rules for "which employee is this
- * account" is how one of them ends up finding somebody the other does not.
- *
- * Days worked and reimbursements sit beside the pay because they are what a
- * month's figure is actually against — but neither is combined with it. An
- * expense reimbursement is money owed back, not earnings, and adding them
- * would produce a number that is neither.
- */
-export async function payForPeriod(from: string, to: string): Promise<PayRow[]> {
-  const scope = await managerScope();
-  return db.execute<PayRow>(sql`
-    select u.id as "salesmanId", u.name as "salesmanName", u.active,
-           e.employee_code as "employeeCode",
-           ${employeeLinkKindSql("u")} as "employeeMatch",
-           e.status_raw as "employeeStatus",
-           e.net_salary_paise as "netSalaryPaise",
-           e.conveyance_paise as "conveyancePaise",
-           e.other_salary_paise as "otherSalaryPaise",
-           e.pf_esic_applicable as "pfEsicApplicable",
-           e.date_of_joining::text as "dateOfJoining",
-
-           (select count(*)::int from mbos_attendance_days d
-             where d.user_id = u.id and d.check_in_at is not null
-               and d.day between ${from}::date and ${to}::date) as "daysWorked",
-           (select count(*)::int from mbos_attendance_days d
-             where d.user_id = u.id and d.status = 'on_leave'
-               and d.day between ${from}::date and ${to}::date) as "daysOnLeave",
-
-           coalesce((select sum(coalesce(ap.approved_amount_paise, ex.amount_paise))
-                       from mbos_expenses ex
-                       join mbos_approvals ap
-                         on ap.subject_id = ex.id and ap.type = 'expense_claim'
-                      where ex.user_id = u.id
-                        and ap.state in ('approved', 'partially_approved')
-                        and ex.expense_date between ${from}::date and ${to}::date), 0)
-             as "reimbursedPaise"
-
-      from users u
-      join app_access a on a.user_id = u.id and a.app = 'field'
-      /* The link somebody made, falling back to the old email-or-mobile guess
-         where nobody has made one -- see lib/employee-link.ts, which the
-         handset's own copy of these figures reads too. The guess alone matched
-         almost nobody on the real book, so this screen showed a blank salary
-         for every field salesman with no way to say whether that meant unpaid
-         or unknown. */
-      left join employees e on ${employeeJoinOn("u", "e")}
-     where u.active ${onlyMine(scope, "u.id")}
-     order by u.name asc
-  `) as unknown as PayRow[];
-}
-
 /* ═══════════════════════════════════════════════════ who covers what */
 
 export type ManagerRow = {
@@ -5355,25 +5719,25 @@ export async function knownPlaces(): Promise<PlaceTree> {
 }
 
 /**
- * THE SAME TREE, COUNTED OVER THE LEADS LIST — because a count has to describe
- * what the filter will find.
+ * THE FOUR PLACE FILTERS, COUNTED OVER THE LEADS LIST — because a count has to
+ * describe what the filter will find.
  *
- * `knownPlaces` counts the whole book, which is right for allocating a
- * territory and wrong above a list of leads: on the real book that is 5,926
- * shops against 3,777 leads, so a city offering "412" and then answering with
- * 63 rows is a number nobody can get behind. It is the same grouping through
- * the same expressions, narrowed by the same `where` the filter dropdowns
- * beside it are built from — and deliberately NOT narrowed by the filters
- * themselves, for the reason `leadFilterOptions` gives: a place that vanishes
- * as you tick a box in the dropdown next to it is a place you cannot widen a
- * search back out to.
+ * Narrowed by the same `where` the other dropdowns beside it are built from,
+ * and by the place picks above each rung (the cascade) — deliberately NOT by
+ * the other filters, for the reason `leadFilterOptions` gives: a place that
+ * vanishes as you tick a box next to it is a place you cannot widen back out to.
  */
-export async function leadPlaceTree(archived = false): Promise<PlaceTree> {
+export async function leadPlaceOptions(
+  archived = false,
+  picks: PlaceFilterValues = {},
+): Promise<PlaceFilterOptions> {
   const scope = await managerScope();
-  return placeTreeFrom(sql`
-     where c.lead_stage is not null
-       and c.lead_archived = ${archived}
-       ${leadsVisible(scope)}`);
+  return placeFilterOptions({
+    from: sql`customers c`,
+    alias: "c",
+    where: sql`c.lead_stage is not null and c.lead_archived = ${archived} and ${notConverted()} ${leadsVisible(scope)}`,
+    picks,
+  });
 }
 
 /**
@@ -5626,9 +5990,14 @@ export async function salesmanRecord(
       db.execute(sql`
         select e.id, e.category::text as category, e.amount_paise as "amountPaise",
                e.expense_date::text as "expenseDate", e.remarks,
-               (select ap.state::text from mbos_approvals ap
-                 where ap.subject_id = e.id and ap.type = 'expense_claim'
-                 order by ap.requested_at desc limit 1) as state
+               coalesce(
+                 (select ap.state::text from mbos_approvals ap
+                   where ap.subject_type = 'mbos_expense_days'
+                     and ap.subject_id = e.expense_day_id
+                   order by ap.step_index desc limit 1),
+                 (select ap.state::text from mbos_approvals ap
+                   where ap.subject_id = e.id and ap.type = 'expense_claim'
+                   order by ap.requested_at desc limit 1)) as state
           from mbos_expenses e
          where e.user_id = ${userId}
          order by e.expense_date desc limit ${limit}
@@ -5655,6 +6024,7 @@ export async function salesmanRecord(
           from customers c
          where c.owner_id = ${userId} and c.lead_stage is not null
            and c.lead_archived = false
+           and ${notConverted()}
          order by c.lead_last_activity_date desc nulls last limit ${limit}
       `),
       db.execute(sql`
@@ -5685,32 +6055,34 @@ export async function salesmanRecord(
 
 /* ══════════════════════════════════════ leave, per person */
 
-export type EntitlementRow = {
+export type LeaveTakenRow = {
   userId: string;
   name: string;
-  balances: LeaveBalance[];
-  /** The kinds this person has a stored figure for, as against the default. */
-  overridden: string[];
+  /** Approved days this year, by kind. Never a balance — see below. */
+  taken: Record<string, number>;
+  takenTotal: number;
+  /** Requests still waiting on somebody's answer. */
+  waiting: number;
+  /** Every request this year, withdrawn ones excepted. */
+  requested: number;
 };
 
 /**
- * What each salesman may take this year, and how much is left.
+ * Who on the team has taken leave this year, and who has asked.
  *
- * The entitlement itself is CONFIGURATION — `mbos.leave.annualEntitlementDays`
- * — and a row in `mbos_leave_balances` overrides it for one person. That much
- * already worked. What did not exist was any way to WRITE such a row: nothing
- * in MahekOne created one, so the override was a mechanism with no door, and a
- * salesman on different terms could not be given them.
- *
- * Read through `leaveBalances`, the same engine the handset's own figures come
- * through, so this screen and the phone in somebody's pocket cannot disagree
- * about how many days remain.
+ * TAKEN, NEVER WHAT IS LEFT. Mahek holds leave allowances in HRMS and nowhere
+ * else, so this screen used to draw a second copy of them — "12 of 12, company
+ * default" — from a configuration figure nobody on the team had agreed to, with
+ * a door to set per-person terms that HRMS never read. Two answers to "how many
+ * days does he get" is one too many, and the handset already shows no balance.
+ * So the figure here is what was approved, counted from the requests through
+ * `leaveDebitDays` so a half day is half, and a salesman with no request at all
+ * is listed rather than dropped — "who has not asked" is half the question.
  */
-export async function leaveEntitlements(year: number): Promise<EntitlementRow[]> {
+export async function leaveTakenByPerson(year: number): Promise<LeaveTakenRow[]> {
   const scope = await managerScope();
-  const { getConfig } = await import("../config/store");
 
-  const [people, overrideRows, usedRows, config] = await Promise.all([
+  const [people, requestRows] = await Promise.all([
     db.execute<{ userId: string; name: string }>(sql`
       select u.id as "userId", u.name
         from users u
@@ -5718,45 +6090,39 @@ export async function leaveEntitlements(year: number): Promise<EntitlementRow[]>
        where u.active ${onlyMine(scope, "u.id")}
        order by u.name asc
     `),
-    db.execute<{ userId: string; kind: string; entitled: number }>(sql`
-      select b.user_id as "userId", b.leave_type::text as kind, b.entitled_days as entitled
-        from mbos_leave_balances b
-       where b.year = ${year}
-    `),
-    /* The approved requests, not a stored sum — what a request costs is
-       `leaveDebitDays`, and spelling that arithmetic out in SQL as well is how
-       two answers to "how much has he taken" come to exist. */
-    db.execute<{ userId: string; kind: string; days: number; halfDay: boolean }>(sql`
-      select r.user_id as "userId", r.leave_type::text as kind, r.days, r.half_day as "halfDay"
+    db.execute<{ userId: string; kind: string; days: number; halfDay: boolean; state: string | null }>(sql`
+      select r.user_id as "userId", r.leave_type::text as kind, r.days,
+             r.half_day as "halfDay", ap.state::text as state
         from mbos_leave_requests r
-        join mbos_approvals ap on ap.subject_id = r.id and ap.type = 'leave'
-       where ap.state in ('approved', 'partially_approved')
-         and r.cancelled_at is null
+        left join mbos_approvals ap on ap.subject_id = r.id and ap.type = 'leave'
+       where r.cancelled_at is null
          and extract(year from r.from_date) = ${year}
+         ${onlyMine(scope, "r.user_id")}
     `),
-    getConfig(),
   ]);
 
-  const entitlement = config["mbos.leave.annualEntitlementDays"] ?? {};
-
-  const overridesBy = new Map<string, Record<string, number>>();
-  for (const r of overrideRows as unknown as { userId: string; kind: string; entitled: number }[]) {
-    const forUser = overridesBy.get(r.userId) ?? {};
-    forUser[r.kind] = r.entitled;
-    overridesBy.set(r.userId, forUser);
-  }
-
-  const usedBy = new Map<string, Record<string, number>>();
-  for (const r of usedRows as unknown as { userId: string; kind: string; days: number; halfDay: boolean }[]) {
-    const forUser = usedBy.get(r.userId) ?? {};
-    forUser[r.kind] = (forUser[r.kind] ?? 0) + leaveDebitDays(Number(r.days), r.halfDay);
-    usedBy.set(r.userId, forUser);
+  const by = new Map<string, Omit<LeaveTakenRow, "userId" | "name">>();
+  for (const r of requestRows as unknown as {
+    userId: string;
+    kind: string;
+    days: number;
+    halfDay: boolean;
+    state: string | null;
+  }[]) {
+    const row = by.get(r.userId) ?? { taken: {}, takenTotal: 0, waiting: 0, requested: 0 };
+    row.requested += 1;
+    if (!r.state || r.state === "pending") row.waiting += 1;
+    if (r.state === "approved" || r.state === "partially_approved") {
+      const d = leaveDebitDays(Number(r.days), r.halfDay);
+      row.taken[r.kind] = (row.taken[r.kind] ?? 0) + d;
+      row.takenTotal += d;
+    }
+    by.set(r.userId, row);
   }
 
   return (people as unknown as { userId: string; name: string }[]).map((p) => ({
     userId: p.userId,
     name: p.name,
-    balances: leaveBalancesFor(entitlement, usedBy.get(p.userId) ?? {}, overridesBy.get(p.userId) ?? {}),
-    overridden: Object.keys(overridesBy.get(p.userId) ?? {}),
+    ...(by.get(p.userId) ?? { taken: {}, takenTotal: 0, waiting: 0, requested: 0 }),
   }));
 }

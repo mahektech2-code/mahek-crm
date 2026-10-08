@@ -2,20 +2,28 @@ import "server-only";
 import { createHash, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
 import { and, desc, eq, gt, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { authOtps, passwordResets, sessions, users } from "@/db/schema";
+import { authOtps, employees, passwordResets, sessions, users } from "@/db/schema";
 import { hashPassword } from "../password";
 import { getConfig } from "../config/store";
 import { isApproved, listWatiTemplates, sendWatiTemplate, watiConfig } from "../wati";
 import { waNumber } from "../whatsapp-delivery";
+import { isTestKey, minimothKey, sendMiniMothOtp, verifyMiniMothOtp } from "../minimoth";
+import { clientAddress } from "./sign-in-throttle";
 
 /* ---------------------------------------------------------------------------
  * One-time codes on WhatsApp — for signing in (web and MBOS handset), for
  * changing a password, and for resetting a forgotten one.
  *
- * THE CODE GOES TO THE WORK NUMBER ON THE ACCOUNT, never to a number typed at
- * the screen. Somebody can only ever receive a code for an account whose
- * number is their own phone, which is the whole of what makes this a second
- * factor rather than a way round the first.
+ * THE CODE GOES TO THE PERSONAL MOBILE IN HRMS, for every purpose — signing
+ * in, changing a password, resetting one — and never to a number typed at the
+ * screen. It used to go to the work number on the account; Mahek asked for the
+ * employee's own phone instead, as HR keeps it, so one number is somebody's
+ * way in on the web and on the MBOS handset alike. It is read through
+ * `users.employee_id` and nothing looser: the email/company-mobile guess the
+ * pay screens fall back on is wrong on this book (two Pritesh rows share one
+ * company mobile), and a guess here would send a sign-in code to the wrong
+ * person. An account with no link, or a linked employee with no personal
+ * mobile, gets no code and is told why — the password still works.
  *
  * IT IS OFFERED ONLY WHEN IT CAN WORK: a Wati key, and an APPROVED
  * authentication template named in `auth.otp.whatsappTemplateName`. Until
@@ -27,9 +35,60 @@ import { waNumber } from "../whatsapp-delivery";
  * Limits are configuration (`auth.otp.*`): digits, lifetime, wrong guesses per
  * code, the resend cooldown, and how many codes an account may be sent in a
  * window — the last is what stops a number being used to run up a bill.
+ *
+ * TWO WAYS TO SEND, and MiniMoth is asked first. A MiniMoth key
+ * (`minimoth.apiKey`, set under Admin Console → Integrations) is all it needs:
+ * no template to get approved, WhatsApp first with an SMS fallback, under
+ * MiniMoth's DLT registration rather than ours. MiniMoth makes and checks the
+ * code itself, so its rows store `minimoth:<otp id>` where a Wati row stores a
+ * hash — the digits never reach MahekOne. Every limit above still applies to
+ * both: the cooldown, the window cap and wrong guesses are counted here,
+ * whoever sent the code. `auth.otp.codeLength` and `ttlMinutes` do not apply
+ * to MiniMoth's codes, which are six digits and live ten minutes.
  * ------------------------------------------------------------------------- */
 
 export type OtpPurpose = "login" | "password_change" | "password_reset";
+
+/** Where a code was asked for — what the Admin Console's OTP history shows. */
+export type OtpSurface = "web" | "handset" | "settings";
+
+export type OtpRequestContext = {
+  surface?: OtpSurface;
+  /** Exactly what was typed at the screen, which is not always the number the code went to. */
+  requestedWith?: string | null;
+};
+
+/**
+ * Who asked, from where, as far as the request says. Never throws and never
+ * delays a send: outside a request (a job, a test) it is simply empty.
+ */
+async function requestFacts(): Promise<{ requestIp: string | null; userAgent: string | null }> {
+  const requestIp = await clientAddress();
+  let userAgent: string | null = null;
+  try {
+    const { headers } = await import("next/headers");
+    userAgent = (await headers()).get("user-agent")?.slice(0, 400) ?? null;
+  } catch {
+    userAgent = null;
+  }
+  return { requestIp, userAgent };
+}
+
+/*
+ * A REFUSED REQUEST IS HISTORY AND NOTHING ELSE. Rows carrying
+ * `refused_reason` are written so the Admin Console can say "Priya asked
+ * three times inside the cooldown" — and are kept out of all three questions
+ * below. Counted towards the cooldown, a refusal would extend itself every
+ * time somebody pressed the button; counted towards the window cap, pressing
+ * it would use up the allowance without a code being sent; and as the newest
+ * row, it would shadow the code that WAS sent and make it unverifiable.
+ */
+const notRefused = isNull(authOtps.refusedReason);
+
+/** A provider's answer, minus anything that could be the code itself. */
+function withoutDigits(raw: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(raw).filter(([k]) => !/^(code|otp|otp_code|pin)$/i.test(k)));
+}
 
 const hashOf = (id: string, code: string) => createHash("sha256").update(`${id}:${code}`).digest("hex");
 
@@ -39,7 +98,12 @@ export function maskNumber(wa: string): string {
   return `+${d.slice(0, 2)} ${d.slice(2, 4)}•••••${d.slice(-3)}`;
 }
 
-export type OtpAvailability = { available: true; template: string; param: string } | { available: false; why: string };
+export type OtpAvailability =
+  | { available: true; provider: "minimoth"; key: string }
+  | { available: true; provider: "wati"; template: string; param: string }
+  | { available: false; why: string };
+
+const MINIMOTH_PREFIX = "minimoth:";
 
 let availabilityCache: { at: number; value: OtpAvailability } | null = null;
 
@@ -51,6 +115,13 @@ export async function otpAvailability(): Promise<OtpAvailability> {
   // migrated, a Wati outage) must cost the WhatsApp option, never the sign-in
   // screen. The password form stands on its own.
   const value = await (async (): Promise<OtpAvailability> => {
+    const mm = await minimothKey();
+    /* A TEST KEY IS REFUSED IN PRODUCTION: it sends nothing and accepts
+       000000 for every number, so on a real deployment it would let anybody
+       who knows a colleague's work number sign in as them. */
+    if (mm && !(isTestKey(mm) && process.env.NODE_ENV === "production")) {
+      return { available: true, provider: "minimoth", key: mm };
+    }
     const config = await getConfig();
     const name = String(config["auth.otp.whatsappTemplateName"] ?? "").trim();
     if (!name) return { available: false, why: "No WhatsApp code template is named in the settings." };
@@ -62,7 +133,7 @@ export async function otpAvailability(): Promise<OtpAvailability> {
     if (!isApproved(t)) return { available: false, why: `"${name}" is ${t.status.toLowerCase()} in Wati.` };
     // An authentication template carries exactly one variable, the code.
     // Whatever Wati calls it ("1", "otp", …) is what the send must name.
-    return { available: true, template: name, param: t.params[0] ?? "1" };
+    return { available: true, provider: "wati", template: name, param: t.params[0] ?? "1" };
   })().catch((e): OtpAvailability => ({
     available: false,
     why: `Could not check: ${e instanceof Error ? e.message : "unknown error"}`,
@@ -76,7 +147,18 @@ export function forgetOtpAvailability() {
   availabilityCache = null;
 }
 
-/** An account by work number or email — the same lookup the password sign-in uses. */
+const last10Of = (col: unknown) => sql`right(regexp_replace(coalesce(${col}, ''), '[^0-9]', '', 'g'), 10)`;
+
+/**
+ * An account by email, work number or HRMS personal mobile — the one lookup
+ * every sign-in uses: password and code, web and handset.
+ *
+ * The personal mobile is asked LAST and only through the explicit employee
+ * link, and it must name exactly one account. A number that is one person's
+ * work number and another's personal mobile goes on meaning the work number,
+ * so nobody's existing sign-in moves; one that names two accounts names
+ * nobody, rather than signing somebody in as whichever came first.
+ */
 export async function findAccount(identifier: string) {
   const id = identifier.trim();
   const digits = id.replace(/\D/g, "");
@@ -86,11 +168,47 @@ export async function findAccount(identifier: string) {
     .from(users)
     .where(
       last10
-        ? sql`lower(${users.email}) = lower(${id}) or right(regexp_replace(coalesce(${users.phone}, ''), '[^0-9]', '', 'g'), 10) = ${last10}`
+        ? sql`lower(${users.email}) = lower(${id}) or ${last10Of(users.phone)} = ${last10}`
         : sql`lower(${users.email}) = lower(${id})`,
     )
     .limit(1);
-  return user ?? null;
+  if (user || !last10) return user ?? null;
+  const viaHr = await db
+    .select({ user: users })
+    .from(users)
+    .innerJoin(employees, eq(employees.id, users.employeeId))
+    .where(sql`${last10Of(employees.personalMobile)} = ${last10}`)
+    .limit(2);
+  return viaHr.length === 1 ? viaHr[0].user : null;
+}
+
+/**
+ * Where this account's codes go: the personal mobile of the HRMS employee it
+ * is linked to. A refusal, in words, where there is none — the person is at a
+ * login screen with nobody to ask.
+ */
+export async function otpDestination(
+  userId: string,
+): Promise<{ ok: true; to: string } | { ok: false; error: string }> {
+  const [row] = await db
+    .select({ employeeId: users.employeeId, personalMobile: employees.personalMobile })
+    .from(users)
+    .leftJoin(employees, eq(employees.id, users.employeeId))
+    .where(eq(users.id, userId));
+  if (!row?.employeeId) {
+    return {
+      ok: false,
+      error: "OTPs go to your personal mobile in HRMS, and your account is not linked to an HRMS record yet. Use your password, or ask an administrator to link it.",
+    };
+  }
+  const to = waNumber(row.personalMobile);
+  if (!to) {
+    return {
+      ok: false,
+      error: "OTPs go to your personal mobile in HRMS, and there is none on your HRMS record. Use your password, or ask HR to add it.",
+    };
+  }
+  return { ok: true, to };
 }
 
 export type SendResult =
@@ -98,20 +216,58 @@ export type SendResult =
   | { ok: false; error: string; retryInSeconds?: number };
 
 /**
- * Sends a fresh code for one purpose to the account's own work number.
+ * Sends a fresh code for one purpose to the personal mobile in HRMS.
  * Every refusal says what to do instead, because the person is standing at a
  * login screen with nobody to ask.
  */
-export async function sendOtp(userId: string, purpose: OtpPurpose): Promise<SendResult> {
+export async function sendOtp(
+  userId: string,
+  purpose: OtpPurpose,
+  context: OtpRequestContext = {},
+): Promise<SendResult> {
+  const facts = await requestFacts();
+  const history = {
+    surface: context.surface ?? null,
+    requestedWith: context.requestedWith?.trim().slice(0, 200) || null,
+    requestIp: facts.requestIp,
+    userAgent: facts.userAgent,
+  };
+  /* Written for the history, then the refusal is returned exactly as before. */
+  const refuse = async (
+    reason: string,
+    result: { ok: false; error: string; retryInSeconds?: number },
+    destination = "",
+    provider: string | null = null,
+  ) => {
+    await db
+      .insert(authOtps)
+      .values({
+        id: `otp_${randomUUID().slice(0, 12)}`,
+        userId,
+        purpose,
+        destination,
+        codeHash: "",
+        expiresAt: new Date(),
+        provider,
+        refusedReason: reason,
+        ...history,
+      })
+      .catch(() => undefined);
+    return result;
+  };
+
   const avail = await otpAvailability();
-  if (!avail.available) return { ok: false, error: "Sign-in codes on WhatsApp are not set up yet. Use your password." };
+  if (!avail.available) return { ok: false, error: "OTP sign-in is not set up yet. Use your password." };
+  const provider = avail.provider;
 
   const [user] = await db.select().from(users).where(eq(users.id, userId));
-  if (!user || !user.active) return { ok: false, error: "That account is not open. Ask your manager." };
-  const to = waNumber(user.phone);
-  if (!to) {
-    return { ok: false, error: "There is no mobile number on this account to send a code to. Use your password, or ask your manager to add your number." };
+  if (!user) return { ok: false, error: "That account is not open. Ask your manager." };
+  if (!user.active) {
+    return refuse("account_closed", { ok: false, error: "That account is not open. Ask your manager." }, "", provider);
   }
+  const dest = await otpDestination(user.id);
+  if (!dest.ok) return refuse("no_hrms_mobile", { ok: false, error: dest.error }, "", provider);
+  const to = dest.to;
 
   const config = await getConfig();
   const cooldown = Number(config["auth.otp.resendCooldownSeconds"]);
@@ -123,22 +279,72 @@ export async function sendOtp(userId: string, purpose: OtpPurpose): Promise<Send
   const [last] = await db
     .select({ createdAt: authOtps.createdAt })
     .from(authOtps)
-    .where(and(eq(authOtps.userId, userId), eq(authOtps.purpose, purpose)))
+    .where(and(eq(authOtps.userId, userId), eq(authOtps.purpose, purpose), notRefused))
     .orderBy(desc(authOtps.createdAt))
     .limit(1);
   if (last) {
     const wait = Math.ceil(cooldown - (Date.now() - last.createdAt.getTime()) / 1000);
-    if (wait > 0) return { ok: false, error: `A code was just sent. You can ask for another in ${wait} seconds.`, retryInSeconds: wait };
+    if (wait > 0) {
+      return refuse(
+        "cooldown",
+        { ok: false, error: `An OTP was just sent. You can ask for another in ${wait} seconds.`, retryInSeconds: wait },
+        to,
+        provider,
+      );
+    }
   }
   const [recent] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(authOtps)
-    .where(and(eq(authOtps.userId, userId), gt(authOtps.createdAt, new Date(Date.now() - windowMin * 60_000))));
+    .where(and(eq(authOtps.userId, userId), notRefused, gt(authOtps.createdAt, new Date(Date.now() - windowMin * 60_000))));
   if (Number(recent?.n ?? 0) >= cap) {
-    return { ok: false, error: `Too many codes asked for in the last ${windowMin} minutes. Use your password, or try again later.` };
+    return refuse(
+      "window_cap",
+      { ok: false, error: `Too many OTPs asked for in the last ${windowMin} minutes. Use your password, or try again later.` },
+      to,
+      provider,
+    );
   }
 
   const id = `otp_${randomUUID().slice(0, 12)}`;
+
+  if (avail.provider === "minimoth") {
+    const sent = await sendMiniMothOtp(avail.key, to);
+    if (!sent.ok) {
+      /* Recorded so the failure is visible, and so it still counts towards
+         the window cap — a number that keeps failing must not be retried
+         without limit. `sent_at` stays null, so the row can never verify. */
+      await db.insert(authOtps).values({
+        id,
+        userId,
+        purpose,
+        destination: to,
+        codeHash: MINIMOTH_PREFIX,
+        expiresAt: new Date(),
+        failureReason: `${sent.code}: ${sent.error}`,
+        provider,
+        providerResponse: { status: sent.status, code: sent.code, error: sent.error },
+        ...history,
+      });
+      return { ok: false, error: "The OTP could not be sent just now. Use your password, or try again in a minute." };
+    }
+    await db.insert(authOtps).values({
+      id,
+      userId,
+      purpose,
+      destination: to,
+      codeHash: `${MINIMOTH_PREFIX}${sent.otpId}`,
+      expiresAt: sent.expiresAt,
+      sentAt: new Date(),
+      provider,
+      providerRef: sent.otpId,
+      providerResponse: withoutDigits(sent.raw),
+      ...history,
+    });
+    const minutes = Math.max(1, Math.round((sent.expiresAt.getTime() - Date.now()) / 60_000));
+    return { ok: true, sentTo: maskNumber(to), expiresInMinutes: minutes };
+  }
+
   const code = String(randomInt(0, 10 ** digits)).padStart(digits, "0");
   await db.insert(authOtps).values({
     id,
@@ -147,6 +353,9 @@ export async function sendOtp(userId: string, purpose: OtpPurpose): Promise<Send
     destination: to,
     codeHash: hashOf(id, code),
     expiresAt: new Date(Date.now() + ttl * 60_000),
+    provider,
+    providerRef: id,
+    ...history,
   });
 
   const sent = await sendWatiTemplate({
@@ -157,8 +366,11 @@ export async function sendOtp(userId: string, purpose: OtpPurpose): Promise<Send
     broadcastName: "mahekone_sign_in_code",
   });
   if (!sent.ok) {
-    await db.update(authOtps).set({ failureReason: sent.error }).where(eq(authOtps.id, id));
-    return { ok: false, error: "The code could not be sent on WhatsApp just now. Use your password, or try again in a minute." };
+    await db
+      .update(authOtps)
+      .set({ failureReason: sent.error, providerResponse: { error: sent.error } })
+      .where(eq(authOtps.id, id));
+    return { ok: false, error: "The OTP could not be sent just now. Use your password, or try again in a minute." };
   }
   await db.update(authOtps).set({ sentAt: new Date() }).where(eq(authOtps.id, id));
   return { ok: true, sentTo: maskNumber(to), expiresInMinutes: ttl };
@@ -173,35 +385,72 @@ export type VerifyResult = { ok: true } | { ok: false; error: string };
  */
 export async function verifyOtp(userId: string, purpose: OtpPurpose, code: string): Promise<VerifyResult> {
   const typed = code.replace(/\D/g, "");
-  if (!typed) return { ok: false, error: "Enter the code from WhatsApp." };
+  if (!typed) return { ok: false, error: "Enter the OTP." };
   const config = await getConfig();
   const maxAttempts = Number(config["auth.otp.maxVerifyAttempts"]);
 
   const [row] = await db
     .select()
     .from(authOtps)
-    .where(and(eq(authOtps.userId, userId), eq(authOtps.purpose, purpose), isNull(authOtps.consumedAt)))
+    .where(and(eq(authOtps.userId, userId), eq(authOtps.purpose, purpose), isNull(authOtps.consumedAt), notRefused))
     .orderBy(desc(authOtps.createdAt))
     .limit(1);
-  if (!row || !row.sentAt) return { ok: false, error: "No code is waiting for this account. Ask for one first." };
-  if (row.expiresAt.getTime() < Date.now()) return { ok: false, error: "That code has expired. Ask for a new one." };
-  if (row.attempts >= maxAttempts) return { ok: false, error: "Too many wrong tries for that code. Ask for a new one." };
+  if (!row || !row.sentAt) return { ok: false, error: "No OTP is waiting for this account. Ask for one first." };
+  /* Every check of a code is part of its history, whatever the answer. */
+  const noteAttempt = (result: string) =>
+    db
+      .update(authOtps)
+      .set({ lastAttemptAt: new Date(), lastAttemptResult: result })
+      .where(eq(authOtps.id, row.id))
+      .catch(() => undefined);
+  if (row.expiresAt.getTime() < Date.now()) {
+    await noteAttempt("expired");
+    return { ok: false, error: "That OTP has expired. Ask for a new one." };
+  }
+  if (row.attempts >= maxAttempts) {
+    await noteAttempt("too_many");
+    return { ok: false, error: "Too many wrong tries for that OTP. Ask for a new one." };
+  }
 
-  const a = Buffer.from(hashOf(row.id, typed));
-  const b = Buffer.from(row.codeHash);
-  const match = a.length === b.length && timingSafeEqual(a, b);
+  let match: boolean;
+  let wrongAs = "wrong";
+  if (row.codeHash.startsWith(MINIMOTH_PREFIX)) {
+    /* MiniMoth holds the code, so MiniMoth is asked. A failure to REACH it is
+       not a wrong guess and is not counted as one. */
+    const key = await minimothKey();
+    if (!key) return { ok: false, error: "OTP sign-in is not set up any more. Use your password." };
+    const checked = await verifyMiniMothOtp(key, row.destination, typed);
+    if (!checked.ok) {
+      await noteAttempt("unavailable");
+      return { ok: false, error: "The OTP could not be checked just now. Try again in a minute, or use your password." };
+    }
+    match = checked.valid;
+    // MiniMoth's own word for why, where it is more than "wrong digits".
+    if (!checked.valid && checked.code !== "INVALID_OTP") wrongAs = checked.code;
+  } else {
+    const a = Buffer.from(hashOf(row.id, typed));
+    const b = Buffer.from(row.codeHash);
+    match = a.length === b.length && timingSafeEqual(a, b);
+  }
   if (!match) {
-    await db.update(authOtps).set({ attempts: sql`${authOtps.attempts} + 1` }).where(eq(authOtps.id, row.id));
+    await db
+      .update(authOtps)
+      .set({
+        attempts: sql`${authOtps.attempts} + 1`,
+        lastAttemptAt: new Date(),
+        lastAttemptResult: wrongAs,
+      })
+      .where(eq(authOtps.id, row.id));
     const left = maxAttempts - row.attempts - 1;
-    return { ok: false, error: left > 0 ? `That code is not right. ${left} ${left === 1 ? "try" : "tries"} left.` : "That code is not right, and it has now stopped working. Ask for a new one." };
+    return { ok: false, error: left > 0 ? `That OTP is not right. ${left} ${left === 1 ? "try" : "tries"} left.` : "That OTP is not right, and it has now stopped working. Ask for a new one." };
   }
   // Consumed atomically: two submissions of one right code sign in once.
   const used = await db
     .update(authOtps)
-    .set({ consumedAt: new Date() })
+    .set({ consumedAt: new Date(), lastAttemptAt: new Date(), lastAttemptResult: "ok" })
     .where(and(eq(authOtps.id, row.id), isNull(authOtps.consumedAt)))
     .returning({ id: authOtps.id });
-  if (!used.length) return { ok: false, error: "That code has already been used. Ask for a new one." };
+  if (!used.length) return { ok: false, error: "That OTP has already been used. Ask for a new one." };
   return { ok: true };
 }
 

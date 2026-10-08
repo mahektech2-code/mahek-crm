@@ -62,7 +62,6 @@ export default async function Page({
   const best = topAndBottom(people, (p) => p.perKm.value, 1);
   const revenue = people.reduce((n, p) => n + Number(p.revenuePaise), 0);
   const cost = people.reduce((n, p) => n + p.cost.totalPaise, 0);
-  const noSalary = people.filter((p) => p.cost.salaryMissing);
 
   /* Sorting is DISPLAY ONLY. Every figure in the three metric rows above is
      counted over the whole team and never over the sorted copy — re-ordering a
@@ -98,14 +97,6 @@ export default async function Page({
         actions={<MonthNav month={month} basePath="/sales/roi" />}
       />
 
-      {noSalary.length ? (
-        <Banner
-          tone="warn"
-          title={`${noSalary.length} salesman without a salary figure`}
-          body={`${noSalary.map((p) => p.name).join(", ")} — payroll has no row matching their account, so their cost is the expenses alone. Treating a missing salary as zero would make whoever payroll has not caught up with look like the cheapest person on the team.`}
-        />
-      ) : null}
-
       {breakdown.awaitingPaise > 0 ? (
         <Banner
           tone="warn"
@@ -117,7 +108,7 @@ export default async function Page({
       <MetricRow
         metrics={[
           { label: "Revenue", value: money(revenue) },
-          { label: "Total cost", value: money(cost), sub: "salary + approved expenses" },
+          { label: "Field spend", value: money(cost), sub: "approved expenses — pay is in HRMS" },
           {
             label: "Expense to sales",
             value: revenue > 0 ? pct(Math.round((cost / revenue) * 10_000)) : "—",
@@ -196,8 +187,8 @@ export default async function Page({
               {head("perKm", "Sales per km", 130, "right")}
               {head("perVisit", "Sales per visit", 130, "right")}
               {head("expenseRatio", "Travel to sales", 130, "right")}
-              {head("cost", "Total cost", 140, "right")}
-              {head("multiple", "Revenue to cost", 140, "right")}
+              {head("cost", "Field spend", 140, "right")}
+              {head("multiple", "Revenue to spend", 140, "right")}
             </>
           }
         >
@@ -235,9 +226,6 @@ export default async function Page({
               </Cell>
               <Cell align="right">
                 {money(p.cost.totalPaise)}
-                {p.cost.salaryMissing ? (
-                  <span className="block text-[12px] text-warn-ink">no salary on file</span>
-                ) : null}
               </Cell>
               <Cell align="right">
                 {p.ret.multiple === null ? (

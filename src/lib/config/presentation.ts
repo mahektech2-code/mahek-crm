@@ -15,6 +15,8 @@
  * Pure data. No storage, no clock, no network.
  * ------------------------------------------------------------------------- */
 
+import { ADMIN } from "../admin-routes";
+
 /** The control the console should render. Mirrors its declared control set. */
 export type Control =
   | "int"
@@ -69,7 +71,7 @@ export const TABS = [
   { slug: "interactions", label: "Interactions" },
   { slug: "products", label: "Products" },
   { slug: "whatsapp", label: "WhatsApp" },
-  { slug: "scripts", label: "Scripts & help" },
+  { slug: "help", label: "Help articles" },
   { slug: "reminders", label: "Reminders" },
   { slug: "complaints", label: "Complaints" },
   { slug: "workday", label: "Workday" },
@@ -83,14 +85,14 @@ export const TAB_ORDER = TABS.map((t) => t.label);
 export const GROUP_ORDER: Record<string, string[]> = {
   "Call queue": ["When a customer is due a call", "Chasing the order", "Suppression", "Size and ordering"],
   Collections: ["Escalation stages", "Behaviour", "Aging and credit"],
-  "Targets & cycles": ["Buying cycle", "Inactivity", "Targets"],
-  Interactions: ["Quick notes", "Field rules and side effects"],
+  "Targets & cycles": ["Buying cycle", "Inactivity", "Targets", "Top customers"],
+  Interactions: ["Quick notes"],
   Products: ["Catalogue", "How the order form offers them"],
   WhatsApp: ["Connection", "Limits", "Templates"],
-  "Scripts & help": ["Call scripts", "Help articles"],
+  "Help articles": ["Help articles"],
   Reminders: ["Types and behaviour"],
   Complaints: ["Classification", "Resolution"],
-  Workday: ["Hours", "Holidays"],
+  Workday: ["Hours"],
   Attachments: ["Files", "Lifecycle", "Limits"],
   Voice: ["Dictation", "Models"],
 };
@@ -119,7 +121,7 @@ export const GROUP_NOTES: Record<string, string> = {
   "Voice · Dictation":
     "The microphone appears on every box where somebody writes a sentence, in every app — it belongs to the text box rather than to the CRM. The recording is transcribed and dropped; nothing keeps the audio.",
   "Voice · Models":
-    "Sarvam is asked first because it is built for Indian languages and code-mixed speech; OpenAI catches what it cannot take, which is anything over its 30-second ceiling. Keys live in Admin Console → Voice. Claude is not an option here and could not be — it has no audio input at all.",
+    "Sarvam is asked first because it is built for Indian languages and code-mixed speech; OpenAI catches what it cannot take, which is anything over its 30-second ceiling. Keys live in Admin Console → Integrations. Claude is not an option here and could not be — it has no audio input at all.",
   "Attachments · Lifecycle":
     "An upload starts before its parent record exists, so a form abandoned mid-call keeps its files for the cleanup window first. Removing an attachment is a status, not a delete.",
 };
@@ -194,6 +196,7 @@ export const PRESENTATION: Record<string, Presentation> = {
 
   "inactive.cycleMultiplier": { tab: "Targets & cycles", group: "Inactivity", control: "decimal", impact: "inactive" },
   "inactive.decisionAgeWarningDays": { tab: "Targets & cycles", group: "Inactivity", unit: "days" },
+  "topCustomers.count": { tab: "Targets & cycles", group: "Top customers", unit: "customers" },
 
   "targets.defaultMethod": { tab: "Targets & cycles", group: "Targets", control: "choice" },
   "targets.trailingMonths": { tab: "Targets & cycles", group: "Targets", unit: "months" },
@@ -203,6 +206,9 @@ export const PRESENTATION: Record<string, Presentation> = {
   /* --------------------------------------------------------- interactions */
   "interactions.singleSelectOutcomes": { tab: "Interactions", group: "Quick notes", control: "ordered" },
   "interactions.maxNotesLength": { tab: "Interactions", group: "Quick notes", unit: "characters" },
+  "interactions.followUpDefaultDays": { tab: "Interactions", group: "Follow-up", unit: "days" },
+  "interactions.paymentPromiseDefaultDays": { tab: "Interactions", group: "Follow-up", unit: "days" },
+  "customers.birthdayHeadsUpDays": { tab: "Interactions", group: "Customer contacts", unit: "days" },
 
   /* -------------------------------------------------------------- products */
   "products.frequentCount": { tab: "Products", group: "How the order form offers them", unit: "products" },
@@ -321,7 +327,7 @@ export type EntityCollection = {
 export const ENTITY_COLLECTIONS: EntityCollection[] = [
   {
     key: "products", tab: "Products", group: "Catalogue", label: "Products", noun: "SKUs", cta: "Open the catalogue",
-    built: true, editable: false, href: "/admin/catalogue",
+    built: true, editable: false, href: ADMIN.catalogue(),
     help: "Four levels — formulation, brand line, finished good and SKU — and an order line attaches to a SKU only. Managed on its own screen, because a catalogue is rows a person edits one at a time rather than a change set. No selling price is stored yet, so nothing computes order value from it.",
   },
   {
@@ -330,29 +336,17 @@ export const ENTITY_COLLECTIONS: EntityCollection[] = [
     help: "Per outcome, tappable in the Call Log. Retired notes are deactivated, never deleted — historical interactions must keep resolving to something a human can read.",
   },
   {
-    key: "templates", tab: "WhatsApp", group: "Templates", label: "Templates", noun: "templates", cta: "New template",
-    built: true, editable: true,
-    help: "Merge placeholders are validated at authoring time, not at send time.",
+    key: "templates", tab: "WhatsApp", group: "Templates", label: "Templates", noun: "templates", cta: "Open in the CRM",
+    built: true, editable: false, href: "/crm/whatsapp?tab=templates",
+    /* Authored on the CRM's own WhatsApp screen, where they are sent from. The
+       console carried a second editor that opened every real template blank,
+       because it looked the row up in a list of samples. */
+    help: "Written and archived on the CRM's WhatsApp screen, where they are sent from. Merge placeholders are validated there, at authoring time.",
   },
   {
-    key: "help", tab: "Scripts & help", group: "Help articles", label: "Help articles", noun: "articles", cta: "New article",
+    key: "help", tab: "Help articles", group: "Help articles", label: "Help articles", noun: "articles", cta: "New article",
     built: true, editable: false,
-    help: "Read in the CRM Help Center, authored here.",
-  },
-  {
-    key: "scripts", tab: "Scripts & help", group: "Call scripts", label: "Call scripts", noun: "scripts", cta: "New script",
-    built: false, editable: false,
-    help: "Opening, purpose, repeatable objection blocks and closing, matched to the customer's situation.",
-  },
-  {
-    key: "rules", tab: "Interactions", group: "Field rules and side effects", label: "Per-outcome rules", noun: "outcomes", cta: "Edit rules",
-    built: false, editable: false,
-    help: "Which fields appear for each outcome, and what saving it creates. Today these are declared in code, in the interaction and payment follow-up services.",
-  },
-  {
-    key: "holidays", tab: "Workday", group: "Holidays", label: "Holiday calendar", noun: "holidays", cta: "Add holiday",
-    built: false, editable: false,
-    help: "Excluded from working-day counts and run-rate maths.",
+    help: "Read in the CRM Help Center. Nothing edits them from a screen yet, so they are listed here as they stand.",
   },
 ];
 

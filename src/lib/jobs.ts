@@ -27,7 +27,7 @@ import {
   seedMonthlyTargets,
   today,
 } from "./recompute";
-import { sweepUnconfirmed } from "./services/whatsapp-service";
+import { backfillReplyMedia, sweepUnconfirmed } from "./services/whatsapp-service";
 import { sweepOrphans } from "./services/attachment-service";
 import { autoGenerateEodReports } from "./services/eod-service";
 import {
@@ -62,6 +62,7 @@ import {
   fieldActivitySheetId,
   FIELD_ACTIVITY_TAB,
   rematchFieldActivitySalesmen,
+  reparseFieldActivityDates,
   syncFieldActivitySheet,
 } from "./services/field-activity-sync-service";
 import { projectFieldActivityTimeline } from "./services/field-activity-projection-service";
@@ -71,6 +72,11 @@ import {
   proposePlaces,
   resolvePlaces,
 } from "./services/place-service";
+import {
+  importPlaceTree,
+  refreshPlaceCounts,
+  resolveTypedPlaces,
+} from "./services/place-tree-service";
 import { syncCustomerMasterSheet } from "./services/customer-master-sync-service";
 import { projectCustomerMaster } from "./services/customer-master-projection-service";
 import { notifyUsers } from "./notify";
@@ -90,6 +96,7 @@ export type JobName =
   | "day-boundary"
   | "recompute-cycles"
   | "recompute-sales-managers"
+  | "self-raised-verifier-seats"
   | "recompute-inactivity"
   | "recompute-followups"
   | "recompute-slow-payers"
@@ -104,8 +111,13 @@ export type JobName =
   | "snapshot-customer-health"
   | "sweep-unconfirmed"
   | "whatsapp-automation"
+  | "whatsapp-receipts"
   | "escalate-complaint-sla"
   | "auto-eod"
+  /** Tell anybody still punched in at the end of the day. Half-hourly. */
+  | "punch-out-reminders"
+  /** The monthly Top customers report — the 1st at 10:00 IST, and caught up hourly. */
+  | "top-customers-report"
   | "roll-reminders"
   | "sweep-orphan-attachments"
   | "sheet-append"
@@ -117,6 +129,7 @@ export type JobName =
   | "field-activity-sync"
   | "field-activity-project"
   | "field-activity-rematch"
+  | "field-activity-reparse"
   | "customer-master-sync"
   | "customer-master-project"
   /** Address to a coordinate, for the shops nobody has stood in. */
@@ -125,11 +138,17 @@ export type JobName =
   | "resolve-places-lookup"
   /** Build the master and point every shop at its leaf, from what is stored. */
   | "resolve-places"
+  /** The team's reviewed state › district › city › area file, onto every customer. */
+  | "place-tree-import"
+  /** Shops the review never saw, placed from their sheet text — runs nightly. */
+  | "resolve-typed-places"
   | "sheet-payments"
   | "taken-order-sync"
   | "taken-order-reparse"
   /** The ERP customer profile from the Sales Party sheet — fills blanks only. */
   | "erp-seed-profiles"
+  /** The Mahek Plus "My Products" tab's Can Use and boxes onto ERP packing. `--dry-run` to look first. */
+  | "erp-packing-import"
   | "erp-alerts"
   /** HRMS: this month's paid-leave credit for every active employee — idempotent. */
   | "hrms-leave-credit"
@@ -146,6 +165,8 @@ export type JobName =
   | "revert-sheet-paid"
   | "provision-team"
   | "backfill-timeline"
+  /** Find the photographs and PDFs customers sent before the webhook kept them. */
+  | "wa-reply-media"
   | "mbos-nightly"
   | "mbos-hourly"
   /** Relearn the office's shorthand from logged calls, for the call assistant. */
@@ -272,6 +293,34 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
     await run("recompute-sales-managers", async () => {
       const n = await recomputeSalesManagers();
       return { recordsAffected: n, detail: `${n} customers updated` };
+    }, triggeredById),
+  );
+
+  /*
+   * The person Mahek designates to approve a lead its Sales Manager raised
+   * herself, seated on each one so they can see it. After the pass above, which
+   * may have just seated the Sales Manager. Does nothing until somebody is
+   * designated on the Settings screen.
+   */
+  results.push(
+    await run("self-raised-verifier-seats", async () => {
+      const { ensureSelfRaisedVerifierSeats } = await import("./services/self-raised-verifier-service");
+      const n = await ensureSelfRaisedVerifierSeats();
+      return { recordsAffected: n, detail: `${n} leads seated` };
+    }, triggeredById),
+  );
+
+  /*
+   * Where each shop is, for every account the location review never saw —
+   * matched from the sheet's own text against the reviewed tree, so a shop
+   * created today can be filtered by state, district, city and area tomorrow.
+   * A reviewed or hand-picked place is never touched.
+   */
+  results.push(
+    await run("resolve-typed-places", async () => {
+      const out = await resolveTypedPlaces();
+      await refreshPlaceCounts();
+      return { recordsAffected: out.considered, detail: out.detail };
     }, triggeredById),
   );
 
@@ -573,6 +622,17 @@ async function erpInboxStep() {
   return { recordsAffected: r.drafted, detail: r.skipped ? `skipped: ${r.skipped}` : `${r.screened} screened · ${r.drafted} drafted` };
 }
 
+async function topCustomersReportStep() {
+  const { ensureCurrentTopCustomerReports } = await import("./services/top-customers-service");
+  const { generated } = await ensureCurrentTopCustomerReports();
+  return {
+    recordsAffected: generated.length,
+    detail: generated.length
+      ? `generated the ${generated.join(", ")}-month reports`
+      : "this month's reports already exist",
+  };
+}
+
 export async function runHourly(triggeredById?: string): Promise<JobResult[]> {
   const results: JobResult[] = [];
 
@@ -580,6 +640,12 @@ export async function runHourly(triggeredById?: string): Promise<JobResult[]> {
   results.push(await run("erp-inbox", erpInboxStep, triggeredById));
 
   results.push(await run("mbos-hourly", mbosHourly, triggeredById));
+
+  // The Top customers report has its own 10:00 IST cron line on the 1st. This
+  // is the net under it: a droplet whose crontab predates that line still
+  // gets the month's report within the hour, and on every other hour it is
+  // one indexed lookup that finds the report already there.
+  results.push(await run("top-customers-report", topCustomersReportStep, triggeredById));
 
   // The founder's WhatsApp rules. The pass checks the sending window itself
   // (10 am–1 pm IST unless the founder changed it) and returns at once
@@ -604,6 +670,23 @@ export async function runHourly(triggeredById?: string): Promise<JobResult[]> {
       };
     }, triggeredById),
   );
+
+  // Delivered and read, read back from Wati's history for the last week —
+  // the webhook has not been bringing them (see lib/wati-receipts.ts).
+  results.push(
+    await run("whatsapp-receipts", async () => {
+      const { refreshReceipts } = await import("./services/whatsapp-receipts-service");
+      const r = await refreshReceipts({ days: 7 });
+      return {
+        recordsAffected: r.updated,
+        detail: `${r.updated} ticks moved across ${r.numbers} numbers${r.errors ? `, ${r.errors} numbers Wati did not answer for` : ""}`,
+      };
+    }, triggeredById),
+  );
+
+  // A file a customer sent that arrived without its path — found in Wati's
+  // history, so the chat can show it. Two days back; by hand reads everything.
+  results.push(await runReplyMedia(triggeredById, 2));
 
   results.push(
     await run("escalate-complaint-sla", async () => {
@@ -772,6 +855,22 @@ export async function runJob(
       return runHourly(triggeredById);
     case "day-boundary":
       return runDayBoundary(triggeredById);
+    case "top-customers-report":
+      return [await run("top-customers-report", topCustomersReportStep, triggeredById)];
+    case "punch-out-reminders":
+      /* Its own mode rather than a step of `hourly`: that one runs at :52 IST
+         on the droplet's clock, which would land a six o'clock reminder at
+         ten to seven. The half-hourly cycle runs at :07 and :37. */
+      return [
+        await run(
+          "punch-out-reminders",
+          async () => {
+            const { sendPunchOutReminders } = await import("./services/punch-out-reminder-service");
+            return sendPunchOutReminders();
+          },
+          triggeredById,
+        ),
+      ];
     case "build-queues":
       /*
        * Build every telecaller's list for today, before the shift.
@@ -885,6 +984,47 @@ export async function runJob(
           triggeredById,
         ),
       ];
+    case "place-tree-import":
+      /*
+       * `data/places/customer-places.csv`, the reviewed tree. Idempotent and
+       * re-runnable; `--dry-run` reports what it would create and writes
+       * nothing. Each row it writes is marked decided, so no unattended pass
+       * moves a shop a person checked.
+       */
+      return [
+        await run(
+          "place-tree-import",
+          async () => {
+            const out = await importPlaceTree({ dryRun: options.dryRun });
+            return { recordsAffected: out.customersSet, detail: out.detail };
+          },
+          triggeredById,
+        ),
+      ];
+    case "resolve-typed-places":
+      return [
+        await run(
+          "resolve-typed-places",
+          async () => {
+            const out = await resolveTypedPlaces();
+            await refreshPlaceCounts();
+            return { recordsAffected: out.considered, detail: out.detail };
+          },
+          triggeredById,
+        ),
+      ];
+    case "self-raised-verifier-seats":
+      return [
+        await run(
+          "self-raised-verifier-seats",
+          async () => {
+            const { ensureSelfRaisedVerifierSeats } = await import("./services/self-raised-verifier-service");
+            const n = await ensureSelfRaisedVerifierSeats();
+            return { recordsAffected: n, detail: `${n} leads seated` };
+          },
+          triggeredById,
+        ),
+      ];
     case "recompute-sales-managers":
       /*
        * Hand-triggerable on its own, not only bundled in the nightly — the
@@ -970,6 +1110,25 @@ export async function runJob(
           triggeredById,
         ),
       ];
+    case "erp-packing-import":
+      return [
+        await run(
+          "erp-packing-import",
+          async () => {
+            const { importPackingFromMahekPlus, packingImportSummary } = await import("./erp/packing-import");
+            const r = await importPackingFromMahekPlus({ dryRun: !!options.dryRun, userId: triggeredById });
+            const lines = [
+              packingImportSummary(r),
+              ...r.noSku.map((x) => `  no SKU: Product ID ${x.productIdOnSheet} (${x.name}) — row ${x.row}`),
+              ...r.unknownCan.map((x) => `  unknown Can Use: "${x.canUse}" on ${x.sku} — row ${x.row}`),
+              ...r.unknownBoxType.map((x) => `  unknown Box Type: "${x.boxType}" on ${x.sku} — row ${x.row}`),
+              ...r.conflicting.map((x) => `  disagrees: Product ID ${x.productIdOnSheet} on ${x.sku}, Product ID ${x.keptFrom} used — row ${x.row}`),
+            ];
+            return { recordsAffected: r.applied ? r.materialsCreated.length + r.packingSet.length : 0, detail: lines.join("\n") };
+          },
+          triggeredById,
+        ),
+      ];
     case "project-sheet":
       return [await runProjection(triggeredById, options)];
     case "revert-sheet-paid":
@@ -978,6 +1137,8 @@ export async function runJob(
       return [await runTeamProvision(triggeredById, options)];
     case "backfill-timeline":
       return [await runBackfillTimeline(triggeredById)];
+    case "wa-reply-media":
+      return [await runReplyMedia(triggeredById)];
     case "hrms-sync":
     case "hrms-reparse":
       return [await runEmployeeSync(job, triggeredById)];
@@ -989,6 +1150,8 @@ export async function runJob(
       return [await runFieldActivityProjection(triggeredById)];
     case "field-activity-rematch":
       return [await runFieldActivityRematch(triggeredById)];
+    case "field-activity-reparse":
+      return [await runFieldActivityReparse(triggeredById)];
     case "customer-master-sync":
       return [await runCustomerMasterSync(triggeredById)];
     case "customer-master-project":
@@ -1167,9 +1330,35 @@ async function runFieldActivitySync(
         mode,
         triggeredById,
       });
+      /* The daily full read also re-reads every stored DATE, because the hash
+         compare above rewrites only rows whose cells changed and a row read
+         the wrong way round is otherwise wrong for ever. Cheap: no Google,
+         and it writes only rows whose answer moved. */
+      const dates = mode === "reconcile" ? await reparseFieldActivityDates() : null;
       return {
-        recordsAffected: outcome.rowsCreated + outcome.rowsUpdated,
-        detail: outcome.detail,
+        recordsAffected: outcome.rowsCreated + outcome.rowsUpdated + (dates?.moved ?? 0),
+        detail: outcome.detail + (dates?.moved ? `; ${dates.moved} stored dates re-read` : ""),
+      };
+    },
+    triggeredById,
+  );
+}
+
+/**
+ * Re-read every stored activity date in the order its own read was written —
+ * see `reparseFieldActivityDates`. The one to run when the READING of a date
+ * changed rather than the sheet.
+ */
+async function runFieldActivityReparse(triggeredById?: string): Promise<JobResult> {
+  return run(
+    "field-activity-reparse",
+    async () => {
+      const r = await reparseFieldActivityDates();
+      return {
+        recordsAffected: r.moved,
+        detail:
+          `${r.scanned} rows re-read (${r.orders.dmy} day-first, ${r.orders.mdy} month-first) · ` +
+          `${r.moved} dates corrected · ${r.nowUnreadable} unreadable · ${r.timelineMoved} timeline entries moved`,
       };
     },
     triggeredById,
@@ -1458,6 +1647,25 @@ async function runTeamProvision(
  * By hand, not scheduled. Once it has run there is nothing left for it to do,
  * and the going-forward writes are in the transactions that log the calls.
  */
+/**
+ * Files customers sent on WhatsApp that MahekOne holds no path to, found in
+ * Wati's history. By hand it reads every such row; the hourly pass reads the
+ * last two days, for a file the webhook ever delivers without its path.
+ */
+async function runReplyMedia(triggeredById?: string, sinceDays?: number): Promise<JobResult> {
+  return run(
+    "wa-reply-media",
+    async () => {
+      const r = await backfillReplyMedia(sinceDays);
+      return {
+        recordsAffected: r.found,
+        detail: `${r.found} of ${r.looked} files found again, across ${r.numbers} ${r.numbers === 1 ? "number" : "numbers"}.`,
+      };
+    },
+    triggeredById,
+  );
+}
+
 async function runBackfillTimeline(triggeredById?: string): Promise<JobResult> {
   return run(
     "backfill-timeline",

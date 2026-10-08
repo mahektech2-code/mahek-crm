@@ -34,7 +34,7 @@ import { customerStory } from "./customers";
  * the owner's number and not a second reading of it.
  *
  * A stuck Suspect is `mustDecideSuspect`'s rule said in SQL: still a Suspect,
- * never decided, with at least `leads.suspectMaxVisits` visits on the handset.
+ * never decided, with at least `mbos.leads.maxSuspectVisits` visits on the handset.
  * Samples out are `mbos_samples` with the customer and no verdict yet.
  *
  * "Assign" moves the owner — the owner IS the assignment. A salesman is given
@@ -46,7 +46,7 @@ import { customerStory } from "./customers";
 const TZ = "Asia/Kolkata";
 const CLOSED_STAGES = ["lost", "won", "customer", "active_distributor"];
 const CLOSED_SQL = sql.raw(`('${CLOSED_STAGES.join("','")}')`);
-const OPEN_WHERE = sql`c.kind = 'lead' and not coalesce(c.lead_archived, false)
+const OPEN_WHERE = sql`c.kind = 'lead' and not coalesce(c.lead_archived, false) and c.deleted_at is null
   and (c.lead_stage is null or c.lead_stage::text not in ${CLOSED_SQL})`;
 const LAST_TOUCHED = sql.raw(
   `greatest(c.lead_last_activity_date, c.last_contact_date, c.last_visit_date, (c.created_at at time zone '${TZ}')::date)`,
@@ -61,7 +61,7 @@ const n = (v: unknown) => Number(v ?? 0);
 
 function stuckWhere(cap: number): SQL {
   return sql`c.lead_stage = 'suspect' and c.lead_suspect_decided_at is null
-    and not coalesce(c.lead_archived, false) and ${VISITS} >= ${cap}`;
+    and not coalesce(c.lead_archived, false) and c.deleted_at is null and ${VISITS} >= ${cap}`;
 }
 
 function sourceLabel(config: Config, code: string | null): string {
@@ -136,7 +136,7 @@ async function openPage(query: TableQuery, config: Config, today: string): Promi
     q.length >= 2
       ? sql`and (c.name ilike ${like} or c.city ilike ${like} or c.company_name ilike ${like} or c.phone ilike ${like})`
       : sql``;
-  const cap = Number(config["leads.suspectMaxVisits"]);
+  const cap = Number(config["mbos.leads.maxSuspectVisits"]);
   const [counts] = await db.execute<{ total: number; matched: number }>(sql`
     select count(*)::int as total,
            count(*) filter (where true ${search})::int as matched
@@ -257,7 +257,7 @@ async function cohortPage(today: string, config: Config, query: TableQuery): Pro
 
 async function headline(ctx: Ctx, config: Config) {
   const p = ctx.period;
-  const cap = Number(config["leads.suspectMaxVisits"]);
+  const cap = Number(config["mbos.leads.maxSuspectVisits"]);
   const reviewDays = Number(config["mbos.samples.reviewAfterDays"]);
   const [now, before, [stuck], [samples]] = await Promise.all([
     leadsCreatedIn({ from: p.from, to: p.to }, {}),
@@ -349,7 +349,7 @@ const TITLES: Record<string, string> = {
 /* ----------------------------------------------------------------- record */
 
 async function leadRecord(ctx: Ctx, id: string, config: Config): Promise<RecordView> {
-  const cap = Number(config["leads.suspectMaxVisits"]);
+  const cap = Number(config["mbos.leads.maxSuspectVisits"]);
   const [r] = await db.execute<Record<string, unknown>>(sql`
     select c.id, c.name, c.company_name, c.contact_person, c.phone, c.email, c.city, c.region, c.address,
            c.kind::text as kind, c.lead_stage::text as stage, to_char(c.lead_stage_since, 'YYYY-MM-DD') as stage_since,

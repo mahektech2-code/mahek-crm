@@ -1,13 +1,15 @@
 import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
 import {
+  ALWAYS_OPEN_MODULES,
   APP_MODULES,
+  isAlwaysOpen,
   moduleAllowed,
   moduleForPath,
   moduleGroupsForApp,
   modulesForApp,
 } from "./modules";
-import { grantableApps } from "./modules";
+import { WHATSAPP_MODULES, getModule, grantableApps, writeModuleOf } from "./modules";
 import { NAV, PINNED, navHrefs as crmNavHrefs } from "@/components/shell/nav";
 import { NOT_IN_SIDEBAR, SALES_NAV, SALES_PINNED, navHrefs } from "@/app/sales/nav";
 
@@ -22,8 +24,10 @@ describe("what a module grant means", () => {
     // The rule the whole migration rests on. Every grant that existed before
     // this table did carries no module rows, and has to keep opening
     // everything it opened yesterday.
+    // Every one EXCEPT an explicitOnly seat, which answers to its own row
+    // alone — that exception is the whole point of the flag.
     for (const m of modulesForApp("crm")) {
-      assert.equal(moduleAllowed(m.key, [], "crm"), true);
+      assert.equal(moduleAllowed(m.key, [], "crm"), !m.explicitOnly, m.key);
     }
   });
 
@@ -41,17 +45,20 @@ describe("what a module grant means", () => {
     assert.equal(moduleAllowed("accounts.bills", granted, "accounts"), false);
   });
 
-  it("an administrator holds every offByDefault module whatever the rows say, and nothing else beyond them", () => {
+  it("an administrator holds every offByDefault module whatever the rows say, except an explicitOnly one, and nothing else beyond them", () => {
     const rows = ["crm.dashboard", "crm.customers"];
     const off = modulesForApp("crm").filter((m) => m.offByDefault).map((m) => m.key);
     assert.deepEqual(
       off,
       ["crm.lead-calling-desk", "crm.sales-manager", "crm.lead-lost"],
-      "the desk, the CRM's Sales Manager seat and Lost are the only modules the bypass can reach",
+      "the desk, the CRM's Sales Manager seat and Lost are the only offByDefault modules",
     );
 
     for (const key of off) {
-      assert.equal(moduleAllowed(key, rows, "crm", true), true);
+      /* The Sales Manager seat is offByDefault AND explicitOnly, so the
+         bypass does not reach it — see the explicitOnly test below. */
+      const explicit = modulesForApp("crm").find((m) => m.key === key)?.explicitOnly;
+      assert.equal(moduleAllowed(key, rows, "crm", true), !explicit);
       assert.equal(moduleAllowed(key, rows, "crm", false), false);
       assert.equal(moduleAllowed(key, rows, "crm"), false, "not an administrator by default");
     }
@@ -72,7 +79,19 @@ describe("what a module grant means", () => {
    */
   it("an explicitOnly module answers to its own row alone — not a whole-app grant, not an administrator hat", () => {
     const marked = modulesForApp("sales").filter((m) => m.explicitOnly).map((m) => m.key);
-    assert.deepEqual(marked, ["sales.lead-pipeline"], "the one module this bypass must not reach");
+    assert.deepEqual(marked, ["sales.lead-pipeline"], "the one Sales Dashboard module this bypass must not reach");
+    assert.deepEqual(
+      APP_MODULES.filter((m) => m.explicitOnly).map((m) => m.key).sort(),
+      ["sales.lead-pipeline"],
+      "the Sales Dashboard's pipeline, and nothing else — the CRM's seat is scoped by the seat itself",
+    );
+    for (const m of APP_MODULES.filter((x) => x.explicitOnly)) {
+      assert.equal(m.offByDefault, true, `${m.key} must be offByDefault too, or a first tick of the app sweeps it in`);
+    }
+
+    // The CRM's seat is reached by a whole-CRM grant: its scope is the seat.
+    assert.equal(moduleAllowed("crm.sales-manager", [], "crm", false), true, "whole CRM, no row");
+    assert.equal(moduleAllowed("crm.sales-manager", ["crm.sales-manager"], "crm", false), true);
 
     // A. admin + whole Sales app, no explicit row -> denied
     assert.equal(moduleAllowed("sales.lead-pipeline", [], "sales", true), false);
@@ -103,6 +122,34 @@ describe("what a module grant means", () => {
     // Narrowed rows that simply omit it behave as everyone already expects.
     assert.equal(moduleAllowed("crm.lead-calling-desk", ["crm.dashboard"], "crm", false), false);
     assert.equal(moduleAllowed("crm.lead-calling-desk", ["crm.dashboard"], "crm", true), true);
+  });
+});
+
+describe("retired and always-open modules", () => {
+  it("the retired Reports app keeps its one module, so an old grant can still be taken away", () => {
+    assert.deepEqual(modulesForApp("reports").map((m) => m.key), ["reports.home"]);
+  });
+
+  it("the handset's one module points at no web path", () => {
+    const [field] = modulesForApp("field");
+    assert.equal(modulesForApp("field").length, 1, "one module, so the app can be granted at all");
+    assert.equal(field.key, "field.home");
+    assert.equal(moduleForPath("/field"), undefined, "there is no /field screen to guard");
+  });
+
+  it("the retired People app keeps exactly one module, so a held grant can be taken away", () => {
+    assert.equal(modulesForApp("people").length, 1);
+  });
+
+  it("the always-open set names real modules of HRMS and the ERP", () => {
+    assert.ok(ALWAYS_OPEN_MODULES.size > 0);
+    for (const key of ALWAYS_OPEN_MODULES) {
+      const mod = APP_MODULES.find((m) => m.key === key);
+      assert.ok(mod, `${key} is always open and is not a module`);
+      assert.ok(mod.app === "hrms" || mod.app === "erp", `${key} is not an HRMS or ERP module`);
+      assert.equal(isAlwaysOpen(key), true);
+    }
+    assert.equal(isAlwaysOpen("crm.dashboard"), false);
   });
 });
 
@@ -178,7 +225,9 @@ describe("the registry and the navigation agree", () => {
     assert.equal(desk?.href, "/crm/leads/calling-desk");
     assert.ok(crmNavHrefs().includes("/crm/leads/calling-desk"));
     const item = NAV.flatMap((g) => g.items).find((i) => i.href === "/crm/leads/calling-desk");
-    assert.equal(item?.label, "Telecaller");
+    /* The sidebar says what the access screen says — it read "Telecaller"
+       against a module called "Calling desk", one grant under two names. */
+    assert.equal(item?.label, desk?.label);
   });
 
   it("every Sales Dashboard module is reachable from the sidebar", () => {
@@ -293,6 +342,52 @@ describe("the registry and the navigation agree", () => {
     // uniqueness on (user, module) enough.
     for (const m of APP_MODULES) {
       assert.equal(m.key.split(".")[0], m.app, `${m.key} does not belong to ${m.app}`);
+    }
+  });
+});
+
+describe("WhatsApp has a Read and a Write level", () => {
+  const CRM_READ = "crm.whatsapp";
+  const CRM_WRITE = "crm.whatsapp-reply";
+
+  it("both apps that draw the screen carry a write level beside it", () => {
+    for (const key of WHATSAPP_MODULES) {
+      const write = writeModuleOf(key);
+      assert.ok(write, `${key} has no write level`);
+      assert.equal(write.app, getModule(key)?.app);
+      assert.equal(write.href, getModule(key)?.href, "a write level points where its screen does");
+    }
+  });
+
+  it("a whole-app grant is read AND write, so nothing anybody held moved", () => {
+    assert.equal(moduleAllowed(CRM_READ, [], "crm"), true);
+    assert.equal(moduleAllowed(CRM_WRITE, [], "crm"), true);
+  });
+
+  it("the screen without its write level is read only", () => {
+    assert.equal(moduleAllowed(CRM_READ, [CRM_READ, "crm.payments"], "crm"), true);
+    assert.equal(moduleAllowed(CRM_WRITE, [CRM_READ, "crm.payments"], "crm"), false);
+  });
+
+  it("a write level without its screen opens nothing", () => {
+    assert.equal(moduleAllowed(CRM_WRITE, [CRM_WRITE, "crm.payments"], "crm"), false);
+    assert.equal(moduleAllowed(CRM_READ, [CRM_WRITE, "crm.payments"], "crm"), false);
+  });
+
+  it("no path resolves to a write level — it is not a destination", () => {
+    assert.equal(moduleForPath("/crm/whatsapp")?.key, CRM_READ);
+    assert.equal(moduleForPath("/accounts/whatsapp")?.key, "accounts.whatsapp");
+    for (const m of APP_MODULES.filter((x) => x.writeOf)) {
+      assert.notEqual(moduleForPath(m.href)?.key, m.key);
+    }
+  });
+
+  it("every write level names a real screen of its own app", () => {
+    for (const m of APP_MODULES.filter((x) => x.writeOf)) {
+      const screen = getModule(m.writeOf!);
+      assert.ok(screen, `${m.key} names ${m.writeOf}, which is not a module`);
+      assert.equal(screen.app, m.app);
+      assert.equal(screen.writeOf, undefined, "a write level of a write level means nothing");
     }
   });
 });

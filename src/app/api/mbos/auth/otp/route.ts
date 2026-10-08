@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { canOpen } from "@/lib/access";
 import { findAccount, otpAvailability, sendOtp } from "@/lib/services/otp-service";
 
 /* ---------------------------------------------------------------------------
@@ -27,16 +28,30 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "The request was not readable JSON." }, { status: 400 });
   }
   const mobile = typeof body.mobile === "string" ? body.mobile.trim() : "";
-  if (!mobile) return NextResponse.json({ ok: false, error: "Enter your work number." }, { status: 400 });
+  if (!mobile) return NextResponse.json({ ok: false, error: "Enter your mobile number." }, { status: 400 });
 
   const user = await findAccount(mobile);
-  if (!user || !user.active) {
+  /*
+   * ONLY TO SOMEBODY THE HANDSET WOULD LET IN.
+   *
+   * Login refuses an account without the `field` grant, but by then the code
+   * had already gone out — so this endpoint would message the WhatsApp of any
+   * employee whose number somebody typed, a telecaller or the founder, with a
+   * sign-in code for an app they do not hold. That is a nuisance on its own and
+   * a phishing pretext at its worst ("I sent you a code by mistake, read it
+   * back to me"). So the grant is asked BEFORE anything is sent.
+   *
+   * And the answer for "no grant" is the answer for "no account", word for
+   * word and status for status: a different reply would turn this form into a
+   * way to find out which numbers belong to staff who hold the handset.
+   */
+  if (!user || !user.active || !(await canOpen(user.id, "field"))) {
     return NextResponse.json(
       { ok: false, error: `No open MahekOne account uses ${mobile}. Check the number, or ask your manager.` },
       { status: 404 },
     );
   }
-  const sent = await sendOtp(user.id, "login");
+  const sent = await sendOtp(user.id, "login", { surface: "handset", requestedWith: mobile });
   if (!sent.ok) {
     return NextResponse.json({ ok: false, error: sent.error, retryInSeconds: sent.retryInSeconds ?? null },
       { status: sent.retryInSeconds ? 429 : 400 },

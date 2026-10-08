@@ -60,7 +60,12 @@ export async function POST(
   const applied: string[] = [];
   for (const e of events.slice(0, 100)) {
     try {
-      applied.push(await applyWatiEvent(parseWatiEvent(e)));
+      const outcome = await applyWatiEvent(parseWatiEvent(e));
+      applied.push(outcome);
+      // One line per event — the type and what became of it, never the
+      // words or the number — so "did Wati send it at all" has an answer.
+      const type = e && typeof e === "object" ? String((e as Record<string, unknown>).eventType ?? "?") : "?";
+      console.log(`[wati webhook] ${type} -> ${outcome.replace(/\b\d{6,}\b/g, "…")}`);
     } catch (error) {
       // One bad event must not cost the rest, and must not make Wati retry
       // the whole batch into the same failure for a day.

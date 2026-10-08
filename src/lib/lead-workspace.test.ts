@@ -445,6 +445,21 @@ describe("the Sales Manager screens are workspace-aware", () => {
     }
   });
 
+  it("the Sales Manager record's Edit stays inside the workspace, and is not a route another module guards", () => {
+    const record = readFileSync("src/components/sales-lead-pipeline/desk/record-screen.tsx", "utf8");
+    assert.match(record, /editHref=\{`\$\{links\.base\}\/\$\{lead\.id\}\/edit`\}/, "Edit points at the workspace's own edit page");
+    assert.doesNotMatch(record, /editHref=\{links\.record/, "not at /crm/leads/<id>, which crm.leads guards and redirects away from");
+
+    assert.ok(existsSync("src/app/crm/leads/sales-manager/[id]/edit/page.tsx"), "the edit page exists");
+    /* No layout of its own: the module guard one folder up is what applies, and a second guard here
+       could only be a different module. */
+    assert.equal(existsSync("src/app/crm/leads/sales-manager/[id]/edit/layout.tsx"), false);
+    const page = readFileSync("src/app/crm/leads/sales-manager/[id]/edit/page.tsx", "utf8");
+    assert.match(page, /pipelineLead\(id/, "the lead is read through the seat scope");
+    assert.match(page, /notFound\(\)/, "outside the book is a 404");
+    assert.doesNotMatch(page, /requireModule\(.*"crm\.leads"/);
+  });
+
   it("every old view address still has a page, so no link the shared dialogs draw is dead", () => {
     for (const view of ["pipeline", "list", "today", "overdue", "mine", "distributors"]) {
       assert.ok(existsSync(`src/app/crm/leads/sales-manager/${view}/page.tsx`), `${view} has no page`);

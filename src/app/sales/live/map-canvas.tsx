@@ -1,5 +1,6 @@
 "use client";
 
+import * as React from "react";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { formatDistance } from "@/lib/geo";
 import {
@@ -40,15 +41,22 @@ import type { LastKnown } from "@/lib/services/sales-service";
 export function TeamList({
   rows,
   distanceMetres,
+  speedKmh,
   selectedId,
   onSelect,
   thresholds,
   nowMs,
   isToday,
+  day,
+  feed,
 }: {
+  /** The day on screen, so a row's link opens the same day. */
+  day: string;
   rows: LastKnown[];
   /** Null outside the "today" view — there is no trail to measure yet. */
   distanceMetres: Map<string, number> | null;
+  /** Only the people moving faster than the configured floor are in it. */
+  speedKmh?: Map<string, number>;
   selectedId: string | null;
   onSelect: (id: string) => void;
   thresholds: HandsetThresholds;
@@ -59,82 +67,212 @@ export function TeamList({
   nowMs: number;
   /**
    * Whether the day on screen is TODAY — which decides whether an age beside
-   * a fix means anything. See `seenLine`, and the banners on the page above,
+   * a fix means anything. See `seenLine`, and the warnings on the page above,
    * which are gated on it for the same reason.
    */
   isToday: boolean;
+  /** Whether the feed is live, drawn in the rail's header. */
+  feed?: React.ReactNode;
 }) {
-  return (
-    <div className="overflow-hidden rounded-[6px] border border-line bg-surface">
-      <div className="border-b border-divider px-4 py-3 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-        The team
-      </div>
-      {rows.map((r) => {
-        const hasFix = r.lat != null && r.lng != null;
-        const selected = selectedId === r.salesmanId;
-        /* An open day is one checked into and not yet out of. It changes what
-           silence MEANS — a quiet phone at nine at night is a phone in a
-           drawer, not a fault.
+  const [query, setQuery] = React.useState("");
+  const [filter, setFilter] = React.useState<Filter>("all");
 
-           `hasFix` above is deliberately NOT what answers "has his trail
-           produced anything": it is true of a salesman whose only fix all day
-           is his own punch-in, which is exactly the handset whose tracking is
-           dead. `trailSeenAt` comes down the row for that question and nothing
-           else — see `handset-health`'s `trailIsDead`. */
-        const notes = handsetNotes(
-          { ...r, dayOpen: Boolean(r.checkInAt && !r.checkOutAt) },
-          thresholds,
-          nowMs,
-        );
-        return (
-          <button
-            key={r.salesmanId}
-            type="button"
-            disabled={!hasFix}
-            onClick={() => onSelect(r.salesmanId)}
-            title={hasFix ? `Show ${r.salesmanName} on the map` : undefined}
-            className={
-              "flex w-full items-center gap-2.5 border-t border-[#F7F8FA] px-4 py-3 text-left first:border-t-0 disabled:cursor-default " +
-              (hasFix ? "cursor-pointer hover:bg-canvas" : "") +
-              (selected ? " bg-brand-soft" : "")
-            }
-          >
-            <span className="flex size-7 flex-none items-center justify-center rounded-[4px] bg-brand-soft text-[11px] font-semibold text-[#5223E0]">
-              {r.initials}
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="flex items-center gap-1.5">
+  /* Every row's notes and status, worked out once per render rather than once
+     per filter chip — the chips count what the list would show. */
+  const items = rows.map((r) => {
+    /* An open day is one checked into and not yet out of. It changes what
+       silence MEANS — a quiet phone at nine at night is a phone in a
+       drawer, not a fault.
+
+       `hasFix` is deliberately NOT what answers "has his trail produced
+       anything": it is true of a salesman whose only fix all day is his own
+       punch-in, which is exactly the handset whose tracking is dead.
+       `trailSeenAt` comes down the row for that question and nothing else —
+       see `handset-health`'s `trailIsDead`. */
+    const notes = handsetNotes({ ...r, dayOpen: Boolean(r.checkInAt && !r.checkOutAt) }, thresholds, nowMs);
+    return { r, notes, status: statusOf(r), attention: notes.some((n) => n.tone !== "info") };
+  });
+
+  const counts: Record<Filter, number> = {
+    all: items.length,
+    out: items.filter((i) => i.status === "out").length,
+    attention: items.filter((i) => i.attention).length,
+    notIn: items.filter((i) => i.status === "notIn").length,
+    done: items.filter((i) => i.status === "done").length,
+    leave: items.filter((i) => i.status === "leave").length,
+  };
+
+  const q = query.trim().toLowerCase();
+  const shown = items.filter(
+    (i) =>
+      (filter === "all" || (filter === "attention" ? i.attention : i.status === filter)) &&
+      (!q ||
+        i.r.salesmanName.toLowerCase().includes(q) ||
+        (i.r.place ?? "").toLowerCase().includes(q) ||
+        (i.r.deviceModel ?? "").toLowerCase().includes(q)),
+  );
+
+  return (
+    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[6px] border border-line bg-surface">
+      <div className="flex-none border-b border-divider px-3 pt-3 pb-2.5">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+            The team <span className="tabular-nums">· {rows.length}</span>
+          </span>
+          {feed}
+        </div>
+        {rows.length > 6 ? (
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Find a salesman, a place or a phone"
+            className="mt-2 h-8 w-full rounded-[4px] border border-line bg-surface px-2.5 text-[13px] text-ink placeholder:text-muted focus:border-brand focus:outline-none"
+          />
+        ) : null}
+        <div className="mt-2 flex flex-wrap gap-1">
+          {FILTERS.filter((f) => f.key === "all" || counts[f.key] > 0 || filter === f.key).map((f) => {
+            const on = filter === f.key;
+            return (
+              <button
+                key={f.key}
+                type="button"
+                onClick={() => setFilter(on && f.key !== "all" ? "all" : f.key)}
+                className={
+                  "inline-flex h-6 items-center gap-1 rounded-full border px-2 text-[12px] whitespace-nowrap " +
+                  (on
+                    ? "border-brand bg-brand-soft font-medium text-[#5223E0]"
+                    : "border-line bg-surface text-body hover:bg-canvas")
+                }
+              >
+                {f.label}
+                <span className="tabular-nums opacity-70">{counts[f.key]}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {shown.length === 0 ? (
+          <p className="px-4 py-6 text-center text-[13px] text-muted">
+            {rows.length === 0 ? "Nobody on the team yet." : "Nobody matches that."}
+          </p>
+        ) : null}
+        {shown.map(({ r, notes }) => {
+          const hasFix = r.lat != null && r.lng != null;
+          const selected = selectedId === r.salesmanId;
+          const distance = distanceMetres ? distanceMetres.get(r.salesmanId) ?? 0 : null;
+          const speed = r.checkOutAt ? undefined : speedKmh?.get(r.salesmanId);
+          return (
+            <div
+              key={r.salesmanId}
+              className={
+                "flex items-stretch border-t border-divider first:border-t-0" +
+                (selected ? " bg-brand-soft shadow-[inset_3px_0_0_#6E3FF3]" : "")
+              }
+            >
+            <button
+              type="button"
+              disabled={!hasFix}
+              onClick={() => onSelect(r.salesmanId)}
+              title={hasFix ? `Show ${r.salesmanName} on the map` : "No position to show on the map"}
+              aria-pressed={selected}
+              className={
+                "flex min-w-0 flex-1 items-start gap-2.5 py-2.5 pl-3 text-left disabled:cursor-default " +
+                (hasFix ? "cursor-pointer hover:bg-canvas" : "")
+              }
+            >
+              <span className="relative mt-0.5 flex size-7 flex-none items-center justify-center rounded-[4px] bg-brand-soft text-[11px] font-semibold text-[#5223E0]">
+                {r.initials}
                 <span
-                  className="block size-2 flex-none rounded-full"
+                  className="absolute -right-0.5 -bottom-0.5 block size-2.5 rounded-full border-2 border-surface"
                   style={{ background: dotColour(r) }}
                 />
-                <span className="truncate text-sm font-medium text-ink">{r.salesmanName}</span>
               </span>
-              <span className="mt-0.5 block truncate text-[12px] text-muted">{whereLine(r)}</span>
-              <span className="block text-[12px] text-muted">
-                {seenLine(r, nowMs, isToday, thresholds.noTrailMinutes)}
-                {distanceMetres ? ` · ${formatDistance(distanceMetres.get(r.salesmanId) ?? 0)}` : ""}
+              <span className="min-w-0 flex-1">
+                <span className="flex items-baseline justify-between gap-2">
+                  <span className="truncate text-sm font-medium text-ink">{r.salesmanName}</span>
+                  {speed != null ? (
+                    <span
+                      className="ml-auto flex-none text-[12px] font-medium text-ink tabular-nums"
+                      title="How fast he has moved over his last minute of positions"
+                    >
+                      {speed} km/h
+                    </span>
+                  ) : null}
+                  {distance != null ? (
+                    <span className="flex-none text-[12px] text-muted tabular-nums">
+                      {formatDistance(distance)}
+                    </span>
+                  ) : null}
+                </span>
+                <span className="mt-0.5 block truncate text-[12px] text-muted">
+                  {whereLine(r)} · {seenLine(r, nowMs, isToday, thresholds.noTrailMinutes)}
+                </span>
+                {r.deviceModel ? (
+                  <span className="block truncate text-[11px] text-muted" title={deviceTitle(r)}>
+                    {r.deviceModel}
+                  </span>
+                ) : null}
+                {notes.map((n) => (
+                  <span
+                    key={n.text}
+                    className={"mt-0.5 block text-[12px] leading-[16px] " + TONE[n.tone]}
+                    title={n.detail}
+                  >
+                    {n.text}
+                  </span>
+                ))}
               </span>
-              {r.deviceModel ? (
-                <span className="block truncate text-[12px] text-muted" title={deviceTitle(r)}>
-                  {r.deviceModel}
-                </span>
-              ) : null}
-              {notes.map((n) => (
-                <span
-                  key={n.text}
-                  className={"mt-0.5 block text-[12px] " + TONE[n.tone]}
-                  title={n.detail}
-                >
-                  {n.text}
-                </span>
-              ))}
-            </span>
-          </button>
-        );
-      })}
+            </button>
+            {/* HIS WHOLE DAY, in a tab of its own — the map and every visit,
+                stop and act in order. A link beside the row rather than the
+                row itself, because the row's own click is "show him on this
+                map", which a manager watching the team still wants. */}
+            <a
+              href={`/sales/live/${r.salesmanId}${isToday ? "" : `?day=${day}`}`}
+              target="_blank"
+              rel="noopener"
+              title={`Open ${r.salesmanName}'s whole day in a new tab`}
+              aria-label={`Open ${r.salesmanName}'s whole day in a new tab`}
+              className="flex w-9 flex-none items-start justify-center pt-3 text-[14px] text-muted no-underline hover:bg-canvas hover:text-brand hover:no-underline"
+            >
+              ↗
+            </a>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
+}
+
+/* ------------------------------------------------------------- the filters */
+
+type Status = "out" | "done" | "notIn" | "leave";
+type Filter = "all" | "attention" | Status;
+
+/**
+ * THE LIST IS FILTERED, NEVER THE MAP. At six salesmen a list is read top to
+ * bottom; at sixty it is searched, and the first question is "who needs me"
+ * — so "Needs attention" is a chip of its own, reading the same notes the rows
+ * draw. The map keeps everybody, because a filter that hid pins would make a
+ * missing salesman look like one who was never there.
+ */
+const FILTERS: { key: Filter; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "attention", label: "Needs attention" },
+  { key: "out", label: "Out" },
+  { key: "notIn", label: "Not checked in" },
+  { key: "done", label: "Punched out" },
+  { key: "leave", label: "On leave" },
+];
+
+function statusOf(r: LastKnown): Status {
+  if (r.onLeave) return "leave";
+  if (!r.checkInAt) return "notIn";
+  return r.checkOutAt ? "done" : "out";
 }
 
 /* --------------------------------------------------------------- the words */

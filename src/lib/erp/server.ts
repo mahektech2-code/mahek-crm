@@ -48,7 +48,7 @@ export type ScreenModule = {
  */
 export async function nextNumber(
   tx: { execute: (q: ReturnType<typeof sql>) => Promise<unknown> },
-  key: "pr" | "sfg" | "fg" | "packBatch" | "order",
+  key: "pr" | "sfg" | "fg" | "packBatch" | "order" | "po",
 ): Promise<number> {
   const rows = (await tx.execute(sql`update erp_series set last = last + 1 where key = ${key} returning last`)) as unknown as { last: number }[];
   if (!rows[0]) throw new Error(`No ERP series "${key}"`);
@@ -75,11 +75,13 @@ export async function erpAudit(
 ): Promise<void> {
   await db.insert(auditLog).values({
     id: `aud_${randomUUID().slice(0, 12)}`,
-    actorId: ctx.user.id,
+    /* The person signed in — never whoever a preview is showing the ERP as. */
+    actorId: ctx.actor.id,
     action,
     entityType,
     entityId,
-    actorRole: ctx.level ?? null,
+    /* The hat in force is the previewed one while previewing, so it is not the actor's. */
+    actorRole: ctx.viewingAs ? null : (ctx.level ?? null),
     actorApp: "erp",
     beforeState: (before ?? null) as never,
     afterState: (after ?? null) as never,

@@ -225,8 +225,9 @@ async function raiseValidationTask(
  */
 export async function nextWorkingDate(): Promise<string> {
   const config = await getConfig();
+  /* The company's calendar: the call is the office's, not one region's. */
   const holidays = await db.query.mbosHolidays
-    .findMany()
+    .findMany({ where: (h, { eq }) => eq(h.level, "company") })
     .catch(() => [] as { onDate: string }[]);
 
   /*

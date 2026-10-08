@@ -402,13 +402,22 @@ function handsetPayloads(unresolved: string[]): Sent[] {
  * that is.
  * ------------------------------------------------------------------------- */
 
-type Route = { schema?: string; readsDirectly?: string[]; note?: string };
+type Route = {
+  schema?: string;
+  /** Where one entity/op routes to two handlers by what the payload carries. */
+  schemas?: string[];
+  readsDirectly?: string[];
+  note?: string;
+};
 
 const ROUTES: Record<string, Route> = {
   "visit/create": { schema: "visitSchema" },
   "visit/update": { schema: "visitSchema" },
   "order/create": { schema: "orderSchema" },
-  "order/update": { schema: "orderProgressSchema" },
+  /* An update carrying lines is an edit (`orderEditSchema`); anything else is
+     the order moving along (`orderProgressSchema`). `handleOrder` routes on it. */
+  "order/update": { schemas: ["orderProgressSchema", "orderEditSchema"] },
+  "order_change_request/create": { schema: "orderChangeSchema" },
   "payment/create": { schema: "paymentSchema" },
   "payment/update": { schema: "paymentUpdateSchema" },
   "complaint/create": { schema: "complaintSchema" },
@@ -433,6 +442,7 @@ const ROUTES: Record<string, Route> = {
    */
   "leave/update": { readsDirectly: ["id", "state", "cancelReason"] },
   "tour/create": { schema: "tourSchema" },
+  "territory_request/create": { schema: "territoryRequestSchema" },
   "competitor/create": { schema: "competitorSchema" },
   "lead_validation/create": { schema: "leadValidationSchema" },
   "internal_note/create": { schema: "internalNoteSchema" },
@@ -526,7 +536,6 @@ const NOT_WANTED: Record<string, string> = {
   "order/create.customerName": "read back by /rejections so a refusal can name the shop",
   "payment/create.customerName": "the same",
   "visit/create.customerName": "the same",
-  "order/create.valueUnavailable": "read back by /rejections so a refused order says the value was never known",
   "payment/create.localReceiptRef": "the TMP- number on the paper slip, generated here and shown here; the office matches on `reference`",
 
   /*
@@ -536,6 +545,14 @@ const NOT_WANTED: Record<string, string> = {
   "sample/update.customerId": "sent on every mark so one landing on the CREATE branch is not refused for want of it",
   "sample/create.leadId": "the office collapsed leads and customers into one `customers` row; `customerId` IS the lead",
   "attendance/update.approvalId": "the approval syncs as its own entity naming this day as its subject",
+
+  /*
+   * THE HANDSET'S OWN READING OF AN ANSWER IT CANNOT GIVE. A change request is
+   * decided on the Approvals queue, and a handset that could set its own
+   * verdict would be approving itself; the server derives the state from the
+   * approval instead.
+   */
+  "territory_request/create.state": "shown on the phone until the office answers; the verdict comes from mbos_approvals, never from a handset",
 };
 
 test("every field the handset sends is one the server's schema accepts", () => {
@@ -572,9 +589,11 @@ test("every field the handset sends is one the server's schema accepts", () => {
     if (!accepted.has(key)) {
       accepted.set(
         key,
-        route.schema
-          ? schemaFields(actions, route.schema)
-          : new Set(route.readsDirectly ?? []),
+        route.schemas
+          ? new Set(route.schemas.flatMap((name) => [...schemaFields(actions, name)]))
+          : route.schema
+            ? schemaFields(actions, route.schema)
+            : new Set(route.readsDirectly ?? []),
       );
     }
     const takes = accepted.get(key)!;

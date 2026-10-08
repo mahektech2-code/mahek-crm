@@ -224,14 +224,95 @@ Two, doing different jobs.
 
 - **DigitalOcean daily backups** snapshot the whole droplet. They restore the
   *machine* — good for "the box is gone", useless for "someone deleted a row".
-- **`backup.sh`** dumps the database nightly at 01:15 IST, keeps a week locally
-  and a month in R2. This restores the *data*.
+  They are also the only copy of `/opt/mahekone/.env` — keep that file in a
+  password manager as well, because a snapshot is a week old at best.
+- **`backup.sh`** dumps the database and restores the *data*:
 
-Install the schedule once:
+| Kind | When (IST) | Droplet keeps | R2 keeps |
+|---|---|---|---|
+| nightly | 02:15 | 7 days | `daily/`, 30 days |
+| daytime | 08:15, 14:15, 20:15 | 2 days | `intraday/`, 7 days |
+| first nightly of the month | 02:15 on the 2nd | — | `monthly/`, ~13 months |
+| verify | Monday 04:00 | restores the newest dump into a scratch database, compares it with the live one, drops it | — |
+
+Every OTHER database on the server — today `mahek_website`, the public site's
+enquiries and applications — is dumped alongside as `db-<name>_<stamp>.sql.gz`,
+found at run time rather than listed. Restore one by hand:
+`gunzip -c backups/db-mahek_website_<stamp>.sql.gz | docker compose exec -T
+postgres psql -U mahek -d mahek_website` (it was dumped with `--clean`).
+
+So the most a disk failure can lose is about six working hours, not a day,
+and a mistake noticed after a month still has a monthly copy to go back to.
+
+Install the schedule (re-run after changing `backup.sh`; it replaces its own
+lines and leaves everything else in the crontab alone):
 
 ```bash
 ssh deploy@<droplet-ip> 'bash /opt/mahekone/backup.sh --install-cron'
 ```
+
+### Setting it up — four things, once
+
+**1. The encryption key.** On YOUR machine, never the droplet:
+
+```bash
+brew install gnupg                     # if gpg is missing
+gpg --quick-gen-key "MahekOne backups" rsa4096 encr never   # set a passphrase
+gpg --armor --export "MahekOne backups"             > backup-public.asc
+gpg --armor --export-secret-keys "MahekOne backups" > backup-private.asc
+```
+
+Put `backup-private.asc` AND its passphrase in the password manager, with a
+second person able to reach them. Lose both and every R2 copy is unreadable
+for ever; that is the price of an intruder not being able to read them either.
+Then send only the public half up:
+
+```bash
+scp backup-public.asc deploy@<droplet-ip>:/opt/mahekone/
+# and in /opt/mahekone/.env:
+BACKUP_GPG_RECIPIENT_FILE=/opt/mahekone/backup-public.asc
+```
+
+**2. The alert.** Create a free check at healthchecks.io — period 6 hours,
+grace 1 hour, email to two people — and set its ping URL as
+`BACKUP_HEALTHCHECK_URL` in `.env`. It emails when a run fails AND when no
+run arrives at all; the second is the one a log file can never report.
+
+**3. Lock the bucket, so the droplet cannot delete its own backups.** The R2
+token in `.env` can delete — `backup.sh` prunes with it — so anybody who gets
+onto the box could otherwise wipe the database and every backup of it in one
+sitting. In Cloudflare: R2 → `mahekone-backups` → Settings → **Bucket lock
+rules**, add one rule per prefix:
+
+| Prefix | Retain for |
+|---|---|
+| `daily/` | 30 days |
+| `intraday/` | 7 days |
+| `monthly/` | 365 days |
+
+A locked object cannot be deleted or overwritten by anybody, this token
+included, until it is that old. `backup.sh`'s own prune is refused until then
+and says nothing about it, which is expected. Add an **Object lifecycle rule**
+per prefix deleting at the same ages plus a day, so the bucket is pruned even
+if the script's prune never succeeds.
+
+**4. Check it.** `bash backup.sh --intraday` then `bash backup.sh --verify`
+by hand. The first should end `uploaded` with a `.gpg` file in
+`restore.sh --list-r2`; the second should list eight tables `ok`, and the
+healthcheck should show both pings.
+
+### Restoring
+
+```bash
+bash restore.sh --list-r2
+bash restore.sh backups/mahekone_<stamp>.sql.gz            # from the droplet: no key
+bash restore.sh --from-r2 daily/<file>.sql.gz.gpg --key /tmp/backup-private.asc
+```
+
+An R2 copy needs the private key. Either scp it to `/tmp` for the restore and
+`shred -u` it straight after, or — better — fetch and decrypt the file on your
+own machine (`gpg --decrypt`) and scp the plain `.sql.gz` across instead, so the
+private key never touches the droplet at all.
 
 ## What the droplet runs on a schedule
 
@@ -239,10 +320,18 @@ The host clock is **UTC**, so the crontab is written in UTC.
 
 | UTC | IST | What |
 |---|---|---|
-| `:07`, `:37` hourly | — | `sheet-sync.sh cycle` — append, taken, payments, parties, then project |
+| `:07`, `:37` hourly | — | `sheet-sync.sh cycle` — append, taken, payments, parties, then project, then the EMP 2.0 activity tab and its projection, then the punch-out reminders |
 | `:22` hourly | — | `sheet-sync.sh hourly` — the salesman score, the MBOS sweeps and escalations |
-| `20:13` | 01:43 | `sheet-sync.sh nightly` — reconcile, project, then the recomputes |
+| `20:13` | 01:43 | `sheet-sync.sh nightly` — reconcile, project, the activity tab's full compare, then the recomputes |
 | `20:45` | 02:15 | `backup.sh` — dump to R2, after the nightly has settled |
+| `02:45`, `08:45`, `14:45` | 08:15, 14:15, 20:15 | `backup.sh --intraday` — the day's work, so a disk failure loses hours, not a day |
+| `22:30` Sunday | 04:00 Monday | `backup.sh --verify` — restore the newest dump into a scratch database and compare |
+| `04:30` on the 1st | 10:00 on the 1st | `sheet-sync.sh monthly` — the Top customers report for the month just finished |
+
+`sheet-sync.sh` itself is copied to the droplet by the **Ship sync schedule**
+workflow whenever it changes on `main`, so a change to what the cron runs
+lands without anybody remembering to scp it. The crontab LINES are not
+copied — a new row below still has to be added by hand.
 
 The hourly row is newer than the other two and a deployment installed before it
 **will not have it** — check with `crontab -l` and add it if it is missing:
@@ -251,7 +340,14 @@ The hourly row is newer than the other two and a deployment installed before it
 22 * * * * /usr/bin/env bash /opt/mahekone/sheet-sync.sh hourly >> /var/log/mahekone-sync.log 2>&1
 ```
 
-It had no caller at all until then: `runHourly` shipped with the MBOS module,
+The monthly row is newer still. Without it the hourly pass generates the
+report at 10:52 instead of 10:00, so a missing line is late rather than lost:
+
+```
+30 4 1 * * /usr/bin/env bash /opt/mahekone/sheet-sync.sh monthly >> /var/log/mahekone-sync.log 2>&1
+```
+
+The hourly row had no caller at all until then: `runHourly` shipped with the MBOS module,
 the crontab knew `cycle` and `nightly`, and nothing asked for what sits between
 them. The visible cost was a handset showing yesterday's score — it reads the
 cache rather than deriving anything — and an attendance selfie retention window
@@ -339,6 +435,40 @@ the release back on whichever laptop has a JDK — which is the situation this
 workflow exists to end. Local `gradlew assembleRelease` is for trying a change
 on your own phone.
 
+## Push notifications
+
+**Until this is done, no handset can receive a push.** Every notification the
+office sends still lands on the in-app bell, but nothing reaches the lock
+screen: on Android a push token needs Firebase built into the APK, and on
+2026-10-03 not one active handset held a token. It takes two credentials, both
+from one Firebase project, and someone with the Google account has to create
+it.
+
+1. **Create the Firebase project.** console.firebase.google.com → Add project
+   (e.g. `mahek-mbos`). Analytics is not needed.
+2. **Register the Android app.** Project settings → Your apps → Add app →
+   Android, package name **`in.mahek.mbos`** (it must match `app.json`
+   exactly). Download `google-services.json`.
+3. **Give it to the APK build.** GitHub → Settings → Secrets and variables →
+   Actions → New repository secret, named **`MBOS_GOOGLE_SERVICES_JSON`**,
+   with the whole file pasted as the value. The `MBOS APK` workflow writes it
+   into the build and names it in `app.json` for that build only.
+4. **Let Expo send through it.** Firebase → Project settings → Service
+   accounts → Generate new private key (a JSON file). Then, from `mbos-app/`:
+   `npx eas-cli@latest credentials -p android` → production → Google Service
+   Account → *Manage your Google Service Account Key for Push Notifications
+   (FCM V1)* → upload that file. Or the same from expo.dev → the `mbos`
+   project → Credentials. Without this the handsets get tokens and Expo
+   refuses to deliver to them.
+5. **Ship an APK** (`MBOS APK` workflow, after the version bump — see
+   "Releasing the handset app"). This is native, so an over-the-air update
+   cannot carry it. Its run log says "Firebase configured for this build";
+   a warning instead means the secret was not found.
+6. **Check it worked.** Once salesmen have installed it and opened the app,
+   `mbos_devices.push_token` fills in, and Profile on the handset says push is
+   on. The handset's own punch-out reminder then switches itself off, because
+   the office's notification has taken over.
+
 ## Shipping to the handset without reinstalling it
 
 **Most changes to MBOS no longer need an APK.** `expo-updates` is wired in:
@@ -386,6 +516,42 @@ lose real work to deliver a cosmetic change.
 build that was installed" means the embedded bundle; anything else names the
 update. Without that, "the fix is not on my phone" and "the fix does not work"
 look identical from the office.
+
+## Protecting main
+
+Every push to `main` deploys to the app the accounts team is using, so `main`
+only moves through a pull request whose CI is green. That is a repository
+ruleset, and its whole definition is `.github/rulesets/main.json`:
+
+- **No direct pushes, no force-pushes, no deleting the branch.**
+- **A pull request is the only way in**, merged as a merge commit or a squash.
+  It needs no approving review — this is a one-account repository and GitHub
+  does not let anybody approve their own PR — but every review thread has to be
+  resolved first.
+- **All five CI jobs must pass**: `ci`, `image`, `stack`, `bootstrap-packages`
+  and `links`, reported by GitHub Actions. The branch does not have to be up to
+  date with `main` first: with many branches open at once that is a rebase per
+  merge, and the deploy runs the checks again on the merged commit anyway.
+- **A repository admin may bypass it through a pull request only** — the way
+  out on the day a check is broken for a reason that is not the change, never a
+  way to push straight to `main`.
+
+Apply it, or re-apply it after changing the file, with `gh` signed in as an
+admin:
+
+```bash
+scripts/apply-branch-ruleset.sh
+```
+
+It creates the ruleset the first time and updates it in place after that. On
+the web it is Settings → Rules → Rulesets → New ruleset → Import a ruleset,
+with the same file. Edit the FILE, not the settings page — a change made only
+in the browser is overwritten the next time somebody runs the script.
+
+**Renaming or adding a CI job means editing the ruleset in the same PR.** A
+required check is matched by job id, and one that never reports leaves every
+pull request waiting for it with nothing saying why. `branch-ruleset.test.ts`
+fails the build when the two files disagree.
 
 ## Day to day
 

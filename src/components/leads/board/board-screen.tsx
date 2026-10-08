@@ -12,7 +12,7 @@ import {
   type LeadFilterColumn,
   type LeadFilterOptions,
 } from "@/components/leads/filter-bar";
-import type { PlaceTree } from "@/lib/services/sales-service";
+import type { PlaceFilterOptions } from "@/lib/place-filters";
 import { SALES_TYPES, salesTypeLabel, stageLabel, type LeadStage } from "@/lib/lead-labels";
 import type { BoardCard, LeadBoard } from "@/lib/services/lead-board-service";
 import { AdvanceStage } from "../record/advance-stage";
@@ -69,7 +69,7 @@ export function BoardScreen({
   filters: Record<FilterColumn, string[]>;
   options: LeadFilterOptions;
   /** State → city → area, counted over the leads list. See the Where picker. */
-  places: PlaceTree;
+  places: PlaceFilterOptions;
   canWork: boolean;
   canOverride: boolean;
   /** `leads.allowManagerOverride`. Off means nobody may, however senior. */

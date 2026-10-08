@@ -15,22 +15,25 @@ import type { DeskQueue, DeskRow } from "./types";
 
 export type DeskView = "all" | DeskQueue;
 
-export const DESK_VIEWS: DeskView[] = ["all", "verify", "review", "sample", "order", "overdue"];
+export const DESK_VIEWS: DeskView[] = ["all", "verify", "review", "sample", "order", "overdue", "nurture"];
 
 export const QUEUE_LABEL: Record<DeskQueue, string> = {
   verify: "Verify prospect",
   review: "Qualification review",
-  sample: "Sample review",
+  sample: "Sample",
   order: "Order confirmation",
   overdue: "Overdue",
+  nurture: "Nurture task",
 };
 
 export const QUEUE_HELP: Record<DeskQueue, string> = {
   verify: "Prospects, and calling-desk requests, waiting for your verification call.",
   review: "Qualifications the Telecaller has completed and asked you to review.",
-  sample: "Sample requests to approve, and trials the shop has but nobody has reviewed.",
+  sample:
+    "Sample requests to approve, approved samples to dispatch, samples on the road to chase, and trials the shop has but nobody has reviewed.",
   order: "Expected orders on file that have not become an actual order yet.",
   overdue: "Leads whose next action date has passed.",
+  nurture: "Leads with a nurture task due today or past its day — what the sequence has asked you to do.",
 };
 
 export function parseDeskView(raw: string | null | undefined): DeskView {
@@ -42,7 +45,7 @@ export function inView(row: DeskRow, view: DeskView): boolean {
 }
 
 export function queueCounts(rows: DeskRow[]): Record<DeskQueue, number> & { all: number } {
-  const counts = { all: rows.length, verify: 0, review: 0, sample: 0, order: 0, overdue: 0 };
+  const counts = { all: rows.length, verify: 0, review: 0, sample: 0, order: 0, overdue: 0, nurture: 0 };
   for (const r of rows) for (const q of r.queues) counts[q] += 1;
   return counts;
 }
@@ -155,7 +158,7 @@ export function disabledReasons(caps: DeskCaps, f: DeskReasonFacts): string[] {
   const out: string[] = [];
   if (!caps.canVerify) {
     if (f.gateKind === "awaitingVerification" || ((f.stage === "prospect" || f.stage === "contacted") && !f.verified)) {
-      out.push("Verify prospect is switched off: it needs the lead.verify permission, which your account does not hold.");
+      out.push("Verify prospect is switched off: it needs the lead.verify permission, or to be the Sales Manager this lead is under, which your account is not.");
     }
     if (f.stage === "qualification" || f.stage === "qualified") {
       out.push("Reviewing the qualification is switched off: it needs the lead.verify permission, which your account does not hold.");

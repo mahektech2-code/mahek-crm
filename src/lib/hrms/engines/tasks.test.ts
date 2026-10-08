@@ -44,7 +44,7 @@ test("Take monthly task dates are clamped to the month's length", () => {
 
 test("the template rules speak the source's words", () => {
   const base = { category: "Important", startTime: "10:00", endTime: "10:30", weekdays: [] as string[] };
-  assert.equal(checkTemplate({ ...base, frequency: "Monthly", dayOfMonth: 10, beforeDay: 10 })?.message, "Before Should be Greater Than Selected Date !");
+  assert.equal(checkTemplate({ ...base, frequency: "Monthly", dayOfMonth: 10, beforeDay: 10 })?.message, "The complete-before day must be later than day 10");
   assert.equal(checkTemplate({ ...base, frequency: "Monthly", dayOfMonth: 10, beforeDay: 12 }), null);
   assert.equal(checkTemplate({ ...base, frequency: "Monthly", dayOfMonth: null, beforeDay: null })?.field, "dom");
   assert.equal(checkTemplate({ ...base, frequency: "Weekly", dayOfMonth: null, beforeDay: null })?.field, "weekdays");
@@ -56,7 +56,7 @@ test("a to-do expires the day after its till date, never with none", () => {
   assert.equal(todoExpired("2026-10-01", "2026-10-01"), false);
   assert.equal(todoExpired("2026-10-01", "2026-10-02"), true);
   assert.equal(todoExpired(null, "2030-01-01"), false);
-  assert.equal(expiredMessage("Send stock report", "2026-09-30"), "Send stock report Task of 30 Sep 2026 Date Expired");
+  assert.equal(expiredMessage("Send stock report", "2026-09-30"), "“Send stock report” was due by 30 Sep 2026 and has expired, so it can no longer be marked");
 });
 
 test("overdue: open and past the till date, or past the for date without one", () => {
@@ -111,7 +111,7 @@ test("the Task EOD message is the spec's format, five at most", () => {
   const checklist = [
     { task: "T1", status: "Done", naReason: null, remark: null },
     { task: "T2", status: "", naReason: null, remark: null },
-    ...Array.from({ length: 6 }, (_, i) => ({ task: `N${i + 1}`, status: "N/A", naReason: `R${i + 1}`, remark: null })),
+    ...Array.from({ length: 6 }, (_, i) => ({ task: `N${i + 1}`, status: "Not applicable", naReason: `R${i + 1}`, remark: null })),
   ];
   const todos = [
     { task: "Late one", status: "Open", forDate: "2026-10-01", toEmployeeId: "e1" },
@@ -124,20 +124,20 @@ test("the Task EOD message is the spec's format, five at most", () => {
   assert.equal(
     msg,
     [
-      "* 📝 Task EOD - Pooja Joshi*",
+      "*📝 Task EOD - Pooja Joshi*",
       "📅 *Date:* 1 Oct 2026",
       "--------------------------------",
       "📊 *Summary:*",
-      "🔹 *Total Tasks:* 8",
-      "✅ *Total Completed:* 1",
-      "⏳ *Total Pending:* 1",
-      "🚫 *Total Not Applicable:* 6",
+      "🔹 *Total tasks:* 8",
+      "✅ *Completed:* 1",
+      "⏳ *Pending:* 1",
+      "🚫 *Not applicable:* 6",
       "--------------------------------",
-      "🚫 *Not Applicable Tasks Details:*",
+      "🚫 *Not applicable tasks:*",
       "*Task:* 1. N1\n2. N2\n3. N3\n4. N4\n5. N5",
       "*Reason:* 1. R1\n2. R2\n3. R3\n4. R4\n5. R5",
       "--------------------------------",
-      "⚠ *Overdue / Pending Todo List:*",
+      "⚠ *Overdue and pending to-dos:*",
       "1. Late one",
     ].join("\n"),
   );

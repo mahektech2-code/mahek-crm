@@ -104,17 +104,11 @@ export async function salesmanPeriods(from: string, to: string): Promise<Salesma
            coalesce(s.travel, 0) as "travelPaise",
            coalesce(s.food, 0) as "foodPaise",
            coalesce(s.lodging, 0) as "lodgingPaise",
-           coalesce(s.other, 0) as "otherPaise",
-           e.net_salary_paise as "salaryPaise"
+           coalesce(s.other, 0) as "otherPaise"
       from users u
       join app_access a on a.user_id = u.id and a.app = 'field'
       left join spend s on s.user_id = u.id
       left join distance d on d.user_id = u.id
-      /* Email then company mobile — the same match payForPeriod uses, so the
-         salary here and the salary on the Salary screen cannot differ. */
-      left join employees e
-             on lower(e.email) = lower(u.email)
-             or (e.company_mobile is not null and e.company_mobile = u.phone)
      where u.active ${onlyMine(scope, "u.id")}
      order by u.name asc
   `);

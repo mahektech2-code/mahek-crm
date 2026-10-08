@@ -1,8 +1,9 @@
 import React from 'react';
-import { View, Pressable } from 'react-native';
+import { Animated, View } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Badge, Card, Choice, DashedButton, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../src/components/ui/primitives';
+import { skuText } from '../src/components/ui/sku';
 import { BottomSheet } from '../src/components/ui/overlays';
 import { color as C, radius, weight, type BadgeTone } from '../src/theme/tokens';
 import {
@@ -23,7 +24,8 @@ import { getCustomer, listCustomersPage, searchProducts, type Customer } from '.
 import { isoDate, plural } from '../src/lib/format';
 import { type CodedOption } from '../src/engines/funnel';
 import { useStore } from '../src/state/store';
-import { productLines } from '../src/lib/product-lines';
+import { PressableScale, Pop, Presence, Stagger, animateLayoutFor, useShake } from '../src/components/ui/motion';
+import { skuLines } from '../src/lib/sku-lines';
 
 /**
  * Samples given out and never followed up are the quietest way a sales day
@@ -186,15 +188,23 @@ export default function SamplesScreen() {
       {rows.length > 0 ? (
         <View style={{ flexDirection: 'row', gap: 8, marginTop: 16 }}>
           <Choice
-            label={'Needs chasing · ' + open.length}
+            label={'Needs follow-up · ' + open.length}
             selected={view === 'open'}
-            onPress={() => setView('open')}
+            onPress={() => {
+              /* Narrowing to what is owed takes the finished ones out of the
+                 middle of the list; they fade and the rest close up. */
+              if (view !== 'open') animateLayoutFor(rows.length);
+              setView('open');
+            }}
             style={{ flex: 1 }}
           />
           <Choice
             label={'All · ' + rows.length}
             selected={view === 'all'}
-            onPress={() => setView('all')}
+            onPress={() => {
+              if (view !== 'all') animateLayoutFor(rows.length);
+              setView('all');
+            }}
             style={{ flex: 1 }}
           />
         </View>
@@ -202,32 +212,32 @@ export default function SamplesScreen() {
 
       {status === 'reading' ? (
         <Card style={{ marginTop: 16, paddingVertical: 32 }}>
-          <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>Reading…</T>
+          <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>Loading…</T>
         </Card>
       ) : status === 'failed' ? (
         <Card style={{ marginTop: 16, paddingVertical: 32 }}>
           <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>
-            The samples could not be read off this phone
+            Could not open samples on this phone
           </T>
         </Card>
       ) : rows.length === 0 ? (
         <Card style={{ marginTop: 16, paddingVertical: 32 }}>
           <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>No samples out</T>
           <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 4 }}>
-            A trial is asked for from a lead once its twelve questions are answered.
+            Ask for one from a shop&apos;s record, or with Request a sample above. A lead gets one once its questions are answered.
           </T>
         </Card>
       ) : shown.length === 0 ? (
         <Card style={{ marginTop: 16, paddingVertical: 32 }}>
-          <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>Nothing waiting on you</T>
+          <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>Nothing pending for you</T>
           <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 4 }}>
-            {plural(rows.length, 'sample') + ' here, all of them finished. Tap All to read them.'}
+            {plural(rows.length, 'sample') + ' here. All are finished. Tap All to see them.'}
           </T>
         </Card>
       ) : null}
 
       <View style={{ gap: 12, marginTop: 16 }}>
-        {shown.map((x) => {
+        {shown.map((x, i) => {
           const days = Math.max(0, Math.round((now - x.requestedAt) / 86_400_000));
           const name = names[x.customerId] ?? 'Unknown shop';
           const owed = whatIsOwed(x);
@@ -247,8 +257,8 @@ export default function SamplesScreen() {
            * tab is still there for reading.
            */
           return (
-            <Pressable
-              key={x.id}
+            <Stagger key={x.id} index={i}>
+            <PressableScale
               onPress={() => router.push(`/sample?id=${x.id}&from=samples`)}
               accessibilityRole="button">
               <Card style={isSampleOverdue(x, today) ? { borderLeftWidth: 3, borderLeftColor: C.danger } : undefined}>
@@ -256,10 +266,14 @@ export default function SamplesScreen() {
                   <View style={{ flex: 1, minWidth: 0 }}>
                     <T style={[{ fontSize: 15, color: C.ink }, weight(500)]}>{name}</T>
                     <T s="caption" style={{ marginTop: 2 }}>
-                      {[x.productName, x.cans ? plural(x.cans, 'can') : null].filter(Boolean).join(' · ')}
+                      {[skuText(x.sku), x.productName, x.cans ? plural(x.cans, 'can') : null].filter(Boolean).join(' · ')}
                     </T>
                   </View>
-                  <Badge tone={toneFor(x.state)}>{x.state}</Badge>
+                  {/* Pops when the office moves it on — dispatched, received —
+                      which reaches this list on a pull while it is open. */}
+                  <Pop trigger={x.state}>
+                    <Badge tone={toneFor(x.state)}>{x.state}</Badge>
+                  </Pop>
                 </View>
 
                 {owed ? (
@@ -299,11 +313,12 @@ export default function SamplesScreen() {
 
                 {isSampleOverdue(x, today) ? (
                   <T style={[{ fontSize: 14, color: C.warnInk, marginTop: 4 }, weight(500)]}>
-                    Feedback is late — worth a call
+                    Feedback is late. Call them.
                   </T>
                 ) : null}
               </Card>
-            </Pressable>
+            </PressableScale>
+            </Stagger>
           );
         })}
       </View>
@@ -319,7 +334,7 @@ export default function SamplesScreen() {
         onPickShop={setPicked}
         onClose={() => setAskOpen(false)}
         onSubmit={async (form) => {
-          if (!picked) return notify('Which shop is the trial for?');
+          if (!picked) return notify('Which shop is the trial for?', 'warn');
           const r = await requestLeadSample({
             customerId: picked.id,
             leadId: params.lead ?? null,
@@ -329,10 +344,10 @@ export default function SamplesScreen() {
             application: form.application,
             reasonCode: form.reasonCode,
           });
-          if (!r.ok) return notify(r.message);
+          if (!r.ok) return notify(r.message, 'error');
           setAskOpen(false);
           load();
-          notify('Asked for · the office approves it before it goes out');
+          notify('Requested. The office will approve it before it is sent.');
         }}
       />
     </AppFrame>
@@ -382,13 +397,15 @@ function RequestSheet({
   const [book, setBook] = React.useState<Customer[]>([]);
   const [bookTotal, setBookTotal] = React.useState(0);
   const [query, setQuery] = React.useState('');
-  const [hits, setHits] = React.useState<{ id: string; name: string; formulation: string | null }[]>([]);
+  const [hits, setHits] = React.useState<{ id: string; name: string; formulation: string | null; sku: string | null }[]>([]);
   const [product, setProduct] = React.useState<{ id: string; name: string } | null>(null);
   const [cans, setCans] = React.useState('1');
   const [application, setApplication] = React.useState('');
   const [reasonCode, setReasonCode] = React.useState<string | null>(null);
   const [err, setErr] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
+  /* A ref, not the state, guards the write — see `submit`. */
+  const savingRef = React.useRef(false);
 
   React.useEffect(() => {
     let live = true;
@@ -397,7 +414,7 @@ function RequestSheet({
       return;
     }
     void searchProducts(query, 8).then((r) => {
-      if (live) setHits(r.map((p) => ({ id: p.id, name: p.name, formulation: p.formulation })));
+      if (live) setHits(r.map((p) => ({ id: p.id, name: p.name, formulation: p.formulation, sku: p.sku })));
     });
     return () => {
       live = false;
@@ -420,16 +437,26 @@ function RequestSheet({
     };
   }, [locked, shopQuery]);
 
+  /* A refusal shakes the box that says it and buzzes `warning`: on a sheet
+     this long the box can sit below the fold, and the buzz is what says look. */
+  const refusal = useShake('warning');
+  const refuse = (message: string) => {
+    setErr(message);
+    refusal.shake();
+  };
+
   const submit = async () => {
     /* The sheet closes only once the write returns, so a second tap on a slow
        phone raised a second sample request — and a second approval behind it —
-       for one trial. Only one of the two would ever be chased. */
-    if (saving) return;
-    if (!shop) return setErr('Which shop is the trial for?');
-    if (!product) return setErr('Which product is the trial of?');
-    if (!(Number(cans) > 0)) return setErr('How many cans?');
-    if (!application.trim()) return setErr('What will they use it on? Without that nobody can judge the trial.');
-    if (!reasonCode) return setErr('Say why they want a trial.');
+       for one trial. Only one of the two would ever be chased. A ref and not
+       the `saving` state, which is a render behind a fast second tap. */
+    if (savingRef.current) return;
+    if (!shop) return refuse('Which shop is the trial for?');
+    if (!product) return refuse('Which product is the sample for?');
+    if (!(Number(cans) > 0)) return refuse('How many cans?');
+    if (!application.trim()) return refuse('What will they use it on? This is needed.');
+    if (!reasonCode) return refuse('Say why they want a trial.');
+    savingRef.current = true;
     setSaving(true);
     try {
       await onSubmit({
@@ -440,6 +467,7 @@ function RequestSheet({
         reasonCode,
       });
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };
@@ -454,10 +482,10 @@ function RequestSheet({
           once named the shop — so there was nothing on any screen that could
           have told him the trial was going out to the wrong one. */}
       <T style={[{ fontSize: 15, lineHeight: 21, color: C.ink, marginTop: 4 }, weight(500)]}>
-        {shop ? 'For ' + (shop.name || 'this shop') : 'Pick the shop below'}
+        {shop ? 'For ' + (shop.name || 'this shop') : 'Choose the shop below'}
       </T>
       <T s="caption" style={{ marginTop: 2 }}>
-        The office approves it, then it is dispatched. You will be asked what they thought.
+        The office approves it, then it is sent. Later you will write their feedback.
       </T>
 
       {locked ? null : (
@@ -475,7 +503,7 @@ function RequestSheet({
               <Input
                 value={shopQuery}
                 onChangeText={(v) => { setShopQuery(v); setErr(null); }}
-                placeholder="Search your book by name, area or phone"
+                placeholder="Search your shops by name, area or phone"
               />
               <View style={{ gap: 8, marginTop: 8 }}>
                 {book.map((c) => (
@@ -489,11 +517,11 @@ function RequestSheet({
                   />
                 ))}
                 {shopQuery.trim() && book.length === 0 ? (
-                  <T s="caption">No shop in your book matches that.</T>
+                  <T s="caption">No shop matches that.</T>
                 ) : null}
                 {bookTotal > book.length ? (
                   <T s="caption">
-                    {'Showing ' + book.length + ' of ' + bookTotal + ' — search for the rest.'}
+                    {'Showing ' + book.length + ' of ' + bookTotal + '. Search to find more.'}
                   </T>
                 ) : null}
               </View>
@@ -518,18 +546,16 @@ function RequestSheet({
               {hits.map((p) => (
                 <Choice
                   key={p.id}
-                  /* The formulation leads and the SKU sits under it — the same
-                     rule the order form runs, in `src/lib/product-lines.ts`.
-                     What is PICKED is unchanged: the id and the product's own
-                     name, never the liquid's. */
-                  label={productLines({ displayName: p.name, subtitle: p.formulation }).lead}
-                  sub={productLines({ displayName: p.name, subtitle: p.formulation }).detail ?? undefined}
+                  /* The SKU's own name leads and the formulation sits under
+                     it — the rule the order form runs, in `src/lib/sku-lines.ts`. */
+                  label={skuLines({ name: p.name, formulation: p.formulation }).lead}
+                  sub={[skuText(p.sku), skuLines({ name: p.name, formulation: p.formulation }).detail].filter(Boolean).join(' · ') || undefined}
                   selected={false}
                   onPress={() => { setProduct({ id: p.id, name: p.name }); setQuery(''); }}
                   style={{ alignItems: 'flex-start', paddingHorizontal: 14 }}
                 />
               ))}
-              {query.trim() && hits.length === 0 ? <T s="caption">Nothing in the catalogue matches that.</T> : null}
+              {query.trim() && hits.length === 0 ? <T s="caption">No product matches that.</T> : null}
             </View>
           </>
         )}
@@ -567,16 +593,17 @@ function RequestSheet({
         </View>
       </View>
 
-      {err ? (
-        <View style={{ marginTop: 12, backgroundColor: C.dangerBg, borderRadius: radius.lg, padding: 12 }}>
+      <Presence show={!!err}>
+        <Animated.View
+          style={[{ marginTop: 12, backgroundColor: C.dangerBg, borderRadius: radius.lg, padding: 12 }, refusal.style]}>
           <T style={[{ fontSize: 14, lineHeight: 20, color: C.danger }, weight(500)]}>{err}</T>
-        </View>
-      ) : null}
+        </Animated.View>
+      </Presence>
 
       <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
         <SecondaryButton label="Cancel" onPress={onClose} style={{ flex: 1, borderRadius: radius.xl }} />
         <PrimaryButton
-          label={saving ? 'Asking…' : 'Ask for it'}
+          label={saving ? 'Sending…' : 'Request sample'}
           disabled={saving}
           onPress={submit}
           style={{ flex: 1, borderRadius: radius.xl }}

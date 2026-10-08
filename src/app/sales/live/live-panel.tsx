@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { dwellStops, type DwellStop } from "@/lib/engines/dwell";
+import { currentSpeedKmh } from "@/lib/engines/live-speed";
 import { trailMetres } from "@/lib/engines/trail-trips";
 import type { ActivityPoint, LastKnown, TrackPoint } from "@/lib/services/sales-service";
 import type { HandsetThresholds } from "@/lib/handset-health";
@@ -73,10 +74,13 @@ export function LivePanel({
   dwellMinMinutes,
   tripBreakMinutes,
   staleAfterSeconds,
+  speedMinKmh,
+  accuracyThresholdM,
   view,
   isToday,
   olaMapsKey,
   olaKeysSpent,
+  initialSelectedId,
   handsetThresholds,
   nowMs,
   cursorMs,
@@ -93,6 +97,10 @@ export function LivePanel({
   dwellMinMinutes: number;
   tripBreakMinutes: number;
   staleAfterSeconds: number;
+  /** Below this no speed is printed — `mbos.location.liveSpeedMinKmh`. */
+  speedMinKmh: number;
+  /** The same accuracy floor the trail is filtered by on the server. */
+  accuracyThresholdM: number;
   view: "now" | "today";
   isToday: boolean;
   /** What the Live map calls quiet and calls low — both configuration. */
@@ -111,8 +119,10 @@ export function LivePanel({
   olaMapsKey: string | null;
   /** With no key: whether every key held has run out, or none is set at all. */
   olaKeysSpent: boolean;
+  /** Who is selected on arrival — a link from Today names one salesman. */
+  initialSelectedId?: string | null;
 }) {
-  const [selectedId, setSelectedId] = React.useState<string | null>(null);
+  const [selectedId, setSelectedId] = React.useState<string | null>(initialSelectedId ?? null);
 
   const { frame, mode } = useLiveFeed({
     day,
@@ -151,6 +161,23 @@ export function LivePanel({
     }
     return { distanceMetres, dwells };
   }, [frame.tracks, dwellRadiusMetres, dwellMinMinutes]);
+
+  /* HOW FAST, NOW — so only on today, and measured against the panel's own
+     clock so a man whose fixes stopped arriving stops showing a speed within a
+     tick rather than keeping his last one all afternoon. Kept apart from the
+     memo above because it also moves with the clock, and the distance and the
+     dwells must not be recomputed every thirty seconds for nothing. In the
+     "now" view the tracks start empty and fill from the feed, so a speed
+     appears there once the first minute of fixes has arrived. */
+  const speeds = React.useMemo(() => {
+    const out = new Map<string, number>();
+    if (!isToday) return out;
+    for (const [id, points] of frame.tracks) {
+      const kmh = currentSpeedKmh(points, clockMs, { minKmh: speedMinKmh, accuracyThresholdM });
+      if (kmh != null) out.set(id, kmh);
+    }
+    return out;
+  }, [frame.tracks, clockMs, isToday, speedMinKmh, accuracyThresholdM]);
 
   const toggle = React.useCallback((id: string) => {
     setSelectedId((current) => (current === id ? null : id));
@@ -191,8 +218,8 @@ export function LivePanel({
     <div
       className={
         fullscreen
-          ? "fixed inset-0 z-50 grid grid-cols-1 gap-3 bg-canvas p-3 lg:grid-cols-[minmax(0,1fr)_clamp(280px,30%,360px)]"
-          : "grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_clamp(280px,30%,360px)]"
+          ? "fixed inset-0 z-50 grid grid-cols-[minmax(0,1fr)_clamp(300px,24%,380px)] grid-rows-[minmax(0,1fr)] gap-3 bg-canvas p-3"
+          : "grid h-full grid-cols-[minmax(0,1fr)_clamp(300px,24%,380px)] grid-rows-[minmax(0,1fr)] gap-3"
       }
     >
       <StreetMap
@@ -212,22 +239,23 @@ export function LivePanel({
         apiKey={olaMapsKey}
         keysSpent={olaKeysSpent}
       />
-      {/* The list scrolls WITHIN the window in fullscreen rather than pushing
-          the page down: the panel is fixed to the viewport, so anything taller
-          than it would simply be unreachable. `min-h-0` is what lets a grid
-          child shrink enough to scroll at all. */}
-      <div className={"flex flex-col gap-2 " + (fullscreen ? "min-h-0 overflow-y-auto" : "")}>
-        {isToday ? <FeedMode mode={mode} pollSeconds={pollSeconds} /> : null}
-        <TeamList
-          rows={frame.rows}
-          distanceMetres={view === "today" ? derived.distanceMetres : null}
-          selectedId={selectedId}
-          onSelect={toggle}
-          thresholds={handsetThresholds}
-          nowMs={clockMs}
-          isToday={isToday}
-        />
-      </div>
+      {/* THE TEAM IS A RAIL THE HEIGHT OF THE MAP, and scrolls inside itself —
+          in and out of fullscreen alike. It used to grow the page instead, so
+          at twenty salesmen the list was a second screen below the map and the
+          map was a picture you scrolled past to reach it. `min-h-0` is what
+          lets a grid child shrink enough to scroll at all. */}
+      <TeamList
+        day={day}
+        rows={frame.rows}
+        distanceMetres={view === "today" ? derived.distanceMetres : null}
+        speedKmh={speeds}
+        selectedId={selectedId}
+        onSelect={toggle}
+        thresholds={handsetThresholds}
+        nowMs={clockMs}
+        isToday={isToday}
+        feed={isToday ? <FeedMode mode={mode} pollSeconds={pollSeconds} /> : null}
+      />
     </div>
   );
 }
@@ -247,19 +275,24 @@ function FeedMode({ mode, pollSeconds }: { mode: LiveMode; pollSeconds: number }
   if (mode === "settled") return null;
   if (mode === "live") {
     return (
-      <p className="flex items-center gap-1.5 px-1 text-[12px] text-muted">
-        <span className="block size-1.5 flex-none rounded-full bg-[#1D7A45]" />
-        Live — positions arrive as the handsets send them.
+      <p
+        className="flex items-center gap-1.5 text-[12px] text-muted"
+        title="Positions arrive as the handsets send them."
+      >
+        <span className="block size-1.5 flex-none animate-pulse rounded-full bg-[#1D7A45]" />
+        Live
       </p>
     );
   }
   if (mode === "connecting") {
-    return <p className="px-1 text-[12px] text-muted">Connecting to the live feed…</p>;
+    return <p className="text-[12px] text-muted">Connecting…</p>;
   }
   return (
-    <p className="px-1 text-[12px] text-[#8A5A00]">
-      The live connection could not be held open here, so this screen is asking every{" "}
-      {pollSeconds} seconds instead. Everything below is still current to within that.
+    <p
+      className="text-[12px] text-[#8A5A00]"
+      title={`The live connection could not be held open here, so this screen is asking every ${pollSeconds} seconds instead. Everything is still current to within that.`}
+    >
+      Every {pollSeconds}s
     </p>
   );
 }

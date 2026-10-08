@@ -37,6 +37,7 @@ import { recomputeSalesManagers } from "@/lib/recompute";
 import { setLeadNextAction } from "@/lib/actions/leads";
 import { reassignLead } from "@/lib/actions/sales";
 import { verifyProspect } from "@/lib/actions/sales-manager-pipeline";
+import { editLeadBasics } from "@/lib/actions/sales-manager-edit";
 import { CRM_SALES_MANAGER_WORKSPACE } from "@/proxy";
 import { setTestWorkspace } from "@/lib/services/crm-sales-manager-scope";
 import { QUAL_NEXT } from "@/lib/services/lead-qualification-flow-service";
@@ -335,14 +336,26 @@ describe("W — a lead that is drawn can be acted on, and one that is not cannot
     assert.equal((await row(theirs.id)).leadStage, "prospect", "nothing moved");
   });
 
-  test("the module does not grant the capability: an ASSOCIATE hat still cannot verify (reported, not changed)", async () => {
-    /* `lead.verify` is a manager capability and this change adds no capability
-       of its own. The screen draws what the level allows — the flag the record
-       reports is the one the action checks — so an associate Sales Manager sees
-       the control disabled rather than pressing it and being refused. */
+  test("an ASSOCIATE Sales Manager verifies a prospect under HER seat (and no other), without becoming a manager", async () => {
+    /* This test used to pin the opposite ("reported, not changed"): the module
+       granted no capability, so an associate Sales Manager saw the control
+       disabled on her own lead. Verification now follows `sales_manager_id`
+       (lead-verifier.ts): the seat plus the module is enough, and nothing else
+       is granted — the same hat still cannot verify a lead under another seat. */
     const mine = await makeLead({ leadStage: "prospect", ownerId: salesman.id, salesManagerId: smA.id, ...prospectFields() });
+    const other = await makeLead({ leadStage: "prospect", ownerId: salesman.id, salesManagerId: smB.id, ...prospectFields() });
     const rec = (await pipelineLead(mine.id, DAY))!.lead;
-    assert.equal(rec.caps.canVerify, false);
+    assert.equal(rec.caps.canVerify, true, "the screen reflects the same rule the action enforces");
+    assert.equal((await pipelineLead(other.id, DAY)) === null || (await pipelineLead(other.id, DAY))!.lead.caps.canVerify === false, true);
+
+    const refused = await verifyProspect({
+      customerId: other.id,
+      outcome: "verified",
+      answers: { visited: "Yes", explained: "Yes", genuine_interest: "Yes", ready_for_trial: "Yes" },
+      corrections: [],
+    });
+    assert.equal(refused.ok, false);
+    assert.equal((await row(other.id)).leadStage, "prospect", "another Sales Manager's lead did not move");
 
     const r = await verifyProspect({
       customerId: mine.id,
@@ -350,8 +363,10 @@ describe("W — a lead that is drawn can be acted on, and one that is not cannot
       answers: { visited: "Yes", explained: "Yes", genuine_interest: "Yes", ready_for_trial: "Yes" },
       corrections: [],
     });
-    assert.equal(r.ok, false);
-    assert.equal((await row(mine.id)).leadStage, "prospect");
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    const after = await row(mine.id);
+    assert.equal(after.leadVerifiedById, smA.id);
+    assert.equal(after.leadStage, "qualification", "Qualification opens as before");
   });
 });
 
@@ -384,10 +399,31 @@ describe("I — it is the salesman's lead, not a copy of it", () => {
 describe("X — the scope is this workspace's, and only this workspace's", () => {
   test("outside the workspace the territory scope is what it was: a manager with no region row is national", async () => {
     setTestWorkspace(null);
+    /* A MANAGER of the Sales Dashboard — the app the territory rule belongs
+       to, and the one a request naming no app is read against. No region row
+       still means national for them; the seat narrowed nothing. */
+    const salesBoss = await makeUser("Sales Boss", "manager", [{ app: "sales", role: "manager" }]);
+    setTestUser(salesBoss);
     assert.deepEqual(
       await listIds(),
       [mineA.id, mineANoOwner.id, mineB.id, ownerOnly.id, unassigned.id].sort(),
       "the Sales Dashboard's scope is untouched — nothing here narrowed it",
+    );
+  });
+
+  test("outside the workspace an ASSOCIATE holding the seat sees their own book, not the company's", async () => {
+    setTestWorkspace(null);
+    /* Manager Aye is a CRM associate. Outside this workspace the seat drives no
+       scope, and the territory rule is a rule about MANAGERS — it used to
+       answer national for anybody with no region row, which handed an
+       associate every lead in the company. The level is read first now: their
+       own book, plus the leads nobody owns, which `leadsVisible` shows to
+       anybody who can open a lead list. `mineANoOwner` is here because it is
+       unowned, not because Aye holds its seat. */
+    assert.deepEqual(
+      await listIds(),
+      [mineANoOwner.id, unassigned.id].sort(),
+      "an associate outside the workspace saw more than their own book",
     );
   });
 
@@ -518,11 +554,22 @@ describe("D — the desk reads the same book, by salesman", () => {
     assert.deepEqual(searched.flatMap((g) => g.rows.map((r) => r.id)), [mineA.id], "the search reads the salesman's name too");
   });
 
-  test("a manager without lead.verify is told, in words, that Verify is off — and the grants are untouched", async () => {
+  test("the Verify-is-off sentence is for somebody with neither the capability nor the seat — and the grants are untouched", async () => {
     const prospect = await makeLead({ name: "A prospect", salesManagerId: smA.id, ownerId: salesman.id, leadStage: "prospect" });
     const asAssociate = (await pipelineLead(prospect.id, DAY))!.lead;
-    assert.equal(asAssociate.caps.canVerify, false, "the production shape: an associate Sales Manager");
-    const reasons = disabledReasons(asAssociate.caps, {
+    assert.equal(asAssociate.caps.canVerify, true, "the production shape: an associate Sales Manager under her own seat can verify");
+    assert.ok(
+      !disabledReasons(asAssociate.caps, {
+        stage: asAssociate.stage,
+        lost: Boolean(asAssociate.lost),
+        deskRequest: Boolean(asAssociate.deskRequest),
+        verified: asAssociate.verification.done,
+        sampleState: asAssociate.sample?.state ?? null,
+        gateKind: asAssociate.gate.kind,
+      }).some((r) => /lead.verify/.test(r)),
+    );
+    const stripped = { ...asAssociate.caps, canVerify: false };
+    const reasons = disabledReasons(stripped, {
       stage: asAssociate.stage,
       lost: Boolean(asAssociate.lost),
       deskRequest: Boolean(asAssociate.deskRequest),
@@ -694,5 +741,143 @@ describe("Recently — raised within the last 7 calendar days, in IST", () => {
     const listed = new Map((await pipelineList(DAY, { q: "", stage: "", view: "", page: 1 })).rows.map((r) => [r.id, r.isRecent]));
     assert.equal(listed.get(fresh.id), true);
     assert.equal(listed.get(old.id), false);
+  });
+});
+
+/* ═══════════════════════════════════════════════ E — the six-field Edit */
+
+describe("E — the Sales Manager's Edit: six fields, inside the book, and nothing else", () => {
+  const freshPhone = () => `98765${String(Math.floor(Math.random() * 99999)).padStart(5, "0")}`;
+  const audits = async (leadId: string) =>
+    (
+      await db.execute<{ action: string }>(
+        sql`select action from audit_log where entity_id = ${leadId} and action = 'lead.basics.edit'`,
+      )
+    ).length;
+
+  const sixFields = (leadId: string, over: Partial<Parameters<typeof editLeadBasics>[0]> = {}) => ({
+    customerId: leadId,
+    ownerId: salesman2.id,
+    leadManagerId: smLead.id,
+    city: "Virar",
+    contact: "Suresh Rane",
+    phone: freshPhone(),
+    productId,
+    ...over,
+  });
+
+  test("an associate-level Sales Manager edits all six on their own lead, and nothing else moves", async () => {
+    const before = await row(mineA.id);
+    const input = sixFields(mineA.id);
+    const r = await editLeadBasics(input);
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+
+    const after = await row(mineA.id);
+    assert.equal(after.ownerId, salesman2.id, "owner");
+    assert.equal(after.leadManagerId, smLead.id, "sales manager");
+    assert.equal(after.city, "Virar", "city");
+    assert.equal(after.contactPerson, "Suresh Rane", "contact");
+    assert.equal(after.phone, input.phone, "phone");
+    assert.equal(after.leadRequiredProductId, productId, "product");
+
+    assert.equal(after.leadStage, before.leadStage, "stage is never touched");
+    assert.equal(after.salesManagerId, smA.id, "the seat the scope reads is never touched");
+    assert.equal(after.kind, before.kind);
+    assert.equal(await audits(mineA.id), 1, "city and phone leave an audit row");
+    assert.ok((await listIds()).includes(mineA.id), "and it is still in the book");
+  });
+
+  test("a lead outside the seat is refused and left exactly as it was", async () => {
+    for (const lead of [mineB, ownerOnly, unassigned]) {
+      const before = await row(lead.id);
+      const r = await editLeadBasics(sixFields(lead.id));
+      assert.equal(r.ok, false, `${lead.name} must be refused`);
+      const after = await row(lead.id);
+      assert.equal(after.city, before.city);
+      assert.equal(after.phone, before.phone);
+      assert.equal(after.ownerId, before.ownerId);
+      assert.equal(after.leadManagerId, before.leadManagerId);
+    }
+  });
+
+  test("an administrator can edit any lead", async () => {
+    setTestUser(admin);
+    const r = await editLeadBasics(sixFields(mineB.id, { ownerId: null, leadManagerId: null }));
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    assert.equal((await row(mineB.id)).city, "Virar");
+  });
+
+  test("it is refused outside the workspace — a server action is a URL", async () => {
+    setTestWorkspace(null);
+    const r = await editLeadBasics(sixFields(mineA.id));
+    assert.equal(r.ok, false);
+    assert.equal((await row(mineA.id)).city, "Nashik", "unchanged");
+  });
+
+  test("a CRM user without the Sales Manager module cannot, even on a lead in a Sales Manager's book", async () => {
+    setTestUser(noModule);
+    const r = await editLeadBasics(sixFields(mineA.id));
+    assert.equal(r.ok, false);
+    assert.equal((await row(mineA.id)).city, "Nashik");
+  });
+
+  test("a phone already on the book is refused before anything is written", async () => {
+    const taken = (await row(mineB.id)).phone!;
+    const r = await editLeadBasics(sixFields(mineA.id, { phone: taken, city: "Pune" }));
+    assert.equal(r.ok, false);
+    assert.equal(r.ok ? "" : r.code, "duplicate");
+    assert.equal((await row(mineA.id)).city, "Nashik", "the city did not slip in ahead of the refusal");
+  });
+
+  test("its own phone number is not a duplicate, and a malformed one is a validation error", async () => {
+    const own = (await row(mineA.id)).phone!;
+    const ok1 = await editLeadBasics(sixFields(mineA.id, { phone: own, ownerId: null, leadManagerId: null, city: "Virar" }));
+    assert.equal(ok1.ok, true, ok1.ok ? "" : ok1.error);
+    const bad = await editLeadBasics(sixFields(mineA.id, { phone: "12345" }));
+    assert.equal(bad.ok, false);
+  });
+
+  test("saving what is already there changes nothing and writes no audit row", async () => {
+    const lead = await row(mineA.id);
+    const r = await editLeadBasics({
+      customerId: lead.id,
+      ownerId: lead.ownerId,
+      leadManagerId: lead.leadManagerId,
+      city: lead.city!,
+      contact: lead.contactPerson,
+      phone: lead.phone!,
+      productId: lead.leadRequiredProductId,
+    });
+    assert.equal(r.ok, true);
+    assert.equal(r.ok ? r.message : "", "Nothing to change.");
+    assert.equal(await audits(lead.id), 0);
+  });
+
+  test("the product and the contact can be cleared", async () => {
+    await db.update(customers).set({ leadRequiredProductId: productId, contactPerson: "Ganesh" }).where(eq(customers.id, mineA.id));
+    const lead = await row(mineA.id);
+    const r = await editLeadBasics({
+      customerId: lead.id,
+      ownerId: lead.ownerId,
+      leadManagerId: null,
+      city: lead.city!,
+      contact: "",
+      phone: lead.phone!,
+      productId: null,
+    });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    const after = await row(mineA.id);
+    assert.equal(after.leadRequiredProductId, null);
+    assert.equal(after.contactPerson, null);
+  });
+
+  test("a refused owner leaves the earlier fields saved and says so", async () => {
+    // noModule holds no Salesman App, so `reassignLead` refuses them.
+    const r = await editLeadBasics(sixFields(mineA.id, { ownerId: noModule.id, leadManagerId: null }));
+    assert.equal(r.ok, false);
+    assert.match(r.ok ? "" : r.error, /Already saved: .*city/);
+    const after = await row(mineA.id);
+    assert.equal(after.city, "Virar", "what was valid was kept");
+    assert.equal(after.ownerId, salesman.id, "the owner did not move");
   });
 });

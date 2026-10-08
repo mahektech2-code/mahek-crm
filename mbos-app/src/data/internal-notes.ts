@@ -44,7 +44,7 @@ export async function writeInternalNote(args: {
   /* The server's own ceiling, stated here so he is told while the words are
      still on the screen rather than by a rejection hours later. */
   if (body.length > 4000) {
-    return { ok: false, message: 'That is too long for one note — 4,000 letters is the limit.' };
+    return { ok: false, message: 'This note is too long. The limit is 4,000 letters.' };
   }
 
   const base = await stamp('internal_note');

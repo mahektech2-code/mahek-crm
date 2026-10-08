@@ -22,7 +22,12 @@ import {
   type PriceDerivation,
   type PriceParsedHeader,
 } from "@/db/schema";
-import { requireCapability, assertCustomerInScope } from "@/lib/access-control";
+import {
+  requireCapability,
+  assertCustomerInScope,
+  NotPermittedError,
+} from "@/lib/access-control";
+import { canOpenModule } from "@/lib/access";
 import { getConfig } from "@/lib/config/store";
 import { addDays } from "@/lib/business-date";
 import { today } from "@/lib/recompute";
@@ -57,7 +62,6 @@ const gen = (prefix: string) => `${prefix}_${randomUUID().slice(0, 12)}`;
 
 function refresh(customerId?: string) {
   try {
-    revalidatePath("/sales/price-lists");
     revalidatePath("/crm/price-lists");
     revalidatePath("/accounts/price-lists");
     revalidatePath("/founder/price-lists");
@@ -101,6 +105,32 @@ const derivationSchema: z.ZodType<PriceDerivation> = z.union([
 ]);
 
 /** A list row as the writes need it. */
+/**
+ * `pricelist.manage`, AND THE DESK IT WAS WORN AT.
+ *
+ * The capability rides on the APP grant — every Founder Dashboard and Accounts
+ * level carries it — while the price desk inside each of those apps is a
+ * MODULE that can be withheld. Asking only the capability meant a Command
+ * Centre delegate given Money alone, or an Accounts clerk narrowed off the
+ * Price lists screen, could still create, edit and publish a list by posting to
+ * these actions, which are URLs whatever the sidebar draws. So the hat that
+ * carried the capability is asked for its desk too: worn as the founder, the
+ * founder's Price lists module; worn at the ledger desk, Accounts' own.
+ */
+async function requirePriceDesk() {
+  const ctx = await requireCapability("pricelist.manage");
+  const desk =
+    ctx.authorisedIn === "founder"
+      ? "founder.price-lists"
+      : ctx.authorisedIn === "accounts"
+        ? "accounts.price-lists"
+        : null;
+  if (desk && !(await canOpenModule(ctx.user.id, desk))) {
+    throw new NotPermittedError("pricelist.manage");
+  }
+  return ctx;
+}
+
 async function listRow(id: string) {
   const [row] = await db.select().from(priceLists).where(eq(priceLists.id, id));
   return row ?? null;
@@ -134,7 +164,7 @@ export async function createPriceList(
   },
 ): Promise<Result<{ id: string }>> {
   try {
-    const ctx = await requireCapability("pricelist.manage");
+    const ctx = await requirePriceDesk();
     const parsed = listFields.safeParse(input);
     if (!parsed.success) return zodErr(parsed.error);
     const config = await getConfig();
@@ -251,7 +281,7 @@ const PUBLISHED_EDITABLE = new Set(["name", "refNo", "notes", "termsText", "sign
 
 export async function updatePriceList(id: string, input: Partial<ListFields>): Promise<Result> {
   try {
-    const ctx = await requireCapability("pricelist.manage");
+    const ctx = await requirePriceDesk();
     const row = await listRow(id);
     if (!row) return err("That price list does not exist.", "not_found");
 
@@ -304,7 +334,7 @@ export async function updatePriceList(id: string, input: Partial<ListFields>): P
 
 export async function deleteDraftPriceList(id: string): Promise<Result> {
   try {
-    const ctx = await requireCapability("pricelist.manage");
+    const ctx = await requirePriceDesk();
     const row = await listRow(id);
     if (!row) return err("That price list does not exist.", "not_found");
     if (row.status !== "draft") {
@@ -349,7 +379,7 @@ function bothRates(
 
 export async function setRate(input: z.input<typeof rateInput>): Promise<Result<{ id: string }>> {
   try {
-    const ctx = await requireCapability("pricelist.manage");
+    const ctx = await requirePriceDesk();
     const parsed = rateInput.safeParse(input);
     if (!parsed.success) return zodErr(parsed.error);
 
@@ -418,7 +448,7 @@ export async function setRate(input: z.input<typeof rateInput>): Promise<Result<
 
 export async function removeRate(rateId: string): Promise<Result> {
   try {
-    const ctx = await requireCapability("pricelist.manage");
+    const ctx = await requirePriceDesk();
     const [row] = await db.select().from(priceListRates).where(eq(priceListRates.id, rateId));
     if (!row) return err("That rate does not exist.", "not_found");
     const list = await listRow(row.priceListId);
@@ -456,7 +486,7 @@ export async function bulkSetRates(input: {
   }>;
 }): Promise<Result<{ written: number }>> {
   try {
-    const ctx = await requireCapability("pricelist.manage");
+    const ctx = await requirePriceDesk();
     const list = await listRow(input.priceListId);
     if (!list) return err("That price list does not exist.", "not_found");
     if (list.status !== "draft") {
@@ -546,7 +576,7 @@ function storedScopeValue(kind: string, value: string): string {
 
 export async function addScope(input: z.input<typeof scopeInput>): Promise<Result<{ id: string }>> {
   try {
-    const ctx = await requireCapability("pricelist.manage");
+    const ctx = await requirePriceDesk();
     const parsed = scopeInput.safeParse(input);
     if (!parsed.success) return zodErr(parsed.error);
     const list = await listRow(parsed.data.priceListId);
@@ -592,7 +622,7 @@ export async function updateScope(
   input: Partial<Omit<z.input<typeof scopeInput>, "priceListId">>,
 ): Promise<Result> {
   try {
-    const ctx = await requireCapability("pricelist.manage");
+    const ctx = await requirePriceDesk();
     const [row] = await db.select().from(priceListScopes).where(eq(priceListScopes.id, id));
     if (!row) return err("That scope does not exist.", "not_found");
 
@@ -631,7 +661,7 @@ export async function updateScope(
 
 export async function removeScope(id: string): Promise<Result> {
   try {
-    const ctx = await requireCapability("pricelist.manage");
+    const ctx = await requirePriceDesk();
     const [row] = await db.select().from(priceListScopes).where(eq(priceListScopes.id, id));
     if (!row) return err("That scope does not exist.", "not_found");
     await db.transaction(async (tx) => {
@@ -662,7 +692,7 @@ export async function setDiscountTerm(input: {
   rawText?: string | null;
 }): Promise<Result<{ id: string }>> {
   try {
-    const ctx = await requireCapability("pricelist.manage");
+    const ctx = await requirePriceDesk();
     if (!PRICE_DISCOUNT_KINDS.includes(input.kind)) return fieldErr("kind", "That is not a kind of discount.");
     if (!Number.isInteger(input.percentBp) || input.percentBp <= 0 || input.percentBp > 10_000) {
       return fieldErr("percentBp", "A discount is a percentage above zero.");
@@ -707,7 +737,7 @@ export async function setDiscountTerm(input: {
 
 export async function removeDiscountTerm(id: string): Promise<Result> {
   try {
-    const ctx = await requireCapability("pricelist.manage");
+    const ctx = await requirePriceDesk();
     const [row] = await db.select().from(priceListDiscountTerms).where(eq(priceListDiscountTerms.id, id));
     if (!row) return err("That term does not exist.", "not_found");
     await db.transaction(async (tx) => {
@@ -733,7 +763,7 @@ export async function publishPriceList(
   input?: { supersedesId?: string | null; effectiveFrom?: string },
 ): Promise<Result<{ warnings: string[] }>> {
   try {
-    const ctx = await requireCapability("pricelist.manage");
+    const ctx = await requirePriceDesk();
     const row = await listRow(id);
     if (!row) return err("That price list does not exist.", "not_found");
     if (row.status !== "draft") return err(`This list is already ${row.status}.`, "rule_violation");
@@ -856,7 +886,7 @@ export async function publishPriceList(
 
 export async function withdrawPriceList(id: string, reason: string): Promise<Result> {
   try {
-    const ctx = await requireCapability("pricelist.manage");
+    const ctx = await requirePriceDesk();
     if (!reason.trim()) {
       return fieldErr("reason", "Say why it is being withdrawn. Somebody will ask what happened to this list.");
     }
@@ -901,7 +931,7 @@ export async function newVersion(
   input: { effectiveFrom: string; name?: string; refNo?: string | null },
 ): Promise<Result<{ id: string }>> {
   try {
-    const ctx = await requireCapability("pricelist.manage");
+    const ctx = await requirePriceDesk();
     if (!ISO_DATE.test(input.effectiveFrom)) return fieldErr("effectiveFrom", "That is not a date.");
     const row = await listRow(id);
     if (!row) return err("That price list does not exist.", "not_found");
@@ -975,7 +1005,7 @@ export async function bulkRevise(
   input: { derivation: PriceDerivation; effectiveFrom: string; name?: string; refNo?: string | null; roundToRupee: boolean },
 ): Promise<Result<{ id: string; sample: Array<{ productName: string; fromEx: number; toEx: number }> }>> {
   try {
-    await requireCapability("pricelist.manage");
+    await requirePriceDesk();
     const derivation = derivationSchema.safeParse(input.derivation);
     if (!derivation.success) return zodErr(derivation.error);
 
@@ -983,7 +1013,7 @@ export async function bulkRevise(
     if (!created.ok) return created;
     const newId = created.data.id;
 
-    const ctx = await requireCapability("pricelist.manage");
+    const ctx = await requirePriceDesk();
     const list = await listRow(newId);
     const gstBp = list?.gstBp ?? 1800;
 
@@ -1045,7 +1075,7 @@ export async function resolveParseRow(input: {
   learnAlias?: boolean;
 }): Promise<Result<{ updated: number }>> {
   try {
-    const ctx = await requireCapability("pricelist.manage");
+    const ctx = await requirePriceDesk();
     const [row] = await db.select().from(priceListParseRows).where(eq(priceListParseRows.id, input.rowId));
     if (!row) return err("That cell does not exist.", "not_found");
 
@@ -1137,7 +1167,7 @@ export async function setParseRowPrice(input: {
   offered: boolean;
 }): Promise<Result> {
   try {
-    const ctx = await requireCapability("pricelist.manage");
+    const ctx = await requirePriceDesk();
     const [row] = await db.select().from(priceListParseRows).where(eq(priceListParseRows.id, input.rowId));
     if (!row) return err("That cell does not exist.", "not_found");
 
@@ -1178,7 +1208,7 @@ export async function setParseRowPrice(input: {
 
 export async function updateDocumentHeader(documentId: string, header: Partial<PriceParsedHeader>): Promise<Result> {
   try {
-    const ctx = await requireCapability("pricelist.manage");
+    const ctx = await requirePriceDesk();
     const [doc] = await db.select().from(priceListDocuments).where(eq(priceListDocuments.id, documentId));
     if (!doc) return err("That document does not exist.", "not_found");
 
@@ -1216,7 +1246,7 @@ export async function publishDocument(
   },
 ): Promise<Result<{ priceListId: string; warnings: string[] }>> {
   try {
-    const ctx = await requireCapability("pricelist.manage");
+    const ctx = await requirePriceDesk();
     const parsed = listFields.safeParse(input);
     if (!parsed.success) return zodErr(parsed.error);
 
@@ -1401,7 +1431,7 @@ export async function publishDocument(
 
 export async function rejectDocument(documentId: string, reason: string): Promise<Result> {
   try {
-    const ctx = await requireCapability("pricelist.manage");
+    const ctx = await requirePriceDesk();
     if (!reason.trim()) return fieldErr("reason", "Say why, so the next person does not upload it again.");
     const [doc] = await db.select().from(priceListDocuments).where(eq(priceListDocuments.id, documentId));
     if (!doc) return err("That document does not exist.", "not_found");
@@ -1435,7 +1465,7 @@ export async function rejectDocument(documentId: string, reason: string): Promis
 
 export async function reparseDocument(documentId: string): Promise<Result<{ status: string; problems: string[] }>> {
   try {
-    const ctx = await requireCapability("pricelist.manage");
+    const ctx = await requirePriceDesk();
     const [doc] = await db.select().from(priceListDocuments).where(eq(priceListDocuments.id, documentId));
     if (!doc) return err("That document does not exist.", "not_found");
     if (doc.parseStatus === "published") {
@@ -1469,7 +1499,7 @@ export async function reparseDocument(documentId: string): Promise<Result<{ stat
 
 export async function deleteDocument(documentId: string): Promise<Result> {
   try {
-    const ctx = await requireCapability("pricelist.manage");
+    const ctx = await requirePriceDesk();
     const [doc] = await db.select().from(priceListDocuments).where(eq(priceListDocuments.id, documentId));
     if (!doc) return err("That document does not exist.", "not_found");
     if (doc.parseStatus === "published") {
@@ -1493,17 +1523,29 @@ export async function deleteDocument(documentId: string): Promise<Result> {
 
 /* ------------------------------------------------------- a special price */
 
-/** Whoever may decide one. The bell has to reach everybody who can answer. */
-async function decidersOfPrices(): Promise<string[]> {
-  const rows = await db.execute<{ id: string }>(sql`
-    select distinct u.id
+/**
+ * Whoever may decide one. The bell has to reach everybody who can answer.
+ *
+ * Each is sent to the Requests tab in an app they actually HOLD — Accounts
+ * first, where the price desk is, then the CRM. It used to point everybody at
+ * the Sales Dashboard's copy, which has since been removed: prices are not
+ * the Sales Dashboard's subject, so a sales manager is told only where he is
+ * also a CRM or Accounts manager.
+ */
+async function decidersOfPrices(): Promise<Array<{ id: string; href: string }>> {
+  const rows = await db.execute<{ id: string; accounts: boolean }>(sql`
+    select u.id, bool_or(a.app = 'accounts') as accounts
       from users u
       left join app_access a on a.user_id = u.id
      where u.active
        and (u.role = 'admin'
-            or (a.role in ('manager', 'admin') and a.app in ('crm', 'sales', 'accounts')))
+            or (a.role in ('manager', 'admin') and a.app in ('crm', 'accounts')))
+     group by u.id
   `);
-  return [...rows].map((r) => r.id);
+  return [...rows].map((r) => ({
+    id: r.id,
+    href: r.accounts ? "/accounts/price-lists/requests" : "/crm/price-lists/requests",
+  }));
 }
 
 export async function requestSpecialPrice(input: {
@@ -1570,13 +1612,13 @@ export async function requestSpecialPrice(input: {
     const [product] = await db.execute<{ name: string }>(sql`select name from products where id = ${input.productId}`);
     await notifyUsers(
       (await decidersOfPrices())
-        .filter((uid) => uid !== ctx.user.id)
-        .map((userId) => ({
-          userId,
+        .filter((d) => d.id !== ctx.user.id)
+        .map((d) => ({
+          userId: d.id,
           title: "A special price has been asked for",
           body: `${ctx.user.name} has asked for ${customer.name} to pay a different price for ${product?.name ?? "a product"}. Reason: ${input.reason.trim()}`,
           kind: "info",
-          href: "/sales/price-lists/requests",
+          href: d.href,
         })),
     );
 
@@ -1592,7 +1634,7 @@ export async function decidePriceRequest(
   input: { decision: "approved" | "refused"; note?: string; effectiveFrom?: string },
 ): Promise<Result<{ listId: string | null }>> {
   try {
-    const ctx = await requireCapability("pricelist.manage");
+    const ctx = await requirePriceDesk();
     const [row] = await db.select().from(priceRequests).where(eq(priceRequests.id, id));
     if (!row) return err("That request does not exist.", "not_found");
     if (row.status !== "pending") return err(`That request was already ${row.status}.`, "rule_violation");
@@ -1798,7 +1840,7 @@ export async function assignCustomerList(input: {
   freightTerm?: "to_pay" | "paid" | null;
 }): Promise<Result> {
   try {
-    const ctx = await requireCapability("pricelist.manage");
+    const ctx = await requirePriceDesk();
     const [customer] = await db.execute<{ id: string; name: string }>(sql`
       select id, name from customers where id = ${input.customerId}
     `);

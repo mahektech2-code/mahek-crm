@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
+import { opensTheBook } from "@/app/api/book-door";
 import { paymentSearch } from "@/lib/services/receipt-service";
 
 /**
@@ -11,6 +12,11 @@ import { paymentSearch } from "@/lib/services/receipt-service";
 export async function GET(request: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ hits: [] }, { status: 401 });
+
+  /* A screen this belongs to, first — see `book-door.ts`. */
+  if (!(await opensTheBook(user.id))) {
+    return NextResponse.json({ hits: [] }, { status: 403 });
+  }
 
   const q = new URL(request.url).searchParams.get("q") ?? "";
   try {

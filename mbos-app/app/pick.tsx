@@ -18,6 +18,8 @@ import { daysSince } from '../src/data/customers';
 import { haversineMetres } from '../src/engines/geo';
 import { ShopMap } from '../src/components/ui/shop-map';
 import { useStore } from '../src/state/store';
+import { Pop, PressableScale, Stagger } from '../src/components/ui/motion';
+import { feedback } from '../src/components/ui/feedback';
 
 /**
  * Picking the shops for a day you have agreed.
@@ -64,8 +66,12 @@ import { useStore } from '../src/state/store';
  * `inr` — which takes rupees — was handed paise, so a shop owing ₹2,360 was
  * listed as owing ₹2,36,000. */
 export default function PickScreen() {
-  const params = useLocalSearchParams<{ day?: string }>();
+  const params = useLocalSearchParams<{ day?: string; fresh?: string }>();
   const planDayId = typeof params.day === 'string' ? params.day : '';
+  /* "Start over" from the day's sheet: the same screen, nothing ticked. The
+     old picks stand until Plan the day is pressed, so backing out loses
+     nothing. */
+  const fresh = params.fresh === '1';
   const notify = useStore((s) => s.notify);
   /* Every other sub-screen draws the chevron and a link naming where it goes
      back to. This one had neither, so its only exit was a footer button reading
@@ -115,6 +121,10 @@ export default function PickScreen() {
      and leaves nothing on the screen to press. */
   const [readFailed, setReadFailed] = React.useState(false);
   const [picked, setPicked] = React.useState<string[]>([]);
+  /* What the day held when the screen opened. Emptying a day that HAD shops
+     is a real answer — the day goes back to agreed — so the button stays live
+     for it; on a day with nothing picked yet, nothing is not an answer. */
+  const [hadPicks, setHadPicks] = React.useState(false);
   const [q, setQ] = React.useState('');
   /*
    * WHAT THE READ SEARCHES FOR, a beat behind what he is typing.
@@ -134,17 +144,18 @@ export default function PickScreen() {
      a record — and that difference lives in this caller rather than in the map. */
   const [asMap, setAsMap] = React.useState(false);
   const [today] = React.useState(() => isoDate(new Date()));
-  /* The freshest fix already known, which costs no battery and no wait —
-     `whereNow` never asks the radio. Null is ordinary and handled: see
-     `pickOrigin`, which then measures from the city instead. */
+  /* A fix no older than the office calls fresh — `measureFrom` refuses
+     yesterday's last shop rather than sorting today around it. Null is
+     ordinary and handled: see `pickOrigin`, which then measures from the city
+     instead. */
   const [fix, setFix] = React.useState<{ lat: number; lng: number } | null>(null);
 
   React.useEffect(() => {
     let live = true;
     void import('../src/native/where')
-      .then((m) => m.whereNow())
+      .then((m) => m.measureFrom())
       .then((w) => {
-        if (live && w?.lat != null && w?.lng != null) setFix({ lat: w.lat, lng: w.lng });
+        if (live && !('reason' in w)) setFix({ lat: w.lat, lng: w.lng });
       })
       .catch(() => {});
     return () => {
@@ -163,7 +174,10 @@ export default function PickScreen() {
         setDay(d);
         /* Whatever was picked before, so reopening the screen is a correction
            rather than starting again. */
-        setPicked(await pickedFor(planDayId));
+        const before = await pickedFor(planDayId);
+        if (!live) return;
+        setHadPicks(before.length > 0);
+        setPicked(fresh ? [] : before);
       } catch {
         if (live) setDayFailed(true);
       } finally {
@@ -173,7 +187,7 @@ export default function PickScreen() {
     return () => {
       live = false;
     };
-  }, [planDayId, dayAttempt]);
+  }, [planDayId, dayAttempt, fresh]);
 
   /*
    * The ticked ids go INTO the read, not just out of it.
@@ -220,10 +234,15 @@ export default function PickScreen() {
     };
   }, [day?.city, day?.planDate, today, fix, search, attempt]);
 
-  const toggle = (id: string) =>
+  /* A tick for every shop added or taken off — the thumb is choosing doors
+     one after another, often without looking, and the tick is what says each
+     one landed. The map's pins go through the same function, so they tick too. */
+  const toggle = (id: string) => {
+    feedback('select');
     setPicked((current) =>
       current.includes(id) ? current.filter((x) => x !== id) : [...current, id],
     );
+  };
 
   /* The write is local first, so it fails only where SQLite itself does — and
      when it did, `saving` stayed true for good and the one control on the
@@ -233,11 +252,15 @@ export default function PickScreen() {
     setSaving(true);
     try {
       const out = await pickShops(planDayId, picked);
-      if (!out.ok) return notify(out.message ?? 'Pick at least one shop.');
-      notify(plural(picked.length, 'shop') + ' picked. Your manager can see the day now.');
+      if (!out.ok) return notify(out.message ?? 'Pick at least one shop.', 'error');
+      notify(
+        picked.length
+          ? plural(picked.length, 'shop') + ' picked. Your manager can see the day now.'
+          : 'The day is cleared. Pick shops again when you know where you are going.',
+      );
       router.back();
     } catch {
-      notify('The day could not be saved on this phone. Nothing is lost — try again.');
+      notify('The day could not be saved on this phone. Nothing is lost. Try again.', 'error');
     } finally {
       setSaving(false);
     }
@@ -245,7 +268,7 @@ export default function PickScreen() {
 
   const away = React.useCallback(
     (c: Candidate): string => {
-      if (c.gpsLat == null || c.gpsLng == null) return 'no pin';
+      if (c.gpsLat == null || c.gpsLng == null) return 'no location';
       if (!origin) return '';
       const m = haversineMetres(origin, { lat: c.gpsLat, lng: c.gpsLng });
       return m < 1000 ? Math.round(m) + ' m' : (m / 1000).toFixed(1) + ' km';
@@ -265,7 +288,7 @@ export default function PickScreen() {
               : /* "The route screen" is not a thing anybody can find: the tab is
                    labelled Journey, and a sentence that names a screen by a word
                    nowhere on the app sends him looking for it. */
-                'That day is not on this handset. Pull down on the Journey tab to fetch it.'}
+                'That day is not on this phone. Pull down on the Journey tab to get it.'}
         </T>
         {dayFailed ? (
           <SecondaryButton
@@ -307,7 +330,7 @@ export default function PickScreen() {
             paddingTop: 10,
             paddingBottom: 10,
             gap: 8,
-            backgroundColor: C.canvas,
+            backgroundColor: C.surface,
             borderTopWidth: 1,
             borderTopColor: C.hairline,
           }}>
@@ -317,13 +340,14 @@ export default function PickScreen() {
                 ? 'Sending…'
                 : picked.length
                   ? 'Plan the day · ' + plural(picked.length, 'shop')
-                  : 'Pick at least one shop'
+                  : hadPicks
+                    ? 'Clear the day'
+                    : 'Pick at least one shop'
             }
             fullWidth
-            disabled={saving || picked.length === 0}
+            disabled={saving || (picked.length === 0 && !hadPicks)}
             onPress={() => void save()}
           />
-          <SecondaryButton label="Not now" fullWidth onPress={() => router.back()} />
         </View>
       }>
       <BackLink label={back.label} onPress={back.go} />
@@ -340,11 +364,11 @@ export default function PickScreen() {
         }}>
         <T style={[type.body, weight(600), { color: C.ink }]}>{dayLabel(day.planDate)}</T>
         <T s="small" style={{ color: C.body, marginTop: 2 }}>
-          {day.city ? day.city + ' — you agreed this day' : 'You agreed this day'}
+          {day.city ? day.city + ' · you agreed this day' : 'You agreed this day'}
         </T>
         <T s="small" style={{ color: C.muted, marginTop: 6 }}>
-          Tick them in the order you mean to walk them. You can change the order on the morning,
-          from wherever you actually are.
+          Tick them in the order you will visit them. You can change the order on the day,
+          from where you are.
         </T>
       </View>
 
@@ -455,11 +479,13 @@ export default function PickScreen() {
                 ? 'No shop matches that.'
                 : /* The Journey tab, by the name written on it — see the day
                      branch above, which named the same non-existent screen. */
-                  'There are no shops on this handset yet — pull down on the Journey tab to fetch your book.'}
+                  day.city
+                  ? 'None of your shops on this phone are in ' + day.city + '. A shop elsewhere can be visited from the Customers tab.'
+                  : 'No shops on this phone yet. Pull down on the Journey tab to get your shops.'}
           </T>
         ) : null}
 
-        {rows.map((c) => {
+        {rows.map((c, i) => {
           const at = picked.indexOf(c.id);
           const on = at >= 0;
           const gap = daysSince(c.lastVisitDate, today);
@@ -470,9 +496,10 @@ export default function PickScreen() {
           const area = [c.area, elsewhere ? c.city : null].filter(Boolean).join(' · ');
 
           return (
-            <Pressable
-              key={c.id}
+            <Stagger key={c.id} index={i}>
+            <PressableScale
               onPress={() => toggle(c.id)}
+              outerStyle={{ marginBottom: 8 }}
               /* NO HIT SLOP. It was `hitSlop={HIT}` — 48 on all four sides of a
                  card about 74dp tall with 8 between it and the next one, so each
                  row's touch area reached 48 into the card above and 48 into the
@@ -491,7 +518,6 @@ export default function PickScreen() {
                 backgroundColor: C.surface,
                 borderRadius: radius.card,
                 padding: 14,
-                marginBottom: 8,
                 borderWidth: on ? 1 : 0,
                 borderColor: on ? C.primary : 'transparent',
                 boxShadow: shadow.card,
@@ -503,7 +529,13 @@ export default function PickScreen() {
                   grey circle on every row of a fresh book read as a broken
                   avatar or a control still loading — nothing about it said
                   "tap this to add the shop", which is the only thing this
-                  screen asks anybody to do. */}
+                  screen asks anybody to do.
+
+                  It pops as the shop is ticked, keyed on whether it is picked
+                  and not on its number: unticking the second shop renumbers
+                  every one after it, and five badges popping at once would
+                  announce five changes where one was made. */}
+              <Pop trigger={on}>
               <View
                 style={{
                   width: 30,
@@ -521,6 +553,7 @@ export default function PickScreen() {
                   <Icon name="add" size={16} color={C.muted} strokeWidth={1.8} />
                 )}
               </View>
+              </Pop>
 
               <View style={{ flex: 1 }}>
                 <T style={[type.body, weight(on ? 600 : 500), { color: C.ink }]} numberOfLines={1}>
@@ -545,7 +578,7 @@ export default function PickScreen() {
                   {/* `inr` takes RUPEES — see its own note. Handed paise it
                       reported ₹2,36,000 owing against a bill of ₹2,360, on a
                       row somebody decides a morning from. */}
-                  {c.outstandingPaise > 0 ? ' · ' + inrFromPaise(c.outstandingPaise) + ' owing' : ''}
+                  {c.outstandingPaise > 0 ? ' · ' + inrFromPaise(c.outstandingPaise) + ' outstanding' : ''}
                 </T>
               </View>
 
@@ -556,7 +589,8 @@ export default function PickScreen() {
               <T s="small" style={{ color: C.muted }}>
                 {away(c)}
               </T>
-            </Pressable>
+            </PressableScale>
+            </Stagger>
           );
         })}
         </View>
@@ -578,7 +612,7 @@ export default function PickScreen() {
       */}
       {total > rows.length ? (
         <T s="small" style={{ color: C.muted, paddingVertical: 14, textAlign: 'center' }}>
-          {rows.length + ' of ' + total + ' shops — search for one that is not here'}
+          {rows.length + ' of ' + total + ' shops. Search for one that is not here'}
         </T>
       ) : null}
     </AppFrame>

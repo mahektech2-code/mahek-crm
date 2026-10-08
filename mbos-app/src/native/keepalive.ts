@@ -26,6 +26,14 @@ import { oemOf, type Oem } from '../engines/oem-keepalive';
  * than the tracker being asleep.
  */
 
+/*
+ * THE FALLBACK LADDER, not a second set of buttons. The screens call
+ * `native/phone-setup.ts`, which asks the native module first and comes here
+ * only on a build that does not carry it — two exported wrappers for the same
+ * three settings screens were two answers to "did it open", and the tracking
+ * screen and the start-of-day gate had drifted onto different ones.
+ */
+
 /** Where the "we have walked him through this" mark lives. */
 const ASKED_KEY = 'keepalive.askedAt';
 
@@ -66,16 +74,15 @@ async function launch(action: string, params: Record<string, unknown> = {}): Pro
  * The fallback is the SETTINGS LIST rather than nothing: it takes three taps
  * instead of one and it is always there.
  */
-export async function requestBatteryExemption(): Promise<boolean> {
+export async function intentBatteryExemption(): Promise<boolean> {
   if (Platform.OS !== 'android') return false;
   const pkg = Application.applicationId ?? 'in.mahek.mbos';
-  await markAsked();
 
   if (await launch('android.settings.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS', { data: `package:${pkg}` })) {
     return true;
   }
   if (await launch('android.settings.IGNORE_BATTERY_OPTIMIZATION_SETTINGS')) return true;
-  return openAppSettings();
+  return intentAppSettings();
 }
 
 /**
@@ -120,16 +127,15 @@ const AUTOSTART_COMPONENTS: Record<Oem, { packageName: string; className: string
   other: [],
 };
 
-export async function openAutostartSettings(): Promise<boolean> {
+export async function intentAutostartSettings(): Promise<boolean> {
   if (Platform.OS !== 'android') return false;
-  await markAsked();
   for (const component of AUTOSTART_COMPONENTS[thisOem()]) {
     /* `MAIN` with an explicit component is how a private activity is opened;
        the action alone reaches nothing, because none of these is registered
        against a public one. */
     if (await launch('android.intent.action.MAIN', component)) return true;
   }
-  return openAppSettings();
+  return intentAppSettings();
 }
 
 /**
@@ -138,7 +144,7 @@ export async function openAutostartSettings(): Promise<boolean> {
  * Battery and background permissions are both reachable from here on every
  * Android, which is what makes it a safe last rung rather than a dead end.
  */
-export async function openAppSettings(): Promise<boolean> {
+export async function intentAppSettings(): Promise<boolean> {
   if (Platform.OS !== 'android') return false;
   const pkg = Application.applicationId ?? 'in.mahek.mbos';
   return launch('android.settings.APPLICATION_DETAILS_SETTINGS', { data: `package:${pkg}` });

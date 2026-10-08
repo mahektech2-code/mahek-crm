@@ -74,7 +74,23 @@ export type Statement<B extends StatementBill, R extends StatementReceipt> = {
   /** Claimed and not yet found by accounts. Counted nowhere, said out loud. */
   awaitingPaise: number;
   awaitingCount: number;
+  /** Bills nobody has spoken for — billed, shown, never counted as owed. */
+  unstatedCount: number;
 };
+
+/**
+ * A bill nobody has spoken for is NOT DEBT.
+ *
+ * `paymentPosition = 'unstated'` is the office's third answer — the sheet said
+ * it was billed and nobody has said whether it was paid — and MahekOne keeps it
+ * out of outstanding, aging and collections. This engine added it as debt, so
+ * on the imported book (most of it unstated) a shop the office says owes
+ * nothing read as owing lakhs "after this" on every card: the original mistake,
+ * an unknown presented as a debt, in different clothes.
+ */
+export function countsAsDebt(b: Pick<StatementBill, 'paymentPosition'>): boolean {
+  return b.paymentPosition !== 'unstated';
+}
 
 /**
  * Only `confirmed` money has moved anything.
@@ -108,6 +124,18 @@ export function buildStatement<B extends StatementBill, R extends StatementRecei
   bills: B[],
   receipts: R[],
   range?: { from?: string; to?: string },
+  /**
+   * The office's own outstanding figure, `customers.outstandingPaise`.
+   *
+   * THE BALANCE IS ANCHORED TO IT, backwards. The phone holds a window of
+   * thirteen months, so a balance counted forwards from zero at the window's
+   * edge leaves out every older open bill — and a receipt in the window for a
+   * bill from before it drove the column negative. The office knows what is
+   * owed today; what the rows explain is how it got there. So the last row is
+   * pinned to the office's figure and every earlier one is that figure with
+   * the later rows taken back off. Absent, the old forwards count stands.
+   */
+  closingPaise?: number | null,
 ): Statement<B, R> {
   type Row =
     | { kind: 'bill'; at: string; debit: number; credit: number; bill: B }
@@ -119,7 +147,7 @@ export function buildStatement<B extends StatementBill, R extends StatementRecei
     rows.push({
       kind: 'bill',
       at: b.billDate ?? '',
-      debit: b.amountPaise ?? 0,
+      debit: countsAsDebt(b) ? (b.amountPaise ?? 0) : 0,
       credit: 0,
       bill: b,
     });
@@ -158,6 +186,7 @@ export function buildStatement<B extends StatementBill, R extends StatementRecei
   let received = 0;
   let awaiting = 0;
   let awaitingCount = 0;
+  let unstatedCount = 0;
   const entries: StatementEntry<B, R>[] = [];
 
   for (const r of rows) {
@@ -178,6 +207,7 @@ export function buildStatement<B extends StatementBill, R extends StatementRecei
 
     if (r.kind === 'bill') {
       billed += r.debit;
+      if (!countsAsDebt(r.bill)) unstatedCount += 1;
       entries.push({ kind: 'bill', at: r.at, balancePaise: balance, bill: r.bill });
     } else {
       received += r.credit;
@@ -189,9 +219,18 @@ export function buildStatement<B extends StatementBill, R extends StatementRecei
     }
   }
 
+  /* The shift that pins the last row to the office's figure. `balance` is
+     what the forwards count reached after every row the phone holds. */
+  const shift = closingPaise == null ? 0 : closingPaise - balance;
+  if (shift !== 0) {
+    for (const e of entries) e.balancePaise += shift;
+    opening += shift;
+  }
+
   entries.reverse();
   return {
     entries,
+    unstatedCount,
     openingPaise: opening,
     billedPaise: billed,
     receivedPaise: received,

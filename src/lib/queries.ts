@@ -1,6 +1,6 @@
 import "server-only";
 import { cache } from "react";
-import { and, asc, desc, eq, inArray, lte, or, sql, type Column, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lte, or, sql, type Column, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { APP_TIMEZONE, asDate, calendarDate } from "@/lib/business-date";
 import type { TrackedMessage } from "@/lib/whatsapp-status";
@@ -21,14 +21,20 @@ import {
   orders,
   users,
 } from "@/db/schema";
-import { ASSIGNED_TO_SQL, resolveScope, scopedUserIds, scopedToUsers} from "./access-control";
+import { ASSIGNED_TO_SQL, canFor, resolveScope, scopedUserIds, scopedToUsers} from "./access-control";
 import { UNASSIGNED_FILTER_VALUE } from "./am-filters";
-import { isManager, requireUser } from "./auth";
+import { requireUser } from "./auth";
 import { getScope } from "./scope";
 import { today as businessToday } from "./recompute";
 import { daysBetween, monthKey, type DateRange } from "./business-date";
 import { eodMetricsFor, eodMetricsForRange } from "./services/eod-service";
 import { managerNameByEmployeeName } from "./services/org-service";
+import { placeFilterOptions, placeFilterSql } from "./services/place-filter-service";
+import type { PlaceFilterOptions, PlaceFilterValues, PlaceNames } from "./place-filters";
+import { callDetailsFor } from "./services/call-detail-service";
+import type { CallDetailView } from "./call-detail";
+import { getConfig } from "./config/store";
+import { upcomingBirthdays, type UpcomingBirthday } from "./customer-contacts";
 
 /* ---------------------------------------------------------------------------
  * Reads for the screens. Every one resolves scope, so a missed check cannot
@@ -63,15 +69,20 @@ export const crmBadgeCounts = cache(async function crmBadgeCounts(): Promise<{
   openComplaints: number;
 }> {
   const user = await requireUser();
-  const scope = await getScope(user);
-  const teamWide = scope === "team" && isManager(user);
+  /* The CRM's level, named rather than read off the request: the launcher asks
+     for these counts too, from a page that is in no app, and there the
+     account's widest level would count a CRM associate's badges team-wide. */
+  const scope = await getScope(user, "crm");
+  const teamWide = scope === "team";
   const day = await businessToday();
 
   const [row] = await db.execute<{ reminders: number; complaints: number }>(sql`
     select
       (select count(*) from reminders r
         where r.status = 'pending' and r.due_date <= ${day}::date
-          and (${teamWide} or r.assigned_user_id = ${user.id}))::int as reminders,
+          and (${teamWide} or r.assigned_user_id = ${user.id})
+          -- the same count the Reminders list shows: none for a trashed lead
+          and not exists (select 1 from customers x where x.id = r.customer_id and x.deleted_at is not null))::int as reminders,
       (select count(*) from complaints c
         join customers cu on cu.id = c.customer_id
         where c.status in ('open','in_progress','awaiting_customer')
@@ -191,6 +202,10 @@ export async function listCustomerStatusRequests(): Promise<CustomerStatusReques
 
 /** How many requests are waiting. The sidebar badge and the screen agree. */
 export async function customerStatusRequestCount(): Promise<number> {
+  /* A badge for a queue the caller cannot decide is a number pointing at a
+     screen they are refused — the same capability the screen asks. */
+  const user = await requireUser();
+  if (!(await canFor(user, "customer.deactivate"))) return 0;
   const [row] = await db.execute<{ n: number }>(sql`
     select (count(*) filter (where deactivation_requested)
           + count(*) filter (where reactivation_requested))::int as n
@@ -391,7 +406,33 @@ export type CustomerRow = typeof customers.$inferSelect & {
    * goods leave on their bill and arrive somewhere else.
    */
   servedShops: number;
+  /**
+   * Where the shop is, by name, off the reviewed location tree — see
+   * `place-tree-service.ts`. Absent on reads that do not ask for it; null
+   * rungs are rungs nobody could place.
+   */
+  place?: PlaceNames;
+  /**
+   * Contacts whose birthday falls inside `customers.birthdayHeadsUpDays`,
+   * soonest first. Absent on reads that do not ask for it.
+   */
+  birthdays?: UpcomingBirthday[];
 };
+
+/**
+ * The four rungs of a shop's place as one JSON object, for a SELECT list.
+ *
+ * Scalar subqueries rather than four joins onto one table, for the reason the
+ * seat names beside it give: four left joins to `places` on one row is where
+ * column aliasing goes wrong quietly. `customers.` is spelled out because a
+ * bare column inside a correlated subquery binds to the inner table.
+ */
+export const PLACE_NAMES_SQL = sql<PlaceNames>`json_build_object(
+  'state', (select p.name from places p where p.id = customers.resolved_state_id),
+  'district', (select p.name from places p where p.id = customers.resolved_district_id),
+  'city', (select p.name from places p where p.id = customers.resolved_city_id),
+  'area', (select p.name from places p where p.id = customers.resolved_area_id)
+)`;
 
 /**
  * The customer status label, in SQL.
@@ -430,20 +471,14 @@ export type CustomerListFilters = {
   salesManager?: string;
   backOfficeAm?: string;
   /**
-   * WHERE THE SHOP IS, as `customers.city` literally holds it — never a
-   * cleaned or canonical place name.
+   * WHERE THE SHOP IS — state, district, city and area, each a `,`-separated
+   * list of place ids off the reviewed location tree. See `lib/place-filters.ts`.
    *
-   * The column is whatever the sheet typed, which on the real book is several
-   * hundred values, a good many of them whole postal addresses offered as a
-   * city. Matching on the stored string is the only thing that can be exactly
-   * right: normalising here would filter on a value no row contains, and a
-   * filter that quietly returns nothing is worse than one that offers an ugly
-   * option. `listCityFilterOptions` returns the same strings, so what is
-   * picked is always something the column actually says.
-   *
-   * `,`-separated for more than one, like every multi-value field here.
+   * It used to be one filter over `customers.city`, which is whatever the
+   * sheet typed: 1,165 spellings of a few hundred places, whole postal
+   * addresses among them. The tree is what those collapse into.
    */
-  city?: string;
+  places?: PlaceFilterValues;
   /**
    * "yes" for accounts marked as shops we deliver to, "no" for the rest, and
    * "delivered" for the ones the sheet shows receiving goods — whether or not
@@ -587,80 +622,24 @@ export const RELATIONSHIP_OWNER_NAME_SQL = sql<string | null>`(
  * people whose accounts they cannot see.
  */
 /**
- * The city exactly as the filter compares it: trimmed, and an empty string
- * where the column is blank.
+ * WHAT THE FOUR PLACE FILTERS OFFER, counted over the scoped book.
  *
- * One expression, read by both the clause and the options list, so a value
- * offered in the dropdown is by construction a value the WHERE can match. Two
- * spellings of this — a `btrim` on one side and a bare column on the other —
- * is a filter that silently returns nothing for every city stored with a
- * trailing space.
+ * It used to be every `customers.city` string in the book — several hundred,
+ * whole postal addresses among them. It is the reviewed tree now: a state
+ * list, then the districts, cities and areas under whatever is picked above.
+ * See `placeFilterOptions`.
  */
-const CITY_FILTER_SQL = sql<string>`coalesce(btrim(customers.city), '')`;
-
-/**
- * EVERY CITY IN THE SCOPED BOOK, read on each page load.
- *
- * Not a stored list and not a fixed one: shops arrive from the sheet with new
- * spellings constantly, so a hardcoded set of cities would be stale the first
- * time somebody imported a district. This is a `group by` over the book the
- * reader can already see — so it costs one indexed aggregate and is right at
- * the moment the page renders, which is the freshness a filter needs.
- *
- * ORDERED BY HOW MANY SHOPS, biggest first, then alphabetically. This column
- * is whatever the sheet typed — several hundred values on the real book, many
- * of them whole postal addresses offered as a city, one of them 80 characters
- * of "06, MAHADEV TOWERS CO-OP HSG SOC, LTD, LBS MARG, …" — and alphabetical
- * order buries Thane and Nagpur somewhere in the middle of that. Frequency
- * puts the places somebody actually means at the top and the long tail below,
- * which is the same reasoning `knownPlaces` follows on the handset, for the
- * same column.
- *
- * The count rides in the label because otherwise the ordering looks arbitrary:
- * a list that is neither alphabetical nor explained reads as unsorted.
- *
- * A BLANK CITY IS AN OPTION, not a gap. Shops with nothing in the column are
- * real and are exactly who somebody is looking for when they ask which of the
- * book has no address — dropping them would make a filter that cannot reach
- * them, and the count at the top of the screen would never add up.
- *
- * AND A FILTER MAY ONLY OFFER WHAT THE TABLE CAN SHOW, which is why this and
- * `listAmFilterOptions` below it are narrowed by `NOT_A_LEAD_SQL` rather than
- * by the scope alone.
- *
- * Both were a pass over the whole scoped book, which was right while the book
- * and the table were the same population. They no longer are: a city that
- * exists only on leads, or a salesperson whose accounts are all leads, would
- * be offered in the dropdown and answer zero rows — which is the failure the
- * paragraph above and `listAmFilterOptions`'s own ("a filter offering a name
- * the column does not render is a filter somebody tries once") both warn
- * about, arriving from a direction neither of them could have anticipated.
- * The shop counts would have been wrong in the same motion, and those are
- * printed in the label.
- *
- * Every caller is either the customer table itself or one of the two target
- * screens, which are direct customers and nothing else — so this can only
- * narrow, never lose an option somebody could have used.
- */
-export async function listCityFilterOptions(): Promise<
-  { value: string; label: string }[]
-> {
+export async function listPlaceFilterOptions(
+  picks: PlaceFilterValues = {},
+): Promise<PlaceFilterOptions> {
   const ctx = await resolveScope();
   const scoped = scopedToUsers(scopedUserIds(ctx.scope));
-
-  const rows = await db
-    .select({ city: CITY_FILTER_SQL, shops: sql<number>`count(*)::int` })
-    .from(customers)
-    .where(scoped ? and(scoped, NOT_A_LEAD_SQL) : NOT_A_LEAD_SQL)
-    .groupBy(CITY_FILTER_SQL)
-    .orderBy(sql`count(*) desc`, CITY_FILTER_SQL);
-
-  return rows.map((r) => ({
-    value: r.city,
-    label: r.city
-      ? `${r.city} (${r.shops})`
-      : `No city recorded (${r.shops})`,
-  }));
+  return placeFilterOptions({
+    from: sql`customers`,
+    alias: "customers",
+    where: scoped ? and(scoped, NOT_A_LEAD_SQL) : NOT_A_LEAD_SQL,
+    picks,
+  });
 }
 
 /**
@@ -732,7 +711,7 @@ export const listAmFilterOptions = cache(async function listAmFilterOptions(): P
         backOfficeName: customers.backOfficeName,
       })
       .from(customers)
-      // Narrowed for the reason stated above `listCityFilterOptions`.
+      // The book this table shows — not a lead — as `listPlaceFilterOptions` reads it.
       .where(scoped ? and(scoped, NOT_A_LEAD_SQL) : NOT_A_LEAD_SQL),
   ]);
 
@@ -862,7 +841,9 @@ export function customerFiltersOnly(
    *
    * See `NOT_A_LEAD_SQL` for why it is not `kind <> 'lead'`.
    */
-  const where: SQL[] = [NOT_A_LEAD_SQL];
+  // Nor is a lead in the trash — not in the list, its tiles, its total or
+  // anything a bulk action reaches.
+  const where: SQL[] = [NOT_A_LEAD_SQL, sql`customers.deleted_at is null`];
 
   const q = filters.query?.trim();
   if (q) {
@@ -872,6 +853,12 @@ export function customerFiltersOnly(
       or customers.contact_person ilike ${like}
       or customers.phone like ${like}
       or customers.city ilike ${like}
+      or exists (
+        select 1 from places p
+         where p.id in (customers.resolved_district_id, customers.resolved_city_id,
+                        customers.resolved_area_id)
+           and p.name ilike ${like}
+      )
     )`);
   }
   if (filters.status) where.push(inList(STATUS_LABEL_SQL, filters.status));
@@ -888,12 +875,8 @@ export function customerFiltersOnly(
   if (filters.backOfficeAm) {
     where.push(inListOrUnassigned(BACK_OFFICE_AM_NAME_SQL, filters.backOfficeAm));
   }
-  if (filters.city) {
-    // `inList` and not `inListOrUnassigned`: an empty city is real on this
-    // book and is offered as its own option, so it is matched by the value
-    // rather than by a null branch — see `listCityFilterOptions`.
-    where.push(inList(CITY_FILTER_SQL, filters.city));
-  }
+  const placed = placeFilterSql(filters.places ?? {}, "customers");
+  if (placed) where.push(placed);
   if (filters.thirdParty) {
     // Several of these are structurally different queries, not different
     // values of one column — "lead" excludes the mark, "delivered" is an
@@ -1084,7 +1067,10 @@ const CUSTOMER_SORT_COLUMNS = {
   status: STATUS_LABEL_SQL,
   outstanding: customers.outstanding,
   lastOrder: customers.lastOrderDate,
-  city: customers.city,
+  // The tree's city, then its area — so a sorted list reads Mumbai's suburbs
+  // together rather than scattered by however the sheet spelled each one.
+  city: sql`(select p.name from places p where p.id = customers.resolved_city_id) || ' ' ||
+            coalesce((select p.name from places p where p.id = customers.resolved_area_id), '')`,
 } satisfies Record<string, SQL | Column>;
 
 export async function listCustomersPage(
@@ -1139,6 +1125,8 @@ export async function listCustomersPage(
 
   const total = Number(agg?.total ?? 0);
   const pageCount = Math.max(1, Math.ceil(total / perPage));
+  const birthdayDay = await businessToday();
+  const birthdayWindow = (await getConfig())["customers.birthdayHeadsUpDays"];
   const page = Math.min(Math.max(filters.page ?? 1, 1), pageCount);
 
   const rows = await db
@@ -1195,9 +1183,20 @@ export async function listCustomersPage(
       // The other end of the delivery chain, and spelled out for the same
       // reason as the line above it: Drizzle renders a column reference bare,
       // and a bare `id` inside a correlated subquery binds to the inner table.
+      place: PLACE_NAMES_SQL,
       servedShops: sql<number>`(
         select count(*)::int from customer_distributors d
          where d.distributor_customer_id = customers.id
+      )`,
+      // Only the contacts with a birthday on record — the window is applied in
+      // JS by `upcomingBirthdays`, the same rule the record and the call
+      // drawer use, so the three cannot disagree about whose birthday is near.
+      birthdayContacts: sql<Array<{ id: string; name: string | null; role: string; birthDay: number; birthMonth: number }> | null>`(
+        select json_agg(json_build_object(
+                 'id', cc.id, 'name', cc.name, 'role', cc.role,
+                 'birthDay', cc.birth_day, 'birthMonth', cc.birth_month))
+          from customer_contacts cc
+         where cc.customer_id = customers.id and cc.birth_month is not null
       )`,
     })
     .from(customers)
@@ -1218,6 +1217,10 @@ export async function listCustomersPage(
       deliveredOrders: Number(r.deliveredOrders),
       servedShops: Number(r.servedShops),
       nextStep: r.nextStep ?? null,
+      place: r.place,
+      birthdays: r.birthdayContacts?.length
+        ? upcomingBirthdays(r.birthdayContacts, birthdayDay, birthdayWindow)
+        : [],
     })),
     total,
     bookTotal: Number(book?.n ?? 0),
@@ -1366,10 +1369,13 @@ export const getCustomer = cache(async function getCustomer(
          order by c.started_at desc, c.id desc
          limit 1
       )`,
+      place: PLACE_NAMES_SQL,
     })
     .from(customers)
     .leftJoin(users, eq(users.id, customers.ownerId))
-    .where(eq(customers.id, customerId))
+    // A lead in the trash is opened from the Admin Console's Trash and from
+    // nowhere else: here it answers as missing, like one out of scope.
+    .where(and(eq(customers.id, customerId), isNull(customers.deletedAt)))
     .limit(1);
   if (!rows[0]) return null;
   return {
@@ -1381,6 +1387,7 @@ export const getCustomer = cache(async function getCustomer(
     relationshipOwnerName: rows[0].relationshipOwnerName,
     grade: rows[0].grade ?? null,
     nextStep: rows[0].nextStep ?? null,
+    place: rows[0].place,
   };
 });
 
@@ -1395,6 +1402,12 @@ export type TimelineEntry = {
   actor: string;
   content: string;
   meta?: string;
+  /**
+   * What a CALL recorded beyond its note — why they rang, who rang, the
+   * answers, the next action, the opportunity. Absent on every other kind and
+   * on every call that predates those columns, which draw as they always did.
+   */
+  detail?: CallDetailView | null;
 };
 
 /** Where a page of the timeline stopped, so the next one can carry on. */
@@ -1417,14 +1430,55 @@ export type TimelinePage = {
  * well. Composed instead, `kind: "Bill"` is a query against `bills` and
  * nothing else.
  */
-function timelineBranch(kind: TimelineKind, customerId: string): SQL {
+/**
+ * A REMINDER A CALL SET IS PART OF THAT CALL, and the full history says so on
+ * one row.
+ *
+ * Saving a call with a callback writes two records — the call, and the
+ * reminder it raised — and the reminder's note is the call's note copied
+ * across. Listed as two entries a minute apart, the same sentence appeared
+ * twice and read as a call saved twice. So in the unfiltered timeline the
+ * reminder is FOLDED into its call: the call's line carries "callback 03 Oct,
+ * pending", and its own row is left out. `reminders.call_id` is what ties
+ * them, and only a reminder whose call exists is folded — one set on its own,
+ * from the reminders screen or a payment promise, keeps its own row.
+ *
+ * Filtering by Reminder still lists every reminder, because that view is the
+ * question "what have we promised to come back about" and a callback set on a
+ * call is the commonest answer to it. Folding is the All view only.
+ *
+ * The reminder's note is repeated beside it only where it SAYS SOMETHING the
+ * call does not — "Promised ₹40,000." in front of the call's own words is
+ * exactly the figure somebody needs before ringing back.
+ */
+const FOLDED_REMINDER_SQL = sql`
+  exists (select 1 from calls fc where fc.id = r.call_id and fc.customer_id = r.customer_id)`;
+
+function timelineBranch(
+  kind: TimelineKind,
+  customerId: string,
+  fold: boolean,
+): SQL {
   switch (kind) {
     case "Call":
       return sql`
         select c.id, 'Call' as kind, c.started_at as at, u.name as actor,
                coalesce(c.notes, c.outcome::text, 'Call logged') as content,
-               nullif(concat_ws(' · ', c.connection_status, c.outcome), '') as meta
+               nullif(concat_ws(' · ', c.connection_status, c.outcome, rr.reminders_set), '') as meta
           from calls c join users u on u.id = c.user_id
+          left join lateral (
+            select string_agg(
+                     concat(
+                       case r.type when 'payment_promise' then 'payment check ' else 'callback ' end,
+                       to_char(r.due_date, 'DD Mon'), ', ', r.status,
+                       case when r.note is distinct from coalesce(c.notes, '')
+                            then concat(' (', r.note, ')') end
+                     ),
+                     ' · ' order by r.due_date, r.id
+                   ) as reminders_set
+              from reminders r
+             where r.customer_id = c.customer_id and r.call_id = c.id
+          ) rr on ${fold ? sql`true` : sql`false`}
          where c.customer_id = ${customerId}`;
     case "Opportunity":
       return sql`
@@ -1473,7 +1527,8 @@ function timelineBranch(kind: TimelineKind, customerId: string): SQL {
         select r.id, 'Reminder', r.created_at, u.name, r.note,
                concat('Due ', to_char(r.due_date, 'DD Mon'), ' · ', r.status)
           from reminders r join users u on u.id = r.assigned_user_id
-         where r.customer_id = ${customerId}`;
+         where r.customer_id = ${customerId}
+           ${fold ? sql`and not ${FOLDED_REMINDER_SQL}` : sql``}`;
     case "Complaint":
       return sql`
         select cm.id, 'Complaint', cm.created_at, u.name, cm.description,
@@ -1565,7 +1620,9 @@ export async function customerTimeline(
   const limit = opts.limit ?? TIMELINE_PAGE;
   const kinds = opts.kind ? [opts.kind] : [...TIMELINE_KINDS];
 
-  const branches = kinds.map((k) => timelineBranch(k, customerId));
+  // Folded only where both halves are on the page — see FOLDED_REMINDER_SQL.
+  const fold = !opts.kind;
+  const branches = kinds.map((k) => timelineBranch(k, customerId, fold));
   const union = sql.join(branches, sql` union all `);
   const keyset = opts.before
     ? sql`where (t.at, t.id) < (${opts.before.at}::timestamptz, ${opts.before.id})`
@@ -1596,6 +1653,14 @@ export async function customerTimeline(
     content: r.content,
     meta: r.meta ?? undefined,
   }));
+  /* The detail behind each CALL on this page — one read for the whole page, and
+     only for the calls: a bill or a message has nothing to add. A failure here
+     must never cost the page its rows, so it degrades to the plain timeline. */
+  const callIds = entries.filter((e) => e.kind === "Call").map((e) => e.id);
+  const details = await callDetailsFor(callIds).catch(() => new Map<string, CallDetailView>());
+  for (const e of entries) {
+    if (e.kind === "Call") (e as TimelineEntry).detail = details.get(e.id) ?? null;
+  }
   const last = entries[entries.length - 1];
 
   return {
@@ -1629,7 +1694,9 @@ export async function customerTimelineCounts(
       (select count(*)::int from reminders where customer_id = ${customerId}) as "Reminder",
       (select count(*)::int from complaints where customer_id = ${customerId}) as "Complaint",
       (select count(*)::int from payment_receipts where customer_id = ${customerId}) as "Payment",
-      (select count(*)::int from bills where customer_id = ${customerId}) as "Bill"
+      (select count(*)::int from bills where customer_id = ${customerId}) as "Bill",
+      (select count(*)::int from reminders r
+        where r.customer_id = ${customerId} and ${FOLDED_REMINDER_SQL}) as "folded"
   `);
 
   const counts = Object.fromEntries(
@@ -1638,7 +1705,12 @@ export async function customerTimelineCounts(
 
   return {
     ...counts,
-    all: TIMELINE_KINDS.reduce((n, k) => n + counts[k], 0),
+    // The All pill counts the rows the All view lists: a reminder folded into
+    // its call is on that call's line, not a row of its own. The Reminder pill
+    // still counts every reminder, because its filter still lists every one.
+    all:
+      TIMELINE_KINDS.reduce((n, k) => n + counts[k], 0) -
+      Number(row?.folded ?? 0),
   };
 }
 
@@ -1834,6 +1906,8 @@ export type InteractionRow = {
   sourceModule: string | null;
   /** What this call said would happen next. Null on calls logged before it existed. */
   nextStep: StoredNextStep | null;
+  /** Why they rang, who rang, the answers and the next action. Null where the call recorded none. */
+  detail: CallDetailView | null;
 };
 
 export async function listInteractions(limit = 400): Promise<InteractionRow[]> {
@@ -1849,8 +1923,13 @@ export async function listInteractions(limit = 400): Promise<InteractionRow[]> {
     .orderBy(desc(calls.startedAt))
     .limit(limit);
 
+  const details = await callDetailsFor(rows.map((r) => r.call.id)).catch(
+    () => new Map<string, CallDetailView>(),
+  );
+
   return rows.map(({ call: c, customerName, userName }) => ({
     id: c.id,
+    detail: details.get(c.id) ?? null,
     occurredAt: c.startedAt,
     customerId: c.customerId,
     customerName,
@@ -2043,6 +2122,34 @@ export async function listNotifications(userId: string) {
     .where(eq(notifications.userId, userId))
     .orderBy(desc(notifications.createdAt))
     .limit(30);
+}
+
+/**
+ * The live bell's answer: the newest thirty, and the TRUE unread count —
+ * the badge used to count unread among the thirty it had, so a person with
+ * forty unread was told thirty, or fewer once some of the thirty were read.
+ */
+export async function notificationFeed(userId: string) {
+  const [items, [counted]] = await Promise.all([
+    listNotifications(userId),
+    db
+      .select({ unread: sql<number>`count(*)::int` })
+      .from(notifications)
+      .where(and(eq(notifications.userId, userId), eq(notifications.read, false))),
+  ]);
+  return {
+    items: items.map((n) => ({
+      id: n.id,
+      title: n.title,
+      body: n.body,
+      kind: n.kind,
+      href: n.href,
+      read: n.read,
+      createdAt: n.createdAt.toISOString(),
+    })),
+    unread: Number(counted?.unread ?? 0),
+    now: new Date().toISOString(),
+  };
 }
 
 /* ------------------------------------------------------------------- help */

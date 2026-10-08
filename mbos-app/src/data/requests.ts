@@ -1,6 +1,6 @@
 import { all, newId, one, run } from '../db';
 import { insertAndQueue, stamp, updateAndQueue } from './write';
-import { leaveDays, overlaps, balanceAfter } from '../engines/leave';
+import { leaveDays, overlaps, balanceAfter, type LeaveCalendar } from '../engines/leave';
 import { isoDate } from '../lib/format';
 import { wireComplaintCategory } from '../lib/wire';
 import type { ClaimedLine } from './travel';
@@ -18,7 +18,8 @@ import type { ExpenseKind } from '../engines/generated/expense-policy';
 
 export type ApprovalType =
   | 'order_over_credit' | 'order_over_threshold' | 'expense_claim'
-  | 'leave' | 'tour' | 'sample' | 'attendance_regularisation' | 'out_of_territory';
+  | 'leave' | 'tour' | 'sample' | 'attendance_regularisation' | 'out_of_territory'
+  | 'territory';
 
 /**
  * Ask somebody in the office to say yes.
@@ -269,14 +270,50 @@ export async function claimExpense(args: {
 export type LeaveRequest = {
   id: string; kind: string; fromDate: string; toDate: string; halfDay: string | null;
   days: number; reason: string; state: string; lossOfPay: number; syncState: string;
+  clientCreatedAt: number;
+  /** Who decided it, when, and what they said — off the approval, once there is one. */
+  approverName: string | null; decidedAt: number | null; decisionNote: string | null;
 };
 
+const DECIDED = `approvals a WHERE a.subjectType = 'leave' AND a.subjectId = l.id AND a.state <> 'pending' ORDER BY a.decidedAt DESC`;
+
+/** His requests, newest first, each with the decision on it where one has been made. */
 export async function listLeave(): Promise<LeaveRequest[]> {
-  return all<LeaveRequest>('SELECT * FROM leave_requests ORDER BY fromDate DESC');
+  return all<LeaveRequest>(
+    /* Subqueries rather than a join: a request can carry more than one
+       approval row, and a join would list it once per row. */
+    `SELECT l.*,
+            (SELECT a.approverName FROM ${DECIDED} LIMIT 1) AS approverName,
+            (SELECT a.decidedAt FROM ${DECIDED} LIMIT 1) AS decidedAt,
+            (SELECT a.decisionNote FROM ${DECIDED} LIMIT 1) AS decisionNote
+       FROM leave_requests l
+      ORDER BY l.clientCreatedAt DESC`,
+  );
 }
 
 export async function leaveBalances() {
   return all<{ kind: string; entitled: number; used: number; available: number }>('SELECT * FROM leave_balances');
+}
+
+/**
+ * THE OFFICE'S WORKING WEEK AND ITS HOLIDAYS, for counting leave the way the
+ * office debits it.
+ *
+ * HIS holidays only — the rows the office marks `universal`, which since
+ * holidays carry a level means "this one reaches you": company-wide, his
+ * state, district, city or area, or given to him by name. It is the reading
+ * `leaveCalendarFor` takes on the server, so the count on the form is the
+ * count the office debits. `workingDay.workingDays` rides down on the pull;
+ * Monday to Saturday is the company default if it has not arrived yet.
+ */
+export async function leaveCalendar(): Promise<LeaveCalendar> {
+  const { getConfig } = await import('./config');
+  const workingDays = await getConfig<number[]>('workingDay.workingDays', [1, 2, 3, 4, 5, 6]);
+  const rows = await all<{ onDate: string }>('SELECT onDate FROM holidays WHERE universal = 1');
+  return {
+    workingDays: Array.isArray(workingDays) && workingDays.length ? workingDays : [1, 2, 3, 4, 5, 6],
+    holidays: new Set(rows.map((r) => r.onDate)),
+  };
 }
 
 /**
@@ -306,7 +343,11 @@ export async function applyForLeave(args: {
     half: args.half ? (args.half === 'Morning' ? ('first_half' as const) : ('second_half' as const)) : null,
   };
 
-  const { days } = leaveDays(span);
+  const counted = leaveDays(span, await leaveCalendar());
+  /* NOTHING TO TAKE is refused here, in the office's own words, rather than
+     queued for the office to refuse an hour later. */
+  if (counted.days <= 0) return { ok: false, message: `${counted.sentence} Nothing was saved.` };
+  const { days } = counted;
 
   /* Pending counts as well as approved — two requests for the same week sit in
      the same inbox and get approved separately by somebody reading them one at
@@ -382,7 +423,7 @@ export async function requestTour(args: {
   notes?: string;
 }): Promise<{ ok: true; id: string } | { ok: false; message: string }> {
   if (args.endDate < args.startDate) {
-    return { ok: false, message: 'That tour ends before it starts.' };
+    return { ok: false, message: 'The end date is before the start date.' };
   }
 
   const base = await stamp('tour');
@@ -513,6 +554,8 @@ export async function complaintsFor(customerId: string): Promise<Complaint[]> {
 
 export type Sample = {
   id: string; customerId: string; productName: string | null; state: string;
+  /** The SKU code, joined off the catalogue on the phone. */
+  sku?: string | null;
   requestedAt: number; followUpDate: string | null; trialOutcome: string | null; syncState: string;
   /* The three assertions, in the order they happen. See `SampleProgress`. */
   dispatchedAt: number | null;
@@ -544,13 +587,13 @@ export type Sample = {
  */
 export async function customerSamples(customerId: string): Promise<Sample[]> {
   return all<Sample>(
-    'SELECT * FROM samples WHERE customerId = ? ORDER BY requestedAt DESC, id DESC',
+    'SELECT s.*, p.sku AS sku FROM samples s LEFT JOIN products p ON p.id = s.productId WHERE s.customerId = ? ORDER BY s.requestedAt DESC, s.id DESC',
     [customerId],
   );
 }
 
 export async function listSamples(): Promise<Sample[]> {
-  return all<Sample>('SELECT * FROM samples ORDER BY requestedAt DESC');
+  return all<Sample>('SELECT s.*, p.sku AS sku FROM samples s LEFT JOIN products p ON p.id = s.productId ORDER BY s.requestedAt DESC');
 }
 
 /**

@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { and, desc, eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { sheetSyncRuns } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
@@ -52,7 +52,7 @@ export async function syncEmployeesAction(
     // a server action is a URL like any other.
     const user = await requireUser();
     if (!(await canOpen(user.id, "hrms"))) {
-      return err("You do not have the HRMS app.", "not_permitted");
+      return err("HRMS is not on your account.", "not_permitted");
     }
 
     const last = await db
@@ -74,7 +74,7 @@ export async function syncEmployeesAction(
       if (running || (!force && ageMs < QUIET_SECONDS * 1000)) {
         return ok(
           { created: 0, updated: 0, unchanged: 0, withdrawn: 0, skipped: true },
-          running ? "A sync is already running." : "Already up to date.",
+          running ? "The employee sheet is already being read. Try again in a minute." : "Already up to date: the employee sheet was read moments ago.",
         );
       }
     }
@@ -85,7 +85,7 @@ export async function syncEmployeesAction(
       triggeredById: user.id,
     });
 
-    revalidatePath("/hrms/employees");
+    revalidatePath("/hrms/people");
     revalidatePath("/apps");
 
     return ok(
@@ -107,20 +107,9 @@ function describe(created: number, updated: number, withdrawn: number): string {
   const parts: string[] = [];
   if (created) parts.push(`${created} new`);
   if (updated) parts.push(`${updated} updated`);
-  if (withdrawn) parts.push(`${withdrawn} no longer in the sheet`);
+  if (withdrawn) parts.push(`${withdrawn} no longer on the sheet`);
   return parts.length
-    ? `Synced — ${parts.join(", ")}.`
-    : "Synced. The sheet has not changed.";
+    ? `Employee sheet read: ${parts.join(", ")}.`
+    : "Employee sheet read. Nothing has changed.";
 }
 
-/** Whether an employee sync has ever completed, for the empty state to read. */
-export async function hasSyncedEmployees(): Promise<boolean> {
-  const rows = await db
-    .select({ id: sheetSyncRuns.id })
-    .from(sheetSyncRuns)
-    .where(
-      and(eq(sheetSyncRuns.source, EMPLOYEE_SOURCE), eq(sheetSyncRuns.status, "ok")),
-    )
-    .limit(1);
-  return rows.length > 0;
-}

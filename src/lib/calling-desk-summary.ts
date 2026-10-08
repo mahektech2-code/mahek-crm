@@ -50,8 +50,9 @@ export type DeskLeadRow = {
   phase: DeskPhase;
   /** The call the lead is owed, where one is. */
   nextCall: 1 | 2 | 3 | null;
+  /** Answers a Prospect needs that are in, out of `needed` — not what a call demands. */
   answered: number;
-  required: number;
+  needed: number;
   /** The rung it stands on — for a lost lead, the rung it was lost at. */
   ladderKey: LadderKey | null;
   requestedAt: string | null;

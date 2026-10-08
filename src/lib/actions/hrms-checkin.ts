@@ -7,18 +7,30 @@ import { hrmsAttendance, hrmsHelp, hrmsOffices } from "@/db/schema";
 import { err, ok, okVoid, type Result } from "@/lib/result";
 import { hrmsContext, has } from "@/lib/hrms/access";
 import { hrmsAudit, hrmsId, today, now, first } from "@/lib/hrms/server";
-import { attendanceCfg } from "@/lib/hrms/services/attendance";
+import { attendanceCfg, fieldDayOn } from "@/lib/hrms/services/attendance";
 import { timingMap } from "@/lib/hrms/services/people";
 import { decideCheckIn, decideCheckOut, dayFigures, minutesBetween, type CheckInRefusal } from "@/lib/hrms/engines/attendance";
 import { metresBetween, weekdayOf, hm } from "@/lib/hrms/time";
 import { bindHrmsFiles } from "@/lib/hrms/attachments";
 import { getConfig } from "@/lib/config/store";
+import { HELP } from "@/lib/hrms/values";
+import { tellPowerHolders } from "@/lib/hrms/services/notify";
+import { hrmsLink } from "@/lib/hrms/registry";
+
+/** Outside a request (a script, a test) nothing is cached, so there is nothing to invalidate — the CRM's rule. */
+function refresh() {
+  try {
+    revalidatePath("/hrms");
+  } catch {
+    /* no request context */
+  }
+}
 
 /* ---------------------------------------------------------------------------
  * Checking in and out from the home card (spec §6.2). The browser sends where
  * it is; the SERVER measures the distance to the office and decides — a
  * position typed into a request is still measured against the office's pin,
- * and the refusal is the same sentence the person saw on the source.
+ * and the refusal comes from the same rule the home card explains.
  * ------------------------------------------------------------------------- */
 
 export type CheckResult = Result<{ refusal?: CheckInRefusal; message?: string; detail?: string }>;
@@ -37,15 +49,19 @@ function refusal(reason: CheckInRefusal, message: string, detail: string): Check
 
 export async function hrmsCheckIn(input: Fix & { photoId?: string | null; code?: string | null }): Promise<CheckResult> {
   const ctx = await hrmsContext();
-  if (!ctx.level) return err("HRMS is not on your account.", "not_permitted");
+  if (!ctx.level) return err("You do not have access to HRMS. Ask an administrator to grant it.", "not_permitted");
   const me = ctx.employee;
   if (!me) return err("Your account is not linked to an employee record yet. Ask HR to link it on the Access screen.", "not_permitted");
-  if (me.status !== "active") return err("Your employee record is not active. Contact HR.", "not_permitted");
+  if (me.status !== "active") return err("Your employee record is not active, so you cannot check in. Ask HR to check it.", "not_permitted");
   const cfg = await attendanceCfg();
   const config = await getConfig();
   const t = today();
   const nowT = now();
   const [existing] = await db.select().from(hrmsAttendance).where(and(eq(hrmsAttendance.employeeId, me.id), eq(hrmsAttendance.date, t)));
+  /* One record of the day: somebody who checked in on the field app has a day
+     already, and a second one here would be counted twice. */
+  const onHandset = existing ? null : await fieldDayOn(me.id, t);
+  if (onHandset) return refusal("already", `You checked in on the field app at ${onHandset.checkIn} today`, "Check out on the field app at the end of the day.");
   const office = await officeFor(me.office);
   const timings = await timingMap();
   const tm = timings.get(`${me.id}|${weekdayOf(t)}`);
@@ -53,8 +69,8 @@ export async function hrmsCheckIn(input: Fix & { photoId?: string | null; code?:
 
   const qr = !!input.code;
   if (qr) {
-    if (!config["hrms.attendance.qrEnabled"]) return err("QR check-in is switched off.", "not_permitted");
-    if (existing) return refusal("already", "You Today Already Checked In!", "Check out at the end of the day.");
+    if (!config["hrms.attendance.qrEnabled"]) return err("QR check-in is switched off in HRMS settings.", "not_permitted");
+    if (existing) return refusal("already", "You have already checked in today", "Check out at the end of the day.");
     if (!office || !office.qrText || office.qrText.trim() !== String(input.code).trim())
       return refusal("outside", `That is not ${office?.name ?? "your office"}’s attendance QR code`, "Scan the code printed at your own office.");
   } else {
@@ -109,22 +125,22 @@ export async function hrmsCheckIn(input: Fix & { photoId?: string | null; code?:
     cfg,
     t,
   );
-  revalidatePath("/hrms");
+  refresh();
   return ok({}, `Checked in at ${nowT} · ${fig.lateTxt}${fig.lateBeyondGrace ? "" : fig.lateMin != null && fig.lateMin > 0 ? `, within the ${cfg.graceMinutes}-minute grace` : ""}`);
 }
 
 export async function hrmsCheckOut(input: Fix & { photoId?: string | null }): Promise<CheckResult> {
   const ctx = await hrmsContext();
-  if (!ctx.level) return err("HRMS is not on your account.", "not_permitted");
+  if (!ctx.level) return err("You do not have access to HRMS. Ask an administrator to grant it.", "not_permitted");
   const me = ctx.employee;
-  if (!me) return err("Your account is not linked to an employee record yet.", "not_permitted");
+  if (!me) return err("Your account is not linked to an employee record yet. Ask HR to link it on the Access screen.", "not_permitted");
   const cfg = await attendanceCfg();
   const t = today();
   const nowT = now();
   const [row] = await db.select().from(hrmsAttendance).where(and(eq(hrmsAttendance.employeeId, me.id), eq(hrmsAttendance.date, t)));
   if (!row) return err("You have not checked in today.");
   if (row.checkOut) return err(`You already checked out at ${row.checkOut}.`);
-  if (minutesBetween(row.checkIn, nowT) == null) return err("Check-out must be after check-in");
+  if (minutesBetween(row.checkIn, nowT) == null) return err(`Check-out must be after your check-in at ${row.checkIn}`);
   const office = await officeFor(me.office);
   const privileged = has(ctx, "hr") || ctx.administrator;
   const hasPin = office?.lat != null && office?.lng != null;
@@ -142,20 +158,26 @@ export async function hrmsCheckOut(input: Fix & { photoId?: string | null }): Pr
   });
   await hrmsAudit(ctx, "hrms.attendance.checkOut", "hrms_attendance", row.id, null, { at: nowT });
   const fig = dayFigures({ ...row, checkOut: nowT }, cfg, t);
-  revalidatePath("/hrms");
+  refresh();
   return ok({}, `Checked out at ${nowT} · ${hm(fig.workedMin)} · ${fig.workDay}`);
 }
 
-/** "I Am Late Today", raised from the refusal itself so nobody has to find the help screen first. */
+/** "Running late today", raised from the refusal itself so nobody has to find the help screen first. */
 export async function hrmsRaiseLateHelp(text: string): Promise<Result<undefined>> {
   const ctx = await hrmsContext();
   const me = ctx.employee;
-  if (!ctx.level || !me) return err("Your account is not linked to an employee record yet.", "not_permitted");
+  if (!ctx.level || !me) return err("Your account is not linked to an employee record yet. Ask HR to link it on the Access screen.", "not_permitted");
+  /* The same door as the Help requests screen, so the same check: the button
+     is drawn only for somebody holding it, and a server action is a URL. */
+  if (!ctx.screens.has("help")) return err("Help requests are not on your account.", "not_permitted");
   const body = text.trim();
-  if (!body) return err("Write what happened.");
+  if (!body) return err("Write what happened before sending.");
   const id = hrmsId("hhlp");
-  await db.insert(hrmsHelp).values({ id, date: today(), employeeId: me.id, type: "I Am Late Today", inTime: now(), text: body, createdById: ctx.user.id });
-  await hrmsAudit(ctx, "hrms.help.raise", "hrms_help", id, null, { type: "I Am Late Today" });
-  revalidatePath("/hrms");
-  return okVoid(`Help request sent · ${first(me.name)}, admin decides and sets your check-in time`);
+  await db.insert(hrmsHelp).values({ id, date: today(), employeeId: me.id, type: HELP.runningLate, inTime: now(), text: body, createdById: ctx.user.id });
+  await hrmsAudit(ctx, "hrms.help.raise", "hrms_help", id, null, { type: HELP.runningLate });
+  /* Raised here or on the Help screen, the people who decide it are told —
+     this door used to write the request and tell nobody. */
+  await tellPowerHolders(ctx.user.id, "resolve", { title: `Help request from ${me.name}`, body: `${HELP.runningLate} · ${body}`, kind: "warn", href: hrmsLink("help", { scope: "all", open: id }) });
+  refresh();
+  return okVoid(`Help request sent, ${first(me.name)}. The person who resolves help requests will decide and set your check-in time.`);
 }

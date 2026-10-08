@@ -62,6 +62,7 @@ import { leadsVisible, managerScope } from "./sales-service";
 const STILL_WORKING = sql.raw(
   `c.lead_stage is not null
      and c.lead_archived = false
+     and c.deleted_at is null
      and c.lead_stage not in ('lost', 'won', 'customer', 'active_distributor')`,
 );
 

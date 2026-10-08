@@ -21,7 +21,8 @@ import {
   type Values,
 } from "./settings-model";
 import { RichTextEditor } from "./rich-text";
-import { useAdmin } from "./store";
+import Link from "next/link";
+import { useToast } from "@/components/ui/toast";
 
 /* ---------------------------------------------------------------------------
  * One renderer per declared control type, and nothing else.
@@ -120,8 +121,10 @@ function FieldRow({
 
   return (
     <div
+      /* The search in the header lands on a setting by its key. */
+      id={field.key}
       className={cx(
-        "flex items-start gap-5 px-5 py-4",
+        "flex scroll-mt-6 items-start gap-5 px-5 py-4 target:ring-2 target:ring-brand target:ring-inset",
         first ? "" : "border-t border-canvas",
         error ? "bg-danger-soft" : "bg-surface",
       )}
@@ -385,7 +388,7 @@ function Control({
 }
 
 function Toggle({ on, locked, onToggle }: { on: boolean; locked: boolean; onToggle: () => void }) {
-  const { notify } = useAdmin();
+  const notify = useToast().push;
   return (
     <button
       type="button"
@@ -447,7 +450,7 @@ function OrderedList({
   set: (v: unknown) => void;
 }) {
   const [draft, setDraft] = React.useState("");
-  const { notify } = useAdmin();
+  const notify = useToast().push;
 
   const move = (i: number, dir: -1 | 1) => {
     const j = i + dir;
@@ -529,25 +532,17 @@ function IconButton({
 }
 
 /**
- * A collection the app owns. The console lists it and opens its editor, and
- * knows nothing about what the rows are.
+ * A collection the app owns, listed as it stands.
+ *
+ * The console edits none of these. A collection with its own screen — the
+ * catalogue, the WhatsApp templates — links there; the rest are read-only
+ * lists. It used to open a drawer editor here too, and the one collection it
+ * claimed to save looked its rows up in a list of samples, so every real
+ * template opened blank.
  */
 function EntityList({ field, collection }: { field: SchemaField; collection?: Collection }) {
-  const { openDrawer } = useAdmin();
   const meta = field.entity;
   if (!meta) return null;
-
-  if (!meta.built) {
-    return (
-      <span className="block rounded-[4px] border border-dashed border-line-strong bg-canvas px-3.5 py-3">
-        <span className="block text-sm font-medium text-ink">Declared, not yet stored</span>
-        <span className="mt-0.5 block text-[13px] leading-[19px] text-muted">
-          The CRM declares this collection but nothing stores it yet, so there is nothing to list. It appears here so
-          the gap is visible rather than silently missing.
-        </span>
-      </span>
-    );
-  }
 
   const rows = collection?.rows ?? [];
   const total = collection?.total ?? 0;
@@ -559,64 +554,30 @@ function EntityList({ field, collection }: { field: SchemaField; collection?: Co
           {total} {meta.noun}
           {total > rows.length ? ` · showing ${rows.length}` : ""}
         </span>
-        {/* A collection managed on its own screen links there. One that has
-            no write path at all says so on a disabled button, rather than
-            offering an editor that would not save. */}
         {meta.href ? (
-          <Button size="sm" variant="secondary" onClick={() => (window.location.href = meta.href!)}>
-            {meta.cta}
-          </Button>
-        ) : (
-          <Button
-            size="sm"
-            variant="primary"
-            disabled={!meta.editable}
-            title={meta.editable ? undefined : "Authoring this collection is not wired into the console yet"}
-            onClick={() => openDrawer({ kind: field.key as never, id: null })}
+          <Link
+            href={meta.href}
+            className="rounded-[4px] border border-line bg-surface px-3 py-1.5 text-[13px] font-medium text-body no-underline hover:bg-canvas hover:no-underline"
           >
             {meta.cta}
-          </Button>
-        )}
+          </Link>
+        ) : null}
       </span>
       <span className="block overflow-hidden rounded-[4px] border border-line">
-        {rows.map((r, i) => {
-          const inner = (
-            <>
-              <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink">{r.name}</span>
-              <span className="truncate text-[13px] whitespace-nowrap text-muted">{r.meta}</span>
-              <Badge tone={r.active ? "success" : "neutral"}>{r.active ? "Active" : "Archived"}</Badge>
-            </>
-          );
-          const shared = cx(
-            "flex w-full items-center gap-3 bg-surface px-2.5 py-2 text-left",
-            i ? "border-t border-canvas" : "",
-          );
-          // A row only opens where there is something to open it with.
-          return meta.editable ? (
-            <button
-              key={r.id}
-              type="button"
-              onClick={() => openDrawer({ kind: field.key as never, id: r.id })}
-              className={cx(shared, "cursor-pointer hover:bg-canvas")}
-            >
-              {inner}
-            </button>
-          ) : (
-            <span key={r.id} className={shared}>
-              {inner}
-            </span>
-          );
-        })}
+        {rows.map((r, i) => (
+          <span
+            key={r.id}
+            className={cx("flex w-full items-center gap-3 bg-surface px-2.5 py-2 text-left", i ? "border-t border-canvas" : "")}
+          >
+            <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink">{r.name}</span>
+            <span className="truncate text-[13px] whitespace-nowrap text-muted">{r.meta}</span>
+            <Badge tone={r.active ? "success" : "neutral"}>{r.active ? "Active" : "Archived"}</Badge>
+          </span>
+        ))}
         {rows.length === 0 ? (
           <span className="block px-3 py-5 text-center text-sm text-muted">Nothing here yet.</span>
         ) : null}
       </span>
-      {meta.editable || meta.href ? null : (
-        <span className="mt-2 block text-[13px] text-muted">
-          Read-only here. Authoring this collection is not wired into the console yet, so nothing offers an editor that
-          would not save.
-        </span>
-      )}
     </span>
   );
 }

@@ -31,6 +31,14 @@ import { SyncAlreadyRunningError } from "@/lib/services/sheet-sync-core";
  *                     the MBOS sweeps and escalations, the complaint SLA.
  *                     Read by the handset rather than derived there, so an
  *                     hour is the most a phone is ever behind the ledger.
+ *   ?mode=top-customers
+ *                     the monthly Top customers report, from its own cron line
+ *                     at 10:00 IST on the 1st. Idempotent — a month already
+ *                     generated is left alone.
+ *   ?mode=punch-out-reminders
+ *                     a notification to anybody still punched in from
+ *                     `mbos.attendance.punchOutPromptHour`, and a second
+ *                     later. Half-hourly, from the cycle.
  *   ?mode=nightly     rebuilds every derived value. Nothing else does: buying
  *                     cycles, the inactive watch, follow-up stages and slow
  *                     payers are caches, and on a deployment with no cron they
@@ -86,6 +94,9 @@ const JOBS: Record<string, JobName> = {
      unchanged row, so a salesman who got a MahekOne account after the import
      never gets matched to the rows that are plainly his. */
   "field-activity-rematch": "field-activity-rematch",
+  /* Re-read every stored activity DATE in its own read's order — a row read
+     month-first from a day-first workbook is otherwise wrong for ever. */
+  "field-activity-reparse": "field-activity-reparse",
   // The derived values: buying cycles, the inactive watch, follow-up stages,
   // slow payers, bill statuses, today's queue snapshot.
   nightly: "nightly",
@@ -105,6 +116,11 @@ const JOBS: Record<string, JobName> = {
    * half rather than three days.
    */
   hourly: "hourly",
+  /* Every half hour from the cycle, so a reminder due at six is sent by seven
+     minutes past rather than at ten to seven. Cheap outside the evening: it
+     answers from the clock before it reads a row. */
+  "punch-out-reminders": "punch-out-reminders",
+  "top-customers": "top-customers-report",
 };
 
 export async function GET(request: Request) {

@@ -1,11 +1,16 @@
 import React from 'react';
-import { Image, Modal, Pressable, TextInput, View } from 'react-native';
-import { CameraView, useCameraPermissions } from 'expo-camera';
+import { useModalOpen } from '../../state/push-banner';
+import { Animated, Image, Modal, Pressable, TextInput, View } from 'react-native';
+import { CameraView } from 'expo-camera';
+import { CameraRefusal, shutterWhy, useCameraAccess } from './camera-access';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { color as C, HIT, radius, weight } from '../../theme/tokens';
 import { Icon } from './Icon';
+import { useKeyboardHeight } from './keyboard';
 import { PrimaryButton, SecondaryButton, T } from './primitives';
+import { Appear, DUR, useShake } from './motion';
+import { feedback } from './feedback';
 import { checkOdometer } from '../../lib/travel-leg';
 
 /**
@@ -52,6 +57,7 @@ export function OdometerCamera({
   /** The departure reading when this is an arrival; null when it is the departure. */
   previousKm,
   maxLegKilometres,
+  span = 'trip',
   onDone,
 }: {
   open: boolean;
@@ -60,16 +66,22 @@ export function OdometerCamera({
   cancelLabel: string;
   previousKm: number | null;
   maxLegKilometres: number;
+  /** Whether the readings bracket one trip or the whole day — see `checkOdometer`. */
+  span?: 'trip' | 'day';
   onDone: (result: OdometerResult) => void;
 }) {
   const insets = useSafeAreaInsets();
-  const [permission, requestPermission] = useCameraPermissions();
+  const keyboardHeight = useKeyboardHeight();
+  const { access, ask } = useCameraAccess(open);
   const camera = React.useRef<CameraView>(null);
   const [ready, setReady] = React.useState(false);
   const [shooting, setShooting] = React.useState(false);
   const [shot, setShot] = React.useState<string | null>(null);
   const [typed, setTyped] = React.useState('');
   const [err, setErr] = React.useState<string | null>(null);
+  /* A reading refused (below the start, or past the longest leg) shakes the
+     box it is typed in, with the reason under it — a refusal, so `warning`. */
+  const refuse = useShake();
 
   /* Fresh every time it opens. A reading left over from the previous shop is
      the one mistake this screen absolutely cannot make — it would be a
@@ -84,12 +96,13 @@ export function OdometerCamera({
     }
   }, [open]);
 
-  React.useEffect(() => {
-    if (open && permission && !permission.granted && permission.canAskAgain) void requestPermission();
-  }, [open, permission, requestPermission]);
 
   const take = async () => {
     if (!ready || shooting) return;
+    /* The shutter is a physical moment, and the camera gives no sound of its
+       own here — the tap is the only sign the press was taken. Fired as the
+       press is accepted, not when the file lands, which can be a second later. */
+    feedback('tap');
     setShooting(true);
     try {
       const picture = await camera.current?.takePictureAsync({ quality: 1 });
@@ -105,15 +118,14 @@ export function OdometerCamera({
 
   const confirm = () => {
     if (!shot) return;
-    const verdict = checkOdometer({ typed, previousKm, maxLegKilometres });
+    const verdict = checkOdometer({ typed, previousKm, maxLegKilometres, span });
     if (!verdict.ok) {
       setErr(verdict.why);
+      refuse.shake();
       return;
     }
     onDone({ uri: shot, km: verdict.km });
   };
-
-  const denied = permission != null && !permission.granted && !permission.canAskAgain;
 
   /* Live, so the distance appears as he types rather than after he presses —
      it is the number he can sanity-check against the road he just rode, and
@@ -123,9 +135,16 @@ export function OdometerCamera({
       ? Math.floor(Number(typed)) - previousKm
       : null;
 
+  /* Its own window over the app — see `useModalOpen`. */
+  useModalOpen(open);
+
   return (
     <Modal visible={open} animationType="slide" onRequestClose={() => onDone(null)} statusBarTranslucent>
-      <View style={{ flex: 1, backgroundColor: '#000000' }}>
+      {/* The reading is typed under the photo it came from, so the keyboard
+          opens over exactly the box and the Save button. An edge-to-edge
+          window does not shrink for it, so this does: the photo gives up the
+          height and the field sits on the keys. */}
+      <View style={{ flex: 1, backgroundColor: '#000000', paddingBottom: keyboardHeight }}>
         {/* ---- what is being asked for, and the way out ---- */}
         <View
           style={{
@@ -152,28 +171,30 @@ export function OdometerCamera({
         {/* ---- the viewfinder, or what is standing in its way ---- */}
         <View style={{ flex: 1, overflow: 'hidden', borderRadius: radius.card, marginHorizontal: 12 }}>
           {shot ? (
-            <Image source={{ uri: shot }} style={{ flex: 1 }} resizeMode="contain" />
-          ) : denied ? (
-            <Refusal body="Camera permission is off for MBOS. The meter reading has to be photographed, so turn the camera on in your phone’s Settings and try again. Tell your manager if you cannot." />
-          ) : permission?.granted ? (
+            /* The frozen frame fades up over the black rather than replacing
+               the viewfinder in one frame — the same place, now held still. */
+            <Appear distance={0} duration={DUR.quick} style={{ flex: 1 }}>
+              <Image source={{ uri: shot }} style={{ flex: 1 }} resizeMode="contain" />
+            </Appear>
+          ) : access === 'granted' ? (
             /* Rear-facing, unmirrored. A mirrored odometer is a mirrored
                NUMBER, which is the one thing on this photograph anybody will
                ever want to read. */
             <CameraView ref={camera} style={{ flex: 1 }} facing="back" onCameraReady={() => setReady(true)} />
           ) : (
-            <Refusal body="Asking for the camera…" />
+            <CameraRefusal access={access} needs="You must take a photo of the meter." onAsk={ask} />
           )}
         </View>
 
         {/* ---- the shutter, or the reading that goes with what it took ---- */}
-        <View style={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: insets.bottom + 16, gap: 10 }}>
+        <View style={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: (keyboardHeight > 0 ? 0 : insets.bottom) + 16, gap: 10 }}>
           {shot ? (
             <>
               <T style={{ fontSize: 13, lineHeight: 18, color: 'rgba(255,255,255,0.65)' }}>
-                Now type what the meter reads, in kilometres.
+                Now type the meter reading in km.
               </T>
-              <View
-                style={{
+              <Animated.View
+                style={[refuse.style, {
                   flexDirection: 'row',
                   alignItems: 'center',
                   gap: 10,
@@ -182,7 +203,7 @@ export function OdometerCamera({
                   borderWidth: 1,
                   borderColor: err ? C.warn : 'rgba(255,255,255,0.25)',
                   paddingHorizontal: 14,
-                }}>
+                }]}>
                 <TextInput
                   value={typed}
                   onChangeText={(v) => {
@@ -193,11 +214,11 @@ export function OdometerCamera({
                   placeholder="41208"
                   placeholderTextColor="rgba(255,255,255,0.35)"
                   autoFocus
-                  accessibilityLabel="Odometer reading in kilometres"
+                  accessibilityLabel="Meter reading in km"
                   style={{ flex: 1, height: 52, fontSize: 22, color: '#FFFFFF', letterSpacing: 0.5 }}
                 />
                 <T style={[{ fontSize: 15, color: 'rgba(255,255,255,0.6)' }, weight(500)]}>km</T>
-              </View>
+              </Animated.View>
 
               {err ? (
                 <T style={{ fontSize: 13, lineHeight: 18, color: C.warn }}>{err}</T>
@@ -207,22 +228,20 @@ export function OdometerCamera({
                 </T>
               ) : previousKm != null ? (
                 <T style={{ fontSize: 13, lineHeight: 18, color: 'rgba(255,255,255,0.5)' }}>
-                  You set off on {previousKm.toLocaleString('en-IN')} km.
+                  Your start reading was {previousKm.toLocaleString('en-IN')} km.
                 </T>
               ) : null}
 
-              <PrimaryButton label="Save this reading" onPress={confirm} />
-              <SecondaryButton label="Take it again" onPress={() => { setShot(null); setErr(null); }} />
+              <PrimaryButton label="Save reading" onPress={confirm} />
+              <SecondaryButton label="Take again" onPress={() => { setShot(null); setErr(null); }} />
             </>
           ) : (
             <>
               <PrimaryButton
-                label={shooting ? 'Taking…' : 'Photograph the meter'}
+                label={shooting ? 'Taking…' : 'Take meter photo'}
                 onPress={() => void take()}
-                disabled={!permission?.granted || !ready || shooting}
-                whyDisabled={
-                  denied ? 'Camera permission is off for MBOS.' : 'The camera is still starting up.'
-                }
+                disabled={access !== 'granted' || !ready || shooting}
+                whyDisabled={shutterWhy(access)}
               />
               {/*
                 A CANCEL, and it says what it abandons. There is no "record it
@@ -246,13 +265,3 @@ export function OdometerCamera({
   );
 }
 
-function Refusal({ body }: { body: string }) {
-  return (
-    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, backgroundColor: C.ink }}>
-      <Icon name="camera" size={32} color="rgba(255,255,255,0.5)" strokeWidth={1.5} />
-      <T style={{ fontSize: 15, lineHeight: 22, color: 'rgba(255,255,255,0.8)', textAlign: 'center', marginTop: 12 }}>
-        {body}
-      </T>
-    </View>
-  );
-}

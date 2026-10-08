@@ -10,6 +10,8 @@ import { ALERT_LABEL, type AlertKind } from "./engines/alerts";
 import { monthId, targetReached } from "./engines/sales";
 import { erpLink } from "./registry";
 import { today } from "./screens/common";
+import { purchaseOrderViews, requirementWork } from "./screens/purchase-flow";
+import { poTotals } from "./engines/purchase-flow";
 import { requestStatus } from "./screens/complaints";
 import { loadCustomers, partyStatus } from "./screens/masters";
 import { fgReorderRows, rmReorderRows } from "./screens/movement";
@@ -83,14 +85,48 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
 
   /* ========================================================== purchase */
   const purchase: Tile[] = [];
+  /* THE PURCHASE FLOW, one tile per step that is waiting on somebody. */
   if (has("requisitions")) {
-    const reqs = (await q(sql`select r.id, r.status, r.priority, g.name as godown from erp_requisitions r join erp_godowns g on g.id = r.godown_id where r.status <> 'Received'`)).filter((r) => inG(r.godown));
-    for (const st of ["Pending", "Order Placed", "Booked"]) {
-      const ids = reqs.filter((r) => r.status === st).map((r) => String(r.id));
-      if (ids.length || st === "Pending") purchase.push({ l: `Requisitions · ${st}`, v: String(ids.length), href: tileHref("requisitions", ids, st) });
+    const work = await requirementWork(ctx);
+    const ids = (stage: string) => (work[stage] ?? []).filter((r) => inG(r.godown)).map((r) => r.id);
+    const tile = (stage: string, l: string, sub: string, tone: Tone | undefined, always = false) => {
+      const list = ids(stage);
+      if (list.length || always) purchase.push({ l, v: String(list.length), sub, tone: list.length ? tone : undefined, href: tileHref("requisitions", list, stage) });
+    };
+    tile("Buyer decision", "Requirements · buyer decision", pw("purchaseBuyer") ? "you decide how these are bought" : "the buyer decides how these are bought", "brand");
+    tile("Select vendor", "Requirements · select vendor", "direct purchases with no vendor yet", "warn", true);
+    tile("Collect quotations", "Requirements · collect quotations", "not enough quotations in yet", "warn");
+    tile("Compare quotations", "Requirements · compare quotations", "quotations in — select one", "info");
+    tile("Ready for PO", "Requirements · ready for PO", "vendor chosen — raise the PO", "brand", true);
+    const open = Object.entries(work)
+      .filter(([s]) => !["Received", "Cancelled", "Closed", "Closed short"].includes(s) && !s.endsWith("(before POs)"))
+      .flatMap(([, r]) => r);
+    const reqRows = (await q(sql`select id, priority, required_by::text as by from erp_requisitions`)) as { id: string; priority: string; by: string | null }[];
+    const openIds = new Set(open.filter((r) => inG(r.godown)).map((r) => r.id));
+    const urgent = reqRows.filter((r) => openIds.has(r.id) && r.priority === "Urgent").map((r) => r.id);
+    purchase.push({ l: "Urgent open requirements", v: String(urgent.length), tone: urgent.length ? "danger" : undefined, href: tileHref("requisitions", urgent, "Urgent") });
+    const late = reqRows.filter((r) => openIds.has(r.id) && r.by && r.by < day).map((r) => r.id);
+    if (late.length) purchase.push({ l: "Requirements past their date", v: String(late.length), sub: "required by a date already gone", tone: "danger", href: tileHref("requisitions", late, "Past its required date") });
+  }
+  if (has("purchaseOrders")) {
+    const pos = (await purchaseOrderViews({ status: ["Pending approval", "Approved", "Sent", "Partly received"] })).filter((p) => inG(p.godown));
+    const by = (st: string) => pos.filter((p) => p.po.status === st).map((p) => p.po.id);
+    purchase.push({
+      l: "POs awaiting approval",
+      v: String(by("Pending approval").length),
+      sub: pw("approvePurchaseOrder") ? "you approve these" : "the approver decides",
+      tone: by("Pending approval").length ? "warn" : undefined,
+      href: tileHref("purchaseOrders", by("Pending approval"), "Pending approval"),
+    });
+    purchase.push({ l: "POs to send to the vendor", v: String(by("Approved").length), sub: "approved, not sent yet", tone: by("Approved").length ? "brand" : undefined, href: tileHref("purchaseOrders", by("Approved"), "Approved") });
+    const waiting = pos.filter((p) => ["Approved", "Sent", "Partly received"].includes(p.po.status)).map((p) => p.po.id);
+    purchase.push({ l: "POs awaiting delivery", v: String(waiting.length), href: tileHref("purchaseOrders", waiting, "Awaiting delivery") });
+    const overdue = pos.filter((p) => ["Approved", "Sent", "Partly received"].includes(p.po.status) && p.po.deliveryDate < day).map((p) => p.po.id);
+    if (overdue.length) purchase.push({ l: "PO deliveries overdue", v: String(overdue.length), tone: "danger", href: tileHref("purchaseOrders", overdue, "Delivery overdue") });
+    if (pw("viewPurchaseMoney")) {
+      const value = pos.filter((p) => p.po.status !== "Pending approval").reduce((a, p) => a + poTotals(p.lines, p.po.freightPaise).totalPaise, 0);
+      purchase.push({ l: "Open PO value", v: rupees(value), sub: "approved, not yet fully received", href: tileHref("purchaseOrders", waiting, "Awaiting delivery") });
     }
-    const urgent = reqs.filter((r) => r.priority === "Urgent").map((r) => String(r.id));
-    purchase.push({ l: "Urgent open requisitions", v: String(urgent.length), tone: urgent.length ? "danger" : undefined, href: tileHref("requisitions", urgent, "Urgent") });
   }
   if (has("inward")) {
     const ids = (
@@ -101,7 +137,7 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
     )
       .filter((r) => inG(r.godown))
       .map((r) => String(r.id));
-    purchase.push({ l: "Inward awaiting routing", v: String(ids.length), sub: "no test, or no register row, yet", tone: ids.length ? "warn" : undefined, href: tileHref("inward", ids, "Awaiting routing") });
+    purchase.push({ l: "Goods received awaiting routing", v: String(ids.length), sub: "no test, or no register row, yet", tone: ids.length ? "warn" : undefined, href: tileHref("inward", ids, "Awaiting routing") });
   }
   if (has("testing")) {
     const ids = (await q(sql`select t.id, g.name as godown from erp_tests t join erp_godowns g on g.id = t.godown_id where t.status <> 'Verified'`)).filter((r) => inG(r.godown)).map((r) => String(r.id));

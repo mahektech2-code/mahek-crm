@@ -214,6 +214,8 @@ export type QualItem = {
    * prevent, so those are shown as answered or not and never toggled.
    */
   tickable: boolean;
+  /** What was answered, in one line, for the Sales Manager's read-through. "" where nothing yet. */
+  answer?: string;
 };
 
 /** What the manager's review of the salesman's checklist says. */
@@ -303,10 +305,23 @@ export type Lead = {
   customerType?: string;
   gstin?: string;
   gstVerified: boolean;
+  /**
+   * Where the GST number stands for the review: `none` (no number yet),
+   * `unchecked` (entered, nobody has validated it), `valid`, or `refused` (the
+   * Sales Manager refused it and the Salesman owes a correction).
+   */
+  gstState?: "none" | "unchecked" | "valid" | "refused";
+  /**
+   * Who verifies, validates and reviews this lead INSTEAD of its Sales Manager —
+   * set only on a lead the Sales Manager raised herself, where Mahek has
+   * designated somebody. A screen says so rather than leaving her to wonder why
+   * the buttons are not hers.
+   */
+  approverName?: string;
   creditDaysWanted?: number;
   buyer?: string;
   visits: number;
-  /** `leads.suspectMaxVisits` — the visits a Suspect gets before an answer is demanded. */
+  /** `mbos.leads.maxSuspectVisits` — the visits a Suspect gets before an answer is demanded. */
   suspectCap: number;
   /** §4 — the window has run out and Prospect-or-not is being DEMANDED. */
   mustDecide: boolean;
@@ -487,7 +502,7 @@ export type PipelineRefs = {
  * (a verified Prospect that is also overdue), and each is a fact read off an
  * existing screen's own query — never a status somebody set here.
  */
-export type DeskQueue = "verify" | "review" | "sample" | "order" | "overdue";
+export type DeskQueue = "verify" | "review" | "sample" | "order" | "overdue" | "nurture";
 
 /** A pipeline row plus the salesman it answers to and the queues it is in. */
 export type DeskRow = PipelineRow & {

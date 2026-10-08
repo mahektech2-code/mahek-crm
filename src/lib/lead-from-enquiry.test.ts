@@ -462,16 +462,25 @@ describe("D — the desk is granted, not inherited", () => {
     assert.equal(await canOpenModule(narrowedAdmin.id, "crm.customers"), true);
   });
 
-  test("the grant's own level wins over the account's, a grant with none falls back to it, and no grant is no administrator", async () => {
+  test("the grant's own level wins over the account's, a grant with none is an associate's, and no grant is no administrator", async () => {
     const grantSaysManager = await makeUser("Admin Account Manager Grant", "admin", ["crm"]);
     await db.update(appAccess).set({ role: "manager" }).where(eq(appAccess.userId, grantSaysManager.id));
     await grantCrmModules(grantSaysManager.id, ["crm.dashboard"]);
     assert.equal(await canOpenModule(grantSaysManager.id, DESK_MODULE), false);
 
+    /* A grant with no level used to fall back to the account's — so an `admin`
+       account handed the CRM from a terminal held the CRM's off-by-default
+       modules with nobody having said so. A grant now says no more than it
+       says: no level is the associate's, and an associate narrowed to the
+       dashboard does not hold the desk. */
     const grantNamesNone = await makeUser("Admin Grant Without Level", "admin", ["crm"]);
     await db.update(appAccess).set({ role: null }).where(eq(appAccess.userId, grantNamesNone.id));
     await grantCrmModules(grantNamesNone.id, ["crm.dashboard"]);
-    assert.equal(await canOpenModule(grantNamesNone.id, DESK_MODULE), true);
+    assert.equal(
+      await canOpenModule(grantNamesNone.id, DESK_MODULE),
+      false,
+      "an unlevelled grant borrowed the account's administrator",
+    );
 
     const noGrant = await makeUser("Admin Without The CRM", "admin", ["enquiries"]);
     assert.equal(await canOpenModule(noGrant.id, DESK_MODULE), false, "an administrator elsewhere holds nothing here");

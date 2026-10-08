@@ -48,7 +48,9 @@ export type FieldType =
   /** A CSV file, read in the browser: the field's value is the file's text. */
   | "csv"
   /** A time of day, "HH:MM". */
-  | "time";
+  | "time"
+  /** A map pin, "lat, lng": typed, picked on a map, or taken from here. */
+  | "pin";
 
 /** A condition on another field of the same form: shown only while it holds. */
 export type When =
@@ -66,6 +68,8 @@ export type FieldSpec = {
   /** A section heading, drawn where it first changes down the form. */
   sec?: string;
   req?: boolean;
+  /** Required only while this holds — "weight with drum" is needed for a kg item, not a litre one. */
+  reqWhen?: When;
   /** Fixed options. */
   opts?: string[];
   /** Options that depend on other fields' values: `{ by: "type", map: { Chemical: [...] } }`; a list of fields keys the map by their values joined with "|". */
@@ -73,6 +77,13 @@ export type FieldSpec = {
   hint?: string;
   /** Default value on open. */
   def?: string;
+  /**
+   * Filled in when a field it depends on changes: `{ by: ["product", "item"],
+   * map: { "Nano|Toluene": "200" } }` — header and line values both count, keys
+   * joined with "|". No entry leaves the value as it was; whatever is filled
+   * stays editable. The SFG batch's quantity per batch reads the recipe this way.
+   */
+  fillBy?: { by: string[]; map: Record<string, string> };
   when?: When;
   /** Numeric bounds, checked in the browser and again on the server. */
   min?: number;
@@ -211,6 +222,13 @@ export type ListRow = {
 export type ListSpec = {
   screen: string;
   cols: ColSpec[];
+  /**
+   * Draw the rows as image cards instead of table rows: the same rows,
+   * search, chips and paging, and a card opens the same record. `img` names
+   * the row value holding the image's URL (empty draws a placeholder),
+   * `title` the bold line, `lines` the muted ones beneath.
+   */
+  cards?: { img: string; title: string; lines: string[]; empty: string };
   /** Columns withheld by a power, named so the screen can say which. */
   hidden: { l: string; power: string }[];
   groups?: string[];
@@ -265,6 +283,11 @@ export const ST_TONE: Record<string, Tone> = {
   High: "success", Low: "warn", "Invoice Received": "info", "Purchase Matched": "brand",
   "Purchase Verified": "success", Dispatched: "success", Transfer: "neutral", Declined: "danger",
   Arrived: "neutral", Tested: "info", "Bill received": "info", Matched: "brand",
+  "Buyer decision": "brand", "Select vendor": "warn", "Collect quotations": "warn", "Compare quotations": "info",
+  "Ready for PO": "brand", "PO awaiting approval": "warn", "PO approved": "info", "PO sent": "info",
+  "Partly received": "warn", "Closed short": "muted", Closed: "muted", Cancelled: "muted",
+  "Direct purchase": "neutral", Quotation: "info", "Pending approval": "warn", Approved: "success",
+  Sent: "info", Selected: "success", "Not selected": "muted",
 };
 
 /** Named row states (the source's format rules), and how each is labelled. */
@@ -302,6 +325,13 @@ export const FLAG: Record<string, [string, Tone]> = {
   dueToday: ["Dispatch today", "brand"],
   dueTomorrow: ["Dispatch tomorrow", "neutral"],
   late: ["Dispatch late", "danger"],
+  requiredOverdue: ["Past its required date", "danger"],
+  noPo: ["Before POs", "neutral"],
+  rateOffPo: ["Rate differs from PO", "warn"],
+  lowestQuote: ["Lowest landed cost", "success"],
+  quoteExpired: ["Quotation expired", "muted"],
+  awaitingApproval: ["Awaiting approval", "warn"],
+  deliveryLate: ["Delivery overdue", "danger"],
 };
 
 /* -------------------------------------------------------------- formatting */
@@ -332,6 +362,15 @@ export function inr(paise: CellValue | undefined): string {
   return (r < 0 ? "−" : "") + "₹" + groupIndian(Math.abs(r));
 }
 
+/** A RATE in paise → "₹11.50": a rate keeps its paise, where an amount is rounded to the rupee. */
+export function inrRate(paise: CellValue | undefined): string {
+  if (paise == null || paise === "") return "";
+  const n = Number(paise);
+  if (!Number.isFinite(n)) return String(paise);
+  const r = n / 100;
+  return (r < 0 ? "−" : "") + "₹" + Math.abs(r).toLocaleString("en-IN", { minimumFractionDigits: Number.isInteger(r) ? 0 : 2, maximumFractionDigits: 2 });
+}
+
 /** 12345.5 → "12,345.5" in Indian grouping, up to two decimals. */
 export function nf(v: CellValue | undefined): string {
   if (v == null || v === "") return "";
@@ -345,6 +384,11 @@ export function cellText(col: ColSpec, v: CellValue | undefined): string {
   if (col.t === "m") return v === "" || v == null ? "—" : inr(v);
   if (col.t === "n") return v === "" || v == null ? "—" : typeof v === "number" ? nf(v) + (col.u ?? "") : String(v);
   return v == null || v === "" ? "—" : String(v);
+}
+
+/** The field as it stands for these values: `reqWhen` folded into `req`. */
+export function resolveField(f: FieldSpec, values: Record<string, string>, data: Record<string, unknown> = {}): FieldSpec {
+  return f.reqWhen && !f.req && whenHolds(f.reqWhen, values, data) ? { ...f, req: true } : f;
 }
 
 export function whenHolds(

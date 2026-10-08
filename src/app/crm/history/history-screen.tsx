@@ -25,6 +25,7 @@ import {
   type StoredNextStep,
 } from "@/components/crm/next-call-cell";
 import { NEXT_STEP_LABELS } from "@/lib/next-step-labels";
+import type { CallDetailView } from "@/lib/call-detail";
 
 type Row = {
   id: string;
@@ -39,13 +40,15 @@ type Row = {
   produced: string | null;
   /** What this call said would happen next. Null on calls logged before it existed. */
   nextStep: StoredNextStep | null;
+  /** Why they rang, who rang, the answers, the next action. Null where none was recorded. */
+  detail?: CallDetailView | null;
 };
 
 type Commitment = { customerId: string; note: string; dueDate: string };
 
 export function HistoryScreen({
   scopeLabel,
-  isManager,
+  canExport,
   team,
   rows,
   capped,
@@ -55,7 +58,12 @@ export function HistoryScreen({
   today,
 }: {
   scopeLabel: string;
-  isManager: boolean;
+  /**
+   * Holds `customer.export`. The export is a CSV built in the browser from the
+   * rows already loaded, so this button is the whole of the gate — it was
+   * `isManager`, the widest level held in any app, rather than the capability.
+   */
+  canExport: boolean;
   team: string[];
   rows: Row[];
   /** The server read was cut off at its limit — these are the newest, not all. */
@@ -142,8 +150,8 @@ export function HistoryScreen({
         actions={
           <Button
             variant="secondary"
-            disabled={!isManager}
-            title={isManager ? "Download as CSV" : "Export is a manager action"}
+            disabled={!canExport}
+            title={canExport ? "Download as CSV" : "Exporting needs the right to export customers"}
             onClick={() => {
               downloadCsv(
                 "mahek-interactions",
@@ -391,7 +399,20 @@ export function HistoryScreen({
                       <span className="text-muted">-</span>
                     )}
                   </Td>
-                  <Td>{r.outcome ?? "-"}</Td>
+                  <Td>
+                    {r.outcome ?? "-"}
+                    {/* One short line under the outcome, and the whole of it on hover:
+                        this table holds its line, so an expandable block would be
+                        clipped. The record's timeline draws the full detail. */}
+                    {r.detail ? (
+                      <div
+                        className="truncate text-[11px] text-muted"
+                        title={r.detail.lines.map((l) => `${l.label}: ${l.value}`).join("\n")}
+                      >
+                        {r.detail.summary ?? "Call details"}
+                      </div>
+                    ) : null}
+                  </Td>
                   <Td>
                     <NextCallCell step={r.nextStep} today={today} />
                   </Td>

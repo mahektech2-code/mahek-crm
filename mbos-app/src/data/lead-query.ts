@@ -195,13 +195,49 @@ function searching(query: string): { where: string; args: string[] } {
 export function leadBookQuery(
   filter: LeadBookFilter = {},
   query = '',
+  page?: { limit: number; offset: number },
+): { sql: string; params: (string | number)[] } {
+  const narrow = narrowing(filter);
+  const search = searching(query);
+  /* `id` ends the ordering for the reason it ends every paged ordering here:
+     two leads owed on the same day, quiet since the same day, under the same
+     name, are a tie the planner may break differently on the next page — and
+     a tie on a page boundary is one lead twice and another not at all. */
+  const order = ` ORDER BY ${OWED} IS NULL, ${OWED} ASC, lastActivityDate ASC, name, id`;
+  return {
+    sql:
+      /* `pendingVisits` is what the outbox still holds for this shop: the
+         card's visit counter used to read the office's figure alone, so a
+         salesman who made his second visit with no signal saw "Visit 1 / 3" on
+         the list while the visit screen, which adds the outbox, demanded the
+         decision. One count, read the same way in both places. */
+      `SELECT leads.*, (SELECT COUNT(*) FROM visits v WHERE v.customerId = leads.id AND v.syncState <> 'synced') AS pendingVisits` +
+      ` FROM leads WHERE ${narrow.where}${search.where}${order}` +
+      (page ? ' LIMIT ? OFFSET ?' : ''),
+    params: [...narrow.args, ...search.args, ...(page ? [page.limit, page.offset] : [])],
+  };
+}
+
+/**
+ * A PAGE OF THE LEAD BOOK, and why it has one now.
+ *
+ * The book read every lead and handed the lot to the list. That was harmless
+ * on a few hundred and is not on a territory where most of the shops are still
+ * leads — the EMP master alone brought five thousand of them, each one a heavy
+ * row of sixty columns held in memory before the first card was drawn. The
+ * same size as a customers page, for the same reason.
+ */
+export const LEAD_PAGE = 30;
+
+/** How many leads match — the number the screen prints, never a loaded length. */
+export function leadCountQuery(
+  filter: LeadBookFilter = {},
+  query = '',
 ): { sql: string; params: string[] } {
   const narrow = narrowing(filter);
   const search = searching(query);
   return {
-    sql:
-      `SELECT * FROM leads WHERE ${narrow.where}${search.where}` +
-      ` ORDER BY ${OWED} IS NULL, ${OWED} ASC, lastActivityDate ASC, name`,
+    sql: `SELECT COUNT(*) AS n FROM leads WHERE ${narrow.where}${search.where}`,
     params: [...narrow.args, ...search.args],
   };
 }
@@ -239,3 +275,23 @@ export function rungCountsQuery(
   };
 }
 
+/**
+ * A LEAD THAT HAS BECOME A CUSTOMER, asked of a `leads` row.
+ *
+ * The office's own definition is `notConverted` in MahekOne's
+ * `lib/lead-action-window.ts`, and this is the same four facts read off what
+ * the phone holds: the ledger calling the shop a customer (`customers.kind`,
+ * which arrives on every pull), a winning terminal rung, the legacy word for
+ * one, and the third-party mark on either table. A lead the office converted
+ * stops arriving on the leads channel, so its row here is frozen at whatever
+ * it last was — which is why the customer row, the one the office keeps
+ * current, is asked as well as the lead's own.
+ *
+ * A bare clause over `leads` with no parameters, so it can be spliced into a
+ * DELETE and run against a real SQLite in `leads-query.test.ts`.
+ */
+export const CONVERTED_LEAD = `(leads.thirdParty = 1
+    OR COALESCE(leads.funnelStage, '') IN ('won', 'customer', 'active_distributor')
+    OR leads.stage = 'Converted'
+    OR EXISTS (SELECT 1 FROM customers c
+                WHERE c.id = leads.id AND (c.thirdParty = 1 OR c.kind = 'customer')))`;

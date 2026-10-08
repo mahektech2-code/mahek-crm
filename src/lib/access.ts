@@ -6,21 +6,21 @@ import {
   appAccess,
   appModuleAccess,
   attendance,
-  users,
   type User,
 } from "@/db/schema";
 import { APPS, webApps, type AppDefinition, type AppId } from "./apps";
 import {
+  WHATSAPP_MODULES,
   getModule,
   moduleAllowed,
   modulesForApp,
+  writeModuleOf,
   type AppModule,
 } from "./modules";
 // The business day, not the calendar day — a 4am sign-in belongs to the shift
 // that started yesterday, and the boundary is configurable.
 import { today } from "./recompute";
 import { pendingOrderCount } from "./services/order-approval-service";
-import { healthTileLine } from "./services/owner-dashboard-service";
 import { crmBadgeCounts } from "./queries";
 import { pendingReceiptCount } from "./services/receipt-service";
 import { pendingCreditNoteCount } from "./services/credit-note-service";
@@ -69,16 +69,16 @@ export const listUserModules = cache(async function listUserModules(
 
   const granted = rows.map((r) => r.module);
 
-  /* The level held IN THIS APP: the grant's own, else the account's — the same
-     fall-through `levelInApp` makes. No grant means no level, so a person who
-     was never given the app gains nothing from this. */
+  /* The level held IN THIS APP, and nothing else — admin of an app is let past
+     THAT app's off-by-default screens, ticked or not (never an explicit-only
+     seat; see `moduleAllowed`). A grant with no level is an associate's, the same rule
+     `levelInApp` reads; no grant means no level at all. */
   const [hat] = await db
-    .select({ grant: appAccess.role, account: users.role })
+    .select({ grant: appAccess.role })
     .from(appAccess)
-    .innerJoin(users, eq(users.id, appAccess.userId))
     .where(and(eq(appAccess.userId, userId), eq(appAccess.app, app)))
     .limit(1);
-  const administrator = hat !== undefined && (hat.grant ?? hat.account) === "admin";
+  const administrator = hat !== undefined && hat.grant === "admin";
 
   return modulesForApp(app).filter((m) => moduleAllowed(m.key, granted, app, administrator));
 });
@@ -141,6 +141,32 @@ export async function canOpenModule(userId: string, key: string): Promise<boolea
      app nobody holds is not a permission. */
   if (!(await canOpen(userId, mod.app))) return false;
   return (await listUserModules(userId, mod.app)).some((m) => m.key === key);
+}
+
+/**
+ * HOW FAR INTO WHATSAPP THIS PERSON MAY GO, across every app that draws it.
+ *
+ * `read` opens the chats and nothing else; `write` adds replying, sending,
+ * runs, templates and groups. It is the UNION over apps, like every other
+ * thing somebody may DO — read-only in Accounts beside the whole of it in the
+ * CRM is somebody who can reply, from either screen, because a server action
+ * does not know which screen it was pressed on any better than that.
+ *
+ * `none` is somebody who holds the screen nowhere. That is NOT the same as
+ * read-only and the actions treat it differently: the payment panel and the
+ * command centre send reminders without the WhatsApp screen and always have,
+ * so only somebody NARROWED to read is refused there — never somebody who was
+ * simply never given the chats.
+ */
+export async function whatsappLevel(userId: string): Promise<"none" | "read" | "write"> {
+  let read = false;
+  for (const key of WHATSAPP_MODULES) {
+    if (!(await canOpenModule(userId, key))) continue;
+    read = true;
+    const write = writeModuleOf(key);
+    if (write && (await canOpenModule(userId, write.key))) return "write";
+  }
+  return read ? "read" : "none";
 }
 
 export async function canOpen(userId: string, app: AppId): Promise<boolean> {
@@ -263,23 +289,7 @@ export async function launcherApps(user: User): Promise<LauncherApp[]> {
       continue;
     }
 
-    /*
-     * A report has nothing waiting in it, so the tile says what the book looks
-     * like rather than what somebody has to do. The badge stays at zero for the
-     * same reason HRMS's does: the chasing an at-risk customer implies happens
-     * in the CRM, and a red pill over a reporting app reads as a queue.
-     */
-    if (app.id === "reports") {
-      const day = await today();
-      out.push({
-        ...app,
-        count: 0,
-        status: await healthTileLine(day.slice(0, 7)),
-      });
-      continue;
-    }
-
-    // A pure rollup, like Reports and HRMS — nothing is decided here, so the
+    // A pure rollup, like HRMS — nothing is decided here, so the
     // badge stays at zero and the sentence says what the screen is rather
     // than pretending to a queue.
     if (app.id === "founder") {

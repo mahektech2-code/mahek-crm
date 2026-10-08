@@ -1,18 +1,20 @@
 "use server";
 
+import { assertLeadInScope } from "@/lib/services/lead-scope";
+import { requireQualificationApprover } from "@/lib/services/lead-verifier";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
 import { auditLog, customers } from "@/db/schema";
-import { assertCustomerInScope, requireCapability } from "@/lib/access-control";
+import { requireCapability } from "@/lib/access-control";
 import { notifyUser } from "@/lib/notify";
 import { MBOS_EVENT, writeTimelineEvent } from "@/lib/timeline";
 import { qualificationAccess } from "@/lib/lead-qualification-access";
 import { handBackAfterReview, settleQualificationState } from "@/lib/services/lead-qualification-flow-service";
 import { leadGateInput, leadRow } from "@/lib/services/lead-service";
-import { qualificationComplete } from "@/lib/engines/lead-gates";
+import { gateTo, qualificationComplete, qualificationReadyForReview } from "@/lib/engines/lead-gates";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
 
 /* ---------------------------------------------------------------------------
@@ -128,7 +130,7 @@ export async function reviewLeadQualification(
     /* Seeing it at all is the ordinary scope question, asked before the
        capability so a refusal cannot be used to find out whether a row
        exists. */
-    await assertCustomerInScope(row);
+    await assertLeadInScope(customerId, row);
 
     /*
      * A CHECKLIST IS A THING A LEAD HAS, so there has to be a lead.
@@ -178,7 +180,38 @@ export async function reviewLeadQualification(
     /* The hat that allowed it, recorded on the audit row exactly as every other
        audited write here records one — with several hats per person, "was he
        allowed to do this" is not answerable from the person alone. */
-    const ctx = await requireCapability("lead.verify");
+    const approver = await requireQualificationApprover(customerId);
+    if (!approver.ok) return err(approver.message, "not_permitted");
+    const ctx = approver.ctx;
+
+    /*
+     * VERIFIED MEANS THE EIGHT ANSWERS ARE IN AND THE GST NUMBER IS VALIDATED.
+     *
+     * The Sample/Trial gate already refuses a lead on these, but a verdict that
+     * could be recorded first would read on the record as "approved" over a
+     * checklist with holes in it, and the sample is then refused by a gate the
+     * manager never saw fail. So the verdict itself refuses, and names what is
+     * missing. The manager's own two review conditions and the next action are
+     * not asked of the answers — they are the review, and the next action is
+     * the review's own.
+     */
+    if (verdict === "verified") {
+      const gate = await leadGateInput(customerId);
+      if (!gate || !qualificationComplete(gate)) {
+        const missing = gate
+          ? gateTo(gate, "sample_trial").missing.filter(
+              (c) => !c.id.startsWith("manager_review") && c.id !== "next_action",
+            )
+          : [];
+        return err(
+          missing.length
+            ? `Not ready to verify: ${missing.map((c) => c.says).join("; ")}.`
+            : "Not ready to verify: the Qualification is not complete.",
+          "rule_violation",
+          missing.map((c) => ({ field: c.id, message: c.says })),
+        );
+      }
+    }
 
     const before = row.leadQualificationReview ?? null;
     /*
@@ -346,8 +379,8 @@ export async function reviewLeadQualification(
           ? `Verified — ${row.name} is no longer held at qualification.`
           : "Verified."
         : verdict === "incomplete"
-          ? `Marked incomplete. ${row.name} is held at qualification and the Telecaller has been told why.`
-          : `Sent back for clarification. ${row.name} is held at qualification and the Telecaller has been told what is wanted.`,
+          ? `Marked incomplete. ${row.name} is held at qualification and the Salesman has been told why.`
+          : `Sent back for clarification. ${row.name} is held at qualification and the Salesman has been told what is wanted.`,
     );
   } catch (e) {
     return fromThrown(e);
@@ -378,7 +411,7 @@ export async function resubmitForReview(customerId: string): Promise<Result<null
     const ctx = await requireCapability("lead.work");
     const lead = await leadRow(customerId);
     if (!lead || !lead.leadStage) return err("That lead is not on MahekOne.", "not_found");
-    await assertCustomerInScope({
+    await assertLeadInScope(customerId, {
       kind: lead.kind,
       ownerId: lead.ownerId,
       salesAmId: lead.salesAmId,
@@ -389,7 +422,7 @@ export async function resubmitForReview(customerId: string): Promise<Result<null
     // Only the lead's current owner answers a note addressed to the owner — not a
     // manager, and not another Telecaller who merely has the lead in scope.
     if (lead.ownerId !== ctx.user.id) {
-      return err("Only the Telecaller who owns this lead can send it back for review.", "not_permitted");
+      return err("Only the Salesman who owns this lead can send it back for review.", "not_permitted");
     }
 
     const access = qualificationAccess(lead.leadStage);
@@ -398,9 +431,9 @@ export async function resubmitForReview(customerId: string): Promise<Result<null
       return err("Nothing has been sent back on this lead, so there is nothing to resubmit.", "rule_violation");
     }
     const gate = await leadGateInput(customerId);
-    if (!gate || !qualificationComplete(gate)) {
+    if (!gate || !qualificationReadyForReview(gate)) {
       return err(
-        "Answer every condition first — it can only go back to the Sales Manager once it is complete.",
+        "Answer every question first — it can only go back to the Sales Manager once it is complete.",
         "rule_violation",
       );
     }

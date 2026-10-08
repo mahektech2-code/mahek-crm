@@ -26,6 +26,13 @@ export type NavItem = {
   label: string;
   icon: SalesIconName;
   exact?: boolean;
+  /**
+   * Out of the main navigation but still granted, routed and working — drawn
+   * ONLY for somebody who cannot reach All Leads, whose desk line and views are
+   * where every one of these is found now. Hiding a destination must not strand
+   * the person whose grant is for that destination alone.
+   */
+  legacy?: boolean;
 };
 
 export type NavGroup = {
@@ -106,8 +113,8 @@ export const SALES_NAV: NavGroup[] = [
     icon: "route",
     items: [
       { href: "/sales/tasks", label: "Tasks", icon: "task" },
-      { href: "/sales/journeys", label: "Journey planning", icon: "route" },
-      { href: "/sales/visits", label: "Visits", icon: "visit" },
+      { href: "/sales/journeys", label: "Journeys & visits", icon: "route" },
+      { href: "/sales/field-reports", label: "Field reports", icon: "doc" },
       { href: "/sales/travel", label: "Travel ledger", icon: "route" },
       { href: "/sales/activity-history", label: "Activity history", icon: "clock" },
     ],
@@ -133,18 +140,21 @@ export const SALES_NAV: NavGroup[] = [
     icon: "spark",
     items: [
       { href: "/sales/leads", label: "All Leads", icon: "spark", exact: true },
+      { href: "/sales/leads/intake", label: "Intake", icon: "doc" },
       /* Its own route, outside `/sales`, but an ordinary module-backed link
          like every other row here — `sales.lead-pipeline`, in `lib/modules.ts`. */
       { href: "/sales-lead-pipeline", label: "Sales Manager", icon: "people" },
-      { href: "/sales/leads/funnel", label: "Funnel & conversion", icon: "chart" },
-      { href: "/sales/leads/intake", label: "Intake", icon: "doc" },
-      { href: "/sales/leads/qualify", label: "Qualification", icon: "tick" },
-      { href: "/sales/samples", label: "Samples & trials", icon: "sample" },
-      { href: "/sales/leads/commercial", label: "Commercial", icon: "order" },
       { href: "/sales/leads/appointments", label: "Distributor appointments", icon: "people" },
-      { href: "/sales/leads/actions", label: "Next actions & nurture", icon: "task" },
-      { href: "/sales/leads/handovers", label: "Handovers", icon: "route" },
-      { href: "/sales/leads/oversight", label: "Oversight", icon: "shield" },
+      /* ---- out of the main navigation; see `NavItem.legacy`. The same six the
+         CRM keeps (Telecaller and Lost are CRM-only: callers work in the CRM,
+         and the loss record has no Sales Dashboard module). ----------------- */
+      { href: "/sales/leads/funnel", label: "Funnel & conversion", icon: "chart", legacy: true },
+      { href: "/sales/leads/qualify", label: "Qualification", icon: "tick", legacy: true },
+      { href: "/sales/samples", label: "Samples & trials", icon: "sample", legacy: true },
+      { href: "/sales/leads/commercial", label: "Commercial", icon: "order", legacy: true },
+      { href: "/sales/leads/actions", label: "Next actions & nurture", icon: "task", legacy: true },
+      { href: "/sales/leads/handovers", label: "Handovers", icon: "route", legacy: true },
+      { href: "/sales/leads/oversight", label: "Oversight", icon: "shield", legacy: true },
     ],
   },
   {
@@ -154,8 +164,6 @@ export const SALES_NAV: NavGroup[] = [
       { href: "/sales/orders", label: "Orders", icon: "order" },
       { href: "/sales/payments", label: "Payments", icon: "money" },
       { href: "/sales/invoices", label: "Invoices", icon: "doc" },
-      { href: "/sales/catalogue", label: "Catalogue & rates", icon: "grid" },
-      { href: "/sales/price-lists", label: "Price lists", icon: "money" },
     ],
   },
   {
@@ -165,10 +173,9 @@ export const SALES_NAV: NavGroup[] = [
       { href: "/sales/attendance", label: "Attendance", icon: "clock" },
       { href: "/sales/leave", label: "Leave", icon: "cal" },
       { href: "/sales/holidays", label: "Holidays", icon: "cal" },
-      { href: "/sales/salary", label: "Salary", icon: "money" },
-      { href: "/sales/expenses", label: "Expenses & claims", icon: "receipt" },
-      { href: "/sales/exceptions", label: "Expense exceptions", icon: "shield" },
-      { href: "/sales/expense-policy", label: "Expense policy", icon: "list" },
+      { href: "/sales/expenses", label: "Expenses", icon: "receipt" },
+      { href: "/sales/exceptions", label: "Flagged expenses", icon: "bell" },
+      { href: "/sales/expense-policy", label: "Expense policy", icon: "doc" },
     ],
   },
   {

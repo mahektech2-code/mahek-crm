@@ -2,6 +2,7 @@ import * as SQLite from 'expo-sqlite';
 import * as Crypto from 'expo-crypto';
 import { MIGRATIONS, SCHEMA_VERSION } from './schema';
 import { createSerialiser } from './serialise';
+import { runMigrations } from './migrate';
 
 /**
  * One connection, opened once, migrated on open.
@@ -40,6 +41,20 @@ export function openDb(): Promise<SQLite.SQLiteDatabase> {
   if (!opening) {
     opening = (async () => {
       const handle = await SQLite.openDatabaseAsync('mbos.db');
+      /*
+       * WAIT FOR A LOCK RATHER THAN FAIL ON IT.
+       *
+       * This is the only connection THIS runtime opens, but it is not the only
+       * one the file ever has: a reload starts a new JavaScript runtime while
+       * the old one's native connection is still open, and SQLite's default
+       * busy timeout is zero — so the first write that met the old
+       * connection's lock threw `database is locked` straight away, as an
+       * unhandled `NativeStatement.finalizeAsync` rejection on whatever screen
+       * was open. Five seconds of waiting turns that into a pause nobody
+       * notices. Per connection and never persisted, so it is set on every
+       * open, before the migration's own writes.
+       */
+      await handle.execAsync('PRAGMA busy_timeout = 5000');
       await migrate(handle);
       db = handle;
       return handle;
@@ -60,19 +75,13 @@ export function resetHandle() {
   opening = null;
 }
 
+/** The loop and why it is shaped the way it is live in `./migrate`. */
 async function migrate(handle: SQLite.SQLiteDatabase) {
-  const row = await handle.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
-  const current = row?.user_version ?? 0;
-  if (current >= SCHEMA_VERSION) return;
+  const userVersion = async () =>
+    (await handle.getFirstAsync<{ user_version: number }>('PRAGMA user_version'))?.user_version ?? 0;
+  if ((await userVersion()) >= SCHEMA_VERSION) return;
 
-  for (let v = current; v < MIGRATIONS.length; v++) {
-    for (const stmt of MIGRATIONS[v]) {
-      await handle.execAsync(stmt);
-    }
-  }
-  /* PRAGMA will not take a bound parameter. The value is a module constant,
-     never user input, so the interpolation is safe here and nowhere else. */
-  await handle.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+  await runMigrations({ exec: (sql) => handle.execAsync(sql), userVersion }, MIGRATIONS);
 }
 
 /* ------------------------------------------------------------ identifiers */

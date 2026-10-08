@@ -1,11 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AppFrame } from "@/components/shell/app-frame";
 import { AccountMenu } from "@/components/shell/account-menu";
-import { AppSwitcher } from "@/components/shell/app-switcher";
+import { HeaderLead } from "@/components/shell/header-lead";
 import { CollapsibleNav, type NavRowGroup, type NavRowItem } from "@/components/shell/collapsible-nav";
 import { FeedbackButton } from "@/components/shell/feedback-button";
 import { Icon as ShellIcon } from "@/components/shell/icons";
@@ -13,7 +12,9 @@ import { NotificationBell } from "@/components/shell/notification-bell";
 import { cx } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/overlays";
 import { ToastProvider, useToast } from "@/components/ui/toast";
-import { erpAsk, erpSearch, erpSetWorkingGodown, type ErpSearchHit } from "@/lib/actions/erp";
+import { erpAsk, erpLocateWorkingGodown, erpSearch, erpSetWorkingGodown, erpStartViewAs, erpStopViewAs, type ErpLocateResult, type ErpSearchHit } from "@/lib/actions/erp";
+import type { ErpViewingAs } from "@/lib/erp/access";
+import type { PreviewTargets } from "@/lib/services/erp-designation-service";
 import type { Notification } from "@/db/schema";
 import type { AppDefinition } from "@/lib/apps";
 import { GodownPicker } from "./godown-picker";
@@ -53,6 +54,8 @@ const SCREEN_ICON: Record<string, string> = {
   powers: "lock",
   refLists: "clipboard",
   requisitions: "clipboard",
+  quotations: "rupee",
+  purchaseOrders: "book",
   inward: "truck",
   testing: "beaker",
   register: "book",
@@ -132,6 +135,8 @@ export function ErpShell({
   apps,
   voice = false,
   ask = false,
+  locate = false,
+  preview = null,
   children,
 }: {
   nav: NavGroup[];
@@ -146,6 +151,10 @@ export function ErpShell({
   apps: AppDefinition[];
   voice?: boolean;
   ask?: boolean;
+  /** `erp.location.autoDetect` — find the working godown from where somebody stands. */
+  locate?: boolean;
+  /** Drawn only for an ERP administrator: who the ERP can be previewed as, and who it is being. */
+  preview?: { targets: PreviewTargets; current: ErpViewingAs | null; self: { id: string; name: string } } | null;
   children: React.ReactNode;
 }) {
   const [collapsed, setCollapsed] = useState(false);
@@ -185,22 +194,15 @@ export function ErpShell({
         <AppFrame
           header={
             <header className="z-30 flex h-14 flex-none items-center gap-5 border-b border-line bg-surface px-4">
-              <div className="flex w-[216px] flex-none items-center gap-2">
-                {apps.length > 1 ? <AppSwitcher apps={apps} current="erp" /> : null}
-                <button
-                  onClick={() => setCollapsed((c) => !c)}
-                  title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-                  aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-                  className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[4px] text-muted hover:bg-canvas hover:text-body"
-                >
-                  <ShellIcon name="menu" size={18} />
-                </button>
-                <Link href="/erp" className="flex items-center gap-2 no-underline hover:no-underline">
-                  <span className="flex h-4 w-4 flex-none items-center justify-center rounded-[3px] bg-brand">
-                    <span className="block h-1.5 w-1.5 rounded-[1px] bg-brand-lime" />
-                  </span>
-                  <span className="text-[15px] font-semibold tracking-[-0.01em] text-ink">MAHEK ERP</span>
-                </Link>
+              <div className="flex w-[216px] flex-none items-center">
+                <HeaderLead
+                  apps={apps}
+                  current="erp"
+                  collapsed={collapsed}
+                  onToggleSidebar={() => setCollapsed((c) => !c)}
+                  href="/erp"
+                  label="MAHEK ERP"
+                />
               </div>
 
               <ErpSearch ask={ask} />
@@ -208,7 +210,7 @@ export function ErpShell({
               <div className="flex-1" />
 
               <div className="flex items-center gap-2">
-                <WorkingAt godowns={godowns} working={working} />
+                <WorkingAt godowns={godowns} working={working} locate={locate} />
                 <FeedbackButton />
                 <button
                   onClick={() => setShortcutsOpen(true)}
@@ -242,12 +244,14 @@ export function ErpShell({
                    open alert is something the ERP could not explain. */
                 badgeToneFor={(item) => (item.href === "/erp/alerts" ? "danger" : "warn")}
               />
+              {preview && !collapsed ? <PreviewAs preview={preview} /> : null}
               <div className="flex flex-none items-center border-t border-divider px-2 py-2">
                 <AccountMenu user={user} hat={hat} variant="sidebar" collapsed={collapsed} />
               </div>
             </aside>
           }
         >
+          {preview?.current ? <PreviewBanner current={preview.current} /> : null}
           {children}
         </AppFrame>
 
@@ -266,10 +270,217 @@ export function ErpShell({
   );
 }
 
-/** Where this person is working — the CRM's Viewing switch, holding a godown. */
-function WorkingAt({ godowns, working }: { godowns: { id: string; name: string }[]; working: { id: string; name: string } | null }) {
+/*
+ * PREVIEW ACCESS AS — the design's control, at the foot of the sidebar where
+ * the design puts it. It was a prototype's way of showing every role on one
+ * page; here it is an administrator checking what a Quality tester actually
+ * gets before handing the designation out, or why somebody says a screen is
+ * missing. Read-only on the server, whatever this control says.
+ */
+function PreviewAs({ preview }: { preview: { targets: PreviewTargets; current: ErpViewingAs | null; self: { id: string; name: string } } }) {
   const router = useRouter();
   const { push } = useToast();
+  const value = preview.current ? `${preview.current.kind}:${preview.current.id}` : "";
+  const pick = (v: string) => {
+    const [kind, ...rest] = v.split(":");
+    const id = rest.join(":");
+    const done = (r: { ok: boolean; message?: string; error?: string }) => {
+      if (!r.ok) return push(r.error ?? "That did not work.", "error");
+      push(r.message ?? "Done");
+      /* The dashboard, because the screen in view may be one this preview does not hold. */
+      router.push("/erp");
+      router.refresh();
+    };
+    if (!v) void erpStopViewAs().then(done);
+    else void erpStartViewAs({ kind: kind as "designation" | "user", id }).then(done);
+  };
+  return (
+    <div className="flex-none border-t border-divider px-3 pt-2.5 pb-2">
+      <div className="mb-1.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">Preview access as</div>
+      <select
+        value={value}
+        onChange={(e) => pick(e.target.value)}
+        aria-label="Preview access as"
+        className={cx(
+          "h-8.5 w-full cursor-pointer rounded-[4px] border bg-surface px-2 text-[13px]",
+          preview.current ? "border-brand text-brand-hover" : "border-line text-body",
+        )}
+      >
+        <option value="">Myself — {preview.self.name}</option>
+        {preview.targets.designations.length ? (
+          <optgroup label="Designations">
+            {preview.targets.designations.map((d) => (
+              <option key={d.id} value={`designation:${d.id}`}>
+                {d.name}
+              </option>
+            ))}
+          </optgroup>
+        ) : null}
+        {preview.targets.people.filter((p) => p.id !== preview.self.id).length ? (
+          <optgroup label="People">
+            {preview.targets.people
+              .filter((p) => p.id !== preview.self.id)
+              .map((p) => (
+                <option key={p.id} value={`user:${p.id}`}>
+                  {p.name}
+                  {p.designation ? ` — ${p.designation}` : ""}
+                </option>
+              ))}
+          </optgroup>
+        ) : null}
+      </select>
+    </div>
+  );
+}
+
+/** Said across the top of every screen while previewing, with the way out beside it. */
+function PreviewBanner({ current }: { current: ErpViewingAs }) {
+  const router = useRouter();
+  const { push } = useToast();
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-brand bg-brand-soft px-6 py-2 text-[13px] text-ink">
+      <Icon n="lock" s={14} />
+      <span>
+        Previewing the ERP as <span className="font-medium">{current.label}</span>
+        {current.kind === "designation" ? " (designation)" : ""} — read-only. Nothing you do here is saved
+        {current.kind === "designation" ? ", and lists that belong to a person show yours" : ""}.
+      </span>
+      <span className="flex-1" />
+      <button
+        type="button"
+        onClick={() =>
+          void erpStopViewAs().then((r) => {
+            if (!r.ok) return push(r.error, "error");
+            push(r.message ?? "Back to your own ERP");
+            router.refresh();
+          })
+        }
+        className="cursor-pointer rounded-[4px] border border-brand bg-surface px-2.5 py-1 text-[13px] font-medium text-brand-hover hover:bg-canvas"
+      >
+        Back to my ERP
+      </button>
+    </div>
+  );
+}
+
+/*
+ * THE WORKING GODOWN CAN BE FOUND RATHER THAN PICKED. Once per tab, where the
+ * browser already holds location permission, the shell takes a fix and asks
+ * the server which assigned godown's fence it falls inside; the server
+ * measures and switches, so a crafted fix can only pick what this menu offers.
+ * It never puts up the browser's permission prompt on its own — a dialog on
+ * every page load is how people learn to press Block — so where permission has
+ * not been given the locate button beside the chip is the way to give it.
+ * A godown chosen by hand stays chosen for the rest of the tab: the person
+ * walking between two sheds knows where they are working better than a fix.
+ */
+const LOCATED_KEY = "erp.workingGodown.located";
+
+function remembered(): boolean {
+  try {
+    return sessionStorage.getItem(LOCATED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+function remember() {
+  try {
+    sessionStorage.setItem(LOCATED_KEY, "1");
+  } catch {
+    /* private window — the worst case is one more check next page */
+  }
+}
+
+/** A pressed button wants a fresh fix; the automatic check may reuse one a minute old. */
+function readFix(fresh: boolean): Promise<{ lat: number; lng: number; accuracyM: number | null } | { error: string }> {
+  return new Promise((resolve) => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      resolve({ error: "This browser cannot share a location." });
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude, accuracyM: Number.isFinite(p.coords.accuracy) ? p.coords.accuracy : null }),
+      (e) =>
+        resolve({
+          error:
+            e.code === e.PERMISSION_DENIED
+              ? "Location is blocked for MahekOne in this browser — allow it in the address bar to find your godown."
+              : "Could not get a location fix just now.",
+        }),
+      { enableHighAccuracy: true, timeout: 15_000, maximumAge: fresh ? 0 : 60_000 },
+    );
+  });
+}
+
+/** What the result says, in words — null where there is nothing worth a toast. */
+function locateLine(r: ErpLocateResult, asked: boolean): { text: string; tone?: "error" } | null {
+  if ("status" in r) {
+    if (r.status === "switched") return { text: `You are at ${r.godown} (${r.metres} m from its pin) · working location switched` };
+    if (r.status === "already") return asked ? { text: `You are at ${r.godown} — already your working location` } : null;
+    return asked ? { text: "Finding the godown by location is switched off in ERP settings", tone: "error" } : null;
+  }
+  if (!asked) return null;
+  if (r.kind === "unpinned") return { text: "None of your godowns has a map pin yet — set one under Masters → Godowns", tone: "error" };
+  if (r.kind === "imprecise") return { text: `Location is only good to ${r.accuracyM} m here — too vague to tell which godown. Pick it from the list.`, tone: "error" };
+  return {
+    text: r.nearest ? `Not inside any of your godowns — nearest is ${r.nearest.name}, ${r.nearest.metres >= 1000 ? `${(r.nearest.metres / 1000).toFixed(1)} km` : `${r.nearest.metres} m`} away` : "Not inside any of your godowns",
+    tone: "error",
+  };
+}
+
+/** Where this person is working — the CRM's Viewing switch, holding a godown. */
+function WorkingAt({
+  godowns,
+  working,
+  locate,
+}: {
+  godowns: { id: string; name: string }[];
+  working: { id: string; name: string } | null;
+  locate: boolean;
+}) {
+  const router = useRouter();
+  const { push } = useToast();
+  const [finding, setFinding] = useState(false);
+
+  const find = (asked: boolean) => {
+    setFinding(true);
+    remember();
+    void readFix(asked).then(async (fix) => {
+      if ("error" in fix) {
+        setFinding(false);
+        if (asked) push(fix.error, "error");
+        return;
+      }
+      const res = await erpLocateWorkingGodown(fix);
+      setFinding(false);
+      if (!res.ok) {
+        if (asked) push(res.error, "error");
+        return;
+      }
+      const line = locateLine(res.data, asked);
+      if (line) push(line.text, line.tone);
+      if ("status" in res.data && res.data.status === "switched") router.refresh();
+    });
+  };
+
+  const multiple = godowns.length > 1;
+  useEffect(() => {
+    if (!locate || !multiple || remembered()) return;
+    if (typeof navigator === "undefined" || !navigator.permissions?.query) return;
+    let live = true;
+    navigator.permissions
+      .query({ name: "geolocation" as PermissionName })
+      .then((p) => {
+        if (live && p.state === "granted") find(false);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+    // Once per mount; `find` closes over nothing that changes the answer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locate, multiple]);
+
   if (!godowns.length) {
     return (
       <span
@@ -291,6 +502,7 @@ function WorkingAt({ godowns, working }: { godowns: { id: string; name: string }
         placeholder={`Search ${godowns.length} godowns you are assigned to`}
         onPick={(id) => {
           if (!id) return;
+          remember();
           void erpSetWorkingGodown(id).then((res) => {
             if (res.ok) {
               push(res.message ?? "Working location changed");
@@ -299,6 +511,21 @@ function WorkingAt({ godowns, working }: { godowns: { id: string; name: string }
           });
         }}
       />
+      {locate && multiple ? (
+        <button
+          type="button"
+          onClick={() => find(true)}
+          disabled={finding}
+          title="Find my godown from where I am standing"
+          aria-label="Find my godown from where I am standing"
+          className={cx(
+            "inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded-[4px] text-muted hover:bg-canvas hover:text-[#5223E0] disabled:cursor-wait",
+            finding && "animate-pulse text-[#5223E0]",
+          )}
+        >
+          <Icon n="locate" s={14} />
+        </button>
+      ) : null}
     </div>
   );
 }

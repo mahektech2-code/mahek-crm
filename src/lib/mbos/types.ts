@@ -117,6 +117,8 @@ export const LEAVE_LABELS: Record<LeaveType, string> = {
 export const SYNC_ENTITY_TYPES = [
   "visit",
   "order",
+  /* A change to an order accounts have already approved — asked for, not made. */
+  "order_change_request",
   "payment",
   "complaint",
   "sample",
@@ -132,6 +134,12 @@ export const SYNC_ENTITY_TYPES = [
    * as leave and an expense, gated by `mbosApprovalTypeEnum`'s `"tour"`.
    */
   "tour",
+  /**
+   * His answer to the cities and areas allocated to him: accepted as they
+   * stand, or a request for different ones — decided on the Approvals queue
+   * as type `territory`.
+   */
+  "territory_request",
   /**
    * What was heard about a competitor at a shop — captured on the handset
    * since the app shipped, and never queued: `mbos_competitor_records` had
@@ -314,6 +322,14 @@ export type TerritoryState = {
   exempt: boolean;
   /** What to print. The narrowest name of each branch, already deduplicated. */
   places: string[];
+  /**
+   * WHERE A LEAD MAY BE RAISED — every row the book is narrowed by, region
+   * rows included, because `customerIdsInScope` reads them all and a lead the
+   * picker offered must be one the book then finds. Each says what it is and
+   * what it was picked under, so the lead form can fill in the state as well as
+   * the town. Empty with `exempt` means nothing narrows this person at all.
+   */
+  areas: { kind: string; value: string; parent: string | null }[];
 };
 
 export type PullDelta = {
@@ -407,6 +423,12 @@ export type PullDelta = {
    * there was nothing to send until the Sales Dashboard existed to decide them.
    */
   approvals: unknown[];
+  /** His own field orders as the office stands on them — status, reason, lines. */
+  myOrders: unknown[];
+  /** Changes he asked for on approved orders, and their answers. */
+  orderChanges: unknown[];
+  /** What he said about his allocated areas, and the office's answer. */
+  territoryRequests: unknown[];
   /**
    * His own month, scored: the six figures, what was asked for each, and the
    * product mix behind the third of them.
@@ -419,6 +441,13 @@ export type PullDelta = {
    * credit limit and the outstanding balance already follow.
    */
   performance: unknown[];
+  /**
+   * His customers' own monthly targets — target, achieved and what is still
+   * waiting for approval, per shop, this month and last. REPLACED wholesale on
+   * the handset, so it is optional: absent (the cursorless reply) changes
+   * nothing there, and an empty list says he has none.
+   */
+  customerTargets?: unknown[];
   /**
    * A task the office raised or reassigned, coming down on every pass and not
    * only at sign-in — the same reasoning `journeyStops` already carries: a

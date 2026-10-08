@@ -24,6 +24,8 @@ import {
   type ImportReport,
 } from "@/lib/services/catalogue-import";
 import { err as fail, ok, type Result } from "@/lib/result";
+import { ADMIN } from "@/lib/admin-routes";
+import type { PackingImportReport } from "@/lib/erp/packing-import";
 
 /* ---------------------------------------------------------------------------
  * Writes to the catalogue.
@@ -76,7 +78,7 @@ async function audit(
  */
 function refresh() {
   try {
-    revalidatePath("/admin/catalogue");
+    revalidatePath(ADMIN.home, "layout");
     revalidatePath("/crm");
   } catch {
     // No request scope, so nothing is cached to drop.
@@ -110,6 +112,30 @@ export async function runCatalogueImport(dryRun: boolean): Promise<Result<Import
     );
   } catch (e) {
     return fail(e instanceof Error ? e.message : "The import did not run.");
+  }
+}
+
+/**
+ * The ERP packing — Can Use, empty boxes, box type, box rate — from the Mahek
+ * Plus "My Products" tab, with the packing raw materials it names. The rules
+ * are in `lib/erp/packing-plan.ts`; a dry run writes nothing.
+ */
+export async function runPackingImport(dryRun: boolean): Promise<Result<PackingImportReport>> {
+  try {
+    const user = await actor();
+    const { importPackingFromMahekPlus, packingImportSummary } = await import("@/lib/erp/packing-import");
+    const report = await importPackingFromMahekPlus({ dryRun, userId: user.id });
+    if (!dryRun) {
+      await audit(user.id, "catalogue.packing_import", null, null, {
+        materialsCreated: report.materialsCreated.length,
+        packingSet: report.packingSet.length,
+        withCanUse: report.withCanUse,
+      });
+      refresh();
+    }
+    return ok(report, `${dryRun ? "Dry run: " : ""}${packingImportSummary(report)}.`);
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : "The packing import did not run.");
   }
 }
 

@@ -212,10 +212,14 @@ function payloadColumns(source: string, fn: string): string[] {
  * itself on the way in — part of the same INSERT, so part of the same
  * contract.
  */
-const WIRE: { fn: string; table: string; extra?: string[] }[] = [
+const WIRE: { fn: string; table: string; extra?: string[]; strip?: string[] }[] = [
   { fn: "customersForDevice", table: "customers", extra: ["lastSyncedAt"] },
-  { fn: "activeCatalogue", table: "products", extra: ["lastSyncedAt"] },
+  { fn: "catalogueRows", table: "products", extra: ["lastSyncedAt"] },
   { fn: "recentTimeline", table: "timeline_events" },
+  /* The delta's timeline, once an inline second spelling that sent
+     `occurredAt` as a timestamp string. `createdAt` is its order and its
+     cursor clamp, taken off the row before it is sent. */
+  { fn: "timelineSince", table: "timeline_events", strip: ["createdAt"] },
   { fn: "recentOrders", table: "customer_orders", extra: ["lastSyncedAt"] },
   { fn: "recentPayments", table: "customer_payments", extra: ["lastSyncedAt"] },
   /*
@@ -233,6 +237,10 @@ const WIRE: { fn: string; table: string; extra?: string[] }[] = [
   { fn: "visibleDocuments", table: "documents", extra: ["lastSyncedAt"] },
   { fn: "coursesFor", table: "courses", extra: ["lastSyncedAt"] },
   { fn: "performanceFor", table: "performance", extra: ["lastSyncedAt"] },
+  /* Replaced wholesale by `replaceCustomerTargets` rather than upserted, but
+     inserted with exactly these keys all the same — so an extra one here
+     still throws on the phone and still takes the pull down with it. */
+  { fn: "customerTargetsFor", table: "customer_targets", extra: ["lastSyncedAt"] },
   { fn: "salaryFor", table: "salary", extra: ["lastSyncedAt"] },
   /* Not covered until `scope` was added to it, which is exactly the shape of
      column this test exists for: a field the office knows about and the
@@ -263,11 +271,13 @@ test("every column MBOS sends has a column on the handset to land in", () => {
   const service = readFileSync(SERVICE, "utf8");
   const faults: string[] = [];
 
-  for (const { fn, table, extra } of WIRE) {
+  for (const { fn, table, extra, strip } of WIRE) {
     const local = tables.get(table);
     assert.ok(local, `the handset has no \`${table}\` table for ${fn} to fill`);
 
-    const sent = [...new Set([...payloadColumns(service, fn), ...(extra ?? [])])];
+    const sent = [...new Set([...payloadColumns(service, fn), ...(extra ?? [])])].filter(
+      (c) => !(strip ?? []).includes(c),
+    );
     const missing = sent.filter((c) => !local.has(c));
     if (missing.length) {
       faults.push(`${table} (${fn}): ${missing.join(", ")}`);
@@ -296,11 +306,9 @@ test("every column MBOS sends has a column on the handset to land in", () => {
  * loudly rather than quietly stop being checked.
  */
 const DELTA: { anchor: string; table: string }[] = [
-  { anchor: 'select p.id, p.name, p.pack_size', table: "products" },
-  { anchor: 'select t.id, t.customer_id as "customerId"', table: "timeline_events" },
   { anchor: "select s.id,", table: "journey_stops" },
   /*
-   * THREE ENTRIES HAVE LEFT THIS LIST, all for the same reason: the delta now
+   * FIVE ENTRIES HAVE LEFT THIS LIST, all for the same reason: the delta now
    * calls the same function the bootstrap does, so there is no second spelling
    * left to check and the WIRE entry above covers each once. That is the state
    * every remaining entry is waiting to reach.
@@ -563,6 +571,12 @@ const ENGINE_COPIES: { server: string; handset: string }[] = [
    * two different sentences about one month.
    */
   { server: "src/lib/performance-labels.ts", handset: "mbos-app/src/engines/performance-labels.ts" },
+  /*
+   * A task's form — which fields show for which answers, and which answers are
+   * owed. The builder, the phone and the sync handler read one copy, or a
+   * salesman fills in a form the office reads as half empty.
+   */
+  { server: "src/lib/task-form.ts", handset: "mbos-app/src/engines/task-form.ts" },
 ];
 
 /** The import lines are the one difference allowed, so they are normalised. */
@@ -1293,7 +1307,7 @@ test("the delta reads customers through the same function the bootstrap does", (
     src.indexOf("async function customersForDevice"),
   );
   assert.ok(
-    /return customersForDevice\(/.test(helper),
+    /rows: await customersForDevice\(|return customersForDevice\(/.test(helper),
     "changedCustomersForDevice must hand its ids to customersForDevice so there is one column list",
   );
 });
@@ -1404,7 +1418,35 @@ test("the book-reconcile field is spelled the same on both sides", () => {
 /* `mbos.ai.visitAssistant` is the same kind of answer: whether the visit
    assistant can run, worked out from `visitIntel.enabled` and the model keys.
    The test below pins its spelling at both ends. */
-const INJECTED = new Set(["mbos.ai.dictation", "mbos.ai.visitAssistant"]);
+/* `mbos.ai.leadScan` too: whether the New lead form may offer to read a
+   visiting card, from `leadScan.enabled` and the OpenAI key. */
+/* And `mbos.ai.leadVoice`: whether the same form may offer to be filled from
+   what the salesman says, from `leadVoice.enabled` and either model key. */
+const INJECTED = new Set(["mbos.ai.dictation", "mbos.ai.visitAssistant", "mbos.ai.leadScan", "mbos.ai.leadVoice"]);
+
+test("the voice filler's answer is written under the key the handset reads", () => {
+  const server = readFileSync("src/lib/services/mbos-service.ts", "utf8");
+  const handset = readFileSync("mbos-app/src/components/leads/lead-voice.tsx", "utf8");
+  const defaults = readFileSync("mbos-app/src/data/config.ts", "utf8");
+  assert.ok(server.includes('out["mbos.ai.leadVoice"]'));
+  assert.ok(handset.includes("'mbos.ai.leadVoice'"));
+  assert.ok(
+    defaults.includes("'mbos.ai.leadVoice': { available: false }"),
+    "unavailable until the office says otherwise",
+  );
+});
+
+test("the card scanner's answer is written under the key the handset reads", () => {
+  const server = readFileSync("src/lib/services/mbos-service.ts", "utf8");
+  const handset = readFileSync("mbos-app/src/components/leads/lead-scan.tsx", "utf8");
+  const defaults = readFileSync("mbos-app/src/data/config.ts", "utf8");
+  assert.ok(server.includes('out["mbos.ai.leadScan"]'));
+  assert.ok(handset.includes("'mbos.ai.leadScan'"));
+  assert.ok(
+    defaults.includes("'mbos.ai.leadScan': { available: false }"),
+    "unavailable until the office says otherwise",
+  );
+});
 
 test("the visit assistant's answer is written under the key the handset reads", () => {
   /* Joined only by a spelling, and a wrong one fails SILENTLY: `getConfig`
@@ -2190,8 +2232,11 @@ test("the office's verification call and every check on a finding reach the hand
      too, so a call sitting in the outbox is a fact the office has not heard
      yet and nothing arriving may write over it. `leads` and `samples` carry
      the same clause for the same reason. */
+  /* The guard asks the OUTBOX now — anything still pending for the id —
+     rather than the row's own syncState, which a refused edit left reading
+     `rejected` for ever and so froze the record against the office's word. */
   assert.ok(
-    /lead_validations\.syncState = 'synced'/.test(pull),
+    /noPending\('lead_validations'\)/.test(pull),
     "the lead_validations upsert has lost its `syncState = 'synced'` guard, so " +
       "a pull can write the office's answer over a call still waiting in the outbox",
   );

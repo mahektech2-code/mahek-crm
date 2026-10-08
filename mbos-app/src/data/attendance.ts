@@ -150,11 +150,12 @@ export function workedMs(sessions: Session[], now = Date.now()): number {
  * Was this calendar day a holiday — the input `deriveStatus` has always
  * wanted and never had.
  *
- * Only a `universal` row answers yes. A regionally-scoped one is real data
- * (see `holidays.scope`) but the phone has no reliable way to match its
- * free-text scope against this salesman's own beat, so it is left for a
- * future screen to LIST rather than trusted to silently flip a working day
- * to Weekly Off on a guess.
+ * Only a `universal` row answers yes, and the OFFICE decides which those are
+ * — per salesman. A holiday carries a level (company, state, district, city,
+ * area, named people) and the office resolves it against where he is
+ * allocated, so `universal` arrives meaning "this one is yours". The phone
+ * never matches a place itself; it reads the answer, which is why a state
+ * holiday reaches the right handsets with no app update.
  */
 export async function isHoliday(day: string): Promise<boolean> {
   const row = await one<{ n: number }>(
@@ -162,6 +163,21 @@ export async function isHoliday(day: string): Promise<boolean> {
     [day],
   );
   return (row?.n ?? 0) > 0;
+}
+
+export type HolidayItem = { id: string; onDate: string; name: string; scope: string | null; universal: number };
+
+/**
+ * One year of the company's calendar, for the Holidays screen — every day,
+ * with `universal` saying which are his. The ones that are not his are listed
+ * too, because "why is the Odisha team off and I am not" is a question he
+ * will ask, and the answer is on the row: it is somebody else's place.
+ */
+export async function listHolidays(year: number): Promise<HolidayItem[]> {
+  return all<HolidayItem>(
+    `SELECT id, onDate, name, scope, universal FROM holidays WHERE onDate >= ? AND onDate <= ? ORDER BY onDate ASC, name ASC`,
+    [`${year}-01-01`, `${year}-12-31`],
+  );
 }
 
 /** Everything on the calendar for one day, universal or not — for display. */
@@ -180,6 +196,31 @@ export function today(): string {
 
 export async function todayRow(userId: string): Promise<AttendanceDay | null> {
   return one<AttendanceDay>('SELECT * FROM attendance_days WHERE userId = ? AND day = ?', [userId, today()]);
+}
+
+/**
+ * THE ROW THE RUNNING SESSION IS ON, which is not always today's.
+ *
+ * Evening calls from eight to half past twelve are one session on yesterday's
+ * row. Asking only for today's row made that session vanish at midnight: Home
+ * drew "Punch in" where it should have drawn "Punch out", and a punch-out
+ * pressed at 00:01 was refused with "the day has not been started yet" while
+ * the tracker kept running. So the newest row is asked first, and its open
+ * session counts while it is inside the same ceiling the tracker keeps —
+ * `mbos.location.serviceMaxDayHours` — so a session forgotten open on Friday
+ * is not still "running" on Monday. Anything else falls back to today's row.
+ */
+export async function currentRow(userId: string): Promise<AttendanceDay | null> {
+  const newest = await one<AttendanceDay>(
+    'SELECT * FROM attendance_days WHERE userId = ? ORDER BY day DESC LIMIT 1',
+    [userId],
+  );
+  const open = openSession(sessionsOf(newest));
+  if (newest && open && newest.day !== today()) {
+    const hours = await getConfig<number>('mbos.location.serviceMaxDayHours', 16);
+    if (Date.now() - open.inAt < Math.max(1, hours) * 3_600_000) return newest;
+  }
+  return todayRow(userId);
 }
 
 /**
@@ -224,7 +265,7 @@ export async function checkIn(args: {
   mayOpen: DayMayOpen;
   homeLocation?: { lat: number; lng: number } | null;
   overrideReason?: string | null;
-}): Promise<{ id: string; withinRadius: boolean | null; needsOverride: boolean }> {
+}): Promise<{ id: string; withinRadius: boolean | null; alreadyRunning: boolean }> {
   const radius = await getConfig<number>('mbos.attendance.geofenceRadiusM', 200);
   const day = today();
 
@@ -264,8 +305,10 @@ export async function checkIn(args: {
        turned 9-to-1 plus 2-to-6 into nine hours instead of eight. */
     const sessions = sessionsOf(existing);
     if (openSession(sessions)) {
-      /* Already running. Checking in twice is a slip, not a second day. */
-      return { id: existing.id, withinRadius, needsOverride: false };
+      /* Already running. Checking in twice is a slip, not a second day — and
+         the caller is told, so the photographs it took for this tap can be let
+         go rather than uploaded with nothing to belong to. */
+      return { id: existing.id, withinRadius, alreadyRunning: true };
     }
     sessions.push({ inAt: Date.now(), outAt: null, inSelfieId: args.selfieMediaId });
     await run('UPDATE attendance_days SET sessions = ?, checkOutAt = NULL WHERE id = ?', [
@@ -304,11 +347,11 @@ export async function checkIn(args: {
        It was stopped at the check-out, and an afternoon with no line on the map
        reads as an afternoon nobody worked. */
     void trail.start('check-in');
-    return { id: existing.id, withinRadius, needsOverride: false };
+    await stampClock(args.userId, day, 'in', sessions[sessions.length - 1].inAt);
+    return { id: existing.id, withinRadius, alreadyRunning: false };
   }
 
   const base = await stamp('att');
-  const needsOverride = withinRadius === false && !args.overrideReason;
 
   const opened: Session[] = [{ inAt: Date.now(), outAt: null, inSelfieId: args.selfieMediaId }];
 
@@ -347,7 +390,12 @@ export async function checkIn(args: {
          and the mark is the whole point of having asked. */
       withinGeofence: withinRadius ?? undefined,
       ...setup,
-      regularisationRequested: withinRadius === false,
+      /* A REQUEST IS SOMETHING HE MADE. Being outside the radius used to file
+         one on its own — so with a company-wide base, every man who starts
+         from home "asked" for a correction every morning and buried the real
+         ones. `withinGeofence` already carries the fact; a request travels
+         only with a reason, here or from `setOverrideReason` after. */
+      regularisationRequested: args.overrideReason ? true : undefined,
       regularisationReason: args.overrideReason ?? undefined,
       deviceId: base.deviceId,
     },
@@ -357,8 +405,9 @@ export async function checkIn(args: {
      one second either side — a track that carried on afterwards would be
      following somebody home. */
   void trail.start('check-in');
+  await stampClock(args.userId, day, 'in', opened[0].inAt);
 
-  return { id: base.id, withinRadius, needsOverride };
+  return { id: base.id, withinRadius, alreadyRunning: false };
 }
 
 /**
@@ -404,7 +453,7 @@ export async function checkOut(
    */
   selfieMediaId: string,
 ): Promise<{ ok: boolean; workedMinutes: number; reason?: string }> {
-  const row = await todayRow(userId);
+  const row = await currentRow(userId);
   if (!row) return { ok: false, workedMinutes: 0, reason: 'The day has not been started yet.' };
 
   const sessions = sessionsOf(row);
@@ -472,8 +521,25 @@ export async function checkOut(
   /* The day is closed. Stop, and send what is held — the last stretch of the
      afternoon is the part most likely still to be on the phone. */
   void trail.stop();
+  await stampClock(userId, row.day, 'out', at);
 
   return { ok: true, workedMinutes: worked };
+}
+
+/**
+ * The punch, written onto the day the meal allowance is priced from.
+ *
+ * After the attendance write and never able to undo it: a punch that landed
+ * is a punch, and a day whose times could not be stamped is one he can still
+ * be paid for by the office reopening it.
+ */
+async function stampClock(userId: string, day: string, edge: 'in' | 'out', at: number): Promise<void> {
+  try {
+    const { stampDayClock } = await import('./travel');
+    await stampDayClock(userId, day, edge, at);
+  } catch {
+    /* Swallowed on purpose — see above. */
+  }
 }
 
 /**
@@ -512,7 +578,7 @@ export async function dayState(userId: string): Promise<{
    */
   sessions: Session[];
 }> {
-  const row = await todayRow(userId);
+  const row = await currentRow(userId);
   const sessions = sessionsOf(row);
   return {
     started: sessions.length > 0,

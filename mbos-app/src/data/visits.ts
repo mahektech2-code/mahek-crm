@@ -5,6 +5,11 @@ import { notify } from './notifications';
 import type { Fix } from '../native/location';
 import { isoDate } from '../lib/format';
 import { wireOutcome } from '../lib/wire';
+import { FOLLOW_UP_MODES, type FollowUpMode } from './fixtures';
+
+function followUpVerb(mode: FollowUpMode | undefined): string {
+  return FOLLOW_UP_MODES.find((m) => m.k === (mode ?? 'visit'))?.task ?? 'Visit';
+}
 
 /**
  * Saving a visit.
@@ -23,6 +28,12 @@ function round(value: number | null | undefined): number | undefined {
 }
 
 export type SaveVisitArgs = {
+  /**
+   * The id minted at the door — see `Arrival.visitId`. Everything punched
+   * inside the visit already names it, so the visit has to be saved under it.
+   * Absent only for an arrival written before ids were minted there.
+   */
+  id?: string | null;
   customerId: string;
   customerName: string;
   userId: string;
@@ -54,6 +65,8 @@ export type SaveVisitArgs = {
   custPhotoId: string | null;
   voiceNoteId: string | null;
   nextFollowUpDate: string | null;
+  /** How the follow-up happens; it names the task. Absent reads as a visit. */
+  nextFollowUpMode?: FollowUpMode;
   journeyStopId: string | null;
   wasPlanned: boolean;
   deviationReason: string | null;
@@ -61,6 +74,16 @@ export type SaveVisitArgs = {
   metresFromShop: number | null;
   verified: boolean;
   unverifiedReason: string | null;
+  /**
+   * HIS OWN WORDS for "save as not checked", and only those.
+   *
+   * `unverifiedReason` above is what this phone files the visit under, which
+   * may be a sentence composed here. This is the sentence he typed, and it was
+   * never sent: the office wrote its own reason over the visit — "…and no
+   * reason was given for it" — on a visit where he had given one, which is the
+   * opposite of what happened and the thing his manager reads.
+   */
+  savedAnywayReason?: string | null;
   /*
    * PAST THE CHECK-IN GATE, in his own words.
    *
@@ -74,8 +97,8 @@ export type SaveVisitArgs = {
   /** "The shop's pin is wrong — move it here." A request for his manager. */
   pinCorrectionRequested?: boolean;
   /** Records already created from inside this visit, to be linked to it. */
-  linkedOrderId?: string | null;
-  linkedPaymentId?: string | null;
+  linkedOrderIds?: string[];
+  linkedPaymentIds?: string[];
   linkedComplaintId?: string | null;
   linkedSampleId?: string | null;
   /*
@@ -107,7 +130,10 @@ export type SaveVisitArgs = {
 };
 
 export async function saveVisit(args: SaveVisitArgs): Promise<string> {
-  const base = await stamp('visit');
+  const stamped = await stamp('visit');
+  const base = args.id ? { ...stamped, id: args.id } : stamped;
+  const orderIds = args.linkedOrderIds ?? [];
+  const paymentIds = args.linkedPaymentIds ?? [];
 
   const durationSeconds =
     args.checkOutAt != null ? Math.max(0, Math.round((args.checkOutAt - args.checkInAt) / 1000)) : null;
@@ -132,7 +158,8 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
         args.checkOut?.lat ?? null, args.checkOut?.lng ?? null, args.checkOut?.accuracyM ?? null, args.checkOutAt,
         durationSeconds, args.outcome, args.notes, args.transcript, args.transcriptIsAi ? 1 : 0,
         args.shopPhotoId, args.custPhotoId, args.voiceNoteId,
-        args.linkedOrderId ?? null, args.linkedPaymentId ?? null, args.linkedComplaintId ?? null, args.linkedSampleId ?? null,
+        orderIds[orderIds.length - 1] ?? null, paymentIds[paymentIds.length - 1] ?? null,
+        args.linkedComplaintId ?? null, args.linkedSampleId ?? null,
         args.nextFollowUpDate, args.journeyStopId, args.wasPlanned ? 1 : 0, args.deviationReason,
         args.locationMismatch ? 1 : 0, args.metresFromShop, args.verified ? 1 : 0, args.unverifiedReason,
         args.checkOutAt == null ? 1 : 0,
@@ -142,10 +169,17 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
     );
 
     /* Bind the media that was captured before the visit existed. A photograph
-       is taken when the shop is in front of you, not when the form saves — so
-       it begins life unparented and is claimed here. */
+       is taken when the shop is in front of you, not when the form saves.
+       Where the arrival minted the visit's id, the photograph already names it
+       and this changes nothing; where it did not, the file began life as
+       `pending` and is claimed here — for as long as it is still in the queue.
+       One that already went up as `pending` is the office's to bind, from the
+       ids on this visit's payload: the local copy may already be deleted, so
+       re-sending it from here is not an option. */
     for (const mediaId of [args.shopPhotoId, args.custPhotoId, args.voiceNoteId]) {
-      if (mediaId) await run('UPDATE media_queue SET parentId = ? WHERE id = ?', [base.id, mediaId]);
+      if (mediaId) {
+        await run(`UPDATE media_queue SET parentId = ? WHERE id = ? AND state <> 'synced'`, [base.id, mediaId]);
+      }
     }
 
     /* The records punched from inside the visit now depend on it.
@@ -159,12 +193,13 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
      * write is what the record screens read the moment the sheet closes, so
      * removing it would leave the link invisible on the phone until the next
      * pull — on a handset that may not sync for a day. */
-    for (const [table, id] of [
-      ['orders', args.linkedOrderId],
-      ['payments', args.linkedPaymentId],
+    const local: (readonly [string, string | null | undefined])[] = [
+      ...orderIds.map((id) => ['orders', id] as const),
+      ...paymentIds.map((id) => ['payments', id] as const),
       ['complaints', args.linkedComplaintId],
       ['samples', args.linkedSampleId],
-    ] as const) {
+    ];
+    for (const [table, id] of local) {
       if (id) await run(`UPDATE ${table} SET visitId = ? WHERE id = ?`, [base.id, id]);
     }
 
@@ -174,7 +209,7 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
     if (args.nextFollowUpDate) {
       const { createTask } = await import('./tasks');
       await createTask({
-        title: `Follow up with ${args.customerName}`,
+        title: `${followUpVerb(args.nextFollowUpMode)} ${args.customerName}`,
         customerId: args.customerId,
         priority: 'Normal',
         dueDate: args.nextFollowUpDate,
@@ -277,71 +312,87 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
         ]);
       }
     }
+
+    /*
+     * QUEUED IN THE SAME TRANSACTION AS THE ROW, which it was not.
+     *
+     * The enqueue ran after the commit, so a reap between the two — and this
+     * app is reaped on the road all day — left a visit on the phone that the
+     * outbox had never heard of. It drew on every screen as saved, and it
+     * never went. `insertAndQueue` keeps the pair together for every other
+     * record for exactly this reason.
+     */
+    await enqueue({
+      entityType: 'visit',
+      entityId: base.id,
+      op: 'create',
+      /* Spelled out rather than spread — see PROTOCOL.md §4.1. Spreading `args`
+         sent the handset's own shapes, so a `checkIn: { lat, lng, at }` reached
+         a server reading `checkInLat`, `checkInLng`, `checkInAt` and every fix,
+         photograph and duration was quietly dropped on the way in: the visit
+         landed with a customer and nothing else, and nothing on either end
+         reported a loss, because an unknown field is not an invalid one. */
+      payload: {
+        id: base.id,
+        customerId: args.customerId,
+        customerName: args.customerName,
+        checkInAt: args.checkInAt,
+        checkInLat: args.checkIn?.lat ?? undefined,
+        checkInLng: args.checkIn?.lng ?? undefined,
+        checkInAccuracyM: round(args.checkIn?.accuracyM),
+        checkOutAt: args.checkOutAt ?? undefined,
+        checkOutLat: args.checkOut?.lat ?? undefined,
+        checkOutLng: args.checkOut?.lng ?? undefined,
+        checkOutAccuracyM: round(args.checkOut?.accuracyM),
+        durationSeconds: durationSeconds ?? undefined,
+        outcome: wireOutcome(args.outcome),
+        notes: args.notes ?? undefined,
+        transcript: args.transcript ?? undefined,
+        transcriptIsAi: args.transcriptIsAi,
+        shopPhotoId: args.shopPhotoId ?? undefined,
+        custPhotoId: args.custPhotoId ?? undefined,
+        voiceNoteId: args.voiceNoteId ?? undefined,
+        journeyPlanStopId: args.journeyStopId ?? undefined,
+        wasPlanned: args.wasPlanned,
+        deviationReason: args.deviationReason ?? undefined,
+        nextFollowUpDate: args.nextFollowUpDate ?? undefined,
+        checkInOverrideReason: args.checkInOverrideReason ?? undefined,
+        pinCorrectionRequested: args.pinCorrectionRequested ?? undefined,
+        suspectDecision: args.suspectDecision ?? undefined,
+        suspectReason: args.suspectReason ?? undefined,
+        requirement: args.requirement ?? undefined,
+        monthlyVolumeLitres: args.monthlyVolumeLitres ?? undefined,
+        quantityCans: args.quantityCans ?? undefined,
+        aiDraftId: args.aiDraftId ?? undefined,
+        /* His own sentence for saving it as not checked — see the type. */
+        fieldUnverifiedReason: args.savedAnywayReason?.trim() || undefined,
+        clientCreatedAt: base.clientCreatedAt,
+        deviceId: base.deviceId,
+      },
+    });
   });
 
-  await enqueue({
-    entityType: 'visit',
-    entityId: base.id,
-    op: 'create',
-    /* Spelled out rather than spread — see PROTOCOL.md §4.1. Spreading `args`
-       sent the handset's own shapes, so a `checkIn: { lat, lng, at }` reached
-       a server reading `checkInLat`, `checkInLng`, `checkInAt` and every fix,
-       photograph and duration was quietly dropped on the way in: the visit
-       landed with a customer and nothing else, and nothing on either end
-       reported a loss, because an unknown field is not an invalid one. */
-    payload: {
-      id: base.id,
-      customerId: args.customerId,
-      customerName: args.customerName,
-      checkInAt: args.checkInAt,
-      checkInLat: args.checkIn?.lat ?? undefined,
-      checkInLng: args.checkIn?.lng ?? undefined,
-      checkInAccuracyM: round(args.checkIn?.accuracyM),
-      checkOutAt: args.checkOutAt ?? undefined,
-      checkOutLat: args.checkOut?.lat ?? undefined,
-      checkOutLng: args.checkOut?.lng ?? undefined,
-      checkOutAccuracyM: round(args.checkOut?.accuracyM),
-      durationSeconds: durationSeconds ?? undefined,
-      outcome: wireOutcome(args.outcome),
-      notes: args.notes ?? undefined,
-      transcript: args.transcript ?? undefined,
-      transcriptIsAi: args.transcriptIsAi,
-      shopPhotoId: args.shopPhotoId ?? undefined,
-      custPhotoId: args.custPhotoId ?? undefined,
-      voiceNoteId: args.voiceNoteId ?? undefined,
-      journeyPlanStopId: args.journeyStopId ?? undefined,
-      wasPlanned: args.wasPlanned,
-      deviationReason: args.deviationReason ?? undefined,
-      nextFollowUpDate: args.nextFollowUpDate ?? undefined,
-      checkInOverrideReason: args.checkInOverrideReason ?? undefined,
-      pinCorrectionRequested: args.pinCorrectionRequested ?? undefined,
-      suspectDecision: args.suspectDecision ?? undefined,
-      suspectReason: args.suspectReason ?? undefined,
-      requirement: args.requirement ?? undefined,
-      monthlyVolumeLitres: args.monthlyVolumeLitres ?? undefined,
-      quantityCans: args.quantityCans ?? undefined,
-      aiDraftId: args.aiDraftId ?? undefined,
-      clientCreatedAt: base.clientCreatedAt,
-      deviceId: base.deviceId,
-    },
-  });
+  /* Anything punched inside the visit tells the office which visit it came
+     from, where it has not gone yet. Orders and payments taken since the
+     arrival minted the visit's id already carry it; this is for the ones
+     raised before that existed.
 
-  /* Anything punched inside the visit must not reach the server before it —
-     and must tell the office which visit it came from when it gets there. */
+     NOT a dependency. A hard `dependsOn` held the order behind a visit that
+     might be refused — or never saved at all, if the trip was called off — and
+     blocked it for ever. An order is the customer's yes and goes the moment
+     it is taken; the office joins the two from the id they share. */
   for (const [type, id] of [
-    ['order', args.linkedOrderId],
-    ['payment', args.linkedPaymentId],
-    ['complaint', args.linkedComplaintId],
-    ['sample', args.linkedSampleId],
-  ] as const) {
-    if (!id) continue;
-    await addDependency(type, id, base.id);
-    await carryVisitId(type, id, base.id);
+    ...orderIds.map((id) => ['order', id] as const),
+    ...paymentIds.map((id) => ['payment', id] as const),
+    ['complaint', args.linkedComplaintId] as const,
+    ['sample', args.linkedSampleId] as const,
+  ]) {
+    if (id) await carryVisitId(type, id, base.id);
   }
 
   if (!args.verified) {
     await notify({
-      title: 'Visit saved unverified',
+      title: 'Visit saved, not checked',
       body: `${args.customerName} · your manager will see the reason you gave.`,
       kind: 'amber',
       href: '/sync',
@@ -349,26 +400,6 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
   }
 
   return base.id;
-}
-
-/**
- * Re-point an already-queued item at a record created after it.
- *
- * The order is punched from inside the visit, so it is enqueued first and the
- * visit does not exist yet. Rather than delay the order's write until save,
- * the dependency is added here — the queue reads `dependsOn` at send time, not
- * at enqueue time.
- */
-async function addDependency(entityType: string, entityId: string, dependsOnId: string): Promise<void> {
-  const row = await one<{ id: string; dependsOn: string }>(
-    'SELECT id, dependsOn FROM sync_queue WHERE entityType = ? AND entityId = ? ORDER BY createdAt DESC LIMIT 1',
-    [entityType, entityId],
-  );
-  if (!row) return;
-  const deps: string[] = JSON.parse(row.dependsOn);
-  if (deps.includes(dependsOnId)) return;
-  deps.push(dependsOnId);
-  await run('UPDATE sync_queue SET dependsOn = ? WHERE id = ?', [JSON.stringify(deps), row.id]);
 }
 
 /**
@@ -482,4 +513,24 @@ export async function closeOpenVisits(dayBoundaryMs: number): Promise<number> {
     await run(`UPDATE visits SET openEnded = 0, verified = 0, unverifiedReason = COALESCE(unverifiedReason, 'Closed automatically at the end of the day — no check-out was recorded') WHERE id = ?`, [v.id]);
   }
   return open.length;
+}
+
+/**
+ * Whether the office has this visit yet — for the screen that says so.
+ *
+ * Its own outbox row, not the whole outbox: "your manager is told" was drawn
+ * green the moment the queue was empty and amber while anything at all was
+ * waiting, so a visit that went perfectly read as unsent behind somebody's
+ * photograph, and one refused by the office read as told the moment the
+ * queue cleared.
+ */
+export async function visitSendState(visitId: string): Promise<'sent' | 'waiting' | 'refused'> {
+  const row = await one<{ state: string }>(
+    `SELECT state FROM sync_queue WHERE entityType = 'visit' AND entityId = ? ORDER BY createdAt DESC LIMIT 1`,
+    [visitId],
+  );
+  if (!row) return 'waiting';
+  if (row.state === 'synced') return 'sent';
+  if (row.state === 'rejected' || row.state === 'failed' || row.state === 'blocked') return 'refused';
+  return 'waiting';
 }

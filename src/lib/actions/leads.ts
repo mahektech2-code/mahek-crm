@@ -1,11 +1,14 @@
 "use server";
 
+import { assertLeadInScope } from "@/lib/services/lead-scope";
+import { qualificationCollectorRefusal, requireLeadVerifier } from "@/lib/services/lead-verifier";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
-import { and, eq, notInArray } from "drizzle-orm";
+import { and, eq, inArray, notInArray } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import {
+  appAccess,
   auditLog,
   customers,
   mbosDocuments,
@@ -17,7 +20,6 @@ import {
   users,
 } from "@/db/schema";
 import {
-  assertCustomerInScope,
   canAny,
   requireCapability,
   hatsFor,
@@ -43,7 +45,7 @@ import {
   VERIFICATION_FAILED_CODE,
   type LeadStage,
 } from "@/lib/lead-labels";
-import { checklistFor } from "@/lib/engines/lead-gates";
+import { checklistFor, QUALIFICATION_ANSWER_KEYS, qualificationAnswerFault } from "@/lib/engines/lead-gates";
 import { commitmentGap, commitmentState, isConfirmedCommitment } from "@/lib/lead-commitment";
 import { addDays, money } from "@/lib/format";
 import { isParked, ladderFor, rungOf } from "@/lib/engines/lead-ladder";
@@ -117,7 +119,7 @@ async function reachableLead(
   if (!lead) {
     return { ok: false, refusal: err("That lead is not on MahekOne.", "not_found") };
   }
-  await assertCustomerInScope({
+  await assertLeadInScope(customerId, {
     kind: lead.kind,
     ownerId: lead.ownerId,
     salesAmId: lead.salesAmId,
@@ -655,14 +657,32 @@ export async function saveLeadQualification(
     const access = qualificationAccess(lead.leadStage);
     if (!access.writable) return err(access.reason, "rule_violation");
 
-    const known = new Set(
-      checklistFor(lead.leadSalesType as LeadSalesType | null, "qualification").map((c) => c.id),
-    );
+    /* The Sales Manager the lead is under reviews it; she does not fill it in. */
+    const barred = await qualificationCollectorRefusal(ctx.user, lead);
+    if (barred) return err(barred, "rule_violation");
+
+    /* The condition ids, and the stored answers the eight questions keep in this
+       jsonb. Anything else a stale screen sends is dropped rather than stored. */
+    const known = new Set<string>([
+      ...checklistFor(lead.leadSalesType as LeadSalesType | null, "qualification").map((c) => c.id),
+      ...QUALIFICATION_ANSWER_KEYS,
+    ]);
+    const answerKeys = new Set<string>(QUALIFICATION_ANSWER_KEYS);
     const kept: Record<string, boolean | string> = {};
     const dropped: string[] = [];
     for (const [id, value] of Object.entries(answers ?? {})) {
-      if (!known.has(id)) dropped.push(id);
-      else if (typeof value === "boolean" || typeof value === "string") kept[id] = value;
+      if (!known.has(id)) {
+        dropped.push(id);
+        continue;
+      }
+      if (answerKeys.has(id)) {
+        if (typeof value !== "string") continue;
+        const fault = qualificationAnswerFault(id, value);
+        if (fault) return err(fault, "validation", [{ field: id, message: fault }]);
+        kept[id] = value.trim();
+      } else if (typeof value === "boolean" || typeof value === "string") {
+        kept[id] = value;
+      }
     }
 
     const merged = { ...(lead.leadQualification ?? {}), ...kept };
@@ -783,6 +803,10 @@ export async function saveProspectFields(
     if (asked.length) {
       const access = qualificationAccess(lead.leadStage);
       if (!access.writable) return err(access.reason, "rule_violation");
+      /* The Sales Manager the lead is under reviews it; she does not fill in
+         its GST number, application, credit or buyer. */
+      const barred = await qualificationCollectorRefusal(ctx.user, lead);
+      if (barred) return err(barred, "rule_violation");
     }
 
     const set: Partial<typeof customers.$inferInsert> = {
@@ -1106,12 +1130,33 @@ export async function assignLeadManager(
         );
       }
     } else {
+      /*
+       * A MANAGER OF THE BOOK THIS LEAD IS WORKED IN — the CRM or the Sales
+       * Dashboard, at manager or admin level on THAT grant. It read
+       * `users.role`, the widest level held anywhere, so a telecaller who
+       * managed HRMS passed as a sales manager and was handed a lead to
+       * verify, while the check said nothing about whether they could open a
+       * lead screen at all.
+       */
       const [m] = await db
-        .select({ id: users.id, role: users.role, active: users.active })
+        .select({ id: users.id, active: users.active })
         .from(users)
         .where(eq(users.id, chosen))
         .limit(1);
-      if (!m || !m.active || m.role === "associate") {
+      const seat = m
+        ? await db
+            .select({ id: appAccess.id })
+            .from(appAccess)
+            .where(
+              and(
+                eq(appAccess.userId, chosen),
+                inArray(appAccess.app, ["crm", "sales"]),
+                inArray(appAccess.role, ["manager", "admin"]),
+              ),
+            )
+            .limit(1)
+        : [];
+      if (!m || !m.active || seat.length === 0) {
         return err(
           "A lead manager has to be a sales manager who can sign in and work the list.",
           "validation",
@@ -1292,7 +1337,7 @@ export async function recordLeadValidationCall(
     if (!parsed.success) return zodErr(parsed.error);
     const c = parsed.data;
 
-    const ctx = await requireCapability("lead.verify");
+    const ctx = await requireLeadVerifier(customerId);
     const found = await reachableLead(customerId);
     if (!found.ok) return found.refusal;
     const lead = found.lead;

@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { askTeam } from "@/lib/actions/ask-team";
+import { BodyPortal } from "@/components/ui/body-portal";
 import { SalesIcon } from "@/components/console/icons";
 
 /* ---------------------------------------------------------------------------
@@ -11,36 +11,46 @@ import { SalesIcon } from "@/components/console/icons";
  * slides 24px and the scrim fades, both on 150–200ms of the console's own
  * easing. Those are the design's values and not approximations of them.
  *
- * THE LABEL OVER EVERY ANSWER IS A PROMISE. "Written from your team's figures"
- * is only true because `teamBrief()` hands the model the same numbers the
- * Performance and Today screens read and the system prompt forbids it anything
- * else. If that ever stops being true the label has to come off — it is the
- * one piece of text here that a manager will trust a number on.
+ * IT READS THE DATABASE NOW, not a summary. `/api/sales/ask` streams one JSON
+ * line per event: each read the model makes ("Leave Mahesh took this year"),
+ * then the answer's words as they are written. The reads are drawn as they
+ * happen so the manager watches it work instead of a spinner; they collapse
+ * to a count once the answer lands. What it may read is the asker's own
+ * access — see `team-ask/catalog.ts`.
  *
- * WHY THE THREAD IS NOT PERSISTED. Nothing here is a record: the answers are a
- * reading of figures that are themselves on screen, and the figures move. A
- * stored thread would be a month-old sentence about a number that has since
- * changed, which is the kind of thing somebody quotes back. Closing the drawer
- * clears it, and that is deliberate.
+ * THE THREAD IS A CONVERSATION while the drawer is open: earlier turns ride
+ * along so "and last month?" means something. It is NOT persisted — closing
+ * the drawer clears it, because a stored answer is a month-old sentence about
+ * a number that has since moved.
+ *
+ * OPENING THE DRAWER WARMS IT: the server resolves and remembers what this
+ * person may read before they have typed, so the first question starts
+ * immediately.
  * ------------------------------------------------------------------------- */
 
 type Message =
   | { role: "user"; text: string }
-  | { role: "ai"; text: string; period: { from: string; to: string } };
+  | {
+      role: "ai";
+      text: string;
+      steps: string[];
+      done: boolean;
+      meta?: { queries: number; dbQueries: number; cached: boolean; ms: number };
+    };
 
-/**
- * The starting questions.
- *
- * Five, as the design draws them, and every one answerable from the brief —
- * a suggested question the figures cannot answer teaches somebody on their
- * first use that the panel does not work.
- */
+type AskEvent =
+  | { type: "step"; text: string }
+  | { type: "delta"; text: string }
+  | { type: "done"; queries: number; dbQueries: number; cached: boolean; ms: number }
+  | { type: "error"; message: string };
+
+/** Starting questions — each one answerable from what a manager may read. */
 const CHIPS = [
-  "Who is behind on target and by how much?",
-  "Who has not checked in today?",
-  "How much cash is the team holding?",
-  "How are we doing against the visit plan?",
-  "What should I look at first this morning?",
+  "Who has not punched in today?",
+  "Who is on leave today, and who has leave coming up this week?",
+  "Who is behind on target this month and by how much?",
+  "Which shops did each salesman visit yesterday?",
+  "How many salesmen do I have, and where does each one work?",
 ];
 
 export function AskPanel() {
@@ -63,7 +73,13 @@ export function AskPanel() {
         Ask about the team
       </button>
 
-      {open ? <Drawer onClose={() => setOpen(false)} /> : null}
+      {/* On <body>: the header is `relative z-2`, which trapped this drawer
+          under the Live map's controls — see body-portal.tsx. */}
+      {open ? (
+        <BodyPortal>
+          <Drawer onClose={() => setOpen(false)} />
+        </BodyPortal>
+      ) : null}
     </>
   );
 }
@@ -79,38 +95,102 @@ function Drawer({ onClose }: { onClose: () => void }) {
   const [thinking, setThinking] = React.useState(false);
   const [problem, setProblem] = React.useState<string | null>(null);
   const bottom = React.useRef<HTMLDivElement>(null);
+  const abort = React.useRef<AbortController | null>(null);
 
-  const ask = React.useCallback(async (question: string) => {
+  // Warm the server's memory of what this person may read, and stop any
+  // answer still streaming when the drawer closes.
+  React.useEffect(() => {
+    fetch("/api/sales/ask", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ warm: true }),
+    }).catch(() => undefined);
+    return () => abort.current?.abort();
+  }, []);
+
+  const scroll = () => requestAnimationFrame(() => bottom.current?.scrollIntoView({ block: "end" }));
+
+  /** Apply one change to the answer being written — always the last message. */
+  const patchLast = (fn: (m: Extract<Message, { role: "ai" }>) => Extract<Message, { role: "ai" }>) =>
+    setThread((t) => {
+      const last = t[t.length - 1];
+      if (!last || last.role !== "ai") return t;
+      return [...t.slice(0, -1), fn(last)];
+    });
+
+  const ask = async (question: string) => {
     const text = question.trim();
-    if (!text) return;
+    if (!text || thinking) return;
+    // Earlier finished turns, so a follow-up keeps its meaning.
+    const history = thread
+      .filter((m) => m.role === "user" || m.done)
+      .map((m) => ({ role: m.role === "user" ? ("user" as const) : ("assistant" as const), text: m.text }))
+      .filter((m) => m.text.trim());
     setQ("");
     setProblem(null);
-    setThread((t) => [...t, { role: "user", text }]);
+    setThread((t) => [...t, { role: "user", text }, { role: "ai", text: "", steps: [], done: false }]);
     setThinking(true);
+    scroll();
+
+    const controller = new AbortController();
+    abort.current = controller;
+    let failed: string | null = null;
     try {
-      const result = await askTeam({ question: text });
-      if (result.ok) {
-        setThread((t) => [
-          ...t,
-          { role: "ai", text: result.data.text, period: result.data.period },
-        ]);
+      const res = await fetch("/api/sales/ask", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ question: text, history }),
+        signal: controller.signal,
+      });
+      if (!res.ok || !res.body) {
+        const j = (await res.json().catch(() => null)) as { error?: string } | null;
+        failed = j?.error ?? "Could not answer just now. Try again in a moment.";
       } else {
-        /*
-         * A refusal is shown as itself and NOT as a message in the thread. The
-         * thread is answers written from the figures; "no AI account is
-         * connected" is a fact about the deployment, and dressing it as an
-         * answer would put it under the "written from your team's figures"
-         * label, which would make that label a lie.
-         */
-        setProblem(result.error);
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          let nl = buffer.indexOf("\n");
+          while (nl >= 0) {
+            const line = buffer.slice(0, nl).trim();
+            buffer = buffer.slice(nl + 1);
+            nl = buffer.indexOf("\n");
+            if (!line) continue;
+            const e = JSON.parse(line) as AskEvent;
+            if (e.type === "step") patchLast((m) => ({ ...m, steps: [...m.steps, e.text] }));
+            else if (e.type === "delta") patchLast((m) => ({ ...m, text: m.text + e.text }));
+            else if (e.type === "done")
+              patchLast((m) => ({ ...m, done: true, meta: { queries: e.queries, dbQueries: e.dbQueries, cached: e.cached, ms: e.ms } }));
+            else if (e.type === "error") failed = e.message;
+            scroll();
+          }
+        }
+      }
+    } catch (e) {
+      if (!(e instanceof DOMException && e.name === "AbortError")) {
+        failed = "Lost the connection while answering. Try again.";
       }
     } finally {
+      abort.current = null;
       setThinking(false);
-      requestAnimationFrame(() =>
-        bottom.current?.scrollIntoView({ block: "end" }),
-      );
     }
-  }, []);
+
+    if (failed) {
+      /*
+       * A refusal is shown as itself and NOT as a message in the thread. "No AI
+       * account is connected" is a fact about the deployment, and dressing it
+       * as an answer would put it under the "from your team's data" label.
+       */
+      setThread((t) => (t[t.length - 1]?.role === "ai" && !(t[t.length - 1] as { text: string }).text ? t.slice(0, -1) : t));
+      setProblem(failed);
+    } else {
+      patchLast((m) => ({ ...m, done: true }));
+    }
+    scroll();
+  };
 
   const empty = thread.length === 0;
 
@@ -131,8 +211,8 @@ function Drawer({ onClose }: { onClose: () => void }) {
           <div>
             <div className="text-lg font-semibold text-ink">Ask about the team</div>
             <div className="mt-0.5 text-[13px] text-muted">
-              Reads today&apos;s attendance and today&apos;s and this month&apos;s visits,
-              orders, targets, approvals, cash, leads, bills, leave and expenses.
+              Ask anything — attendance, leave, visits, routes, orders, collections,
+              targets — answered from the data your access lets you see.
             </div>
           </div>
           <button
@@ -173,34 +253,9 @@ function Drawer({ onClose }: { onClose: () => void }) {
                 </span>
               </div>
             ) : (
-              <div key={i} className="mb-4">
-                <span className="mb-1.5 flex items-center gap-1.5">
-                  <span className="flex text-[#5223E0]">
-                    <SalesIcon name="spark" size={14} />
-                  </span>
-                  <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                    Written from your team&apos;s figures
-                  </span>
-                </span>
-                <span className="block text-sm leading-[21px] whitespace-pre-wrap text-ink">
-                  {m.text}
-                </span>
-                {/* Which window it read. The design's answers carry a link; the
-                    honest version of that here is naming the period, because a
-                    figure with no dates is the thing somebody misquotes. */}
-                <span className="mt-1.5 block text-[11px] text-muted">
-                  {m.period.from} to {m.period.to}
-                </span>
-              </div>
+              <AiAnswer key={i} m={m} />
             ),
           )}
-
-          {thinking ? (
-            <div className="mt-3 flex items-center gap-2">
-              <span className="block h-4 w-4 animate-spin rounded-full border-2 border-brand-softer border-t-brand" />
-              <span className="text-sm text-muted">Reading the figures…</span>
-            </div>
-          ) : null}
 
           {problem ? (
             <div className="mt-3 rounded-[6px] border border-warn-line bg-warn-soft px-3 py-2.5 text-[13px] text-warn-ink">
@@ -215,7 +270,7 @@ function Drawer({ onClose }: { onClose: () => void }) {
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            if (!thinking) ask(q);
+            ask(q);
           }}
           className="flex flex-none gap-2.5 border-t border-line px-5 py-3"
         >
@@ -235,6 +290,60 @@ function Drawer({ onClose }: { onClose: () => void }) {
           </button>
         </form>
       </div>
+    </div>
+  );
+}
+
+/** One answer: the reads it is making, then the words as they arrive. */
+function AiAnswer({ m }: { m: Extract<Message, { role: "ai" }> }) {
+  const writing = !m.done;
+  return (
+    <div className="mb-4">
+      <span className="mb-1.5 flex items-center gap-1.5">
+        <span className="flex text-[#5223E0]">
+          <SalesIcon name="spark" size={14} />
+        </span>
+        <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+          From your team&apos;s data
+        </span>
+      </span>
+
+      {/* While it works, every read is listed as it is made; once the answer
+          has started, they fold into the line underneath it. */}
+      {writing && !m.text ? (
+        <div className="mb-1.5 space-y-1">
+          {m.steps.map((s, i) => (
+            <div key={i} className="flex items-center gap-2 text-[13px] text-muted">
+              <span className="block h-1.5 w-1.5 flex-none rounded-full bg-brand-softer" />
+              {s}
+            </div>
+          ))}
+          <div className="flex items-center gap-2">
+            <span className="block h-4 w-4 animate-spin rounded-full border-2 border-brand-softer border-t-brand" />
+            <span className="text-sm text-muted">{m.steps.length ? "Reading…" : "Thinking…"}</span>
+          </div>
+        </div>
+      ) : null}
+
+      {m.text ? (
+        <span className="block text-sm leading-[21px] whitespace-pre-wrap text-ink">
+          {m.text}
+          {writing ? <span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse bg-brand-softer align-middle" /> : null}
+        </span>
+      ) : null}
+
+      {m.done && m.meta ? (
+        <span className="mt-1.5 block text-[11px] text-muted" title={m.steps.join(" · ")}>
+          {m.meta.cached
+            ? "Answered from a moment ago"
+            : m.meta.queries
+              ? `Looked at ${m.meta.queries} ${m.meta.queries === 1 ? "thing" : "things"}${
+                  m.meta.queries > m.meta.dbQueries ? ` (${m.meta.queries - m.meta.dbQueries} from memory)` : ""
+                }`
+              : "No data needed"}{" "}
+          · {(m.meta.ms / 1000).toFixed(1)}s
+        </span>
+      ) : null}
     </div>
   );
 }

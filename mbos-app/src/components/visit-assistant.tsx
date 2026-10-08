@@ -1,9 +1,11 @@
 import React from 'react';
-import { View, Text, Pressable } from 'react-native';
+import { View, Text } from 'react-native';
 import { color as C, radius, type, weight } from '../theme/tokens';
 import { Icon } from './ui/Icon';
 import { Card, Choice, PrimaryButton, SecondaryButton } from './ui/primitives';
 import { useOnline } from './ui/dictate';
+import { PressableScale, Presence, Stagger, Swap } from './ui/motion';
+import { feedback } from './ui/feedback';
 import { getConfig } from '../data/config';
 import { visitAssist } from '../sync/api';
 import { pretty } from '../lib/format';
@@ -70,9 +72,9 @@ export function useVisitAssistantAvailable(): boolean {
 }
 
 const STATE_WORD: Record<string, { text: string; fg: string; bg: string }> = {
-  ready: { text: 'Filled in — check it', fg: C.success, bg: C.successBg },
+  ready: { text: 'Filled in. Check it', fg: C.success, bg: C.successBg },
   confirm: { text: 'Needs you', fg: C.warnInk, bg: C.warnBg },
-  duplicate: { text: 'Already on record', fg: C.info, bg: C.infoBg },
+  duplicate: { text: 'Already saved', fg: C.info, bg: C.infoBg },
 };
 
 function StatePill({ state }: { state: string }) {
@@ -142,10 +144,15 @@ export function VisitAssistant({
         language: spokenStill?.language ?? null,
         heardBy: spokenStill ? 'dictated' : 'typed',
       });
+      /* A reading takes seconds over a thin connection, and he has usually
+         looked back up at the shopkeeper by the time it answers — so the
+         answer is felt as well as drawn, either way. */
       if (!out.ok) {
         setError(out.error);
+        feedback('error');
         return;
       }
+      feedback('success');
       setResult(out.analysis);
       setReadNote(text);
       setPicked({});
@@ -156,9 +163,9 @@ export function VisitAssistant({
   };
 
   const whyOff = !text
-    ? 'Say or type what happened first — the note box above.'
+    ? 'First say or type what happened, in the note box above.'
     : !online
-      ? 'No signal — fill the visit yourself. Your note is kept either way.'
+      ? 'No signal. Fill the visit yourself. Your note is safe.'
       : undefined;
 
   return (
@@ -168,21 +175,33 @@ export function VisitAssistant({
         <Text style={[type.h3, { flex: 1 }]}>Understand this visit</Text>
       </View>
 
-      {!result ? (
+      <Presence show={!result}>
         <Text style={[type.caption, { marginTop: 6 }]}>
-          Say what happened in the shop, in any language — MahekOne fills the visit and lines up
-          what comes next. You check everything; nothing saves until you press Save.
+          Say what happened in the shop, in any language. MahekOne fills the visit and the
+          next steps. You check everything. Nothing saves until you press Save.
         </Text>
-      ) : null}
+      </Presence>
 
-      {result ? <Proposal result={result} picked={picked} setPicked={setPicked} handlers={handlers} /> : null}
+      {/* The proposal opens in place of the explanation, and a second reading
+          replaces the first in place — keyed on the note it was read from, so
+          "Read it again" visibly lands a new answer rather than a same-looking
+          card that may or may not have changed. */}
+      <Presence show={!!result}>
+        {result ? (
+          <Swap id={readNote}>
+            <Proposal result={result} picked={picked} setPicked={setPicked} handlers={handlers} />
+          </Swap>
+        ) : null}
+      </Presence>
 
-      {stale ? (
+      <Presence show={stale}>
         <Text style={[type.caption, { marginTop: 10, color: C.warnInk }]}>
-          The note has changed since this was read. Read it again to include what you added.
+          The note has changed. Read it again to add what you wrote.
         </Text>
-      ) : null}
-      {error ? <Text style={[type.caption, { marginTop: 10, color: C.warnInk }]}>{error}</Text> : null}
+      </Presence>
+      <Presence show={!!error}>
+        {error ? <Text style={[type.caption, { marginTop: 10, color: C.warnInk }]}>{error}</Text> : null}
+      </Presence>
 
       <View style={{ marginTop: 12 }}>
         {result && !stale ? (
@@ -224,7 +243,7 @@ function Proposal({
     <View style={{ marginTop: 8 }}>
       {result.summary ? <Text style={[type.bodyInk, { marginBottom: 4 }]}>{result.summary}</Text> : null}
       <Text style={type.caption}>
-        {waiting === 0 ? 'Nothing needs you — check it and fill the visit.' : `${waiting} thing${waiting === 1 ? '' : 's'} to answer below.`}
+        {waiting === 0 ? 'Nothing to answer. Check it and fill the visit.' : `${waiting} thing${waiting === 1 ? '' : 's'} to answer below.`}
       </Text>
       {result.notes.map((n) => (
         <Text key={n} style={[type.caption, { marginTop: 4 }]}>
@@ -277,7 +296,9 @@ function Proposal({
         <Section title="What comes next">
           <View style={{ gap: 12 }}>
             {result.actions.map((a, i) => (
-              <ActionRow key={a.kind + i} action={a} picked={picked} setPicked={setPicked} handlers={handlers} />
+              <Stagger key={a.kind + i} index={i}>
+                <ActionRow action={a} picked={picked} setPicked={setPicked} handlers={handlers} />
+              </Stagger>
             ))}
           </View>
         </Section>
@@ -287,13 +308,13 @@ function Proposal({
 
       {result.competitor || result.feedback.length ? (
         <Section title="For your manager">
-          {result.competitor ? <Text style={type.small}>{'Competitor named: ' + result.competitor}</Text> : null}
+          {result.competitor ? <Text style={type.small}>{'Other brand named: ' + result.competitor}</Text> : null}
           {result.feedback.map((f) => (
             <Text key={f.text} style={type.small}>
               {(f.tone === 'negative' ? '▾ ' : f.tone === 'positive' ? '▴ ' : '• ') + f.text}
             </Text>
           ))}
-          <Text style={[type.caption, { marginTop: 4 }]}>Keep it in the note if it matters — the office reads the note.</Text>
+          <Text style={[type.caption, { marginTop: 4 }]}>If it matters, keep it in the note. The office reads the note.</Text>
         </Section>
       ) : null}
     </View>
@@ -311,11 +332,11 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 function DoorButton({ label, onPress }: { label: string; onPress: () => void }) {
   return (
-    <Pressable
+    <PressableScale
       onPress={onPress}
       accessibilityRole="button"
+      outerStyle={{ marginTop: 8 }}
       style={{
-        marginTop: 8,
         minHeight: 44,
         borderRadius: radius.md,
         borderWidth: 1,
@@ -325,7 +346,7 @@ function DoorButton({ label, onPress }: { label: string; onPress: () => void }) 
         paddingHorizontal: 12,
       }}>
       <Text style={[{ fontSize: 15, color: C.primaryDeep }, weight(600)]}>{label}</Text>
-    </Pressable>
+    </PressableScale>
   );
 }
 
@@ -384,15 +405,15 @@ function ActionRow({
       <Questions items={a.state === 'duplicate' ? [] : a.questions} />
 
       {a.state === 'duplicate' ? null : a.kind === 'order' ? (
-        <DoorButton label="Put it in the cart and open the order" onPress={() => handlers.onOrder(a, picked)} />
+        <DoorButton label="Add to cart, open order" onPress={() => handlers.onOrder(a, picked)} />
       ) : a.kind === 'payment' ? (
-        <DoorButton label="Open the receipt, filled in" onPress={() => handlers.onPayment(a)} />
+        <DoorButton label="Open filled receipt" onPress={() => handlers.onPayment(a)} />
       ) : a.kind === 'complaint' ? (
-        <DoorButton label="Open the complaint, filled in" onPress={() => handlers.onComplaint(a)} />
+        <DoorButton label="Open filled complaint" onPress={() => handlers.onComplaint(a)} />
       ) : a.kind === 'sample' ? (
-        <DoorButton label="Open the sample request, filled in" onPress={() => handlers.onSample(a)} />
+        <DoorButton label="Open filled sample request" onPress={() => handlers.onSample(a)} />
       ) : a.kind === 'requirement' ? (
-        <DoorButton label="Fill the requirement" onPress={() => handlers.onRequirement(a)} />
+        <DoorButton label="Fill what they need" onPress={() => handlers.onRequirement(a)} />
       ) : a.kind === 'lead_decision' && a.decision ? (
         <DoorButton
           label={a.decision === 'qualified' ? 'Mark it "A prospect"' : 'Mark it "Lost"'}

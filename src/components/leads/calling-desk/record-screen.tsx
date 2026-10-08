@@ -17,6 +17,7 @@ import {
   nextActionTypeLabel,
   nextCallNumber,
   questionsForCall,
+  prospectProgress,
   requiredProgress,
   type DeskFieldKey,
 } from "@/lib/engines/lead-calling-desk";
@@ -110,7 +111,7 @@ export function RecordScreen({
   const phase = lead.phase;
   const working = isWorking(phase);
   const next = nextCallNumber(phase);
-  const req = requiredProgress(lead.values);
+  const req = prospectProgress(lead.values);
   const all = answeredCount(lead.values);
   const suspect = lead.ladderIndex === 0;
   const status = stageStatus({
@@ -213,8 +214,8 @@ export function RecordScreen({
           <div className="min-w-0 flex-1">
             <div className="text-xs font-medium tracking-[0.04em] text-success uppercase">Ready for Prospect</div>
             <div className="text-sm font-medium text-ink">
-              Every required answer is in after {lead.callCount} call{lead.callCount === 1 ? "" : "s"} — no more
-              calls needed.
+              Everything a Prospect needs is in after {lead.callCount} call{lead.callCount === 1 ? "" : "s"} — no
+              more calls needed.
             </div>
             <div className="text-[12.5px] text-muted">
               Converting to Prospect moves this lead now — no Sales Manager verification call is needed.
@@ -426,8 +427,9 @@ export function RecordScreen({
           })}
         </div>
         <p className="mt-3 mb-0 text-[12.5px] text-muted">
-          At most {MAX_QUALIFICATION_CALLS} calls. All required answers within them →{" "}
-          <b className="text-success">Ready for Prospect</b>. Calls used up without them →{" "}
+          At most {MAX_QUALIFICATION_CALLS} calls. Everything a Prospect needs within them →{" "}
+          <b className="text-success">Ready for Prospect</b>. Calls used up with only Product or the monthly requirement
+          still blank → <b className="text-ink">stays a Suspect</b>, nothing is lost. Calls used up with no competitor →{" "}
           <b className="text-danger">Lost</b>. Messages do not use a call.
         </p>
       </Card>
@@ -469,7 +471,7 @@ export function RecordScreen({
               <div className="min-w-[220px] flex-1">
                 <div className="mb-1.5 flex items-baseline justify-between">
                   <span className="text-sm font-medium text-ink">
-                    Required answers {req.done} / {req.total}
+                    Needed for Prospect {req.done} / {req.total}
                   </span>
                   <span className="text-[12px] text-muted">
                     {all.done} of {all.total} questions answered in all
@@ -479,10 +481,10 @@ export function RecordScreen({
               </div>
               <div className="text-[12.5px] text-muted">
                 {req.complete ? (
-                  <span className="font-medium text-success">Complete — nothing left to ask.</span>
+                  <span className="font-medium text-success">Everything a Prospect needs is in.</span>
                 ) : (
                   <>
-                    <span className="font-medium text-body">Still needed: </span>
+                    <span className="font-medium text-body">Not yet captured: </span>
                     {req.missing.map((f) => f.label).join(" · ")}
                   </>
                 )}
@@ -783,7 +785,7 @@ function OpportunityCard({ lead }: { lead: DeskLeadRecord }) {
       <p className="mt-3 mb-0 text-[12.5px] text-muted">
         {handed
           ? "Collected by the Telecaller across the Suspect calls. The Sales Manager verifies it — confirming or correcting each answer — and it is never re-collected from the customer."
-          : "Collected by the Telecaller across the Suspect calls. When every required answer is in the Telecaller requests a Prospect and the Sales Manager verifies it."}
+          : "Collected by the Telecaller across the Suspect calls. When what a Prospect needs is in the Telecaller requests a Prospect and the Sales Manager verifies it."}
       </p>
       {lead.enquiry ? (
         <div className="mt-4 rounded-[4px] border border-line bg-canvas px-3.5 py-2.5">
@@ -812,7 +814,7 @@ function SuspectCallsTracker({
 }) {
   const phase = lead.phase;
   const next = nextCallNumber(phase);
-  const req = requiredProgress(lead.values);
+  const req = prospectProgress(lead.values);
   const canDecide = phase === "ready";
   const showButtons = isWorking(phase) || phase === "ready";
   return (
@@ -858,7 +860,7 @@ function SuspectCallsTracker({
           </Button>
           {!canDecide ? (
             <span className="text-[12.5px] text-muted">
-              Converting to Prospect unlocks when every required answer is in ({req.done} of {req.total}).
+              Converting to Prospect unlocks when what a Prospect needs is in ({req.done} of {req.total}).
             </span>
           ) : (
             <span className="text-[12.5px] text-muted">
@@ -1144,7 +1146,7 @@ function GateActionCard({
   if (p === "lost") return note("No further action — this lead is closed. Its history stays for reference.");
   if (p === "ready")
     return box(
-      "All required answers are in. Pick the reason it is worth pursuing and convert it — this moves the lead to Prospect at once, with no Sales Manager verification call needed.",
+      "Everything a Prospect needs is in. Pick the reason it is worth pursuing and convert it — this moves the lead to Prospect at once, with no Sales Manager verification call needed.",
       <Button variant="primary" disabled={!canWork} onClick={onConvert}>
         Convert to Prospect
       </Button>,
@@ -1173,30 +1175,36 @@ function GateActionCard({
     );
   if (p === "exhausted")
     return box(
-      "Three calls have been made and the required answers are still not in. There is no Call 4 — close the lead, or fill the answers on the Edit screen if they have since come in.",
+      `Three calls have been made and ${prospectProgress(lead.values)
+        .missing.map((f) => f.label)
+        .join(" and ")} ${prospectProgress(lead.values).missing.length === 1 ? "is" : "are"} not yet captured. There is no Call 4 — the lead is not lost: fill them in on the Edit screen when they come in, or close the lead.`,
       <Button variant="secondary" className="text-danger" disabled={!canWork} onClick={onLost}>
         Mark Lost
       </Button>,
     );
   if (isWorking(p)) {
     const { askNow } = questionsForCall(lead.values, next ?? MAX_QUALIFICATION_CALLS);
-    const req = requiredProgress(lead.values);
+    const req = prospectProgress(lead.values);
+    const compulsory = requiredProgress(lead.values);
     return (
       <Card className="px-5 py-4">
         {next === MAX_QUALIFICATION_CALLS ? (
           <Callout tone="warn" className="mb-3">
             <div className="text-[13px]">
-              <b>Last call.</b> If the required answers are not in by the end of it, the lead is marked Lost.
+              <b>Last call.</b>{" "}
+              {compulsory.complete
+                ? "Anything still blank at the end of it stays “not yet captured” — the lead is not marked Lost."
+                : `If ${compulsory.missing.map((f) => f.label).join(", ")} is not in by the end of it, the lead is marked Lost.`}
             </div>
           </Callout>
         ) : null}
         <div className="mb-3 text-sm text-muted">
           {askNow.length} question{askNow.length === 1 ? "" : "s"} worth asking on call {next}.{" "}
           {req.missing.length === 0 ? (
-            "Every required answer is already in."
+            "Everything a Prospect needs is already in."
           ) : (
             <b className="text-ink">
-              {req.missing.length} required — {req.missing.map((f) => f.label).join(", ")} still missing.
+              {req.missing.length} still not captured — {req.missing.map((f) => f.label).join(", ")}. You can save a call without them.
             </b>
           )}{" "}
           Anything already answered is not asked again.

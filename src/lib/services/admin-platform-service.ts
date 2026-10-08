@@ -5,7 +5,6 @@ import { db } from "@/db";
 import {
   appAccess,
   appSettings,
-  auditLog,
   jobRuns,
   notifications,
   sessions,
@@ -15,8 +14,11 @@ import {
 import { APPS, type AppId } from "@/lib/apps";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { SETTINGS } from "@/lib/config/registry";
+import { ADMIN } from "@/lib/admin-routes";
+import { settingsCountFor } from "@/lib/config/settings-schemas";
 import { getConfig, configWarnings } from "@/lib/config/store";
 import { sheetsConfigured } from "@/lib/sheets";
+import { secretStatuses } from "@/lib/secrets";
 import { mailConfigured } from "@/lib/mailer";
 
 /* ---------------------------------------------------------------------------
@@ -47,8 +49,8 @@ export type AttentionItem = {
   detail: string;
   tone: Tone;
   cta: string;
-  /** Where the button goes: a console address, or an app route. */
-  go: { section: string; tab: string } | { href: string };
+  /** Where the button goes. Console addresses come from `ADMIN`, never a literal. */
+  href: string;
 };
 
 /**
@@ -99,8 +101,8 @@ export async function attentionItems(): Promise<AttentionItem[]> {
       detail:
         "A job that did not finish leaves a derived figure stale — the queue, the stages or the outstanding are describing yesterday.",
       tone: "danger",
-      cta: "Open job health",
-      go: { section: "overview", tab: "jobs" },
+      cta: "Open jobs",
+      href: ADMIN.jobs,
     },
     {
       n: warnings.length,
@@ -110,7 +112,7 @@ export async function attentionItems(): Promise<AttentionItem[]> {
         "Two thresholds that disagree put two screens in conflict about the same account.",
       tone: "danger",
       cta: "Open configuration",
-      go: { section: "overview", tab: "drift" },
+      href: ADMIN.settings,
     },
     {
       n: unassigned,
@@ -119,7 +121,7 @@ export async function attentionItems(): Promise<AttentionItem[]> {
       detail: "No owner and no sales account manager, so they appear in no queue.",
       tone: "warn",
       cta: "Open in the CRM",
-      go: { href: "/crm/customers" },
+      href: "/crm/customers",
     },
     {
       n: unreadFeedback,
@@ -128,7 +130,7 @@ export async function attentionItems(): Promise<AttentionItem[]> {
       detail: "Sent from inside the apps by somebody waiting for an answer.",
       tone: "warn",
       cta: "Open feedback",
-      go: { section: "feedback", tab: "new" },
+      href: ADMIN.feedback("new"),
     },
     {
       n: sheetIssues,
@@ -136,8 +138,8 @@ export async function attentionItems(): Promise<AttentionItem[]> {
       many: "imported order rows need attention",
       detail: "Rows the sheet import could not read cleanly. Nothing is dropped silently.",
       tone: "warn",
-      cta: "Open the order sheet",
-      go: { section: "sheet", tab: "issues" },
+      cta: "Open the sheets",
+      href: ADMIN.sheets("issues"),
     },
     {
       n: unresolvedSkus,
@@ -147,7 +149,7 @@ export async function attentionItems(): Promise<AttentionItem[]> {
         "One name, two legacy product IDs. They stay unorderable until a person picks the canonical one.",
       tone: "warn",
       cta: "Open the catalogue",
-      go: { section: "catalogue", tab: "duplicates" },
+      href: ADMIN.catalogue("duplicates"),
     },
     {
       n: noApps,
@@ -156,7 +158,7 @@ export async function attentionItems(): Promise<AttentionItem[]> {
       detail: "An active account with no app is somebody who cannot start work.",
       tone: "neutral",
       cta: "Open app access",
-      go: { section: "people", tab: "access" },
+      href: ADMIN.access,
     },
     {
       n: neverSignedIn,
@@ -164,8 +166,8 @@ export async function attentionItems(): Promise<AttentionItem[]> {
       many: "accounts have never signed in",
       detail: "Created, but nobody has used it — usually a password that never arrived.",
       tone: "neutral",
-      cta: "Open onboarding",
-      go: { section: "people", tab: "onboarding" },
+      cta: "Open sign-ins",
+      href: ADMIN.signIns("never"),
     },
   ];
 
@@ -210,10 +212,6 @@ export async function platformHealth(): Promise<{ facts: Fact[]; apps: AppHealth
     .groupBy(appAccess.app);
   const grantedBy = new Map(grants.map((g) => [g.app as AppId, g.n]));
 
-  // Only the CRM publishes a schema today. Counting the registry rather than
-  // stating a number keeps this true the day a second app publishes one.
-  const crmSettings = SETTINGS.length;
-
   const facts: Fact[] = [
     {
       label: "Accounts",
@@ -247,7 +245,7 @@ export async function platformHealth(): Promise<{ facts: Fact[]; apps: AppHealth
     name: a.name,
     built: a.built,
     granted: grantedBy.get(a.id) ?? 0,
-    settings: a.id === "crm" ? crmSettings : null,
+    settings: settingsCountFor(a.id),
   }));
 
   return { facts, apps };
@@ -271,6 +269,8 @@ export type Integration = {
  * own last run — the sheets do — that run is what the row reports.
  */
 export async function integrationStatus(): Promise<Integration[]> {
+  const secrets = await secretStatuses();
+  const held = (name: string) => secrets.some((s) => s.name === name && s.source !== "unset");
   const runs = await db
     .select({
       source: sheetSyncRuns.source,
@@ -327,10 +327,22 @@ export async function integrationStatus(): Promise<Integration[]> {
           : "Postgres. Bytes live in the same backup and point-in-time restore as the rows that refer to them — right until field photographs make it wrong.",
     },
     {
-      name: "WhatsApp",
-      state: "Not connected",
+      /* It said "Not connected — there is no provider" as a literal long after
+         Wati went live: a console answering from a sentence somebody typed. */
+      name: "WhatsApp (Wati)",
+      state: held("wati.apiToken") ? "Healthy" : "Not connected",
       last: "—",
-      note: "There is no provider. Messages are prepared and copied by a person, and only a confirmed send counts.",
+      note: held("wati.apiToken")
+        ? "A key is held. Whether anything is actually sent is the founder's switch, on the Founder Command Centre's WhatsApp desk, where the key is also changed."
+        : "No key. Messages are prepared and copied by a person, and only a confirmed send counts. The key is set on the Founder Command Centre's WhatsApp desk.",
+    },
+    {
+      name: "Website enquiry form",
+      state: held("enquiries.ingestSecret") ? "Healthy" : "Not connected",
+      last: "—",
+      note: held("enquiries.ingestSecret")
+        ? "The website's backend can forward a submitted enquiry. The secret it proves it holds is set below."
+        : "No secret, so the website cannot forward an enquiry into MahekOne. Set one below and give the same value to the website.",
     },
   ];
 
@@ -341,10 +353,7 @@ export async function integrationStatus(): Promise<Integration[]> {
 
 export type UsageRow = { label: string; value: string; sub: string };
 
-export async function usageStats(): Promise<{
-  facts: UsageRow[];
-  perUser: Array<{ name: string; role: string; calls: number; lastSeen: string | null }>;
-}> {
+export async function usageStats(): Promise<{ facts: UsageRow[] }> {
   const [callsToday, callsWeek, signedInToday] = await Promise.all([
     // Never a bare cast: Postgres casts a timestamptz in the SESSION zone, and
     // on Neon that is GMT, which puts a 1am IST call on the previous day.
@@ -357,28 +366,6 @@ export async function usageStats(): Promise<{
                 where day = (now() at time zone ${APP_TIMEZONE})::date`),
   ]);
 
-  const perUser = await db
-    .select({
-      name: users.name,
-      role: users.role,
-      calls: sql<number>`(
-        select count(*)::int from calls c
-         where c.user_id = users.id and c.started_at > now() - interval '7 days'
-      )`,
-      // Falling back to attendance: `last_login_at` only started being written
-      // recently, and somebody with a day recorded plainly has signed in.
-      lastSeen: sql<Date | null>`coalesce(
-        users.last_login_at,
-        (select max(a.signed_in_at) from attendance a where a.user_id = users.id)
-      )`,
-    })
-    .from(users)
-    .where(eq(users.active, true))
-    .orderBy(desc(sql`(
-      select count(*) from calls c
-       where c.user_id = users.id and c.started_at > now() - interval '7 days'
-    )`));
-
   return {
     facts: [
       // Not "attendance opened": this counts accounts that opened MahekOne
@@ -387,12 +374,6 @@ export async function usageStats(): Promise<{
       { label: "Calls logged today", value: String(callsToday), sub: "Across every telecaller" },
       { label: "Calls this week", value: String(callsWeek), sub: "Rolling seven days" },
     ],
-    perUser: perUser.map((u) => ({
-      name: u.name,
-      role: u.role,
-      calls: u.calls,
-      lastSeen: u.lastSeen ? new Date(u.lastSeen).toISOString() : null,
-    })),
   };
 }
 
@@ -558,97 +539,6 @@ export async function jobHealth(): Promise<JobRow[]> {
   return [...latest.values()].sort((a, b) => Number(a.ok) - Number(b.ok));
 }
 
-/* ---------------------------------------------------------------- audit */
-
-export type AuditKind = "config" | "access" | "signin" | "work";
-
-export type AuditRow = {
-  kind: AuditKind;
-  action: string;
-  entityType: string;
-  entityId: string | null;
-  detail: string;
-  actor: string | null;
-  at: string;
-};
-
-/**
- * The audit log, sorted into the three kinds the console shows.
- *
- * The kind is derived from the action rather than stored, because the log is
- * written by a dozen call sites that should not have to know how a console
- * groups them.
- */
-export async function auditRows(limit = 400): Promise<AuditRow[]> {
-  const rows = await db
-    .select({
-      action: auditLog.action,
-      entityType: auditLog.entityType,
-      entityId: auditLog.entityId,
-      before: auditLog.beforeState,
-      after: auditLog.afterState,
-      at: auditLog.at,
-      actor: sql<string | null>`(select name from users u where u.id = audit_log.actor_id)`,
-    })
-    .from(auditLog)
-    .orderBy(desc(auditLog.at))
-    .limit(limit);
-
-  return rows.map((r) => ({
-    kind: auditKind(r.action, r.entityType),
-    action: r.action,
-    entityType: r.entityType,
-    entityId: r.entityId,
-    detail: auditDetail(r.before, r.after),
-    actor: r.actor,
-    at: r.at.toISOString(),
-  }));
-}
-
-/**
- * Four kinds, derived from the action.
- *
- * Signing in is not an access CHANGE and business work is not an admin
- * action; folding either into "admin" is how an audit tab becomes a list
- * nobody can read a question out of. The kinds are derived here rather than
- * stored, because the dozen call sites that write the log should not have to
- * know how a console groups them.
- */
-function auditKind(action: string, entityType: string): AuditKind {
-  if (action === "sign-in" || action === "sign-out") return "signin";
-  if (entityType === "setting" || action.includes("config") || action.includes("setting")) {
-    return "config";
-  }
-  if (
-    entityType === "user" ||
-    action.includes("access") ||
-    action.includes("role") ||
-    action.includes("password") ||
-    action.includes("deactivate")
-  ) {
-    return "access";
-  }
-  return "work";
-}
-
-function auditDetail(before: unknown, after: unknown): string {
-  const pick = (v: unknown): string => {
-    if (v == null) return "";
-    if (typeof v === "string") return v;
-    if (typeof v === "object") {
-      const o = v as Record<string, unknown>;
-      const d = o.detail ?? o.message ?? o.reason;
-      if (typeof d === "string") return d;
-      return JSON.stringify(v);
-    }
-    return String(v);
-  };
-  const b = pick(before);
-  const a = pick(after);
-  if (b && a) return `${b} → ${a}`;
-  return a || b || "—";
-}
-
 /* ------------------------------------------------------------------ data */
 
 export type ImportRow = {
@@ -697,47 +587,6 @@ export async function importHistory(limit = 50): Promise<ImportRow[]> {
   }));
 }
 
-export type MigrationRow = { tag: string; appliedAt: string };
-
-/**
- * What the database has actually been through.
- *
- * Read from Drizzle's own bookkeeping table rather than the migrations folder,
- * because the question this answers is "is this database up to date", and the
- * folder is what SHOULD have been applied.
- */
-export async function migrationStatus(): Promise<{
-  applied: MigrationRow[];
-  pending: number;
-}> {
-  const rows = await db.execute<{ hash: string; created_at: string }>(sql`
-    select hash, created_at from drizzle.__drizzle_migrations order by created_at desc limit 30
-  `);
-
-  // The journal is the list of what exists in the repository. Comparing counts
-  // is enough to say "this database is behind" without shipping the folder.
-  const [{ n }] = await db.execute<{ n: number }>(sql`
-    select count(*)::int as n from drizzle.__drizzle_migrations
-  `);
-
-  const journalLength = MIGRATION_COUNT;
-
-  return {
-    applied: rows.map((r) => ({
-      tag: r.hash.slice(0, 12),
-      appliedAt: new Date(Number(r.created_at)).toISOString(),
-    })),
-    pending: Math.max(0, journalLength - n),
-  };
-}
-
-/**
- * How many migrations the repository holds. A constant rather than a file read
- * because the server bundle has no filesystem access to `drizzle/` in
- * production — and it only ever moves when somebody adds one.
- */
-const MIGRATION_COUNT = 28;
-
 /* --------------------------------------------------------- notifications */
 
 export type NotificationRow = {
@@ -771,17 +620,19 @@ export async function notificationLog(limit = 100): Promise<NotificationRow[]> {
 
 export type SessionRow = {
   id: string;
+  userId: string;
   user: string;
   role: string;
   startedAt: string;
   expiresAt: string;
 };
 
-/** Live sessions. There is no device or IP here, because none is stored. */
-export async function liveSessions(): Promise<SessionRow[]> {
+/** Live sessions — everybody's, or one account's. There is no device or IP here, because none is stored. */
+export async function liveSessions(userId?: string): Promise<SessionRow[]> {
   const rows = await db
     .select({
       id: sessions.id,
+      userId: users.id,
       user: users.name,
       role: users.role,
       startedAt: sessions.createdAt,
@@ -789,7 +640,7 @@ export async function liveSessions(): Promise<SessionRow[]> {
     })
     .from(sessions)
     .innerJoin(users, eq(users.id, sessions.userId))
-    .where(gte(sessions.expiresAt, sql`now()`))
+    .where(and(gte(sessions.expiresAt, sql`now()`), userId ? eq(sessions.userId, userId) : undefined))
     .orderBy(desc(sessions.createdAt));
 
   return rows.map((r) => ({

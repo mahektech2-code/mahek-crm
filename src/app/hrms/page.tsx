@@ -1,9 +1,9 @@
-import { and, eq, isNull, lt, sql } from "drizzle-orm";
+import { and, eq, isNull, lt, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { hrmsAttendance, hrmsBuddyTasks, hrmsChecklist, hrmsGrievances, hrmsHelp, hrmsLeaveRequests, hrmsOffices, hrmsTaskTemplates, hrmsTodos } from "@/db/schema";
 import { hrmsContext } from "@/lib/hrms/access";
 import { attendanceCfg, attendanceRows } from "@/lib/hrms/services/attendance";
-import { allPeople, markableStaff, timingMap } from "@/lib/hrms/services/people";
+import { allPeople, markableStaff, staffInReach, timingMap } from "@/lib/hrms/services/people";
 import { timeRemark } from "@/lib/hrms/engines/attendance";
 import { hrmsLink } from "@/lib/hrms/registry";
 import { today } from "@/lib/hrms/server";
@@ -11,6 +11,7 @@ import { weekdayOf, hm, distanceLabel, tmin } from "@/lib/hrms/time";
 import { getConfig } from "@/lib/config/store";
 import { nowMs } from "@/lib/format";
 import { HomeCard, type HomeState, type WaitItem } from "./_ui/home-card";
+import { BUDDY_DONE, LEAVE_WAITING } from "@/lib/hrms/values";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Check in — HRMS — MahekOne" };
@@ -56,8 +57,9 @@ export default async function HrmsHome() {
             workedMin: r.fig.workedMin,
             workDay: r.fig.workDay,
             fullDayPercent: cfg.fullDayPercent,
-            distance: r.method === "officer" ? `Marked by ${r.markedByName ?? "your head"}` : distanceLabel(r.distanceM),
+            distance: r.method === "officer" ? `Marked by ${r.markedByName ?? "your department head"}` : distanceLabel(r.distanceM),
             worked: hm(r.fig.workedMin),
+            field: r.method === "field",
           }
         : null,
     };
@@ -67,7 +69,7 @@ export default async function HrmsHome() {
   const count = sql<number>`count(*)::int`;
   if (me) {
     const [pend] = await db.select({ n: count }).from(hrmsAttendance).where(and(eq(hrmsAttendance.employeeId, me.id), isNull(hrmsAttendance.checkOut), lt(hrmsAttendance.date, t)));
-    if (pend.n) wait.push({ l: "Your pending check-outs", v: String(pend.n), sub: "Blocks your salary until you check out", tone: "danger", href: hrmsLink("pendingOut") });
+    if (pend.n) wait.push({ l: "Your pending check-outs", v: String(pend.n), sub: "Your salary for that month waits until you check out", tone: "danger", href: hrmsLink("pendingOut") });
     if (ctx.screens.has("checklist")) {
       const cl = await db.select({ status: hrmsChecklist.status }).from(hrmsChecklist).where(and(eq(hrmsChecklist.employeeId, me.id), eq(hrmsChecklist.date, t)));
       if (cl.length) {
@@ -75,7 +77,7 @@ export default async function HrmsHome() {
         wait.push({ l: "Today’s checklist", v: `${cl.length - open} of ${cl.length}`, sub: `${open} still open`, tone: open ? "brand" : "success", href: hrmsLink("checklist") });
       } else {
         const [tpl] = await db.select({ n: count }).from(hrmsTaskTemplates).where(and(eq(hrmsTaskTemplates.employeeId, me.id), sql`${hrmsTaskTemplates.frequency} <> 'Monthly'`));
-        if (tpl.n) wait.push({ l: "Today’s checklist", v: "Not taken", sub: "Take my task copies today’s tasks in", tone: "warn", href: hrmsLink("checklist") });
+        if (tpl.n) wait.push({ l: "Today’s checklist", v: "Not taken", sub: "Today’s tasks are not in your checklist yet", tone: "warn", href: hrmsLink("checklist") });
       }
     }
     if (ctx.screens.has("todos")) {
@@ -89,23 +91,27 @@ export default async function HrmsHome() {
       const [bd] = await db
         .select({ n: count })
         .from(hrmsBuddyTasks)
-        .where(and(eq(hrmsBuddyTasks.toEmployeeId, me.id), eq(hrmsBuddyTasks.date, t), sql`${hrmsBuddyTasks.status} <> 'Task done'`));
+        .where(and(eq(hrmsBuddyTasks.toEmployeeId, me.id), eq(hrmsBuddyTasks.date, t), ne(hrmsBuddyTasks.status, BUDDY_DONE)));
       if (bd.n) wait.push({ l: "Buddy tasks shared with you", v: String(bd.n), sub: "", tone: "brand", href: hrmsLink("buddy") });
     }
   }
   if (ctx.screens.has("approvals") && ctx.powers.has("approveLeave")) {
-    const [n] = await db.select({ n: count }).from(hrmsLeaveRequests).where(eq(hrmsLeaveRequests.status, "Requesting"));
+    const [n] = await db.select({ n: count }).from(hrmsLeaveRequests).where(eq(hrmsLeaveRequests.status, LEAVE_WAITING));
     if (n.n) wait.push({ l: "Leave requests awaiting approval", v: String(n.n), sub: "", tone: "warn", href: hrmsLink("approvals") });
   }
   if (ctx.powers.has("checkoutStaff") && ctx.screens.has("pendingOut")) {
-    const [n] = await db.select({ n: count }).from(hrmsAttendance).where(and(eq(hrmsAttendance.date, t), isNull(hrmsAttendance.checkOut)));
+    /* Only the people this person may actually check out: a head's team and
+       office, not the whole company still at work. */
+    const open = await db.select({ employeeId: hrmsAttendance.employeeId }).from(hrmsAttendance).where(and(eq(hrmsAttendance.date, t), isNull(hrmsAttendance.checkOut)));
+    const reach = staffInReach(ctx, await allPeople(), "checkoutStaff");
+    const n = { n: open.filter((x) => x.employeeId !== me?.id && (!reach || reach.has(x.employeeId))).length };
     if (n.n) wait.push({ l: "Staff still checked in today", v: String(n.n), sub: "Check them out at the end of the day", tone: "neutral", href: hrmsLink("pendingOut") });
   }
   if (ctx.powers.has("markStaff") && ctx.screens.has("attendance")) {
     const [people, todays] = await Promise.all([allPeople(), attendanceRows({ from: t, to: t })]);
     const marked = new Set(todays.map((x) => x.employeeId));
     const n = markableStaff(ctx, people, ctx.powers.has("hr") || ctx.administrator).filter((p) => !marked.has(p.id)).length;
-    if (n) wait.push({ l: "Field staff not yet marked", v: String(n), sub: "Mark attendance for staff of your office", tone: "warn", href: hrmsLink("attendance") });
+    if (n) wait.push({ l: "Staff not yet marked today", v: String(n), sub: "Mark attendance for field and other staff of your office", tone: "warn", href: hrmsLink("attendance") });
   }
   if (ctx.powers.has("resolve")) {
     const [h] = await db.select({ n: count }).from(hrmsHelp).where(eq(hrmsHelp.status, "Pending"));

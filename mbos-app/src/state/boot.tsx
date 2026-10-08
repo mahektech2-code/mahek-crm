@@ -1,19 +1,23 @@
 import React from 'react';
-import { AppState } from 'react-native';
-import { openDb } from '../db';
+import { AppState, Pressable, Text, View } from 'react-native';
+import { getKv, openDb, resetHandle, setKv } from '../db';
 import { recoverInterrupted } from '../sync/queue';
 import { startBackgroundSync, stopBackgroundSync } from '../sync/engine';
 import { registerBackgroundSync, unregisterBackgroundSync } from '../sync/background-sync-task';
 import * as trail from '../sync/trail';
-import { currentSession, type Session } from '../data/session';
+import { currentSession, sessionOpen, setSessionOpen, type Session } from '../data/session';
+import { loadFeedbackPrefs } from '../data/feedback-prefs';
+import { primeSounds } from '../components/ui/feedback';
 import { autoCloseMissedCheckouts, dayState } from '../data/attendance';
+import { syncPunchOutReminders } from '../native/punch-out-reminder';
 import { closeOpenVisits } from '../data/visits';
 import { closeStaleLegs, closeStaleSessions } from '../data/travel';
 import { escalateOverdue } from '../data/tasks';
 import { getConfig } from '../data/config';
 import { registerForPush } from '../native/push';
-import { fetchUpdateInBackground } from '../native/updates';
+import { fetchUpdateQuietly } from '../native/refresh';
 import { restoreArrival, restoreOffPlanReason } from './store';
+import { color as C } from '../theme/tokens';
 
 /**
  * Starting up.
@@ -39,6 +43,17 @@ export function useBoot() {
 export function BootProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = React.useState(false);
   const [session, setSession] = React.useState<Session | null>(null);
+  /*
+   * A STORE THAT WILL NOT OPEN IS SAID, not shown as a white screen.
+   *
+   * The start-up ran as an async block with no catch: a migration that threw
+   * after an update, or a recovery step that failed, left `ready` false for
+   * ever. The splash had already been hidden by the fonts and the sign-in
+   * screen draws nothing until `ready`, so the salesman saw a blank white
+   * phone with nothing on it to tell him to restart, or anybody why.
+   */
+  const [failure, setFailure] = React.useState<string | null>(null);
+  const [attempt, setAttempt] = React.useState(0);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -46,38 +61,30 @@ export function BootProvider({ children }: { children: React.ReactNode }) {
     (async () => {
       await openDb();
       await recoverInterrupted();
+      /* The vibration and sound switches, read before the first screen so the
+         first tap of the day is felt the way he set it. Never blocks boot. */
+      await loadFeedbackPrefs().then(primeSounds).catch(() => {});
 
       const existing = await currentSession();
       if (cancelled) return;
       setSession(existing);
+      setFailure(null);
       setReady(true);
 
       if (existing) {
-        startBackgroundSync();
-        void registerBackgroundSync();
-        void runDayBoundaryWork(existing.user.id).then(() => resumeTrailIfDayOpen(existing.user.id));
-        /* Half-finished work put back on the screen that took it. An off-plan
-           reason is typed on the route screen and spent by a visit two screens
-           later, and this app is reaped between the two routinely — restoring
-           it here is what stops the sentence being lost in silence. It expires
-           itself at the day boundary; see `restoreOffPlanReason`. */
-        void restoreOffPlanReason();
-        /* The shop he arrived at and did not go into. Same shape, same reason. */
-        void restoreArrival();
-        void registerForPush();
-        /* Behind the app, never in front of it: `setReady(true)` has already
-           run, so the salesman is looking at his day while this downloads. It
-           applies at once if it lands within seconds of the launch, otherwise
-           on the NEXT launch — see `fetchUpdateInBackground`. */
-        void fetchUpdateInBackground();
+        await rememberWhoThisIs(existing);
+        onSessionStarted(existing);
       }
-    })();
+    })().catch((e: unknown) => {
+      if (cancelled) return;
+      setFailure(e instanceof Error && e.message ? e.message : 'The phone storage did not open.');
+    });
 
     return () => {
       cancelled = true;
       stopBackgroundSync();
     };
-  }, []);
+  }, [attempt]);
 
   /*
    * The other half of noticing a permission granted mid-session: this is a
@@ -101,9 +108,11 @@ export function BootProvider({ children }: { children: React.ReactNode }) {
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'background') backgroundedAt = Date.now();
       if (state === 'active') {
+        /* Never for nobody: a resume after sign-out must not reopen tracking. */
+        if (!sessionOpen()) return;
         void resumeTrailIfDayOpen(userId);
         if (backgroundedAt != null && Date.now() - backgroundedAt >= 30 * 60_000) {
-          void fetchUpdateInBackground();
+          void fetchUpdateQuietly();
         }
         backgroundedAt = null;
       }
@@ -118,10 +127,9 @@ export function BootProvider({ children }: { children: React.ReactNode }) {
       setSession: (s) => {
         setSession(s);
         if (s) {
-          startBackgroundSync();
-          void registerBackgroundSync();
-          void registerForPush();
+          onSessionStarted(s);
         } else {
+          setSessionOpen(false);
           stopBackgroundSync();
           void unregisterBackgroundSync();
         }
@@ -130,7 +138,73 @@ export function BootProvider({ children }: { children: React.ReactNode }) {
     [ready, session],
   );
 
+  if (failure) {
+    return (
+      <View style={{ flex: 1, backgroundColor: C.surface, justifyContent: 'center', padding: 24 }}>
+        <Text style={{ fontSize: 20, fontWeight: '600', color: C.ink }}>Mahek MBOS could not open</Text>
+        <Text style={{ fontSize: 15, lineHeight: 22, color: C.body, marginTop: 10 }}>
+          The storage on this phone did not open: {failure}
+        </Text>
+        <Text style={{ fontSize: 15, lineHeight: 22, color: C.body, marginTop: 10 }}>
+          Nothing you saved has been deleted. Try again. If this keeps happening, restart the phone and tell your
+          manager.
+        </Text>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => {
+            resetHandle();
+            setFailure(null);
+            setAttempt((n) => n + 1);
+          }}
+          style={{ marginTop: 20, minHeight: 52, borderRadius: 12, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={{ fontSize: 16, fontWeight: '600', color: C.surface }}>Try again</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
   return <BootContext.Provider value={value}>{children}</BootContext.Provider>;
+}
+
+/**
+ * EVERYTHING A SESSION STARTS, in one place for both ways one begins.
+ *
+ * A cold start with a stored session ran the full list; a fresh sign-in ran
+ * three of the eight. So a salesman who reinstalled mid-day was signed in on a
+ * running day with no trail until he backgrounded and reopened the app, and
+ * the overnight housekeeping never ran for a same-day sign-in at all.
+ */
+function onSessionStarted(s: Session): void {
+  setSessionOpen(true);
+  startBackgroundSync();
+  void registerBackgroundSync();
+  void runDayBoundaryWork(s.user.id).then(() => resumeTrailIfDayOpen(s.user.id));
+  /* Half-finished work put back on the screen that took it. An off-plan
+     reason is typed on the route screen and spent by a visit two screens
+     later, and this app is reaped between the two routinely — restoring it
+     here is what stops the sentence being lost in silence. It expires itself
+     at the day boundary; see `restoreOffPlanReason`. */
+  void restoreOffPlanReason();
+  /* The shop he arrived at and did not go into. Same shape, same reason. */
+  void restoreArrival();
+  void registerForPush();
+  /* Behind the app, never in front of it: the salesman is already looking at
+     his day while this downloads. See `fetchUpdateQuietly`. */
+  void fetchUpdateQuietly();
+}
+
+/**
+ * A phone signed in before the last-user record existed has no record of who
+ * it belongs to, so the first sign-in after the update could not tell a
+ * colleague from its owner. The session it already holds answers that.
+ */
+async function rememberWhoThisIs(s: Session): Promise<void> {
+  try {
+    if (await getKv('mbos.lastUser')) return;
+    await setKv('mbos.lastUser', JSON.stringify({ userId: s.user.id, mobile: s.user.phone ?? '', name: s.user.name }));
+  } catch {
+    /* The next sign-in writes it anyway. */
+  }
 }
 
 /**
@@ -173,6 +247,10 @@ async function runDayBoundaryWork(userId: string): Promise<void> {
        its owner on Monday still on Friday's meter reading. */
     await closeStaleSessions(userId, startOfToday.getTime());
     await autoCloseMissedCheckouts(userId);
+    /* On every open, because Android may drop a scheduled alarm across a
+       reboot or an app update, and because a day closed overnight above must
+       not leave last night's reminders standing. */
+    await syncPunchOutReminders(userId);
     /* `mbos.tasks.escalationHours`, which is the PUBLISHED key. This read
        `mbos.tasks.escalateAfterHours` — the same question, one word apart, and
        a spelling no office could ever set — so the handset marked a task

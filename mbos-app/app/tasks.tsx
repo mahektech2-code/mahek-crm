@@ -3,12 +3,33 @@ import { View, Pressable } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Card, Choice, DashedButton, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../src/components/ui/primitives';
-import { BottomSheet } from '../src/components/ui/overlays';
+import { BottomSheet, Calendar } from '../src/components/ui/overlays';
+import { VoiceField } from '../src/components/ui/dictate';
+import { takePhoto } from '../src/native/capture';
+import { discardQueuedMedia } from '../src/sync/media';
+import { getConfig } from '../src/data/config';
+import { useBoot } from '../src/state/boot';
 import { color as C, radius, shadow, weight } from '../src/theme/tokens';
-import { bucketOf, completeTask, createTask, listOpenTasks, snoozeTask, type Task } from '../src/data/tasks';
+import {
+  bucketOf,
+  completeTask,
+  createTask,
+  dropTaskDraft,
+  listOpenTasks,
+  loadTaskDraft,
+  saveTaskDraft,
+  snoozeTarget,
+  snoozeTask,
+  taskFormForShop,
+  taskFormOf,
+  type Task,
+} from '../src/data/tasks';
+import { TaskFormFields } from '../src/components/task-form';
+import { cleanTaskAnswers, taskAnswerProblems, taskAnswersNote, type TaskAnswers } from '../src/engines/task-form';
 import { customerNames, daysSince, listCustomersPage, type Customer } from '../src/data/customers';
 import { dmy, isoDate, plural } from '../src/lib/format';
 import { useStore } from '../src/state/store';
+import { Stagger, SwipeRow, animateLayoutFor } from '../src/components/ui/motion';
 
 /**
  * Tasks, in five buckets.
@@ -35,6 +56,19 @@ const BUCKETS = ['Overdue', 'Today', 'Tomorrow', 'This week', 'Later'] as const;
 const WHENS = ['Today', 'Tomorrow', 'This week'] as const;
 const PRIS = ['Normal', 'High'] as const;
 
+/** What a form asks, in one line: "4 questions · 2 photos". */
+function formLine(fields: ReturnType<typeof taskFormOf>): string {
+  const asks = fields.filter((f) => f.type !== 'info' && f.type !== 'photo').length;
+  const photos = fields.filter((f) => f.type === 'photo').length;
+  return [
+    asks ? plural(asks, 'question') : '',
+    photos ? plural(photos, 'photo') + ' to take' : '',
+  ]
+    .concat(fields.some((f) => f.link) ? ['updates the shop record'] : [])
+    .filter(Boolean)
+    .join(' · ') || 'Read and confirm';
+}
+
 /** The three offers the design makes, as real dates. */
 function dateFor(when: (typeof WHENS)[number], today: string): string {
   const base = new Date(today + 'T00:00:00');
@@ -47,7 +81,6 @@ export default function TasksScreen() {
   const set = useStore((st) => st.set);
   const back = useCameFrom('more');
   const notify = useStore((s) => s.notify);
-  const askConfirm = useStore((s) => s.askConfirm);
 
   const [tasks, setTasks] = React.useState<Task[]>([]);
   /* THE PICKER IS A PAGE, NOT THE BOOK. This rendered a Choice per customer
@@ -76,10 +109,45 @@ export default function TasksScreen() {
   const [pri, setPri] = React.useState<(typeof PRIS)[number]>('Normal');
   const [titleErr, setTitleErr] = React.useState(false);
 
-  const load = React.useCallback(() => {
+  /* DONE ASKS HOW. See `completeTask` — the office refuses a closed task with
+     nothing said about it, so the note is asked here, at the one moment the
+     salesman still remembers what he did. */
+  const boot = useBoot();
+  const me = boot.session?.user.id ?? null;
+  const [closing, setClosing] = React.useState<Task | null>(null);
+  const [doneNote, setDoneNote] = React.useState('');
+  const [donePhoto, setDonePhoto] = React.useState<string | null>(null);
+  const [doneErr, setDoneErr] = React.useState<string | null>(null);
+  const [doneBusy, setDoneBusy] = React.useState(false);
+  /* A task the office attached a form to is answered by the form. The
+     answers are kept as a draft as they are given, so a form left half done
+     opens where he left it. */
+  const [answers, setAnswers] = React.useState<TaskAnswers>({});
+  const [answerErrs, setAnswerErrs] = React.useState<Map<string, string>>(new Map());
+  /* The form as he answers it on this shop — linked questions show what the
+     customer record holds, and a question about every contact is asked once
+     per person. */
+  const closingForm = React.useMemo(() => (closing ? taskFormForShop(closing).fields : []), [closing]);
+  const doneLock = React.useRef(false);
+  const [noteRequired, setNoteRequired] = React.useState(true);
+  React.useEffect(() => {
+    void getConfig<boolean>('mbos.tasks.requireCompletionNote', true)
+      .then((v) => setNoteRequired(v !== false))
+      .catch(() => setNoteRequired(true));
+  }, []);
+
+  const [snoozing, setSnoozing] = React.useState<Task | null>(null);
+  const [snoozeTo, setSnoozeTo] = React.useState('');
+  const [snoozeWhy, setSnoozeWhy] = React.useState('');
+  const [snoozeErr, setSnoozeErr] = React.useState<string | null>(null);
+
+  /* `animate` is asked for by the two acts that move a row — done and snooze —
+     and not by focus: a screen opening on its list is not that list changing. */
+  const load = React.useCallback((animate?: boolean) => {
     let live = true;
     void listOpenTasks().then(async (t) => {
       if (!live) return;
+      if (animate === true) animateLayoutFor(t.length);
       setTasks(t);
       const found = await customerNames(t.map((x) => x.customerId ?? '').filter(Boolean));
       if (live) setNames(found);
@@ -89,7 +157,7 @@ export default function TasksScreen() {
     };
   }, []);
 
-  useFocusEffect(load);
+  useFocusEffect(React.useCallback(() => load(), [load]));
 
   /* The book is read by the SEARCH rather than once on focus, which is what
      makes a shop past the first page reachable at all. An empty query is the
@@ -127,28 +195,107 @@ export default function TasksScreen() {
     notify('Task added · ' + t);
   };
 
-  const markDone = async (t: Task) => {
-    await completeTask(t.id, null);
-    load();
-    notify('Done · ' + t.title);
+  const openDone = (t: Task) => {
+    setClosing(t);
+    setDoneNote('');
+    setDonePhoto(null);
+    setDoneErr(null);
+    setAnswerErrs(new Map());
+    setAnswers({});
+    if (taskFormOf(t).length) void loadTaskDraft(t).then(setAnswers).catch(() => undefined);
   };
 
-  const snooze = (t: Task) =>
-    askConfirm({
-      title: 'Push this to another day?',
-      body: t.title + ' · ' + nameOf(t.customerId),
-      reasonLabel: 'Why · required',
-      confirmLabel: 'Push it back',
-      run: (reason) => {
-        /* Both halves are kept: the new day and the reason for it, appended
-           rather than replaced, because three snoozes is the story. */
-        const to = isoDate(new Date(Date.now() + 86_400_000));
-        void snoozeTask(t.id, to, reason).then(() => {
-          load();
-          notify('Moved to tomorrow · ' + reason);
-        });
-      },
-    });
+  const changeAnswers = (next: TaskAnswers) => {
+    setAnswers(next);
+    setAnswerErrs(new Map());
+    setDoneErr(null);
+    if (closing) void saveTaskDraft(closing.id, next).catch(() => undefined);
+  };
+
+  const closeDone = () => {
+    /* A photograph taken for a task that was then not closed belongs to
+       nothing — drop it rather than let it upload as an orphan. */
+    if (donePhoto) void discardQueuedMedia(donePhoto).catch(() => undefined);
+    setClosing(null);
+  };
+
+  const addDonePhoto = async () => {
+    if (!closing) return;
+    const shot = await takePhoto({ parentType: 'task', parentId: closing.id, kind: 'task_proof' });
+    if (!shot.ok) {
+      if (shot.reason !== 'cancelled') setDoneErr(shot.reason);
+      return;
+    }
+    if (donePhoto) void discardQueuedMedia(donePhoto).catch(() => undefined);
+    setDonePhoto(shot.mediaId);
+    setDoneErr(null);
+  };
+
+  /* The row leaves once the write has landed, not before: a local SQLite
+     write is instant, and a row that vanished on a write that then threw
+     would come back with nothing on the screen saying why. */
+  const markDone = async () => {
+    const t = closing;
+    if (!t || doneLock.current) return;
+    const form = taskFormForShop(t).fields;
+    let responses: TaskAnswers | null = null;
+    let note = doneNote;
+    if (form.length) {
+      const problems = taskAnswerProblems(form, answers);
+      if (problems.length) {
+        setAnswerErrs(new Map(problems.map((p) => [p.fieldId, p.message])));
+        setDoneErr(problems.length === 1 ? 'One answer is still needed.' : problems.length + ' answers are still needed.');
+        return;
+      }
+      responses = cleanTaskAnswers(form, answers);
+      /* The answers are the "how"; a note he adds goes on top of them. */
+      const summary = taskAnswersNote(form, responses);
+      note = [doneNote.trim(), summary].filter(Boolean).join('\n');
+    } else if (noteRequired && !doneNote.trim()) {
+      setDoneErr('Say what you did. Your manager reads this.');
+      return;
+    }
+    doneLock.current = true;
+    setDoneBusy(true);
+    try {
+      await completeTask(t.id, { note, photoId: donePhoto, responses });
+      if (responses) void dropTaskDraft(t.id);
+      animateLayoutFor(tasks.length);
+      setClosing(null);
+      notify('Done · ' + t.title);
+    } catch (e) {
+      setDoneErr(e instanceof Error && e.message ? e.message : 'Could not save. Try again.');
+    } finally {
+      doneLock.current = false;
+      setDoneBusy(false);
+      load();
+    }
+  };
+
+  const openSnooze = (t: Task) => {
+    setSnoozing(t);
+    setSnoozeTo(snoozeTarget(t.dueDate, today, 1));
+    setSnoozeWhy('');
+    setSnoozeErr(null);
+  };
+
+  const saveSnooze = async () => {
+    const t = snoozing;
+    if (!t) return;
+    const why = snoozeWhy.trim();
+    if (!why) return setSnoozeErr('Say why it is moving. Three moves is a story your manager needs.');
+    if (!snoozeTo) return setSnoozeErr('Pick the day it moves to.');
+    try {
+      /* Both halves are kept: the new day and the reason for it, appended
+         rather than replaced, because three snoozes is the story. */
+      await snoozeTask(t.id, snoozeTo, why);
+      setSnoozing(null);
+      load(true);
+      notify('Moved to ' + dmy(snoozeTo));
+    } catch (e) {
+      setSnoozeErr(e instanceof Error && e.message ? e.message : 'Could not save. Try again.');
+    }
+  };
 
   return (
     <AppFrame title="Tasks" activeTab={null} onBack={back.go} contentStyle={{ padding: 16, paddingBottom: 24 }}>
@@ -158,135 +305,173 @@ export default function TasksScreen() {
 
       {tasks.length === 0 ? (
         <Card style={{ marginTop: 12, paddingHorizontal: 16, paddingVertical: 32 }} padded={false}>
-          <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>Nothing outstanding</T>
+          <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>Nothing pending</T>
           <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 4 }}>
-            Anything you promise a customer during a visit lands here.
+            What you promise a customer on a visit shows here.
           </T>
         </Card>
       ) : null}
 
       {BUCKETS.map((g) => {
         const items = tasks.filter((t) => bucketOf(t.dueDate, today) === g);
+        const before = BUCKETS.slice(0, BUCKETS.indexOf(g)).reduce(
+          (n, b) => n + tasks.filter((t) => bucketOf(t.dueDate, today) === b).length,
+          0,
+        );
         if (items.length === 0) return null;
         return (
           <View key={g} style={{ marginTop: 20 }}>
             <SectionLabel style={{ marginBottom: 10 }}>{g}</SectionLabel>
             <View style={{ gap: 10 }}>
-              {items.map((t) => {
+              {items.map((t, i) => {
                 const edge =
                   t.priority === 'High' ? C.danger : g === 'Overdue' ? C.danger : g === 'Today' ? C.warn : C.border;
+                /* Swiping left is a SHORTCUT to the Done button on the row,
+                   and opens the same sheet: a closed task has to say how. */
                 return (
-                  <View
-                    key={t.id}
-                    style={{
-                      backgroundColor: C.surface,
-                      borderWidth: 1,
-                      borderColor: C.hairline,
-                      borderLeftWidth: 3,
-                      borderLeftColor: edge,
-                      borderRadius: radius.xl,
-                      paddingHorizontal: 16,
-                      paddingVertical: 14,
-                      boxShadow: shadow.soft,
-                    }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
-                      <T style={[{ flex: 1, minWidth: 0, fontSize: 14, lineHeight: 20, color: C.ink }, weight(500)]}>
-                        {t.title}
-                      </T>
-                      {t.priority === 'High' ? (
+                  <Stagger key={t.id} index={before + i}>
+                    <SwipeRow
+                      /* The "Done" toast already buzzes. */
+                      buzz={false}
+                      right={{ label: taskFormOf(t).length ? 'Answer' : 'Done', color: C.success, run: () => openDone(t) }}
+                      style={{ borderRadius: radius.xl, overflow: 'hidden' }}>
+                      <View
+                        style={{
+                          backgroundColor: C.surface,
+                          borderWidth: 1,
+                          borderColor: C.hairline,
+                          borderLeftWidth: 3,
+                          borderLeftColor: edge,
+                          borderRadius: radius.xl,
+                          paddingHorizontal: 16,
+                          paddingVertical: 14,
+                          boxShadow: shadow.soft,
+                        }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
+                          <T style={[{ flex: 1, minWidth: 0, fontSize: 14, lineHeight: 20, color: C.ink }, weight(500)]}>
+                            {t.title}
+                          </T>
+                          {t.priority === 'High' ? (
+                            <View
+                              style={{
+                                backgroundColor: C.dangerBg,
+                                borderRadius: 10,
+                                paddingHorizontal: 8,
+                                paddingVertical: 2,
+                              }}>
+                              <T
+                                style={[
+                                  { fontSize: 11, letterSpacing: 0.33, textTransform: 'uppercase', color: C.danger },
+                                  weight(600),
+                                ]}>
+                                High
+                              </T>
+                            </View>
+                          ) : null}
+                        </View>
+                        {/* The shop, or — for a task that belongs to none — who
+                            set it, so the caption line is never left blank. */}
+                        <T s="caption" style={{ marginTop: 2 }}>
+                          {[
+                            nameOf(t.customerId) || (t.customerId ? '' : 'No shop'),
+                            t.assignerId && me && t.assignerId !== me ? 'From the office' : '',
+                          ]
+                            .filter(Boolean)
+                            .join(' · ')}
+                        </T>
+                        {/* What the office wrote is the half of the task that says
+                            what to do — a refusal's reason, a manager's
+                            instruction. It was stored and never drawn. */}
+                        {t.description ? (
+                          <T s="small" style={{ color: C.body, marginTop: 6 }}>{t.description}</T>
+                        ) : null}
+                        {/* A task with a form says how much it asks before he
+                            opens it, so "two questions" and "fifteen questions
+                            and four photos" are not the same tap. */}
+                        {taskFormOf(t).length ? (
+                          <T s="caption" style={{ marginTop: 6, color: C.primary }}>
+                            {formLine(taskFormOf(t))}
+                          </T>
+                        ) : null}
+
+                        {/* A task that ASKS for something specific opens the screen
+                            that answers it. Without this the office raises a
+                            validation call and the salesman reads a title with
+                            nowhere to go — which is how a workflow becomes a list
+                            of sentences people tick off without doing. */}
+                        {t.sourceType === 'lead_validation' && t.customerId ? (
+                          <SecondaryButton
+                            label="Call now"
+                            onPress={() =>
+                              router.push(`/validate?id=${t.customerId}&taskId=${t.id}&from=tasks`)
+                            }
+                            style={{ marginTop: 10 }}
+                          />
+                        ) : null}
+                        {t.sourceType === 'requirement_visit' && t.customerId ? (
+                          <SecondaryButton
+                            label="Open shop"
+                            onPress={() => {
+                              set({ custId: t.customerId ?? undefined, pTab: 0 });
+                              router.push('/customer');
+                            }}
+                            style={{ marginTop: 10 }}
+                          />
+                        ) : null}
                         <View
                           style={{
-                            backgroundColor: C.dangerBg,
-                            borderRadius: 10,
-                            paddingHorizontal: 8,
-                            paddingVertical: 2,
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            gap: 12,
+                            marginTop: 12,
                           }}>
-                          <T
-                            style={[
-                              { fontSize: 11, letterSpacing: 0.33, textTransform: 'uppercase', color: C.danger },
-                              weight(600),
-                            ]}>
-                            High
+                          <T style={[{ fontSize: 13, color: g === 'Overdue' ? C.danger : C.muted }, weight(500)]}>
+                            {/* A heading of "Later" says nothing a man planning a
+                                week can use, so anything past tomorrow prints its
+                                own date instead of repeating the bucket's name. */}
+                            {g === 'Overdue'
+                              ? 'Overdue by ' + plural(daysSince(t.dueDate, today) ?? 0, 'day')
+                              : g === 'This week' || g === 'Later'
+                                ? dmy(t.dueDate)
+                                : g}
                           </T>
+                          <View style={{ flexDirection: 'row', gap: 8 }}>
+                            <Pressable
+                              onPress={() => openSnooze(t)}
+                              accessibilityRole="button"
+                              style={{
+                                height: 48,
+                                paddingHorizontal: 12,
+                                borderWidth: 1,
+                                borderColor: C.border,
+                                backgroundColor: C.surface,
+                                borderRadius: radius.md,
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                              }}>
+                              <T style={{ fontSize: 15, color: C.body }}>Snooze</T>
+                            </Pressable>
+                            <Pressable
+                              onPress={() => openDone(t)}
+                              accessibilityRole="button"
+                              style={{
+                                height: 48,
+                                paddingHorizontal: 14,
+                                backgroundColor: C.primary,
+                                borderRadius: radius.md,
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                              }}>
+                              <T style={[{ fontSize: 15, color: C.surface }, weight(500)]}>
+                                {taskFormOf(t).length ? 'Answer' : 'Done'}
+                              </T>
+                            </Pressable>
+                          </View>
                         </View>
-                      ) : null}
-                    </View>
-                    <T s="caption" style={{ marginTop: 2 }}>{nameOf(t.customerId)}</T>
-
-                    {/* A task that ASKS for something specific opens the screen
-                        that answers it. Without this the office raises a
-                        validation call and the salesman reads a title with
-                        nowhere to go — which is how a workflow becomes a list
-                        of sentences people tick off without doing. */}
-                    {t.sourceType === 'lead_validation' && t.customerId ? (
-                      <SecondaryButton
-                        label="Make the call"
-                        onPress={() =>
-                          router.push(`/validate?id=${t.customerId}&taskId=${t.id}&from=tasks`)
-                        }
-                        style={{ marginTop: 10 }}
-                      />
-                    ) : null}
-                    {t.sourceType === 'requirement_visit' && t.customerId ? (
-                      <SecondaryButton
-                        label="Open the shop"
-                        onPress={() => {
-                          set({ custId: t.customerId ?? undefined, pTab: 0 });
-                          router.push('/customer');
-                        }}
-                        style={{ marginTop: 10 }}
-                      />
-                    ) : null}
-                    <View
-                      style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: 12,
-                        marginTop: 12,
-                      }}>
-                      <T style={[{ fontSize: 13, color: g === 'Overdue' ? C.danger : C.muted }, weight(500)]}>
-                        {/* A heading of "Later" says nothing a man planning a
-                            week can use, so anything past tomorrow prints its
-                            own date instead of repeating the bucket's name. */}
-                        {g === 'Overdue'
-                          ? 'Overdue by ' + plural(daysSince(t.dueDate, today) ?? 0, 'day')
-                          : g === 'This week' || g === 'Later'
-                            ? dmy(t.dueDate)
-                            : g}
-                      </T>
-                      <View style={{ flexDirection: 'row', gap: 8 }}>
-                        <Pressable
-                          onPress={() => snooze(t)}
-                          accessibilityRole="button"
-                          style={{
-                            height: 48,
-                            paddingHorizontal: 12,
-                            borderWidth: 1,
-                            borderColor: C.border,
-                            backgroundColor: C.surface,
-                            borderRadius: radius.md,
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                          }}>
-                          <T style={{ fontSize: 15, color: C.body }}>Snooze</T>
-                        </Pressable>
-                        <Pressable
-                          onPress={() => markDone(t)}
-                          accessibilityRole="button"
-                          style={{
-                            height: 48,
-                            paddingHorizontal: 14,
-                            backgroundColor: C.primary,
-                            borderRadius: radius.md,
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                          }}>
-                          <T style={[{ fontSize: 15, color: C.surface }, weight(500)]}>Done</T>
-                        </Pressable>
                       </View>
-                    </View>
-                  </View>
+                    </SwipeRow>
+                  </Stagger>
                 );
               })}
             </View>
@@ -298,7 +483,7 @@ export default function TasksScreen() {
         <T style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.285, color: C.ink }, weight(600)]}>New task</T>
 
         <View style={{ marginTop: 14 }}>
-          <SectionLabel style={{ marginBottom: 6 }}>What needs doing</SectionLabel>
+          <SectionLabel style={{ marginBottom: 6 }}>What to do</SectionLabel>
           <Input
             value={title}
             onChangeText={(v) => {
@@ -308,7 +493,7 @@ export default function TasksScreen() {
             placeholder="Take the rate list to Balaji"
             invalid={titleErr}
           />
-          {titleErr ? <T style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Say what needs doing.</T> : null}
+          {titleErr ? <T style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Write what needs to be done.</T> : null}
         </View>
 
         <View style={{ marginTop: 12 }}>
@@ -316,7 +501,7 @@ export default function TasksScreen() {
           <Input
             value={custQuery}
             onChangeText={setCustQuery}
-            placeholder="Search your book by name, area or phone"
+            placeholder="Search your customers by name, area or phone"
           />
           <View style={{ gap: 8, marginTop: 8 }}>
             {/* A job that belongs to nobody in particular is a real task —
@@ -324,7 +509,7 @@ export default function TasksScreen() {
                 no such row made it unrecordable. It is first because it is also
                 the only way to undo a pick. */}
             <Choice
-              label="No customer — a general job"
+              label="No customer. General work"
               selected={picked === null}
               onPress={() => setPicked(null)}
             />
@@ -343,11 +528,11 @@ export default function TasksScreen() {
               />
             ))}
             {custQuery.trim() && customers.length === 0 ? (
-              <T s="caption">No shop in your book matches that.</T>
+              <T s="caption">No customer found.</T>
             ) : null}
             {bookTotal > customers.length ? (
               <T s="caption">
-                {'Showing ' + customers.length + ' of ' + bookTotal + ' — search for the rest.'}
+                {'Showing ' + customers.length + ' of ' + bookTotal + '. Search to find more.'}
               </T>
             ) : null}
           </View>
@@ -374,6 +559,114 @@ export default function TasksScreen() {
         <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
           <SecondaryButton label="Cancel" onPress={() => setFormOpen(false)} style={{ flex: 1, borderRadius: radius.xl }} />
           <PrimaryButton label="Add task" onPress={save} style={{ flex: 1, borderRadius: radius.xl }} />
+        </View>
+      </BottomSheet>
+
+      <BottomSheet open={closing !== null} onClose={closeDone} scroll>
+        <T style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.285, color: C.ink }, weight(600)]}>
+          {closingForm.length ? 'Answer and finish' : 'Mark as done'}
+        </T>
+        {closing ? <T s="small" style={{ color: C.muted, marginTop: 4 }}>{closing.title}</T> : null}
+        {closing?.description && closingForm.length ? (
+          <T s="small" style={{ color: C.body, marginTop: 6 }}>{closing.description}</T>
+        ) : null}
+        {closing && closingForm.length ? (
+          <View style={{ marginTop: 14 }}>
+            <TaskFormFields
+              taskId={closing.id}
+              fields={closingForm}
+              answers={answers}
+              onChange={changeAnswers}
+              problems={answerErrs}
+            />
+          </View>
+        ) : null}
+        <View style={{ marginTop: 14 }}>
+          <SectionLabel style={{ marginBottom: 6 }}>
+            {closingForm.length ? 'Anything else (optional)' : noteRequired ? 'What you did · needed' : 'What you did'}
+          </SectionLabel>
+          <VoiceField
+            value={doneNote}
+            onChangeText={(v) => {
+              setDoneNote(v);
+              setDoneErr(null);
+            }}
+            placeholder={closingForm.length ? 'Anything the questions did not ask.' : 'Gave them the new rate list. They will order next week.'}
+            multiline
+            maxLength={2000}
+          />
+        </View>
+        {closingForm.length ? null : (
+          <View style={{ marginTop: 12 }}>
+            <SecondaryButton label={donePhoto ? 'Photo added. Take it again' : 'Add a photo (optional)'} onPress={() => void addDonePhoto()} />
+          </View>
+        )}
+        {closingForm.length ? (
+          <T s="caption" style={{ marginTop: 10 }}>Your answers are kept on the phone if you close this — finish later.</T>
+        ) : null}
+        {doneErr ? <T style={{ fontSize: 13, color: C.danger, marginTop: 10 }}>{doneErr}</T> : null}
+        <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
+          <SecondaryButton label="Cancel" onPress={closeDone} style={{ flex: 1, borderRadius: radius.xl }} />
+          <PrimaryButton
+            label={doneBusy ? 'Saving…' : closingForm.length ? 'Submit' : 'Done'}
+            onPress={() => void markDone()}
+            disabled={doneBusy}
+            style={{ flex: 1, borderRadius: radius.xl }}
+          />
+        </View>
+      </BottomSheet>
+
+      <BottomSheet open={snoozing !== null} onClose={() => setSnoozing(null)} scroll>
+        <T style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.285, color: C.ink }, weight(600)]}>
+          Move to another day
+        </T>
+        {snoozing ? <T s="small" style={{ color: C.muted, marginTop: 4 }}>{snoozing.title}</T> : null}
+        {snoozing ? (
+          <View style={{ flexDirection: 'row', gap: 8, marginTop: 14 }}>
+            <Choice
+              label="Next day"
+              selected={snoozeTo === snoozeTarget(snoozing.dueDate, today, 1)}
+              onPress={() => setSnoozeTo(snoozeTarget(snoozing.dueDate, today, 1))}
+              style={{ flex: 1 }}
+            />
+            <Choice
+              label="A week later"
+              selected={snoozeTo === snoozeTarget(snoozing.dueDate, today, 7)}
+              onPress={() => setSnoozeTo(snoozeTarget(snoozing.dueDate, today, 7))}
+              style={{ flex: 1 }}
+            />
+          </View>
+        ) : null}
+        <View style={{ marginTop: 12 }}>
+          <Calendar
+            selected={snoozeTo}
+            onPick={(d) => {
+              setSnoozeTo(d);
+              setSnoozeErr(null);
+            }}
+            disabledReason={(d) =>
+              snoozing && d <= (snoozing.dueDate > today ? snoozing.dueDate : today)
+                ? 'Pick a day after ' + dmy(snoozing.dueDate > today ? snoozing.dueDate : today) + '.'
+                : null
+            }
+          />
+        </View>
+        <T s="small" style={{ color: C.body, marginTop: 8 }}>{snoozeTo ? 'Moves to ' + dmy(snoozeTo) : ''}</T>
+        <View style={{ marginTop: 12 }}>
+          <SectionLabel style={{ marginBottom: 6 }}>Why · needed</SectionLabel>
+          <Input
+            value={snoozeWhy}
+            onChangeText={(v) => {
+              setSnoozeWhy(v);
+              setSnoozeErr(null);
+            }}
+            placeholder="Shop was closed today"
+          />
+        </View>
+        {snoozeErr ? <T style={{ fontSize: 13, color: C.danger, marginTop: 10 }}>{snoozeErr}</T> : null}
+        <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
+          <SecondaryButton label="Cancel" onPress={() => setSnoozing(null)} style={{ flex: 1, borderRadius: radius.xl }} />
+          <PrimaryButton label="Move it" onPress={() => void saveSnooze()} style={{ flex: 1, borderRadius: radius.xl }} />
         </View>
       </BottomSheet>
     </AppFrame>

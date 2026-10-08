@@ -1,11 +1,12 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, ne, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, ne, or, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import {
   attachments,
   auditLog,
+  calls,
   complaints,
   complaintStatusHistory,
   customers,
@@ -30,7 +31,7 @@ import {
   COMPLAINT_PRIORITIES,
   priorityLabel,
 } from "../complaint-labels";
-import { classifyShortfall, resolveTarget } from "../engines/targets";
+import { resolveTarget } from "../engines/targets";
 import { watchAge } from "../engines/inactivity";
 import {
   closureNoteFor,
@@ -60,6 +61,7 @@ import {
 } from "../queries";
 import { creditedToSql, CREDITED_TO_SEAT_SQL, type CreditSeat } from "../sales-attribution";
 import { orderCountsSql, orderValueSql } from "../order-status";
+import { placeNameSql } from "./place-filter-service";
 
 /**
  * Whose target a customer's monthly figure counts toward — the same rule
@@ -128,6 +130,15 @@ export type ReminderRow = {
   closedBySourceId: string | null;
   closedByName: string | null;
   closedOn: string | null;
+  /**
+   * The newest call logged to this customer SINCE the reminder was set, on a
+   * pending reminder only — null where nobody has rung them since, and null on
+   * every closed one. It is what ties the list to the Call Log: a reminder
+   * that is still open after somebody rang is open for a reason the screen
+   * can say — nobody answered, or they were rung before it fell due — rather
+   * than looking as though the call never reached it.
+   */
+  lastCall: { on: string; answered: boolean; byName: string | null } | null;
 };
 
 export async function listReminders(view?: ReminderView): Promise<ReminderRow[]> {
@@ -151,7 +162,8 @@ export async function listReminders(view?: ReminderView): Promise<ReminderRow[]>
     .from(reminders)
     .innerJoin(customers, eq(customers.id, reminders.customerId))
     .innerJoin(users, eq(users.id, reminders.assignedUserId))
-    .where(ids ? inArray(reminders.assignedUserId, ids) : undefined)
+    // A trashed lead's callbacks wait with it, and come back if it does.
+    .where(and(isNull(customers.deletedAt), ids ? inArray(reminders.assignedUserId, ids) : undefined))
     .orderBy(asc(reminders.dueDate));
 
   // Only a FUTURE pending reminder can be the thing standing between a
@@ -173,7 +185,55 @@ export async function listReminders(view?: ReminderView): Promise<ReminderRow[]>
     ).filter((id): id is string => id !== null),
   );
 
+  const dateOpts = {
+    timezone: config["workingDay.timezone"],
+    dayBoundaryHour: config["workingDay.dayBoundaryHour"],
+    workingDays: config["workingDay.workingDays"],
+  };
+
+  /*
+   * One read for every pending customer, newest call each. An order received
+   * is not a call — nobody spoke to anybody — so it can neither explain nor
+   * close a promise to ring.
+   */
+  const pendingCustomerIds = [
+    ...new Set(rows.filter(({ reminder: r }) => r.status === "pending").map(({ reminder: r }) => r.customerId)),
+  ];
+  const lastCalls = new Map(
+    (pendingCustomerIds.length
+      ? await db
+          .selectDistinctOn([calls.customerId], {
+            id: calls.id,
+            customerId: calls.customerId,
+            createdAt: calls.createdAt,
+            outcome: calls.outcome,
+            byName: users.name,
+          })
+          .from(calls)
+          .leftJoin(users, eq(users.id, calls.userId))
+          .where(
+            and(
+              inArray(calls.customerId, pendingCustomerIds),
+              ne(calls.interactionType, "order_received"),
+            ),
+          )
+          .orderBy(calls.customerId, desc(calls.createdAt))
+      : []
+    ).map((c) => [c.customerId, c]),
+  );
+
   const mapped = rows.map(({ reminder: r, customerName, assignedUserName, closedByName }) => {
+    const call = r.status === "pending" ? lastCalls.get(r.customerId) : undefined;
+    // Strictly after: the call that WROTE this reminder shares its transaction
+    // and so its `now()`, and is not a call made about it.
+    const lastCall =
+      call && call.id !== r.callId && call.createdAt > r.createdAt
+        ? {
+            on: businessDate(call.createdAt, dateOpts),
+            answered: call.outcome !== "no_answer",
+            byName: call.byName,
+          }
+        : null;
     const overdueDays = Math.max(0, daysBetween(r.dueDate, day));
     const displayStatus =
       r.status === "completed"
@@ -208,13 +268,8 @@ export async function listReminders(view?: ReminderView): Promise<ReminderRow[]>
       closedByName,
       // A date, not the instant: this is read on a list, and the hour a
       // reminder was ticked has never been the question anybody asks of it.
-      closedOn: r.closedAt
-        ? businessDate(r.closedAt, {
-            timezone: config["workingDay.timezone"],
-            dayBoundaryHour: config["workingDay.dayBoundaryHour"],
-            workingDays: config["workingDay.workingDays"],
-          })
-        : null,
+      closedOn: r.closedAt ? businessDate(r.closedAt, dateOpts) : null,
+      lastCall,
     } satisfies ReminderRow;
   });
 
@@ -462,6 +517,7 @@ export async function closeRemindersOnEvidence(
       id: reminders.id,
       type: reminders.type,
       dueDate: reminders.dueDate,
+      callId: reminders.callId,
     })
     .from(reminders)
     .where(
@@ -473,7 +529,15 @@ export async function closeRemindersOnEvidence(
 
   const closing = remindersClosedBy(
     pending
-      .filter((r) => !excluded.has(r.id))
+      /*
+       * Nothing the evidence itself WROTE. `exclude` names one reminder, and a
+       * single call can write three — the outcome's promise, a "try again
+       * later" recall and a dated Next Action — so a Next Action dated today
+       * used to be closed by the very call that set it, the moment it was
+       * saved. `callId` is stamped on every reminder a call writes, so asking
+       * it is the whole of "never close what you just created".
+       */
+      .filter((r) => !excluded.has(r.id) && r.callId !== input.sourceId)
       .map((r) => ({
         id: r.id,
         type: r.type as ClosableReminderType,
@@ -728,6 +792,24 @@ export async function complaintHistory(complaintId: string) {
     .orderBy(asc(complaintStatusHistory.at));
 }
 
+/**
+ * A COMPLAINT IS WORKED BY WHOEVER MAY WORK ITS CUSTOMER.
+ *
+ * The status, priority and resolution writes below took a complaint id and
+ * nothing else — so anybody signed in to the CRM could move, re-prioritise or
+ * reassign a complaint on a customer outside their book by posting its id.
+ * The complaints LIST is scoped through the customer; the writes now ask the
+ * same question of the same row, through `assertCustomerInScope`, so a
+ * complaint you can see is one you can act on and nothing else is.
+ */
+async function customerOfComplaintInScope(customerId: string) {
+  const [customer] = await db.select().from(customers).where(eq(customers.id, customerId));
+  await assertCustomerInScope(customer ?? null);
+}
+
+/** Statuses after which a complaint is finished with. */
+const FINISHED_COMPLAINT = new Set(["resolved", "closed", "rejected"]);
+
 export async function changeComplaintStatus(
   complaintId: string,
   toStatus: "open" | "in_progress" | "awaiting_customer" | "rejected" | "closed",
@@ -739,6 +821,19 @@ export async function changeComplaintStatus(
     .from(complaints)
     .where(eq(complaints.id, complaintId));
   if (!existing) return err("That complaint no longer exists.", "not_found");
+  await customerOfComplaintInScope(existing.customerId);
+
+  /*
+   * FINISHING ONE, OR OPENING A FINISHED ONE, IS THE RESOLVER'S.
+   * `complaint.resolve` is what closes a complaint through `resolveComplaint`;
+   * a status write that could close or reject it without that capability, or
+   * reopen one somebody with it had closed, was the same decision through a
+   * side door. Moving an open complaint along — in progress, awaiting the
+   * customer — stays anybody's who works the customer.
+   */
+  if (FINISHED_COMPLAINT.has(toStatus) || FINISHED_COMPLAINT.has(existing.status)) {
+    await requireCapability("complaint.resolve");
+  }
 
   await db.transaction(async (tx) => {
     await tx
@@ -806,6 +901,7 @@ export async function setComplaintPriority(
     .from(complaints)
     .where(eq(complaints.id, complaintId));
   if (!existing) return err("That complaint no longer exists.", "not_found");
+  await customerOfComplaintInScope(existing.customerId);
   if (existing.severity === picked.value) {
     return okVoid(`Already ${picked.label}`);
   }
@@ -876,6 +972,7 @@ export async function resolveComplaint(input: {
     .from(complaints)
     .where(eq(complaints.id, input.complaintId));
   if (!existing) return err("That complaint no longer exists.", "not_found");
+  await customerOfComplaintInScope(existing.customerId);
 
   await db.transaction(async (tx) => {
     await tx
@@ -1095,8 +1192,32 @@ async function targetListClause(period: string | undefined, filters: TargetListF
   });
   const day = await today();
   const key = period ?? monthKey(day);
-  const [year, month] = key.split("-").map(Number);
+  const month = targetMonth(key);
 
+  return {
+    ...month,
+    where: and(
+      month.population,
+      visibility,
+      // Undefined where nothing is filtered, which `and` drops — so the
+      // unfiltered read is the query it always was, byte for byte.
+      customerClause,
+    ),
+  };
+}
+
+/**
+ * THE MONTH AND THE POPULATION, WITHOUT ANYBODY'S SCOPE.
+ *
+ * Split out of `targetListClause` so the handset's read below measures the
+ * same book the Targets screen does. That one resolves a browser session;
+ * a handset arrives on a device token and has no session to resolve, so it
+ * supplies its own narrowing — the credited seat — and takes everything else
+ * from here. Two spellings of "which accounts carry a target" is how the
+ * phone and the office would come to disagree about one shop.
+ */
+function targetMonth(key: string) {
+  const [year, month] = key.split("-").map(Number);
   return {
     key,
     year,
@@ -1106,7 +1227,7 @@ async function targetListClause(period: string | undefined, filters: TargetListF
       eq(monthlyTargets.year, year),
       eq(monthlyTargets.month, month),
     ),
-    where: and(
+    population: and(
       // A customer who has gone quiet still carries a target — that is the
       // gap the month has to explain. Only deactivation removes them.
       ne(customers.status, "deactivated"),
@@ -1131,12 +1252,77 @@ async function targetListClause(period: string | undefined, filters: TargetListF
        * target for them in the meantime.
        */
       DIRECT_CUSTOMER_SQL,
-      visibility,
-      // Undefined where nothing is filtered, which `and` drops — so the
-      // unfiltered read is the query it always was, byte for byte.
-      customerClause,
     ),
   };
+}
+
+/**
+ * ONE SALESMAN'S CUSTOMER TARGETS FOR A MONTH, for his handset.
+ *
+ * The person target on the Performance screen says how far he is from his
+ * month; this says WHERE the rest of it would come from — which of his own
+ * shops are short, by how much, and which have bought nothing yet. Read by
+ * `customerTargetsFor` in the MBOS sync, never by a browser.
+ *
+ * THE SAME POPULATION, THE SAME TARGET AND THE SAME ACHIEVED FIGURE the
+ * Targets screen shows: `targetMonth` and `targetAchievedSql` are the ones
+ * `listTargets` reads, so a manager and the salesman cannot quote one shop
+ * two different numbers. A shop with no stored target reads 0, which is what
+ * `resolveTarget` gives it on that screen too — see `targetTotals`.
+ *
+ * NARROWED BY THE CREDITED SEAT and by nothing else. `creditedToSql` is whose
+ * number a customer's orders count towards, which is the question "my
+ * customers' targets" is asking; the sales manager seat that widens the
+ * office screen drives no target and is deliberately absent.
+ *
+ * `pendingPaise` IS NOT ACHIEVEMENT and is never added to it. It is what he
+ * took this month that accounts have not decided yet — the one figure that
+ * explains why a shop he sold to this morning still reads short. Counted on
+ * `ordered_at` in the same window, at the same net-of-GST value.
+ */
+export async function customerTargetsCreditedTo(userId: string, key: string) {
+  const month = targetMonth(key);
+  const w = monthWindow(key);
+
+  const rows = await db
+    .select({
+      customerId: customers.id,
+      target: sql<number>`coalesce(${monthlyTargets.targetAmount}, 0)::bigint`,
+      isDefault: sql<boolean>`coalesce(${monthlyTargets.isDefault}, true)`,
+      carriedForward: sql<boolean>`coalesce(${monthlyTargets.carriedForward}, false)`,
+      billTarget: monthlyTargets.billTarget,
+      billsAchieved: billsAchievedSql(key),
+      achieved: targetAchievedSql(key),
+      pending: sql<number>`coalesce((
+        select sum(${orderValueSql("o")}) from ${orders} o
+         where o.customer_id = customers.id
+           and o.status = 'pending_approval'
+           and o.ordered_at >= ${w.start}
+           and o.ordered_at < ${w.end}
+      ), 0)`,
+    })
+    .from(customers)
+    .leftJoin(monthlyTargets, month.joinTarget)
+    .where(and(month.population, sql`${creditedToSql("customers")} = ${userId}`));
+
+  return rows
+    .map((r) => {
+      const target = Number(r.target ?? 0);
+      const achieved = Number(r.achieved ?? 0);
+      return {
+        customerId: r.customerId,
+        target,
+        achieved,
+        pending: Number(r.pending ?? 0),
+        isDefault: Boolean(r.isDefault),
+        carriedForward: Boolean(r.carriedForward),
+        billTarget: r.billTarget ?? null,
+        billsAchieved: Number(r.billsAchieved ?? 0),
+      };
+    })
+    /* A shop with no target, nothing bought and nothing waiting has nothing
+       to say on this screen, and on a big book it is most of the rows. */
+    .filter((r) => r.target > 0 || (r.billTarget ?? 0) > 0 || r.achieved > 0 || r.pending > 0);
 }
 
 /**
@@ -1197,7 +1383,13 @@ export async function targetTotals(
 export async function targetFor(
   customerId: string,
   period?: string,
-): Promise<{ amount: number; isDefault: boolean; shareOfBookPercent: number | null } | null> {
+): Promise<{
+  amount: number;
+  isDefault: boolean;
+  shareOfBookPercent: number | null;
+  billTarget: number | null;
+  billsAchieved: number;
+} | null> {
   const { where, joinTarget } = await targetListClause(period, {});
 
   const [row] = await db
@@ -1206,6 +1398,8 @@ export async function targetFor(
       // default, which on this path is always 0. See `targetTotals`.
       amount: sql<number>`coalesce(${monthlyTargets.targetAmount}, 0)::bigint`,
       isDefault: sql<boolean>`coalesce(${monthlyTargets.isDefault}, true)`,
+      billTarget: monthlyTargets.billTarget,
+      billsAchieved: billsAchievedSql(period ?? monthKey(await today())),
     })
     .from(customers)
     .leftJoin(monthlyTargets, joinTarget)
@@ -1223,6 +1417,23 @@ export async function targetFor(
     amount,
     isDefault: Boolean(row.isDefault),
     shareOfBookPercent: bookTarget ? Math.round((amount / bookTarget) * 100) : null,
+    billTarget: row.billTarget ?? null,
+    billsAchieved: Number(row.billsAchieved ?? 0),
+  };
+}
+
+/**
+ * A bill target's three figures, read the one way every list reads them. Null
+ * means nobody asked for a count this month — not a target of zero, which
+ * would read as "met" on a shop nobody set one for.
+ */
+function billFigures(billTarget: number | null | undefined, billsAchieved: unknown) {
+  const target = billTarget && billTarget > 0 ? billTarget : null;
+  const achieved = Number(billsAchieved ?? 0);
+  return {
+    billTarget: target,
+    billsAchieved: achieved,
+    billGap: target ? Math.max(0, target - achieved) : 0,
   };
 }
 
@@ -1281,6 +1492,7 @@ export async function listTargets(
       target: monthlyTargets.targetAmount,
       isDefault: monthlyTargets.isDefault,
       carriedForward: monthlyTargets.carriedForward,
+      billTarget: monthlyTargets.billTarget,
       /*
        * The SAME expression the totals row, the paged list and the shortfall
        * report read. It was a second copy of it written out here, which is how
@@ -1288,6 +1500,7 @@ export async function listTargets(
        * in whatever zone the session happened to be in.
        */
       achieved: targetAchievedSql(key),
+      billsAchieved: billsAchievedSql(key),
       contactsThisMonth: sql<number>`(
         select count(*)::int from calls c
          where c.customer_id = customers.id
@@ -1333,6 +1546,7 @@ export async function listTargets(
       percent: resolved.amount ? Math.round((achieved / resolved.amount) * 100) : 0,
       isDefault: resolved.isDefault,
       carriedForward: resolved.carriedForward,
+      ...billFigures(r.billTarget, r.billsAchieved),
     };
   });
 }
@@ -1389,6 +1603,24 @@ function targetAchievedSql(key: string) {
 }
 
 /**
+ * SALES BILLS RAISED ON THE ACCOUNT IN THE MONTH — what a bill target is
+ * measured against. Counted off the bills ledger by `bill_date`, exactly as
+ * the Top customers report counts them, so "4 bills in August" reads the same
+ * on both tabs. `bill_date` is a DATE, so the window compares dates with dates
+ * and no zone is involved.
+ */
+function billsAchievedSql(key: string) {
+  const start = `${key}-01`;
+  const end = `${addMonths(key, 1)}-01`;
+  return sql<number>`(
+    select count(*)::int from bills bl
+     where bl.customer_id = customers.id
+       and bl.bill_date >= ${start}::date
+       and bl.bill_date < ${end}::date
+  )`;
+}
+
+/**
  * The customer-list filters, and only those — the Targets tab's filter bar
  * is deliberately the same four controls the Customers list offers
  * (status, sales people, sales managers, back office), read the same way,
@@ -1401,26 +1633,60 @@ export type TargetListFilters = Pick<
 > & {
   page?: number;
   perPage?: number;
+  /**
+   * Where the month's figure came from — `hand`, `carried`, `default`,
+   * comma-separated. Empty means all three.
+   */
+  source?: string;
+  /** `behind` (a gap remains) or `met` (none does). Empty means both. */
+  progress?: string;
 };
+
+/** The three ways a stored target came to be, as the screen names them. */
+export const TARGET_SOURCES = ["hand", "carried", "default"] as const;
+export type TargetSource = (typeof TARGET_SOURCES)[number];
 
 export type TargetListRow = Awaited<ReturnType<typeof listTargets>>[number];
 
 export type TargetListPage = {
-  rows: TargetListRow[];
+  rows: Array<TargetListRow & { city: string | null }>;
   /** Matching the filters. */
   total: number;
   /** In the whole scoped book, before any filter. */
   bookTotal: number;
   page: number;
   pageCount: number;
-  /** Over the FILTERED set, not the page — the tiles describe the search. */
+  /**
+   * Over the FILTERED set, not the page — the tiles describe the search.
+   * Everything except the Behind/Met tab, so the tab counts stay put.
+   */
   totals: {
+    /** Allocated targets the filters reach, before the Behind/Met tab. */
+    customers: number;
     target: number;
     achieved: number;
     gap: number;
     defaults: number;
     behind: number;
     maxGap: number;
+    /** Accounts carrying a bill target, and the count asked and raised. */
+    billTargeted: number;
+    billTarget: number;
+    billsAchieved: number;
+  };
+  /**
+   * Over every direct customer in scope, BEFORE the filters — the split the
+   * source filter offers, and the direct customers who carry no target at
+   * all this month. That last figure is the screen's to-do list: an account
+   * with nothing allocated is not on the table, so it has to be counted
+   * somewhere or it is simply invisible.
+   */
+  allocation: {
+    allocated: number;
+    unallocated: number;
+    hand: number;
+    carried: number;
+    default: number;
   };
 };
 
@@ -1468,6 +1734,33 @@ export async function targetFilterClause(
   const targetExpr = sql<number>`coalesce(${monthlyTargets.targetAmount}, 0)`;
   const isDefaultExpr = sql<boolean>`coalesce(${monthlyTargets.isDefault}, true)`;
   const gapExpr = sql<number>`greatest(0, ${targetExpr} - ${achievedExpr})`;
+  const carriedExpr = sql<boolean>`coalesce(${monthlyTargets.carriedForward}, false)`;
+  /*
+   * THE BILL COUNT IS A SECOND TARGET ON THE SAME ROW, not a second list. A
+   * shop asked for five bills and ₹1 lakh is behind until BOTH are met, and a
+   * shop asked only for bills is allocated though its rupee figure is zero —
+   * the count is what somebody asked of it, and leaving it off the table
+   * because no amount sits beside it would hide the one target it has.
+   */
+  const billTargetExpr = sql<number>`coalesce(${monthlyTargets.billTarget}, 0)`;
+  const billsExpr = billsAchievedSql(key);
+  const billGapExpr = sql<number>`greatest(0, ${billTargetExpr} - ${billsExpr})`;
+  const behindExpr = sql<boolean>`(${gapExpr} > 0 or ${billGapExpr} > 0)`;
+  /*
+   * ALLOCATED means a stored figure above zero for this month. A direct
+   * customer with no row, or with a row of nothing — a default derived from
+   * months in which they bought nothing — has not been asked for anything,
+   * and a table of ₹0 targets "met" at 0% is a table of noise: on the real
+   * book it was most of the rows, burying the accounts somebody actually set
+   * a number for. They are counted instead (`allocation.unallocated`) and
+   * offered for allocation, never silently dropped.
+   */
+  const allocatedExpr = sql<boolean>`(${targetExpr} > 0 or ${billTargetExpr} > 0)`;
+  const sourceExprs: Record<TargetSource, SQL> = {
+    hand: sql`(not ${isDefaultExpr} and not ${carriedExpr})`,
+    carried: sql`(not ${isDefaultExpr} and ${carriedExpr})`,
+    default: sql`${isDefaultExpr}`,
+  };
 
   // The SAME clause the Customers list runs for the same four filters —
   // `customerFilterClause` already carries scope, so this is the whole
@@ -1492,10 +1785,36 @@ export async function targetFilterClause(
   // `DIRECT_CUSTOMER_SQL` is the other: leads and third-party shops carry no
   // target here. See `listTargets` for why.
   const onThisScreen = and(ne(customers.status, "deactivated"), DIRECT_CUSTOMER_SQL);
-  const clause = customerClause ? and(onThisScreen, customerClause) : onThisScreen;
+  // Every direct customer the filters reach, allocated or not — what the
+  // bulk dialog's "no target yet" option and the allocate dialog read.
+  const directClause = customerClause ? and(onThisScreen, customerClause) : onThisScreen;
+
+  const sources = (filters.source ?? "")
+    .split(",")
+    .filter((v): v is TargetSource => (TARGET_SOURCES as readonly string[]).includes(v));
+  const sourceClause =
+    sources.length && sources.length < TARGET_SOURCES.length
+      ? or(...sources.map((k) => sourceExprs[k]))
+      : undefined;
+  const progressClause =
+    filters.progress === "behind"
+      ? behindExpr
+      : filters.progress === "met"
+        ? sql`not ${behindExpr}`
+        : undefined;
+
+  // The table: direct customers with a target allocated this month.
+  // Everything but the Behind/Met tab — what the summary and the tab counts
+  // describe, so switching tabs does not change the figures above them.
+  const summaryClause = and(directClause, allocatedExpr, sourceClause);
+  const clause = and(summaryClause, progressClause);
 
   return {
     clause,
+    summaryClause,
+    directClause,
+    allocatedExpr,
+    sourceExprs,
     joinTarget: and(
       eq(monthlyTargets.customerId, customers.id),
       eq(monthlyTargets.year, year),
@@ -1506,6 +1825,9 @@ export async function targetFilterClause(
     targetExpr,
     achievedExpr,
     gapExpr,
+    billTargetExpr,
+    billsExpr,
+    behindExpr,
     year,
     month,
     key,
@@ -1521,14 +1843,27 @@ export async function targetFilterClause(
 export async function resolveTargetCustomerIds(
   period: string | undefined,
   filters: TargetListFilters,
-  onlyDefault: boolean,
+  /**
+   * `listed` is the rows on the table; `defaults` the listed rows still on
+   * the auto-applied default; `unallocated` the direct customers the same
+   * filters reach that carry no target this month — the ones the table does
+   * not show, which is the point of offering them.
+   */
+  population: "listed" | "defaults" | "unallocated",
 ): Promise<string[]> {
-  const { clause, joinTarget, isDefaultExpr } = await targetFilterClause(period, filters);
+  const { clause, directClause, allocatedExpr, joinTarget, isDefaultExpr } =
+    await targetFilterClause(period, filters);
+  const where =
+    population === "unallocated"
+      ? and(directClause, sql`not ${allocatedExpr}`)
+      : population === "defaults"
+        ? and(clause, isDefaultExpr)
+        : clause;
   const rows = await db
     .select({ id: customers.id })
     .from(customers)
     .leftJoin(monthlyTargets, joinTarget)
-    .where(onlyDefault ? and(clause, isDefaultExpr) : clause);
+    .where(where);
   return rows.map((r) => r.id);
 }
 
@@ -1539,8 +1874,14 @@ export async function resolveTargetCustomerIds(
  * expressions the tiles above the table are summed from, so a sorted column
  * can never disagree with the totals sitting over it.
  */
-function targetSortColumns(targetExpr: SQL<number>, achievedExpr: SQL<number>, gapExpr: SQL<number>) {
+function targetSortColumns(
+  targetExpr: SQL<number>,
+  achievedExpr: SQL<number>,
+  gapExpr: SQL<number>,
+  billsExpr: SQL<number>,
+) {
   return {
+    bills: billsExpr,
     name: customers.name,
     target: targetExpr,
     achieved: achievedExpr,
@@ -1558,12 +1899,18 @@ export async function listTargetsPage(
   const perPage = Math.min(Math.max(filters.perPage ?? 25, 1), 200);
   const {
     clause,
+    summaryClause,
     joinTarget,
     scoped,
     isDefaultExpr,
+    allocatedExpr,
+    sourceExprs,
     targetExpr,
     achievedExpr,
     gapExpr,
+    billTargetExpr,
+    billsExpr,
+    behindExpr,
     key,
   } = await targetFilterClause(period, filters);
 
@@ -1573,28 +1920,55 @@ export async function listTargetsPage(
       target: sql<number>`coalesce(sum(${targetExpr}), 0)::bigint`,
       achieved: sql<number>`coalesce(sum(${achievedExpr}), 0)::bigint`,
       defaults: sql<number>`count(*) filter (where ${isDefaultExpr})::int`,
-      behind: sql<number>`count(*) filter (where ${gapExpr} > 0)::int`,
+      behind: sql<number>`count(*) filter (where ${behindExpr})::int`,
       maxGap: sql<number>`coalesce(max(${gapExpr}), 0)::bigint`,
+      // Bills are summed over the accounts that were ASKED for a count, so
+      // "38 of 50 bills" compares like with like — a shop with no bill target
+      // adds nothing to either side.
+      billTargeted: sql<number>`count(*) filter (where ${billTargetExpr} > 0)::int`,
+      billTarget: sql<number>`coalesce(sum(${billTargetExpr}), 0)::int`,
+      billsAchieved: sql<number>`coalesce(sum(${billsExpr}) filter (where ${billTargetExpr} > 0), 0)::int`,
     })
     .from(customers)
     .leftJoin(monthlyTargets, joinTarget)
-    .where(clause);
+    .where(summaryClause);
 
   const [book] = await db
-    .select({ n: sql<number>`count(*)::int` })
+    .select({
+      n: sql<number>`count(*)::int`,
+      allocated: sql<number>`count(*) filter (where ${allocatedExpr})::int`,
+      hand: sql<number>`count(*) filter (where ${allocatedExpr} and ${sourceExprs.hand})::int`,
+      carried: sql<number>`count(*) filter (where ${allocatedExpr} and ${sourceExprs.carried})::int`,
+      defaults: sql<number>`count(*) filter (where ${allocatedExpr} and ${sourceExprs.default})::int`,
+    })
     .from(customers)
-    // The same two rules the list itself applies, minus the filters — "of
-    // your book" has to count the book THIS SCREEN shows, or the unfiltered
-    // page reads as 480 of 1,100 with nothing saying where the rest went.
-    .where(and(ne(customers.status, "deactivated"), DIRECT_CUSTOMER_SQL, scoped));
+    .leftJoin(monthlyTargets, joinTarget)
+    // Every direct customer in scope, minus the filters: how many carry a
+    // target this month, how each came to be, and how many carry none.
+    .where(
+      and(
+        ne(customers.status, "deactivated"),
+        DIRECT_CUSTOMER_SQL,
+        sql`customers.deleted_at is null`,
+        scoped,
+      ),
+    );
 
-  const total = Number(agg?.total ?? 0);
+  const summaryTotal = Number(agg?.total ?? 0);
+  const behindCount = Number(agg?.behind ?? 0);
+  const total =
+    filters.progress === "behind"
+      ? behindCount
+      : filters.progress === "met"
+        ? summaryTotal - behindCount
+        : summaryTotal;
   const pageCount = Math.max(1, Math.ceil(total / perPage));
   const page = Math.min(Math.max(filters.page ?? 1, 1), pageCount);
 
   const rows = await db
     .select({
       customer: customers,
+      city: placeNameSql("customers", "city", "city"),
       ownerName: CREDITED_TO_NAME_SQL,
       creditedSeat: CREDITED_TO_SEAT_SQL,
       salesSeatName: SALES_SEAT_NAME_SQL,
@@ -1602,7 +1976,9 @@ export async function listTargetsPage(
       target: monthlyTargets.targetAmount,
       isDefault: monthlyTargets.isDefault,
       carriedForward: monthlyTargets.carriedForward,
+      billTarget: monthlyTargets.billTarget,
       achieved: achievedExpr,
+      billsAchieved: billsExpr,
       contactsThisMonth: sql<number>`(
         select count(*)::int from calls c
          where c.customer_id = customers.id
@@ -1615,7 +1991,7 @@ export async function listTargetsPage(
     .where(clause)
     .orderBy(
       ...resolveSort(
-        targetSortColumns(targetExpr, achievedExpr, gapExpr),
+        targetSortColumns(targetExpr, achievedExpr, gapExpr, billsExpr),
         filters.sort,
         "name",
         customers.id,
@@ -1648,6 +2024,7 @@ export async function listTargetsPage(
     return {
       customerId: r.customer.id,
       customerName: r.customer.name,
+      city: (r.city as string | null) ?? null,
       ownerName: r.ownerName,
       creditedSeat: r.creditedSeat as CreditSeat,
       salesSeatName: r.salesSeatName,
@@ -1660,6 +2037,7 @@ export async function listTargetsPage(
       percent: resolved.amount ? Math.round((achieved / resolved.amount) * 100) : 0,
       isDefault: resolved.isDefault,
       carriedForward: resolved.carriedForward,
+      ...billFigures(r.billTarget, r.billsAchieved),
     };
   });
 
@@ -1670,14 +2048,131 @@ export async function listTargetsPage(
     page,
     pageCount,
     totals: {
+      customers: summaryTotal,
       target: Number(agg?.target ?? 0),
       achieved: Number(agg?.achieved ?? 0),
       gap: Math.max(0, Number(agg?.target ?? 0) - Number(agg?.achieved ?? 0)),
       defaults: Number(agg?.defaults ?? 0),
       behind: Number(agg?.behind ?? 0),
       maxGap: Number(agg?.maxGap ?? 0),
+      billTargeted: Number(agg?.billTargeted ?? 0),
+      billTarget: Number(agg?.billTarget ?? 0),
+      billsAchieved: Number(agg?.billsAchieved ?? 0),
+    },
+    allocation: {
+      allocated: Number(book?.allocated ?? 0),
+      unallocated: Number(book?.n ?? 0) - Number(book?.allocated ?? 0),
+      hand: Number(book?.hand ?? 0),
+      carried: Number(book?.carried ?? 0),
+      default: Number(book?.defaults ?? 0),
     },
   };
+}
+
+/* ------------------------------------------------- allocating a target */
+
+export type TargetCandidate = {
+  customerId: string;
+  customerName: string;
+  city: string | null;
+  ownerName: string | null;
+  /** The stored figure for the month, 0 where nothing is allocated. */
+  target: number;
+  source: TargetSource | null;
+  achieved: number;
+  /**
+   * Net sales in each of the three months before this one, newest first —
+   * what a sensible number is judged against. Read with the same
+   * `targetAchievedSql` the table's Achieved column uses, so the context in
+   * the dialog and the figure on the row are one measurement.
+   */
+  trailing: number[];
+  /** The stored bill count for the month, null where none is asked. */
+  billTarget: number | null;
+  /** Sales bills raised this month so far. */
+  bills: number;
+  /** Sales bills in each of the same three months, newest first. */
+  trailingBills: number[];
+};
+
+/**
+ * WHO A TARGET CAN BE GIVEN TO, for the allocate dialog — the direct
+ * customers this person can see, searched by the same text the Customers
+ * list searches, with what each bought lately.
+ *
+ * Unallocated accounts sort first: the dialog is opened to give somebody a
+ * number, and an account that already has one is there so a search for it
+ * does not read as "not found" — it is shown with its current figure and
+ * saving overwrites it, exactly as editing the row would.
+ *
+ * `customerId` reads one account instead of searching, which is how the
+ * edit dialog gets the same context for a row already on the table.
+ */
+export async function targetCandidates(input: {
+  period?: string;
+  query?: string;
+  customerId?: string;
+  limit?: number;
+}): Promise<TargetCandidate[]> {
+  await requireCapability("target.set");
+  const query = input.query?.trim() || undefined;
+  const { directClause, joinTarget, targetExpr, isDefaultExpr, allocatedExpr, key } =
+    await targetFilterClause(input.period, { query });
+
+  const months = [1, 2, 3].map((i) => addMonths(key, -i));
+  const rows = await db
+    .select({
+      id: customers.id,
+      name: customers.name,
+      city: placeNameSql("customers", "city", "city"),
+      ownerName: CREDITED_TO_NAME_SQL,
+      target: sql<number>`${targetExpr}::bigint`,
+      isDefault: isDefaultExpr,
+      carried: sql<boolean>`coalesce(${monthlyTargets.carriedForward}, false)`,
+      achieved: targetAchievedSql(key),
+      m1: targetAchievedSql(months[0]),
+      m2: targetAchievedSql(months[1]),
+      m3: targetAchievedSql(months[2]),
+      billTarget: monthlyTargets.billTarget,
+      bills: billsAchievedSql(key),
+      b1: billsAchievedSql(months[0]),
+      b2: billsAchievedSql(months[1]),
+      b3: billsAchievedSql(months[2]),
+    })
+    .from(customers)
+    .leftJoin(monthlyTargets, joinTarget)
+    .where(
+      input.customerId
+        ? and(directClause, eq(customers.id, input.customerId))
+        : directClause,
+    )
+    .orderBy(sql`${allocatedExpr}`, asc(customers.name), asc(customers.id))
+    .limit(Math.min(Math.max(input.limit ?? 20, 1), 50));
+
+  return rows.map((r) => {
+    const target = Number(r.target ?? 0);
+    const billTarget = r.billTarget && r.billTarget > 0 ? r.billTarget : null;
+    return {
+      customerId: r.id,
+      customerName: r.name,
+      city: (r.city as string | null) ?? null,
+      ownerName: r.ownerName,
+      target,
+      source:
+        target > 0 || billTarget
+          ? r.isDefault
+            ? "default"
+            : r.carried
+              ? "carried"
+              : "hand"
+          : null,
+      achieved: Number(r.achieved ?? 0),
+      trailing: [r.m1, r.m2, r.m3].map((v) => Number(v ?? 0)),
+      billTarget,
+      bills: Number(r.bills ?? 0),
+      trailingBills: [r.b1, r.b2, r.b3].map((v) => Number(v ?? 0)),
+    };
+  });
 }
 
 /**
@@ -1689,16 +2184,28 @@ export async function setTarget(
   customerId: string,
   amount: number,
   period?: string,
+  /**
+   * Sales bills asked for in the month. `undefined` leaves whatever is stored
+   * alone — which is what a bulk rupee change wants — and `null` clears it.
+   */
+  billTarget?: number | null,
 ): Promise<Result> {
   const ctx = await requireCapability("target.set");
   const day = await today();
   const key = period ?? monthKey(day);
   const [year, month] = key.split("-").map(Number);
 
-  if (!Number.isInteger(amount) || amount <= 0) {
+  if (!Number.isInteger(amount) || amount < 0) {
     return err("Enter the monthly target in rupees.", "validation", [
-      { field: "amount", message: "Must be a positive amount." },
+      { field: "amount", message: "Must be an amount in rupees." },
     ]);
+  }
+  if (billTarget !== undefined && billTarget !== null) {
+    if (!Number.isInteger(billTarget) || billTarget <= 0 || billTarget > 1000) {
+      return err("Enter the number of bills as a whole number.", "validation", [
+        { field: "bills", message: "Must be a whole number of bills, 1 or more." },
+      ]);
+    }
   }
 
   /*
@@ -1732,6 +2239,30 @@ export async function setTarget(
     );
   }
 
+  // A target has to ask for SOMETHING: rupees, bills or both. The bill count
+  // a save leaves untouched is the one already stored, so it is read back
+  // before deciding that a zero amount leaves the row empty.
+  let effectiveBills = billTarget ?? null;
+  if (billTarget === undefined) {
+    const [stored] = await db
+      .select({ billTarget: monthlyTargets.billTarget })
+      .from(monthlyTargets)
+      .where(
+        and(
+          eq(monthlyTargets.customerId, customerId),
+          eq(monthlyTargets.year, year),
+          eq(monthlyTargets.month, month),
+        ),
+      )
+      .limit(1);
+    effectiveBills = stored?.billTarget ?? null;
+  }
+  if (amount <= 0 && !(effectiveBills && effectiveBills > 0)) {
+    return err("Set a sales target, a bill target, or both.", "validation", [
+      { field: "amount", message: "Enter an amount or a number of bills." },
+    ]);
+  }
+
   await db
     .insert(monthlyTargets)
     .values({
@@ -1740,6 +2271,7 @@ export async function setTarget(
       year,
       month,
       targetAmount: amount,
+      billTarget: billTarget ?? null,
       isDefault: false,
       carriedForward: false,
       setById: ctx.user.id,
@@ -1750,6 +2282,7 @@ export async function setTarget(
       target: [monthlyTargets.customerId, monthlyTargets.year, monthlyTargets.month],
       set: {
         targetAmount: amount,
+        ...(billTarget !== undefined ? { billTarget } : {}),
         isDefault: false,
         // A real save is a decision, even one that reproduces a carried
         // figure verbatim — so a carried target stops being one the moment a
@@ -1773,77 +2306,49 @@ export async function setTargetsBulk(
   await requireCapability("target.set");
   if (!customerIds.length) return err("Select at least one customer.", "validation");
 
+  const config = await getConfig();
+  const day = await today();
+  const key = period ?? monthKey(day);
   const rows = await listTargets(period);
   const byId = new Map(rows.map((r) => [r.customerId, r]));
+
+  /*
+   * An uplift needs something to lift. A customer with a target this month
+   * starts from it; one with none starts from their own average month over
+   * the trailing window the default target is derived from — otherwise "10%
+   * on each customer's run rate" applied to the unallocated is ten percent of
+   * nothing, and the dialog would report having set nobody.
+   */
+  const needsBase =
+    mode === "uplift" ? customerIds.filter((cid) => !(byId.get(cid)?.target ?? 0)) : [];
+  const baseFor = new Map<string, number>();
+  if (needsBase.length) {
+    const n = Math.max(1, config["targets.trailingMonths"]);
+    const monthsBack = Array.from({ length: n }, (_, i) => addMonths(key, -(i + 1)));
+    const trailing = await db
+      .select({
+        id: customers.id,
+        total: sql<number>`(${sql.join(
+          monthsBack.map((m) => targetAchievedSql(m)),
+          sql` + `,
+        )})::bigint`,
+      })
+      .from(customers)
+      .where(inArray(customers.id, needsBase));
+    for (const t of trailing) baseFor.set(t.id, Math.round(Number(t.total ?? 0) / n));
+  }
 
   let updated = 0;
   for (const cid of customerIds) {
     const current = byId.get(cid);
-    const amount =
-      mode === "amount"
-        ? value
-        : Math.round((current?.target ?? 0) * (1 + value / 100));
+    const base = current?.target || baseFor.get(cid) || 0;
+    const amount = mode === "amount" ? value : Math.round(base * (1 + value / 100));
     if (amount > 0) {
       await setTarget(cid, amount, period);
       updated++;
     }
   }
   return ok({ updated }, `Targets set for ${updated} customers`);
-}
-
-/**
- * The view a manager opens before a coaching conversation.
- *
- * It is a worklist rather than a table, so it is narrowed by the same filters
- * and then read WHOLE — see `listTargetsPage`. What it does not need is the
- * four seat names every list row carries, each of them a correlated subquery
- * against `users` on every customer in scope, because `classifyShortfall` asks
- * only about a customer's own contacts against their own cycle. So this reads
- * the six columns it classifies on and nothing else, off the SAME clause the
- * list runs — the population has to be identical or a manager would be
- * coaching against a different book to the one on the screen above it.
- */
-export async function shortfallAnalysis(
-  period?: string,
-  filters: TargetListFilters = {},
-) {
-  await requireCapability("target.shortfall");
-  const day = await today();
-  const { where, joinTarget, key } = await targetListClause(period, filters);
-
-  const rows = await db
-    .select({
-      customerId: customers.id,
-      name: customers.name,
-      cycleDays: customers.cycleDays,
-      // The stored figure, or the default — which on the missing-row path is
-      // always 0. See `targetTotals` for why that is an identity rather than
-      // an approximation.
-      target: sql<number>`coalesce(${monthlyTargets.targetAmount}, 0)::bigint`,
-      achieved: targetAchievedSql(key),
-      contactsThisMonth: sql<number>`(
-        select count(*)::int from calls c
-         where c.customer_id = customers.id
-           and c.started_at >= ${monthWindow(key).start}
-           and c.started_at < ${monthWindow(key).end}
-      )`,
-    })
-    .from(customers)
-    .leftJoin(monthlyTargets, joinTarget)
-    .where(where)
-    .orderBy(asc(customers.name));
-
-  return classifyShortfall(
-    rows.map((r) => ({
-      customerId: r.customerId,
-      name: r.name,
-      target: Number(r.target ?? 0),
-      achieved: Number(r.achieved ?? 0),
-      contactsThisMonth: Number(r.contactsThisMonth ?? 0),
-      cycleDays: r.cycleDays,
-    })),
-    day,
-  );
 }
 
 export { addMonths, desc };

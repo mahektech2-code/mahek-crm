@@ -1,4 +1,6 @@
 import type { NextConfig } from "next";
+import { ADMIN_REDIRECTS } from "./src/lib/admin-redirects";
+import { HRMS_RETIRED_SLUGS, hrmsLink } from "./src/lib/hrms/registry";
 
 const nextConfig: NextConfig = {
   /*
@@ -78,8 +80,58 @@ const nextConfig: NextConfig = {
    */
   deploymentId: process.env.NEXT_DEPLOYMENT_ID,
 
+  /*
+   * Set by the app rather than by Caddy, because the Caddyfile is copied to
+   * the droplet by hand and a deploy never touches it — a header written
+   * there would reach production only when somebody remembered to.
+   *
+   * HSTS: HTTPS, always, for a year. Caddy already redirects http to https;
+   * this is what stops the browser asking over http at all, where the first
+   * request on café Wi-Fi is one an attacker can answer.
+   *
+   * Not inside somebody else's page: without these any site could load the
+   * Admin Console in an invisible frame over a button of its own and have a
+   * signed-in administrator press Save on the Access screen without seeing
+   * it. SAMEORIGIN rather than DENY because the price-list editor previews
+   * its own print page in a frame. The first is the old spelling, the second
+   * the current one.
+   */
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          { key: "Strict-Transport-Security", value: "max-age=31536000" },
+          { key: "X-Frame-Options", value: "SAMEORIGIN" },
+          { key: "Content-Security-Policy", value: "frame-ancestors 'self'" },
+        ],
+      },
+    ];
+  },
+
   async redirects() {
     return [
+      /*
+       * The Admin Console's old addresses — one page that read its screen out
+       * of the path — and where each screen lives now. See the file itself.
+       */
+      ...ADMIN_REDIRECTS,
+
+      /*
+       * The Reports app is retired. A bookmark lands on the launcher rather
+       * than a 404 — not on /founder, which is granted separately and would
+       * only refuse most of the people holding an old Reports link.
+       */
+      { source: "/reports", destination: "/apps", permanent: false },
+      { source: "/reports/:path*", destination: "/apps", permanent: false },
+      /* Removed from the Sales Dashboard on Mahek's instruction: prices are the
+         price desk's and pay is HRMS's. A bookmark lands on the dashboard
+         rather than on a 404 that reads as something broken. */
+      { source: "/sales/catalogue", destination: "/sales", permanent: false },
+      { source: "/sales/price-lists", destination: "/sales", permanent: false },
+      { source: "/sales/price-lists/:path*", destination: "/sales", permanent: false },
+      { source: "/sales/salary", destination: "/sales", permanent: false },
+
       /*
        * The Accounts app was called Orders, and lived at /orders, until it grew
        * past the name — it now holds approvals, receipts, the bill ledger,
@@ -123,7 +175,10 @@ const nextConfig: NextConfig = {
       { source: "/erp/paid-freight", destination: "/erp/transport?view=paidFreight", permanent: true },
       { source: "/erp/credits", destination: "/erp/expenses?view=credits", permanent: true },
       { source: "/erp/powers", destination: "/admin/people", permanent: true },
-      { source: "/erp/employees", destination: "/hrms/employees", permanent: true },
+      { source: "/erp/employees", destination: "/hrms/people", permanent: true },
+      /* The HRMS's 41 screens became 14 (lib/hrms/registry.ts): each old
+         screen is a tab now, reached at its screen's URL with ?view=. */
+      ...Object.entries(HRMS_RETIRED_SLUGS).map(([slug, key]) => ({ source: `/hrms/${slug}`, destination: hrmsLink(key), permanent: true })),
       /* The sales-order lists and Order details are tabs of one Orders screen;
          order follow-up is the CRM's buying cycle now, so its old screens land
          on the ERP's home rather than on a 404. */

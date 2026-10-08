@@ -6,6 +6,7 @@ import type { JobName, JobOptions } from "@/lib/jobs";
 import { secretStatuses } from "@/lib/secrets";
 import { num, plural } from "./format";
 import type { Tone } from "./types";
+import { ADMIN } from "@/lib/admin-routes";
 
 /* ---------------------------------------------------------------------------
  * FRESHNESS OF EVERY SOURCE BEHIND THE NUMBERS (PRD §21.8).
@@ -46,6 +47,7 @@ export const NIGHTLY_STEPS = [
   "link-delivery-parties",
   "recompute-cycles",
   "recompute-sales-managers",
+  "self-raised-verifier-seats",
   "recompute-inactivity",
   "recompute-followups",
   "sweep-orphan-attachments",
@@ -62,6 +64,7 @@ const NIGHTLY_WORDS: Record<string, string> = {
   "link-delivery-parties": "Delivery parties linked",
   "recompute-cycles": "Buying cycles",
   "recompute-sales-managers": "Sales manager seats",
+  "self-raised-verifier-seats": "Designated approver seated on self-raised leads",
   "recompute-inactivity": "Inactive watch",
   "recompute-followups": "Bill statuses, outstanding and follow-up stages",
   "sweep-orphan-attachments": "Unattached files swept",
@@ -340,7 +343,7 @@ type SheetDef = {
   suffix?: (age: string) => string;
 };
 
-const ORDER_SHEET_HREF = { label: "Order sheet in the Admin Console", url: "/admin/order-sheet" };
+const ORDER_SHEET_HREF = { label: "Sheets in the Admin Console", url: ADMIN.sheets() };
 
 const SHEETS: SheetDef[] = [
   {
@@ -393,7 +396,7 @@ const SHEETS: SheetDef[] = [
     expected: "On HRMS open",
     staleAfter: STALE_AFTER_HOURS.hrSheet,
     job: "hrms-sync",
-    href: { label: "HRMS employees", url: "/hrms/employees" },
+    href: { label: "HRMS employees", url: "/hrms/people" },
     suffix: (age) => `${age} old — only syncs when HRMS opens`,
   },
   {
@@ -600,7 +603,7 @@ export async function freshnessSources(): Promise<FreshSource[]> {
         staleAfter: STALE_AFTER_HOURS.hourly,
         marker: "escalate-complaint-sla",
         job: "hourly",
-        history: ["mbos-hourly", "whatsapp-automation", "sweep-unconfirmed", "escalate-complaint-sla"],
+        history: ["mbos-hourly", "whatsapp-automation", "whatsapp-receipts", "sweep-unconfirmed", "escalate-complaint-sla"],
       },
       r,
     ),

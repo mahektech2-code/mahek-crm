@@ -1,4 +1,4 @@
-import { APP_LABEL, oemOf, oemWords } from './oem-keepalive';
+import { APP_LABEL, autostartWhere, oemOf, oemWords } from './oem-keepalive';
 import type { BatteryExemption, PermissionState } from './phone-readiness';
 
 /**
@@ -161,8 +161,8 @@ function allowStep(f: SetupFacts): Step {
       state: 'todo',
       title,
       detail:
-        `Your phone will ask about ${listed(ask)}, one after another. Tap Allow each time — ` +
-        '“While using the app” is the right answer for location here.',
+        `Your phone will ask about ${listed(ask)}, one after another. Tap Allow each time. ` +
+        'For location, choose “While using the app” here.',
       action: 'ask_popups',
       button: ask.length === 1 ? 'Allow' : `Allow all ${ask.length}`,
     };
@@ -173,7 +173,7 @@ function allowStep(f: SetupFacts): Step {
     state: 'settings',
     title,
     detail:
-      `Your phone has stopped asking about ${listed(settings)}. Tap below, open Permissions, and switch ` +
+      `Your phone will not ask about ${listed(settings)} again. Tap below, open Permissions, and switch ` +
       `${settings.length === 1 ? 'it' : 'them'} on. Then come back here.`,
     action: 'app_settings',
     button: 'Open MBOS settings',
@@ -204,7 +204,7 @@ function backgroundStep(f: SetupFacts): Step {
       key: 'background',
       state: 'done',
       title,
-      detail: 'Allowed all the time, so your route keeps recording with the phone in your pocket.',
+      detail: 'Allowed all the time. Your route is saved even with the phone in your pocket.',
       action: null,
       button: null,
     };
@@ -217,7 +217,7 @@ function backgroundStep(f: SetupFacts): Step {
       key: 'background',
       state: 'todo',
       title,
-      detail: 'Allow location in the step above first. Your phone will not offer this until you have.',
+      detail: 'First allow location in the step above. Your phone shows this only after that.',
       action: null,
       button: null,
     };
@@ -231,7 +231,7 @@ function backgroundStep(f: SetupFacts): Step {
       (f.android
         ? `Your phone will open ${APP_LABEL}’s location page. Tap “Allow all the time”, then come back here. `
         : 'Tap below and choose “Always”. ') +
-      'Anything less and the office stops seeing you the moment the phone goes in your pocket.',
+      'With any other choice, the office stops seeing you when the phone goes in your pocket.',
     action: f.backgroundCanAsk ? 'ask_background' : 'app_settings',
     button: f.android ? 'Open the location page' : 'Allow',
   };
@@ -272,7 +272,7 @@ function autostartStep(f: SetupFacts): Step {
     key: 'autostart',
     state: 'todo',
     title: words.label,
-    detail: words.path + (words.also ? ' ' + words.also : ''),
+    detail: autostartWhere(oemOf(f.manufacturer)),
     action: 'autostart',
     button: 'Open the setting',
   };

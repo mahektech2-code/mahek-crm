@@ -174,7 +174,7 @@ test('a stale reading carries its age rather than passing as live', () => {
      time he read it. */
   assert.equal(
     navigationLine({ hasPin: true, metresAway: 4_100, fixAgeSeconds: 12 * 60, staleAfterSeconds: 300 }),
-    '4.1 km away, from your last fix 12 min ago',
+    '4.1 km away, from your last location 12 min ago',
   );
 });
 
@@ -184,13 +184,13 @@ test('an unpinned shop says so, because navigating to it is a different act', ()
      should learn that here rather than from the maps app. */
   assert.equal(
     navigationLine({ hasPin: false, metresAway: null, fixAgeSeconds: null, staleAfterSeconds: 300 }),
-    'No pin on this shop — maps will search for its name and town.',
+    'This shop has no pin. Maps will search for its name and town.',
   );
   /* The pin decides it, not the reading: a shop with no pin says so even where
      a distance could somehow be computed. */
   assert.equal(
     navigationLine({ hasPin: false, metresAway: 500, fixAgeSeconds: 10, staleAfterSeconds: 300 }),
-    'No pin on this shop — maps will search for its name and town.',
+    'This shop has no pin. Maps will search for its name and town.',
   );
 });
 
@@ -211,7 +211,7 @@ describe('a visit never asks how he got there', () => {
       record: true,
       modeKey: 'own_bike',
       claimExcluded: true,
-      reason: 'Counted in the meter readings taken at the punch-in and the punch-out.',
+      reason: 'Counted in the meter readings at punch-in and punch-out.',
     });
   });
 
@@ -271,4 +271,12 @@ describe('the punch-out prompt for expenses', () => {
     assert.equal(promptsForExpenses({ modeKey: 'walking', odometerStartKm: null }), true);
     assert.equal(promptsForExpenses(null), true);
   });
+});
+
+test('a punch-out reading is refused in the words of a day, not a trip', () => {
+  const v = checkOdometer({ typed: '41700', previousKm: 41208, maxLegKilometres: 400, span: 'day' });
+  assert.equal(v.ok, false);
+  assert.match(v.ok ? '' : v.why, /one day/);
+  const t = checkOdometer({ typed: '41700', previousKm: 41208, maxLegKilometres: 400 });
+  assert.match(t.ok ? '' : t.why, /one trip/);
 });

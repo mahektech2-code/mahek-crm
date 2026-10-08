@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
 import { HrmsNotPermitted, requireHrmsWrite } from "@/lib/hrms/access";
 import { hrmsScreenModule } from "@/lib/hrms/screens";
-import { hrmsHref } from "@/lib/hrms/registry";
+import { hrmsHref, hrmsScreen } from "@/lib/hrms/registry";
 import type { FormSpec } from "@/lib/erp/ui";
 
 /* ---------------------------------------------------------------------------
@@ -21,7 +21,9 @@ function refused(e: unknown): Result<never> {
 }
 
 function revalidate(screen: string) {
-  revalidatePath(hrmsHref(screen));
+  /* `screen` names the tab that wrote; the path is the screen it is a tab of. */
+  const on = hrmsScreen(screen);
+  if (on) revalidatePath(hrmsHref(on));
   revalidatePath("/hrms");
 }
 
@@ -43,7 +45,7 @@ export async function hrmsRunBulk(screen: string, action: string, ids: string[],
     const ctx = await requireHrmsWrite(screen);
     const handler = hrmsScreenModule(screen)?.bulk?.[action];
     if (!handler) return err("That action is not available.", "not_found");
-    if (!ids.length) return err("Nothing selected.");
+    if (!ids.length) return err("Select at least one row first.");
     const res = await handler(ctx, ids, values);
     if (res.ok) revalidate(screen);
     return res;
@@ -88,7 +90,7 @@ export async function hrmsRunTool(screen: string, tool: string, values: Record<s
   try {
     const ctx = await requireHrmsWrite(screen);
     const handler = hrmsScreenModule(screen)?.tools?.[tool];
-    if (!handler) return err("That is not available.", "not_found");
+    if (!handler) return err("That tool is not available.", "not_found");
     const res = await handler(ctx, values);
     if (res.ok) revalidate(screen);
     return res;
@@ -103,32 +105,32 @@ export type HrmsSearchHit = { kind: string; name: string; meta: string; href: st
 export async function hrmsSearch(q: string): Promise<HrmsSearchHit[]> {
   const { hrmsContext } = await import("@/lib/hrms/access");
   const { hrmsLink } = await import("@/lib/hrms/registry");
-  const { db } = await import("@/db");
-  const { sql } = await import("drizzle-orm");
   const ctx = await hrmsContext();
   const term = q.trim();
   if (term.length < 2 || !ctx.level) return [];
-  const like = `%${term.toLowerCase()}%`;
   const out: HrmsSearchHit[] = [];
+  /* Each kind answers with what that screen would list for this person —
+     the search used to return every employee, customer and document title
+     to anybody holding the screen, whatever their scope or a document's
+     audience said. */
   if (ctx.screens.has("employees")) {
-    const rows = (await db.execute(
-      sql`select id, name, employee_code as code, coalesce(position, '') as position from employees where lower(name) like ${like} or lower(employee_code) like ${like} order by name limit 5`,
-    )) as unknown as { id: string; name: string; code: string; position: string }[];
-    rows.forEach((r) => out.push({ kind: "Employee", name: r.name, meta: `${r.code} · ${r.position}`, href: hrmsLink("employees", { open: r.id }) }));
+    const { allPeople, visibleIds } = await import("@/lib/hrms/services/people");
+    const { scopeOf } = await import("@/lib/hrms/access");
+    const people = await allPeople();
+    const ids = visibleIds(ctx, scopeOf(ctx, "hr"));
+    const n = term.toLowerCase();
+    people
+      .filter((p) => (!ids || ids.has(p.id)) && (p.name.toLowerCase().includes(n) || String(p.code ?? "").toLowerCase().includes(n)))
+      .slice(0, 5)
+      .forEach((r) => out.push({ kind: "Employee", name: r.name, meta: `${r.code} · ${r.position ?? ""}`, href: hrmsLink("employees", { open: r.id }) }));
   }
   if (ctx.screens.has("customers")) {
-    const rows = (await db.execute(
-      sql`select id, name, coalesce(area, city, '') as area from customers where lower(name) like ${like} order by name limit 4`,
-    )) as unknown as { id: string; name: string; area: string }[];
-    rows.forEach((r) => out.push({ kind: "Customer", name: r.name, meta: r.area, href: hrmsLink("customers", { open: r.id }) }));
+    const { searchCustomers } = await import("@/lib/hrms/screens/sales");
+    for (const r of await searchCustomers(ctx, term, 4)) out.push({ kind: "Customer", name: r.name ?? "", meta: r.area ?? r.city ?? "", href: hrmsLink("customers", { open: r.id }) });
   }
   if (ctx.screens.has("documents")) {
-    const rows = (await db.execute(sql`select id, title, type from hrms_documents where lower(title) like ${like} order by date desc limit 3`)) as unknown as {
-      id: string;
-      title: string;
-      type: string;
-    }[];
-    rows.forEach((r) => out.push({ kind: "Document", name: r.title, meta: r.type, href: hrmsLink("documents", { open: r.id }) }));
+    const { searchDocuments } = await import("@/lib/hrms/screens/misc");
+    for (const r of await searchDocuments(ctx, term, 3)) out.push({ kind: "Document", name: r.title, meta: r.type, href: hrmsLink("documents", { open: r.id }) });
   }
   return out.slice(0, 10);
 }

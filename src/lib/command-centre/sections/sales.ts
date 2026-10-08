@@ -982,7 +982,6 @@ async function funnelRecord(ctx: Ctx, id: string): Promise<RecordView> {
     timeline: [],
     audit: [],
     acts: [],
-    href: { label: "Open the lead report", url: "/reports/leads" },
     noteTarget: { kind: "lead_funnel", id },
   };
 }

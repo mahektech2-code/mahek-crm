@@ -1,14 +1,16 @@
+import { isRunningInExpoGo } from 'expo';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import { all, getKv, run, setKv } from '../db';
 import { getConfig } from '../data/config';
 import { getFix, fixOf, rememberFix } from '../native/location';
 import { shouldKeepFix } from '../engines/cadence';
+import { watchForLeftShop } from './left-shop';
 import { trailVerdict } from '../engines/trail-watchdog';
 import { mayRetryBackground, type Demotion } from '../engines/trail-retry';
 import { decideFlush } from '../engines/flush-answer';
 import { isoDate } from '../lib/format';
-import { chooseCapture, trackingDeadlineSeconds } from '../engines/capture';
+import { chooseCapture, openSessionStart, trackingSecondsLeft, type DayRowForTracking } from '../engines/capture';
 import type { CaptureMode } from '../engines/oem-keepalive';
 import {
   available as serviceAvailable,
@@ -86,6 +88,15 @@ import {
  */
 const TASK_NAME = 'mbos-trail';
 
+/* A registration left by an earlier Expo Go run is removed the moment this
+   module loads, not when `start` next decides to retry — the client is killed
+   on every delivery until it goes. See `startBackground`. */
+if (isRunningInExpoGo()) {
+  void TaskManager.isTaskRegisteredAsync(TASK_NAME)
+    .then((registered) => (registered ? Location.stopLocationUpdatesAsync(TASK_NAME) : undefined))
+    .catch(() => undefined);
+}
+
 type Row = { id: string; at: number; lat: number; lng: number; accuracyM: number | null };
 
 /**
@@ -133,6 +144,28 @@ async function store(lat: number, lng: number, accuracyM: number | null, at: num
 /* ------------------------------------------------------------- the cadence */
 
 const LAST_KEPT = 'trailLastKeptAt';
+
+/**
+ * WHEN THIS HANDSET LAST HELD PROOF THE TRAIL WAS ALIVE, whoever recorded it.
+ *
+ * `LAST_KEPT` above is the expo task's cadence mark and only `keep()` writes
+ * it — so once our own service took over capture, nothing moved it, and the
+ * start-of-day gate read a perfectly healthy service-mode day as "your last
+ * working day saved no movement at all" and sent every Android salesman to the
+ * autostart screen every morning. This mark is moved by all three recorders:
+ * the expo task as it keeps a fix, the drain as it moves the service's rows,
+ * and the service's own report of its last fix where it is sending for itself.
+ * It only moves forward. `data/phone-readiness.ts` reads the later of the two.
+ */
+export const TRAIL_ALIVE = 'trailAliveAt';
+
+async function noteAlive(at: number): Promise<void> {
+  if (!Number.isFinite(at) || at <= 0) return;
+  const raw = await getKv(TRAIL_ALIVE);
+  const was = raw ? Number(raw) : 0;
+  if (Number.isFinite(was) && was >= at) return;
+  await setKv(TRAIL_ALIVE, String(at));
+}
 
 /**
  * When the watchdog last caught the background task accepted and silent.
@@ -191,6 +224,7 @@ async function keep(at: number, gap: number): Promise<boolean> {
      reading and writing of the mark. */
   if (!shouldKeepFix({ at, lastKeptAt, gapMs: gap })) return false;
   await setKv(LAST_KEPT, String(at));
+  await noteAlive(at);
   return true;
 }
 
@@ -207,6 +241,18 @@ TaskManager.defineTask<{ locations: Location.LocationObject[] }>(TASK_NAME, asyn
     rememberFix({ lat: loc.coords.latitude, lng: loc.coords.longitude, accuracyM: accuracyM ?? 9999, at: loc.timestamp });
     if (!(await keep(loc.timestamp, gap))) continue;
     await store(loc.coords.latitude, loc.coords.longitude, accuracyM, loc.timestamp);
+  }
+  /* Did he walk out of a visit without checking out? Asked of the newest
+     reading only — the batch is a queue catching up, and the newest is where
+     he is. Before the flush, which can wait on the network. */
+  const newest = data.locations[data.locations.length - 1];
+  if (newest) {
+    await watchForLeftShop({
+      lat: newest.coords.latitude,
+      lng: newest.coords.longitude,
+      accuracyM: newest.coords.accuracy ?? null,
+      at: newest.timestamp,
+    });
   }
   /*
    * Pushed here rather than left for the sync engine's own timer, which is a
@@ -402,6 +448,20 @@ async function startBackground(everyMs: number): Promise<BackgroundStart> {
     detail?: string,
   ): BackgroundStart => ({ ok: false, why, at: Date.now(), detail });
 
+  /*
+   * EXPO GO ACCEPTS THE TASK AND THEN DIES OF IT.
+   *
+   * `startLocationUpdatesAsync` answers yes there, and every batch Android
+   * later hands the task makes `TaskService` ask for a headless app loader
+   * Expo Go does not have — a NullPointerException in native code, the whole
+   * client killed, and killed again on the next delivery because the
+   * registration outlives the process. So in Expo Go it is never registered,
+   * and one left by an earlier run is removed when the module loads; the floor timer the
+   * caller falls back to covers a phone with the app open, which is all
+   * Expo Go can ever be. A real build is untouched.
+   */
+  if (isRunningInExpoGo()) return failed('unavailable', 'Expo Go cannot run a background task');
+
   try {
     if (!(await Location.isBackgroundLocationAvailableAsync())) return failed('unavailable');
 
@@ -503,8 +563,8 @@ async function startBackground(everyMs: number): Promise<BackgroundStart> {
       showsBackgroundLocationIndicator: true,
       pausesUpdatesAutomatically: false,
       foregroundService: {
-        notificationTitle: 'MahekOne is following your route',
-        notificationBody: 'Recording where the day takes you. Stops the moment you punch out.',
+        notificationTitle: 'Mahek MBOS is saving your route',
+        notificationBody: 'Saving where you go today. Stops when you punch out.',
         killServiceOnDestroy: false,
       },
     });
@@ -545,13 +605,12 @@ async function startBackground(everyMs: number): Promise<BackgroundStart> {
  * file is exactly where such a rule gets lost. It is pushed forward on every
  * flush, so a working day extends it and a dead one expires.
  */
-async function startOurService(everyMs: number): Promise<boolean> {
+async function startOurService(everyMs: number, secondsLeft: number): Promise<boolean> {
   if (!serviceAvailable()) return false;
 
   try {
     const keepSeconds = Math.round((await minGapMs()) / 1000);
     const cap = await getConfig<number>('mbos.location.serviceBufferCap', 50_000);
-    const hours = await getConfig<number>('mbos.location.serviceMaxDayHours', 16);
     const watchdogMinutes = await getConfig<number>('mbos.location.serviceWatchdogMinutes', 15);
 
     const uploadSeconds = await getConfig<number>(
@@ -588,7 +647,7 @@ async function startOurService(everyMs: number): Promise<boolean> {
       askEverySeconds: Math.max(3, Math.round(everyMs / 1000)),
       keepEverySeconds: Math.max(3, keepSeconds),
       bufferCap: Math.max(1, cap),
-      wantedForSeconds: trackingDeadlineSeconds(hours),
+      wantedForSeconds: secondsLeft,
       watchdogMinutes: Math.max(15, watchdogMinutes),
       periodChanged,
       /* NOT FLOORED, unlike everything beside it. Zero is a decision — the
@@ -659,6 +718,10 @@ async function drainService(): Promise<number> {
       buffered: state.buffered,
     }) === 'native'
   ) {
+    /* Sending for itself, so nothing passes through here — but its report of
+       its own last fix is still proof the trail was alive, and it is the only
+       proof this side will ever see on such a day. */
+    if (state.lastFixAgoSeconds != null) await noteAlive(Date.now() - state.lastFixAgoSeconds * 1000);
     return 0;
   }
 
@@ -684,6 +747,12 @@ async function drainService(): Promise<number> {
     }
     await forgetFixes(kept);
     moved += kept.length;
+
+    const newest = rows[rows.length - 1];
+    if (newest) {
+      await noteAlive(newest.at);
+      await watchForLeftShop(newest);
+    }
 
     if (rows.length < DRAIN_BATCH) return moved;
   }
@@ -889,11 +958,6 @@ export function captureMode(): CaptureMode {
   return mode === 'foreground' ? 'floor' : mode;
 }
 
-/** Is the trail running right now, one way or the other? */
-export function isTracking(): boolean {
-  return captureMode() !== null;
-}
-
 /**
  * Start following, if the office has asked for it.
  *
@@ -926,7 +990,50 @@ export function isTracking(): boolean {
  * was just sent to fix would make that screen pointless. It defaults to
  * `'resume'`, so a caller that says nothing gets the cautious answer.
  */
-export async function start(reason: 'check-in' | 'resume' = 'resume'): Promise<void> {
+export function start(reason: 'check-in' | 'resume' = 'resume'): Promise<void> {
+  return serially(() => startNow(reason));
+}
+
+/*
+ * START AND STOP RUN ONE AFTER THE OTHER, NEVER INTERLEAVED.
+ *
+ * Both are fire-and-forget at their callers and both await configuration and a
+ * native call before they act — so a punch-in followed quickly by a punch-out
+ * let `stop()` finish first and `start()` then started the service AFTER the
+ * day had closed, which is tracking somebody home. One chain, and `startNow`
+ * re-reads whether a session is open as its first act, so a start queued
+ * behind a stop finds the day closed and does nothing.
+ */
+let lifecycle: Promise<unknown> = Promise.resolve();
+function serially<T>(fn: () => Promise<T>): Promise<T> {
+  const next = lifecycle.then(fn, fn);
+  lifecycle = next.catch(() => {});
+  return next;
+}
+
+/** How long tracking may still run, off the newest attendance row. */
+async function trackingWindowSeconds(): Promise<number> {
+  try {
+    const rows = await all<DayRowForTracking>(
+      'SELECT sessions, checkInAt, checkOutAt FROM attendance_days ORDER BY day DESC LIMIT 1',
+    );
+    const hours = await getConfig<number>('mbos.location.serviceMaxDayHours', 16);
+    return trackingSecondsLeft({ openedAt: openSessionStart(rows), hours, now: Date.now() });
+  } catch {
+    return 0;
+  }
+}
+
+async function startNow(reason: 'check-in' | 'resume'): Promise<void> {
+  /* NO OPEN SESSION, NO TRACKING — asked here rather than trusted to every
+     caller, because one of them is a cold start and one is a resume, and
+     neither of those is a punch-in. */
+  const secondsLeft = await trackingWindowSeconds();
+  if (secondsLeft <= 0) {
+    if (mode !== null) await stopTicking();
+    return;
+  }
+
   if (mode === 'background') return;
 
   /*
@@ -977,7 +1084,7 @@ export async function start(reason: 'check-in' | 'resume' = 'resume'): Promise<v
    * service outright — see `chooseCapture`, which is where that choice lives
    * so it can be tested without a phone.
    */
-  const serviceStarted = await startOurService(every);
+  const serviceStarted = await startOurService(every, secondsLeft);
 
   /*
    * THE DEMOTION GOVERNS THE BORROWED TRACKER AND NOTHING ELSE, which is what
@@ -1202,7 +1309,7 @@ async function stopTicking(): Promise<void> {
 
 /** Stop, and send what is left. Called by the check-out. */
 export async function stop(): Promise<void> {
-  await stopTicking();
+  await serially(stopTicking);
   await flush();
 }
 
@@ -1342,17 +1449,29 @@ export async function flush(): Promise<number> {
        already running. A flush happens on every sync pass, so this is the
        cheapest possible place to push the deadline out, and it means a phone
        that is syncing at all can never have its tracker expire underneath it. */
-    if (mode !== null) {
-      const hours = await getConfig<number>('mbos.location.serviceMaxDayHours', 16);
-      void touchService(trackingDeadlineSeconds(hours));
+    /* THE SAME ABSOLUTE INSTANT, re-sent — never a fresh "sixteen hours from
+       now", which is what let a forgotten punch-out track somebody all night.
+       And where nothing is open any more (the day closed, the ceiling passed,
+       the next morning's boundary) the recorder is stopped here, which is the
+       one path every sync pass, the background worker included, goes through. */
+    const secondsLeft = await trackingWindowSeconds();
+    if (secondsLeft > 0) {
+      if (mode !== null) void touchService(secondsLeft);
+    } else {
+      if (mode !== null) await serially(stopTicking);
+      else await stopService();
     }
 
     let sent = 0;
+    /* Rows stepped past because the server could file none of them — see
+       `MAX_HELD_SKIPS`. Kept, never deleted; only read past. */
+    let offset = 0;
+    let heldSkips = 0;
 
     for (let pass = 0; pass < MAX_PASSES; pass++) {
       const rows = await all<Row>(
-        'SELECT id, at, lat, lng, accuracyM FROM positions ORDER BY at ASC LIMIT ?',
-        [BATCH],
+        'SELECT id, at, lat, lng, accuracyM FROM positions ORDER BY at ASC LIMIT ? OFFSET ?',
+        [BATCH, offset],
       );
       if (!rows.length) return sent;
 
@@ -1368,7 +1487,10 @@ export async function flush(): Promise<number> {
          is pure and tested — two production data-loss bugs have now been in
          this loop, and nothing in this file can be exercised without a device.
          What is left here is the doing. */
-      const decision = decideFlush(answer, rows.map((r) => r.id));
+      const decision = decideFlush(answer, rows.map((r) => r.id), {
+        fullBatch: rows.length === BATCH,
+        heldSkipsSoFar: heldSkips,
+      });
 
       /* The office turned it off. Stop taking fixes and drop what is held —
          keeping them would be storing something nobody asked for. */
@@ -1386,7 +1508,10 @@ export async function flush(): Promise<number> {
          grows. */
       if (decision.effect === 'age-out') {
         await run('DELETE FROM positions WHERE at < ?', [Date.now() - (await retentionMs())]);
-        return sent;
+        if (!decision.carryOn) return sent;
+        offset += decision.skip;
+        heldSkips += 1;
+        continue;
       }
 
       await removeIds(decision.remove);

@@ -2,14 +2,15 @@ import React from 'react';
 import { create } from 'zustand';
 import { useFocusEffect } from 'expo-router';
 import { getKv, setKv } from '../db';
-import { readArrival, type Arrival } from '../data/arrival';
+import { patchArrival, readArrival, type Arrival } from '../data/arrival';
 import { getCustomer, type Customer } from '../data/customers';
 import { unreadCount } from '../data/notifications';
 import { daysAwaitingAnswer } from '../data/journey';
 import { pendingCount } from '../sync/queue';
 import { isoDate } from '../lib/format';
-import type { OutcomeKey } from '../data/fixtures';
+import type { FollowUpMode, OutcomeKey } from '../data/fixtures';
 import type { ToastTone } from '../components/ui/overlays';
+import type { UpdateOffer } from '../engines/refresh';
 
 /**
  * One store, holding what the design's single `this.state` held.
@@ -51,6 +52,49 @@ export type LoginMethod = 'password' | 'otp';
 export type SheetKind = 'action' | 'journeyMore' | 'filters' | 'rowMore' | 'leadForm' | null;
 export type FormKind = 'complaint' | 'sample' | null;
 
+/**
+ * The records raised from inside the visit in progress, so the visit can name
+ * them and the office can link them. Lists for the order and the payment,
+ * because a shop can place two orders on one visit — and keeping only the last
+ * left the first linked to nothing, which is the bug this replaced.
+ */
+export type VisitLinked = {
+  complaintId?: string;
+  sampleId?: string;
+  orderIds?: string[];
+  paymentIds?: string[];
+};
+
+/**
+ * The visit form's own answers, held here rather than in the screen.
+ *
+ * They were `useState` on the visit screen, so a tab tap kept them and a reap
+ * did not — and the Suspect decision, the requirement and "no follow-up" are
+ * exactly the answers a salesman types and then walks away from for a minute.
+ * Here, they are in the draft `persistVisitDraft` writes to the arrival.
+ */
+export type VisitForm = {
+  decision?: string | null;
+  decisionWhy?: string;
+  reqWhat?: string;
+  reqLitres?: string;
+  reqCans?: string;
+  aiDraftId?: string | null;
+  /** He said there is no next contact to set. See the save. */
+  noFollowUp?: boolean;
+  /** Whether he chose the date himself, rather than the cycle choosing it. */
+  nextDatePicked?: boolean;
+};
+
+/** What the visit-saved screen reads about the visit it is a receipt for. */
+export type VisitSaved = {
+  id: string;
+  /** Saved as not checked — the manager will read the reason. */
+  unverified: boolean;
+  /** The follow-up date that was actually set, or null where none was. */
+  followUpDate: string | null;
+};
+
 export type Confirm = {
   title: string;
   body: string;
@@ -79,6 +123,8 @@ type State = {
   confirm: Confirm;
   confirmReason: string;
   confirmErr: boolean;
+  /** A new build to offer — see `components/shell/UpdatePrompt.tsx`. */
+  updateOffer: UpdateOffer | null;
 
   /* ---- customers ---- */
   custQ: string;
@@ -94,6 +140,8 @@ type State = {
   note: string;
   outcome: OutcomeKey | null;
   nextDate: string;
+  /** Visit, call or WhatsApp — how the next contact on `nextDate` happens. */
+  nextMode: FollowUpMode;
   visitStart: number | null;
   /**
    * The shop he has just pressed "Start visit" on, waiting for the question
@@ -149,9 +197,10 @@ type State = {
    * because a visit now runs while he is elsewhere in the app — held by the
    * screen, they went with it, and the visit saved linked to nothing.
    */
-  visitLinked: { complaintId?: string; sampleId?: string };
+  visitLinked: VisitLinked;
   visitVoiceNoteId: string | null;
-  overrodeReason: string | null;
+  visitForm: VisitForm;
+  visitSaved: VisitSaved | null;
   form: FormKind;
   formDraft: Record<string, string>;
   formErr: string | null;
@@ -198,6 +247,8 @@ type Actions = {
    */
   notify: (msg: string, tone?: ToastTone) => void;
   clearToast: () => void;
+  offerUpdate: (o: UpdateOffer) => void;
+  dismissUpdate: () => void;
   signIn: () => void;
   signOut: () => void;
   startDay: () => void;
@@ -301,7 +352,12 @@ export async function restoreArrival(): Promise<void> {
   try {
     if (useStore.getState().arrival) return;
     const value = await readArrival();
-    if (value) useStore.setState({ arrival: value });
+    if (!value) return;
+    /* The draft first, then the arrival: the arrival landing is what lets the
+       draft writer run, and writing before the draft is back would write an
+       empty form over the one on disk. */
+    if (value.checkedInAt != null) restoreVisitDraft(value);
+    useStore.setState({ arrival: value });
   } catch {
     /* Housekeeping must never stop the app opening. The worst this costs is a
        bar that appears on the next launch instead of this one, and the visit
@@ -358,6 +414,7 @@ export const useStore = create<State & Actions>((set, get) => ({
   confirm: null,
   confirmReason: '',
   confirmErr: false,
+  updateOffer: null,
 
   custQ: '',
   custId: '',
@@ -369,6 +426,7 @@ export const useStore = create<State & Actions>((set, get) => ({
   note: '',
   outcome: null,
   nextDate: NO_DATE_YET,
+  nextMode: 'visit',
   visitStart: null,
   travelTo: null,
   arrival: null,
@@ -378,7 +436,8 @@ export const useStore = create<State & Actions>((set, get) => ({
   visitDone: {},
   visitLinked: {},
   visitVoiceNoteId: null,
-  overrodeReason: null,
+  visitForm: {},
+  visitSaved: null,
   form: null,
   formDraft: {},
   formErr: null,
@@ -418,8 +477,13 @@ export const useStore = create<State & Actions>((set, get) => ({
 
   notify: (msg, tone = 'success') => set({ toast: msg, toastTone: tone }),
   clearToast: () => set({ toast: null, toastTone: 'success' }),
+  offerUpdate: (o) => set({ updateOffer: o }),
+  dismissUpdate: () => set({ updateOffer: null }),
 
-  signIn: () => set({ signedIn: true }),
+  /* The password goes the moment it has been used. It sat in this store as
+     plain text until sign-out, which on a phone that is never signed out of
+     is for ever. */
+  signIn: () => set({ signedIn: true, pw: '' }),
 
   /**
    * Signing out keeps the day, the cart and the queue exactly where they were.
@@ -443,6 +507,7 @@ export const useStore = create<State & Actions>((set, get) => ({
       note: '',
       outcome: null,
       nextDate: NO_DATE_YET,
+      nextMode: 'visit',
       /*
        * NOT `Date.now()` any more, and that is the whole shape of the change.
        *
@@ -458,7 +523,8 @@ export const useStore = create<State & Actions>((set, get) => ({
       visitDone: {},
       visitLinked: {},
       visitVoiceNoteId: null,
-      overrodeReason: null,
+      visitForm: {},
+      visitSaved: null,
       sheet: null,
       /* `offPlanReason` is deliberately NOT reset here. It is set on the route
          screen BEFORE the shop is chosen, and choosing the shop is what calls
@@ -539,7 +605,18 @@ export function useCustomer(): Customer | null {
  * observe.
  */
 function usePolledCount(read: () => Promise<number>, everyMs = 10_000): number {
-  const [n, setN] = React.useState(0);
+  return usePolledCountOrNull(read, everyMs) ?? 0;
+}
+
+/**
+ * The same poll, but `null` until the first read has answered.
+ *
+ * The bell needs the difference: it rings when the count RISES, and a count
+ * that starts every screen at 0 and then becomes 3 a frame later is a rise on
+ * every navigation — the bell would ring each time somebody opened a screen.
+ */
+function usePolledCountOrNull(read: () => Promise<number>, everyMs = 10_000): number | null {
+  const [n, setN] = React.useState<number | null>(null);
 
   React.useEffect(() => {
     let live = true;
@@ -559,8 +636,9 @@ function usePolledCount(read: () => Promise<number>, everyMs = 10_000): number {
   return n;
 }
 
-export function useUnreadCount(): number {
-  return usePolledCount(unreadCount);
+/** `null` until read — see `usePolledCountOrNull`. For the bell. */
+export function useUnreadCountOrNull(): number | null {
+  return usePolledCountOrNull(unreadCount, 5_000);
 }
 
 /** The status strip's third cell, and the More list's Sync badge, read this. */
@@ -582,3 +660,88 @@ export function usePendingCount(): number {
 export function useDaysToAgreeCount(): number {
   return usePolledCount(daysAwaitingAnswer);
 }
+
+/* ══════════════════════════════════════ the visit draft, on disk */
+
+/**
+ * Which parts of the store ARE the visit in progress.
+ *
+ * The cart is here because an order punched inside a visit is built on the
+ * order screen while the visit is open — it is the visit's work as much as
+ * the note is — and `cartFor` with it, so a restored cart is put back only on
+ * the shop it was built for.
+ */
+const DRAFT_KEYS = [
+  'note',
+  'outcome',
+  'shots',
+  'voice',
+  'visitLinked',
+  'visitDone',
+  'visitVoiceNoteId',
+  'nextDate',
+  'nextMode',
+  'visitForm',
+  'cart',
+  'cartFor',
+] as const;
+
+type DraftKey = (typeof DRAFT_KEYS)[number];
+
+function draftOf(s: State): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const k of DRAFT_KEYS) out[k] = s[k];
+  return out;
+}
+
+/**
+ * Put a visit's draft back, after a reap.
+ *
+ * Called by the visit screen at the same moment it puts the clock back — the
+ * one sign that the store was emptied under a visit that is still open. A key
+ * the draft does not carry is left as it stands, and the cart only comes back
+ * onto the shop it was built for.
+ */
+export function restoreVisitDraft(arrival: Arrival): void {
+  const d = arrival.draft;
+  if (!d) return;
+  const patch: Partial<Record<DraftKey, unknown>> = {};
+  for (const k of DRAFT_KEYS) if (d[k] !== undefined) patch[k] = d[k];
+  if (patch.cartFor !== arrival.customerId) {
+    delete patch.cart;
+    delete patch.cartFor;
+  }
+  useStore.setState(patch as Partial<State>);
+}
+
+let draftTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Written a beat after it settles rather than on every keystroke — a note is
+ * dictated or typed a letter at a time, and a disk write per letter buys
+ * nothing the next one does not. Only while he is checked in: before the door
+ * there is nothing typed, and after the save the arrival is gone.
+ */
+async function persistVisitDraft(): Promise<void> {
+  const s = useStore.getState();
+  const a = s.arrival;
+  if (!a || a.checkedInAt == null) return;
+  try {
+    const current = await readArrival();
+    /* The arrival on disk moved on — saved, called off, or a different shop. */
+    if (!current || current.customerId !== a.customerId || current.checkedInAt == null) return;
+    await patchArrival({ draft: draftOf(useStore.getState()) });
+  } catch {
+    /* A draft that did not land costs a reap, never the visit in front of him. */
+  }
+}
+
+useStore.subscribe((s, prev) => {
+  if (!s.arrival || s.arrival.checkedInAt == null) return;
+  if (DRAFT_KEYS.every((k) => s[k] === prev[k])) return;
+  if (draftTimer) clearTimeout(draftTimer);
+  draftTimer = setTimeout(() => {
+    draftTimer = null;
+    void persistVisitDraft();
+  }, 400);
+});

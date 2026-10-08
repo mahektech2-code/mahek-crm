@@ -2,20 +2,17 @@
 
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { and, eq, inArray, isNull, or } from "drizzle-orm";
+import { and, eq, isNull, ne } from "drizzle-orm";
 import { db } from "@/db";
 import {
   appAccess,
-  appModuleAccess,
   auditLog,
   passwordResets,
   sessions,
   users,
 } from "@/db/schema";
-import { requireUser, isManager, hashPassword } from "@/lib/auth";
-import { APP_IDS, type AppId } from "@/lib/apps";
-import { initialsOf } from "@/lib/format";
-import { err as fail, fieldErr, ok, type Result } from "@/lib/result";
+import { requirePlatformAdminUser } from "@/lib/access-control";
+import { err as fail, ok, type Result } from "@/lib/result";
 import { mailConfigured, sendMail } from "@/lib/mailer";
 import {
   appOrigin,
@@ -23,6 +20,8 @@ import {
   newResetToken,
   RESET_TTL_MINUTES,
 } from "@/lib/password-reset";
+import { ADMIN } from "@/lib/admin-routes";
+import { ConsoleNotConfirmedError } from "@/lib/console-confirm";
 
 /* ---------------------------------------------------------------------------
  * Writes for the People section.
@@ -39,10 +38,42 @@ import {
 
 const newId = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
+/**
+ * A PLATFORM ADMINISTRATOR, and nobody else — the same bar `setAccess` sets.
+ *
+ * It was `isManager`, the widest level held anywhere, so a manager of any app
+ * could disable every administrator, end their sessions, or (through the
+ * identity action this file used to export) move an administrator's sign-in
+ * address and mail themselves its reset link. Removed with it: `setUserRole`,
+ * `setUserApps`, `createUser` and `updateUserIdentity`, which no screen called
+ * and which were a second door onto the account level and the app grants —
+ * one that knew nothing about modules, levels or the last administrator.
+ */
 async function manager() {
-  const user = await requireUser();
-  if (!isManager(user)) throw new Error("Only a manager can change accounts.");
-  return user;
+  try {
+    return await requirePlatformAdminUser();
+  } catch (e) {
+    if (e instanceof ConsoleNotConfirmedError) throw e;
+    throw new Error("Only a platform administrator can change accounts.");
+  }
+}
+
+/** Whether anybody other than this person is an active platform administrator. */
+async function anotherPlatformAdmin(userId: string): Promise<boolean> {
+  const rows = await db
+    .select({ id: users.id })
+    .from(appAccess)
+    .innerJoin(users, eq(users.id, appAccess.userId))
+    .where(
+      and(
+        eq(appAccess.app, "admin"),
+        eq(appAccess.role, "admin"),
+        eq(users.active, true),
+        ne(users.id, userId),
+      ),
+    )
+    .limit(1);
+  return rows.length > 0;
 }
 
 async function audit(
@@ -63,115 +94,14 @@ async function audit(
 
 function refresh() {
   try {
-    revalidatePath("/admin");
+    revalidatePath(ADMIN.home, "layout");
     revalidatePath("/apps");
   } catch {
     /* outside a request, which is fine */
   }
 }
 
-/** The complete set of apps an account may open. */
-export async function setUserApps(
-  userId: string,
-  apps: string[],
-): Promise<Result<{ apps: string[] }>> {
-  let actor;
-  try {
-    actor = await manager();
-  } catch (e) {
-    return fail(e instanceof Error ? e.message : "Not allowed.");
-  }
 
-  const wanted = [...new Set(apps)].filter((a): a is AppId => APP_IDS.includes(a as AppId));
-  const unknown = [...new Set(apps)].filter((a) => !APP_IDS.includes(a as AppId));
-  if (unknown.length) return fail(`Not an app: ${unknown.join(", ")}`);
-
-  const current = await db
-    .select({ app: appAccess.app })
-    .from(appAccess)
-    .where(eq(appAccess.userId, userId));
-  const had = current.map((c) => c.app as AppId);
-
-  const add = wanted.filter((a) => !had.includes(a));
-  const remove = had.filter((a) => !wanted.includes(a));
-  if (!add.length && !remove.length) return ok({ apps: wanted }, "No change.");
-
-  await db.transaction(async (tx) => {
-    if (remove.length) {
-      await tx
-        .delete(appAccess)
-        .where(and(eq(appAccess.userId, userId), inArray(appAccess.app, remove)));
-      // The module rows go with the app. Left behind, they would silently
-      // narrow it the day somebody granted it back — a grant that opened four
-      // screens of fourteen with nothing on any screen saying why.
-      await tx
-        .delete(appModuleAccess)
-        .where(
-          and(eq(appModuleAccess.userId, userId), inArray(appModuleAccess.app, remove)),
-        );
-    }
-    if (add.length) {
-      await tx.insert(appAccess).values(
-        add.map((app) => ({ id: newId("acc"), userId, app, grantedById: actor.id })),
-      );
-    }
-  });
-
-  await audit(
-    actor.id,
-    "set-app-access",
-    userId,
-    `${had.sort().join(",") || "none"} → ${wanted.sort().join(",") || "none"}`,
-  );
-  refresh();
-
-  const granted = add.length ? `granted ${add.join(", ")}` : "";
-  const revoked = remove.length ? `revoked ${remove.join(", ")}` : "";
-  return ok({ apps: wanted }, [granted, revoked].filter(Boolean).join("; "));
-}
-
-/** The three there are. Read by the guard below — see `lib/hat-labels.ts`. */
-const LEVELS = ["associate", "manager", "admin"] as const;
-
-export async function setUserRole(
-  userId: string,
-  role: "associate" | "manager" | "admin",
-): Promise<Result<null>> {
-  let actor;
-  try {
-    actor = await manager();
-  } catch (e) {
-    return fail(e instanceof Error ? e.message : "Not allowed.");
-  }
-
-  /*
-   * CHECKED HERE, because a typed parameter is not a check.
-   *
-   * The console's own drawer offered "Telecaller" and "Accounts" for years
-   * after both stopped being roles, lowercased whatever was picked and cast it
-   * to this signature — so the value arriving could be any string, and the
-   * first thing that noticed was Postgres refusing the enum. That surfaces as
-   * "The role did not change" with nothing saying what was wrong. A server
-   * action is a URL as well, so the dropdown was never the only caller.
-   */
-  if (!LEVELS.includes(role)) {
-    return fail(
-      `There is no level called "${role}". A level is associate, manager or admin — the APP is the job.`,
-    );
-  }
-
-  const [before] = await db
-    .select({ role: users.role, name: users.name })
-    .from(users)
-    .where(eq(users.id, userId));
-  if (!before) return fail("That account no longer exists.");
-  if (before.role === role) return ok(null, "No change.");
-
-  await db.update(users).set({ role, updatedAt: new Date() }).where(eq(users.id, userId));
-  await audit(actor.id, "set-role", userId, `${before.role} → ${role}`);
-  refresh();
-  return ok(null, `${before.name} is now ${role}.`);
-}
 
 /**
  * Deactivation is a status, never a deletion — the same rule customers follow.
@@ -203,6 +133,16 @@ export async function setUserActive(
 
   if (!active && userId === actor.id) {
     return fail("You cannot deactivate your own account.");
+  }
+  if (!active && !(await anotherPlatformAdmin(userId))) {
+    const [admin] = await db
+      .select({ id: appAccess.id })
+      .from(appAccess)
+      .where(and(eq(appAccess.userId, userId), eq(appAccess.app, "admin"), eq(appAccess.role, "admin")))
+      .limit(1);
+    if (admin) {
+      return fail(`${before.name} is the only platform administrator, so their sign-in cannot be turned off.`);
+    }
   }
 
   const ended = await db.transaction(async (tx) => {
@@ -236,68 +176,6 @@ export async function setUserActive(
   );
 }
 
-/** Name, work number and sign-in address. Never the password. */
-export async function updateUserIdentity(
-  userId: string,
-  input: { name?: string; email?: string; phone?: string | null },
-): Promise<Result<null>> {
-  let actor;
-  try {
-    actor = await manager();
-  } catch (e) {
-    return fail(e instanceof Error ? e.message : "Not allowed.");
-  }
-
-  const [before] = await db
-    .select({ name: users.name, email: users.email, phone: users.phone })
-    .from(users)
-    .where(eq(users.id, userId));
-  if (!before) return fail("That account no longer exists.");
-
-  const patch: Partial<typeof users.$inferInsert> = {};
-  const changed: string[] = [];
-
-  if (input.name && input.name.trim() && input.name !== before.name) {
-    patch.name = input.name.trim();
-    // The avatar follows the name, or it keeps the previous person's letters.
-    const parts = patch.name.split(/\s+/).filter(Boolean);
-    patch.initials = (
-      (parts[0]?.[0] ?? "") + (parts.length > 1 ? (parts[parts.length - 1][0] ?? "") : (parts[0]?.[1] ?? ""))
-    ).toUpperCase();
-    changed.push(`name ${before.name} → ${patch.name}`);
-  }
-
-  if (input.email && input.email.trim() && input.email !== before.email) {
-    const email = input.email.trim().toLowerCase();
-    const taken = await db.select({ id: users.id }).from(users).where(eq(users.email, email));
-    if (taken.length && taken[0].id !== userId) {
-      return fail(`${email} already belongs to another account.`);
-    }
-    patch.email = email;
-    // This is a sign-in, not a label. Worth saying so where somebody will read
-    // it rather than discovering it at the login screen.
-    changed.push(`email ${before.email} → ${email} (this is their sign-in)`);
-  }
-
-  if (input.phone !== undefined) {
-    const phone = input.phone ? input.phone.replace(/\D/g, "").slice(-10) : null;
-    if (phone && !/^[6-9]\d{9}$/.test(phone)) {
-      return fail("That is not a 10-digit Indian mobile number.");
-    }
-    if (phone !== before.phone) {
-      patch.phone = phone;
-      changed.push(`work number ${before.phone ?? "none"} → ${phone ?? "none"}`);
-    }
-  }
-
-  if (!changed.length) return ok(null, "No change.");
-
-  patch.updatedAt = new Date();
-  await db.update(users).set(patch).where(eq(users.id, userId));
-  await audit(actor.id, "update-user", userId, changed.join("; "));
-  refresh();
-  return ok(null, changed.join("; "));
-}
 
 /**
  * Send somebody a reset link from the console.
@@ -417,95 +295,3 @@ export async function endSessionsFor(userId: string): Promise<Result<{ ended: nu
   );
 }
 
-/**
- * Create an account.
- *
- * The console's most prominent button, and until now the only thing it did was
- * toast "saved". Accounts are admin-created here — there is no sign-up — so a
- * password is set at creation and the person is told to change it; a reset
- * link from the row menu is the other way in.
- *
- * Apps are granted in the same breath, because an account that can open
- * nothing is somebody who cannot start work and will ring somebody about it.
- */
-export async function createUser(input: {
-  name: string;
-  email: string;
-  phone?: string | null;
-  role: "associate" | "manager" | "admin";
-  password: string;
-  apps: string[];
-}): Promise<Result<{ id: string }>> {
-  let actor;
-  try {
-    actor = await manager();
-  } catch (e) {
-    return fail(e instanceof Error ? e.message : "Not allowed.", "not_permitted");
-  }
-
-  const name = input.name.trim();
-  const email = input.email.trim().toLowerCase();
-  const phone = input.phone?.trim() || null;
-
-  if (name.length < 2) return fieldErr("name", "A name is needed.");
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
-    return fieldErr("email", "That does not look like an email address.");
-  }
-  if (phone && !/^[6-9]\d{9}$/.test(phone)) {
-    return fieldErr("phone", "A work number is ten digits, starting 6 to 9.");
-  }
-  if (input.password.length < 8) {
-    return fieldErr("password", "Eight characters at least.");
-  }
-
-  // Both of these are how somebody signs in, so both have to be unique or the
-  // sign-in form has two answers to one question.
-  const clashes = await db
-    .select({ email: users.email, phone: users.phone })
-    .from(users)
-    .where(phone ? or(eq(users.email, email), eq(users.phone, phone)) : eq(users.email, email));
-  if (clashes.some((c) => c.email === email)) {
-    return fieldErr("email", "An account already uses that email.");
-  }
-  if (phone && clashes.some((c) => c.phone === phone)) {
-    return fieldErr("phone", "An account already uses that work number.");
-  }
-
-  const wanted = [...new Set(input.apps)].filter((a): a is AppId =>
-    APP_IDS.includes(a as AppId),
-  );
-
-  const id = newId("usr");
-  await db.transaction(async (tx) => {
-    await tx.insert(users).values({
-      id,
-      name,
-      email,
-      phone,
-      role: input.role,
-      initials: initialsOf(name),
-      passwordHash: await hashPassword(input.password),
-      active: true,
-    });
-    if (wanted.length) {
-      await tx.insert(appAccess).values(
-        wanted.map((app) => ({ id: newId("acc"), userId: id, app, grantedById: actor.id })),
-      );
-    }
-  });
-
-  await audit(
-    actor.id,
-    "create-user",
-    id,
-    `${name} · ${input.role} · ${wanted.join(", ") || "no apps"}`,
-  );
-  refresh();
-
-  return ok(
-    { id },
-    wanted.length
-      ? `${name} can sign in with ${email}, and opens ${wanted.length} app${wanted.length === 1 ? "" : "s"}.`
-      : `${name} can sign in with ${email}, but has no app yet — grant one or they land on an empty launcher.`,
-  );
-}

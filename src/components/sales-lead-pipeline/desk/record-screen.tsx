@@ -127,7 +127,7 @@ function QualificationCard({ lead }: { lead: Lead }) {
         </PBadge>
       </div>
       <p className="mt-2 text-[13px] text-body">
-        The Telecaller has {done} of {lead.qualItems.length} conditions answered. Only a verified review lets this lead go to Sample / Trial.
+        The Salesman has {done} of {lead.qualItems.length} conditions answered. Only a verified review lets this lead go to Sample / Trial.
       </p>
       {lead.qualReview?.note ? <p className="mt-1 text-[12.5px] text-muted">&ldquo;{lead.qualReview.note}&rdquo;</p> : null}
       <button
@@ -187,7 +187,7 @@ export function SalesManagerRecordScreen({ initialTab, timeline }: { initialTab?
       <ProtoRecordHeader
         lead={lead}
         canWork={canWork}
-        editHref={links.record(lead.id)}
+        editHref={`${links.base}/${lead.id}/edit`}
         onReassign={() => openModal("reassign", lead.id)}
         onLost={() => openModal("lost", lead.id)}
       />

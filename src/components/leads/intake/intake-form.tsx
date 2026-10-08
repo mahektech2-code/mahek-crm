@@ -11,6 +11,8 @@ import { offeredSalesTypes, salesTypeLabel, type LeadSalesType } from "@/lib/lea
 import { captureLead } from "@/lib/actions/lead-intake";
 import type { NextActionOwner } from "@/lib/services/lead-intake-service";
 import { Banner, Button, Pill, ScreenHeader } from "@/components/console/parts";
+import { ProductCombobox } from "@/components/products/product-combobox";
+import { IntakeAssistant } from "@/components/leads/intake/intake-assistant";
 
 /* ---------------------------------------------------------------------------
  * Screen 5's form.
@@ -68,6 +70,7 @@ export function IntakeForm({
   canPrioritise,
   distributors,
   defaultOwnerId = "",
+  productSearchEnabled = true,
 }: {
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
   workspace: LeadWorkspace;
@@ -90,6 +93,12 @@ export function IntakeForm({
    * select, not a typeahead.
    */
   distributors: { id: string; name: string; city: string | null }[];
+  /**
+   * `products.searchOnOrderForms`, read by the page. When it is off the
+   * catalogue endpoint answers an empty list for everything, which would read as
+   * "we do not sell that" — so the picker is not drawn and the box says so.
+   */
+  productSearchEnabled?: boolean;
 }) {
   const router = useRouter();
   const { push } = useToast();
@@ -122,6 +131,12 @@ export function IntakeForm({
 
   const set = (k: keyof typeof f) => (v: string) => setF((s) => ({ ...s, [k]: v }));
 
+  /* "What product they want" is EITHER words OR a product chosen from the
+     catalogue, never both: the server stores whichever it is in the one text
+     column. The box shows the chosen product's name, and `requirementProductId`
+     says that text is a catalogue pick rather than something typed. */
+  const [requirementProductId, setRequirementProductId] = React.useState<string | null>(null);
+
   async function submit(allowDuplicate: boolean) {
     setBusy(true);
     setErrors({});
@@ -143,7 +158,10 @@ export function IntakeForm({
         customerType: CUSTOMER_TYPE_CODES.find((c) => c === f.customerType) ?? null,
         monthlyLitres: litres ? Number(litres) : null,
         competitor: f.competitor || undefined,
-        requirement: f.requirement || undefined,
+        requirement: requirementProductId ? undefined : f.requirement || undefined,
+        /* Sent as an id only: the server checks it is a live product and
+           writes the catalogue's own name, never one the browser typed. */
+        requirementProductId: requirementProductId ?? undefined,
         application: f.application || undefined,
         ownerId: f.ownerId || null,
         notes: f.notes || undefined,
@@ -203,6 +221,7 @@ export function IntakeForm({
               onClick={() => {
                 setDone(null);
                 setAnswer(null);
+                setRequirementProductId(null);
                 setF((s) => ({
                   ...s,
                   name: "",
@@ -346,6 +365,47 @@ export function IntakeForm({
                   It is a different shop — raise it anyway
                 </Button>
               }
+            />
+          ) : null}
+
+          {/*
+            THE VOICE ASSISTANT proposes; it does not save. It is handed the
+            current text of each box (so it never overwrites one), one setter
+            into this form's own state, and a boolean for whether "Under" is
+            drawn — and nothing else: not the sales type, not submit, not the
+            owner, not the priority, not the duplicate override.
+          */}
+          {canWork ? (
+            <IntakeAssistant
+              workspace={workspace}
+              offerUnder={answer === "third_party"}
+              current={{
+                name: f.name,
+                contactPerson: f.contactPerson,
+                phone: f.phone,
+                companyName: f.companyName,
+                city: f.city,
+                address: f.address,
+                customerType: f.customerType,
+                monthlyLitres: f.monthlyLitres,
+                competitor: f.competitor,
+                requirement: f.requirement,
+                application: f.application,
+                notes: f.notes,
+                source: f.source,
+                sourceDetail: f.sourceDetail,
+                distributorCustomerId: f.distributorCustomerId,
+              }}
+              onFill={(key, value) => {
+                /* A product the person chose from the catalogue wins over words
+                   the assistant heard: the text box is locked while one is
+                   chosen, and a value set behind it would show on screen and be
+                   dropped on save. */
+                if (key === "requirement" && requirementProductId) return;
+                set(key)(value);
+                /* The same rule the Lead source box applies when it changes. */
+                if (key === "source" && value !== "other") set("sourceDetail")("");
+              }}
             />
           ) : null}
 
@@ -547,12 +607,51 @@ export function IntakeForm({
                   />
                 </Field>
 
-                <Field label="What they want (optional)" error={errors.requirement} className="lg:col-span-6">
-                  <Input
-                    value={f.requirement}
-                    onChange={(e) => set("requirement")(e.target.value)}
-                    placeholder="e.g. Thinner for a spray booth"
-                  />
+                <Field
+                  label="What product they want (optional)"
+                  error={errors.requirement ?? errors.requirementProductId}
+                  className="lg:col-span-6"
+                >
+                  {/*
+                    * ONE FIELD: the whole active catalogue to pick from, or words.
+                    * Click it and every active Mahek product is offered; type and it
+                    * narrows; pick one and its name is the value. Nothing forces a
+                    * choice — words that match nothing are saved as typed, which is
+                    * what this box has always meant — and editing the box after a
+                    * pick drops the pick. A chosen product is stored by NAME in the
+                    * same column the words go in (the server checks it and writes
+                    * the catalogue's own spelling); it is not the Calling Desk's
+                    * Product answer and does not stand in for it.
+                    */}
+                  {productSearchEnabled ? (
+                    <ProductCombobox
+                      text={f.requirement}
+                      productId={requirementProductId}
+                      invalid={Boolean(errors.requirement || errors.requirementProductId)}
+                      placeholder="Search Mahek products, or type what they want"
+                      onText={(t) => {
+                        // Typing is words, never a pick: it drops any product that was chosen.
+                        setRequirementProductId(null);
+                        set("requirement")(t);
+                      }}
+                      onPick={(p) => {
+                        setRequirementProductId(p ? p.productId : null);
+                        set("requirement")(p ? p.name : "");
+                      }}
+                    />
+                  ) : (
+                    <>
+                      <Input
+                        value={f.requirement}
+                        invalid={Boolean(errors.requirement)}
+                        onChange={(e) => set("requirement")(e.target.value)}
+                        placeholder="e.g. Thinner for a spray booth"
+                      />
+                      <div className="mt-1 text-[12px] text-muted">
+                        Product search is switched off, so type what they want in your own words.
+                      </div>
+                    </>
+                  )}
                 </Field>
                 <Field
                   label="What they'll use it on (optional)"

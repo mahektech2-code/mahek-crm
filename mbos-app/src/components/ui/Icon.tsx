@@ -103,9 +103,17 @@ const ICONS = {
     { p: 'M18 8A6 6 0 1 0 6 8c0 7-3 9-3 9h18s-3-2-3-9' },
     { p: 'M13.7 21a2 2 0 0 1-3.4 0' },
   ],
+  refresh: [
+    { p: 'M21 12a9 9 0 0 1-15.5 6.2L3 16' },
+    { p: 'M3 12a9 9 0 0 1 15.5-6.2L21 8' },
+    { p: 'M21 3v5h-5' },
+    { p: 'M3 21v-5h5' },
+  ],
   play: [{ p: 'M5 3l14 9-14 9V3z' }],
   tick: [{ p: 'm5 13 4 4L19 7' }],
   search: [{ c: [11, 11, 7] }, { p: 'm20 20-3.2-3.2' }],
+  /* Four corners of a viewfinder and a line across — read a card into a form. */
+  scan: [{ p: 'M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M7 12h10' }],
   filter: [{ p: 'M3 6h18M6 12h12M10 18h4' }],
   shop: [{ p: 'M3 8h3l2-3h8l2 3h3v11H3z' }, { c: [12, 13, 3.5] }],
   person: [{ c: [12, 8, 3.5] }, { p: 'M5 20a7 7 0 0 1 14 0' }],

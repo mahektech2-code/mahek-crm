@@ -92,20 +92,42 @@ export async function ownerFilterClause(
 
   const ids = opts.unscoped ? null : scopedUserIds((await resolveScope()).scope);
 
-  // `scopedToUsers` is written against the literal table name `customers`, so
-  // it is only usable where the alias IS that. Everything here aliases to `c`,
-  // so the same rule is re-expressed rather than borrowed — and it is the ONE
-  // place in this file that happens, with the clause below kept in step by
-  // hand rather than by hope.
+  /*
+   * `scopedToUsers` is written against the literal table name `customers`, so
+   * it is only usable where the alias IS that. Everything here aliases to `c`,
+   * so the same rule is re-expressed rather than borrowed — and it is the ONE
+   * place in this file that happens, kept in step with `scopedToUsers` by
+   * hand rather than by hope.
+   *
+   * IT HAD FALLEN OUT OF STEP, in both directions. It read the sales seat and
+   * the owner as two independent seats, so an account reassigned away from
+   * somebody went on counting in their Reports through the owner column after
+   * `am_decided_at` had said the sales seat is read exactly as it stands — the
+   * very thing `ASSIGNED_TO_SQL` exists to stop. And it left out the lead
+   * manager and the relationship owner, the two seats added to the canonical
+   * clause since, so a manager's Reports and the CRM's own lists disagreed
+   * about whose book an account is in. It now reads the same five-seat rule,
+   * and — as `scopedToUsers` does for every reader — never counts a lead in the
+   * trash.
+   */
+  const col = (name: string) => sql.raw(`${alias}.${name}`);
+  parts.push(sql`${col("deleted_at")} is null`);
   if (ids) {
     const list = sql.join(
       ids.map((i: string) => sql`${i}`),
       sql`, `,
     );
+    const assignedTo = sql`case when ${col("kind")} = 'lead'
+           then ${col("owner_id")}
+           when ${col("am_decided_at")} is not null
+           then ${col("sales_am_id")}
+           else coalesce(${col("sales_am_id")}, ${col("owner_id")})
+      end`;
     parts.push(
-      sql`(${sql.raw(`${alias}.sales_am_id`)} in (${list})
-           or ${sql.raw(`${alias}.owner_id`)} in (${list})
-           or ${sql.raw(`${alias}.back_office_am_id`)} in (${list}))`,
+      sql`(${assignedTo} in (${list})
+           or ${col("back_office_am_id")} in (${list})
+           or ${col("lead_manager_id")} in (${list})
+           or ${col("relationship_owner_id")} in (${list}))`,
     );
   }
 
@@ -283,6 +305,8 @@ export async function leadsCreatedIn(
       left join users u on u.id = c.owner_id
       left join first_order f on f.customer_id = c.id
      where (c.kind = 'lead' or c.lead_stage is not null)
+       -- A lead in the trash is not one the business generated.
+       and c.deleted_at is null
        and c.created_at >= ${w.start} and c.created_at <= ${w.end}
        and not (c.created_by_id is null
                 and date_trunc('minute', c.created_at) in (select m from bulk_minute))
@@ -875,37 +899,4 @@ function addDays(iso: string, days: number): string {
   return `${at.getUTCFullYear()}-${String(at.getUTCMonth() + 1).padStart(2, "0")}-${String(
     at.getUTCDate(),
   ).padStart(2, "0")}`;
-}
-
-/**
- * The launcher tile's sentence.
- *
- * Read from the SNAPSHOT rather than banded live: the launcher draws for
- * everybody on every visit to `/apps`, and a full scan of the book to fill one
- * line of text is not a thing to do on a page nobody is reading yet. It is at
- * most a night old, and the tile says nothing about freshness because a
- * headline count that moved overnight is not a figure anybody acts on directly.
- *
- * The badge stays at zero, like HRMS's headcount. An at-risk customer is real
- * work but it is not work done HERE — the chasing happens in the CRM, and a red
- * pill over a reporting app would read as a queue somebody has to clear.
- */
-export async function healthTileLine(period: string): Promise<string> {
-  const rows = await db.execute<{ band: string; n: number }>(sql`
-    select band, count(*)::int as n
-      from customer_health_snapshots
-     where period = ${period}
-     group by band
-  `);
-  if (!rows.length) return "No reading yet - the first runs tonight";
-
-  const by = new Map(rows.map((r) => [r.band, Number(r.n)]));
-  const parts: string[] = [];
-  const active = by.get("active") ?? 0;
-  const atRisk = by.get("at-risk") ?? 0;
-  const dormant = by.get("dormant") ?? 0;
-  if (active) parts.push(`${active} active`);
-  if (atRisk) parts.push(`${atRisk} at risk`);
-  if (dormant) parts.push(`${dormant} dormant`);
-  return parts.length ? parts.join(" \u00b7 ") : "Nothing banded yet";
 }

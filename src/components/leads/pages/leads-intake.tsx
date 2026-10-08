@@ -5,6 +5,8 @@ import { canLead } from "@/lib/services/lead-console-service";
 import { nextActionOwners } from "@/lib/services/lead-intake-service";
 import { distributorOptions } from "@/lib/services/distributor-service";
 import { canOpenModule } from "@/lib/access";
+import { sourcesFor } from "@/lib/lead-source-scope";
+import { isSalesManagerSeat } from "@/lib/services/lead-source-access";
 import { DESK_MODULE } from "@/lib/services/lead-desk-assignment-service";
 import { LeadTabs } from "@/components/leads/lead-tabs";
 import { IntakeForm } from "@/components/leads/intake/intake-form";
@@ -56,16 +58,23 @@ export async function Body({
   const creatorWorksLeads =
     (await canOpenModule(user.id, DESK_MODULE)) && !canPrioritise && owners.some((o) => o.id === user.id);
 
+  /* Sales-Manager-only sources are drawn for whoever holds the Sales Manager
+     seat, in either workspace: that seat lives in the CRM app, so its holder
+     reaches this form as `/crm/...` as often as `/sales/...`. The action
+     re-checks the grant, so this is presentation only. */
+  const isSalesManager = await isSalesManagerSeat(user.id);
+
   return (
     <div className="p-6">
       <LeadTabs workspace={workspace} />
       <IntakeForm workspace={workspace}
         defaultOwnerId={creatorWorksLeads ? user.id : ""}
-        sourceOptions={config["leads.sources"]}
+        sourceOptions={sourcesFor(config["leads.sources"], isSalesManager)}
         owners={owners}
         canWork={canWork}
         canPrioritise={canPrioritise}
         distributors={distributors}
+        productSearchEnabled={config["products.searchOnOrderForms"]}
       />
     </div>
   );

@@ -78,12 +78,19 @@ beforeEach(async () => {
       email: `boss-${randomUUID().slice(0, 4)}@test.local`,
       phone: "9820000001",
       passwordHash: "x",
-      role: "manager",
+      role: "admin",
       initials: "BO",
     })
     .returning();
   boss = row;
-  await db.insert(appAccess).values({ id: id("aca"), userId: row.id, app: "crm", role: "manager" });
+  /* Setting somebody up is a PLATFORM administrator's act — the Admin Console
+     at the admin level. A CRM manager could once do it, and could then grant
+     themselves anything; now they cannot, so the actor here holds the one
+     grant that may. */
+  await db.insert(appAccess).values([
+    { id: id("aca"), userId: row.id, app: "crm", role: "manager" },
+    { id: id("aca"), userId: row.id, app: "admin", role: "admin" },
+  ]);
   setTestUser(boss);
 });
 

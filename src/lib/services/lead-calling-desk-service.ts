@@ -1,4 +1,5 @@
 import "server-only";
+import { notConverted } from "../lead-action-window";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { getConfig } from "../config/store";
@@ -24,7 +25,7 @@ import {
   nextCallNumber,
   parseLostNote,
   phaseOf,
-  requiredProgress,
+  prospectProgress,
   type CallOutcome,
   type DeskFieldKey,
   type DeskPhase,
@@ -34,7 +35,7 @@ import {
   type NextActionKind,
   type RequestState,
 } from "../engines/lead-calling-desk";
-import { QUALIFICATION_CONDITIONS, gateTo, qualificationComplete } from "../engines/lead-gates";
+import { QUALIFICATION_CONDITIONS, gateTo, qualificationReadyForReview } from "../engines/lead-gates";
 import { ladderFor } from "../engines/lead-ladder";
 import { resolveScope, scopedToUsers, scopedUserIds } from "../access-control";
 import { MBOS_EVENT } from "../timeline";
@@ -43,7 +44,7 @@ import { countsAsPurchase } from "../order-status";
 import { deskReference } from "../calling-desk-labels";
 import { deskSummary, type DeskLeadRow, type DeskSummary } from "../calling-desk-summary";
 import type { LeadPriority } from "../lead-priority";
-import { stageLabel, type LeadSalesType, type LeadStage } from "../lead-labels";
+import { findingLabel, stageLabel, type LeadSalesType, type LeadStage } from "../lead-labels";
 import {
   leadReceipts,
   leadRecord,
@@ -119,7 +120,6 @@ type RawRow = {
   decisionMaker: string | null;
   buyer: string | null;
   monthlyLitres: number | null;
-  potentialPaise: number | null;
   requiredProductId: string | null;
   competitor: string | null;
   customerType: string | null;
@@ -140,7 +140,6 @@ function valuesOf(r: RawRow): DeskValues {
     buyer: r.buyer,
     gstin: r.gstin,
     monthlyLitres: r.monthlyLitres,
-    potentialPaise: r.potentialPaise,
     creditDaysWanted: r.creditDaysWanted,
     requiredProductId: r.requiredProductId,
     competitor: r.competitor,
@@ -165,7 +164,7 @@ function toRow(r: RawRow, sources: readonly { code: string; label: string }[] = 
   const values = valuesOf(r);
   const state = isRequestState(r.requestState) ? r.requestState : null;
   const phase = phaseOf(r.stage as LeadStage, values, Number(r.callCount), state);
-  const progress = requiredProgress(values);
+  const progress = prospectProgress(values);
   const pending = phase === "requested" || phase === "followup";
   return {
     id: r.id,
@@ -189,7 +188,7 @@ function toRow(r: RawRow, sources: readonly { code: string; label: string }[] = 
     phase,
     nextCall: nextCallNumber(phase),
     answered: progress.done,
-    required: progress.total,
+    needed: progress.total,
     ladderKey:
       phase === "lost"
         ? ladderKeyOfLost(r.lostFrom as LeadStage | null, values, Number(r.callCount))
@@ -225,7 +224,6 @@ const ROW_COLUMNS = sql`
      order by t.at desc limit 1) as "lostFrom",
   customers.lead_decision_maker as "decisionMaker", customers.lead_buyer as buyer,
   customers.lead_monthly_volume_litres::int as "monthlyLitres",
-  customers.lead_estimated_potential_paise::float8 as "potentialPaise",
   customers.lead_required_product_id as "requiredProductId",
   customers.lead_competitor as competitor, customers.customer_type::text as "customerType",
   customers.lead_application as application,
@@ -255,7 +253,7 @@ const ROW_JOINS = sql`
  */
 export async function callingDesk(day: string, view: DeskView): Promise<CallingDesk> {
   const own = scopedToUsers(scopedUserIds((await resolveScope()).scope));
-  const where = sql`customers.lead_stage is not null and customers.lead_archived = false ${
+  const where = sql`customers.lead_stage is not null and customers.lead_archived = false and ${notConverted("customers")} ${
     own ? sql`and ${own}` : sql``
   }`;
 
@@ -479,7 +477,6 @@ async function inDeskScope(customerId: string): Promise<boolean> {
 const FINDING_KEY: Record<string, DeskFieldKey> = {
   competitor: "competitor",
   monthly_litres: "monthlyLitres",
-  potential: "potentialPaise",
   required_product: "requiredProductId",
   decision_maker: "decisionMaker",
   credit_days: "creditDaysWanted",
@@ -573,7 +570,6 @@ export async function deskLeadRecord(customerId: string, today: string): Promise
     buyer: extras?.buyer ?? null,
     gstin: lead.gstin,
     monthlyLitres: lead.leadMonthlyVolumeLitres,
-    potentialPaise: lead.leadEstimatedPotentialPaise,
     creditDaysWanted: lead.leadCreditDaysWanted,
     requiredProductId: lead.leadRequiredProductId,
     competitor: lead.leadCompetitor,
@@ -672,7 +668,6 @@ export async function deskLeadRecord(customerId: string, today: string): Promise
     const v = values[key];
     if (key === "requiredProductId") return rec.requiredProductName ?? "Chosen";
     if (key === "monthlyLitres") return `${Number(v).toLocaleString("en-IN")} litres a month`;
-    if (key === "potentialPaise") return `₹${Math.round(Number(v) / 100).toLocaleString("en-IN")} a month`;
     if (key === "creditDaysWanted") return `${v} days`;
     return String(v ?? "");
   };
@@ -776,7 +771,7 @@ export async function deskLeadRecord(customerId: string, today: string): Promise
 
   const sample = samples[0] ?? null;
   const qualGate = lead.leadSalesType !== "distributor" ? await leadGateInput(customerId) : null;
-  const qualComplete = qualGate ? qualificationComplete(qualGate) : false;
+  const qualComplete = qualGate ? qualificationReadyForReview(qualGate) : false;
 
   /* ---- the order, and the after-sales steps read off the ledger ---- */
   const counting = orderRows.filter((o) => countsAsPurchase(o.status));
@@ -939,7 +934,7 @@ export async function deskLeadRecord(customerId: string, today: string): Promise
             corrections: checks
               .filter((c) => c.verdict === "corrected")
               .map((c) => ({
-                label: DESK_FIELDS.find((f) => f.key === FINDING_KEY[c.field])?.label ?? c.field,
+                label: DESK_FIELDS.find((f) => f.key === FINDING_KEY[c.field])?.label ?? findingLabel(c.field),
                 original: c.original,
                 corrected: c.corrected ?? "",
                 reason: c.reason ?? "",

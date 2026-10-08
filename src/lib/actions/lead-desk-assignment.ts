@@ -1,5 +1,6 @@
 "use server";
 
+import { assertLeadInScope } from "@/lib/services/lead-scope";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
@@ -7,7 +8,7 @@ import { z } from "zod";
 import { db } from "@/db";
 import { auditLog, customers, users } from "@/db/schema";
 import { canOpenModule } from "@/lib/access";
-import { assertCustomerInScope, requireCapability } from "@/lib/access-control";
+import { requireCapability } from "@/lib/access-control";
 import { notifyUser } from "@/lib/notify";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
 import { MBOS_EVENT, writeTimelineEvent } from "@/lib/timeline";
@@ -92,7 +93,7 @@ async function assignOne(
   }
 
   if (lead.ownerId) {
-    await assertCustomerInScope({
+    await assertLeadInScope(customerId, {
       kind: lead.kind,
       ownerId: lead.ownerId,
       salesAmId: lead.salesAmId,

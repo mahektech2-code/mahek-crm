@@ -1,7 +1,8 @@
 import "server-only";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "@/db";
-import { attachments, employees, hrmsAssetAssignments, hrmsAttendance } from "@/db/schema";
+import { attachments, hrmsAssetAssignments, hrmsAttendance } from "@/db/schema";
+import { allPeople, staffInReach, visibleIds } from "./services/people";
 import { has, hrmsContext, scopeOf } from "./access";
 
 /* ---------------------------------------------------------------------------
@@ -20,17 +21,16 @@ export async function canReadHrmsAttachment(parentType: string, parentId: string
   switch (parentType as HrmsParent) {
     case "hrms_attendance": {
       if (!holds("attendance", "home", "pendingOut")) return false;
-      const [row] = await db
-        .select({ employeeId: hrmsAttendance.employeeId, reportsTo: employees.reportsTo })
-        .from(hrmsAttendance)
-        .innerJoin(employees, eq(employees.id, hrmsAttendance.employeeId))
-        .where(eq(hrmsAttendance.id, parentId))
-        .limit(1);
+      const [row] = await db.select({ employeeId: hrmsAttendance.employeeId }).from(hrmsAttendance).where(eq(hrmsAttendance.id, parentId)).limit(1);
       if (!row) return false;
       if (row.employeeId === ctx.employee?.id) return true;
       const scope = scopeOf(ctx, "hr", "editAtt", "markStaff");
       if (scope === "all") return true;
-      return scope === "team" && !!ctx.employee?.position && (row.reportsTo ?? "").trim().toLowerCase() === ctx.employee.position.trim().toLowerCase();
+      /* The register's own rule: a head's team, and the staff of their office
+         they mark — the same people whose day they can see and act on. */
+      const people = await allPeople();
+      if (visibleIds(ctx, scope)?.has(row.employeeId)) return true;
+      return staffInReach(ctx, people, "markStaff")?.has(row.employeeId) ?? false;
     }
     case "hrms_employee":
       return parentId === ctx.employee?.id || holds("employees", "idCards");
@@ -49,8 +49,13 @@ export async function canReadHrmsAttachment(parentType: string, parentId: string
         .limit(1);
       return a ? a.employeeId === ctx.employee?.id : holds("assetStock");
     }
-    case "hrms_document":
-      return holds("documents");
+    case "hrms_document": {
+      /* Under the document's own audience, as on the screen: it used to open
+         for anybody holding Documents, whoever it was meant for. */
+      if (!holds("documents")) return false;
+      const { mayReadDocument } = await import("./screens/misc");
+      return mayReadDocument(ctx, parentId);
+    }
     case "hrms_journey":
       return holds("journey");
     default:

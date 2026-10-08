@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Pressable, ScrollView, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
+import { Animated, AppState, View, Text, Pressable, ScrollView, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { color as C, HIT, radius, type, weight } from '../src/theme/tokens';
@@ -8,15 +8,20 @@ import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { openPasswordReset, signIn as signInReal, type LoginStep } from '../src/data/session';
 import { useKeyboardHeight } from '../src/components/ui/keyboard';
+import * as Clipboard from 'expo-clipboard';
 import { otpAvailable, requestOtp, ApiError } from '../src/sync/api';
+import { otpFromClipboard } from '../src/engines/otp-clipboard';
+import { Appear, Pop, Pulse, useShake } from '../src/components/ui/motion';
+import { feedback } from '../src/components/ui/feedback';
+import type { FeedbackKind } from '../src/engines/feedback';
 
 /**
  * Sign in.
  *
- * The five checks the design shows running are not decoration. An account can
- * be refused for being inactive or for having no territory, and each has a
- * different answer for the person holding the phone — so the ladder names the
- * step it is on rather than showing one spinner and one eventual failure.
+ * An account can be refused for being closed, for not holding the field app,
+ * or because the handset belongs to somebody else, and each has a different
+ * answer for the person holding the phone — so a refusal lands on the part of
+ * the screen it is about rather than as one red line under the number.
  */
 
 type Stage = 'form' | 'verifying';
@@ -58,7 +63,7 @@ export default function Login() {
 
   const [stage, setStage] = React.useState<Stage>('form');
   const [step, setStep] = React.useState(0);
-  const [err, setErr] = React.useState<'mob' | 'pw' | 'inactive' | 'payload' | null>(null);
+  const [err, setErr] = React.useState<'mob' | 'pw' | 'inactive' | 'payload' | 'network' | null>(null);
   const [pwShow, setPwShow] = React.useState(false);
   /* Password, or a code on WhatsApp — the second offered only once the
      server says it can send one (`/api/mbos/auth/otp`). */
@@ -67,14 +72,52 @@ export default function Login() {
   const [code, setCode] = React.useState('');
   const [codeSentTo, setCodeSentTo] = React.useState<string | null>(null);
   const [sendingCode, setSendingCode] = React.useState(false);
+
+  /*
+   * A REFUSAL SHAKES THE FORM, and says it in the hand too.
+   *
+   * The red line under a field is easy to miss on a phone held at waist
+   * height in sunlight, and this screen has no toast to carry the news. The
+   * shake sits on a wrapper that is mounted in BOTH stages, so a refusal that
+   * arrives from the server — which swaps the check ladder back out for the
+   * form in the same breath — still has a view on screen to move.
+   *
+   * The buzz is chosen per refusal rather than fixed on the hook: something
+   * he typed is a `warning`, a code that would not send or a book that would
+   * not save is a failure, `error`.
+   */
+  const { shake, style: shakeStyle } = useShake(null);
+  const refuse = (kind: FeedbackKind = 'warning') => {
+    feedback(kind);
+    shake();
+  };
+
+  /* Asked again whenever the app comes back to the front: opened in a lane
+     with no signal, the first answer is "no", and the WhatsApp option used to
+     stay hidden until the app was restarted. */
   React.useEffect(() => {
     let live = true;
-    otpAvailable().then((v) => { if (live) setCodeOffered(v); }).catch(() => {});
-    return () => { live = false; };
+    const ask = () => otpAvailable().then((v) => { if (live) setCodeOffered(v); }).catch(() => {});
+    void ask();
+    const sub = AppState.addEventListener('change', (st) => { if (st === 'active') void ask(); });
+    return () => { live = false; sub.remove(); };
   }, []);
 
+  /* The wait the server asked for after too many codes, counted down on the
+     button rather than refused again on every press. */
+  const [codeWait, setCodeWait] = React.useState(0);
+  React.useEffect(() => {
+    if (codeWait <= 0) return;
+    const t = setTimeout(() => setCodeWait((n) => n - 1), 1000);
+    return () => clearTimeout(t);
+  }, [codeWait]);
+
   async function sendCode() {
-    if (mob.length !== MOBILE_DIGITS) return setErr('mob');
+    if (sendingCode || codeWait > 0) return;
+    if (mob.length !== MOBILE_DIGITS) {
+      refuse();
+      return setErr('mob');
+    }
     setSendingCode(true);
     setErr(null);
     setServerMessage(null);
@@ -83,7 +126,9 @@ export default function Login() {
       setCodeSentTo(r.sentTo);
     } catch (e) {
       setErr('pw');
-      setServerMessage(e instanceof ApiError && e.message ? e.message : 'The code could not be sent. Check your signal, or use your password.');
+      setServerMessage(e instanceof ApiError && e.message ? e.message : 'Code not sent. Check your signal, or use your password.');
+      if (e instanceof ApiError && e.retryInSeconds) setCodeWait(Math.ceil(e.retryInSeconds));
+      refuse('error');
     } finally {
       setSendingCode(false);
     }
@@ -91,6 +136,47 @@ export default function Login() {
   /* What the server actually said, shown verbatim — a generic "sign-in failed"
      leaves the salesman with nothing to do about it. */
   const [serverMessage, setServerMessage] = React.useState<string | null>(null);
+
+  /*
+   * THE OTP IS CAUGHT OFF THE CLIPBOARD, because it cannot be caught anywhere
+   * else. MiniMoth sends it on WhatsApp first, and no app may read another
+   * app's WhatsApp messages — the only way in is Android's notification
+   * access, which would hand MBOS every notification on the phone. So the
+   * salesman taps "Copy code" in WhatsApp (or long-presses the message), comes
+   * back, and the screen fills the OTP in and signs him in: two taps and no
+   * typing. A code arriving by SMS is still offered by the keyboard through
+   * `autoComplete="sms-otp"` below.
+   *
+   * Read only on the way BACK to the app, only once an OTP has been sent, and
+   * only while the form is waiting for one — never as a habit, because on
+   * Android 12 and later every read shows a "pasted from clipboard" notice.
+   * `hasStringAsync` asks without reading, so an empty clipboard costs nothing.
+   * A code is submitted at most once: the same copied code coming back after a
+   * refusal must not spend a second try.
+   */
+  const triedCodes = React.useRef<Set<string>>(new Set());
+  const submitRef = React.useRef<(override?: string) => Promise<void>>(async () => {});
+  React.useEffect(() => { submitRef.current = submit; });
+  React.useEffect(() => {
+    if (method !== 'code' || !codeSentTo || stage !== 'form') return;
+    let live = true;
+    const catchCode = async () => {
+      try {
+        if (!(await Clipboard.hasStringAsync())) return;
+        const found = otpFromClipboard(await Clipboard.getStringAsync(), triedCodes.current);
+        if (!found || !live) return;
+        triedCodes.current.add(found);
+        setCode(found);
+        setErr(null);
+        setServerMessage(null);
+        void submitRef.current(found);
+      } catch {
+        /* The clipboard is a convenience; typing the OTP still works. */
+      }
+    };
+    const sub = AppState.addEventListener('change', (st) => { if (st === 'active') void catchCode(); });
+    return () => { live = false; sub.remove(); };
+  }, [method, codeSentTo, stage]);
 
   const boot = useBoot();
   const keyboardHeight = useKeyboardHeight();
@@ -119,24 +205,35 @@ export default function Login() {
   }, [boot.ready, boot.session]);
 
   /**
-   * The five steps are real checks happening on the server, not a timer.
+   * TWO STEPS, because there are only two things the phone can see.
    *
-   * Each one has a different answer for the person holding the phone — an
-   * inactive account and a wrong password are not the same problem — so the
-   * ladder names the step it reached and the failure lands on that step.
+   * It used to draw five — mobile, password, status, area, day — and claim
+   * they were real checks rather than a timer. They were neither: the server
+   * runs all five and answers once, so "Checking mobile" pulsed for the whole
+   * wait and the other four flashed green together at the end. What the phone
+   * actually knows is whether MahekOne has answered, and whether the book it
+   * sent has been saved here.
    */
   const STEP_INDEX: Record<LoginStep, number> = {
-    mobile: 0, credential: 1, status: 2, territory: 3, payload: 4,
+    mobile: 0, credential: 0, status: 0, territory: 0, network: 0, payload: 1,
   };
 
-  async function submit() {
+  async function submit(override?: string) {
+    const typed = (override ?? code).replace(/\D/g, '');
     /* One at a time. Two overlapping sign-ins are two `setTokens`, two
        persists and two bootstraps writing into the same database. */
     if (stage === 'verifying') return;
-    if (mob.length !== MOBILE_DIGITS) return setErr('mob');
-    if (method === 'password' && pw.length < 8) return setErr('pw');
-    if (method === 'code' && code.replace(/\D/g, '').length < 4) {
-      setServerMessage(codeSentTo ? 'Enter the code from WhatsApp.' : 'Send yourself a code first.');
+    if (mob.length !== MOBILE_DIGITS) {
+      refuse();
+      return setErr('mob');
+    }
+    if (method === 'password' && pw.length < 8) {
+      refuse();
+      return setErr('pw');
+    }
+    if (method === 'code' && typed.length < 4) {
+      setServerMessage(codeSentTo ? 'Enter the OTP.' : 'Send yourself an OTP first.');
+      refuse();
       return setErr('pw');
     }
 
@@ -150,9 +247,12 @@ export default function Login() {
 
     const outcome = await signInReal({
       mobile: mob.trim(),
-      ...(method === 'code' ? { otp: code.replace(/\D/g, '') } : { password: pw }),
+      ...(method === 'code' ? { otp: typed } : { password: pw }),
       remember,
       onStep: (s) => { if (live()) setStep(STEP_INDEX[s]); },
+      /* Cancel now stops the attempt WRITING, not only the screen reacting:
+         an answer that arrives after Cancel is not stored. */
+      cancelled: () => !live(),
     });
 
     if (!live()) return;
@@ -173,29 +273,28 @@ export default function Login() {
       setErr(
         outcome.step === 'payload'
           ? 'payload'
-          : outcome.step === 'status' || outcome.step === 'territory'
-            ? 'inactive'
-            : outcome.step === 'credential'
-              ? 'pw'
-              : 'mob',
+          : outcome.step === 'network'
+            ? 'network'
+            : outcome.step === 'status' || outcome.step === 'territory'
+              ? 'inactive'
+              : outcome.step === 'credential'
+                ? 'pw'
+                : 'mob',
       );
       setServerMessage(outcome.message);
+      /* A wrong password or an account switched off is a refusal; a book
+         that would not save on this phone is a failure. */
+      refuse(outcome.step === 'payload' || outcome.step === 'network' ? 'error' : 'warning');
       return;
     }
 
     signIn();
     boot.setSession(outcome.session);
-    if (outcome.offline) notify('Signed in from this phone — your book is as of the last time you had signal');
+    if (outcome.offline) notify('Signed in without signal. Your data is from the last time you had signal.', 'warn');
     router.replace('/home');
   }
 
-  const steps = [
-    'Verifying mobile',
-    'Verifying password',
-    'Checking employee status',
-    'Checking assigned territory',
-    'Loading your day',
-  ];
+  const steps = ['Checking your sign-in with MahekOne', 'Saving your day on this phone'];
 
   /* The splash stays up until the database has been opened and the stored
      session read. Drawn before that, the whole form appears on every cold
@@ -231,14 +330,19 @@ export default function Login() {
           <View style={{ width: 28, height: 28, backgroundColor: C.primary, borderRadius: 8, alignItems: 'center', justifyContent: 'center' }}>
             <View style={{ width: 10, height: 10, backgroundColor: C.lime, borderRadius: 3 }} />
           </View>
-          <Text style={[{ fontSize: 18, color: C.ink, letterSpacing: -0.18 }, weight(600)]}>MBOS</Text>
+          <Text style={[{ fontSize: 18, color: C.ink, letterSpacing: -0.18 }, weight(600)]}>Mahek MBOS</Text>
         </View>
 
         <Text style={[type.h2, { marginTop: 28 }]}>Sign in</Text>
         <Text style={[type.body, { color: C.muted, marginTop: 6 }]}>
-          Mahek field sales. Your accounts team sets this up — there is no sign-up.
+          Mahek field sales. Your manager has your account made for you. There is no sign-up.
         </Text>
 
+        {/* One wrapper for both stages: it carries the refusal shake (see
+            `refuse`), and the Appear inside it is keyed on the stage, so the
+            form settles in on arrival and the ladder settles in over it. */}
+        <Animated.View style={shakeStyle}>
+        <Appear key={stage}>
         {/* ---- the check ladder ---- */}
         {stage === 'verifying' ? (
           <View style={{ borderWidth: 1, borderColor: C.border, backgroundColor: C.wash, borderRadius: radius.xl, padding: 16, marginTop: 24 }}>
@@ -247,14 +351,22 @@ export default function Login() {
               const now = step === i;
               return (
                 <View key={label} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 6 }}>
-                  <View
-                    style={{
-                      width: 18,
-                      height: 18,
-                      borderRadius: 9,
-                      backgroundColor: done ? C.lime : now ? C.primary : C.hairline,
-                    }}
-                  />
+                  {/* The step being checked breathes — it is waiting on the
+                      server, and a still dot reads as stuck — and a step
+                      passed pops as it turns green. These are real checks,
+                      so the movement follows the answers, not a timer. */}
+                  <Pop trigger={done}>
+                    <Pulse active={now}>
+                      <View
+                        style={{
+                          width: 18,
+                          height: 18,
+                          borderRadius: 9,
+                          backgroundColor: done ? C.lime : now ? C.primary : C.hairline,
+                        }}
+                      />
+                    </Pulse>
+                  </Pop>
                   <Text style={{ fontSize: 14, color: done || now ? C.ink : C.muted }}>{label}</Text>
                 </View>
               );
@@ -273,13 +385,15 @@ export default function Login() {
         {/* ---- the form ---- */}
         {stage === 'form' ? (
           <View style={{ marginTop: 24 }}>
-            {err === 'inactive' || err === 'payload' ? (
+            {err === 'inactive' || err === 'payload' || err === 'network' ? (
               <View style={{ backgroundColor: C.dangerBg, borderLeftWidth: 3, borderLeftColor: C.danger, borderRadius: 8, paddingVertical: 12, paddingHorizontal: 14, marginBottom: 16 }}>
                 <Text style={{ fontSize: 14, lineHeight: 20, color: C.ink }}>
                   {err === 'payload'
-                    ? (serverMessage ?? "Signed in, but the day's data could not be saved on this phone.") +
-                      ' Try again; if it keeps happening tell your manager, this one will not fix itself.'
-                    : (serverMessage ?? 'This account is not active. Ask your sales manager to switch it back on.')}
+                    ? (serverMessage ?? "Signed in, but today's data was not saved on this phone.") +
+                      ' Try again. If it keeps happening, tell your manager.'
+                    : err === 'network'
+                      ? (serverMessage ?? 'No internet. Could not reach MahekOne.')
+                      : (serverMessage ?? 'This account cannot be used right now. Ask your manager.')}
                 </Text>
               </View>
             ) : null}
@@ -307,7 +421,15 @@ export default function Login() {
                   /* Digits only, and never more than ten. An Indian mobile is
                      ten digits; letting an eleventh be typed only produces a
                      refusal later, after the password has been entered too. */
-                  set({ mob: v.replace(/[^0-9]/g, '').slice(0, MOBILE_DIGITS) });
+                  const next = v.replace(/[^0-9]/g, '').slice(0, MOBILE_DIGITS);
+                  /* A code was sent to the OLD number. Keeping "Sent to …" and
+                     the typed code beside a different number is how somebody
+                     signs in with a code that can only ever be refused. */
+                  if (next !== mob) {
+                    setCodeSentTo(null);
+                    setCode('');
+                  }
+                  set({ mob: next });
                   setErr(null);
                   setServerMessage(null);
                 }}
@@ -331,7 +453,7 @@ export default function Login() {
                   ? serverMessage
                   : mob.length === 0
                     ? 'Enter your mobile number.'
-                    : `That is ${mob.length} digits — a mobile number has ${MOBILE_DIGITS}.`}
+                    : `You typed ${mob.length} digits. A mobile number has ${MOBILE_DIGITS}.`}
               </Text>
             ) : null}
 
@@ -348,7 +470,7 @@ export default function Login() {
                     onPress={() => { setMethod(m); setErr(null); setServerMessage(null); }}
                     style={{ flex: 1, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: radius.md - 2, backgroundColor: method === m ? C.primaryTint : 'transparent' }}>
                     <Text style={[{ fontSize: 15, color: method === m ? C.ink : C.muted }, weight(method === m ? 600 : 400)]}>
-                      {m === 'password' ? 'Password' : 'WhatsApp code'}
+                      {m === 'password' ? 'Password' : 'OTP'}
                     </Text>
                   </Pressable>
                 ))}
@@ -411,13 +533,13 @@ export default function Login() {
                 ) : null}
                 </>) : (
                   <View>
-                    <Text style={[type.label, { marginTop: 16, marginBottom: 6 }]}>Code from WhatsApp</Text>
+                    <Text style={[type.label, { marginTop: 16, marginBottom: 6 }]}>OTP</Text>
                     {codeSentTo ? (
                       <>
                         <TextInput
                           value={code}
                           onChangeText={(v) => { setCode(v.replace(/\D/g, '').slice(0, 8)); setErr(null); setServerMessage(null); }}
-                          placeholder="6-digit code"
+                          placeholder="6-digit OTP"
                           placeholderTextColor={C.faint}
                           keyboardType="number-pad"
                           textContentType="oneTimeCode"
@@ -428,15 +550,29 @@ export default function Login() {
                           }}
                         />
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 }}>
-                          <Text style={{ fontSize: 14, color: C.muted }}>Sent to {codeSentTo} on WhatsApp</Text>
-                          <Pressable onPress={() => void sendCode()} disabled={sendingCode}>
-                            <Text style={[{ fontSize: 14, color: C.primary }, weight(500)]}>{sendingCode ? 'Sending…' : 'Send again'}</Text>
+                          <Text style={{ fontSize: 14, color: C.muted }}>OTP sent to {codeSentTo}</Text>
+                          <Pressable
+                            onPress={() => void sendCode()}
+                            disabled={sendingCode || codeWait > 0}
+                            hitSlop={12}
+                            accessibilityRole="button">
+                            <Text style={[{ fontSize: 14, color: codeWait > 0 ? C.muted : C.primary }, weight(500)]}>
+                              {sendingCode ? 'Sending…' : codeWait > 0 ? `Send again in ${codeWait}s` : 'Send again'}
+                            </Text>
                           </Pressable>
                         </View>
                       </>
                     ) : (
                       <PrimaryButton
-                        label={sendingCode ? 'Sending…' : 'Send me a code on WhatsApp'}
+                        label={
+                          sendingCode
+                            ? 'Sending…'
+                            : codeWait > 0
+                              ? `Wait ${codeWait}s to send another OTP`
+                              : 'Send OTP'
+                        }
+                        disabled={sendingCode || codeWait > 0}
+                        whyDisabled={sendingCode ? 'Sending the OTP now.' : 'MahekOne asked us to wait before sending another OTP.'}
                         onPress={() => void sendCode()}
                       />
                     )}
@@ -458,8 +594,9 @@ export default function Login() {
                     const opened = await openPasswordReset();
                     notify(
                       opened
-                        ? 'Opening the reset page. It emails a link to your work address.'
-                        : 'Could not open the browser. Ask your manager to send you a reset link.',
+                        ? 'Opening the reset page. Use your work email, or an OTP if it offers one.'
+                        : 'Could not open the browser. Ask your manager to reset your password.',
+                      opened ? 'info' : 'error',
                     );
                   }}
                   style={{ width: '100%', height: HIT, marginTop: 8, alignItems: 'center', justifyContent: 'center' }}>
@@ -468,6 +605,8 @@ export default function Login() {
               </View>
           </View>
         ) : null}
+        </Appear>
+        </Animated.View>
 
       </ScrollView>
     </KeyboardAvoidingView>
