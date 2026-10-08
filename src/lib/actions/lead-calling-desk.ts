@@ -8,7 +8,7 @@ import { z } from "zod";
 import { db } from "@/db";
 import { auditLog, calls, customers, users } from "@/db/schema";
 import { canAny, hatsFor, requireCapability } from "@/lib/access-control";
-import { approverFor, holdsLeadSeat } from "@/lib/services/lead-verifier";
+import { approverFor, holdsLeadSeat, telecallerRouteFor } from "@/lib/services/lead-verifier";
 import { NO_ANSWER_REASONS } from "@/lib/call-outcomes";
 import { addDays, nextWorkingDay, type BusinessDate } from "@/lib/business-date";
 import { getConfig } from "@/lib/config/store";
@@ -766,6 +766,26 @@ async function preparePromotion(
      DESIGNATES, not by her: the verification is the check on her own work. */
   const selfRaisedApprover = await approverFor({ ownerId: lead.ownerId, salesManagerId: lead.salesManagerId });
   if (selfRaisedApprover) managerId = selfRaisedApprover.id;
+  /* A LEAD A TELECALLER WORKS is verified by the person Mahek designates for
+     exactly that (`leads.telecallerVerifierEmail`), with nothing to choose. STRICT:
+     it wins over an org-chart-derived Sales Manager seat and needs no regional
+     coverage - what keeps it off a lead is a Sales Manager's or a salesman's own
+     workflow (a seat a PERSON decided, a field owner, the self-raised rule above),
+     never the seat merely existing. Configured but unusable, it REFUSES in words
+     rather than routing the lead somewhere the setting did not say. Blank, it is
+     off and everything below is exactly what it was. */
+  if (!managerId) {
+    const route = await telecallerRouteFor(
+      {
+        ownerId: lead.ownerId,
+        salesManagerDecidedAt: lead.salesManagerDecidedAt,
+        leadManagerDecidedAt: lead.leadManagerDecidedAt,
+      },
+      ctx.user.id,
+    );
+    if (route.kind === "refuse") return err(route.message, "rule_violation");
+    if (route.kind === "verifier") managerId = route.id;
+  }
   if (!managerId && lead.salesManagerId) {
     const [sm] = await db
       .select({ id: users.id, role: users.role, active: users.active })

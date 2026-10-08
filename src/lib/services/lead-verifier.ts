@@ -3,9 +3,9 @@ import "server-only";
 import { and, eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { customers, users } from "@/db/schema";
+import { appModuleAccess, customers, users } from "@/db/schema";
 import { canOpenModule } from "@/lib/access";
-import { canFor, levelInApp, requireCapability, resolveScope } from "@/lib/access-control";
+import { canAny, canFor, hatsFor, levelInApp, requireCapability, resolveScope } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
 
 /**
@@ -84,6 +84,141 @@ export async function approverFor(lead: LeadSeats): Promise<{ id: string; name: 
   const designated = await designatedApprover();
   if (!designated || designated.id === lead.salesManagerId) return null;
   return designated;
+}
+
+/* --------------------------------------------- a lead a Telecaller works alone */
+
+const DESK_MODULE = "crm.lead-calling-desk";
+
+/**
+ * IS THIS OWNER A CALLING-DESK WORKER - and not a salesman, a manager or a
+ * Sales Manager. Asked of the GRANTS, because "a role is a level, the app is
+ * the job": a Telecaller and a field salesman are both associates.
+ *
+ *   - holds the CRM and the Calling desk (`canOpenModule`, which also answers for
+ *     an administrator - who is excluded below, so the desk alone proves nothing);
+ *   - holds NO `field` grant: a lead a salesman owns is the field's workflow;
+ *   - does not hold `lead.verify`: a manager or an administrator is not a desk
+ *     worker, whatever they can open;
+ *   - has no explicit `crm.sales-manager` module row: that is the Sales Manager.
+ *     Explicit, because a whole-CRM grant with no rows "holds" the module without
+ *     being one, and reading it as the seat would exclude every Telecaller.
+ */
+async function ownerWorksTheDesk(ownerId: string): Promise<boolean> {
+  const [owner] = await db
+    .select({ id: users.id, role: users.role })
+    .from(users)
+    .where(eq(users.id, ownerId))
+    .limit(1);
+  if (!owner) return false;
+  const hats = await hatsFor(owner);
+  if (!hats.some((h) => h.app === "crm")) return false;
+  if (hats.some((h) => h.app === "field")) return false;
+  if (canAny(hats, "lead.verify")) return false;
+  const [seat] = await db
+    .select({ id: appModuleAccess.id })
+    .from(appModuleAccess)
+    .where(and(eq(appModuleAccess.userId, ownerId), eq(appModuleAccess.module, SALES_MANAGER_MODULE)))
+    .limit(1);
+  if (seat) return false;
+  return canOpenModule(ownerId, DESK_MODULE);
+}
+
+/**
+ * A lead a TELECALLER works: owned by a calling-desk worker (or by nobody), and
+ * not entered into a workflow that belongs to somebody else.
+ *
+ * It does NOT read `sales_manager_id` being empty. The nightly org-chart pass
+ * (`recomputeSalesManagers`) fills that seat for any lead whose owner is on the
+ * chart, so a seat existing says nothing about whether a Sales Manager is
+ * involved. What says so is a PERSON having set it - `sales_manager_decided_at`,
+ * which only a Sales Manager raising a lead and `assignSalesManager` write.
+ *
+ * Read off the seats and the owner's grants and never off a creator, which is not
+ * stored. The two workflows that belong to others are kept out explicitly:
+ *   - a Sales Manager's own lead: the owner is her (explicit module row, so not a
+ *     desk worker) and her seat is decided; `isSelfRaised` also routes it first.
+ *   - a salesman's lead: the owner holds `field`.
+ * Somebody who CHOSE the lead manager made a decision, and a rule that runs by
+ * itself does not undo one.
+ */
+export async function isTelecallerHandled(lead: {
+  ownerId: string | null;
+  salesManagerDecidedAt?: Date | null;
+  leadManagerDecidedAt?: Date | null;
+}): Promise<boolean> {
+  if (lead.salesManagerDecidedAt) return false;
+  if (lead.leadManagerDecidedAt) return false;
+  if (!lead.ownerId) return true;
+  return ownerWorksTheDesk(lead.ownerId);
+}
+
+/**
+ * The person Mahek designates to verify what a Telecaller converts, by work
+ * email - null where nothing is configured, or nobody ACTIVE matches.
+ *
+ * Its own setting, `leads.telecallerVerifierEmail`, and not
+ * `leads.selfRaisedVerifierEmail`: that one is the approver of a lead a Sales
+ * Manager raised herself, this one is the verifier of a lead a Telecaller works,
+ * and they are different jobs that happen to be held by one person today.
+ */
+export async function telecallerApprover(): Promise<{ id: string; name: string; role: string } | null> {
+  const email = ((await getConfig())["leads.telecallerVerifierEmail"] ?? "").trim().toLowerCase();
+  if (!email) return null;
+  const [row] = await db
+    .select({ id: users.id, name: users.name, role: users.role })
+    .from(users)
+    .where(and(sql`lower(${users.email}) = ${email}`, eq(users.active, true)))
+    .limit(1);
+  return row ?? null;
+}
+
+export type TelecallerRoute =
+  | { kind: "off" }
+  | { kind: "verifier"; id: string; name: string }
+  | { kind: "refuse"; message: string };
+
+/**
+ * HOW THIS LEAD'S VERIFICATION IS ROUTED when a Telecaller converts it.
+ *
+ *   off       nothing configured, or not a Telecaller's lead: the ordinary routing
+ *             answers, exactly as it did before this existed.
+ *   verifier  the designated person. STRICT: it wins over an org-chart-derived
+ *             Sales Manager seat and there is no regional coverage requirement.
+ *   refuse    a Telecaller's lead WITH a setting that cannot be honoured - the
+ *             named person is missing, inactive, cannot verify, or is the person
+ *             converting. Refused in words and the lead stays a Suspect: quietly
+ *             routing it elsewhere would defeat the one thing the setting says.
+ */
+export async function telecallerRouteFor(
+  lead: { ownerId: string | null; salesManagerDecidedAt?: Date | null; leadManagerDecidedAt?: Date | null },
+  converterId: string,
+): Promise<TelecallerRoute> {
+  const configured = ((await getConfig())["leads.telecallerVerifierEmail"] ?? "").trim();
+  if (!configured) return { kind: "off" };
+  if (!(await isTelecallerHandled(lead))) return { kind: "off" };
+
+  const designated = await telecallerApprover();
+  if (!designated) {
+    return {
+      kind: "refuse",
+      message: `Nobody can verify this lead yet: the person set to verify leads a Telecaller converts (${configured}) has no active account. Ask an administrator to correct that setting - the lead stays a Suspect until then.`,
+    };
+  }
+  if (designated.id === converterId) {
+    return {
+      kind: "refuse",
+      message:
+        "You are the person who verifies leads a Telecaller converts, so you cannot also convert this one. Ask another desk worker to convert it.",
+    };
+  }
+  if (!(await canFor({ id: designated.id, role: designated.role }, "lead.verify"))) {
+    return {
+      kind: "refuse",
+      message: `Nobody can verify this lead yet: ${designated.name}, who is set to verify leads a Telecaller converts, does not hold the verification permission. Ask an administrator to fix that - the lead stays a Suspect until then.`,
+    };
+  }
+  return { kind: "verifier", id: designated.id, name: designated.name };
 }
 
 /** `NotPermittedError`'s name, so `fromThrown` answers `not_permitted`, with a sentence of our own. */

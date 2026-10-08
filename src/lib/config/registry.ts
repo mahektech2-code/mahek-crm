@@ -3727,6 +3727,15 @@ export const SETTINGS = [
     default: "",
   },
   {
+    key: "leads.telecallerVerifierEmail",
+    type: "text",
+    category: "mbos-leads",
+    label: "Who verifies a lead a Telecaller converts",
+    description:
+      "The work email of the person who verifies the Prospect when a Telecaller converts a lead a Calling-desk worker owns. The Telecaller chooses nobody - it goes to this person, whether or not the org chart has filled the lead's Sales Manager seat, and with no regional coverage needed. A lead a salesman owns, a lead somebody personally set a Sales Manager seat on or chose a lead manager for, and a lead a Sales Manager raised herself (that is the setting above) are not affected. Blank switches the rule off and routing is exactly as before. If a name is set but matches no active account, or that person cannot verify, converting such a lead is refused with a message saying so - it is never quietly routed elsewhere.",
+    default: "",
+  },
+  {
     key: "leads.figuresFreshDays",
     type: "integer",
     category: "mbos-leads",
@@ -6053,6 +6062,7 @@ export type Config = {
   "leads.sampleReviewChaseDays": number[];
   "leads.verificationDueDays": number;
   "leads.selfRaisedVerifierEmail": string;
+  "leads.telecallerVerifierEmail": string;
   "leads.figuresFreshDays": number;
   "leads.sources": { code: string; label: string }[];
   "leads.distributorDiscountApprovalPercent": number;

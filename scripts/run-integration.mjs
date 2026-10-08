@@ -206,6 +206,9 @@ const files = [
   "src/lib/qualification-flow.test.ts",
   // A lead the Sales Manager raised herself is approved by the person Mahek designates.
   "src/lib/self-raised-approver.test.ts",
+  // Who verifies a Prospect on each of the three workflows, kept apart: a Telecaller's lead,
+  // a Sales Manager's own, and everything a salesman or a seat already routes.
+  "src/lib/telecaller-verifier-routing.test.ts",
   // A lead's owner is respected: a Sales Manager's lead is not a Telecaller's.
   "src/lib/lead-owner-visibility.test.ts",
   "src/lib/sales-manager-desk-queues.test.ts",

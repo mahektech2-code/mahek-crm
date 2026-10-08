@@ -7604,6 +7604,34 @@ one place the rule is decided: the designated person always may; the seat
 holder may not on a self-raised lead; everybody else is judged by the capability
 and the seat exactly as before.
 
+**A LEAD A TELECALLER WORKS IS VERIFIED BY ITS OWN DESIGNATED PERSON, and it is a
+different setting from the one above on purpose.** Where
+`leads.telecallerVerifierEmail` names an active account who holds `lead.verify`,
+converting such a lead to Prospect sends the verification to them with nothing
+for the Telecaller to choose — no picker, no Assign Lead Manager step
+(`telecallerRouteFor`, asked in `preparePromotion` right after the self-raised
+approver). It is STRICT: it wins over an org-chart-derived Sales Manager seat and
+needs no regional coverage.
+
+**WHAT MAKES A LEAD A TELECALLER'S IS ITS OWNER AND WHAT A PERSON DECIDED, never
+`sales_manager_id` being empty.** `recomputeSalesManagers` fills that seat nightly
+for any lead whose owner is on the org chart, so a filled seat says nothing about
+whether a Sales Manager is involved; `sales_manager_decided_at` does, because
+only a Sales Manager raising a lead and `assignSalesManager` write it
+(`isTelecallerHandled`). A lead is a Telecaller's when its owner is nobody or a
+Calling-desk worker — holds the CRM and the desk, no `field` grant, no
+`lead.verify`, no explicit `crm.sales-manager` row (`ownerWorksTheDesk`; the desk
+alone proves nothing, an administrator and a whole-CRM grant with no rows both
+"hold" it) — and neither `sales_manager_decided_at` nor `lead_manager_decided_at`
+is set. That keeps the other two workflows out by their own marks: a Sales
+Manager's lead (self-raised, or one she set the seat on) and a salesman's lead
+(a `field` owner) are never read as a Telecaller's, and keep the routing they had.
+
+Blank, the rule is OFF and everything is as before. Set but unusable — no active
+account, somebody who cannot verify, or the person converting — it REFUSES in
+words and the lead stays a Suspect, because quietly routing it elsewhere would
+defeat the one thing the setting says. No person is named in code.
+
 **A SAMPLE IS ASKED FOR ONLY WHEN THE LEAD MAY ENTER SAMPLE / TRIAL.**
 `sampleEligibility` asks the ordinary gate (no override) inside `requestSample` and
 the handset's sample handover, before any row is written, for funnel-ladder leads
