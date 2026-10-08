@@ -1776,7 +1776,15 @@ before moved. Two rules, both in `saveRequirement` and not only in the form: a
 requirement filed under a production department is for that department's
 categories, whoever raises it; and somebody in a department raises for their
 own only, sees only those requirements (and their own) on the list and in the
-badge, and cannot cancel another's. The requirement's `department` column
+badge, and cannot cancel another's. **A requirement is raised for one of FOUR
+teams and nothing else** — Mixing & Blending, Refilling, Packing and Production
+Head (`REQUIREMENT_DEPARTMENTS`); the head asks for every category of the
+three. The form used to offer the `department` reference list beside them
+(Production, Godown / Store, Quality, Dispatch, Office, Maintenance), each of
+which could ask for anything; `0232` retired that list and `saveRequirement`
+refuses any other label, except that an edit leaving an older requirement's
+label alone keeps it. A store re-order is raised under the team that asks for
+its category (`departmentForCategory`). The requirement's `department` column
 stays the LABEL it always was. **Departments** (`/erp/departments`) is the
 step-by-step page: one numbered card per step with what is waiting on it and a
 button that opens the ordinary form already filled in (`?new=1&field=value` on

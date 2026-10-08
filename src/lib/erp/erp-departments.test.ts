@@ -140,13 +140,18 @@ describe("each department raises its own requirements", () => {
     assert.ok((await raise(head, "Packing", "Stationary", "Packing Tape", "5")).ok);
     const wrong = await raise(head, "Packing", "Chemical", "Toluene");
     assert.ok(!wrong.ok && wrong.fieldErrors?.[0].field === "type");
+    assert.ok((await raise(head, "Production Head", "Box", "5 L Box", "5")).ok, "or under their own name, for any of it");
     const office = await raise(head, "Office", "Box", "5 L Box");
     assert.ok(!office.ok && office.fieldErrors?.[0].field === "department");
   });
 
-  test("the store, in no department, raises as before — but a production department still asks for its own categories", async () => {
-    assert.ok((await raise(store, "Production", "Chemical", "Toluene", "70")).ok);
-    assert.ok((await raise(store, "Godown / Store", "Box", "5 L Box", "70")).ok);
+  test("somebody in no department picks one of the four teams, and the team decides the category", async () => {
+    assert.ok((await raise(store, "Mixing & Blending", "Chemical", "Toluene", "70")).ok);
+    assert.ok((await raise(store, "Production Head", "Box", "5 L Box", "70")).ok);
+    for (const old of ["Production", "Godown / Store", "Office", "Maintenance"]) {
+      const r = await raise(store, old, "Box", "5 L Box");
+      assert.ok(!r.ok && r.fieldErrors?.[0].field === "department", `${old} is not one of the four`);
+    }
     const wrong = await raise(store, "Refilling", "Box", "5 L Box");
     assert.ok(!wrong.ok && wrong.fieldErrors?.[0].field === "type");
   });
@@ -159,8 +164,12 @@ describe("each department raises its own requirements", () => {
     assert.equal(f("department").readOnly, true);
     assert.deepEqual(f("type").optsBy?.map.Packing, ["Box", "Stationary"]);
     const headForm = (await mod("requisitions").load(await as(head))).spec.newForm!;
-    assert.deepEqual(headForm.header.find((x) => x.k === "department")!.opts, ["Mixing & Blending", "Refilling", "Packing"]);
+    assert.deepEqual(headForm.header.find((x) => x.k === "department")!.opts, ["Mixing & Blending", "Refilling", "Packing", "Production Head"]);
     assert.equal(headForm.init?.department, undefined, "the head chooses");
+    const storeForm = (await mod("requisitions").load(await as(store))).spec.newForm!;
+    const dept = storeForm.header.find((x) => x.k === "department")!;
+    assert.deepEqual(dept.opts, ["Mixing & Blending", "Refilling", "Packing", "Production Head"], "no reference list beside the four");
+    assert.deepEqual(storeForm.header.find((x) => x.k === "type")!.optsBy?.map["Refilling"], ["Can", "Drum"]);
   });
 });
 

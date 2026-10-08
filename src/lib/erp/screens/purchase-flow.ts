@@ -20,7 +20,7 @@ import { calendarDate } from "@/lib/business-date";
 import { err, fieldErr, ok, okVoid, type Result } from "@/lib/result";
 import type { ErpContext } from "../access";
 import { refValues } from "../refs";
-import { DEPARTMENT_LABELS, categoriesFor, departmentsOf, requirementRefusal, requirementVisibleTo } from "../departments";
+import { categoriesFor, categoriesForDepartment, departmentsOf, requirementDepartmentsFor, requirementRefusal, requirementVisibleTo } from "../departments";
 import { erpLink } from "../registry";
 import { erpAudit, erpId, nextNumber, num, paise, rupeesField, stampLine, text, visibleCols, withoutHidden, type ScreenModule } from "../server";
 import type { ActionSpec, ColSpec, FormSpec, ListRow, ToolResult } from "../ui";
@@ -334,20 +334,23 @@ async function presentQuantities() {
  * where it will go before they raise it.
  */
 export async function requisitionForm(ctx: ErpContext, init?: Record<string, string>, editing?: ReqView): Promise<FormSpec> {
-  const [mats, gds, rm, types, deptList, sups] = await Promise.all([
+  const [mats, gds, rm, types, sups] = await Promise.all([
     materials(),
     godownOptions(ctx, { lost: false }),
     rmLots(),
     refValues("materialType"),
-    refValues("department"),
     db.select({ id: erpSuppliers.id, name: erpSuppliers.name }).from(erpSuppliers),
   ]);
   const supName = new Map(sups.map((s) => [s.id, s.name]));
-  /* A production department asks for its own categories; somebody in one
-     raises for their own department(s) only (`lib/erp/departments.ts`). */
+  /* A requirement is raised by one of the four teams, and the team decides the
+     categories it may ask for; somebody in one team raises for it only
+     (`lib/erp/departments.ts`). A requirement raised under an older label
+     keeps it while it is edited. */
   const mine = departmentsOf(ctx.department);
-  const departments = mine.length ? mine.map((d) => d.label) : [...new Set([...DEPARTMENT_LABELS, ...deptList])];
-  const typesBy: Record<string, string[]> = Object.fromEntries(departments.map((d) => [d, categoriesFor(d, types)]));
+  const offered = requirementDepartmentsFor(ctx.department);
+  const legacy = editing?.r.department && !offered.includes(editing.r.department) ? [editing.r.department] : [];
+  const departments = [...offered, ...legacy];
+  const typesBy: Record<string, string[]> = Object.fromEntries([...offered.map((d) => [d, categoriesFor(d, types)]), ...legacy.map((d) => [d, [editing!.itemType]])]);
   const map: Record<string, string[]> = {};
   const unitOf: Record<string, string> = {};
   const ruleOf: Record<string, string> = {};
@@ -396,8 +399,8 @@ export async function requisitionForm(ctx: ErpContext, init?: Record<string, str
         t: "select",
         req: true,
         opts: departments,
-        readOnly: !editing && mine.length === 1,
-        hint: mine.length ? `You raise requirements for ${mine.map((d) => `${d.label} (${d.materialTypes.join(", ").toLowerCase()})`).join(" · ")}.` : undefined,
+        readOnly: offered.length === 1 && !legacy.length,
+        hint: offered.map((d) => `${d}: ${categoriesForDepartment(d).join(", ").toLowerCase()}`).join(" · "),
       },
       { k: "godown", l: "Deliver to godown", t: "select", req: true, opts: gds.map((g) => g.name) },
       { k: "type", l: "Category", t: "select", req: true, optsBy: { by: "department", map: typesBy }, when: { k: "department", notEmpty: true }, readOnly: !!editing },
@@ -715,7 +718,8 @@ async function saveRequirement(ctx: ErpContext, h: Record<string, string>, id?: 
     if (!v) return err("That requirement no longer exists.", "not_found");
     if (v.po || v.legacy || v.r.status === "Cancelled") return err("A requirement on a PO, received or cancelled is not edited.", "conflict");
     if (!requirementVisibleTo(ctx.department, v.r.department, v.r.createdById === ctx.user.id)) return err("That requirement belongs to another department.", "not_permitted");
-    const refusedEdit = requirementRefusal(ctx.department, department, v.itemType);
+    /* An older requirement may keep the label it was raised under; moving it is held to the four. */
+    const refusedEdit = department === v.r.department ? null : requirementRefusal(ctx.department, department, v.itemType);
     if (refusedEdit) return fieldErr(refusedEdit.field, refusedEdit.message);
     const values = { reqDate: date, requiredBy, department, godownId, requiredQty: qty, priority, remarks: text(h.remarks), updatedAt: new Date(), updatedById: ctx.user.id };
     await db.update(erpRequisitions).set(values).where(eq(erpRequisitions.id, id));
