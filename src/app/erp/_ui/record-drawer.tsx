@@ -32,6 +32,10 @@ export function RecordDrawer({ screen, kind, row, onClose }: { screen: ListSpec;
   const blocked = acts.filter((a) => a.why);
   const hiddenCount = screen.hidden.length + (row.hiddenFields ?? 0);
 
+  /* An action does NOT close the record: the list refreshes under it, so the
+     person sees what the action changed and can take the next one. A record
+     the action removes from the list (deleted, filtered out) closes on its
+     own, because the list no longer holds a row to draw. */
   return (
     <Drawer open onClose={onClose} width={600} label={title}>
       <DrawerHeader onClose={onClose}>
@@ -109,7 +113,7 @@ export function RecordDrawer({ screen, kind, row, onClose }: { screen: ListSpec;
               <Button
                 key={a.id}
                 variant={a.primary && okA ? "primary" : "secondary"}
-                onClick={() => okA && ui.act(screen.screen, a, row.id, onClose)}
+                onClick={() => okA && ui.act(screen.screen, a, row.id)}
                 title={a.why || a.l}
                 disabled={!okA}
                 className={cx(a.ai && okA && !a.primary && "border-brand text-[#5223E0]")}
