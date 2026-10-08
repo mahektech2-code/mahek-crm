@@ -55,6 +55,28 @@ export function useEscape(onClose: () => void, active = true) {
   }, [active]);
 }
 
+/**
+ * A click on the BACKDROP closes; a click that merely ENDS on it does not.
+ * The browser fires `click` on the nearest common ancestor of the press and
+ * the release, so a press inside the dialog — selecting text, a button pressed
+ * with a slight drag on a trackpad — released over the backdrop used to arrive
+ * as a backdrop click and shut the dialog with whatever was typed in it. Both
+ * ends have to be on the backdrop itself.
+ */
+export function useBackdropClose(onClose: () => void) {
+  const pressed = React.useRef(false);
+  return {
+    onMouseDown: (e: React.MouseEvent) => {
+      pressed.current = e.target === e.currentTarget;
+    },
+    onClick: (e: React.MouseEvent) => {
+      const both = pressed.current && e.target === e.currentTarget;
+      pressed.current = false;
+      if (both) onClose();
+    },
+  };
+}
+
 export function Modal({
   open,
   onClose,
@@ -73,12 +95,13 @@ export function Modal({
   // A closed modal is not listening: mounted-but-shut must never be the "top"
   // overlay and swallow the Escape meant for one that is open.
   useEscape(onClose, open);
+  const backdrop = useBackdropClose(onClose);
   if (!open) return null;
 
   return (
     <BodyPortal>
       <div
-        onClick={onClose}
+        {...backdrop}
         className="animate-fade-in fixed inset-0 z-[70] flex items-center justify-center bg-[rgba(22,22,22,0.35)] p-6"
         role="dialog"
         aria-modal="true"

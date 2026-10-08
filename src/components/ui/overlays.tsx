@@ -4,7 +4,7 @@ import * as React from "react";
 import { createPortal } from "react-dom";
 import { Button, cx } from "./primitives";
 import { DictateButton, joinDictation } from "./dictate";
-import { Modal, useEscape } from "./modal";
+import { Modal, useBackdropClose, useEscape } from "./modal";
 import { BodyPortal } from "@/components/ui/body-portal";
 
 /*
@@ -30,12 +30,13 @@ export function Drawer({
   label?: string;
 }) {
   useEscape(onClose, open);
+  const backdrop = useBackdropClose(onClose);
   if (!open) return null;
 
   return (
     <BodyPortal>
       <div className="fixed inset-0 z-[60] flex justify-end" role="dialog" aria-label={label}>
-        <div onClick={onClose} className="flex-1 bg-[rgba(22,22,22,0.2)]" />
+        <div {...backdrop} className="flex-1 bg-[rgba(22,22,22,0.2)]" />
         <div
           style={{ width }}
           className="animate-drawer-in flex flex-col bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)]"

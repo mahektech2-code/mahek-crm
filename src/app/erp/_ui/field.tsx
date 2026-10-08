@@ -1,6 +1,6 @@
 "use client";
 
-import { useContext, useState } from "react";
+import { useContext, useId, useState } from "react";
 import type { FieldSpec } from "@/lib/erp/ui";
 import { cx } from "@/components/ui/primitives";
 import { DictateButton, joinDictation } from "@/components/ui/dictate";
@@ -108,34 +108,7 @@ function Control({
       </span>
     );
   }
-  if (f.t === "scan") {
-    /* A USB or Bluetooth scanner types the label and presses Enter, so this is
-       a plain input — never a list that has to be opened first. */
-    const listId = `scan-${f.k}`;
-    return (
-      <span className="relative block">
-        <input
-          value={value}
-          list={listId}
-          autoComplete="off"
-          placeholder="Scan or type the lot label"
-          onChange={(e) => onChange(e.target.value.trim())}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") e.preventDefault();
-          }}
-          className={control(error, "pr-8 font-mono")}
-        />
-        <span className="pointer-events-none absolute top-2 right-2.5 flex text-muted">
-          <Icon n="scan" />
-        </span>
-        <datalist id={listId}>
-          {opts.map((o) => (
-            <option key={o} value={o} />
-          ))}
-        </datalist>
-      </span>
-    );
-  }
+  if (f.t === "scan") return <ScanField value={value} opts={opts} error={error} onChange={onChange} />;
   if (f.t === "suggest") {
     const has = !!derived;
     return (
@@ -293,6 +266,96 @@ function Combo({ value, opts, error, onChange }: { value: string; opts: string[]
             <span className="block border-t border-divider px-3 py-2 text-xs text-muted">{(m.length - 8).toLocaleString("en-IN")} more — keep typing</span>
           ) : null}
           {m.length === 0 ? <span className="block px-3 py-2.5 text-[13px] text-muted">Nothing matches “{q}”</span> : null}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+/**
+ * A lot label, scanned or typed. A USB or Bluetooth scanner types the label and
+ * presses Enter, so this is a plain input first — Enter never submits the form
+ * — and the lots with stock are a list drawn UNDER the field, at its width, in
+ * the form's own type. It used to be a native `<datalist>`, which the browser
+ * draws itself: a narrow floating box, offset from the field and covering the
+ * hint beneath it. Free text is kept; the list is a shortcut, not a rule.
+ */
+function ScanField({ value, opts, error, onChange }: { value: string; opts: string[]; error: boolean; onChange: (v: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(-1);
+  const listId = useId();
+  const ql = value.trim().toLowerCase();
+  const m = ql && !opts.some((x) => x.toLowerCase() === ql) ? opts.filter((x) => x.toLowerCase().includes(ql)) : opts;
+  const shown = m.slice(0, 8);
+  const pick = (x: string) => {
+    onChange(x);
+    setOpen(false);
+    setActive(-1);
+  };
+  return (
+    <span className="relative block">
+      <input
+        value={value}
+        autoComplete="off"
+        spellCheck={false}
+        role="combobox"
+        aria-expanded={open}
+        aria-controls={listId}
+        aria-autocomplete="list"
+        placeholder="Scan or type the lot label"
+        onFocus={() => setOpen(true)}
+        onClick={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        onChange={(e) => {
+          onChange(e.target.value.trim());
+          setOpen(true);
+          setActive(-1);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            if (open && active >= 0 && shown[active]) pick(shown[active]);
+            else setOpen(false);
+          } else if (e.key === "Escape") {
+            if (open) {
+              e.preventDefault();
+              setOpen(false);
+            }
+          } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+            e.preventDefault();
+            if (!open) return setOpen(true);
+            if (!shown.length) return;
+            const step = e.key === "ArrowDown" ? 1 : -1;
+            setActive((i) => (i + step + shown.length) % shown.length);
+          }
+        }}
+        className={control(error, cx("pr-8", value ? "font-mono" : ""))}
+      />
+      <span className="pointer-events-none absolute top-2 right-2.5 flex text-muted">
+        <Icon n="scan" />
+      </span>
+      {open && opts.length ? (
+        <span id={listId} role="listbox" className="absolute top-10 right-0 left-0 z-50 block max-h-[300px] overflow-y-auto rounded-[6px] border border-line bg-surface py-1 shadow-[0_8px_24px_rgba(22,22,22,0.12)]">
+          {shown.map((x, i) => (
+            <button
+              type="button"
+              role="option"
+              aria-selected={x === value}
+              key={x}
+              onMouseEnter={() => setActive(i)}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                pick(x);
+              }}
+              className={cx("block min-h-8.5 w-full cursor-pointer px-3 py-[7px] text-left font-mono text-sm text-ink", x === value ? "bg-brand-soft" : i === active ? "bg-canvas" : "hover:bg-canvas")}
+            >
+              {x}
+            </button>
+          ))}
+          {m.length > 8 ? (
+            <span className="block border-t border-divider px-3 py-2 text-xs text-muted">{(m.length - 8).toLocaleString("en-IN")} more — keep typing</span>
+          ) : null}
+          {m.length === 0 ? <span className="block px-3 py-2.5 text-[13px] text-muted">No lot with stock here matches — what you scanned is still kept</span> : null}
         </span>
       ) : null}
     </span>
