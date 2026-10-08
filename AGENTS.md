@@ -2044,6 +2044,84 @@ asking, so an answer can never hold a row or column their screen would not.
 **The ERP drops the desktop floor** (`AppFrame floor={false}`) — it is used on
 a tablet at the godown gate — and every other app keeps it.
 
+**PRODUCTION & DISPATCH ARE TRACEABLE, BOX BY BOX.** SFG lot → refill (FG
+filling) lot → packing batch → BOX → order → customer, and back. The lots
+already chained to each other; what `0237_erp_traceability` added is a QC
+verdict on the SFG lot, an id for every physical box, a dispatch desk that
+judges each box against its order, and a trace that answers both ways. The
+rules are pure in `engines/trace.ts`; `units.ts` is the register,
+`dispatch.ts` the desk, `traceability.ts` the trace and the dashboard.
+
+**THE LOT CODES DID NOT CHANGE.** SFG `12ASTOL1`, refill `FG12NA`, packing
+`FP40NA` are join keys across the ledgers and are on labels already in the
+godowns, so the new ids sit beside them rather than replacing them.
+
+**AN SFG LOT IS FILLED ONLY ONCE QC APPROVES IT.** `erp_sfg_qc`, keyed on the
+lot code so a transfer carries the verdict; no row reads as Pending. The fill
+form offers approved lots only and `saveFill` refuses any other
+(`qcRefusal`). Deciding is the `approveSfgQc` power; a reject needs a reason,
+and rejecting an approved lot stops further filling while what was filled
+stays traceable to it. Every lot in the book when this shipped was written
+Approved, or refilling would have stopped on deploy day.
+
+**A BOX ID IS WHAT THE QR CARRIES; THE LOT IS LINKED DATA.** `erp_units`, one
+row per box (`BX-YYMMDD-NNNNNN`, series `unit`), minted by `syncPackEntry`
+the moment a packing batch completes and cancelled — never deleted — if an
+edit un-completes it (a re-completion restores the same ids, whose labels may
+be on the boxes). One lot makes many boxes and one dispatch carries several
+lots, which a lot printed into the id could not say. **Which refill lot a box
+holds** is derived, not stored: boxes fill in the order the batch drew its
+cans (`boxLots`), so a box on a boundary names both lots.
+
+**A LOOSE CAN OR DRUM IS LABELLED ON ASKING**, from FG stock → Label loose
+units (`LU-…`), never at the fill: an FG lot's cans may yet be boxed. A lot
+never carries more labels than it has cans (`looseHeadroom`), and packing or
+a can adjustment cancels the newest labels the lot can no longer be
+(`trimLooseUnits`).
+
+**EVERY CHANGE OF A BOX IS AN EVENT, APPENDED.** `erp_unit_events`: created,
+labelled, scanned, unscanned, dispatched, transfer, hold, release, reject,
+return, lost, override. A transfer moves the lowest-numbered boxes in stock
+with the stock (to Item Lost Record they go as `lost`); nothing rewrites a
+box's history, and a correction is a further event.
+
+**THE DISPATCH DESK SCANS EVERY BOX AGAINST ITS ORDER** (`/erp/dispatch`,
+`scanVerdict`). A box of the allocated lot is matched. A box of ANOTHER lot of
+the same SKU takes that lot's place on the allocation (the swap is said on
+the scan and in the history). A line still short of allocation takes the
+box's lot. A different PRODUCT or PACK SIZE is stopped, as is a duplicate, an
+unknown code, a box at another godown, on hold or already gone — and every
+scan, refused ones included, is a row in `erp_dispatch_scans`. Scanning works
+on a Ready line; the allocation may change by scan before dispatch, never
+after.
+
+**A MISMATCH GOES ONLY ON AN OVERRIDE SOMEBODY ELSE APPROVED.**
+`erp_dispatch_overrides`: the reason in a sentence, who asked, and a decision
+by a holder of `dispatchOverride` who is not the asker (an ERP administrator
+excepted). Approved, the box is scanned again and stands in for the line;
+the override is then Used and cannot be spent twice.
+
+**DO VERIFIED WAITS FOR THE SCAN, where there is something to scan.**
+`scanGateFor`: a line whose allocated lots carry box ids cannot be
+dispatch-verified until every box is scanned, and verifying turns those boxes
+`dispatched` (`markDispatched`). Stock packed before box ids existed has none
+and is not held back — refusing it would have stopped dispatch on the day this
+shipped. `erp.dispatch.requireScan` turns the wait off for a day the scanners
+are down; scanning is still checked. Billing still comes BEFORE dispatch
+verification, as it did: the Tally bill number is entered first.
+
+**LABELS ARE DRAWN FROM THE RECORD** (`/erp/print-labels`, not `/erp/labels`,
+which redirects to the Orders tab of that name): box labels by batch, lot or
+selection, and dispatch stickers for an order's scanned boxes, with the QR
+(`qrcode`, server-side SVG). Printing stamps `label_printed_at`.
+
+**TRACE TAKES ANYTHING ON A LABEL** (`/erp/trace?q=`): a box id, an SFG,
+refill or raw-material lot, a packing batch, `ORDER-n` or a Tally bill — back
+to the supplier's drum and QC, forward to every refill lot, batch, box,
+customer and what is still on a shelf. With nothing searched it is the
+traceability dashboard: today's production and dispatch, and every exception.
+A link that is missing is said to be missing, never guessed.
+
 ## Layout
 
 ```

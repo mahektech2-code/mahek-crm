@@ -12118,6 +12118,159 @@ export const erpOrderDetails = pgTable("erp_order_details", {
   updatedById: text("updated_by_id"),
 });
 
+/* ---- ERP traceability: SFG QC, box ids, dispatch scanning (0237) ---- */
+
+/**
+ * The QC verdict on an SFG lot. No row reads as Pending, and only an Approved
+ * lot can be filled (`saveFill`). Keyed on the LOT CODE rather than the batch
+ * line, because a lot is what moves — a transfer carries the code to another
+ * godown and the verdict goes with it.
+ */
+export const erpSfgQc = pgTable(
+  "erp_sfg_qc",
+  {
+    lotCode: text("lot_code").primaryKey(),
+    /** Pending | Approved | Rejected. */
+    status: text("status").notNull().default("Pending"),
+    note: text("note"),
+    decidedById: text("decided_by_id").references(() => users.id),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [check("erp_sfg_qc_status_check", sql`${t.status} in ('Pending', 'Approved', 'Rejected')`)],
+);
+
+/**
+ * ONE PHYSICAL UNIT: a box from a packing batch (`kind = box`, minted when the
+ * batch completes) or a labelled loose can or drum from an FG lot
+ * (`kind = loose`, minted when its labels are asked for). The id is what the
+ * QR carries; the lot it came from is linked data, so one lot can make many
+ * boxes and one dispatch can carry boxes of several lots.
+ *
+ * The status is the unit's place in the lifecycle; HOW it got there is
+ * `erp_unit_events`, appended and never edited.
+ */
+export const erpUnits = pgTable(
+  "erp_units",
+  {
+    id: text("id").primaryKey(),
+    /** box | loose. */
+    kind: text("kind").notNull(),
+    skuId: text("sku_id")
+      .notNull()
+      .references(() => products.id),
+    /** pack (a packing batch) | fg (an FG lot) — the same words `erp_batch_codes` uses. */
+    lotFrom: text("lot_from").notNull(),
+    lotCode: text("lot_code").notNull(),
+    finishedGoodId: text("finished_good_id").references(() => finishedGoods.id),
+    /** Box number within its batch (1…boxes), or label number within its lot. */
+    seq: integer("seq").notNull(),
+    /** Cans in the unit: the SKU's cans per box, or 1. */
+    cans: integer("cans").notNull(),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    /** available | scanned | dispatched | hold | rejected | returned | lost | cancelled. */
+    status: text("status").notNull().default("available"),
+    statusNote: text("status_note"),
+    /** The order line it is scanned against (scanned) or left on (dispatched). */
+    orderId: text("order_id").references(() => erpOrders.id),
+    scannedAt: timestamp("scanned_at", { withTimezone: true }),
+    scannedById: text("scanned_by_id").references(() => users.id),
+    dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
+    labelPrintedAt: timestamp("label_printed_at", { withTimezone: true }),
+    labelPrints: integer("label_prints").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("erp_units_lot_idx").on(t.lotFrom, t.lotCode, t.godownId),
+    index("erp_units_order_idx").on(t.orderId),
+    index("erp_units_status_idx").on(t.status),
+    uniqueIndex("erp_units_seq_key").on(t.lotFrom, t.lotCode, t.seq),
+    check("erp_units_kind_check", sql`${t.kind} in ('box', 'loose')`),
+    check(
+      "erp_units_status_check",
+      sql`${t.status} in ('available', 'scanned', 'dispatched', 'hold', 'rejected', 'returned', 'lost', 'cancelled')`,
+    ),
+  ],
+);
+
+/** Every change of a unit, appended. A correction is a further event, never an edit. */
+export const erpUnitEvents = pgTable(
+  "erp_unit_events",
+  {
+    id: text("id").primaryKey(),
+    unitId: text("unit_id")
+      .notNull()
+      .references(() => erpUnits.id),
+    /** created | labelled | scanned | unscanned | dispatched | transfer | hold | release | reject | return | cancel | lost | override. */
+    event: text("event").notNull(),
+    fromStatus: text("from_status"),
+    toStatus: text("to_status"),
+    orderId: text("order_id"),
+    godownId: text("godown_id"),
+    note: text("note"),
+    byId: text("by_id").references(() => users.id),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("erp_unit_events_unit_idx").on(t.unitId, t.at)],
+);
+
+/** Every scan at the dispatch desk, refused ones included. */
+export const erpDispatchScans = pgTable(
+  "erp_dispatch_scans",
+  {
+    id: text("id").primaryKey(),
+    code: text("code").notNull(),
+    orderNo: integer("order_no"),
+    /** ok | duplicate | mismatch | blocked | unknown. */
+    result: text("result").notNull(),
+    message: text("message").notNull(),
+    unitId: text("unit_id"),
+    orderId: text("order_id"),
+    byId: text("by_id").references(() => users.id),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("erp_dispatch_scans_at_idx").on(t.at), index("erp_dispatch_scans_order_idx").on(t.orderNo, t.at)],
+);
+
+/** A mismatched scan asked to go anyway: who asked, why, and who decided. */
+export const erpDispatchOverrides = pgTable(
+  "erp_dispatch_overrides",
+  {
+    id: text("id").primaryKey(),
+    unitId: text("unit_id")
+      .notNull()
+      .references(() => erpUnits.id),
+    orderId: text("order_id")
+      .notNull()
+      .references(() => erpOrders.id),
+    orderedSkuId: text("ordered_sku_id")
+      .notNull()
+      .references(() => products.id),
+    scannedSkuId: text("scanned_sku_id")
+      .notNull()
+      .references(() => products.id),
+    /** product | size. */
+    mismatch: text("mismatch").notNull(),
+    reason: text("reason").notNull(),
+    /** Pending | Approved | Declined | Used. */
+    status: text("status").notNull().default("Pending"),
+    requestedById: text("requested_by_id").references(() => users.id),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+    decidedById: text("decided_by_id").references(() => users.id),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    decisionNote: text("decision_note"),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("erp_dispatch_overrides_open_key").on(t.unitId, t.orderId).where(sql`${t.status} in ('Pending', 'Approved')`),
+    check("erp_dispatch_overrides_status_check", sql`${t.status} in ('Pending', 'Approved', 'Declined', 'Used')`),
+  ],
+);
+
 /* ---- ERP phase 5: logistics, requests, follow-up, petty cash, videos (spec §12–§13) ---- */
 
 /** One per bill (order number), written when its first detail line is dispatch-verified. */

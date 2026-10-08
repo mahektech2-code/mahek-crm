@@ -142,6 +142,10 @@ export const ERP_GROUPS: ErpGroup[] = [
         v("fgStock", "Finished goods", { key: "fgLog", label: "Show every entry", back: "Show available stock" }),
         v("packStock", "Packed", { key: "packLog", label: "Show every entry", back: "Show available stock" }),
       ]),
+      s("units", "boxes", "Boxes & labels", "Every box a packing batch made and every labelled loose can, by its own id: where it is, whether it has gone, and its label. Print labels for one box, a selection or a whole batch.", true, [
+        v("units", "In stock & at dispatch"),
+        v("allUnits", "Every box"),
+      ]),
       s("transfers", "transfers", "Item transfers", "Stock moved between godowns, including write-offs to Item Lost Record.", true),
       s("rmLevels", "rm-levels", "Raw-material levels", "Minimum and maximum per godown. Raise a requisition from any item below its minimum.", true, [
         v("reorderRm", "Below minimum"),
@@ -167,6 +171,15 @@ export const ERP_GROUPS: ErpGroup[] = [
         v("orders", "All lines"),
         v("orderInbox", "WhatsApp inbox"),
       ]),
+      s("dispatch", "dispatch", "Dispatch desk", "Scan every box onto its order before the lorry leaves. A box of the wrong product or pack size is stopped, and goes only on an override somebody else approved.", true),
+    ],
+  },
+  {
+    id: "trace",
+    label: "Traceability",
+    icon: "refresh",
+    screens: [
+      s("trace", "trace", "Traceability", "Any box id, lot, batch, order or bill: where it came from and where it went. Today's production and dispatch, and what needs attention.", true),
     ],
   },
   {

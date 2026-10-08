@@ -26,6 +26,7 @@ import { godownIdByName, godownOptions, inTx, materials, pair, refuse, today, ty
 import { requisitionForm } from "./purchase-flow";
 import { departmentForCategory, requirementDepartmentsFor } from "../departments";
 import { levelSuggestions } from "../suggest";
+import { moveUnitsForTransfer, trimLooseUnits } from "../units";
 import type { LevelSuggestion } from "../engines/production";
 
 /* ---------------------------------------------------------------------------
@@ -202,6 +203,12 @@ const transfers: ScreenModule = {
           .values({ id, transferDate: text(h.date) ?? today(), itemType: type, fromGodownId: fromId, toGodownId: toId, itemId: src.itemId, itemName: item, lotNo: lot, quantity: qty, remark: text(h.remark), createdById: ctx.user.id })
           .returning();
         await postTransferIn(tx, t);
+        /* The boxes and labelled cans go with the stock: the lowest-numbered still on the shelf. */
+        if (type === "FG Packing" || type === "Finish Goods") {
+          const moved = await moveUnitsForTransfer(tx, { lotFrom: type === "FG Packing" ? "pack" : "fg", lotCode: lot, fromGodownId: fromId, toGodownId: toId, qty, lost: !!toG?.reserved, transferId: id, byId: ctx.user.id });
+          if (type === "Finish Goods" && moved < Math.floor(qty))
+            await trimLooseUnits(tx, { lotCode: lot, finishedGoodId: src.itemId, godownId: fromId, ledgerStock: src.stock - qty, byId: ctx.user.id, why: `Transfer ${id}` });
+        }
         return okVoid(toG?.reserved ? `${nf(qty)} of ${item} written off` : `Transferred ${nf(qty)} of ${item} to ${toG?.name}`);
       });
       if (!res.ok) return res;

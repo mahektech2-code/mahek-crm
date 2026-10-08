@@ -92,7 +92,7 @@ before(async () => {
     truncate users, erp_raw_materials, erp_suppliers, erp_inward, erp_tests, erp_purchases, erp_rm_entries,
              erp_sfg_lines, erp_sfg_entries, erp_fg_fills, erp_fg_entries, erp_pack_lines, erp_pack_entries,
              erp_transfers, erp_rm_levels, erp_fg_levels, erp_requisitions, erp_user_powers, erp_godown_staff,
-             erp_user_settings, audit_log restart identity cascade`);
+             erp_user_settings, erp_sfg_qc, erp_units, erp_unit_events, audit_log restart identity cascade`);
   await db.execute(sql`update erp_series set last = 0`);
   admin = await makeUser("Kavita Admin", "admin");
   clerk = await makeUser("Deepa Clerk", "associate");
@@ -158,6 +158,22 @@ describe("semi-finished", () => {
 });
 
 describe("filling", () => {
+  test("an SFG lot is filled only once QC approves it, and only the QC approver decides", async () => {
+    const base = { date: TODAY, godown: "Bhiwandi", sfg: SFG, sfgLot: "1ASTOL1", fg: FG, size: "5", canUse: "Tin can 5L", cans: "1" };
+    assert.equal(fieldMsg(await mod("fgFill").forms!.new(await as(admin), base, [])), "SFG lot 1ASTOL1 is waiting for QC approval.");
+    const form = await mod("fgFill").load(await as(admin));
+    const lotField = form.spec.newForm!.header.find((f) => f.k === "sfgLot")!;
+    assert.deepEqual(Object.values(lotField.optsBy!.map).flat(), [], "a lot waiting for QC is not offered");
+    const [line] = await db.select().from(erpSfgLines);
+    const refused = await mod("sfgBatches").actions!.qcApprove(await as(clerk), line.id, {});
+    assert.equal(refused.ok, false, "a clerk without the QC power cannot approve");
+    assert.equal(fieldMsg(await mod("sfgBatches").actions!.qcReject(await as(admin), line.id, {})), "Say why the lot failed QC");
+    const ok = await mod("sfgBatches").actions!.qcApprove(await as(admin), line.id, { note: "Viscosity 18 s, clear" });
+    assert.ok(ok.ok, JSON.stringify(ok));
+    const after = await mod("fgFill").load(await as(admin));
+    assert.deepEqual(Object.values(after.spec.newForm!.header.find((f) => f.k === "sfgLot")!.optsBy!.map).flat(), ["1ASTOL1"]);
+  });
+
   test("each failed check says its own thing (A-11)", async () => {
     const ctx = await as(admin);
     const base = { date: TODAY, godown: "Bhiwandi", sfg: SFG, sfgLot: "1ASTOL1", fg: FG, size: "5", canUse: "Tin can 5L" };
@@ -199,6 +215,9 @@ describe("packing", () => {
     assert.ok(more.ok, JSON.stringify(more));
     const packs = await packLots();
     assert.deepEqual(packs.map((p) => [p.batchNo, p.stock]), [["FP1BH", 10]]);
+    const boxes = (await db.execute(sql`select id, seq, status, cans from erp_units where lot_code = 'FP1BH' order by seq`)) as unknown as { id: string; seq: number; status: string; cans: number }[];
+    assert.equal(boxes.length, 10, "a complete batch mints one box id per box");
+    assert.ok(boxes.every((b) => b.status === "available" && Number(b.cans) === 4 && /^BX-\d{6}-\d{6}$/.test(b.id)));
     assert.equal((await fgLots()).find((l) => l.lotCode === "FG2BH")?.stock, 2);
 
     const over = await mod("packBatches").forms!.more(ctx, { date: TODAY, godown: "Bhiwandi", fg: FG, sku: BOXED, boxes: "10", lot: "FG2BH", serialFixed: "1", cans: "1" }, []);
@@ -217,6 +236,8 @@ describe("transfers", () => {
     assert.ok(ok.ok, JSON.stringify(ok));
     const packs = await packLots();
     assert.deepEqual(packs.map((p) => [p.godown, p.stock]).sort(), [["Ambernath", 3], ["Bhiwandi", 7]]);
+    const where = (await db.execute(sql`select g.name as godown, count(*)::int as n from erp_units u join erp_godowns g on g.id = u.godown_id where u.lot_code = 'FP1BH' group by 1 order by 1`)) as unknown as { godown: string; n: number }[];
+    assert.deepEqual(where.map((w) => [w.godown, Number(w.n)]), [["Ambernath", 3], ["Bhiwandi", 7]], "the boxes go with the stock");
   });
 
   test("writing stock off needs the lost-stock power", async () => {

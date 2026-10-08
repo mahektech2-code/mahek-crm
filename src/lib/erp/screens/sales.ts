@@ -43,6 +43,8 @@ import { erpOrdersLive, orderNosOf, syncBookOrders } from "../book";
 import { erpLink } from "../registry";
 import { issuedCreditNotes } from "./complaints";
 import { godownIdByName, godownOptions, has, inTx, refuse, today, type Col } from "./common";
+import { markDispatched, scanGateFor, scannedOnAllocation } from "../dispatch";
+import { erpLabelsHref, erpTraceHref } from "../trace-links";
 import { loadCustomers, partyStatus, type CustomerRow } from "./masters";
 
 /* ---------------------------------------------------------------------------
@@ -489,6 +491,8 @@ function orderList(scope: Scope): ScreenModule {
                 { id: "more", l: "ADD More", loadsForm: true },
                 { id: "select", l: "Select Order Number", href: erpLink(scope, { f: (byNo.get(l.o.orderNo) ?? []).join(","), fl: `Order ${l.o.orderNo}` }) },
                 { id: "customer", l: "View customer", href: `/erp/customers?open=${l.billing.id}` },
+                ...(l.o.status === "Ready" && !l.dispatched ? [{ id: "scan", l: "Scan boxes at dispatch", href: `/erp/dispatch?order=${l.o.orderNo}` } as ActionSpec] : []),
+                { id: "trace", l: "Trace this order", href: erpTraceHref(`ORDER-${l.o.orderNo}`) },
                 {
                   id: "delete",
                   l: "Delete",
@@ -903,6 +907,8 @@ const batchCodes: ScreenModule = {
         /* A-18: this row's own quantity is not counted against it. */
         const [{ others }] = (await tx.execute(sql`select coalesce(sum(quantity), 0)::float8 as others from erp_batch_codes where order_id = ${b.orderId} and id <> ${id}`)) as unknown as { others: number }[];
         const required = allocationTarget(l.boxed, l.boxes, l.o.qtyCans) - Number(others);
+        const onIt = await scannedOnAllocation(b.orderId, b.lotCode);
+        if (qty < onIt) return refuse(fieldErr("qty", `${onIt} scanned box${onIt === 1 ? " is" : "es are"} on this lot; take them off at the Dispatch desk first`));
         if (qty > required + 1e-9 || qty > stock + b.quantity + 1e-9) return refuse(fieldErr("qty", "Invalid Quantity Or Wait For Synchronization"));
         await tx.update(erpBatchCodes).set({ quantity: qty }).where(eq(erpBatchCodes.id, id));
         await erpAudit(ctx, "erp.batchCode.qty", "erp_batch_code", id, { quantity: b.quantity }, { quantity: qty });
@@ -917,6 +923,8 @@ const batchCodes: ScreenModule = {
       /* A billed line was billed on these lots. Taking one away would leave a
          bill for goods no longer set aside, so billing is undone first. */
       if (d) return err("The line is billed. Undo its billing first.", "rule_violation");
+      const onIt = await scannedOnAllocation(b.orderId, b.lotCode);
+      if (onIt) return err(`${onIt} box${onIt === 1 ? " is" : "es are"} scanned against this lot; take ${onIt === 1 ? "it" : "them"} off at the Dispatch desk first.`, "rule_violation");
       await db.delete(erpBatchCodes).where(eq(erpBatchCodes.id, id));
       await erpAudit(ctx, "erp.batchCode.release", "erp_batch_code", id, b, null);
       return okVoid(`${nf(b.quantity)} back in ${b.lotCode}`);
@@ -1012,6 +1020,7 @@ const orderDetails: ScreenModule = {
     const targets = new Map(targetRows.map((x) => [`${x.c}|${monthId(`${x.y}-${String(x.m).padStart(2, "0")}-01`)}`, Number(x.t)]));
     const byNo = new Map<number, string[]>();
     rows.forEach((r) => byNo.set(r.l.o.orderNo, [...(byNo.get(r.l.o.orderNo) ?? []), r.l.o.id]));
+    const gates = await scanGateFor(db, rows.filter((r) => r.d.verification !== "Verified").map((r) => r.l.o.id));
     const all: Col[] = [
       { k: "follow", l: "Transport follow-up", t: "t" },
       { k: "date", l: "Order date", t: "d" },
@@ -1066,14 +1075,16 @@ const orderDetails: ScreenModule = {
           const target = r.monthId ? (targets.get(`${l.o.billingCustomerId}|${r.monthId}`) ?? null) : null;
           const flags: string[] = [];
           if (!d.verification || d.verification === "Pending") flags.push("notVerified");
+          const gate = gates.get(l.o.id) ?? null;
+          if (gate) flags.push("toScan");
           if (r.monthId && targetReached(monthSale, target)) flags.push("targetReached");
           const verifiable = (!d.verification || d.verification === "Pending") && l.allocations > 0 && l.allocation === "Done";
           const actions: ActionSpec[] = [
             {
               id: "verify",
               l: d.verification === "Verified" ? "Verified" : "Do Verified",
-              primary: verifiable,
-              why: d.verification === "Verified" ? "Already verified" : !l.allocations ? "No lot is allocated to this line" : l.allocation !== "Done" ? `Allocation: ${l.allocation}` : "",
+              primary: verifiable && !gate,
+              why: d.verification === "Verified" ? "Already verified" : !l.allocations ? "No lot is allocated to this line" : l.allocation !== "Done" ? `Allocation: ${l.allocation}` : gate ? `Boxes to scan: ${gate}` : "",
               prompt: { title: "Dispatch date", sub: `Order ${l.o.orderNo} · ${l.sku.name}`, submit: "Verify", fields: [{ k: "date", l: "Dispatch date", t: "date", req: true }], init: { date: today() } },
             },
             ...(ctx.administrator && d.verification !== "Not Verify" ? [{ id: "notVerify", l: "Not Verify", confirm: "Mark this line Not Verify?" } as ActionSpec] : []),
@@ -1086,6 +1097,9 @@ const orderDetails: ScreenModule = {
             { id: "gst", l: "Change GST", why: d.verification === "Verified" ? "The line has been dispatch-verified" : "", prompt: { title: "GST", submit: "Save", fields: [{ k: "gst", l: "GST", t: "select", req: true, opts: ["18%", "0%"] }], init: { gst: d.gstBp ? "18%" : "0%" } } },
             { id: "select", l: "Select Order Number", href: erpLink("orderDetails", { f: (byNo.get(l.o.orderNo) ?? []).join(","), fl: `Order ${l.o.orderNo}` }) },
             { id: "view", l: "View order", href: erpLink("orders", { open: l.o.id }) },
+            { id: "scan", l: gate ? "Scan its boxes" : "Dispatch desk", primary: !!gate, href: `/erp/dispatch?order=${l.o.orderNo}` },
+            { id: "stickers", l: "Dispatch stickers", href: erpLabelsHref({ order: l.o.orderNo }) },
+            { id: "trace", l: "Trace this order", href: erpTraceHref(`ORDER-${l.o.orderNo}`) },
           ];
           const credit = l.billing.creditDays ?? null;
           return {
@@ -1191,16 +1205,25 @@ async function verify(ctx: ErpContext, ids: string[], values: Record<string, str
     return d.has(l.o.id) && (!v || v === "Pending") && l.allocations > 0 && l.allocation === "Done";
   });
   if (!ok.length) return err("Nothing to verify: a line needs its lots allocated in full and must not be verified already.", "rule_violation");
-  const earlier = ok.find((l) => date < l.o.orderDate);
+  /* A line whose lots carry box ids leaves only once every box on it has been scanned at the dispatch desk. */
+  const gates = await scanGateFor(db, ok.map((l) => l.o.id));
+  const unscanned = ok.filter((l) => gates.get(l.o.id));
+  if (unscanned.length === ok.length) {
+    const l = unscanned[0];
+    return err(`Scan the boxes first: order ${l.o.orderNo} · ${l.sku.name} has ${gates.get(l.o.id)} at the Dispatch desk.`, "rule_violation");
+  }
+  const go = ok.filter((l) => !gates.get(l.o.id));
+  const earlier = go.find((l) => date < l.o.orderDate);
   if (earlier) return fieldErr("date", `Order ${earlier.o.orderNo} was taken on ${fd(earlier.o.orderDate)}; it cannot leave before that`);
   await db.transaction(async (tx) => {
     await tx
       .update(erpOrderDetails)
       .set({ verification: "Verified", dispatchStatus: "Dispatched", dispatchedAt: new Date(), dispatchDate: date, updatedAt: new Date(), updatedById: ctx.user.id })
-      .where(inArray(erpOrderDetails.orderId, ok.map((l) => l.o.id)));
+      .where(inArray(erpOrderDetails.orderId, go.map((l) => l.o.id)));
+    await markDispatched(tx, go.map((l) => l.o.id), ctx.user.id, date);
     /* §18: a bill's first verified line opens its transport follow-up, once per
        order number — the unique index is what makes "once" hold. */
-    for (const l of ok)
+    for (const l of go)
       await tx
         .insert(erpTransports)
         .values({
@@ -1217,9 +1240,9 @@ async function verify(ctx: ErpContext, ids: string[], values: Record<string, str
         })
         .onConflictDoNothing();
   });
-  await erpAudit(ctx, "erp.detail.verify", "erp_order_detail", ok.map((l) => l.o.id).join(","), null, { dispatchDate: date });
-  await syncBookOrders([...new Set(ok.map((l) => l.o.orderNo))]);
-  return okVoid(ok.length < ids.length ? `${plural(ok.length)} verified · ${ids.length - ok.length} not ready to verify` : `${plural(ok.length)} verified and dispatched`);
+  await erpAudit(ctx, "erp.detail.verify", "erp_order_detail", go.map((l) => l.o.id).join(","), null, { dispatchDate: date });
+  await syncBookOrders([...new Set(go.map((l) => l.o.orderNo))]);
+  return okVoid(go.length < ids.length ? `${plural(go.length)} verified · ${ids.length - go.length} not ready to verify${unscanned.length ? ` (${unscanned.length} still to scan)` : ""}` : `${plural(go.length)} verified and dispatched`);
 }
 
 async function extra(ctx: ErpContext, ids: string[], values: Record<string, string>): Promise<Result<unknown>> {

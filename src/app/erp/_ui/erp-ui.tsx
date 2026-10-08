@@ -88,6 +88,9 @@ export function ErpUiProvider({
         /* An action may answer like a tool does: "Send to vendor" hands back the PO written out. */
         const dialog = (res.data as ToolResult | undefined)?.dialog;
         if (dialog && screen) setResultDialog({ screen, d: dialog });
+        /* …or send the person on: "Print labels" over a selection opens the sheet. */
+        const navigate = (res.data as ToolResult | undefined)?.navigate;
+        if (navigate) router.push(navigate);
       } else {
         toast(res.error, "error");
       }

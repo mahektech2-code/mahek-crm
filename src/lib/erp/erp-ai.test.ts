@@ -79,7 +79,7 @@ before(async () => {
     truncate users, customers, erp_customer_profiles, erp_raw_materials, erp_suppliers, erp_inward, erp_tests, erp_purchases, erp_rm_entries,
              erp_sfg_lines, erp_sfg_entries, erp_fg_fills, erp_fg_entries, erp_pack_lines, erp_pack_entries, erp_transfers,
              erp_rm_levels, erp_fg_levels, erp_orders, erp_batch_codes, erp_order_details, erp_transports, erp_requests,
-             erp_followups, erp_credits, erp_expenses, erp_alerts, erp_user_powers, erp_godown_staff, erp_user_settings,
+             erp_followups, erp_credits, erp_expenses, erp_alerts, erp_user_powers, erp_godown_staff, erp_user_settings, erp_sfg_qc, erp_units, erp_unit_events,
              audit_log restart identity cascade`);
   await db.execute(sql`update erp_series set last = 0`);
   admin = await makeUser("Kavita Admin", "admin");
@@ -113,6 +113,8 @@ before(async () => {
 
   /* The whole chain, through the real handlers: SFG → fill → three orders dispatched on one bill. */
   await ok(mod("sfgBatches").forms!.new(a, { date: ago(15), godown: "Bhiwandi", product: SFG, batches: "1" }, [{ item: "Toluene", lot: "ASTOL1", qty: "200" }]));
+  const [sfgLine] = await db.execute(sql`select id from erp_sfg_lines limit 1`) as unknown as { id: string }[];
+  await ok(mod("sfgBatches").actions!.qcApprove(a, sfgLine.id, {}));
   await ok(mod("fgFill").forms!.new(a, { date: ago(14), godown: "Bhiwandi", sfg: SFG, sfgLot: "1ASTOL1", fg: FG, size: "1", canUse: "Tin can 1L", cans: "150" }, []));
   for (const [i, qty] of [10, 11, 12].entries()) {
     await ok(mod("orders").forms!.new(a, { date: ago(10 - i), godown: "Bhiwandi", billing: "Shree Paints" }, [{ sku: SKU, qty: String(qty), rate: "300" }]));

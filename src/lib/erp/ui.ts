@@ -304,6 +304,7 @@ export const ST_TONE: Record<string, Tone> = {
   "Partly received": "warn", "Closed short": "muted", Closed: "muted", Cancelled: "muted",
   "Direct purchase": "neutral", Quotation: "info", "Pending approval": "warn", Approved: "success",
   Sent: "info", Selected: "success", "Not selected": "muted",
+  "In stock": "success", "Scanned for dispatch": "brand", "On hold": "warn", Returned: "info", "Written off": "danger",
 };
 
 /** Named row states (the source's format rules), and how each is labelled. */
@@ -348,6 +349,12 @@ export const FLAG: Record<string, [string, Tone]> = {
   quoteExpired: ["Quotation expired", "muted"],
   awaitingApproval: ["Awaiting approval", "warn"],
   deliveryLate: ["Delivery overdue", "danger"],
+  qcPending: ["Waiting for SFG QC", "warn"],
+  qcRejected: ["Failed SFG QC", "danger"],
+  toScan: ["Boxes still to scan", "warn"],
+  unitHold: ["Box on hold", "warn"],
+  unlabelled: ["Label not printed", "neutral"],
+  mismatch: ["Override used", "danger"],
 };
 
 /* -------------------------------------------------------------- formatting */

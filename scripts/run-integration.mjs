@@ -56,6 +56,9 @@ const files = [
   // Purchase and production, department by department.
   "src/lib/erp/erp-departments.test.ts",
   "src/lib/erp/erp-production.test.ts",
+  // SFG QC → refill → box ids → the dispatch desk's scan, override and
+  // Do Verified → tracing a box, a lot and an order both ways.
+  "src/lib/erp/erp-traceability.test.ts",
   "src/lib/erp/erp-sales.test.ts",
   "src/lib/erp/erp-logistics.test.ts",
   "src/lib/erp/erp-book.test.ts",
