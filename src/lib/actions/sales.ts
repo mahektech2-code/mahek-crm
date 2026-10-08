@@ -39,7 +39,6 @@ import { getConfig, updateSettings } from "@/lib/config/store";
 import { bindAttachments, createAttachment } from "@/lib/services/attachment-service";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import {
-  fieldBook,
   LEAD_BULK_CAP,
   leadIdsMatching,
   leadsInScope,
