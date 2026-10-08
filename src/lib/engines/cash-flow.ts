@@ -40,7 +40,7 @@ function parse(iso: string): number {
 export function addDays(iso: string, days: number): string {
   const d = new Date(parse(iso));
   d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
 }
 
 export function daysBetween(from: string, to: string): number {

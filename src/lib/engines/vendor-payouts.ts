@@ -49,7 +49,7 @@ function parse(iso: string): Date {
 }
 
 function fmt(d: Date): string {
-  return d.toISOString().slice(0, 10);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
 }
 
 export function addDays(iso: string, days: number): string {
