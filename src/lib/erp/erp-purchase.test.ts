@@ -117,9 +117,9 @@ const flowLine: Record<string, string> = {};
 
 describe("the purchase flow up to the PO", () => {
   const raise = async (item: string, type: string, qty: string) =>
-    mod("requisitions").forms!.new(await as(clerk), { date: TODAY, requiredBy: "2026-09-30", department: "Production", godown: "Bhiwandi", type, item, required: qty, priority: "Medium" }, []);
+    mod("requisitions").forms!.new(await as(clerk), { date: TODAY, requiredBy: "2026-09-30", department: "Production Head", godown: "Bhiwandi", type, item, required: qty, priority: "Medium" }, []);
   /* The flow's own requirements; fixtures elsewhere raise others for the same items. */
-  const req = async (item: string) => (await db.select().from(erpRequisitions).where(sql`raw_material_id = ${item} and purchase_rule is not null and department = 'Production' and required_by = '2026-09-30'`))[0];
+  const req = async (item: string) => (await db.select().from(erpRequisitions).where(sql`raw_material_id = ${item} and purchase_rule is not null and department = 'Production Head' and required_by = '2026-09-30'`))[0];
   const stage = async (item: string) => {
     const { rows } = await mod("requisitions").load(await as(admin));
     return rows.find((r) => r.v.item === item)?.v.stage;
@@ -141,9 +141,9 @@ describe("the purchase flow up to the PO", () => {
 
   test("a requirement needs its date and department; finished goods are never bought", async () => {
     const c = await as(clerk);
-    const noDate = await mod("requisitions").forms!.new(c, { date: TODAY, department: "Production", godown: "Bhiwandi", type: "Chemical", item: "MEK", required: "1", priority: "Medium" }, []);
+    const noDate = await mod("requisitions").forms!.new(c, { date: TODAY, department: "Production Head", godown: "Bhiwandi", type: "Chemical", item: "MEK", required: "1", priority: "Medium" }, []);
     assert.ok(!noDate.ok && noDate.fieldErrors?.[0].field === "requiredBy");
-    const fg = await mod("requisitions").forms!.new(c, { date: TODAY, requiredBy: TODAY, department: "Production", godown: "Bhiwandi", type: "Finish Good", item: "MEK", required: "1", priority: "Medium" }, []);
+    const fg = await mod("requisitions").forms!.new(c, { date: TODAY, requiredBy: TODAY, department: "Production Head", godown: "Bhiwandi", type: "Finish Good", item: "MEK", required: "1", priority: "Medium" }, []);
     assert.ok(!fg.ok && fg.fieldErrors?.[0].field === "type");
   });
 
@@ -563,8 +563,8 @@ describe("net quantity off the scale", () => {
 
 describe("after the PO: sending back, cancelling, closing short", () => {
   const raiseMek = async () =>
-    mod("requisitions").forms!.new(await as(admin), { date: TODAY, requiredBy: "2026-10-30", department: "Quality", godown: "Bhiwandi", type: "Chemical", item: "MEK", required: "50", priority: "Urgent" }, []);
-  const openMek = async () => (await db.select().from(erpRequisitions).where(sql`raw_material_id = 'rm_mek' and status = 'Pending' and department = 'Quality'`))[0];
+    mod("requisitions").forms!.new(await as(admin), { date: TODAY, requiredBy: "2026-10-30", department: "Production Head", godown: "Bhiwandi", type: "Chemical", item: "MEK", required: "50", priority: "Urgent" }, []);
+  const openMek = async () => (await db.select().from(erpRequisitions).where(sql`raw_material_id = 'rm_mek' and status = 'Pending' and required_by = '2026-10-30'`))[0];
   const raisePo = async (reqId: string) => {
     const a = await as(admin);
     const f = (await mod("requisitions").formLoaders!.createPo(a, reqId))!;
@@ -632,7 +632,7 @@ describe("after the PO: sending back, cancelling, closing short", () => {
 });
 
 describe("one requirement, many items", () => {
-  const head = { date: TODAY, requiredBy: "2026-12-01", department: "Quality", godown: "Bhiwandi", priority: "For Stock", remarks: "Monthly stock-up" };
+  const head = { date: TODAY, requiredBy: "2026-12-01", department: "Production Head", godown: "Bhiwandi", priority: "For Stock", remarks: "Monthly stock-up" };
   const rowsOf = async (reqNo: number) =>
     db.select().from(erpRequisitions).where(sql`req_no = ${reqNo}`).orderBy(erpRequisitions.rawMaterialId);
 
@@ -650,9 +650,9 @@ describe("one requirement, many items", () => {
     assert.deepEqual(
       rows.map((x) => [x.rawMaterialId, x.requiredQty, x.unit, x.priority, x.remarks, x.department]),
       [
-        ["rm_can", 900, "Pcs", "For Stock", "Monthly stock-up", "Quality"],
-        ["rm_mek", 120.5, "Kg", "For Stock", "Monthly stock-up", "Quality"],
-        ["rm_tol", 400, "Litre", "For Stock", "Monthly stock-up", "Quality"],
+        ["rm_can", 900, "Pcs", "For Stock", "Monthly stock-up", "Production Head"],
+        ["rm_mek", 120.5, "Kg", "For Stock", "Monthly stock-up", "Production Head"],
+        ["rm_tol", 400, "Litre", "For Stock", "Monthly stock-up", "Production Head"],
       ],
       "the blank row is dropped; the header travels to every item",
     );
@@ -684,7 +684,7 @@ describe("one requirement, many items", () => {
     const form = (await mod("requisitions").load(await as(admin))).spec.newForm!;
     assert.equal(form.lineLayout, "table");
     assert.deepEqual(form.line!.map((f) => f.k), ["item", "stock", "required", "unit", "rule"]);
-    assert.ok(form.line!.find((f) => f.k === "item")!.optsBy!.map.Quality.includes("Toluene"));
+    assert.ok(form.line!.find((f) => f.k === "item")!.optsBy!.map["Production Head"].includes("Toluene"));
     assert.equal((form.data!.ruleShortOf as Record<string, string>).Toluene, "Quotations");
   });
 });
