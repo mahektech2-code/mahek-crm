@@ -60,7 +60,9 @@ export type ParentType =
   /** Training material — a slide deck, a product sheet, a safety brief. */
   | "mbos_course"
   /** A price list somebody uploaded to be parsed: the PDF, scan or photograph itself. */
-  | "price_list_document";
+  | "price_list_document"
+  /** A supplier's invoice on a vendor payout — one file per invoice row. */
+  | "vendor_payout_invoice";
 
 export type AttachmentView = {
   id: string;
@@ -90,6 +92,7 @@ export async function limitFor(parentType: ParentType): Promise<number> {
     case "mbos_document":
     case "mbos_course":
     case "price_list_document":
+    case "vendor_payout_invoice":
       /* A document IS its file. Two would make "open the price list"
        * ambiguous on a handset, and the row carries one `attachment_id`
        * anyway — a second could never be found. */
@@ -341,6 +344,14 @@ export async function canRead(attachmentId: string): Promise<boolean> {
   if (row.parentType.startsWith("hrms_")) {
     const { canReadHrmsAttachment } = await import("@/lib/hrms/attachments");
     return canReadHrmsAttachment(row.parentType, row.parentId);
+  }
+
+  /* A vendor's invoice has no customer behind it: whoever holds Accounts →
+     Vendor payouts may open it, and nobody else. */
+  if (row.parentType === "vendor_payout_invoice") {
+    const ctx = await resolveScope();
+    const { canReadPayoutInvoice } = await import("@/lib/services/vendor-payout-service");
+    return canReadPayoutInvoice(ctx.user.id);
   }
 
   if (row.parentType === "price_list_document") {

@@ -641,6 +641,9 @@ export const attachmentParentEnum = pgEnum("attachment_parent", [
   "hrms_asset",
   "hrms_document",
   "hrms_journey",
+  /** A vendor's invoice (proforma, tax invoice, debit note…) on a payout. Read
+      by whoever holds Accounts → Vendor payouts. */
+  "vendor_payout_invoice",
 ]);
 
 /**
@@ -13784,3 +13787,88 @@ export type HireOffer = typeof hireOffers.$inferSelect;
 export type HireDocument = typeof hireDocuments.$inferSelect;
 export type HireMessage = typeof hireMessages.$inferSelect;
 export type HireAiTask = typeof hireAiTasks.$inferSelect;
+
+/* ---------------------------------------------------------------------------
+ * VENDOR PAYOUTS — what Mahek owes its suppliers and the day it will be paid.
+ *
+ * Payments go out on the payment days (`payments.vendorPayoutDays`, Tuesday to
+ * Friday by default, IST). `due_date` is when the money is OWED (purchase date
+ * plus the supplier's credit days); `pay_on` is the payment day it is planned
+ * for. A purchase payout is rebuilt from the ERP purchase register — one per
+ * supplier per PR number, keyed `purchase_key` — and keeps a date a person
+ * chose (`pay_on_decided_at`). A manual payout is anything else accounts pay.
+ * Rules: `lib/engines/vendor-payouts.ts`. Data: `services/vendor-payout-service.ts`.
+ * ------------------------------------------------------------------------- */
+export const vendorPayouts = pgTable(
+  "vendor_payouts",
+  {
+    id: text("id").primaryKey(),
+    /** purchase | manual. */
+    source: text("source").notNull(),
+    /** `<supplier id>|<PR number>` — set exactly when source = purchase. */
+    purchaseKey: text("purchase_key"),
+    prNumber: integer("pr_number"),
+    supplierId: text("supplier_id").references(() => erpSuppliers.id),
+    /** The supplier's name as it stood, or whoever a manual payout is to. */
+    payeeName: text("payee_name").notNull(),
+    description: text("description"),
+    /** The supplier's bill number(s), or a manual payout's reference. */
+    reference: text("reference"),
+    poId: text("po_id").references(() => erpPurchaseOrders.id),
+    purchaseDate: date("purchase_date"),
+    amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+    dueDate: date("due_date").notNull(),
+    payOn: date("pay_on").notNull(),
+    /** A person chose `pay_on`; the register sync leaves it alone from then on. */
+    payOnDecidedAt: timestamp("pay_on_decided_at", { withTimezone: true }),
+    /** open | on_hold | paid | cancelled. */
+    status: text("status").notNull().default("open"),
+    holdReason: text("hold_reason"),
+    paidOn: date("paid_on"),
+    paidAmountPaise: bigint("paid_amount_paise", { mode: "number" }),
+    paymentMode: text("payment_mode"),
+    paymentReference: text("payment_reference"),
+    paidById: text("paid_by_id").references(() => users.id),
+    cancelReason: text("cancel_reason"),
+    notes: text("notes"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [
+    uniqueIndex("vendor_payouts_purchase_key").on(t.purchaseKey),
+    index("vendor_payouts_pay_on_idx").on(t.status, t.payOn),
+    check("vendor_payouts_source_check", sql`${t.source} in ('purchase', 'manual')`),
+    check("vendor_payouts_status_check", sql`${t.status} in ('open', 'on_hold', 'paid', 'cancelled')`),
+    check(
+      "vendor_payouts_amount_check",
+      sql`${t.amountPaise} >= 0 and (${t.paidAmountPaise} is null or ${t.paidAmountPaise} >= 0)`,
+    ),
+    check("vendor_payouts_purchase_key_check", sql`(${t.source} = 'purchase') = (${t.purchaseKey} is not null)`),
+  ],
+);
+
+/** One invoice on a payout — a proforma, the tax invoice, a debit note — with the file it came as. */
+export const vendorPayoutInvoices = pgTable(
+  "vendor_payout_invoices",
+  {
+    id: text("id").primaryKey(),
+    payoutId: text("payout_id")
+      .notNull()
+      .references(() => vendorPayouts.id, { onDelete: "cascade" }),
+    /** "Proforma invoice", "Tax invoice", … or whatever somebody typed. */
+    kind: text("kind").notNull(),
+    invoiceNo: text("invoice_no"),
+    invoiceDate: date("invoice_date"),
+    amountPaise: bigint("amount_paise", { mode: "number" }),
+    attachmentId: text("attachment_id").references(() => attachments.id),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    index("vendor_payout_invoices_payout_idx").on(t.payoutId),
+    check("vendor_payout_invoices_amount_check", sql`${t.amountPaise} is null or ${t.amountPaise} >= 0`),
+  ],
+);

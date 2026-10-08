@@ -557,6 +557,12 @@ export const APP_MODULES: AppModule[] = [
     "What each customer still owes, and the bills behind it.",
   ),
   accounts("bills", "Bills", "Money"),
+  accounts(
+    "payouts",
+    "Vendor payouts",
+    "Money",
+    "What Mahek owes its suppliers and the payment day each is planned for — the ERP purchase register's purchases, and anything else added by hand, with their invoices.",
+  ),
   /*
    * The CRM's WhatsApp screen, opened from the ledger desk. It reads the same
    * conversations through the Accounts scope, which is every book — a

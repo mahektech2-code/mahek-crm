@@ -26,7 +26,8 @@ export type AccountsIconName =
   | "close"
   | "clock"
   | "check"
-  | "chat";
+  | "chat"
+  | "payout";
 
 const PATHS: Record<AccountsIconName, React.ReactNode> = {
   today: (
@@ -51,6 +52,12 @@ const PATHS: Record<AccountsIconName, React.ReactNode> = {
     </>
   ),
   plus: <path d="M12 5v14M5 12h14" />,
+  payout: (
+    <>
+      <rect x="3" y="5" width="18" height="16" rx="2" />
+      <path d="M3 10h18M8 3v4M16 3v4M12 13v5M10 16l2 2 2-2" />
+    </>
+  ),
   chat: <path d="M21 11.5a8.4 8.4 0 0 1-12.3 7.5L3 20.5l1.6-5.4A8.4 8.4 0 1 1 21 11.5z" />,
   bill: (
     <>
