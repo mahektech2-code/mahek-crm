@@ -2095,6 +2095,15 @@ scan, refused ones included, is a row in `erp_dispatch_scans`. Scanning works
 on a Ready line; the allocation may change by scan before dispatch, never
 after.
 
+**READY MEANS THE STOCK IS ON THE SHELF, AND THE SCAN ALLOCATES IT.** Ready
+(the button, the bulk action and the edit form alike) is refused unless the
+line's godown holds the boxes — or, for a loose SKU, the cans — it still needs,
+net of what lines already Ready and not yet allocated will take
+(`readyStockCheck` in `engines/sales.ts`, pure); a bulk Ready marks the lines
+that pass and names the rest. "Allocate a lot" is gone from the Orders lists:
+scanning at the dispatch desk allocates, and the desk keeps "Allocate a lot by
+hand" only for stock packed before box labels, which has nothing to scan.
+
 **A MISMATCH GOES ONLY ON AN OVERRIDE SOMEBODY ELSE APPROVED.**
 `erp_dispatch_overrides`: the reason in a sentence, who asked, and a decision
 by a holder of `dispatchOverride` who is not the asker (an ERP administrator

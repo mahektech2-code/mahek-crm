@@ -14,6 +14,7 @@ import {
   orderType,
   standingInstructions,
   targetReached,
+  readyStockCheck,
 } from "./sales";
 
 test("a line's type comes from the SKU's box type", () => {
@@ -67,4 +68,22 @@ test("standing instructions and the target flag (A-20)", () => {
   assert.equal(targetReached(100, 100), true);
   assert.equal(targetReached(100, null), false);
   assert.equal(targetReached(100, 0), false);
+});
+
+test("Ready needs the stock on the shelf, net of lines already Ready", () => {
+  const free = new Map([["sku1|g1", 5]]);
+  const ready = new Map([["sku1|g1", 2]]);
+  const [a, b, c] = readyStockCheck(
+    [
+      { id: "a", key: "sku1|g1", need: 2 },
+      { id: "b", key: "sku1|g1", need: 2 },
+      { id: "c", key: "sku2|g1", need: 1 },
+    ],
+    free,
+    ready,
+  );
+  assert.deepEqual([a.ok, a.free], [true, 3]);
+  assert.deepEqual([b.ok, b.free], [false, 1]);
+  assert.deepEqual([c.ok, c.free], [false, 0]);
+  assert.equal(readyStockCheck([{ id: "z", key: "x", need: 0 }], new Map(), new Map())[0].ok, true);
 });

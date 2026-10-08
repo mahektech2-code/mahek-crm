@@ -92,6 +92,7 @@ export default async function ErpDispatch({ searchParams }: { searchParams: Prom
         canDecide={ctx.powers.has("dispatchOverride")}
         administrator={ctx.administrator}
         canVerify={ctx.screens.has("orderDetails")}
+        canAllocate={ctx.screens.has("orders")}
         today={today}
       />
     </Page>
