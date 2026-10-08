@@ -27,6 +27,8 @@ export const ERP_POWERS = [
   "approveParty",
   "decideRequests",
   "employeeAdmin",
+  "approveSfgQc",
+  "dispatchOverride",
 ] as const;
 
 export type ErpPower = (typeof ERP_POWERS)[number];
@@ -87,6 +89,14 @@ export const ERP_POWER_LABEL: Record<ErpPower, { label: string; source: string }
   employeeAdmin: {
     label: "Administer the ERP: godowns and ERP powers",
     source: "Registering godowns and their staff, and giving ERP powers on the Access dialog (admin in the source, who also kept the employee directory).",
+  },
+  approveSfgQc: {
+    label: "Approve or reject SFG QC",
+    source: "Decides an SFG lot's quality check. Only an Approved lot can be filled into cans or drums (new in MahekOne: Mahek Plus filled any lot).",
+  },
+  dispatchOverride: {
+    label: "Approve dispatch overrides; reject or return boxes",
+    source: "Lets a box whose product or pack size does not match the order go anyway, with a reason, and marks boxes rejected or returned. Nobody approves their own override request unless they are an ERP administrator.",
   },
 };
 

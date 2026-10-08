@@ -115,6 +115,17 @@ export async function erpNavCounts(ctx: ErpContext): Promise<Record<string, numb
         if (ctx.screens.has("expenses")) out.expenses = c.pendingExpenses.length;
       }),
     );
+  /* The dispatch desk's badge is overrides somebody is waiting on; Boxes' is boxes on the shelf with no label yet; QC waiting sits on SFG batches beside incomplete packing. */
+  if (ctx.screens.has("dispatch") && ctx.powers.has("dispatchOverride"))
+    jobs.push((db.execute(sql`select count(*)::int as n from erp_dispatch_overrides where status = 'Pending'`) as unknown as Promise<{ n: number }[]>).then((r) => void (out.dispatch = Number(r[0]?.n ?? 0))));
+  if (ctx.screens.has("units"))
+    jobs.push((db.execute(sql`select count(*)::int as n from erp_units where status = 'available' and label_printed_at is null`) as unknown as Promise<{ n: number }[]>).then((r) => void (out.units = Number(r[0]?.n ?? 0))));
+  if (ctx.screens.has("sfgBatches") && ctx.powers.has("approveSfgQc"))
+    jobs.push(
+      (db.execute(sql`select count(distinct l.lot_code)::int as n from erp_sfg_lines l left join erp_sfg_qc q on q.lot_code = l.lot_code where coalesce(q.status, 'Pending') = 'Pending'`) as unknown as Promise<{ n: number }[]>).then(
+        (r) => void (out.sfgBatches = Number(r[0]?.n ?? 0)),
+      ),
+    );
   await Promise.all(jobs);
   return out;
 }

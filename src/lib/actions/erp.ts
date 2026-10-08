@@ -222,6 +222,14 @@ export async function erpSearch(q: string): Promise<ErpSearchHit[]> {
       rows.forEach((r) => out.push({ kind: "PO", name: `PO-${r.n}`, meta: `${r.vendor} · ${r.status}`, href: go("purchaseOrders", r.id) }));
     }
   }
+  /* Anything a label carries — a box id, a lot, a batch — opens its trace. */
+  if (ctx.screens.has("trace")) {
+    const { resolveTrace } = await import("@/lib/erp/traceability");
+    const { erpTraceHref } = await import("@/lib/erp/trace-links");
+    const hit = term.length >= 3 ? await resolveTrace(term) : null;
+    const kinds: Record<string, string> = { unit: "Box", pack: "Packing batch", fg: "Refill lot", sfg: "SFG lot", rm: "Lot", order: "Order", bill: "Bill" };
+    if (hit) out.unshift({ kind: kinds[hit.kind] ?? "Trace", name: hit.kind === "order" ? `Order ${hit.code}` : hit.code, meta: "Trace back and forward", href: erpTraceHref(hit.kind === "order" ? `ORDER-${hit.code}` : hit.code) });
+  }
   if (ctx.screens.has("inward") && /^\d+$/.test(term)) {
     const rows = (await db.execute(
       sql`select min(i.id) as id, i.pr_number as pr, count(*)::int as n from erp_inward i where i.pr_number::text = ${term} group by i.pr_number`,

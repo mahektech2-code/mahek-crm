@@ -50,6 +50,10 @@ import {
   type Ex,
 } from "../stock";
 import { godownIdByName, godownOptions, has, inTx, pair, refuse, today, type Col, type Tx } from "./common";
+import { sfgQcMap, sfgQcOf, setSfgQc } from "../qc";
+import { qcRefusal } from "../engines/trace";
+import { cancelBatchBoxes, ensureBatchBoxes, looseHeadroom, mintLooseUnits, trimLooseUnits } from "../units";
+import { erpLabelsHref, erpTraceHref } from "../trace-links";
 
 /* ---------------------------------------------------------------------------
  * Production (spec §7–§9): semi-finished batches from raw-material lots, FG
@@ -218,6 +222,8 @@ const sfgBatches: ScreenModule = {
     const posted = new Set(
       (await db.select({ id: erpSfgEntries.sourceId }).from(erpSfgEntries).where(eq(erpSfgEntries.sourceType, "sfg"))).map((x) => x.id),
     );
+    const qc = await sfgQcMap();
+    const qcApprover = ctx.powers.has("approveSfgQc");
     const all: Col[] = [
       { k: "sfgNo", l: "SFG no", t: "mono" },
       { k: "date", l: "Date", t: "d" },
@@ -229,6 +235,7 @@ const sfgBatches: ScreenModule = {
       { k: "total", l: "Total use", t: "n" },
       { k: "adjusted", l: "Litres adjusted", t: "n" },
       { k: "lotCode", l: "SFG lot code", t: "mono" },
+      { k: "qc", l: "QC", t: "s" },
       { k: "rate", l: "Purchase rate", t: "m", pw: "viewCost" },
       { k: "costing", l: "Purchase costing", t: "m", pw: "viewCost" },
       { k: "sfgRate", l: "SFG rate", t: "m", pw: "viewCost" },
@@ -261,6 +268,14 @@ const sfgBatches: ScreenModule = {
           },
         ];
         if (!posted.has(x.l.id)) actions.unshift({ id: "post", l: "Post to inventory", primary: true });
+        const verdict = qc.get(x.l.lotCode);
+        const qcStatus = verdict?.status ?? "Pending";
+        const noQcPower = qcApprover ? "" : "Only the SFG QC approver decides QC";
+        if (qcStatus !== "Approved")
+          actions.unshift({ id: "qcApprove", l: "QC approve", primary: qcStatus === "Pending", why: noQcPower, prompt: { title: `Approve SFG lot ${x.l.lotCode}`, sub: "Once approved the lot can be filled into cans and drums.", submit: "Approve", fields: [{ k: "note", l: "QC note (readings, remarks)", t: "area", mic: true }] } });
+        if (qcStatus !== "Rejected")
+          actions.push({ id: "qcReject", l: qcStatus === "Approved" ? "Withdraw QC approval (reject)" : "QC reject", why: noQcPower, prompt: { title: `Reject SFG lot ${x.l.lotCode}`, sub: "A rejected lot cannot be filled. What has already been filled from it stays traceable to it.", submit: "Reject", fields: [{ k: "note", l: "Why it failed", t: "area", req: true, mic: true }] } });
+        actions.push({ id: "trace", l: "Trace this lot", href: erpTraceHref(x.l.lotCode) });
         return {
           id: x.l.id,
           v: withoutHidden(
@@ -275,6 +290,7 @@ const sfgBatches: ScreenModule = {
               total: x.l.totalUse,
               adjusted: x.l.litresAdjusted,
               lotCode: x.l.lotCode,
+              qc: qcStatus,
               rate,
               costing: rate == null ? null : Math.round(rate * x.l.totalUse),
               sfgRate: rates.get(x.l.lotCode) ?? null,
@@ -282,11 +298,12 @@ const sfgBatches: ScreenModule = {
             },
             hiddenKeys,
           ),
-          flags: [...(posted.has(x.l.id) ? [] : ["notPosted"]), ...(overRecipe(x) ? ["overRecipe"] : [])],
+          flags: [...(posted.has(x.l.id) ? [] : ["notPosted"]), ...(overRecipe(x) ? ["overRecipe"] : []), ...(qcStatus === "Pending" ? ["qcPending"] : qcStatus === "Rejected" ? ["qcRejected"] : [])],
           title: `${x.product} · SFG ${x.l.sfgNo}`,
           header: `${x.item} lot ${x.l.rmLotNo} · ${nf(x.l.totalUse)} Ltr used · ${nf(sfgYield(x.l.totalUse, x.l.litresAdjusted))} Ltr made`,
           fields: [
             { l: "Available SFG (litres)", v: nf(sfgYield(x.l.totalUse, x.l.litresAdjusted)), der: true },
+            { l: "QC", v: verdict && verdict.status !== "Pending" ? `${verdict.status}${verdict.by ? ` by ${verdict.by}` : ""}${verdict.note ? ` · ${verdict.note}` : ""}` : "Pending — the lot cannot be filled until QC approves it" },
             ...(recipeFor(x) != null
               ? [{ l: "Recipe", v: `${nf(recipeFor(x)! * Number(x.l.batches))} Ltr for ${nf(Number(x.l.batches))} batch${Number(x.l.batches) === 1 ? "" : "es"} · this batch used ${nf(usedBy.get(`${x.l.sfgNo}|${x.l.rawMaterialId}`) ?? 0)} Ltr`, der: true }]
               : []),
@@ -359,6 +376,14 @@ const sfgBatches: ScreenModule = {
     },
   },
   actions: {
+    async qcApprove(ctx, id, values) {
+      return decideQc(ctx, id, "Approved", text(values.note));
+    },
+    async qcReject(ctx, id, values) {
+      const note = text(values.note);
+      if (!note) return fieldErr("note", "Say why the lot failed QC");
+      return decideQc(ctx, id, "Rejected", note);
+    },
     async post(ctx, id) {
       const [l] = await db.select().from(erpSfgLines).where(eq(erpSfgLines.id, id));
       if (!l) return err("That line no longer exists.", "not_found");
@@ -376,6 +401,22 @@ const sfgBatches: ScreenModule = {
     },
   },
 };
+
+/**
+ * SFG QC: a lot is filled only once somebody holding the QC power approves it.
+ * Rejecting an approved lot stops further filling and leaves what was already
+ * filled exactly where it is — still traceable to the lot that failed.
+ */
+async function decideQc(ctx: ErpContext, lineId: string, status: "Approved" | "Rejected", note: string | null): Promise<Result<unknown>> {
+  if (!ctx.powers.has("approveSfgQc")) return err("Only the SFG QC approver decides QC.", "not_permitted");
+  const [l] = await db.select({ lot: erpSfgLines.lotCode }).from(erpSfgLines).where(eq(erpSfgLines.id, lineId));
+  if (!l) return err("That batch line no longer exists.", "not_found");
+  const before = await sfgQcOf(l.lot);
+  if (before === status) return err(`SFG lot ${l.lot} is already ${status}.`, "rule_violation");
+  await db.transaction((tx) => setSfgQc(tx, l.lot, status, note, ctx.user.id));
+  await erpAudit(ctx, status === "Approved" ? "erp.sfg.qcApprove" : "erp.sfg.qcReject", "erp_sfg_qc", l.lot, { status: before }, { status, note });
+  return okVoid(status === "Approved" ? `SFG lot ${l.lot} approved · it can be filled now` : `SFG lot ${l.lot} rejected · it cannot be filled`);
+}
 
 async function saveSfg(ctx: ErpContext, h: Record<string, string>, lines: Record<string, string>[]): Promise<Result<unknown>> {
   const godownId = await godownIdByName(text(h.godown));
@@ -444,7 +485,7 @@ async function saveSfg(ctx: ErpContext, h: Record<string, string>, lines: Record
         .returning();
       await syncSfgEntry(tx, line);
     }
-    return okVoid(`SFG ${sfgNo} saved · ${nf(parsed.reduce((a, p) => a + sfgYield(p.total, p.adjusted), 0))} Ltr of ${f.name} in stock`);
+    return okVoid(`SFG ${sfgNo} saved · ${nf(parsed.reduce((a, p) => a + sfgYield(p.total, p.adjusted), 0))} Ltr of ${f.name} in stock · lot ${lotCode} waits for QC before it can be filled`);
   });
   if (res.ok) await erpAudit(ctx, "erp.sfg.create", "erp_sfg_line", String(sfgNo), null, { lines: parsed.length, product: f.name });
   return res;
@@ -516,13 +557,14 @@ async function fgCatalogue() {
 }
 
 async function fillForm(ctx: ErpContext, fixed?: { fgNum: number; date: string; godown: string }): Promise<FormSpec> {
-  const [gds, sfg, cat, levelAvail, rates, mats] = await Promise.all([
+  const [gds, sfg, cat, levelAvail, rates, mats, qc] = await Promise.all([
     godownOptions(ctx, { lost: false }),
     sfgLots(),
     fgCatalogue(),
     rmLevelAvailable(),
     sfgRates(),
     db.select({ id: erpRawMaterials.id, name: erpRawMaterials.name, price: erpRawMaterials.pricePaise, type: erpRawMaterials.materialType }).from(erpRawMaterials),
+    sfgQcMap(),
   ]);
   const products: Record<string, string[]> = {};
   const lotsOf: Record<string, string[]> = {};
@@ -530,6 +572,8 @@ async function fillForm(ctx: ErpContext, fixed?: { fgNum: number; date: string; 
   const sfgRate: Record<string, number | null> = {};
   for (const l of sfg) {
     if (l.stock <= 0) continue;
+    /* Only a QC-approved lot is offered; the save refuses any other. */
+    if (qc.get(l.lotCode)?.status !== "Approved") continue;
     if (!(products[l.godown] ??= []).includes(l.product)) products[l.godown].push(l.product);
     (lotsOf[pair(l.godown, l.product)] ??= []).push(l.lotCode);
     avail[pair(l.godown, l.lotCode)] = l.stock;
@@ -553,7 +597,7 @@ async function fillForm(ctx: ErpContext, fixed?: { fgNum: number; date: string; 
       { k: "date", l: "Date", t: "date", req: true, readOnly: !!fixed },
       { k: "godown", l: "Godown", t: "select", req: true, opts: gds.map((g) => g.name), readOnly: !!fixed },
       { k: "sfg", l: "SFG product", t: "select", req: true, optsBy: { by: "godown", map: products }, when: { k: "godown", notEmpty: true } },
-      { k: "sfgLot", l: "SFG lot code", t: "select", req: true, optsBy: { by: ["godown", "sfg"], map: lotsOf }, when: { k: "sfg", notEmpty: true } },
+      { k: "sfgLot", l: "SFG lot code", t: "select", req: true, optsBy: { by: ["godown", "sfg"], map: lotsOf }, when: { k: "sfg", notEmpty: true }, hint: "Only lots QC has approved are offered." },
       { k: "sfgAvail", l: "SFG available (litres)", t: "derived", calc: "fg.sfgAvail" },
       { k: "fg", l: "FG product", t: "select", req: true, optsBy: { by: "sfg", map: cat.fgOf }, when: { k: "sfg", notEmpty: true } },
       { k: "size", l: "Can size (litres)", t: "select", req: true, optsBy: { by: "fg", map: cat.sizesOf }, when: { k: "fg", notEmpty: true } },
@@ -628,6 +672,7 @@ const fgFill: ScreenModule = {
         const actions: ActionSpec[] = [
           { id: "more", l: "Add to this run", loadsForm: true },
           { id: "select", l: "Select SFG 2", href: `?f=${encodeURIComponent(rows.filter((y) => y.f.fgNum === x.f.fgNum).map((y) => y.f.id).join(","))}&fl=${encodeURIComponent(`FG ${x.f.fgNum}`)}` },
+          { id: "trace", l: "Trace this lot", href: erpTraceHref(x.f.lotCode) },
           { id: "adjust", l: "Edit cans adjusted", prompt: { title: "Cans adjusted", sub: `${x.fg} · ${x.f.lotCode}`, submit: "Save", fields: [{ k: "adjusted", l: "Cans lost or adjusted", t: "num", req: true, min: 0, max: x.f.cans }], init: { adjusted: String(x.f.canAdjusted) } } },
           { id: "delete", l: "Delete", why: ctx.administrator ? "" : "Only an administrator deletes a posted filling", confirm: `Delete FG filling ${x.f.lotCode}? Its stock entry stays in the log, flagged as deleted.` },
         ];
@@ -696,6 +741,7 @@ const fgFill: ScreenModule = {
         if (now - (adjusted - before.canAdjusted) < -1e-9) return refuse(fieldErr("adjusted", "Those cans have already been packed or moved"));
         const [after] = await tx.update(erpFgFills).set({ canAdjusted: adjusted, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpFgFills.id, id)).returning();
         await syncFgEntry(tx, after);
+        await trimLooseUnits(tx, { lotCode: before.lotCode, finishedGoodId: before.finishedGoodId, godownId: before.godownId, ledgerStock: now - (adjusted - before.canAdjusted), byId: ctx.user.id, why: "Cans adjusted on the filling" });
         await erpAudit(ctx, "erp.fg.adjust", "erp_fg_fill", id, { canAdjusted: before.canAdjusted }, { canAdjusted: adjusted });
         return okVoid(`${nf(after.cans - adjusted)} cans in stock`);
       });
@@ -741,6 +787,8 @@ async function saveFill(ctx: ErpContext, h: Record<string, string>): Promise<Res
     await lockLot(tx, "sfg", sfgLot, godownId);
     const lot = (await sfgLots(tx)).find((l) => l.lotCode === sfgLot && l.godownId === godownId);
     if (!lot || lot.formulationId !== f.id) return refuse(fieldErr("sfgLot", "Pick a lot of this SFG with stock at this godown"));
+    const qcWhy = qcRefusal(await sfgQcOf(sfgLot, tx), sfgLot);
+    if (qcWhy) return refuse(fieldErr("sfgLot", qcWhy));
     const levelAvail = await rmLevelAvailable();
     const refusal = fillRefusal({
       useLitres: size * cans,
@@ -802,7 +850,7 @@ async function boxedSkus(): Promise<SkuInfo[]> {
 }
 
 /** Posts the batch's one entry once its lines draw exactly its cans; takes it back if an edit un-completes it. */
-async function syncPackEntry(tx: Tx, batchNo: string) {
+async function syncPackEntry(tx: Tx, batchNo: string, byId: string | null = null) {
   const lines = await tx.select().from(erpPackLines).where(eq(erpPackLines.batchNo, batchNo)).orderBy(asc(erpPackLines.createdAt));
   const [entry] = await tx.select().from(erpPackEntries).where(and(eq(erpPackEntries.sourceType, "batch"), eq(erpPackEntries.sourceId, batchNo)));
   if (!lines.length) return;
@@ -811,11 +859,14 @@ async function syncPackEntry(tx: Tx, batchNo: string) {
   const st = batchState(first.boxes, sku?.cpb ?? 1, lines.map((l) => ({ id: l.id, cans: l.cans })));
   if (!st.complete) {
     if (entry) await tx.delete(erpPackEntries).where(eq(erpPackEntries.id, entry.id));
+    await cancelBatchBoxes(tx, batchNo, byId);
     return;
   }
   const values = { entryDate: first.packDate, skuId: first.skuId, batchNo, godownId: first.godownId, boxes: first.boxes };
   if (entry) await tx.update(erpPackEntries).set(values).where(eq(erpPackEntries.id, entry.id));
   else await tx.insert(erpPackEntries).values({ id: erpId("pke"), sourceType: "batch", sourceId: batchNo, ...values });
+  /* A complete batch is boxes on a shelf, and every box gets its own id. */
+  await ensureBatchBoxes(tx, { batchNo, skuId: first.skuId, godownId: first.godownId, boxes: first.boxes, cansPerBox: sku?.cpb ?? 1, byId });
 }
 
 async function packForm(ctx: ErpContext, fixed?: { serial: number; batchNo: string; date: string; godown: string; fg: string; sku: string; boxes: number; remaining: number }): Promise<FormSpec> {
@@ -912,6 +963,8 @@ const packBatches: ScreenModule = {
         const box = boxFigures(x.l.boxes, x.empty ?? 0, null);
         const actions: ActionSpec[] = [];
         if (st.remaining > 0) actions.push({ id: "more", l: "Add More", primary: true, loadsForm: true });
+        else actions.push({ id: "labels", l: "Print box labels", primary: true, href: erpLabelsHref({ batch: x.l.batchNo }) });
+        actions.push({ id: "trace", l: "Trace this batch", href: erpTraceHref(x.l.batchNo) });
         actions.push({ id: "select", l: "Select Batch", href: `?f=${encodeURIComponent(batch.map((b) => b.l.id).join(","))}&fl=${encodeURIComponent(x.l.batchNo)}` });
         actions.push({
           id: "delete",
@@ -980,7 +1033,7 @@ const packBatches: ScreenModule = {
           if (stock < entry.boxes - 1e-9) return refuse(err("Boxes of this batch have already moved on; the batch can no longer be taken apart.", "rule_violation"));
         }
         await tx.delete(erpPackLines).where(eq(erpPackLines.id, id));
-        await syncPackEntry(tx, before.batchNo);
+        await syncPackEntry(tx, before.batchNo, ctx.user.id);
         await erpAudit(ctx, "erp.pack.delete", "erp_pack_line", id, before, null);
         return okVoid("Line deleted · the batch is no longer complete");
       });
@@ -1047,12 +1100,14 @@ async function savePack(ctx: ErpContext, h: Record<string, string>): Promise<Res
       createdById: ctx.user.id,
       updatedById: ctx.user.id,
     });
-    await syncPackEntry(tx, batchNo);
+    await syncPackEntry(tx, batchNo, ctx.user.id);
+    /* Cans drawn from an FG lot may have carried loose labels; the lot cannot carry more labels than cans. */
+    await trimLooseUnits(tx, { lotCode: lot, finishedGoodId: sku.fg, godownId, ledgerStock: avail - cans, byId: ctx.user.id, why: `Cans packed into ${batchNo}` });
     const after = batchState(boxes, sku.cpb, [...lines.map((l) => ({ id: l.id, cans: l.cans })), { id: "new", cans }]);
     complete = after.complete;
     return okVoid(
       complete
-        ? `${batchNo} complete · ${nf(boxes)} boxes of ${sku.name} in packing stock`
+        ? `${batchNo} complete · ${nf(boxes)} boxes of ${sku.name} in packing stock, each with its own box id · print their labels from the batch`
         : `${batchNo} saved · ${nf(after.remaining)} cans still to draw from another lot`,
     );
   });
@@ -1075,12 +1130,14 @@ async function entryOrphans(table: "sfg" | "fg" | "pack"): Promise<Set<string>> 
 const sfgStock: ScreenModule = {
   key: "sfgStock",
   async load(ctx) {
-    const lots = (await sfgLots()).filter((l) => l.stock > 0);
+    const [all0, qc] = await Promise.all([sfgLots(), sfgQcMap()]);
+    const lots = all0.filter((l) => l.stock > 0);
     const all: Col[] = [
       { k: "date", l: "Date", t: "d" },
       { k: "product", l: "SFG product", t: "b" },
       { k: "stock", l: "Current stock (Ltr)", t: "n" },
       { k: "lot", l: "Lot code", t: "mono" },
+      { k: "qc", l: "QC", t: "s" },
       { k: "godown", l: "Godown", t: "t" },
       { k: "batchSize", l: "Batch size", t: "n" },
       { k: "type", l: "Type", t: "s" },
@@ -1100,6 +1157,7 @@ const sfgStock: ScreenModule = {
             product: l.product,
             stock: l.stock,
             lot: l.lotCode,
+            qc: qc.get(l.lotCode)?.status ?? "Pending",
             godown: l.godown,
             batchSize: l.batchSize,
             type: l.latestType,
@@ -1113,6 +1171,7 @@ const sfgStock: ScreenModule = {
         flags: [],
         title: `${l.product} · ${l.lotCode}`,
         header: `${nf(l.stock)} Ltr at ${l.godown}`,
+        actions: [{ id: "trace", l: "Trace this lot", href: erpTraceHref(l.lotCode) }],
       })),
     };
   },
@@ -1122,6 +1181,9 @@ const fgStock: ScreenModule = {
   key: "fgStock",
   async load(ctx) {
     const lots = (await fgLots()).filter((l) => l.stock > 0);
+    const labelled = new Map(
+      ((await db.execute(sql`select lot_code || '|' || godown_id as k, count(*)::int as n from erp_units where lot_from = 'fg' and status in ('available', 'hold') group by 1`)) as unknown as { k: string; n: number }[]).map((r) => [r.k, Number(r.n)]),
+    );
     const all: Col[] = [
       { k: "date", l: "Date", t: "d" },
       { k: "product", l: "FG product", t: "b" },
@@ -1155,8 +1217,46 @@ const fgStock: ScreenModule = {
         flags: [],
         title: `${l.product} · ${l.lotCode}`,
         header: `${nf(l.stock)} cans at ${l.godown}`,
+        fields: [{ l: "Loose labels on the shelf", v: `${nf(labelled.get(`${l.lotCode}|${l.godownId}`) ?? 0)} of these cans carry their own unit id`, der: true }],
+        actions: [
+          {
+            id: "labelLoose",
+            l: "Label loose units",
+            primary: true,
+            why: l.skuId ? "" : "This lot has no loose SKU to sell as; box it instead",
+            prompt: {
+              title: `Label loose units · ${l.lotCode}`,
+              sub: `${l.sku ?? l.product} at ${l.godown}. One unit id per can or drum, for cans that leave LOOSE — cans that will be boxed get their box's id when the batch completes.`,
+              submit: "Create unit ids",
+              fields: [{ k: "count", l: "How many cans or drums", t: "num", req: true, min: 1, max: Math.floor(l.stock) }],
+              init: { count: String(Math.max(0, Math.floor(l.stock) - (labelled.get(`${l.lotCode}|${l.godownId}`) ?? 0))) },
+            },
+          },
+          { id: "labels", l: "Print loose labels", href: erpLabelsHref({ lot: l.lotCode }) },
+          { id: "trace", l: "Trace this lot", href: erpTraceHref(l.lotCode) },
+        ],
       })),
     };
+  },
+  actions: {
+    async labelLoose(ctx, id, values) {
+      const [fg, lotCode, godownId] = id.split("|");
+      const count = int(values.count);
+      if (count == null || count <= 0) return fieldErr("count", "How many is required");
+      let made: string[] = [];
+      const res = await inTx(async (tx) => {
+        await lockLot(tx, "fg", lotCode, godownId);
+        const lot = (await fgLots(tx)).find((l) => l.finishedGoodId === fg && l.lotCode === lotCode && l.godownId === godownId);
+        if (!lot) return refuse(err("That lot has no stock here any more.", "not_found"));
+        if (!lot.skuId) return refuse(err("This lot has no loose SKU to sell as.", "rule_violation"));
+        const h = await looseHeadroom(tx, { lotCode, finishedGoodId: fg, godownId, ledgerStock: lot.stock });
+        if (count > h.room) return refuse(fieldErr("count", h.room ? `Only ${h.room} more can be labelled: ${h.labelled} of this lot's cans already carry an id` : "Every can of this lot already carries an id"));
+        made = await mintLooseUnits(tx, { lotCode, finishedGoodId: fg, skuId: lot.skuId, godownId, count, byId: ctx.user.id });
+        return okVoid(`${count} unit id${count === 1 ? "" : "s"} created · print them from “Print loose labels”`);
+      });
+      if (res.ok) await erpAudit(ctx, "erp.unit.labelLoose", "erp_unit", lotCode, null, { count, first: made[0], last: made[made.length - 1] });
+      return res;
+    },
   },
 };
 
@@ -1193,6 +1293,10 @@ const packStock: ScreenModule = {
         flags: [],
         title: `${l.sku} · ${l.batchNo}`,
         header: `${nf(l.stock)} boxes at ${l.godown}`,
+        actions: [
+          { id: "labels", l: "Print box labels", primary: true, href: erpLabelsHref({ batch: l.batchNo }) },
+          { id: "trace", l: "Trace this batch", href: erpTraceHref(l.batchNo) },
+        ],
       })),
     };
   },

@@ -45,6 +45,7 @@ const TEMPLATES: Record<string, string[]> = {
   "catalogue.${}Active": ["formulation", "brand", "good", "category"],
   "erp.request.${}": ["accepted", "rejected"],
   "erp.expense.${}": ["verify", "pending"],
+  "erp.unit.${}": ["hold", "release", "reject", "return"],
 };
 
 function files(dir: string, out: string[] = []): string[] {

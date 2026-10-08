@@ -942,6 +942,16 @@ export const VERBS: Record<string, string> = {
   formulationActive: "switched a formulation on or off in",
   brandActive: "switched a brand on or off in",
   categoryActive: "switched a category on or off in",
+  hold: "put on hold",
+  scan: "scanned for dispatch",
+  unscan: "took off a dispatch",
+  overrideRequest: "asked for a dispatch override on",
+  overrideApprove: "approved a dispatch override on",
+  overrideDecline: "declined a dispatch override on",
+  qcApprove: "passed QC on",
+  qcReject: "failed QC on",
+  labelLoose: "labelled loose units of",
+  labelPrint: "printed labels for",
 };
 
 /** Nouns. A code's middle tokens are looked up here. */
@@ -958,6 +968,8 @@ export const NOUNS: Record<string, string> = {
   rmLevel: "raw-material stock level",
   fgLevel: "finished-goods stock level",
   sfg: "semi-finished batch",
+  unit: "box",
+  dispatch: "box",
   fg: "finished-goods fill",
   pack: "packing entry",
   requisition: "purchase requirement",

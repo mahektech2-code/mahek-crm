@@ -300,6 +300,8 @@ export function powerRefusal(power: ErpPower): string {
     approveParty: "Only an admin approves orders from a pending customer.",
     decideRequests: "Only the CEO or an admin decides a customer request.",
     employeeAdmin: "Only an ERP administrator manages godowns and ERP powers.",
+    approveSfgQc: "Only the SFG QC approver decides an SFG lot's quality check.",
+    dispatchOverride: "Only a dispatch-override approver lets a mismatched box go, or rejects or returns a box.",
   };
   return map[power];
 }

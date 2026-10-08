@@ -4363,6 +4363,15 @@ export const SETTINGS = [
     max: 100,
   },
   {
+    key: "erp.dispatch.requireScan",
+    type: "boolean",
+    category: "erp",
+    label: "Scan every box before dispatch",
+    description:
+      "On: a billed line whose lots carry box ids cannot be dispatch-verified until every box (or labelled loose unit) on it has been scanned at the Dispatch desk and passed the order check. Stock packed before box ids existed has none and is not held back. Off: scanning is still offered and still checked, but Do Verified no longer waits for it — for a day the scanners are down.",
+    default: true,
+  },
+  {
     key: "erp.location.autoDetect",
     type: "boolean",
     category: "erp",
@@ -5814,6 +5823,7 @@ export type Config = {
   "erp.purchase.minQuotations": number;
   "erp.purchase.receiptTolerancePercent": number;
   "erp.production.recipeTolerancePercent": number;
+  "erp.dispatch.requireScan": boolean;
   "erp.ai.voice.enabled": boolean;
   "erp.ai.alerts.enabled": boolean;
   "erp.ai.alerts.rateJumpPct": number;
