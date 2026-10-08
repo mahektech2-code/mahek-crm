@@ -749,7 +749,7 @@ export async function saveLeadQualification(
 
 const prospectFieldsSchema = z.object({
   customerType: z
-    .enum(["dealer", "manufacturer", "distributor", "retailer"])
+    .enum(["dealer", "manufacturer", "distributor", "retailer", "private_limited_user"])
     .nullish(),
   monthlyLitres: z.number().int().nonnegative().nullish(),
   potentialPaise: z.number().int().nonnegative().nullish(),

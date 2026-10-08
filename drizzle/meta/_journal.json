@@ -1618,6 +1618,13 @@
       "when": 1792272634442,
       "tag": "0233_erp_requirement_departments",
       "breakpoints": true
+    },
+    {
+      "idx": 231,
+      "version": "7",
+      "when": 1792272734442,
+      "tag": "0234_customer_type_private_limited_user",
+      "breakpoints": true
     }
   ]
 }

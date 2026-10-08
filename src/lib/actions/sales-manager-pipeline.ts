@@ -66,7 +66,7 @@ const convertSchema = z.object({
   customerId: z.string().min(1),
   reasonCode: z.string().trim().min(1).max(80),
   fields: z.object({
-    customerType: z.enum(["dealer", "manufacturer", "distributor", "retailer"]).nullish(),
+    customerType: z.enum(["dealer", "manufacturer", "distributor", "retailer", "private_limited_user"]).nullish(),
     monthlyLitres: z.number().int().nonnegative().nullish(),
     potentialPaise: z.number().int().nonnegative().nullish(),
     competitor: z.string().trim().max(200).nullish(),

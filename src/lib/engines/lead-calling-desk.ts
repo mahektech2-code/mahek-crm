@@ -105,6 +105,7 @@ export const DESK_FIELDS: readonly DeskField[] = [
       { value: "manufacturer", label: "Manufacturer" },
       { value: "distributor", label: "Distributor" },
       { value: "retailer", label: "Retailer" },
+      { value: "private_limited_user", label: "Private Limited(User)" },
     ],
   },
   { key: "decisionMaker", label: "Decision maker", kind: "text", required: false, prospect: false, suggestCall: 2, hint: "Ask if known" },
