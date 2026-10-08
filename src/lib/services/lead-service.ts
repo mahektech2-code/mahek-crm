@@ -124,6 +124,10 @@ const LEAD_COLUMNS = {
   /* The Sales Manager seat. Read by the CRM Sales Manager workspace's scope
      check (`assertCustomerInScope`) and by nothing else. */
   salesManagerId: customers.salesManagerId,
+  /* Whether a PERSON set that seat (a Sales Manager raising the lead, or `assignSalesManager`)
+     rather than the nightly org-chart pass. Read by the Telecaller routing, which must not
+     mistake a derived seat for a Sales Manager being involved. */
+  salesManagerDecidedAt: customers.salesManagerDecidedAt,
   leadManagerDecidedAt: customers.leadManagerDecidedAt,
   leadVerifiedAt: customers.leadVerifiedAt,
   leadVerifiedById: customers.leadVerifiedById,
