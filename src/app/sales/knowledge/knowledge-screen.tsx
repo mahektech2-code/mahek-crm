@@ -7,8 +7,8 @@ import { shortDate } from "@/lib/format";
 import {
   publishCourse,
   setCoursePublished,
-  uploadPublishFile,
 } from "@/lib/actions/sales";
+import { uploadPublishFile } from "../publish-upload";
 import type { CourseRow } from "@/lib/services/sales-service";
 import {
   Banner,
@@ -62,17 +62,9 @@ export function KnowledgeScreen({ rows }: { rows: CourseRow[] }) {
     if (!chosen) return;
     setUploading(true);
     setError(null);
-    const form = new FormData();
-    form.set("file", chosen);
-    let result;
-    try {
-      result = await uploadPublishFile(form);
-    } finally {
-      // Cleared whatever happened: an action that rejects rather
-      // than returning a Result would otherwise leave this button
-      // disabled until the page was reloaded.
-      setUploading(false);
-    }
+    // Never rejects — every failure, the network's included, is a Result.
+    const result = await uploadPublishFile(chosen);
+    setUploading(false);
     if (!result.ok) {
       setError(result.error);
       setPickerKey((k) => k + 1);

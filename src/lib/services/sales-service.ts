@@ -4762,26 +4762,83 @@ export type DocumentRow = {
   contentType: string | null;
   sizeBytes: number | null;
   visibleToRoles: string[];
+  /** The people it is tagged to, as user ids. Empty is everybody in the field. */
+  visibleToUserIds: string[];
+  /**
+   * The same people with their names, in name order — read here rather than
+   * looked up in the picker's roster, because somebody tagged and since taken
+   * off the field must still be NAMED on the screen that can untag them.
+   */
+  tagged: { id: string; name: string; initials: string; inField: boolean }[];
   customerName: string | null;
+  /** True for a document HR published from HRMS; it lives in the same table. */
+  fromHrms: boolean;
   active: boolean;
+  createdByName: string | null;
+  createdAt: Date;
+  updatedByName: string | null;
   updatedAt: Date;
 };
 
-/** The library a handset can open. Read-only here; HR and the office own it. */
+/** The library a handset can open, with who each document is for. */
 export async function documents(): Promise<DocumentRow[]> {
   return db.execute<DocumentRow>(sql`
     select d.id, d.title, d.category::text as category,
            d.attachment_id as "attachmentId",
            a.filename, a.content_type as "contentType", a.size_bytes as "sizeBytes",
            d.visible_to_roles as "visibleToRoles",
+           d.visible_to_user_ids as "visibleToUserIds",
+           coalesce((
+             select json_agg(json_build_object(
+                      'id', u.id, 'name', u.name, 'initials', u.initials,
+                      'inField', exists (select 1 from app_access x
+                                          where x.user_id = u.id and x.app = 'field')
+                    ) order by u.name)
+               from users u
+              where d.visible_to_user_ids ? u.id
+           ), '[]'::json) as "tagged",
            c.name as "customerName",
-           d.active, d.updated_at as "updatedAt"
+           (d.audience is not null) as "fromHrms",
+           d.active,
+           cu.name as "createdByName", d.server_created_at as "createdAt",
+           uu.name as "updatedByName", d.updated_at as "updatedAt"
       from mbos_documents d
       left join attachments a on a.id = d.attachment_id
       left join customers c on c.id = d.customer_id
+      left join users cu on cu.id = d.created_by_id
+      left join users uu on uu.id = d.updated_by_id
      order by d.active desc, d.updated_at desc
      limit 200
   `) as unknown as DocumentRow[];
+}
+
+export type DocumentPerson = {
+  id: string;
+  name: string;
+  initials: string;
+  /** Where he works — the cities and beats allocated to him — to tell two Rahuls apart. */
+  places: string | null;
+};
+
+/**
+ * Who a document can be tagged to: everybody holding the field app, signed-in
+ * accounts only. The same definition `fieldTeam` uses — it is what MBOS sign-in
+ * checks — and NOT narrowed by `managerScope`: the library is the company's,
+ * publishing it is not narrowed either, and a regional manager editing a
+ * document tagged to somebody outside his region must not silently drop him on
+ * save because the picker could not show him.
+ */
+export async function documentPeople(): Promise<DocumentPerson[]> {
+  return db.execute<DocumentPerson>(sql`
+    select u.id, u.name, u.initials,
+           (select string_agg(distinct t.region, ', ')
+              from mbos_user_territories t
+             where t.user_id = u.id and t.kind <> 'region') as places
+      from users u
+      join app_access a on a.user_id = u.id and a.app = 'field'
+     where u.active
+     order by u.name asc
+  `) as unknown as DocumentPerson[];
 }
 
 export type CourseRow = {

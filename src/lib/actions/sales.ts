@@ -3,10 +3,11 @@
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { and, eq, inArray, isNotNull, sql, type SQL } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import {
   appAccess,
+  attachments,
   auditLog,
   customers,
   mbosApprovals,
@@ -36,7 +37,7 @@ import {
 import { salesGateRefusal, scopeCovers } from "@/lib/sales-gate";
 import { inCrmSalesManagerWorkspace } from "@/lib/services/crm-sales-manager-scope";
 import { getConfig, updateSettings } from "@/lib/config/store";
-import { bindAttachments, createAttachment } from "@/lib/services/attachment-service";
+import { bindAttachments } from "@/lib/services/attachment-service";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import {
   LEAD_BULK_CAP,
@@ -2966,6 +2967,142 @@ async function tombstone(entity: string, entityId: string, reason: string, userI
 
 const MAX_TITLE = 160;
 
+/* ---------------------------------------------------------------------------
+ * WHO A DOCUMENT IS FOR, BY NAME.
+ *
+ * `visible_to_user_ids` is the people a document is tagged to; empty is
+ * everybody in the field. Tagging is a narrowing of the role list, never a way
+ * round it, and the people offered are exactly the people `fieldTeam` lists —
+ * holding the `field` app IS being in the field, because it is what MBOS
+ * sign-in checks.
+ * ------------------------------------------------------------------------- */
+
+/** Everybody who could hold a document on a handset — the field grant. */
+async function fieldUserIds(): Promise<string[]> {
+  const rows = await db
+    .select({ id: appAccess.userId })
+    .from(appAccess)
+    .where(eq(appAccess.app, "field"));
+  return [...new Set(rows.map((r) => r.id))];
+}
+
+/**
+ * The tagged list as it will be stored: de-duplicated, and every id somebody
+ * in the field. Asked of the database rather than trusted from the dialog,
+ * because a server action is a URL — and an id that names nobody on a handset
+ * would make a document that reaches nobody while reading as tagged.
+ */
+async function taggedPeople(ids: readonly string[] | undefined): Promise<Result<string[]>> {
+  const wanted = [...new Set((ids ?? []).map((i) => i.trim()).filter(Boolean))];
+  if (!wanted.length) return ok([]);
+  const field = new Set(await fieldUserIds());
+  const strangers = wanted.filter((i) => !field.has(i));
+  if (strangers.length) {
+    return err(
+      strangers.length === 1
+        ? "One of the people tagged is not in the field any more, so a handset could never show it to them. Open Tag employees again and save."
+        : `${strangers.length} of the people tagged are not in the field any more. Open Tag employees again and save.`,
+      "validation",
+      [{ field: "people", message: "Not in the field." }],
+    );
+  }
+  return ok(wanted);
+}
+
+/**
+ * What moving a document's tags does to the phones.
+ *
+ * A PULL SAYS WHAT EXISTS AND ONLY A TOMBSTONE SAYS WHAT STOPPED. Untagging a
+ * salesman removes the row from what his next pull sends — and leaves the copy
+ * he already has on his phone for ever, because nothing tells it to go. So
+ * everybody who could see it before and cannot now is written a tombstone of
+ * their own (`user_id` set, so nobody else's handset is touched).
+ *
+ * The other direction has a trap in it. The handset applies a pull's upserts
+ * BEFORE its tombstones, so somebody untagged and tagged back between two of
+ * his syncs would receive the row and then delete it in the same breath.
+ * Re-adding somebody therefore withdraws any tombstone still standing against
+ * them for this document, and the `updated_at` bump carries the row back to a
+ * handset that had already applied it.
+ *
+ * Returns who gained it, for the notification.
+ */
+async function applyTagChange(
+  documentId: string,
+  before: readonly string[],
+  after: readonly string[],
+): Promise<string[]> {
+  const field = before.length && after.length ? [] : await fieldUserIds();
+  const sawBefore = new Set(before.length ? before : field);
+  const seesAfter = new Set(after.length ? after : field);
+
+  const lost = [...sawBefore].filter((u) => !seesAfter.has(u));
+  const gained = [...seesAfter].filter((u) => !sawBefore.has(u));
+
+  if (lost.length) {
+    await db.insert(mbosDeletions).values(
+      lost.map((userId) => ({
+        id: gen("del"),
+        entity: "documents",
+        entityId: documentId,
+        userId,
+        reason: "untagged",
+      })),
+    );
+  }
+  if (gained.length) {
+    await db
+      .delete(mbosDeletions)
+      .where(
+        and(
+          eq(mbosDeletions.entity, "documents"),
+          eq(mbosDeletions.entityId, documentId),
+          inArray(mbosDeletions.userId, gained),
+        ),
+      );
+  }
+  return gained;
+}
+
+/**
+ * Telling the people a document was tagged TO that it is there.
+ *
+ * Only named people, and only a published document: "everybody in the field"
+ * is the ordinary case and a bell on every phone for every price list is a bell
+ * people learn to ignore. A tag is somebody deciding THIS person needs THIS
+ * file, which is worth saying. Never fails the write it follows.
+ */
+async function tellTagged(userIds: readonly string[], title: string) {
+  if (!userIds.length) return;
+  await notifyUsers(
+    userIds.map((userId) => ({
+      userId,
+      title: "A document was shared with you",
+      body: `${title} is in your Documents. It downloads on your next sync.`,
+      mbosHref: "/docs",
+    })),
+  ).catch(() => {});
+}
+
+function checkTitle(raw: string): Result<string> {
+  const title = raw.trim();
+  if (!title) {
+    return err("A document needs a title — it is what the handset lists it by.", "validation", [
+      { field: "title", message: "Required." },
+    ]);
+  }
+  if (title.length > MAX_TITLE) {
+    return err(`A title is at most ${MAX_TITLE} characters.`, "validation", [
+      { field: "title", message: "Too long." },
+    ]);
+  }
+  return ok(title);
+}
+
+function peopleSentence(n: number): string {
+  return n === 0 ? "every handset" : n === 1 ? "the one person tagged" : `the ${n} people tagged`;
+}
+
 export async function publishDocument(input: {
   title: string;
   category: DocumentCategory;
@@ -2973,21 +3110,15 @@ export async function publishDocument(input: {
   customerId?: string | null;
   /** Empty means everybody in the field, which is what the handset reads too. */
   visibleToRoles?: string[];
+  /** The people it is tagged to. Empty means everybody in the field. */
+  visibleToUserIds?: string[];
 }): Promise<Result<{ id: string }>> {
   try {
     const user = await requireSalesAccess(SALES_MANAGER("sales.documents"));
 
-    const title = input.title.trim();
-    if (!title) {
-      return err("A document needs a title — it is what the handset lists it by.", "validation", [
-        { field: "title", message: "Required." },
-      ]);
-    }
-    if (title.length > MAX_TITLE) {
-      return err(`A title is at most ${MAX_TITLE} characters.`, "validation", [
-        { field: "title", message: "Too long." },
-      ]);
-    }
+    const titled = checkTitle(input.title);
+    if (!titled.ok) return titled;
+    const title = titled.data;
 
     /* A document with no file is a title, and a title is not something anybody
      * can open. Refused here rather than published empty, because the failure
@@ -3000,6 +3131,9 @@ export async function publishDocument(input: {
       );
     }
 
+    const people = await taggedPeople(input.visibleToUserIds);
+    if (!people.ok) return people;
+
     const documentId = gen("mdoc");
     await db.insert(mbosDocuments).values({
       id: documentId,
@@ -3008,6 +3142,7 @@ export async function publishDocument(input: {
       attachmentId: input.attachmentId,
       customerId: input.customerId ?? null,
       visibleToRoles: input.visibleToRoles ?? [],
+      visibleToUserIds: people.data,
       active: true,
       createdById: user.id,
       updatedById: user.id,
@@ -3031,13 +3166,192 @@ export async function publishDocument(input: {
       action: "mbos.document.publish",
       entityType: "mbos_document",
       entityId: documentId,
-      afterState: { title, category: input.category } as never,
+      afterState: { title, category: input.category, visibleToUserIds: people.data } as never,
     });
+
+    await tellTagged(people.data, title);
 
     refresh();
     return ok(
       { id: documentId },
-      `${title} published. Handsets pick it up on their next sync.`,
+      `${title} published to ${peopleSentence(people.data.length)}. Handsets pick it up on their next sync.`,
+    );
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * Who a document is tagged to — the whole list, every time.
+ *
+ * The WHOLE list rather than a difference, for the reason `plan_stops` is: a
+ * shorter list is how somebody is untagged, and a merge could never express
+ * that. Adding, removing and clearing are one act with one review.
+ */
+export async function setDocumentPeople(input: {
+  documentId: string;
+  /** Empty means everybody in the field. */
+  userIds: string[];
+}): Promise<Result> {
+  try {
+    const user = await requireSalesAccess(SALES_MANAGER("sales.documents"));
+
+    const [doc] = await db
+      .select({
+        id: mbosDocuments.id,
+        title: mbosDocuments.title,
+        active: mbosDocuments.active,
+        visibleToUserIds: mbosDocuments.visibleToUserIds,
+      })
+      .from(mbosDocuments)
+      .where(eq(mbosDocuments.id, input.documentId));
+    if (!doc) return err("That document is not here any more.", "not_found");
+
+    const people = await taggedPeople(input.userIds);
+    if (!people.ok) return people;
+
+    const before = doc.visibleToUserIds ?? [];
+    const same =
+      before.length === people.data.length && before.every((u) => people.data.includes(u));
+    if (same) return okVoid("Nothing changed — the same people are tagged.");
+
+    await db
+      .update(mbosDocuments)
+      .set({ visibleToUserIds: people.data, updatedById: user.id, updatedAt: new Date() })
+      .where(eq(mbosDocuments.id, input.documentId));
+
+    /* A withdrawn document is on nobody's phone, so moving its tags moves
+     * nothing there; the list is kept for the day it is published again. */
+    const gained = doc.active ? await applyTagChange(doc.id, before, people.data) : [];
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: "mbos.document.tag",
+      entityType: "mbos_document",
+      entityId: doc.id,
+      beforeState: { visibleToUserIds: before } as never,
+      afterState: { visibleToUserIds: people.data } as never,
+    });
+
+    if (people.data.length) await tellTagged(gained, doc.title);
+
+    refresh();
+    return okVoid(
+      people.data.length
+        ? `${doc.title} is now for ${peopleSentence(people.data.length)}.${doc.active ? " Their handsets update on the next sync." : ""}`
+        : `${doc.title} is now for everybody in the field.`,
+    );
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * The title, the kind, and the file behind it.
+ *
+ * REPLACING THE FILE KEEPS THE DOCUMENT. A price list revised in September is
+ * the same entry the field already knows, with the same people tagged to it;
+ * withdrawing and publishing a second one would leave two rows on every handset
+ * for a day and lose the tags. The old file is marked removed — a status, not a
+ * delete, so the retention window still decides when its bytes go — and the
+ * handset fetches the new one because its stored copy is named after the file
+ * it came from (`heldFile`), not after the document.
+ */
+export async function updateDocument(input: {
+  documentId: string;
+  title: string;
+  category: DocumentCategory;
+  /** A newly uploaded file to put behind it. Absent or the same id keeps the file. */
+  attachmentId?: string | null;
+}): Promise<Result> {
+  try {
+    const user = await requireSalesAccess(SALES_MANAGER("sales.documents"));
+
+    const titled = checkTitle(input.title);
+    if (!titled.ok) return titled;
+    const title = titled.data;
+
+    const [doc] = await db
+      .select({
+        id: mbosDocuments.id,
+        title: mbosDocuments.title,
+        category: mbosDocuments.category,
+        attachmentId: mbosDocuments.attachmentId,
+      })
+      .from(mbosDocuments)
+      .where(eq(mbosDocuments.id, input.documentId));
+    if (!doc) return err("That document is not here any more.", "not_found");
+
+    const replacing = !!input.attachmentId && input.attachmentId !== doc.attachmentId;
+    if (!replacing && title === doc.title && input.category === doc.category) {
+      return okVoid("Nothing changed.");
+    }
+
+    if (replacing) {
+      const [file] = await db
+        .select({ id: attachments.id, parentId: attachments.parentId, status: attachments.status })
+        .from(attachments)
+        .where(eq(attachments.id, input.attachmentId!));
+      if (!file || file.parentId || file.status !== "available") {
+        return err(
+          "That file is not available to attach any more. Choose it again.",
+          "conflict",
+          [{ field: "file", message: "Choose it again." }],
+        );
+      }
+    }
+
+    await db.transaction(async (tx) => {
+      if (replacing) {
+        if (doc.attachmentId) {
+          await tx
+            .update(attachments)
+            .set({
+              status: "removed",
+              parentType: null,
+              parentId: null,
+              removedAt: new Date(),
+              updatedAt: new Date(),
+            })
+            .where(eq(attachments.id, doc.attachmentId));
+        }
+        await tx
+          .update(attachments)
+          .set({ parentType: "mbos_document", parentId: doc.id, updatedAt: new Date() })
+          .where(and(eq(attachments.id, input.attachmentId!), isNull(attachments.parentId)));
+      }
+      await tx
+        .update(mbosDocuments)
+        .set({
+          title,
+          category: input.category,
+          ...(replacing ? { attachmentId: input.attachmentId! } : {}),
+          updatedById: user.id,
+          updatedAt: new Date(),
+        })
+        .where(eq(mbosDocuments.id, doc.id));
+    });
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: "mbos.document.edit",
+      entityType: "mbos_document",
+      entityId: doc.id,
+      beforeState: { title: doc.title, category: doc.category, attachmentId: doc.attachmentId } as never,
+      afterState: {
+        title,
+        category: input.category,
+        attachmentId: replacing ? input.attachmentId : doc.attachmentId,
+      } as never,
+    });
+
+    refresh();
+    return okVoid(
+      replacing
+        ? `${title} saved with its new file. Handsets fetch it on their next sync.`
+        : `${title} saved.`,
     );
   } catch (e) {
     return fromThrown(e);
@@ -3048,7 +3362,9 @@ export async function publishDocument(input: {
  * Take it back, or put it back.
  *
  * Withdrawing writes the tombstone; republishing does not need one, because the
- * ordinary pull carries a row that exists.
+ * ordinary pull carries a row that exists. It DOES have to lift the withdrawal's
+ * tombstone: a handset applies upserts before tombstones, so one that slept
+ * through both would receive the row and delete it in the same pull.
  */
 export async function setDocumentPublished(input: {
   documentId: string;
@@ -3073,6 +3389,16 @@ export async function setDocumentPublished(input: {
 
     if (!input.published) {
       await tombstone("documents", input.documentId, "withdrawn");
+    } else {
+      await db
+        .delete(mbosDeletions)
+        .where(
+          and(
+            eq(mbosDeletions.entity, "documents"),
+            eq(mbosDeletions.entityId, input.documentId),
+            eq(mbosDeletions.reason, "withdrawn"),
+          ),
+        );
     }
 
     await db.insert(auditLog).values({
@@ -3223,32 +3549,6 @@ export async function setCoursePublished(input: {
         ? `${course.title} is published again.`
         : `${course.title} withdrawn. Anybody part-way through keeps their record of it.`,
     );
-  } catch (e) {
-    return fromThrown(e);
-  }
-}
-
-/**
- * Store one file, unparented, and hand back its id.
- *
- * §4 — an attachment is created before its parent exists, so the publish form
- * uploads as soon as the file is chosen and binds when it saves. An abandoned
- * form leaves an orphan, which the nightly sweep is for.
- */
-export async function uploadPublishFile(form: FormData): Promise<Result<{ id: string; filename: string }>> {
-  try {
-    await requireSalesAccess(SALES_MANAGER("sales.documents", "sales.knowledge"));
-    const file = form.get("file");
-    if (!(file instanceof File)) {
-      return err("No file arrived.", "validation");
-    }
-    const created = await createAttachment({
-      filename: file.name,
-      bytes: new Uint8Array(await file.arrayBuffer()),
-      declaredType: file.type,
-    });
-    if (!created.ok) return created;
-    return ok({ id: created.data.id, filename: file.name });
   } catch (e) {
     return fromThrown(e);
   }
