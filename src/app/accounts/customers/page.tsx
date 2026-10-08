@@ -100,6 +100,8 @@ export default async function Page({
       // seat drives no queue, no scope and no target, so a manager may set it
       // while the two beside it stay accounts' and admin's.
       canAssignSalesManager={await canFor(user, "customer.assignSalesManager")}
+      // Setting a credit limit on a new account — the ledger desk's money call.
+      canDecideCredit={await canFor(user, "payment.confirm")}
       amReasons={config["people.amChangeReasons"]}
       amSearchThreshold={config["people.pickerSearchThreshold"]}
       amOptions={amOptions}

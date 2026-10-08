@@ -2708,6 +2708,23 @@ leads, or a salesperson whose accounts are all leads, would otherwise be
 offered and answer zero rows — the failure both of those functions already had
 a paragraph warning about, arriving from a direction neither anticipated.
 
+**ACCOUNTS ADDS A CUSTOMER DIRECTLY, and it is wired everywhere on save.**
+The Accounts door of the Customers list has "Add customer"
+(`components/customers/add-customer-dialog.tsx`), and `createDirectCustomer`
+(`lib/actions/customer-create.ts`) writes an account we INVOICE —
+`kind = 'customer'`, never a lead, which stays the CRM's capture form. It is
+`customer.reassign`, because naming the seats decides whose book it is in.
+`lib/new-customer.ts` is the rule, pure, read by the form and the action: the
+name as on the bill (the party sheet matches on it, so the sheet adopts the row
+rather than duplicating it), a mobile, the city, the STATE from a fixed list
+(the handset's territory matches on it — no state, no handset) and the sales
+account manager. The seats are written WITH their name mirrors and
+`am_decided_at`, so neither the nightly `recomputeSalesPeople` nor the party
+projection restates them; the contact goes through `reconcileContacts` and the
+place through `placeShopsNow`. A number or GSTIN already on the book is
+refused; the same name asks once. `customer-create.test.ts` pins it, including
+that the shop is in the salesman's `customerIdsInScope`.
+
 **There is no "Add lead" on the Customers screen.** It hard-coded `kind:
 "lead"`, so on a table that no longer lists leads it wrote a record and
 returned the reader to a list the record was not on, which reads as a save that
