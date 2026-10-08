@@ -132,27 +132,66 @@ export default async function ErpLabels({ searchParams }: { searchParams: Promis
     >
       <style>{`
         .label-sheet { display: grid; grid-template-columns: repeat(auto-fill, 100mm); gap: 4mm; }
+        .label-sheet.square { grid-template-columns: repeat(auto-fill, 50mm); gap: 3mm; }
+
+        /* The dispatch sticker: 100 x 62 mm, unchanged. */
         .label { width: 100mm; height: 62mm; box-sizing: border-box; border: 1px solid #c9ced8; border-radius: 2mm; padding: 3mm 4mm; background: #fff; color: #111; display: flex; gap: 3mm; break-inside: avoid; page-break-inside: avoid; }
         .label .qr { width: 30mm; flex: none; display: flex; flex-direction: column; align-items: center; gap: 1mm; }
         .label .qr svg { width: 30mm; height: 30mm; }
         .label .body { min-width: 0; flex: 1; display: flex; flex-direction: column; font-family: Arial, Helvetica, sans-serif; line-height: 1.15; }
-        .label .brand { font-weight: 800; letter-spacing: 1px; font-size: 10pt; }
-        .label .product { font-weight: 700; font-size: 13pt; margin-top: 0.5mm; }
-        .label .size { font-weight: 800; font-size: 20pt; }
         .label .k { font-size: 6.5pt; color: #555; text-transform: uppercase; margin-top: 1mm; }
         .label .v { font-size: 9pt; font-family: "Courier New", monospace; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .label .id { font-family: "Courier New", monospace; font-size: 8pt; font-weight: 700; text-align: center; }
         .label .cust { font-weight: 800; font-size: 12pt; }
+
+        /*
+         * THE BOX LABEL: 50 x 50 mm.
+         *
+         * A square a quarter the area of the old 100 x 62, so it says each
+         * thing once. The QR is 20 mm — about 0.8 mm a module for a box id at
+         * error level M, comfortably scannable — with the pack size beside it,
+         * because size is what a picker reads first; the product name gets two
+         * lines under it; then the two lot lines a recall is traced by; then
+         * when and where it was packed. The SKU string is dropped: product,
+         * size and cans per box already say all of it.
+         */
+        .sq { width: 50mm; height: 50mm; box-sizing: border-box; border: 1px solid #c9ced8; border-radius: 1.5mm; padding: 2.5mm; background: #fff; color: #111; display: flex; flex-direction: column; font-family: Arial, Helvetica, sans-serif; line-height: 1.12; overflow: hidden; break-inside: avoid; page-break-inside: avoid; }
+        .sq .top { display: flex; gap: 2mm; }
+        .sq .qr { width: 20mm; flex: none; display: flex; flex-direction: column; align-items: center; gap: 0.6mm; }
+        .sq .qr svg { width: 20mm; height: 20mm; display: block; }
+        .sq .id { font-family: "Courier New", monospace; font-size: 5pt; font-weight: 700; white-space: nowrap; }
+        .sq .head { min-width: 0; flex: 1; display: flex; flex-direction: column; }
+        .sq .brand { font-weight: 800; letter-spacing: 0.8px; font-size: 6.5pt; }
+        .sq .size { font-weight: 800; font-size: 17pt; line-height: 1; margin-top: 0.8mm; white-space: nowrap; }
+        .sq .pack { font-size: 6pt; margin-top: 0.8mm; }
+        .sq .product { font-weight: 700; font-size: 8pt; margin-top: 1.6mm; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+        .sq .rows { margin-top: 1.2mm; display: grid; grid-template-columns: auto 1fr; column-gap: 1.5mm; row-gap: 0.4mm; align-items: baseline; }
+        .sq .k { font-size: 5pt; color: #555; text-transform: uppercase; white-space: nowrap; }
+        .sq .v { font-size: 6.5pt; font-family: "Courier New", monospace; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+        .sq .foot { font-size: 5.5pt; margin-top: auto; color: #333; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
         @media print {
-          @page { margin: 6mm; }
           body * { visibility: hidden !important; }
           .label-sheet, .label-sheet * { visibility: visible !important; }
           .label-sheet { position: absolute; left: 0; top: 0; }
           .label { border-color: #999; }
           .no-print { display: none !important; }
         }
+        ${
+          mode === "sticker"
+            ? `@media print { @page { margin: 6mm; } }`
+            : /* One label per 50 x 50 page, no margin — what a label printer
+                 loaded with 50 x 50 stock feeds, one label at a time. The
+                 border is dropped on paper: the die-cut is the edge. */
+              `@media print {
+                 @page { size: 50mm 50mm; margin: 0; }
+                 .label-sheet.square { display: block; }
+                 .sq { border: none; border-radius: 0; break-after: page; page-break-after: always; }
+                 .sq:last-child { break-after: auto; page-break-after: auto; }
+               }`
+        }
       `}</style>
-      <div className="label-sheet">
+      <div className={mode === "sticker" ? "label-sheet" : "label-sheet square"}>
         {units.map((u) =>
           mode === "sticker" ? (
             <div key={u.id} className="label">
@@ -184,27 +223,33 @@ export default async function ErpLabels({ searchParams }: { searchParams: Promis
               </div>
             </div>
           ) : (
-            <div key={u.id} className="label">
-              <div className="qr">
-                <span dangerouslySetInnerHTML={{ __html: qrs.get(u.id) ?? "" }} />
-                <span className="id">{u.id}</span>
+            <div key={u.id} className="sq">
+              <div className="top">
+                <div className="qr">
+                  <span dangerouslySetInnerHTML={{ __html: qrs.get(u.id) ?? "" }} />
+                  <span className="id">{u.id}</span>
+                </div>
+                <div className="head">
+                  <span className="brand">MAHEK</span>
+                  <span className="size">{packLabel(u.litres)}</span>
+                  <span className="pack">{u.kind === "box" ? `${u.cans} cans per box` : "Loose unit"}</span>
+                </div>
               </div>
-              <div className="body">
-                <span className="brand">MAHEK</span>
-                <span className="product">{u.product ?? u.sku}</span>
-                <span className="size">{packLabel(u.litres)}</span>
-                <span style={{ fontSize: "8pt" }}>
-                  {u.kind === "box" ? `${u.cans} cans per box` : "Loose"} · {u.sku}
-                </span>
-                <span className="k">Lot no</span>
+              <span className="product">{u.product ?? u.sku}</span>
+              <div className="rows">
+                <span className="k">Lot</span>
                 <span className="v">{refillOf(u).join(" / ")}</span>
-                <span className="k">{u.kind === "box" ? "Batch · box" : "FG lot · unit"}</span>
+                <span className="k">{u.kind === "box" ? "Batch·Box" : "Lot·Unit"}</span>
                 <span className="v">
                   {u.lotCode} · {u.seq}
                   {refillOf(u).length === 1 && sfgOf.get(refillOf(u)[0]) ? ` · SFG ${sfgOf.get(refillOf(u)[0])}` : ""}
                 </span>
-                {packedOn(u) ? <span style={{ fontSize: "7pt", marginTop: "auto" }}>Packed {packedOn(u)} · {u.godown}</span> : null}
               </div>
+              {packedOn(u) ? (
+                <span className="foot">
+                  Packed {packedOn(u)} · {u.godown}
+                </span>
+              ) : null}
             </div>
           ),
         )}
