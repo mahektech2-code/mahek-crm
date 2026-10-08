@@ -38,7 +38,7 @@ import { err, fieldErr, ok, okVoid, type Err, type Result } from "@/lib/result";
  * Accounts manager's, as confirming a receipt is.
  * ------------------------------------------------------------------------- */
 
-const MODULE = "accounts.payouts";
+const MODULE = "accounts.cash-flow";
 const GONE = "No longer in the purchase register.";
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -106,7 +106,7 @@ async function requireDesk(
   capability: Capability,
 ): Promise<{ refused: Err; ctx?: undefined } | { refused?: undefined; ctx: DeskCtx }> {
   const { open } = await deskUser();
-  if (!open) return { refused: err("Vendor payouts is not on your account.", "not_permitted") };
+  if (!open) return { refused: err("Cash flow is not on your account.", "not_permitted") };
   try {
     return { ctx: await requireCapability(capability) };
   } catch {

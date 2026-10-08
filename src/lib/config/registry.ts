@@ -992,6 +992,28 @@ export const SETTINGS = [
     default: ["Tuesday", "Wednesday", "Thursday", "Friday"],
   },
   {
+    key: "payments.cashflowLookbackMonths",
+    type: "integer",
+    category: "payments",
+    label: "How far back a customer's paying habit is read",
+    description:
+      "Cash flow predicts when each open bill will be paid from how that customer has actually paid - the average days from bill to confirmed money over this many months - never from the credit term on the bill. Longer is steadier; shorter follows a customer who has changed.",
+    default: 12,
+    min: 1,
+    max: 36,
+  },
+  {
+    key: "payments.cashflowMinPayments",
+    type: "integer",
+    category: "payments",
+    label: "Payments needed before a customer has a habit of their own",
+    description:
+      "Below this many confirmed payments in the window, a customer's bills are predicted from the company's average instead, and every such prediction says so.",
+    default: 3,
+    min: 1,
+    max: 50,
+  },
+  {
     key: "payments.vendorDefaultCreditDays",
     type: "integer",
     category: "payments",
@@ -5727,6 +5749,8 @@ export type Config = {
   "payments.matchWindowDays": number;
   "payments.vendorPayoutDays": string[];
   "payments.vendorDefaultCreditDays": number;
+  "payments.cashflowLookbackMonths": number;
+  "payments.cashflowMinPayments": number;
   "payments.matchTolerancePercent": number;
 
   "targets.defaultMethod": "trailing-average" | "last-month" | "fixed";

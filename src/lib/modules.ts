@@ -558,10 +558,10 @@ export const APP_MODULES: AppModule[] = [
   ),
   accounts("bills", "Bills", "Money"),
   accounts(
-    "payouts",
-    "Vendor payouts",
+    "cash-flow",
+    "Cash flow",
     "Money",
-    "What Mahek owes its suppliers and the payment day each is planned for — the ERP purchase register's purchases, and anything else added by hand, with their invoices.",
+    "Money in and money out, day by day. Out: what Mahek owes its suppliers and the payment day each is planned for — the ERP purchase register and anything added by hand, with their invoices. In: when each open bill is expected, from how that customer actually pays.",
   ),
   /*
    * The CRM's WhatsApp screen, opened from the ledger desk. It reads the same

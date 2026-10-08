@@ -5183,8 +5183,29 @@ adding it would put the whole imported order book on a collections list. Its
 balance is drawn as "not stated" rather than as a figure, because rendering an
 unknown beside real balances is the original mistake in different clothes.
 
+**CASH FLOW IS ONE SCREEN, THREE TABS.** Accounts → Cash flow
+(`accounts.cash-flow`, `?view=` overview | in | out): Overview is projected
+inflows against scheduled outflows on one daily axis with the cumulative net;
+Receivables is the collections forecast; Payables is the vendor payouts below.
+The cumulative line is the net FROM TODAY, never a bank balance — MahekOne holds
+none. Overdue items on either side are their own figure and are never folded
+into today. The screen speaks finance (inflows, outflows, receivables,
+payables, days to pay) and keeps explanations behind an `InfoTip`, not on the
+page.
+
+**A RECEIVABLE IS PROJECTED FROM HOW THE CUSTOMER PAYS, NOT FROM THE TERM.**
+`engines/cash-flow.ts`: a customer's average days to pay is the amount-weighted
+days from bill date to confirmed money over `payments.cashflowLookbackMonths`,
+from real receipts only — `sheet_import`, Adjustment and Credit note are not a
+customer paying. Below `payments.cashflowMinPayments` payments the company
+average is used and the row says so. A reported or held receipt is expected on
+its cheque date (else the day reported) and is SUBTRACTED from its bill's
+projection, so the same money is never forecast twice.
+`services/cash-flow-service.ts` reads it; it is not scoped, because Accounts
+sees every book.
+
 **VENDOR PAYOUTS ARE WHAT WE OWE, AND THE ERP REGISTER IS WHERE A PURCHASE IS
-TYPED.** Accounts → Vendor payouts (`accounts.payouts`) is the one screen in
+TYPED.** The Payables tab is the one place in
 Accounts about money going OUT. A purchase payout is not entered here: the page
 runs `syncPurchasePayouts` first, which turns the ERP purchase register into one
 payout per supplier per PR number (`purchase_key`), worth the register's own

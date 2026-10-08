@@ -143,9 +143,9 @@ export const TONE_LABEL: Record<PayoutTone, string> = {
   cancelled: "Cancelled",
   held: "On hold",
   overdue: "Overdue",
-  today: "Pay today",
+  today: "Due today",
   late: "After due date",
-  upcoming: "Planned",
+  upcoming: "Scheduled",
 };
 
 /* ------------------------------------------------------------- purchases */

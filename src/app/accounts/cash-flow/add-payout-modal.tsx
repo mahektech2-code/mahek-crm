@@ -103,7 +103,7 @@ export function AddPayoutModal({
       open
       onClose={onClose}
       width={720}
-      title="Add a payout"
+      title="Add payable"
       footer={
         <>
           <span className="mr-auto self-center text-[13px] text-muted">
@@ -115,13 +115,13 @@ export function AddPayoutModal({
           </span>
           <Button onClick={onClose}>Cancel</Button>
           <Button variant="primary" disabled={busy || uploading} onClick={() => void submit()}>
-            {uploading ? "Waiting for files…" : "Add payout"}
+            {uploading ? "Uploading…" : "Add payable"}
           </Button>
         </>
       }
     >
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Pay to" error={errors.supplierId}>
+        <Field label="Vendor" error={errors.supplierId}>
           <Select
             value={supplierId}
             onChange={(e) => {
@@ -135,15 +135,15 @@ export function AddPayoutModal({
                 {s.name}
               </option>
             ))}
-            <option value={OTHER}>Someone not in the supplier list…</option>
+            <option value={OTHER}>Other payee…</option>
           </Select>
         </Field>
         {supplierId === OTHER ? (
-          <Field label="Their name" error={errors.payeeName}>
+          <Field label="Payee name" error={errors.payeeName}>
             <Input autoFocus value={payee} onChange={(e) => setPayee(e.target.value)} placeholder="e.g. Shree Ganesh Transport" />
           </Field>
         ) : (
-          <Field label="Purchase order" hint={supplier ? undefined : "Pick the supplier to narrow this list"} error={errors.poId}>
+          <Field label="Purchase order" error={errors.poId}>
             <Select value={poId} onChange={(e) => setPoId(e.target.value)}>
               <option value="">No PO</option>
               {supplierPos.map((p) => (
@@ -154,32 +154,32 @@ export function AddPayoutModal({
             </Select>
           </Field>
         )}
-        <Field label="What for" error={errors.description} className="col-span-2">
-          <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Advance against proforma, freight for PR 112, AMC…" />
+        <Field label="Description" error={errors.description} className="col-span-2">
+          <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="e.g. Advance against proforma, freight, AMC" />
         </Field>
-        <Field label="Amount to pay" error={errors.amountPaise}>
+        <Field label="Amount" error={errors.amountPaise}>
           <MoneyInput value={amount} onChange={(e) => setAmount(e.target.value)} invalid={!!errors.amountPaise} />
         </Field>
-        <Field label="Bill / reference no.">
+        <Field label="Invoice / ref. no.">
           <Input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="optional" />
         </Field>
-        <Field label="Bill date">
+        <Field label="Invoice date">
           <Input type="date" value={billDate} onChange={(e) => setBillDate(e.target.value)} />
         </Field>
         <Field
-          label="Due"
+          label="Due date"
           hint={
             dueInput
               ? undefined
-              : `${supplier?.creditDays ?? defaultCreditDays} days' credit${supplier?.creditDays == null ? " (default)" : ""}`
+              : `${supplier?.creditDays ?? defaultCreditDays}-day terms`
           }
         >
           <Input type="date" value={due} onChange={(e) => setDueInput(e.target.value || null)} />
         </Field>
         <Field
-          label="Pay on"
+          label="Payment date"
           error={errors.payOn ?? payOnWhy}
-          hint={payOnInput ? undefined : "The first payment day on or after the due date"}
+          hint={payOnInput ? undefined : "Next payment run"}
         >
           <Input type="date" value={payOn} min={today} onChange={(e) => setPayOnInput(e.target.value || null)} />
         </Field>
@@ -196,7 +196,7 @@ export function AddPayoutModal({
             setInvoices((list) => [...list, blankInvoice(Math.max(0, ...list.map((d) => d.key)) + 1, list.length ? "Tax invoice" : undefined)])
           }
         >
-          + Another invoice
+          + Add invoice
         </Button>
       </div>
       {invoiceError ? <p className="mb-2 text-[13px] text-danger">{invoiceError[1]}</p> : null}

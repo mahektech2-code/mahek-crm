@@ -13,7 +13,21 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { appAccess, attachments, erpGodowns, erpPurchases, erpRawMaterials, erpSuppliers, users, vendorPayouts } from "@/db/schema";
+import {
+  appAccess,
+  attachments,
+  bills,
+  customers,
+  erpGodowns,
+  erpPurchases,
+  erpRawMaterials,
+  erpSuppliers,
+  paymentReceipts,
+  payments,
+  users,
+  vendorPayouts,
+} from "@/db/schema";
+import { cashInForecast } from "@/lib/services/cash-flow-service";
 import { setTestUser } from "@/lib/auth";
 import { addDays, paymentDayOnOrAfter, paymentWeekdays, weekdayOf } from "@/lib/engines/vendor-payouts";
 import { today } from "@/lib/recompute";
@@ -91,7 +105,7 @@ function laterPaymentDay(iso: string, n = 1): string {
 
 before(async () => {
   await db.execute(sql`
-    truncate users, vendor_payouts, vendor_payout_invoices, erp_purchases, erp_suppliers, erp_raw_materials,
+    truncate users, customers, bills, payment_receipts, payments, vendor_payouts, vendor_payout_invoices, erp_purchases, erp_suppliers, erp_raw_materials,
              audit_log restart identity cascade`);
   clerk = await makeUser("Payout Clerk", "accounts", "associate");
   manager = await makeUser("Payout Manager", "accounts", "manager");
@@ -254,5 +268,50 @@ describe("manual payouts", () => {
     setTestUser(caller);
     const res = await createManualPayout({ payeeName: "X", description: "Y", amountPaise: 100, dueDate: day });
     assert.match(msg(res), /not on your account/);
+  });
+});
+
+describe("money in", () => {
+  test("an open bill is expected at its date plus the customer's own paying habit, a claim on its own date", async () => {
+    setTestUser(clerk);
+    const [shop] = await db
+      .insert(customers)
+      .values({ id: id("cus"), name: "Habit Paints", contactPerson: "A", phone: "9811122233", city: "Pune", ownerId: clerk.id })
+      .returning();
+    // Three past bills, each paid 20 days after it was raised.
+    for (let i = 0; i < 3; i++) {
+      const billDate = addDays(day, -100 + i * 20);
+      const [b] = await db
+        .insert(bills)
+        .values({ id: id("bil"), customerId: shop.id, billNo: `HB/${i}`, billDate, amount: 10_000_00, paidAmount: 10_000_00 })
+        .returning();
+      const [r] = await db
+        .insert(paymentReceipts)
+        .values({ id: id("rct"), idempotencyKey: id("idem"), customerId: shop.id, amount: 10_000_00, receivedAt: addDays(billDate, 20), status: "confirmed", mode: "Bank transfer" })
+        .returning();
+      await db.insert(payments).values({ id: id("pay"), receiptId: r.id, billId: b.id, customerId: shop.id, amount: 10_000_00, paidAt: addDays(billDate, 20) });
+    }
+    // An open bill raised five days ago: expected in fifteen days, not on any credit term.
+    const [open] = await db
+      .insert(bills)
+      .values({ id: id("bil"), customerId: shop.id, billNo: "HB/OPEN", billDate: addDays(day, -5), dueDate: addDays(day, 25), amount: 50_000_00 })
+      .returning();
+    // ₹10,000 of it reported by cheque dated in three days.
+    const [claim] = await db
+      .insert(paymentReceipts)
+      .values({ id: id("rct"), idempotencyKey: id("idem"), customerId: shop.id, amount: 10_000_00, receivedAt: day, instrumentDate: addDays(day, 3), status: "reported", mode: "Cheque" })
+      .returning();
+    await db.insert(payments).values({ id: id("pay"), receiptId: claim.id, billId: open.id, customerId: shop.id, amount: 10_000_00, paidAt: day });
+
+    const f = await cashInForecast();
+    const mine = f.items.filter((i) => i.customerId === shop.id);
+    const bill = mine.find((i) => i.kind === "bill")!;
+    assert.equal(bill.basis, "own");
+    assert.equal(bill.habit?.avgDays, 20);
+    assert.equal(bill.expectedOn, addDays(day, 15));
+    assert.equal(bill.amountPaise, 40_000_00, "the reported ₹10,000 is not predicted twice");
+    const reported = mine.find((i) => i.kind === "reported")!;
+    assert.equal(reported.expectedOn, addDays(day, 3));
+    assert.equal(reported.amountPaise, 10_000_00);
   });
 });

@@ -18,13 +18,14 @@ import {
 } from "@/lib/engines/vendor-payouts";
 import { money, moneyShort, shortDate } from "@/lib/format";
 import type { PayoutPo, PayoutSupplier, PayoutView } from "@/lib/services/vendor-payout-service";
-import { Cell, Empty, HeadCell, MetricRow, Row, ScreenHeader, Table, plural } from "../parts";
+import { Cell, Empty, HeadCell, MetricRow, Row, Table, plural } from "../parts";
 import { AddPayoutModal } from "./add-payout-modal";
+import { InfoTip } from "./info-tip";
 import { PayoutDrawer } from "./payout-drawer";
 import { StatusPill, TONE_SKIN, sourceWords, toneOf } from "./payout-parts";
 
 /* ---------------------------------------------------------------------------
- * VENDOR PAYOUTS.
+ * PAYABLES — the vendor payouts side of Cash flow.
  *
  * What Mahek owes its suppliers and the day each will be paid. Two views of
  * one list:
@@ -49,7 +50,7 @@ const OFF_COL = 34;
 const VENDOR_COL = 220;
 const EARLIER_COL = 150;
 
-export function PayoutsScreen({
+export function PayoutsSection({
   payouts,
   suppliers,
   pos,
@@ -76,7 +77,7 @@ export function PayoutsScreen({
   const [view, setView] = React.useState<View>("calendar");
   const [filter, setFilter] = React.useState<Filter>("due");
   const [query, setQuery] = React.useState("");
-  const [from, setFrom] = React.useState(() => weekStart(today));
+  const [from, setFrom] = React.useState(today);
   const [moved, setMoved] = React.useState<Record<string, string>>({});
   const [openId, setOpenId] = React.useState<string | null>(null);
   const [adding, setAdding] = React.useState(false);
@@ -139,36 +140,25 @@ export function PayoutsScreen({
   const dayNames = [...days].sort().map((d) => WEEKDAY_NAMES[d - 1]);
 
   return (
-    <div className="px-6 pt-6 pb-12">
-      <ScreenHeader
-        title="Vendor payouts"
-        subtitle={`What we owe suppliers and the day each will be paid. Payments go out ${listWords(dayNames)} (IST). Purchases come straight from the ERP purchase register; anything else can be added by hand.`}
-        actions={
-          canEdit ? (
-            <Button variant="primary" onClick={() => setAdding(true)}>
-              + Add payout
-            </Button>
-          ) : null
-        }
-      />
+    <div>
 
       <MetricRow
         metrics={[
           {
             label: "Overdue",
             value: money(sum(overdue)),
-            sub: overdue.length ? `${plural(overdue.length, "payout")} on a day that has gone` : "nothing missed",
+            sub: overdue.length ? plural(overdue.length, "payable") : undefined,
             tone: overdue.length ? "danger" : undefined,
           },
-          { label: "This week", value: money(sum(thisWeek)), sub: plural(thisWeek.length, "payout") },
-          { label: "Next 30 days", value: money(sum(next30)), sub: plural(next30.length, "payout") },
+          { label: "Due this week", value: money(sum(thisWeek)), sub: plural(thisWeek.length, "payable") },
+          { label: "Due in 30 days", value: money(sum(next30)), sub: plural(next30.length, "payable") },
           {
             label: "On hold",
             value: money(sum(held)),
-            sub: plural(held.length, "payout"),
+            sub: held.length ? plural(held.length, "payable") : undefined,
             tone: held.length ? "warn" : undefined,
           },
-          { label: "Paid this month", value: money(paidMonth.reduce((a, p) => a + (p.paidAmountPaise ?? 0), 0)), sub: plural(paidMonth.length, "payout"), tone: paidMonth.length ? "success" : undefined },
+          { label: "Paid this month", value: money(paidMonth.reduce((a, p) => a + (p.paidAmountPaise ?? 0), 0)), sub: paidMonth.length ? plural(paidMonth.length, "payment") : undefined, tone: paidMonth.length ? "success" : undefined },
         ]}
       />
 
@@ -184,7 +174,7 @@ export function PayoutsScreen({
         <Segmented
           value={filter}
           options={[
-            { value: "due", label: "To pay" },
+            { value: "due", label: "Outstanding" },
             { value: "paid", label: "Paid" },
             { value: "all", label: "All" },
           ]}
@@ -193,36 +183,48 @@ export function PayoutsScreen({
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search vendor, PO, PR, bill or invoice no."
+          placeholder="Search vendor, PO, PR or invoice no."
           className="h-8.5 w-[300px] rounded-[4px] border border-line bg-surface px-2.5 text-sm outline-none focus:border-brand"
         />
+        <InfoTip>
+          Accounts payable by scheduled payment date. Payment runs are {listWords(dayNames)} (IST). Purchases post
+          automatically from the ERP purchase register; other payables can be added manually. Drag a payable to another
+          payment run to reschedule it.
+        </InfoTip>
+        <div className="ml-auto flex items-center gap-1.5">
         {view === "calendar" ? (
-          <div className="ml-auto flex items-center gap-1.5">
+          <>
             <Button size="sm" onClick={() => setFrom(addDays(from, -7))} title="A week earlier">
               ←
             </Button>
-            <Button size="sm" onClick={() => setFrom(weekStart(today))}>
-              This week
+            <Button size="sm" onClick={() => setFrom(today)}>
+              Today
             </Button>
             <Button size="sm" onClick={() => setFrom(addDays(from, 7))} title="A week later">
               →
             </Button>
-            <span className="ml-1 text-[13px] whitespace-nowrap text-muted">
+            <span className="mr-2 ml-1 text-[13px] whitespace-nowrap text-muted">
               {shortDate(from)} – {shortDate(addDays(from, WEEKS * 7 - 1))}
             </span>
-          </div>
+          </>
         ) : null}
+        {canEdit ? (
+          <Button variant="primary" size="sm" onClick={() => setAdding(true)}>
+            + Add payable
+          </Button>
+        ) : null}
+        </div>
       </div>
 
       {shown.length === 0 && view === "list" ? (
         <Empty
-          title={filter === "paid" ? "Nothing paid yet" : q ? "Nothing matches that search" : "Nothing to pay"}
+          title={filter === "paid" ? "No payments yet" : q ? "No matches" : "No outstanding payables"}
           body={
             filter === "due" && !q
-              ? "Purchases appear here as soon as the register has a rate for them. Anything else owed can be added by hand."
+              ? "Purchases post here once rated in the register."
               : filter === "paid"
-                ? "Payouts marked paid in the last six months appear here."
-                : "Try the vendor's name, a PO or PR number, or an invoice number."
+                ? "Payments from the last six months appear here."
+                : "Try a vendor, PO, PR or invoice number."
           }
         />
       ) : view === "calendar" ? (
@@ -269,12 +271,12 @@ export function PayoutsScreen({
   );
 }
 
-function listWords(items: string[]): string {
+export function listWords(items: string[]): string {
   if (items.length <= 1) return items.join("");
   return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
 }
 
-function Segmented<T extends string>({
+export function Segmented<T extends string>({
   value,
   options,
   onChange,
@@ -383,7 +385,7 @@ function Calendar({
           <div className="sticky top-0 left-0 z-30 flex h-14 items-end border-r border-b border-line bg-canvas px-3 pb-2 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
             Vendor · {rows.length}
           </div>
-          <HeaderDay label="Earlier" sub="not paid yet" list={toPay(earlierAll)} tone="danger" />
+          <HeaderDay label="Overdue" sub="—" list={toPay(earlierAll)} tone="danger" />
           {dates.map((d) => {
             const pay = isPaymentDay(d, days);
             const wd = weekdayOf(d);
@@ -431,7 +433,7 @@ function Calendar({
                     {r.name}
                   </span>
                   <span className="text-[12px] text-muted tabular-nums">
-                    {owed ? `${money(owed)} to pay` : "nothing to pay"}
+                    {owed ? money(owed) : "Settled"}
                   </span>
                 </div>
                 <div className={cx("border-r border-b border-divider p-1.5", stripe ? "bg-canvas" : "bg-surface")}>
@@ -488,7 +490,7 @@ function Calendar({
 
           {/* ---------------------------------------------------- totals */}
           <div className="sticky bottom-0 left-0 z-30 flex h-10 items-center border-t border-r border-line bg-canvas px-3 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-            To pay that day
+            Total
           </div>
           <FootCell list={toPay(earlierAll)} />
           {dates.map((d) =>
@@ -501,16 +503,15 @@ function Calendar({
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-line px-4 py-2 text-[12px] text-muted">
-        {canEdit ? <span>Drag a payout sideways to plan it for another payment day.</span> : null}
         <Legend tone="overdue" label="Overdue" />
-        <Legend tone="today" label="Pay today" />
-        <Legend tone="late" label="After its due date" />
-        <Legend tone="upcoming" label="Planned" />
+        <Legend tone="today" label="Due today" />
+        <Legend tone="late" label="After due date" />
+        <Legend tone="upcoming" label="Scheduled" />
         <Legend tone="held" label="On hold" />
         <Legend tone="paid" label="Paid" />
         {later.length ? (
           <span className="ml-auto">
-            {plural(later.length, "more payout")} after {shortDate(to)} · {money(later.reduce((a, p) => a + p.amountPaise, 0))}
+            After {shortDate(to)}: {money(later.reduce((a, p) => a + p.amountPaise, 0))}
           </span>
         ) : null}
       </div>
@@ -548,8 +549,7 @@ function HeaderDay({
       )}
     >
       <span className={cx("text-[12px] font-semibold", isToday ? "text-[#5223E0]" : past ? "text-muted" : "text-ink")}>
-        {label}
-        {isToday ? " · today" : ""}
+        {isToday ? `Today · ${label.split(" ").slice(1).join(" ")}` : label}
       </span>
       <span className={cx("text-[11px] tabular-nums", tone === "danger" && list.length ? "text-danger" : "text-muted")}>
         {list.length ? `${list.length} · ${moneyShort(total)}` : (sub ?? "—")}
@@ -648,13 +648,13 @@ function PayoutList({ payouts, today, onOpen }: { payouts: PayoutView[]; today: 
         minWidth={1280}
         head={
           <>
-            <HeadCell width={110}>Pay on</HeadCell>
+            <HeadCell width={110}>Payment date</HeadCell>
             <HeadCell width={220}>Vendor</HeadCell>
-            <HeadCell width={200}>For</HeadCell>
+            <HeadCell width={200}>Description</HeadCell>
             <HeadCell width={90}>PO</HeadCell>
-            <HeadCell width={130}>Bill / ref.</HeadCell>
+            <HeadCell width={130}>Invoice / ref.</HeadCell>
             <HeadCell width={200}>Invoices</HeadCell>
-            <HeadCell width={90}>Due</HeadCell>
+            <HeadCell width={90}>Due date</HeadCell>
             <HeadCell width={120} align="right">
               Amount
             </HeadCell>

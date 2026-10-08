@@ -49,7 +49,7 @@ export default async function OrdersLayout({
     getConfig(),
     pendingOrderChangeCount(),
     // Only somebody who can open the screen is shown its badge.
-    modules.some((m) => m.key === "accounts.payouts") ? overduePayoutCount() : Promise.resolve(0),
+    modules.some((m) => m.key === "accounts.cash-flow") ? overduePayoutCount() : Promise.resolve(0),
   ]);
   const staleHours = config["payments.confirmationAgeWarningHours"];
   const hat = await hatForHeader(user, "accounts");

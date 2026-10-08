@@ -186,13 +186,14 @@ export function AccountsShell({
         { href: "/accounts/outstanding", label: "Outstanding", icon: "wallet" },
         { href: "/accounts/bills", label: "Bills", icon: "bill" },
         /*
-         * What Mahek owes its SUPPLIERS — every other screen in this group is
-         * money coming in. The badge is what is overdue: planned for a payment
-         * day that has gone and still not paid.
+         * Money in AND out, day by day — the one screen in this group that
+         * also carries what Mahek owes its suppliers. The badge is the out
+         * side's overdue: a payout planned for a payment day that has gone
+         * and still not paid.
          */
         {
-          href: "/accounts/payouts",
-          label: "Vendor payouts",
+          href: "/accounts/cash-flow",
+          label: "Cash flow",
           icon: "payout",
           badge: counts.payoutsOverdue,
           urgent: counts.payoutsOverdue > 0,

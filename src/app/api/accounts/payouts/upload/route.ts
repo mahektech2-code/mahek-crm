@@ -12,8 +12,8 @@ import { createAttachment } from "@/lib/services/attachment-service";
  */
 export async function POST(request: Request) {
   const user = await requireUser();
-  if (!(await canOpenModule(user.id, "accounts.payouts"))) {
-    return NextResponse.json({ error: "Vendor payouts is not on your account." }, { status: 403 });
+  if (!(await canOpenModule(user.id, "accounts.cash-flow"))) {
+    return NextResponse.json({ error: "Cash flow is not on your account." }, { status: 403 });
   }
   const form = await request.formData();
   const file = form.get("file");

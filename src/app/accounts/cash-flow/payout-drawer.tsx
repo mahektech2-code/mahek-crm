@@ -127,13 +127,13 @@ function PayoutBody({
     <>
       <DrawerHeader onClose={onClose}>
         <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-          {p.source === "purchase" ? "Purchase payout" : "Added by hand"}
+          {p.source === "purchase" ? "Purchase payable" : "Manual payable"}
         </div>
         <div className="mt-0.5 truncate text-lg font-semibold text-ink">{p.payeeName}</div>
         <div className="mt-1 flex flex-wrap items-center gap-2">
           <span className="text-[22px] leading-7 font-semibold text-ink tabular-nums">{money(p.amountPaise)}</span>
           <StatusPill tone={tone} />
-          {p.payOnDecided ? <span className="text-[12px] text-muted">day chosen by hand</span> : null}
+          {p.payOnDecided ? <span className="text-[12px] text-muted">rescheduled</span> : null}
         </div>
       </DrawerHeader>
 
@@ -155,16 +155,15 @@ function PayoutBody({
             {p.paidByName ? ` · marked by ${p.paidByName}` : ""}
             {p.paidAmountPaise != null && p.paidAmountPaise !== p.amountPaise ? (
               <div className="mt-0.5 text-warn-ink">
-                The payout was for {money(p.amountPaise)} — {money(Math.abs(p.amountPaise - p.paidAmountPaise))}{" "}
-                {p.paidAmountPaise < p.amountPaise ? "less" : "more"} was paid.
+                Payable {money(p.amountPaise)} · difference {money(Math.abs(p.amountPaise - p.paidAmountPaise))}
               </div>
             ) : null}
           </div>
         ) : null}
 
         <dl className="grid grid-cols-2 gap-x-5 gap-y-3 text-sm">
-          <Fact label="For">{sourceWords(p)}</Fact>
-          <Fact label="Bill / reference">{p.reference ?? <Muted>none recorded</Muted>}</Fact>
+          <Fact label="Description">{sourceWords(p)}</Fact>
+          <Fact label="Invoice / ref.">{p.reference ?? <Muted>—</Muted>}</Fact>
           <Fact label="Purchase order">
             {p.poNumber != null ? (
               <span>
@@ -175,19 +174,19 @@ function PayoutBody({
                 </span>
               </span>
             ) : (
-              <Muted>{p.source === "purchase" ? "bought before POs" : "none named"}</Muted>
+              <Muted>—</Muted>
             )}
           </Fact>
-          <Fact label={p.source === "purchase" ? "Purchased" : "Bill date"}>
+          <Fact label={p.source === "purchase" ? "Purchase date" : "Invoice date"}>
             {p.purchaseDate ? longDate(p.purchaseDate) : <Muted>—</Muted>}
           </Fact>
-          <Fact label="Due">
+          <Fact label="Due date">
             {longDate(p.dueDate)}
             {p.source === "purchase" ? (
-              <span className="text-muted"> · {p.creditDays != null ? `${p.creditDays} days' credit` : "default credit"}</span>
+              <span className="text-muted"> · {p.creditDays != null ? `${p.creditDays}-day terms` : "default terms"}</span>
             ) : null}
           </Fact>
-          <Fact label="Pay on">
+          <Fact label="Payment date">
             <span className={cx(tone === "overdue" && "font-medium text-danger")}>
               {WEEKDAY_SHORT[weekdayOf(p.payOn) - 1]} {longDate(p.payOn)}
             </span>
@@ -196,13 +195,13 @@ function PayoutBody({
             ) : null}
           </Fact>
           {p.source === "purchase" && p.registerStatuses.length ? (
-            <Fact label="In the register">{p.registerStatuses.join(", ")}</Fact>
+            <Fact label="Register status">{p.registerStatuses.join(", ")}</Fact>
           ) : null}
         </dl>
 
         {live && canEdit ? (
           <section className="mt-5">
-            <SectionTitle>Plan for another day</SectionTitle>
+            <SectionTitle>Reschedule</SectionTitle>
             <div className="flex flex-wrap gap-1.5">
               {nextDays.map((day) => (
                 <button
@@ -242,7 +241,7 @@ function PayoutBody({
           </div>
           {p.invoices.length === 0 && !adding ? (
             <p className="rounded-[4px] border border-dashed border-line px-3 py-3 text-[13px] text-muted">
-              No invoice on this payout yet — add the proforma, the tax invoice or whatever the vendor sent.
+              No invoices attached
             </p>
           ) : null}
           <ul className="space-y-1.5">
@@ -288,7 +287,7 @@ function PayoutBody({
           </ul>
           {invoiceTotal > 0 && invoiceTotal !== p.amountPaise ? (
             <p className="mt-1.5 text-[12px] text-muted">
-              Invoices add up to {money(invoiceTotal)} against a payout of {money(p.amountPaise)} — a proforma and its tax invoice are usually the same money twice.
+              Invoices total {money(invoiceTotal)} vs. payable {money(p.amountPaise)}
             </p>
           ) : null}
           {adding ? (
@@ -320,7 +319,7 @@ function PayoutBody({
             rows={2}
             value={notes}
             disabled={!canEdit}
-            placeholder="Anything whoever pays this should know"
+            placeholder="Add a note"
             onChange={(e) => setNotes(e.target.value)}
           />
           {canEdit && notes !== (p.notes ?? "") ? (
@@ -336,7 +335,7 @@ function PayoutBody({
       <div className="flex flex-none flex-wrap items-center justify-end gap-2 border-t border-line px-5 py-3">
         {p.source === "manual" && live && canSettle ? (
           <Button variant="ghost" disabled={busy} onClick={() => setDialog("cancel")}>
-            Cancel payout
+            Cancel payable
           </Button>
         ) : null}
         {p.status === "open" && canEdit ? (
@@ -358,7 +357,7 @@ function PayoutBody({
           <Button
             variant="primary"
             disabled={busy || !canSettle}
-            title={canSettle ? undefined : "Marking a payout paid is the Accounts manager's."}
+            title={canSettle ? undefined : "Requires Accounts manager"}
             onClick={() => setDialog("paid")}
           >
             Mark paid
@@ -385,7 +384,7 @@ function PayoutBody({
                 ? "Why is this not owed after all?"
                 : "Why is it being reopened — returned by the bank, marked on the wrong payout?"
           }
-          confirm={dialog === "hold" ? "Hold" : dialog === "cancel" ? "Cancel payout" : "Reopen"}
+          confirm={dialog === "hold" ? "Hold" : dialog === "cancel" ? "Cancel payable" : "Reopen"}
           destructive={dialog === "cancel"}
           onClose={() => setDialog(null)}
           onSubmit={(reason) =>
