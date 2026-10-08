@@ -49,6 +49,17 @@ export async function recipeQtyByName(): Promise<Record<string, string>> {
   return Object.fromEntries(rows.map((r) => [`${r.product}|${r.item}`, String(Number(r.r.qtyPerBatch))]));
 }
 
+/**
+ * Each product's recipe as the lines of a new SFG batch, keyed by product name —
+ * what picking the product on a blank batch lays out, the same lines "Start a
+ * batch" opens with. The lots are still the person's to pick.
+ */
+export async function recipeLinesByProduct(): Promise<Record<string, Record<string, string>[]>> {
+  const out: Record<string, Record<string, string>[]> = {};
+  for (const r of await recipeRows()) (out[r.product] ??= []).push({ item: r.item, qty: String(Number(r.r.qtyPerBatch)) });
+  return out;
+}
+
 const mayWrite = (ctx: { administrator: boolean; level: string | null }) => ctx.administrator || ctx.level === "manager";
 
 export const recipesScreen: ScreenModule = {
@@ -130,7 +141,7 @@ export const recipesScreen: ScreenModule = {
         title: `New SFG batch · ${x.product}`,
         sub: "From the recipe, in litres. Pick the lot for each raw material from what is at the godown; change a quantity if this batch is different.",
         init: { ...base.init, product: x.product, batches: "1" },
-        initLines: lines.map((r) => ({ item: r.item, qty: String(r.r.qtyPerBatch) })),
+        initLines: lines.map((r) => ({ item: r.item, qty: String(Number(r.r.qtyPerBatch)) })),
       };
     },
   },

@@ -334,6 +334,11 @@ describe("recipes", () => {
     assert.equal(start?.screen, "sfgBatches");
     assert.equal(start?.init?.product, SFG);
     assert.deepEqual(start?.initLines, [{ item: "Toluene", qty: "200" }]);
+    /* A blank New SFG batch lays out the same lines when the product is picked. */
+    const blank = (await mod("sfgBatches").load(ctx)).spec.newForm!;
+    assert.equal(blank.linesFrom?.by, "product");
+    assert.deepEqual(blank.linesFrom?.map[SFG], start?.initLines);
+    assert.equal(blank.linesFrom?.set?.batches, "1");
     /* The batch made earlier used 400 over 2 batches: exactly the recipe. */
     const line = () => mod("sfgBatches").load(ctx).then((x) => x.rows.find((y) => y.v.item === "Toluene")!);
     assert.ok(!(await line()).flags.includes("overRecipe"));

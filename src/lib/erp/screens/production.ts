@@ -1,6 +1,6 @@
 import "server-only";
 import { getConfig } from "@/lib/config/store";
-import { recipeMap, recipeQtyByName } from "./recipes";
+import { recipeLinesByProduct, recipeMap, recipeQtyByName } from "./recipes";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
@@ -94,11 +94,12 @@ async function syncSfgEntry(tx: Ex, line: SfgRow) {
 }
 
 export async function sfgForm(ctx: ErpContext, fixed?: { sfgNo: number; date: string; godown: string; product: string; batches: string }): Promise<FormSpec> {
-  const [gds, forms, lots, recipe] = await Promise.all([
+  const [gds, forms, lots, recipe, recipeLines] = await Promise.all([
     godownOptions(ctx, { lost: false }),
     db.select({ name: productFormulations.name }).from(productFormulations).where(eq(productFormulations.active, true)).orderBy(asc(productFormulations.name)),
     rmLots(),
     recipeQtyByName(),
+    fixed ? Promise.resolve({}) : recipeLinesByProduct(),
   ]);
   const items: Record<string, string[]> = {};
   const lotsOf: Record<string, string[]> = {};
@@ -116,9 +117,13 @@ export async function sfgForm(ctx: ErpContext, fixed?: { sfgNo: number; date: st
     screen: "sfgBatches",
     id: fixed ? "more" : "new",
     title: fixed ? `Add a lot to SFG ${fixed.sfgNo}` : "New SFG batch",
-    sub: "One line per raw-material lot the batch consumes.",
+    sub: fixed
+      ? "One line per raw-material lot the batch consumes."
+      : "Pick the SFG product and its recipe fills the raw materials, in litres. Pick the lot for each from what is at the godown; change a quantity if this batch is different.",
     submit: "Save batch",
     lineLabel: "Raw-material lot",
+    /* Picking the product lays out its recipe — the lines "Start a batch" on Recipes opens with. */
+    ...(fixed ? {} : { linesFrom: { by: "product", map: recipeLines, set: { batches: "1" } } }),
     init: fixed
       ? { sfgFixed: String(fixed.sfgNo), date: fixed.date, godown: fixed.godown, product: fixed.product, batches: fixed.batches }
       : { date: today(), godown: ctx.workingGodown?.name ?? "" },
