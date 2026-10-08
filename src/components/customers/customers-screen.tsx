@@ -33,6 +33,7 @@ import {
   Tabs,
 } from "@/components/ui/overlays";
 import { CustomerContactsPanel } from "@/components/customers/customer-contacts-panel";
+import { AddCustomerDialog } from "@/components/customers/add-customer-dialog";
 import { birthdaySentence, type UpcomingBirthday } from "@/lib/customer-contacts";
 import {
   loadCustomerEditor,
@@ -181,6 +182,7 @@ export function CustomersScreen({
   canClassify,
   canReassign,
   canAssignSalesManager,
+  canDecideCredit = false,
   amReasons,
   amSearchThreshold,
   amOptions,
@@ -231,6 +233,11 @@ export function CustomersScreen({
    * visible button and a permitted action cannot disagree.
    */
   canAssignSalesManager: boolean;
+  /**
+   * `payment.confirm` — setting a credit limit on a new account. Only the
+   * Accounts door passes it; the Add customer button is drawn there alone.
+   */
+  canDecideCredit?: boolean;
   amReasons: string[];
   amSearchThreshold: number;
   /** The names each filter offers — the ones the column actually shows. */
@@ -301,6 +308,15 @@ export function CustomersScreen({
    * account statement IS the accounts-side record of a customer.
    */
   const isCrm = app === "crm";
+  /*
+   * ADDING A CUSTOMER IS THE ACCOUNTS DESK'S, and only on its own door. An
+   * account we invoice is opened by the people who invoice it; the CRM's
+   * door for a new shop is lead capture, beside the funnel. Drawn for anybody
+   * on the Accounts list and disabled with a reason where the person cannot
+   * decide whose book it is in — `customer.reassign`, which the action asks
+   * again.
+   */
+  const [adding, setAdding] = React.useState(false);
   // The filter URLs need no base path — `navigate()` pushes a relative query
   // string, so the address it builds is already whichever list is open.
   const recordHref = (id: string) =>
@@ -662,6 +678,20 @@ export function CustomersScreen({
             >
               Transfer sales manager
             </Button>
+            {isCrm ? null : (
+              <Button
+                variant="primary"
+                disabled={!canReassign}
+                title={
+                  canReassign
+                    ? "Open a new account we invoice"
+                    : "Adding a customer decides whose book it is in — an Accounts manager or admin action"
+                }
+                onClick={() => setAdding(true)}
+              >
+                Add customer
+              </Button>
+            )}
             {/*
               THERE IS NO "ADD LEAD" HERE ANY MORE, and it went with the rows
               it created. This button opened a form that hard-coded
@@ -1579,6 +1609,23 @@ export function CustomersScreen({
           }
           return result.ok;
         }}
+      />
+
+      <AddCustomerDialog
+        open={adding}
+        onClose={() => setAdding(false)}
+        onAdded={(added) => {
+          setAdding(false);
+          // Straight to the new row: the list narrowed to its name, so the
+          // person who added it sees it landed rather than hunting for it.
+          router.push(`?q=${encodeURIComponent(added.name)}`);
+          router.refresh();
+        }}
+        people={backOfficePeople}
+        salesManagerPeople={salesManagerPeople}
+        salesManagerSuggestions={salesManagerSuggestions}
+        canAssignSalesManager={canAssignSalesManager}
+        canDecideCredit={canDecideCredit}
       />
 
       <CustomerForm
