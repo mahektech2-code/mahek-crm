@@ -33,12 +33,13 @@ import {
   margin,
   monthId,
   orderType,
+  readyStockCheck,
   standingInstructions,
   targetReached,
   type Allocation,
   type OrderType,
 } from "../engines/sales";
-import { fgLots, lockLot, packLots } from "../stock";
+import { fgLevelAvailable, fgLots, lockLot, packLots } from "../stock";
 import { erpOrdersLive, orderNosOf, syncBookOrders } from "../book";
 import { erpLink } from "../registry";
 import { issuedCreditNotes } from "./complaints";
@@ -476,13 +477,6 @@ function orderList(scope: Scope): ScreenModule {
             ? []
             : [
                 ...(l.o.status !== "Ready" ? [{ id: "ready", l: "Ready", primary: true } as ActionSpec] : [{ id: "underProcess", l: "Under Process" } as ActionSpec]),
-                {
-                  id: "allocate",
-                  l: "Allocate a lot",
-                  primary: l.o.status === "Ready" && l.allocation === "Add More Quantity",
-                  loadsForm: true,
-                  why: l.o.status !== "Ready" ? "Lots are allocated once the line is Ready" : l.allocation !== "Add More Quantity" ? (l.allocation === "Done" ? "Fully allocated" : "Over-allocated: remove a batch code first") : !l.boxesValid ? "The box quantity is not whole" : "",
-                },
                 ...(l.inDetails
                   ? [{ id: "unbill", l: "Undo billing", why: l.dispatched ? "It has been dispatch-verified" : "", confirm: `Take order ${l.o.orderNo} · ${l.sku.name} back out of billing?` } as ActionSpec]
                   : [{ id: "bill", l: "Bill it", primary: !blockers.length, why: blockers.length ? `Needs ${blockers.join(", ")}` : "" } as ActionSpec]),
@@ -572,8 +566,44 @@ async function setMany(ctx: ErpContext, ids: string[], values: Partial<typeof er
 
 const plural = (n: number) => `${n} line${n === 1 ? "" : "s"}`;
 
+/** Where a line's stock is counted: packed boxes for a boxed SKU, filled cans for a loose one. */
+const stockKey = (l: OrderLine) => `${l.boxed ? "pack" : "fg"}|${l.sku.id}|${l.o.godownId}`;
+const stillToAllocate = (l: OrderLine) => Math.max(0, allocationTarget(l.boxed, l.boxes, l.o.qtyCans) - l.allocated);
+
+/**
+ * READY IS REFUSED WITHOUT STOCK. A line is Ready only where its godown holds
+ * the boxes (or cans) it needs, after what the lines already Ready and not yet
+ * allocated will take — `readyStockCheck` is the rule. The lines that pass are
+ * marked; each that fails is named with what it needs against what is there.
+ */
+/** The lines among these that the shelf cannot cover, each with the sentence that says so. */
+async function stockShortfalls(asked: { l: OrderLine; need: number }[]): Promise<Map<string, string>> {
+  const all = await orderLines();
+  const onShelf = await fgLevelAvailable();
+  const free = new Map(asked.map(({ l }) => [stockKey(l), onShelf(l.sku.id, l.boxed, l.o.godownId)]));
+  const askedIds = new Set(asked.map(({ l }) => l.o.id));
+  const reserved = new Map<string, number>();
+  for (const l of all) if (l.o.status === "Ready" && !l.dispatched && !askedIds.has(l.o.id)) reserved.set(stockKey(l), (reserved.get(stockKey(l)) ?? 0) + stillToAllocate(l));
+  const byId = new Map(asked.map(({ l }) => [l.o.id, l]));
+  const out = new Map<string, string>();
+  for (const a of readyStockCheck(asked.map(({ l, need }) => ({ id: l.o.id, key: stockKey(l), need })), free, reserved)) {
+    if (a.ok) continue;
+    const l = byId.get(a.id)!;
+    out.set(a.id, `order ${l.o.orderNo} · ${l.sku.name} at ${l.godown} needs ${nf(a.need)} ${l.boxed ? "boxes" : "cans"}, ${nf(a.free)} in stock`);
+  }
+  return out;
+}
+
 async function doReady(ctx: ErpContext, ids: string[]) {
-  return setMany(ctx, ids, { status: "Ready" }, "erp.order.ready", (n) => `${plural(n)} Ready`);
+  const asked = (await lines(ids)).filter((l) => l.o.status !== "Ready");
+  if (!asked.length) return err("Those lines are already Ready.", "rule_violation");
+  const short = await stockShortfalls(asked.map((l) => ({ l, need: stillToAllocate(l) })));
+  const ok = asked.filter((l) => !short.has(l.o.id)).map((l) => l.o.id);
+  const why = [...short.values()].join("; ");
+  if (!ok.length) return err(`Stock is not there: ${why}. Pack or move the stock first, then mark it Ready.`, "rule_violation");
+  const res = await setMany(ctx, ok, { status: "Ready" }, "erp.order.ready", (n) => `Marked Ready · ${plural(n)}`);
+  if (res.ok && short.size) return okVoid(`Marked Ready · ${plural(ok.length)}. Not marked — stock is not there: ${why}.`);
+  return res;
 }
 async function doUnder(ctx: ErpContext, ids: string[]) {
   const ls = await lines(ids);
@@ -760,6 +790,12 @@ async function saveEdit(ctx: ErpContext, h: Record<string, string>, id?: string)
   if (qty == null || qty <= 0) return fieldErr("qty", "Minus Quantity Not Allowed");
   if (l.inDetails && qty !== l.o.qtyCans) return fieldErr("qty", "This line is in order details; its quantity is fixed");
   if (!boxQuantity(qty, l.sku.cpb, !l.boxed).valid) return fieldErr("qty", "INVALID");
+  /* Ready through the edit form is the same claim as the Ready button, checked the same way. */
+  if (status === "Ready" && l.o.status !== "Ready") {
+    const need = Math.max(0, allocationTarget(l.boxed, boxQuantity(qty, l.sku.cpb, !l.boxed).boxes, qty) - l.allocated);
+    const short = (await stockShortfalls([{ l, need }])).get(l.o.id);
+    if (short) return fieldErr("status", `Stock is not there: ${short}`);
+  }
   const delivery = (await partyByName(text(h.delivery))) ?? l.delivery;
   const values: Partial<typeof erpOrders.$inferInsert> = {
     status,
@@ -853,7 +889,7 @@ const batchCodes: ScreenModule = {
     ];
     const { cols, hidden, hiddenKeys } = visibleCols(all, has(ctx));
     return {
-      spec: { screen: "batchCodes", cols, hidden, groups: ["godown"], godownKey: "godown", noDataLine: "No lots allocated yet. Allocate from a Ready order line." },
+      spec: { screen: "batchCodes", cols, hidden, groups: ["godown"], godownKey: "godown", noDataLine: "No lots allocated yet. Lots are allocated on the Dispatch desk, by scanning the boxes." },
       rows: rows.map((r): ListRow => {
         const dispatched = r.verified === "Verified";
         return {

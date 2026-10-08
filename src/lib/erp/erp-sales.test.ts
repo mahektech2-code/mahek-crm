@@ -169,6 +169,20 @@ describe("taking an order", () => {
   });
 });
 
+describe("marking Ready", () => {
+  test("Ready is refused where the godown has not the stock, and says what it needs", async () => {
+    const ctx = await as(admin);
+    const r = await mod("orders").forms!.new(ctx, { date: TODAY, godown: "Bhiwandi", billing: "Shree Paints" }, [{ sku: LOOSE, qty: "40" }]);
+    assert.ok(r.ok, JSON.stringify(r));
+    const [big] = await db.select().from(erpOrders).where(sql`${erpOrders.skuId} = ${looseId} and ${erpOrders.qtyCans} = 40`);
+    assert.match(msg(await mod("orders").actions!.ready(ctx, big.id, {})), /^Stock is not there: .*needs 40 cans, 30 in stock/);
+    const viaEdit = await mod("orders").forms!.edit(ctx, { status: "Ready", delivery: "Shree Paints", qty: "40" }, [], big.id);
+    assert.match(msg(viaEdit), /Stock is not there/);
+    assert.equal((await db.select().from(erpOrders).where(eq(erpOrders.id, big.id)))[0].status, big.status, "nothing was marked");
+    await db.delete(erpOrders).where(eq(erpOrders.id, big.id));
+  });
+});
+
 describe("allocating lots", () => {
   test("a line is allocated only once Ready, and never beyond its need or the lot's stock", async () => {
     const ctx = await as(admin);

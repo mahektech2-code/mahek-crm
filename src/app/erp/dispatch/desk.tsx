@@ -8,6 +8,7 @@ import type { ScanVerdict } from "@/lib/erp/engines/trace";
 import { erpTraceHref } from "@/lib/erp/trace-links";
 import { erpDispatchDecideOverride, erpDispatchRequestOverride, erpDispatchScan, erpDispatchUnscan, erpDispatchVerify } from "@/lib/actions/erp-trace";
 import { Badge, Button, Card, cx, Progress } from "@/components/ui/primitives";
+import { useErpUi } from "../_ui/erp-ui";
 
 /**
  * The scanning desk. A hand scanner types the code and an Enter into the box,
@@ -38,8 +39,9 @@ function beep(ok: boolean) {
   }
 }
 
-export function DispatchDesk({ board, me, canDecide, administrator, canVerify, today }: { board: DispatchBoard; me: string; canDecide: boolean; administrator: boolean; canVerify: boolean; today: string }) {
+export function DispatchDesk({ board, me, canDecide, administrator, canVerify, canAllocate, today }: { board: DispatchBoard; me: string; canDecide: boolean; administrator: boolean; canVerify: boolean; canAllocate: boolean; today: string }) {
   const router = useRouter();
+  const ui = useErpUi();
   const input = useRef<HTMLInputElement>(null);
   const [code, setCode] = useState("");
   const [last, setLast] = useState<Last>(null);
@@ -175,6 +177,19 @@ export function DispatchDesk({ board, me, canDecide, administrator, canVerify, t
                     {l.alloc.length ? `Lots ${l.alloc.map((a) => `${a.lotCode} × ${a.qty}`).join(", ")}` : "No lot allocated yet — scanning allocates"}
                     {!l.unitsExist && l.alloc.length ? " · packed before box ids: no scan needed" : ""}
                   </span>
+                  {/* Scanning allocates. Stock packed before box labels has
+                      nothing to scan, so its lot is allocated here by hand —
+                      the one place left that does it. */}
+                  {canAllocate && !l.cancelled && !l.dispatched && !l.billed && l.alloc.reduce((a, x) => a + x.qty, 0) < l.target ? (
+                    <button
+                      type="button"
+                      onClick={() => ui.act("orders", { id: "allocate", l: "Allocate a lot by hand", loadsForm: true }, l.id)}
+                      className="mt-0.5 cursor-pointer text-[12px] text-[#5223E0] hover:underline"
+                      title="For stock packed before box labels, which has nothing to scan"
+                    >
+                      Allocate a lot by hand (no box labels)
+                    </button>
+                  ) : null}
                 </span>
                 <span className="text-sm text-body">{l.packLabel}</span>
                 <span className="text-sm tabular-nums">

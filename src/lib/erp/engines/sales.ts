@@ -122,3 +122,24 @@ export function standingInstructions(p: { instructions: string | null; deliveryT
 export function targetReached(monthlySalePaise: number, targetPaise: number | null): boolean {
   return targetPaise != null && targetPaise > 0 && monthlySalePaise >= targetPaise;
 }
+
+/**
+ * READY MEANS THE GOODS ARE ON THE SHELF. A line is marked Ready only where the
+ * godown holds enough unallocated stock of its SKU — packed boxes for a boxed
+ * line, filled cans for a loose one — after what the lines ALREADY Ready and
+ * still short of allocation will take. Lines asked for together are judged in
+ * order, each spending what it needs, so two lines cannot both claim the last
+ * box. `free` is stock left on the lots (allocations are already out of it).
+ */
+export type ReadyAsk = { id: string; key: string; need: number };
+export type ReadyAnswer = { id: string; ok: boolean; need: number; free: number };
+export function readyStockCheck(asks: ReadyAsk[], free: Map<string, number>, alreadyReady: Map<string, number>): ReadyAnswer[] {
+  const left = new Map<string, number>();
+  for (const [k, v] of free) left.set(k, v - (alreadyReady.get(k) ?? 0));
+  return asks.map((a) => {
+    const have = Math.max(0, left.get(a.key) ?? 0);
+    const ok = a.need <= 0 || have >= a.need;
+    if (ok) left.set(a.key, have - Math.max(0, a.need));
+    return { id: a.id, ok, need: a.need, free: have };
+  });
+}
