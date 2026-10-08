@@ -11170,6 +11170,41 @@ export const erpRawMaterials = pgTable(
 );
 
 /**
+ * WHO DOES WHAT TO ONE MATERIAL: who may ask for it, who raises its PO, who
+ * approves that PO and — for a chemical — who tests its lots.
+ *
+ * Each row names ONE person or ONE department (an ERP designation, so
+ * everybody holding "Production" or "Quality tester"), never both. A duty
+ * with no rows is not configured and behaves exactly as it did before this
+ * table existed: whoever holds the screen (and, for approval, the "Approve
+ * purchase orders" power). Once a duty names anybody, only they — and an ERP
+ * administrator — may do it for this material. `lib/erp/material-duties.ts`
+ * is the rule; an ERP administrator sets it from the material's record.
+ */
+export const erpMaterialDuties = pgTable(
+  "erp_material_duties",
+  {
+    id: text("id").primaryKey(),
+    rawMaterialId: text("raw_material_id")
+      .notNull()
+      .references(() => erpRawMaterials.id, { onDelete: "cascade" }),
+    /** `request` | `raisePo` | `approve` | `test`. */
+    duty: text("duty").notNull(),
+    userId: text("user_id").references(() => users.id, { onDelete: "cascade" }),
+    designationId: text("designation_id").references(() => erpDesignations.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id, { onDelete: "set null" }),
+  },
+  (t) => [
+    index("erp_material_duties_material_idx").on(t.rawMaterialId),
+    uniqueIndex("erp_material_duties_user_key").on(t.rawMaterialId, t.duty, t.userId),
+    uniqueIndex("erp_material_duties_designation_key").on(t.rawMaterialId, t.duty, t.designationId),
+    check("erp_material_duties_duty_check", sql`${t.duty} in ('request', 'raisePo', 'approve', 'test')`),
+    check("erp_material_duties_one_target", sql`(${t.userId} is null) <> (${t.designationId} is null)`),
+  ],
+);
+
+/**
  * A supplier ("Purchase Party"). NOT a `customers` row: a supplier in the
  * customer table would land on the Call Log. `party_code` is part of every
  * raw-material lot number bought from them, so it is required to be stable.
