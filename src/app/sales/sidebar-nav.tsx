@@ -43,9 +43,12 @@ const DANGER_HREFS = new Set<string>(["/sales/leads/actions"]);
 export function SalesSidebarNav({
   allowed,
   counts,
+  railed = false,
 }: {
   allowed: string[];
   counts: SalesCounts;
+  /** Icons only — the shell's collapsed sidebar. */
+  railed?: boolean;
 }) {
   const permitted = new Set(allowed);
 
@@ -64,6 +67,7 @@ export function SalesSidebarNav({
       ariaLabel="Manager Console sections"
       pinned={pinned}
       groups={groups}
+      railed={railed}
       countFor={(item) => counts[item.href] ?? 0}
       /* Named red, or the console's own size rule. See `DANGER_HREFS` — the
          rows it does not name keep exactly the tone they have always had. */

@@ -2,7 +2,6 @@ import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { listUserApps, listUserModules } from "@/lib/access";
 import { webApps } from "@/lib/apps";
-import { AppSwitcher } from "@/components/shell/app-switcher";
 import { FeedbackButton } from "@/components/shell/feedback-button";
 import { ToastProvider } from "@/components/ui/toast";
 import { getConfig } from "@/lib/config/store";
@@ -76,11 +75,9 @@ export default async function OrdersLayout({
           orderChanges: changeCount,
         }}
         allowed={modules.map((m) => m.href)}
-        switcher={
-          apps.length > 1 ? (
-            <AppSwitcher apps={webApps(apps)} current="accounts" />
-          ) : null
-        }
+        // Drawn for everybody, one app or several: the switcher is also the
+        // only way back to the launcher.
+        apps={webApps(apps)}
         feedback={<FeedbackButton />}
       >
         {children}

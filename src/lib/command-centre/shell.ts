@@ -17,7 +17,7 @@ import type { InboxItem, NavCounts, Tone } from "./types";
 
 export type ShellChrome = {
   user: { name: string; initials: string; hatLabel: string };
-  switcherApps: AppDefinition[] | null;
+  switcherApps: AppDefinition[];
   inbox: InboxItem[];
   liveCount: number;
   navCounts: NavCounts;
@@ -41,7 +41,7 @@ export async function shellChrome(access: Awaited<ReturnType<typeof founderAcces
 
   return {
     user: { name: access.user.name, initials: initials(access.user.name), hatLabel: `${hat.label} · Founder` },
-    switcherApps: apps.length > 1 ? webApps(apps) : null,
+    switcherApps: webApps(apps),
     inbox,
     liveCount: live.length,
     navCounts,

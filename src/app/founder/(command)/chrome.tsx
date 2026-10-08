@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { C, Hov, Icon, upper } from "./ui";
-import { AppSwitcher } from "@/components/shell/app-switcher";
+import { HeaderLead } from "@/components/shell/header-lead";
 import type { AppDefinition } from "@/lib/apps";
 import type { NavCounts, SectionKey, Tone } from "@/lib/command-centre/types";
 
@@ -73,15 +73,55 @@ export function crumbFor(section: SectionKey): string {
 
 export type ChromeUser = { name: string; initials: string; hatLabel: string };
 
+/* The sidebar's collapsed state outlives the component drawing it: the
+ * Command Centre remounts on every section change and the desks are other
+ * routes, so held in useState it would spring open on every click. It lives
+ * in localStorage behind useSyncExternalStore, which renders expanded on the
+ * server and on first paint, so nothing mismatches on hydration. */
+const COLLAPSE_KEY = "founder.sidebar.collapsed";
+const collapseListeners = new Set<() => void>();
+function readCollapsed(): boolean {
+  try {
+    return window.localStorage.getItem(COLLAPSE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function useFounderSidebar(): [boolean, () => void] {
+  const collapsed = React.useSyncExternalStore(
+    (cb) => {
+      collapseListeners.add(cb);
+      return () => collapseListeners.delete(cb);
+    },
+    readCollapsed,
+    () => false,
+  );
+  const toggle = React.useCallback(() => {
+    try {
+      window.localStorage.setItem(COLLAPSE_KEY, readCollapsed() ? "0" : "1");
+    } catch {
+      /* Storage refused: the toggle simply does not stick. */
+    }
+    collapseListeners.forEach((l) => l());
+  }, []);
+  return [collapsed, toggle];
+}
+
 export function FounderHeader({
   switcherApps,
+  collapsed,
+  onToggleSidebar,
   user,
   liveCount,
   onBell,
   search,
   actions,
 }: {
-  switcherApps: AppDefinition[] | null;
+  /** Every web app this person opens — drawn whatever the count. */
+  switcherApps: AppDefinition[];
+  collapsed: boolean;
+  onToggleSidebar: () => void;
   user: ChromeUser;
   /** Live items in Needs you — the red count on the bell. */
   liveCount: number;
@@ -95,19 +135,14 @@ export function FounderHeader({
     <header
       style={{ height: 56, flex: "none", position: "relative", zIndex: 3, background: C.white, borderBottom: `1px solid ${C.line}`, display: "flex", alignItems: "center", gap: 16, padding: "0 24px" }}
     >
-      {switcherApps ? (
-        <span style={{ display: "flex", alignItems: "center", flex: "none", marginRight: -4 }}>
-          <AppSwitcher apps={switcherApps} current="founder" />
-        </span>
-      ) : null}
-      <span style={{ display: "flex", alignItems: "center", gap: 8, flex: "none" }}>
-        <span style={{ width: 16, height: 16, background: C.brand, borderRadius: 3, display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
-          <span style={{ width: 6, height: 6, background: C.lime, borderRadius: 1, display: "block" }} />
-        </span>
-        <span style={{ fontSize: 15, fontWeight: 600, color: C.ink, whiteSpace: "nowrap" }}>
-          MAHEK <span style={{ color: C.brand }}>COMMAND CENTRE</span>
-        </span>
-      </span>
+      <HeaderLead
+        apps={switcherApps}
+        current="founder"
+        collapsed={collapsed}
+        onToggleSidebar={onToggleSidebar}
+        href="/founder"
+        label="MAHEK COMMAND CENTRE"
+      />
       <span style={{ width: 1, height: 22, background: C.soft, flex: "none" }} />
       {search}
       <span style={{ flex: 1 }} />
@@ -187,22 +222,29 @@ export function FounderSidebar({
   navCounts,
   freshness,
   onGo,
+  collapsed = false,
 }: {
   active: SectionKey;
   allowed: readonly SectionKey[];
   navCounts: NavCounts;
   freshness: { tone: Tone; line: string };
   onGo: (s: SectionKey) => void;
+  /** The narrow rail: icons only, a count becomes a dot, the label rides on `title`. */
+  collapsed?: boolean;
 }) {
   return (
-    <aside style={{ width: 232, flex: "none", background: C.white, borderRight: `1px solid ${C.line}`, display: "flex", flexDirection: "column", minHeight: 0 }}>
+    <aside style={{ width: collapsed ? 56 : 232, transition: "width 150ms", flex: "none", background: C.white, borderRight: `1px solid ${C.line}`, display: "flex", flexDirection: "column", minHeight: 0 }}>
       <nav style={{ flex: 1, overflowY: "auto", padding: "8px 6px 16px 6px" }}>
         {NAV.map((g) => {
           const items = g.items.filter(([k]) => allowed.includes(k));
           if (!items.length) return null;
           return (
             <div key={g.label}>
-              <div style={{ ...upper, padding: "14px 12px 6px 12px" }}>{g.label}</div>
+              {collapsed ? (
+                <div style={{ height: 1, background: C.soft, margin: "10px 8px" }} />
+              ) : (
+                <div style={{ ...upper, padding: "14px 12px 6px 12px" }}>{g.label}</div>
+              )}
               {items.map(([k, label, ic]) => {
                 const on = active === k;
                 const c = navCounts[k] ?? 0;
@@ -211,15 +253,19 @@ export function FounderSidebar({
                     key={k}
                     onClick={() => onGo(k)}
                     title={label}
-                    style={{ position: "relative", display: "flex", alignItems: "center", gap: 10, width: "100%", height: 36, padding: "0 10px", border: "none", borderRadius: 6, background: "transparent", cursor: "pointer", fontSize: 14, textAlign: "left", color: on ? C.brandDark : C.body, fontWeight: on ? 500 : 400, marginBottom: 1 }}
+                    style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : undefined, gap: 10, width: "100%", height: 36, padding: collapsed ? 0 : "0 10px", border: "none", borderRadius: 6, background: "transparent", cursor: "pointer", fontSize: 14, textAlign: "left", color: on ? C.brandDark : C.body, fontWeight: on ? 500 : 400, marginBottom: 1 }}
                     hover={on ? undefined : { background: C.canvas }}
                   >
                     <span style={on ? { position: "absolute", inset: 0, background: C.brandTint, borderRadius: 6, borderLeft: `3px solid ${C.brand}`, display: "block" } : { display: "none" }} />
                     <span style={{ position: "relative", zIndex: 1, display: "flex", flex: "none" }}>
                       <Icon name={ic} />
                     </span>
-                    <span style={{ position: "relative", zIndex: 1, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
-                    {c > 0 ? (
+                    {collapsed ? null : (
+                      <span style={{ position: "relative", zIndex: 1, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
+                    )}
+                    {c > 0 && collapsed ? (
+                      <span style={{ position: "absolute", zIndex: 1, top: 7, right: 12, width: 7, height: 7, borderRadius: "50%", background: k === "inbox" ? C.bad : C.warn, display: "block" }} />
+                    ) : c > 0 ? (
                       <span
                         style={{ position: "relative", zIndex: 1, minWidth: 20, height: 18, padding: "0 6px", borderRadius: 9, fontSize: 11, fontWeight: 600, lineHeight: "18px", textAlign: "center", flex: "none", background: k === "inbox" ? C.bad : C.warnTint, color: k === "inbox" ? C.white : C.warnInk }}
                       >
@@ -233,16 +279,17 @@ export function FounderSidebar({
           );
         })}
       </nav>
-      <div style={{ flex: "none", borderTop: `1px solid ${C.soft}`, padding: "10px 12px" }}>
-        <div style={upper}>Data freshness</div>
+      <div style={{ flex: "none", borderTop: `1px solid ${C.soft}`, padding: collapsed ? "12px 0" : "10px 12px", display: collapsed ? "flex" : undefined, justifyContent: "center" }}>
+        {collapsed ? null : <div style={upper}>Data freshness</div>}
         <button
           onClick={() => (allowed.includes("system") ? onGo("system") : undefined)}
-          style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6, border: "none", background: "transparent", padding: 0, cursor: "pointer", textAlign: "left" }}
+          title={collapsed ? `Data freshness: ${freshness.line}` : undefined}
+          style={{ display: "flex", alignItems: "center", gap: 8, marginTop: collapsed ? 0 : 6, border: "none", background: "transparent", padding: 0, cursor: "pointer", textAlign: "left" }}
         >
           <span
             style={{ width: 7, height: 7, borderRadius: "50%", background: freshness.tone === "good" ? C.good : freshness.tone === "bad" ? C.bad : C.warn, display: "block", flex: "none", animation: freshness.tone === "good" ? undefined : "fd-pulse 2s ease-in-out infinite" }}
           />
-          <span style={{ fontSize: 13, color: C.ink }}>{freshness.line}</span>
+          {collapsed ? null : <span style={{ fontSize: 13, color: C.ink }}>{freshness.line}</span>}
         </button>
       </div>
     </aside>

@@ -20,7 +20,7 @@
  *
  * The requirement's own `department` column carries the LABEL. It was free
  * text from a reference list before departments were a rule; that list is
- * retired (0232) and requirements raised under it keep their words.
+ * retired (0233) and requirements raised under it keep their words.
  *
  * PURE and client-safe: the requirement form narrows its categories in the
  * browser from the same table the server refuses with.
