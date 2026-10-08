@@ -11274,6 +11274,12 @@ export const erpRequisitions = pgTable(
   "erp_requisitions",
   {
     id: text("id").primaryKey(),
+    /**
+     * The requirement number every item raised together shares (series
+     * `requirement`). One row is one item; null on rows from before a
+     * requirement could carry several.
+     */
+    reqNo: integer("req_no"),
     reqDate: date("req_date").notNull(),
     godownId: text("godown_id")
       .notNull()
@@ -11321,6 +11327,7 @@ export const erpRequisitions = pgTable(
   },
   (t) => [
     index("erp_requisitions_status_idx").on(t.status, t.reqDate),
+    index("erp_requisitions_req_no_idx").on(t.reqNo),
     check("erp_requisitions_priority_check", sql`${t.priority} in ('Urgent', 'Medium', 'For Stock')`),
     check("erp_requisitions_status_check", sql`${t.status} in ('Pending', 'Order Placed', 'Booked', 'Received', 'Cancelled')`),
     check("erp_requisitions_rule_check", sql`${t.purchaseRule} is null or ${t.purchaseRule} in ('direct', 'quotation', 'buyer')`),

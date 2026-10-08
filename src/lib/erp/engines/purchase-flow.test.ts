@@ -103,3 +103,32 @@ test("an item is bought in its own unit: boxes and units are pieces", () => {
   assert.equal(purchaseUnit("Unit", "Can"), "Pcs");
   assert.equal(purchaseUnit("Kg", "Box"), "Pcs");
 });
+
+test("a name two categories share is picked with its category; every other item by its name", async () => {
+  const { itemPickLabels } = await import("./purchase-flow");
+  const labels = [...itemPickLabels([
+    { name: "Toluene", materialType: "Chemical" },
+    { name: "Label", materialType: "Box" },
+    { name: "Label", materialType: "Stationary" },
+  ]).keys()];
+  assert.deepEqual(labels, ["Toluene", "Label · Box", "Label · Stationary"]);
+});
+
+test("a pasted list: the last number is the quantity, names match exactly or uniquely, the rest is said back", async () => {
+  const { parsePastedLines } = await import("./purchase-flow");
+  const labels = ["Toluene", "MEK", "Tin can 5L", "Tin can 20L", "Label · Box"];
+  const r = parsePastedLines(
+    ["toluene, 200", "MEK\t50.5", "Tin can 5L 120 pcs", "", "tin can 2", "label", "Acetone 10", "MEK 3"].join("\n"),
+    labels,
+  );
+  assert.deepEqual(r.lines, [
+    { item: "Toluene", qty: "200" },
+    { item: "MEK", qty: "50.5" },
+    { item: "Tin can 5L", qty: "120" },
+    { item: "Label · Box", qty: "" },
+  ]);
+  /* "tin can" fits two cans, "Acetone" fits nothing: neither is guessed. */
+  assert.deepEqual(r.unmatched, ["tin can 2", "Acetone 10"]);
+  assert.deepEqual(r.duplicates, ["MEK"]);
+  assert.deepEqual(parsePastedLines("Toluene 5", labels, ["Toluene"]).duplicates, ["Toluene"]);
+});

@@ -1915,6 +1915,20 @@ or item any more. `engines/purchase-flow.ts` is the rule, pure, and
 `screens/purchase-flow.ts` the requirements, their Quotations tab and the
 Purchase orders screen. The receipt side stays in `screens/purchase.ts`.
 
+**A REQUIREMENT CARRIES EVERY ITEM A DEPARTMENT NEEDS, under one number.**
+It used to be one item per form, and a department's monthly list is a hundred.
+Each item is still its own `erp_requisitions` row — its method, quotations,
+vendor and PO line are decided per item, and everything after the raise reads
+one item — and the rows raised together share `req_no` (`REQ-n`, series
+`requirement`), written in ONE transaction so a requirement is never half
+raised; a bad line refuses the whole save and names its row (`l3.item`).
+Editing stays per item. The form is the `table` line layout
+(`app/erp/_ui/line-table.tsx`): a header, then one row per item, added from a
+search or by pasting a list ("Toluene, 200" a row, straight from Excel) that
+`parsePastedLines` matches exactly or uniquely and never guesses. A header that
+names one item itself and sends no lines is a requirement of one item, which is
+what the re-order levels' "Raise requirement" still sends.
+
 **The ITEM MASTER says how an item is bought** — `erp_raw_materials.purchase_method`:
 `direct` (boxes, cans, stationery, routine chemicals: pick the vendor, raise
 the PO), `quotation` (price-sensitive chemicals: quotations are collected and

@@ -221,3 +221,69 @@ export function poMessage(po: {
     `Please quote ${poLabel(po.number)} on your invoice and delivery challan.`,
   ].join("\n");
 }
+
+/* ------------------------------------------------- a requirement of many items */
+
+/** A requirement's number, as every screen prints it. */
+export function requirementLabel(n: number): string {
+  return `REQ-${n}`;
+}
+
+/**
+ * The label each item is picked by on a requirement. The item master keeps a
+ * name unique only within its category, so a name two categories share is
+ * told apart by the category; every other item is its plain name.
+ */
+export function itemPickLabels(items: { name: string; materialType: string }[]): Map<string, { name: string; type: string }> {
+  const count = new Map<string, number>();
+  items.forEach((m) => count.set(m.name.toLowerCase(), (count.get(m.name.toLowerCase()) ?? 0) + 1));
+  const out = new Map<string, { name: string; type: string }>();
+  for (const m of items) {
+    const label = (count.get(m.name.toLowerCase()) ?? 0) > 1 ? `${m.name} · ${m.materialType}` : m.name;
+    out.set(label, { name: m.name, type: m.materialType });
+  }
+  return out;
+}
+
+export type PastedLine = { item: string; qty: string };
+export type PasteResult = { lines: PastedLine[]; unmatched: string[]; duplicates: string[] };
+
+/**
+ * A list pasted from a spreadsheet or typed one per row — "Toluene, 200",
+ * "MEK<tab>50", "Tin can 5L 120" — read into requirement lines. The quantity
+ * is the LAST number on the row; everything before it names the item, matched
+ * to the offered labels exactly (ignoring case), then to the one label that
+ * contains it. A row that names nothing offered is returned unmatched rather
+ * than guessed, and an item already on the requirement or earlier in the
+ * paste is a duplicate, not a second line.
+ */
+export function parsePastedLines(text: string, labels: string[], already: string[] = []): PasteResult {
+  const lower = labels.map((l) => [l.toLowerCase(), l] as const);
+  const seen = new Set(already.map((a) => a.toLowerCase()));
+  const out: PasteResult = { lines: [], unmatched: [], duplicates: [] };
+  for (const raw of text.split(/\r?\n/)) {
+    const row = raw.trim();
+    if (!row) continue;
+    const m = row.match(/^(.*?)[\s,;\t]+(-?\d+(?:[.,]\d+)?)\s*[A-Za-z.]*\s*$/);
+    const name = (m ? m[1] : row).replace(/[\s,;\t]+$/, "").trim();
+    const qty = m ? m[2].replace(",", ".") : "";
+    if (!name) continue;
+    const key = name.toLowerCase();
+    let label = lower.find(([l]) => l === key)?.[1];
+    if (!label) {
+      const hits = key.length >= 3 ? lower.filter(([l]) => l.includes(key)) : [];
+      if (hits.length === 1) label = hits[0][1];
+    }
+    if (!label) {
+      out.unmatched.push(row);
+      continue;
+    }
+    if (seen.has(label.toLowerCase())) {
+      out.duplicates.push(label);
+      continue;
+    }
+    seen.add(label.toLowerCase());
+    out.lines.push({ item: label, qty });
+  }
+  return out;
+}

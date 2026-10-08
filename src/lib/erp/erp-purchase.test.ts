@@ -630,3 +630,61 @@ describe("after the PO: sending back, cancelling, closing short", () => {
     assert.equal(can.preferredSupplierId, "sup_b");
   });
 });
+
+describe("one requirement, many items", () => {
+  const head = { date: TODAY, requiredBy: "2026-12-01", department: "Quality", godown: "Bhiwandi", priority: "For Stock", remarks: "Monthly stock-up" };
+  const rowsOf = async (reqNo: number) =>
+    db.select().from(erpRequisitions).where(sql`req_no = ${reqNo}`).orderBy(erpRequisitions.rawMaterialId);
+
+  test("every item is raised under ONE number, each on its own row and its own rule", async () => {
+    const r = await mod("requisitions").forms!.new(await as(admin), head, [
+      { item: "Toluene", required: "400" },
+      { item: "MEK", required: "120.5" },
+      { item: "1 L Tin Can", required: "900" },
+      { item: "", required: "" },
+    ]);
+    assert.ok(r.ok, JSON.stringify(r));
+    assert.match(r.message ?? "", /^REQ-\d+ raised · 3 items/);
+    const reqNo = Number(/REQ-(\d+)/.exec(r.message!)![1]);
+    const rows = await rowsOf(reqNo);
+    assert.deepEqual(
+      rows.map((x) => [x.rawMaterialId, x.requiredQty, x.unit, x.priority, x.remarks, x.department]),
+      [
+        ["rm_can", 900, "Pcs", "For Stock", "Monthly stock-up", "Quality"],
+        ["rm_mek", 120.5, "Kg", "For Stock", "Monthly stock-up", "Quality"],
+        ["rm_tol", 400, "Litre", "For Stock", "Monthly stock-up", "Quality"],
+      ],
+      "the blank row is dropped; the header travels to every item",
+    );
+    assert.equal(rows[1].purchaseRule, "direct", "each item copies its own rule");
+    assert.equal(rows[2].purchaseRule, "quotation");
+    /* The list names the requirement on each of its items. */
+    const listed = (await mod("requisitions").load(await as(admin))).rows.filter((x) => x.v.reqNo === `REQ-${reqNo}`);
+    assert.equal(listed.length, 3);
+  });
+
+  test("a bad line names its row and writes nothing — a requirement is never half raised", async () => {
+    const before = (await db.select().from(erpRequisitions)).length;
+    const dup = await mod("requisitions").forms!.new(await as(admin), head, [
+      { item: "MEK", required: "10" },
+      { item: "Toluene", required: "5" },
+      { item: "MEK", required: "3" },
+    ]);
+    assert.ok(!dup.ok && dup.fieldErrors?.[0].field === "l2.item" && /line 1/.test(dup.fieldErrors[0].message), JSON.stringify(dup));
+    const noQty = await mod("requisitions").forms!.new(await as(admin), head, [{ item: "MEK", required: "10" }, { item: "Toluene", required: "" }]);
+    assert.ok(!noQty.ok && noQty.fieldErrors?.[0].field === "l1.required");
+    const unknown = await mod("requisitions").forms!.new(await as(admin), head, [{ item: "Acetone", required: "1" }]);
+    assert.ok(!unknown.ok && unknown.fieldErrors?.[0].field === "l0.item");
+    const empty = await mod("requisitions").forms!.new(await as(admin), head, []);
+    assert.ok(!empty.ok && /at least one item/.test(empty.error));
+    assert.equal((await db.select().from(erpRequisitions)).length, before);
+  });
+
+  test("the form is a header and an item table, its search offering every item the department may ask for", async () => {
+    const form = (await mod("requisitions").load(await as(admin))).spec.newForm!;
+    assert.equal(form.lineLayout, "table");
+    assert.deepEqual(form.line!.map((f) => f.k), ["item", "stock", "required", "unit", "rule"]);
+    assert.ok(form.line!.find((f) => f.k === "item")!.optsBy!.map.Quality.includes("Toluene"));
+    assert.equal((form.data!.ruleShortOf as Record<string, string>).Toluene, "Quotations");
+  });
+});
