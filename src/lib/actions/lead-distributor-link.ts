@@ -1,12 +1,13 @@
 "use server";
 
+import { assertLeadInScope } from "@/lib/services/lead-scope";
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import { auditLog, customerDistributors, customers } from "@/db/schema";
-import { assertCustomerInScope, requireCapability } from "@/lib/access-control";
+import { requireCapability } from "@/lib/access-control";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
 import { qualificationAccess } from "@/lib/lead-qualification-access";
 import { reviewVoidPatch } from "@/lib/lead-review-void";
@@ -71,7 +72,7 @@ export async function nameLeadDistributor(
 
     const lead = await leadRow(customerId);
     if (!lead || lead.leadStage === null) return err("That lead is not on MahekOne.", "not_found");
-    await assertCustomerInScope({
+    await assertLeadInScope(customerId, {
       kind: lead.kind,
       ownerId: lead.ownerId,
       salesAmId: lead.salesAmId,
