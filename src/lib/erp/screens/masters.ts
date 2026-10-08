@@ -52,6 +52,8 @@ import type { ActionSpec, ColSpec, FieldSpec, FormSpec, ListRow } from "../ui";
 import { inr } from "../ui";
 import { rmTotalsByItem } from "../stock";
 import { PURCHASE_METHODS, methodByLabel, methodLabel, type PurchaseMethod } from "../engines/purchase-flow";
+import { DUTY_LABEL, MATERIAL_DUTIES, dutyApplies, type DutyHolders, type MaterialDuty } from "../material-duties";
+import { dutiesOf, dutyCandidates, dutyFieldsFor, replaceMaterialDuties } from "../material-duties-server";
 
 /* ---------------------------------------------------------------------------
  * Masters (spec §4): raw materials, suppliers, products, customers, godowns,
@@ -158,6 +160,7 @@ const rawMaterials: ScreenModule = {
     ];
     const { cols, hidden, hiddenKeys } = visibleCols(all, has(ctx));
     const form = await rawMaterialForm(ctx);
+    const duties = await dutyFieldsFor(rows);
     return {
       spec: {
         screen: "rawMaterials",
@@ -188,6 +191,7 @@ const rawMaterials: ScreenModule = {
         );
         const actions: ActionSpec[] = [
           { id: "edit", l: "Edit", primary: true, loadsForm: true },
+          ...(ctx.administrator ? [{ id: "duties", l: "Who does what", loadsForm: true }] : []),
           r.active
             ? { id: "retire", l: "Retire", confirm: `Retire ${r.name}? It stays on every record that already names it, and is no longer offered on new ones.` }
             : { id: "restore", l: "Restore" },
@@ -197,6 +201,7 @@ const rawMaterials: ScreenModule = {
           v,
           flags: r.active ? [] : ["inactive"],
           title: r.name,
+          fields: duties.get(r.id),
           actions,
           by: stampLine(null, r.createdAt),
         };
@@ -205,10 +210,14 @@ const rawMaterials: ScreenModule = {
   },
   formLoaders: {
     edit: (ctx, id) => rawMaterialForm(ctx, id),
+    duties: (ctx, id) => dutiesForm(ctx, id),
   },
   forms: {
     async new(ctx, h) {
       return saveRawMaterial(ctx, h);
+    },
+    async duties(ctx, h, _l, id) {
+      return saveDuties(ctx, h, id);
     },
     async edit(ctx, h, _l, id) {
       return saveRawMaterial(ctx, h, id);
@@ -227,6 +236,71 @@ const rawMaterials: ScreenModule = {
     },
   },
 };
+
+/* ------------------------------------------------- who does what (duties) */
+
+const DUTY_HINT: Record<MaterialDuty, string> = {
+  request: "Who may raise a purchase requirement for this material.",
+  raisePo: "Who may put its requirement on a purchase order.",
+  approve: "Who approves or sends back a PO carrying it. Nobody approves a PO they raised.",
+  test: "Who records the quality test of each lot. Verifying a test is still the verifier's.",
+};
+
+/**
+ * One section per duty, each naming people, departments or both. Leaving a
+ * section empty is an answer too — it keeps the duty open to whoever could do
+ * it before — and the form says so rather than leaving it to be guessed.
+ */
+async function dutiesForm(ctx: ErpContext, id: string): Promise<FormSpec | null> {
+  if (!ctx.administrator) return null;
+  const [r] = await db.select().from(erpRawMaterials).where(eq(erpRawMaterials.id, id));
+  if (!r) return null;
+  const [cand, held] = await Promise.all([dutyCandidates(), dutiesOf(id)]);
+  const personLabel = new Map(cand.people.map((p) => [p.id, p.label]));
+  const deptLabel = new Map(cand.departments.map((d) => [d.id, d.label]));
+  const init: Record<string, string> = {};
+  const header: FieldSpec[] = [];
+  for (const d of MATERIAL_DUTIES.filter((x) => dutyApplies(x, r.materialType))) {
+    init[`${d}People`] = (held[d]?.userIds ?? []).map((u) => personLabel.get(u)).filter(Boolean).join("|");
+    init[`${d}Departments`] = (held[d]?.designationIds ?? []).map((x) => deptLabel.get(x)).filter(Boolean).join("|");
+    header.push(
+      { k: `${d}People`, l: "People", t: "multi", wide: true, sec: DUTY_LABEL[d].label, opts: cand.people.map((p) => p.label), hint: DUTY_HINT[d] },
+      { k: `${d}Departments`, l: "Departments", t: "multi", wide: true, opts: cand.departments.map((x) => x.label), hint: `Everybody holding the department. Leave both empty: ${DUTY_LABEL[d].open.toLowerCase()}.` },
+    );
+  }
+  return {
+    screen: "rawMaterials",
+    id: "duties",
+    recordId: id,
+    title: `Who does what · ${r.name}`,
+    sub: "Named people and departments only — plus ERP administrators. They still need the screen itself on their account.",
+    submit: "Save",
+    init,
+    header,
+  };
+}
+
+async function saveDuties(ctx: ErpContext, h: Record<string, string>, id?: string) {
+  if (!ctx.administrator) return err("Only an ERP administrator sets who does what.", "not_permitted");
+  if (!id) return err("No material named.", "not_found");
+  const [r] = await db.select({ id: erpRawMaterials.id }).from(erpRawMaterials).where(eq(erpRawMaterials.id, id));
+  if (!r) return err("That material no longer exists.", "not_found");
+  const cand = await dutyCandidates();
+  const personId = new Map(cand.people.map((p) => [p.label, p.id]));
+  const deptId = new Map(cand.departments.map((d) => [d.label, d.id]));
+  const next: Partial<Record<MaterialDuty, DutyHolders>> = {};
+  for (const d of MATERIAL_DUTIES) {
+    const people = multi(h[`${d}People`]);
+    const depts = multi(h[`${d}Departments`]);
+    const unknownP = people.find((p) => !personId.has(p));
+    if (unknownP) return fieldErr(`${d}People`, `${unknownP} no longer holds the ERP`);
+    const unknownD = depts.find((x) => !deptId.has(x));
+    if (unknownD) return fieldErr(`${d}Departments`, `${unknownD} is no longer a department`);
+    next[d] = { userIds: people.map((p) => personId.get(p)!), designationIds: depts.map((x) => deptId.get(x)!) };
+  }
+  await replaceMaterialDuties(ctx, id, next);
+  return okVoid("Saved · the buttons follow on everybody's next load");
+}
 
 async function saveRawMaterial(ctx: ErpContext, h: Record<string, string>, id?: string) {
   const name = text(h.name);

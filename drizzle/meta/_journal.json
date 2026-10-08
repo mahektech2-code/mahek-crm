@@ -1625,6 +1625,13 @@
       "when": 1792272734442,
       "tag": "0234_customer_type_private_limited_user",
       "breakpoints": true
+    },
+    {
+      "idx": 232,
+      "version": "7",
+      "when": 1792272735442,
+      "tag": "0235_material_duties",
+      "breakpoints": true
     }
   ]
 }

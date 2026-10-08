@@ -1941,6 +1941,22 @@ the lowest; choosing other than the lowest needs the reason in words
 (`selection_note`). The PO takes the selected quotation's rate and refuses
 another — the negotiation is recorded on the quotation, not hidden on the PO.
 
+**WHO DOES WHAT TO A MATERIAL is set on the material, by an ERP administrator.**
+"Who does what" on a raw material's record names, for each duty — request it,
+raise its PO, approve that PO, and (a chemical only) test its lots — people
+who hold the ERP, departments (ERP designations: everybody holding
+"Production", "Quality tester"…), or both. `erp_material_duties` stores it;
+`lib/erp/material-duties.ts` is the rule, pure. A duty NOBODY is named for is
+the old rule unchanged: whoever holds the screen, and for approval whoever
+holds "Approve purchase orders" — which is why adding it moved nobody. Once a
+duty names anybody it is theirs alone, plus an ERP administrator's: a named
+approver approves without the power, an unnamed power holder no longer does,
+and a PO needs the duty for every line. It decides who may DO a thing, never
+who may SEE a screen; the other rules (nobody approves their own PO, a
+department raises for its own categories, verifying a test is `verifyTest`)
+still apply. Forms offer only what the person may act on, buttons carry the
+name of whoever the duty belongs to, and every handler checks again.
+
 **A requirement's STAGE is derived, never typed** (`requirementStage`): Buyer
 decision, Select vendor, Collect / Compare quotations, Ready for PO, PO awaiting
 approval, PO approved, PO sent, Partly received, Received, Closed short,
