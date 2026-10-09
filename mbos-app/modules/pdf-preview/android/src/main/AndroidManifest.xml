@@ -1,0 +1,6 @@
+<!--
+  Deliberately empty. PdfRenderer reads a file this app already owns, in its
+  own documents directory, so there is no permission to ask for.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+</manifest>

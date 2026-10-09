@@ -109,6 +109,7 @@ export const FROM_LABEL: Record<string, string> = {
   performance: 'Performance',
   catalogue: 'Catalogue',
   docs: 'Documents',
+  'doc-view': 'Document',
   knowledge: 'Knowledge',
   reports: 'Reports',
   notifications: 'Notifications',

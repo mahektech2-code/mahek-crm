@@ -210,7 +210,7 @@ export const TABLES: TableSpec[] = [
     table: "mbos_visits",
     about:
       "A salesman's visit to a shop: salesman_id, customer_id, check_in_at, check_out_at, duration_seconds, outcome, notes, was_planned, verified, distance_from_shop_m, linked_order_id, linked_payment_id, next_follow_up_date.",
-    modules: ["sales.journeys", "sales.today", "sales.live"],
+    modules: ["sales.journeys", "sales.today", "sales.live", "sales.activity-history"],
     scope: { kind: "user", cols: ["salesman_id"] },
   },
   {
@@ -249,7 +249,7 @@ export const TABLES: TableSpec[] = [
   {
     table: "sheet_field_activity_rows",
     about:
-      "Visits and calls from the prior system (EMP 2.0), before MBOS: employee_name, matched_salesman_id, customer_name, matched_customer_id, visit_date, meeting_type, meeting_purpose, meeting_note, location.",
+      "Visits and calls from the prior system (EMP 2.0), before MBOS — the past only; from the cutover (setting fieldActivity.cutoverDate, 10 Oct 2026 by default) mbos_visits is the record and rows here dated on or after it are not part of the history: employee_name, matched_salesman_id, customer_name, matched_customer_id, visit_date, meeting_type, meeting_purpose, meeting_note, location.",
     modules: ["sales.activity-history"],
     scope: { kind: "custom", where: "matched_salesman_id in {S}" },
   },

@@ -3062,8 +3062,21 @@ async function visibleDocuments(
     select d.id, d.title, d.category,
            -- What the handset fetches the bytes by, and the column it keeps
            -- them under once it has.
-           d.attachment_id as "remoteRef"
+           d.attachment_id as "remoteRef",
+           -- What the file IS, so the viewer knows to draw pages or a picture,
+           -- and so a file handed to another app goes with its real type. The
+           -- handset has had this column since v1 and nothing ever filled it.
+           a.content_type as kind,
+           d.description,
+           -- Epoch milliseconds, as every instant on the handset is counted.
+           (extract(epoch from d.server_created_at) * 1000)::double precision as "publishedAt",
+           case
+             when a.size_bytes is null then null
+             when a.size_bytes < 1048576 then greatest(1, round(a.size_bytes / 1024.0))::int || ' KB'
+             else to_char(a.size_bytes / 1048576.0, 'FM9990.0') || ' MB'
+           end as "sizeLabel"
       from mbos_documents d
+      left join attachments a on a.id = d.attachment_id
      where d.active = true
        and (jsonb_array_length(d.visible_to_roles) = 0
             or d.visible_to_roles ? ${role})

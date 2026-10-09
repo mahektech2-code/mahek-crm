@@ -5822,6 +5822,28 @@ export const sheetFieldActivityRows = pgTable(
 );
 
 /**
+ * WHICH ACCOUNT AN OLD-APP SHOP NAME IS, as a person decided it.
+ *
+ * The old field app (EMP 2.0) named a shop in free text and nothing else, so
+ * a sheet row reaches a customer only by its name. The importer links a name
+ * on its own only where exactly one account on the book carries that name,
+ * spelled the same; everything else is a question for a person. This is the
+ * answer, keyed on the FOLDED name (`foldShopName`) because the old app was
+ * keyed on the name too — one decision covers every row typed under it, and
+ * no sync or re-match overrides it.
+ *
+ * `customer_id` null is a real answer: "this shop is not on MahekOne".
+ */
+export const fieldActivityCustomerDecisions = pgTable("field_activity_customer_decisions", {
+  nameKey: text("name_key").primaryKey(),
+  /** The name as somebody saw it when deciding, for reading back. */
+  shownName: text("shown_name").notNull(),
+  customerId: text("customer_id").references(() => customers.id, { onDelete: "cascade" }),
+  decidedById: text("decided_by_id").references(() => users.id, { onDelete: "set null" }),
+  decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
  * One row per pin from a third-party field-tracking app the salesmen used to
  * drop a shop's location before MBOS existed — a one-time CSV export, not a
  * live sheet, so this carries none of `sheet_sync_runs`' watermark machinery.

@@ -4,7 +4,7 @@ import { canOpenModule } from "@/lib/access";
 import { isPlatformAdmin, levelInApp } from "@/lib/access-control";
 import { salesGateRefusal } from "@/lib/sales-gate";
 import { createAttachment } from "@/lib/services/attachment-service";
-import { PUBLISH_MAX_BYTES, PUBLISH_MAX_MB, megabytes } from "@/lib/publish-limits";
+import { PUBLISH_MAX_BYTES, PUBLISH_MAX_MB, megabytes, officeFileRefusal } from "@/lib/publish-limits";
 
 /* ---------------------------------------------------------------------------
  * ONE FILE FOR THE LIBRARY OR THE TRAINING, stored unparented.
@@ -84,6 +84,11 @@ export async function POST(request: Request) {
   if (!(file instanceof File)) {
     return NextResponse.json({ ok: false, error: "No file arrived." }, { status: 400 });
   }
+
+  // Before the sniffer, which would call a .docx "not a JPG, PNG or PDF" and
+  // stop there — true, and no help to whoever has to make the PDF.
+  const office = officeFileRefusal(file.name);
+  if (office) return NextResponse.json({ ok: false, error: office }, { status: 400 });
 
   const created = await createAttachment({
     filename: file.name,

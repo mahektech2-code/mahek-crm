@@ -1686,7 +1686,14 @@
       "idx": 240,
       "version": "7",
       "when": 1792531779442,
-      "tag": "0243_hometown_is_a_place",
+      "tag": "0243_field_activity_shop_decisions",
+      "breakpoints": true
+    },
+    {
+      "idx": 241,
+      "version": "7",
+      "when": 1792531780442,
+      "tag": "0244_hometown_is_a_place",
       "breakpoints": true
     }
   ]
