@@ -79,7 +79,7 @@ test("two rules answering one question for the same people are refused", () => {
 });
 
 test("the same rule for a different grade is an override, not a repeat", () => {
-  const override = { ...ruleToDraft(STANDARD_POLICY.rules[0]!), grade: "asm", value: { paisePerKm: 500, dailyKmCap: null } };
+  const override = { ...ruleToDraft(STANDARD_POLICY.rules[0]!), grade: "asm", value: { amountPaise: 12000 } };
   const { errors, rules } = checkRules([...drafts(), override]);
   assert.deepEqual(errors, []);
   assert.equal(rules.length, STANDARD_POLICY.rules.length + 1);
@@ -90,10 +90,10 @@ test("a bad figure is marked on its own field", () => {
   const i = list.findIndex((d) => d.kind === "meal_rate");
   list[i] = { ...list[i]!, value: { amountPaise: "a lot" } };
   const j = list.findIndex((d) => d.kind === "meal_entitlement");
-  list[j] = { ...list[j]!, value: { ...list[j]!.value, windowToMinutes: 0 } };
+  list[j] = { ...list[j]!, value: { ...list[j]!.value, leftToMinutes: null } };
   const { errors } = checkRules(list);
   assert.ok(errors.some((e) => e.index === i && e.field === "amountPaise"));
-  assert.ok(errors.some((e) => e.index === j && e.field === "windowToMinutes"));
+  assert.ok(errors.some((e) => e.index === j && e.field.startsWith("left")));
 });
 
 test("a limit with nothing to apply to is refused", () => {
@@ -130,7 +130,7 @@ test("the words for the standard policy do not move when they are built from its
 test("the diff counts what moved", () => {
   const before = drafts();
   const after = before.slice(1);
-  after[0] = { ...after[0]!, value: { ...after[0]!.value, paisePerKm: 1000 } };
+  after[0] = { ...after[0]!, value: { ...after[0]!.value, amountPaise: 99900 } };
   after.push({ ...before[0]!, grade: "asm" });
   assert.deepEqual(diffRules(before, after), { added: 1, removed: 1, changed: 1 });
 });

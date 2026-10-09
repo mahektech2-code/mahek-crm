@@ -222,12 +222,49 @@ export const RULE_KINDS: readonly RuleKindSpec[] = [
   {
     kind: "meal_entitlement",
     label: "When a meal is earned",
-    blurb: "He was away across this part of the day.",
+    blurb:
+      "Every condition set here has to hold. Leave one empty and it does not decide. A window may run past midnight — 11 PM to 8 AM.",
     scope: "meal",
     requirements: [26],
     fields: [
-      { key: "windowFromMinutes", label: "Window opens", type: "clock", required: true },
-      { key: "windowToMinutes", label: "Window closes", type: "clock", required: true },
+      {
+        key: "leftFromMinutes",
+        label: "Left home between",
+        type: "clock",
+        required: false,
+        emptyMeans: "any time",
+      },
+      { key: "leftToMinutes", label: "And", type: "clock", required: false, emptyMeans: "any time" },
+      {
+        key: "returnedAfterMinutes",
+        label: "Came back after",
+        type: "clock",
+        required: false,
+        emptyMeans: "whenever he came back",
+      },
+      {
+        key: "returnedByMinutes",
+        label: "Came back by",
+        type: "clock",
+        required: false,
+        emptyMeans: "whenever he came back",
+      },
+      {
+        key: "awayFromHometownOnly",
+        label: "Only on a day away from his hometown",
+        type: "boolean",
+        required: false,
+        help: "A day worked in his own hometown earns none of this meal. His hometown is set on the Who is on which tab.",
+        emptyMeans: "Earned in his hometown too.",
+      },
+      {
+        key: "windowFromMinutes",
+        label: "Away during — from",
+        type: "clock",
+        required: false,
+        emptyMeans: "not asked",
+      },
+      { key: "windowToMinutes", label: "Away during — to", type: "clock", required: false, emptyMeans: "not asked" },
       {
         key: "minAwayMinutes",
         label: "And away at least",
@@ -283,6 +320,17 @@ export const RULE_KINDS: readonly RuleKindSpec[] = [
         required: true,
         help: "Off means a room with no night in it is ₹0 — still recorded, with the reason beside it.",
       },
+      {
+        key: "flatPerNight",
+        label: "How the amount is paid",
+        type: "select",
+        required: false,
+        emptyMeans: "Up to this amount — the bill, capped.",
+        options: [
+          { value: "cap", label: "Up to this amount (the bill, capped)" },
+          { value: "flat", label: "Fixed — this amount whatever the bill" },
+        ],
+      },
     ],
   },
   {
@@ -291,7 +339,17 @@ export const RULE_KINDS: readonly RuleKindSpec[] = [
     blurb: "At or above this, a bill or ticket is not optional.",
     scope: "wildcard",
     requirements: [34, 37],
-    fields: [{ key: "atPaise", label: "At or above", type: "paise", required: true, min: 0 }],
+    fields: [
+      { key: "atPaise", label: "At or above", type: "paise", required: true, min: 0 },
+      {
+        key: "travelLogCounts",
+        label: "A trip the app recorded counts as proof for travel bills",
+        type: "boolean",
+        required: false,
+        help: "\"Bills or travel logs\": a travel or local-transport claim on a day the app recorded a trip needs no photo.",
+        emptyMeans: "Only a photo counts.",
+      },
+    ],
   },
   {
     kind: "approval_route",
@@ -479,6 +537,26 @@ export function validateRule(draft: RuleDraft): FieldError[] {
         message: "The window has to close after it opens. A late dinner runs past midnight — 23:00 to 25:30.",
       });
     }
+    if ((from === null) !== (to === null)) {
+      errors.push({ field: from === null ? "windowFromMinutes" : "windowToMinutes", message: "Give both ends of the window, or neither." });
+    }
+    const lf = num(draft.value.leftFromMinutes);
+    const lt = num(draft.value.leftToMinutes);
+    if ((lf === null) !== (lt === null)) {
+      errors.push({ field: lf === null ? "leftFromMinutes" : "leftToMinutes", message: "Give both ends of when he left, or neither." });
+    }
+    const after = num(draft.value.returnedAfterMinutes);
+    const by = num(draft.value.returnedByMinutes);
+    if (after !== null && by !== null && by <= after) {
+      errors.push({ field: "returnedByMinutes", message: "\"Back by\" has to be later than \"back after\", or no return could earn it." });
+    }
+    const conditions = [from, lf, after, by].some((v) => v !== null) || draft.value.awayFromHometownOnly === true;
+    if (!conditions) {
+      errors.push({
+        field: "leftFromMinutes",
+        message: "Say at least one condition — when he left, when he came back, a time he was away, or away from his hometown.",
+      });
+    }
   }
 
   if (draft.kind === "dormitory") {
@@ -576,9 +654,14 @@ export function parseRule(row: {
         ...q,
         kind: "meal_entitlement",
         meal: row.scopeKey as Meal,
-        windowFromMinutes: req("windowFromMinutes"),
-        windowToMinutes: req("windowToMinutes"),
+        windowFromMinutes: n("windowFromMinutes"),
+        windowToMinutes: n("windowToMinutes"),
         minAwayMinutes: n("minAwayMinutes"),
+        leftFromMinutes: n("leftFromMinutes"),
+        leftToMinutes: n("leftToMinutes"),
+        returnedAfterMinutes: n("returnedAfterMinutes"),
+        returnedByMinutes: n("returnedByMinutes"),
+        awayFromHometownOnly: v.awayFromHometownOnly === true,
       };
     case "meal_disqualifier":
       return {
@@ -602,9 +685,16 @@ export function parseRule(row: {
         kind: "lodging",
         maxPerNightPaise: req("maxPerNightPaise"),
         dayUseAllowed: v.dayUseAllowed === true,
+        flatPerNight: v.flatPerNight === "flat" || v.flatPerNight === true,
       };
     case "proof_threshold":
-      return { ...q, kind: "proof_threshold", scopeKey: row.scopeKey || "*", atPaise: req("atPaise") };
+      return {
+        ...q,
+        kind: "proof_threshold",
+        scopeKey: row.scopeKey || "*",
+        atPaise: req("atPaise"),
+        travelLogCounts: v.travelLogCounts === true,
+      };
     case "approval_route":
       return {
         ...q,
@@ -688,10 +778,18 @@ export function describeRule(rule: PolicyRule): string {
       }
     case "meal_rate":
       return `${rule.meal[0]!.toUpperCase()}${rule.meal.slice(1)} is worth ${rupeesOf(rule.amountPaise)}.`;
-    case "meal_entitlement":
-      return `${rule.meal[0]!.toUpperCase()}${rule.meal.slice(1)} is earned by being away between ${clockOf(rule.windowFromMinutes)} and ${clockOf(rule.windowToMinutes)}${
-        rule.minAwayMinutes !== null ? `, and away at least ${Math.round(rule.minAwayMinutes / 60)} hours` : ""
-      }.`;
+    case "meal_entitlement": {
+      const bits: string[] = [];
+      if (rule.leftFromMinutes != null && rule.leftToMinutes != null)
+        bits.push(`leaving between ${clockOf(rule.leftFromMinutes)} and ${clockOf(rule.leftToMinutes)}`);
+      if (rule.returnedAfterMinutes != null) bits.push(`coming back after ${clockOf(rule.returnedAfterMinutes)}`);
+      if (rule.returnedByMinutes != null) bits.push(`back by ${clockOf(rule.returnedByMinutes)}`);
+      if (rule.windowFromMinutes !== null && rule.windowToMinutes !== null)
+        bits.push(`being away between ${clockOf(rule.windowFromMinutes)} and ${clockOf(rule.windowToMinutes)}`);
+      if (rule.minAwayMinutes !== null) bits.push(`being away at least ${Math.round(rule.minAwayMinutes / 60)} hours`);
+      const where = rule.awayFromHometownOnly ? " on a day away from his hometown" : "";
+      return `${rule.meal[0]!.toUpperCase()}${rule.meal.slice(1)} is earned by ${bits.join(", and ") || "any working day"}${where}.`;
+    }
     case "meal_disqualifier":
       return `${rule.meal[0]!.toUpperCase()}${rule.meal.slice(1)} is not paid to anybody leaving after ${clockOf(rule.departedAfterMinutes)}.`;
     case "dormitory":
@@ -699,11 +797,11 @@ export function describeRule(rule: PolicyRule): string {
         rule.replacesMeals ? ", instead of the day's meals" : ", on top of the day's meals"
       }.`;
     case "lodging":
-      return `A hotel night is allowed up to ${rupeesOf(rule.maxPerNightPaise)}${
+      return `A hotel night is ${rule.flatPerNight ? `paid a fixed ${rupeesOf(rule.maxPerNightPaise)}, whatever the bill` : `allowed up to ${rupeesOf(rule.maxPerNightPaise)}`}${
         rule.dayUseAllowed ? ", and a daytime room is reimbursed too" : ". A room with no night in it pays nothing"
       }.`;
     case "proof_threshold":
-      return `${rule.scopeKey === "*" ? "Anything" : rule.scopeKey.startsWith("travel_mode:") ? humanMode(rule.scopeKey) : humanCategory(rule.scopeKey)} at or above ${rupeesOf(rule.atPaise)} needs a bill or a ticket.`;
+      return `${rule.scopeKey === "*" ? "Anything" : rule.scopeKey.startsWith("travel_mode:") ? humanMode(rule.scopeKey) : humanCategory(rule.scopeKey)} at or above ${rupeesOf(rule.atPaise)} needs a bill or a ticket${rule.travelLogCounts ? ", or for travel a trip the app recorded" : ""}.`;
     case "approval_route": {
       const bits = [
         `A day within policy under ${rupeesOf(rule.autoApproveUpToPaise)} is approved on submission`,

@@ -19,6 +19,9 @@ import {
   duplicatesForDay,
 } from "./expense-service";
 import { resolveSubject, classOfCity, ensurePolicyRow } from "./expense-policy-service";
+import { placeNameSql } from "./place-filter-service";
+import { awayFromHometown } from "@/lib/expense-hometown";
+import { APP_TIMEZONE } from "@/lib/business-date";
 
 /* ---------------------------------------------------------------------------
  * A day's money, kept current as its records arrive.
@@ -244,34 +247,11 @@ async function writeLineFigures(answer: NonNullable<Awaited<ReturnType<typeof pr
      their eligible figure is written; the claimed amount is his and is never
      touched. */
   const eligibleByLine = new Map<string, { eligible: number; excess: number }>();
-  {
-    /* Lodging and everything else, recomputed the same way the engine did, by
-       asking it for the per-line answer rather than re-deriving one here. */
-    const lodgingTotalEligible = c.lodgingEligiblePaise;
-    const lodgingLines = answer.lines.filter((l) => l.kind === "lodging");
-    const lodgingClaimed = lodgingLines.reduce((n, l) => n + Number(l.amountPaise), 0);
-    for (const l of lodgingLines) {
-      /* Where there is one hotel line — which is every real day — this is
-         exact. Where there are two, the eligible total is shared in the
-         proportion claimed, which is the only split that cannot favour one
-         line over the other. */
-      const share = lodgingClaimed > 0 ? Number(l.amountPaise) / lodgingClaimed : 0;
-      const eligible = Math.round(lodgingTotalEligible * share);
-      eligibleByLine.set(l.id, {
-        eligible,
-        excess: Math.max(0, Number(l.amountPaise) - eligible),
-      });
-    }
-    const otherLines = answer.lines.filter((l) => l.kind !== "lodging");
-    const otherClaimed = otherLines.reduce((n, l) => n + Number(l.amountPaise), 0);
-    for (const l of otherLines) {
-      const share = otherClaimed > 0 ? Number(l.amountPaise) / otherClaimed : 0;
-      const eligible = Math.round(c.otherEligiblePaise * share);
-      eligibleByLine.set(l.id, {
-        eligible,
-        excess: Math.max(0, Number(l.amountPaise) - eligible),
-      });
-    }
+  for (const l of answer.lines) {
+    /* The engine's own answer for the line. A line it did not see (none, in
+       practice) is left at nothing rather than handed a share of the day. */
+    const eligible = c.lineEligiblePaise[l.id] ?? 0;
+    eligibleByLine.set(l.id, { eligible, excess: Math.max(0, Number(l.amountPaise) - eligible) });
   }
 
   for (const [id, figures] of eligibleByLine) {
@@ -306,9 +286,41 @@ async function writeLineFigures(answer: NonNullable<Awaited<ReturnType<typeof pr
  *
  * A day with no record yet is left alone: nothing has happened on it.
  */
+/** Where the day went, against his hometown. See `lib/expense-hometown.ts`. */
+async function awayOnDay(
+  userId: string,
+  day: string,
+  d: { destinationCity: string | null; overnight: boolean; departedFromHometown: boolean },
+): Promise<boolean> {
+  const [home] = await db.execute<{ city: string }>(
+    sql`select city from expense_hometowns where user_id = ${userId} limit 1`,
+  );
+  if (!home) return d.departedFromHometown;
+  const visits = await db.execute<{ city: string | null }>(sql`
+    select ${placeNameSql("c", "city", "city")} as city
+      from mbos_visits v
+      join customers c on c.id = v.customer_id
+     where v.salesman_id = ${userId}
+       and v.check_in_at >= (${day}::date)::timestamp at time zone ${APP_TIMEZONE}
+       and v.check_in_at < (${day}::date + 1)::timestamp at time zone ${APP_TIMEZONE}
+  `);
+  return awayFromHometown({
+    hometown: home.city,
+    visitCities: visits.map((v) => v.city),
+    destinationCity: d.destinationCity,
+    overnight: d.overnight,
+    recorded: d.departedFromHometown,
+  });
+}
+
 export async function refreshDayMoney(userId: string, day: string): Promise<void> {
   const [existing] = await db
-    .select({ id: mbosExpenseDays.id, destinationCity: mbosExpenseDays.destinationCity })
+    .select({
+      id: mbosExpenseDays.id,
+      destinationCity: mbosExpenseDays.destinationCity,
+      overnight: mbosExpenseDays.overnight,
+      departedFromHometown: mbosExpenseDays.departedFromHometown,
+    })
     .from(mbosExpenseDays)
     .where(and(eq(mbosExpenseDays.userId, userId), eq(mbosExpenseDays.day, day)))
     .limit(1);
@@ -317,6 +329,17 @@ export async function refreshDayMoney(userId: string, day: string): Promise<void
   /* Who he is under the policy, stamped on the day so a promotion next month
      does not reprice this one. Re-read each time while the day is current:
      the destination can still change until it is over. */
+  /* "Away from his hometown", from where the day actually went — the handset
+     cannot know where home is and always says yes. No hometown set leaves the
+     recorded answer alone. */
+  const away = await awayOnDay(userId, day, existing);
+  if (away !== existing.departedFromHometown) {
+    await db
+      .update(mbosExpenseDays)
+      .set({ departedFromHometown: away })
+      .where(eq(mbosExpenseDays.id, existing.id));
+  }
+
   const subject = await resolveSubject(userId, existing.destinationCity ?? null);
   const cityClass = existing.destinationCity ? await classOfCity(existing.destinationCity) : null;
   await db
