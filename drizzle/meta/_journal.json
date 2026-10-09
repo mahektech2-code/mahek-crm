@@ -1681,6 +1681,13 @@
       "when": 1792531778442,
       "tag": "0242_expense_policy_matches_document",
       "breakpoints": true
+    },
+    {
+      "idx": 240,
+      "version": "7",
+      "when": 1792531779442,
+      "tag": "0243_field_activity_shop_decisions",
+      "breakpoints": true
     }
   ]
 }
