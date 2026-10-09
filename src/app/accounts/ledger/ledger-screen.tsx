@@ -308,7 +308,7 @@ export function LedgerScreen({
                 onClick={() => navigate({ view: key })}
                 className={cx(
                   "h-8 cursor-pointer rounded-[4px] px-3.5 text-sm font-medium",
-                  view === key ? "bg-brand-soft text-brand" : "text-body hover:bg-canvas",
+                  view === key ? "bg-canvas text-ink shadow-[inset_0_0_0_1px_var(--color-line)]" : "text-muted hover:text-body",
                 )}
               >
                 {label} <span className="ml-1 text-xs text-muted tabular-nums">{count}</span>
@@ -393,9 +393,7 @@ export function LedgerScreen({
                     onMouseLeave={() => setHover(null)}
                     className={cx(
                       "border-b border-divider border-l-[3px] align-top transition-colors",
-                      on
-                        ? "border-l-brand bg-brand-soft"
-                        : cx("border-l-transparent", i % 2 === 1 ? "bg-canvas" : "bg-surface"),
+                      on ? "border-l-line-strong bg-canvas" : "border-l-transparent bg-surface",
                     )}
                   >
                     <td className={cx(TD, "text-body", dead && "text-muted line-through")}>
@@ -418,7 +416,7 @@ export function LedgerScreen({
                       className={cx(
                         TD,
                         "text-right tabular-nums",
-                        e.credit && !dead ? "text-success" : "text-muted",
+                        e.credit && !dead ? "text-body" : "text-muted",
                         dead && "line-through",
                       )}
                     >
@@ -514,44 +512,18 @@ export function LedgerScreen({
 /** What the line is: a bill by its number, or a payment by its mode and reference. */
 function EntryName({ entry: e }: { entry: LedgerEntry }) {
   const dead = deadStatus(e.status);
-  if (e.kind === "bill") {
-    return (
-      <span className="flex items-center gap-2">
-        <KindTag kind="bill" />
-        <span className={cx("font-medium whitespace-nowrap", dead ? "text-muted line-through" : "text-ink")}>
-          {e.ref}
-        </span>
-      </span>
-    );
-  }
   // The detail sentence starts with the mode; the reference is the ref
   // unless the receipt has none, in which case the server put the mode there.
   const mode = e.detail.split(" · ")[0];
   const hasReference = e.ref !== "—" && e.ref !== mode;
   return (
-    <span className="flex items-start gap-2">
-      <KindTag kind="receipt" />
-      <span className="min-w-0">
-        <span className={cx("block font-medium", dead ? "text-muted line-through" : "text-ink")}>
-          {mode}
-        </span>
-        <span className="block text-xs text-muted">
-          {hasReference ? `Ref ${e.ref}` : "No reference"}
-        </span>
+    <span className="block min-w-0">
+      <span className={cx("block font-medium", dead ? "text-muted line-through" : "text-ink")}>
+        {e.kind === "bill" ? e.ref : mode}
       </span>
-    </span>
-  );
-}
-
-function KindTag({ kind }: { kind: "bill" | "receipt" }) {
-  return (
-    <span
-      className={cx(
-        "inline-flex h-5 w-[58px] shrink-0 items-center justify-center rounded-[4px] text-[10px] font-semibold tracking-[0.04em] uppercase",
-        kind === "bill" ? "bg-divider text-body" : "bg-success-soft text-success",
-      )}
-    >
-      {kind === "bill" ? "Bill" : "Payment"}
+      <span className="block text-xs text-muted">
+        {e.kind === "bill" ? "Bill" : `Payment · ${hasReference ? `ref ${e.ref}` : "no reference"}`}
+      </span>
     </span>
   );
 }
@@ -566,34 +538,29 @@ function BillSettlement({
 }) {
   const paid = e.paid ?? 0;
   const links = e.links ?? [];
-  // Only confirmed money counts towards the bill; a reported or rejected
-  // payment is listed but is not one of the "parts".
-  const counted = links.filter((l) => l.status === "confirmed").length;
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="flex flex-col gap-0.5">
       <div className="flex flex-wrap items-center gap-2">
         <BillStatus amount={e.debit} paid={paid} unstated={e.unstated} />
         {e.detail.includes("disputed") ? <Pill tone="danger">disputed</Pill> : null}
         {(e.claimed ?? 0) > 0 ? (
           <Pill tone="warn">{money(e.claimed!)} claimed, not yet confirmed</Pill>
         ) : null}
-        {counted > 1 ? (
-          <span className="text-xs text-muted">paid in {counted} parts</span>
-        ) : null}
       </div>
-      {paid > 0 && paid < e.debit ? <PaidBar amount={e.debit} paid={paid} /> : null}
       {links.length ? (
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-xs text-muted">Paid by</span>
+        <div className="text-xs text-muted">
+          Paid by{" "}
           {links.map((l, i) => (
-            <LinkChip
-              key={`${l.id}-${i}`}
-              onClick={() => onLink(l.id)}
-              status={l.status}
-              title={`${l.mode ?? "Payment"} received ${longDate(l.at)}${l.label !== l.mode ? ` · ref ${l.label}` : ""}${(l.receiptBills ?? 1) > 1 && l.receiptAmount ? ` · part of a ${money(l.receiptAmount)} payment split across ${l.receiptBills} bills` : ""}`}
-            >
-              {shortDate(l.at)} {l.mode ?? l.label} · {money(l.amount)}
-            </LinkChip>
+            <React.Fragment key={`${l.id}-${i}`}>
+              {i > 0 ? ", " : null}
+              <TextLink
+                onClick={() => onLink(l.id)}
+                status={l.status}
+                title={`${l.mode ?? "Payment"} received ${longDate(l.at)}${l.label !== l.mode ? ` · ref ${l.label}` : ""}${(l.receiptBills ?? 1) > 1 && l.receiptAmount ? ` · part of a ${money(l.receiptAmount)} payment split across ${l.receiptBills} bills` : ""}`}
+              >
+                {shortDate(l.at)} {l.mode ?? l.label} {money(l.amount)}
+              </TextLink>
+            </React.Fragment>
           ))}
         </div>
       ) : null}
@@ -601,26 +568,22 @@ function BillSettlement({
   );
 }
 
-/** How much of a part-paid bill is paid, at a glance. */
-function PaidBar({ amount, paid }: { amount: number; paid: number }) {
-  const pct = Math.min(100, Math.max(0, Math.round((paid / amount) * 100)));
-  return (
-    <div className="flex items-center gap-2">
-      <div className="h-1.5 w-40 overflow-hidden rounded-full bg-divider">
-        <div className="h-full rounded-full bg-success" style={{ width: `${pct}%` }} />
-      </div>
-      <span className="text-xs text-muted tabular-nums">
-        {money(paid)} of {money(amount)} paid
-      </span>
-    </div>
-  );
-}
-
 function BillStatus({ amount, paid, unstated }: { amount: number; paid: number; unstated?: boolean }) {
-  if (unstated && paid === 0) return <Pill tone="neutral">payment not stated</Pill>;
-  if (amount > 0 && paid >= amount) return <Pill tone="success">Paid in full</Pill>;
-  if (paid > 0) return <Pill tone="warn">{money(amount - paid)} still due</Pill>;
-  return <Pill tone="danger">Unpaid · {money(amount)} due</Pill>;
+  if (unstated && paid === 0) return <span className="text-sm text-muted">Payment not stated</span>;
+  if (amount > 0 && paid >= amount) return <span className="text-sm text-body">Paid</span>;
+  if (paid > 0) {
+    return (
+      <span className="text-sm text-body">
+        Part paid · <span className="font-medium text-danger">{money(amount - paid)} due</span>
+        <span className="text-muted"> of {money(amount)}</span>
+      </span>
+    );
+  }
+  return (
+    <span className="text-sm text-body">
+      Unpaid · <span className="font-medium text-danger">{money(amount)} due</span>
+    </span>
+  );
 }
 
 /** Which bills this payment settled, and anything left over. */
@@ -645,51 +608,29 @@ function ReceiptSettlement({
       : links.length === 1
         ? "Against"
         : "Not against any bill";
-  const onAccountTag =
-    onAccount > 0 ? (
-      <span
-        className="inline-flex h-6 items-center rounded-full border border-dashed border-line-strong px-2.5 text-xs text-body"
-        title="Received and not yet put against a bill"
-      >
-        On account · {money(onAccount)}
-      </span>
-    ) : null;
+  const linkLine = (l: LedgerLink, i: number) => (
+    <div key={`${l.id}-${i}`} className="flex flex-wrap items-baseline gap-x-2 text-sm">
+      <TextLink onClick={() => onLink(l.id)} status={status ?? l.status} title={`Bill ${l.label}, raised ${longDate(l.at)}`}>
+        {l.label}
+      </TextLink>
+      <span className="tabular-nums text-body">{money(l.amount)}</span>
+      <AllocationNote link={l} receiptStatus={status} />
+    </div>
+  );
   return (
-    <div className="flex flex-col gap-1.5">
-      {/*
-        ONE BILL fits on one line. SEVERAL get a line each, so each one can say
-        whether this payment cleared it or paid part of it — which is the
-        question somebody reading a split payment is actually asking.
-      */}
+    <div className="flex flex-col gap-0.5">
       {links.length > 1 ? (
-        <>
-          <span className="text-xs font-medium text-muted">{heading}</span>
-          <ul className="flex flex-col gap-1">
-            {links.map((l, i) => (
-              <li key={`${l.id}-${i}`} className="flex flex-wrap items-center gap-2">
-                <LinkChip onClick={() => onLink(l.id)} status={status ?? l.status} title={`Bill ${l.label}, raised ${longDate(l.at)}`}>
-                  {l.label} · {money(l.amount)}
-                </LinkChip>
-                <AllocationNote link={l} receiptStatus={status} />
-              </li>
-            ))}
-          </ul>
-          {onAccountTag ? <div>{onAccountTag}</div> : null}
-        </>
-      ) : (
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-xs text-muted">{heading}</span>
-          {links.map((l, i) => (
-            <React.Fragment key={`${l.id}-${i}`}>
-              <LinkChip onClick={() => onLink(l.id)} status={status ?? l.status} title={`Bill ${l.label}, raised ${longDate(l.at)}`}>
-                {l.label} · {money(l.amount)}
-              </LinkChip>
-              <AllocationNote link={l} receiptStatus={status} />
-            </React.Fragment>
-          ))}
-          {onAccountTag}
+        <span className="text-xs text-muted">{heading}</span>
+      ) : !links.length && !onAccount ? (
+        <span className="text-sm text-muted">{heading}</span>
+      ) : null}
+      {links.map(linkLine)}
+      {onAccount > 0 ? (
+        <div className="flex items-baseline gap-x-2 text-sm" title="Received and not yet put against a bill">
+          <span className="text-body">On account</span>
+          <span className="tabular-nums text-body">{money(onAccount)}</span>
         </div>
-      )}
+      ) : null}
       {status !== "confirmed" ? (
         <div className="flex flex-wrap items-center gap-2">
           {status === "reported" ? <Pill tone="warn">reported, waiting for accounts</Pill> : null}
@@ -711,21 +652,16 @@ function ReceiptSettlement({
 function AllocationNote({ link: l, receiptStatus }: { link: LedgerLink; receiptStatus: string | null }) {
   if (receiptStatus !== "confirmed") return null;
   if (l.billAmount == null || l.billDue == null) return null;
-  if (l.billDue === 0) {
-    return (
-      <span className="text-xs font-medium text-success">
-        {l.amount >= l.billAmount ? "✓ cleared the bill" : "✓ bill now cleared"}
-      </span>
-    );
-  }
+  if (l.billDue === 0) return <span className="text-xs text-muted">bill cleared</span>;
   return (
-    <span className="text-xs text-warn-ink" title="What is due on the bill today, after every confirmed payment">
+    <span className="text-xs text-muted" title="What is due on the bill today, after every confirmed payment">
       part of {money(l.billAmount)} · {money(l.billDue)} due now
     </span>
   );
 }
 
-function LinkChip({
+/** A bill or payment named on another row — plain text that jumps to it. */
+function TextLink({
   status,
   title,
   onClick,
@@ -737,19 +673,14 @@ function LinkChip({
   children: React.ReactNode;
 }) {
   const dead = deadStatus(status);
-  const pending = status === "reported" || status === "held";
   return (
     <button
       type="button"
       onClick={onClick}
       title={title}
       className={cx(
-        "inline-flex h-6 cursor-pointer items-center rounded-full border-none px-2.5 text-xs font-medium whitespace-nowrap tabular-nums underline-offset-2 hover:underline",
-        dead
-          ? "bg-divider text-muted line-through"
-          : pending
-            ? "bg-warn-soft text-warn-ink"
-            : "bg-brand-softer text-brand hover:bg-brand-soft",
+        "cursor-pointer border-none bg-transparent p-0 text-left font-medium whitespace-nowrap tabular-nums underline decoration-line-strong underline-offset-2 hover:decoration-current",
+        dead ? "text-muted line-through" : "text-ink hover:text-brand",
       )}
     >
       {children}
@@ -807,7 +738,6 @@ function BillWise({
                 <td className={cx(TD, "font-medium text-body")}>{longDate(b.at)}</td>
                 <td className={TD}>
                   <span className="flex items-center gap-2">
-                    <KindTag kind="bill" />
                     <span className="font-semibold text-ink">{b.ref}</span>
                     {(b.claimed ?? 0) > 0 ? (
                       <Pill tone="warn">{money(b.claimed!)} claimed</Pill>
@@ -815,14 +745,20 @@ function BillWise({
                   </span>
                 </td>
                 <td className={cx(TD, "text-right font-medium tabular-nums text-ink")}>{money(b.debit)}</td>
-                <td className={cx(TD, "text-right tabular-nums", paid ? "text-success" : "text-muted")}>
+                <td className={cx(TD, "text-right tabular-nums", paid ? "text-body" : "text-muted")}>
                   {paid ? money(paid) : "—"}
                 </td>
                 <td className={cx(TD, "text-right font-medium tabular-nums", due ? "text-danger" : "text-muted")}>
                   {b.unstated && paid === 0 ? "not stated" : due ? money(due) : "—"}
                 </td>
-                <td className={TD}>
-                  <BillStatus amount={b.debit} paid={paid} unstated={b.unstated} />
+                <td className={cx(TD, "text-body")}>
+                  {b.unstated && paid === 0
+                    ? "Not stated"
+                    : b.debit > 0 && paid >= b.debit
+                      ? "Paid"
+                      : paid > 0
+                        ? "Part paid"
+                        : "Unpaid"}
                 </td>
               </tr>
               {links.length ? (
@@ -851,8 +787,8 @@ function BillWise({
                             {l.label !== l.mode ? <span className="text-muted"> · ref {l.label}</span> : null}
                           </span>
                           {(l.receiptBills ?? 1) > 1 && l.receiptAmount ? (
-                            <span className="rounded-full bg-brand-softer px-2 py-0.5 text-[11px] font-medium text-brand">
-                              part of a {money(l.receiptAmount)} payment split across {l.receiptBills} bills
+                            <span className="text-xs text-muted">
+                              (part of {money(l.receiptAmount)}, split across {l.receiptBills} bills)
                             </span>
                           ) : null}
                         </span>
@@ -862,7 +798,7 @@ function BillWise({
                         className={cx(
                           TD,
                           "text-right tabular-nums",
-                          dead ? "text-muted line-through" : pending ? "text-warn-ink" : "text-success",
+                          dead ? "text-muted line-through" : pending ? "text-muted" : "text-body",
                         )}
                       >
                         {money(l.amount)}
@@ -917,11 +853,11 @@ function BillWise({
                   </span>
                 </td>
                 <td className={TD} />
-                <td className={cx(TD, "text-right tabular-nums text-success")}>{money(r.onAccount ?? 0)}</td>
+                <td className={cx(TD, "text-right tabular-nums text-body")}>{money(r.onAccount ?? 0)}</td>
                 <td className={TD} />
                 <td className={TD}>
                   {r.status === "confirmed" ? (
-                    <Pill tone="neutral">on account</Pill>
+                    <span className="text-body">On account</span>
                   ) : (
                     <Pill tone="warn">not yet confirmed</Pill>
                   )}
