@@ -5,9 +5,11 @@ import { readPeriod } from "@/lib/expense-period";
 import {
   expenseClaimants,
   expenseLedgerTeam,
+  expensePayees,
   type LedgerTeamRow,
 } from "@/lib/services/expense-ledger-service";
-import { canRecordExpensePayouts } from "@/lib/actions/sales";
+import { canDecideExpenseLines, canRecordExpensePayouts } from "@/lib/actions/sales";
+import { AddExpense } from "../add-expense";
 import {
   Cell,
   Empty,
@@ -67,12 +69,14 @@ export default async function Page({
   const now = await today();
   const period = readPeriod(query, now);
 
-  const [everybody, claimants, canPay] = await Promise.all([
+  const [everybody, claimants, canPay, canDecide, payees] = await Promise.all([
     expenseLedgerTeam(
       period.from && period.to ? { from: period.from, to: period.to } : null,
     ),
     expenseClaimants(),
     canRecordExpensePayouts(),
+    canDecideExpenseLines(),
+    expensePayees(),
   ]);
 
   /* The salesman filter narrows the WHOLE screen, figures included. */
@@ -157,6 +161,9 @@ export default async function Page({
               basePath="/sales/expenses/ledger"
               query={query}
             />
+            {canPay ? (
+              <AddExpense people={payees} defaultUserId={query.who} today={now} canApprove={canDecide} />
+            ) : null}
           </div>
         }
       />

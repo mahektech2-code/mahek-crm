@@ -2,12 +2,13 @@ import Link from "next/link";
 import { shortDate, shortDateWithYear } from "@/lib/format";
 import { today } from "@/lib/recompute";
 import { readPeriod } from "@/lib/expense-period";
-import { expenseClaimants } from "@/lib/services/expense-ledger-service";
+import { expenseClaimants, expensePayees } from "@/lib/services/expense-ledger-service";
 import {
   expenseLines,
   type ExpenseLineRow,
 } from "@/lib/services/expense-claims-service";
-import { canDecideExpenseLines } from "@/lib/actions/sales";
+import { canDecideExpenseLines, canRecordExpensePayouts } from "@/lib/actions/sales";
+import { AddExpense } from "./add-expense";
 import { DecideExpense } from "./decide-expense";
 import { ExpenseTabs } from "./tabs";
 import { FilterRow, PeriodPicker } from "./filters";
@@ -77,13 +78,15 @@ export default async function Page({
   const now = await today();
   const period = readPeriod(query, now);
 
-  const [inPeriodRows, claimants, canDecide] = await Promise.all([
+  const [inPeriodRows, claimants, canDecide, canAdd, payees] = await Promise.all([
     expenseLines({
       from: period.from ?? undefined,
       to: period.to ?? undefined,
     }),
     expenseClaimants(),
     canDecideExpenseLines(),
+    canRecordExpensePayouts(),
+    expensePayees(),
   ]);
 
   const filters: LineFilters = {
@@ -193,6 +196,9 @@ export default async function Page({
               basePath="/sales/expenses"
               query={query}
             />
+            {canAdd ? (
+              <AddExpense people={payees} defaultUserId={query.who} today={now} canApprove={canDecide} />
+            ) : null}
           </div>
         }
       />
@@ -372,6 +378,9 @@ export default async function Page({
                       ? plural(r.files.length, "bill") + " attached"
                       : "No bill attached"}
                   </span>
+                ) : null}
+                {r.enteredByName ? (
+                  <span className="block text-[12px] text-muted">Entered by {r.enteredByName}</span>
                 ) : null}
               </Cell>
               <Cell align="right">

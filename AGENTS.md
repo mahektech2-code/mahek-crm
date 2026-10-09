@@ -6650,6 +6650,18 @@ narrows the rows drawn. A wrong payment is VOIDED with a reason, never deleted.
 Recording one is a sales manager's (`sales.expenses`), audited, and the
 salesman is told on his phone. Nothing here touches the policy.
 
+**THE OFFICE CAN ADD AN EXPENSE FOR A SALESMAN, AND IT IS HIS EXPENSE.**
+"+ Add expense" on every Expenses screen (`add-expense.tsx`, `addExpenseFor`)
+writes exactly what the handset's claim sheet writes — an `mbos_expenses` line
+of `source_type = 'manual'` under his day, priced by `refreshDayMoney`, with an
+`expense_claim` approval raised in HIS name — so it is decided, paid and
+reported like one he logged, and `expenseBookFor` carries it to his phone on
+the next pull. `created_by_id` is who entered it, and the screens say
+"Entered by". Bills go up through `/api/sales/expense-file` (a route, past the
+action body cap) and are filed under it. "Add and approve" goes through
+`decideExpense` and is offered only to whoever may decide expenses. It is
+gated like a payout (`sales.expenses`, manager, own team) and audited.
+
 **TRAVEL IS ASKED TWICE A DAY, AND NEVER AT A SHOP — a reversal (Sep 2026).**
 The paragraphs below describe how a visit used to ask how he was travelling,
 open a meter camera, and ask for the bus fare on the way out. The field would

@@ -6,6 +6,7 @@ import { inPeriod as inPeriodOf, readPeriod } from "@/lib/expense-period";
 import {
   expenseClaimants,
   expenseLedgerFor,
+  expensePayees,
   ledgerLineOf,
   type PayoutRow,
   type PolicyNote,
@@ -39,6 +40,7 @@ import {
 } from "@/components/console/parts";
 import { plural } from "@/components/console/words";
 import { DecideExpense } from "../../decide-expense";
+import { AddExpense } from "../../add-expense";
 import { expenseKindLabel, inrExact } from "../../labels";
 import { ExpenseTabs } from "../../tabs";
 import { FilterRow, PeriodPicker, PersonSwitch } from "../../filters";
@@ -113,11 +115,12 @@ export default async function Page({
   };
   const narrowed = Boolean(query.kind || query.bill || query.policy || query.q);
 
-  const [ledger, claimants, canPay, canDecide] = await Promise.all([
+  const [ledger, claimants, canPay, canDecide, payees] = await Promise.all([
     expenseLedgerFor(userId),
     expenseClaimants(),
     canRecordExpensePayouts(),
     canDecideExpenseLines(),
+    expensePayees(),
   ]);
   if (!ledger) notFound();
 
@@ -200,6 +203,9 @@ export default async function Page({
               basePath={here}
               query={query}
             />
+            {canPay ? (
+              <AddExpense people={payees} defaultUserId={userId} today={now} canApprove={canDecide} />
+            ) : null}
           </div>
         }
       />
@@ -530,6 +536,9 @@ function LineRowView({
             No bill attached
           </span>
         )}
+        {row.enteredByName ? (
+          <span className="block text-[12px] text-muted">Entered by {row.enteredByName}</span>
+        ) : null}
       </Cell>
       <Cell align="right">
         <span className="tabular-nums">{inrExact(row.claimedPaise)}</span>

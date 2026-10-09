@@ -289,3 +289,21 @@ export async function expenseClaimants(): Promise<Claimant[]> {
   `);
   return [...rows];
 }
+
+/**
+ * Who the office may enter an expense FOR: everybody in the reader's scope who
+ * holds the Salesman App and is still active, plus anybody already on the
+ * expense book — a man who has left can still be owed for his last week.
+ */
+export async function expensePayees(): Promise<Claimant[]> {
+  const scope = await managerScope();
+  const rows = await db.execute<Claimant>(sql`
+    select u.id, u.name
+      from users u
+     where ((u.active and exists (select 1 from app_access a where a.user_id = u.id and a.app = 'field'))
+            or exists (select 1 from mbos_expenses e where e.user_id = u.id and e.superseded_by_id is null))
+       ${onlyMine(scope, "u.id")}
+     order by lower(u.name)
+  `);
+  return [...rows];
+}

@@ -68,7 +68,8 @@ import {
   type TerritoryKind,
 } from "@/lib/services/territory-service";
 import { bookIdsIgnoringTerritory } from "@/lib/services/mbos-service";
-import { repriceDay, rescoreLeg } from "@/lib/services/expense-submit-service";
+import { refreshDayMoney, repriceDay, rescoreLeg } from "@/lib/services/expense-submit-service";
+import { ensureDay } from "@/lib/services/expense-service";
 import { notifyUsers } from "../notify";
 import { announce } from "@/lib/services/announcement-service";
 import { mirrorToHrms, removeEverywhere } from "@/lib/services/holiday-calendar";
@@ -665,6 +666,147 @@ export async function decideExpense(input: {
       /* no request context */
     }
     return out;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/* ═══════════════════════════════════════ an expense entered by the office */
+
+/** The kinds a salesman logs, and the older category column each one fills. */
+const ENTERED_KINDS = {
+  travel: "travel",
+  local_transport: "travel",
+  food: "food",
+  lodging: "lodging",
+  other: "other",
+} as const;
+
+const enteredExpenseSchema = z.object({
+  userId: z.string().min(1, "Pick the salesman."),
+  day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick the day it was spent."),
+  kind: z.enum(["travel", "local_transport", "food", "lodging", "other"]),
+  amountPaise: z.number().int().positive("The amount has to be more than ₹0."),
+  vendorName: z.string().trim().max(200).optional(),
+  billNumber: z.string().trim().max(100).optional(),
+  billDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  remarks: z.string().trim().max(2000).optional(),
+  attachmentIds: z.array(z.string().min(1).max(100)).max(10).optional(),
+  /** Approve it in the same breath — only where the reader may decide expenses. */
+  approve: z.boolean().optional(),
+});
+
+/**
+ * ENTER AN EXPENSE FOR A SALESMAN — the office's door onto what the handset's
+ * claim sheet does. For the bill handed over at the desk, the phone that was
+ * lost, the claim older than the handset will take ("Ask your manager to
+ * enter it for you" is the handset's own refusal, and this is where that
+ * sentence leads).
+ *
+ * It is the SAME record a phone writes: an `mbos_expenses` line of
+ * `source_type = 'manual'` under his day, priced by the policy through
+ * `refreshDayMoney`, with its own `expense_claim` approval raised in HIS name —
+ * so it is decided, paid and reported exactly like one he logged, and reaches
+ * his phone on the next pull. `created_by_id` is the person who entered it,
+ * which is how every screen says "entered by the office". The bills are filed
+ * under it here; nobody else's uploads can be moved. Approving now goes
+ * through `decideExpense`, so the gate, the audit and the message are the
+ * ordinary ones.
+ */
+export async function addExpenseFor(
+  input: z.input<typeof enteredExpenseSchema>,
+): Promise<Result<{ id: string; approved: boolean }>> {
+  try {
+    const user = await requireSalesAccess({ modules: ["sales.expenses"], manager: true });
+    const parsed = enteredExpenseSchema.safeParse(input);
+    if (!parsed.success) return err(parsed.error.issues[0]?.message ?? "Check the expense.", "validation");
+    const p = parsed.data;
+    if (await salesmanOutsideScope(p.userId)) return err(NOT_YOUR_TEAM, "not_permitted");
+    if (p.day > (await today())) return err("An expense cannot be dated in the future.", "validation");
+
+    const [who] = await db.select({ id: users.id, name: users.name }).from(users).where(eq(users.id, p.userId)).limit(1);
+    if (!who) return err("That person no longer exists.", "not_found");
+
+    const id = gen("mbexp");
+    const expenseDayId = await ensureDay(p.userId, p.day, null);
+    const files = [...new Set(p.attachmentIds ?? [])];
+
+    await db.insert(mbosExpenses).values({
+      id,
+      userId: p.userId,
+      category: ENTERED_KINDS[p.kind],
+      kind: p.kind,
+      amountPaise: p.amountPaise,
+      expenseDate: p.day,
+      remarks: p.remarks || null,
+      vendorName: p.vendorName || null,
+      billNumber: p.billNumber || null,
+      billDate: p.billDate ?? null,
+      billPhotoId: files[0] ?? null,
+      sourceType: "manual",
+      expenseDayId,
+      createdById: user.id,
+      updatedById: user.id,
+    });
+    if (files.length) {
+      await db
+        .update(attachments)
+        .set({ parentType: "mbos_expense", parentId: id, updatedAt: new Date() })
+        .where(and(inArray(attachments.id, files), eq(attachments.uploadedById, user.id), isNull(attachments.parentId)));
+    }
+    await db
+      .insert(mbosApprovals)
+      .values({
+        id: gen("mbappr"),
+        type: "expense_claim",
+        requestedByUserId: p.userId,
+        subjectType: "expense",
+        subjectId: id,
+        reason: p.remarks || null,
+        createdById: user.id,
+        updatedById: user.id,
+      })
+      .onConflictDoNothing();
+
+    /* What the policy allows on it — written by the same pass a phone's claim
+       gets, so the Review dialog shows the figure. Never fails the entry. */
+    await refreshDayMoney(p.userId, p.day).catch(() => {});
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: "mbos.expense.entered_for",
+      entityType: "mbos_expense",
+      entityId: id,
+      beforeState: null as never,
+      afterState: { ...p, attachmentIds: files } as never,
+    });
+
+    let approved = false;
+    if (p.approve) {
+      const decided = await decideExpense({ expenseId: id, decision: "approved" });
+      if (!decided.ok) {
+        return err(`The expense was added, but it could not be approved: ${decided.error}`, decided.code);
+      }
+      approved = true;
+    } else {
+      const rupees = `₹${(p.amountPaise / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+      await tell(
+        p.userId,
+        "An expense was added for you",
+        `${user.name} added ${rupees} for ${p.day} on your behalf. It is waiting for approval.`,
+        "/expenses",
+      );
+    }
+    try {
+      revalidatePath("/sales/expenses");
+    } catch {
+      /* no request context */
+    }
+    return ok({ id, approved });
   } catch (e) {
     return fromThrown(e);
   }
