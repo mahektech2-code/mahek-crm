@@ -39,6 +39,7 @@ import {
   setDeskNextAction,
 } from "@/lib/actions/lead-calling-desk";
 import { assignDeskLead } from "@/lib/actions/lead-desk-assignment";
+import { OwnerOptions, UNASSIGNED, ownerIdFor, type OwnerPerson } from "@/components/leads/owner-options";
 import type { DeskLeadRecord } from "@/lib/services/lead-calling-desk-service";
 import { LeadCallAssistant } from "@/components/leads/calling-desk/lead-call-assistant";
 
@@ -1347,11 +1348,13 @@ export function AssignDialog({
   onClose,
 }: {
   lead: DeskLeadRecord;
-  assignees: { id: string; name: string }[];
+  assignees: OwnerPerson[];
   onClose: () => void;
 }) {
   const done = useDone();
-  const [ownerId, setOwnerId] = React.useState("");
+  /* Opened on who has it now (or Unassigned), so the list reads the way the lead stands. */
+  const current = lead.ownerId ?? UNASSIGNED;
+  const [ownerId, setOwnerId] = React.useState(current);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -1364,7 +1367,7 @@ export function AssignDialog({
     setError(null);
     let result;
     try {
-      result = await assignDeskLead({ customerId: lead.id, ownerId });
+      result = await assignDeskLead({ customerId: lead.id, ownerId: ownerIdFor(ownerId) });
     } finally {
       setBusy(false);
     }
@@ -1393,7 +1396,7 @@ export function AssignDialog({
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" disabled={busy} onClick={() => void save()}>
+          <Button variant="primary" disabled={busy || ownerId === current} onClick={() => void save()}>
             {busy ? "Saving…" : "Assign"}
           </Button>
         </>
@@ -1401,16 +1404,12 @@ export function AssignDialog({
     >
       <FieldLabel label="Give it to">
         <Select value={ownerId} onChange={(e) => setOwnerId(e.target.value)}>
-          <option value="">Pick a telecaller…</option>
-          {assignees.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
+          <OwnerOptions people={assignees} />
         </Select>
       </FieldLabel>
       <p className="mt-2 mb-0 text-[12.5px] text-muted">
-        Only people who have been given the Calling desk are listed. It lands on their desk and they are told.
+        It lands on their desk and they are told. People marked &ldquo;no Calling desk&rdquo; cannot be chosen until
+        they are given it on the Access screen.
       </p>
       {error ? <p className="mt-2 mb-0 text-[13px] text-danger">{error}</p> : null}
     </Modal>

@@ -2,7 +2,7 @@ import { canValidateGstById, canVerifyLeadById } from "@/lib/services/lead-verif
 import { type LeadWorkspace } from "@/lib/lead-workspace";
 import { qualificationAccess } from "@/lib/lead-qualification-access";
 import { canOpenModule } from "@/lib/access";
-import { DESK_MODULE, deskHolders } from "@/lib/services/lead-desk-assignment-service";
+import { DESK_MODULE, ownerChoices } from "@/lib/services/lead-desk-assignment-service";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { canFor } from "@/lib/access-control";
@@ -340,7 +340,7 @@ export async function Body({
          `assignLeadManager` seats when nobody names anybody, so the picker and
          the action cannot disagree about one lead. */
       leadManagers={leadManagers}
-      assignees={await deskHolders()}
+      assignees={await ownerChoices()}
       canReassign={
         (await canLead(user, "lead.verify")) && (await canOpenModule(user.id, DESK_MODULE))
       }

@@ -366,6 +366,8 @@ export type DeskLeadRecord = {
   ladderIndex: number;
   stageDates: Partial<Record<LadderKey, string>>;
   ownerName: string | null;
+  /** Who holds it — the Change owner list opens on them. Null when nobody does. */
+  ownerId: string | null;
   /** Nobody owns it — it is on no telecaller's desk. */
   unassigned: boolean;
   managerName: string | null;
@@ -892,6 +894,7 @@ export async function deskLeadRecord(customerId: string, today: string): Promise
     ladderIndex: key ? ladder.indexOf(key) : -1,
     stageDates,
     ownerName: extras?.ownerName ?? rec.salesmanName,
+    ownerId: rec.salesmanId,
     unassigned: !rec.salesmanId,
     managerName: rec.leadManagerName,
     values,

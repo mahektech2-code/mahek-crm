@@ -37,6 +37,27 @@ async function crmAccounts(): Promise<(DeskPerson & { role: string })[]> {
     .orderBy(users.name);
 }
 
+/** A person the Change owner list offers. `canOwn` is whether they hold the Calling desk. */
+export type OwnerChoice = DeskPerson & { canOwn: boolean };
+
+/**
+ * EVERYONE A "CHANGE OWNER" LIST SHOWS — every active CRM user, in name order.
+ *
+ * The list used to be `deskHolders()` alone, so anybody who had not been granted
+ * the Calling desk was simply missing, and the picker read as if half the team
+ * did not exist. They are listed now, and `canOwn` says whether they can be
+ * chosen: the server still refuses a lead handed to somebody with no desk to see
+ * it on (`assignDeskLead`), so a person without it is drawn DISABLED, with the
+ * reason, rather than offered as a choice that cannot work.
+ */
+export async function ownerChoices(): Promise<OwnerChoice[]> {
+  const out: OwnerChoice[] = [];
+  for (const u of await crmAccounts()) {
+    out.push({ id: u.id, name: u.name, canOwn: await canOpenModule(u.id, DESK_MODULE) });
+  }
+  return out;
+}
+
 /** Everyone who holds the CRM AND the desk — the people a lead can be handed to. */
 export async function deskHolders(): Promise<DeskPerson[]> {
   const out: DeskPerson[] = [];
