@@ -24,6 +24,7 @@ export function RecordPayment({
   today,
   size = "md",
   tone = "primary",
+  label = "Record payment",
 }: {
   userId: string;
   who: string;
@@ -32,6 +33,8 @@ export function RecordPayment({
   today: string;
   size?: "sm" | "md";
   tone?: "primary" | "default";
+  /** The button's words — shorter in a table row. */
+  label?: string;
 }) {
   const router = useRouter();
   const [open, setOpen] = React.useState(false);
@@ -82,7 +85,7 @@ export function RecordPayment({
   return (
     <>
       <Button tone={tone} size={size} onClick={start}>
-        Record payment
+        {label}
       </Button>
       <Modal
         open={open}

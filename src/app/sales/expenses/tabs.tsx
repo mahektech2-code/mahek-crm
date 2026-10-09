@@ -1,24 +1,34 @@
 import Link from "next/link";
 import { cx } from "@/components/ui/primitives";
+import { hrefWith, type Query } from "./query";
 
 /**
  * The two halves of Expenses: deciding claims, and the ledger of what each
  * salesman claimed, was allowed, was refused and has been paid. Links, not
- * buttons — each is its own address somebody can send.
+ * buttons — each is its own address somebody can send. The period and the
+ * salesman ride across, so switching tab keeps what somebody was looking at.
  */
 export function ExpenseTabs({
   current,
-  month,
+  query,
 }: {
   current: "claims" | "ledger";
-  month: string;
+  query: Query;
 }) {
+  const keep: Query = {
+    period: query.period,
+    on: query.on,
+    from: query.from,
+    to: query.to,
+    month: query.month,
+    who: query.who,
+  };
   const tabs = [
-    { key: "claims", label: "Claims", href: `/sales/expenses?month=${month}` },
+    { key: "claims", label: "Claims", href: hrefWith("/sales/expenses", keep) },
     {
       key: "ledger",
       label: "Ledger",
-      href: `/sales/expenses/ledger?month=${month}`,
+      href: hrefWith("/sales/expenses/ledger", keep),
     },
   ] as const;
   return (

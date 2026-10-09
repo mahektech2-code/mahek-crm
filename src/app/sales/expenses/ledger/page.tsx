@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { shortDate } from "@/lib/format";
 import { today } from "@/lib/recompute";
-import { endOfMonth } from "@/lib/business-date";
-import { MonthNav } from "@/components/ui/month-nav";
+import { readPeriod } from "@/lib/expense-period";
 import {
+  expenseClaimants,
   expenseLedgerTeam,
   type LedgerTeamRow,
 } from "@/lib/services/expense-ledger-service";
@@ -28,6 +28,8 @@ import {
 } from "@/components/console/sort";
 import { plural } from "@/components/console/words";
 import { ExpenseTabs } from "../tabs";
+import { FilterRow, PeriodPicker } from "../filters";
+import { hrefWith, keepString, queryOf } from "../query";
 import { inrExact } from "../labels";
 import { RecordPayment } from "./ledger-actions";
 
@@ -44,47 +46,76 @@ export const metadata = {
  * payout in October settles a September fare, so "due" is always all-time,
  * and the column says so. A name opens his full statement.
  */
+const KEYS = [
+  "period",
+  "on",
+  "from",
+  "to",
+  "month",
+  "show",
+  "who",
+  "sort",
+  "dir",
+];
+
 export default async function Page({
   searchParams,
 }: {
-  searchParams: Promise<{
-    month?: string;
-    period?: string;
-    show?: string;
-    sort?: string;
-    dir?: string;
-  }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const params = await searchParams;
+  const query = queryOf(await searchParams, KEYS);
   const now = await today();
-  const month = /^\d{4}-\d{2}$/.test(params.month ?? "")
-    ? params.month!
-    : now.slice(0, 7);
-  const allTime = params.period === "all";
-  const period = allTime
-    ? null
-    : { from: `${month}-01`, to: endOfMonth(month) };
+  const period = readPeriod(query, now);
 
-  const [all, canPay] = await Promise.all([
-    expenseLedgerTeam(period),
+  const [everybody, claimants, canPay] = await Promise.all([
+    expenseLedgerTeam(
+      period.from && period.to ? { from: period.from, to: period.to } : null,
+    ),
+    expenseClaimants(),
     canRecordExpensePayouts(),
   ]);
 
-  const show = ["all", "due", "waiting"].includes(params.show ?? "")
-    ? params.show!
+  /* The salesman filter narrows the WHOLE screen, figures included. */
+  const all = query.who
+    ? everybody.filter((r) => r.userId === query.who)
+    : everybody;
+
+  const show = ["all", "due", "waiting", "refused", "paid"].includes(
+    query.show ?? "",
+  )
+    ? query.show!
     : "all";
   const owed = all.filter((r) => r.balance.duePaise > 0);
   const waiting = all.filter((r) => r.balance.pendingCount > 0);
-  const rows = show === "due" ? owed : show === "waiting" ? waiting : all;
+  const refusedSome = all.filter((r) => r.period.disallowedPaise > 0);
+  const paidSome = all.filter((r) => r.period.paidPaise > 0);
+  const rows =
+    show === "due"
+      ? owed
+      : show === "waiting"
+        ? waiting
+        : show === "refused"
+          ? refusedSome
+          : show === "paid"
+            ? paidSome
+            : all;
 
   const sum = (pick: (r: LedgerTeamRow) => number) =>
     all.reduce((n, r) => n + pick(r), 0);
-  const base = `month=${month}${allTime ? "&period=all" : ""}`;
+  /* What a name carries into his statement: the period, nothing else. */
+  const personQuery = hrefWith("", {
+    period: query.period,
+    on: query.on,
+    from: query.from,
+    to: query.to,
+    month: query.month,
+  });
 
   /* Owed-most first until somebody picks a column: the screen exists to pay people. */
-  const picked = readSort(params, COLUMNS);
+  const picked = readSort(query, COLUMNS);
   const sort = picked.key ? picked : { key: "due", dir: "desc" as const };
   const sorted = sortRows(rows, sort, COLUMNS);
+  const keep = keepString(query, ["sort", "dir"]);
   const head = (
     key: string,
     text: string,
@@ -94,20 +125,17 @@ export default async function Page({
     <SortHead
       width={width}
       align={align}
-      href={sortHref(
-        "/sales/expenses/ledger",
-        sort,
-        key,
-        `show=${show}&${base}`,
-      )}
+      href={sortHref("/sales/expenses/ledger", sort, key, keep)}
       active={sort.key === key}
       dir={sort.dir}
     >
       {text}
     </SortHead>
   );
+  const chip = (key: string) =>
+    hrefWith("/sales/expenses/ledger", query, { show: key });
 
-  const label = allTime ? "all time" : "this month";
+  const label = period.noun;
 
   return (
     <div className="p-6">
@@ -115,32 +143,24 @@ export default async function Page({
         title="Expenses"
         subtitle="What each salesman claimed, what was approved, refused or cut, what his work log earned him, what he has been paid, and what is still owed to him."
         actions={
-          <div className="flex items-center gap-3">
-            <Link href="/sales/expense-policy" className="text-sm font-medium">
+          <div className="flex items-start gap-4">
+            <Link
+              href="/sales/expense-policy"
+              className="mt-1.5 text-sm font-medium"
+            >
               The policy
             </Link>
-            {allTime ? (
-              <Link
-                href={`/sales/expenses/ledger?month=${month}`}
-                className="text-sm font-medium"
-              >
-                By month
-              </Link>
-            ) : (
-              <>
-                <Link
-                  href={`/sales/expenses/ledger?month=${month}&period=all`}
-                  className="text-sm font-medium"
-                >
-                  All time
-                </Link>
-                <MonthNav month={month} basePath="/sales/expenses/ledger" />
-              </>
-            )}
+            <PeriodPicker
+              key={period.label}
+              period={period}
+              today={now}
+              basePath="/sales/expenses/ledger"
+              query={query}
+            />
           </div>
         }
       />
-      <ExpenseTabs current="ledger" month={month} />
+      <ExpenseTabs current="ledger" query={query} />
 
       <MetricRow
         metrics={[
@@ -194,26 +214,52 @@ export default async function Page({
         ]}
       />
 
+      <FilterRow
+        basePath="/sales/expenses/ledger"
+        query={query}
+        filters={[
+          {
+            param: "who",
+            all: "All salesmen",
+            label: "Salesman",
+            value: query.who ?? "",
+            options: claimants.map((c) => ({ value: c.id, label: c.name })),
+          },
+        ]}
+      />
+
       <FilterChips
         current={show}
         options={[
           {
             key: "all",
-            href: `/sales/expenses/ledger?show=all&${base}`,
+            href: chip("all"),
             label: "Everybody",
             count: all.length,
           },
           {
             key: "due",
-            href: `/sales/expenses/ledger?show=due&${base}`,
+            href: chip("due"),
             label: "Owed money",
             count: owed.length,
           },
           {
             key: "waiting",
-            href: `/sales/expenses/ledger?show=waiting&${base}`,
+            href: chip("waiting"),
             label: "Expenses waiting",
             count: waiting.length,
+          },
+          {
+            key: "refused",
+            href: chip("refused"),
+            label: "Refused or cut",
+            count: refusedSome.length,
+          },
+          {
+            key: "paid",
+            href: chip("paid"),
+            label: `Paid ${label}`,
+            count: paidSome.length,
           },
         ]}
       />
@@ -232,7 +278,7 @@ export default async function Page({
           minWidth={1110}
           head={
             <>
-              {head("name", "Salesman", 150)}
+              {head("name", "Salesman", 140)}
               {head("claimed", "Claimed", 105, "right")}
               {head("approved", "Approved", 105, "right")}
               {head("disallowed", "Refused", 105, "right")}
@@ -241,14 +287,16 @@ export default async function Page({
               {head("paid", "Paid", 105, "right")}
               {head("due", "Owed now", 110, "right")}
               <HeadCell width={80}>Last paid</HeadCell>
-              <HeadCell align="right" width={140} />
+              <HeadCell align="right" width={150} />
             </>
           }
         >
           {sorted.map((r, i) => (
             <Row key={r.userId} striped={i % 2 === 1}>
-              <Cell truncate={150}>
-                <EntityLink href={`/sales/expenses/ledger/${r.userId}?${base}`}>
+              <Cell truncate={140}>
+                <EntityLink
+                  href={`/sales/expenses/ledger/${r.userId}${personQuery}`}
+                >
                   {r.userName}
                 </EntityLink>
               </Cell>
@@ -333,6 +381,7 @@ export default async function Page({
                     today={now}
                     size="sm"
                     tone="default"
+                    label="Pay"
                   />
                 ) : null}
               </Cell>
@@ -341,8 +390,8 @@ export default async function Page({
         </Table>
       )}
       <p className="mt-3 text-[12px] text-muted">
-        Claimed, approved, refused, waiting, allowances and paid are {label}
-        &apos;s. Owed now is everything approved and earned to date, less
+        Claimed, approved, refused, waiting, allowances and paid are for{" "}
+        {period.label}. Owed now is everything approved and earned to date, less
         everything paid to date — a payment this month can settle last
         month&apos;s expenses.
       </p>

@@ -2,9 +2,9 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { shortDate } from "@/lib/format";
 import { today } from "@/lib/recompute";
-import { endOfMonth } from "@/lib/business-date";
-import { MonthNav } from "@/components/ui/month-nav";
+import { inPeriod as inPeriodOf, readPeriod } from "@/lib/expense-period";
 import {
+  expenseClaimants,
   expenseLedgerFor,
   ledgerLineOf,
   type PayoutRow,
@@ -41,6 +41,15 @@ import { plural } from "@/components/console/words";
 import { DecideExpense } from "../../decide-expense";
 import { expenseKindLabel, inrExact } from "../../labels";
 import { ExpenseTabs } from "../../tabs";
+import { FilterRow, PeriodPicker, PersonSwitch } from "../../filters";
+import { hrefWith, queryOf } from "../../query";
+import {
+  BILL_OPTIONS,
+  POLICY_OPTIONS,
+  kindOptions,
+  matchesLine,
+  type LineFilters,
+} from "../../line-filters";
 import { RecordPayment, VoidPayment } from "../ledger-actions";
 
 export const metadata = {
@@ -70,33 +79,50 @@ const SHOWS = [
 ] as const;
 type Show = (typeof SHOWS)[number];
 
+const KEYS = [
+  "period",
+  "on",
+  "from",
+  "to",
+  "month",
+  "show",
+  "kind",
+  "bill",
+  "policy",
+  "q",
+];
+
 export default async function Page({
   params,
   searchParams,
 }: {
   params: Promise<{ userId: string }>;
-  searchParams: Promise<{ month?: string; period?: string; show?: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { userId } = await params;
-  const sp = await searchParams;
+  const query = queryOf(await searchParams, KEYS);
   const now = await today();
-  const month = /^\d{4}-\d{2}$/.test(sp.month ?? "")
-    ? sp.month!
-    : now.slice(0, 7);
-  const allTime = sp.period === "all";
-  const from = allTime ? null : `${month}-01`;
-  const to = allTime ? null : endOfMonth(month);
-  const inPeriod = (day: string) => !from || (day >= from && day <= to!);
+  const period = readPeriod(query, now);
+  const from = period.from;
+  const inPeriod = (day: string) => inPeriodOf(period, day);
+  const lineFilters: LineFilters = {
+    kind: query.kind,
+    bill: query.bill,
+    policy: query.policy,
+    q: query.q,
+  };
+  const narrowed = Boolean(query.kind || query.bill || query.policy || query.q);
 
-  const [ledger, canPay, canDecide] = await Promise.all([
+  const [ledger, claimants, canPay, canDecide] = await Promise.all([
     expenseLedgerFor(userId),
+    expenseClaimants(),
     canRecordExpensePayouts(),
     canDecideExpenseLines(),
   ]);
   if (!ledger) notFound();
 
-  const show: Show = (SHOWS as readonly string[]).includes(sp.show ?? "")
-    ? (sp.show as Show)
+  const show: Show = (SHOWS as readonly string[]).includes(query.show ?? "")
+    ? (query.show as Show)
     : "all";
   const rowsById = new Map(ledger.lines.map((r) => [r.id, r]));
   const lines = ledger.lines.map(ledgerLineOf);
@@ -115,16 +141,28 @@ export default async function Page({
         .at(-1)?.balancePaise ?? 0)
     : 0;
 
-  const inView = entries.filter((e) =>
-    inPeriod(e.kind === "line" ? e.line.day : e.payout.paidOn),
-  );
+  /* The type, bill, policy and search filters are about LINES, so a payment
+     leaves the view while any of them is on; the balance column still reads
+     the whole statement, so it never changes with a filter. */
+  const inView = entries.filter((e) => {
+    if (e.kind === "payout") return !narrowed && inPeriod(e.payout.paidOn);
+    return (
+      inPeriod(e.line.day) && matchesLine(rowsById.get(e.line.id)!, lineFilters)
+    );
+  });
   const count = (s: Show) =>
     inView.filter((e) => matchesFor(s, e, alloc)).length;
   const drawn = inView.filter((e) => matchesFor(show, e, alloc)).reverse();
 
-  const base = `month=${month}${allTime ? "&period=all" : ""}`;
+  const periodOnly = hrefWith("", {
+    period: query.period,
+    on: query.on,
+    from: query.from,
+    to: query.to,
+    month: query.month,
+  });
   const here = `/sales/expenses/ledger/${userId}`;
-  const label = allTime ? "all time" : "this month";
+  const label = period.noun;
   const unpaidTotal = lines.reduce(
     (n, l) =>
       n + Math.max(0, payablePaise(l) - (alloc.paidByLine.get(l.id) ?? 0)),
@@ -137,7 +175,7 @@ export default async function Page({
         title={
           <>
             <Link
-              href={`/sales/expenses/ledger?${base}`}
+              href={`/sales/expenses/ledger${periodOnly}`}
               className="text-muted no-underline hover:text-body"
             >
               Expenses
@@ -148,46 +186,37 @@ export default async function Page({
         }
         subtitle="Every expense he logged and every allowance he earned, what the policy allows, what was decided and why, and every payment made to him."
         actions={
-          <div className="flex items-center gap-3">
+          <div className="flex items-start gap-4">
             <Link
               href={`/sales/people/${userId}`}
-              className="text-sm font-medium"
+              className="mt-1.5 text-sm font-medium"
             >
               Profile
             </Link>
-            {allTime ? (
-              <Link
-                href={`${here}?month=${month}`}
-                className="text-sm font-medium"
-              >
-                By month
-              </Link>
-            ) : (
-              <>
-                <Link
-                  href={`${here}?month=${month}&period=all`}
-                  className="text-sm font-medium"
-                >
-                  All time
-                </Link>
-                <MonthNav month={month} basePath={here} />
-              </>
-            )}
-            {canPay ? (
-              <RecordPayment
-                userId={userId}
-                who={ledger.userName}
-                duePaise={balance.duePaise}
-                today={now}
-              />
-            ) : null}
+            <PeriodPicker
+              key={period.label}
+              period={period}
+              today={now}
+              basePath={here}
+              query={query}
+            />
           </div>
         }
       />
-      <ExpenseTabs current="ledger" month={month} />
+      <ExpenseTabs current="ledger" query={{ ...query, who: userId }} />
 
       <Banner
         tone={balance.duePaise > 0 ? "warn" : "info"}
+        action={
+          canPay ? (
+            <RecordPayment
+              userId={userId}
+              who={ledger.userName}
+              duePaise={balance.duePaise}
+              today={now}
+            />
+          ) : undefined
+        }
         title={
           balance.advancePaise > 0
             ? `${inrExact(balance.advancePaise)} paid in advance`
@@ -256,6 +285,44 @@ export default async function Page({
         ]}
       />
 
+      <FilterRow
+        basePath={here}
+        query={query}
+        search="Search"
+        filters={[
+          {
+            param: "kind",
+            all: "All types",
+            label: "Type",
+            value: query.kind ?? "",
+            options: kindOptions(ledger.lines),
+          },
+          {
+            param: "policy",
+            all: "Any policy result",
+            label: "Policy",
+            value: query.policy ?? "",
+            options: POLICY_OPTIONS,
+          },
+          {
+            param: "bill",
+            all: "Bill or not",
+            label: "Bill",
+            value: query.bill ?? "",
+            options: BILL_OPTIONS,
+          },
+        ]}
+      >
+        <span className="ml-auto flex items-center gap-2 text-[13px] text-muted">
+          Salesman
+          <PersonSwitch
+            people={claimants}
+            current={userId}
+            query={hrefQuery(query)}
+          />
+        </span>
+      </FilterRow>
+
       <FilterChips
         current={show}
         options={(
@@ -274,7 +341,7 @@ export default async function Page({
           key,
           label: text,
           count: count(key),
-          href: `${here}?show=${key}&${base}`,
+          href: hrefWith(here, query, { show: key }),
         }))}
       />
 
@@ -282,9 +349,9 @@ export default async function Page({
         <Empty
           title="Nothing here"
           body={
-            allTime
-              ? "Nothing matches this filter."
-              : "Nothing matches this filter in this month. Try All time."
+            period.kind === "all"
+              ? "Nothing matches these filters."
+              : "Nothing matches these filters in this period. Try All time."
           }
         />
       ) : (
@@ -330,12 +397,12 @@ export default async function Page({
               />
             ),
           )}
-          {from && (show === "all" || show === "payments") ? (
+          {from && !narrowed && (show === "all" || show === "payments") ? (
             <Row striped={drawn.length % 2 === 1}>
               <Cell>{shortDate(from)}</Cell>
               <Cell colSpan={6}>
                 <span className="text-[13px] text-muted">
-                  Owed at the start of the month
+                  Owed before this period
                 </span>
               </Cell>
               <Cell align="right">
@@ -715,4 +782,9 @@ function PayoutRowView({
       </Cell>
     </Row>
   );
+}
+
+/** The period alone — what carries across when switching salesman. */
+function hrefQuery(q: Record<string, string | undefined>) {
+  return { period: q.period, on: q.on, from: q.from, to: q.to, month: q.month };
 }

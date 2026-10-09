@@ -267,3 +267,25 @@ export function ledgerLineOf(r: ExpenseLineRow): LedgerLine {
     approvedAmountPaise: r.approvedAmountPaise,
   };
 }
+
+export type Claimant = { id: string; name: string };
+
+/**
+ * Who the salesman filter offers: everybody in the reader's scope with at
+ * least one expense or allowance on the book, ever — never the whole staff
+ * list. A name with nothing behind it would only ever filter to an empty
+ * table. All time rather than the period, so switching the month does not make
+ * the person somebody picked vanish from the box that picked them.
+ */
+export async function expenseClaimants(): Promise<Claimant[]> {
+  const scope = await managerScope();
+  const rows = await db.execute<Claimant>(sql`
+    select u.id, u.name
+      from users u
+     where exists (select 1 from mbos_expenses e
+                    where e.user_id = u.id and e.superseded_by_id is null)
+       ${onlyMine(scope, "u.id")}
+     order by lower(u.name)
+  `);
+  return [...rows];
+}
