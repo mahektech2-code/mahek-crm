@@ -60,14 +60,17 @@ import {
   restorePolicyRevision,
   savePolicySet,
   setPolicySetActive,
+  setExpenseHometown,
 } from "@/lib/actions/expense-policy-sets";
-import { policySetRevisions, readPolicySet } from "@/lib/services/expense-policy-set-service";
+import { policyPeople, policySetRevisions, readPolicySet } from "@/lib/services/expense-policy-set-service";
+import { hometownTree } from "@/lib/services/hometown-service";
+import { fieldTeam } from "@/lib/services/sales-service";
 import { ruleToDraft } from "@/lib/expense-policy-sets";
 import { priceDay } from "@/lib/services/expense-service";
 import { refreshDayMoney } from "@/lib/services/expense-submit-service";
 import { expenseLines } from "@/lib/services/expense-claims-service";
 import { resolveException } from "@/lib/actions/expenses";
-import { decideExpense } from "@/lib/actions/sales";
+import { decideExpense, setSalesmanHometown } from "@/lib/actions/sales";
 import { expenseStateSql, paidPaiseSql } from "@/lib/expense-money-sql";
 import { duplicateWarnings } from "@/lib/services/expense-service";
 import { simulatePolicy } from "@/lib/services/expense-simulator-service";
@@ -1134,5 +1137,94 @@ describe("named policies", () => {
   test("the standard policy cannot be switched off or deleted", async () => {
     assert.equal((await setPolicySetActive({ id: STANDARD_POLICY_ID, active: false })).ok, false);
     assert.equal((await deletePolicySet({ id: STANDARD_POLICY_ID })).ok, false);
+  });
+});
+
+/* ------------------------------------------------------- hometowns */
+
+describe("a hometown", () => {
+  /** A state › district › city branch, under a name no other run shares. */
+  async function branch() {
+    const tag = randomUUID().slice(0, 6);
+    const state = { id: id("pl"), name: `Statia ${tag}` };
+    const district = { id: id("pl"), name: `Nagpur ${tag}` };
+    const city = { id: id("pl"), name: `Kamptee ${tag}` };
+    await db.execute(sql`
+      insert into places (id, kind, name, key, parent_id) values
+        (${state.id}, 'state', ${state.name}, ${`statia${tag}`}, null),
+        (${district.id}, 'district', ${district.name}, ${`nagpur${tag}`}, ${state.id}),
+        (${city.id}, 'city', ${city.name}, ${`kamptee${tag}`}, ${district.id})
+    `);
+    return { state, district, city };
+  }
+
+  test("is picked from the tree, read back with its state, and audited", async () => {
+    const { state, district, city } = await branch();
+    const tree = await hometownTree();
+    const node = tree.find((s) => s.id === state.id);
+    assert.ok(node, "the state is offered");
+    assert.deepEqual(
+      node!.cities.map((c) => ({ id: c.id, district: c.district })),
+      [{ id: city.id, district: district.name }],
+    );
+
+    const set = await setExpenseHometown({ userId: salesman.id, placeId: city.id });
+    assert.ok(set.ok, set.ok ? "" : set.error);
+    const [row] = await db.execute<{ city: string; state: string; placeId: string }>(sql`
+      select city, state, place_id as "placeId" from expense_hometowns where user_id = ${salesman.id}
+    `);
+    assert.deepEqual(row, { city: city.name, state: state.name, placeId: city.id });
+
+    const again = await setExpenseHometown({ userId: salesman.id, placeId: city.id });
+    assert.ok(again.ok);
+    assert.equal(again.message, "Nothing changed.");
+
+    const people = await policyPeople();
+    assert.deepEqual(people.find((p) => p.userId === salesman.id)!.hometown, {
+      city: city.name,
+      state: state.name,
+      placeId: city.id,
+    });
+    const [audited] = await db.execute<{ n: number }>(sql`
+      select count(*)::int as n from audit_log where action = 'expense_policy.hometown' and entity_id = ${salesman.id}
+    `);
+    assert.equal(audited!.n, 1, "a no-op is not audited");
+
+    assert.ok((await setExpenseHometown({ userId: salesman.id, placeId: null })).ok);
+    const [gone] = await db.execute<{ n: number }>(sql`
+      select count(*)::int as n from expense_hometowns where user_id = ${salesman.id}
+    `);
+    assert.equal(gone!.n, 0);
+  });
+
+  test("a place that is not a city is refused, and so is anybody without the policy capability", async () => {
+    const { district, city } = await branch();
+    const wrong = await setExpenseHometown({ userId: salesman.id, placeId: district.id });
+    assert.equal(wrong.ok, false, "a district is not a town");
+
+    setTestUser(salesman);
+    await assert.rejects(() => setExpenseHometown({ userId: salesman.id, placeId: city.id }));
+  });
+
+  test("a salesman's own manager sets it from the Salesmen screen, through the same writer", async () => {
+    const { city } = await branch();
+    setTestUser(await salesManager());
+    const set = await setSalesmanHometown({ salesmanId: salesman.id, placeId: city.id });
+    assert.ok(set.ok, set.ok ? "" : set.error);
+    const team = await fieldTeam();
+    assert.equal(team.find((t) => t.id === salesman.id)!.hometown?.placeId, city.id);
+  });
+
+  test("a hometown picked from the tree is what the meal rule compares the day against", async () => {
+    const { city } = await branch();
+    const day = "2026-06-24";
+    const dayId = await openDay(day, { departedAt: at(day, hhmm(6)), returnedAt: at(day, hhmm(23)) });
+    assert.ok((await setExpenseHometown({ userId: salesman.id, placeId: city.id })).ok);
+    await refreshDayMoney(salesman.id, day);
+    assert.equal((await priceDay(salesman.id, day))!.computation!.foodPaise, 0, "a day at home");
+
+    await db.update(mbosExpenseDays).set({ destinationCity: "Wardha" }).where(eq(mbosExpenseDays.id, dayId));
+    await refreshDayMoney(salesman.id, day);
+    assert.equal((await priceDay(salesman.id, day))!.computation!.foodPaise, 45000, "a trip elsewhere");
   });
 });

@@ -7,7 +7,6 @@ import { z } from "zod";
 import { db } from "@/db";
 import {
   auditLog,
-  expenseHometowns,
   expensePolicyAssignments,
   expensePolicySetRevisions,
   expensePolicySets,
@@ -26,10 +25,8 @@ import {
 } from "@/lib/expense-policy-sets";
 import { daysStampedWith, ensureStandardSet, readPolicySet } from "@/lib/services/expense-policy-set-service";
 import { ensurePolicyRow } from "@/lib/services/expense-policy-service";
-import { refreshDayMoney } from "@/lib/services/expense-submit-service";
+import { repriceRecentExpenseDays, writeHometown } from "@/lib/services/hometown-service";
 import { notifyUsers } from "@/lib/notify";
-import { addDays } from "@/lib/business-date";
-import { today } from "@/lib/recompute";
 import { err as fail, ok, okVoid, type Result } from "@/lib/result";
 import { ADMIN } from "@/lib/admin-routes";
 
@@ -75,33 +72,7 @@ function refresh(setId?: string) {
   }
 }
 
-/**
- * Re-work today's and yesterday's allowances for the people a change moves,
- * so a new rate is on the next screen anybody opens rather than tomorrow
- * morning. The nightly pass covers everything older. Best effort: the policy
- * is saved whether or not this finishes.
- */
-async function repriceRecent(userIds: readonly string[]) {
-  if (userIds.length === 0) return;
-  const day = await today();
-  const from = addDays(day, -1);
-  const rows = await db.execute<{ userId: string; day: string }>(sql`
-    select user_id as "userId", day::text as day
-      from mbos_expense_days
-     where user_id in (${sql.join(
-       userIds.map((u) => sql`${u}`),
-       sql`, `,
-     )})
-       and day >= ${from}::date
-  `);
-  for (const r of rows) {
-    try {
-      await refreshDayMoney(r.userId, r.day);
-    } catch {
-      /* One day that cannot be re-worked must not cost the others. */
-    }
-  }
-}
+const repriceRecent = repriceRecentExpenseDays;
 
 /** Everybody a policy's change reaches: its members, or — for standard — everybody on no other active policy. */
 async function peopleOn(setId: string, isStandard: boolean): Promise<string[]> {
@@ -525,42 +496,26 @@ export async function assignPolicySet(input: z.input<typeof assignSchema>): Prom
 
 const hometownSchema = z.object({
   userId: z.string().min(1),
-  /** Blank clears it, and the day keeps what the handset recorded. */
-  city: z.string().trim().max(80, "A town name is at most 80 characters.").nullable(),
+  /** A city node of the reviewed place tree. Null clears it, and the day keeps what the handset recorded. */
+  placeId: z.string().min(1).nullable(),
 });
 
 /**
- * Where a salesman lives, for the policy's "away from his hometown". Saved at
- * once, and today's and yesterday's allowances are re-worked so the effect is
- * on the next screen anybody opens.
+ * Where a salesman lives, for the policy's "away from his hometown" — the same
+ * record the Sales Dashboard's Salesmen screen sets, through the same writer.
  */
 export async function setExpenseHometown(input: z.input<typeof hometownSchema>): Promise<Result> {
   const user = await author();
   const parsed = hometownSchema.safeParse(input);
   if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "That is not a town.", "validation");
-  const { userId } = parsed.data;
-  const city = parsed.data.city?.trim() || null;
-
-  const [before] = await db
-    .select({ city: expenseHometowns.city })
-    .from(expenseHometowns)
-    .where(eq(expenseHometowns.userId, userId))
-    .limit(1);
-  if ((before?.city ?? null) === city) return okVoid("Nothing changed.");
-
-  if (city) {
-    await db
-      .insert(expenseHometowns)
-      .values({ userId, city, setById: user.id })
-      .onConflictDoUpdate({
-        target: expenseHometowns.userId,
-        set: { city, setById: user.id, setAt: new Date() },
-      });
-  } else {
-    await db.delete(expenseHometowns).where(eq(expenseHometowns.userId, userId));
+  const result = await writeHometown(user.id, parsed.data.userId, parsed.data.placeId);
+  if (result.ok) {
+    refresh();
+    try {
+      revalidatePath("/sales/people");
+    } catch {
+      /* No request scope. */
+    }
   }
-  await audit(user.id, "expense_policy.hometown", userId, { city: before?.city ?? null }, { city });
-  await repriceRecent([userId]);
-  refresh();
-  return okVoid(city ? `Hometown set to ${city}.` : "Hometown cleared.");
+  return result;
 }

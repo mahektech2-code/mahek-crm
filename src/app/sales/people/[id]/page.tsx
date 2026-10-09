@@ -4,6 +4,7 @@ import { dayEvidence } from "@/lib/services/day-evidence-service";
 import { getSetting } from "@/lib/config/store";
 import { endOfMonth } from "@/lib/business-date";
 import { today } from "@/lib/recompute";
+import { hometownTree } from "@/lib/services/hometown-service";
 import { SalesmanScreen } from "./salesman-screen";
 
 export const metadata = { title: "Salesman — Sales Dashboard — MahekOne" };
@@ -37,12 +38,13 @@ export default async function Page({
   lastMonth.setUTCMonth(lastMonth.getUTCMonth() - 1);
   const previous = lastMonth.toISOString().slice(0, 7);
 
-  const [record, current, before, evidence, retentionHours] = await Promise.all([
+  const [record, current, before, evidence, retentionHours, towns] = await Promise.all([
     salesmanRecord(id),
     performance(`${thisMonth}-01`, endOfMonth(thisMonth)),
     performance(`${previous}-01`, endOfMonth(previous)),
     dayEvidence(id, day),
     getSetting("mbos.attendance.selfieRetentionHours"),
+    hometownTree(),
   ]);
 
   /* `salesmanRecord` answers null for anybody who does not hold the field app,
@@ -63,6 +65,7 @@ export default async function Page({
       dayEvidence={evidence}
       selfieRetentionHours={retentionHours}
       openDayCheck={asked !== null}
+      towns={towns}
     />
   );
 }
