@@ -6635,6 +6635,20 @@ named, and an overnight (`lib/expense-hometown.ts`, pure). With no hometown set
 the recorded answer stands. The tour advance the document describes (GPay 1–2
 days before a tour) is NOT built — there is no advance ledger yet.
 
+**A HOMETOWN IS PICKED FROM THE REVIEWED TREE, AND IT LIVES BESIDE "WORKS".**
+Typed, a hometown was a string the pay rule compared against shop towns read
+through `placeNameSql`, so "Nagpur " or "nagpur city" matched nothing and made
+every day an away day. It is now a city node of `places` (state › district ›
+city), stored as `expense_hometowns.place_id` with the name and state beside it
+(`0245`; a typed row that names exactly one city was adopted, the rest show as
+"Typed"). It is set on the Sales Dashboard's Salesmen screen (`/sales/people`,
+a Hometown column, a "Hometown not set" filter and a banner counting the
+backlog) and on each salesman's page, through `setSalesmanHometown`
+(`sales.people`, his manager's team), and on the Admin Console's "Who is on
+which" through `setExpenseHometown` (`expense.policy.write`). Both doors are
+`HometownPicker` and both write through `writeHometown` in
+`services/hometown-service.ts`, which refuses anything that is not a city.
+
 **A LOGGED BILL IS WORTH ITS OWN FIGURE.** `DayComputation.lineEligiblePaise`
 is per line, and `writeLineFigures` reads it; it used to share the day's
 eligible total in proportion to what was claimed, which with a ₹0 food bill

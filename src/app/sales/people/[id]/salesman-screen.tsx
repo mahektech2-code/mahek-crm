@@ -7,6 +7,8 @@ import { readAttendanceVerdict } from "@/lib/attendance-labels";
 import type { PerformanceRow, SalesmanRecord } from "@/lib/services/sales-service";
 import type { DayEvidence as DayEvidenceType } from "@/lib/services/day-evidence-service";
 import { DayCheck } from "./day-check";
+import type { HometownState } from "@/lib/services/hometown-service";
+import { HometownPicker } from "@/components/expenses/hometown-picker";
 import { ExportMenu } from "@/components/ui/export-menu";
 import { CustomerName } from "@/components/console/customer-name";
 import {
@@ -71,6 +73,7 @@ export function SalesmanScreen({
   dayEvidence,
   selfieRetentionHours,
   openDayCheck,
+  towns,
 }: {
   record: SalesmanRecord;
   month: string;
@@ -90,6 +93,8 @@ export function SalesmanScreen({
    * would navigate and drop the reader back on Visits.
    */
   openDayCheck: boolean;
+  /** The reviewed place tree, for picking where he lives. */
+  towns: HometownState[];
 }) {
   const [tab, setTab] = React.useState<Tab>(openDayCheck ? "Day check" : "Visits");
   const { salesman: s } = record;
@@ -160,6 +165,26 @@ export function SalesmanScreen({
           </>
         }
       />
+
+      {/* WHERE HE WORKS AND WHERE HE LIVES, side by side as on the team table.
+          The hometown decides which of his days pay a meal allowance, so it is
+          set here as well as on the list — the same record, the same writer. */}
+      <div className="mb-4 flex flex-wrap items-center gap-x-8 gap-y-2 rounded-[6px] border border-line bg-surface px-4 py-3 text-[13px]">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="text-muted">Works</span>
+          <span className="min-w-0 truncate text-ink">
+            {(s.territories ?? []).length ? (
+              (s.territories ?? []).map((t) => t.value).join(", ")
+            ) : (
+              <Pill tone="danger">No area · empty handset</Pill>
+            )}
+          </span>
+        </div>
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="text-muted">Hometown</span>
+          <HometownPicker door="sales" salesman={{ id: s.id, name: s.name }} hometown={s.hometown} tree={towns} />
+        </div>
+      </div>
 
       {/*
         WHAT HE HAS ACTUALLY DONE THIS MONTH, above the tabs.

@@ -1,3 +1,4 @@
+import { hometownTree } from "@/lib/services/hometown-service";
 import { notFound } from "next/navigation";
 import { canFor } from "@/lib/access-control";
 import { STANDARD_GUIDELINES, STANDARD_POLICY } from "@/lib/expense-policy-standard";
@@ -5,7 +6,6 @@ import { ruleToDraft } from "@/lib/expense-policy-sets";
 import {
   listPolicySets,
   policyChoices,
-  hometownChoices,
   policyPeople,
   policySetRevisions,
   readPolicySet,
@@ -75,7 +75,7 @@ export default async function ExpensePolicyPage({
     );
   }
 
-  const [sets, people, towns] = await Promise.all([listPolicySets(), policyPeople(), hometownChoices()]);
+  const [sets, people, towns] = await Promise.all([listPolicySets(), policyPeople(), hometownTree()]);
   return (
     <PoliciesScreen
       sets={sets.map((s) => ({

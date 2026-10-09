@@ -7588,7 +7588,12 @@ export const expenseHometowns = pgTable("expense_hometowns", {
   userId: text("user_id")
     .primaryKey()
     .references(() => users.id, { onDelete: "cascade" }),
+  /** The town's name — what the pay rule compares the visited shops' towns against. */
   city: text("city").notNull(),
+  /** The city node it was picked as. Null on a town typed before the picker. */
+  placeId: text("place_id").references(() => places.id, { onDelete: "set null" }),
+  /** The state it was picked under, for drawing the path. */
+  state: text("state"),
   setAt: timestamp("set_at", { withTimezone: true }).notNull().defaultNow(),
   setById: text("set_by_id").references(() => users.id),
 });

@@ -264,7 +264,7 @@ export type PolicyPerson = {
   assignedAt: string | null;
   assignedByName: string | null;
   /** Where he lives, for "away from his hometown". Null when not set. */
-  hometown: string | null;
+  hometown: { city: string; state: string | null; placeId: string | null } | null;
 };
 
 /**
@@ -279,7 +279,8 @@ export async function policyPeople(): Promise<PolicyPerson[]> {
     select u.id as "userId", u.name, u.email, e.position, u.active,
            a.set_id as "setId", s.name as "setName", coalesce(not s.active, false) as "setInactive",
            a.assigned_at as "assignedAt", ab.name as "assignedByName",
-           h.city as "hometown"
+           case when h.user_id is null then null
+                else json_build_object('city', h.city, 'state', h.state, 'placeId', h.place_id) end as "hometown"
       from users u
       ${employeeLateral("u", "e")}
       left join expense_policy_assignments a on a.user_id = u.id
@@ -336,10 +337,3 @@ export async function daysStampedWith(setId: string): Promise<number> {
   return row?.n ?? 0;
 }
 
-/** The towns offered when a hometown is typed — the reviewed place tree's cities. */
-export async function hometownChoices(): Promise<string[]> {
-  const rows = await db.execute<{ name: string }>(sql`
-    select distinct name from places where kind = 'city' order by name asc limit 2000
-  `);
-  return rows.map((r) => r.name);
-}
