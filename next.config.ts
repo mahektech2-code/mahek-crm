@@ -80,6 +80,21 @@ const nextConfig: NextConfig = {
    */
   deploymentId: process.env.NEXT_DEPLOYMENT_ID,
 
+  experimental: {
+    /*
+     * How much of a request body survives `src/proxy.ts`. Next buffers a
+     * proxied body so the proxy and the route can both read it, and past this
+     * it keeps the first N bytes and says so only in the server log — the
+     * route is handed a truncated upload and no error. The default is 10 MB,
+     * which is how a 12 MB price list read as "the file did not arrive whole"
+     * three times running. It has to sit ABOVE `PUBLISH_MAX_MB` in
+     * `lib/publish-limits.ts` with room for the multipart framing, so that the
+     * route, not the proxy, is what refuses a file that is too big — and says
+     * the limit in words. `publish-limits.test.ts` holds the two together.
+     */
+    proxyClientMaxBodySize: "32mb",
+  },
+
   /*
    * Set by the app rather than by Caddy, because the Caddyfile is copied to
    * the droplet by hand and a deploy never touches it — a header written
