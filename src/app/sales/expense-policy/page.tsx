@@ -59,6 +59,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ p
         <PolicyView
           sections={policyInWords(shown.rules, { modeLabel, gradeLabel })}
           title={shown.name}
+          guidelines={shown.guidelines}
           intro={
             shown.isStandard
               ? `the policy everybody is on unless they are put on another — ${onIt} ${onIt === 1 ? "person" : "people"} right now.`

@@ -481,8 +481,12 @@ export async function decideApproval(input: {
         approverUserId: user.id,
         decidedAt: new Date(),
         decisionNote: note || null,
+        /* A full approval carries an amount only where the policy pays MORE
+           than was logged — a fixed hotel rate on a cheaper room. */
         approvedAmountPaise:
-          input.decision === "partially_approved" ? input.approvedAmountPaise : null,
+          input.decision === "partially_approved" || input.decision === "approved"
+            ? (input.approvedAmountPaise ?? null)
+            : null,
         updatedAt: new Date(),
         updatedById: user.id,
       })
@@ -592,6 +596,7 @@ export async function decideExpense(input: {
         id: mbosExpenses.id,
         userId: mbosExpenses.userId,
         amountPaise: mbosExpenses.amountPaise,
+        eligiblePaise: mbosExpenses.eligiblePaise,
         sourceType: mbosExpenses.sourceType,
         remarks: mbosExpenses.remarks,
       })
@@ -644,7 +649,14 @@ export async function decideExpense(input: {
       approvalId,
       decision,
       note: input.note,
-      approvedAmountPaise: decision === "partially_approved" ? input.approvedAmountPaise : undefined,
+      /* A fixed allowance (a flat hotel rate) can be worth more than the bill;
+         approving it in full pays what the policy allows, not the bill. */
+      approvedAmountPaise:
+        decision === "partially_approved"
+          ? input.approvedAmountPaise
+          : decision === "approved" && line.eligiblePaise !== null && Number(line.eligiblePaise) > Number(line.amountPaise)
+            ? Number(line.eligiblePaise)
+            : undefined,
     });
     try {
       revalidatePath("/sales/expenses");

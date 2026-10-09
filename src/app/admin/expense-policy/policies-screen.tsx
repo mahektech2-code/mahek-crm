@@ -22,6 +22,7 @@ import { ConfirmDialog, Modal, RowMenu, SelectionBar, Tabs } from "@/components/
 import { useToast } from "@/components/ui/toast";
 import {
   assignPolicySet,
+  setExpenseHometown,
   createPolicySet,
   deletePolicySet,
   duplicatePolicySet,
@@ -64,6 +65,7 @@ export type PersonRow = {
   setInactive: boolean;
   assignedAt: string | null;
   assignedByName: string | null;
+  hometown: string | null;
 };
 
 const STANDARD = "__standard";
@@ -83,11 +85,14 @@ function when(iso: string | null): string {
 export function PoliciesScreen({
   sets,
   people,
+  towns,
   canWrite,
   initialTab,
 }: {
   sets: PolicySummary[];
   people: PersonRow[];
+  /** Towns offered when a hometown is typed. */
+  towns: string[];
   canWrite: boolean;
   initialTab: "policies" | "people";
 }) {
@@ -244,7 +249,7 @@ export function PoliciesScreen({
           )}
         </Card>
       ) : (
-        <PeopleTab sets={sets} people={people} canWrite={canWrite} />
+        <PeopleTab sets={sets} people={people} towns={towns} canWrite={canWrite} />
       )}
 
       {creating ? (
@@ -412,7 +417,17 @@ function DuplicateDialog({
 
 /* ------------------------------------------------------------- people */
 
-function PeopleTab({ sets, people, canWrite }: { sets: PolicySummary[]; people: PersonRow[]; canWrite: boolean }) {
+function PeopleTab({
+  sets,
+  people,
+  towns,
+  canWrite,
+}: {
+  sets: PolicySummary[];
+  people: PersonRow[];
+  towns: string[];
+  canWrite: boolean;
+}) {
   const router = useRouter();
   const { run } = useToast();
   const [q, setQ] = React.useState("");
@@ -457,7 +472,7 @@ function PeopleTab({ sets, people, canWrite }: { sets: PolicySummary[]; people: 
     <Card className="mt-4 overflow-hidden">
       <CardHeader
         title="Who is on which policy"
-        hint="Everybody who holds the Salesman App. Change a row's policy and it is saved at once, re-works today's allowances and tells him on his phone."
+        hint="Everybody who holds the Salesman App. Change a row's policy and it is saved at once, re-works today's allowances and tells him on his phone. A hometown decides which days count as away from home — with none set, every day he records as away is."
       />
       <div className="flex flex-wrap items-end gap-3 border-b border-divider px-5 py-3">
         <Field label="Search" className="w-[260px]">
@@ -489,7 +504,12 @@ function PeopleTab({ sets, people, canWrite }: { sets: PolicySummary[]; people: 
         <EmptyState title="Nobody here" body="Nobody matches that search, or nobody holds the Salesman App yet." />
       ) : (
         <div className="max-h-[640px] overflow-auto">
-          <table className="w-full min-w-[960px] table-fixed">
+          <datalist id="expense-hometown-towns">
+            {towns.map((t) => (
+              <option key={t} value={t} />
+            ))}
+          </datalist>
+          <table className="w-full min-w-[1140px] table-fixed">
             <thead>
               <tr>
                 <Th style={{ width: 44 }}>
@@ -511,6 +531,7 @@ function PeopleTab({ sets, people, canWrite }: { sets: PolicySummary[]; people: 
                 <Th style={{ width: 260 }}>Person</Th>
                 <Th style={{ width: 200 }}>Position</Th>
                 <Th style={{ width: 290 }}>Expense policy</Th>
+                <Th style={{ width: 190 }}>Hometown</Th>
                 <Th style={{ width: 190 }}>Since</Th>
               </tr>
             </thead>
@@ -561,6 +582,9 @@ function PeopleTab({ sets, people, canWrite }: { sets: PolicySummary[]; people: 
                       </div>
                     ) : null}
                   </Td>
+                  <Td>
+                    <HometownCell key={p.hometown ?? ""} person={p} canWrite={canWrite} />
+                  </Td>
                   <Td className="whitespace-normal text-[12px] text-muted">
                     {p.assignedAt ? (
                       <>
@@ -602,4 +626,46 @@ function PeopleTab({ sets, people, canWrite }: { sets: PolicySummary[]; people: 
 
 function refuseTitle(canWrite: boolean) {
   return canWrite ? undefined : "Only accounts and administrators may change who is on which policy.";
+}
+
+/* ----------------------------------------------------------- hometown */
+
+/** Typed against the place tree's towns, saved when the box is left. */
+function HometownCell({ person, canWrite }: { person: PersonRow; canWrite: boolean }) {
+  const router = useRouter();
+  const { run } = useToast();
+  const [value, setValue] = React.useState(person.hometown ?? "");
+  const [busy, setBusy] = React.useState(false);
+
+  async function commit() {
+    const next = value.trim();
+    if (next === (person.hometown ?? "")) return;
+    setBusy(true);
+    try {
+      const r = await run(setExpenseHometown({ userId: person.userId, city: next || null }));
+      if (r.ok) router.refresh();
+      else setValue(person.hometown ?? "");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <span className="block">
+      <Input
+        list="expense-hometown-towns"
+        value={value}
+        maxLength={80}
+        placeholder="Not set"
+        aria-label={`Hometown of ${person.name}`}
+        disabled={!canWrite || busy}
+        title={refuseTitle(canWrite)}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={() => void commit()}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+        }}
+      />
+    </span>
+  );
 }

@@ -48,6 +48,8 @@ import {
   blankRule,
   checkRules,
   diffRules,
+  MAX_GUIDELINE_CHARS,
+  MAX_GUIDELINES,
   policyGaps,
   sectionOf,
   type RuleSectionKey,
@@ -86,6 +88,7 @@ export type EditorSet = {
   updatedAt: string | null;
   updatedByName: string | null;
   clonedFromName: string | null;
+  guidelines: string[];
 };
 
 export type EditorChoices = {
@@ -130,6 +133,7 @@ export function PolicyEditor({
   set,
   drafts,
   defaults,
+  defaultGuidelines,
   choices,
   revisions,
   members,
@@ -140,6 +144,8 @@ export function PolicyEditor({
   drafts: RuleDraft[];
   /** The shipped figures — the standard policy only, for "Reset to defaults". */
   defaults: RuleDraft[] | null;
+  /** The shipped guidelines — the standard policy only. */
+  defaultGuidelines: string[] | null;
   choices: EditorChoices;
   revisions: EditorRevision[];
   members: { userId: string; name: string; position: string | null }[];
@@ -152,6 +158,7 @@ export function PolicyEditor({
   const [rows, setRows] = React.useState<Row[]>(initialRows);
   const [name, setName] = React.useState(set.name);
   const [description, setDescription] = React.useState(set.description ?? "");
+  const [guidelines, setGuidelines] = React.useState<string[]>(set.guidelines);
   const [note, setNote] = React.useState("");
   const [tab, setTab] = React.useState<TabKey>("rules");
   const [saving, setSaving] = React.useState(false);
@@ -164,8 +171,10 @@ export function PolicyEditor({
     errors.find((e) => e.index === index && e.field === field)?.message ?? null;
   const rowErrors = (index: number) => errors.filter((e) => e.index === index);
 
-  const saved = JSON.stringify({ n: set.name, d: set.description ?? "", r: drafts });
-  const dirty = JSON.stringify({ n: name, d: description, r: current }) !== saved;
+  const saved = JSON.stringify({ n: set.name, d: set.description ?? "", g: set.guidelines, r: drafts });
+  const dirty = JSON.stringify({ n: name, d: description, g: guidelines, r: current }) !== saved;
+  const guidelinesMoved = JSON.stringify(guidelines) !== JSON.stringify(set.guidelines);
+  const cleanGuidelines = guidelines.map((g) => g.trim()).filter(Boolean);
   const diff = diffRules(drafts, current);
 
   React.useEffect(() => {
@@ -201,6 +210,7 @@ export function PolicyEditor({
     setRows(initialRows);
     setName(set.name);
     setDescription(set.description ?? "");
+    setGuidelines(set.guidelines);
     setNote("");
   }
 
@@ -221,6 +231,7 @@ export function PolicyEditor({
           name,
           description: description.trim() || null,
           rules: current,
+          guidelines: cleanGuidelines,
           expectedRevision: set.revision,
           note: note.trim() || null,
         }),
@@ -292,6 +303,7 @@ export function PolicyEditor({
               diff.changed ? `${diff.changed} changed` : null,
               diff.removed ? `${diff.removed} removed` : null,
               name !== set.name || description !== (set.description ?? "") ? "name or description" : null,
+              guidelinesMoved ? "guidelines" : null,
             ]
               .filter(Boolean)
               .join(" · ") || "rules reordered"}
@@ -364,6 +376,62 @@ export function PolicyEditor({
                 </Button>
               </div>
             ) : null}
+          </Card>
+
+          <Card>
+            <CardHeader
+              title="Guidelines"
+              hint="What the figures cannot say — how a claim is proved, when advances are paid, who to call. Shown to salesmen and managers beside the rules, and on the handset."
+            />
+            <div className="space-y-2 px-5 py-4">
+              {guidelines.length === 0 ? (
+                <div className="text-[13px] text-muted italic">None — this policy is its figures alone.</div>
+              ) : null}
+              {guidelines.map((g, i) => (
+                <div key={i} className="flex items-start gap-2">
+                  <span className="mt-2 w-5 shrink-0 text-right text-[12px] text-muted">{i + 1}.</span>
+                  <span className="block min-w-0 flex-1">
+                    <Input
+                      value={g}
+                      maxLength={MAX_GUIDELINE_CHARS}
+                      disabled={!canWrite}
+                      placeholder="A line of the policy, in plain words"
+                      onChange={(e) => setGuidelines((gs) => gs.map((x, j) => (j === i ? e.target.value : x)))}
+                    />
+                  </span>
+                  <Button
+                    size="sm"
+                    disabled={!canWrite || i === 0}
+                    title={i === 0 ? "Already first." : "Move up"}
+                    onClick={() =>
+                      setGuidelines((gs) => {
+                        const next = [...gs];
+                        [next[i - 1], next[i]] = [next[i]!, next[i - 1]!];
+                        return next;
+                      })
+                    }
+                  >
+                    ↑
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={!canWrite}
+                    title={refuse}
+                    onClick={() => setGuidelines((gs) => gs.filter((_, j) => j !== i))}
+                  >
+                    Remove
+                  </Button>
+                </div>
+              ))}
+              <Button
+                size="sm"
+                disabled={!canWrite || guidelines.length >= MAX_GUIDELINES}
+                title={guidelines.length >= MAX_GUIDELINES ? `At most ${MAX_GUIDELINES} guidelines.` : refuse}
+                onClick={() => setGuidelines((gs) => [...gs, ""])}
+              >
+                + Add a guideline
+              </Button>
+            </div>
           </Card>
 
           {gaps.length ? (
@@ -440,6 +508,7 @@ export function PolicyEditor({
         <div className="mt-4">
           <PolicyView
             sections={policyInWords(rules, { modeLabel, gradeLabel })}
+            guidelines={cleanGuidelines}
             title={name}
             intro={
               dirty
@@ -564,11 +633,12 @@ export function PolicyEditor({
       <ConfirmDialog
         open={confirmReset}
         title="Put the shipped defaults back?"
-        body="Every rule on this page is replaced with the figures the standard policy shipped with. Nothing is saved until you press Save."
+        body="Every rule and guideline on this page is replaced with the figures the standard policy shipped with. Nothing is saved until you press Save."
         confirmLabel="Replace the rules"
         onClose={() => setConfirmReset(false)}
         onConfirm={() => {
           if (defaults) setRows(defaults.map((d) => ({ k: nextKey(), d })));
+          if (defaultGuidelines) setGuidelines(defaultGuidelines);
           setNote("Reset to the shipped defaults.");
         }}
       />
