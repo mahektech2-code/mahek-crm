@@ -99,7 +99,9 @@ test("every step names a built screen", () => {
 test("the departmental designations seed only real screens, powers and seats", () => {
   const sql = readFileSync(new URL("../../../drizzle/0226_erp_departments.sql", import.meta.url), "utf8");
   const built = new Set(ERP_SCREENS.filter((s) => s.built).map((s) => `erp.${s.key}`));
-  for (const m of sql.matchAll(/'(erp\.[A-Za-z]+)'/g)) assert.ok(built.has(m[1]), `${m[1]} is not an ERP screen`);
+  // The Departments page was taken out of the ERP; the grant 0226 seeded for it is ignored (access.ts reads only registry screens)
+  const retired = new Set(["erp.departments"]);
+  for (const m of sql.matchAll(/'(erp\.[A-Za-z]+)'/g)) assert.ok(built.has(m[1]) || retired.has(m[1]), `${m[1]} is not an ERP screen`);
   for (const m of sql.matchAll(/'(mixing|refilling|packing|head)'/g)) assert.ok((DEPARTMENT_SEATS as readonly string[]).includes(m[1]));
   for (const m of sql.matchAll(/power"\) VALUES[\s\S]*?;/g)) for (const p of m[0].matchAll(/'([a-zA-Z]+)'\)/g)) assert.ok((ERP_POWERS as readonly string[]).includes(p[1]));
 });
