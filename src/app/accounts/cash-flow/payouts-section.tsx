@@ -32,7 +32,7 @@ import { StatusPill, TONE_SKIN, sourceWords, toneOf } from "./payout-parts";
  *
  *  - the CALENDAR — vendors down the side, dates along the top, one card per
  *    payout in the cell for the day it is planned. Dragging a card sideways
- *    plans it for another day; only a payment day (Tuesday to Friday by
+ *    plans it for another day; only a payment day (Tuesday and Friday by
  *    default) that has not gone accepts it, and the narrow grey columns are
  *    the days nothing goes out. Anything still unpaid from before the window
  *    sits in the first column, so scrolling forward never hides a debt.

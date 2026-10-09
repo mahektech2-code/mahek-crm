@@ -5220,14 +5220,18 @@ is the rule, pure.
 **Two dates, two questions.** `due_date` is when the money is owed: the purchase
 date plus the supplier's `credit_days` (else `payments.vendorDefaultCreditDays`).
 `pay_on` is the payment day it is planned for: the first of
-`payments.vendorPayoutDays` (Tuesday to Friday, IST) on or after the due date, or
+`payments.vendorPayoutDays` (Tuesday and Friday, IST) on or after the due date, or
 on or after today where the due date has gone. Dragging a card on the calendar
 (vendors down, dates across) moves `pay_on` and stamps `pay_on_decided_at`, the
 same "a person decided" mark as `am_decided_at`, so the sync never moves it back.
 Only a payment day that has not gone accepts a drop — `moveRefusal`, asked by the
 calendar and again by `reschedulePayout`. An overdue payout nobody moved STAYS on
 its missed day rather than rolling forward to today, because rolling it would hide
-that it was missed.
+that it was missed. **The payment days are Tuesday and Friday** (Mahek's
+instruction, October 2026; it shipped as Tuesday to Friday). When the setting
+changes, the sync moves every unpaid payout nobody moved by hand that is planned
+for a day still to come and no longer a payment day onto the next one that is
+(`replannedPayOn`) — `0239` moved the stored setting where nobody had chosen it.
 
 **An invoice is a row, because one order collects several.** A proforma before
 the goods, the tax invoice after, a debit note later: `vendor_payout_invoices`,

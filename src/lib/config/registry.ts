@@ -988,8 +988,8 @@ export const SETTINGS = [
     category: "payments",
     label: "Days vendor payments go out",
     description:
-      "The weekdays accounts pay suppliers on, in IST. A purchase is planned for the first of these on or after its due date, and the Vendor payouts calendar refuses a payout dragged onto any other day. Tuesday to Friday by default - Monday is for reconciling the week before, and nothing is paid at the weekend.",
-    default: ["Tuesday", "Wednesday", "Thursday", "Friday"],
+      "The weekdays accounts pay suppliers on, in IST. A purchase is planned for the first of these on or after its due date, and the Vendor payouts calendar refuses a payout dragged onto any other day. Tuesday and Friday by default. Changing the days moves every payout planned for a day still to come that is no longer a payment day to the next one that is, unless somebody chose that day by hand.",
+    default: ["Tuesday", "Friday"],
   },
   {
     key: "payments.cashflowLookbackMonths",
