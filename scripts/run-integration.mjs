@@ -98,6 +98,8 @@ const files = [
   "src/lib/document-tagging.test.ts",
   "src/lib/activity-location.test.ts",
   "src/lib/salesman-day.test.ts",
+  // Activity history: MBOS visits are the record, the old app's sheet its past.
+  "src/lib/activity-history.test.ts",
   // The server's end-of-day punch-out reminder: found, claimed, sent once.
   "src/lib/punch-out-reminders.test.ts",
   "src/lib/positions-endpoint.test.ts",

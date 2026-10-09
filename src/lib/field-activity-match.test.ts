@@ -1,7 +1,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
-import { decideCustomerMatch, matchSalesmanName } from "./field-activity-match";
+import { decideCustomerMatch, foldShopName, matchSalesmanName } from "./field-activity-match";
 
 describe("matchSalesmanName", () => {
   const candidates = [
@@ -54,42 +54,71 @@ describe("matchSalesmanName", () => {
   });
 });
 
+describe("foldShopName", () => {
+  test("case, spacing and punctuation are not part of a name", () => {
+    assert.equal(foldShopName("  K. Ramsing   sales "), "K RAMSING SALES");
+    assert.equal(foldShopName("K RAMSING SALES"), "K RAMSING SALES");
+  });
+  test("every other character is", () => {
+    assert.notEqual(foldShopName("Shree Ganesh Paints"), foldShopName("Shree Ganesh Paint"));
+    assert.notEqual(foldShopName("Shri Traders"), foldShopName("Shree Traders"));
+  });
+});
+
 describe("decideCustomerMatch", () => {
-  test("no candidates at all is unmatched", () => {
-    assert.deepEqual(decideCustomerMatch([]), { status: "unmatched", matchedId: null, note: null });
+  test("nothing exact and nothing close is unmatched", () => {
+    assert.deepEqual(decideCustomerMatch({ exact: [] }), { status: "unmatched", matchedId: null, note: null });
+    assert.equal(
+      decideCustomerMatch({ exact: [], near: [{ id: "c1", name: "some shop", score: 0.1 }] }).status,
+      "unmatched",
+    );
   });
 
-  test("candidates below the floor are unmatched, not treated as ambiguous", () => {
-    const result = decideCustomerMatch([{ id: "c1", name: "some shop", score: 0.1 }]);
-    assert.equal(result.status, "unmatched");
+  test("exactly one account with the same name is a match", () => {
+    assert.deepEqual(decideCustomerMatch({ exact: [{ id: "c1", name: "Hira Hardware" }] }), {
+      status: "matched",
+      matchedId: "c1",
+      note: null,
+    });
   });
 
-  test("one clear leader over the threshold, well ahead of the field, matches", () => {
-    const result = decideCustomerMatch([
-      { id: "c1", name: "hira hardware", score: 0.95 },
-      { id: "c2", name: "kira hardware", score: 0.4 },
-    ]);
-    assert.deepEqual(result, { status: "matched", matchedId: "c1", note: null });
+  test("two accounts with the same name are a question, named with their towns", () => {
+    const r = decideCustomerMatch({
+      exact: [
+        { id: "c1", name: "Balaji Traders", city: "Ajmer" },
+        { id: "c2", name: "Balaji Traders", city: "Mumbai" },
+      ],
+    });
+    assert.equal(r.status, "ambiguous");
+    assert.equal(r.matchedId, null);
+    assert.ok(r.note?.includes("Ajmer") && r.note?.includes("Mumbai"));
   });
 
-  test("a lone candidate over the threshold matches even with no runner-up", () => {
-    const result = decideCustomerMatch([{ id: "c1", name: "hira hardware", score: 0.7 }]);
-    assert.deepEqual(result, { status: "matched", matchedId: "c1", note: null });
+  test("a close name is NEVER linked, however close", () => {
+    const r = decideCustomerMatch({
+      exact: [],
+      near: [
+        { id: "c1", name: "Shree Ganesh Paint House", score: 0.95 },
+        { id: "c2", name: "Kira Hardware", score: 0.31 },
+      ],
+    });
+    assert.equal(r.status, "ambiguous");
+    assert.equal(r.matchedId, null);
+    assert.ok(r.note?.includes("Shree Ganesh Paint House"));
   });
 
-  test("two close candidates are ambiguous, never auto-picked", () => {
-    const result = decideCustomerMatch([
-      { id: "c1", name: "shree traders", score: 0.65 },
-      { id: "c2", name: "shri traders", score: 0.62 },
-    ]);
-    assert.equal(result.status, "ambiguous");
-    assert.equal(result.matchedId, null);
-    assert.ok(result.note?.includes("shree traders"));
-    assert.ok(result.note?.includes("shri traders"));
-  });
-
-  test("a single candidate that clears the floor but not the match threshold is ambiguous, not matched", () => {
-    const result = decideCustomerMatch([{ id: "c1", name: "some shop", score: 0.45 }]);
-    assert.equal(result.status, "ambiguous");
+  test("a person's decision wins, both ways", () => {
+    const linked = decideCustomerMatch({
+      exact: [{ id: "c1", name: "A" }, { id: "c2", name: "A" }],
+      decision: { customerId: "c2" },
+    });
+    assert.equal(linked.status, "matched");
+    assert.equal(linked.matchedId, "c2");
+    const none = decideCustomerMatch({
+      exact: [{ id: "c1", name: "A" }],
+      decision: { customerId: null },
+    });
+    assert.equal(none.status, "unmatched");
+    assert.equal(none.matchedId, null);
   });
 });

@@ -2129,6 +2129,19 @@ export const MIGRATIONS: string[][] = [
     `ALTER TABLE expenses ADD COLUMN decisionNote TEXT;`,
   ],
 
+  /*
+   * A LIBRARY OF HUNDREDS IS SEARCHED, NOT SCROLLED.
+   *
+   * `description` is what the office wrote about a document, and the search
+   * reads it; `publishedAt` is when it went out, which is what "New" means.
+   * `kind` has been a column since v1 and was never filled — the pull now sends
+   * the file's media type in it, which is what tells the viewer to draw pages.
+   */
+  [
+    `ALTER TABLE documents ADD COLUMN description TEXT;`,
+    `ALTER TABLE documents ADD COLUMN publishedAt INTEGER;`,
+  ],
+
 ];
 
 /**

@@ -163,6 +163,7 @@ const RULES: Rule[] = [
   { test: /^mbos\.attendance\./, page: "sales", tab: "attendance", group: "Check-in and the day" },
   { test: /^mbos\.leave\./, page: "sales", tab: "attendance", group: "Leave" },
   { test: /^mbos\.(visits?|travel)\./, page: "sales", tab: "visits", group: "Visits" },
+  { test: /^fieldActivity\./, page: "sales", tab: "visits", group: "The old field app" },
   { test: /^mbos\.route\./, page: "sales", tab: "visits", group: "Ordering a day's route" },
   { test: /^mbos\.location\.nearby(RadiusOptions|PerKilometreCost)$/, page: "sales", tab: "visits", group: "What is near me" },
   {
