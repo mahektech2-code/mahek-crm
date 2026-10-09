@@ -211,6 +211,7 @@ const RULES: Rule[] = [
 
   /* ------------------------------------------------------------------- ERP */
   { test: /^erp\.purchase\./, page: "erp", tab: "general", group: "Purchase" },
+  { test: /^erp\.factory\./, page: "erp", tab: "general", group: "Factory app" },
   { test: /^erp\.(production|orders|dispatch)\./, page: "erp", tab: "general", group: "Production and orders" },
   { test: /^erp\.location\./, page: "erp", tab: "general", group: "Working location" },
   { test: /^erp\.pettyCash\./, page: "erp", tab: "petty", group: "Petty cash" },

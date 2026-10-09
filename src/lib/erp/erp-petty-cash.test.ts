@@ -84,7 +84,7 @@ before(async () => {
   await db.execute(sql`update erp_series set last = 0`);
   /* Truncating users cascades into anything that names a user — the seeded categories among them. Put them back as the migration wrote them. */
   const { readFileSync } = await import("node:fs");
-  const seed = readFileSync("drizzle/0245_petty_cash_funds_control.sql", "utf8").match(/INSERT INTO "erp_expense_categories"[\s\S]*?ON CONFLICT DO NOTHING;/)![0];
+  const seed = readFileSync("drizzle/0247_petty_cash_funds_control.sql", "utf8").match(/INSERT INTO "erp_expense_categories"[\s\S]*?ON CONFLICT DO NOTHING;/)![0];
   await db.execute(sql.raw(seed));
   await db.execute(sql`delete from app_settings where key like 'erp.tally.%' or key like 'erp.pettyCash.%'`);
   head = await makeUser("Production Head", "associate");
