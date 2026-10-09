@@ -1688,6 +1688,13 @@
       "when": 1792531779442,
       "tag": "0243_field_activity_shop_decisions",
       "breakpoints": true
+    },
+    {
+      "idx": 241,
+      "version": "7",
+      "when": 1792531780442,
+      "tag": "0244_docs_app",
+      "breakpoints": true
     }
   ]
 }
