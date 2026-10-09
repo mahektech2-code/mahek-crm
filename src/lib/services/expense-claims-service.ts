@@ -47,13 +47,23 @@ export type ExpenseLineRow = {
   approvedAmountPaise: number | null;
   decisionNote: string | null;
   decidedByName: string | null;
+  /** `YYYY-MM-DD` the decision was taken, in India's day. */
+  decidedOn: string | null;
+  /** Who entered it, where that was somebody other than him — the office. */
+  enteredByName: string | null;
   /** Flags on this line or its day nobody has answered — Flagged expenses. */
   openFlags: number;
   raisedAt: string | null;
   files: ExpenseFile[];
 };
 
-export async function expenseLines(opts: { from: string; to: string }): Promise<ExpenseLineRow[]> {
+export async function expenseLines(opts: {
+  /** Both bounds optional — the ledger reads a person's whole history. */
+  from?: string;
+  to?: string;
+  /** One salesman only. Still narrowed by the scope: an id is not a pass. */
+  userId?: string;
+}): Promise<ExpenseLineRow[]> {
   const scope = await managerScope();
   const rows = await db.execute<{
     id: string;
@@ -72,6 +82,8 @@ export async function expenseLines(opts: { from: string; to: string }): Promise<
     approvedAmountPaise: number | string | null;
     decisionNote: string | null;
     decidedByName: string | null;
+    decidedOn: string | null;
+    enteredByName: string | null;
     openFlags: number;
     raisedAt: string | null;
     billPhotoId: string | null;
@@ -92,6 +104,12 @@ export async function expenseLines(opts: { from: string; to: string }): Promise<
               join users du on du.id = ap.approver_user_id
              where ap.subject_type = 'expense' and ap.subject_id = e.id
              order by ap.step_index desc, ap.requested_at desc limit 1) as "decidedByName",
+           (select to_char(ap.decided_at at time zone ${APP_TIMEZONE}, 'YYYY-MM-DD') from mbos_approvals ap
+             where ap.subject_type = 'expense' and ap.subject_id = e.id
+             order by ap.step_index desc, ap.requested_at desc limit 1) as "decidedOn",
+           (case when e.created_by_id is not null and e.created_by_id <> e.user_id
+                      and coalesce(e.source_type, 'manual') = 'manual'
+                 then (select eb.name from users eb where eb.id = e.created_by_id) end) as "enteredByName",
            (select count(*)::int from mbos_expense_exceptions x
              where x.resolved_at is null
                and (x.expense_id = e.id
@@ -102,7 +120,9 @@ export async function expenseLines(opts: { from: string; to: string }): Promise<
       from mbos_expenses e
       join users u on u.id = e.user_id
      where e.superseded_by_id is null
-       and e.expense_date between ${opts.from}::date and ${opts.to}::date
+       ${opts.from ? sql`and e.expense_date >= ${opts.from}::date` : sql``}
+       ${opts.to ? sql`and e.expense_date <= ${opts.to}::date` : sql``}
+       ${opts.userId ? sql`and e.user_id = ${opts.userId}` : sql``}
        ${onlyMine(scope, "e.user_id")}
      order by e.expense_date desc, coalesce(e.client_created_at, e.server_created_at) desc
   `);
