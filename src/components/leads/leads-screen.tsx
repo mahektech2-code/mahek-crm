@@ -22,6 +22,7 @@ import {
 import { assignDeskLead, bulkAssignDeskLeads } from "@/lib/actions/lead-desk-assignment";
 import { bulkAdvanceLeadStage } from "@/lib/actions/leads";
 import { trashLeads } from "@/lib/actions/lead-trash";
+import { bulkStagePayload, bulkStageReady, pickableLostReasons } from "@/lib/lead-bulk-stage";
 import { healthView } from "@/lib/customer-health";
 import { cx } from "@/components/ui/primitives";
 import { pinnedCell, pinnedHead } from "@/components/ui/pinned";
@@ -158,6 +159,7 @@ export function LeadsScreen({
   canTrash,
   viewer,
   places,
+  lostReasons,
 }: {
   /**
    * Whether this person may delete leads — move them to the trash. A
@@ -273,6 +275,8 @@ export function LeadsScreen({
    * and every action on this screen goes on checking its own capability.
    */
   viewer: VantageViewer;
+  /** `leads.lostReasons`, resolved on the server. Never the literal list. */
+  lostReasons: Array<{ code: string; label: string }>;
 }) {
   const router = useRouter();
   const search = useSearchParams();
@@ -389,6 +393,11 @@ export function LeadsScreen({
   const [salesmanId, setSalesmanId] = React.useState("");
   const [stage, setStage] = React.useState<LeadStage>("contacted");
   const [reason, setReason] = React.useState("");
+  /* The bulk Lost picker. Its own state rather than `reason`, which is the
+     archive sentence; nothing is pre-selected, for the reason MarkLost gives. */
+  const [lostCode, setLostCode] = React.useState("");
+  const [lostNote, setLostNote] = React.useState("");
+  const offeredLost = React.useMemo(() => pickableLostReasons(lostReasons), [lostReasons]);
   /*
    * §4.1 — what the priority dialog currently has picked, and "" IS an answer.
    *
@@ -465,6 +474,8 @@ export function LeadsScreen({
     setSalesmanId(team[0]?.id ?? "");
     setStage("contacted");
     setReason("");
+    setLostCode("");
+    setLostNote("");
     setError(null);
   }
 
@@ -478,7 +489,7 @@ export function LeadsScreen({
         bulk === "reassign"
           ? await bulkAssignDeskLeads({ leadIds, ownerId: salesmanId })
           : bulk === "stage"
-            ? await bulkAdvanceLeadStage({ customerIds: leadIds, to: stage })
+            ? await bulkAdvanceLeadStage(bulkStagePayload(leadIds, stage, lostCode, lostNote))
             : bulk === "archive"
               ? await bulkArchiveLeads({ leadIds, reason })
               : bulk === "trash"
@@ -1109,6 +1120,44 @@ export function LeadsScreen({
           </label>
         ) : null}
 
+        {bulk === "stage" && stage === "lost" ? (
+          <div className="mt-3">
+            <div className="mb-1 text-[13px] font-medium text-ink">Why · required</div>
+            <div className="flex flex-col gap-0.5">
+              {offeredLost.map((r) => (
+                <label
+                  key={r.code}
+                  className="flex cursor-pointer items-center gap-2 rounded-[4px] px-1.5 py-1 text-[13px] text-body hover:bg-canvas"
+                >
+                  <input
+                    type="radio"
+                    name="bulk-lost-reason"
+                    value={r.code}
+                    checked={lostCode === r.code}
+                    onChange={() => setLostCode(r.code)}
+                  />
+                  {r.label}
+                </label>
+              ))}
+            </div>
+            <p className="mt-1.5 text-[12px] text-muted">
+              One reason for every lead selected. A code rather than a sentence, so &ldquo;how many
+              did we lose on credit terms this quarter&rdquo; is a question somebody can ask.
+            </p>
+            <label className="mt-3 block">
+              <span className="mb-1 block text-[13px] font-medium text-ink">
+                Anything to add (optional)
+              </span>
+              <textarea
+                value={lostNote}
+                onChange={(e) => setLostNote(e.target.value)}
+                rows={3}
+                className="w-full rounded-[4px] border border-line bg-surface px-2.5 py-2 text-sm text-ink outline-none focus:border-brand"
+              />
+            </label>
+          </div>
+        ) : null}
+
         {bulk === "archive" ? (
           <label className="block">
             <span className="mb-1 block text-[13px] font-medium text-ink">Why · required</span>
@@ -1169,7 +1218,8 @@ export function LeadsScreen({
             disabled={
               busy ||
               (bulk === "reassign" && !salesmanId) ||
-              ((bulk === "archive" || bulk === "trash") && reason.trim().length < 3)
+              ((bulk === "archive" || bulk === "trash") && reason.trim().length < 3) ||
+              (bulk === "stage" && !bulkStageReady(stage, lostCode, offeredLost))
             }
             onClick={() => void submitBulk()}
           >
