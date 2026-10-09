@@ -4,16 +4,19 @@ import QRCode from "qrcode";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { erpContext } from "@/lib/erp/access";
-import { boxLots, packLabel } from "@/lib/erp/engines/trace";
+import { packLabel } from "@/lib/erp/engines/trace";
 import { Page } from "../_ui/page-head";
 import { PrintButton } from "./print-button";
 
 /**
  * LABELS AND DISPATCH STICKERS, drawn from the record rather than typed: the
  * label machine never receives free text. A product label carries the box's
- * own id in its QR and the lot it came from as linked data printed beside it;
- * a dispatch sticker carries the customer, the order and the same box id, so
- * the scan at the lorry reads one code whichever sticker it hits.
+ * own id in its QR and, in words, only what a picker reads at arm's length —
+ * the pack size, the product and how many cans are inside. The lot and the
+ * batch are not printed: they are linked to the box id, and Trace answers with
+ * them from a scan. A dispatch sticker carries the customer, the order and the
+ * same box id, so the scan at the lorry reads one code whichever sticker it
+ * hits.
  *
  *   ?batch=FP40NA   every box of a packing batch
  *   ?lot=FG12NA     every labelled loose unit of an FG lot still on the shelf
@@ -44,6 +47,18 @@ type U = {
 };
 
 const LABEL_SCREENS = ["units", "dispatch", "packBatches", "stock", "orders"];
+
+/**
+ * The pack size is the largest thing on a box label, and it is anything from
+ * "1 L" to "500 ml": the type steps down with the length of the words so the
+ * longest still fits beside the QR and the shortest fills the space.
+ */
+function sizePt(label: string): number {
+  if (label.length <= 3) return 36;
+  if (label.length === 4) return 29;
+  if (label.length === 5) return 24;
+  return 20;
+}
 
 async function unitsFor(where: ReturnType<typeof sql>): Promise<U[]> {
   return (await db.execute(sql`
@@ -86,25 +101,11 @@ export default async function ErpLabels({ searchParams }: { searchParams: Promis
           ? await unitsFor(sql`o.order_no = ${order} and u.status in ('scanned', 'dispatched')`)
           : [];
 
-  /* Which refill (FG) lots each box's cans came from: boxes fill in the order the batch drew its cans. */
+  /* When each packing batch was packed — the first line of the batch, as it always was. */
   const batches = [...new Set(units.filter((u) => u.lotFrom === "pack").map((u) => u.lotCode))];
   const packLines = batches.length
-    ? ((await db.execute(sql`select batch_no as batch, fg_lot_code as lot, cans, pack_date::text as date from erp_pack_lines where batch_no in ${batches} order by created_at`)) as unknown as { batch: string; lot: string; cans: number; date: string }[])
+    ? ((await db.execute(sql`select batch_no as batch, pack_date::text as date from erp_pack_lines where batch_no in ${batches} order by created_at`)) as unknown as { batch: string; date: string }[])
     : [];
-  const refillOf = (u: U) =>
-    u.lotFrom === "fg"
-      ? [u.lotCode]
-      : boxLots(
-          Number(u.seq),
-          Number(u.cpb) || Number(u.cans),
-          packLines.filter((l) => l.batch === u.lotCode).map((l) => ({ lot: l.lot, cans: Number(l.cans) })),
-        ).map((x) => x.lot);
-  const refillLots = [...new Set(units.flatMap((u) => refillOf(u)))];
-  const sfgOf = new Map(
-    refillLots.length
-      ? ((await db.execute(sql`select lot_code as lot, sfg_lot_code as sfg from erp_fg_fills where lot_code in ${refillLots}`)) as unknown as { lot: string; sfg: string }[]).map((r) => [r.lot, r.sfg])
-      : [],
-  );
   const packedOn = (u: U) => packLines.find((l) => l.batch === u.lotCode)?.date ?? null;
 
   const qrs = new Map<string, string>();
@@ -118,7 +119,7 @@ export default async function ErpLabels({ searchParams }: { searchParams: Promis
       title={title}
       sub={
         units.length
-          ? `${units.length} ${what}${units.length === 1 ? "" : "s"}. Each QR carries the box's own id; the lot is printed beside it and linked in the ERP.`
+          ? `${units.length} ${what}${units.length === 1 ? "" : "s"}. Each QR carries the box's own id; scan it in Trace for the lot and the batch.`
           : mode === "sticker"
             ? "No box is scanned onto this order yet. Scan them at the Dispatch desk; a sticker is printed per scanned box."
             : "Nothing to print here."
@@ -147,28 +148,32 @@ export default async function ErpLabels({ searchParams }: { searchParams: Promis
         /*
          * THE BOX LABEL: 50 x 50 mm.
          *
-         * A square a quarter the area of the old 100 x 62, so it says each
-         * thing once. The QR is 20 mm — about 0.8 mm a module for a box id at
-         * error level M, comfortably scannable — with the pack size beside it,
-         * because size is what a picker reads first; the product name gets two
-         * lines under it; then the two lot lines a recall is traced by; then
-         * when and where it was packed. The SKU string is dropped: product,
-         * size and cans per box already say all of it.
+         * Four things, each said once and each large enough to read from
+         * across a godown: the pack size, the product, how many cans are in
+         * the box, and the QR. The lot and batch lines are gone — they are a
+         * scan away in Trace, and at this size they were what crowded out
+         * everything a picker reads.
+         *
+         * A 3 mm margin all round, because a die-cut label drifts a millimetre
+         * or two in the printer and type set to the edge is type that gets cut.
+         * The four blocks are spread over the height with equal space between
+         * them — never less than about 2 mm — so a one-line product name and a
+         * two-line one both fill the label. The QR is 17 mm — a box id is a
+         * 21-module code at error level M, so about 0.8 mm a module, which is
+         * what the old 20 mm code was drawn for and comfortably scannable.
          */
-        .sq { width: 50mm; height: 50mm; box-sizing: border-box; border: 1px solid #c9ced8; border-radius: 1.5mm; padding: 2.5mm; background: #fff; color: #111; display: flex; flex-direction: column; font-family: Arial, Helvetica, sans-serif; line-height: 1.12; overflow: hidden; break-inside: avoid; page-break-inside: avoid; }
-        .sq .top { display: flex; gap: 2mm; }
-        .sq .qr { width: 20mm; flex: none; display: flex; flex-direction: column; align-items: center; gap: 0.6mm; }
-        .sq .qr svg { width: 20mm; height: 20mm; display: block; }
-        .sq .id { font-family: "Courier New", monospace; font-size: 5pt; font-weight: 700; white-space: nowrap; }
-        .sq .head { min-width: 0; flex: 1; display: flex; flex-direction: column; }
-        .sq .brand { font-weight: 800; letter-spacing: 0.8px; font-size: 6.5pt; }
-        .sq .size { font-weight: 800; font-size: 17pt; line-height: 1; margin-top: 0.8mm; white-space: nowrap; }
-        .sq .pack { font-size: 6pt; margin-top: 0.8mm; }
-        .sq .product { font-weight: 700; font-size: 8pt; margin-top: 1.6mm; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-        .sq .rows { margin-top: 1.2mm; display: grid; grid-template-columns: auto 1fr; column-gap: 1.5mm; row-gap: 0.4mm; align-items: baseline; }
-        .sq .k { font-size: 5pt; color: #555; text-transform: uppercase; white-space: nowrap; }
-        .sq .v { font-size: 6.5pt; font-family: "Courier New", monospace; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-        .sq .foot { font-size: 5.5pt; margin-top: auto; color: #333; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .sq { width: 50mm; height: 50mm; box-sizing: border-box; border: 1px solid #c9ced8; border-radius: 1.5mm; padding: 3mm; background: #fff; color: #000; display: flex; flex-direction: column; justify-content: space-between; font-family: Arial, Helvetica, sans-serif; overflow: hidden; break-inside: avoid; page-break-inside: avoid; }
+        .sq .top { display: flex; gap: 3mm; }
+        .sq .qr { width: 17mm; flex: none; display: flex; flex-direction: column; align-items: center; gap: 0.9mm; }
+        .sq .qr svg { width: 17mm; height: 17mm; display: block; }
+        .sq .id { font-family: "Courier New", monospace; font-size: 5pt; line-height: 1; font-weight: 700; white-space: nowrap; }
+        .sq .head { min-width: 0; flex: 1; height: 17mm; display: flex; flex-direction: column; justify-content: space-between; }
+        .sq .brand { font-weight: 800; letter-spacing: 1.2px; font-size: 7.5pt; line-height: 1; }
+        .sq .size { font-weight: 800; line-height: 0.74; white-space: nowrap; letter-spacing: -0.3px; }
+        .sq .product { font-weight: 800; font-size: 11pt; line-height: 1.12; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+        .sq .pack { border-top: 0.45mm solid #000; padding-top: 1.6mm; font-weight: 700; font-size: 11pt; line-height: 1; white-space: nowrap; display: flex; align-items: baseline; gap: 1.3mm; }
+        .sq .pack b { font-weight: 800; font-size: 18pt; line-height: 0.8; }
+        .sq .foot { font-size: 5.5pt; line-height: 1; color: #000; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
         @media print {
           body * { visibility: hidden !important; }
@@ -231,20 +236,21 @@ export default async function ErpLabels({ searchParams }: { searchParams: Promis
                 </div>
                 <div className="head">
                   <span className="brand">MAHEK</span>
-                  <span className="size">{packLabel(u.litres)}</span>
-                  <span className="pack">{u.kind === "box" ? `${u.cans} cans per box` : "Loose unit"}</span>
+                  <span className="size" style={{ fontSize: `${sizePt(packLabel(u.litres))}pt` }}>
+                    {packLabel(u.litres)}
+                  </span>
                 </div>
               </div>
               <span className="product">{u.product ?? u.sku}</span>
-              <div className="rows">
-                <span className="k">Lot</span>
-                <span className="v">{refillOf(u).join(" / ")}</span>
-                <span className="k">{u.kind === "box" ? "Batch·Box" : "Lot·Unit"}</span>
-                <span className="v">
-                  {u.lotCode} · {u.seq}
-                  {refillOf(u).length === 1 && sfgOf.get(refillOf(u)[0]) ? ` · SFG ${sfgOf.get(refillOf(u)[0])}` : ""}
-                </span>
-              </div>
+              <span className="pack">
+                {u.kind === "box" ? (
+                  <>
+                    <b>{u.cans}</b> cans per box
+                  </>
+                ) : (
+                  "Loose unit"
+                )}
+              </span>
               {packedOn(u) ? (
                 <span className="foot">
                   Packed {packedOn(u)} · {u.godown}
