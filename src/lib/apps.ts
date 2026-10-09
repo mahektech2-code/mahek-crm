@@ -20,6 +20,7 @@ export const APP_IDS = [
   "erp",
   "website",
   "hire",
+  "factory",
 ] as const;
 
 export type AppId = (typeof APP_IDS)[number];
@@ -244,6 +245,26 @@ export const APPS: AppDefinition[] = [
     description:
       "Role blueprints, the hiring pipeline, AI-assisted interviews with evidence, decisions, offers and onboarding — ending in a working account.",
     href: "/hire",
+    tone: "neutral",
+    built: true,
+  },
+  {
+    id: "factory",
+    /*
+     * The factory floor's phone app — scan a label, see the picture, enter
+     * the count, send. It is a WEB app sized for a phone, not a handset build:
+     * the people using it share a station phone, and a page needs no APK to
+     * be updated. Every stock movement it makes is an ERP document, posted
+     * through the ERP's own handlers (`lib/factory/post.ts`).
+     *
+     * Associate is a worker on the floor; manager is the Production Head,
+     * who assigns the work and reviews what the app could not accept alone.
+     */
+    name: "Factory",
+    initials: "FA",
+    description:
+      "The floor's phone app: mixing, filling, packing and dispatch, by scanning — with the Production Head's live view.",
+    href: "/factory",
     tone: "neutral",
     built: true,
   },

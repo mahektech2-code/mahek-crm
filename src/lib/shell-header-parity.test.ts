@@ -36,7 +36,15 @@ const SHELLS: Partial<Record<AppId, string[]>> = {
   hire: ["src/app/hire/_ui/hire-shell.tsx"],
 };
 
-const webApps = APPS.filter((a) => a.built && !a.mobileOnly && !a.retiredInto);
+/*
+ * THE FACTORY APP IS A PHONE SCREEN, drawn to the design's phone frame: a top
+ * bar with the person, the work place and the network, and a bottom nav. A
+ * desktop header with a sidebar collapse has nothing to collapse there, and a
+ * switcher would be a way off the floor's only app on a shared station phone.
+ * The Production Head's way to the launcher is the avatar menu.
+ */
+const PHONE_FRAME: AppId[] = ["factory"];
+const webApps = APPS.filter((a) => a.built && !a.mobileOnly && !a.retiredInto && !PHONE_FRAME.includes(a.id));
 
 describe("every app's header", () => {
   test("every web app names the shell that draws its header", () => {

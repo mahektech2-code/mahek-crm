@@ -349,7 +349,9 @@ export function NotificationCenter() {
     setPops((p) => p.filter((x) => x.key !== key));
   }, []);
 
-  const onSignIn = pathname?.startsWith("/login");
+  /* The factory app is a phone screen of its own, with its own toasts; a
+     desktop pop-up over a scan screen covers the one button that matters. */
+  const onSignIn = pathname?.startsWith("/login") || pathname?.startsWith("/factory");
   if (onSignIn || !pops.length) return null;
 
   return (

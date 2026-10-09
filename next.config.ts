@@ -96,6 +96,14 @@ const nextConfig: NextConfig = {
   },
 
   /*
+   * The same sha, inlined into BOTH the server and the browser bundle, for
+   * the factory phone: a station phone keeps a page open for days, and it
+   * compares its own build with the one the server answers in, so it can
+   * reload itself once its queue is empty — never in the middle of a job.
+   */
+  env: { FACTORY_BUILD: process.env.NEXT_DEPLOYMENT_ID ?? "dev" },
+
+  /*
    * Set by the app rather than by Caddy, because the Caddyfile is copied to
    * the droplet by hand and a deploy never touches it — a header written
    * there would reach production only when somebody remembered to.

@@ -1005,6 +1005,19 @@ export const APP_MODULES: AppModule[] = [
     href: "/hire",
     note: "What they can do inside Hire is their Hire role — recruiter, interviewer, hiring manager, onboarding, HR head or admin — set below, under Hire.",
   },
+  /*
+   * THE FACTORY app is one module. A worker sees their own team's work and a
+   * Production Head sees the floor — that is the grant's LEVEL, not a screen
+   * somebody could be given without the other.
+   */
+  {
+    key: "factory.app",
+    app: "factory",
+    label: "Factory",
+    group: "Factory",
+    href: "/factory",
+    note: "Associate is a worker on the floor; manager is the Production Head. Their team and badge are set in the Factory app's staff list.",
+  },
   website("products", "Products", "Website", "The catalogue shown on the public site."),
   website("industries", "Industries", "Website", "The industries the public site says Mahek serves."),
   website("pages", "Pages", "Website", "About, Manufacturing, Distributor and Contact — their sections and copy."),

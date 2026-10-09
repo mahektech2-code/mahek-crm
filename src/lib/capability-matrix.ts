@@ -799,6 +799,9 @@ export const MATRIX: Record<AppId, AppMatrix> = {
      not fit two levels, and the capability that matters most there, keeping
      an interviewer away from earlier scores, is a scope rather than a verb. */
   hire: { associate: [], manager: [] },
+  /* The factory floor app checks its own two levels — a worker and the
+     Production Head — in \`lib/factory/head.ts\`; it carries no book capability. */
+  factory: { associate: [], manager: [] },
   /* The ERP's decisions are POWERS granted to named people (`lib/erp/powers.ts`),
      not capabilities of a level — the CEO who verifies a test is one person,
      not every ERP manager. Holding the app and its modules is what opens the
