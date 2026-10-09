@@ -76,6 +76,14 @@ export type Expense = {
   kind: string | null;
   billPhotoId: string | null; remarks: string | null; state: string;
   approvedAmountPaise: number | null; rejectionReason: string | null; syncState: string;
+  /**
+   * 1 where the OFFICE wrote this line from his punches and trips — the meal
+   * and kilometre allowances. He never logged it, so it is never offered back
+   * to him to fix, and it never waits for anybody: it is his by the work log.
+   */
+  allowance: number;
+  /** What his manager said on the decision — a part approval has a reason too. */
+  decisionNote: string | null;
 };
 
 /**
@@ -104,20 +112,41 @@ export async function listExpenses(limit?: number): Promise<Expense[]> {
 }
 
 /**
- * The two figures a capped list cannot answer for itself.
+ * The figures a capped list cannot answer for itself.
  *
  * "₹4,200 waiting on your manager" is a statement about the whole book, and
- * reading it off the rows the screen happens to be holding would drop a claim
- * that has been pending for two months — the one most worth chasing — out of
- * the total the moment it fell past the window.
+ * reading it off the rows the screen happens to be holding would drop an
+ * expense that has been waiting for two months — the one most worth chasing —
+ * out of the total the moment it fell past the window.
+ *
+ * `month` is `YYYY-MM`, the screen's own month, so the clock is read once by
+ * the caller rather than here.
  */
-export async function expenseTotals(): Promise<{ count: number; pendingPaise: number }> {
-  const row = await one<{ n: number; pending: number }>(
+export async function expenseTotals(month: string): Promise<{
+  count: number;
+  pendingCount: number;
+  pendingPaise: number;
+  approvedMonthPaise: number;
+  allowanceMonthPaise: number;
+}> {
+  const row = await one<{ n: number; pn: number; pending: number; approved: number; allowances: number }>(
     `SELECT count(*) AS n,
-            COALESCE(SUM(CASE WHEN state = 'Pending' THEN amountPaise ELSE 0 END), 0) AS pending
+            COALESCE(SUM(CASE WHEN allowance = 0 AND state = 'Pending' THEN 1 ELSE 0 END), 0) AS pn,
+            COALESCE(SUM(CASE WHEN allowance = 0 AND state = 'Pending' THEN amountPaise ELSE 0 END), 0) AS pending,
+            COALESCE(SUM(CASE WHEN allowance = 0 AND state = 'Approved' AND substr(spentOn, 1, 7) = ?
+                              THEN COALESCE(approvedAmountPaise, amountPaise) ELSE 0 END), 0) AS approved,
+            COALESCE(SUM(CASE WHEN allowance = 1 AND substr(spentOn, 1, 7) = ?
+                              THEN amountPaise ELSE 0 END), 0) AS allowances
        FROM expenses`,
+    [month, month],
   );
-  return { count: row?.n ?? 0, pendingPaise: row?.pending ?? 0 };
+  return {
+    count: row?.n ?? 0,
+    pendingCount: row?.pn ?? 0,
+    pendingPaise: row?.pending ?? 0,
+    approvedMonthPaise: row?.approved ?? 0,
+    allowanceMonthPaise: row?.allowances ?? 0,
+  };
 }
 
 /**
@@ -146,8 +175,11 @@ export async function expensesOn(spentOn: string): Promise<ClaimedLine[]> {
     amountPaise: number;
     billPhotoId: string | null;
   }>(
+    /* What HE logged. An allowance is not a claim against a cap: the meal
+       allowance is `food` too, and counting it would tell him his food bills
+       had no room left on a day the policy pays both. */
     `SELECT id, kind, category, amountPaise, billPhotoId FROM expenses
-      WHERE spentOn = ? AND state <> 'Rejected'`,
+      WHERE spentOn = ? AND state <> 'Rejected' AND allowance = 0`,
     [spentOn],
   );
   return rows.map((r) => ({

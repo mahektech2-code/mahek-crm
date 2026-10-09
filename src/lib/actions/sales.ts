@@ -14,6 +14,7 @@ import {
   mbosCourses,
   mbosDeletions,
   mbosDocuments,
+  mbosExpenses,
   mbosHolidays,
   mbosHolidayAssignments,
   mbosLeaveRequests,
@@ -538,6 +539,119 @@ export async function decideApproval(input: {
 
     refresh();
     return okVoid(`Answered — ${approval.type.replace(/_/g, " ")} ${words}.`);
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/* ══════════════════════════════════════════════════════════ one expense */
+
+/**
+ * Whether this viewer may decide expenses — read by the Expenses screen to draw
+ * the buttons. The SAME gate `decideApproval` applies when the button is
+ * pressed, so a control is never drawn for somebody the action would refuse.
+ */
+export async function canDecideExpenseLines(): Promise<boolean> {
+  try {
+    await requireSalesAccess({ modules: ["sales.approvals", "sales.expenses"], manager: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Answer one expense a salesman logged.
+ *
+ * Every expense is its own decision now, from the moment he logs it — there is
+ * no day to close and nothing waits for one. This finds the expense's own
+ * approval and answers it through `decideApproval`, so the gate, the team
+ * scope, "nobody answers their own", the reason a refusal needs, the audit row
+ * and the message to the salesman are all the ones every other request gets.
+ *
+ * Two things are added because they are about MONEY:
+ *  - A part approval has to be LESS than he logged and more than nothing. At
+ *    or above the amount it is a yes, and is recorded as one.
+ *  - An expense whose approval has not reached the office yet — the handset
+ *    sends it as its own record right behind the expense — gets one here, so a
+ *    manager looking at the expense is never told there is nothing to decide.
+ *
+ * An allowance is never decided: it is his by the work log, and is refused here.
+ */
+export async function decideExpense(input: {
+  expenseId: string;
+  decision: ApprovalDecision;
+  note?: string;
+  approvedAmountPaise?: number;
+}): Promise<Result> {
+  try {
+    await requireSalesAccess({ modules: ["sales.approvals", "sales.expenses"], manager: true });
+
+    const [line] = await db
+      .select({
+        id: mbosExpenses.id,
+        userId: mbosExpenses.userId,
+        amountPaise: mbosExpenses.amountPaise,
+        sourceType: mbosExpenses.sourceType,
+        remarks: mbosExpenses.remarks,
+      })
+      .from(mbosExpenses)
+      .where(eq(mbosExpenses.id, input.expenseId))
+      .limit(1);
+    if (!line) return err("That expense no longer exists.", "not_found");
+    if (line.sourceType === "travel_leg" || line.sourceType === "expense_day") {
+      return err(
+        "This is an allowance, worked out from his punch times and trips. There is nothing to approve — it is his by the work log.",
+        "conflict",
+      );
+    }
+
+    let decision = input.decision;
+    if (decision === "partially_approved") {
+      const amount = input.approvedAmountPaise ?? 0;
+      if (!Number.isInteger(amount) || amount <= 0) {
+        return err("Say how much you are allowing. It has to be more than ₹0.", "validation");
+      }
+      if (amount >= Number(line.amountPaise)) decision = "approved";
+    }
+
+    const [existing] = await db
+      .select({ id: mbosApprovals.id, state: mbosApprovals.state })
+      .from(mbosApprovals)
+      .where(and(eq(mbosApprovals.subjectType, "expense"), eq(mbosApprovals.subjectId, line.id)))
+      .orderBy(sql`${mbosApprovals.stepIndex} desc, ${mbosApprovals.requestedAt} desc`)
+      .limit(1);
+
+    let approvalId = existing?.id ?? null;
+    if (!approvalId) {
+      approvalId = gen("mbappr");
+      await db
+        .insert(mbosApprovals)
+        .values({
+          id: approvalId,
+          type: "expense_claim",
+          requestedByUserId: line.userId,
+          subjectType: "expense",
+          subjectId: line.id,
+          reason: line.remarks ?? null,
+          createdById: line.userId,
+          updatedById: line.userId,
+        })
+        .onConflictDoNothing();
+    }
+
+    const out = await decideApproval({
+      approvalId,
+      decision,
+      note: input.note,
+      approvedAmountPaise: decision === "partially_approved" ? input.approvedAmountPaise : undefined,
+    });
+    try {
+      revalidatePath("/sales/expenses");
+    } catch {
+      /* no request context */
+    }
+    return out;
   } catch (e) {
     return fromThrown(e);
   }

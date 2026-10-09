@@ -124,7 +124,6 @@ export const FROM_LABEL: Record<string, string> = {
   account: 'Account',
   profile: 'Profile',
   policy: 'Allowances',
-  eod: 'Close the day',
   collections: 'Collections',
   orders: 'Orders',
   travel: 'Today’s travel',

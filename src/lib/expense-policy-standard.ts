@@ -219,18 +219,13 @@ export function policyInWords(): PolicySection[] {
     });
 
   const proof = only("proof_threshold")[0];
-  const route = only("approval_route")[0];
+  /* Said as it now works, not as the `approval_route` rule reads: there is no
+     closing a day, so nothing is "approved automatically up to a day's total".
+     Allowances are automatic and every logged expense is decided on its own. */
   const approval: PolicyLine[] = [
     ...(proof ? [{ label: "Bill or ticket photo", value: `needed from ${money(proof.atPaise)}` }] : []),
-    ...(route
-      ? [
-          { label: "Approved automatically", value: `up to ${money(route.autoApproveUpToPaise)} a day`, note: "only when nothing on the day is flagged" },
-          { label: "Everything else", value: "Sales manager decides" },
-          ...(route.escalateAboveDayTotalPaise
-            ? [{ label: "Owner also sees it", value: `from ${money(route.escalateAboveDayTotalPaise)} a day` }]
-            : []),
-        ]
-      : []),
+    { label: "Meal and kilometre allowances", value: "Automatic", note: "worked out from your punch times and trips, no approval needed" },
+    { label: "Every expense you log", value: "Sales manager decides", note: "each one on its own, as soon as it is logged" },
     { label: "Over the limit", value: "Still recorded", note: "the extra is shown to the manager, who decides" },
   ];
 

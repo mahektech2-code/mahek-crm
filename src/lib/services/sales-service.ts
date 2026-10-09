@@ -36,6 +36,7 @@ import { metresBetween } from "@/lib/geo";
 import { NOBODY, type TerritorySeat } from "@/lib/territory-seats";
 import { dropInaccurateFixes } from "../engines/trail-gaps";
 import { leaveDebitDays } from "@/lib/engines/leave";
+import { expenseStateSql } from "@/lib/expense-money-sql";
 
 /* ---------------------------------------------------------------------------
  * Every read the Sales Dashboard makes.
@@ -5990,16 +5991,10 @@ export async function salesmanRecord(
       db.execute(sql`
         select e.id, e.category::text as category, e.amount_paise as "amountPaise",
                e.expense_date::text as "expenseDate", e.remarks,
-               coalesce(
-                 (select ap.state::text from mbos_approvals ap
-                   where ap.subject_type = 'mbos_expense_days'
-                     and ap.subject_id = e.expense_day_id
-                   order by ap.step_index desc limit 1),
-                 (select ap.state::text from mbos_approvals ap
-                   where ap.subject_id = e.id and ap.type = 'expense_claim'
-                   order by ap.requested_at desc limit 1)) as state
+               ${expenseStateSql("e")} as state
           from mbos_expenses e
          where e.user_id = ${userId}
+           and e.superseded_by_id is null
          order by e.expense_date desc limit ${limit}
       `),
       db.execute(sql`

@@ -3,14 +3,13 @@ import { randomUUID } from "node:crypto";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
-  mbosApprovals,
   mbosExpenseDays,
   mbosExpenseExceptions,
   mbosExpenses,
   mbosTravelLegs,
 } from "@/db/schema";
 import { getConfig } from "@/lib/config/store";
-import { worstSeverity, type PolicyException } from "@/lib/engines/expense-policy";
+import { type PolicyException } from "@/lib/engines/expense-policy";
 import { kmAnomalies, spendAnomalies } from "@/lib/engines/expense-fraud";
 import {
   priceDay,
@@ -22,14 +21,26 @@ import {
 import { resolveSubject, classOfCity, ensurePolicyRow } from "./expense-policy-service";
 
 /* ---------------------------------------------------------------------------
- * Closing a day: pricing it, writing the eligible figures onto its lines,
- * raising what it raises, and routing it to whoever decides.
+ * A day's money, kept current as its records arrive.
  *
- * ONE function does all of it — `submitDay` — because every one of those is
- * part of the same act and a day that is priced but not routed, or routed but
- * not locked, is a state nobody designed. The same rule the CRM's "saving a
- * call is one transaction" follows, and for the same reason: half-saved is how
- * field data goes wrong.
+ * THERE IS NO CLOSING A DAY ANY MORE, and that is a reversal. A day used to be
+ * priced, locked and routed only when the salesman pressed Send day on his
+ * phone — and in practice almost nobody did, so a fortnight of travel and
+ * claims sat on the server drawn on no screen anybody decides from. Mahek's
+ * answer splits the money in two:
+ *
+ *  - ALLOWANCES are automatic. The meal allowance from his punch-in and
+ *    punch-out, and own bike or car kilometres from the trips he logs, are
+ *    worked out from the day's records every time one of them arrives, and
+ *    need nobody's approval. They are lines this file writes (`source_type`
+ *    `expense_day` or `travel_leg`) — see `lib/expense-money-sql.ts`.
+ *  - EXPENSES are what he logs himself: a hotel, a food bill, a fare. Each is
+ *    its own line with its own `expense_claim` approval, decided one at a time
+ *    by his manager the moment it is raised.
+ *
+ * `refreshDayMoney` is the one function that does the first half, and it also
+ * writes what the policy allows on each logged expense and raises the day's
+ * flags, because both read the same priced day.
  * ------------------------------------------------------------------------- */
 
 const newId = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
@@ -110,16 +121,38 @@ async function writeLineFigures(answer: NonNullable<Awaited<ReturnType<typeof pr
   if (!c) return;
   if (answer.policy) await ensurePolicyRow(answer.policy.id);
 
-  /* A travel leg's money is an expense LINE, so the ledger stays one list.
-     Upserted on (sourceType, sourceId) rather than inserted, because a day is
-     submitted, reopened and submitted again and each pass must land on the
-     same row. */
+  /* A trip's KILOMETRE ALLOWANCE is an expense line, so the ledger stays one
+     list. Only a trip the policy pays by the kilometre earns one — own bike,
+     own car. A fare is not an allowance: it is a bill he logs in Expenses, and
+     the trip that carried him is a record of where he went.
+
+     NEVER A ₹0 LINE. A walk, a company vehicle, a trip with no distance yet: a
+     zero line reads on every screen as money withheld, so it is not written,
+     and one written earlier is taken away when the trip stops earning — a
+     trip re-measured, re-moded or excluded.
+
+     Keyed on the trip, so every refresh lands on the same row. */
+  const keptLegLines: string[] = [];
   for (const leg of c.legs) {
+    const id = `mbos_exp_leg_${leg.legId.slice(-20)}`;
     const row = answer.legs.find((l) => l.id === leg.legId);
+    if (leg.paisePerKm === null || leg.eligiblePaise <= 0) {
+      await db.delete(mbosExpenses).where(eq(mbosExpenses.id, id));
+      continue;
+    }
+    keptLegLines.push(id);
+    const km = leg.chosenMetres != null ? `${(leg.chosenMetres / 1000).toFixed(1)} km` : null;
+    const where =
+      row?.fromLabel && row?.toLabel
+        ? `${row.fromLabel} → ${row.toLabel}`
+        : row?.toLabel
+          ? `To ${row.toLabel}`
+          : null;
+    const remarks = [where, km].filter(Boolean).join(" · ") || null;
     await db
       .insert(mbosExpenses)
       .values({
-        id: `mbos_exp_leg_${leg.legId.slice(-20)}`,
+        id,
         userId: answer.day.userId,
         expenseDate: answer.day.day,
         category: "travel",
@@ -127,28 +160,39 @@ async function writeLineFigures(answer: NonNullable<Awaited<ReturnType<typeof pr
         sourceType: "travel_leg",
         sourceId: leg.legId,
         expenseDayId: answer.day.id,
-        amountPaise: leg.claimedPaise,
+        /* An allowance is what the policy pays, so the amount IS the eligible
+           figure. Nobody claimed a different number for it to exceed. */
+        amountPaise: leg.eligiblePaise,
         eligiblePaise: leg.eligiblePaise,
-        excessPaise: leg.excessPaise,
+        excessPaise: 0,
         policyId: answer.policy?.id ?? null,
         resolvedGrade: answer.subject.grade,
         resolvedCityClass: answer.subject.cityClass,
-        billPhotoId: row?.ticketPhotoId ?? null,
-        remarks: row ? `${row.fromLabel ?? "?"} → ${row.toLabel ?? "?"}` : null,
+        remarks,
         createdById: answer.day.userId,
         updatedById: answer.day.userId,
       })
       .onConflictDoUpdate({
         target: mbosExpenses.id,
         set: {
-          amountPaise: leg.claimedPaise,
+          amountPaise: leg.eligiblePaise,
           eligiblePaise: leg.eligiblePaise,
-          excessPaise: leg.excessPaise,
+          excessPaise: 0,
+          remarks,
           policyId: answer.policy?.id ?? null,
           updatedAt: new Date(),
         },
       });
   }
+
+  /* A trip deleted since the last refresh leaves its allowance behind unless
+     somebody takes it away. Only lines this file writes are touched. */
+  await db.execute(sql`
+    delete from mbos_expenses
+     where expense_day_id = ${answer.day.id}
+       and source_type = 'travel_leg'
+       ${keptLegLines.length ? sql`and id not in (${sql.join(keptLegLines.map((k) => sql`${k}`), sql`, `)})` : sql``}
+  `);
 
   /* Food is not entered at all — it is what the day's times earn. One line,
      rewritten each pass, so a day whose departure time is corrected does not
@@ -246,27 +290,103 @@ async function writeLineFigures(answer: NonNullable<Awaited<ReturnType<typeof pr
 }
 
 /**
- * Re-price a day that has already been submitted, after somebody in the office
- * corrected the evidence under it.
+ * Bring one day's money up to date with its records.
  *
- * **It moves the LINES and never the RECORD of what was claimed.**
- * `submittedClaimedPaise` and `submittedEligiblePaise` say what the totals were
- * at submission and are deliberately never rebuilt — they are the same kind of
- * mark as `orders.approvedAt`, a note of what somebody was told on a day, and
- * a rebuild does not correct that question, it destroys it. What this rewrites
- * is the per-line eligible figure, which is the cache every screen adds up.
+ * Run whenever something about the day arrives from the handset — a punch, a
+ * trip, a logged expense, a change to the day itself — and again nightly over
+ * the last few days, because the trail that measures a trip arrives in
+ * batches and a trip synced the moment it ended has fewer positions behind it
+ * than it has by evening.
  *
- * **It does not touch the lock, the approval or the exceptions.** A correction
- * is not a decision, and the day stays exactly where it was in the queue with
- * the same person still owing an answer on it.
+ * It is idempotent and it decides nothing. It writes the AUTOMATIC lines (the
+ * meal allowance and the kilometre allowance on each trip), what the policy
+ * allows on each expense he logged, and the day's flags. It never locks the
+ * day, never raises or touches an approval, and never changes an amount a
+ * person entered — those are his, and his manager's.
  *
- * Calling it on a day nobody has submitted is harmless and pointless: the
- * figures are written at submission anyway, from these same functions.
+ * A day with no record yet is left alone: nothing has happened on it.
+ */
+export async function refreshDayMoney(userId: string, day: string): Promise<void> {
+  const [existing] = await db
+    .select({ id: mbosExpenseDays.id, destinationCity: mbosExpenseDays.destinationCity })
+    .from(mbosExpenseDays)
+    .where(and(eq(mbosExpenseDays.userId, userId), eq(mbosExpenseDays.day, day)))
+    .limit(1);
+  if (!existing) return;
+
+  /* Who he is under the policy, stamped on the day so a promotion next month
+     does not reprice this one. Re-read each time while the day is current:
+     the destination can still change until it is over. */
+  const subject = await resolveSubject(userId, existing.destinationCity ?? null);
+  const cityClass = existing.destinationCity ? await classOfCity(existing.destinationCity) : null;
+  await db
+    .update(mbosExpenseDays)
+    .set({ resolvedGrade: subject.grade, resolvedCityClass: cityClass, destinationCityClass: cityClass })
+    .where(eq(mbosExpenseDays.id, existing.id));
+
+  const legIds = await db
+    .select({ id: mbosTravelLegs.id })
+    .from(mbosTravelLegs)
+    .where(eq(mbosTravelLegs.expenseDayId, existing.id));
+  for (const leg of legIds) await rescoreLeg(leg.id);
+
+  const answer = await priceDay(userId, day);
+  if (!answer?.computation || !answer.policy) return;
+
+  await ensurePolicyRow(answer.policy.id);
+  await db
+    .update(mbosExpenseDays)
+    .set({ policyId: answer.policy.id })
+    .where(eq(mbosExpenseDays.id, existing.id));
+
+  await writeLineFigures(answer);
+
+  /* The flags, against the day as it now stands. Only the unresolved are
+     replaced, so an answer a manager already gave survives the refresh. */
+  const priced = (await priceDay(userId, day))!;
+  const c = priced.computation!;
+  const dayGps = priced.legs.reduce<number | null>(
+    (n, l) => (l.gpsMetres === null ? n : (n ?? 0) + l.gpsMetres),
+    null,
+  );
+  const dayOdo = priced.legs.reduce<number | null>(
+    (n, l) => (l.odometerMetres === null ? n : (n ?? 0) + l.odometerMetres),
+    null,
+  );
+  const anomalies = await anomaliesFor(userId, day, {
+    metres: c.totalMetres,
+    claimedPaise: c.totalClaimedPaise,
+    gpsMetres: dayGps,
+    odometerMetres: dayOdo,
+  });
+  /* Requirement 47 — the same bill logged twice. A `certain` match is worth a
+     manager's eye before he approves the second one; a `possible` one is a
+     note. */
+  const duplicates = (await duplicatesForDay(priced.day.id)).map(
+    (d): PolicyException => ({
+      kind: "duplicate_suspect",
+      severity: d.strength === "certain" ? "block_route" : d.strength === "likely" ? "warn" : "info",
+      message: d.reason,
+      detail: {
+        otherId: d.otherId,
+        otherDate: d.otherDate,
+        otherClaimedPaise: d.otherClaimedPaise,
+        matchedOn: d.matchedOn.join(", "),
+        strength: d.strength,
+      },
+      lineId: d.claimId,
+    }),
+  );
+  await replaceExceptions(userId, priced.day.id, [...c.exceptions, ...anomalies, ...duplicates]);
+}
+
+/**
+ * The same refresh, after somebody in the office corrected the evidence under a
+ * day — a meter read wrong, a trip re-measured. Kept as its own name because
+ * that is what the caller is doing.
  */
 export async function repriceDay(userId: string, day: string): Promise<void> {
-  const answer = await priceDay(userId, day);
-  if (!answer?.computation) return;
-  await writeLineFigures(answer);
+  await refreshDayMoney(userId, day);
 }
 
 /* ---------------------------------------------------- the anomaly findings */
@@ -311,206 +431,10 @@ async function anomaliesFor(
   ];
 }
 
-/* --------------------------------------------------------------- submitting */
-
-export type SubmitOutcome = {
-  ok: true;
-  dayId: string;
-  claimedPaise: number;
-  eligiblePaise: number;
-  autoApproved: boolean;
-  escalated: boolean;
-  routeReason: string;
-  exceptionCount: number;
-} | { ok: false; reason: string };
-
-/**
- * Close a day: price it, store what it is worth, raise what it raises, route
- * it, and lock it.
- *
- * **The lock is what requirement 54 asks for and it is not a UI state.** After
- * this the day's lines cannot be edited — a correction supersedes a line
- * rather than changing one, so what was submitted stays readable exactly as it
- * was submitted.
- */
-export async function submitDay(
-  userId: string,
-  day: string,
-  opts: { note?: string | null } = {},
-): Promise<SubmitOutcome> {
-  const existing = await db
-    .select({ id: mbosExpenseDays.id, lockedAt: mbosExpenseDays.lockedAt })
-    .from(mbosExpenseDays)
-    .where(and(eq(mbosExpenseDays.userId, userId), eq(mbosExpenseDays.day, day)))
-    .limit(1);
-  if (!existing[0]) return { ok: false, reason: "That day has not been opened, so there is nothing to submit." };
-  if (existing[0].lockedAt) {
-    return { ok: false, reason: "That day has already been submitted and locked." };
-  }
-
-  /* Stamp the resolution BEFORE pricing. A promotion after today must not
-     change what today was worth, and the only way to guarantee that is to
-     freeze the question rather than trusting nobody to be promoted. */
-  const before = await db
-    .select({ destinationCity: mbosExpenseDays.destinationCity, policyId: mbosExpenseDays.policyId })
-    .from(mbosExpenseDays)
-    .where(eq(mbosExpenseDays.id, existing[0].id))
-    .limit(1);
-
-  const subject = await resolveSubject(userId, before[0]?.destinationCity ?? null);
-  const cityClass = before[0]?.destinationCity ? await classOfCity(before[0].destinationCity) : null;
-
-  await db
-    .update(mbosExpenseDays)
-    .set({
-      resolvedGrade: subject.grade,
-      resolvedCityClass: cityClass,
-      destinationCityClass: cityClass,
-      updatedAt: new Date(),
-    })
-    .where(eq(mbosExpenseDays.id, existing[0].id));
-
-  /* Every leg's distance is re-read first: the trail arrives in batches, and a
-     leg synced the minute it ended has fewer positions behind it than the same
-     leg has by evening. */
-  const legIds = await db
-    .select({ id: mbosTravelLegs.id })
-    .from(mbosTravelLegs)
-    .where(eq(mbosTravelLegs.expenseDayId, existing[0].id));
-  for (const leg of legIds) await rescoreLeg(leg.id);
-
-  const answer = await priceDay(userId, day);
-  if (!answer) return { ok: false, reason: "That day could not be read back." };
-
-  if (!answer.computation) {
-    /* No policy covers the date. The day is still submitted — the money was
-       still spent — and it goes to a person rather than being auto-approved
-       against rules that do not exist. */
-    await db
-      .update(mbosExpenseDays)
-      .set({
-        submittedAt: new Date(),
-        lockedAt: new Date(),
-        note: opts.note ?? null,
-        updatedAt: new Date(),
-      })
-      .where(eq(mbosExpenseDays.id, existing[0].id));
-    await raiseApproval(userId, existing[0].id, 0, "no_policy", null);
-    return {
-      ok: true,
-      dayId: existing[0].id,
-      claimedPaise: 0,
-      eligiblePaise: 0,
-      autoApproved: false,
-      escalated: false,
-      routeReason: answer.noPolicyReason ?? "No policy covers this date.",
-      exceptionCount: 0,
-    };
-  }
-
-  await ensurePolicyRow(answer.policy!.id);
-  await db
-    .update(mbosExpenseDays)
-    .set({ policyId: answer.policy!.id, updatedAt: new Date() })
-    .where(eq(mbosExpenseDays.id, existing[0].id));
-
-  await writeLineFigures(answer);
-
-  /* Re-read after writing the figures, so the totals below are the totals the
-     lines now carry rather than the ones they carried a moment ago. */
-  const priced = (await priceDay(userId, day))!;
-  const c = priced.computation!;
-
-  const dayGps = priced.legs.reduce<number | null>(
-    (n, l) => (l.gpsMetres === null ? n : (n ?? 0) + l.gpsMetres),
-    null,
-  );
-  const dayOdo = priced.legs.reduce<number | null>(
-    (n, l) => (l.odometerMetres === null ? n : (n ?? 0) + l.odometerMetres),
-    null,
-  );
-
-  const anomalies = await anomaliesFor(userId, day, {
-    metres: c.totalMetres,
-    claimedPaise: c.totalClaimedPaise,
-    gpsMetres: dayGps,
-    odometerMetres: dayOdo,
-  });
-
-  /* Requirement 47, asked once of the finished day rather than at every entry.
-     A salesman typing the third of four fares should not be interrupted three
-     times; the question is better put to the person who can actually answer
-     it, which is whoever reads the day. A `certain` match — the same file, or
-     the same bill number — is worth blocking to a person; a `possible` one is
-     an ordinary Tuesday and is a note. */
-  const duplicates = (await duplicatesForDay(priced.day.id)).map(
-    (d): PolicyException => ({
-      kind: "duplicate_suspect",
-      severity: d.strength === "certain" ? "block_route" : d.strength === "likely" ? "warn" : "info",
-      message: d.reason,
-      detail: {
-        otherId: d.otherId,
-        otherDate: d.otherDate,
-        otherClaimedPaise: d.otherClaimedPaise,
-        matchedOn: d.matchedOn.join(", "),
-        strength: d.strength,
-      },
-      lineId: d.claimId,
-    }),
-  );
-
-  const all = [...c.exceptions, ...anomalies, ...duplicates];
-  await replaceExceptions(userId, priced.day.id, all);
-
-  const route = priced.route!;
-  /* The anomalies are raised AFTER the engine has routed, so a day the engine
-     called clean but the history calls strange must not auto-approve. Routing
-     is re-decided against everything found. */
-  const worst = worstSeverity(all);
-  const autoApproved = route.autoApproved && worst !== "warn" && worst !== "block_route";
-
-  await db
-    .update(mbosExpenseDays)
-    .set({
-      submittedAt: new Date(),
-      submittedClaimedPaise: c.totalClaimedPaise,
-      submittedEligiblePaise: c.totalEligiblePaise,
-      lockedAt: new Date(),
-      note: opts.note ?? null,
-      updatedAt: new Date(),
-    })
-    .where(eq(mbosExpenseDays.id, priced.day.id));
-
-  if (autoApproved) {
-    await raiseApproval(userId, priced.day.id, 0, "auto", c.totalEligiblePaise, "approved");
-  } else {
-    await raiseApproval(
-      userId,
-      priced.day.id,
-      0,
-      worst === "block_route" ? "missing_proof" : worst === "warn" ? "flagged" : "over_limit",
-      null,
-    );
-    if (route.escalate) {
-      await raiseApproval(userId, priced.day.id, 1, "escalated", null);
-    }
-  }
-
-  return {
-    ok: true,
-    dayId: priced.day.id,
-    claimedPaise: c.totalClaimedPaise,
-    eligiblePaise: c.totalEligiblePaise,
-    autoApproved,
-    escalated: route.escalate,
-    routeReason: autoApproved ? route.reason : route.reason,
-    exceptionCount: all.length,
-  };
-}
 
 async function replaceExceptions(userId: string, dayId: string, list: PolicyException[]) {
   /* Only the UNRESOLVED are replaced. One a manager has already answered is a
-     record of a decision, and a recompute must not silently reopen it. */
+     record of a decision, and a refresh must not silently reopen it. */
   await db
     .delete(mbosExpenseExceptions)
     .where(
@@ -530,85 +454,4 @@ async function replaceExceptions(userId: string, dayId: string, list: PolicyExce
       detail: e.detail as Record<string, unknown>,
     })),
   );
-}
-
-async function raiseApproval(
-  userId: string,
-  dayId: string,
-  stepIndex: number,
-  routeReason: string,
-  approvedAmountPaise: number | null,
-  state: "pending" | "approved" = "pending",
-) {
-  await db
-    .insert(mbosApprovals)
-    .values({
-      id: newId("mbappr"),
-      type: "expense_claim",
-      requestedByUserId: userId,
-      subjectType: "mbos_expense_days",
-      subjectId: dayId,
-      stepIndex,
-      routeReason,
-      state,
-      approvedAmountPaise,
-      decidedAt: state === "approved" ? new Date() : null,
-      decisionNote:
-        state === "approved"
-          ? "Within policy and under the automatic limit — approved on submission."
-          : null,
-    })
-    .onConflictDoNothing();
-}
-
-/**
- * Requirement 50 — a submitted day corrected by an authorised person.
- *
- * The window is configuration and defaults to a week. Past it a locked day
- * cannot be reopened at all, which is deliberate: an authorised correction is
- * a real thing, and an authorised correction to a quarter that has already
- * been reported on is a different and worse thing.
- */
-export async function reopenDay(
-  dayId: string,
-  byUserId: string,
-  reason: string,
-  todayIso: string,
-): Promise<{ ok: boolean; reason: string }> {
-  const config = await getConfig();
-  const [row] = await db
-    .select({
-      id: mbosExpenseDays.id,
-      day: sql<string>`${mbosExpenseDays.day}::text`,
-      lockedAt: mbosExpenseDays.lockedAt,
-    })
-    .from(mbosExpenseDays)
-    .where(eq(mbosExpenseDays.id, dayId))
-    .limit(1);
-  if (!row) return { ok: false, reason: "There is no such day." };
-  if (!row.lockedAt) return { ok: false, reason: "That day is not locked, so there is nothing to reopen." };
-
-  const ageDays = Math.floor(
-    (Date.parse(`${todayIso}T00:00:00Z`) - Date.parse(`${row.day}T00:00:00Z`)) / 86_400_000,
-  );
-  const window = config["expenses.eodReopenWindowDays"];
-  if (ageDays > window) {
-    return {
-      ok: false,
-      reason: `That day is ${ageDays} days old and a submitted day may be reopened for ${window}. Past that the correction is an accounts adjustment rather than an edit to what was submitted.`,
-    };
-  }
-
-  await db
-    .update(mbosExpenseDays)
-    .set({
-      lockedAt: null,
-      reopenedAt: new Date(),
-      reopenedById: byUserId,
-      reopenReason: reason,
-      updatedAt: new Date(),
-    })
-    .where(eq(mbosExpenseDays.id, dayId));
-
-  return { ok: true, reason: "Reopened. What was submitted is still recorded — a correction supersedes a line rather than changing it." };
 }

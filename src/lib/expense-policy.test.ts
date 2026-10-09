@@ -37,9 +37,11 @@ import {
 import { policyForDate, readPolicy } from "@/lib/services/expense-policy-service";
 import { STANDARD_POLICY_ID } from "@/lib/expense-policy-standard";
 import { priceDay } from "@/lib/services/expense-service";
-import { submitDay, reopenDay } from "@/lib/services/expense-submit-service";
-import { claimDays } from "@/lib/services/expense-claims-service";
-import { resolveException, decideExpenseDay } from "@/lib/actions/expenses";
+import { refreshDayMoney } from "@/lib/services/expense-submit-service";
+import { expenseLines } from "@/lib/services/expense-claims-service";
+import { resolveException } from "@/lib/actions/expenses";
+import { decideExpense } from "@/lib/actions/sales";
+import { expenseStateSql, paidPaiseSql } from "@/lib/expense-money-sql";
 import { duplicateWarnings } from "@/lib/services/expense-service";
 import { simulatePolicy } from "@/lib/services/expense-simulator-service";
 import { expenseTrend, snapshotExpenseMonth } from "@/lib/services/expense-roi-service";
@@ -328,9 +330,7 @@ describe("the hard-coded standard policy", () => {
     const day = "2026-06-15";
     const dayId = await openDay(day);
     await addBikeLeg(dayId, day, 40);
-    setTestUser(salesman);
-    const sent = await submitDay(salesman.id, day);
-    assert.ok(sent.ok);
+    await refreshDayMoney(salesman.id, day);
     const priced = await priceDay(salesman.id, day);
     assert.equal(priced!.computation!.travelPaise, 14000, "40 km × ₹3.50");
     const [row] = await db
@@ -345,7 +345,6 @@ describe("the hard-coded standard policy", () => {
 
 describe("a day, priced", () => {
   test("food is worked out from the times, never claimed", async () => {
-    await publishPolicyV("2026-04-01", 350);
     const day = "2026-06-15";
     await openDay(day);
 
@@ -355,7 +354,6 @@ describe("a day, priced", () => {
   });
 
   test("requirement 28 — leaving after eight drops breakfast and nothing else", async () => {
-    await publishPolicyV("2026-04-01", 350);
     const day = "2026-06-16";
     await openDay(day, { departedAt: at(day, hhmm(8, 30)), returnedAt: at(day, hhmm(21)) });
 
@@ -366,207 +364,209 @@ describe("a day, priced", () => {
     assert.match(breakfast.withheldReason!, /left at 08:30/);
   });
 
-  test("submitting writes the eligible figures, and they equal the derived ones", async () => {
-    await publishPolicyV("2026-04-01", 350);
+  test("the allowances are written with no day closed, and equal the derived figures", async () => {
     const day = "2026-06-17";
     const dayId = await openDay(day);
     await addBikeLeg(dayId, day, 30);
 
-    const outcome = await submitDay(salesman.id, day);
-    assert.ok(outcome.ok);
+    await refreshDayMoney(salesman.id, day);
 
     const priced = await priceDay(salesman.id, day);
-    const storedTravel = await db.execute<{ eligible: number }>(sql`
-      select coalesce(sum(eligible_paise), 0) as eligible
-        from mbos_expenses where expense_day_id = ${dayId} and kind = 'travel'
+    const stored = await db.execute<{ kind: string; amount: number; eligible: number }>(sql`
+      select kind, sum(amount_paise)::int as amount, sum(eligible_paise)::int as eligible
+        from mbos_expenses where expense_day_id = ${dayId} group by kind
     `);
-    assert.equal(
-      Number(storedTravel[0]!.eligible),
-      priced!.computation!.travelPaise,
-      "the stored figure is a cache of the derived one and must never diverge from it",
-    );
+    const travel = stored.find((r) => r.kind === "travel")!;
+    const food = stored.find((r) => r.kind === "food")!;
+    assert.equal(Number(travel.amount), priced!.computation!.travelPaise, "the kilometre allowance");
+    assert.equal(Number(travel.eligible), Number(travel.amount), "an allowance is what the policy pays");
+    assert.equal(Number(food.amount), priced!.computation!.foodPaise, "the meal allowance");
 
-    const storedFood = await db.execute<{ eligible: number }>(sql`
-      select coalesce(sum(eligible_paise), 0) as eligible
-        from mbos_expenses where expense_day_id = ${dayId} and kind = 'food'
-    `);
-    assert.equal(Number(storedFood[0]!.eligible), priced!.computation!.foodPaise);
+    const [day_] = await db
+      .select({ submittedAt: mbosExpenseDays.submittedAt, lockedAt: mbosExpenseDays.lockedAt })
+      .from(mbosExpenseDays)
+      .where(eq(mbosExpenseDays.id, dayId));
+    assert.equal(day_!.submittedAt, null, "nothing is submitted");
+    assert.equal(day_!.lockedAt, null, "and nothing locks");
+    const approvals = await db.select().from(mbosApprovals).where(eq(mbosApprovals.subjectId, dayId));
+    assert.equal(approvals.length, 0, "an allowance asks nobody's approval");
   });
 
-  test("re-submitting a day does not double its lines", async () => {
-    await publishPolicyV("2026-04-01", 350);
+  test("refreshing again does not double its lines", async () => {
     const day = "2026-06-18";
     const dayId = await openDay(day);
     await addBikeLeg(dayId, day, 20);
 
-    await submitDay(salesman.id, day);
-    const again = await submitDay(salesman.id, day);
-    assert.equal(again.ok, false, "a locked day cannot be submitted twice");
+    await refreshDayMoney(salesman.id, day);
+    await refreshDayMoney(salesman.id, day);
 
     const [count] = await db.execute<{ n: number }>(sql`
       select count(*)::int as n from mbos_expenses where expense_day_id = ${dayId}
     `);
-    assert.equal(count!.n, 2, "one travel line and one food line");
+    assert.equal(count!.n, 2, "one kilometre allowance and one meal allowance");
   });
-});
 
-/* ---------------------------------------------------- §H routing, §J locking */
-
-describe("where a day goes, and what locks", () => {
-  test("a clean day under the limit approves itself", async () => {
-    await publishPolicyV("2026-04-01", 350);
+  test("a walk, or a trip that stops earning, leaves no ₹0 line behind", async () => {
     const day = "2026-06-19";
-    const dayId = await openDay(day);
-    await addBikeLeg(dayId, day, 20);
+    const dayId = await openDay(day, { departedAt: null, returnedAt: null });
+    const legId = await addBikeLeg(dayId, day, 25);
 
-    const outcome = await submitDay(salesman.id, day);
-    assert.ok(outcome.ok);
-    const raised = await db.execute<{ kind: string; severity: string; message: string }>(sql`
-      select kind, severity, message from mbos_expense_exceptions where expense_day_id = ${dayId}
+    await refreshDayMoney(salesman.id, day);
+    const [before_] = await db.execute<{ n: number }>(sql`
+      select count(*)::int as n from mbos_expenses where source_id = ${legId}
     `);
-    assert.equal(
-      outcome.autoApproved,
-      true,
-      `expected a clean day to approve itself; exceptions raised: ${JSON.stringify(raised)}`,
-    );
+    assert.equal(before_!.n, 1, "a bike trip earns its kilometres");
 
-    const approvals = await db
-      .select()
-      .from(mbosApprovals)
-      .where(eq(mbosApprovals.subjectId, dayId));
-    assert.equal(approvals.length, 1);
-    assert.equal(approvals[0]!.state, "approved");
-    assert.equal(approvals[0]!.routeReason, "auto");
+    await db.update(mbosTravelLegs).set({ modeKey: "walking" }).where(eq(mbosTravelLegs.id, legId));
+    await refreshDayMoney(salesman.id, day);
+
+    const [lines] = await db.execute<{ n: number; zero: number }>(sql`
+      select count(*)::int as n, count(*) filter (where amount_paise <= 0)::int as zero
+        from mbos_expenses where expense_day_id = ${dayId}
+    `);
+    assert.equal(lines!.zero, 0, "nothing is ever written at ₹0");
+    assert.equal(lines!.n, 0, "a walk pays nothing, so its allowance is taken away");
   });
 
-  test("a hotel bill over the ceiling is flagged, still recorded, and waits for a person", async () => {
-    await publishPolicyV("2026-04-01", 350);
+  test("a deleted trip takes its allowance with it", async () => {
     const day = "2026-06-20";
-    const dayId = await openDay(day, { overnight: true, stayedInHotel: true });
-    await db.insert(mbosExpenses).values({
-      id: id("mbos_exp"),
-      userId: salesman.id,
-      expenseDate: day,
-      category: "lodging",
-      kind: "lodging",
-      sourceType: "manual",
-      expenseDayId: dayId,
-      amountPaise: 220000,
-      billPhotoId: null,
-      createdById: salesman.id,
-      updatedById: salesman.id,
-    });
+    const dayId = await openDay(day, { departedAt: null, returnedAt: null });
+    const legId = await addBikeLeg(dayId, day, 25);
+    await refreshDayMoney(salesman.id, day);
 
-    const outcome = await submitDay(salesman.id, day);
-    assert.ok(outcome.ok);
-    assert.equal(outcome.autoApproved, false, "over policy has to reach a person");
+    await db.delete(mbosTravelLegs).where(eq(mbosTravelLegs.id, legId));
+    await refreshDayMoney(salesman.id, day);
 
-    const priced = await priceDay(salesman.id, day);
-    assert.equal(priced!.computation!.lodgingClaimedPaise, 220000, "still recorded in full");
-    assert.equal(priced!.computation!.lodgingEligiblePaise, 150000);
-    assert.ok(priced!.computation!.exceptions.some((e) => e.kind === "over_cap"));
-  });
-
-  test("the day is locked on submission and reopening takes a reason", async () => {
-    await publishPolicyV("2026-04-01", 350);
-    const day = "2026-06-21";
-    const dayId = await openDay(day);
-    await addBikeLeg(dayId, day, 10);
-    await submitDay(salesman.id, day);
-
-    const [row] = await db
-      .select({ lockedAt: mbosExpenseDays.lockedAt })
-      .from(mbosExpenseDays)
-      .where(eq(mbosExpenseDays.id, dayId));
-    assert.ok(row!.lockedAt, "submitting locks the day");
-
-    const reopened = await reopenDay(dayId, admin.id, "He photographed the wrong bill.", day);
-    assert.equal(reopened.ok, true);
-
-    const [after_] = await db
-      .select({ lockedAt: mbosExpenseDays.lockedAt, reason: mbosExpenseDays.reopenReason })
-      .from(mbosExpenseDays)
-      .where(eq(mbosExpenseDays.id, dayId));
-    assert.equal(after_!.lockedAt, null);
-    assert.match(after_!.reason!, /wrong bill/);
-  });
-
-  test("reopening far outside the window is refused, with the window named", async () => {
-    await publishPolicyV("2026-04-01", 350);
-    const day = "2026-06-22";
-    const dayId = await openDay(day);
-    await addBikeLeg(dayId, day, 10);
-    await submitDay(salesman.id, day);
-
-    const refused = await reopenDay(dayId, admin.id, "Too late.", "2026-08-01");
-    assert.equal(refused.ok, false);
-    assert.match(refused.reason, /days old/);
+    const [lines] = await db.execute<{ n: number }>(sql`
+      select count(*)::int as n from mbos_expenses where expense_day_id = ${dayId}
+    `);
+    assert.equal(lines!.n, 0);
   });
 });
 
-/* -------------------------------------------------------- §G41 three figures */
+/* ------------------------------------------------- one expense, one decision */
 
-describe("the manager's list", () => {
-  test("claimed, eligible and approved are three separate figures", async () => {
-    await publishPolicyV("2026-04-01", 350);
+async function logExpense(day: string, dayId: string, amountPaise: number, kind = "lodging") {
+  const expenseId = id("mbos_expense");
+  await db.insert(mbosExpenses).values({
+    id: expenseId,
+    userId: salesman.id,
+    expenseDate: day,
+    category: kind === "local_transport" ? "travel" : (kind as "lodging" | "food" | "travel" | "other"),
+    kind,
+    sourceType: "manual",
+    expenseDayId: dayId,
+    amountPaise,
+    billPhotoId: await makeBill(),
+    createdById: salesman.id,
+    updatedById: salesman.id,
+  });
+  return expenseId;
+}
+
+/** Somebody who decides expenses: a manager of the Sales Dashboard. */
+async function salesManager() {
+  const m = await makeUser("Ravi", "manager");
+  await db.insert(appAccess).values({ id: id("aa"), userId: m.id, app: "sales", role: "manager" });
+  return m;
+}
+
+describe("an expense he logs", () => {
+  test("is on the Expenses desk at once, waiting, with the policy figure beside it", async () => {
     const day = "2026-06-23";
     const dayId = await openDay(day, { overnight: true, stayedInHotel: true });
-    await db.insert(mbosExpenses).values({
-      id: id("mbos_exp"),
-      userId: salesman.id,
-      expenseDate: day,
-      category: "lodging",
-      kind: "lodging",
-      sourceType: "manual",
-      expenseDayId: dayId,
-      amountPaise: 220000,
-      billPhotoId: await makeBill(),
-      createdById: salesman.id,
-      updatedById: salesman.id,
-    });
-    await submitDay(salesman.id, day);
+    const expenseId = await logExpense(day, dayId, 220000);
+    await refreshDayMoney(salesman.id, day);
 
-    const rows = await claimDays({ from: day, to: day });
-    assert.equal(rows.length, 1);
-    const row = rows[0]!;
-    assert.equal(Number(row.claimedPaise) > Number(row.eligiblePaise), true);
-    assert.equal(Number(row.excessPaise), 70000);
-    assert.equal(row.approvedAmountPaise, null, "nobody has decided yet");
+    setTestUser(await salesManager());
+    const rows = await expenseLines({ from: day, to: day });
+    const row = rows.find((r) => r.id === expenseId)!;
+    assert.ok(row, "no day was closed and it is listed anyway");
+    assert.equal(row.state, "pending");
+    assert.equal(row.allowance, false);
+    assert.equal(row.claimedPaise, 220000, "recorded in full, however far over");
+    assert.equal(row.eligiblePaise, 150000, "the hotel ceiling");
+    assert.equal(row.excessPaise, 70000);
+    assert.equal(row.files.length, 1, "the bill is in front of whoever decides it");
+    assert.ok(
+      rows.some((r) => r.allowance && r.kind === "food" && r.state === "allowance"),
+      "the day's meal allowance is listed beside it, already his",
+    );
+  });
 
-    const decided = await decideExpenseDay({
-      dayId,
+  test("is part-approved on its own, and only that amount counts as paid", async () => {
+    const day = "2026-06-24";
+    const dayId = await openDay(day, { overnight: true, stayedInHotel: true });
+    const expenseId = await logExpense(day, dayId, 220000);
+    await refreshDayMoney(salesman.id, day);
+
+    setTestUser(await salesManager());
+    const decided = await decideExpense({
+      expenseId,
       decision: "partially_approved",
-      approvedAmountPaise: Number(row.eligiblePaise),
+      approvedAmountPaise: 150000,
       note: "Allowed at the policy figure.",
     });
     assert.ok(decided.ok, decided.ok ? "" : decided.error);
 
-    const after_ = await claimDays({ from: day, to: day });
-    assert.equal(after_[0]!.approvalState, "partially_approved");
-    assert.equal(Number(after_[0]!.approvedAmountPaise), Number(row.eligiblePaise));
+    const [row] = await db.execute<{ state: string; paid: number }>(sql`
+      select ${expenseStateSql("e")} as state, ${paidPaiseSql("e")}::int as paid
+        from mbos_expenses e where e.id = ${expenseId}
+    `);
+    assert.equal(row!.state, "partially_approved");
+    assert.equal(Number(row!.paid), 150000);
   });
 
-  test("a refusal without a reason is refused", async () => {
-    await publishPolicyV("2026-04-01", 350);
-    const day = "2026-06-24";
-    const dayId = await openDay(day, { overnight: true, stayedInHotel: true });
-    await db.insert(mbosExpenses).values({
-      id: id("mbos_exp"),
-      userId: salesman.id,
-      expenseDate: day,
-      category: "other",
-      kind: "other",
-      sourceType: "manual",
-      expenseDayId: dayId,
-      amountPaise: 900000,
-      createdById: salesman.id,
-      updatedById: salesman.id,
-    });
-    await submitDay(salesman.id, day);
+  test("a 'part' at or above what he logged is recorded as a yes", async () => {
+    const day = "2026-06-25";
+    const dayId = await openDay(day);
+    const expenseId = await logExpense(day, dayId, 30000, "other");
 
-    const refused = await decideExpenseDay({ dayId, decision: "rejected", note: "  " });
+    setTestUser(await salesManager());
+    const decided = await decideExpense({
+      expenseId,
+      decision: "partially_approved",
+      approvedAmountPaise: 30000,
+      note: "Fine.",
+    });
+    assert.ok(decided.ok, decided.ok ? "" : decided.error);
+    const [row] = await db.execute<{ state: string }>(sql`
+      select ${expenseStateSql("e")} as state from mbos_expenses e where e.id = ${expenseId}
+    `);
+    assert.equal(row!.state, "approved");
+  });
+
+  test("a refusal without a reason is refused, and an allowance cannot be decided", async () => {
+    const day = "2026-06-26";
+    const dayId = await openDay(day);
+    const expenseId = await logExpense(day, dayId, 90000, "other");
+    await refreshDayMoney(salesman.id, day);
+
+    setTestUser(await salesManager());
+    const refused = await decideExpense({ expenseId, decision: "rejected", note: "  " });
     assert.equal(refused.ok, false);
-    assert.match(refused.ok ? "" : refused.error, /say why/);
+    assert.match(refused.ok ? "" : refused.error, /Say why/);
+
+    const [meal] = await db.execute<{ id: string }>(sql`
+      select id from mbos_expenses where expense_day_id = ${dayId} and source_type = 'expense_day'
+    `);
+    const onAllowance = await decideExpense({ expenseId: meal!.id, decision: "approved" });
+    assert.equal(onAllowance.ok, false);
+    assert.match(onAllowance.ok ? "" : onAllowance.error, /allowance/);
+  });
+
+  test("an expense whose approval has not arrived yet can still be decided", async () => {
+    const day = "2026-06-27";
+    const dayId = await openDay(day);
+    const expenseId = await logExpense(day, dayId, 12050, "local_transport");
+
+    setTestUser(await salesManager());
+    const decided = await decideExpense({ expenseId, decision: "approved" });
+    assert.ok(decided.ok, decided.ok ? "" : decided.error);
+    const [row] = await db.execute<{ paid: number }>(sql`
+      select ${paidPaiseSql("e")}::int as paid from mbos_expenses e where e.id = ${expenseId}
+    `);
+    assert.equal(Number(row!.paid), 12050, "to the paisa");
   });
 });
 
@@ -574,23 +574,10 @@ describe("the manager's list", () => {
 
 describe("exceptions", () => {
   test("an answered exception survives the day being priced again", async () => {
-    await publishPolicyV("2026-04-01", 350);
-    const day = "2026-06-25";
+    const day = "2026-06-28";
     const dayId = await openDay(day, { overnight: true, stayedInHotel: true });
-    await db.insert(mbosExpenses).values({
-      id: id("mbos_exp"),
-      userId: salesman.id,
-      expenseDate: day,
-      category: "lodging",
-      kind: "lodging",
-      sourceType: "manual",
-      expenseDayId: dayId,
-      amountPaise: 220000,
-      billPhotoId: await makeBill(),
-      createdById: salesman.id,
-      updatedById: salesman.id,
-    });
-    await submitDay(salesman.id, day);
+    await logExpense(day, dayId, 220000);
+    await refreshDayMoney(salesman.id, day);
 
     const [raised] = await db.execute<{ id: string }>(sql`
       select id from mbos_expense_exceptions
@@ -605,9 +592,8 @@ describe("exceptions", () => {
     });
     assert.ok(answered.ok, answered.ok ? "" : answered.error);
 
-    /* Price it again — which is what reopening and re-submitting does. */
-    await reopenDay(dayId, admin.id, "Checking something.", day);
-    await submitDay(salesman.id, day);
+    /* Price it again — which every sync and the nightly pass do. */
+    await refreshDayMoney(salesman.id, day);
 
     const [after_] = await db.execute<{ resolution: string | null; note: string | null }>(sql`
       select resolution, resolution_note as note
@@ -767,7 +753,7 @@ describe("a claim written down twice", () => {
     assert.deepEqual(warnings, []);
   });
 
-  test("a certain duplicate blocks the day to a person on submission", async () => {
+  test("a certain duplicate is raised for whoever decides it", async () => {
     await publishPolicyV("2026-04-01", 350);
     const day = "2026-07-04";
     const dayId = await openDay(day);
@@ -786,9 +772,7 @@ describe("a claim written down twice", () => {
         updatedById: salesman.id,
       });
     }
-    const outcome = await submitDay(salesman.id, day);
-    assert.ok(outcome.ok);
-    assert.equal(outcome.autoApproved, false);
+    await refreshDayMoney(salesman.id, day);
 
     const [raised] = await db.execute<{ n: number }>(sql`
       select count(*)::int as n from mbos_expense_exceptions
@@ -806,7 +790,7 @@ describe("what a draft would have cost", () => {
     const day = "2026-06-15";
     const dayId = await openDay(day);
     await addBikeLeg(dayId, day, 40);
-    await submitDay(salesman.id, day);
+    await refreshDayMoney(salesman.id, day);
 
     /* A draft at a higher rate — not published, so nothing in force moves. */
     setTestUser(admin);
@@ -845,7 +829,7 @@ describe("what a draft would have cost", () => {
     assert.equal(sim.byCategory.actualTravelPaise, 14000);
     assert.equal(sim.byCategory.travelPaise, 20000);
     assert.equal(sim.differencePaise, 6000);
-    assert.match(sim.caveats[0]!, /Replayed 1 submitted day/);
+    assert.match(sim.caveats[0]!, /Replayed 1 recorded day/);
   });
 
   test("it writes nothing — the day is worth what it was worth afterwards", async () => {
@@ -853,7 +837,7 @@ describe("what a draft would have cost", () => {
     const day = "2026-06-16";
     const dayId = await openDay(day);
     await addBikeLeg(dayId, day, 40);
-    await submitDay(salesman.id, day);
+    await refreshDayMoney(salesman.id, day);
 
     const before = await priceDay(salesman.id, day);
     setTestUser(admin);
@@ -891,7 +875,7 @@ describe("what a draft would have cost", () => {
     const day = "2026-06-17";
     const dayId = await openDay(day);
     await addBikeLeg(dayId, day, 40);
-    await submitDay(salesman.id, day);
+    await refreshDayMoney(salesman.id, day);
 
     /* A draft with no travel rate at all. */
     setTestUser(admin);
@@ -932,8 +916,7 @@ describe("the monthly trend", () => {
     const day = "2026-06-18";
     const dayId = await openDay(day);
     await addBikeLeg(dayId, day, 40);
-    await submitDay(salesman.id, day);
-    await decideExpenseDay({ dayId, decision: "approved", approvedAmountPaise: 0, note: null });
+    await refreshDayMoney(salesman.id, day);
 
     const rows = await snapshotExpenseMonth("2026-06");
     assert.ok(rows >= 1, "at least the company row");
@@ -949,8 +932,7 @@ describe("the monthly trend", () => {
     const day = "2026-06-19";
     const dayId = await openDay(day);
     await addBikeLeg(dayId, day, 40);
-    await submitDay(salesman.id, day);
-    await decideExpenseDay({ dayId, decision: "approved", approvedAmountPaise: 0, note: null });
+    await refreshDayMoney(salesman.id, day);
 
     await snapshotExpenseMonth("2026-06");
     const once = (await expenseTrend(12))[0]!.totalPaise;

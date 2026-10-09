@@ -23,7 +23,7 @@ import { DUR, EASE, Stagger, animateLayoutFor, useReduceMotion } from '../src/co
 const SCREENS = new Set([
   'home', 'customers', 'customer', 'account', 'accounts', 'journey', 'pick', 'tasks', 'leads', 'lead',
   'samples', 'sample', 'orders', 'collections', 'expenses', 'travel', 'leave', 'attendance', 'performance',
-  'salary', 'docs', 'sync', 'rejections', 'notifications', 'nearby', 'maps', 'eod', 'profile', 'policy',
+  'salary', 'docs', 'sync', 'rejections', 'notifications', 'nearby', 'maps', 'profile', 'policy',
   'reports', 'more', 'validate',
 ]);
 

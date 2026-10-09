@@ -511,6 +511,39 @@ async function sweepPushFailures(): Promise<Counted> {
   return { recordsAffected: gone, detail: `${gone} old push failures cleared` };
 }
 
+/**
+ * Every recent day's allowances, worked out again.
+ *
+ * The sync refreshes a day the moment its records land; this is the net under
+ * it. The trail that measures a trip arrives in batches, a punch-out can reach
+ * the office after the batch that carried the trip, and a refresh that failed
+ * in the sync is retried nowhere else. Idempotent — a day whose records have
+ * not moved is rewritten to exactly what it already says.
+ *
+ * Hourly over the last two days, which is where the trail is still arriving;
+ * nightly back as far as an expense may still be logged, which is also what
+ * fills in the days nobody ever closed under the old Send day.
+ */
+async function refreshRecentAllowances(windowDays: number): Promise<Counted> {
+  const { refreshDayMoney } = await import("./services/expense-submit-service");
+  const day = await today();
+  const days = await db.execute<{ userId: string; day: string }>(sql`
+    select d.user_id as "userId", d.day::text as day
+      from mbos_expense_days d
+     where d.day between ${addDays(day, -windowDays)}::date and ${day}::date
+  `);
+  let done = 0;
+  for (const d of days) {
+    try {
+      await refreshDayMoney(d.userId, d.day);
+      done++;
+    } catch {
+      /* One day that cannot be priced must not stop the rest. */
+    }
+  }
+  return { recordsAffected: done, detail: `${done} of ${days.length} recent days' allowances refreshed` };
+}
+
 export async function mbosNightly(): Promise<Counted> {
   const parts = [
     await sweepPushFailures(),
@@ -524,6 +557,8 @@ export async function mbosNightly(): Promise<Counted> {
     await ageLeads(),
     await raiseReorderFollowUps(),
     await countCustomersWithoutGps(),
+    /* AFTER the closers, so a day closed tonight is priced tonight. */
+    await refreshRecentAllowances((await getConfig())["mbos.expenses.backdatedDaysAllowed"]),
     /* §13 — the sequence, once a day. Its longest interval is four days, so a
        nightly pass is ample and an hourly one would re-derive the same events
        twenty-four times to raise nothing twenty-three of them. */
@@ -641,6 +676,7 @@ export async function mbosHourly(): Promise<Counted> {
     await readPushReceipts(),
     await sweepSelfies(),
     await settleTasksFromRecords(),
+    await refreshRecentAllowances(1),
   ];
   return {
     recordsAffected: parts.reduce((a, p) => a + p.recordsAffected, 0),

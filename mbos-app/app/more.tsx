@@ -38,7 +38,6 @@ type Counts = {
   overdueTasks: number;
   openLeads: number;
   pendingExpenses: number;
-  daySent: boolean;
   legsToday: number;
   openSamples: number;
   toSend: number;
@@ -53,7 +52,6 @@ const EMPTY: Counts = {
   overdueTasks: 0,
   openLeads: 0,
   pendingExpenses: 0,
-  daySent: false,
   legsToday: 0,
   openSamples: 0,
   toSend: 0,
@@ -125,7 +123,6 @@ function groupsFor(n: Counts): { label: string; items: Item[] }[] {
         { label: 'Holidays', badge: '', route: 'holidays' },
         { label: 'Salary', badge: '', route: 'salary' },
         { label: "Today's travel", badge: n.legsToday ? String(n.legsToday) : '', route: 'travel' },
-        { label: 'Close the day', badge: n.daySent ? 'sent' : '', route: 'eod' },
         { label: 'Expenses', badge: n.pendingExpenses ? n.pendingExpenses + ' pending' : '', route: 'expenses' },
         { label: 'What you are allowed', badge: '', route: 'policy' },
         { label: 'Performance', badge: '', route: 'performance' },
@@ -219,7 +216,6 @@ export default function MoreScreen() {
             openSamples: samples.filter((s) => s.state !== 'Converted' && s.state !== 'Rejected').length,
             toSend,
             rejected: queue.rejected ?? 0,
-            daySent: today_.day?.lockedAt != null,
             legsToday: today_.legs.length,
             owing: money?.owing ?? 0,
           });
