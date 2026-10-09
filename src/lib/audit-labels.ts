@@ -681,6 +681,12 @@ const DESCRIBE: Record<string, Describer> = {
   "whatsapp.automation_window": () => ["changed when automatic WhatsApp messages may be sent"],
   "whatsapp.template_link": (c) => ({ says: ["linked a WhatsApp template to", strong(words(str(c.a.watiTemplateName) ?? "nothing"))], changes: false }),
   "expense_policy.published": (c) => ({ says: ["published the expense policy", ...(str(c.a.effectiveFrom) ? ["from", strong(shortDate(str(c.a.effectiveFrom)!))] : [])], changes: false }),
+  "expense_policy.set.create": (c) => ({ says: ["created the expense policy", strong(str(c.a.name) ?? "")], changes: false }),
+  "expense_policy.set.save": (c) => ({ says: ["edited the expense policy", strong(str(c.a.name) ?? "")], changes: false }),
+  "expense_policy.set.activate": () => ({ says: ["switched an expense policy on"], changes: false }),
+  "expense_policy.set.deactivate": () => ({ says: ["switched an expense policy off"], changes: false }),
+  "expense_policy.set.delete": (c) => ({ says: ["deleted the expense policy", strong(str(c.b.name) ?? "")], changes: false }),
+  "expense_policy.set.assign": () => ({ says: ["changed which expense policy salesmen are on"], changes: false }),
   "job.run": (c) => ({ says: ["ran the job", strong(words(str(c.a.job) ?? str(c.e.entityId) ?? ""))], changes: false }),
   "job.dry_run": (c) => ({ says: ["tried the job", strong(words(str(c.a.job) ?? str(c.e.entityId) ?? "")), "without saving anything"], changes: false }),
 

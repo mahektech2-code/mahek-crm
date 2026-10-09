@@ -1667,6 +1667,13 @@
       "when": 1792531776442,
       "tag": "0240_expenses_logged_not_sent",
       "breakpoints": true
+    },
+    {
+      "idx": 238,
+      "version": "7",
+      "when": 1792531777442,
+      "tag": "0241_expense_policy_sets",
+      "breakpoints": true
     }
   ]
 }

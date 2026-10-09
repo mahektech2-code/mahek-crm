@@ -1,24 +1,96 @@
-import { AdminPage } from "../../_shell/admin-page";
+import { notFound } from "next/navigation";
+import { canFor } from "@/lib/access-control";
+import { STANDARD_POLICY } from "@/lib/expense-policy-standard";
+import { ruleToDraft } from "@/lib/expense-policy-sets";
+import {
+  listPolicySets,
+  policyChoices,
+  policyPeople,
+  policySetRevisions,
+  readPolicySet,
+} from "@/lib/services/expense-policy-set-service";
 import { adminContext } from "../../_shell/context";
-import { PolicyView } from "@/components/expenses/policy-view";
+import { PoliciesScreen } from "../policies-screen";
+import { PolicyEditor } from "../policy-editor";
 
 /**
- * The expense policy, read-only.
+ * The expense policies.
  *
- * It used to be a rule builder — versions, drafts, grades, city classes, a
- * simulator and a publish step across five tabs — and it was too much to use,
- * so nothing was ever published. The policy is hard-coded now
- * (`lib/expense-policy-standard.ts`) and this page says what it is. The old
- * tab addresses (`/rules`, `/versions`, …) still land here.
+ * With no segment it is the list of policies and who is on which; with a
+ * policy id (`ADMIN.expensePolicy(id)`) it is that policy's editor. The rule builder's old
+ * tab addresses (`/rules`, `/versions`, …) are not policy ids and land on the
+ * list, as they did when the policy was read-only.
  */
-export default async function ExpensePolicyPage() {
-  await adminContext();
+export default async function ExpensePolicyPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ tab?: string[] }>;
+  searchParams: Promise<{ tab?: string }>;
+}) {
+  const ctx = await adminContext();
+  const [{ tab }, query] = await Promise.all([params, searchParams]);
+  const canWrite = await canFor(ctx.user, "expense.policy.write");
+  const first = tab?.[0];
+
+  if (first && first.startsWith("xpol")) {
+    const set = await readPolicySet(first);
+    if (!set) notFound();
+    const [choices, revisions, people] = await Promise.all([
+      policyChoices(),
+      policySetRevisions(set.id),
+      policyPeople(),
+    ]);
+    const standardCount = people.filter((p) => p.active && (!p.setId || p.setInactive)).length;
+    return (
+      /* Keyed on the revision, so a save (or somebody else's) remounts the
+         editor with the rules as they now stand rather than a stale draft. */
+      <PolicyEditor
+        key={`${set.id}:${set.revision}`}
+        set={{
+          id: set.id,
+          name: set.name,
+          description: set.description,
+          isStandard: set.isStandard,
+          active: set.active,
+          revision: set.revision,
+          unreadable: set.unreadable,
+          updatedAt: set.updatedAt,
+          updatedByName: set.updatedByName,
+          clonedFromName: set.clonedFromName,
+        }}
+        drafts={set.rules.map(ruleToDraft)}
+        defaults={set.isStandard ? STANDARD_POLICY.rules.map(ruleToDraft) : null}
+        choices={choices}
+        revisions={revisions}
+        members={people
+          .filter((p) => p.setId === set.id)
+          .map((p) => ({ userId: p.userId, name: p.name, position: p.position }))}
+        standardCount={standardCount}
+        canWrite={canWrite}
+      />
+    );
+  }
+
+  const [sets, people] = await Promise.all([listPolicySets(), policyPeople()]);
   return (
-    <AdminPage
-      title="Expense policy"
-      subtitle="What the field is paid back for travel, meals, hotels and bills. One policy for everybody."
-    >
-      <PolicyView />
-    </AdminPage>
+    <PoliciesScreen
+      sets={sets.map((s) => ({
+        id: s.id,
+        name: s.name,
+        description: s.description,
+        isStandard: s.isStandard,
+        active: s.active,
+        ruleCount: s.rules.length,
+        memberCount: s.memberCount,
+        revision: s.revision,
+        updatedAt: s.updatedAt,
+        updatedByName: s.updatedByName,
+        clonedFromName: s.clonedFromName,
+      }))}
+      people={people}
+      canWrite={canWrite}
+      initialTab={query.tab === "people" ? "people" : "policies"}
+    />
   );
 }

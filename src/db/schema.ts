@@ -7478,6 +7478,76 @@ export const expensePolicyRules = pgTable(
 );
 
 /**
+ * A NAMED expense policy — the standard one, or one a salesman is put on
+ * instead.
+ *
+ * `rules` is the engine's own `PolicyRule[]`, saved whole by the editor and
+ * read whole by the engine: one list, so what the screen shows and what a day
+ * is priced with are the same JSON. Validated on the way in by
+ * `checkRules` in `lib/expense-policy-sets.ts`, the same per-kind checks the
+ * old builder ran. `revision` moves on every save and is what the editor's
+ * "somebody else saved this" check compares.
+ *
+ * The id doubles as an archived anchor row in `expense_policies`, because
+ * `mbos_expense_days.policy_id` references that table (see `ensurePolicyRow`).
+ * Exactly one row is `is_standard` (a partial unique index in 0241), and the
+ * name is unique case-insensitively (a functional index, so only in SQL).
+ */
+export const expensePolicySets = pgTable("expense_policy_sets", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  description: text("description"),
+  isStandard: boolean("is_standard").notNull().default(false),
+  active: boolean("active").notNull().default(true),
+  rules: jsonb("rules").$type<unknown[]>().notNull().default([]),
+  revision: integer("revision").notNull().default(1),
+  clonedFromId: text("cloned_from_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  createdById: text("created_by_id").references(() => users.id),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedById: text("updated_by_id").references(() => users.id),
+});
+
+/** Every saved state of a policy — read back on its History tab, restorable. */
+export const expensePolicySetRevisions = pgTable(
+  "expense_policy_set_revisions",
+  {
+    id: text("id").primaryKey(),
+    setId: text("set_id")
+      .notNull()
+      .references(() => expensePolicySets.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+    rules: jsonb("rules").$type<unknown[]>().notNull(),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [uniqueIndex("expense_policy_set_revisions_key").on(t.setId, t.revision)],
+);
+
+/**
+ * Who is NOT on the standard policy. No row means standard — so adding a
+ * policy moves nobody until somebody is deliberately put on it, and deleting
+ * one returns its people to standard by the cascade.
+ */
+export const expensePolicyAssignments = pgTable(
+  "expense_policy_assignments",
+  {
+    userId: text("user_id")
+      .primaryKey()
+      .references(() => users.id, { onDelete: "cascade" }),
+    setId: text("set_id")
+      .notNull()
+      .references(() => expensePolicySets.id, { onDelete: "cascade" }),
+    assignedAt: timestamp("assigned_at", { withTimezone: true }).notNull().defaultNow(),
+    assignedById: text("assigned_by_id").references(() => users.id),
+  },
+  (t) => [index("expense_policy_assignments_set_idx").on(t.setId)],
+);
+
+/**
  * The grades a policy may name.
  *
  * HRMS holds `employees.position` — free text, typed by HR on the workbook —

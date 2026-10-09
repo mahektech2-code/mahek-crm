@@ -129,7 +129,7 @@ export async function simulatePolicy(
           }));
 
     const facts = factsFor(day, legs, lines);
-    const inForce: Policy | null = await policyForDate(row.day);
+    const inForce: Policy | null = await policyForDate(row.day, row.userId);
 
     const actual: DayComputation | null = inForce
       ? computeDay(inForce, subject, facts)

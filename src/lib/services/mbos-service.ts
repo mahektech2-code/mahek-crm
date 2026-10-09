@@ -706,7 +706,7 @@ export async function mbosConfigPayload(): Promise<Record<string, unknown>> {
  */
 async function expensePolicyFor(userId: string, onDate: string) {
   const [policy, subject] = await Promise.all([
-    policyForDate(onDate),
+    policyForDate(onDate, userId),
     resolveSubject(userId, null),
   ]);
   if (!policy) return null;

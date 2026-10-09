@@ -457,11 +457,14 @@ export function validateRule(draft: RuleDraft): FieldError[] {
       errors.push({ field: field.key, message: `${field.label} has to be a whole number — money is paise and time is minutes.` });
       continue;
     }
-    const min = field.type === "clock" ? 0 : (field.min ?? 0);
-    const max = field.type === "clock" ? 36 * 60 : field.max;
-    if (n < min) errors.push({ field: field.key, message: `${field.label} cannot be below ${min}.` });
+    /* A percentage is typed as a percentage and stored in basis points, so its
+       bounds — written in percent on the spec — are compared in basis points. */
+    const scale = field.type === "percent" ? 100 : 1;
+    const min = field.type === "clock" ? 0 : (field.min ?? 0) * scale;
+    const max = field.type === "clock" ? 36 * 60 : field.max === undefined ? undefined : field.max * scale;
+    if (n < min) errors.push({ field: field.key, message: `${field.label} cannot be below ${min / scale}${scale === 100 ? "%" : ""}.` });
     if (max !== undefined && n > max) {
-      errors.push({ field: field.key, message: `${field.label} cannot be above ${max}.` });
+      errors.push({ field: field.key, message: `${field.label} cannot be above ${max / scale}${scale === 100 ? "%" : ""}.` });
     }
   }
 
