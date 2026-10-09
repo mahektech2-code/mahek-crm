@@ -1,4 +1,5 @@
 import "server-only";
+import { calendarDate } from "@/lib/business-date";
 import { desc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { erpBankImports, erpTallySync } from "@/db/schema";
@@ -362,7 +363,7 @@ const tally: ScreenModule = {
         if (r.status === "correction") actions.push({ id: "reversed", l: "Reversed in Tally", why, prompt: { title: "Reversed in Tally", submit: "Mark", fields: [{ k: "reason", l: "What was done in Tally", t: "area", req: true }] } });
         return {
           id: r.id,
-          v: { record: r.remoteId.replace("MAHEKONE-", ""), kind: KIND[r.recordType] ?? r.recordType, status: TALLY_WORD[r.status], voucher: r.voucherNo ? `${r.voucherType ?? ""} ${r.voucherNo}` : "—", attempts: r.attempts, error: r.lastError, updated: new Date(r.updatedAt).toISOString().slice(0, 10) },
+          v: { record: r.remoteId.replace("MAHEKONE-", ""), kind: KIND[r.recordType] ?? r.recordType, status: TALLY_WORD[r.status], voucher: r.voucherNo ? `${r.voucherType ?? ""} ${r.voucherNo}` : "—", attempts: r.attempts, error: r.lastError, updated: calendarDate(new Date(r.updatedAt)) },
           flags: [],
           title: `${r.remoteId}`,
           header: `${TALLY_WORD[r.status]}${r.tallyCompany ? ` · ${r.tallyCompany}` : ""}`,
