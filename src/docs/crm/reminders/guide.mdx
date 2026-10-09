@@ -1,0 +1,117 @@
+A reminder is a **promise somebody made to a customer** — "I'll ring you back on Thursday", "I'll check the payment on the 20th", "I'll send the price list". Reminders is the list of every promise in your book, which are due today, which are already late, and which are coming up.
+
+You do not tick a reminder off. You **make the call**, and the call closes it.
+
+## The screen at a glance
+
+<Wireframe url="/crm/reminders" nav={["Dashboard", "#Daily calling", "Call Log", "Reminders", "Call History", "Opportunities"]} active="Reminders" caption="Reminders, on the Needs action tab">
+  <WfBar>
+    <WfTitle sub="Your book · 2 overdue - the oldest by 3 days.">Reminders</WfTitle>
+    <WfSpacer />
+    <WfButton primary>Set reminder</WfButton>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfBar>
+    <WfCard title="Due today"><WfText>3</WfText></WfCard>
+    <WfCard title="Overdue"><WfText>2 · oldest by 3 days</WfText></WfCard>
+    <WfCard title="Upcoming"><WfText>11</WfText></WfCard>
+    <WfCard title="Closed"><WfText>40</WfText></WfCard>
+    <Hotspot n={2} />
+  </WfBar>
+  <WfTabs items={["Needs action 5", "Due today 3", "Overdue 2", "Upcoming 11", "Closed 40", "All 56"]} active="Needs action 5" />
+  <Hotspot n={3} />
+  <WfTable highlight={0} columns={["Promise", ""]} rows={[
+    [<span key="a"><WfPill tone="danger">3 days overdue</WfPill> <b>Call back with the revised drum rate</b><br/>Customer A · call back <Hotspot n={4} /></span>, <span key="b"><WfButton primary>Call</WfButton> <WfButton>Mark done</WfButton> ⋯ <Hotspot n={5} /></span>],
+    [<span key="c"><WfPill tone="warn">Due today</WfPill> <b>Collect ₹40,000 promised for 12 Aug</b><br/>Customer B · payment promise · set by the system<br/><i>Rang on 13 Aug - no answer, so this is still owed. It closes by itself when a call gets through.</i> <Hotspot n={6} /></span>, <span key="d"><WfButton primary>Call</WfButton> ⋯</span>],
+    [<span key="e"><WfPill>In 4 days</WfPill> <b>Send the new shade card</b><br/>Customer C · information to send<br/><WfPill tone="warn">An earlier reason would call this customer sooner</WfPill> <Hotspot n={7} /></span>, <span key="f"><WfButton primary>Call</WfButton> ⋯</span>],
+  ]} />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Set reminder.</b> Write a promise down by hand — pick the customer, the date and what was promised. Most reminders are written for you when you save a call.</span>,
+  <span key="2"><b>The counts.</b> Due today, overdue (and how late the oldest is), upcoming and closed.</span>,
+  <span key="3"><b>Tabs.</b> <i>Needs action</i> is overdue and due today together, overdue first. Its count is the number on the sidebar badge.</span>,
+  <span key="4"><b>The promise.</b> What was promised, who to, and what kind of reminder it is. "Set by the system" means a call wrote it for you. "Moved N times" appears when it has been rescheduled often.</span>,
+  <span key="5"><b>Call.</b> Opens the Call Log with this customer's call panel. Saving a call that gets through closes the reminder. <i>Mark done</i> only appears if you are allowed to close one by hand.</span>,
+  <span key="6"><b>Why it is still open.</b> If somebody already rang, the row says so — nobody answered, or they were rung before it was due.</span>,
+  <span key="7"><b>A conflict.</b> The customer would come back to the Call Log for another reason before this date. The row menu offers to hold those other calls until the promised day.</span>,
+]} />
+
+## Keeping a promise
+
+<Steps>
+<Step title="Open Needs action">
+Overdue first, then due today. These are the promises the Call Log is also putting at the top of your list.
+</Step>
+<Step title="Press Call">
+The Call Log opens with the customer's panel. The reminder shows as the reason for the call.
+</Step>
+<Step title="Log the call">
+Save it as usual. If the customer answered, every reminder for them that is due today or overdue closes, and the row moves to **Closed** with the line *Closed by the call logged on …*.
+</Step>
+<Step title="If nobody answered">
+The reminder stays open — a ring that nobody picked up is not a promise kept. The row says *Rang on … - no answer, so this is still owed*, and the Call Log's no-answer ladder brings the customer back.
+</Step>
+</Steps>
+
+## What closes a reminder by itself
+
+| Event | Closes | Line on the closed row |
+|---|---|---|
+| A call that got through | Every reminder for that customer that is due today or overdue | Closed by the call logged on … |
+| An order taken from the customer | Their **order confirmation** reminders, whatever the date | Closed by the order taken on … |
+| Money accounts **confirmed** | Their **payment promise** reminders, whatever the date | Closed by the payment accounts confirmed on … |
+| A person, by hand | That one reminder | Marked done by *name* on … |
+
+<Callout kind="note">
+A payment the customer only **says** they made does not close a payment promise. It closes when accounts find the money. The call in which they told you still closes any reminder that was due that day.
+</Callout>
+
+A call never closes a reminder it created itself. If you save a *Follow-up* call for tomorrow, tomorrow's reminder stays open.
+
+## Kinds of reminder
+
+| Kind | Usually written by |
+|---|---|
+| **call back** | A *Follow-up* outcome, a callback asked for on a collections call, or *Set reminder* |
+| **payment promise** | *Payment Promised* on a call, or *Payment promised* on a collections call — dated the working day after the promised date |
+| **order confirmation** | A next action on a call |
+| **information to send** | A next action on a call |
+| **stock check** | A next action on a call |
+| **other** | A next action on a call |
+
+## Rescheduling, carrying forward and dismissing
+
+From the row menu (⋯):
+
+- **Reschedule** — pick a new date, optionally update what was promised. The row counts how many times it has moved; after <Setting k="reminders.rescheduleWarningCount" /> moves it says so.
+- **Carry forward to tomorrow** — the next working day.
+- **Hold other calls until *date*** — only offered when another reason would bring the customer back to the Call Log first. It stops the Call Log asking about orders or check-ins until the promised day. Money and reminders are never held.
+- **Open customer record**.
+- **Dismiss reminder** — needs a reason, and only appears if you may close reminders by hand. A dismissed reminder is never deleted.
+
+<Callout kind="note">
+A date that falls on a non-working day is moved to the next working day when <Setting k="reminders.rollForwardOnNonWorkingDays" /> is on. The message after saving says the date it actually landed on.
+</Callout>
+
+## For managers
+
+On team scope you see your whole team's reminders, each with the person it is assigned to, and a card **Overdue reminders by telecaller** showing who is sitting on the overdue pile and how old their oldest is. Managers hold the right to **Mark done** and **Dismiss** by default; that can be moved on the Access screen.
+
+## Questions people ask
+
+<Faq q="Where did the Mark done button go?">
+A reminder is closed by doing what was promised — the call, the order, or confirmed money. Closing one by hand is now for the cases a call cannot reach (settled over WhatsApp, shop shut, written twice) and is given to managers. It is recorded as their decision.
+</Faq>
+<Faq q="I rang them today and the reminder is still open.">
+Either nobody answered, or the reminder is not due yet — a call on Tuesday does not keep a promise made for the 20th. The row says which.
+</Faq>
+<Faq q="Will the Call Log remind me?">
+Yes. A reminder due today or overdue puts the customer at the top of your Call Log, and a reminder that falls due during the day is added to the top of a list that is otherwise settled for the day.
+</Faq>
+<Faq q="What does 'An earlier reason would call this customer sooner' mean?">
+The customer would come back to your Call Log before the promised date — say, a stock check due on Tuesday for a promise on Friday. Use **Hold other calls until …** if your promise covers it.
+</Faq>
+<Faq q="The badge says 6 but I only see 4.">
+The badge counts due-today and overdue reminders together — the **Needs action** tab. The Due today and Overdue tabs each show half of it.
+</Faq>

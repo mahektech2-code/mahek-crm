@@ -1,0 +1,121 @@
+Sales Bills is a server page over three reads in `payment-service.ts` — `billLedgerPage` (one sorted, paged slice), `billLedgerTotals` (sums over the filter) and `openBillAges` (the open rows for the aging strip) — banded by `bucketise`. Bills are written by the sheet projection (`sheet-projection-service.ts`), by accounts, and by the receivables import; `paid_amount`, `status` and the customer's outstanding are caches in `lib/recompute.ts`.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Route guard | `src/app/crm/bills/layout.tsx` | `requireModule(user.id, "crm.bills")` |
+| Page (server) | `src/app/crm/bills/page.tsx` | Parses `?fy= status= bucket= customer= sort= dir= page= per=`; `financialYearsBetween(earliestBillDate, today)`; the three reads |
+| Screen (client) | `src/app/crm/bills/bills-screen.tsx` | Metrics, aging strip, filters, sortable columns, expandable order lines, Record payment modal |
+| Financial years | `src/lib/financial-year.ts` | `financialYearOf`, `financialYearRange` (end exclusive), `financialYearsBetween`, `financialYearLabel` |
+| Reads | `src/lib/services/payment-service.ts` | `BillFilters`, `listBills`, `billLedgerPage`, `billLedgerTotals`, `openBillAges`, `earliestBillDate`, `agingSummary` |
+| Bands | `src/lib/services/accounts-home-service.ts` | `bucketise(rows, bounds)` |
+| Due date and band | `src/lib/engines/escalation.ts` | `effectiveDueDate`, `agingBucket` |
+| Writers | `src/lib/services/sheet-projection-service.ts` | `projectBillsFromOrders`, `projectBills`, `positionFor`, `receivedPerPaymentTab` |
+| Caches | `src/lib/recompute.ts` | `recomputeBillPaid`, `recomputeAllBillPaid`, `recomputeBillStatuses`, `recomputeOutstanding` |
+| Export | `src/app/accounts/bills/export/route.ts` | The whole filtered year as CSV |
+
+## A request, end to end
+
+<Flow caption="GET /crm/bills?fy=26-27&bucket=…&page=2" chart={`
+sequenceDiagram
+  autonumber
+  participant P as bills/page.tsx
+  participant S as payment-service
+  participant B as bucketise
+  participant DB as Postgres
+  P->>S: earliestBillDate(), today(), getConfig()
+  P->>P: years, financialYear (default financialYearOf(today)), sort, perPage
+  P->>S: openBillAges({fy, customer})
+  S->>DB: open bills only (amount above paid)
+  P->>B: bucketise(ages, bills.agingBuckets)
+  P->>P: bucket picked? → billIds of that band
+  P->>S: billLedgerPage(filters, page) · billLedgerTotals(filters) · billLedgerTotals(year)
+  S->>DB: scoped, filtered, order by key, id — limit / offset
+  S-->>P: rows, totals
+`} />
+
+<Code file="src/lib/financial-year.ts" symbol="financialYearOf" />
+
+<Code file="src/lib/services/payment-service.ts" symbol="billLedgerPage" collapsed />
+
+<Code file="src/lib/services/payment-service.ts" symbol="billLedgerTotals" />
+
+<Code file="src/lib/services/payment-service.ts" symbol="openBillAges" collapsed />
+
+## Where bills come from
+
+<Code file="src/lib/services/sheet-projection-service.ts" symbol="positionFor" />
+
+<Code file="src/lib/services/sheet-projection-service.ts" symbol="projectBillsFromOrders" collapsed />
+
+<Callout kind="rule">
+The projection writes `payment_position` on **insert only**, and never writes `paid_amount`, `status`, a receipt or `outstanding`. A bill a person has spoken for must not be returned to silence by the next scheduled pass. `billUnchanged` also skips rewriting a bill the sheet still agrees with.
+</Callout>
+
+## Money on a bill is a cache
+
+<Code file="src/lib/recompute.ts" symbol="recomputeBillPaid" />
+
+<Code file="src/lib/recompute.ts" symbol="recomputeBillStatuses" />
+
+## The table
+
+<DbTable name="bills" note={{
+  bill_no: "Unique across the table (bills_no_key). Tally number, Tally/order number, or ORD-order number.",
+  order_id: "The order this bill is. Its lines are the bill's lines.",
+  due_date: "Null means bill date + credit period (order term, customer term, bills.defaultCreditDays).",
+  amount: "Paise. Sum of the order's line final amounts.",
+  paid_amount: "Paise. Cache: confirmed receipts only. Never written by the sheet.",
+  status: "Cache from paid_amount against amount.",
+  payment_position: "stated or unstated. Sheet writes it on insert only.",
+  payment_decided_at: "When a person decided — the mark the projection never overrides.",
+  external_ref: "SHEETPAY-order number for sheet bills.",
+}} />
+
+<DbEnum name="bill_status" />
+<DbEnum name="bill_payment_position" />
+
+## Access
+
+- **Module:** <ModuleRef k="crm.bills" />.
+- **Scope:** `billsWhere(ids, filters)` — `scopedToUsers` plus the filters.
+- **Export:** drawn when `managesHere(user, "crm")`; links to `/accounts/bills/export`.
+- **Record a payment:** `recordPayment` → `recordReceipt`, `payment.record`; confirmed only with `payment.confirm`.
+
+<CapabilityGrid names={["payment.record", "payment.confirm", "sheet.import"]} />
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test:integration` | `src/lib/bill-paging.test.ts` | Every bill seen exactly once on every sort; totals describe the year, not the page; bucket filter matches the strip |
+| `npm run test:integration` | `src/lib/projection-idempotence.test.ts` | A re-run projection rewrites nothing the sheet still agrees with |
+| `npm run test` | `src/lib/sheet-net-amount.test.ts` | A sheet line's net amount — the figure a bill sums |
+| `npm run test` | `src/lib/business-date.test.ts` | Date-only values cast with a named zone |
+
+## Changing it safely
+
+<Steps>
+<Step title="Never let an import write money">
+No path from a sheet may write `paid_amount`, `status`, a receipt or outstanding.
+</Step>
+<Step title="Keep the tie-breaker in every sort">
+`order by <key>, bills.id`. The paging test uses seven bills a day so a broken cursor cannot pass on a page boundary.
+</Step>
+<Step title="Cast a stored date with the zone">
+`bill_date::timestamp at time zone 'Asia/Kolkata'`, never `::timestamptz`.
+</Step>
+<Step title="Exclude unstated from every money total">
+If a new figure is "what is owed", filter `payment_position = 'stated'` like `recomputeOutstanding` does.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| `billLedgerTotals.open` and the "Overdue bills" count include `unstated` bills; the screen never marks them | `payment-service.ts` `billLedgerTotals`; `bills-screen.tsx` |
+| `openBillAges` (the aging strip) includes `unstated` bills | `payment-service.ts` `openBillAges` |
+| Export gated on `isManager` (CRM level) rather than `customer.export`; links to the Accounts export route | `bills-screen.tsx` |
+| `getScope(user)` without the app name | `app/crm/bills/page.tsx` |

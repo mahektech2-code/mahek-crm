@@ -1,0 +1,275 @@
+**All Leads** is the lead book: every shop that has not become a customer yet, the rung of the ladder it is standing on, and what it is waiting for before it can climb. You use it to find the lead you need, see what is owed on it today, and move it forward — or, if it is dead, close it with a reason.
+
+The same screens are open to the field sales team on the Sales Dashboard. What you see here in the CRM is **your own book** (leads you own, plus unowned leads nobody has taken). A manager sees the team's.
+
+<Callout kind="live">
+The numbers on this page — how many visits, how many days — are the settings your CRM is using right now, read live. If a manager changes one, this page changes with it.
+</Callout>
+
+## The screen at a glance
+
+<Wireframe url="/crm/leads" nav={["#Lead Management", "All Leads", "Calling desk", "Intake", "Lost"]} active="All Leads" caption="All Leads, for a telecaller working their own book">
+  <WfBar>
+    <WfTitle sub="Prospects each salesman is working. Anything untouched for the configured window is tagged stale.">Leads</WfTitle>
+    <WfSpacer />
+    <WfButton>Export</WfButton>
+    <WfButton>12 archived leads</WfButton>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfBar>
+    <WfPill tone="brand">All</WfPill><WfPill>My leads</WfPill><WfPill>Today's actions</WfPill><WfPill>Overdue</WfPill><WfPill>Nobody is working these</WfPill><WfPill>On hold</WfPill><WfPill>Suspect decisions</WfPill><WfPill>Handovers</WfPill>
+    <Hotspot n={2} />
+  </WfBar>
+  <WfBar>
+    <WfCard title="My leads"><WfText>18</WfText></WfCard>
+    <WfCard title="Today's actions"><WfText>4</WfText></WfCard>
+    <WfCard title="Overdue"><WfText>2</WfText></WfCard>
+    <WfCard title="New suspects"><WfText>9</WfText></WfCard>
+    <WfCard title="In sample"><WfText>3</WfText></WfCard>
+    <WfCard title="Lost (30 days)"><WfText>5</WfText></WfCard>
+    <Hotspot n={3} />
+  </WfBar>
+  <WfCard tone="warn">
+    <WfBar><WfText>3 leads nobody has touched in 14 days</WfText><Hotspot n={4} /></WfBar>
+  </WfCard>
+  <WfCard>
+    <WfBar><WfInput placeholder="Search leads…" /><WfButton>State</WfButton><WfButton>Owner</WfButton><WfButton>Sales type</WfButton><WfButton>Stage</WfButton><WfButton>Next</WfButton><WfText muted>…</WfText><Hotspot n={5} /></WfBar>
+  </WfCard>
+  <WfTable
+    highlight={0}
+    columns={["Lead", "Owner", "Wants", "Stage", "For you", "Next", ""]}
+    rows={[
+      [<span key="a">☐ <b>Customer A</b></span>, "You", "Thinner · 200 L/month", <span key="b"><WfPill tone="brand">Prospect</WfPill> <Hotspot n={6} /></span>, "Your next action is due", <span key="c">Today · call back <Hotspot n={7} /></span>, "⋯"],
+      [<span key="d">☐ <b>Customer B</b></span>, "You", "PU Sealer", <WfPill key="e">Suspect · 2 visits</WfPill>, "Decide: Prospect or not", "Overdue 3 days", "⋯"],
+      [<span key="f">☐ <b>Customer C</b></span>, "Nobody", "—", <WfPill key="g" tone="warn">Sample review</WfPill>, "—", "None promised", <Hotspot key="h" n={8} />],
+    ]}
+  />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Export and archive.</b> Export downloads the whole filtered list, not just this page. The archived count opens the leads somebody filed away.</span>,
+  <span key="2"><b>Views.</b> One list, several ways of reading it. The heading changes with the view, so you always know which population you are looking at.</span>,
+  <span key="3"><b>Tiles.</b> How many leads sit in each group, counted over your current filters. Press a tile to open that group.</span>,
+  <span key="4"><b>Stale strip.</b> Leads nobody has done anything with for <Setting k="mbos.leads.staleDays" /> days, named.</span>,
+  <span key="5"><b>Filters and search.</b> Place, owner, source, potential, priority, sales type, stage, when something is owed, age and health. Every filter is in the address bar, so you can send somebody the exact list you are looking at.</span>,
+  <span key="6"><b>Stage.</b> The rung the lead is on. Which rungs exist depends on the lead's sales type — see below.</span>,
+  <span key="7"><b>Next.</b> What is owed on the lead and when. Red means the day has gone.</span>,
+  <span key="8"><b>Row menu (⋯).</b> Open the record, and — depending on what you are allowed — reassign, set priority, chase the owner, archive or delete.</span>,
+]} />
+
+### Other tabs of All Leads
+
+| Tab | What it shows |
+|---|---|
+| **List** | The screen above. |
+| **Board** | The same leads drawn as columns, one per rung, so you can see where the book is bunching. |
+| **Dashboard** | Seven queues across the funnel — what is waiting on somebody — each opening the list behind it. |
+
+Under the table, **Other desks** links to the lead screens that have left the sidebar (Qualification, Samples & trials, Commercial, Next actions…), but only the ones you have been given.
+
+## Reading the list
+
+### The views
+
+| View | What it lists |
+|---|---|
+| **All** | Every active lead in your book. |
+| **My leads** | Leads where you hold a seat: you own it, you coordinate it as lead manager, or its paperwork is yours. |
+| **Today's actions** | A next action falling due today, or a parked lead whose day has come. |
+| **Overdue** | Past its day, with nobody having answered it. |
+| **Nobody is working these** | Active leads with no next action at all, then leads whose next action has gone past. |
+| **On hold** | Parked leads, by the day each comes back — those with no day named first. |
+| **Suspect decisions** | Suspects visited at least <Setting k="mbos.leads.visitsBeforeDecision" /> times and still undecided. |
+| **Handovers** | Converted accounts with nobody named yet to run the relationship. |
+| **Distributors & third-party** | Who sells our goods on, and the shops the goods go to. |
+
+Tiles add three more: **New suspects**, **Prospects**, **In sample**, **Negotiations**, **Expected orders** (a day *and* a size somebody wrote down) and **Lost (30 days)**.
+
+### The order of the rows
+
+The list is ordered by **what is owed soonest**: the earliest of the next action, a follow-up date or a parked lead's return date. Leads with nothing owed come after, longest-quiet first. The manager's priority badge does **not** change the order — use the Priority filter to see the high ones.
+
+### The Next column
+
+| It says | It means |
+|---|---|
+| A date and an action | Somebody owes this lead something on that day. |
+| **Overdue N days** | The day has gone and nobody has answered it. |
+| **Nothing owed** | No next action. On an active lead this is the problem the "Nobody is working these" view exists to show. |
+
+## Lead and customer: which is which
+
+A **lead** is an account that has not yet become a customer. A **customer** is on the book.
+
+<Callout kind="rule" title="A lead becomes a customer on its second order">
+One order from a shop that has just finished a trial is still a lead. When a **second** approved order lands, the account becomes a customer — automatically, whether the order came from a call or from a salesman's handset. Moving a lead up to the **2nd order** rung does the same.
+</Callout>
+
+When it converts you will see *"… is on the book — they are a customer from today."* The person who owned the lead becomes its sales account manager.
+
+## The three ladders
+
+Every lead has a **sales type**, asked first when it is raised. The sales type decides which rungs it climbs.
+
+| Sales type | Who gets the bill | What the ladder is working towards |
+|---|---|---|
+| **Direct customer** | We bill them | Their first order, then the second that makes them a customer |
+| **Third-party customer** | A distributor bills them; the goods come to them | The same, but somebody else invoices |
+| **Distributor** *(no longer offered for new leads)* | They buy from us and sell on | Appointing them as a distributor |
+| **Not set** | — | Leads raised before the funnel existed climb the old six rungs |
+
+### Direct customer
+
+<Flow caption="Direct customer — Mahek to the shop" chart={`
+flowchart TD
+  A["Suspect"] --> B["Prospect"]
+  B --> C["Qualification"]
+  C --> D["Sample / trial"]
+  D --> E["Sample received"]
+  E --> F["Sample review"]
+  F --> G["Negotiation"]
+  G --> H["1st order"]
+  H --> I["Delivery"]
+  I --> J["Payment"]
+  J --> K["2nd order<br/>(becomes a customer)"]
+  K --> L["Customer"]
+`} />
+
+### Third-party customer
+
+The same climb without **Sample received** — the sample goes through the distributor. Before a sample can go out you must say **which distributor bills this shop**.
+
+<Flow caption="Third-party customer — Mahek to a distributor to the shop" chart={`
+flowchart TD
+  A["Suspect"] --> B["Prospect"]
+  B --> C["Qualification"]
+  C --> D["Sample / trial"]
+  D --> F["Sample review"]
+  F --> G["Negotiation"]
+  G --> H["1st order"]
+  H --> I["Delivery"]
+  I --> J["Payment"]
+  J --> K["2nd order<br/>(becomes a customer)"]
+  K --> L["Customer"]
+`} />
+
+### Distributor (retired for new leads)
+
+Leads already on this ladder keep their place and can still move. New leads cannot be started on it, and the list shows a note saying the distributor ladder is closed.
+
+<Flow caption="Distributor — appointing one" chart={`
+flowchart TD
+  A["Suspect"] --> B["Prospect"]
+  B --> C["Qualification"]
+  C --> D["Management review"]
+  D --> E["Commercial discussion"]
+  E --> F["Approval<br/>(billed from here)"]
+  F --> G["Agreement"]
+  G --> H["Initial stock"]
+  H --> I["Active distributor"]
+`} />
+
+### No sales type (older leads)
+
+<Flow caption="The original six rungs" chart={`
+flowchart LR
+  A["New"] --> B["Contacted"]
+  B --> C["Qualified"]
+  C --> D["Negotiation"]
+  D --> E["Won"]
+`} />
+
+**Lost** can be reached from any rung on any ladder. **On hold** is a pause, not a rung — see below.
+
+## Moving a lead forward
+
+<Steps>
+<Step title="Open the lead">
+Press its name. The **Overview** tab starts with **What happens next** — the next rung, and either a **Move to …** button or the list of what it is still waiting for.
+</Step>
+<Step title="Read what is missing">
+If the gate is shut you see each missing condition as an instruction, for example *"How many litres a month do they use?"* or *"Your sales manager must check this customer first"*. Many come with a link to the tab where you fix it.
+</Step>
+<Step title="Do the work, then move it">
+When nothing is missing, press **Move to …**. The move is written to the stage history with your name.
+</Step>
+<Step title="Always leave a next action">
+On a lead with a sales type, every move up needs **what happens next, on which day, and who will do it**. A lead with nobody owing it anything is the thing this rule exists to stop.
+</Step>
+</Steps>
+
+<Callout kind="note">
+You cannot jump rungs, and you cannot move a lead **down** its ladder yourself — that is a manager's, and needs a reason.
+</Callout>
+
+### What each rung asks for
+
+| To enter | You need |
+|---|---|
+| **Prospect** | What kind of business, litres a month, the brand they use now, which of our products they need, who to ask for, a next action, and a **reason** why it is worth following (one of a fixed list) |
+| **Qualification** | Your sales manager's verification call has been made and passed |
+| **Sample / trial** | The eight qualification answers (GST, what they use it on, the trial plan, who decides/orders/pays, price and credit, delivery, still willing to test, a dated next step), your sales manager's review marked **verified**, the figures still current, and — for a third-party shop — a distributor named |
+| **Sample received** | The sample has been sent |
+| **Sample review** | They have actually got it |
+| **Negotiation** | A sample was sent, their feedback is written down, and the trial was approved |
+| **1st order** | A date they expect to order, and an order placed |
+| **Delivery** | The goods have reached them |
+| **Payment** | Accounts have seen the money in the bank |
+| **2nd order** / **Customer** | A second order |
+
+The [Intake & qualification](/docs/crm/lead-intake-and-qualification) and [Samples](/docs/crm/samples) pages explain those rungs in detail.
+
+## When a manager moves a lead anyway
+
+A manager can pass a shut gate. They press **Move it anyway**, see the list of conditions not met, and must choose **why** — for example *"It was done. Written down later"* or *"Customer will not wait"*. The override is recorded with exactly what was missing, and appears on the **Oversight** screen.
+
+## Closing a lead as lost
+
+Choose **Lost** and pick a reason: price, quality, stayed with another brand, they do not need it, credit terms, delivery or service, not interested, wrong lead, check call failed, clash with a distributor or area, or other. A lost lead's next action is cleared and its follow-up tasks are cancelled.
+
+## Putting a lead on hold
+
+On hold is for a lead that is real but not moving — a shutdown, a budget quarter, the decision maker away. You must give:
+
+- **why** it stopped (one of six reasons; *Other* needs words),
+- **the day it comes back**, and
+- **what happens when it does**.
+
+It then waits in the **On hold** view. Resuming it moves it back to a named rung through the same gate.
+
+## Doing things to many leads at once
+
+Tick leads (or **select everything** the filter found, up to 200) and the bulk bar offers:
+
+| Action | What happens |
+|---|---|
+| **Change stage** | Each lead goes through its own gate. Leads missing a condition do not move and come back named, with what they are waiting on. Moving to **Lost** asks for one reason for all of them. |
+| **Change the owner** | Managers who can assign. Each new owner gets one message naming how many. |
+| **Chase the owners** | One nudge per owner. Unowned leads are named back to you. |
+| **Archive them** | Needs a sentence; every owner losing a lead gets it. |
+| **Delete them — move to trash** | Managers only. They leave every screen; an administrator can restore them. |
+
+## Leads and your Call Log
+
+A lead that has a sales type is being worked on the funnel, so the **Call Log does not ring it for a first order or a reorder** — that would be two people chasing one shop. It appears in the Call Log's held-back strip as *"On the sales team's lead funnel (Direct customer) - they are asking for the order, so the Call Log does not"*. Reminders, money owed and order status still reach the Call Log.
+
+## Questions people ask
+
+<Faq q="A lead I expected is not in my list.">
+In the CRM you see leads you own and unowned leads nobody has claimed. A lead owned by somebody else, or held by a sales manager, is not in your book. Archived and deleted leads are not on the working list either — try the archived link at the top.
+</Faq>
+<Faq q="The Move button is grey.">
+Either there is no rung above this one, or the gate is shut — the conditions it is waiting for are listed above the button. A grey button with a list is "not yet", not "not allowed".
+</Faq>
+<Faq q="It says 'Prospect is not a rung on this lead's ladder'.">
+The lead has no sales type, or its sales type has a different ladder. Set the sales type on the record first.
+</Faq>
+<Faq q="The customer ordered once. Why is it still a lead?">
+A first order is the tail of the trial. The account becomes a customer on its second approved order.
+</Faq>
+<Faq q="Why can I not choose Distributor when raising a lead?">
+That ladder has been retired for new leads. Existing distributor leads still work.
+</Faq>
+<Faq q="Bulk 'Change stage' moved only some of them.">
+Each lead goes through its own gate. The message names the ones that did not move and why.
+</Faq>

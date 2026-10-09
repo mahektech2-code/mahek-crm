@@ -1,0 +1,195 @@
+The attachment subsystem is one service (`attachment-service.ts`) over one storage interface (`FileStorage` in `src/lib/storage.ts`) with two backends: **Postgres** (`attachment_bytes`, the default) and an **S3-compatible bucket** (Cloudflare R2 in production, signed by hand in `s3-signing.ts`, no SDK). The backend is chosen once, at module load, from environment variables. Bytes are only ever read back through `/api/attachments/[id]`, which asks `canRead` first. The handset has its own upload door (`/api/mbos/media`) that lands in the same table.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Backend choice | `src/lib/storage.ts` | `FileStorage`, `postgresStorage`, `s3Storage`, `s3Config`, `fileStorage` |
+| Signing | `src/lib/s3-signing.ts` | `signRequest` (SigV4), `parseEndpoint`, `encodeS3Path` — tested against the published vectors |
+| Type sniffing | `src/lib/file-types.ts` | `sniffContentType`, `ACCEPTED_IMAGE_TYPES`, `ACCEPTED_UPLOAD_TYPES`, `ACCEPTED_AUDIO_TYPES` |
+| Service | `src/lib/services/attachment-service.ts` | `createAttachment`, `bindAttachments`, `listAttachments`, `removeAttachment`, `canRead`, `sweepOrphans`, `sweepAttendanceSelfies` |
+| Handset uploads | `src/app/api/mbos/media/route.ts` → `storeMbosMedia` in `src/lib/actions/mbos.ts` | Client-chosen id, `MBOS_PARENTS`, `bindMbosMedia` |
+| Read endpoint | `src/app/api/attachments/[id]/route.ts` | 401 / 404 / 410 / 502, `Cache-Control: private` |
+| Jobs | `src/lib/jobs.ts` (nightly `sweep-orphan-attachments`), `src/lib/mbos-jobs.ts` (hourly selfie sweep) | — |
+| Smoke test | `scripts/check-storage.mts` (`npm run check:storage`) | Upload, read back, compare, delete |
+| UI | `src/components/ui/attachment-strip.tsx`, `src/components/crm/image-picker.tsx` | The picker reads `ACCEPTED_IMAGE_TYPES`, never a literal |
+
+## The storage interface
+
+<Code file="src/lib/storage.ts" symbol="FileStorage" />
+
+<Code file="src/lib/storage.ts" symbol="fileStorage" />
+
+### Choosing the backend
+
+<Code file="src/lib/storage.ts" symbol="s3Config" collapsed />
+
+| Variables set | Backend |
+|---|---|
+| None of the below | Postgres |
+| `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ENDPOINT` (already there for backups) **and** `R2_ATTACHMENTS_BUCKET` | R2, region `auto` |
+| `R2_*` with the bucket in the endpoint's path and no `R2_ATTACHMENTS_BUCKET` | R2, bucket from the path |
+| `S3_BUCKET` or `S3_ENDPOINT` (plus `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, optional `S3_REGION`) | That store, overriding every `R2_*` name; region defaults to `us-east-1` |
+| Bucket resolves to the same name as `R2_BUCKET` | **Refused** with a console error; Postgres is used |
+
+<Callout kind="warn" title="R2's two particulars">
+The region is the literal word `auto`, and `R2_ENDPOINT` carries the account id and **not** the bucket (backup.sh reads the same variable). Both mistakes produce a bare 403 or 404. Run `npm run check:storage` against the target environment before relying on it — it prints the backend and which of upload, read and delete failed.
+</Callout>
+
+### Reading falls back; removing removes from both
+
+`s3Storage.read` asks the bucket and, on anything but success, reads `attachment_bytes` — so everything uploaded before the switch keeps opening. `s3Storage.remove` deletes from the bucket (a 404 counts as success) and then from `attachment_bytes`. Nothing migrates bytes between backends; `attachments.stored_ref` is the key in whichever store it was written to (`attachments/<id>`).
+
+`attachment_bytes` is created by `drizzle/0011_attachment_bytes.sql` and is **not declared in `schema.ts`**: three columns, `ref` (primary key), `bytes` (`bytea`) and `created_at`. It is a separate table so that listing attachments never drags bytes through the pool.
+
+## The attachments table
+
+<DbTable name="attachments" note={{
+  parent_type: "What kind of record owns it. Null while unbound.",
+  parent_id: "That record's id. Null while unbound — and after removal (see Known gaps).",
+  stored_ref: "Key in the store it was written to. Empty on a failed upload.",
+  content_type: "The SNIFFED type, never the browser's claim.",
+  thumbnail_ref: "Images are their own thumbnail; null for PDFs.",
+  content_hash: "SHA-256 of the bytes, taken at upload.",
+  status: "uploading · available · failed · removed.",
+  removed_at: "When it was removed or swept.",
+}} />
+
+<DbEnum name="attachment_parent" />
+
+<DbEnum name="attachment_status" />
+
+## Uploading from a browser form
+
+<Flow caption="Choose a file, save the form" chart={`
+sequenceDiagram
+  autonumber
+  participant UI as Picker (client)
+  participant A as upload action
+  participant S as attachment-service
+  participant F as fileStorage
+  participant DB as Postgres
+  participant Save as the form's save action
+  UI->>A: file chosen - bytes
+  A->>S: createAttachment(filename, bytes)
+  S->>S: size check against attachments.maxSizeMb
+  S->>S: sniffContentType(bytes) in accepted list?
+  S->>F: upload(key attachments/att_x)
+  F-->>S: ref, size
+  S->>DB: insert attachments (status available, parent null)
+  S-->>UI: id
+  UI->>Save: save the record with attachmentIds
+  Save->>DB: write the record (its own transaction)
+  Save->>S: bindAttachments(ids, parentType, parentId)
+  S->>DB: count bound, take up to the limit
+  S->>DB: set parent where parent_id is null
+`} />
+
+<Code file="src/lib/services/attachment-service.ts" symbol="createAttachment" collapsed />
+
+<Code file="src/lib/file-types.ts" symbol="sniffContentType" collapsed />
+
+A failed store write records a `failed` row so the screen can name the file that did not make it; the action returns an error for that file and the form still saves.
+
+<Code file="src/lib/services/attachment-service.ts" symbol="bindAttachments" />
+
+Binding over the limit leaves the extras unbound for the sweep rather than failing a save that already succeeded. `limitFor` reads <Setting k="attachments.maxPerComplaint" />, <Setting k="attachments.maxPerFollowUp" /> or <Setting k="attachments.maxPerFeedback" />, and returns 1 for documents, courses, price-list files and payout invoices.
+
+## Uploading from the handset
+
+The handset queues media separately and uploads **after** the parent record has synced. It chooses the attachment id itself (`mbos_<kind>_<uuid>`), which makes a re-sent upload idempotent; an id already held by another user is refused with 409. It names the parent with its own word, mapped here:
+
+<Code file="src/lib/actions/mbos.ts" symbol="MBOS_PARENTS" collapsed />
+
+Because the camera usually closes before the record exists, the parent is often `pending`. The handler that writes the record calls `bindMbosMedia`, which binds only the uploader's own file and cannot fail the write:
+
+<Code file="src/lib/actions/mbos.ts" symbol="bindMbosMedia" />
+
+<Callout kind="warn" title="A new MBOS parent must be added to MBOS_PARENTS and to canRead">
+An unmapped `parentType` stores the file with `parent_id` null, and `sweepOrphans` deletes it the next night. This has happened twice — for every MBOS photograph, and again for the odometer photographs. The enum value, the map entry and a `canRead` branch are one change.
+</Callout>
+
+## Reading a file
+
+<Flow caption="GET /api/attachments/[id]" chart={`
+sequenceDiagram
+  autonumber
+  participant B as Browser or handset
+  participant R as attachments/[id]/route.ts
+  participant C as canRead
+  participant F as fileStorage
+  B->>R: GET with session
+  R->>R: no user - 401
+  R->>C: canRead(id)
+  C->>C: row missing or not available - false
+  C->>C: unbound - uploader only
+  C->>C: by parent type: ERP, HRMS, payout, price list,<br/>feedback, document, course, selfie, travel leg,<br/>expense, else the customer behind it
+  C-->>R: false - 404 (same as not found)
+  R->>R: status removed - 410
+  R->>F: read(stored_ref)
+  F-->>R: bytes (bucket, then Postgres)
+  R-->>B: 200 inline, private, no-store
+`} />
+
+<Code file="src/lib/services/attachment-service.ts" symbol="canRead" collapsed />
+
+<Code file="src/app/api/attachments/[id]/route.ts" symbol="GET" collapsed />
+
+Rules worth knowing before adding a parent type:
+
+- **No customer behind it** (feedback, documents, courses, selfies, travel legs, expenses, price lists, ERP, HRMS, payouts) needs an explicit branch. The fall-through, `customerBehind`, looks the id up as a call — which is how every selfie once answered 404.
+- **Sales evidence asks the module first, then `managerScope`.** `managerScope` alone is vacuous ("national") for anybody without a region row; asking `canOpenModule` for `sales.attendance` (selfies), `sales.travel`/`sales.expenses` (legs), or `sales.expenses`/`sales.exceptions` (expenses) first stops one salesman fetching another's photograph by id.
+- **Not-allowed and not-found are identical**, so ids cannot enumerate customers.
+
+## Removal and sweeps
+
+<Code file="src/lib/services/attachment-service.ts" symbol="removeAttachment" />
+
+<Code file="src/lib/services/attachment-service.ts" symbol="sweepOrphans" />
+
+<Code file="src/lib/services/attachment-service.ts" symbol="sweepAttendanceSelfies" />
+
+| Sweep | Runs | Selects | Does |
+|---|---|---|---|
+| `sweepOrphans` | Nightly (`sweep-orphan-attachments` in `runNightly`) | `parent_id is null` and uploaded before <Setting k="attachments.orphanCleanupHours" /> hours ago — **any status** | Deletes bytes from both stores, marks `removed` |
+| `sweepAttendanceSelfies` | Hourly (from `mbosHourly` in `src/lib/mbos-jobs.ts`) | `parent_type = 'mbos_attendance'`, `available`, uploaded before <Setting k="mbos.attendance.selfieRetentionHours" /> hours ago | Deletes bytes, marks `removed`, **keeps** the parent and every reference on the attendance day |
+
+Both delete bytes before updating the row, so a crash leaves a live row over missing bytes (a 502 somebody will notice) rather than a `removed` row over bytes nothing will ever tidy.
+
+## Tests that pin it
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/s3-signing.test.ts` | SigV4 against AWS's published vectors |
+| `npm run test` | `src/lib/storage-s3.test.ts` | The S3 backend's requests, region and bucket rules |
+| `npm run test:integration` | `src/lib/storage-fallback.test.ts` | Reading a pre-switch file from Postgres; refusing the backup bucket |
+| `npm run test:integration` | `src/lib/activity-location.test.ts` | The selfie sweep: window from arrival, row and references kept |
+| `npm run test:integration` | `src/lib/expense-attachments.test.ts` | Travel and expense evidence binds and reads under the right rules |
+
+## Changing it safely
+
+<Steps>
+<Step title="A new parent type is three edits">
+The `attachment_parent` enum value (in its own migration — a value cannot be used in the transaction that adds it), the `ParentType` union or `MBOS_PARENTS` entry, and a `canRead` branch.
+</Step>
+<Step title="Never serve a stored URL">
+Objects are private; bytes go out through `/api/attachments/[id]` only. Do not add an ACL header to uploads.
+</Step>
+<Step title="Prove the store before switching">
+`npm run check:storage` with the target environment's variables.
+</Step>
+<Step title="Never point attachments at R2_BUCKET">
+The backup bucket's lifecycle rules delete old objects.
+</Step>
+</Steps>
+
+## Known gaps
+
+| Gap | Where |
+|---|---|
+| `removeAttachment` nulls `parent_id`, and `sweepOrphans` selects `parent_id is null` regardless of status — so a removed file's bytes are deleted after the orphan window, contrary to "the bytes go only when retention says so" | `attachment-service.ts` `removeAttachment`, `sweepOrphans` |
+| `attachments.retentionDays` is never read | `src/lib/config/registry.ts` |
+| `canRead` returns false for any status other than `available`, so the route's 410 "This file has been deleted" branch is unreachable — a swept selfie answers 404 | `attachment-service.ts` `canRead`; `src/app/api/attachments/[id]/route.ts` |
+| The comment above `fileStorage` still describes a Vercel Blob backend and says reads of old files "fail loudly"; the code has no Blob backend and falls back to Postgres | `src/lib/storage.ts` |
+| AGENTS.md says `BLOB_READ_WRITE_TOKEN` switches the backend; nothing reads it | `AGENTS.md`; `src/lib/storage.ts` |
+| `attachment_bytes` exists only in SQL, not in `schema.ts` | `drizzle/0011_attachment_bytes.sql` |

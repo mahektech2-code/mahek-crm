@@ -1,0 +1,198 @@
+Configuration in MahekOne is three stores with three different rules: **settings** (`app_settings`, declared in one registry, cached, audited with values), **credentials** (`app_secrets`, read only by the request about to spend them, audited without values), and the **process environment** (read at start-up or per request from `process.env`). This page covers the code behind each, how to add a setting without breaking the server build, and every environment variable the code actually reads.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Registry | `src/lib/config/registry.ts` | `SETTINGS` (every key, type, default, bounds, description), `validateSetting`, `checkConsistency`, the hand-written `Config` type |
+| Store | `src/lib/config/store.ts` | `getConfig` (30-second cache), `updateSetting`, `updateSettings` (one transaction per page), `seedConfig`, `configWarnings` |
+| Storage helper | `src/lib/config/storage.ts` | `storedSettingValue` — JSON `null` rather than SQL NULL in a `jsonb NOT NULL` column |
+| Pages | `src/lib/config/settings-pages.ts` | `SETTINGS_PAGES` — one page per app, with `owners` |
+| Placement | `src/lib/config/settings-placement.ts` | `placeSetting` — which page, tab and group each key sits on; `RETIRED_SETTINGS` |
+| Presentation | `src/lib/config/presentation.ts` | Units, controls, tabs and `adminOnly` per key |
+| Write action | `src/lib/actions/crm.ts` | `requireConfigWriteFor` — `config.write` plus ownership of each key's page |
+| Console | `src/app/admin/settings/[page]/[[...tab]]/page.tsx` | The settings screens |
+| Credentials | `src/lib/secrets.ts`, `src/lib/actions/secrets.ts` | `SECRET_NAMES`, `readSecret`, `readSecrets`, `secretStatuses`; `setSecretAction`, `clearSecretAction` |
+| Credential screen | `src/app/admin/integrations/page.tsx`, `secret-credential-row.tsx` | Admin Console → Integrations |
+| Env guard | `src/lib/env-names.test.ts` | `.env.production.example` names the variables the code reads |
+
+## Settings
+
+### A setting is a registry entry
+
+<Code file="src/lib/config/registry.ts" symbol="SettingDefinition" />
+
+`SETTINGS` is one long array of these. `getConfig()` layers whatever is stored in `app_settings` over `defaultConfig()`, so a key never written simply reads its default — adding a setting needs no migration.
+
+<Code file="src/lib/config/store.ts" symbol="getConfig" />
+
+<Callout kind="warn" title="The cache is per process">
+`invalidateConfig()` clears the cache only in the process that wrote. The production app is one container, so a save is visible on the next read; a job running in another process (a `npm run jobs` on a laptop) sees it within 30 seconds of its own cache.
+</Callout>
+
+<DbTable name="app_settings" note={{
+  key: "The registry key, e.g. queue.tierWeights. A row whose key is not in the registry is ignored on read.",
+  value: "jsonb, NOT NULL. A legitimately null setting is stored as JSON null via storedSettingValue.",
+  category: "Copied from the registry at write time; informational.",
+  updated_by_id: "Who last changed it. Null means it still holds the seeded default — migrations that move a default match on this.",
+}} />
+
+### Validation and consistency
+
+Every write validates against the definition first — type, bounds, options, nullability:
+
+<Code file="src/lib/config/registry.ts" symbol="validateSetting" collapsed />
+
+Then the whole configuration is checked for contradictions between keys (a stage threshold against the window that feeds it, a strong-health threshold at or below the watch one, a recording limit above Sarvam's ceiling with the fallback off, and so on). `updateSettings` refuses a page save **only if it introduces** a problem that was not already present; `updateSetting` (single key) saves and returns the problems as warnings.
+
+<Code file="src/lib/config/registry.ts" symbol="checkConsistency" collapsed />
+
+<Code file="src/lib/config/store.ts" symbol="updateSetting" collapsed />
+
+### Who may write which key
+
+`requireConfigWriteFor(keys)` in `src/lib/actions/crm.ts` asks for `config.write` and then, for anybody who is not the platform administrator, that **every** key's page (via `placeSetting`) is owned by an app they hold at manager or admin level. Platform-page keys and keys marked `adminOnly` in `PRESENTATION` are the platform administrator's alone, and the platform administrator must have confirmed their password within <Setting k="auth.console.confirmMinutes" />.
+
+<CapabilityGrid names={["config.write"]} />
+
+### Settings on the handset
+
+`mbos.*` keys reach the handset on every pull as part of the configuration channel, so a change made at a desk lands on phones on their next sync. The handset reads them from its local cache; a key that is not sent falls back silently to the handset's default, which is why `mbos-wire.test.ts` pins the spelling of the keys both sides share.
+
+## Adding a setting
+
+<Steps>
+<Step title="Add the registry entry">
+In `SETTINGS` in `src/lib/config/registry.ts`: key, type, category, label, a description a manager can act on, a default, and `min`/`max` or `options`. Never type the number into an engine.
+</Step>
+<Step title="Add the Config type entry — or the server build breaks">
+`Config` is a **hand-written** type further down the same file. A key in `SETTINGS` with no entry in `Config` type-checks in most places and fails `next build` where `getConfig()["your.key"]` is read.
+</Step>
+<Step title="Place it on a page">
+Make sure a rule in `settings-placement.ts` (or a tab in `PRESENTATION`) places it. `settings-placement.test.ts` fails the build on a setting that sits on no page — a setting nobody can find cannot be changed.
+</Step>
+<Step title="Add a consistency rule if it pairs with another key">
+In `checkConsistency`, with a sentence that names both keys.
+</Step>
+<Step title="Read it through the engine's config type">
+Pass it into the pure engine as an argument; read `getConfig()` in the service.
+</Step>
+<Step title="Changing a shipped default">
+Write a migration that updates the stored value **only where `updated_by_id is null`**, so a value somebody chose is left alone (see `0042_day_boundary_midnight`, `0120_check_in_is_a_gate`).
+</Step>
+</Steps>
+
+<Callout kind="warn">
+A setting whose default is `null` breaks every integration test unless it is marked `nullable` and written through `storedSettingValue` — `app_settings.value` is `jsonb NOT NULL`.
+</Callout>
+
+## Credentials
+
+### The list is closed
+
+Only names in `SECRET_NAMES` can be stored, and each maps to the environment variable it falls back to:
+
+<Code file="src/lib/secrets.ts" symbol="SECRET_NAMES" collapsed />
+
+### Reading one
+
+`readSecret` is the only function that selects a value. The console row wins; the environment is the fallback. It is deliberately **not cached**, so a rotated key stops working at once.
+
+<Code file="src/lib/secrets.ts" symbol="readSecret" />
+
+Screens call `secretStatuses()`, which selects `last4` and the source (`console`, `environment` or `unset`) and never the value:
+
+<Code file="src/lib/secrets.ts" symbol="secretStatuses" collapsed />
+
+<DbTable name="app_secrets" note={{
+  name: "A SECRET_NAMES key, e.g. wati.apiToken.",
+  value: "The key as typed. Not encrypted — there is nowhere to hold an encryption key the app can read and a dump cannot.",
+  last4: "The tail, for telling keys apart on a screen.",
+}} />
+
+Writes go through `setSecretAction` / `clearSecretAction` (platform administrator only), which audit `secret.set` / `secret.clear` with the name and never the value.
+
+<Callout kind="note" title="The one exception: the Ola Maps key">
+A map tile key must reach whoever draws tiles, so the Ola key is handed to the browser as a prop by the page that draws the map, and to a bound handset in its sync payload. The mitigations are a domain restriction in Ola's console for the web key and a **separate** key with a spend cap for the handset. See [Integrations](/docs/platform/integrations/developer).
+</Callout>
+
+## Environment variables
+
+Found with `grep -rhoE 'process\.env\.[A-Z0-9_]+' src scripts` plus the names `SECRET_NAMES` reads indirectly. Production values live in `/opt/mahekone/.env` on the droplet (mode 600); `deploy/docker-compose.yml` passes it to the app container with `env_file`.
+
+### The app
+
+| Variable | Required | Read in | Purpose |
+|---|---|---|---|
+| `DATABASE_URL` | **Yes** | `src/db/index.ts` | Throws at import without it. In production compose builds it from `POSTGRES_PASSWORD`. |
+| `DATABASE_POOL_MAX`, `DATABASE_PREPARE` | No | `src/db/index.ts` | Pool size (default 10) and prepared statements |
+| `APP_URL` | No | `src/lib/password-reset.ts` | Absolute links in reset mail; otherwise built from the request |
+| `NODE_ENV` | Set by the runtime | many | `production` refuses a MiniMoth test key; `test` enables `setTestUser` |
+| `CRON_SECRET` | For schedules | `src/app/api/sheets/sync/route.ts`, `src/app/api/hrms/sync/route.ts` | Bearer token; without it both endpoints answer 503 |
+| `SYNC_OWNER_EMAIL` | For schedules | `deploy/sheet-sync.sh`, `src/lib/command-centre/freshness.ts` | Who the sheet projection publishes as |
+| `MBOS_JWT_SECRET` (legacy `JWT_SECRET`) | For the handset | `src/lib/mbos/token.ts`; `JWT_SECRET` also in `src/lib/hire/services/vault.ts` | Signs handset tokens |
+| `GOOGLE_SA_EMAIL`, `GOOGLE_SA_PRIVATE_KEY` | For sheets | `src/lib/sheets.ts` | The read-only service account; the key keeps literal `\n` |
+| `ORDERS_SHEET_ID`, `ORDERS_SHEET_TAB`, `PAYMENTS_SHEET_TAB`, `PARTY_SHEET_ID`, `PARTY_SHEET_TAB`, `TAKEN_ORDER_SHEET_ID`, `TAKEN_ORDER_SHEET_TAB`, `HR_SHEET_ID`, `FIELD_ACTIVITY_SHEET_ID` | No | the sync services | Override the hardcoded workbook ids and tab names (a staging copy) |
+| `RESEND_API_KEY`, `MAIL_FROM` | No | `src/lib/mailer.ts` | Without both, mail is written to the server log |
+| `WATI_API_BASE`, `WATI_TENANT_ID` | No | `src/lib/wati.ts` | Override Wati's host and account |
+| `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ENDPOINT`, `R2_BUCKET` | For backups | `deploy/backup.sh`, `src/lib/storage.ts` | The backup bucket's credentials, reused by attachments |
+| `R2_ATTACHMENTS_BUCKET` | No | `src/lib/storage.ts` | Turns on the bucket backend for attachments (must not equal `R2_BUCKET`) |
+| `S3_BUCKET`, `S3_ENDPOINT`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | No | `src/lib/storage.ts` | A non-R2 S3-compatible store; overrides the R2 names |
+
+### Credential fallbacks (via `SECRET_NAMES`)
+
+| Variable | Console name |
+|---|---|
+| `SARVAM_API_KEY`, `OPENAI_API_KEY` | `sarvam.apiKey`, `openai.apiKey` |
+| `WATI_API_TOKEN` | `wati.apiToken` |
+| `MINIMOTH_API_KEY` | `minimoth.apiKey` |
+| `MSG91_AUTH_KEY` | `msg91.authKey` (declared, unused) |
+| `OLAMAPS_API_KEY`, `OLAMAPS_API_KEY_2` … `_5` | `olamaps.apiKey` … `olamaps.apiKey5` |
+| `ENQUIRY_INGEST_SECRET` | `enquiries.ingestSecret` |
+
+### The droplet only
+
+| Variable | Read by | Purpose |
+|---|---|---|
+| `DOMAIN`, `ACME_EMAIL` | `Caddyfile`, `deploy/sheet-sync.sh` | Site name and Let's Encrypt contact |
+| `IMAGE` | `deploy/docker-compose.yml` | The app image tag in production; the deploy rewrites it |
+| `POSTGRES_PASSWORD` | `deploy/docker-compose.yml` | The database password (the deploy workflow holds the same value) |
+| `BACKUP_GPG_RECIPIENT_FILE`, `BACKUP_HEALTHCHECK_URL` | `deploy/backup.sh` | Encryption key file and alert ping |
+
+### Scripts
+
+| Variable | Read by |
+|---|---|
+| `BASE_URL` | `scripts/check-links.mjs` |
+| `HOME` | several scripts, for paths |
+
+## `.env.local` and `.env.prod.local`
+
+- **`.env.local`** is the laptop's own environment: `DATABASE_URL` to your local Postgres, and whatever optional keys you are testing. `npm run jobs`, `db:seed` and the other `tsx` scripts pass `--env-file=.env.local`.
+- **`.env.prod.local`** holds a `DATABASE_URL` pointing at production **through an SSH tunnel** (`ssh -N -L 5433:127.0.0.1:5432 deploy@one.mahekindia.com`). `npm run jobs:prod` loads only that file.
+- **`npm run jobs:prod:sheets`** loads `.env.local` **first** (for the Google credentials) and `.env.prod.local` **second**, so production's `DATABASE_URL` wins.
+
+<Callout kind="warn" title="The order of the two files is the whole safety">
+With the files reversed, `.env.local`'s `DATABASE_URL` wins, and a "production" job writes to your local database and reports success. A prod job also runs **your checkout's** code, not what is deployed — make sure your tree is current with `main` first.
+</Callout>
+
+## Tests that pin it
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/config/settings-placement.test.ts` | Every setting sits on a page |
+| `npm run test` | `src/lib/env-names.test.ts` | The example env file names what the code reads |
+| `npm run test` | `src/lib/settings-storage.test.ts` | JSON null is written, not SQL NULL |
+| `npm run test` | `src/lib/credentials.test.ts` | Credential statuses never expose a value |
+| `npm run test` | `src/lib/voice-readiness.test.ts` | The provider/fallback matrix for dictation keys |
+
+## Known gaps
+
+| Gap | Where |
+|---|---|
+| `msg91.authKey` is a settable credential that no code reads | `src/lib/secrets.ts` `SECRET_NAMES` |
+| `attachments.retentionDays` is on the Settings screen but never read | `src/lib/config/registry.ts`; `src/lib/services/attachment-service.ts` |
+| `workingDay.timezone` is a setting but SQL uses the `APP_TIMEZONE` constant | `src/lib/business-date.ts` |
+| `getConfig` caches per process; there is no cross-process invalidation | `src/lib/config/store.ts` |
+| `Config` is hand-typed beside `SETTINGS`; nothing derives one from the other, so a missing entry fails only `next build` | `src/lib/config/registry.ts` |
+| `app_secrets.value` is stored in clear; a leaked unencrypted dump leaks every console-set key | `src/db/schema.ts` `appSecrets` |

@@ -1,0 +1,80 @@
+An opportunity is the CRM's record of **something a call turned up that a customer may buy**. It used to be a line on the customer's timeline and nothing else, which meant whether anything came of it depended on somebody happening to read that account. The Opportunities screen turns the same record into a worklist: an owner, a status, and a sentence about what came of it.
+
+## Deliberately not a lead
+
+<Rule title="An opportunity never changes what an account is">
+A lead in MahekOne is an account that has **never ordered**, and about thirty parts of the product — the Call Log's prospect cadence, sales attribution, the buying cycle, the owner's funnel — are built on exactly that. An opportunity spotted on a call with a four-year customer cannot be a lead without making every one of them wrong. So an opportunity is a separate record; where the account already **is** a lead, it is already in Lead Management and the opportunity simply names what this call turned up.
+</Rule>
+
+## How one is raised
+
+<Flow caption="From a call to the list" chart={`
+flowchart TD
+  C["A call is being logged"] --> I{"Did the customer call us?"}
+  I -- "Yes" --> Q["Ask: Did this call turn up<br/>a sales opportunity?"]
+  I -- "No" --> AI{"Did the call assistant<br/>hear a possible sale?"}
+  AI -- "Yes" --> Q
+  AI -- "No" --> X["Not asked — recorded as nobody asked"]
+  Q -- "No" --> N["Recorded: asked, and No"]
+  Q -- "Yes" --> F["Product (required), quantity, value,<br/>expected date (today or later)"]
+  F --> W["Written in the same transaction as the call"]
+  W --> O["Owner: whoever's book the account is in,<br/>or the caller if nobody holds it"]
+  O --> M{"Owner is somebody else?"}
+  M -- "Yes" --> T["Notify the owner"]
+  M -- "No" --> L["On the caller's list"]
+  T --> L2["On the owner's list"]
+`} />
+
+<Rule title="Three answers, kept apart">
+*Nobody asked*, *asked and No*, and *asked and Yes* are three different facts about a call. A No used to leave no trace and read as a call nobody asked on. A No sent together with an opportunity is a contradiction and the save refuses it, as it refuses an opportunity on an *Order Received* (nobody was on the phone to ask).
+</Rule>
+
+<Rule title="It goes to whoever will be asked about the account">
+The owner is the person whose book the account is in — the same single definition every list and every target reads — falling back to whoever took the call. A call taken by one telecaller on another's customer lands on the right list, with a notification.
+</Rule>
+
+<Callout kind="money">
+The estimated value is typed in whole rupees and stored in paise. **No value** and **zero** are different answers: no value is nobody having put a figure on it; zero would read as an opportunity judged worthless. *Estimated value open* adds up only the opportunities that have one.
+</Callout>
+
+## Who sees a row
+
+<Rule title="The owner's people, plus whoever raised it">
+A row is visible to the people in scope for its **owner**, and to the people in scope for **whoever logged the call**. The telecaller who raised an opportunity is never left unable to see what became of it. A telecaller sees their own; a manager sees their team's.
+</Rule>
+
+Anybody who can see a row can work it. Asking about a row you cannot see answers *That opportunity is not on your list* — the same as one that does not exist, so the screen cannot be used to find out what is on somebody else's.
+
+## Statuses
+
+<Flow caption="An opportunity's life" chart={`
+stateDiagram-v2
+  [*] --> Open: raised on a call
+  Open --> Being_worked: Start working it
+  Open --> Won
+  Open --> Lost: needs a reason
+  Being_worked --> Won
+  Being_worked --> Lost: needs a reason
+  Won --> Open: Reopen
+  Lost --> Open: Reopen
+`} />
+
+| Rule | Why |
+|---|---|
+| **Lost needs a sentence** | Nobody will look again, and the next call to the account needs to know why. |
+| **Won takes an optional note**, and is the person's judgement | Nothing compares it with the customer's orders; the dialog says so. |
+| **Reopening is always allowed** and clears the closing mark | Closing something by mistake must never be harder to undo than to do. |
+| **A reopen keeps the old note** | What was written the last time it was worked is still worth reading. |
+| **Every change is audited** | `opportunity.status`, with before and after. |
+
+## Past its expected day
+
+An opportunity that is open or being worked and whose expected order date has passed is **past due**: it gets a red badge, its own tab, and a count at the top. Nothing chases it automatically — no reminder is created and the Call Log does not read it.
+
+## Where the code and the intent disagree today
+
+- **The list is the newest 500.** The counts and *Estimated value open* are computed over those 500, not over every opportunity in scope.
+- **The team view is drawn for anybody who manages any app**, not only a manager in the CRM — the screen uses the widest level held anywhere to decide whether to show whose each row is.
+- **The audit row does not record which hat allowed the change**, unlike other audited actions.
+- **An opportunity cannot be reassigned or edited.** Its owner is set once, when the call is saved; if the account changes hands, the opportunity stays with the old owner.
+- **Past due raises nothing.** No reminder, no notification and no Call Log reason follow an opportunity whose day has gone.

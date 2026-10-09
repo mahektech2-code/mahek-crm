@@ -1,0 +1,108 @@
+Call History is a server page that reads `listInteractions(400)` from `lib/queries.ts`, today's activity and pending reminders, and hands them to a client screen that filters, exports and builds the handover text in the browser. The Next call cell is `NextCallCell`, shared with the Customers list, rendering the six `calls.next_step_*` columns that the save paths wrote.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Route guard | `src/app/crm/history/layout.tsx` | `requireModule(user.id, "crm.history")` |
+| Page (server) | `src/app/crm/history/page.tsx` | `CALL_HISTORY_LIMIT = 400`; `listInteractions`, `listTeam`, `dayActivity`, `listReminders`; `canFor(user, "customer.export")` |
+| Screen (client) | `src/app/crm/history/history-screen.tsx` | Filters, CSV export, handover summary, the table |
+| Next call cell | `src/components/crm/next-call-cell.tsx` | `NextCallCell`, `StoredNextStep` |
+| Vocabulary | `src/lib/next-step-labels.ts` | `NEXT_STEP_LABELS` (long word for the dialog, short for a cell), `hasNoDate` |
+| Read | `src/lib/queries.ts` | `listInteractions` |
+| Call details | `src/lib/services/call-detail-service.ts` | `callDetailsFor(ids)` — why they rang, who rang, the answers, the next action |
+| Writers of the stored step | `interaction-service.ts` `saveInteraction`; `payment-followup-service.ts` `logPaymentFollowUp` | Both call `nextStepForCustomer` after their recomputes and update the call row |
+
+## A request, end to end
+
+<Flow caption="GET /crm/history" chart={`
+sequenceDiagram
+  autonumber
+  participant P as history/page.tsx
+  participant Q as queries.ts
+  participant D as call-detail-service
+  participant DB as Postgres
+  P->>Q: listInteractions(400)
+  Q->>Q: resolveScope → scopedUserIds
+  Q->>DB: calls join customers join users<br/>where user_id in ids, order by started_at desc, limit 400
+  Q->>D: callDetailsFor(ids)
+  D-->>Q: detail per call (or empty map on failure)
+  Q-->>P: InteractionRow[] with nextStep
+  P->>Q: dayActivity, listTeam, listReminders (in parallel)
+  P-->>P: HistoryScreen(rows, capped = rows.length at the limit)
+`} />
+
+<Code file="src/lib/queries.ts" symbol="listInteractions" collapsed />
+
+Points worth knowing:
+
+- Scope is by `calls.user_id` — **who logged the call** — not by whose book the customer is in. A call a colleague made on your customer is not in your history.
+- `nextStep` is read straight off the row; `toldOn` is `calendarDate(c.startedAt)`, the business date the call was made.
+- `callDetailsFor` failures are swallowed into an empty map so a broken detail read never blanks the page.
+
+## The cell
+
+<Code file="src/components/crm/next-call-cell.tsx" symbol="NextCallCell" />
+
+<Code file="src/lib/next-step-labels.ts" symbol="NEXT_STEP_LABELS" />
+
+`today` is passed from the server; the cell never reads the clock during render (the React Compiler rule this codebase enforces).
+
+## The columns it renders
+
+<DbTable name="calls" only={["started_at", "user_id", "customer_id", "interaction_type", "outcome", "notes", "order_id", "reminder_id", "complaint_id", "source_module", "next_step_kind", "next_step_date", "next_step_reason", "next_step_headline", "next_step_detail", "next_step_held_today", "connection_status"]} note={{
+  interaction_type: "outbound_call, inbound_call or order_received.",
+  source_module: "call_queue for the Call Log, payment_follow_up for collections — reporting tells the two apart.",
+  next_step_kind: "booked · scheduled · decide · none. Written once after the save; never rebuilt.",
+  next_step_date: "Null for decide and none.",
+  connection_status: "Retired. Nothing writes it; the Status column still reads it.",
+}} />
+
+<DbEnum name="next_step_kind" />
+
+<Callout kind="warn" title="Never let a recompute touch next_step_*">
+`lib/recompute.ts` must not learn to rebuild these columns. They are a record of what somebody was told — the same kind of mark as `orders.approved_at` — and a rebuild destroys the question rather than answering it. A duplicate save (same `idempotency_key`) returns the stored sentence, not a fresh one.
+</Callout>
+
+## Access
+
+- **Module:** <ModuleRef k="crm.history" />.
+- **Read scope:** `scopedUserIds(resolveScope().scope)` on `calls.user_id`.
+- **Export:** `customer.export`, decided on the server and passed as `canExport`; the CSV itself is built client-side.
+
+<CapabilityGrid names={["customer.export"]} />
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/engines/next-step.test.ts` | The four kinds, payment cadence, the horizon |
+| `npm run test` | `src/lib/call-detail.test.ts` | The details summary for each call reason |
+| `npm run test:integration` | `src/lib/journeys.test.ts` | The stored next step on a save, the duplicate-save answer |
+
+## Changing it safely
+
+<Steps>
+<Step title="Moving filtering to the server">
+If the 400 cap starts to matter, move the filters into `listInteractions` (with a keyset cursor on `started_at, id`) rather than raising the limit; then make the date ranges business-date windows like the dashboard's.
+</Step>
+<Step title="Adding WhatsApp or visits to the stream">
+Union them in the read with a real `channel`, or remove the channel options and the subtitle's claim. Do not leave a filter that matches nothing.
+</Step>
+<Step title="Changing what the cell says">
+Change `NEXT_STEP_LABELS`; the dialog, this table and the Customers list all read it.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| `channel` is hard-coded `"Call"`; the WhatsApp and Visit filter options can never match; the subtitle claims WhatsApp messages are included | `queries.ts` `listInteractions`; `history-screen.tsx` |
+| Status column reads retired `calls.connection_status` and compares against `"Connected"` / `"Busy"`; the enum values are lower case and no writer sets the column | `history-screen.tsx`; `schema.ts` `connectionEnum` |
+| Range filters use `nowMs - 86_400_000` and `- 31 days`, not the business day or calendar month | `history-screen.tsx` `filtered` |
+| "Last thing promised" is the newest non-empty note | `history-screen.tsx` `lastPromise` |
+| Person filter compares `userName` strings | `history-screen.tsx` |
+| Export permission is only enforced by the disabled button; there is no server route | `history-screen.tsx` |
+| `missed > 5` red threshold is a literal | `history-screen.tsx` |
+| `getScope(user)` without the app name | `app/crm/history/page.tsx` |

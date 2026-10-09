@@ -1,0 +1,204 @@
+Samples & trials is where a sample's whole life is worked: somebody asks for a can to give a shop, a manager says yes or no, it is sent, the shop confirms it arrived, they try it, and somebody writes down what they thought. **A sample with no feedback is stock given away**, so every screen here is built around getting that answer.
+
+You reach it from **Lead Management → Samples & trials** in the CRM sidebar (it is also linked under *Other desks* on All Leads). The same four tabs exist on the Sales Dashboard; the screens are identical, only who you see differs — see [Whose samples you see](#whose-samples-you-see).
+
+<Callout kind="live">
+The numbers on this page — which days a review is chased on, how long before a parcel is chased — are the settings your CRM is using right now, read live.
+</Callout>
+
+## The four tabs
+
+| Tab | What it answers | You use it to |
+|---|---|---|
+| **All samples** | What is out with customers, and which have no feedback yet | See what is late and who owes an answer |
+| **Desk** | Where each sample has got to, and what it is owed next | Approve, record dispatch, confirm receipt, record the review, call it off |
+| **Review chases** | Which trials are waiting on an answer, and how many times we have asked | Find the shops to ring yourself |
+| **Trial feedback** | What every trial said, across products and competitors | Read patterns — "price was the problem in nine of eleven" |
+
+Click any sample's customer to open the lead; open a sample itself to see its full history on the **sample record**.
+
+## The desk at a glance
+
+<Wireframe url="/crm/samples/desk" nav={["#Lead Management", "All Leads", "Samples & trials", "Intake", "Qualification"]} active="Samples & trials" caption="The sample desk, with one request waiting and one trial waiting on a review">
+  <WfTabs items={["All samples", "Desk", "Review chases", "Trial feedback"]} active="Desk" />
+  <WfBar>
+    <WfTitle sub="Approve it, send it, watch it land, and write down what they thought.">Sample desk</WfTitle>
+  </WfBar>
+  <WfCard tone="warn">
+    <WfBar><WfText>2 trials chased 3 times with no answer — these are the ones to ring yourself</WfText><Hotspot n={1} /></WfBar>
+  </WfCard>
+  <WfBar>
+    <WfCard title="Waiting on approval"><WfText>3</WfText></WfCard>
+    <WfCard title="Late in delivery"><WfText>1</WfText></WfCard>
+    <WfCard title="Delivered, not reviewed"><WfText>4</WfText></WfCard>
+    <WfCard title="On the desk"><WfText>17</WfText></WfCard>
+    <Hotspot n={2} />
+  </WfBar>
+  <WfTable
+    columns={["Customer", "What, and why", "State", "Dispatch", "Delivery", "Review", ""]}
+    rows={[
+      [<span key="a"><b>Customer A</b><br/>a salesman</span>, "4 cans · Nano Thinner – 5 Liter (Loose) · Wants to compare it with another brand", <span key="b"><WfPill tone="warn">Asked for</WfPill> <Hotspot n={3} /></span>, "Not sent", "Nothing promised", "Nothing recorded", <span key="c"><WfButton primary>Approve</WfButton> <WfButton>Refuse</WfButton> <Hotspot n={4} /></span>],
+      [<span key="d"><b>Customer B</b></span>, "2 cans · PU Sealer – 4 Liter", <WfPill key="e" tone="brand">Delivered</WfPill>, "Courier · docket", <span key="f"><WfPill tone="success">Landed</WfPill> <Hotspot n={5} /></span>, <span key="g">Nothing recorded · asked 2 times <Hotspot n={6} /></span>, <span key="h"><WfButton primary>Record feedback</WfButton> <WfButton>Call off</WfButton> <Hotspot n={7} /></span>],
+    ]}
+  />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Chased hard.</b> Trials whose review has been asked for as many times as the chase ladder has steps. The system keeps asking, but these are the ones a manager should ring personally.</span>,
+  <span key="2"><b>Counts.</b> Requests waiting for a decision, parcels past the date the courier promised, delivered samples with no review, and everything on the desk.</span>,
+  <span key="3"><b>State.</b> Where the sample has got to on its journey — see the table below. "not approved yet" underneath means nobody has decided the request.</span>,
+  <span key="4"><b>Approve / Refuse.</b> Only shown while the request is waiting. Refusing needs a reason.</span>,
+  <span key="5"><b>Delivery.</b> "Landed" with the date the shop confirmed, or the date the courier promised and how many days past it we are.</span>,
+  <span key="6"><b>Review.</b> Either what they said, or "Nothing recorded" with how many times the review has been asked for.</span>,
+  <span key="7"><b>The next step.</b> Each row offers exactly one thing it is owed — Record dispatch, Confirm received, or Record feedback — and Call off beside it until the review is in.</span>,
+]} />
+
+## A sample, step by step
+
+<Steps>
+<Step title="Somebody asks for one">
+A sample is asked for from the lead record (**Ask for a sample**), from the call assistant, or by a salesman on the handset. You give the **product**, how many **cans**, **what it will be used on**, and **why** they want one (a choice from a list such as *Wants to compare it with another brand*).
+
+For a lead on the Direct or Third-party ladder, a sample can only be asked for once its **Qualification is complete and the Sales Manager has verified it**. If not, you are told exactly what is still to do and nothing is created. For an older lead, a sample asked for before the lead is Qualified is allowed but marked **"Lead not qualified — Manager approval required."** so the person approving it knows.
+</Step>
+<Step title="A manager approves or refuses">
+On the desk, press **Approve** or **Refuse**. A refusal **must say why** — *"Say why — the salesman cannot work it out from the word alone."* The salesman's handset hears the answer. Only managers and admins can make this decision.
+</Step>
+<Step title="Record the dispatch">
+Press **Record dispatch** and give the **courier**, the **docket number** and the **date they promised** delivery. All three are required: a docket nobody can chase is a sample nobody will review, and the promised date is what the late flag is measured against.
+</Step>
+<Step title="Confirm it was received">
+When **the shop** says they have it, press **Confirm received** → **They have it**. This is the shop's word — not the courier's website. It starts the review clock.
+</Step>
+<Step title="Record what they thought">
+Press **Record feedback** and fill in the seven questions (below), then pick the verdict: **Approved**, **Rejected** or **More testing**. At least one answer is required, and a rejection must say why.
+</Step>
+<Step title="Or call it off">
+At any point before the review, **Call off** ends the trial. Pick one of the reasons; *Other* needs a sentence.
+</Step>
+</Steps>
+
+## What each state means
+
+| State on the screen | Stored as | Meaning | What it is owed |
+|---|---|---|---|
+| Asked for | `requested` | Somebody asked; nobody has decided | A manager's yes or no |
+| Approved | `approved` | Yes — it can go out | Dispatch |
+| Refused | `rejected` | A manager said no, with a reason | Nothing. *Refused — nothing to send* |
+| Sent | `dispatched` | It has left us, with a courier and docket | The shop confirming receipt |
+| Delivered | `received` | The shop says they have it | Their review |
+| Tried | `trial_done` | They have used it | Their review |
+| Reviewed | `reviewed` | Their verdict is written down | Nothing — the trial is closed |
+| Cancelled | `cancelled` | Called off, with a coded reason | Nothing |
+
+<Callout kind="note" title="State and verdict are two different things">
+The **state** is where the sample has got to. The **verdict** is what the customer thought of it — *Awaiting feedback*, *Approved*, *Rejected* or *More testing*. "Approved" in the State column means a **manager** said it may go out; "Approved" as a verdict means the **customer** liked it. The All samples list shows the verdict; the Desk shows the state.
+</Callout>
+
+## The three dates
+
+The sample record shows three dates side by side, because three different people say three different things:
+
+| Date | Who says it | What it means |
+|---|---|---|
+| **It left us** | We say | The day it was dispatched |
+| **It arrived** | The carrier says | Delivery, as reported by the courier or our own man |
+| **It is in our hands** | **The shop** says | The confirmed receipt — the only date the review is counted from |
+
+Confirming receipt on the desk records only the third date. A sample that sat in a courier office for four days and one handed over the same afternoon must not look the same.
+
+## The seven feedback questions
+
+| Question | What to write |
+|---|---|
+| **Quality** | What they thought of the product itself |
+| **Performance** | How it performed in use |
+| **Application** | How it went on — spraying, brushing, coverage |
+| **Drying** | Drying time against what they expected |
+| **Compared with what they use now** | The comparison against their current brand — the whole point of a trial |
+| **Price** | What they said about the price |
+| **Anything else** | Anything that does not fit above |
+
+<Rule title="A rejection needs a reason">
+If the verdict is **Rejected**, at least one of *Anything else*, *Price* or *Compared with what they use now* must be filled in. Otherwise you will see: *"A rejected trial has to say why — the price, the comparison against what they use now, or in your own words. Without it the next sample goes out exactly the same."*
+</Rule>
+
+The review is recorded **once**. A second opinion is a second sample.
+
+### What each verdict does
+
+<Cards cols={3}>
+<Card title="Approved" tone="brand">The trial is closed and an **"Call about the order"** task goes to the lead manager. When the verdict comes from the handset, the lead is also moved up to **Negotiation** if its checklist allows.</Card>
+<Card title="Rejected" tone="warn">The trial is closed with the reason on the record. The salesman and the lead manager are told why.</Card>
+<Card title="More testing">They want to try it again — neither yes nor no. The lead stays where it is.</Card>
+</Cards>
+
+## Review chases
+
+<Wireframe url="/crm/samples/chases" caption="Review chases — every trial waiting on an answer, most-asked first">
+  <WfTabs items={["All samples", "Desk", "Review chases", "Trial feedback"]} active="Review chases" />
+  <WfTitle sub="A sample review is asked for on day 2, 4 and 6, until there is an answer.">Review chases</WfTitle>
+  <WfTable
+    columns={["Customer", "What is out there", "Received", "Asked", "Next ask", ""]}
+    rows={[
+      [<b key="a">Customer C</b>, "3 cans · Nano Thinner", "12 days ago", <span key="b">4 times <Hotspot n={1} /></span>, <span key="c">Ask 5 · 2 days overdue <Hotspot n={2} /></span>, <WfButton key="d" primary>What did they think?</WfButton>],
+      [<b key="e">Customer D</b>, "2 cans · PU Sealer", "3 days ago", "Asked today", "Ask 2 on Friday", <WfButton key="f">What did they think?</WfButton>],
+    ]}
+  />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>How many times asked.</b> The list is sorted by this — the sample asked about most is closest to being written off.</span>,
+  <span key="2"><b>The next ask.</b> Which ask it is, and its day — or how overdue it is. Rows past the end of the ladder are flagged.</span>,
+]} />
+
+The review is chased on the days in <Setting k="leads.sampleReviewChaseDays" /> **after the shop confirmed receipt**, and after the last of those the last gap **repeats** — it never stops until somebody records the verdict or calls the sample off. Each ask becomes a task for the lead manager (or the salesman, where there is no lead manager), and the third ask onward is marked high priority.
+
+A sample with **no confirmed receipt** cannot be chased — the screen lists those separately and tells you to confirm receipt on the desk.
+
+## Trial feedback
+
+The **Trial feedback** tab is a library: every trial's seven answers, filterable by **product**, **competitor** and **verdict**. The verdict counts follow your filters, so "of the trials against this competitor, how many did we lose" is one click. It writes nothing.
+
+At the bottom, **Trials called off** counts every cancelled sample by reason, grouped by **whose problem** it was:
+
+| Group | Reasons | Whose to fix |
+|---|---|---|
+| **Supply** | Product not available · Wrong product or wrong need | We could not give them the right stock |
+| **Customer** | No longer needs it · Delayed the trial · Sample not needed any more · Not replying | The shop stopped replying, delayed, or does not want it now |
+| **Sales** | Price or terms problem | The talk about price and terms stopped it |
+| (on its own) | Other | Always needs a sentence |
+
+## Parcels that do not arrive
+
+- When a salesman records a dispatch from the handset, a task **"Where is the sample — Customer A"** is raised <Setting k="mbos.samples.transitChaseAfterDays" /> days after dispatch for the account's **back office person**. If the account has none, it goes to the **lead manager**, and the task says so: *"This is on your list because no back office person is named on this account — naming one sends the next chase to them."*
+- Once a dispatched sample passes the date the courier promised, a **"Sample has not arrived"** task is raised once for the lead manager (or the salesman).
+- Confirming receipt **closes** those chases as done — it does not delete them, so the record still shows the parcel was slow.
+
+## Whose samples you see
+
+| Screen | You see |
+|---|---|
+| All samples, Desk | As a telecaller or salesman: the samples **you asked for**. As a manager: your region's salesmen, or every sample if no region has been allocated to you. |
+| Review chases, sample record | Samples on customers in your book (your own as a telecaller, your team's as a manager). |
+
+## Questions people ask
+
+<Faq q="I pressed Approve on All samples and it said to use the samples desk.">
+Decide sample requests on the **Desk** tab. The approval there checks the stock and the lead; the button on All samples cannot decide a sample.
+</Faq>
+<Faq q="Why can't I ask for a sample for this lead?">
+On the Direct and Third-party ladders a sample needs the lead's Qualification complete and verified by the Sales Manager. The message lists exactly what is still missing — finish those and ask again.
+</Faq>
+<Faq q="The review call is not on anybody's list.">
+The chase counts from the day **the shop** confirmed receipt. If nobody pressed **Confirm received**, there is no date to count from. Confirm it on the desk.
+</Faq>
+<Faq q="Can I change the review after saving it?">
+No. The verdict is recorded once. If they want to try again, that is a new sample.
+</Faq>
+<Faq q="The sample arrived, but the shop says it was the wrong one.">
+A sample cannot go back a step. Call it off with **Wrong product or wrong need** and ask for another.
+</Faq>
+<Faq q="What does 'Asked 4 times' mean for me as a manager?">
+The automatic chase has asked four times and nobody has an answer. Ring the shop yourself.
+</Faq>

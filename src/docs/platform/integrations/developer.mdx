@@ -1,0 +1,165 @@
+Every outside service has **one client file** that owns the HTTP calls, reads its credential through `readSecret` (console first, environment second — see [Configuration](/docs/platform/configuration/developer)), and returns a result type rather than throwing. Each also has a **readiness** question the screens ask before drawing the feature. No SDKs are used where a `fetch` will do: Google, Wati, MiniMoth, Resend, Ola and S3 are all plain HTTP; only dictation's OpenAI path goes through the AI SDK.
+
+## Map of the integrations
+
+| Service | Client | Credential (console name → env fallback) | Readiness | Inbound route |
+|---|---|---|---|---|
+| Wati (WhatsApp) | `src/lib/wati.ts`; policy in `src/lib/services/whatsapp-service.ts`, switch in `whatsapp-switch-service.ts` | `wati.apiToken` → `WATI_API_TOKEN`; `WATI_API_BASE`, `WATI_TENANT_ID` (env) | `watiConfig`, `watiHealth`, `deliveryContext` | `POST /api/whatsapp/wati/[token]` |
+| MiniMoth (codes) | `src/lib/minimoth.ts`; flow in `src/lib/services/otp-service.ts` | `minimoth.apiKey` → `MINIMOTH_API_KEY` | `otpAvailability` (cached 60 s) | `src/app/api/mbos/auth/otp` (handset) |
+| Ola Maps | `src/lib/services/ola-key-service.ts` (pool), `road-snap-service.ts`, `ola-geocode-service.ts`, `ola-directions-service.ts`, `ola-distance-service.ts`, `ola-reverse-geocode-service.ts`; web maps in `src/app/sales/ola-maps.tsx` | `olamaps.apiKey` … `olamaps.apiKey5` → `OLAMAPS_API_KEY` … `_5` | `liveOlaKey`, `olaPoolStatus`, `olaKeysHeld` | `POST /api/sales/live/snap-trail` |
+| Resend (mail) | `src/lib/mailer.ts` | env only: `RESEND_API_KEY`, `MAIL_FROM` | `mailConfigured` | — |
+| Sarvam | `src/lib/sarvam.ts`, `src/lib/dictation.ts`, `src/lib/writing-model.ts` | `sarvam.apiKey` → `SARVAM_API_KEY` | `voiceReadiness` → `resolveReadiness` | `/api/dictate/*`, `/api/mbos/dictate/*` |
+| OpenAI | `src/lib/dictation.ts`, `src/lib/writing-model.ts`, `price-list-extract.ts`, `structured-read.ts`, `lead-scan-availability.ts`, `src/lib/hire/ai/*`, `src/lib/erp/ai.ts` | `openai.apiKey` → `OPENAI_API_KEY` | `voiceReadiness`, `writingConfigured`, per-feature checks | same |
+| Google Sheets | `src/lib/sheets.ts` | env only: `GOOGLE_SA_EMAIL`, `GOOGLE_SA_PRIVATE_KEY` | `sheetsConfigured` | — |
+| Expo push | `src/lib/mbos/push.ts`, `push-rules.ts` | settings `mbos.push.*`; Firebase via the APK build | `pushReadiness` | `POST /api/mbos/push-token` |
+| Public website | `src/app/api/public/enquiries/route.ts` | `enquiries.ingestSecret` → `ENQUIRY_INGEST_SECRET` | refuses without it | `POST /api/public/enquiries` |
+
+The console screen for all of them is `src/app/admin/integrations/page.tsx` (with `voice-section.tsx` and `maps-section.tsx`), each key drawn by `secret-credential-row.tsx`.
+
+## Wati
+
+### Sending
+
+`src/lib/wati.ts` talks to Wati's v3 API with a Bearer token and **decides nothing** — whether a message may go (the founder's switch, an approved template, the number, the weekly limit <Setting k="whatsapp.contactsPerWeekLimit" />) is `whatsapp-service.ts`'s question, asked before the client is called.
+
+<Code file="src/lib/wati.ts" symbol="watiConfig" />
+
+The founder's switch is the newest row of `whatsapp_service_events` (no row means off), read on every send rather than cached. `whatsapp.activate` is the capability that flips it.
+
+<CapabilityGrid names={["whatsapp.activate", "whatsapp.bulk", "whatsapp.template.write"]} />
+
+### Receiving
+
+Wati's webhook settings take a URL and nothing else, so the path segment **is** the credential, derived from the API key:
+
+<Code file="src/lib/wati.ts" symbol="webhookTokenFor" />
+
+<Flow caption="A Wati delivery or reply event" chart={`
+sequenceDiagram
+  autonumber
+  participant W as Wati
+  participant R as /api/whatsapp/wati/[token]
+  participant S as whatsapp-service.ts
+  participant DB as Postgres
+  W->>R: POST events (one or an array)
+  R->>R: currentWebhookToken() - timing-safe compare
+  alt no key or wrong token
+    R-->>W: 404
+  end
+  R->>R: body over 256 KB - 413, not JSON - 200 ignored
+  loop up to 100 events
+    R->>S: applyWatiEvent(parseWatiEvent(e))
+    S->>DB: delivery status, inbound reply, media reference
+  end
+  R-->>W: 200 with outcomes
+`} />
+
+Rotating the key rotates the address — update it in Wati's webhook settings at the same time. Hourly jobs `whatsapp-receipts` and `wa-reply-media` catch up on anything a webhook missed.
+
+## MiniMoth and sign-in codes
+
+<Code file="src/lib/services/otp-service.ts" symbol="otpAvailability" collapsed />
+
+| Order | Provider | Condition |
+|---|---|---|
+| 1 | MiniMoth | `minimoth.apiKey` held, and not an `mm_test_` key while `NODE_ENV=production` |
+| 2 | Wati authentication template | <Setting k="auth.otp.whatsappTemplateName" /> named, a Wati key held, and the template approved in Wati |
+| — | None | `available: false` with a reason; the login page shows passwords only |
+
+MiniMoth generates and verifies the code (`sendMiniMothOtp`, `verifyMiniMothOtp`); MahekOne's `auth_otps` row records that one was sent and the MiniMoth id. The destination is the HRMS personal mobile of the linked employee. Limits are settings: <Setting k="auth.otp.ttlMinutes" />, <Setting k="auth.otp.maxVerifyAttempts" />, <Setting k="auth.otp.resendCooldownSeconds" />.
+
+<Callout kind="warn">
+`otpAvailability` never throws — the container's health check is the login page, so a settings read failing during a migration must cost the code option, never the sign-in screen.
+</Callout>
+
+## Ola Maps
+
+Five named credentials rather than one list, spent in order. With one key held, calls go straight through; with several, a quota refusal is recorded and the next key is used, and the spent one is skipped for <Setting k="maps.olaKeyCooldownHours" /> hours.
+
+<Code file="src/lib/services/ola-key-service.ts" symbol="olaGet" collapsed />
+
+| Use | Where | Key travels to |
+|---|---|---|
+| Live and Territory maps (tiles, style, glyphs) | `src/app/sales/live/page.tsx`, `src/app/sales/territory/page.tsx` → `ola-maps.tsx` | The **browser**, as a prop from `liveOlaKey()` — restrict it to the domain in Ola's console |
+| Handset map | Sync payload to a bound device | The **phone** — use a separate key with a spend cap; Ola offers no package restriction |
+| Snap-to-Road | `road-snap-service.ts`, asked once per selected salesman per day by `/api/sales/live/snap-trail` | Server only |
+| Geocoding, places, directions, distance | `ola-geocode-service.ts` and siblings, `geocode-customers` job | Server only |
+
+The key is never put in the style URL on the handset — requests are signed at the HTTP layer so offline map packs are stored key-less and survive a key rotation.
+
+## Resend
+
+<Code file="src/lib/mailer.ts" symbol="sendMail" collapsed />
+
+Returns `{ delivered: true }`, `{ reason: "not_configured" }` (written to the server log) or `{ reason: "failed", detail }`. Swapping provider means editing the delivery function only. `APP_URL` makes the reset link absolute behind a tunnel.
+
+## Sarvam and OpenAI (dictation and writing)
+
+<Code file="src/lib/dictation.ts" symbol="voiceReadiness" />
+
+<Code file="src/lib/voice-readiness.ts" symbol="resolveReadiness" collapsed />
+
+| Rule | Detail |
+|---|---|
+| Hearing | Sarvam (`saaras`) for recordings up to 30 s, run as transcribe and translate in parallel; longer or failed recordings go to OpenAI when <Setting k="voice.fallbackToOpenai" /> allows — and always when no Sarvam key is held |
+| Writing | `writing-model.ts` tries OpenAI then Sarvam; a permanent refusal (no credit, revoked key) moves to the next rather than surfacing |
+| Readiness | No key → no microphone; `canRefine` false → Tighten/Rewrite omitted |
+| Audio | Never stored; route handlers (not actions) because two minutes of audio exceeds the 1 MB action body limit |
+| Doors | `/api/dictate/*` (session) and `/api/mbos/dictate/*` (device token) share `src/lib/dictation-requests.ts`, including the six refusal sentences |
+
+Settings: <Setting k="voice.enabled" />, <Setting k="voice.transcriptionProvider" />, <Setting k="voice.maxSeconds" />.
+
+## Google service account
+
+<Code file="src/lib/sheets.ts" symbol="sheetsConfigured" />
+
+A self-signed JWT (RS256, `spreadsheets.readonly` scope) is exchanged for an hour-long token, cached in module scope with a minute of headroom. `GOOGLE_SA_PRIVATE_KEY` is stored with literal `\n`; the client converts them, and "invalid JWT signature" from Google almost always means that conversion did not happen. The service account must hold **Viewer** on each workbook.
+
+## Expo push
+
+<Code file="src/lib/mbos/push.ts" symbol="pushReadiness" collapsed />
+
+Tokens are registered by the handset at `POST /api/mbos/push-token` onto `mbos_devices.push_token`. Sends go to `https://exp.host/--/api/v2/push/send` in chunks of 100; `collectPushReceipts` reads receipts hourly and clears tokens Expo reports as `DeviceNotRegistered`. See [Handset release](/docs/platform/handset-release/developer#push-notifications) for the Firebase setup.
+
+## The public website
+
+`/api/public/enquiries` compares the presented secret with `readSecret("enquiries.ingestSecret")` in constant time and refuses anything else; duplicates are reported rather than created twice. It is server-to-server only — the secret never reaches a browser on either side.
+
+## Adding an integration
+
+<Steps>
+<Step title="Declare the credential">
+Add a name to `SECRET_NAMES` with its environment fallback, and to `.env.production.example` (commented) so `env-names.test.ts` agrees.
+</Step>
+<Step title="One client file">
+Plain `fetch` with a timeout, `readSecret` per call (no caching of keys), a result type rather than a throw.
+</Step>
+<Step title="A readiness function the screen asks first">
+Missing key → the feature is not drawn, or says it is not set up. Never draw a control that fails when pressed.
+</Step>
+<Step title="Inbound webhooks authenticate before parsing">
+A derived path token or a shared secret, compared in constant time; cap the body size; answer 404 to a wrong token.
+</Step>
+<Step title="A row on the Integrations screen">
+Via `secret-credential-row.tsx`, so a deploy nobody has shell access to can still be connected.
+</Step>
+</Steps>
+
+## Tests that pin it
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/voice-readiness.test.ts` | Every provider/fallback/key combination |
+| `npm run test` | `src/lib/wati-receipts.test.ts`, `src/lib/wati-templates.test.ts`, `src/lib/whatsapp-delivery.test.ts` | Event parsing, template specs, delivery states |
+| `npm run test` | `src/lib/otp-history.test.ts`, `src/lib/sign-in-throttle-rules.test.ts` | Code history and throttles |
+| `npm run test` | `src/lib/credentials.test.ts`, `src/lib/env-names.test.ts` | Credential statuses; env names match the code |
+| `npm run test` | `src/lib/mbos/push-rules.test.ts` | Push chunking, quiet hours, channels |
+
+## Known gaps
+
+| Gap | Where |
+|---|---|
+| `msg91.authKey` can be set on the Integrations screen but nothing reads it | `src/lib/secrets.ts` |
+| Resend and the Google service account are environment-only; every other integration can be connected from the console | `src/lib/mailer.ts`, `src/lib/sheets.ts` |
+| `WATI_TENANT_ID` defaults to Mahek's own account id in code | `src/lib/wati.ts` |
+| The `app_secrets` schema comment still names `anthropic.apiKey` and `gateway.apiKey`, which are not in `SECRET_NAMES` | `src/db/schema.ts` `appSecrets` |

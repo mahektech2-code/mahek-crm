@@ -5,7 +5,7 @@ import { join, relative } from "node:path";
 import { spawnSync } from "node:child_process";
 import { modulesForApp } from "@/lib/modules";
 import { APP_IDS } from "@/lib/apps";
-import { DOC_APPS, DOC_TABS } from "./registry";
+import { DOC_APPS, DOC_TABS, tabsOf } from "./registry";
 
 /* ---------------------------------------------------------------------------
  * The Documentation app cannot drift silently from the product it describes.
@@ -31,21 +31,33 @@ function mdxFiles(dir: string): string[] {
 }
 
 describe("documentation coverage", () => {
-  test("every documented app is a real app", () => {
-    for (const a of DOC_APPS) assert.ok((APP_IDS as readonly string[]).includes(a.app), a.app);
+  test("every documented app is a real app, and section slugs are unique", () => {
+    for (const a of DOC_APPS) if (a.appId) assert.ok((APP_IDS as readonly string[]).includes(a.appId), a.appId);
+    assert.equal(new Set(DOC_APPS.map((a) => a.app)).size, DOC_APPS.length);
+  });
+
+  test("a page marks written only tabs it has", () => {
+    for (const a of DOC_APPS)
+      for (const p of a.pages)
+        for (const t of p.written) assert.ok(tabsOf(p).includes(t), `${a.app}/${p.slug}: "${t}" is written but not one of its tabs`);
   });
 
   test("every module of a documented app is claimed by a page", () => {
     for (const a of DOC_APPS) {
+      if (!a.appId) continue;
       const claimed = new Set(a.pages.flatMap((p) => p.modules));
-      const missing = modulesForApp(a.app).filter((m) => !claimed.has(m.key)).map((m) => m.key);
+      const missing = modulesForApp(a.appId).filter((m) => !claimed.has(m.key)).map((m) => m.key);
       assert.deepEqual(missing, [], `${a.app}: no documentation page claims ${missing.join(", ")}`);
     }
   });
 
   test("a page claims only modules that exist, and no module is claimed twice", () => {
     for (const a of DOC_APPS) {
-      const real = new Set(modulesForApp(a.app).map((m) => m.key));
+      if (!a.appId) {
+        for (const p of a.pages) assert.deepEqual(p.modules, [], `${a.app}/${p.slug}: a section with no app claims modules`);
+        continue;
+      }
+      const real = new Set(modulesForApp(a.appId).map((m) => m.key));
       const seen = new Set<string>();
       for (const p of a.pages) {
         for (const k of p.modules) {

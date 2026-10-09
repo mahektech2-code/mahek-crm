@@ -1,0 +1,121 @@
+Call History is every call logged in your book, newest first, with what happened on it, what it produced, and **what the screen told the telecaller would happen next**. Use it to look back over a week, to see what a colleague said to a customer before you ring them, and to hand a customer over to somebody else.
+
+## The screen at a glance
+
+<Wireframe url="/crm/history" nav={["Dashboard", "#Daily calling", "Call Log", "Reminders", "Call History", "Opportunities"]} active="Call History" caption="Call History, last 7 days">
+  <WfBar>
+    <WfTitle sub="Your book · Calls and WhatsApp messages in one stream, newest first.">Call history</WfTitle>
+    <WfSpacer />
+    <WfButton>Export</WfButton>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfBar>
+    <WfCard title="Calls today"><WfText>24</WfText></WfCard>
+    <WfCard title="Connected"><WfText>18 · 75% rate</WfText></WfCard>
+    <WfCard title="Missed"><WfText>6</WfText></WfCard>
+    <WfCard title="Messages sent today"><WfText>9</WfText></WfCard>
+    <WfCard title="Interactions in view"><WfText>132</WfText></WfCard>
+    <Hotspot n={2} />
+  </WfBar>
+  <WfCard title="Handover summary - Customer A">
+    <WfBar><WfText muted>Everything someone else needs to pick up this customer</WfText><WfSpacer /><WfInput placeholder="Customer A ▾" /><WfButton primary>Copy</WfButton><Hotspot n={3} /></WfBar>
+  </WfCard>
+  <WfBar>
+    <WfInput placeholder="Search notes and customers" wide /><WfInput placeholder="All channels ▾" /><WfInput placeholder="Everyone ▾" /><WfInput placeholder="Last 7 days ▾" />
+    <WfSpacer /><WfText muted>132 interactions</WfText>
+    <Hotspot n={4} />
+  </WfBar>
+  <WfTable columns={["Timestamp", "Customer", "Telecaller", "Channel", "Status", "Outcome", "Next call", "Notes", "Produced"]} rows={[
+    ["12 Aug, 10:42", "Customer A", "Telecaller A", "Call", "-", "Order Taken", <span key="a">20 Aug <WfText muted>Scheduled</WfText> <Hotspot n={5} /></span>, "6 cans Nano Thinner…", "Order"],
+    ["12 Aug, 10:15", "Customer B", "Telecaller A", "Call", "-", "Follow-up", <span key="b">14 Aug <WfText muted>Promised</WfText></span>, "Call after stock-take", "Reminder"],
+    ["5 Aug, 16:02", "Customer C", "Telecaller B", "Call", "-", "No Answer", <span key="c"><WfText muted>6 Aug</WfText> <WfText muted>Scheduled</WfText> <Hotspot n={6} /></span>, "Switched off", "-"],
+  ]} />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Export.</b> Downloads what the filters are showing as a CSV. Needs the right to export customers.</span>,
+  <span key="2"><b>Today's figures.</b> Calls you placed, connected and missed today, and messages you sent. The last card counts what the filters below are showing.</span>,
+  <span key="3"><b>Handover summary.</b> Pick a customer and press Copy: their last three interactions, the last thing promised and every open commitment, ready to paste to a colleague.</span>,
+  <span key="4"><b>Filters.</b> Search notes and customer names; narrow by channel, by person (managers), and by date.</span>,
+  <span key="5"><b>Next call.</b> What this call told the telecaller would happen next, with the badge saying whether it was a promise or a scheduled date. Hover for the full sentence and the day it was said.</span>,
+  <span key="6"><b>A past date, greyed.</b> It was true when the call was saved and is not a promise now — the customer has a different next call today.</span>,
+]} />
+
+## Reading the Next call column
+
+Every call saved since this column existed carries the answer the telecaller saw in the window after saving: *Comes back to your Call Log on …*. The column shows that answer, **as it was on that day**.
+
+| What you see | It means |
+|---|---|
+| A date in black, **Promised** | A callback the customer asked for. Somebody owes them this call. |
+| A date in black, **Scheduled** | The date the rules gave on that day. It moves if the customer orders, pays or asks for a callback. |
+| A date in **grey** | The date has passed. It was what the screen said then, not a commitment now. |
+| **Needs a decision** | Nobody could reach them — no date was given, and somebody has to decide what happens next. |
+| **Nothing scheduled** | Marked do not contact, or nothing would bring them back within four months. |
+| **-** | The call was logged before this was recorded. Nothing is filled in after the fact. |
+
+<Callout kind="note">
+To see when a customer **actually** comes back today, open their record or the Customers list. Call History shows what was said at the time — the difference between the two is the record of what changed.
+</Callout>
+
+## Looking something up
+
+<Steps>
+<Step title="Pick a date range">
+Today, Last 7 days, This month or All time. Last 7 days is where the screen opens.
+</Step>
+<Step title="Narrow it">
+Type a customer name or a word from a note. Managers can pick one telecaller from **Everyone**.
+</Step>
+<Step title="Open the details">
+Where a call recorded why the customer rang, who rang and what was agreed, hover the details summary to read every answer.
+</Step>
+<Step title="Open the customer">
+The customer's name opens their record.
+</Step>
+</Steps>
+
+<Callout kind="warn" title="All time is not all time">
+The screen loads the newest 400 calls in your book and filters those. When it is holding a full 400 it says so — *132 of the newest 400 calls* — and *All time* reaches back only as far as those 400 go. For older history, open the customer's record, whose timeline pages back to the beginning.
+</Callout>
+
+## Handing a customer over
+
+<Steps>
+<Step title="Pick the customer in the Handover summary card">
+The list is the customers in the calls you are looking at.
+</Step>
+<Step title="Press Copy">
+You get a short message: the customer's name, their last three interactions with date, channel, outcome and note, the last thing promised, and every open reminder with its due date.
+</Step>
+<Step title="Paste it to your colleague">
+In WhatsApp, an email or the customer's notes.
+</Step>
+</Steps>
+
+## What the other columns mean
+
+| Column | What it shows |
+|---|---|
+| **Timestamp** | When the call was logged |
+| **Telecaller** | Who logged it |
+| **Channel** | Call |
+| **Status** | Left blank on calls logged today — the outcome says whether they answered |
+| **Outcome** | How the call ended: Order Taken, No Order, No Answer, Payment Promised… |
+| **Notes** | What the telecaller wrote. Hover for the whole note. |
+| **Produced** | What the call created: Order, Reminder, Complaint |
+
+## Questions people ask
+
+<Faq q="Why are my WhatsApp messages not here?">
+Despite the subtitle, this screen lists calls only. Sent WhatsApp messages are on the WhatsApp screen's Message log, and on the customer's record.
+</Faq>
+<Faq q="The Next call date is in the past and greyed out.">
+That is the date the telecaller was given when they saved the call. It has passed; the customer's real next call is on their record.
+</Faq>
+<Faq q="Why can I not export?">
+Exporting needs the right to export customers, which a manager decides on the Access screen.
+</Faq>
+<Faq q="I am a manager and I only see my own calls.">
+Switch the header to **Team**. On My book you see only your own.
+</Faq>
