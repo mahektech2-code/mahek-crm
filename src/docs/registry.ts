@@ -80,6 +80,8 @@ export type DocApp = {
   pages: DocPage[];
 };
 
+const ALL: DocTab[] = ["guide", "how-it-works", "developer"];
+
 export const DOC_APPS: DocApp[] = [
   {
     app: "crm",
@@ -122,7 +124,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Daily calling",
         modules: ["crm.call-log"],
         screen: "/crm/call-log",
-        written: [],
+        written: ALL,
       },
       {
         slug: "reminders",
