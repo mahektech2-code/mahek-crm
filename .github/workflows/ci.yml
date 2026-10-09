@@ -19,7 +19,7 @@ jobs:
 
     services:
       db:
-        image: postgres:16
+        image: public.ecr.aws/docker/library/postgres:16
         env:
           POSTGRES_USER: mahek
           POSTGRES_PASSWORD: mahek
@@ -191,6 +191,19 @@ jobs:
           # headers, the compose wiring.
           echo 'DOMAIN=:80' >> /tmp/stack/.env
 
+      # The compose file is the droplet's own, so it names Docker Hub images and
+      # stays that way (renaming them there would recreate the live database
+      # container on the next deploy). CI pre-pulls the same images from the
+      # public mirror and gives them the names compose asks for, so the stack
+      # starts without an anonymous Docker Hub pull — see the Dockerfile.
+      - name: Fetch the stack's images from the mirror
+        working-directory: /tmp/stack
+        run: |
+          for img in $(grep -E '^\s+image: [a-z]' docker-compose.yml | awk '{print $2}' | grep -v '\$'); do
+            docker pull "public.ecr.aws/docker/library/$img" && docker tag "public.ecr.aws/docker/library/$img" "$img"
+          done
+          docker images
+
       - name: Bring it up, with the script the droplet uses
         working-directory: /tmp/stack
         run: bash restart.sh
@@ -240,7 +253,7 @@ jobs:
         run: |
           PKGS=$(grep -oP 'apt-get install -y -qq \K.*' deploy/bootstrap.sh | head -1)
           echo "packages: $PKGS"
-          docker run --rm ubuntu:24.04 sh -c "
+          docker run --rm public.ecr.aws/docker/library/ubuntu:24.04 sh -c "
             apt-get update -qq >/dev/null 2>&1
             apt-get install -s $PKGS >/dev/null
           "
@@ -255,7 +268,7 @@ jobs:
 
     services:
       db:
-        image: postgres:16
+        image: public.ecr.aws/docker/library/postgres:16
         env:
           POSTGRES_USER: mahek
           POSTGRES_PASSWORD: mahek
