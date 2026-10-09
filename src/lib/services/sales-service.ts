@@ -1276,21 +1276,11 @@ export async function visitsList(day: string): Promise<VisitRow[]> {
 }
 
 /**
- * Every visit in a window, optionally one salesman's — the same columns as a
- * day's list, so the Visits tab and a salesman's calendar read one row shape.
- *
- * The cap is per call: a day for the team is 400, a month for one salesman
- * rarely comes near it, and `limit` lets the calendar ask for more.
+ * The columns of a `VisitRow` and the joins they need, with no WHERE — one
+ * copy, so the Visit log and Activity history read one row shape.
  */
-export async function visitsBetween(filter: {
-  from: string;
-  to: string;
-  salesmanId?: string;
-  limit?: number;
-}): Promise<VisitRow[]> {
-  const scope = await managerScope();
-  const who = filter.salesmanId ? sql`and v.salesman_id = ${filter.salesmanId}` : sql``;
-  return db.execute<VisitRow>(sql`
+function visitSelect(): SQL {
+  return sql`
     select v.id, v.salesman_id as "salesmanId",
            (v.check_in_at ${IST_DAY})::date::text as "day",
            v.journey_plan_stop_id as "journeyPlanStopId", u.name as "salesmanName", u.initials,
@@ -1341,6 +1331,26 @@ export async function visitsBetween(filter: {
       from mbos_visits v
       join users u on u.id = v.salesman_id
       join customers c on c.id = v.customer_id
+  `;
+}
+
+/**
+ * Every visit in a window, optionally one salesman's — the same columns as a
+ * day's list, so the Visits tab and a salesman's calendar read one row shape.
+ *
+ * The cap is per call: a day for the team is 400, a month for one salesman
+ * rarely comes near it, and `limit` lets the calendar ask for more.
+ */
+export async function visitsBetween(filter: {
+  from: string;
+  to: string;
+  salesmanId?: string;
+  limit?: number;
+}): Promise<VisitRow[]> {
+  const scope = await managerScope();
+  const who = filter.salesmanId ? sql`and v.salesman_id = ${filter.salesmanId}` : sql``;
+  return db.execute<VisitRow>(sql`
+    ${visitSelect()}
      where (v.check_in_at ${IST_DAY})::date between ${filter.from}::date and ${filter.to}::date
        ${who}
        ${onlyMine(scope, "u.id")}
@@ -1390,27 +1400,6 @@ export type FieldActivityRow = {
   readAt: string;
 };
 
-export type FieldActivityFilter = {
-  from: string;
-  to: string;
-  /** The name exactly as the sheet writes it — most have no MahekOne account. */
-  salesmanName?: string;
-  matchStatus?: "matched" | "ambiguous" | "unmatched";
-  /** 1-based. Every row in range is reachable a page at a time. */
-  page?: number;
-  perPage?: number;
-};
-
-const FIELD_ACTIVITY_PER_PAGE = 50;
-
-/**
- * A capped, filtered slice of the imported "Mahek EMP 2.0" activity history
- * — a manager's read of the full staging table, not just the subset that
- * resolved to a real customer. `timeline_events` (and through it the MBOS
- * `timeline` pull channel) only ever gets the matched subset; a manager
- * reviewing this backfill needs to see the rows that still need a customer
- * resolved too, which is why this reads `sheet_field_activity_rows` directly.
- */
 /**
  * A ROW NOBODY OWNS IS NOBODY'S TO HIDE.
  *
@@ -1442,41 +1431,10 @@ function mineOrNobodys(scope: ManagerScope, column: string) {
   )}))`;
 }
 
-export async function fieldActivityHistory(
-  filter: FieldActivityFilter,
-): Promise<{
-  rows: FieldActivityRow[];
-  total: number;
-  page: number;
-  perPage: number;
-  /** Rows in the staging table regardless of filter — see the note below. */
-  everInTable: number;
-}> {
-  const scope = await managerScope();
-  const matchClause = filter.matchStatus
-    ? sql`and f.customer_match_status = ${filter.matchStatus}`
-    : sql``;
-  const salesmanClause = filter.salesmanName
-    ? sql`and f.employee_name = ${filter.salesmanName}`
-    : sql``;
-
-  const counted = await db.execute<{ n: number }>(sql`
-    select count(*)::int as n
-      from sheet_field_activity_rows f
-      left join users u on u.id = f.matched_salesman_id
-     where f.status = 'present'
-       and f.visit_date between ${filter.from}::date and ${filter.to}::date
-       ${mineOrNobodys(scope, "u.id")}
-       ${matchClause}
-       ${salesmanClause}
-  `);
-  const total = counted[0]?.n ?? 0;
-  const perPage = filter.perPage ?? FIELD_ACTIVITY_PER_PAGE;
-  // A page past the end (filters narrowed under it) lands on the last one.
-  const page = Math.min(Math.max(1, filter.page ?? 1), Math.max(1, Math.ceil(total / perPage)));
-
-  const rows = await db.execute<FieldActivityRow>(sql`
-    select f.id, f.visit_date as "visitDate",
+/** The columns of a `FieldActivityRow` and their joins, with no WHERE. */
+function sheetActivitySelect(): SQL {
+  return sql`
+    select f.id, f.visit_date::text as "visitDate",
            f.matched_salesman_id as "salesmanId", u.name as "salesmanName",
            f.employee_name as "employeeNameRaw",
            f.matched_customer_id as "customerId", c.name as "customerName",
@@ -1487,7 +1445,7 @@ export async function fieldActivityHistory(
            f.location, f.customer_match_status as "customerMatchStatus",
            f.match_note as "matchNote",
            f.activity_id as "activityId", f.row_number as "rowNumber",
-           f.reminder_date as "reminderDate", f.mood_raw as "moodRaw",
+           f.reminder_date::text as "reminderDate", f.mood_raw as "moodRaw",
            f.salesman_match_status as "salesmanMatchStatus",
            u.active as "salesmanAccountActive",
            e.status::text as "employmentStatus",
@@ -1500,97 +1458,250 @@ export async function fieldActivityHistory(
       left join users u on u.id = f.matched_salesman_id
       left join employees e on e.id = u.employee_id
       left join customers c on c.id = f.matched_customer_id
-     where f.status = 'present'
-       and f.visit_date between ${filter.from}::date and ${filter.to}::date
-       ${mineOrNobodys(scope, "u.id")}
-       ${matchClause}
-       ${salesmanClause}
-     order by f.visit_date desc nulls last, f.row_number desc, f.id desc
-     limit ${perPage} offset ${(page - 1) * perPage}
-  `) as unknown as FieldActivityRow[];
+  `;
+}
 
-  /*
-   * HOW MANY ROWS EXIST AT ALL, so an empty screen can say WHY it is empty.
-   *
-   * "Nothing in this range" and "nothing you are allowed to see" and "this
-   * table has never been filled" are three different situations with three
-   * different things to do about them, and the screen answered all of them
-   * with advice about the date filter. That advice was actively wrong on the
-   * day it was reported: 907 rows sat inside the default window, and the
-   * reason none were drawn was the scope clause above.
-   *
-   * Unfiltered and unscoped deliberately — it is a count of the staging table
-   * and nothing more, used only to choose a sentence. No row of it is shown.
-   */
-  const everything = total === 0
-    ? await db.execute<{ n: number }>(sql`
-        select count(*)::int as n from sheet_field_activity_rows where status = 'present'
-      `)
-    : null;
+/* ═════════════════════════════════════════════ activity history (unified) */
 
+/*
+ * MBOS IS THE RECORD; THE OLD APP IS ITS PAST.
+ *
+ * Activity history used to read the EMP 2.0 sheet and nothing else, so a
+ * visit logged on a handset — the app the team actually works in — was on
+ * the Visit log and never here. It now reads both, as one list newest first:
+ * every MBOS visit, and the old app's rows only BEFORE
+ * `fieldActivity.cutoverDate`. From that date the sheet stops being stored
+ * at all (see the sync service), so this clause is the second half of one
+ * rule rather than a filter hiding live data.
+ *
+ * A past day can carry both, because some men typed a visit into each app
+ * during the overlap. They are different records and each row says which
+ * app it came from — merging them would be guessing which two are one visit.
+ */
+
+export type ActivitySource = "mbos" | "sheet";
+export type ActivityMatch = "matched" | "ambiguous" | "unmatched";
+
+export type ActivityHistoryRow =
+  | { source: "mbos"; visit: VisitRow }
+  | { source: "sheet"; sheet: FieldActivityRow };
+
+export type ActivityHistoryFilter = {
+  from: string;
+  to: string;
+  /** "u:<user id>" for an account, "n:<name>" for a name only the sheet carries. */
+  salesman?: string;
+  source?: ActivitySource;
+  /** The old app's customer match — only meaningful with `source: "sheet"`. */
+  match?: ActivityMatch;
+  page?: number;
+  perPage?: number;
+};
+
+const ACTIVITY_PER_PAGE = 50;
+
+type Clauses = { mbos: SQL; sheet: SQL };
+
+/** Imported lazily, as every reader of it here does — `config/store` reaches
+ *  back into places that reach back here. */
+async function activityCutover(): Promise<string> {
+  const { getConfig } = await import("../config/store");
+  return (await getConfig())["fieldActivity.cutoverDate"];
+}
+
+async function activityClauses(
+  filter: Omit<ActivityHistoryFilter, "page" | "perPage">,
+  cutover: string,
+): Promise<Clauses> {
+  const scope = await managerScope();
+  let mbosWho = sql``;
+  let sheetWho = sql``;
+  if (filter.salesman?.startsWith("u:")) {
+    const id = filter.salesman.slice(2);
+    mbosWho = sql`and v.salesman_id = ${id}`;
+    sheetWho = sql`and f.matched_salesman_id = ${id}`;
+  } else if (filter.salesman?.startsWith("n:")) {
+    // A name nobody has an account under has no MBOS visits by definition.
+    mbosWho = sql`and false`;
+    sheetWho = sql`and f.employee_name = ${filter.salesman.slice(2)}`;
+  }
+  const sheetMatch = filter.match ? sql`and f.customer_match_status = ${filter.match}` : sql``;
   return {
-    rows,
-    total,
-    page,
-    perPage,
-    everInTable: everything ? (everything[0]?.n ?? 0) : total,
+    mbos: sql`
+      (v.check_in_at ${IST_DAY})::date between ${filter.from}::date and ${filter.to}::date
+      ${mbosWho}
+      ${onlyMine(scope, "u.id")}`,
+    sheet: sql`
+      f.status = 'present'
+      and f.visit_date between ${filter.from}::date and ${filter.to}::date
+      and f.visit_date < ${cutover}::date
+      ${sheetWho}
+      ${sheetMatch}
+      ${mineOrNobodys(scope, "u.id")}`,
   };
 }
 
 /**
- * Every salesman NAME the imported activity carries, for the filter.
- *
- * Read off the sheet's own column rather than off the matched accounts: most of
- * these men never had a MahekOne sign-in, so a list of accounts offered two
- * names out of twenty and the rest of the book could not be narrowed at all.
+ * One page of the merged history, newest day first; within a day the MBOS
+ * visits (which carry a time) come first, latest check-in on top, then the
+ * old app's rows in the sheet's own order.
  */
-export async function fieldActivitySalesmen(): Promise<{ name: string; rows: number }[]> {
-  const scope = await managerScope();
-  return db.execute<{ name: string; rows: number }>(sql`
-    select f.employee_name as name, count(*)::int as rows
-      from sheet_field_activity_rows f
-      left join users u on u.id = f.matched_salesman_id
-     where f.status = 'present'
-       and f.employee_name is not null
-       ${mineOrNobodys(scope, "u.id")}
-     group by f.employee_name
-     order by f.employee_name
-  `) as unknown as { name: string; rows: number }[];
+export async function activityHistory(filter: ActivityHistoryFilter): Promise<{
+  rows: ActivityHistoryRow[];
+  total: number;
+  page: number;
+  perPage: number;
+  cutover: string;
+  /** Anything at all, regardless of filter — so an empty screen can say why. */
+  everAnything: boolean;
+}> {
+  const cutover = await activityCutover();
+  const w = await activityClauses(filter, cutover);
+  const wantMbos = filter.source !== "sheet" && !filter.match;
+  const wantSheet = filter.source !== "mbos";
+
+  const keyed = sql`
+    ${wantMbos ? sql`
+      select 'mbos' as src, v.id, (v.check_in_at ${IST_DAY})::date as day,
+             0 as tier, extract(epoch from v.check_in_at)::bigint as ord
+        from mbos_visits v
+        join users u on u.id = v.salesman_id
+        join customers c on c.id = v.customer_id
+       where ${w.mbos}` : sql`select null::text as src, null::text as id, null::date as day, 0 as tier, 0::bigint as ord where false`}
+    union all
+    ${wantSheet ? sql`
+      select 'sheet' as src, f.id, f.visit_date as day, 1 as tier, f.row_number::bigint as ord
+        from sheet_field_activity_rows f
+        left join users u on u.id = f.matched_salesman_id
+       where ${w.sheet}` : sql`select null::text, null::text, null::date, 0, 0::bigint where false`}
+  `;
+
+  const counted = await db.execute<{ n: number }>(sql`select count(*)::int as n from (${keyed}) k`);
+  const total = Number(counted[0]?.n ?? 0);
+  const perPage = filter.perPage ?? ACTIVITY_PER_PAGE;
+  const page = Math.min(Math.max(1, filter.page ?? 1), Math.max(1, Math.ceil(total / perPage)));
+
+  const keys = (await db.execute<{ src: ActivitySource; id: string }>(sql`
+    select src, id from (${keyed}) k
+     order by day desc nulls last, tier, ord desc, id desc
+     limit ${perPage} offset ${(page - 1) * perPage}
+  `)) as unknown as { src: ActivitySource; id: string }[];
+
+  const mbosIds = keys.filter((k) => k.src === "mbos").map((k) => k.id);
+  const sheetIds = keys.filter((k) => k.src === "sheet").map((k) => k.id);
+  const [visits, sheets] = await Promise.all([
+    mbosIds.length
+      ? (db.execute<VisitRow>(sql`
+          ${visitSelect()}
+           where v.id in (${sql.join(mbosIds.map((i) => sql`${i}`), sql`, `)})
+        `) as unknown as Promise<VisitRow[]>)
+      : Promise.resolve([] as VisitRow[]),
+    sheetIds.length
+      ? (db.execute<FieldActivityRow>(sql`
+          ${sheetActivitySelect()}
+           where f.id in (${sql.join(sheetIds.map((i) => sql`${i}`), sql`, `)})
+        `) as unknown as Promise<FieldActivityRow[]>)
+      : Promise.resolve([] as FieldActivityRow[]),
+  ]);
+  const visitById = new Map(visits.map((v) => [v.id, v]));
+  const sheetById = new Map(sheets.map((r) => [r.id, r]));
+  const rows: ActivityHistoryRow[] = [];
+  for (const k of keys) {
+    if (k.src === "mbos") {
+      const visit = visitById.get(k.id);
+      if (visit) rows.push({ source: "mbos", visit });
+    } else {
+      const sheet = sheetById.get(k.id);
+      if (sheet) rows.push({ source: "sheet", sheet });
+    }
+  }
+
+  // Unfiltered and unscoped, only to choose a sentence; no row of it is shown.
+  const everAnything =
+    total > 0 ||
+    Number(
+      (
+        await db.execute<{ n: number }>(sql`
+          select ((select count(*) from mbos_visits) + (select count(*) from sheet_field_activity_rows where status = 'present'))::int as n
+        `)
+      )[0]?.n ?? 0,
+    ) > 0;
+
+  return { rows, total, page, perPage, cutover, everAnything };
 }
 
 /**
- * How many rows in range fall into each match status, over the WHOLE
- * filtered set rather than the capped page — the same reason the customer
- * timeline's filter pills read a `count(*)` instead of what happened to load.
+ * How many rows each chip would show, over the whole filtered range rather
+ * than the page — MBOS and the old app, and the old app by customer match.
  */
-export async function fieldActivityMatchCounts(
-  filter: Omit<FieldActivityFilter, "matchStatus">,
-): Promise<{ all: number; matched: number; ambiguous: number; unmatched: number }> {
-  const scope = await managerScope();
-  const salesmanClause = filter.salesmanName
-    ? sql`and f.employee_name = ${filter.salesmanName}`
-    : sql``;
-
-  const rows = await db.execute<{ status: string; n: number }>(sql`
-    select f.customer_match_status as status, count(*)::int as n
-      from sheet_field_activity_rows f
-      left join users u on u.id = f.matched_salesman_id
-     where f.status = 'present'
-       and f.visit_date between ${filter.from}::date and ${filter.to}::date
-       ${mineOrNobodys(scope, "u.id")}
-       ${salesmanClause}
-     group by f.customer_match_status
-  `);
-
-  const counts = { all: 0, matched: 0, ambiguous: 0, unmatched: 0 };
-  for (const r of rows) {
+export async function activityHistoryCounts(
+  filter: Omit<ActivityHistoryFilter, "page" | "perPage" | "source" | "match">,
+): Promise<{ all: number; mbos: number; sheet: number; matched: number; ambiguous: number; unmatched: number }> {
+  const cutover = await activityCutover();
+  const w = await activityClauses(filter, cutover);
+  const [m, s] = await Promise.all([
+    db.execute<{ n: number }>(sql`
+      select count(*)::int as n
+        from mbos_visits v
+        join users u on u.id = v.salesman_id
+        join customers c on c.id = v.customer_id
+       where ${w.mbos}
+    `),
+    db.execute<{ status: string; n: number }>(sql`
+      select f.customer_match_status as status, count(*)::int as n
+        from sheet_field_activity_rows f
+        left join users u on u.id = f.matched_salesman_id
+       where ${w.sheet}
+       group by f.customer_match_status
+    `),
+  ]);
+  const out = { all: 0, mbos: Number(m[0]?.n ?? 0), sheet: 0, matched: 0, ambiguous: 0, unmatched: 0 };
+  for (const r of s) {
     const n = Number(r.n);
-    counts.all += n;
-    if (r.status === "matched" || r.status === "ambiguous" || r.status === "unmatched") {
-      counts[r.status] = n;
-    }
+    out.sheet += n;
+    if (r.status === "matched" || r.status === "ambiguous" || r.status === "unmatched") out[r.status] = n;
   }
-  return counts;
+  out.all = out.mbos + out.sheet;
+  return out;
+}
+
+/**
+ * Everybody the salesman filter can offer: accounts with MBOS visits or with
+ * old-app rows matched to them, then the names only the sheet carries (most
+ * of the old app's men never had a MahekOne sign-in).
+ */
+export async function activityHistorySalesmen(): Promise<{
+  accounts: { id: string; name: string }[];
+  sheetNames: { name: string; rows: number }[];
+}> {
+  const scope = await managerScope();
+  const cutover = await activityCutover();
+  const [accounts, sheetNames] = await Promise.all([
+    db.execute<{ id: string; name: string }>(sql`
+      select u.id, u.name
+        from users u
+       where (exists (select 1 from mbos_visits v where v.salesman_id = u.id)
+              or exists (select 1 from sheet_field_activity_rows f
+                          where f.matched_salesman_id = u.id and f.status = 'present'
+                            and f.visit_date < ${cutover}::date))
+         ${onlyMine(scope, "u.id")}
+       order by u.name
+    `),
+    db.execute<{ name: string; rows: number }>(sql`
+      select f.employee_name as name, count(*)::int as rows
+        from sheet_field_activity_rows f
+       where f.status = 'present'
+         and f.employee_name is not null
+         and f.matched_salesman_id is null
+         and f.visit_date < ${cutover}::date
+       group by f.employee_name
+       order by f.employee_name
+    `),
+  ]);
+  return {
+    accounts: accounts as unknown as { id: string; name: string }[],
+    sheetNames: sheetNames as unknown as { name: string; rows: number }[],
+  };
 }
 
 export type LeadRow = {

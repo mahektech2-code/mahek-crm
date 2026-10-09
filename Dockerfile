@@ -12,7 +12,11 @@
 # see the note beside that line.
 
 # --------------------------------------------------------------- dependencies
-FROM node:24-alpine AS deps
+# Docker's official images, pulled through AWS's public mirror of them rather
+# than Docker Hub: GitHub's runners share IPs, and Docker Hub's anonymous pull
+# limit failed every CI job and deploy that landed on a throttled one. Same
+# image, same tags — only where it is fetched from.
+FROM public.ecr.aws/docker/library/node:24-alpine AS deps
 WORKDIR /app
 
 # Only the manifests, so this layer is cached until a dependency actually
@@ -21,7 +25,7 @@ COPY package.json package-lock.json ./
 RUN npm ci
 
 # --------------------------------------------------------------------- build
-FROM node:24-alpine AS builder
+FROM public.ecr.aws/docker/library/node:24-alpine AS builder
 WORKDIR /app
 
 COPY --from=deps /app/node_modules ./node_modules
@@ -63,7 +67,7 @@ ENV DATABASE_URL=postgres://build:build@build-time-no-database.invalid:5432/buil
 RUN npx next build
 
 # ------------------------------------------------------------------- runtime
-FROM node:24-alpine AS runner
+FROM public.ecr.aws/docker/library/node:24-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
