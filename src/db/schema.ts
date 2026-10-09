@@ -13872,3 +13872,103 @@ export const vendorPayoutInvoices = pgTable(
     check("vendor_payout_invoices_amount_check", sql`${t.amountPaise} is null or ${t.amountPaise} >= 0`),
   ],
 );
+
+/* ---------------------------------------------------------------------------
+ * THE WEBSITE CMS (migration 0240).
+ *
+ * `website_content` holds every editable piece of mahekindia.com. Two copies
+ * of each: `data`, the working copy the editor shows and a preview renders, and
+ * `published_data`, the snapshot the public site reads — written only by a
+ * publish. `version` counts saves; `published_version` is the save that went
+ * live, so "unpublished changes" is a comparison of two integers.
+ *
+ * Read `lib/website-cms/` for the rules. The schema only enforces what cannot
+ * be allowed to drift: a row is `published` exactly when it has a snapshot.
+ * ------------------------------------------------------------------------- */
+
+export const websiteContentStateEnum = pgEnum("website_content_state", ["draft", "published", "archived"]);
+
+export const websiteContent = pgTable(
+  "website_content",
+  {
+    id: text("id").primaryKey(),
+    /** `product`, `industry`, `gallery`, `job`, `testimonial`, `milestone`, `page`, `seo`, `navigation`, `settings`. */
+    kind: text("kind").notNull(),
+    /** Identity inside the kind: a product's web address, a page key, a path for SEO, `site` for the one-row kinds. */
+    slug: text("slug").notNull(),
+    sort: integer("sort").notNull().default(0),
+    state: websiteContentStateEnum("state").notNull().default("draft"),
+    /** The working copy. Shape per kind is `lib/website-cms/kinds.ts`. */
+    data: jsonb("data").$type<Record<string, unknown>>().notNull(),
+    /** What is live. Non-null exactly when `state = 'published'`. */
+    publishedData: jsonb("published_data").$type<Record<string, unknown>>(),
+    version: integer("version").notNull().default(1),
+    publishedVersion: integer("published_version"),
+    /** The position this row has on the LIVE site. Copied from `sort` when its list is published, so reordering in the editor changes nothing live until then. */
+    publishedSort: integer("published_sort"),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    publishedById: text("published_by_id").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedById: text("updated_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("website_content_kind_slug_key").on(t.kind, t.slug),
+    index("website_content_kind_state_sort_idx").on(t.kind, t.state, t.sort),
+    check(
+      "website_content_live_has_snapshot",
+      sql`(${t.state} = 'published') = (${t.publishedData} is not null)`,
+    ),
+  ],
+);
+
+export const websiteMedia = pgTable(
+  "website_media",
+  {
+    id: text("id").primaryKey(),
+    /** `upload` — bytes in the file store, served at `/cms-media/<id>/<filename>`; `site` — a file already inside the website's own image. */
+    source: text("source").notNull(),
+    filename: text("filename").notNull(),
+    contentType: text("content_type").notNull(),
+    sizeBytes: integer("size_bytes").notNull().default(0),
+    contentHash: text("content_hash"),
+    storedRef: text("stored_ref"),
+    sitePath: text("site_path"),
+    alt: text("alt").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    uploadedById: text("uploaded_by_id").references(() => users.id),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    deletedById: text("deleted_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("website_media_site_path_key").on(t.sitePath).where(sql`${t.sitePath} is not null`),
+    index("website_media_created_idx").on(t.createdAt),
+    check("website_media_source_check", sql`${t.source} in ('upload', 'site')`),
+    check(
+      "website_media_where_check",
+      sql`(${t.source} = 'upload' and ${t.storedRef} is not null) or (${t.source} = 'site' and ${t.sitePath} is not null)`,
+    ),
+  ],
+);
+
+export const websitePublishLog = pgTable(
+  "website_publish_log",
+  {
+    id: text("id").primaryKey(),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+    actorId: text("actor_id").references(() => users.id),
+    /** `save`, `publish`, `unpublish`, `archive`, `restore`, `discard`, `delete`, `reorder`, `import`, `refresh`, `media-upload`, `media-delete`. */
+    action: text("action").notNull(),
+    kind: text("kind"),
+    slug: text("slug"),
+    contentId: text("content_id"),
+    ok: boolean("ok").notNull().default(true),
+    detail: text("detail"),
+  },
+  (t) => [index("website_publish_log_at_idx").on(t.at)],
+);
+
+export type WebsiteContentRow = typeof websiteContent.$inferSelect;
+export type WebsiteMediaRow = typeof websiteMedia.$inferSelect;
+export type WebsitePublishLogRow = typeof websitePublishLog.$inferSelect;
