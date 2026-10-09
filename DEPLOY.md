@@ -435,6 +435,22 @@ the release back on whichever laptop has a JDK — which is the situation this
 workflow exists to end. Local `gradlew assembleRelease` is for trying a change
 on your own phone.
 
+## Releasing the Factory app (Android)
+
+The Factory app is a Trusted Web Activity around `/factory`
+(`factory-android/`). Its screens update with every deploy, so it only needs
+releasing when the wrapper itself changes — and once, the first time.
+
+```bash
+gh workflow run "Factory APK" --ref main -f site=https://one.mahekindia.com -f version=1.0.0 -f publish=true
+```
+
+It signs with the MBOS release key, puts `factory.apk` on the droplet beside
+`mbos.apk`, and publishes `factory-assetlinks.json` with the key's fingerprint;
+the site serves that at `/.well-known/assetlinks.json`, which is what lets the
+app open without a browser bar. Floor staff install it from
+`https://one.mahekindia.com/download?team=erp`.
+
 ## Push notifications
 
 **Until this is done, no handset can receive a push.** Every notification the

@@ -9,6 +9,7 @@ import { asc, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { appAccess, appModuleAccess, employees, erpUserPowers, hireUserRoles, hrmsUserPowers, users } from "@/db/schema";
 import { APPS, type AppId } from "@/lib/apps";
+import type { CrewRole, FactoryDept, FactoryPlace } from "@/lib/factory/departments";
 import { isAlwaysOpen, moduleAllowed, moduleKeysForApp, modulesForApp } from "@/lib/modules";
 
 /* ---------------------------------------------------------------------------
@@ -108,6 +109,8 @@ export type AccessRow = {
   hrmsPowers: string[];
   /** Their job inside Hire, where one is set; null means the level decides. */
   hireRole: string | null;
+  /** Where they work on the factory floor, with the Factory level their department-level permission. */
+  factoryPlace: FactoryPlace | null;
   /**
    * The ERP designation this person holds, and whether their access is still
    * exactly it. `matches: false` is CUSTOMISED: an edit to the designation
@@ -228,7 +231,7 @@ function buildGrants(
 
 /** Every account, with what it opens and how far into each app it reaches. */
 export async function listAccess(): Promise<AccessRow[]> {
-  const [accounts, access, moduleRows, staff, powerRows, hrmsPowerRows, hireRoleRows, standings] = await Promise.all([
+  const [accounts, access, moduleRows, staff, powerRows, hrmsPowerRows, hireRoleRows, standings, factoryRows] = await Promise.all([
     db
       .select({
         id: users.id,
@@ -257,7 +260,12 @@ export async function listAccess(): Promise<AccessRow[]> {
     db.select({ userId: hrmsUserPowers.userId, power: hrmsUserPowers.power }).from(hrmsUserPowers),
     db.select({ userId: hireUserRoles.userId, role: hireUserRoles.role }).from(hireUserRoles),
     designationStandings(),
+    db.execute(sql`
+      select s.user_id as "userId", s.area, s.badge_code as badge, s.hr_confirmed as "hrConfirmed",
+             (select d.role from factory_team_defaults d where d.user_id = s.user_id and d.proc = s.area limit 1) as crew
+        from factory_staff s`) as unknown as Promise<{ userId: string; area: FactoryDept; badge: string | null; hrConfirmed: boolean; crew: CrewRole | null }[]>,
   ]);
+  const placeByUser = new Map(factoryRows.map((r) => [r.userId, { dept: r.area, crew: r.crew, badge: r.badge, hrConfirmed: r.hrConfirmed } as FactoryPlace]));
   const hireRoleByUser = new Map(hireRoleRows.map((r) => [r.userId, r.role]));
   const hrmsPowersByUser = new Map<string, string[]>();
   for (const p of hrmsPowerRows) hrmsPowersByUser.set(p.userId, [...(hrmsPowersByUser.get(p.userId) ?? []), p.power]);
@@ -346,6 +354,7 @@ export async function listAccess(): Promise<AccessRow[]> {
       erpPowers: powersByUser.get(u.id) ?? [],
       hrmsPowers: hrmsPowersByUser.get(u.id) ?? [],
       hireRole: hireRoleByUser.get(u.id) ?? null,
+      factoryPlace: placeByUser.get(u.id) ?? null,
       erpDesignation: standings.get(u.id) ?? null,
     };
   });

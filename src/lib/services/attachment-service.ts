@@ -354,6 +354,15 @@ export async function canRead(attachmentId: string): Promise<boolean> {
     return canReadHrmsAttachment(row.parentType, row.parentId);
   }
 
+  /* A factory job's photograph is evidence about the job: anybody holding the
+     Factory app may open it, which is the team that loaded the truck and the
+     Production Head who reviews it. */
+  if (row.parentType === "factory_task") {
+    const { listUserApps } = await import("@/lib/access");
+    const ctx = await resolveScope();
+    return (await listUserApps(ctx.user.id)).includes("factory");
+  }
+
   /* A vendor's invoice has no customer behind it: whoever holds Accounts →
      Vendor payouts may open it, and nobody else. */
   if (row.parentType === "vendor_payout_invoice") {

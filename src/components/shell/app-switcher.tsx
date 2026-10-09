@@ -39,6 +39,7 @@ const GLYPH: Record<AppId, string> = {
   erp: "clipboard",
   website: "grid",
   hire: "people",
+  factory: "clipboard",
   docs: "book",
 };
 

@@ -1699,8 +1699,15 @@
     {
       "idx": 242,
       "version": "7",
-      "when": 1792531781442,
-      "tag": "0245_hometown_is_a_place",
+      "when": 1792531840442,
+      "tag": "0245_factory_app",
+      "breakpoints": true
+    },
+    {
+      "idx": 243,
+      "version": "7",
+      "when": 1792531900442,
+      "tag": "0246_hometown_is_a_place",
       "breakpoints": true
     }
   ]

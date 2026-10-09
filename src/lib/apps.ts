@@ -21,6 +21,7 @@ export const APP_IDS = [
   "website",
   "hire",
   "docs",
+  "factory",
 ] as const;
 
 export type AppId = (typeof APP_IDS)[number];
@@ -263,6 +264,26 @@ export const APPS: AppDefinition[] = [
     description:
       "How every MahekOne app works — step-by-step guides, the rules behind each screen, and the developer reference.",
     href: "/docs",
+    tone: "neutral",
+    built: true,
+  },
+  {
+    id: "factory",
+    /*
+     * The factory floor's phone app — scan a label, see the picture, enter
+     * the count, send. A web app sized for a phone, also shipped as a thin
+     * Android wrapper (factory-android/) so it has a home-screen icon; every
+     * screen still comes from the server. Every stock movement it makes is an
+     * ERP document, posted through the ERP's own handlers (`lib/factory/post.ts`).
+     *
+     * Associate is a worker on the floor; manager supervises a department, or
+     * the whole floor as the Production Head (`lib/factory/departments.ts`).
+     */
+    name: "Factory",
+    initials: "FA",
+    description:
+      "The floor's phone app: mixing, filling, packing and dispatch, by scanning — with the Production Head's live view.",
+    href: "/factory",
     tone: "neutral",
     built: true,
   },
