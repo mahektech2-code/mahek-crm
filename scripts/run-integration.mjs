@@ -187,6 +187,10 @@ const files = [
   // again with every call kept, one reopen from two simultaneous requests, and
   // the ladder's gates still applying to what comes back.
   "src/lib/lead-reopen.test.ts",
+  // All Leads → Change stage → Lost: the reason the modal now sends, validated
+  // by the server, a mixed batch reported by name, and a bulk loss reversed by
+  // the existing reopen with its history intact.
+  "src/lib/lead-bulk-lost.test.ts",
   // The Telecaller-owned Qualification workflow, Prospect to Sample/Trial.
   "src/lib/telecaller-qualification.test.ts",
   // Intake: what they want, in words or from the catalogue — and never the Calling Desk Product answer.

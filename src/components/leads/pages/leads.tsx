@@ -281,6 +281,7 @@ export async function Body({
          instruction each row prints and nothing whatever about what may be
          done to the lead, which every action goes on checking for itself. */
       viewer={viewer}
+      lostReasons={config["leads.lostReasons"]}
       desks={{
         verification: verification.total,
         verificationMine: verification.mine,
