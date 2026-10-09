@@ -7364,6 +7364,43 @@ export const mbosExpenses = pgTable(
   ],
 );
 
+/**
+ * A REIMBURSEMENT HANDED OVER — the money that settles what the expense
+ * ledger says a salesman is owed.
+ *
+ * It is paid against his BALANCE, never against one expense: one transfer at
+ * the end of the week covers a dozen fares and a hotel, and pinning it to
+ * lines would make the ordinary case a chore. Which lines it covered is worked
+ * out oldest first by `lib/engines/expense-ledger.ts` on every read, so the
+ * per-line "paid" is a reading of this table and never a second copy of it.
+ *
+ * A wrong entry is VOIDED with a reason, never deleted or edited: "we paid
+ * ₹4,000 and then took it back" is a fact about his money that the statement
+ * must go on showing.
+ */
+export const mbosExpensePayouts = pgTable(
+  "mbos_expense_payouts",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    paidOn: date("paid_on").notNull(),
+    amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+    /** Bank transfer, UPI, cash, with salary … — free text, offered as chips. */
+    mode: text("mode"),
+    /** UTR, cheque number, payroll month — what finds it in a statement. */
+    reference: text("reference"),
+    note: text("note"),
+    recordedById: text("recorded_by_id").references(() => users.id),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+    voidedAt: timestamp("voided_at", { withTimezone: true }),
+    voidedById: text("voided_by_id").references(() => users.id),
+    voidReason: text("void_reason"),
+  },
+  (t) => [index("mbos_expense_payouts_user_idx").on(t.userId, t.paidOn)],
+);
+
 /* ------------------------------------------------- the expense POLICY */
 
 /**

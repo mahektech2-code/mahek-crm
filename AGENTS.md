@@ -6636,6 +6636,20 @@ approval. The per-day approvals already decided stay as the record they are;
 `0240` deleted only the pending ones and the ₹0 lines the old close-the-day
 wrote.
 
+**THE EXPENSE LEDGER IS DERIVED, AND A REIMBURSEMENT IS PAID AGAINST THE
+BALANCE.** Expenses → Ledger (`/sales/expenses/ledger`, and one salesman's
+statement under `/[userId]`) answers what he claimed, what the policy allows
+and why (`mbos_expense_exceptions` per line), what was approved, cut or
+refused with the remark, what is waiting, what his work log earned, what has
+been paid and what is owed now. `mbos_expense_payouts` (0243) is the only new
+record: money handed over, never pinned to an expense — one transfer covers a
+week — so `lib/engines/expense-ledger.ts` (pure) allocates it to approved lines
+OLDEST FIRST on every read for the per-line Paid / Part paid / Not paid. "Owed
+now" is all-time (a payment in October settles a September fare); a month only
+narrows the rows drawn. A wrong payment is VOIDED with a reason, never deleted.
+Recording one is a sales manager's (`sales.expenses`), audited, and the
+salesman is told on his phone. Nothing here touches the policy.
+
 **TRAVEL IS ASKED TWICE A DAY, AND NEVER AT A SHOP — a reversal (Sep 2026).**
 The paragraphs below describe how a visit used to ask how he was travelling,
 open a meter camera, and ask for the bus fare on the way out. The field would

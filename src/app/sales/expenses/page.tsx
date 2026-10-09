@@ -6,6 +6,7 @@ import { MonthNav } from "@/components/ui/month-nav";
 import { expenseLines, type ExpenseLineRow } from "@/lib/services/expense-claims-service";
 import { canDecideExpenseLines } from "@/lib/actions/sales";
 import { DecideExpense } from "./decide-expense";
+import { ExpenseTabs } from "./tabs";
 import { expenseKindLabel, inrExact } from "./labels";
 import {
   Cell,
@@ -94,6 +95,7 @@ export default async function Page({
           </div>
         }
       />
+      <ExpenseTabs current="claims" month={month} />
 
       <MetricRow
         metrics={[
@@ -156,7 +158,7 @@ export default async function Page({
           {sorted.map((r, i) => (
             <Row key={r.id} striped={i % 2 === 1}>
               <Cell truncate={180}>
-                <EntityLink href={`/sales/people/${r.userId}`}>{r.userName}</EntityLink>
+                <EntityLink href={`/sales/expenses/ledger/${r.userId}?month=${month}`}>{r.userName}</EntityLink>
               </Cell>
               <Cell>{shortDate(r.day)}</Cell>
               <Cell>

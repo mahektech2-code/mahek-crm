@@ -15,6 +15,7 @@ import {
   mbosDeletions,
   mbosDocuments,
   mbosExpenses,
+  mbosExpensePayouts,
   mbosHolidays,
   mbosHolidayAssignments,
   mbosLeaveRequests,
@@ -664,6 +665,130 @@ export async function decideExpense(input: {
       /* no request context */
     }
     return out;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/* ═══════════════════════════════════════════ reimbursements handed over */
+
+/** Whether the reader may record and void reimbursements — the screen asks, the actions re-check. */
+export async function canRecordExpensePayouts(): Promise<boolean> {
+  try {
+    await requireSalesAccess({ modules: ["sales.expenses"], manager: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const payoutSchema = z.object({
+  userId: z.string().min(1),
+  amountPaise: z.number().int().positive("The amount has to be more than ₹0."),
+  paidOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick the day it was paid."),
+  mode: z.string().trim().max(60).optional(),
+  reference: z.string().trim().max(120).optional(),
+  note: z.string().trim().max(500).optional(),
+});
+
+/**
+ * RECORD MONEY HANDED OVER against a salesman's expense balance.
+ *
+ * Paid against the balance, never against one expense — the ledger works out
+ * which lines it covered, oldest first. Paying more than is owed is allowed
+ * and shown as an advance, because an advance before a tour is ordinary; a day
+ * in the future is not, because a payout that has not happened is a plan.
+ * Same gate as deciding an expense, and only for somebody in your team.
+ */
+export async function recordExpensePayout(input: z.input<typeof payoutSchema>): Promise<Result<{ id: string }>> {
+  try {
+    const user = await requireSalesAccess({ modules: ["sales.expenses"], manager: true });
+    const parsed = payoutSchema.safeParse(input);
+    if (!parsed.success) return err(parsed.error.issues[0]?.message ?? "Check the payment.", "validation");
+    const p = parsed.data;
+    if (await salesmanOutsideScope(p.userId)) return err(NOT_YOUR_TEAM, "not_permitted");
+    if (p.paidOn > (await today())) return err("A payment cannot be dated in the future.", "validation");
+
+    const id = gen("mbpay");
+    await db.insert(mbosExpensePayouts).values({
+      id,
+      userId: p.userId,
+      paidOn: p.paidOn,
+      amountPaise: p.amountPaise,
+      mode: p.mode || null,
+      reference: p.reference || null,
+      note: p.note || null,
+      recordedById: user.id,
+    });
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: "mbos.expense_payout.recorded",
+      entityType: "mbos_expense_payout",
+      entityId: id,
+      beforeState: null as never,
+      afterState: p as never,
+    });
+    const rupees = `₹${(p.amountPaise / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+    await tell(
+      p.userId,
+      "Expenses reimbursed",
+      `${rupees} was paid to you against your expenses${p.mode ? ` by ${p.mode.toLowerCase()}` : ""}${p.reference ? ` (ref ${p.reference})` : ""}.`,
+      "/expenses",
+    );
+    try {
+      revalidatePath("/sales/expenses");
+    } catch {
+      /* no request context */
+    }
+    return ok({ id });
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * VOID a payout recorded wrongly. Never deleted and never edited: the
+ * statement goes on listing it, struck through, with who voided it and why.
+ */
+export async function voidExpensePayout(input: { payoutId: string; reason: string }): Promise<Result> {
+  try {
+    const user = await requireSalesAccess({ modules: ["sales.expenses"], manager: true });
+    const reason = input.reason?.trim() ?? "";
+    if (!reason) return err("Say why this payment is being voided.", "validation");
+    const [row] = await db
+      .select({
+        id: mbosExpensePayouts.id,
+        userId: mbosExpensePayouts.userId,
+        voidedAt: mbosExpensePayouts.voidedAt,
+        amountPaise: mbosExpensePayouts.amountPaise,
+      })
+      .from(mbosExpensePayouts)
+      .where(eq(mbosExpensePayouts.id, input.payoutId))
+      .limit(1);
+    if (!row) return err("That payment no longer exists.", "not_found");
+    if (await salesmanOutsideScope(row.userId)) return err(NOT_YOUR_TEAM, "not_permitted");
+    if (row.voidedAt) return err("That payment was already voided.", "conflict");
+
+    await db
+      .update(mbosExpensePayouts)
+      .set({ voidedAt: new Date(), voidedById: user.id, voidReason: reason })
+      .where(and(eq(mbosExpensePayouts.id, row.id), isNull(mbosExpensePayouts.voidedAt)));
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: "mbos.expense_payout.voided",
+      entityType: "mbos_expense_payout",
+      entityId: row.id,
+      beforeState: { amountPaise: row.amountPaise } as never,
+      afterState: { voided: true, reason } as never,
+    });
+    try {
+      revalidatePath("/sales/expenses");
+    } catch {
+      /* no request context */
+    }
+    return okVoid();
   } catch (e) {
     return fromThrown(e);
   }
