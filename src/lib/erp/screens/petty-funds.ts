@@ -10,7 +10,7 @@ import type { ActionSpec, ColSpec, FormSpec, ListRow, PromptSpec, SummaryCard, S
 import { fd, inr } from "../ui";
 import { today } from "./common";
 import { addDaysIso } from "../engines/sales";
-import { FUND_TYPE_LABEL, FUND_TYPES, TRANSFER_TYPES, rupees, transferType, type FundType } from "../engines/petty-cash";
+import { FUND_TYPE_LABEL, FUND_TYPES, TRANSFER_TYPES, transferType, type FundType } from "../engines/petty-cash";
 import { audit, balances, evidenceFor, evidenceLinks, nameOf, pettyConfig, pettyRoles, userNames, WHY, type FundRow } from "../petty/core";
 import {
   cancelTransfer,
@@ -49,14 +49,13 @@ const overview: ScreenModule = {
   key: "pettyOverview",
   async load(ctx) {
     const cfg = await pettyConfig();
-    const [facts, bal, transfers, receipts, closings, bank, tally, l, exc] = await Promise.all([
+    const [facts, bal, transfers, receipts, closings, bank, l, exc] = await Promise.all([
       loadExpenses(),
       balances(),
       loadTransfers(),
       loadReceipts(),
       loadClosings(),
       loadBankLines(),
-      tallyByRecord(),
       lookups(ctx),
       exceptions(cfg),
     ]);
@@ -84,52 +83,42 @@ const overview: ScreenModule = {
       const inTransitIn = transfers.filter((x) => x.status === "initiated" && x.toFundId === f.id);
       const inTransitOut = transfers.filter((x) => x.status === "initiated" && x.fromFundId === f.id);
       const rows: SummaryRow[] = [];
-      if (inTransitIn.length) rows.push({ l: "On its way in — not counted yet", v: inr(inTransitIn.reduce((s, x) => s + x.amountPaise, 0)), tone: "warn", href: link("credits", inTransitIn.map((x) => x.id), "In transit") });
-      if (inTransitOut.length) rows.push({ l: "On its way out", v: inr(inTransitOut.reduce((s, x) => s + x.amountPaise, 0)), href: link("credits", inTransitOut.map((x) => x.id), "In transit") });
+      if (inTransitIn.length) rows.push({ l: "In transit (in)", v: inr(inTransitIn.reduce((s, x) => s + x.amountPaise, 0)), tone: "warn", href: link("credits", inTransitIn.map((x) => x.id), "In transit") });
+      if (inTransitOut.length) rows.push({ l: "In transit (out)", v: inr(inTransitOut.reduce((s, x) => s + x.amountPaise, 0)), href: link("credits", inTransitOut.map((x) => x.id), "In transit") });
       if (f.type === "BANK") {
         const b = await bookVsStatement(f.id);
-        rows.push({ l: "Statement balance", v: b.statementPaise == null ? "No statement" : inr(b.statementPaise), sub: b.asOf ? `as of ${fd(b.asOf)} · imported ${stampLine(null, b.lastImport).replace("Created ", "")}` : "Import one on Bank reconciliation", href: link("pettyBank") });
-        if (b.differencePaise != null) rows.push({ l: "Statement less book", v: inr(b.differencePaise), sub: "explained by unmatched lines and timing", tone: b.differencePaise === 0 ? "success" : "warn", href: link("pettyBank") });
+        rows.push({ l: "Statement balance", v: b.statementPaise == null ? "No statement" : inr(b.statementPaise), sub: b.asOf ? fd(b.asOf) : undefined, href: link("pettyBank") });
+        if (b.differencePaise != null) rows.push({ l: "Statement less book", v: inr(b.differencePaise), tone: b.differencePaise === 0 ? "success" : "warn", href: link("pettyBank") });
       } else {
         const last = closings.find((c) => c.fundAccountId === f.id);
         rows.push({ l: "Last closing", v: last ? `${fd(last.closingDate)} · ${last.status}` : "None yet", tone: !last || last.closingDate < addDaysIso(t, -1) ? "warn" : last.variancePaise ? "danger" : "success", href: link("pettyClosing") });
       }
       if (f.openingStatus !== "verified") rows.push({ l: "Opening balance", v: f.openingStatus === "proposed" ? "Awaiting verification" : "Not set", tone: "warn", href: erpLink("pettySettings", { open: f.id }) });
-      fundCards.push({ t: f.name, sub: `${FUND_TYPE_LABEL[f.type]}${f.bankAccountLabel ? ` · ${f.bankAccountLabel}` : ""}`, big: { v: inr(bal.get(f.id) ?? 0), sub: "balance, read off the ledger now", tone: (bal.get(f.id) ?? 0) < 0 ? "danger" : undefined }, rows });
+      fundCards.push({ t: f.name, sub: `${FUND_TYPE_LABEL[f.type]}${f.bankAccountLabel ? ` · ${f.bankAccountLabel}` : ""}`, big: { v: inr(bal.get(f.id) ?? 0), tone: (bal.get(f.id) ?? 0) < 0 ? "danger" : undefined }, rows });
     }
     const physical = activeFunds(l, ["PHYSICAL_CASH", "CUSTOMER_CASH"]);
-    const lastSync = [...tally.values()].filter((x) => x.postedAt).sort((a, b) => +new Date(b.postedAt!) - +new Date(a.postedAt!))[0];
-    const lastImport = bank.lines.length ? (await db.execute(sql`select max(imported_at) as at from erp_bank_imports`) as unknown as { at: Date | null }[])[0]?.at : null;
     const closedToday = closings.filter((c) => c.closingDate === t && c.status !== "returned");
     const variances = closings.filter((c) => c.variancePaise !== 0 && c.status !== "approved");
     const work: SummaryCard = {
-      t: "Spending",
-      big: { v: inr(sum(mtd)), sub: `incurred this month · ${mtd.length} expense${mtd.length === 1 ? "" : "s"}` },
+      t: "This month",
+      big: { v: inr(sum(mtd)), sub: `${mtd.length} expense${mtd.length === 1 ? "" : "s"}` },
       rows: [
-        { l: "Today's expenses", v: inr(sum(todays)), sub: `${todays.length} recorded`, href: link("expenses", ids(todays), "Today") },
-        { l: "Pending payment", v: inr(pending.reduce((s, f) => s + f.state.outstandingPaise, 0)), sub: `${pending.length} approved, nothing paid`, href: link("pettyVendors", ids(pending), "Pending") },
-        { l: "Partially paid — still owed", v: inr(partly.reduce((s, f) => s + f.state.outstandingPaise, 0)), sub: `${partly.length} bill${partly.length === 1 ? "" : "s"}`, href: link("pettyVendors", ids(partly), "Partially paid") },
+        { l: "Today's expenses", v: inr(sum(todays)), href: link("expenses", ids(todays), "Today") },
+        { l: "Pending payment", v: inr(pending.reduce((s, f) => s + f.state.outstandingPaise, 0)), href: link("pettyVendors", ids(pending), "Pending") },
+        { l: "Partially paid", v: inr(partly.reduce((s, f) => s + f.state.outstandingPaise, 0)), sub: `${partly.length} bill${partly.length === 1 ? "" : "s"}`, href: link("pettyVendors", ids(partly), "Partially paid") },
         { l: "Vendor outstanding", v: inr(payable.reduce((s, f) => s + f.state.outstandingPaise, 0)), href: link("pettyVendors") },
         { l: "Budget used this month", v: util == null ? "No budgets" : `${util}%`, tone: util != null && util > 100 ? "danger" : util != null && util > 85 ? "warn" : undefined, href: link("pettyBudgets") },
       ],
     };
     const control: SummaryCard = {
-      t: "Waiting on someone",
+      t: "Pending actions",
       rows: [
         { l: "Awaiting approval", v: String(awaiting.length), sub: inr(awaiting.reduce((s, f) => s + f.e.amountPaise, 0)), tone: awaiting.length ? "warn" : undefined, href: link("expenses", ids(awaiting), "Awaiting approval") },
-        { l: "Without a bill or receipt", v: String(noEvidence.length), tone: noEvidence.length ? "warn" : undefined, href: link("expenses", ids(noEvidence), "Missing bill") },
-        { l: "Customer cash not handed over", v: inr(held.reduce((s, r) => s + r.r.amountPaise, 0)), sub: `${held.length} receipt${held.length === 1 ? "" : "s"}`, tone: held.length ? "warn" : undefined, href: link("pettyReceipts", held.map((r) => r.r.id), "Held") },
+        { l: "Missing bill", v: String(noEvidence.length), tone: noEvidence.length ? "warn" : undefined, href: link("expenses", ids(noEvidence), "Missing bill") },
+        { l: "Customer cash held", v: inr(held.reduce((s, r) => s + r.r.amountPaise, 0)), sub: `${held.length} receipt${held.length === 1 ? "" : "s"}`, tone: held.length ? "warn" : undefined, href: link("pettyReceipts", held.map((r) => r.r.id), "Held") },
         { l: "Bank lines to reconcile", v: String(unmatched.length), tone: unmatched.length ? "warn" : undefined, href: link("pettyBank", unmatched.map((x) => x.id), "To reconcile") },
         { l: "Today's cash closing", v: `${closedToday.length} of ${physical.length}`, tone: closedToday.length < physical.length ? "warn" : "success", href: link("pettyClosing") },
-        { l: "Cash shortage / overage", v: String(variances.length), tone: variances.length ? "danger" : undefined, href: link("pettyClosing", variances.map((c) => c.id), "Variance") },
-      ],
-    };
-    const fresh: SummaryCard = {
-      t: "How fresh these figures are",
-      rows: [
-        { l: "Fund balances", v: "Now", sub: "read off the ledger on every load", tone: "success" },
-        { l: "Last bank statement import", v: lastImport ? fd(new Date(lastImport).toISOString().slice(0, 10)) : "Never", sub: "the statement side is only as new as the last import", tone: lastImport ? undefined : "warn", href: link("pettyBank") },
-        { l: "Last posted to Tally", v: lastSync?.postedAt ? fd(new Date(lastSync.postedAt).toISOString().slice(0, 10)) : "Never", sub: cfg.tallyMode === "live" ? "live posting is on" : cfg.tallyMode === "export" ? "posted by hand from exported vouchers" : "Tally sync is off", href: link("pettyTally") },
+        { l: "Cash variances", v: String(variances.length), tone: variances.length ? "danger" : undefined, href: link("pettyClosing", variances.map((c) => c.id), "Variance") },
       ],
     };
     const cols: ColSpec[] = [
@@ -144,9 +133,9 @@ const overview: ScreenModule = {
         cols,
         hidden: [],
         chips: "label",
-        summary: [...fundCards, work, control, fresh],
+        summary: [...fundCards, work, control],
         readOnly: true,
-        noDataLine: "No exceptions. Every expense is decided, every bill has its document, every bank line is explained and every cash box is closed.",
+        noDataLine: "No exceptions.",
       },
       rows: exc.map((x) => ({
         id: x.key,
@@ -168,7 +157,6 @@ function transferForm(l: PettyLookups, heldReceipts: { label: string }[], init: 
     screen: "credits",
     id: "new",
     title: "Move money between funds",
-    sub: "A withdrawal, a handover, cash returned, customer cash deposited. Nothing moves until whoever receives it confirms — until then it is in transit.",
     submit: "Record transfer",
     header: [
       { k: "type", l: "Kind", t: "select", req: true, opts: TRANSFER_TYPES.map((t) => t.label) },
@@ -176,8 +164,8 @@ function transferForm(l: PettyLookups, heldReceipts: { label: string }[], init: 
       { k: "from", l: "From", t: "select", req: true, opts: funds },
       { k: "to", l: "To", t: "select", req: true, opts: funds },
       { k: "amount", l: "Amount (₹)", t: "num", req: true, min: 0.01 },
-      { k: "bankReference", l: "Bank reference / slip no.", t: "text", hint: "Needed where the money leaves or reaches the bank" },
-      { k: "receipts", l: "Customer receipts it carries", t: "multi", opts: heldReceipts.map((r) => r.label), hint: "So the same cash is never deposited twice" },
+      { k: "bankReference", l: "Bank reference / slip no.", t: "text" },
+      { k: "receipts", l: "Customer receipts it carries", t: "multi", opts: heldReceipts.map((r) => r.label) },
       { k: "purpose", l: "Purpose", t: "area" },
       { k: "file", l: "Slip / evidence", t: "photo" },
     ],
@@ -226,7 +214,7 @@ const credits: ScreenModule = {
           l: "Confirm received",
           primary: !confirmWhy,
           why: confirmWhy,
-          prompt: { title: `Confirm ${t.code}`, sub: `${inr(t.amountPaise)} arrives in ${to?.name}. Both sides post now, together.`, submit: "Confirm received", fields: [{ k: "file", l: "Acknowledgement photo", t: "photo" }, { k: "note", l: "Note", t: "text" }] },
+          prompt: { title: `Confirm ${t.code}`, sub: `${inr(t.amountPaise)} · ${to?.name}`, submit: "Confirm received", fields: [{ k: "file", l: "Acknowledgement photo", t: "photo" }, { k: "note", l: "Note", t: "text" }] },
         });
         actions.push({ id: "cancel", l: "Cancel", prompt: { title: `Cancel ${t.code}`, submit: "Cancel", fields: [{ k: "reason", l: "Why", t: "area", req: true }] } });
       }
@@ -261,7 +249,7 @@ const credits: ScreenModule = {
     }
     const summary: SummaryCard[] = activeFunds(l).map((f) => ({ t: f.name, big: { v: inr(bal.get(f.id) ?? 0), sub: FUND_TYPE_LABEL[f.type] }, rows: [] }));
     return {
-      spec: { screen: "credits", cols, hidden: [], chips: "status", summary, newForm: transferForm(l, held), newLabel: "New transfer", noDataLine: "No money has moved between funds yet." },
+      spec: { screen: "credits", cols, hidden: [], chips: "status", summary, newForm: transferForm(l, held), newLabel: "New transfer", noDataLine: "No transfers yet." },
       rows,
     };
   },
@@ -348,15 +336,14 @@ const receiptsScreen: ScreenModule = {
       screen: "pettyReceipts",
       id: "new",
       title: "Customer cash received",
-      sub: "Cash a customer handed over. It is a receipt against their account — never a sale — and depositing it later is a transfer, never a second receipt.",
       submit: "Record receipt",
       header: [
         { k: "customer", l: "Customer", t: "select", req: true, opts: choices.map((c) => c.label) },
         { k: "date", l: "Received on", t: "date", req: true },
         { k: "amount", l: "Amount (₹)", t: "num", req: true, min: 0.01 },
         { k: "fund", l: "Held in", t: "select", req: true, opts: custFunds.map(fundLabel) },
-        { k: "bills", l: "Against invoices", t: "multi", optsBy: { by: "customer", map: bills2.map }, hint: "Where the customer said what it was for" },
-        { k: "ack", l: "Customer's acknowledgement", t: "photo", hint: "The receipt you gave, signed — or the customer's own note" },
+        { k: "bills", l: "Against invoices", t: "multi", optsBy: { by: "customer", map: bills2.map } },
+        { k: "ack", l: "Customer's acknowledgement", t: "photo" },
         { k: "remarks", l: "Remarks", t: "area" },
       ],
       init: { date: today(), fund: custFunds[0] ? fundLabel(custFunds[0]) : "", requestKey: requestKey() },
@@ -374,7 +361,7 @@ const receiptsScreen: ScreenModule = {
           {
             id: "deposit",
             l: "Deposit into bank",
-            prompt: { title: "Deposit the selected cash", sub: "One deposit carrying these receipts. It counts in the bank once confirmed.", submit: "Record deposit", fields: [{ k: "to", l: "Into", t: "select", req: true, opts: bankFunds.map(fundLabel) }, { k: "date", l: "Date", t: "date", req: true }, { k: "bankReference", l: "Deposit slip no.", t: "text", req: true }], init: { date: today(), ...(bankFunds[0] ? { to: fundLabel(bankFunds[0]) } : {}) } },
+            prompt: { title: "Deposit the selected cash", submit: "Record deposit", fields: [{ k: "to", l: "Into", t: "select", req: true, opts: bankFunds.map(fundLabel) }, { k: "date", l: "Date", t: "date", req: true }, { k: "bankReference", l: "Deposit slip no.", t: "text", req: true }], init: { date: today(), ...(bankFunds[0] ? { to: fundLabel(bankFunds[0]) } : {}) } },
           },
           {
             id: "handover",
@@ -382,14 +369,14 @@ const receiptsScreen: ScreenModule = {
             prompt: { title: "Hand the selected cash over", submit: "Record handover", fields: [{ k: "to", l: "To", t: "select", req: true, opts: activeFunds(l, ["PHYSICAL_CASH", "CUSTOMER_CASH"]).map(fundLabel) }, { k: "date", l: "Date", t: "date", req: true }], init: { date: today() } },
           },
         ],
-        noDataLine: "No customer cash recorded yet.",
+        noDataLine: "No receipts yet.",
       },
       rows: rows.map(({ r, customer }) => {
         const c = receiptCustody(r.id, transfers);
         const t = tally.get(`receipt:${r.id}`);
         const actions: ActionSpec[] = [];
         if (r.status === "posted" && !r.verifiedAt)
-          actions.push({ id: "verify", l: "Verify against the ledger", primary: true, why: !roles.accounts ? WHY.accounts : r.recordedById === ctx.actor.id && !ctx.administrator ? "Somebody other than whoever recorded it verifies it" : "", prompt: { title: `Verify ${r.receiptNo}`, sub: "Checked against the customer's ledger and its invoices.", submit: "Verified", fields: [{ k: "crm", l: "Accounts receipt reference", t: "text" }, { k: "note", l: "Note", t: "area" }] } });
+          actions.push({ id: "verify", l: "Verify against the ledger", primary: true, why: !roles.accounts ? WHY.accounts : r.recordedById === ctx.actor.id && !ctx.administrator ? "Somebody other than whoever recorded it verifies it" : "", prompt: { title: `Verify ${r.receiptNo}`, submit: "Verified", fields: [{ k: "crm", l: "Accounts receipt reference", t: "text" }, { k: "note", l: "Note", t: "area" }] } });
         if (r.status === "posted" && c.word === "Held") actions.push({ id: "reverse", l: "Reverse", why: !roles.approve && !roles.owner ? WHY.approve : "", prompt: { title: `Reverse ${r.receiptNo}`, submit: "Reverse", fields: [{ k: "reason", l: "Why", t: "area", req: true }] } });
         return {
           id: r.id,
@@ -463,7 +450,6 @@ const closing: ScreenModule = {
       screen: "pettyClosing",
       id: "new",
       title: "Close the day",
-      sub: "Count the cash in the box and enter what is actually there. Expected is worked out from confirmed movements only — unpaid bills, requests and handovers in transit are not cash.",
       submit: "Submit closing",
       header: [
         { k: "fund", l: "Cash fund", t: "select", req: true, opts: cash.map(fundLabel) },
@@ -493,7 +479,7 @@ const closing: ScreenModule = {
       const todayRow = rows.find((c) => c.fundAccountId === f.id && c.closingDate === t);
       return {
         t: f.name,
-        big: { v: inr(bal.get(f.id) ?? 0), sub: "expected in the box now" },
+        big: { v: inr(bal.get(f.id) ?? 0) },
         rows: [
           { l: "Today", v: todayRow ? todayRow.status : "Not closed", tone: todayRow ? (todayRow.variancePaise ? "danger" : "success") : "warn" },
           { l: "Last closing", v: last ? fd(last.closingDate) : "None yet" },
@@ -502,7 +488,7 @@ const closing: ScreenModule = {
     });
     const STATUS: Record<string, string> = { submitted: "Submitted", approved: "Approved", returned: "Returned for correction", reopened: "Reopened" };
     return {
-      spec: { screen: "pettyClosing", cols, hidden: [], chips: "status", summary, newForm: form, newLabel: "Close the day", noDataLine: "No day has been closed yet." },
+      spec: { screen: "pettyClosing", cols, hidden: [], chips: "status", summary, newForm: form, newLabel: "Close the day", noDataLine: "No closings yet." },
       rows: rows.map((c) => {
         const fName = fund.get(c.fundAccountId) ?? "—";
         const reviewWhy = !roles.approve && !roles.owner ? WHY.approve : c.submittedById === ctx.actor.id ? "Somebody other than whoever counted reviews it" : c.status !== "submitted" ? "It is not waiting for review" : "";
@@ -514,7 +500,7 @@ const closing: ScreenModule = {
             primary: !reviewWhy,
             why: reviewWhy,
             prompt: c.variancePaise
-              ? { title: `Approve ${fName} · ${c.closingDate}`, sub: `Variance ${inr(c.variancePaise)}. It is never turned into an expense; resolve it here.`, submit: "Approve", fields: [{ k: "resolution", l: "Resolution", t: "select", req: true, opts: ["Explained — accept as it stands", "Post an adjustment for the variance"] }, { k: "note", l: "Resolution in words", t: "area", req: true }] }
+              ? { title: `Approve ${fName} · ${c.closingDate}`, sub: `Variance ${inr(c.variancePaise)}`, submit: "Approve", fields: [{ k: "resolution", l: "Resolution", t: "select", req: true, opts: ["Explained — accept as it stands", "Post an adjustment for the variance"] }, { k: "note", l: "Resolution in words", t: "area", req: true }] }
               : { title: `Approve ${fName} · ${c.closingDate}`, submit: "Approve", fields: [{ k: "note", l: "Note", t: "area" }] },
           });
           actions.push({ id: "return", l: "Return for a recount", why: reviewWhy, prompt: { title: "Return the closing", submit: "Return", fields: [{ k: "note", l: "What to recount or explain", t: "area", req: true }] } });
@@ -601,7 +587,6 @@ const ledger: ScreenModule = {
         l: "Request an adjustment",
         prompt: {
           title: "Fund adjustment",
-          sub: "The only way to correct a balance: a reasoned entry somebody else approves. Nothing edits a posted line.",
           submit: "Request",
           fields: [
             { k: "fund", l: "Fund", t: "select", req: true, opts: l.funds.map(fundLabel) },
@@ -634,8 +619,7 @@ const ledger: ScreenModule = {
         hidden: [],
         chips: "fund",
         tools,
-        notes: [{ tone: "info", text: "Every posted movement, oldest balance first in each fund. Nothing here is edited or deleted — a correction is a new line that reverses or adjusts. Balances everywhere in the module are read from this list." }],
-        noDataLine: "Nothing posted yet. Set each fund's opening balance on Settings to start.",
+        noDataLine: "No entries yet.",
       },
       rows,
     };
@@ -675,7 +659,6 @@ async function people() {
 function fundPrompt(f: FundRow | null, p: Awaited<ReturnType<typeof people>>, gds: string[], godown: string): PromptSpec {
   return {
     title: f ? `Edit ${f.name}` : "New fund account",
-    sub: "A balance is never typed here: it is the ledger's. The opening balance is proposed and verified separately.",
     submit: "Save",
     fields: [
       { k: "code", l: "Code", t: "text" as const, req: true },
@@ -740,7 +723,7 @@ const settings: ScreenModule = {
         ],
         actions: [
           { id: "editFund", l: "Edit", why: ownerWhy, prompt: fundPrompt(f, p, gds, f.godownId ? (gName.get(f.godownId) ?? "") : "") },
-          { id: "proposeOpening", l: "Propose opening balance", primary: f.openingStatus === "none" && !openingWhy, why: openingWhy, prompt: { title: `Opening balance · ${f.name}`, sub: "Proposed by one person, verified by another. Only the verification posts it.", submit: "Propose", fields: [{ k: "amount", l: "Opening balance (₹)", t: "num", req: true, min: 0 }, { k: "date", l: "As of", t: "date", req: true }, { k: "note", l: "Based on", t: "area", req: true, hint: "The bank statement balance, a cash count…" }], init: { amount: rupeesField(f.openingBalancePaise), date: f.openingBalanceDate ?? today() } } },
+          { id: "proposeOpening", l: "Propose opening balance", primary: f.openingStatus === "none" && !openingWhy, why: openingWhy, prompt: { title: `Opening balance · ${f.name}`, submit: "Propose", fields: [{ k: "amount", l: "Opening balance (₹)", t: "num", req: true, min: 0 }, { k: "date", l: "As of", t: "date", req: true }, { k: "note", l: "Based on", t: "area", req: true }], init: { amount: rupeesField(f.openingBalancePaise), date: f.openingBalanceDate ?? today() } } },
           { id: "verifyOpening", l: "Verify and post opening", primary: !verifyWhy, why: verifyWhy, confirm: `Post ${f.name}'s opening balance of ${inr(f.openingBalancePaise ?? 0)} as of ${f.openingBalanceDate}? It cannot be changed afterwards except by an adjustment.` },
         ],
       };
@@ -775,7 +758,6 @@ const settings: ScreenModule = {
         why: ownerWhy,
         prompt: {
           title: "Approval limits and timings",
-          sub: "Kept in the ERP's settings and audited like every setting. Changing them never re-decides an expense already decided.",
           submit: "Save",
           fields: [
             { k: "auto", l: "Approved on submission up to (₹) — 0 sends everything to an approver", t: "num", req: true, min: 0 },
@@ -795,10 +777,6 @@ const settings: ScreenModule = {
         hidden: [],
         chips: "kind",
         tools,
-        notes: [
-          { tone: "info", text: `Approval: up to ${rupees(cfg.autoApproveUpToPaise)} by policy on submission (where the category allows and the bill is attached); up to ${rupees(cfg.approverLimitPaise)} by an approver; above that, the owner. Over budget: ${cfg.budgetRule === "approval" ? "the owner decides" : "flagged"}. Tally: ${cfg.tallyMode}.` },
-          { tone: "info", text: "Who may do what is set on the Admin Console's Access dialog under the ERP: “Petty cash: accounts team”, “Approve petty-cash expenses” and “Owner-level petty-cash approvals”. Holding the Petty cash screen is the production head's role." },
-        ],
         noDataLine: "No fund accounts yet.",
       },
       rows,

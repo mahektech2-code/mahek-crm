@@ -147,7 +147,7 @@ export async function exceptions(cfgIn?: PettyConfig): Promise<PettyException[]>
       add({ kind: "aboveLimit", label: "Above the approver's limit", tone: "info", text: `${e.code} · ${rupees(e.amountPaise)} — ${e.approvalRule ?? "needs the owner"}.`, view: "expenses", open: e.id, ids: [e.id], date: e.expenseDate });
     }
     if (isLive(e) && f.receiptRequired && (e.docStatus === "to_follow" || e.docStatus === "not_available")) {
-      add({ kind: "missingEvidence", label: "Bill or receipt missing", tone: "warn", text: `${e.code} · ${e.particular ?? "expense"} (${f.category}) has no bill attached and no approved exception.`, view: "expenses", open: e.id, ids: [e.id], date: e.expenseDate });
+      add({ kind: "missingEvidence", label: "Bill or receipt missing", tone: "warn", text: `${e.code} · ${e.particular ?? "expense"} (${f.category}) — no bill attached.`, view: "expenses", open: e.id, ids: [e.id], date: e.expenseDate });
     }
     if (isPayable(e) && f.state.outstandingPaise > 0 && f.due) {
       const d = daysBetween(t, f.due);
@@ -158,7 +158,7 @@ export async function exceptions(cfgIn?: PettyConfig): Promise<PettyException[]>
       add({ kind: "paidUnapproved", label: "Paid without approval", tone: e.approvalStatus === "rejected" ? "danger" : "warn", text: `${e.code} was paid as urgent and is ${e.approvalStatus === "rejected" ? "now REJECTED — the money has to be recovered or the decision revisited" : "still awaiting approval"}.`, view: "expenses", open: e.id, ids: [e.id], date: e.expenseDate });
     }
     if (e.isAdvance && f.advanceOpenPaise > 0 && daysBetween(e.expenseDate, t) > 30) {
-      add({ kind: "advanceOpen", label: "Advance not settled", tone: "info", text: `${e.code}: ${rupees(f.advanceOpenPaise)} advanced to ${e.vendorName ?? e.expenseBy} over 30 days ago is not yet set against a bill or recovered.`, view: "expenses", open: e.id, ids: [e.id], date: e.expenseDate });
+      add({ kind: "advanceOpen", label: "Advance not settled", tone: "info", text: `${e.code}: ${rupees(f.advanceOpenPaise)} advanced to ${e.vendorName ?? e.expenseBy} over 30 days ago.`, view: "expenses", open: e.id, ids: [e.id], date: e.expenseDate });
     }
   }
 
@@ -193,12 +193,12 @@ export async function exceptions(cfgIn?: PettyConfig): Promise<PettyException[]>
     if (r.r.status !== "posted") continue;
     const c = receiptCustody(r.r.id, transfers);
     if (c.word === "Held" && (now - new Date(r.r.createdAt).getTime()) / 3600000 > cfg.handoverHours) {
-      add({ kind: "cashHeld", label: "Customer cash not handed over", tone: "warn", text: `${r.r.receiptNo} · ${rupees(r.r.amountPaise)} from ${r.customer} has been held more than ${cfg.handoverHours} hours.`, view: "pettyReceipts", open: r.r.id, ids: [r.r.id], date: r.r.receiptDate });
+      add({ kind: "cashHeld", label: "Customer cash not handed over", tone: "warn", text: `${r.r.receiptNo} · ${rupees(r.r.amountPaise)} from ${r.customer} — held over ${cfg.handoverHours} hours.`, view: "pettyReceipts", open: r.r.id, ids: [r.r.id], date: r.r.receiptDate });
     }
   }
   for (const tr of transfers) {
     if (tr.status === "initiated" && (now - new Date(tr.createdAt).getTime()) / 3600000 > cfg.handoverHours) {
-      add({ kind: "transferUnconfirmed", label: "Handover not confirmed", tone: "warn", text: `${tr.code} · ${rupees(tr.amountPaise)} is still in transit — nobody has confirmed receiving it.`, view: "credits", open: tr.id, ids: [tr.id], date: tr.transferDate });
+      add({ kind: "transferUnconfirmed", label: "Handover not confirmed", tone: "warn", text: `${tr.code} · ${rupees(tr.amountPaise)} — not confirmed.`, view: "credits", open: tr.id, ids: [tr.id], date: tr.transferDate });
     }
   }
 
@@ -216,10 +216,10 @@ export async function exceptions(cfgIn?: PettyConfig): Promise<PettyException[]>
   for (const f of funds.filter((x) => x.status === "active" && x.fundType !== "BANK")) {
     const missing = moved.filter((m) => m.fund === f.id && !closedDays.has(`${f.id}|${m.day}`)).map((m) => m.day).sort();
     if (missing.length) add({ kind: "closingMissing", label: "Cash closing not submitted", tone: "warn", text: `${f.name}: no closing for ${missing.join(", ")}.`, view: "pettyClosing", open: null, ids: [f.id], date: missing[0] });
-    if ((bal.get(f.id) ?? 0) < 0) add({ kind: "fundNegative", label: "Fund below zero", tone: "danger", text: `${f.name} reads ${rupees(bal.get(f.id) ?? 0)} — a payment went out under an overdraw authority.`, view: "pettyLedger", open: null, ids: [f.id], date: t });
+    if ((bal.get(f.id) ?? 0) < 0) add({ kind: "fundNegative", label: "Fund below zero", tone: "danger", text: `${f.name} reads ${rupees(bal.get(f.id) ?? 0)}`, view: "pettyLedger", open: null, ids: [f.id], date: t });
   }
   for (const f of funds.filter((x) => x.status === "active" && x.openingStatus !== "verified")) {
-    add({ kind: "openingPending", label: "Opening balance not verified", tone: "info", text: `${f.name}: ${f.openingStatus === "proposed" ? "an opening balance is proposed and waits for verification" : "no opening balance has been set"}.`, view: "pettySettings", open: f.id, ids: [f.id], date: t });
+    add({ kind: "openingPending", label: "Opening balance not verified", tone: "info", text: `${f.name}: ${f.openingStatus === "proposed" ? "awaiting verification" : "not set"}.`, view: "pettySettings", open: f.id, ids: [f.id], date: t });
   }
 
   for (const b of await budgetRows(t.slice(0, 7), facts)) {

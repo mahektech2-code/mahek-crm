@@ -45,11 +45,10 @@ const bank: ScreenModule = {
       const mine = lines.filter((x) => x.fundAccountId === f.id);
       summary.push({
         t: f.name,
-        sub: b.lastImport ? `Statement last imported ${stampLine(null, b.lastImport).replace("Created ", "")}` : "No statement imported yet",
-        big: { v: b.statementPaise == null ? "—" : inr(b.statementPaise), sub: b.asOf ? `statement balance as of ${fd(b.asOf)}` : "statement balance" },
+        big: { v: b.statementPaise == null ? "—" : inr(b.statementPaise), sub: b.asOf ? `Statement · ${fd(b.asOf)}` : "Statement" },
         rows: [
           { l: `Book balance${b.asOf ? ` to ${fd(b.asOf)}` : ""}`, v: inr(b.bookPaise) },
-          { l: "Difference", v: b.differencePaise == null ? "—" : inr(b.differencePaise), tone: b.differencePaise ? "warn" : b.differencePaise === 0 ? "success" : undefined, sub: "unmatched lines, timing, charges" },
+          { l: "Difference", v: b.differencePaise == null ? "—" : inr(b.differencePaise), tone: b.differencePaise ? "warn" : b.differencePaise === 0 ? "success" : undefined },
           { l: "Lines to reconcile", v: String(mine.filter((x) => x.reconStatus !== "reconciled").length), tone: mine.some((x) => x.reconStatus !== "reconciled") ? "warn" : "success" },
         ],
       });
@@ -57,7 +56,7 @@ const bank: ScreenModule = {
     if (imports.length)
       summary.push({
         t: "Imports",
-        rows: imports.slice(0, 5).map((i) => ({ l: `${fd(i.statementFrom)} – ${fd(i.statementTo)}`, v: `${i.linesNew} new`, sub: `${i.linesDuplicate} already here${i.duplicateOfImportId ? " · same file imported before" : ""} · ${nameOf(names, i.importedById)}`, tone: i.duplicateOfImportId ? "warn" : undefined })),
+        rows: imports.slice(0, 5).map((i) => ({ l: `${fd(i.statementFrom)} – ${fd(i.statementTo)}`, v: `${i.linesNew} new`, tone: i.duplicateOfImportId ? "warn" : undefined })),
       });
     const tools: ToolSpec[] = [
       {
@@ -67,7 +66,6 @@ const bank: ScreenModule = {
         why: accountsWhy,
         prompt: {
           title: "Import a bank statement",
-          sub: "The CSV the bank's net banking exports. A line already imported is recognised and skipped, so importing an overlapping statement — or the same one twice — adds nothing twice. Lines are matched to what is recorded; nothing new is created from them.",
           submit: "Import",
           fields: [
             { k: "fund", l: "Account", t: "select", req: true, opts: bankFunds.map(fundLabel) },
@@ -99,13 +97,13 @@ const bank: ScreenModule = {
           id: "match",
           l: "Match by hand",
           why: accountsWhy || (!c.length ? "Nothing recorded runs this way and is unclaimed — record the movement first" : ""),
-          prompt: { title: "What is this line?", sub: `${x.debitPaise ? "Debit" : "Credit"} of ${inr(amount)} on ${fd(x.txnDate)}. Pick one record, or several if one transaction paid several (their total cannot exceed the line).`, submit: "Match", fields: [{ k: "records", l: "Recorded movements", t: "multi", req: true, opts: c.map((y) => y.label.replace(/\|/g, "/")) }] },
+          prompt: { title: "What is this line?", sub: `${x.debitPaise ? "Debit" : "Credit"} ${inr(amount)} · ${fd(x.txnDate)}`, submit: "Match", fields: [{ k: "records", l: "Recorded movements", t: "multi", req: true, opts: c.map((y) => y.label.replace(/\|/g, "/")) }] },
         });
-        if (x.debitPaise && !ms.length && cashFunds.length) actions.push({ id: "withdrawal", l: "It is a cash withdrawal", why: accountsWhy, prompt: { title: "Record the withdrawal", sub: "Raised from this line and matched to it. The cash counts in production only when the custodian confirms receipt.", submit: "Record", fields: [{ k: "to", l: "Cash taken to", t: "select", req: true, opts: cashFunds.map(fundLabel) }, { k: "purpose", l: "Purpose", t: "text" }], init: { to: fundLabel(cashFunds[0]) } } });
-        if (!ms.length) actions.push({ id: "charge", l: x.debitPaise ? "It is a bank charge" : "It is bank interest / other", why: accountsWhy, prompt: { title: "Record it", sub: "An adjustment an approver decides; it posts once approved.", submit: "Request", fields: [{ k: "reason", l: "What it was", t: "area", req: true }] } });
+        if (x.debitPaise && !ms.length && cashFunds.length) actions.push({ id: "withdrawal", l: "It is a cash withdrawal", why: accountsWhy, prompt: { title: "Record the withdrawal", submit: "Record", fields: [{ k: "to", l: "Cash taken to", t: "select", req: true, opts: cashFunds.map(fundLabel) }, { k: "purpose", l: "Purpose", t: "text" }], init: { to: fundLabel(cashFunds[0]) } } });
+        if (!ms.length) actions.push({ id: "charge", l: x.debitPaise ? "It is a bank charge" : "It is bank interest / other", why: accountsWhy, prompt: { title: "Record it", submit: "Request", fields: [{ k: "reason", l: "What it was", t: "area", req: true }] } });
         if (x.reconStatus !== "exception") actions.push({ id: "exception", l: "Mark as exception", why: accountsWhy, prompt: { title: "Exception", submit: "Mark", fields: [{ k: "reason", l: "What is wrong", t: "area", req: true }] } });
       }
-      if (ms.length) actions.push({ id: "unmatch", l: "Unmatch", why: accountsWhy, prompt: { title: "Unmatch", sub: "The records go back to awaiting the statement. Said why, on the record.", submit: "Unmatch", fields: [{ k: "reason", l: "Why", t: "area", req: true }] } });
+      if (ms.length) actions.push({ id: "unmatch", l: "Unmatch", why: accountsWhy, prompt: { title: "Unmatch", submit: "Unmatch", fields: [{ k: "reason", l: "Why", t: "area", req: true }] } });
       return {
         id: x.id,
         v: { date: x.txnDate, narration: x.narration ?? "—", reference: x.reference, debit: x.debitPaise || null, credit: x.creditPaise || null, balance: x.balancePaise, status: BANK_WORD[x.reconStatus], matched: ms.map((m) => `${codes.get(m.recordId) ?? m.recordType}${m.confirmed ? "" : " (to confirm)"}`).join(", ") || "—" },
@@ -130,7 +128,6 @@ const bank: ScreenModule = {
         tools,
         summary,
         bulk: roles.accounts ? [{ id: "confirm", l: "Reconcile matched" }] : undefined,
-        notes: [{ tone: "info", text: "A statement line CONFIRMS a payment, withdrawal or deposit already recorded — it never creates an expense or a payment. Only an exact reference matches on its own; an equal amount is a suggestion a person confirms, and two equal amounts are an exception." }],
         noDataLine: "No statement imported yet.",
       },
       rows,
@@ -207,7 +204,7 @@ const budgets: ScreenModule = {
     const summary: SummaryCard[] = [
       {
         t: `This month · ${monthWord(t.slice(0, 7))}`,
-        big: { v: inr(sum("incurredPaise")), sub: `incurred against ${inr(sum("budgetPaise"))} budgeted` },
+        big: { v: inr(sum("incurredPaise")), sub: `of ${inr(sum("budgetPaise"))}` },
         rows: [
           { l: "Paid", v: inr(sum("paidPaise")) },
           { l: "Unpaid", v: inr(sum("incurredPaise") - sum("paidPaise")) },
@@ -223,12 +220,10 @@ const budgets: ScreenModule = {
         hidden: [],
         chips: "month",
         summary,
-        notes: [{ tone: "info", text: "Budgets are controlled on INCURRED expense — what was received and recorded, net of approved adjustments. Paid is shown beside it. Committed (approved, not yet received) is taken off what remains so it is never counted twice." }],
         newForm: {
           screen: "pettyBudgets",
           id: "new",
           title: "Set a monthly budget",
-          sub: "A draft until the owner approves it. Only an approved budget is checked when an expense is submitted.",
           submit: "Save budget",
           header: [
             { k: "period", l: "Month (YYYY-MM)", t: "select", req: true, opts: months },
@@ -241,7 +236,7 @@ const budgets: ScreenModule = {
         },
         newLabel: "Set a budget",
         bulk: roles.owner ? [{ id: "approve", l: "Approve" }] : undefined,
-        noDataLine: "No budgets and no spending in these months.",
+        noDataLine: "No budgets.",
       },
       rows: all.map((b, i) => ({
         id: b.id ?? `nobudget-${b.period}-${b.categoryId}-${i}`,
@@ -251,7 +246,7 @@ const budgets: ScreenModule = {
         header: `${b.godown}${b.department !== "—" ? ` · ${b.department}` : ""} · ${b.count} expense${b.count === 1 ? "" : "s"}`,
         actions: b.id
           ? [
-              { id: "edit", l: "Change the amount", why: setWhy, prompt: { title: "Budget", sub: "Changing an approved budget sends it back for approval.", submit: "Save", fields: [{ k: "amount", l: "Budget (₹)", t: "num", req: true, min: 0 }], init: { amount: String(b.budgetPaise / 100) } } },
+              { id: "edit", l: "Change the amount", why: setWhy, prompt: { title: "Budget", submit: "Save", fields: [{ k: "amount", l: "Budget (₹)", t: "num", req: true, min: 0 }], init: { amount: String(b.budgetPaise / 100) } } },
               ...(b.status !== "approved" ? [{ id: "approve", l: "Approve", primary: true, why: roles.owner ? "" : WHY.owner } as ActionSpec] : []),
             ]
           : [],
@@ -323,7 +318,7 @@ const reports: ScreenModule = {
       { k: "outstanding", l: "Outstanding", t: "m" },
       { k: "count", l: "Expenses", t: "n" },
     ];
-    return { spec: { screen: "pettyReports", cols, hidden: [], chips: "report", readOnly: true, download: true, notes: [{ tone: "info", text: "This month's spending broken down, and the last six months' trend — incurred expense, what was paid against it and what is still owed. Export takes the list as filtered." }], noDataLine: "Nothing recorded yet." }, rows };
+    return { spec: { screen: "pettyReports", cols, hidden: [], chips: "report", readOnly: true, download: true, noDataLine: "Nothing recorded yet." }, rows };
   },
 };
 
@@ -353,19 +348,8 @@ const tally: ScreenModule = {
         hidden: [],
         chips: "status",
         bulk: roles.accounts && cfg.tallyMode === "live" ? [{ id: "post", l: "Post to Tally" }] : undefined,
-        notes: [
-          {
-            tone: cfg.tallyMode === "live" ? "info" : "warn",
-            text:
-              cfg.tallyMode === "off"
-                ? "Tally sync is switched off: nothing new is queued. Turn it on in the ERP's settings (Petty cash & Tally)."
-                : cfg.tallyMode === "export"
-                  ? "Live posting is off. Export a voucher, post it in Tally, and record the number Tally gave it. Switch to live only once the ledger mappings and approvals are checked."
-                  : `Live posting to ${cfg.tallyUrl || "(no address set)"}. A retry sends the same remote id, so Tally alters the voucher rather than duplicating it.`,
-          },
-          { tone: "info", text: "A paid or reconciled record is not a posted voucher, and a posted voucher is not proof the classification is right — each has its own status." },
-        ],
-        noDataLine: "Nothing is queued for Tally yet.",
+        notes: cfg.tallyMode === "off" ? [{ tone: "warn", text: "Tally sync is off." }] : undefined,
+        noDataLine: "Nothing queued.",
       },
       rows: rows.map((r) => {
         const actions: ActionSpec[] = [];
@@ -393,7 +377,7 @@ const tally: ScreenModule = {
     async export(ctx, id) {
       const r = await exportVoucher(ctx, id);
       if (!r.ok) return r;
-      return ok({ dialog: { title: `Voucher · ${r.data.remoteId}`, sub: "Import it in Tally (Gateway → Import → Vouchers), then record the voucher number here.", text: r.data.xml, copy: true } } satisfies ToolResult, "Voucher written out");
+      return ok({ dialog: { title: `Voucher · ${r.data.remoteId}`, text: r.data.xml, copy: true } } satisfies ToolResult, "Voucher written out");
     },
     voucher: (ctx, id, v) => recordVoucher(ctx, id, { voucherType: text(v.type), voucherNo: text(v.no) }),
     notRequired: (ctx, id, v) => setTallyStatus(ctx, id, "not_required", text(v.reason)),

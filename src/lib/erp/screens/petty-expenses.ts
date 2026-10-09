@@ -70,36 +70,36 @@ async function expenseForm(ctx: ErpContext, l: PettyLookups, edit?: ExpenseFact)
   const cats = l.categories.filter((c) => c.active || c.id === edit?.e.categoryId).map((c) => c.name);
   const header: FieldSpec[] = [
     { k: "date", l: "Expense date", t: "date", req: true, sec: "What it was" },
-    { k: "particular", l: "Particular", t: "text", req: true, hint: parts.length ? `What it was for, in a few words — e.g. ${parts.slice(0, 3).join(", ")}` : "What it was for, in a few words" },
+    { k: "particular", l: "Particular", t: "text", req: true, hint: parts.length ? `e.g. ${parts.slice(0, 3).join(", ")}` : undefined },
     { k: "category", l: "Category", t: "select", req: true, opts: cats },
     { k: "txnType", l: "Transaction type", t: "select", req: true, opts: [...PETTY_TXN_TYPES] },
     { k: "godown", l: "Godown", t: "select", req: true, opts: l.godowns.map((g) => g.name) },
     { k: "expenseBy", l: "Spent by", t: "select", opts: names },
-    { k: "department", l: "Department", t: "text", hint: "Optional — for department budgets" },
-    { k: "vendor", l: "Vendor / payee", t: "text", sec: "The bill", hint: "As on the bill. A name that matches an ERP supplier is linked to it" },
+    { k: "department", l: "Department", t: "text" },
+    { k: "vendor", l: "Vendor / payee", t: "text", sec: "The bill" },
     { k: "amount", l: "Total amount (₹)", t: "num", req: true, min: 0.01 },
     { k: "billNo", l: "Bill / invoice / reference no.", t: "text" },
     { k: "billDate", l: "Bill date", t: "date" },
-    { k: "termsDays", l: "Payment terms (days)", t: "num", min: 0, hint: "Due date is the bill date plus this, unless a due date is given" },
+    { k: "termsDays", l: "Payment terms (days)", t: "num", min: 0 },
     { k: "dueDate", l: "Due date", t: "date" },
-    { k: "received", l: "Goods / service", t: "select", req: true, opts: RECEIVED_OPTS, hint: "A commitment is not an expense yet — it becomes one when received" },
+    { k: "received", l: "Goods / service", t: "select", req: true, opts: RECEIVED_OPTS },
     { k: "docStatus", l: "Bill / receipt", t: "select", req: true, opts: DOC_OPTS },
     { k: "file", l: "Bill or receipt photo", t: "photo", when: { k: "docStatus", eq: "Attached" }, reqWhen: { k: "docStatus", eq: "Attached" } },
     { k: "remarks", l: "Remarks / purpose", t: "area", mic: true, wide: true, reqWhen: { k: "txnType", eq: "Other" } },
   ];
   if (!edit) {
     header.push(
-      { k: "situation", l: "Payment", t: "select", req: true, opts: [...SITUATIONS], sec: "Payment", hint: "The payment status is worked out from the payments — this only records one made now" },
+      { k: "situation", l: "Payment", t: "select", req: true, opts: [...SITUATIONS], sec: "Payment" },
       { k: "payAmount", l: "Paid now (₹)", t: "num", min: 0.01, when: { k: "situation", in: ["Part paid now", "Advance paid now"] }, reqWhen: { k: "situation", in: ["Part paid now", "Advance paid now"] } },
       ...paymentFields(l, "pay").map((f) => ({ ...f, when: { k: "situation", in: ["Paid in full now", "Part paid now", "Advance paid now"] } as FieldSpec["when"] })),
-      { k: "payAckName", l: "Received by (payee's name)", t: "text", when: { k: "situation", in: ["Paid in full now", "Part paid now", "Advance paid now"] }, hint: "A cash payment needs the payee's acknowledgement" },
+      { k: "payAckName", l: "Received by (payee's name)", t: "text", when: { k: "situation", in: ["Paid in full now", "Part paid now", "Advance paid now"] } },
       { k: "payAckFile", l: "Signed slip / acknowledgement", t: "photo", when: { k: "situation", in: ["Paid in full now", "Part paid now", "Advance paid now"] } },
-      { k: "urgentReason", l: "Why it could not wait for approval", t: "area", when: { k: "situation", in: ["Paid in full now", "Part paid now", "Advance paid now"] }, hint: "Only asked if the expense is not approved on submission: paying first is an urgent payment" },
+      { k: "urgentReason", l: "Why it could not wait for approval", t: "area", when: { k: "situation", in: ["Paid in full now", "Part paid now", "Advance paid now"] } },
     );
   }
   header.push(
     { k: "submitAs", l: "Save as", t: "select", req: true, opts: SUBMIT_OPTS, sec: "Save" },
-    { k: "notDuplicate", l: "If warned of a duplicate", t: "select", opts: [NOT_DUP], hint: "Only if MahekOne warns that this looks like an expense already recorded" },
+    { k: "notDuplicate", l: "If warned of a duplicate", t: "select", opts: [NOT_DUP] },
   );
   const e = edit?.e;
   return {
@@ -107,7 +107,6 @@ async function expenseForm(ctx: ErpContext, l: PettyLookups, edit?: ExpenseFact)
     id: edit ? "edit" : "new",
     recordId: e?.id,
     title: edit ? `Edit ${e!.code}` : "New expense",
-    sub: edit ? "A draft or a returned expense. Once submitted it is corrected by an adjustment, never edited." : "Record what was bought or spent. Paying it is a separate step — an expense can wait unpaid.",
     submit: edit ? "Save" : "Save expense",
     header,
     init: e
@@ -194,15 +193,15 @@ function payForm(f: ExpenseFact, l: PettyLookups, roles: ReturnType<typeof petty
     { k: "amount", l: "Amount (₹)", t: "num", req: true, min: 0.01, max: left / 100, hint: `${inr(left)} left to pay` },
     ...paymentFields(l).map((x) => (x.k === "fund" || x.k === "mode" ? { ...x, req: true } : x)),
     { k: "payee", l: "Payee", t: "text" },
-    { k: "ackName", l: "Received by (payee's name)", t: "text", hint: "For cash: who took the money" },
+    { k: "ackName", l: "Received by (payee's name)", t: "text" },
     { k: "ackFile", l: "Signed slip / acknowledgement", t: "photo" },
-    { k: "evidence", l: "Proof (UPI screenshot, receipt)", t: "photo", hint: "A screenshot is evidence, not reconciliation — the statement reconciles it" },
-    { k: "split", l: "Same transfer pays several bills", t: "select", opts: ["Yes"], hint: "Only where one UPI/UTR reference paid this and another expense" },
+    { k: "evidence", l: "Proof (UPI screenshot, receipt)", t: "photo" },
+    { k: "split", l: "Same transfer pays several bills", t: "select", opts: ["Yes"] },
   ];
-  if (!approved && !asRequest) header.push({ k: "urgentReason", l: "Why it could not wait for approval", t: "area", req: true, hint: "This expense is not approved yet: paying it now is an urgent payment, flagged until it is approved" });
+  if (!approved && !asRequest) header.push({ k: "urgentReason", l: "Why it could not wait for approval", t: "area", req: true });
   if (!asRequest && (roles.approve || roles.owner)) {
     header.push(
-      { k: "overdrawReason", l: "Authorise paying beyond the fund (approver)", t: "area", hint: "Only if the fund holds less than this payment" },
+      { k: "overdrawReason", l: "Authorise paying beyond the fund (approver)", t: "area" },
       { k: "evidenceExceptionReason", l: "Authorise cash with no acknowledgement (approver)", t: "area" },
     );
   }
@@ -211,9 +210,6 @@ function payForm(f: ExpenseFact, l: PettyLookups, roles: ReturnType<typeof petty
     id: asRequest ? "request" : "pay",
     recordId: f.e.id,
     title: asRequest ? `Request payment · ${f.e.code}` : `Record payment · ${f.e.code}`,
-    sub: asRequest
-      ? "A request moves no money. Accounts confirm it once it is actually paid, and only then does the fund go down."
-      : "Money that has actually left the fund. It goes down once, now, and the expense's status is worked out again.",
     submit: asRequest ? "Request payment" : "Record payment",
     header,
     init: { date: today(), amount: rupeesField(left), payee: f.e.vendorName ?? "", requestKey: requestKey() },
@@ -283,7 +279,7 @@ async function expenseRow(ctx: ErpContext, f: ExpenseFact, l: PettyLookups, name
     actions.push({ id: "docException", l: "Allow without a bill", why: !approver ? WHY.approve : maker ? "Not on your own expense" : "", prompt: { title: "Missing-document exception", submit: "Approve exception", fields: [{ k: "reason", l: "Why it can stand without a bill", t: "area", req: true }] } });
   }
   if (!e.legacy) {
-    actions.push({ id: "evidence", l: "Add a document", prompt: { title: `Add to ${e.code}`, sub: "Documents are added, never replaced — each one keeps who added it and when.", submit: "Add", fields: [{ k: "kind", l: "What it is", t: "select", req: true, opts: [...EVIDENCE_KINDS] }, { k: "file", l: "File", t: "photo", req: true }] } });
+    actions.push({ id: "evidence", l: "Add a document", prompt: { title: `Add to ${e.code}`, submit: "Add", fields: [{ k: "kind", l: "What it is", t: "select", req: true, opts: [...EVIDENCE_KINDS] }, { k: "file", l: "File", t: "photo", req: true }] } });
   }
   if (!e.legacy && ["submitted", "under_review", "approved"].includes(e.approvalStatus)) {
     actions.push({
@@ -291,7 +287,6 @@ async function expenseRow(ctx: ErpContext, f: ExpenseFact, l: PettyLookups, name
       l: "Request an adjustment",
       prompt: {
         title: `Adjust ${e.code}`,
-        sub: "A vendor credit, a correction or a write-off changes what is payable — it never edits the bill. An approver decides it.",
         submit: "Request",
         fields: [
           { k: "kind", l: "Kind", t: "select", req: true, opts: ["Vendor credit / return", "Correction — less is payable", "Correction — more is payable", "Write-off", ...(advances.length ? ["Set an advance against this bill"] : [])] },
@@ -324,7 +319,7 @@ async function expenseRow(ctx: ErpContext, f: ExpenseFact, l: PettyLookups, name
       l: "Set against a bill",
       prompt: {
         title: `Set ${e.code} against a bill`,
-        sub: `${inr(f.advanceOpenPaise)} of this advance is open. Setting it against the bill reduces what is payable on the bill; an approver decides it.`,
+        sub: `${inr(f.advanceOpenPaise)} open`,
         submit: "Request",
         fields: [
           { k: "bill", l: "Bill", t: "select", req: true, opts: bills.map((b) => `${b.e.code} · ${b.e.vendorName ?? ""} · ${inr(b.state.outstandingPaise)} outstanding`) },
@@ -339,7 +334,6 @@ async function expenseRow(ctx: ErpContext, f: ExpenseFact, l: PettyLookups, name
       l: "Recovered in cash",
       prompt: {
         title: `Recover ${e.code}`,
-        sub: "Money handed back comes into a fund through an adjustment an approver decides.",
         submit: "Request",
         fields: [
           { k: "fund", l: "Into", t: "select", req: true, opts: activeFunds(l).map(fundLabel) },
@@ -466,7 +460,7 @@ const expenses: ScreenModule = {
         newForm: await expenseForm(ctx, l),
         newLabel: "New expense",
         noDataLine: "No expenses yet.",
-        notes: waiting.length && (roles.approve || roles.owner) ? [{ tone: "warn", text: `${waiting.length} expense${waiting.length === 1 ? " waits" : "s wait"} for a decision — ${inr(waiting.reduce((s, f) => s + f.e.amountPaise, 0))}. Open one to approve, return or reject it.` }] : undefined,
+        notes: waiting.length && (roles.approve || roles.owner) ? [{ tone: "warn", text: `${waiting.length} expense${waiting.length === 1 ? " waits" : "s wait"} for approval — ${inr(waiting.reduce((s, f) => s + f.e.amountPaise, 0))}` }] : undefined,
       },
       rows,
     };
@@ -585,7 +579,7 @@ const payments: ScreenModule = {
         hidden: [],
         chips: "status",
         bulk: roles.accounts ? [{ id: "verify", l: "Mark verified" }] : undefined,
-        noDataLine: "No payments yet. A payment is recorded from its expense.",
+        noDataLine: "No payments yet.",
       },
       rows: rows.map(({ p, expenseCode, particular, vendor }) => {
         const t = tally.get(`payment:${p.id}`);
@@ -599,7 +593,7 @@ const payments: ScreenModule = {
             why: !roles.accounts && !roles.approve ? WHY.accounts : p.requestedById === ctx.actor.id && !ctx.administrator ? "Somebody other than whoever asked for it confirms it" : "",
             prompt: {
               title: `Confirm ${p.code}`,
-              sub: `${inr(p.amountPaise)} out of ${fundName.get(p.fundAccountId)} — the fund goes down now.`,
+              sub: `${inr(p.amountPaise)} · ${fundName.get(p.fundAccountId)}`,
               submit: "Confirm paid",
               fields: [
                 { k: "date", l: "Paid on", t: "date", req: true },
@@ -620,7 +614,6 @@ const payments: ScreenModule = {
             why: !roles.approve && !roles.owner ? WHY.approve : p.reconStatus === "matched" || p.reconStatus === "reconciled" ? "Matched to the bank statement — unmatch it first" : "",
             prompt: {
               title: `Reverse ${p.code}`,
-              sub: "The payment stays on record; a reversing entry puts the money back and the expense's status is worked out again.",
               submit: "Reverse",
               fields: [
                 { k: "reason", l: "Why", t: "area", req: true },
@@ -707,7 +700,7 @@ const vendors: ScreenModule = {
     for (const f of open) byVendor.set(f.e.vendorName ?? "No payee named", (byVendor.get(f.e.vendorName ?? "No payee named") ?? 0) + f.state.outstandingPaise);
     const top = [...byVendor].sort((a, b) => b[1] - a[1]).slice(0, 6);
     const summary: SummaryCard[] = [
-      { t: "Ageing", big: { v: inr(total(open)), sub: `outstanding on ${open.length} approved bill${open.length === 1 ? "" : "s"}` }, rows: byBucket.map(({ b, list }) => ({ l: b, v: inr(total(list)), sub: `${list.length} bill${list.length === 1 ? "" : "s"}`, tone: b === "Not yet due" ? undefined : b.startsWith("More") || b.startsWith("16") ? "danger" : "warn" })) },
+      { t: "Ageing", big: { v: inr(total(open)), sub: `${open.length} bill${open.length === 1 ? "" : "s"}` }, rows: byBucket.map(({ b, list }) => ({ l: b, v: inr(total(list)), sub: `${list.length} bill${list.length === 1 ? "" : "s"}`, tone: b === "Not yet due" ? undefined : b.startsWith("More") || b.startsWith("16") ? "danger" : "warn" })) },
       { t: "Largest balances", rows: top.length ? top.map(([v, amt]) => ({ l: v, v: inr(amt) })) : [{ l: "Nothing outstanding", v: "—" }] },
     ];
     return {
@@ -721,8 +714,7 @@ const vendors: ScreenModule = {
         godownKey: "godown",
         sortDefault: ["overdue", -1],
         summary,
-        notes: [{ tone: "info", text: "Only approved, received bills are liabilities here. Drafts, bills awaiting approval and commitments not yet received are not — they are on the Expenses tab." }],
-        noDataLine: "Nothing is owed to any vendor.",
+        noDataLine: "Nothing outstanding.",
       },
       rows: open.map((f) => {
         const e = f.e;

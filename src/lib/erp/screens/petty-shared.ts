@@ -51,9 +51,9 @@ export function paymentFields(l: PettyLookups, prefix = ""): FieldSpec[] {
   const modeMap: Record<string, string[]> = {};
   for (const f of funds) modeMap[fundLabel(f)] = PAYMENT_MODES_BY_FUND[f.type];
   return [
-    { k: `${prefix}fund`, l: "Paid from", t: "select", opts: funds.map(fundLabel), hint: "Kotak by UPI or transfer, or one of the cash boxes" },
+    { k: `${prefix}fund`, l: "Paid from", t: "select", opts: funds.map(fundLabel) },
     { k: `${prefix}mode`, l: "Mode", t: "select", optsBy: { by: `${prefix}fund`, map: modeMap } },
-    { k: `${prefix}reference`, l: "UPI / UTR / cheque reference", t: "text", hint: "Needed for a bank payment — it is what matches the statement" },
+    { k: `${prefix}reference`, l: "UPI / UTR / cheque reference", t: "text" },
   ];
 }
 
