@@ -567,3 +567,24 @@
 /* Hire: table rows are 44px comfortable, 36px compact (design brief §4.3). */
 .hire-root .hire-row { height: 44px; }
 .hire-root[data-density="compact"] .hire-row { height: 36px; }
+
+/* ---------------------------------------------------------------------------
+   Documentation: code excerpts carry the SOURCE file's line numbers.
+
+   Shiki emits one `span.line` per line; `<Code>` sets the counter to start at
+   the excerpt's first line, so "L812" on the page is L812 in the file.
+--------------------------------------------------------------------------- */
+.docs-code .line::before {
+  counter-increment: line;
+  content: counter(line);
+  display: inline-block;
+  width: 3.2em;
+  margin-right: 1.2em;
+  text-align: right;
+  color: var(--color-faint);
+  user-select: none;
+}
+.docs-code pre,
+.docs-fence {
+  font-family: var(--font-mono);
+}

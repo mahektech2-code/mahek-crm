@@ -2161,6 +2161,9 @@ src/
       complaints/  targets/  eod/  whatsapp/
       help/  settings/     SOPs and the manager configuration screen
     hrms/employees/        HRMS — the employee master, one module
+    docs/                  the Documentation app — every app's pages, three tabs
+                           each; content is MDX in src/docs/, see "The
+                           Documentation app" below
     hire/                  Hire — role blueprints, the pipeline, AI-assisted
                            interviews with evidence, decisions, onboarding,
                            provisioning. Rules in "## Hire" below; engines in
@@ -4991,6 +4994,35 @@ workbook. `?mode=field-activity-project` writes matched rows onto
 `timeline_events`, which is how this reaches a customer's shared history and
 a salesman's phone.
 
+**AND MBOS IS NOW THE RECORD; THE SHEET IS ITS PAST.** `fieldActivity.cutoverDate`
+(10 Oct 2026) is the first day only MBOS counts. The sync still runs, so an
+edit to an old row lands, but a row dated on or after the cutover is read,
+counted in the run's detail and NOT stored (it is still marked seen, so a
+reconcile never takes "not stored" for "gone"), and the timeline projection
+never projects one already stored. Activity history (`activityHistory` in
+`sales-service.ts`) is one list of every MBOS visit plus the sheet's rows
+before the cutover, each marked MBOS or Old app; a past day can carry both
+because some men typed a visit into each app, and nothing merges them. Its
+salesman filter is `u:<user id>` (his MBOS visits and the sheet rows matched
+to him) or `n:<name>` (a name only the sheet carries). `visitSelect()` is the
+one select of a `VisitRow`, shared with the Visit log.
+
+**AN OLD-APP SHOP NAME IS LINKED ONLY WHERE NOTHING COULD BE WRONG.** The
+importer used to auto-link any name scoring 0.6 trigram similarity, which put
+"Shree Ganesh Paints" visits on "Shree Ganesh Paint House" and an Ajmer shop's
+on its Mumbai namesake — read on those timelines as fact. `decideCustomerMatch`
+now links a name only when exactly ONE account carries it once folded
+(`foldShopName`: case, spacing and punctuation only), or when a person decided
+it; several exact namesakes and every close name are "Needs review" with the
+shortlist. A person decides once per NAME on the row's detail
+(`lib/actions/field-activity.ts`, a Sales manager holding Activity history),
+stored in `field_activity_customer_decisions`, and every row typed under that
+name moves with it; "not on MahekOne" is an answer too. The nightly
+`field-activity-shops` pass (and `npm run jobs -- field-activity-rematch`)
+re-judges every stored row and takes back the timeline entries wrong links
+wrote. The pin import (`customer-location-import-service.ts`) uses the same
+matcher, `shop-name-match-service.ts`.
+
 **A flag that is silently discarded is worse than one that is rejected.**
 `npm run jobs -- project-sheet --bills` used to run the projection with no
 options whatsoever: the argument was read into argv, dropped before `runJob`,
@@ -6641,7 +6673,7 @@ BALANCE.** Expenses → Ledger (`/sales/expenses/ledger`, and one salesman's
 statement under `/[userId]`) answers what he claimed, what the policy allows
 and why (`mbos_expense_exceptions` per line), what was approved, cut or
 refused with the remark, what is waiting, what his work log earned, what has
-been paid and what is owed now. `mbos_expense_payouts` (0243) is the only new
+been paid and what is owed now. `mbos_expense_payouts` (0245) is the only new
 record: money handed over, never pinned to an expense — one transfer covers a
 week — so `lib/engines/expense-ledger.ts` (pure) allocates it to approved lines
 OLDEST FIRST on every read for the per-line Paid / Part paid / Not paid. "Owed
@@ -8069,6 +8101,44 @@ seeds the blueprints the first time Hire opens on an empty database. Everybody
 else gets Hire, and their role in it, on the Access screen.
 `npm run hire:seed -- --demo --reset`
 wipes Hire and loads the demo pipeline, development only.
+
+## The Documentation app
+
+**`/docs` is an app like any other**, granted in `app_access` and checked in
+its layout. Everybody granted it reads every page and all three tabs — that is
+a decision, recorded on `docs.app` in `lib/modules.ts`, not an omission.
+
+**Every page has three tabs for three readers**: Guide (the person using the
+screen), How it works (the owner: the rule, why, and the setting that changes
+it) and Developer (routes, services, engine, tables, tests). `src/docs/registry.ts`
+lists the pages; `src/docs/<app>/<slug>/<tab>.mdx` is the content;
+`src/docs/content.ts` is the one map from one to the other.
+
+**No page types a setting's value.** `<Setting k="queue.quietDaysAfterOrder"/>`
+reads it through `getConfig()` from the database the deployment is connected
+to, so prod's docs quote prod's settings and a value changed on the Settings
+screen changes the page. `<SettingsTable>`, `<SettingMap>`, `<DbTable>`,
+`<DbEnum>`, `<CapabilityGrid>` and `<ModuleRef>` read the registry, the schema
+and the matrix the same way, and a name that no longer exists renders as a red
+mistake rather than a confident fiction.
+
+**Code is quoted by SYMBOL, cut at build.** The runtime image carries no
+source, so `<Code file="…" symbol="buildQueue"/>` is resolved by
+`scripts/docs-index.mjs`, which `prebuild` runs: a renamed symbol fails the
+build instead of quoting whatever now sits on those lines. Run
+`npm run docs:index` after editing MDX or a quoted file — `coverage.test.ts`
+fails on a stale index, on a module of a documented app that no page claims,
+and on a `;` inside a Mermaid chart, which Mermaid reads as the end of a
+statement.
+
+**Wireframes, never screenshots, and no names.** A screenshot carries real
+customers into a page every grantee can read and goes stale when a column
+moves. Wireframes are built from the design tokens (`components/wireframe.tsx`)
+and use placeholders — "Customer A" — never seed or production names.
+
+**A page describes the code as it stands.** Where the code and the intent
+disagree, the How it works and Developer tabs say so under "Where the code and
+the intent disagree today", rather than documenting the intent as if it shipped.
 
 ## Testing
 

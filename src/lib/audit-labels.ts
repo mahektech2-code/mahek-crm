@@ -612,6 +612,13 @@ const DESCRIBE: Record<string, Describer> = {
   "mbos.holiday.deallocate": (c) => ({ says: ["took the holiday", strong(str(c.a.name) ?? ""), "away from", strong(str(c.a.person) ?? "somebody")], changes: false }),
   "mbos.holiday.reset": (c) => ({ says: ["put", strong(str(c.a.person) ?? "somebody"), "back on the usual rule for", strong(str(c.a.name) ?? "")], changes: false }),
   "mbos.visit.accept": () => ({ says: ["accepted a salesman's visit as genuine"], changes: false }),
+  "mbos.oldAppShop.decide": (c) => ({
+    says: c.a.customerId
+      ? ["said which account an old-app shop name is, for", strong(String(num(c.a.rows) ?? 0)), "visits"]
+      : ["marked an old-app shop name as not on MahekOne"],
+    changes: false,
+  }),
+  "mbos.oldAppShop.undo": () => ({ says: ["took back which account an old-app shop name is"], changes: false }),
   "mbos.visit.pin.accept": (c) => ({ says: ["moved the map pin of", c.subject(), "to where the salesman checked in"], changes: false }),
   "mbos.visit.pin.reject": (c) => ({ says: ["kept the map pin of", c.subject(), "where it was"], changes: false }),
   "mbos.visit.ask": () => ({ says: ["asked a salesman about a visit"], changes: false }),

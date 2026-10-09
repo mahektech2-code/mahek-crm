@@ -1,4 +1,4 @@
-import { PUBLISH_MAX_BYTES, tooLargeMessage } from "@/lib/publish-limits";
+import { PUBLISH_MAX_BYTES, officeFileRefusal, tooLargeMessage } from "@/lib/publish-limits";
 import { err, ok, type Result } from "@/lib/result";
 
 export type Uploaded = {
@@ -35,6 +35,9 @@ export async function uploadPublishFile(
   /** The route that stores it — the library's by default, an expense bill's on Expenses. */
   endpoint = "/api/sales/publish-file",
 ): Promise<Result<Uploaded>> {
+  const office = officeFileRefusal(chosen.name);
+  if (office) return err(office, "validation");
+
   let file = chosen;
   if (chosen.size > PUBLISH_MAX_BYTES) {
     const kind = shrinkable(chosen);

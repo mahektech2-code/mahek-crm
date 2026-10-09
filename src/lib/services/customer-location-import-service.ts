@@ -8,12 +8,8 @@ import {
   parseCustomerLocationRow,
   type ParsedCustomerLocationRow,
 } from "@/lib/customer-location-parse";
-import {
-  decideCustomerMatch,
-  matchSalesmanName,
-  type CustomerCandidate,
-  type MatchResult,
-} from "@/lib/field-activity-match";
+import { matchSalesmanName, type MatchResult } from "@/lib/field-activity-match";
+import { shopNameMatcher } from "./shop-name-match-service";
 import { hashRow, newSyncId, WRITE_BATCH } from "./sheet-sync-core";
 
 /* ---------------------------------------------------------------------------
@@ -42,48 +38,6 @@ export type CustomerLocationImportOutcome = {
   withIssues: number;
   detail: string;
 };
-
-/**
- * A distinct shop name against `customers.name`, by the same trigram/substring
- * technique `field-activity-sync-service.ts:matchCustomer` already uses.
- * Cached across the whole run — a shared cache would leak between imports run
- * concurrently, so this is a plain function taking its own cache rather than
- * a module-level one.
- */
-async function matchCustomer(
-  name: string,
-  cache: Map<string, MatchResult>,
-): Promise<MatchResult> {
-  const key = name.trim().toLowerCase();
-  if (!key) return { status: "unmatched", matchedId: null, note: null };
-
-  const cached = cache.get(key);
-  if (cached) return cached;
-
-  const like = `%${name}%`;
-  const rows = await db.execute<{ id: string; name: string; score: number }>(sql`
-    select id, name, similarity(lower(name), lower(${name})) as score
-      from customers
-     where name ilike ${like} or similarity(lower(name), lower(${name})) > 0.3
-     order by
-       case
-         when lower(name) = lower(${name}) then 0
-         when name ilike ${name + "%"} then 1
-         when name ilike ${like} then 2
-         else 3
-       end,
-       similarity(lower(name), lower(${name})) desc
-     limit 8
-  `);
-  const candidates: CustomerCandidate[] = rows.map((r) => ({
-    id: r.id,
-    name: r.name,
-    score: Number(r.score),
-  }));
-  const result = decideCustomerMatch(candidates);
-  cache.set(key, result);
-  return result;
-}
 
 function toRow(
   cells: Record<string, string>,
@@ -154,7 +108,9 @@ export async function importCustomerLocationsCsv(
 ): Promise<CustomerLocationImportOutcome> {
   const records = parseCsv(csvText).filter((cells) => !isBlankCustomerLocationRow(cells));
   const salesmen = await db.select({ id: users.id, name: users.name }).from(users);
-  const customerCache = new Map<string, MatchResult>();
+  // Exact name or a person's decision only — a pin on the wrong shop is a
+  // shop every later check-in is refused at.
+  const matcher = await shopNameMatcher();
 
   let created = 0;
   let unchanged = 0;
@@ -185,7 +141,7 @@ export async function importCustomerLocationsCsv(
       if (parsed.issues.length) withIssues++;
 
       const addedBy = matchSalesmanName(parsed.sourceAddedByName, salesmen);
-      const customer = await matchCustomer(parsed.name, customerCache);
+      const customer = await matcher.match(parsed.name);
       if (customer.status === "matched") matched++;
       else if (customer.status === "ambiguous") ambiguous++;
       else unmatched++;
