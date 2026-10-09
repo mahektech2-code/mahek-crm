@@ -2161,6 +2161,9 @@ src/
       complaints/  targets/  eod/  whatsapp/
       help/  settings/     SOPs and the manager configuration screen
     hrms/employees/        HRMS — the employee master, one module
+    docs/                  the Documentation app — every app's pages, three tabs
+                           each; content is MDX in src/docs/, see "The
+                           Documentation app" below
     hire/                  Hire — role blueprints, the pipeline, AI-assisted
                            interviews with evidence, decisions, onboarding,
                            provisioning. Rules in "## Hire" below; engines in
@@ -6625,7 +6628,7 @@ Typed, a hometown was a string the pay rule compared against shop towns read
 through `placeNameSql`, so "Nagpur " or "nagpur city" matched nothing and made
 every day an away day. It is now a city node of `places` (state › district ›
 city), stored as `expense_hometowns.place_id` with the name and state beside it
-(`0244`; a typed row that names exactly one city was adopted, the rest show as
+(`0245`; a typed row that names exactly one city was adopted, the rest show as
 "Typed"). It is set on the Sales Dashboard's Salesmen screen (`/sales/people`,
 a Hometown column, a "Hometown not set" filter and a banner counting the
 backlog) and on each salesman's page, through `setSalesmanHometown`
@@ -8086,6 +8089,44 @@ seeds the blueprints the first time Hire opens on an empty database. Everybody
 else gets Hire, and their role in it, on the Access screen.
 `npm run hire:seed -- --demo --reset`
 wipes Hire and loads the demo pipeline, development only.
+
+## The Documentation app
+
+**`/docs` is an app like any other**, granted in `app_access` and checked in
+its layout. Everybody granted it reads every page and all three tabs — that is
+a decision, recorded on `docs.app` in `lib/modules.ts`, not an omission.
+
+**Every page has three tabs for three readers**: Guide (the person using the
+screen), How it works (the owner: the rule, why, and the setting that changes
+it) and Developer (routes, services, engine, tables, tests). `src/docs/registry.ts`
+lists the pages; `src/docs/<app>/<slug>/<tab>.mdx` is the content;
+`src/docs/content.ts` is the one map from one to the other.
+
+**No page types a setting's value.** `<Setting k="queue.quietDaysAfterOrder"/>`
+reads it through `getConfig()` from the database the deployment is connected
+to, so prod's docs quote prod's settings and a value changed on the Settings
+screen changes the page. `<SettingsTable>`, `<SettingMap>`, `<DbTable>`,
+`<DbEnum>`, `<CapabilityGrid>` and `<ModuleRef>` read the registry, the schema
+and the matrix the same way, and a name that no longer exists renders as a red
+mistake rather than a confident fiction.
+
+**Code is quoted by SYMBOL, cut at build.** The runtime image carries no
+source, so `<Code file="…" symbol="buildQueue"/>` is resolved by
+`scripts/docs-index.mjs`, which `prebuild` runs: a renamed symbol fails the
+build instead of quoting whatever now sits on those lines. Run
+`npm run docs:index` after editing MDX or a quoted file — `coverage.test.ts`
+fails on a stale index, on a module of a documented app that no page claims,
+and on a `;` inside a Mermaid chart, which Mermaid reads as the end of a
+statement.
+
+**Wireframes, never screenshots, and no names.** A screenshot carries real
+customers into a page every grantee can read and goes stale when a column
+moves. Wireframes are built from the design tokens (`components/wireframe.tsx`)
+and use placeholders — "Customer A" — never seed or production names.
+
+**A page describes the code as it stands.** Where the code and the intent
+disagree, the How it works and Developer tabs say so under "Where the code and
+the intent disagree today", rather than documenting the intent as if it shipped.
 
 ## Testing
 

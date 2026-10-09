@@ -678,6 +678,8 @@ export const appIdEnum = pgEnum("app_id", [
   "website",
   /** Hiring and onboarding — the pipeline that ends in a provisioned account. */
   "hire",
+  /** Documentation — every app's guide, rules and developer reference, in one place. */
+  "docs",
 ]);
 
 /* --------------------------------------------------------- §2 configuration */
