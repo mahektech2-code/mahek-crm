@@ -43,6 +43,7 @@ export const ROUTE_MOTION: Record<string, ScreenMotion> = {
   travel: 'deeper',
   performance: 'deeper',
   docs: 'deeper',
+  'doc-view': 'deeper',
   knowledge: 'deeper',
   policy: 'deeper',
   profile: 'deeper',

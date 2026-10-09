@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import sharp from "sharp";
 import { PDFDocument, PDFName, PDFRawStream } from "pdf-lib";
-import { PUBLISH_MAX_BYTES, PUBLISH_MAX_MB, tooLargeMessage } from "./publish-limits";
+import { PUBLISH_MAX_BYTES, PUBLISH_MAX_MB, officeFileRefusal, tooLargeMessage } from "./publish-limits";
 import { MAX_EDGE, shrinkPdf, type JpegReencoder } from "./pdf-shrink";
 
 /* ---------------------------------------------------------------------------
@@ -29,6 +29,15 @@ test("the refusal names the file, its size and the limit, and says whether compr
   const after = tooLargeMessage("catalogue.pdf", 34.5 * 1024 * 1024, true);
   assert.match(after, /34\.5 MB\. The limit is 30 MB\. It is still that size after compressing/);
   assert.equal(PUBLISH_MAX_BYTES, 30 * 1024 * 1024);
+});
+
+test("a Word, PowerPoint or Excel file is refused with how to make the PDF; a PDF or picture is not", () => {
+  assert.match(officeFileRefusal("Rate card.DOCX") ?? "", /is a Word file.*Save as → PDF/);
+  assert.match(officeFileRefusal("deck.pptx") ?? "", /PowerPoint/);
+  assert.match(officeFileRefusal("rates.xlsx") ?? "", /Excel/);
+  for (const ok of ["price list.pdf", "shop.jpg", "logo.PNG", "no-extension"]) {
+    assert.equal(officeFileRefusal(ok), null, ok);
+  }
 });
 
 /* ---------------------------------------------------------------------------
