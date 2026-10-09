@@ -644,6 +644,8 @@ export const attachmentParentEnum = pgEnum("attachment_parent", [
   /** A vendor's invoice (proforma, tax invoice, debit note…) on a payout. Read
       by whoever holds Accounts → Vendor payouts. */
   "vendor_payout_invoice",
+  /** The photograph of a loaded truck the dispatch team takes as proof (factory app). */
+  "factory_task",
 ]);
 
 /**
@@ -678,6 +680,8 @@ export const appIdEnum = pgEnum("app_id", [
   "website",
   /** Hiring and onboarding — the pipeline that ends in a provisioned account. */
   "hire",
+  /** The factory floor's phone app: mixing, filling, packing, dispatch. */
+  "factory",
   /** Documentation — every app's guide, rules and developer reference, in one place. */
   "docs",
 ]);
@@ -7621,7 +7625,12 @@ export const expenseHometowns = pgTable("expense_hometowns", {
   userId: text("user_id")
     .primaryKey()
     .references(() => users.id, { onDelete: "cascade" }),
+  /** The town's name — what the pay rule compares the visited shops' towns against. */
   city: text("city").notNull(),
+  /** The city node it was picked as. Null on a town typed before the picker. */
+  placeId: text("place_id").references(() => places.id, { onDelete: "set null" }),
+  /** The state it was picked under, for drawing the path. */
+  state: text("state"),
   setAt: timestamp("set_at", { withTimezone: true }).notNull().defaultNow(),
   setById: text("set_by_id").references(() => users.id),
 });
@@ -14020,4 +14029,207 @@ export const vendorPayoutInvoices = pgTable(
     index("vendor_payout_invoices_payout_idx").on(t.payoutId),
     check("vendor_payout_invoices_amount_check", sql`${t.amountPaise} is null or ${t.amountPaise} >= 0`),
   ],
+);
+
+/* ===================================================== the factory floor app
+ *
+ * The phone app the mixing, filling, packing and dispatch teams work from
+ * (`src/app/factory`). It is NOT a second stock system: every litre, can and
+ * box it records is posted through the ERP's own save handlers, so stock is
+ * still derived from `erp_sfg_lines`, `erp_fg_fills` and `erp_pack_lines`.
+ * What these tables add is what the ERP never had — who was given the work,
+ * who actually did it, why a machine stopped, and what the Production Head
+ * still has to look at.
+ * ========================================================================= */
+
+/**
+ * A person on the floor: which team they work in, what their badge says, and
+ * the four-digit PIN they sign in with. The PIN is hashed like a password; a
+ * badge is only a QR of a code, never a credential on its own — scanning one
+ * still asks for the PIN.
+ */
+export const factoryStaff = pgTable(
+  "factory_staff",
+  {
+    userId: text("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+    /** head | mixing | filling | packing | dispatch | qc */
+    area: text("area").notNull(),
+    /** "Machine operator", "Helper" — the words under their name. */
+    roleLabel: text("role_label"),
+    badgeCode: text("badge_code").unique(),
+    pinHash: text("pin_hash"),
+    /** en | hi | mr */
+    lang: text("lang").notNull().default("en"),
+    /** False until HR has confirmed the name and role (PRD §5.1). */
+    hrConfirmed: boolean("hr_confirmed").notNull().default(true),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check("factory_staff_area_check", sql`${t.area} in ('head', 'mixing', 'filling', 'packing', 'dispatch', 'qc')`),
+    check("factory_staff_lang_check", sql`${t.lang} in ('en', 'hi', 'mr')`),
+  ],
+);
+
+/** The standing team of each process — what a new task starts with, and what the Production Head changes. */
+export const factoryTeamDefaults = pgTable(
+  "factory_team_defaults",
+  {
+    proc: text("proc").notNull(),
+    /** owner | operator | helper | verifier */
+    role: text("role").notNull(),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  },
+  (t) => [
+    primaryKey({ name: "factory_team_defaults_pk", columns: [t.proc, t.role, t.userId] }),
+    check("factory_team_defaults_proc_check", sql`${t.proc} in ('mixing', 'filling', 'packing', 'dispatch')`),
+    check("factory_team_defaults_role_check", sql`${t.role} in ('owner', 'operator', 'helper', 'verifier')`),
+  ],
+);
+
+/**
+ * One piece of assigned work. `item` is what it makes, in the process's own
+ * terms: a formulation id (mixing), `<finished good id>:<litres>` (filling) or
+ * a boxed product id (packing). Dispatch names the ERP order instead.
+ * `out` is what the floor reported once the ERP accepted it — a summary for
+ * the dashboard; the ERP documents named in it are the truth.
+ */
+export const factoryTasks = pgTable(
+  "factory_tasks",
+  {
+    id: text("id").primaryKey(),
+    proc: text("proc").notNull(),
+    godownId: text("godown_id").notNull().references(() => erpGodowns.id),
+    workDate: date("work_date").notNull(),
+    /** "HH:MM", Asia/Kolkata */
+    due: text("due").notNull(),
+    /** ready | done | cancelled — blocked and waiting-to-send are derived. */
+    status: text("status").notNull().default("ready"),
+    item: text("item"),
+    batches: integer("batches"),
+    target: integer("target"),
+    sfgLot: text("sfg_lot"),
+    orderNo: text("order_no"),
+    out: jsonb("out"),
+    doneAt: timestamp("done_at", { withTimezone: true }),
+    createdById: text("created_by_id").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("factory_tasks_day_idx").on(t.godownId, t.workDate),
+    uniqueIndex("factory_tasks_order_key").on(t.orderNo).where(sql`${t.proc} = 'dispatch' and ${t.status} <> 'cancelled'`),
+    check("factory_tasks_proc_check", sql`${t.proc} in ('mixing', 'filling', 'packing', 'dispatch')`),
+    check("factory_tasks_status_check", sql`${t.status} in ('ready', 'done', 'cancelled')`),
+  ],
+);
+
+/**
+ * Who is on a job, by role — responsibility kept apart from participation
+ * (PRD §5): one owner, one operator, any number of helpers, an optional
+ * verifier. The person who pressed Send is `factory_submissions.user_id`,
+ * never assumed to be any of these.
+ */
+export const factoryTaskMembers = pgTable(
+  "factory_task_members",
+  {
+    taskId: text("task_id").notNull().references(() => factoryTasks.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull().references(() => users.id),
+    role: text("role").notNull(),
+    assignedById: text("assigned_by_id").references(() => users.id),
+    assignedAt: timestamp("assigned_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ name: "factory_task_members_pk", columns: [t.taskId, t.userId, t.role] }),
+    check("factory_task_members_role_check", sql`${t.role} in ('owner', 'operator', 'helper', 'verifier')`),
+  ],
+);
+
+/**
+ * THE IDEMPOTENCY LEDGER. The phone mints `key` when a job is started and
+ * sends it with every attempt; the first attempt claims the row and every
+ * later one — a double tap, a retry after a dropped connection, the queue
+ * draining after the app was killed — reads the stored result instead of
+ * posting again. `progress` records each ERP document already written, so a
+ * job that posts several (a packing count spanning two batches) resumes
+ * rather than repeats.
+ */
+export const factorySubmissions = pgTable(
+  "factory_submissions",
+  {
+    key: text("key").primaryKey(),
+    taskId: text("task_id").notNull().references(() => factoryTasks.id),
+    userId: text("user_id").notNull().references(() => users.id),
+    payload: jsonb("payload").notNull(),
+    /**
+     * processing | done | failed | held. HELD is received but not in the ERP:
+     * work sent from a phone's queue that the ERP refused (the stock moved
+     * while the phone was offline, the job was closed meanwhile). The worker
+     * is not handed an error for something that happened hours ago; the
+     * Production Head is handed a review item to post or close.
+     */
+    status: text("status").notNull().default("processing"),
+    progress: jsonb("progress").notNull().default([]),
+    result: jsonb("result"),
+    attempts: integer("attempts").notNull().default(1),
+    /** When the phone saved it — differs from created_at for work sent from the queue. */
+    savedAt: text("saved_at"),
+    /** The build of the page that sent it — old phones keep sending for days after a deploy. */
+    appBuild: text("app_build"),
+    /** The payload's own shape version; `normalizeDraft` reads every one there has been. */
+    schemaVersion: integer("schema_version").notNull().default(1),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("factory_submissions_task_idx").on(t.taskId),
+    check("factory_submissions_status_check", sql`${t.status} in ('processing', 'done', 'failed', 'held')`),
+  ],
+);
+
+/**
+ * What the app could not accept on its own: output outside the limit, a lot
+ * picked by photo, a correction asked for, a job saved with nobody helping, a
+ * problem reported before starting. Closed with a decision AND a reason, and
+ * never deleted.
+ */
+export const factoryReviews = pgTable(
+  "factory_reviews",
+  {
+    id: text("id").primaryKey(),
+    /** tolerance | manual | correction | attribution | issue | unposted */
+    kind: text("kind").notNull(),
+    taskId: text("task_id").notNull().references(() => factoryTasks.id),
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    meta: text("meta").notNull(),
+    /** For a correction: the change asked for, applied only on approval. */
+    change: jsonb("change"),
+    status: text("status").notNull().default("open"),
+    decision: text("decision"),
+    reason: text("reason"),
+    decidedById: text("decided_by_id").references(() => users.id),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    createdById: text("created_by_id").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("factory_reviews_open_idx").on(t.status),
+    check("factory_reviews_kind_check", sql`${t.kind} in ('tolerance', 'manual', 'correction', 'attribution', 'issue', 'unposted')`),
+    check("factory_reviews_status_check", sql`${t.status} in ('open', 'closed')`),
+  ],
+);
+
+/** A machine stop, with its reason and minutes, as the team recorded it on the job. */
+export const factoryDowntime = pgTable(
+  "factory_downtime",
+  {
+    id: text("id").primaryKey(),
+    taskId: text("task_id").notNull().references(() => factoryTasks.id),
+    godownId: text("godown_id").notNull().references(() => erpGodowns.id),
+    proc: text("proc").notNull(),
+    reason: text("reason").notNull(),
+    minutes: integer("minutes").notNull(),
+    recordedById: text("recorded_by_id").references(() => users.id),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("factory_downtime_at_idx").on(t.godownId, t.recordedAt), check("factory_downtime_minutes_check", sql`${t.minutes} > 0`)],
 );

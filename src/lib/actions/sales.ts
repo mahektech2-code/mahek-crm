@@ -70,6 +70,8 @@ import {
 import { bookIdsIgnoringTerritory } from "@/lib/services/mbos-service";
 import { refreshDayMoney, repriceDay, rescoreLeg } from "@/lib/services/expense-submit-service";
 import { ensureDay } from "@/lib/services/expense-service";
+import { writeHometown } from "@/lib/services/hometown-service";
+import { ADMIN } from "@/lib/admin-routes";
 import { notifyUsers } from "../notify";
 import { announce } from "@/lib/services/announcement-service";
 import { mirrorToHrms, removeEverywhere } from "@/lib/services/holiday-calendar";
@@ -2048,6 +2050,45 @@ export async function setSalesmanTerritories(input: {
       e instanceof Error ? e.message : "That could not be saved.",
       "validation",
     );
+  }
+}
+
+/**
+ * WHERE HE LIVES — the expense policy's "away from his hometown".
+ *
+ * Set beside where he works, because it is the same kind of fact, and picked
+ * from the reviewed place tree so it matches the towns of the shops he visits.
+ * The Admin Console's "Who is on which" writes the same record through the
+ * same `writeHometown`; this door is the Salesmen screen's, so it asks what
+ * that screen asks — the screen, and that he is in this manager's team.
+ */
+export async function setSalesmanHometown(input: {
+  salesmanId: string;
+  placeId: string | null;
+}): Promise<Result<void>> {
+  try {
+    const user = await requireSalesAccess(SALES_MANAGER("sales.people"));
+    if (await salesmanOutsideScope(input.salesmanId)) return err(NOT_YOUR_TEAM, "not_permitted");
+    const [person] = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.id, input.salesmanId))
+      .limit(1);
+    if (!person) return err("That account is not on MahekOne.", "not_found");
+
+    const result = await writeHometown(user.id, input.salesmanId, input.placeId || null);
+    if (result.ok) {
+      try {
+        revalidatePath("/sales/people");
+        revalidatePath(`/sales/people/${input.salesmanId}`);
+        revalidatePath(ADMIN.expensePolicy(), "layout");
+      } catch {
+        /* No request scope — nothing cached to drop. */
+      }
+    }
+    return result;
+  } catch (e) {
+    return fromThrown(e);
   }
 }
 

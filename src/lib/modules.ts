@@ -1019,6 +1019,18 @@ export const APP_MODULES: AppModule[] = [
     group: "Documentation",
     href: "/docs",
   },
+  /*
+   * THE FACTORY app is one module. What somebody can do inside it is their
+   * department and level, set beside the grant in Admin Console → Access.
+   */
+  {
+    key: "factory.app",
+    app: "factory",
+    label: "Factory",
+    group: "Factory",
+    href: "/factory",
+    note: "Associate works their department's jobs; manager supervises their department, or the whole floor as the Production Head. The department is set just below, under Factory.",
+  },
   website("products", "Products", "Website", "The catalogue shown on the public site."),
   website("industries", "Industries", "Website", "The industries the public site says Mahek serves."),
   website("pages", "Pages", "Website", "About, Manufacturing, Distributor and Contact — their sections and copy."),

@@ -537,6 +537,12 @@ export type Salesman = {
     reason: string | null;
     state: string;
   } | null;
+  /**
+   * Where he LIVES, for the expense policy's "away from his hometown". Picked
+   * from the reviewed place tree; `placeId` is null on a town typed before the
+   * picker. Null where nobody has set one.
+   */
+  hometown: { city: string; state: string | null; placeId: string | null } | null;
 };
 
 /**
@@ -593,7 +599,10 @@ export async function fieldTeam(): Promise<Salesman[]> {
               from mbos_territory_requests r
              where r.user_id = u.id
              order by r.server_created_at desc
-             limit 1) as "areaAnswer"
+             limit 1) as "areaAnswer",
+           (select json_build_object('city', h.city, 'state', h.state, 'placeId', h.place_id)
+              from expense_hometowns h
+             where h.user_id = u.id) as "hometown"
       from users u
       join app_access a on a.user_id = u.id and a.app = 'field'
      where true ${onlyMine(scope, "u.id")}

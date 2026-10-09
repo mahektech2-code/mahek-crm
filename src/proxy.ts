@@ -56,6 +56,11 @@ const APP_ROUTES: ReadonlyArray<readonly [string, string]> = [
   ["/erp", "erp"],
   ["/website", "website"],
   ["/hire", "hire"],
+  ["/factory", "factory"],
+  /* The factory phone's own API: a station phone sends from a page that may
+     be days old, so the app it belongs to is named by the path, not left to
+     a Referer an offline-cached page may not carry. */
+  ["/api/factory", "factory"],
   ["/docs", "docs"],
 ];
 
