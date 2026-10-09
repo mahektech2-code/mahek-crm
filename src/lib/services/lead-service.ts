@@ -836,6 +836,35 @@ export async function evaluateLeadStageMove(input: {
     direction = await resumeDirection(lead.id, to, salesType);
   }
 
+  /*
+   * §— `new` AND `contacted` ARE THE OLD SPELLING OF SUSPECT, and a lead still
+   * spelled that way can be moved to the Suspect it already is.
+   *
+   * A lead raised before the funnel, or imported, sits at `new` or `contacted`.
+   * Give it a sales type and it is judged against the funnel ladder, which
+   * starts at `suspect` — so `directionOf` answered `off_ladder` and the move to
+   * Suspect was refused with "Suspect is not a rung on this lead's ladder.
+   * Change the sales type first", about a lead whose sales type was already set.
+   * `setLeadSalesType` leaves the stage alone on the stated understanding that
+   * the lead then moves to the foot of its new ladder; this is the move that
+   * understanding promised. The calling desk's convert-to-Prospect already
+   * treats the three as one thing (`funnelStageFor`).
+   *
+   * Narrow on purpose: only `new`/`contacted`, only to `suspect`, only onto a
+   * ladder that has it. Nothing is established at those rungs that the move
+   * could throw away and it is not a step forward, so no gate is asked — the
+   * transition row is written like any other move. `lost`, `on_hold`, `won` and
+   * the legacy `qualified` all stay off the ladder, as does every other target.
+   */
+  if (
+    direction === "off_ladder" &&
+    to === "suspect" &&
+    (from === "new" || from === "contacted") &&
+    ladderFor(salesType).includes("suspect")
+  ) {
+    return { ok: true, kind: "passed", overriddenConditions: [] };
+  }
+
   /* Walking a lead back DOWN undoes work somebody recorded, which is why the
      ladder engine's own `previousStage` says in as many words that it is for a
      manager reverting one. A reason is demanded with it for the same reason a
