@@ -13,7 +13,6 @@ import { longDate, money, shortDate, signedMoney } from "@/lib/format";
 import {
   Banner,
   Empty,
-  HeadCell,
   MetricRow,
   Pager,
   Pill,
@@ -368,16 +367,20 @@ export function LedgerScreen({
         ) : (
           <div className="overflow-hidden rounded-[6px] border border-line bg-surface">
             <Table
-              minWidth={1100}
+              minWidth={800}
               head={
                 <>
-                  <HeadCell width={112}>Date</HeadCell>
-                  <HeadCell width={200}>Bill / payment</HeadCell>
-                  <HeadCell>Settlement</HeadCell>
-                  <HeadCell align="right" width={104}>Billed</HeadCell>
-                  <HeadCell align="right" width={104}>Received</HeadCell>
-                  <HeadCell align="right" width={112}>Balance</HeadCell>
-                  {canReverse ? <HeadCell align="right" width={72}>Actions</HeadCell> : null}
+                  <Th width={104}>Date</Th>
+                  <Th width={150}>Bill / payment</Th>
+                  <Th>Settlement</Th>
+                  <Th align="right" width={96}>Billed</Th>
+                  <Th align="right" width={96}>Received</Th>
+                  <Th align="right" width={104}>Balance</Th>
+                  {canReverse ? (
+                    <Th align="right" width={40}>
+                      <span className="sr-only">Actions</span>
+                    </Th>
+                  ) : null}
                 </>
               }
             >
@@ -399,10 +402,10 @@ export function LedgerScreen({
                     <td className={cx(TD, "text-body", dead && "text-muted line-through")}>
                       {longDate(e.at)}
                     </td>
-                    <td className={TD}>
+                    <td className={cx(TD_WRAP, "break-words")}>
                       <EntryName entry={e} />
                     </td>
-                    <td className={cx(TD, "whitespace-normal")}>
+                    <td className={TD_WRAP}>
                       {e.kind === "bill" ? (
                         <BillSettlement entry={e} onLink={goTo} />
                       ) : (
@@ -426,7 +429,7 @@ export function LedgerScreen({
                       {signedMoney(e.balance)}
                     </td>
                     {canReverse ? (
-                      <td className={cx(TD, "text-right")}>
+                      <td className="w-10 px-1.5 py-2.5 text-right align-middle">
                         {e.kind === "receipt" && e.status === "confirmed" && e.receiptId ? (
                           <RowMenu
                             items={[
@@ -451,10 +454,10 @@ export function LedgerScreen({
               */}
               {from && page === lastPage ? (
                 <tr className="border-t border-divider bg-surface">
-                  <td colSpan={5} className="px-4 py-2.5 text-sm text-muted">
+                  <td colSpan={5} className="px-3 py-2.5 text-sm text-muted">
                     Opening balance
                   </td>
-                  <td className="px-4 py-2.5 text-right text-sm tabular-nums text-muted">
+                  <td className="px-3 py-2.5 text-right text-sm tabular-nums text-muted">
                     {money(ledger.openingBalance)}
                   </td>
                   {canReverse ? <td /> : null}
@@ -518,7 +521,7 @@ function EntryName({ entry: e }: { entry: LedgerEntry }) {
   const hasReference = e.ref !== "—" && e.ref !== mode;
   return (
     <span className="block min-w-0">
-      <span className={cx("block font-medium", dead ? "text-muted line-through" : "text-ink")}>
+      <span className={cx("block font-medium whitespace-nowrap", dead ? "text-muted line-through" : "text-ink")}>
         {e.kind === "bill" ? e.ref : mode}
       </span>
       <span className="block text-xs text-muted">
@@ -574,14 +577,14 @@ function BillStatus({ amount, paid, unstated }: { amount: number; paid: number; 
   if (paid > 0) {
     return (
       <span className="text-sm text-body">
-        Part paid · <span className="font-medium text-danger">{money(amount - paid)} due</span>
+        Part paid · <span className="font-medium whitespace-nowrap text-danger">{money(amount - paid)} due</span>
         <span className="text-muted"> of {money(amount)}</span>
       </span>
     );
   }
   return (
     <span className="text-sm text-body">
-      Unpaid · <span className="font-medium text-danger">{money(amount)} due</span>
+      Unpaid · <span className="font-medium whitespace-nowrap text-danger">{money(amount)} due</span>
     </span>
   );
 }
@@ -679,7 +682,7 @@ function TextLink({
       onClick={onClick}
       title={title}
       className={cx(
-        "cursor-pointer border-none bg-transparent p-0 text-left font-medium whitespace-nowrap tabular-nums underline decoration-line-strong underline-offset-2 hover:decoration-current",
+        "cursor-pointer border-none bg-transparent p-0 text-left font-medium tabular-nums underline decoration-line-strong underline-offset-2 hover:decoration-current",
         dead ? "text-muted line-through" : "text-ink hover:text-brand",
       )}
     >
@@ -716,15 +719,15 @@ function BillWise({
   return (
     <div className="overflow-hidden rounded-[6px] border border-line bg-surface">
       <Table
-        minWidth={900}
+        minWidth={800}
         head={
           <>
-            <HeadCell width={130}>Date</HeadCell>
-            <HeadCell>Bill / payment against it</HeadCell>
-            <HeadCell align="right" width={130}>Bill amount</HeadCell>
-            <HeadCell align="right" width={130}>Paid</HeadCell>
-            <HeadCell align="right" width={130}>Due</HeadCell>
-            <HeadCell width={190}>Status</HeadCell>
+            <Th width={104}>Date</Th>
+            <Th>Bill / payment against it</Th>
+            <Th align="right" width={104}>Bill amount</Th>
+            <Th align="right" width={96}>Paid</Th>
+            <Th align="right" width={96}>Due</Th>
+            <Th width={96}>Status</Th>
           </>
         }
       >
@@ -736,7 +739,7 @@ function BillWise({
             <React.Fragment key={b.billId ?? b.ref}>
               <tr className="border-t border-line bg-canvas">
                 <td className={cx(TD, "font-medium text-body")}>{longDate(b.at)}</td>
-                <td className={TD}>
+                <td className={cx(TD_WRAP, "break-words")}>
                   <span className="flex items-center gap-2">
                     <span className="font-semibold text-ink">{b.ref}</span>
                     {(b.claimed ?? 0) > 0 ? (
@@ -779,8 +782,8 @@ function BillWise({
                   return (
                     <tr key={`${l.id}-${i}`} className="border-t border-divider bg-surface">
                       <td className={cx(TD, "pl-8 text-muted", dead && "line-through")}>{longDate(l.at)}</td>
-                      <td className={TD}>
-                        <span className="flex items-center gap-2 pl-4">
+                      <td className={cx(TD_WRAP, "break-words")}>
+                        <span className="flex flex-wrap items-center gap-x-2 pl-4">
                           <span className="text-muted">↳</span>
                           <span className={cx("text-body", dead && "text-muted line-through")}>
                             {l.mode ?? "Payment"}
@@ -843,8 +846,8 @@ function BillWise({
             {looseMoney.map((r) => (
               <tr key={r.receiptId} className="border-t border-divider bg-surface">
                 <td className={cx(TD, "pl-8 text-muted")}>{longDate(r.at)}</td>
-                <td className={TD}>
-                  <span className="flex items-center gap-2 pl-4">
+                <td className={cx(TD_WRAP, "break-words")}>
+                  <span className="flex flex-wrap items-center gap-x-2 pl-4">
                     <span className="text-muted">↳</span>
                     <span className="text-body">{r.detail.split(" · ")[0]}</span>
                     {r.ref !== "—" && r.ref !== r.detail.split(" · ")[0] ? (
@@ -879,7 +882,35 @@ function BillWise({
   );
 }
 
-const TD = "px-4 py-2.5 text-sm align-middle whitespace-nowrap";
+const TD_WRAP = "px-3 py-2.5 text-sm align-middle";
+
+/**
+ * This screen's header cell: the Accounts `HeadCell` with the same tighter
+ * padding as the cells under it, so a seven-column statement fits the
+ * narrowest window the app supports without scrolling sideways.
+ */
+function Th({
+  align = "left",
+  width,
+  children,
+}: {
+  align?: "left" | "right";
+  width?: number;
+  children?: React.ReactNode;
+}) {
+  return (
+    <th
+      style={width ? { width, minWidth: width } : undefined}
+      className={cx(
+        "sticky top-0 z-2 h-8.5 border-b border-line bg-canvas px-3 text-[11px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase",
+        align === "right" ? "text-right" : "text-left",
+      )}
+    >
+      {children}
+    </th>
+  );
+}
+const TD = `${TD_WRAP} whitespace-nowrap`;
 
 const BUTTON =
   "h-9 cursor-pointer rounded-[4px] border border-line-strong bg-surface px-3.5 text-sm font-medium text-body hover:bg-canvas";
