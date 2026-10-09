@@ -1005,6 +1005,20 @@ export const APP_MODULES: AppModule[] = [
     href: "/hire",
     note: "What they can do inside Hire is their Hire role — recruiter, interviewer, hiring manager, onboarding, HR head or admin — set below, under Hire.",
   },
+  /*
+   * DOCUMENTATION is one module. Everybody granted it reads every app's pages
+   * and all three tabs of each — the guide, how it works, and the developer
+   * reference — by decision rather than by omission: a telecaller who wants
+   * to see the rule behind their Call Log is reading the same truth the
+   * developer is, and splitting it would make two versions of one answer.
+   */
+  {
+    key: "docs.app",
+    app: "docs",
+    label: "Documentation",
+    group: "Documentation",
+    href: "/docs",
+  },
   website("products", "Products", "Website", "The catalogue shown on the public site."),
   website("industries", "Industries", "Website", "The industries the public site says Mahek serves."),
   website("pages", "Pages", "Website", "About, Manufacturing, Distributor and Contact — their sections and copy."),

@@ -34,6 +34,7 @@ const SHELLS: Partial<Record<AppId, string[]>> = {
   erp: ["src/app/erp/_ui/erp-shell.tsx"],
   website: ["src/app/website/website-shell.tsx"],
   hire: ["src/app/hire/_ui/hire-shell.tsx"],
+  docs: ["src/app/docs/docs-shell.tsx"],
 };
 
 const webApps = APPS.filter((a) => a.built && !a.mobileOnly && !a.retiredInto);

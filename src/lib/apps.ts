@@ -20,6 +20,7 @@ export const APP_IDS = [
   "erp",
   "website",
   "hire",
+  "docs",
 ] as const;
 
 export type AppId = (typeof APP_IDS)[number];
@@ -244,6 +245,24 @@ export const APPS: AppDefinition[] = [
     description:
       "Role blueprints, the hiring pipeline, AI-assisted interviews with evidence, decisions, offers and onboarding — ending in a working account.",
     href: "/hire",
+    tone: "neutral",
+    built: true,
+  },
+  {
+    id: "docs",
+    /*
+     * Documentation for every app in MahekOne, read in MahekOne. Each page has
+     * three tabs for three readers — the person doing the work, the owner who
+     * wants the rule behind it, and the developer changing it — and every
+     * figure on a page that comes from configuration is read live from the
+     * database this deployment is connected to, so the docs on prod quote
+     * prod's settings rather than a copy typed into the page.
+     */
+    name: "Documentation",
+    initials: "DO",
+    description:
+      "How every MahekOne app works — step-by-step guides, the rules behind each screen, and the developer reference.",
+    href: "/docs",
     tone: "neutral",
     built: true,
   },
