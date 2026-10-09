@@ -23,7 +23,7 @@ concurrency:
 # need it, because three different things pull: the service containers
 # (named `mirror.gcr.io/library/...` outright), `docker run` in a step (the
 # same), and anything a build or `docker compose` pulls by its short name
-# (the buildx and daemon mirror settings in the image and stack jobs).
+# (the buildx mirror setting, and a pre-pull step in the stack job).
 # Production is untouched: the Dockerfile and deploy/docker-compose.yml keep
 # their plain names, and only how CI fetches them changed.
 
@@ -201,13 +201,18 @@ jobs:
           load: true
           tags: mahekone:ci
 
-      # `docker compose` pulls caddy and postgres through the daemon, not
-      # buildx, so the daemon needs the mirror too.
-      - name: Pull Docker Hub images through the mirror
+      # `docker compose up` pulls only what it does not already have, so the
+      # compose file's Docker Hub images are pulled from the mirror first and
+      # tagged with their plain names. A daemon `registry-mirrors` setting was
+      # tried and is not honoured by the runner's Docker. The list is READ OUT
+      # OF the compose file, so an image added there is covered too.
+      - name: Pull the compose images through the mirror
         run: |
-          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
-          sudo systemctl restart docker
-          docker info --format '{{.RegistryConfig.Mirrors}}'
+          for img in $(grep -oP '^\s*image:\s*\K[^$\s]+' deploy/docker-compose.yml); do
+            case "$img" in */*) src="mirror.gcr.io/$img" ;; *) src="mirror.gcr.io/library/$img" ;; esac
+            docker pull "$src"
+            docker tag "$src" "$img"
+          done
 
       - name: Lay it out the way the droplet is
         run: |
