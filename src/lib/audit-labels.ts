@@ -526,6 +526,10 @@ const DESCRIBE: Record<string, Describer> = {
   }),
   "lead.stage.promote": (c) => ({ says: ["won the lead", c.subject(), "— it is now a customer"], note: overriddenNote(c), changes: false }),
   "lead.stage.reopen": (c) => ({ says: ["reopened the lead", c.subject(), "(it had been", `${words(str(c.b.stage) ?? "closed")})`], changes: false }),
+  "lead.stage.relabel": (c) => ({
+    says: ["relabelled the lead", c.subject(), "from", strong(words(str(c.b.stage) ?? "?")), "to", strong(words(str(c.a.stage) ?? "?")), "so it can be converted"],
+    changes: false,
+  }),
   "lead.trashed": (c) => ({ says: ["deleted the lead", c.subject(str(c.b.name) ?? "a lead")], changes: false }),
   "lead.restored": (c) => ({ says: ["restored the deleted lead", c.subject()], changes: false }),
   "lead.priority": (c) => ({ says: ["set the priority of", c.subject(), "to", strong(words(str(c.a.leadPriority) ?? "none"))], changes: false }),
