@@ -7,6 +7,8 @@ import { useToast } from "@/components/ui/toast";
 import { calendarDate } from "@/lib/business-date";
 import { StatusBadge } from "../status-badge";
 import { MILESTONES, type Milestone, type Status } from "../mock-data";
+import { tempFeedback } from "../prototype";
+import { hasErrors, required, type Errors } from "../validation";
 
 export default function MilestonesPage() {
   const toast = useToast();
@@ -21,7 +23,7 @@ export default function MilestonesPage() {
     setItems((all) =>
       (isNew ? [m, ...all] : all.map((x) => (x.id === m.id ? m : x))).sort((a, b) => a.year.localeCompare(b.year)),
     );
-    toast.push(isNew ? "Milestone added." : "Milestone saved.");
+    toast.push(tempFeedback(isNew ? "Milestone added" : "Milestone saved"));
     setCreating(false);
     setEditing(null);
   }
@@ -84,7 +86,7 @@ export default function MilestonesPage() {
         onClose={() => setRemoving(null)}
         onConfirm={() => {
           setItems((all) => all.filter((m) => m.id !== removing?.id));
-          toast.push("Milestone deleted.");
+          toast.push(tempFeedback("Milestone deleted"));
         }}
       />
     </div>
@@ -102,6 +104,7 @@ function MilestoneEditor({
   onClose: () => void;
   onSave: (m: Milestone) => void;
 }) {
+  const [errors, setErrors] = React.useState<Errors<"year" | "title">>({});
   const [form, setForm] = React.useState<Milestone>(() =>
     milestone ?? {
       id: `ms${Date.now()}`,
@@ -112,13 +115,37 @@ function MilestoneEditor({
     },
   );
 
+  function submit() {
+    const clean = { ...form, year: form.year.trim(), title: form.title.trim() };
+    const found = { year: required(clean.year, "Year"), title: required(clean.title, "Title") };
+    if (hasErrors(found)) {
+      setErrors(found);
+      return;
+    }
+    onSave({ ...clean, updatedAt: calendarDate(new Date()) });
+  }
+
   const fields = (
     <div className="flex flex-col gap-3.5">
-      <Field label="Year">
-        <Input value={form.year} onChange={(e) => setForm({ ...form, year: e.target.value })} />
+      <Field label="Year" error={errors.year}>
+        <Input
+          value={form.year}
+          aria-invalid={!!errors.year}
+          onChange={(e) => {
+            setForm({ ...form, year: e.target.value });
+            setErrors((x) => ({ ...x, year: undefined }));
+          }}
+        />
       </Field>
-      <Field label="Title">
-        <Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
+      <Field label="Title" error={errors.title}>
+        <Input
+          value={form.title}
+          aria-invalid={!!errors.title}
+          onChange={(e) => {
+            setForm({ ...form, title: e.target.value });
+            setErrors((x) => ({ ...x, title: undefined }));
+          }}
+        />
       </Field>
       <Field label="Status">
         <Select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as Status })}>
@@ -133,7 +160,7 @@ function MilestoneEditor({
   const footer = (
     <>
       <Button variant="secondary" onClick={onClose}>Cancel</Button>
-      <Button variant="primary" onClick={() => onSave({ ...form, updatedAt: calendarDate(new Date()) })}>
+      <Button variant="primary" onClick={submit}>
         {isNew ? "Add milestone" : "Save"}
       </Button>
     </>

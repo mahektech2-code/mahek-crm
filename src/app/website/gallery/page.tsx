@@ -15,6 +15,8 @@ import { useToast } from "@/components/ui/toast";
 import { calendarDate } from "@/lib/business-date";
 import { StatusBadge } from "../status-badge";
 import { GALLERY, type GalleryItem, type Status } from "../mock-data";
+import { tempFeedback } from "../prototype";
+import { hasErrors, required, type Errors } from "../validation";
 
 export default function GalleryPage() {
   const toast = useToast();
@@ -25,7 +27,9 @@ export default function GalleryPage() {
 
   function save(item: GalleryItem, isNew: boolean) {
     setItems((all) => (isNew ? [item, ...all] : all.map((i) => (i.id === item.id ? item : i))));
-    toast.push(isNew ? "Photo uploaded." : "Photo saved.");
+    /* No file is stored — the entry records a title and category only — so
+       "uploaded" would be false. */
+    toast.push(tempFeedback(isNew ? "Photo entry added (no file stored)" : "Photo saved"));
     setUploading(false);
     setEditing(null);
   }
@@ -79,7 +83,7 @@ export default function GalleryPage() {
         onClose={() => setRemoving(null)}
         onConfirm={() => {
           setItems((all) => all.filter((i) => i.id !== removing?.id));
-          toast.push("Photo deleted.");
+          toast.push(tempFeedback("Photo deleted"));
         }}
       />
     </div>
@@ -97,6 +101,7 @@ function GalleryEditor({
   onClose: () => void;
   onSave: (item: GalleryItem) => void;
 }) {
+  const [errors, setErrors] = React.useState<Errors<"title">>({});
   const [form, setForm] = React.useState<GalleryItem>(() =>
     item ?? {
       id: `g${Date.now()}`,
@@ -107,6 +112,16 @@ function GalleryEditor({
     },
   );
 
+  function submit() {
+    const clean = { ...form, title: form.title.trim() };
+    const found = { title: required(clean.title, "Title") };
+    if (hasErrors(found)) {
+      setErrors(found);
+      return;
+    }
+    onSave({ ...clean, updatedAt: calendarDate(new Date()) });
+  }
+
   const fields = (
     <div className="flex flex-col gap-3.5">
       {isNew ? (
@@ -116,8 +131,15 @@ function GalleryEditor({
           </div>
         </Field>
       ) : null}
-      <Field label="Title">
-        <Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
+      <Field label="Title" error={errors.title}>
+        <Input
+          value={form.title}
+          aria-invalid={!!errors.title}
+          onChange={(e) => {
+            setForm({ ...form, title: e.target.value });
+            setErrors((x) => ({ ...x, title: undefined }));
+          }}
+        />
       </Field>
       <Field label="Category">
         <Select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
@@ -139,7 +161,7 @@ function GalleryEditor({
   const footer = (
     <>
       <Button variant="secondary" onClick={onClose}>Cancel</Button>
-      <Button variant="primary" onClick={() => onSave({ ...form, updatedAt: calendarDate(new Date()) })}>
+      <Button variant="primary" onClick={submit}>
         {isNew ? "Upload" : "Save"}
       </Button>
     </>

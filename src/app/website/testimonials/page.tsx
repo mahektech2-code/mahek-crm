@@ -16,6 +16,8 @@ import { useToast } from "@/components/ui/toast";
 import { calendarDate } from "@/lib/business-date";
 import { StatusBadge } from "../status-badge";
 import { TESTIMONIALS, type Testimonial, type Status } from "../mock-data";
+import { tempFeedback } from "../prototype";
+import { hasErrors, required, type Errors } from "../validation";
 
 export default function TestimonialsPage() {
   const toast = useToast();
@@ -26,7 +28,7 @@ export default function TestimonialsPage() {
 
   function save(t: Testimonial, isNew: boolean) {
     setItems((all) => (isNew ? [t, ...all] : all.map((x) => (x.id === t.id ? t : x))));
-    toast.push(isNew ? "Testimonial added." : "Testimonial saved.");
+    toast.push(tempFeedback(isNew ? "Testimonial added" : "Testimonial saved"));
     setCreating(false);
     setEditing(null);
   }
@@ -82,7 +84,7 @@ export default function TestimonialsPage() {
         onClose={() => setRemoving(null)}
         onConfirm={() => {
           setItems((all) => all.filter((t) => t.id !== removing?.id));
-          toast.push("Testimonial deleted.");
+          toast.push(tempFeedback("Testimonial deleted"));
         }}
       />
     </div>
@@ -100,6 +102,7 @@ function TestimonialEditor({
   onClose: () => void;
   onSave: (t: Testimonial) => void;
 }) {
+  const [errors, setErrors] = React.useState<Errors<"author" | "quote">>({});
   const [form, setForm] = React.useState<Testimonial>(() =>
     testimonial ?? {
       id: `t${Date.now()}`,
@@ -111,16 +114,41 @@ function TestimonialEditor({
     },
   );
 
+  function submit() {
+    const clean = { ...form, author: form.author.trim(), company: form.company.trim(), quote: form.quote.trim() };
+    const found = { author: required(clean.author, "Author"), quote: required(clean.quote, "Quote") };
+    if (hasErrors(found)) {
+      setErrors(found);
+      return;
+    }
+    onSave({ ...clean, updatedAt: calendarDate(new Date()) });
+  }
+
   const fields = (
     <div className="flex flex-col gap-3.5">
-      <Field label="Author">
-        <Input value={form.author} onChange={(e) => setForm({ ...form, author: e.target.value })} />
+      <Field label="Author" error={errors.author}>
+        <Input
+          value={form.author}
+          aria-invalid={!!errors.author}
+          onChange={(e) => {
+            setForm({ ...form, author: e.target.value });
+            setErrors((x) => ({ ...x, author: undefined }));
+          }}
+        />
       </Field>
       <Field label="Company">
         <Input value={form.company} onChange={(e) => setForm({ ...form, company: e.target.value })} />
       </Field>
-      <Field label="Quote">
-        <Textarea rows={3} value={form.quote} onChange={(e) => setForm({ ...form, quote: e.target.value })} />
+      <Field label="Quote" error={errors.quote}>
+        <Textarea
+          rows={3}
+          value={form.quote}
+          aria-invalid={!!errors.quote}
+          onChange={(e) => {
+            setForm({ ...form, quote: e.target.value });
+            setErrors((x) => ({ ...x, quote: undefined }));
+          }}
+        />
       </Field>
       <Field label="Status">
         <Select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as Status })}>
@@ -135,7 +163,7 @@ function TestimonialEditor({
   const footer = (
     <>
       <Button variant="secondary" onClick={onClose}>Cancel</Button>
-      <Button variant="primary" onClick={() => onSave({ ...form, updatedAt: calendarDate(new Date()) })}>
+      <Button variant="primary" onClick={submit}>
         {isNew ? "Add testimonial" : "Save"}
       </Button>
     </>

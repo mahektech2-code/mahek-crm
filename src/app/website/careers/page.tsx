@@ -20,6 +20,8 @@ import { useToast } from "@/components/ui/toast";
 import { calendarDate } from "@/lib/business-date";
 import { StatusBadge } from "../status-badge";
 import { JOBS, type Job, type Status } from "../mock-data";
+import { tempFeedback } from "../prototype";
+import { hasErrors, required, type Errors } from "../validation";
 
 export default function CareersPage() {
   const toast = useToast();
@@ -30,7 +32,7 @@ export default function CareersPage() {
 
   function save(job: Job, isNew: boolean) {
     setJobs((all) => (isNew ? [job, ...all] : all.map((j) => (j.id === job.id ? job : j))));
-    toast.push(isNew ? "Job posted." : "Job saved.");
+    toast.push(tempFeedback(isNew ? "Job added to the list" : "Job saved"));
     setCreating(false);
     setEditing(null);
   }
@@ -103,7 +105,7 @@ export default function CareersPage() {
         onClose={() => setRemoving(null)}
         onConfirm={() => {
           setJobs((all) => all.filter((j) => j.id !== removing?.id));
-          toast.push("Job posting deleted.");
+          toast.push(tempFeedback("Job posting deleted"));
         }}
       />
     </div>
@@ -121,6 +123,7 @@ function JobEditor({
   onClose: () => void;
   onSave: (job: Job) => void;
 }) {
+  const [errors, setErrors] = React.useState<Errors<"title" | "location">>({});
   const [form, setForm] = React.useState<Job>(() =>
     job ?? {
       id: `j${Date.now()}`,
@@ -132,10 +135,27 @@ function JobEditor({
     },
   );
 
+  function submit() {
+    const clean = { ...form, title: form.title.trim(), location: form.location.trim() };
+    const found = { title: required(clean.title, "Title"), location: required(clean.location, "Location") };
+    if (hasErrors(found)) {
+      setErrors(found);
+      return;
+    }
+    onSave({ ...clean, updatedAt: calendarDate(new Date()) });
+  }
+
   const fields = (
     <div className="flex flex-col gap-3.5">
-      <Field label="Title">
-        <Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
+      <Field label="Title" error={errors.title}>
+        <Input
+          value={form.title}
+          aria-invalid={!!errors.title}
+          onChange={(e) => {
+            setForm({ ...form, title: e.target.value });
+            setErrors((x) => ({ ...x, title: undefined }));
+          }}
+        />
       </Field>
       <Field label="Department">
         <Select value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })}>
@@ -145,8 +165,15 @@ function JobEditor({
           <option>Administration</option>
         </Select>
       </Field>
-      <Field label="Location">
-        <Input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />
+      <Field label="Location" error={errors.location}>
+        <Input
+          value={form.location}
+          aria-invalid={!!errors.location}
+          onChange={(e) => {
+            setForm({ ...form, location: e.target.value });
+            setErrors((x) => ({ ...x, location: undefined }));
+          }}
+        />
       </Field>
       <Field label="Status">
         <Select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as Status })}>
@@ -161,7 +188,7 @@ function JobEditor({
   const footer = (
     <>
       <Button variant="secondary" onClick={onClose}>Cancel</Button>
-      <Button variant="primary" onClick={() => onSave({ ...form, updatedAt: calendarDate(new Date()) })}>
+      <Button variant="primary" onClick={submit}>
         {isNew ? "Add job" : "Save"}
       </Button>
     </>
