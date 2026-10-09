@@ -9,7 +9,7 @@ export const metadata = { title: "Customer account — MahekOne" };
 export default async function Page({
   searchParams,
 }: {
-  searchParams: Promise<{ customer?: string; from?: string; to?: string }>;
+  searchParams: Promise<{ customer?: string; from?: string; to?: string; view?: string }>;
 }) {
   const params = await searchParams;
   const user = await requireUser();
@@ -39,6 +39,7 @@ export default async function Page({
       serving={serving}
       from={params.from ?? ""}
       to={params.to ?? ""}
+      view={params.view === "bills" ? "bills" : "statement"}
     />
   );
 }

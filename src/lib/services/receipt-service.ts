@@ -1698,8 +1698,55 @@ export type LedgerEntry = {
   claimed?: number;
   /** Set on receipt lines only — what a reversal acts on. */
   receiptId?: string;
+  /** Set on bill lines only. */
+  billId?: string;
+  /**
+   * Bill lines: confirmed money that has landed on this bill
+   * (`bills.paidAmount`). Receipt lines: unset.
+   */
+  paid?: number;
+  /** Bill lines: nobody has stated whether this bill was paid. */
+  unstated?: boolean;
+  /**
+   * WHICH MONEY WENT WHERE, on the row itself. A receipt line lists the bills
+   * it was allocated to; a bill line lists the receipts allocated to it. One
+   * read of `payments`, folded both ways, so the two sides cannot disagree.
+   * Every allocation is listed whatever the receipt's status — a rejected
+   * receipt's lines are drawn struck through rather than hidden, for the same
+   * reason the receipt itself stays on the statement.
+   */
+  links?: LedgerLink[];
+  /** Receipt lines: the part of the receipt not against any bill. */
+  onAccount?: number;
   /** Running balance after this entry. Confirmed money only. */
   balance: number;
+};
+
+export type LedgerLink = {
+  /** The bill's id on a receipt line, the receipt's id on a bill line. */
+  id: string;
+  /** Bill number, or the receipt's reference (falling back to its mode). */
+  label: string;
+  /** Receipt lines: the receipt's mode. Bill lines: unset. */
+  mode?: string;
+  at: string;
+  /** Paise of this allocation. */
+  amount: number;
+  /** The RECEIPT's status — what decides whether this allocation counts. */
+  status: string;
+  /**
+   * Receipt lines only: the bill's full amount and what is still due on it
+   * today (confirmed money only), so a payment can say whether it CLEARED a
+   * bill or paid PART of one.
+   */
+  billAmount?: number;
+  billDue?: number;
+  /**
+   * Bill lines only: the whole receipt and how many bills it was split
+   * across, so a bill can say it got ₹20,000 OF a ₹70,000 payment.
+   */
+  receiptAmount?: number;
+  receiptBills?: number;
 };
 
 export type CustomerLedger = {
@@ -1838,6 +1885,48 @@ export async function ledgerForCustomer(
   type Row = Omit<LedgerEntry, "balance"> & { sort: string };
   const rows: Row[] = [];
 
+  /* Every allocation line on the account, folded both ways. */
+  const billById = new Map(billRows.map((b) => [b.id, b]));
+  const receiptById = new Map(receiptRows.map(({ receipt }) => [receipt.id, receipt]));
+  const linksByBill = new Map<string, LedgerLink[]>();
+  const linksByReceipt = new Map<string, LedgerLink[]>();
+  for (const a of await db
+    .select({
+      receiptId: payments.receiptId,
+      billId: payments.billId,
+      amount: payments.amount,
+    })
+    .from(payments)
+    .where(and(eq(payments.customerId, customerId), isNotNull(payments.billId)))
+    .orderBy(asc(payments.paidAt))) {
+    if (!a.billId || !a.receiptId) continue;
+    const r = receiptById.get(a.receiptId);
+    const b = billById.get(a.billId);
+    if (!r || !b) continue;
+    const amount = Number(a.amount);
+    const onBill = linksByBill.get(b.id) ?? [];
+    onBill.push({
+      id: r.id,
+      label: r.reference ?? r.mode,
+      mode: r.mode,
+      at: r.receivedAt,
+      amount,
+      status: r.status,
+    });
+    linksByBill.set(b.id, onBill);
+    const onReceipt = linksByReceipt.get(r.id) ?? [];
+    onReceipt.push({
+      id: b.id,
+      label: b.billNo,
+      at: b.billDate,
+      amount,
+      status: r.status,
+      billAmount: Number(b.amount),
+      billDue: Math.max(0, Number(b.amount) - Number(b.paidAmount)),
+    });
+    linksByReceipt.set(r.id, onReceipt);
+  }
+
   /*
    * What is CLAIMED against each bill and not yet confirmed, so the bill line
    * can say it. A telecaller writes down that the customer paid bill 0804; the
@@ -1875,6 +1964,10 @@ export async function ledgerForCustomer(
       credit: 0,
       status: b.status,
       claimed: claimedByBill.get(b.id) ?? 0,
+      billId: b.id,
+      paid: Number(b.paidAmount),
+      unstated: b.paymentPosition === "unstated",
+      links: linksByBill.get(b.id) ?? [],
     });
   }
 
@@ -1905,8 +1998,20 @@ export async function ledgerForCustomer(
       // Reversing a payment starts with finding it, and this is where anybody
       // looking for one already is.
       receiptId: r.id,
+      links: linksByReceipt.get(r.id) ?? [],
+      onAccount: Math.max(0, Number(r.amount) - Number(allocated)),
     });
   }
+
+  for (const list of linksByBill.values()) {
+    for (const l of list) {
+      l.receiptAmount = Number(receiptById.get(l.id)?.amount ?? 0);
+      l.receiptBills = linksByReceipt.get(l.id)?.length ?? 1;
+    }
+  }
+  // A split payment lists its bills oldest first, which is how allocation
+  // spends money and how anybody reads a run of bills.
+  for (const list of linksByReceipt.values()) list.sort((a, b) => a.at.localeCompare(b.at));
 
   rows.sort((a, b) => a.sort.localeCompare(b.sort));
 
