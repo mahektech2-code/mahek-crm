@@ -62,6 +62,11 @@ export function ruleToDraft(rule: PolicyRule): RuleDraft {
           windowFromMinutes: rule.windowFromMinutes,
           windowToMinutes: rule.windowToMinutes,
           minAwayMinutes: rule.minAwayMinutes,
+          leftFromMinutes: rule.leftFromMinutes ?? null,
+          leftToMinutes: rule.leftToMinutes ?? null,
+          returnedAfterMinutes: rule.returnedAfterMinutes ?? null,
+          returnedByMinutes: rule.returnedByMinutes ?? null,
+          awayFromHometownOnly: rule.awayFromHometownOnly === true,
         },
       };
     case "meal_disqualifier":
@@ -83,10 +88,19 @@ export function ruleToDraft(rule: PolicyRule): RuleDraft {
         ...q,
         kind: rule.kind,
         scopeKey: "",
-        value: { maxPerNightPaise: rule.maxPerNightPaise, dayUseAllowed: rule.dayUseAllowed },
+        value: {
+          maxPerNightPaise: rule.maxPerNightPaise,
+          dayUseAllowed: rule.dayUseAllowed,
+          flatPerNight: rule.flatPerNight ? "flat" : "cap",
+        },
       };
     case "proof_threshold":
-      return { ...q, kind: rule.kind, scopeKey: rule.scopeKey, value: { atPaise: rule.atPaise } };
+      return {
+        ...q,
+        kind: rule.kind,
+        scopeKey: rule.scopeKey,
+        value: { atPaise: rule.atPaise, travelLogCounts: rule.travelLogCounts === true },
+      };
     case "approval_route":
       return {
         ...q,
@@ -220,7 +234,11 @@ export function checkRules(drafts: readonly RuleDraft[]): { rules: PolicyRule[];
 export function policyGaps(rules: readonly PolicyRule[]): string[] {
   const has = (k: PolicyRuleKind) => rules.some((r) => r.kind === k);
   const gaps: string[] = [];
-  if (!has("per_km")) gaps.push("No vehicle is paid per kilometre, so own-vehicle trips earn nothing.");
+  /* Not paying own vehicles is a decision, and saying so with `zero_rated` is
+     how a policy makes it; only silence about them is a gap. */
+  const ownSaid = rules.some((r) => r.kind === "zero_rated" && (r.modeKey === "own_bike" || r.modeKey === "own_car"));
+  if (!has("per_km") && !ownSaid)
+    gaps.push("No vehicle is paid per kilometre, so own-vehicle trips earn nothing.");
   if (!has("meal_rate")) gaps.push("No meal is priced, so nobody earns a meal allowance.");
   if (has("meal_rate") && !has("meal_entitlement"))
     gaps.push("Meals are priced but no meal says when it is earned, so none ever is.");
@@ -329,7 +347,16 @@ export function blankRule(kind: PolicyRuleKind, section: RuleSectionKey): RuleDr
         ...q,
         kind,
         scopeKey: "breakfast",
-        value: { windowFromMinutes: 360, windowToMinutes: 600, minAwayMinutes: null },
+        value: {
+          windowFromMinutes: null,
+          windowToMinutes: null,
+          minAwayMinutes: null,
+          leftFromMinutes: 1380,
+          leftToMinutes: 480,
+          returnedAfterMinutes: null,
+          returnedByMinutes: null,
+          awayFromHometownOnly: true,
+        },
       };
     case "meal_disqualifier":
       return { ...q, kind, scopeKey: "breakfast", value: { departedAfterMinutes: 480 } };
@@ -341,9 +368,9 @@ export function blankRule(kind: PolicyRuleKind, section: RuleSectionKey): RuleDr
         value: { arrivalFromMinutes: 360, arrivalToMinutes: 600, amountPaise: 0, replacesMeals: true },
       };
     case "lodging":
-      return { ...q, kind, scopeKey: "", value: { maxPerNightPaise: 0, dayUseAllowed: false } };
+      return { ...q, kind, scopeKey: "", value: { maxPerNightPaise: 0, dayUseAllowed: false, flatPerNight: "cap" } };
     case "proof_threshold":
-      return { ...q, kind, scopeKey: "*", value: { atPaise: 0 } };
+      return { ...q, kind, scopeKey: "*", value: { atPaise: 0, travelLogCounts: false } };
     case "approval_route":
       return {
         ...q,
@@ -380,4 +407,24 @@ export function diffRules(
   }
   for (const k of b.keys()) if (!a.has(k)) removed++;
   return { added, removed, changed };
+}
+
+/* --------------------------------------------------------- guidelines */
+
+/** The most lines a policy's guidelines may carry, and the longest line. */
+export const MAX_GUIDELINES = 30;
+export const MAX_GUIDELINE_CHARS = 300;
+
+/**
+ * A policy's written lines as stored — a list of strings. Anything else in the
+ * list is dropped rather than thrown on, and blanks go, so a stored row from a
+ * later release or a hand edit never breaks the page.
+ */
+export function readGuidelines(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((x): x is string => typeof x === "string")
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .slice(0, MAX_GUIDELINES);
 }

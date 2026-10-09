@@ -1,10 +1,11 @@
 import { notFound } from "next/navigation";
 import { canFor } from "@/lib/access-control";
-import { STANDARD_POLICY } from "@/lib/expense-policy-standard";
+import { STANDARD_GUIDELINES, STANDARD_POLICY } from "@/lib/expense-policy-standard";
 import { ruleToDraft } from "@/lib/expense-policy-sets";
 import {
   listPolicySets,
   policyChoices,
+  hometownChoices,
   policyPeople,
   policySetRevisions,
   readPolicySet,
@@ -58,7 +59,9 @@ export default async function ExpensePolicyPage({
           updatedAt: set.updatedAt,
           updatedByName: set.updatedByName,
           clonedFromName: set.clonedFromName,
+          guidelines: set.guidelines,
         }}
+        defaultGuidelines={set.isStandard ? [...STANDARD_GUIDELINES] : null}
         drafts={set.rules.map(ruleToDraft)}
         defaults={set.isStandard ? STANDARD_POLICY.rules.map(ruleToDraft) : null}
         choices={choices}
@@ -72,7 +75,7 @@ export default async function ExpensePolicyPage({
     );
   }
 
-  const [sets, people] = await Promise.all([listPolicySets(), policyPeople()]);
+  const [sets, people, towns] = await Promise.all([listPolicySets(), policyPeople(), hometownChoices()]);
   return (
     <PoliciesScreen
       sets={sets.map((s) => ({
@@ -89,6 +92,7 @@ export default async function ExpensePolicyPage({
         clonedFromName: s.clonedFromName,
       }))}
       people={people}
+      towns={towns}
       canWrite={canWrite}
       initialTab={query.tab === "people" ? "people" : "policies"}
     />

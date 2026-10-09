@@ -35,7 +35,23 @@ import {
   policyReadiness,
 } from "@/lib/actions/expense-policy";
 import { policyForDate, readPolicy } from "@/lib/services/expense-policy-service";
-import { STANDARD_POLICY, STANDARD_POLICY_ID } from "@/lib/expense-policy-standard";
+import {
+  STANDARD_DEFAULTS_VERSION,
+  STANDARD_POLICY,
+  STANDARD_POLICY_ID,
+  STANDARD_POLICY_TITLE,
+} from "@/lib/expense-policy-standard";
+import type { PolicyRule } from "@/lib/engines/expense-policy";
+
+/* The issued policy pays own vehicles nothing, and these tests are about how a
+   kilometre allowance is written, edited and re-worked — so the standard row
+   is seeded as the document's rules with own bike at ₹3.50 a km. Seeded at the
+   current defaults edition, so `ensureStandardSet` leaves it as it is. */
+const TEST_RULES: PolicyRule[] = STANDARD_POLICY.rules.map((r) =>
+  r.kind === "zero_rated" && r.modeKey === "own_bike"
+    ? { kind: "per_km", grade: null, cityClass: null, modeKey: "own_bike", paisePerKm: 350, dailyKmCap: null }
+    : r,
+);
 import {
   assignPolicySet,
   createPolicySet,
@@ -241,6 +257,11 @@ beforeEach(async () => {
   `);
   invalidateConfig();
   await seedConfig();
+  await db.execute(sql`
+    insert into expense_policy_sets (id, name, is_standard, active, rules, revision, defaults_version)
+    values (${STANDARD_POLICY_ID}, ${STANDARD_POLICY_TITLE}, true, true, ${JSON.stringify(TEST_RULES)}::jsonb, 1,
+            ${STANDARD_DEFAULTS_VERSION})
+  `);
 
   admin = await makeUser("Asha", "admin");
   /* The PLATFORM administrator: the Admin Console at the admin level. Admin of
@@ -360,19 +381,40 @@ describe("a day, priced", () => {
     await openDay(day);
 
     const priced = await priceDay(salesman.id, day);
-    /* Out at 07:00, back at 20:00 — all three meals. */
-    assert.equal(priced!.computation!.foodPaise, 45000);
+    /* Out at 07:00, back at 20:00 — breakfast and lunch; dinner needs him
+       back after 22:30. */
+    assert.equal(priced!.computation!.foodPaise, 25000);
   });
 
-  test("requirement 28 — leaving after eight drops breakfast and nothing else", async () => {
+  test("the policy document — leaving after eight earns no meal at all", async () => {
     const day = "2026-06-16";
-    await openDay(day, { departedAt: at(day, hhmm(8, 30)), returnedAt: at(day, hhmm(21)) });
+    await openDay(day, { departedAt: at(day, hhmm(8, 30)), returnedAt: at(day, hhmm(23)) });
 
     const priced = await priceDay(salesman.id, day);
-    assert.equal(priced!.computation!.foodPaise, 35000, "lunch and dinner only");
+    assert.equal(priced!.computation!.foodPaise, 0);
     const breakfast = priced!.computation!.meals.find((m) => m.meal === "breakfast")!;
     assert.equal(breakfast.earned, false);
-    assert.match(breakfast.withheldReason!, /left at 08:30/);
+    assert.match(breakfast.withheldReason!, /08:30/);
+  });
+
+  test("a day in his hometown earns no meal, once his hometown is set", async () => {
+    const day = "2026-06-21";
+    const dayId = await openDay(day, { departedAt: at(day, hhmm(6)), returnedAt: at(day, hhmm(23)) });
+    await refreshDayMoney(salesman.id, day);
+    assert.equal((await priceDay(salesman.id, day))!.computation!.foodPaise, 45000, "no hometown set: as recorded");
+
+    await db.execute(sql`insert into expense_hometowns (user_id, city) values (${salesman.id}, 'Nagpur')`);
+    await refreshDayMoney(salesman.id, day);
+    const [row] = await db
+      .select({ away: mbosExpenseDays.departedFromHometown })
+      .from(mbosExpenseDays)
+      .where(eq(mbosExpenseDays.id, dayId));
+    assert.equal(row!.away, false, "no shop elsewhere and no trip named");
+    assert.equal((await priceDay(salesman.id, day))!.computation!.foodPaise, 0);
+
+    await db.update(mbosExpenseDays).set({ destinationCity: "Wardha" }).where(eq(mbosExpenseDays.id, dayId));
+    await refreshDayMoney(salesman.id, day);
+    assert.equal((await priceDay(salesman.id, day))!.computation!.foodPaise, 45000, "a trip to Wardha is away");
   });
 
   test("the allowances are written with no day closed, and equal the derived figures", async () => {
@@ -496,8 +538,8 @@ describe("an expense he logs", () => {
     assert.equal(row.state, "pending");
     assert.equal(row.allowance, false);
     assert.equal(row.claimedPaise, 220000, "recorded in full, however far over");
-    assert.equal(row.eligiblePaise, 150000, "the hotel ceiling");
-    assert.equal(row.excessPaise, 70000);
+    assert.equal(row.eligiblePaise, 45000, "the fixed hotel rate");
+    assert.equal(row.excessPaise, 175000);
     assert.equal(row.files.length, 1, "the bill is in front of whoever decides it");
     assert.ok(
       rows.some((r) => r.allowance && r.kind === "food" && r.state === "allowance"),
@@ -799,7 +841,9 @@ describe("what a draft would have cost", () => {
   test("a rate rise is priced against days that really happened", async () => {
     const publishedId = await publishPolicyV("2026-04-01", 350);
     const day = "2026-06-15";
-    const dayId = await openDay(day);
+    /* Out early and back late, so every meal is earned under either policy and
+       the only difference is the kilometres. */
+    const dayId = await openDay(day, { departedAt: at(day, hhmm(6)), returnedAt: at(day, hhmm(23)) });
     await addBikeLeg(dayId, day, 40);
     await refreshDayMoney(salesman.id, day);
 
@@ -1022,16 +1066,17 @@ describe("named policies", () => {
   test("a broken rule is refused with its field named, and an old revision can be restored", async () => {
     const set = (await readPolicySet(STANDARD_POLICY_ID))!;
     const drafts = set.rules.map(ruleToDraft);
-    drafts[0] = { ...drafts[0]!, value: { paisePerKm: -5, dailyKmCap: null } };
+    const k = drafts.findIndex((d) => d.kind === "per_km");
+    drafts[k] = { ...drafts[k]!, value: { paisePerKm: -5, dailyKmCap: null } };
     const bad = await savePolicySet({ id: set.id, name: set.name, description: null, rules: drafts, expectedRevision: set.revision });
     assert.equal(bad.ok, false);
-    assert.ok(!bad.ok && bad.fieldErrors?.some((f) => f.field === "rules.0.paisePerKm"));
+    assert.ok(!bad.ok && bad.fieldErrors?.some((f) => f.field === `rules.${k}.paisePerKm`));
 
     assert.ok((await bikeRate(STANDARD_POLICY_ID, 777)).ok);
     const restored = await restorePolicyRevision({ id: STANDARD_POLICY_ID, revision: 1 });
     assert.ok(restored.ok, restored.ok ? "" : restored.error);
     const back = (await readPolicySet(STANDARD_POLICY_ID))!;
-    assert.deepEqual(back.rules, STANDARD_POLICY.rules);
+    assert.deepEqual(back.rules, TEST_RULES);
   });
 
   test("a duplicate is a full copy nobody is on, and an unused one can be deleted", async () => {
@@ -1043,6 +1088,47 @@ describe("named policies", () => {
     assert.equal(copy.memberCount, 0);
     assert.ok((await deletePolicySet({ id: copy.id })).ok);
     assert.equal(await readPolicySet(copy.id), null);
+  });
+
+  test("guidelines are saved with the rules, copied with a duplicate, and kept in the history", async () => {
+    const set = (await readPolicySet(STANDARD_POLICY_ID))!;
+    const saved = await savePolicySet({
+      id: set.id,
+      name: set.name,
+      description: null,
+      rules: set.rules.map(ruleToDraft),
+      guidelines: ["  Bills with every claim. ", "", "Paid with salary."],
+      expectedRevision: set.revision,
+    });
+    assert.ok(saved.ok, saved.ok ? "" : saved.error);
+    assert.deepEqual((await readPolicySet(STANDARD_POLICY_ID))!.guidelines, ["Bills with every claim.", "Paid with salary."]);
+    const dup = await duplicatePolicySet({ id: STANDARD_POLICY_ID });
+    assert.ok(dup.ok);
+    assert.deepEqual((await readPolicySet(dup.data.id))!.guidelines, ["Bills with every claim.", "Paid with salary."]);
+    const restored = await restorePolicyRevision({ id: STANDARD_POLICY_ID, revision: 1 });
+    assert.ok(restored.ok);
+    assert.deepEqual((await readPolicySet(STANDARD_POLICY_ID))!.guidelines, []);
+  });
+
+  test("an untouched standard policy moves onto the document's figures; an edited one does not", async () => {
+    await db.execute(sql`update expense_policy_sets set defaults_version = 1 where id = ${STANDARD_POLICY_ID}`);
+    const moved = (await readPolicySet(STANDARD_POLICY_ID))!;
+    assert.deepEqual(moved.rules, STANDARD_POLICY.rules);
+    assert.ok(moved.guidelines.length > 0);
+    assert.equal(moved.revision, 2);
+    assert.match((await policySetRevisions(STANDARD_POLICY_ID))[0]!.note ?? "", /Expense Policy document/);
+
+    const edited = await savePolicySet({
+      id: moved.id,
+      name: moved.name,
+      description: null,
+      rules: TEST_RULES.map(ruleToDraft),
+      expectedRevision: moved.revision,
+    });
+    assert.ok(edited.ok, edited.ok ? "" : edited.error);
+    await db.execute(sql`update expense_policy_sets set defaults_version = 1 where id = ${STANDARD_POLICY_ID}`);
+    const kept = (await readPolicySet(STANDARD_POLICY_ID))!;
+    assert.deepEqual(kept.rules, TEST_RULES, "a person's edit stands");
   });
 
   test("the standard policy cannot be switched off or deleted", async () => {

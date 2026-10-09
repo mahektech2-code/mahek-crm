@@ -5,11 +5,25 @@ import { revalidatePath } from "next/cache";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { auditLog, expensePolicyAssignments, expensePolicySetRevisions, expensePolicySets } from "@/db/schema";
+import {
+  auditLog,
+  expenseHometowns,
+  expensePolicyAssignments,
+  expensePolicySetRevisions,
+  expensePolicySets,
+} from "@/db/schema";
 import { requireUser } from "@/lib/auth";
 import { requireCapability } from "@/lib/access-control";
-import { STANDARD_POLICY } from "@/lib/expense-policy-standard";
-import { checkRules, readStoredRules, ruleToDraft, type RuleDraft } from "@/lib/expense-policy-sets";
+import { STANDARD_DEFAULTS_VERSION, STANDARD_GUIDELINES, STANDARD_POLICY } from "@/lib/expense-policy-standard";
+import {
+  MAX_GUIDELINE_CHARS,
+  MAX_GUIDELINES,
+  checkRules,
+  readGuidelines,
+  readStoredRules,
+  ruleToDraft,
+  type RuleDraft,
+} from "@/lib/expense-policy-sets";
 import { daysStampedWith, ensureStandardSet, readPolicySet } from "@/lib/services/expense-policy-set-service";
 import { ensurePolicyRow } from "@/lib/services/expense-policy-service";
 import { refreshDayMoney } from "@/lib/services/expense-submit-service";
@@ -146,11 +160,13 @@ export async function createPolicySet(input: z.input<typeof createSchema>): Prom
     ]);
 
   let rules: unknown[] = [];
+  let guidelines: string[] = [];
   let clonedFromId: string | null = null;
   if (fromId !== "blank") {
     const source = await readPolicySet(fromId ?? STANDARD_POLICY.id);
     if (!source) return fail("The policy to copy from no longer exists.", "not_found");
     rules = source.rules;
+    guidelines = source.guidelines;
     clonedFromId = source.id;
   }
 
@@ -163,6 +179,7 @@ export async function createPolicySet(input: z.input<typeof createSchema>): Prom
       isStandard: false,
       active: true,
       rules,
+      guidelines,
       revision: 1,
       clonedFromId,
       createdById: user.id,
@@ -175,6 +192,7 @@ export async function createPolicySet(input: z.input<typeof createSchema>): Prom
       name,
       description: description || null,
       rules,
+      guidelines,
       note: clonedFromId ? "Created as a copy." : "Created empty.",
       createdById: user.id,
     });
@@ -218,6 +236,13 @@ const saveSchema = z.object({
   name: nameSchema,
   description: descriptionSchema,
   rules: z.array(draftSchema).max(300, "A policy of more than 300 rules is a policy nobody can read."),
+  /** The policy's written lines. Omitted keeps the ones it has. */
+  guidelines: z
+    .array(z.string().trim().max(MAX_GUIDELINE_CHARS, `A guideline is at most ${MAX_GUIDELINE_CHARS} characters.`))
+    .max(MAX_GUIDELINES, `A policy carries at most ${MAX_GUIDELINES} guidelines.`)
+    .optional(),
+  /** Set when the save puts the standard policy back on the shipped figures. */
+  defaultsVersion: z.number().int().optional(),
   expectedRevision: z.number().int(),
   note: z.string().trim().max(300).nullable().optional(),
 });
@@ -226,7 +251,7 @@ export async function savePolicySet(input: z.input<typeof saveSchema>): Promise<
   const user = await author();
   const parsed = saveSchema.safeParse(input);
   if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "That is not a policy.", "validation");
-  const { id, name, description, rules: drafts, expectedRevision, note } = parsed.data;
+  const { id, name, description, rules: drafts, expectedRevision, note, defaultsVersion } = parsed.data;
 
   const current = await readPolicySet(id);
   if (!current) return fail("That policy no longer exists.", "not_found");
@@ -253,6 +278,7 @@ export async function savePolicySet(input: z.input<typeof saveSchema>): Promise<
     );
   }
 
+  const guidelines = parsed.data.guidelines ? readGuidelines(parsed.data.guidelines) : current.guidelines;
   const revision = current.revision + 1;
   try {
     await db.transaction(async (tx) => {
@@ -262,7 +288,9 @@ export async function savePolicySet(input: z.input<typeof saveSchema>): Promise<
           name,
           description: description || null,
           rules,
+          guidelines,
           revision,
+          ...(defaultsVersion ? { defaultsVersion } : {}),
           updatedById: user.id,
           updatedAt: new Date(),
         })
@@ -276,6 +304,7 @@ export async function savePolicySet(input: z.input<typeof saveSchema>): Promise<
         name,
         description: description || null,
         rules,
+        guidelines,
         note: note || null,
         createdById: user.id,
       });
@@ -290,8 +319,8 @@ export async function savePolicySet(input: z.input<typeof saveSchema>): Promise<
     user.id,
     "expense_policy.set.save",
     id,
-    { name: current.name, revision: current.revision, rules: current.rules },
-    { name, revision, rules },
+    { name: current.name, revision: current.revision, rules: current.rules, guidelines: current.guidelines },
+    { name, revision, rules, guidelines },
   );
   await repriceRecent(await peopleOn(id, current.isStandard));
   refresh(id);
@@ -322,6 +351,7 @@ export async function restorePolicyRevision(input: {
     name: current.name,
     description: current.description,
     rules: rules.map(ruleToDraft),
+    guidelines: readGuidelines(snap.guidelines),
     expectedRevision: current.revision,
     note: `Restored revision ${input.revision}.`,
   });
@@ -340,6 +370,8 @@ export async function resetStandardToDefaults(input: {
     name: current.name,
     description: current.description,
     rules: STANDARD_POLICY.rules.map(ruleToDraft),
+    guidelines: [...STANDARD_GUIDELINES],
+    defaultsVersion: STANDARD_DEFAULTS_VERSION,
     expectedRevision: input.expectedRevision,
     note: "Reset to the shipped defaults.",
   });
@@ -487,4 +519,48 @@ export async function assignPolicySet(input: z.input<typeof assignSchema>): Prom
     { moved: moving.length },
     `${moving.length} ${moving.length === 1 ? "person" : "people"} moved to ${targetName}.`,
   );
+}
+
+/* ----------------------------------------------------------- hometown */
+
+const hometownSchema = z.object({
+  userId: z.string().min(1),
+  /** Blank clears it, and the day keeps what the handset recorded. */
+  city: z.string().trim().max(80, "A town name is at most 80 characters.").nullable(),
+});
+
+/**
+ * Where a salesman lives, for the policy's "away from his hometown". Saved at
+ * once, and today's and yesterday's allowances are re-worked so the effect is
+ * on the next screen anybody opens.
+ */
+export async function setExpenseHometown(input: z.input<typeof hometownSchema>): Promise<Result> {
+  const user = await author();
+  const parsed = hometownSchema.safeParse(input);
+  if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "That is not a town.", "validation");
+  const { userId } = parsed.data;
+  const city = parsed.data.city?.trim() || null;
+
+  const [before] = await db
+    .select({ city: expenseHometowns.city })
+    .from(expenseHometowns)
+    .where(eq(expenseHometowns.userId, userId))
+    .limit(1);
+  if ((before?.city ?? null) === city) return okVoid("Nothing changed.");
+
+  if (city) {
+    await db
+      .insert(expenseHometowns)
+      .values({ userId, city, setById: user.id })
+      .onConflictDoUpdate({
+        target: expenseHometowns.userId,
+        set: { city, setById: user.id, setAt: new Date() },
+      });
+  } else {
+    await db.delete(expenseHometowns).where(eq(expenseHometowns.userId, userId));
+  }
+  await audit(user.id, "expense_policy.hometown", userId, { city: before?.city ?? null }, { city });
+  await repriceRecent([userId]);
+  refresh();
+  return okVoid(city ? `Hometown set to ${city}.` : "Hometown cleared.");
 }
