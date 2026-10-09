@@ -124,7 +124,6 @@ export const ERP_GROUPS: ErpGroup[] = [
     label: "Production",
     icon: "beaker",
     screens: [
-      s("departments", "departments", "Departments", "Purchase and production, step by step, department by department: what each one asks to be bought, what is waiting on it, and what it made.", true),
       s("sfgBatches", "sfg-batches", "SFG batches", "Liquid made from raw-material lots. One line per lot consumed.", true),
       s("fgFill", "fg-fill", "FG filling", "SFG filled into cans or drums.", true),
       s("packBatches", "pack-batches", "Packing batches", "Loose cans packed into boxes. A batch posts only when the cans used match the boxes.", true),

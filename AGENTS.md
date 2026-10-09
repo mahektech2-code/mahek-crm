@@ -1785,11 +1785,12 @@ which could ask for anything; `0233` retired that list and `saveRequirement`
 refuses any other label, except that an edit leaving an older requirement's
 label alone keeps it. A store re-order is raised under the team that asks for
 its category (`departmentForCategory`). The requirement's `department` column
-stays the LABEL it always was. **Departments** (`/erp/departments`) is the
-step-by-step page: one numbered card per step with what is waiting on it and a
-button that opens the ordinary form already filled in (`?new=1&field=value` on
-any list opens its new form with those answers — only the form's own fields
-are taken). Testing is recorded by the department; VERIFYING a test is still
+stays the LABEL it always was. The step-by-step **Departments** page
+(`/erp/departments`) was taken out of the ERP; its steps live on in
+`lib/erp/departments.ts` for the purchase flow, and a grant of `erp.departments`
+left on a designation is ignored. Any list still opens its new form already
+filled in from `?new=1&field=value` (only the form's own fields are taken).
+Testing is recorded by the department; VERIFYING a test is still
 the `verifyTest` power, which no departmental designation carries by default.
 
 **PREVIEW ACCESS AS is the design's sidebar control, made real and made
