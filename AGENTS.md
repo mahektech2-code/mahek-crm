@@ -8303,6 +8303,8 @@ which Mermaid reads as the end of a statement.
 customers into a page every grantee can read and goes stale when a column
 moves. Wireframes are built from the design tokens (`components/wireframe.tsx`)
 and use placeholders — "Customer A" — never seed or production names.
+A `url` that is not a web path ("MBOS · Pay") draws a handset screen in a phone
+frame instead of a browser window.
 
 **A page describes the code as it stands.** Where the code and the intent
 disagree, the How it works and Developer tabs say so under "Where the code and

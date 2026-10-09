@@ -1,0 +1,87 @@
+The office's maps (the Live map, Territory) are read at a desk. The handset's map is read in a paint market with two bars of nothing — exactly where a map is worth most and a tile server cannot be reached. The map library already serves tiles from a downloaded pack without being asked, so the drawing needed no new code. What this feature decides is **what is worth hundreds of megabytes of somebody's phone**, **what it will cost before he starts**, and **whether where he is standing is inside it**.
+
+The street tiles come from Ola Maps, the same supplier as the web; see [Live map](/docs/sales/live-map/how-it-works) for the key and why there is one supplier.
+
+## Places come from the book, not from districts
+
+<Rule title="An area is a cluster of the salesman's own shops">
+Every pinned shop on his phone is dropped into a grid of cells <Setting k="mbos.maps.areaSeparationKm" /> km across, and neighbouring occupied cells are joined. Two shops on one street are always one area; two towns an hour apart never are. Each area is padded by <Setting k="mbos.maps.paddingMetres" /> metres.
+</Rule>
+
+<Callout kind="why">
+An administrative district was drawn for revenue collection: most of one is fields with no shop in it, and a beat that straddles two needs both. The grid is one pass over the book rather than millions of distance calculations, on a phone, while somebody waits.
+</Callout>
+
+Areas are named with the office's own word for where the shops are — the area, falling back to the city. Two areas with the same name are told apart by their town, not by a number, because two rows both reading "Sadar" are two rows nobody can tell apart.
+
+## The size is on the row before the button
+
+Every area shows an **estimate** of its download size: the number of tiles between zoom <Setting k="mbos.maps.minZoom" /> and <Setting k="mbos.maps.maxZoom" />, times <Setting k="mbos.maps.bytesPerTileEstimate" /> bytes. Each step of zoom closer is four times the tiles, so <Setting k="mbos.maps.maxZoom" /> is the setting that decides the size.
+
+<Callout kind="why">
+These are the largest downloads the product asks anybody for. A progress bar that appears after the decision is not a decision. The estimate is right about the order of magnitude — tens or hundreds of megabytes — which is the one the answer turns on.
+</Callout>
+
+### Two ceilings in two units
+
+| Ceiling | Unit | What happens |
+|---|---|---|
+| <Setting k="mbos.maps.maxPackMegabytes" /> | Megabytes, ours | An area over it is refused **up front**, with its size on the screen |
+| <Setting k="mbos.maps.tileCountLimit" /> | Tiles, the map library's | A download over it is **aborted part-way** with an error about tiles |
+
+<Rule title="The tile ceiling must allow the megabyte ceiling">
+The configuration check refuses a tile ceiling lower than the megabyte ceiling allows. Otherwise a salesman starts a download this app has told him is fine and watches it stop.
+</Rule>
+
+## The key is not in the pack
+
+<Rule title="Saved tiles are stored without the key">
+The map style is requested at a URL **without** the Ola key; the key is added to every request to Ola's host at the network layer, after the offline store has been checked. So a pack is stored key-less and found key-less.
+</Rule>
+
+<Callout kind="why">
+The map library files every downloaded resource under the URL it asked for. With the key in that URL, rotating the key in the Admin Console would make every saved map on every phone unreachable, with nothing able to say why. It fixes a second problem too: a key on the style URL signs the style file alone, and the tiles, fonts and icons it names would carry none.
+</Callout>
+
+The key reaches the phone on each sync — the one in force when the pull is answered — and only to an authenticated handset. Without one, every map says *Maps are not set up yet* rather than drawing a grey box.
+
+## Packs are matched by geometry
+
+<Rule title="A saved map belongs to an area by where it is, not by an id">
+The phone asks which saved pack contains the most of an area's shops. Nothing stores "this pack is area 3".
+</Rule>
+
+<Callout kind="why">
+An id written at download time is wrong the first time somebody adds a shop and the cluster moves: the pack is orphaned, the area offers itself again, and the phone ends up holding two copies of the same 300 MB with nothing able to say so.
+</Callout>
+
+**Coverage is counted in shops.** "9 of these 62 are outside the map you saved" is something a salesman can act on; "83% of the box" is not. **Partial** is a real answer and is never rounded: rounding up draws a map with a blank corner and no explanation, rounding down hides a map that would have worked for most of what he needs.
+
+## Saving again replaces — after the new one lands
+
+When an area has grown past its pack, saving it downloads the bigger area and deletes the old pack **only after** the new one finishes — and only if the old one is genuinely inside the new one. Packs share tiles, so the overlap is not downloaded twice.
+
+<Callout kind="why">
+Deleting first loses a salesman his working map for the twenty minutes the new download takes, on the day he is standing in the market it covers. Checking containment stops re-saving a small area from deleting a wide pack another area also relies on.
+</Callout>
+
+## Nothing is deleted automatically
+
+Not a pack for an area that has left his book, not a stale one, not one that failed half-way. Each is listed with what it is and a **Remove** button. A pack older than <Setting k="mbos.maps.refreshAfterDays" /> days is nudged for an update — never expired. Updating re-checks each tile and fetches only what changed.
+
+## The four states a map can be in
+
+<Flow caption="Before the map draws" chart={`
+flowchart TD
+  A{"Maps key set?"} -- "no" --> K["No map. 'Maps are not set up yet'"]
+  A -- "yes" --> B{"Any pinned shops?"}
+  B -- "no" --> P["No map. Says why"]
+  B -- "yes" --> C{"Online, or shops<br/>inside a saved pack?"}
+  C -- "online or all covered" --> M["Draw the map"]
+  C -- "offline, some covered" --> Q["Draw it, and say how many<br/>shops are not in the saved map"]
+  C -- "offline, none covered" --> N["Do not draw.<br/>'Save maps for offline' link"]
+`} />
+
+Coverage is asked of the **pins**, not of the viewport, because the decision has to be made before the map draws.
+
+<SettingsTable keys={["mbos.maps.offlineEnabled", "mbos.maps.minZoom", "mbos.maps.maxZoom", "mbos.maps.areaSeparationKm", "mbos.maps.paddingMetres", "mbos.maps.bytesPerTileEstimate", "mbos.maps.maxPackMegabytes", "mbos.maps.tileCountLimit", "mbos.maps.downloadOnWifiOnly", "mbos.maps.refreshAfterDays"]} />

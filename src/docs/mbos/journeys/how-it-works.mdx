@@ -1,0 +1,92 @@
+A journey day is **agreed, not issued**. The office proposes where a salesman works; he answers; and he picks the shops, because he is the one who knows which doors are worth a morning. On the day, the phone orders those shops for walking, points him at the next one, and — when he is standing in a lane wondering what else to do — tells him which nearby shop is most worth a stop. The office end is [Journeys on the Sales Dashboard](/docs/sales/journeys).
+
+## The life of a day
+
+<Flow caption="From proposal to a planned day" chart={`
+flowchart TD
+  P["Office proposes a city<br/>for a date"] --> A{"Salesman answers"}
+  A -- "Agree" --> AG["agreed"]
+  A -- "Send it back + reason<br/>(optionally another city)" --> RF["refused<br/>office re-plans"]
+  SELF["Salesman plans a day himself<br/>(date + city)"] --> AG
+  AG --> PK["He picks shops in that city<br/>in walking order"]
+  PK -- "one or more" --> PL["planned"]
+  PK -- "none" --> AG
+  PL --> DAY["On the day: route, visits,<br/>off-plan stops with a reason"]
+`} />
+
+<DbEnum name="mbos_plan_day_state" />
+
+<Rule title="A refusal must carry a reason">
+Without one the manager has nothing to act on and the day sits unplanned while each waits for the other. Naming a city he would rather go to is optional — "not this" is a legitimate answer, and being made to produce an alternative on the spot is how people stop refusing things they should refuse.
+</Rule>
+
+<Rule title="Only picking shops makes a day planned">
+Answering a day moves it to agreed or refused and nothing else. A day becomes planned only when shops are picked, so an empty day can never claim to be a route. Picking nothing returns it to agreed.
+</Rule>
+
+The phone sends the **whole list** of picked shops each time, not the change. That is how a shop is unpicked; a merge would make unpicking impossible. If a shop has left his book since he picked it, the office drops that one, keeps the rest, and tells him — refusing the whole day over one stale shop would lose the nineteen he got right.
+
+<Callout kind="note">
+The office can still arrange a day's stops itself. That is now the exception, for a salesman who has agreed a day and cannot fill it.
+</Callout>
+
+## Picking shops: the city is a hard filter
+
+<Rule title="A day is a city">
+The pick list shows only shops in the agreed city. It used to put that city's shops first and show the rest below, on the reasoning that a man going to Nagpur often has a call on the way. Mahek's answer was that a day is a city; the call on the road is an off-plan stop with a deviation reason, which is what that field is for.
+</Rule>
+
+The list is **nearest first**, because a man filling a Tuesday morning in one town is choosing a walking order. What "nearest" is measured from matters more than anything else on the screen:
+
+| Planning | Origin | Why |
+|---|---|---|
+| Today, with a fix | Where he is standing | He is about to walk it. |
+| Any other day | The centre of our pinned shops in that city | He plans tomorrow at home in the evening; sorted from his sofa, the list comes out nearly upside down. The centre of our shops needs no map service and no signal, and is the middle of our business rather than the middle of the town. |
+| Neither available | No origin — the list keeps its own order | A list sorted around an invented point looks right and is wrong. |
+
+The list is capped at a page at a time, says how many there are in total, and never loses a shop already ticked. A shop with no pin sorts last.
+
+## The day's route
+
+On the day the phone orders the stops by straight-line distance: nearest neighbour from where he is, then a bounded improvement pass that untangles the long dash back across town.
+
+<Rule title="A shop with no pin is appended, never dropped">
+A shop missing from the day's list because nobody captured its coordinates is a shop nobody visits, and nobody ever finds out why. It goes at the end and is flagged.
+</Rule>
+
+<Callout kind="why">
+**It is not a routing service.** There is no road network on the phone — it is offline in a market lane, and a route that arrives is worth more than a route that is optimal. The same input always produces the same order, so the plan does not reshuffle between two screens. Real directions come from the phone's own maps app through **Navigate**, which already has the roads, the traffic and a voice.
+</Callout>
+
+The estimate of time on the road uses <Setting k="mbos.route.averageSpeedKmph" /> km/h and <Setting k="mbos.route.minutesPerStop" /> minutes a stop. The improvement pass runs only up to <Setting k="mbos.route.maxStopsForTwoOpt" /> stops and <Setting k="mbos.route.maxTwoOptPasses" /> passes, so a long day still answers instantly.
+
+## Navigate
+
+Navigate is a **deep link** into the phone's maps app: no key, no bill, no tile ever fetched. It is drawn before he sets off **and** while he is travelling — it once existed only in the first of those, which was every moment except the one it is for. While travelling, the screen also prints the distance left, with its age where the reading is stale, and says plainly when a shop has no pin (the maps app then searches the name and town, which lands near a name rather than on a doorway).
+
+## Near me and Next Best Visit
+
+<Rule title="Ordered by what is worth doing, not by distance">
+Each nearby shop is scored by its reasons — a task, an overdue or due reorder, money owed, an open lead, never visited — and distance is subtracted as a cost at <Setting k="mbos.location.nearbyPerKilometreCost" /> per kilometre. A shop with no reason is not listed at all: "near me" is a list of what to do, and the whole book is a different screen.
+</Rule>
+
+- **Proximity decides only ties.** Two shops with the same reasons are listed nearest first.
+- **Next Best Visit is the head of the same list**, not a second calculation, so the button and the list can never recommend different shops.
+- **It needs no signal and no map.** Every coordinate, cycle, debt and task is already on the phone.
+- It is deliberately **not** a copy of the Call Log's ranking. That orders four hundred names for a telecaller; this answers "of the eleven shops within three kilometres, which one now".
+
+The radius choices are <Setting k="mbos.location.nearbyRadiusOptions" />.
+
+## The map says what it cannot show
+
+A pin is drawn only where there is a fix — spacing shops out to fill the screen is the one thing a map of where things are must not do. With no map key the screen says so rather than drawing a grey box; with no signal and no saved map for the area it does not draw at all and links to [Offline maps](/docs/mbos/offline-maps).
+
+## Settings
+
+<SettingsTable keys={["mbos.route.averageSpeedKmph", "mbos.route.minutesPerStop", "mbos.route.maxStopsForTwoOpt", "mbos.route.maxTwoOptPasses", "mbos.location.nearbyRadiusOptions", "mbos.location.nearbyPerKilometreCost"]} />
+
+## Where the code and the intent disagree today
+
+- The header comment above `PICK_PAGE` in `mbos-app/src/data/journey.ts` still says the city "narrows rather than filters"; the query below it filters (and the comment on `pickCandidates` says so). The code is right; the first comment is stale.
+- `nearby()` carries its own hard-coded fallback cost per kilometre, used if the setting never arrives on the phone (`mbos-app/src/engines/nearby.ts`).
+- <Setting k="mbos.location.routeDeviationM" /> and <Setting k="mbos.location.unplannedVisitsPerDay" /> are on the Settings screen but nothing reads them: an off-plan stop is recorded with its reason and never counted or capped (`mbos-app/src/data/config.ts` lists them as defaults only).

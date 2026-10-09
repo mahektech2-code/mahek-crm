@@ -1,0 +1,110 @@
+The book is decided on the server (`customerIdsInScope`), shaped once per channel (`customersForDevice`, reused by bootstrap and delta), stored in the handset's `customers` table, and read through two SQL builders in `mbos-app/src/data/customer-query.ts`. Every word on a card comes from a pure file — `lib/account-label.ts`, `engines/leads.ts` `reorderState`, `engines/statement.ts` — because `data/customers.ts` imports SQLite and cannot be tested off a device, which is exactly how a branch that could never fire shipped on the most-read screen in the app.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Screens | `mbos-app/app/customers.tsx` | The tab: Customers/Leads switch, search, sort, filters, map, add a shop |
+| Screens | `mbos-app/app/customer.tsx` | The record and its seven tabs |
+| Screens | `mbos-app/app/accounts.tsx`, `account.tsx` | Customer accounts (the Accounts app's view, read-only) |
+| Queries | `mbos-app/src/data/customer-query.ts` | `IS_LEAD`, `LEAD_FACTS`, page and count builders |
+| Local data | `mbos-app/src/data/customers.ts`, `customer-account.ts`, `territory.ts` | Reads; `phoneAccount`/`freshAccount`; `myAreas`, `acceptAreas`, `askForDifferentAreas` |
+| Words | `mbos-app/src/lib/account-label.ts` | `accountType`, `accountLine`, `customerStage` |
+| Engines | `mbos-app/src/engines/leads.ts`, `statement.ts`, `account-view.ts`, `health.ts` | `reorderState`, `buildStatement`, `fromPhone`, `healthScore` |
+| Server scope | `src/lib/services/mbos-service.ts` | `principalBookClause`, `customerIdsInScope`, `territoryExempt`, `mbosTerritoryState` |
+| Server territory | `src/lib/territory-rules.ts`, `src/lib/services/territory-service.ts` | `territoryClause`, `territoriesFor` |
+| Server band | `src/lib/engines/inactivity.ts` | `bandFor` |
+| Server account | `src/app/api/mbos/customer-account/route.ts` | The full account for one shop, on demand |
+
+## Scope on the server
+
+<Code file="src/lib/services/mbos-service.ts" symbol="customerIdsInScope" collapsed />
+
+<Code file="src/lib/territory-rules.ts" symbol="territoryClause" collapsed />
+
+`territoryClause([])` answers `false`, never `undefined`: an absent clause and a false one look alike in a type signature and are opposite answers to "what may this person see", and the dangerous one should be the loud one. `customerIdsInScope` short-circuits before the query when a non-exempt principal has no territory.
+
+<Code file="src/lib/services/mbos-service.ts" symbol="territoryExempt" />
+
+<Code file="src/lib/services/mbos-service.ts" symbol="mbosTerritoryState" collapsed />
+
+The territory state rides on the bootstrap **and** every delta — a territory is changed at a desk mid-day and the shops leave the phone on the next pull. A reallocation tombstones the shops that left, diffed over **his own** book (not over `customers`, or one click would tombstone thousands of shops never on the phone).
+
+<DbTable name="mbos_user_territories" only={["user_id", "kind", "region", "parent"]} note={{
+  kind: "state · region · city · beat. managerScope reads region; the handset's book reads the rest.",
+  region: "The place's name, as allocated.",
+  parent: "What it was picked UNDER. Empty on legacy rows, read as 'this place wherever it is'.",
+}} />
+
+## One function for both channels
+
+<Code file="src/lib/services/mbos-service.ts" symbol="customersForDevice" collapsed />
+
+<Callout kind="warn" title="A missing column is not a null">
+`applyPull` upserts exactly the columns that arrive, so a column the delta omits keeps the bootstrap's value for the life of the installation (`pullCursor` is never reset). The customers channel was two queries that drifted eleven columns apart — the Third party chip, the band and the reorder line went stale on every phone. It is one function now; keep it that way.
+</Callout>
+
+`healthBand` is filled in JavaScript by `bandFor`, never as a SQL `CASE` — a second copy of the rule would drift the day somebody changes a multiplier.
+
+<Code file="src/lib/engines/inactivity.ts" symbol="bandFor" />
+
+## The handset's book
+
+<Code file="mbos-app/src/data/customer-query.ts" symbol="IS_LEAD" />
+
+<Code file="mbos-app/src/data/customer-query.ts" symbol="LEAD_FACTS" />
+
+A lead is a row in **both** handset tables: the office sends leads on their own channel into `leads`, keyed on the same id as the `customers` row. So "is this a lead" is an `EXISTS`, never a column read, and `archived = 0` is part of it — an archived lead leaving the Customers half too would put the shop on no screen at all. The facts are correlated subqueries rather than a join, because both tables carry `id`, `name` and `city`. On the Customers half the three facts are constants (`NOT_A_LEAD`), saving thirty thousand point lookups on a large book.
+
+<Code file="mbos-app/src/lib/account-label.ts" symbol="accountType" />
+
+<Code file="mbos-app/src/lib/account-label.ts" symbol="customerStage" />
+
+`customerStage` once compared `status` against `'Overdue'`, `'At risk'` and `'Active'` while the enum is `active`, `inactive`, `deactivated` — the branch could never fire and a deactivated shop read as whatever its cycle said. Only `deactivated` wins now; `inactive` is the same fact as `dormant`.
+
+<Code file="mbos-app/src/engines/leads.ts" symbol="reorderState" />
+
+## The statement
+
+<Code file="mbos-app/src/engines/statement.ts" symbol="buildStatement" collapsed />
+
+<Code file="mbos-app/src/engines/statement.ts" symbol="countsAsMoney" />
+
+<Code file="mbos-app/src/engines/statement.ts" symbol="countsAsDebt" />
+
+The window is `mbos.sync.statementMonths`, resolved to a date by `statementFrom` on the server. Bills and receipts are **delta** channels inside the window: a row is either on the phone already or has a moved `updated_at`, and a bill leaves only by ageing past a date the handset can read itself. What was on a bill rides on the bill as JSON text (`lines`), because a bill's lines never change after it is raised.
+
+<Code file="mbos-app/src/data/customer-account.ts" symbol="freshAccount" />
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `cd mbos-app && npm test` | `src/lib/account-label.test.ts` | Mark beats kind, leads table answers first, rung on the card, `deactivated` wins |
+| `cd mbos-app && npm test` | `src/data/customer-query.test.ts`, `book-scale.test.ts`, `book-cap.test.ts` | The query builders against the real schema; scale and caps |
+| `cd mbos-app && npm test` | `src/engines/statement.test.ts`, `src/data/statement-reads.test.ts` | Running balance, confirmed-only, unstated bills, oldest-first arithmetic |
+| `cd mbos-app && npm test` | `src/engines/account-view.test.ts` | Office / remembered / phone views |
+| `npm run test` | `src/lib/territory-rules.test.ts` | Hierarchy: and down a branch, or across |
+| `npm run test` | `src/lib/mbos-wire.test.ts` | The customers channel fits the handset schema |
+
+## Changing it safely
+
+<Steps>
+<Step title="Add a customer column to both sides at once">
+A server column the handset should show goes into `customersForDevice` **and** a handset migration in the same release pair — server first, but never a column the old build cannot hold.
+</Step>
+<Step title="Keep words in the pure files">
+Any new label on a card goes into `account-label.ts` (or an engine) with a test, never inline in `customers.tsx`.
+</Step>
+<Step title="Never let territory widen sight">
+Territory may only `and` onto `principalBookClause`. Any new exemption belongs in `territoryExempt`, the one definition three callers read.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| AGENTS.md's three view chips are two on the phone | `mbos-app/app/customers.tsx` |
+| A comment in `customerIdsInScope` says no territory keeps the whole book; the code returns none | `src/lib/services/mbos-service.ts` |
+| Band words are duplicated on the handset (`BAND_WORD`) because it cannot import the server's labels; nothing pins the two lists together | `mbos-app/src/components/ui/primitives.tsx` |
