@@ -26,10 +26,10 @@ const TEAMS: { id: Team; label: string; app: AppId }[] = [
  * built into the app image: a 90+ MB binary there would bloat every layer
  * and the container registry along with it.
  *
- * The Factory app has no APK: it is `/factory`, a web app with its own
- * service worker, so "getting it" is opening it and adding it to the home
- * screen. The button says Open rather than Download for that reason — a
- * Download button that navigates to a page is a promise the tap breaks.
+ * The Factory app's APK sits beside it as factory.apk — a Trusted Web
+ * Activity around `/factory`, released by .github/workflows/factory-apk.yml.
+ * Its screens come from the server, so a phone that has it installed is
+ * updated by every deploy; the APK itself is downloaded once.
  */
 const APPS: Record<
   AppId,
@@ -56,13 +56,13 @@ const APPS: Record<
   },
   factory: {
     name: "Mahek Factory",
-    tag: "Phone app — opens in the browser",
+    tag: "Android app",
     what: "Scan a job, follow the steps, count what was made and send it. Mixing, filling, packing and loading, recorded on the floor as the work is done — and it keeps working when the Wi-Fi drops.",
     who: "The mixing, filling, packing and dispatch teams, their supervisors, and the Production Head.",
-    href: "/factory",
-    action: "Open the Factory app",
-    download: false,
-    note: "Nothing to install. Open it on the phone, then tap the browser’s three-dot menu and choose “Add to Home screen” so it opens like any other app.",
+    href: "/downloads/factory.apk",
+    action: "Download for Android",
+    download: true,
+    note: "Your phone will warn you it’s from outside the Play Store — that’s expected for an internal app. Once installed it updates itself from the server, so download again only if your supervisor asks you to.",
   },
 };
 
