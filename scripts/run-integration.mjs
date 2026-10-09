@@ -61,6 +61,9 @@ const files = [
   "src/lib/erp/erp-traceability.test.ts",
   "src/lib/erp/erp-sales.test.ts",
   "src/lib/erp/erp-logistics.test.ts",
+  // Production petty cash: the PRD's fourteen acceptance tests — payments in
+  // instalments, transfers, customer cash, the bank statement, closing, Tally.
+  "src/lib/erp/erp-petty-cash.test.ts",
   "src/lib/erp/erp-book.test.ts",
   "src/lib/erp/erp-ai.test.ts",
   "src/lib/erp/erp-ai-reading.test.ts",

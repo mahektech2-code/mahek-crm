@@ -243,9 +243,23 @@ export type ListRow = {
   panel?: { kind: string; data: unknown };
 };
 
+/** A figure on a summary card: one line, its value, and the list it opens. */
+export type SummaryRow = { l: string; v: string; sub?: string; tone?: Tone; href?: string };
+
+/**
+ * A card drawn above a list — a fund and what it holds, the day's figures.
+ * `big` is the card's headline number; `rows` the figures under it, each
+ * opening the records behind it where it has an `href`.
+ */
+export type SummaryCard = { t: string; sub?: string; big?: { v: string; sub?: string; tone?: Tone }; rows: SummaryRow[] };
+
 export type ListSpec = {
   screen: string;
   cols: ColSpec[];
+  /** Cards above the list (an overview's figures). */
+  summary?: SummaryCard[];
+  /** Lines said above the list — what a figure is as of, why a list is empty. */
+  notes?: { tone: Tone; text: string }[];
   /**
    * Draw the rows as image cards instead of table rows: the same rows,
    * search, chips and paging, and a card opens the same record. `img` names
@@ -313,6 +327,16 @@ export const ST_TONE: Record<string, Tone> = {
   "Direct purchase": "neutral", Quotation: "info", "Pending approval": "warn", Approved: "success",
   Sent: "info", Selected: "success", "Not selected": "muted",
   "In stock": "success", "Scanned for dispatch": "brand", "On hold": "warn", Returned: "info", "Written off": "danger",
+  /* Petty cash */
+  Draft: "neutral", Submitted: "warn", "Under review": "info", "Returned for correction": "warn", "Partially paid": "info",
+  Completed: "success", Overpaid: "danger", Commitment: "neutral", Confirmed: "success", Reversed: "muted",
+  "In transit": "info", Held: "warn", "Handed over": "success", Deposited: "success", "Suggested match": "info",
+  Unmatched: "warn", Reconciled: "success", Exception: "danger", "Correction required": "danger", "Pending sync": "warn",
+  "Posted to Tally": "success", Failed: "danger", Syncing: "info", "Not required": "muted", "Reversed in Tally": "muted",
+  "Awaiting bank statement": "warn", "Not a bank payment": "muted", Reopened: "danger", Explained: "info",
+  Adjusted: "brand", "No budget": "muted", Proposed: "warn", "Not set": "muted", "To verify": "warn",
+  "Awaiting approval": "warn", "Before the ledger": "muted", In: "success", Out: "neutral", "Approved by policy": "success",
+  "Verified (before the ledger)": "muted", "Pending (before the ledger)": "muted",
 };
 
 /** Named row states (the source's format rules), and how each is labelled. */
@@ -363,6 +387,19 @@ export const FLAG: Record<string, [string, Tone]> = {
   unitHold: ["Box on hold", "warn"],
   unlabelled: ["Label not printed", "neutral"],
   mismatch: ["Override used", "danger"],
+  /* Petty cash */
+  urgentPaid: ["Paid before approval", "danger"],
+  missingDoc: ["Bill not attached", "warn"],
+  overdue: ["Payment overdue", "danger"],
+  legacy: ["Before the ledger", "neutral"],
+  overBudget: ["Over budget", "warn"],
+  commitment: ["Not yet received", "neutral"],
+  advanceOpen: ["Advance not settled", "warn"],
+  reversed: ["Reversed", "muted"],
+  overdrawn: ["Paid beyond the fund", "danger"],
+  variance: ["Cash variance", "danger"],
+  reopened: ["Reopened by a backdated entry", "danger"],
+  ambiguous: ["Ambiguous match", "warn"],
 };
 
 /* -------------------------------------------------------------- formatting */

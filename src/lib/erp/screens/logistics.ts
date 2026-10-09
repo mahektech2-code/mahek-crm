@@ -1,27 +1,27 @@
 import "server-only";
-import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { complaints, customers, employees, erpCredits, erpExpenses, erpGodowns, erpOrderDetails, erpTransports, erpVideos, users } from "@/db/schema";
+import { complaints, customers, erpOrderDetails, erpTransports, erpVideos, users } from "@/db/schema";
 import { categoryLabel } from "@/lib/complaint-labels";
 import { complaintRows, requestStatus } from "./complaints";
 import { calendarDate } from "@/lib/business-date";
 import { err, fieldErr, okVoid, type Result } from "@/lib/result";
 import type { ErpContext } from "../access";
 import { bindErpFiles } from "../attachments";
-import { erpAudit, erpId, multi, paise, rupeesField, stampLine, text, visibleCols, withoutHidden, type ScreenModule } from "../server";
-import type { ActionSpec, BulkSpec, CellValue, ColSpec, FieldSpec, FormSpec, ListRow } from "../ui";
+import { erpAudit, erpId, multi, paise, stampLine, text, visibleCols, withoutHidden, type ScreenModule } from "../server";
+import type { ActionSpec, BulkSpec, CellValue, ColSpec, ListRow } from "../ui";
 import { fd, inr } from "../ui";
-import { cashBalances, cashKey } from "../engines/cash";
 import { monthId } from "../engines/sales";
 import { refValues } from "../refs";
-import { godownIdByName, godownOptions, has, today, type Col } from "./common";
+import { has, today, type Col } from "./common";
 import { customerForm, loadCustomers, phoneContacts, saveCustomerDetails } from "./masters";
 import { detailRows } from "./sales";
 import { syncBookOrders } from "../book";
 
 /* ---------------------------------------------------------------------------
- * Logistics, customer requests and credit notes, order follow-up, petty cash,
- * my customers and help videos (spec §12–§13).
+ * Logistics, customer requests and credit notes, order follow-up, my
+ * customers and help videos (spec §12–§13). Petty cash moved to its own
+ * files (`petty-*.ts`) when it became the production funds module.
  * ------------------------------------------------------------------------- */
 
 /**
@@ -39,7 +39,6 @@ const CLOSED = "Close - Received to Party";
  * facts or contradict them.
  */
 export const onTheRoad = (t: { lrNo: string | null; materialStage: string }) => !!t.lrNo && t.materialStage !== CLOSED;
-const MODES = ["Bank Cash", "Cash", "Other"];
 
 /* ============================================================ transport */
 
@@ -229,217 +228,6 @@ async function setExtra(ctx: ErpContext, ids: string[], values: Record<string, s
   return okVoid(`Extra expenses on ${res.length} line${res.length === 1 ? "" : "s"}`);
 }
 
-/** Active employees from HRMS: who can be given petty cash or spend it. */
-async function activeEmployees(): Promise<{ name: string; position: string | null }[]> {
-  return db.select({ name: employees.name, position: employees.position }).from(employees).where(eq(employees.status, "active")).orderBy(asc(employees.name));
-}
-
-/* ============================================================ petty cash */
-
-async function balances() {
-  const [credits, expenses] = await Promise.all([db.select().from(erpCredits), db.select().from(erpExpenses)]);
-  return cashBalances(
-    credits.map((c) => ({ employee: c.employeeName, godownId: c.godownId, mode: c.mode, amountPaise: c.amountPaise })),
-    expenses.map((e) => ({ employee: e.expenseBy, godownId: e.godownId, mode: e.mode, amountPaise: e.amountPaise })),
-  );
-}
-
-async function staffNames(ctx: ErpContext): Promise<string[]> {
-  const names = (await activeEmployees()).map((e) => e.name);
-  return names.includes(ctx.user.name) ? names : [ctx.user.name, ...names];
-}
-
-async function cashForm(ctx: ErpContext, kind: "credit" | "expense"): Promise<FormSpec> {
-  const [gds, names, notes, cats, parts] = await Promise.all([
-    godownOptions(ctx, { lost: false }),
-    staffNames(ctx),
-    refValues("creditNote"),
-    refValues("expenseCategory"),
-    refValues("expenseParticular"),
-  ]);
-  const common: FieldSpec[] = [
-    { k: "date", l: "Date", t: "date", req: true },
-    { k: "godown", l: "Godown", t: "select", req: true, opts: gds.map((g) => g.name) },
-    { k: "who", l: kind === "credit" ? "Employee" : "Expense by", t: "select", req: true, opts: names },
-    { k: "mode", l: kind === "credit" ? "Credit mode" : "Expense mode", t: "select", req: true, opts: MODES },
-  ];
-  return kind === "credit"
-    ? {
-        screen: "credits",
-        id: "new",
-        title: "Give funds",
-        submit: "Save credit",
-        init: { date: today(), godown: ctx.workingGodown?.name ?? "", who: ctx.user.name },
-        header: [...common, { k: "amount", l: "Credit amount (₹)", t: "num", req: true, min: 0.01 }, { k: "note", l: "Credit note", t: "select", opts: notes }],
-      }
-    : {
-        screen: "expenses",
-        id: "new",
-        title: "New expense",
-        submit: "Save expense",
-        init: { date: today(), godown: ctx.workingGodown?.name ?? "", who: ctx.user.name },
-        header: [
-          ...common,
-          { k: "category", l: "Category", t: "select", opts: cats },
-          { k: "particular", l: "Particular", t: "select", opts: parts },
-          { k: "amount", l: "Amount (₹)", t: "num", req: true, min: 0.01 },
-          { k: "note", l: "Expense note", t: "area", mic: true },
-        ],
-      };
-}
-
-const credits: ScreenModule = {
-  key: "credits",
-  async load(ctx) {
-    const [rows, bal] = await Promise.all([
-      db.select({ c: erpCredits, godown: erpGodowns.name, by: users.name }).from(erpCredits).innerJoin(erpGodowns, eq(erpGodowns.id, erpCredits.godownId)).leftJoin(users, eq(users.id, erpCredits.createdById)).orderBy(desc(erpCredits.creditDate), desc(erpCredits.createdAt)),
-      balances(),
-    ]);
-    const cols: ColSpec[] = [
-      { k: "date", l: "Date", t: "d" },
-      { k: "amount", l: "Amount", t: "m" },
-      { k: "note", l: "Credit note", t: "t" },
-      { k: "available", l: "Available", t: "m" },
-      { k: "who", l: "Employee", t: "b" },
-      { k: "mode", l: "Mode", t: "s" },
-      { k: "godown", l: "Godown", t: "t" },
-      { k: "id", l: "Credit id", t: "mono" },
-    ];
-    return {
-      spec: { screen: "credits", cols, hidden: [], groups: ["godown", "mode"], godownKey: "godown", newForm: await cashForm(ctx, "credit"), newLabel: "Give funds", noDataLine: "No funds given yet." },
-      rows: rows.map((r) => {
-        const available = bal.get(cashKey(r.c.employeeName, r.c.godownId, r.c.mode)) ?? 0;
-        return {
-          id: r.c.id,
-          v: { date: r.c.creditDate, amount: r.c.amountPaise, note: r.c.note, available, who: r.c.employeeName, mode: r.c.mode, godown: r.godown, id: r.c.id },
-          flags: [],
-          title: `${r.c.employeeName} · ${inr(r.c.amountPaise)}`,
-          header: `${inr(available)} available · ${r.c.mode}`,
-          actions: [{ id: "mode", l: "Change mode", prompt: { title: "Credit mode", submit: "Save", fields: [{ k: "mode", l: "Mode", t: "select", req: true, opts: MODES }], init: { mode: r.c.mode } } }],
-          by: stampLine(r.by, r.c.createdAt),
-        };
-      }),
-    };
-  },
-  forms: {
-    async new(ctx, h) {
-      const godownId = await godownIdByName(text(h.godown));
-      if (!godownId) return fieldErr("godown", "Godown is required");
-      const who = text(h.who);
-      if (!who) return fieldErr("who", "Employee is required");
-      const mode = text(h.mode);
-      if (!mode || !MODES.includes(mode)) return fieldErr("mode", "Credit mode is required");
-      const amount = paise(h.amount);
-      if (amount == null || amount <= 0) return fieldErr("amount", "Credit amount is required");
-      const id = erpId("cr");
-      await db.insert(erpCredits).values({ id, creditDate: text(h.date) ?? today(), godownId, employeeName: who, mode, amountPaise: amount, note: text(h.note), createdById: ctx.user.id });
-      await erpAudit(ctx, "erp.credit.create", "erp_credit", id, null, { who, amount, mode });
-      return okVoid(`${inr(amount)} given to ${who}`);
-    },
-  },
-  actions: {
-    async mode(ctx, id, v) {
-      const mode = text(v.mode);
-      if (!mode || !MODES.includes(mode)) return fieldErr("mode", "Mode is required");
-      await db.update(erpCredits).set({ mode, updatedAt: new Date() }).where(eq(erpCredits.id, id));
-      await erpAudit(ctx, "erp.credit.mode", "erp_credit", id, null, { mode });
-      return okVoid("Mode changed");
-    },
-  },
-};
-
-const expenses: ScreenModule = {
-  key: "expenses",
-  async load(ctx) {
-    const [rows, bal] = await Promise.all([
-      db.select({ e: erpExpenses, godown: erpGodowns.name, by: users.name }).from(erpExpenses).innerJoin(erpGodowns, eq(erpGodowns.id, erpExpenses.godownId)).leftJoin(users, eq(users.id, erpExpenses.createdById)).orderBy(desc(erpExpenses.expenseDate), desc(erpExpenses.createdAt)),
-      balances(),
-    ]);
-    const cols: ColSpec[] = [
-      { k: "date", l: "Date", t: "d" },
-      { k: "particular", l: "Particular", t: "b" },
-      { k: "amount", l: "Amount", t: "m" },
-      { k: "note", l: "Note", t: "t" },
-      { k: "available", l: "Available", t: "m" },
-      { k: "mode", l: "Mode", t: "s" },
-      { k: "godown", l: "Godown", t: "t" },
-      { k: "status", l: "Status", t: "s" },
-      { k: "who", l: "Expense by", t: "t" },
-    ];
-    const verifier = ctx.administrator || ctx.level === "manager";
-    return {
-      spec: {
-        screen: "expenses",
-        cols,
-        hidden: [],
-        groups: ["godown", "mode"],
-        agg: { k: "available", l: "average available", t: "avg" },
-        chips: "status",
-        godownKey: "godown",
-        bulk: verifier ? [{ id: "verify", l: "Verify" }] : undefined,
-        newForm: await cashForm(ctx, "expense"),
-        newLabel: "New expense",
-        noDataLine: "No expenses yet.",
-      },
-      rows: rows.map((r) => {
-        const available = bal.get(cashKey(r.e.expenseBy, r.e.godownId, r.e.mode)) ?? 0;
-        return {
-          id: r.e.id,
-          v: { date: r.e.expenseDate, particular: r.e.particular ?? r.e.category ?? "Expense", amount: r.e.amountPaise, note: r.e.note, available, mode: r.e.mode, godown: r.godown, status: r.e.status, who: r.e.expenseBy },
-          flags: available < 0 ? ["below"] : [],
-          title: `${r.e.particular ?? "Expense"} · ${inr(r.e.amountPaise)}`,
-          header: `${inr(available)} available · ${r.e.mode}`,
-          fields: [{ l: "Category", v: r.e.category ?? "—" }],
-          actions: [
-            ...(r.e.status !== "Verify" ? [{ id: "verify", l: "Verify", primary: true, why: verifier ? "" : "A manager verifies expenses" } as ActionSpec] : [{ id: "pending", l: "Back to Pending", why: verifier ? "" : "A manager verifies expenses" } as ActionSpec]),
-            { id: "amount", l: "Change amount", why: r.e.status === "Verify" ? "A verified expense is closed" : "", prompt: { title: "Amount", submit: "Save", fields: [{ k: "amount", l: "Amount (₹)", t: "num", req: true, min: 0.01 }], init: { amount: rupeesField(r.e.amountPaise) } } },
-          ],
-          by: stampLine(r.by, r.e.createdAt),
-        };
-      }),
-    };
-  },
-  forms: {
-    async new(ctx, h) {
-      const godownId = await godownIdByName(text(h.godown));
-      if (!godownId) return fieldErr("godown", "Godown is required");
-      const who = text(h.who);
-      if (!who) return fieldErr("who", "Expense by is required");
-      const mode = text(h.mode);
-      if (!mode || !MODES.includes(mode)) return fieldErr("mode", "Expense mode is required");
-      const amount = paise(h.amount);
-      if (amount == null || amount <= 0) return fieldErr("amount", "Amount is required");
-      const id = erpId("exp");
-      await db.insert(erpExpenses).values({ id, expenseDate: text(h.date) ?? today(), godownId, expenseBy: who, category: text(h.category), mode, particular: text(h.particular), amountPaise: amount, note: text(h.note), createdById: ctx.user.id, updatedById: ctx.user.id });
-      await erpAudit(ctx, "erp.expense.create", "erp_expense", id, null, { who, amount, mode });
-      const bal = (await balances()).get(cashKey(who, godownId, mode)) ?? 0;
-      return okVoid(`Expense saved · ${inr(bal)} left with ${who}${bal < 0 ? " — more spent than given" : ""}`);
-    },
-  },
-  actions: {
-    verify: (ctx, id) => setExpenseStatus(ctx, [id], "Verify"),
-    pending: (ctx, id) => setExpenseStatus(ctx, [id], "Pending"),
-    async amount(ctx, id, v) {
-      const amount = paise(v.amount);
-      if (amount == null || amount <= 0) return fieldErr("amount", "Amount is required");
-      const [e] = await db.select().from(erpExpenses).where(eq(erpExpenses.id, id));
-      if (!e) return err("That expense no longer exists.", "not_found");
-      if (e.status === "Verify") return err("A verified expense is closed.", "rule_violation");
-      await db.update(erpExpenses).set({ amountPaise: amount, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpExpenses.id, id));
-      await erpAudit(ctx, "erp.expense.amount", "erp_expense", id, { amountPaise: e.amountPaise }, { amountPaise: amount });
-      return okVoid("Amount changed");
-    },
-  },
-  bulk: { verify: (ctx, ids) => setExpenseStatus(ctx, ids, "Verify") },
-};
-
-async function setExpenseStatus(ctx: ErpContext, ids: string[], status: "Verify" | "Pending"): Promise<Result<unknown>> {
-  if (!(ctx.administrator || ctx.level === "manager")) return err("A manager verifies expenses.", "not_permitted");
-  await db.update(erpExpenses).set({ status, updatedAt: new Date(), updatedById: ctx.user.id }).where(inArray(erpExpenses.id, ids));
-  await erpAudit(ctx, `erp.expense.${status.toLowerCase()}`, "erp_expense", ids.join(","));
-  return okVoid(`${ids.length} expense${ids.length === 1 ? "" : "s"} ${status === "Verify" ? "verified" : "back to Pending"}`);
-}
-
 /* ========================================================= my customers */
 
 const myCustomers: ScreenModule = {
@@ -594,8 +382,6 @@ export const LOGISTICS_SCREENS: ScreenModule[] = [
   transportList("pendingLr"),
   transportList("trackLr"),
   paidFreight,
-  credits,
-  expenses,
   myCustomers,
   videos,
 ];

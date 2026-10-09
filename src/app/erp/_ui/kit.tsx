@@ -4,7 +4,7 @@ import { createContext, useContext } from "react";
 import type { FormSpec, Tone } from "@/lib/erp/ui";
 import { FLAG, ST_TONE } from "@/lib/erp/ui";
 import type { Result } from "@/lib/result";
-import { erpLoadForm, erpRunAction, erpRunBulk, erpSubmitForm } from "@/lib/actions/erp";
+import { erpLoadForm, erpRunAction, erpRunBulk, erpRunTool, erpSubmitForm } from "@/lib/actions/erp";
 
 /* ---------------------------------------------------------------------------
  * What makes the generic screens one app's rather than another's.
@@ -51,6 +51,7 @@ export const ERP_KIT: ScreenKit = {
   runBulk: erpRunBulk,
   submitForm: erpSubmitForm,
   loadForm: erpLoadForm,
+  runTool: erpRunTool,
   uploadUrl: "/api/erp/attachments",
   flags: FLAG,
   tones: ST_TONE,

@@ -71,12 +71,12 @@ export async function unverifiedIds(): Promise<string[]> {
   return (await detailRows()).rows.filter((r) => !r.d.verification || r.d.verification === "Pending").map((r) => r.l.o.id);
 }
 
-/** Bills without an LR, requests awaiting a decision, expenses awaiting verification. */
+/** Bills without an LR, requests awaiting a decision, expenses waiting for a decision. */
 export async function logisticsCounts() {
   const [lr, req, exp] = await Promise.all([
     db.execute(sql`select id from erp_transports where lr_no is null or lr_no = ''`) as unknown as Promise<{ id: string }[]>,
     db.execute(sql`select id from complaints where status = 'open'`) as unknown as Promise<{ id: string }[]>,
-    db.execute(sql`select id from erp_expenses where status = 'Pending'`) as unknown as Promise<{ id: string }[]>,
+    db.execute(sql`select id from erp_expenses where not legacy and approval_status in ('submitted', 'under_review')`) as unknown as Promise<{ id: string }[]>,
   ]);
   return { pendingLr: lr.map((r) => r.id), requested: req.map((r) => r.id), pendingExpenses: exp.map((r) => r.id) };
 }
