@@ -6591,6 +6591,39 @@ and "Try a day" run over the UNSAVED rules with the real engine. Every write is
 `expense_policies`, written when it is created, so a day stamped with it keeps
 its foreign key.
 
+**THE STANDARD POLICY IS THE ISSUED DOCUMENT, and that dropped two things the
+code used to pay (Oct 2026).** Mahek's written Expense Policy is the standard
+policy's shipped figures, rule for rule (`STANDARD_DEFAULTS_VERSION` 2): a meal
+needs him to have LEFT between 11 PM and 8 AM (breakfast ₹100, lunch ₹150), and
+dinner (₹200) also needs him back after 10:30 PM — leaving after 8 AM earns
+nothing; a hotel is a FIXED ₹450 a night, paid whatever the bill (`flatPerNight`,
+and `decideExpense` approves that figure even above what he logged); a day room
+nothing; the ₹250 dormitory is paid beside the day's meals; local travel at
+actuals with no limit; a bill or a recorded trip with every claim
+(`travelLogCounts`). Own vehicles are NOT in the document, so they are
+`zero_rated` — the ₹3.50/km bike allowance is gone from the standard policy —
+and a food bill pays nothing, because meals are the allowance. Each of these is
+a field on a rule (`leftFrom/leftTo`, `returnedAfter/returnedBy`,
+`awayFromHometownOnly`, `flatPerNight`, `travelLogCounts`), so any of it can be
+undone or varied per policy from the editor. An untouched standard row
+(`updated_by_id` null) moves onto a newer edition on its next read, with a
+revision saying so; an edited one does not.
+
+**A POLICY CARRIES ITS OWN GUIDELINES.** `expense_policy_sets.guidelines` is the
+lines no rule can say — bills with every claim, advances by GPay, no calls after
+hours — edited on the Rules tab, shown in Preview, on the Sales page and, first,
+in the handset's policy sentences (no APK needed). **"Away from his hometown" is
+decided by the office**: the handset always sends true, so `refreshDayMoney`
+derives `departed_from_hometown` from `expense_hometowns` (set per salesman on
+"Who is on which") against the towns of the shops he checked in at, the city he
+named, and an overnight (`lib/expense-hometown.ts`, pure). With no hometown set
+the recorded answer stands. The tour advance the document describes (GPay 1–2
+days before a tour) is NOT built — there is no advance ledger yet.
+
+**A LOGGED BILL IS WORTH ITS OWN FIGURE.** `DayComputation.lineEligiblePaise`
+is per line, and `writeLineFigures` reads it; it used to share the day's
+eligible total in proportion to what was claimed, which with a ₹0 food bill
+beside a bus fare paid the food bill part of the fare.
 **THERE IS NO CLOSING A DAY, and that is a REVERSAL (Oct 2026).** A day used to
 reach a manager only when the salesman pressed Close the day → Send day on his
 phone, which priced it, LOCKED it and raised one approval for the whole day. In

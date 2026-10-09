@@ -16,10 +16,13 @@ export function PolicyView({
   sections = policyInWords(),
   title = STANDARD_POLICY_TITLE,
   intro = "one policy for every salesman who is not on another. The handset works each day out with these figures, and the manager decides what is logged.",
+  guidelines = [],
 }: {
   sections?: PolicySection[];
   title?: string;
   intro?: string | null;
+  /** The policy's own written lines, drawn above the figures. */
+  guidelines?: readonly string[];
 }) {
   return (
     <div className="space-y-4">
@@ -27,6 +30,17 @@ export function PolicyView({
         <div className="rounded-[8px] border border-line bg-canvas px-4 py-3 text-[13px] text-body">
           <span className="font-medium text-ink">{title}</span> — {intro}
         </div>
+      ) : null}
+
+      {guidelines.length ? (
+        <section className="rounded-[8px] border border-line bg-surface">
+          <h2 className="border-b border-line px-4 py-2.5 text-[14px] font-semibold text-ink">Guidelines</h2>
+          <ol className="list-decimal space-y-1.5 py-3 pr-4 pl-9 text-[13px] text-body">
+            {guidelines.map((g, i) => (
+              <li key={`${i}-${g}`}>{g}</li>
+            ))}
+          </ol>
+        </section>
       ) : null}
 
       {sections.length === 0 ? (

@@ -30,6 +30,7 @@ import {
   type Territory,
 } from "./territory-service";
 import { policyForDate, resolveSubject } from "./expense-policy-service";
+import { policySetForUser } from "./expense-policy-set-service";
 import { describeRule } from "../expense-rule-forms";
 import { verifyPassword } from "../password";
 import { findAccount, verifyOtp } from "./otp-service";
@@ -705,10 +706,12 @@ export async function mbosConfigPayload(): Promise<Record<string, unknown>> {
  * stripped of its qualifier would apply to a city class it was never meant for.
  */
 async function expensePolicyFor(userId: string, onDate: string) {
-  const [policy, subject] = await Promise.all([
+  const [policy, subject, set] = await Promise.all([
     policyForDate(onDate, userId),
     resolveSubject(userId, null),
+    policySetForUser(userId),
   ]);
+  const guidelines = set.guidelines;
   if (!policy) return null;
 
   const mine = policy.rules.filter(
@@ -723,7 +726,9 @@ async function expensePolicyFor(userId: string, onDate: string) {
     grade: subject.grade,
     cityClass: subject.cityClass,
     rules: mine as unknown[],
-    sentences: mine.map((r) => describeRule(r)),
+    /* The policy's written guidelines first, then a sentence per rule — the
+       handset draws this list as it comes, so no new APK is needed. */
+    sentences: [...guidelines, ...mine.map((r) => describeRule(r))],
   };
 }
 

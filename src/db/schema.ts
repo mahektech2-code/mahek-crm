@@ -7524,6 +7524,10 @@ export const expensePolicySets = pgTable("expense_policy_sets", {
   rules: jsonb("rules").$type<unknown[]>().notNull().default([]),
   revision: integer("revision").notNull().default(1),
   clonedFromId: text("cloned_from_id"),
+  /** The policy's own written lines, beside the rules. A list of strings. */
+  guidelines: jsonb("guidelines").$type<unknown[]>().notNull().default([]),
+  /** Which edition of the shipped figures an untouched standard row holds. */
+  defaultsVersion: integer("defaults_version").notNull().default(1),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   createdById: text("created_by_id").references(() => users.id),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -7542,6 +7546,7 @@ export const expensePolicySetRevisions = pgTable(
     name: text("name").notNull(),
     description: text("description"),
     rules: jsonb("rules").$type<unknown[]>().notNull(),
+    guidelines: jsonb("guidelines").$type<unknown[]>().notNull().default([]),
     note: text("note"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     createdById: text("created_by_id").references(() => users.id),
@@ -7568,6 +7573,19 @@ export const expensePolicyAssignments = pgTable(
   },
   (t) => [index("expense_policy_assignments_set_idx").on(t.setId)],
 );
+
+/**
+ * Where a salesman lives, for the expense policy's "away from his hometown".
+ * No row means not set, and the day keeps what the handset recorded.
+ */
+export const expenseHometowns = pgTable("expense_hometowns", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  city: text("city").notNull(),
+  setAt: timestamp("set_at", { withTimezone: true }).notNull().defaultNow(),
+  setById: text("set_by_id").references(() => users.id),
+});
 
 /**
  * The grades a policy may name.
