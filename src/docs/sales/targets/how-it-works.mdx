@@ -1,0 +1,88 @@
+A target is what somebody is appraised against, so the rules around it are about one thing: **nobody should be measured against a number they were not shown, or one that moved without a word.** That is why there is a draft, why publishing is its own act, why a published target changes only with a reason, and why the person is told every time.
+
+## Draft, published, revised
+
+<Flow caption="The life of one person's target for one month" chart={`
+stateDiagram-v2
+  [*] --> Draft: Save as draft
+  [*] --> Published: Carried forward on the 1st
+  Draft --> Draft: edited freely, nothing logged
+  Draft --> Published: Publish (at least one figure asked)
+  Published --> Published: Save the change — reason required,<br/>each moved figure recorded, person told
+`} />
+
+<Rule title="A draft reaches nobody">
+A manager builds many of these in an afternoon. A salesman watching his number change four times before lunch stops believing any of them, so nothing reaches a phone, the CRM screen or the score until it is published.
+</Rule>
+
+<Rule title="Publishing needs something asked">
+A target with none of the five figures set is refused: it would put "a score of nothing out of nothing" on somebody's phone.
+</Rule>
+
+<Rule title="A published target changes only with a reason">
+The reason is a code from <Setting k="performance.revisionReasons" />, so "which targets moved for the price revision" can be counted rather than grepped. One row is kept per figure that moved, in words — "₹13,00,000 → ₹14,50,000" reads back in a year. The person is notified.
+</Rule>
+
+## Null is not zero
+
+<Rule title="An empty figure is not asked">
+A figure left empty drops out of the score and its weight is shared among the rest, so the score stays "out of 100, against what was actually asked of you". Zero is a target nobody can fail and is refused as a divisor. The difference is load-bearing.
+</Rule>
+
+## What is asked
+
+| Figure | Measured as |
+|---|---|
+| Revenue | Approved order value excluding GST |
+| Volume | Litres, from cans × pack size |
+| New customers | Accounts whose first counting order lands in the month |
+| Collection | A share of what was **already overdue on the 1st**, collected as confirmed money |
+| Activity | A share — labelled *Tasks target* in the drawer |
+
+### The mix, by formulation
+
+The mix is set on **formulations** — the liquid a salesman actually sells — not on the three broad categories above them. A target carries as many formulations as that person's book warrants, each with minimum, target and stretch shares. Value whose product names no formulation lands in the residual *Other*, so the shares always total 100%.
+
+<Callout kind="why" title="Why bands are weighted by what was asked">
+Weighting by the actual share would let somebody who sold nothing but the easy line score a perfect mix. Each formulation is weighted by its target share, and a band that does not increase is refused by the database — it would score a larger share lower than a smaller one.
+</Callout>
+
+<Rule title="Nothing already set is reinterpreted">
+Targets set against the older broad categories go on scoring as categories. Reading "Universal 40%" as a formulation would mean inventing which liquid somebody meant.
+</Rule>
+
+## Carried forward
+
+On the first of the month, a scheduled job copies each person's **published** target from the month before — bands included — and publishes it again, but only where that person has no target for the new month at all. A draft in progress or a figure already saved is left alone, and a draft is never copied: nobody was told it, so there is no commitment to continue. The copy is marked *Carried forward* until somebody saves a real change.
+
+## Who is on the list
+
+The default list is the people who actually sell: an **associate** holding a book — the CRM, the Salesman App or the Sales Dashboard — who is credited with a live account. Anybody who already has a target for the month stays on the list whatever their role, because a target given to somebody is a decision and a filter must not hide it. Anybody else can be added. Next to each, their own average over the last <Setting k="targets.trailingMonths" /> months.
+
+## Who may set targets
+
+<CapabilityGrid names={["target.set"]} />
+
+<Rule title="Held by managers and by accounts">
+The accounts desk is who assigns and manages targets here, so the capability was **added** to accounts rather than moved — a manager coaching a shortfall can still act directly. It is checked in every action, not by hiding a button.
+</Rule>
+
+<Rule title="Setting the number and choosing the book are different people's jobs">
+Moving which accounts feed a target is a separate permission held by accounts and admins only. No one person can both choose the number and choose the book that fills it.
+</Rule>
+
+Opening the screen needs <ModuleRef k="sales.targets" /> **and** `target.set`. Withholding the module leaves the month readable on Performance and unchangeable.
+
+## Two doors, one feature
+
+| Door | Who uses it | Adds |
+|---|---|---|
+| Sales Dashboard → Sales Targets | Sales managers | — |
+| Accounts → Sales targets | The accounts desk | The revision history drawer |
+
+Both read and write through the same functions, so the two can never draw a different picture of one target. A **customer's** monthly target is a different grain and a different screen — [Monthly targets](/docs/crm/targets).
+
+## Where the code and the intent disagree today
+
+- **The revision history is only on the Accounts door.** Sales managers who revise a target cannot see the trail on their own screen.
+- **The activity figure is labelled "Tasks target"** in the drawer while every other screen, and the score, call it activity.

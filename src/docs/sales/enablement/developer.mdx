@@ -1,0 +1,113 @@
+Documents are `mbos_documents` rows with exactly one `attachments` row behind them (parent type `mbos_document`); courses are `mbos_courses`, optionally with a file (parent type `mbos_course`), and `mbos_course_progress` per salesman. The office writes through `src/lib/actions/sales.ts`; handsets receive them on the pull from `src/lib/services/mbos-service.ts` and learn what stopped from `mbos_deletions`.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Route guards | `src/app/sales/documents/layout.tsx`, `src/app/sales/knowledge/layout.tsx` | `sales.documents`, `sales.knowledge` |
+| Documents screen | `src/app/sales/documents/documents-screen.tsx`, `tag-people.tsx` | List, publish dialog, details drawer, Tag employees |
+| Knowledge screen | `src/app/sales/knowledge/knowledge-screen.tsx` | Courses, completion counts, publish dialog |
+| Upload | `src/app/sales/publish-upload.ts` | The file upload the publish dialogs share |
+| Reads | `src/lib/services/sales-service.ts` | `documents`, `documentPeople`, `courses` |
+| Writes | `src/lib/actions/sales.ts` | `publishDocument`, `updateDocument`, `setDocumentPeople`, `setDocumentPublished`, `publishCourse`, `setCoursePublished`; helpers `taggedPeople`, `applyTagChange`, `tombstone` |
+| Pull | `src/lib/services/mbos-service.ts` | `visibleDocuments`, `coursesFor` |
+| File access | `src/lib/services/attachment-service.ts` | `canRead` → `canReadDocument`; a course file reads while the course is active |
+| Handset | `mbos-app/app/doc-view.tsx`, `mbos-app/src/data/library.ts` | In-app viewer (PDF via `modules/pdf-preview`), download, open elsewhere |
+
+## Publishing, end to end
+
+<Flow caption="publishDocument → a phone" chart={`
+sequenceDiagram
+  autonumber
+  participant U as Documents screen
+  participant A as publishDocument
+  participant DB as Postgres
+  participant P as mbos-service pull
+  participant H as Handset
+  U->>U: upload the file (attachment, unparented)
+  U->>A: title, category, attachmentId, tagged ids
+  A->>A: requireSalesAccess(sales.documents, manager), checkTitle
+  A->>DB: taggedPeople — every id must hold the field app
+  A->>DB: insert mbos_documents, bindAttachments
+  alt file not bound
+    A->>DB: delete the document — nothing half-published
+  end
+  A->>DB: audit_log mbos.document.publish, notify tagged
+  H->>P: next pull
+  P->>DB: visibleDocuments — active, untagged or tagged to him, plus mbos_deletions
+  P-->>H: rows, then tombstones
+`} />
+
+<Code file="src/lib/actions/sales.ts" symbol="publishDocument" collapsed />
+
+<Code file="src/lib/actions/sales.ts" symbol="taggedPeople" collapsed />
+
+<Code file="src/lib/actions/sales.ts" symbol="applyTagChange" collapsed />
+
+<Code file="src/lib/actions/sales.ts" symbol="setDocumentPublished" collapsed />
+
+<Code file="src/lib/actions/sales.ts" symbol="publishCourse" collapsed />
+
+<Code file="src/lib/actions/sales.ts" symbol="setCoursePublished" collapsed />
+
+<Code file="src/lib/services/mbos-service.ts" symbol="visibleDocuments" collapsed />
+
+## Tables
+
+<DbTable name="mbos_documents" only={["title", "category", "attachment_id", "customer_id", "visible_to_roles", "visible_to_user_ids", "active", "audience", "audience_employee_ids"]} note={{
+  attachment_id: "Required on publish. updateDocument may replace it.",
+  visible_to_user_ids: "Empty means everybody holding the field app.",
+  active: "False is withdrawn — never deleted.",
+  audience: "Set by HRMS for documents published there; the Sales Dashboard does not edit it.",
+}} />
+
+<DbEnum name="mbos_document_category" />
+
+<DbTable name="mbos_courses" only={["title", "category", "duration_minutes", "attachment_id", "pass_mark_percent", "mandatory", "due_date", "active"]} note={{
+  due_date: "Only on a mandatory course.",
+  attachment_id: "Optional — a briefing given in a meeting is still a course.",
+}} />
+
+<DbTable name="mbos_course_progress" />
+
+<DbTable name="mbos_deletions" note={{
+  entity: "documents · courses (and other reference data).",
+  user_id: "Null means every handset; set for an untag that touches one person.",
+  reason: "withdrawn · untagged.",
+}} />
+
+## Access
+
+<ModuleRef k="sales.documents" /> <ModuleRef k="sales.knowledge" />
+
+Writes use `requireSalesAccess(SALES_MANAGER(module))`. A course is filed under its own attachment parent, not `mbos_document`, because `canRead` decides who may open a file from the parent kind — a course deck read under the document rules would meet role lists and a customer scope a course does not have.
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test:integration` | `src/lib/document-tagging.test.ts` | Picker offers field holders only; untagged reaches all; strangers refused; untag tombstones and re-tag lifts it; replacing the file keeps tags; republish is not undone by its own tombstone |
+| `npm run test` | `src/lib/mbos-wire.test.ts` | Document and course columns fit the handset schema |
+| `npm run test` | `mbos-app/src/data/reachable.test.ts` | Every handset data export has a caller |
+
+## Changing it safely
+
+<Steps>
+<Step title="Every way a phone loses sight of a row needs a tombstone">
+Withdraw, untag, a narrowed audience — each must write to `mbos_deletions`, scoped to the people affected.
+</Step>
+<Step title="Every way it regains sight must lift the tombstone">
+Upserts apply before tombstones on the handset; a standing tombstone deletes a row the same pull delivered.
+</Step>
+<Step title="Never publish a row without its file">
+Bind first, and roll the row back if binding fails.
+</Step>
+</Steps>
+
+## Known gaps
+
+| Gap | Where |
+|---|---|
+| `setCoursePublished(true)` does not delete the course's `withdrawn` tombstone (documents do) | `actions/sales.ts` `setCoursePublished` |
+| `publishCourse` ignores a failed `bindAttachments` | `actions/sales.ts` `publishCourse` |
+| Courses cannot be edited after publishing — only withdrawn and republished | `actions/sales.ts` |

@@ -1,0 +1,118 @@
+Journeys & visits is one route, `/sales/journeys`, with four tabs rendered server-side from `src/app/sales/journeys/page.tsx`. Plans live in `mbos_journey_plans` (one row per person per day, carrying `day_state`) and `mbos_journey_stops`. The office writes through `proposeJourneyDays`, `answerRefusal` and `saveJourneyPeriod`; the handset writes through `handlePlanDay` (agree, refuse, or start a day) and `handlePlanStops` (the whole shop list) in `src/lib/actions/mbos.ts`. Visit verdicts are `acceptVisit`, `decidePinCorrection` and `askAboutVisit`. `/sales/visits` survives only as a redirect to the Visit log tab.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Module guard | `src/app/sales/journeys/layout.tsx` | `requireModule(user.id, "sales.journeys")` |
+| Page (server) | `src/app/sales/journeys/page.tsx` | Tabs `team`, `today`, `salesman` (`view=calendar|list|propose`), `visits`; the person modal (`?in=`) |
+| Tabs | `team-tab.tsx`, `today-tab.tsx`, `salesman-tab.tsx`, `visits-tab.tsx`, `visit-parts.tsx` | Rendering |
+| Planning UI | `src/app/sales/journeys/journeys-screen.tsx` | Propose, answer refusal, pick shops yourself |
+| Old route | `src/app/sales/visits/page.tsx` | Redirects to `?tab=visits` |
+| Reads | `src/lib/services/journey-service.ts` | `teamJourneySummary`, `journeyHistory`, `calendarFacts` |
+| Reads | `src/lib/services/sales-service.ts` | `journeyPlansFor`, `journeyPlansBetween`, `visitsList`, `visitsBetween`, `fieldBook` |
+| Office writes | `src/lib/actions/sales.ts` | `proposeJourneyDays`, `answerRefusal`, `saveJourneyPeriod`, `acceptVisit`, `decidePinCorrection`, `askAboutVisit` |
+| Handset writes | `src/lib/actions/mbos.ts` | `handlePlanDay`, `handlePlanStops`, `handleVisit` |
+| Day helpers | `src/lib/journey-days.ts` | `monthGrid`, `monthParam` |
+
+## The plan, end to end
+
+<Flow caption="Propose, refuse, take his city, pick shops" chart={`
+sequenceDiagram
+  autonumber
+  participant M as Manager (journeys-screen)
+  participant A as actions/sales.ts
+  participant DB as Postgres
+  participant H as Handset
+  participant X as actions/mbos.ts
+  M->>A: proposeJourneyDays(salesmanId, days with city)
+  A->>DB: upsert plan rows day_state = proposed (skip agreed and planned)
+  A->>H: tell 'N days proposed for you' (/journey)
+  H->>X: plan_day answer = refused, reason, counterCity
+  X->>DB: day_state = refused, notifyManagers
+  M->>A: answerRefusal(planId, take = counter)
+  A->>DB: city = counter_city, day_state = agreed
+  A->>H: tell '… is agreed — city'
+  H->>X: plan_stops — the WHOLE list, in order
+  X->>X: drop shops no longer in his book
+  X->>DB: replace stops, day_state = planned (or agreed if none)
+  X->>H: notify 'N shops left out' when any were dropped`} />
+
+<Code file="src/lib/actions/sales.ts" symbol="proposeJourneyDays" collapsed />
+
+<Code file="src/lib/actions/sales.ts" symbol="answerRefusal" collapsed />
+
+<Code file="src/lib/actions/mbos.ts" symbol="handlePlanDay" collapsed />
+
+<Code file="src/lib/actions/mbos.ts" symbol="handlePlanStops" collapsed />
+
+<Code file="src/lib/actions/sales.ts" symbol="saveJourneyPeriod" collapsed />
+
+`saveJourneyPeriod` validates every day before writing any, in one transaction, and tombstones stops it removes so the handset drops them on its next pull.
+
+## Tables
+
+<DbTable name="mbos_journey_plans" only={["user_id", "plan_date", "city", "day_state", "proposed_by_id", "proposed_at", "refusal_reason", "counter_city", "responded_at", "self_planned", "status", "beat", "area"]} note={{
+  day_state: "proposed · refused · agreed · planned — the agreement. Unique per user and day.",
+  refusal_reason: "Required on a refusal. Cleared when the office answers.",
+  counter_city: "The city he would rather work, if he named one. 'Take his city' uses it.",
+  self_planned: "True when the day was started on the handset.",
+  status: "The walking status (draft, active, completed, abandoned) — separate from day_state.",
+}} />
+
+<DbEnum name="mbos_plan_day_state" />
+
+<DbTable name="mbos_journey_stops" only={["plan_id", "customer_id", "sequence", "status", "skip_reason", "actual_visit_at"]} note={{
+  sequence: "Walking order, as the handset sent it.",
+  status: "planned · visited · skipped.",
+}} />
+
+## Visit verdicts
+
+<DbTable name="mbos_visits" only={["verified", "unverified_reason", "distance_from_shop_m", "check_in_lat", "check_in_lng", "check_in_override_reason", "was_planned", "deviation_reason", "accepted_at", "accepted_by_id", "pin_correction", "pin_correction_decided_at", "pin_correction_decided_by_id"]} note={{
+  verified: "What the phone could confirm; acceptVisit sets it true with the manager's name.",
+  check_in_override_reason: "His words when he checked in past the radius.",
+  pin_correction: "requested · accepted · rejected. Carries no coordinates — accepting copies check_in_lat/lng onto the customer.",
+  was_planned: "False draws 'Off plan'; deviation_reason is why he went.",
+}} />
+
+<Code file="src/lib/actions/sales.ts" symbol="acceptVisit" collapsed />
+
+<Code file="src/lib/actions/sales.ts" symbol="decidePinCorrection" collapsed />
+
+## Access
+
+- **Module:** <ModuleRef k="sales.journeys" /> on the page and on every office action, at manager level.
+- **Scope:** `salesmanOutsideScope` on the salesman (or the plan's user) in every action; every read narrows through `managerScope`.
+- **Self-dealing:** `acceptVisit` and `decidePinCorrection` refuse the salesman's own record.
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/journey-days.test.ts` | Month grids and day parameters |
+| `npm run test` | `src/lib/engines/mbos-payload-contract.test.ts` | The `plan_stops` payload the handset sends |
+| `npm run test:integration` | `src/lib/check-in-gate.test.ts` | The radius, overrides, pin requests, `decidePinCorrection` |
+| `npm run test:integration` | `src/lib/journeys.test.ts` | Journeys of the whole product, including field visits |
+
+## Changing it safely
+
+<Steps>
+<Step title="Keep plan_stops whole-list">
+Never change the handset contract to a delta. A merge makes unpicking impossible.
+</Step>
+<Step title="Never refuse a visit on the server">
+Mark it unverified and say why. A refused visit loses the work attached to it.
+</Step>
+<Step title="Tombstone removed stops">
+Anything that deletes a stop must write an `mbos_deletions` row, or the phone keeps it.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| `acceptVisit` and `decidePinCorrection` notify nobody | `src/lib/actions/sales.ts` |
+| `askAboutVisit` stores the question only in `audit_log`; nothing on the visit records it | `src/lib/actions/sales.ts` `askAboutVisit` |
+| No test exercises `proposeJourneyDays` or `answerRefusal` directly | `src/lib/*.test.ts` |

@@ -1,0 +1,89 @@
+Leave and holidays answer the same question from two ends: **on which days is this person not expected to work?** Leave is a person asking; a holiday is the company saying. Both feed the attendance verdict, the cost of leave, the journey calendar, the salesman's own handset and — for company-wide holidays — the month-end forecast.
+
+## Leave
+
+<Flow caption="A leave request from the handset to a decision" chart={`
+flowchart TD
+  A["Salesman applies on the handset<br/>kind, dates, half day, reason"] --> B{"Office checks on sync"}
+  B -- "Ends before it starts" --> R1["Not accepted"]
+  B -- "Every day is a holiday<br/>or a non-working day" --> R2["Not accepted:<br/>no leave to take"]
+  B -- "Overlaps his own pending<br/>or approved request" --> R3["Not accepted:<br/>withdraw that one first"]
+  B -- "Fine" --> C["Stored, his manager notified"]
+  C --> D{"A manager decides"}
+  D -- "Approve" --> E["Answer reaches the phone<br/>attendance reads on leave"]
+  D -- "Refuse, with a reason" --> F["Answer and reason reach the phone"]
+  C --> W["He withdraws it"] --> X["Withdrawn — nothing to decide"]
+`} />
+
+<Rule title="A day nobody works is not a day of leave">
+The days a request costs are his **working** days in the range: the company's working week, minus the holidays that apply **to him**. A Friday-to-Monday request across a Sunday off costs three days, not four. A state holiday in a state he does not work is a working day for him. A half day means something only on a single-day request.
+</Rule>
+
+<Callout kind="why">
+It used to count plain calendar days, so somebody spent four days of balance to be absent for two. And it used to count every holiday in the company, so leave across a holiday in a state he never works became cheaper than it should be.
+</Callout>
+
+<Rule title="Nobody answers their own request, and a refusal needs a reason">
+A manager who also carries a handset raises leave like anybody else, and his request lands in the queue he decides. So his own is refused to him. Refusing anybody's asks for words: he has to be able to do something differently.
+</Rule>
+
+<Rule title="A withdrawn request is not a request">
+The salesman may withdraw his own request from the handset — the only change a handset may make to one. A withdrawn request leaves the queue, and approving it is refused: it once debited his balance and told him his leave was approved for days he had said he no longer wanted.
+</Rule>
+
+<Rule title="Only for your own team">
+Deciding leave needs the Leave screen (or the Approvals queue) and a manager's level, and the request must come from somebody inside your team.
+</Rule>
+
+### Overlaps
+
+Two people off in the same week leave those shops unworked, and a manager approving the second request usually cannot see the first. The **Also off** column and the banner are worked out at the moment you look — not stored — because they are a question about the calendar as it stands. A salesman cannot file a second request overlapping his own pending or approved one.
+
+### Allowances live in HRMS
+
+The Leave screen shows **days taken**, never days left. How many days a person is allowed is kept in HRMS; what has been used is worked out from approved, unwithdrawn requests rather than counted up as decisions are made — a counter would drift the first time a decision was reversed.
+
+## Holidays
+
+<Rule title="A holiday has a level, and the level decides who gets it">
+**Company-wide** reaches everybody, except anybody it is taken from. **State, district, city or area** reaches the salesmen whose allocated territory lies in the places picked. **Named people** reaches exactly those named. On any of them a manager can give the day to somebody by name, or take it away with a reason.
+</Rule>
+
+Who each holiday reaches is worked out from the place tree, each salesman's territory and the named allocations, and stored as a membership list. It is rebuilt after every holiday change, every allocation and every territory change, and hourly as a safety net. A company-wide holiday is never listed — it reaches a salesman granted the app this minute, before any rebuild has run.
+
+<Callout kind="why">
+A state holiday in Odisha is not a day a man in Nagpur was going to be off. Treating every holiday as everybody's made leave cheaper than it should be and marked people "on holiday" on days they were expected at work.
+</Callout>
+
+<Rule title="No holiday entered twice">
+A second holiday with the same name on the same date is refused — two entries would be two answers to who is off. Different holidays on one date (a state's and a city's) are allowed.
+</Rule>
+
+A change reaches the handsets on their next sync (only holidays whose audience actually changed are re-sent), and each holiday is mirrored into HRMS for the same people. Removing a holiday takes it off the office's screens, the phones and HRMS.
+
+## What reads the calendar
+
+| Reader | Which holidays | Effect |
+|---|---|---|
+| **Attendance verdict** | His own | A day with too little work on one of his holidays reads *holiday*, not *absent*. Work always comes first. |
+| **Leave** | His own | His holidays are not charged as leave. |
+| **Journeys** | His own | His journey calendar shows the days he is off. |
+| **The handset** | His own | His phone shows his holidays. |
+| **Performance forecast** | Company-wide only | The month's working days exclude company holidays and the days outside the working week (<Setting k="workingDay.workingDays" />). See [Performance](/docs/sales/performance/how-it-works). |
+
+<Callout kind="why" title="Working days, never dates">
+A month with four Sundays left is not two thirds gone because twenty of thirty dates have passed. A forecast built on dates tells a salesman on the 20th that he is further behind than he is. Today is never counted as elapsed — dividing by a day still being worked would make everybody look behind every morning.
+</Callout>
+
+## Who can do what
+
+| Action | Needs |
+|---|---|
+| See Leave | The **Leave** module |
+| Approve or refuse leave | Leave (or Approvals), a manager's level, the person in your team, not your own |
+| See and edit Holidays | The **Holidays** module and a manager's level |
+
+## Where the code and the intent disagree today
+
+- **The forecast reads company-wide holidays only**, while attendance, leave and journeys read each person's own. A state holiday therefore lowers a salesman's working days for his attendance but not for his forecast.
+- **Holiday edits are not narrowed to a manager's team.** Anybody with the Holidays module and a manager's level can add or remove a company-wide holiday that reaches the whole field, and can name any MahekOne user on a named-people holiday.

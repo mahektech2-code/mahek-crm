@@ -1,0 +1,128 @@
+The Live map shows **where your salesmen are**. In the morning you use it to see who is out and where; in the evening, to see the shape of each person's day — where they went, where they stopped, and where they made visits. Beside the map, the team list says, in plain words, what is wrong with any phone that has stopped reporting.
+
+<Callout kind="note">
+Positions are only recorded **between a salesman's check-in and his check-out**. Nothing is tracked before he starts the day or after he ends it. A missing pin usually means a day that was never started.
+</Callout>
+
+## The screen at a glance
+
+<Wireframe url="/sales/live" nav={["Today", "#Overview", "Live map", "Territory", "Performance"]} active="Live map" caption="The Live map, 'Where they are now', with two warnings">
+  <WfBar>
+    <WfTitle>Live map</WfTitle>
+    <WfText muted>11 salesmen · 6 out now · 2 punched out · 3 not checked in</WfText>
+    <Hotspot n={1} />
+    <WfSpacer />
+    <WfButton>←</WfButton><WfButton>→</WfButton>
+    <WfButton primary>Where they are now</WfButton><WfButton>Everywhere they went today</WfButton>
+    <Hotspot n={2} />
+    <WfButton>About</WfButton>
+  </WfBar>
+  <WfBar>
+    <WfPill tone="danger">2 salesmen out today with no trail at all</WfPill>
+    <WfPill tone="warn">1 salesman whose route has stopped reaching us</WfPill>
+    <Hotspot n={3} />
+  </WfBar>
+  <WfBar>
+    <WfBlock h={220} label="Map — a pin for each salesman with a fix, shops and leads nearby underneath" />
+    <WfPanel title="Team" side>
+      <WfInput placeholder="Find a salesman, a place or a phone" wide />
+      <Hotspot n={4} />
+      <WfTable columns={["Salesman", "Last seen"]} rows={[
+        ["Salesman A · 18 km/h", "2 min ago"],
+        [<span key="b">Salesman B <WfPill tone="danger">Needs attention</WfPill> <Hotspot n={5} /></span>, "Last seen 11:04"],
+        ["Salesman C", "Not checked in"],
+        ["Salesman D", "On approved leave"],
+      ]} />
+    </WfPanel>
+  </WfBar>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>The team in numbers.</b> How many salesmen, out now, punched out, not checked in and on leave.</span>,
+  <span key="2"><b>Day and view.</b> Step a day back or forward; switch between <i>where they are now</i> and <i>everywhere they went</i>. <i>About</i> explains the screen and how often a phone reports.</span>,
+  <span key="3"><b>Warnings.</b> One chip per kind of problem across the team. Click for the explanation and the fix.</span>,
+  <span key="4"><b>Team list.</b> Everyone is listed, with or without a position. Search by name, place or phone model.</span>,
+  <span key="5"><b>A row that needs attention.</b> Opens a short note naming what is wrong with that phone and what the salesman has to do.</span>,
+]} />
+
+## The two views
+
+<Cards cols={2}>
+<Card title="Where they are now" tone="brand">One pin per salesman at his **latest position**. Moving salesmen show a speed. On a past day this becomes **Last position** — where each one was last seen that day.</Card>
+<Card title="Everywhere they went today">Each salesman's **trail**, in the order the positions arrived, with visits, stops and other work marked along it. A **dashed** stretch is a real gap: two positions far enough apart that the road between them is not known.</Card>
+</Cards>
+
+When you select somebody in the team list on *Everywhere they went*, their trail is laid onto the roads they actually travelled. That takes a moment and only happens for the person you pick.
+
+## Reading the warnings
+
+| Warning | What it means | What fixes it |
+|---|---|---|
+| **Following the route is switched off** | Tracking is off for the whole team. Only check-ins and visits leave a position. | Turn it on in the field settings. |
+| **N salesmen with no GPS signal** | No position at all from these phones. | Usually the day was never started. |
+| **N handsets reporting the tracker stopped** | The phone's own watchdog says tracking was accepted and then killed. | On the phone: Sync → **Keep tracking on**, which walks through autostart and battery settings. |
+| **N salesmen out today with no trail at all** | Checked in, the phone is talking to us, and not one position since. | Allow MahekOne to autostart and set battery use to unrestricted, then punch out and back in. |
+| **N salesmen whose route has stopped reaching us** | Positions stopped arriving; the map shows where he *was*, not where he is. | Often the phone is holding them and will send them later — the row says so. |
+| **N salesmen whose trail will have gaps** | The phone stops taking positions when the screen locks. | Location permission → *Allow all the time*. |
+
+The four "today" warnings are only shown for today. A problem reported this afternoon says nothing about a day last month.
+
+## What a row in the team list can say
+
+A healthy phone says nothing extra — a row with no note is a phone that is working. When something is wrong, the row carries one short line. The commonest:
+
+| The row says | Means |
+|---|---|
+| **Location only while the app is open** | The trail dies every time the phone locks. |
+| **Location refused for MahekOne** | No trail at all; visits save with no coordinates. |
+| **Location switched off on the phone** | The phone's own location toggle is off. |
+| **Location not asked for yet** | Clears on his first check-in. |
+| **His phone stopped the tracker** | Battery management killed tracking. Fixed once on Sync → Keep tracking on. |
+| **Route recorder not running** | Restarts itself on the next wake-up; his work is safe on the phone. |
+| **No background sync for …** | His work goes up only when he opens the app. |
+| **Battery …% — read … ago** | Every battery figure says how old it is. There is no live battery reading. |
+
+<Callout kind="warn" title="'Last seen' is the last contact, not a live position">
+A phone speaks when it syncs. Every figure on a row — battery, last seen, last fix — is "at last contact". The row says how long ago.
+</Callout>
+
+## Common tasks
+
+<Steps>
+<Step title="Find where somebody is now">
+Open the Live map. Type his name in the team list and select him; the map moves to his pin.
+</Step>
+<Step title="Read one salesman's whole day">
+Select him and open his day. It opens in a new tab with his trail and a timeline of every punch, journey, stop, visit and order. Close the tab to return to the team.
+</Step>
+<Step title="Check a past day">
+Press ← to step back. Trails and positions are for that day; the today-only warnings disappear.
+</Step>
+<Step title="Find out why a trail is broken">
+Click the row marked **Needs attention**. The note names the cause and the setting the salesman has to change on his phone.
+</Step>
+</Steps>
+
+## When the map itself does not draw
+
+| You see | Means |
+|---|---|
+| **The map needs a key** | No Ola Maps key is set. The team list still works. An admin adds one in Admin Console → Integrations. |
+| **Every Ola Maps key has run out** | Every key has hit its monthly quota. Streets return when one resets or another key is added. |
+| **Nothing to place yet** | No phone has sent a position. Everyone is still listed beside the map. |
+| **The map could not be drawn** | The map itself failed to load in this browser. Positions are still recorded. |
+
+## Questions people ask
+
+<Faq q="A salesman is in the team list but has no pin.">
+He has no position for the day. The map never invents a spot for anybody — the row says why there is none.
+</Faq>
+<Faq q="Can I see where a salesman is after he checks out?">
+No. Tracking stops at check-out, on purpose. The map would otherwise follow people home.
+</Faq>
+<Faq q="The trail cuts straight across fields.">
+That stretch is a real gap — the phone sent nothing between those two points. It is drawn dashed. Most often the phone killed tracking; the row usually says so.
+</Faq>
+<Faq q="Is the salesman's position sent to the map company?">
+No. The map supplier is only asked for squares of map. The pins are drawn from MahekOne's own data.
+</Faq>

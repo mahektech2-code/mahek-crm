@@ -1,0 +1,87 @@
+Five screens under **Administration** run the handsets from the office: **App preferences** (the thresholds every phone reads), **Login history** (which phone each salesman is bound to), **Sync health** (whose phone has gone quiet, and what the office has refused from it), **Send a notification** (a message to one salesman, a few, or the whole team) and the **Audit trail** (every decision made on the Sales Dashboard, with a name against it).
+
+## App preferences
+
+<Wireframe url="/sales/prefs" nav={["#Administration", "Salesmen", "App preferences", "Login history", "Sync health", "Send a notification", "Audit trail"]} active="App preferences" caption="Field settings">
+  <WfBar><WfTitle sub="The thresholds every handset reads. A change here reaches a salesman on his next sync, not the moment you press save.">Field settings</WfTitle><WfSpacer /><WfButton primary>Save 2 changes</WfButton><Hotspot n={1} /></WfBar>
+  <WfCard title="Attendance"><WfField label="Geofence radius (metres)"><WfInput placeholder="500" /></WfField><WfField label="Photographs kept for (hours)"><WfInput placeholder="72" /></WfField><Hotspot n={2} /></WfCard>
+  <WfCard title="Everything else"><WfText muted>Field settings that have not been given a section yet.</WfText><Hotspot n={3} /></WfCard>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Save.</b> Saves only what you changed. If a change interacts with another setting, the screen says so after saving.</span>,
+  <span key="2"><b>Groups.</b> Every setting whose name starts with <code>mbos.</code>, grouped by subject, each with its description and whether it is still at the shipped default.</span>,
+  <span key="3"><b>Everything else.</b> Any field setting not yet given a section still appears — a setting on no screen is a setting nobody can change.</span>,
+]} />
+
+Opening this screen needs the App preferences module; **saving** also needs permission to change settings, which a manager on the Sales Dashboard holds and an associate does not. Only field settings can be saved here. Saved changes reach each handset on its next sync. Settings for the rest of MahekOne are in the Admin Console.
+
+## Login history
+
+One row per salesman: the handset he is bound to, its app version, when it was bound and when it last spoke, and its state.
+
+| State | It means |
+|---|---|
+| <Pill tone="success">Active</Pill> | Bound to a phone. |
+| <Pill tone="warn">No handset</Pill> | He has never signed in on a phone. |
+| <Pill>Released</Pill> | The binding was released — hover for the reason. |
+
+With one phone per person switched on, a second phone is **refused** until the first is released. That is not a fault; it is what stops one salesman's visits being logged from somebody else's phone. **Release** asks for a reason.
+
+<Callout kind="note">
+Despite its name this is not a log of sign-in attempts — MahekOne keeps no failed-attempt records or sign-in locations. What it shows is each device binding and the last time each handset spoke.
+</Callout>
+
+## Sync health
+
+<Wireframe url="/sales/sync-health" active="Sync health" caption="Sync health">
+  <WfBar><WfTitle sub="When each handset last reached MahekOne, and what it has sent that the server refused or flagged.">Sync health</WfTitle></WfBar>
+  <WfBar>
+    <WfCard title="Quiet handsets"><WfText>2 · no signal in 24h</WfText></WfCard>
+    <WfCard title="Rejected in 7 days"><WfText>5</WfText></WfCard>
+    <WfCard title="Unresolved conflicts"><WfText>1</WfText></WfCard>
+  </WfBar>
+  <WfTable columns={["Salesman", "Handset", "Last spoke", "Rejected, 7d", "Conflicts, 7d", "Unresolved", "State"]} rows={[
+    ["Salesman A", "Phone model", "2 days ago", "0", "0", "0", <WfPill key="a" tone="warn">Quiet</WfPill>],
+    ["Salesman B", "Phone model", "10 min ago", "4", "1", "1", <span key="b"><WfPill tone="danger">Being refused</WfPill> <Hotspot n={1} /></span>],
+    ["Salesman C", "Phone model", "3 min ago", "0", "0", "0", <WfPill key="c" tone="success">Healthy</WfPill>],
+  ]} />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Being refused.</b> The office turned down things this phone sent in the last week. The salesman sees each one, with the reason, on his handset's <i>Sync & rejections</i> screen.</span>,
+]} />
+
+A handset is **Quiet** when it has not reached the office for more than <Setting k="mbos.sync.quietHours" /> hours. This screen cannot show what is still waiting on a phone — something that never reached the office leaves nothing here; that view is on the handset itself.
+
+## Send a notification
+
+<Steps>
+<Step title="Pick who">
+The whole field team, or named people from your team.
+</Step>
+<Step title="Write a title and the message">
+The title is what shows first ("New price list from Monday"); the message says what you mean. Both are required.
+</Step>
+<Step title="Read it back, then send">
+There is no undo. It lands in the app straight away and pushes to any handset with notifications turned on.
+</Step>
+</Steps>
+
+The screen warns you when **push cannot reach anybody** (push switched off, no project id set, or no phone holding a push token), when **recent pushes did not arrive**, and when **some of your team have no handset registered for push** — they still see the message the next time they open the app, they just do not feel a buzz.
+
+## Audit trail
+
+Every decision made on the Sales Dashboard — approving or refusing a request, publishing or withdrawing a document, releasing a handset, sending a notification, publishing a route — with **when**, **who**, **what**, and the detail. It is the same audit log the rest of MahekOne writes, filtered to the field. The newest rows are shown, with a sentence saying how many there are in all.
+
+## Common questions
+
+<Faq q="I changed a setting and the salesman's phone still shows the old value.">
+Settings reach a phone on its next sync. Ask him to open the app with a signal.
+</Faq>
+<Faq q="A salesman has a new phone and cannot sign in.">
+His old phone is still bound. Release it on Login history (or on his row in Salesmen), with a reason.
+</Faq>
+<Faq q="I sent a notification and nobody felt it.">
+Read the banners on the Send a notification screen — push may be switched off, or their phones may hold no push token yet. The message is still in their app.
+</Faq>

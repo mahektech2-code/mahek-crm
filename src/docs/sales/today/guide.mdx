@@ -1,0 +1,117 @@
+Today is the Sales Dashboard's home. It answers two questions every morning: **how is the team's day going**, and **what is waiting on me**. Everything on it links to the screen where you act on it.
+
+## The screen at a glance
+
+<Wireframe url="/sales" caption="Today, for a manager with seven things waiting">
+  <WfBar>
+    <WfTitle sub="WEDNESDAY 8 OCT">Good morning, Manager</WfTitle>
+    <WfSpacer />
+    <WfButton>‹</WfButton><WfButton>Today</WfButton><WfButton>›</WfButton>
+    <Hotspot n={1} />
+    <WfButton>Team map</WfButton>
+    <WfButton primary>Review 7</WfButton>
+    <Hotspot n={2} />
+  </WfBar>
+  <WfBar>
+    <WfCard title="Out now"><WfText>6 / 11</WfText></WfCard>
+    <WfCard title="Visits"><WfText>23 · 18 of 30 planned stops</WfText></WfCard>
+    <WfCard title="Orders"><WfText>5 · ₹1.4L captured</WfText></WfCard>
+    <WfCard title="Collected"><WfText>₹62,000 · reported, not yet confirmed</WfText></WfCard>
+    <Hotspot n={3} />
+  </WfBar>
+  <WfCard title="Waiting on you">
+    <WfBar>
+      <WfPill tone="danger">2 Orders over the credit limit</WfPill>
+      <WfPill tone="warn">3 Expense claims</WfPill>
+      <WfPill tone="warn">1 Days he will not walk</WfPill>
+      <WfPill>1 Leave requests</WfPill>
+      <Hotspot n={4} />
+    </WfBar>
+  </WfCard>
+  <WfBar><WfPill tone="brand">All</WfPill><WfPill>Out now</WfPill><WfPill>Finished</WfPill><WfPill>Not started</WfPill><WfSpacer /><WfInput placeholder="Search salesmen" /><Hotspot n={5} /></WfBar>
+  <WfTable
+    columns={["Salesman", "Status", "Visits", "Orders", "Order value", "Collected", "Planned route"]}
+    rows={[
+      [<span key="a"><b>Salesman A</b> <Hotspot n={6} /></span>, <WfPill key="b" tone="success">Out since 09:12</WfPill>, "5", "2", "₹48,000", "₹12,000", "4/6"],
+      ["Salesman B", <span key="c"><WfPill tone="warn">Out since 09:40</WfPill> Punched in off site</span>, "3 · 1 unverified", "—", "—", "—", "2/5"],
+      ["Salesman C", <WfPill key="d" tone="danger">Not started</WfPill>, "0", "—", "—", "—", "No route"],
+      ["Salesman D", <WfPill key="e">Finished 17:05</WfPill>, "6", "1", "₹22,000", "—", "6/6"],
+    ]}
+  />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Day switcher.</b> Step back a day or forward a day. <i>Back to today</i> returns you.</span>,
+  <span key="2"><b>Review.</b> Shows only when something is waiting, with the total. Opens the Approvals queue. <i>Team map</i> opens the Live map in a new tab.</span>,
+  <span key="3"><b>The day in four figures.</b> Who is out, visits against the planned route, orders taken and money reported collected.</span>,
+  <span key="4"><b>Waiting on you.</b> One card per kind of decision, only where the count is above zero. Each opens the screen where it is decided.</span>,
+  <span key="5"><b>Filter and search.</b> Narrow the team list by status, or type a name.</span>,
+  <span key="6"><b>A salesman's row.</b> Click anywhere on it to open that salesman's day in a new tab. Every column header sorts.</span>,
+]} />
+
+## The four figures
+
+| Figure | What it counts | What it does not mean |
+|---|---|---|
+| **Out now** (today) / **Punched in** (another day) | Salesmen who started their day, out of everyone with an active account. The bar is the share. | A salesman on leave still counts in the total. |
+| **Visits** | Visits checked in on this day, and how many of the planned route stops were walked. | Unverified visits count — the row says how many. |
+| **Orders** | Orders taken on the phone this day, with their value. | Not sales yet. Each sits at *pending approval* until accounts decide it. |
+| **Collected** | Money salesmen reported collecting this day. | Not money in the bank. It counts only once accounts confirm it against the statement. Rejected payments are left out. |
+
+## What is waiting on you
+
+| Card | Opens | Means |
+|---|---|---|
+| **Orders over the credit limit** — *Nothing dispatches until you decide* | Orders | Field orders still waiting for a decision. |
+| **Expense claims** — *Money the field is owed back* | Expenses | Claims waiting for an answer. |
+| **Samples awaiting feedback** — *All past their follow-up date* | Samples | Samples whose follow-up date has passed with no verdict recorded. |
+| **Leave requests** — *Somebody is waiting to book time off* | Leave | Leave waiting for a decision. Withdrawn requests are not counted. |
+| **Days he will not walk** — *Refused with a reason, waiting on your answer* | Journeys & visits | Days a salesman refused, from today on. |
+| **Salesmen with nothing tomorrow** — *They will decide for themselves where to go* | Journeys & visits | Active salesmen with no day at all for tomorrow. |
+
+<Callout kind="note">
+The **Review** button adds every card together and opens [Approvals](/docs/sales/approvals). Some of what it counts — refused days, empty tomorrows, overdue samples, orders — is decided on its own screen rather than on Approvals. Use the cards to go straight to the right place.
+</Callout>
+
+## Reading the team list
+
+| Status | Means |
+|---|---|
+| <Pill tone="success">Out since 09:12</Pill> | Checked in and not yet checked out. |
+| <Pill>Finished 17:05</Pill> | Checked out. |
+| <Pill tone="danger">Not started</Pill> | No check-in on this day. |
+| <Pill>Account closed</Pill> | The salesman's account is disabled. Listed last. |
+
+Under the status or the visits you may see:
+
+- **Punched in off site** — he checked in outside the permitted distance from where he is expected to start. It is a flag, not a refusal.
+- **N unverified** — visits saved without the checks passing. Open [Journeys & visits](/docs/sales/journeys) → *Visit log* to read why and accept them.
+
+The **Planned route** bar shows stops walked out of stops planned. *No route* means no shops were picked for that day.
+
+<Steps>
+<Step title="Find who has not started">
+Press **Not started**. Anyone here at mid-morning is worth a call — or check the [Live map](/docs/sales/live-map), which says whether the phone itself is reporting.
+</Step>
+<Step title="Open a salesman's day">
+Click his row. His day opens in a new tab: the trail, each visit, orders and payments, so you can come back to the team list without losing your place.
+</Step>
+<Step title="Look at a past day">
+Use ‹ to step back. The four figures and the team list are for that day. Of the waiting cards, refused days, tomorrow's empty days and overdue samples follow the day you picked; orders, leave and expenses always show what is waiting now.
+</Step>
+</Steps>
+
+## Questions people ask
+
+<Faq q="Orders shows a value but Performance shows less revenue.">
+Today counts orders as they were taken. Performance counts only what accounts approved. An order declined by accounts stays in Today's figure for that day.
+</Faq>
+<Faq q="Collected says one figure, accounts say another.">
+Today shows what salesmen reported. Accounts confirm money against the bank, and only confirmed money moves outstanding.
+</Faq>
+<Faq q="A salesman is missing from the list.">
+Only people holding the Salesman App, inside your patch, are listed. A salesman whose shops are all in another manager's regions is theirs.
+</Faq>
+<Faq q="Why does Review say 9 when Approvals shows 4?">
+Review adds every card, including refused days, tomorrow's unplanned salesmen, orders and overdue samples. Approvals lists only requests raised for a yes or no.
+</Faq>

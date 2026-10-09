@@ -1,0 +1,115 @@
+Five small screens over shared machinery: field settings are the `mbos.*` slice of the configuration registry, saved through `updateSettings`; bindings and sync health read `mbos_devices`, `mbos_sync_receipts` and `mbos_conflicts`; notifications go through the shared `announce` → `notifyUsers` → `pushToUsers`; the audit trail is a filter over `audit_log`.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Route guards | `src/app/sales/{prefs,logins,sync-health,notify,audit}/layout.tsx` | `requireModule` on each `sales.*` key |
+| Preferences | `src/app/sales/prefs/settings-screen.tsx` | Grouped editor, dirty tracking, warnings banner |
+| Bindings | `src/app/sales/logins/page.tsx`, `release-button.tsx` | Binding table, Release with a reason |
+| Sync health | `src/app/sales/sync-health/page.tsx` | Quiet / Being refused / Healthy |
+| Notify | `src/app/sales/notify/page.tsx`, `notify-screen.tsx` | Audience picker, readiness and failure banners |
+| Audit | `src/app/sales/audit/page.tsx` | Newest rows with the total |
+| Reads | `src/lib/services/sales-service.ts` | `fieldSettings`, `deviceBindings`, `syncHealth`, `fieldAudit`, `fieldAuditCount`, `FIELD_AUDIT_WHERE` |
+| Writes | `src/lib/actions/sales.ts` | `saveFieldSettings`, `releaseDevice`, `sendFieldNotification` |
+| Config | `src/lib/config/registry.ts`, `src/lib/config/store.ts` | `SETTINGS`, `checkConsistency`; `updateSettings`, `getConfig` |
+| Push | `src/lib/mbos/push.ts`, `push-rules.ts` | `pushReadiness`, `pushToUsers`, `collectPushReceipts`, `recentPushFailures`, `withinQuietHours` |
+| Announcements | `src/lib/services/announcement-service.ts` | `announce` — bell rows plus an `hrms_notifications` record |
+
+## Saving a field setting
+
+<Code file="src/lib/actions/sales.ts" symbol="saveFieldSettings" />
+
+<Code file="src/lib/services/sales-service.ts" symbol="fieldSettings" collapsed />
+
+`updateSettings` validates each value against its registry entry, runs `checkConsistency` across settings, writes `app_settings` with an audited before/after, and returns warnings the screen shows after saving. The handset receives `mbos.*` keys on its pull; keys that must not reach a phone are excluded from the wire (pinned in `mbos-wire.test.ts`).
+
+## Bindings and sync health
+
+<Code file="src/lib/actions/sales.ts" symbol="releaseDevice" collapsed />
+
+<Code file="src/lib/services/sales-service.ts" symbol="deviceBindings" collapsed />
+
+<Code file="src/lib/services/sales-service.ts" symbol="syncHealth" collapsed />
+
+<DbTable name="mbos_sync_receipts" note={{
+  idempotency_key: "One receipt per outbox item — a resend returns the stored answer.",
+  result_json: "status accepted · rejected · conflict · retry, with the message the handset shows.",
+}} />
+
+<DbTable name="mbos_devices" only={["user_id", "device_id", "model", "app_version", "bound_at", "last_seen_at", "active", "released_at", "release_reason", "push_token"]} note={{
+  active: "One active binding per user when mbos.devices.onePerPerson is on.",
+  push_token: "Expo push token; cleared when a receipt reports DeviceNotRegistered.",
+}} />
+
+## Sending a notification
+
+<Flow caption="sendFieldNotification" chart={`
+sequenceDiagram
+  autonumber
+  participant S as notify-screen
+  participant A as sendFieldNotification
+  participant N as announce / notifyUsers
+  participant P as push.ts
+  S->>A: audience, userIds, title, body
+  A->>A: requireSalesAccess(sales.notify, manager), both fields required
+  A->>A: targets = field holders, active, scopeCovers(managerScope)
+  A->>N: announce(recipients minus the sender)
+  N->>N: notifications rows (the record)
+  N->>P: pushToUsers — skipped in quiet hours, chunked for Expo
+  A->>A: audit_log mbos.notification.send
+  P->>P: later — collectPushReceipts clears dead tokens
+`} />
+
+<Code file="src/lib/actions/sales.ts" symbol="sendFieldNotification" collapsed />
+
+<Code file="src/lib/mbos/push.ts" symbol="pushReadiness" />
+
+<Code file="src/lib/services/announcement-service.ts" symbol="announce" />
+
+## Audit
+
+<Code file="src/lib/services/sales-service.ts" symbol="FIELD_AUDIT_WHERE" />
+
+<Code file="src/lib/services/sales-service.ts" symbol="fieldAudit" />
+
+## Access
+
+<ModuleRef k="sales.prefs" /> <ModuleRef k="sales.logins" /> <ModuleRef k="sales.sync-health" /> <ModuleRef k="sales.notify" /> <ModuleRef k="sales.audit" />
+
+<CapabilityGrid names={["config.write"]} />
+
+`config.write` is in `MANAGER_ONLY`, so it reaches a Sales Dashboard manager through `BOOK_MANAGEMENT`; an associate with `sales.prefs` can read but not save.
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/mbos-wire.test.ts` | The handset can hold every pulled column; dictation's answer crosses, no `voice.*` key does |
+| `npm run test` | `src/lib/mbos/push-rules.test.ts` | Quiet hours wrap midnight; equal bounds mean none; Expo batch limits |
+| `npm run test:integration` | `src/lib/settings-storage.test.ts` | Settings round-trip, nullable keys |
+| `npm run test` | `src/lib/handset-versions.test.ts` | Builds behind the published version |
+| `npm run test:integration` | `src/lib/sync-dependencies.test.ts` | Receipts, retries and dependent items |
+
+## Changing it safely
+
+<Steps>
+<Step title="A new field setting needs a group and a type">
+Add it to `registry.ts` with a `Config` type entry; give it a `category` that `SETTING_GROUPS` claims, or it lands under *Everything else*. If the handset reads it, add it to the handset's config defaults and check the wire test.
+</Step>
+<Step title="Never let the notify path skip scope">
+Any new audience option must pass through `scopeCovers(managerScope)`.
+</Step>
+<Step title="Write the record before the push">
+A push is best-effort; nothing may fail because a push failed.
+</Step>
+</Steps>
+
+## Known gaps
+
+| Gap | Where |
+|---|---|
+| `fieldAudit` and `fieldAuditCount` are not scoped to the manager's team | `sales-service.ts` `fieldAudit` |
+| `pushReadiness` counts every active device in the company, not the sender's team | `mbos/push.ts` `pushReadiness` |
+| The page is titled "Handsets and sign-in" while the module and nav say "Login history" | `logins/page.tsx`; `lib/modules.ts` |
+| The preferences page is titled "Field settings" while the module says "App preferences" | `prefs/settings-screen.tsx`; `lib/modules.ts` |

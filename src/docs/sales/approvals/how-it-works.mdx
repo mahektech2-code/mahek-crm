@@ -1,0 +1,96 @@
+Every request a salesman raises on his phone for a yes or no is one row in **one approvals table**, whatever it is about. Six status columns on six tables would be six places for "pending" to mean something slightly different. This tab explains how a request moves, who may answer it, and what an answer does.
+
+## One table, every kind
+
+| Kind | The request is about | Decided here? |
+|---|---|---|
+| Leave | A leave request | Yes |
+| Expense claim (single expense) | One expense | Yes |
+| Expense claim (a whole day) | A day's expenses | No — on Expenses, where per-line amounts and policy live |
+| Tour | A tour away from base | Yes |
+| Attendance correction | One attendance day | Yes |
+| Territory | A request to work different cities | Yes — the answer only, not the change |
+| Order | An order over the credit limit | No — accounts decide |
+| Sample | A sample request | No — on the samples desk |
+| Distributor appointment | Appointing a distributor | No — its own two-step screen |
+
+<Rule title="The subject's state is derived from this table, never set beside it">
+A leave request has no status column of its own. It is approved because there is an approved row here naming it. Two copies of one decision is how a screen ends up showing a rejection beside a payment.
+</Rule>
+
+## How a request moves
+
+<Flow caption="One approval" chart={`
+stateDiagram-v2
+  [*] --> pending: raised on the phone
+  pending --> approved: Approve
+  pending --> partially_approved: Part, with an amount
+  pending --> rejected: Refuse, with a reason
+  approved --> [*]
+  partially_approved --> [*]
+  rejected --> [*]
+`} />
+
+<Rule title="A decision is made once">
+Deciding an already-decided request is refused, not overwritten. The first answer is the one somebody acted on; a second would erase the record of it. The write itself only lands on a row still `pending`, so two managers pressing at the same moment cannot both win.
+</Rule>
+
+<Rule title="A refusal needs a reason, and a part approval needs an amount">
+A salesman told "declined" with nothing after it has to ring somebody to find out what to do, with the customer waiting. An expense allowed at less than it asked is a different answer from yes or no; recording it as yes loses the difference on payday.
+</Rule>
+
+<Rule title="A withdrawn request is not a request">
+Withdrawing leave marks the leave cancelled and leaves the approval pending. The queue hides those, and deciding one is refused — approving it would tell him his leave was approved for days he had already said he did not want.
+</Rule>
+
+## Who may answer
+
+<Flow caption="The checks, in order" chart={`
+flowchart TD
+  A["Decide pressed"] --> B{"Sales Dashboard manager or admin?"}
+  B -- "No" --> R1["Refused — a decision for a manager"]
+  B -- "Yes" --> C{"Sample, distributor appointment<br/>or a whole day's expenses?"}
+  C -- "Yes" --> R2["Refused — sent to its own desk"]
+  C -- "No" --> D{"Holds Approvals or the screen<br/>this kind belongs to?"}
+  D -- "No" --> R3["Refused — screen not granted"]
+  D -- "Yes" --> E{"His own request?"}
+  E -- "Yes" --> R4["Refused — somebody else answers"]
+  E -- "No" --> F{"Requester in your patch?"}
+  F -- "No" --> R5["Refused — outside your team"]
+  F -- "Yes" --> G{"Still pending, not an order,<br/>not withdrawn, reason given?"}
+  G -- "Yes" --> OK["Decided, audited, he is told"]
+`} />
+
+The screen a kind belongs to: leave → Leave; expense claim and tour → Expenses; attendance correction → Attendance; territory → Territory. **Withholding Leave from somebody also withholds deciding leave**, even from the Approvals queue.
+
+<Callout kind="why" title="Why orders are accounts' and not the sales desk's">
+The person chasing a target must not sign off the orders that hit it. The row is shown — a manager who cannot see a control assumes the screen is broken — with a link to accounts' queue.
+</Callout>
+
+<Callout kind="why" title="Why three kinds are sent elsewhere">
+A sample, a distributor appointment and a priced expense day each carry rules this generic answer knows nothing about — stock checks, a second management step, per-line amounts. Answering them here used to write "approved" and go round all of those rules.
+</Callout>
+
+## What an answer does
+
+- **Writes the decision** — who, when, the note and any amount — and an audit row.
+- **Tells the requester** with a notification on his phone. The tap opens the handset screen the request belongs to.
+- **Changes nothing else.** Approving leave debits no balance: what somebody has used is worked out from approved requests, so a decision reversed or withdrawn can never leave the balance wrong. Approving a territory request does not move his cities — a person does that on Salesmen.
+
+## When nothing happens
+
+<Rule title="Nothing is approved by a timer">
+An approval with nowhere to go is a salesman waiting for an answer that is not coming; the fix is to tell somebody, not to guess. The screen turns red when the oldest request has waited <Setting k="payments.confirmationAgeWarningHours" /> hours — the same threshold accounts are held to for an unconfirmed payment. An hourly job also counts approvals older than <Setting k="mbos.approvals.escalationHours" /> hours.
+</Rule>
+
+## The two-step chain
+
+Every row carries a **step**. Step 0 is the ordinary decider; step 1 is an escalation to management. The request's state is the state of its highest step. Distributor appointments use it always; expense days use it when a claim is over a cap or high in value. The owner is escalated **to**, never substituted for — skipping the manager removes the person who knows whether the salesman really was in that city on Tuesday.
+
+## Where the code and the intent disagree today
+
+- **The approvals escalation notifies nobody.** The hourly job counts requests past <Setting k="mbos.approvals.escalationHours" /> hours and records the number; it sends no message to any manager, though its own description says the fix is to tell somebody.
+- **Approve buttons are drawn on samples, distributor appointments and whole-day expense claims**, and pressing them is refused with a pointer to the right desk.
+- **"Lately decided" is not narrowed to your team** — it lists the company's last 25 decisions.
+- **Two kinds have no label.** A territory request and a distributor appointment show their raw names (*territory*, *distributor appointment*) in the kind pill and tiles.
+- **A territory approval reads as done to the salesman** ("your territory request was approved") although his cities have not changed.
