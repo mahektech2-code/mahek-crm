@@ -9,7 +9,14 @@ import { Pill } from "@/components/console/parts";
 import { cx } from "@/components/ui/primitives";
 import { longDate } from "@/lib/format";
 import { FIELD_ACTIVITY_COL } from "@/lib/field-activity-parse";
-import type { FieldActivityRow } from "@/lib/services/sales-service";
+import type {
+  ActivityHistoryRow,
+  FieldActivityRow,
+  VisitRow,
+} from "@/lib/services/sales-service";
+import { accountTypeLabel } from "@/lib/account-types";
+import { VISIT_OUTCOME_LABEL, label } from "@/components/console/words";
+import { VisitDetail, VisitState, clock, useVisitActions } from "../journeys/visit-parts";
 
 /* ---------------------------------------------------------------------------
  * The activity log as a table that fits beside the sidebar and wraps rather
@@ -90,23 +97,33 @@ function salesmanStatus(
   return null;
 }
 
+function rowKey(r: ActivityHistoryRow): string {
+  return r.source === "mbos" ? `m:${r.visit.id}` : `s:${r.sheet.id}`;
+}
+
+const TH =
+  "sticky top-0 z-2 h-8.5 border-b border-line bg-canvas px-3 text-left text-[11px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase";
+
 export function ActivityTable({
   rows,
   total,
   page,
   perPage,
   baseQuery,
+  canActOnVisits,
 }: {
-  rows: FieldActivityRow[];
+  rows: ActivityHistoryRow[];
   total: number;
   page: number;
   perPage: number;
   /** The filters in force, without page or per-page. */
   baseQuery: string;
+  /** Whether the visit actions (accept, ask, answer a pin) are this person's. */
+  canActOnVisits: boolean;
 }) {
   const router = useRouter();
-  const [openId, setOpenId] = React.useState<string | null>(null);
-  const open = rows.find((r) => r.id === openId) ?? null;
+  const [openKey, setOpenKey] = React.useState<string | null>(null);
+  const open = rows.find((r) => rowKey(r) === openKey) ?? null;
 
   const go = (p: number, n: number) => {
     const qs = new URLSearchParams(baseQuery);
@@ -124,22 +141,12 @@ export function ActivityTable({
           <col style={{ width: "21%" }} />
           <col style={{ width: 156 }} />
           <col />
-          <col style={{ width: 118 }} />
+          <col style={{ width: 132 }} />
         </colgroup>
         <thead>
           <tr>
-            {[
-              "Date",
-              "Salesman",
-              "Customer",
-              "Visit",
-              "What happened",
-              "Match",
-            ].map((h) => (
-              <th
-                key={h}
-                className="sticky top-0 z-2 h-8.5 border-b border-line bg-canvas px-3 text-left text-[11px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase"
-              >
+            {["Date", "Salesman", "Customer", "Visit", "What happened", "Status"].map((h) => (
+              <th key={h} className={TH}>
                 {h}
               </th>
             ))}
@@ -147,89 +154,22 @@ export function ActivityTable({
         </thead>
         <tbody>
           {rows.map((r) => {
-            const status = salesmanStatus(r);
-            const note = [r.meetingNote, r.issueNote]
-              .filter(Boolean)
-              .join(" — ");
+            const key = rowKey(r);
             return (
               <tr
-                key={r.id}
+                key={key}
                 tabIndex={0}
-                onClick={() => setOpenId(r.id)}
+                onClick={() => setOpenKey(key)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
-                    setOpenId(r.id);
+                    setOpenKey(key);
                   }
                 }}
-                aria-label={`Open the activity of ${r.visitDate ? longDate(r.visitDate) : "an unknown date"}`}
+                aria-label="Open this visit"
                 className="cursor-pointer border-b border-divider align-top last:border-b-0 hover:bg-brand-soft focus-visible:bg-brand-soft focus-visible:outline-none"
               >
-                <td className="px-3 py-2.5 text-sm">
-                  {r.visitDate ? (
-                    <>
-                      <div className="font-medium whitespace-nowrap text-ink tabular-nums">
-                        {longDate(r.visitDate)}
-                      </div>
-                      <div className="text-xs text-muted">
-                        {weekday(r.visitDate)}
-                      </div>
-                    </>
-                  ) : (
-                    <span className="text-warn-ink">Date unreadable</span>
-                  )}
-                </td>
-                <td className="px-3 py-2.5 text-sm break-words">
-                  <div className="text-ink">
-                    {r.salesmanName ?? r.employeeNameRaw ?? "—"}
-                  </div>
-                  {status ? (
-                    <div
-                      className={cx(
-                        "text-xs",
-                        status.tone === "warn"
-                          ? "font-medium text-warn-ink"
-                          : "text-muted",
-                      )}
-                    >
-                      {status.text}
-                    </div>
-                  ) : null}
-                </td>
-                <td className="px-3 py-2.5 text-sm break-words">
-                  <div className="text-ink">
-                    {r.customerName ?? r.customerNameRaw ?? "—"}
-                  </div>
-                  {r.customerCity ? (
-                    <div className="text-xs text-muted">{r.customerCity}</div>
-                  ) : null}
-                </td>
-                <td className="px-3 py-2.5 text-sm">
-                  <div className="text-ink">
-                    {r.meetingType ?? "—"}
-                    {r.durationMinutes != null ? (
-                      <span className="text-muted">
-                        {" "}
-                        · {minutes(r.durationMinutes)}
-                      </span>
-                    ) : null}
-                  </div>
-                  {r.meetingPurpose ? (
-                    <div className="text-xs text-muted">{r.meetingPurpose}</div>
-                  ) : null}
-                </td>
-                <td className="px-3 py-2.5 text-sm text-body">
-                  {note ? (
-                    <p className="line-clamp-2 break-words">{note}</p>
-                  ) : (
-                    <span className="text-muted">No note</span>
-                  )}
-                </td>
-                <td className="px-3 py-2.5">
-                  <Pill tone={MATCH_TONE[r.customerMatchStatus]}>
-                    {MATCH_LABEL[r.customerMatchStatus]}
-                  </Pill>
-                </td>
+                {r.source === "mbos" ? <MbosCells v={r.visit} /> : <SheetCells r={r.sheet} />}
               </tr>
             );
           })}
@@ -243,14 +183,189 @@ export function ActivityTable({
         onPage={(p) => go(p, perPage)}
         onPerPage={(n) => go(1, n)}
       />
-      {open ? (
-        <ActivityDetail
-          key={open.id}
-          row={open}
-          onClose={() => setOpenId(null)}
-        />
+      {open?.source === "sheet" ? (
+        <ActivityDetail key={openKey} row={open.sheet} onClose={() => setOpenKey(null)} />
+      ) : null}
+      {open?.source === "mbos" ? (
+        <MbosVisitModal key={openKey} v={open.visit} canAct={canActOnVisits} onClose={() => setOpenKey(null)} />
       ) : null}
     </div>
+  );
+}
+
+/* ------------------------------------------------------------- MBOS row */
+
+function MbosCells({ v }: { v: VisitRow }) {
+  const note = v.notes?.trim() || v.transcript?.trim() || null;
+  const mins = v.durationSeconds != null ? Math.round(v.durationSeconds / 60) : null;
+  return (
+    <>
+      <td className="px-3 py-2.5 text-sm">
+        <div className="font-medium whitespace-nowrap text-ink tabular-nums">{longDate(v.day)}</div>
+        <div className="text-xs text-muted">
+          {weekday(v.day ?? "").slice(0, 3)}
+          {v.checkInAt ? ` · ${clock(v.checkInAt)}` : ""}
+        </div>
+      </td>
+      <td className="px-3 py-2.5 text-sm break-words text-ink">{v.salesmanName}</td>
+      <td className="px-3 py-2.5 text-sm break-words">
+        <div className="text-ink">{v.customerName}</div>
+        <div className="text-xs text-muted">
+          {[v.customerCity, accountTypeLabel({ kind: v.customerKind, thirdParty: v.customerThirdParty })]
+            .filter(Boolean)
+            .join(" · ")}
+        </div>
+      </td>
+      <td className="px-3 py-2.5 text-sm">
+        <div className="text-ink">
+          {label(VISIT_OUTCOME_LABEL, v.outcome)}
+          {mins != null ? <span className="whitespace-nowrap text-muted"> · {minutes(mins)}</span> : null}
+        </div>
+        <div className="text-xs text-muted">
+          {v.checkOutAt ? (v.wasPlanned ? "On the route" : "Off the route") : "Still checked in"}
+        </div>
+      </td>
+      <td className="px-3 py-2.5 text-sm text-body">
+        {note ? <p className="line-clamp-2 break-words">{note}</p> : <span className="text-muted">No note</span>}
+      </td>
+      <td className="px-3 py-2.5">
+        <div className="flex flex-col items-start gap-1">
+          <Pill tone="brand">MBOS</Pill>
+          {v.verified ? (
+            <Pill tone="success">{v.acceptedAt ? "Accepted" : "Verified"}</Pill>
+          ) : (
+            <Pill tone="warn">{v.locationMismatch ? "Wrong place" : "Unverified"}</Pill>
+          )}
+        </div>
+      </td>
+    </>
+  );
+}
+
+function MbosVisitModal({ v, canAct, onClose }: { v: VisitRow; canAct: boolean; onClose: () => void }) {
+  const actions = useVisitActions();
+  const items = canAct ? actions.items(v) : [];
+  return (
+    <>
+      <Modal
+        open
+        onClose={onClose}
+        width={820}
+        title={
+          <span>
+            {v.customerName}
+            <span className="ml-2 text-sm font-normal text-muted">
+              {weekday(v.day ?? "")}, {longDate(v.day)}
+              {v.checkInAt ? ` · ${clock(v.checkInAt)}` : ""}
+            </span>
+          </span>
+        }
+        footer={
+          <div className="flex w-full flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap gap-2">
+              {items.map((it) => (
+                <button
+                  key={it.label}
+                  disabled={it.disabled}
+                  title={it.title}
+                  onClick={() => it.run?.()}
+                  className="h-8 cursor-pointer rounded-[4px] border border-line bg-surface px-3 text-[13px] font-medium text-body hover:bg-canvas disabled:cursor-default disabled:opacity-50"
+                >
+                  {it.label}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={onClose}
+              className="h-8 cursor-pointer rounded-[4px] border border-line bg-surface px-3 text-[13px] font-medium text-body hover:bg-canvas"
+            >
+              Close
+            </button>
+          </div>
+        }
+      >
+        <div className="flex flex-col gap-4">
+          <dl className="grid grid-cols-3 gap-x-4 gap-y-3">
+            <Field label="Salesman">
+              <Link href={`/sales/live/${v.salesmanId}?day=${v.day}`} target="_blank">
+                {v.salesmanName}
+              </Link>
+              <span className="block text-xs text-muted">Opens his whole day</span>
+            </Field>
+            <Field label="Customer">
+              <Link href={`/crm/customers/${v.customerId}`}>{v.customerName}</Link>
+              <span className="block text-xs text-muted">
+                {[v.customerCity, accountTypeLabel({ kind: v.customerKind, thirdParty: v.customerThirdParty })]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </span>
+            </Field>
+            <Field label="Outcome">
+              {label(VISIT_OUTCOME_LABEL, v.outcome)}
+              {v.durationSeconds != null ? (
+                <span className="block text-xs text-muted">
+                  {minutes(Math.round(v.durationSeconds / 60))} in the shop
+                </span>
+              ) : null}
+            </Field>
+          </dl>
+          <div className="text-[13px]">
+            <VisitState v={v} />
+          </div>
+          <VisitDetail v={v} />
+        </div>
+      </Modal>
+      {actions.modal}
+    </>
+  );
+}
+
+/* ------------------------------------------------------------ old app row */
+
+function SheetCells({ r }: { r: FieldActivityRow }) {
+  const status = salesmanStatus(r);
+  const note = [r.meetingNote, r.issueNote].filter(Boolean).join(" — ");
+  return (
+    <>
+      <td className="px-3 py-2.5 text-sm">
+        {r.visitDate ? (
+          <>
+            <div className="font-medium whitespace-nowrap text-ink tabular-nums">{longDate(r.visitDate)}</div>
+            <div className="text-xs text-muted">{weekday(r.visitDate)}</div>
+          </>
+        ) : (
+          <span className="text-warn-ink">Date unreadable</span>
+        )}
+      </td>
+      <td className="px-3 py-2.5 text-sm break-words">
+        <div className="text-ink">{r.salesmanName ?? r.employeeNameRaw ?? "—"}</div>
+        {status ? (
+          <div className={cx("text-xs", status.tone === "warn" ? "font-medium text-warn-ink" : "text-muted")}>
+            {status.text}
+          </div>
+        ) : null}
+      </td>
+      <td className="px-3 py-2.5 text-sm break-words">
+        <div className="text-ink">{r.customerName ?? r.customerNameRaw ?? "—"}</div>
+        {r.customerCity ? <div className="text-xs text-muted">{r.customerCity}</div> : null}
+      </td>
+      <td className="px-3 py-2.5 text-sm">
+        <div className="text-ink">
+          {r.meetingType ?? "—"}
+          {r.durationMinutes != null ? <span className="whitespace-nowrap text-muted"> · {minutes(r.durationMinutes)}</span> : null}
+        </div>
+        {r.meetingPurpose ? <div className="text-xs text-muted">{r.meetingPurpose}</div> : null}
+      </td>
+      <td className="px-3 py-2.5 text-sm text-body">
+        {note ? <p className="line-clamp-2 break-words">{note}</p> : <span className="text-muted">No note</span>}
+      </td>
+      <td className="px-3 py-2.5">
+        <div className="flex flex-col items-start gap-1">
+          <Pill tone="neutral">Old app</Pill>
+          <Pill tone={MATCH_TONE[r.customerMatchStatus]}>{MATCH_LABEL[r.customerMatchStatus]}</Pill>
+        </div>
+      </td>
+    </>
   );
 }
 

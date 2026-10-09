@@ -12,6 +12,7 @@ import {
   type ParsedFieldActivityRow,
 } from "@/lib/field-activity-parse";
 import { MBOS_EVENT } from "@/lib/timeline";
+import { getConfig } from "@/lib/config/store";
 import {
   decideCustomerMatch,
   matchSalesmanName,
@@ -159,7 +160,16 @@ async function pullFromSheet(
   let updated = 0;
   let unchanged = 0;
   let withIssues = 0;
+  let afterCutover = 0;
   let highestRow = Math.max(startRow - 1, 1);
+
+  /*
+   * MBOS IS THE RECORD FROM THE CUTOVER ON. A row dated on or after it is
+   * read, counted and left out: storing it would put a visit from a retired
+   * app beside the real one on every screen that reads this table. It is
+   * still marked SEEN, so a reconcile never mistakes "not stored" for "gone".
+   */
+  const cutover = (await getConfig())["fieldActivity.cutoverDate"];
 
   /** Every activity key this pass found, accumulated across windows. A
    *  reconcile withdraws what is NOT in here; an append never withdraws. */
@@ -184,7 +194,8 @@ async function pullFromSheet(
       (await storedDateOrder()) ??
       "mdy";
 
-    const result = await writeWindow(syncId, { ...window, rows }, salesmen, customerCache, seen, order);
+    const result = await writeWindow(syncId, { ...window, rows }, salesmen, customerCache, seen, order, cutover);
+    afterCutover += result.afterCutover;
     created += result.created;
     updated += result.updated;
     unchanged += result.unchanged;
@@ -215,7 +226,8 @@ async function pullFromSheet(
     `${mode} from row ${startRow}: ${created} new, ${updated} changed, ` +
     `${unchanged} unchanged` +
     (withdrawn ? `, ${withdrawn} gone from the sheet` : "") +
-    (withIssues ? `, ${withIssues} with issues` : "");
+    (withIssues ? `, ${withIssues} with issues` : "") +
+    (afterCutover ? `, ${afterCutover} dated from ${cutover} on left out (MBOS is the record)` : "");
 
   return {
     rowsRead,
@@ -235,7 +247,9 @@ async function writeWindow(
   customerCache: Map<string, MatchResult>,
   seen: Set<string>,
   order: DateOrder,
+  cutover: string,
 ) {
+  let afterCutover = 0;
   let created = 0;
   let updated = 0;
   let unchanged = 0;
@@ -281,6 +295,12 @@ async function writeWindow(
       const key = parsed.activityId || `ROW-${row.rowNumber}`;
       const known = hashByActivityId.get(key);
       seen.add(key);
+      // Already stored before the cutover existed: left as it is, and the
+      // screens read it out by its date. Never stored: stays that way.
+      if (parsed.visitDate && parsed.visitDate >= cutover) {
+        afterCutover++;
+        continue;
+      }
       if (known === hash) {
         unchanged++;
         if (statusByActivityId.get(key) !== "present") returned.push(key);
@@ -314,7 +334,7 @@ async function writeWindow(
     }
   }
 
-  return { created, updated, unchanged, withIssues };
+  return { created, updated, unchanged, withIssues, afterCutover };
 }
 
 function toRow(

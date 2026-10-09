@@ -650,7 +650,7 @@ export const APP_MODULES: AppModule[] = [
     "activity-history",
     "Activity history",
     "Field work",
-    "Field salesman visits and calls from before this app existed, imported from a prior system's own log — including the shop names that still need matching to a real account.",
+    "Every visit the field team logged on MBOS, newest first, and before the cutover date the old field app's (EMP 2.0) log beside it — including the shop names that still need matching to a real account.",
   ),
   sales("orders", "Orders", "Commercial", "Orders taken in the field, and the ones over a credit limit."),
   sales("payments", "Payments", "Commercial", "Money collected, and cash still in somebody's pocket."),

@@ -4991,6 +4991,19 @@ workbook. `?mode=field-activity-project` writes matched rows onto
 `timeline_events`, which is how this reaches a customer's shared history and
 a salesman's phone.
 
+**AND MBOS IS NOW THE RECORD; THE SHEET IS ITS PAST.** `fieldActivity.cutoverDate`
+(10 Oct 2026) is the first day only MBOS counts. The sync still runs, so an
+edit to an old row lands, but a row dated on or after the cutover is read,
+counted in the run's detail and NOT stored (it is still marked seen, so a
+reconcile never takes "not stored" for "gone"), and the timeline projection
+never projects one already stored. Activity history (`activityHistory` in
+`sales-service.ts`) is one list of every MBOS visit plus the sheet's rows
+before the cutover, each marked MBOS or Old app; a past day can carry both
+because some men typed a visit into each app, and nothing merges them. Its
+salesman filter is `u:<user id>` (his MBOS visits and the sheet rows matched
+to him) or `n:<name>` (a name only the sheet carries). `visitSelect()` is the
+one select of a `VisitRow`, shared with the Visit log.
+
 **A flag that is silently discarded is worse than one that is rejected.**
 `npm run jobs -- project-sheet --bills` used to run the projection with no
 options whatsoever: the argument was read into argv, dropped before `runJob`,
