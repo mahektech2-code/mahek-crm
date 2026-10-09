@@ -813,7 +813,7 @@ export const APP_MODULES: AppModule[] = [
   sales("attendance", "Attendance", "People", "Who started the day, when, and from where."),
   sales("leave", "Leave", "People", "Requests waiting on a decision, and the policy behind them."),
   sales("holidays", "Holidays", "People", "The days nobody is expected to work."),
-  sales("expenses", "Expenses", "People", "Each day a salesman sends, worked out against the policy, to approve."),
+  sales("expenses", "Expenses", "People", "Every expense a salesman logs, to approve, and the ledger of what each was claimed, allowed, refused and paid."),
   sales(
     "travel",
     "Travel ledger",

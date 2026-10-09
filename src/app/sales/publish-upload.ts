@@ -32,6 +32,8 @@ export type UploadStage = "compressing" | "sending";
 export async function uploadPublishFile(
   chosen: File,
   onStage?: (stage: UploadStage) => void,
+  /** The route that stores it — the library's by default, an expense bill's on Expenses. */
+  endpoint = "/api/sales/publish-file",
 ): Promise<Result<Uploaded>> {
   const office = officeFileRefusal(chosen.name);
   if (office) return err(office, "validation");
@@ -52,7 +54,7 @@ export async function uploadPublishFile(
   const form = new FormData();
   form.set("file", file);
   try {
-    const res = await fetch("/api/sales/publish-file", { method: "POST", body: form });
+    const res = await fetch(endpoint, { method: "POST", body: form });
     const body = (await res.json().catch(() => null)) as
       | { ok: true; data: { id: string; filename: string; sizeBytes: number } }
       | { ok: false; error: string }

@@ -35,3 +35,6 @@ export function inrExact(paise: number): string {
   const rest = Math.abs(paise) % 100;
   return `${paise < 0 ? "−" : ""}₹${groupIndian(whole)}${rest ? `.${String(rest).padStart(2, "0")}` : ""}`;
 }
+
+/** The usual ways a reimbursement is paid. Offered as chips; anything typed stands. */
+export const PAYOUT_MODES = ["Bank transfer", "UPI", "Cash", "With salary", "Cheque"] as const;
