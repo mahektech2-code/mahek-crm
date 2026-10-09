@@ -33,6 +33,7 @@ import {
 import { ConfirmDialog, Drawer, DrawerHeader, Modal } from "@/components/ui/overlays";
 import { cx } from "@/components/ui/primitives";
 import { plural } from "@/components/console/words";
+import { callAction } from "@/lib/call-action";
 import { uploadPublishFile } from "../publish-upload";
 import { AudienceLine, Initials, TagPeopleModal } from "./tag-people";
 
@@ -117,9 +118,9 @@ export function DocumentsScreen({
     setBusy(true);
     setTagError(null);
     setError(null);
-    const result = await setDocumentPeople({ documentId: doc.id, userIds }).catch(() => null);
+    const result = await callAction(setDocumentPeople({ documentId: doc.id, userIds }));
     setBusy(false);
-    const failure = !result ? "That did not reach the server. Try again." : !result.ok ? result.error : null;
+    const failure = result.ok ? null : result.error;
     if (failure) {
       // Under the picker if it is open, on the screen if the drawer asked.
       if (tagging) setTagError(failure);
@@ -134,10 +135,9 @@ export function DocumentsScreen({
   async function setPublished(doc: DocumentRow, published: boolean) {
     setBusy(true);
     setError(null);
-    const result = await setDocumentPublished({ documentId: doc.id, published }).catch(() => null);
+    const result = await callAction(setDocumentPublished({ documentId: doc.id, published }));
     setBusy(false);
     setWithdrawing(null);
-    if (!result) return setError("That did not reach the server. Try again.");
     if (!result.ok) return setError(result.error);
     toast.push(result.message ?? "Saved.");
     router.refresh();
@@ -518,14 +518,13 @@ function PublishModal({
   async function publish() {
     setBusy(true);
     setError(null);
-    const result = await publishDocument({
+    const result = await callAction(publishDocument({
       title,
       category,
       attachmentId: file?.id ?? null,
       visibleToUserIds: tagged,
-    }).catch(() => null);
+    }));
     setBusy(false);
-    if (!result) return setError("That did not reach the server. Try again.");
     if (!result.ok) return setError(result.error);
     onDone(result.message ?? "Published.");
   }
@@ -726,14 +725,13 @@ function DetailsDrawer({
   async function save() {
     setSaving(true);
     setError(null);
-    const result = await updateDocument({
+    const result = await callAction(updateDocument({
       documentId: doc.id,
       title,
       category,
       attachmentId: file?.id ?? null,
-    }).catch(() => null);
+    }));
     setSaving(false);
-    if (!result) return setError("That did not reach the server. Try again.");
     if (!result.ok) return setError(result.error);
     setEditing(false);
     onSaved(result.message ?? "Saved.");
