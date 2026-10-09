@@ -132,6 +132,11 @@ const nextConfig: NextConfig = {
     ];
   },
 
+  /* Android asks for this exact path to trust the Factory app's APK; the
+     answer is published by the APK's own release (see api/assetlinks). */
+  async rewrites() {
+    return [{ source: "/.well-known/assetlinks.json", destination: "/api/assetlinks" }];
+  },
   async redirects() {
     return [
       /*
