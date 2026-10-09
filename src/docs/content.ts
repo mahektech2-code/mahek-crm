@@ -14,7 +14,11 @@ import type { DocTab } from "./registry";
 
 type Loader = () => Promise<{ default: ComponentType }>;
 
-export const CONTENT: Record<string, Loader> = {};
+export const CONTENT: Record<string, Loader> = {
+  "crm/call-log/guide": () => import("./crm/call-log/guide.mdx"),
+  "crm/call-log/how-it-works": () => import("./crm/call-log/how-it-works.mdx"),
+  "crm/call-log/developer": () => import("./crm/call-log/developer.mdx"),
+};
 
 export function contentKey(app: string, slug: string, tab: DocTab): string {
   return `${app}/${slug}/${tab}`;
