@@ -6,10 +6,10 @@ import { AppChooser, type Team } from "./app-chooser";
 
 export const metadata = { title: "Download the apps - MahekOne" };
 
-const TEAMS: Team[] = ["sales", "factory", "erp"];
+const TEAMS: Team[] = ["sales", "erp"];
 
 /**
- * `?team=sales` (or factory, erp) opens with that team already chosen, so a
+ * `?team=sales` (or erp) opens with that team already chosen, so a
  * link sent to one team lands on their app without the question.
  */
 export default async function DownloadPage({

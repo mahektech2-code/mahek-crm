@@ -11,12 +11,11 @@ import { useState } from "react";
 
 type AppId = "mbos" | "factory";
 
-export type Team = "sales" | "factory" | "erp";
+export type Team = "sales" | "erp";
 
 const TEAMS: { id: Team; label: string; app: AppId }[] = [
-  { id: "sales", label: "Sales (field salesman)", app: "mbos" },
-  { id: "factory", label: "Factory floor", app: "factory" },
-  { id: "erp", label: "ERP / store", app: "factory" },
+  { id: "sales", label: "Sales", app: "mbos" },
+  { id: "erp", label: "ERP", app: "factory" },
 ];
 
 /**
