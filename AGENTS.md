@@ -8110,9 +8110,22 @@ in hand and nothing is waiting to send.
 **SIGNING IN IS A NUMBER AND FOUR DIGITS.** The mobile number, then a PIN
 (hashed like a password, throttled like one). A forgotten PIN is the SMS code
 the web sign-in already sends, then a new PIN. A badge QR only says WHO — the
-PIN is still asked. Associate on the Factory grant is a worker; manager is the
-Production Head. Who is on which team is `factory_staff` and
-`factory_team_defaults`, set with `npm run factory:staff`.
+PIN is still asked.
+
+**STAFF ARE PLACED IN ADMIN CONSOLE → ACCESS, BESIDE THE FACTORY GRANT.**
+Ticking Factory draws a Department row: the department, their seat in its
+standing crew (in charge, operator, helpers, who checks), their badge, and
+whether HR has confirmed the name and role. With the grant's level it is a
+DEPARTMENT-LEVEL permission (`lib/factory/departments.ts`, read by the dialog
+and enforced by the server): an associate works their department's jobs only;
+a manager of a department supervises THAT department — its Today, its review
+items, its teams, Give a task for it — and nothing else; a manager of the whole
+floor is the Production Head. Picking the whole floor raises the level to
+manager, the way an ERP designation sets the ERP's. Taking Factory away takes
+the place with it. The seat writes `factory_team_defaults` — one person in
+charge and one operator per department, any number of helpers — which is what
+every new job starts with. `npm run factory:staff` does the same from a
+terminal, for a pilot.
 
 **Loading is CHECKED, never dispatched.** The dispatch team scans the
 allocated lots, loads exactly what the order takes, ticks the checklist and

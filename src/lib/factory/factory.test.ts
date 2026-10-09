@@ -20,6 +20,7 @@ import { bootstrap, contextFor, type FactoryCtx } from "./server";
 import { submitJob } from "./post";
 import { assignTask, decideReview, requestCorrection } from "./head";
 import { resolveScan } from "./rules";
+import { setAccess } from "@/lib/actions/access";
 import type { Draft, FactoryData, Submission, Task } from "./types";
 
 type Row = Record<string, unknown>;
@@ -309,5 +310,64 @@ describe("offline, old phones, and never an error", () => {
     assert.equal(row.by, "Anil", "posted under the worker who did it, not the head who approved it");
     const [day] = await q<{ d: string }>(sql`select batch_date::text as d from erp_sfg_lines where created_by_id = ${fc.user.id} order by created_at desc limit 1`);
     assert.equal(day.d, new Date(Date.now() - 50 * 3_600_000).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }), "dated the day the work was done");
+  });
+});
+
+describe("staffed from Admin Console → Access, with department-level permissions", () => {
+  let admin: User;
+  const grant = (role: "associate" | "manager") => [{ app: "factory", modules: ["factory.app"], role }];
+  before(async () => {
+    const [a] = await db.insert(users).values({ id: "usr_console", name: "Console Admin", email: "console@x.test", phone: "9000000009", passwordHash: "x", role: "admin", initials: "CA" }).returning();
+    await db.insert(appAccess).values({ id: "aca_console", userId: a.id, app: "admin", role: "admin" });
+    admin = a as User;
+  });
+
+  test("the Access dialog's place writes the department and the crew seat, and taking the app away takes them", async () => {
+    const [p] = await db.insert(users).values({ id: "usr_newhelper", name: "New Helper", email: "nh@x.test", phone: "9000000010", passwordHash: "x", role: "associate", initials: "NH" }).returning();
+    setTestUser(admin);
+    const r = await setAccess({ userId: p.id, grants: grant("associate") as never, factoryPlace: { dept: "packing", crew: "helper", badge: "EMP-9010", hrConfirmed: false } });
+    assert.ok(r.ok, r.ok ? "" : r.error);
+    const [row] = await q<{ area: string; badge: string; confirmed: boolean }>(sql`select area, badge_code as badge, hr_confirmed as confirmed from factory_staff where user_id = ${p.id}`);
+    assert.deepEqual([row.area, row.badge, row.confirmed], ["packing", "EMP-9010", false]);
+    const [seat] = await q<{ role: string }>(sql`select role from factory_team_defaults where user_id = ${p.id} and proc = 'packing'`);
+    assert.equal(seat.role, "helper");
+    const fc = (await contextFor(p as User))!;
+    assert.equal(fc.area, "packing");
+    assert.equal(fc.head, false);
+
+    setTestUser(admin);
+    const gone = await setAccess({ userId: p.id, grants: [] });
+    assert.ok(gone.ok);
+    assert.equal((await q(sql`select 1 from factory_staff where user_id = ${p.id}`)).length, 0);
+  });
+
+  test("the whole floor needs the manager level", async () => {
+    const [p] = await db.insert(users).values({ id: "usr_wannahead", name: "Wanna Head", email: "wh@x.test", phone: "9000000011", passwordHash: "x", role: "associate", initials: "WH" }).returning();
+    setTestUser(admin);
+    const r = await setAccess({ userId: p.id, grants: grant("associate") as never, factoryPlace: { dept: "head", crew: null, badge: null, hrConfirmed: true } });
+    assert.equal(r.ok, false);
+  });
+
+  test("a manager of one department supervises that department and no other", async () => {
+    const [p] = await db.insert(users).values({ id: "usr_mixsup", name: "Mixing Supervisor", email: "ms@x.test", phone: "9000000012", passwordHash: "x", role: "manager", initials: "MS" }).returning();
+    await db.execute(sql`insert into erp_godown_staff (godown_id, user_id) values ('erpg_bhiwandi', ${p.id})`);
+    setTestUser(admin);
+    const r = await setAccess({ userId: p.id, grants: grant("manager") as never, factoryPlace: { dept: "mixing", crew: null, badge: null, hrConfirmed: true } });
+    assert.ok(r.ok, r.ok ? "" : r.error);
+    setTestUser(p as User);
+    const fc = (await contextFor(p as User))!;
+    assert.equal(fc.head, true);
+    assert.equal(fc.scope, "mixing");
+    const data = await bootstrap(fc);
+    assert.ok(data.tasks.length && data.tasks.every((t) => t.proc === "mixing"), "their floor is their department");
+    const nc = Object.keys(data.sfg).find((k) => data.sfg[k].short === "NC")!;
+    assert.ok((await assignTask(fc, { proc: "mixing", item: nc, qty: 1, due: "16:00" })).ok);
+    const sku = Object.keys(data.box)[0];
+    const other = await assignTask(fc, { proc: "packing", item: sku, qty: 10, due: "16:00" });
+    assert.equal(other.ok, false, "packing is not theirs to give");
+
+    const { fc: head, data: all } = await as("vijay");
+    assert.equal(head.scope, null, "the Production Head is the whole floor");
+    assert.ok(new Set(all.tasks.map((t) => t.proc)).size > 1);
   });
 });

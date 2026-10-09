@@ -43,6 +43,13 @@ export type FactoryCtx = {
   /** A Production Head: manager or admin on the Factory grant, or a staff row saying so. */
   head: boolean;
   area: Area;
+  /**
+   * The department a SUPERVISOR is limited to: a manager placed in mixing
+   * supervises mixing only. Null is the whole floor — the Production Head, or
+   * a manager placed in quality. Meaningless for a worker, whose own area
+   * already limits them to their own work.
+   */
+  scope: Proc | null;
   roleLabel: string | null;
   godown: { id: string; name: string };
   lang: "en" | "hi" | "mr";
@@ -79,11 +86,14 @@ export async function contextFor(user: User): Promise<FactoryCtx | null> {
   const godown = await godownFor(user.id);
   if (!godown) return null;
   const head = level !== "associate" || staff?.area === "head";
+  const dept = staff?.area ?? null;
+  const scope = head && dept && dept !== "head" && dept !== "qc" ? (dept as Proc) : null;
   return {
     user,
     level,
     head,
-    area: head ? "head" : (staff?.area ?? "mixing"),
+    scope,
+    area: head && !scope ? "head" : (staff?.area ?? "mixing"),
     roleLabel: staff?.role_label ?? null,
     godown,
     lang: staff?.lang ?? "en",
@@ -517,7 +527,8 @@ export async function bootstrap(fc: FactoryCtx): Promise<FactoryData> {
   const [lots, { emp, hours }, teams, open] = await Promise.all([lotsFor(fc.godown, m), people(fc.godown.id), teamDefaults(), openPackBatches(fc.godown.id)]);
   const orders = await ordersFor(fc.godown, m, lots);
   await ensureDispatchTasks(fc, orders, teams);
-  const tasks = await tasksFor(fc.godown.id, open);
+  /* A department supervisor's floor is their department. */
+  const tasks = (await tasksFor(fc.godown.id, open)).filter((t) => !fc.head || !fc.scope || t.proc === fc.scope);
   for (const t of tasks) {
     if (t.proc === "dispatch" && t.status !== "done" && t.order && orders[t.order]?.blocked) t.status = "blocked";
   }
@@ -539,6 +550,7 @@ export async function bootstrap(fc: FactoryCtx): Promise<FactoryData> {
       select r.id, r.kind, r.task_id as "taskId", r.title, r.body, r.meta from factory_reviews r
         join factory_tasks t on t.id = r.task_id
        where r.status = 'open' and t.godown_id = ${fc.godown.id}
+         and (${fc.head && fc.scope ? fc.scope : null}::text is null or t.proc = ${fc.head && fc.scope ? fc.scope : null})
        order by r.created_at desc`),
     q<{ task: string; at: string; who: string; detail: string | null }>(sql`
       select a.entity_id as task, a.at as at, coalesce(u.name, 'System') as who, a.after_state->>'detail' as detail
@@ -547,7 +559,9 @@ export async function bootstrap(fc: FactoryCtx): Promise<FactoryData> {
        order by a.at desc limit 400`),
     q<{ reason: string; min: number }>(sql`
       select reason, sum(minutes)::int as min from factory_downtime
-       where godown_id = ${fc.godown.id} and recorded_at > now() - interval '7 days' group by reason`),
+       where godown_id = ${fc.godown.id} and recorded_at > now() - interval '7 days'
+         and (${fc.head && fc.scope ? fc.scope : null}::text is null or proc = ${fc.head && fc.scope ? fc.scope : null})
+       group by reason`),
     q<{ c: number }>(sql`select count(*)::int as c from audit_log where actor_app = 'factory' and action = 'factory.duplicate' and at > now() - interval '7 days'`),
     q<{ c: number }>(sql`select count(*)::int as c from factory_reviews where kind = 'correction' and decision = 'approved' and decided_at > now() - interval '7 days'`),
   ]);

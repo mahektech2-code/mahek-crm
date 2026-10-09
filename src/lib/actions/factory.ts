@@ -28,7 +28,7 @@ import { initialsOf } from "@/lib/format";
  * PIN is still asked, so a badge found on the floor opens nothing.
  * ------------------------------------------------------------------------- */
 
-export type Me = { key: string; n: string; ini: string; head: boolean; area: FactoryCtx["area"]; lang: FactoryCtx["lang"] };
+export type Me = { key: string; n: string; ini: string; head: boolean; area: FactoryCtx["area"]; lang: FactoryCtx["lang"]; /** A supervisor's one department; absent or null is the whole floor. */ scope?: FactoryCtx["scope"] };
 export type Who = { key: string; n: string; ini: string; ph: string; hasPin: boolean };
 type Fail = { ok: false; error: string };
 type SignedIn = { ok: true; me: Me; data: FactoryData; needPin: boolean };
@@ -37,7 +37,7 @@ const NOT_FOUND = "notFound";
 const INACTIVE = "inactive";
 
 function meOf(fc: FactoryCtx): Me {
-  return { key: fc.user.id, n: fc.user.name, ini: initialsOf(fc.user.name), head: fc.head, area: fc.area, lang: fc.lang };
+  return { key: fc.user.id, n: fc.user.name, ini: initialsOf(fc.user.name), head: fc.head, area: fc.area, lang: fc.lang, scope: fc.scope };
 }
 
 async function whoFor(user: User, typed: string): Promise<{ ok: true; who: Who } | Fail> {

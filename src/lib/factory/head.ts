@@ -26,6 +26,9 @@ const q = async <T = Row>(s: ReturnType<typeof sql>) => (await db.execute(s)) as
 const n = (v: unknown) => Number(v ?? 0) || 0;
 
 const NOT_HEAD = "Only the Production Head can do that.";
+/** A supervisor of one department acts on that department's work only. */
+const outOfScope = (fc: FactoryCtx, proc: string) => !!fc.scope && fc.scope !== proc;
+const notYours = (fc: FactoryCtx) => "You supervise " + fc.scope + " only. Ask the Production Head.";
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 async function taskAt(fc: FactoryCtx, id: string) {
@@ -39,6 +42,7 @@ async function taskAt(fc: FactoryCtx, id: string) {
 export async function assignTask(fc: FactoryCtx, a: { proc: Proc; item: string; qty: number; due: string }): Promise<Result<{ id: string }>> {
   if (!fc.head) return err(NOT_HEAD, "not_permitted");
   if (!PROCS.includes(a.proc) || a.proc === "dispatch") return err("Loading jobs come from the ERP's orders.", "validation");
+  if (outOfScope(fc, a.proc)) return err(notYours(fc), "not_permitted");
   if (!HHMM.test(a.due)) return err("Choose when it is due.", "validation");
   const qty = Math.floor(Number(a.qty));
   if (!(qty > 0) || (a.proc === "mixing" ? qty > 6 : qty > 5000)) return err("Enter how many, more than 0.", "validation");
@@ -89,6 +93,7 @@ export async function changeTeam(fc: FactoryCtx, taskId: string, role: keyof Tea
   if (!fc.head) return err(NOT_HEAD, "not_permitted");
   const t = await taskAt(fc, taskId);
   if (!t) return err("That job is not here.", "not_found");
+  if (outOfScope(fc, t.proc)) return err(notYours(fc), "not_permitted");
   if (t.status === "done") return err("This job is saved in ERP. Ask for a correction instead.", "rule_violation");
   if ((role === "owner" || role === "op") && sel.length !== 1) return err("Choose one person.", "validation");
   const ok2 = sel.length ? await q<{ id: string }>(sql`select id from users where active and id in (${sql.join(sel.map((s) => sql`${s}`), sql`, `)})`) : [];
@@ -127,6 +132,7 @@ export async function requestCorrection(fc: FactoryCtx, taskId: string, reason: 
   if (!fc.head) return err(NOT_HEAD, "not_permitted");
   const t = await taskAt(fc, taskId);
   if (!t) return err("That job is not here.", "not_found");
+  if (outOfScope(fc, t.proc)) return err(notYours(fc), "not_permitted");
   if (t.status !== "done") return err("This job is not saved yet — change it on the job instead.", "rule_violation");
   let change: Record<string, unknown> | null = null;
   let body = reason + " · " + label;
@@ -156,12 +162,13 @@ export async function requestCorrection(fc: FactoryCtx, taskId: string, reason: 
 export async function decideReview(fc: FactoryCtx, id: string, act: string, actIndex: number, reason: string, helpers?: string[]): Promise<Result> {
   if (!fc.head) return err(NOT_HEAD, "not_permitted");
   if (!reason.trim()) return err("Choose a reason. It is saved in the history.", "validation");
-  const [it] = await q<{ id: string; kind: string; taskId: string; title: string; change: Record<string, unknown> | null; status: string; createdById: string | null }>(sql`
-    select r.id, r.kind, r.task_id as "taskId", r.title, r.change, r.status, r.created_by_id as "createdById"
+  const [it] = await q<{ id: string; kind: string; taskId: string; title: string; change: Record<string, unknown> | null; status: string; createdById: string | null; proc: string }>(sql`
+    select r.id, r.kind, r.task_id as "taskId", r.title, r.change, r.status, r.created_by_id as "createdById", t.proc
       from factory_reviews r join factory_tasks t on t.id = r.task_id
      where r.id = ${id} and t.godown_id = ${fc.godown.id}`);
   if (!it) return err("That item is not here any more.", "not_found");
   if (it.status !== "open") return err("Somebody already decided this.", "conflict");
+  if (outOfScope(fc, it.proc)) return err(notYours(fc), "not_permitted");
   const approve = actIndex === 0;
 
   if (it.kind === "correction" && approve && it.change?.kind === "fgAdjust") {

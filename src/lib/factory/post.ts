@@ -206,7 +206,7 @@ async function run(fc: FactoryCtx, sub: Submission, progress: Progress): Promise
     if (!t) return failed(sub.key, "This job is not on today's list", "It may have been finished or taken off by your supervisor.", "Go back to your list and pick the job again.", null);
     return failed(sub.key, "This job is already saved", "Somebody sent it before you.", "Go back to your list.", null);
   }
-  if (!fc.head && t.proc !== fc.area) return failed(sub.key, "This work is not yours", "It belongs to the " + t.proc + " team.", "Ask your supervisor.", null);
+  if ((!fc.head && t.proc !== fc.area) || (fc.head && fc.scope && t.proc !== fc.scope)) return failed(sub.key, "This work is not yours", "It belongs to the " + t.proc + " team.", "Ask your supervisor.", null);
   const d = sub.d;
   const team = d.team;
   for (const k of [team.owner, team.op, team.ver, ...team.helpers])

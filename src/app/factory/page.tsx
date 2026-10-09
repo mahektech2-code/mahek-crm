@@ -14,6 +14,6 @@ export const dynamic = "force-dynamic";
 export default async function FactoryPage() {
   const fc = await factoryContext();
   const data = fc ? await bootstrap(fc) : null;
-  const me = fc ? { key: fc.user.id, n: fc.user.name, ini: initialsOf(fc.user.name), head: fc.head, area: fc.area, lang: fc.lang } : null;
+  const me = fc ? { key: fc.user.id, n: fc.user.name, ini: initialsOf(fc.user.name), head: fc.head, area: fc.area, lang: fc.lang, scope: fc.scope } : null;
   return <FactoryApp initialMe={me} initialData={data} dev={process.env.NODE_ENV !== "production"} />;
 }

@@ -1086,7 +1086,7 @@ export class FactoryApp extends Component<Props, State> {
       <div style={{ flex: "none", display: "flex", alignItems: "center", gap: "10px", padding: "8px 16px 10px 16px", background: "#FFFFFF", borderBottom: "1px solid #EDEFF3" }}>
         <button onClick={() => this.setState({ sheet: { type: "menu" } })} aria-label="Menu" style={this.av(me.key, 44)}>{me.ini}</button>
         <span style={{ flex: 1, minWidth: 0 }}>
-          <span style={{ display: "block", fontSize: "17px", fontWeight: 700, lineHeight: "22px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{me.n + (head || !areaWord ? "" : " · " + areaWord)}</span>
+          <span style={{ display: "block", fontSize: "17px", fontWeight: 700, lineHeight: "22px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{me.n + (head && !me.scope ? "" : !areaWord ? "" : " · " + areaWord)}</span>
           <span style={{ display: "block", fontSize: "13px", color: "#6B7385", lineHeight: "17px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{db.loc + " · " + db.shift}</span>
         </span>
         <button onClick={() => this.setState({ route: "sync" })} style={{ height: "36px", padding: "0 12px", borderRadius: "18px", border: "none", background: c[0], color: c[1], fontSize: "13px", fontWeight: 700, display: "flex", alignItems: "center", gap: "6px", cursor: "pointer", whiteSpace: "nowrap", flex: "none" }}>
@@ -1976,7 +1976,7 @@ export class FactoryApp extends Component<Props, State> {
         <div className="fx-scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "14px 16px 96px 16px", display: "flex", flexDirection: "column", gap: "12px" }}>
           <div style={{ fontSize: "14px", color: "#6B7385" }}>{db.dateLine + " · " + db.loc + " · " + db.shift.split(" · ")[0] + " · now " + now}</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-            {kpis.map((k) => (
+            {kpis.filter((k) => !st.me?.scope || PROC[k.l] === st.me.scope).map((k) => (
               <button key={k.l} onClick={() => this.setState({ hf: k.l })} style={{ ...card, padding: "14px", textAlign: "left", cursor: "pointer" }}>
                 <span style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", fontWeight: 700, color: "#3D4453" }}>{ic(k.icn, 16)}{k.l}</span>
                 <span style={{ display: "block", fontSize: "24px", lineHeight: "30px", fontWeight: 700, marginTop: "6px" }}>{nf(k.act) + " / " + nf(k.plan)}</span>
@@ -2014,7 +2014,7 @@ export class FactoryApp extends Component<Props, State> {
             );
           })}
         </div>
-        <button onClick={() => this.setState({ sheet: { type: "assign" }, asg: this.defaultAsg("mixing") })} style={{ position: "absolute", right: "16px", bottom: "94px", height: "56px", padding: "0 20px", border: "none", borderRadius: "28px", background: "#6835FB", color: "#FFFFFF", fontSize: "16px", fontWeight: 700, display: "flex", alignItems: "center", gap: "8px", boxShadow: "0 8px 20px rgba(104,53,251,0.35)", cursor: "pointer", zIndex: 5 }}>{ic("plus", 22, "#FFFFFF")}Give a task</button>
+        {st.me?.scope !== "dispatch" && <button onClick={() => this.setState({ sheet: { type: "assign" }, asg: this.defaultAsg(st.me?.scope ?? "mixing") })} style={{ position: "absolute", right: "16px", bottom: "94px", height: "56px", padding: "0 20px", border: "none", borderRadius: "28px", background: "#6835FB", color: "#FFFFFF", fontSize: "16px", fontWeight: 700, display: "flex", alignItems: "center", gap: "8px", boxShadow: "0 8px 20px rgba(104,53,251,0.35)", cursor: "pointer", zIndex: 5 }}>{ic("plus", 22, "#FFFFFF")}Give a task</button>}
       </>
     );
   }
@@ -2059,7 +2059,7 @@ export class FactoryApp extends Component<Props, State> {
     return (
       <div className="fx-scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "14px 16px 20px 16px", display: "flex", flexDirection: "column", gap: "12px" }}>
         <div style={{ display: "flex", gap: "10px", padding: "12px 14px", borderRadius: "14px", background: "#F1ECFF", color: "#3D14A8", fontSize: "14px", lineHeight: "20px", fontWeight: 600 }}>Each job is counted once for the team. A 1,000 L batch is 1,000 L for the mixing team — never 1,000 L for each of the three people.</div>
-        {(["mixing", "filling", "packing", "dispatch"] as Proc[]).map((p) => {
+        {(this.state.me?.scope ? [this.state.me.scope] : (["mixing", "filling", "packing", "dispatch"] as Proc[])).map((p) => {
           const all = tasks.filter((t) => t.proc === p);
           const done = all.filter((t) => t.status === "done");
           const unit = { mixing: "litres", filling: "good cans + drums", packing: "boxes", dispatch: "orders checked" }[p];
@@ -2415,7 +2415,7 @@ export class FactoryApp extends Component<Props, State> {
     const st = this.state, T = this.T(), db = this.db();
     const a = st.asg ?? this.defaultAsg("mixing");
     const set = (p: Partial<NonNullable<State["asg"]>>) => this.setState({ asg: { ...a, ...p } });
-    const PR: [Proc, string][] = [["mixing", "flask"], ["filling", "fill"], ["packing", "box"]];
+    const PR = ([["mixing", "flask"], ["filling", "fill"], ["packing", "box"]] as [Proc, string][]).filter(([k]) => !st.me?.scope || st.me.scope === k);
     const items =
       a.proc === "mixing" ? Object.keys(db.sfg).filter((k) => db.sfg[k].recipe.length).map((k) => ({ v: k, l: db.sfg[k].short + " base", art: art("tank", db.sfg[k].col, db.sfg[k].short, 48) }))
       : a.proc === "filling" ? Object.keys(db.sku).map((k) => ({ v: k, l: db.sku[k].n.replace("Mahek ", "") + " " + db.sku[k].size, art: art(db.sku[k].kind, db.sku[k].col, db.sku[k].tag, 48) }))

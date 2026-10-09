@@ -2,7 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { and, eq, inArray, isNull, ne } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   appAccess,
@@ -28,6 +28,7 @@ import { requirePlatformAdminUser, widestRole, type Role } from "@/lib/access-co
 import { ERP_POWERS } from "@/lib/erp/powers";
 import { HRMS_POWERS } from "@/lib/hrms/powers";
 import { HIRE_ROLES, ROLE_LABEL } from "@/lib/hire/roles";
+import { CREW_ROLES, crewLabel, DEPT_LABEL, isProc, placeProblem, type CrewRole, type FactoryDept, type FactoryPlace } from "@/lib/factory/departments";
 import {
   employeesForLink,
   listCandidates,
@@ -170,6 +171,13 @@ export type SetAccessInput = {
    */
   hireRole?: string | null;
   /**
+   * Where they work on the factory floor — the department and their seat in
+   * its crew — which with the Factory level is their department-level
+   * permission (`lib/factory/departments.ts`). Absent leaves it as it is;
+   * taking the Factory app away takes it with it.
+   */
+  factoryPlace?: FactoryPlace | null;
+  /**
    * The ERP designation this person holds. Absent leaves it as it is; null
    * takes it away. It is a NAME on their access and the link an edit to the
    * designation follows — the screens, level and powers themselves still
@@ -298,6 +306,62 @@ async function writeHireRole(userId: string, role: string | null, by: string) {
   await db.delete(hireUserRoles).where(eq(hireUserRoles.userId, userId));
   if (role) await db.insert(hireUserRoles).values({ userId, role, grantedById: by });
 }
+
+/* ------------------------------------------------------------ the factory floor */
+
+async function currentFactoryPlace(userId: string): Promise<FactoryPlace | null> {
+  const [row] = (await db.execute(sql`
+    select s.area, s.badge_code as badge, s.hr_confirmed as "hrConfirmed",
+           (select d.role from factory_team_defaults d where d.user_id = s.user_id and d.proc = s.area limit 1) as crew
+      from factory_staff s where s.user_id = ${userId}`)) as unknown as { area: FactoryDept; badge: string | null; hrConfirmed: boolean; crew: CrewRole | null }[];
+  return row ? { dept: row.area, crew: row.crew, badge: row.badge, hrConfirmed: row.hrConfirmed } : null;
+}
+
+const samePlace = (a: FactoryPlace | null, b: FactoryPlace | null) =>
+  !!a && !!b ? a.dept === b.dept && (a.crew ?? null) === (b.crew ?? null) && (a.badge || null) === (b.badge || null) && a.hrConfirmed === b.hrConfirmed : a === b;
+
+/** The floor place after this save: `undefined` where it does not change, null to take it away. */
+function wantedFactoryPlace(input: SetAccessInput, keepsFactory: boolean, current: FactoryPlace | null, level: string): { next: FactoryPlace | null | undefined; error?: string } {
+  if (!keepsFactory) return { next: current ? null : undefined };
+  if (input.factoryPlace === undefined) return { next: undefined };
+  const raw = input.factoryPlace;
+  const p: FactoryPlace | null = raw
+    ? { dept: raw.dept, crew: raw.crew && (CREW_ROLES as readonly string[]).includes(raw.crew) ? raw.crew : null, badge: raw.badge?.trim() || null, hrConfirmed: raw.hrConfirmed !== false }
+    : null;
+  const problem = placeProblem(p, level);
+  if (problem) return { next: undefined, error: problem };
+  return { next: samePlace(p, current) ? undefined : p };
+}
+
+/**
+ * Writes the place: the staff row, and their seat in the department's
+ * standing crew. One person in charge and one operator per department — a
+ * new one in that seat takes it — and any number of helpers. The PIN on the
+ * staff row is theirs and is never touched here.
+ */
+async function writeFactoryPlace(userId: string, p: FactoryPlace | null) {
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`delete from factory_team_defaults where user_id = ${userId}`);
+    if (!p) {
+      await tx.execute(sql`delete from factory_staff where user_id = ${userId}`);
+      return;
+    }
+    const label = p.crew ? crewLabel(p.dept, p.crew) : p.dept === "head" ? "Production Head" : null;
+    await tx.execute(sql`
+      insert into factory_staff (user_id, area, role_label, badge_code, hr_confirmed)
+      values (${userId}, ${p.dept}, ${label}, ${p.badge}, ${p.hrConfirmed})
+      on conflict (user_id) do update set area = excluded.area, role_label = excluded.role_label,
+        badge_code = excluded.badge_code, hr_confirmed = excluded.hr_confirmed, updated_at = now()`);
+    if (p.crew && isProc(p.dept)) {
+      if (p.crew === "owner" || p.crew === "operator")
+        await tx.execute(sql`delete from factory_team_defaults where proc = ${p.dept} and role = ${p.crew}`);
+      await tx.execute(sql`insert into factory_team_defaults (proc, role, user_id) values (${p.dept}, ${p.crew}, ${userId}) on conflict do nothing`);
+    }
+  });
+}
+
+const factoryPlaceWord = (p: FactoryPlace | null) =>
+  p ? DEPT_LABEL[p.dept] + (p.crew ? " · " + crewLabel(p.dept, p.crew) : "") + (p.hrConfirmed ? "" : " · to confirm with HR") : "no department";
 
 const hireRoleWord = (r: string | null) => (r ? (ROLE_LABEL as Record<string, string>)[r] ?? r : "level default");
 
@@ -441,6 +505,8 @@ export async function setAccess(
     if (newDesignation.error) return fieldErr("erpDesignation", newDesignation.error);
     const newHireRole = wantedHireRole(input, wanted.has("hire"), null);
     if (newHireRole.error) return fieldErr("hireRole", newHireRole.error);
+    const newPlace = wantedFactoryPlace(input, wanted.has("factory"), null, wantedRoles.get("factory") ?? "associate");
+    if (newPlace.error) return fieldErr("factoryPlace", newPlace.error);
 
     userId = newId("usr");
     personName = employee.name;
@@ -504,6 +570,7 @@ export async function setAccess(
     if (newHrmsPowers?.length) await writeHrmsPowers(userId!, newHrmsPowers, me.id);
     if (newDesignation.next) await writeDesignation(userId!, newDesignation.next, me.id);
     if (newHireRole.next) await writeHireRole(userId!, newHireRole.next, me.id);
+    if (newPlace.next) await writeFactoryPlace(userId!, newPlace.next);
 
     await audit(
       me.id,
@@ -517,6 +584,7 @@ export async function setAccess(
         newHrmsPowers?.length ? `HRMS powers (${newHrmsPowers.join(", ")})` : "",
         newDesignation.next ? `ERP designation ${newDesignation.name}` : "",
         newHireRole.next ? `Hire role ${hireRoleWord(newHireRole.next)}` : "",
+        newPlace.next ? `Factory ${factoryPlaceWord(newPlace.next)}` : "",
       ]
         .filter(Boolean)
         .join("; "),
@@ -646,6 +714,10 @@ export async function setAccess(
   const hireRole = wantedHireRole(input, wanted.has("hire"), currentHireRow?.role ?? null);
   if (hireRole.error) return fieldErr("hireRole", hireRole.error);
 
+  const placeBefore = await currentFactoryPlace(userId);
+  const place = wantedFactoryPlace(input, wanted.has("factory"), placeBefore, wantedRoles.get("factory") ?? "associate");
+  if (place.error) return fieldErr("factoryPlace", place.error);
+
   if (
     !granted.length &&
     !revoked.length &&
@@ -654,7 +726,8 @@ export async function setAccess(
     !powers &&
     !hrmsPowers &&
     designation.next === undefined &&
-    hireRole.next === undefined
+    hireRole.next === undefined &&
+    place.next === undefined
   ) {
     return ok(
       { userId, created: false, resetLinkSent: false, granted: [], revoked: [], changed: [] },
@@ -752,7 +825,10 @@ export async function setAccess(
   if (hireRole.next !== undefined) await writeHireRole(userId, hireRole.next, me.id);
   const hireRoleDetail = hireRole.next === undefined ? "" : `Hire role ${hireRoleWord(currentHireRow?.role ?? null)} → ${hireRoleWord(hireRole.next)}`;
 
-  await audit(me.id, "set-app-access", userId, [detail, powerDetail, hrmsPowerDetail, designationDetail, hireRoleDetail].filter(Boolean).join("; "));
+  if (place.next !== undefined) await writeFactoryPlace(userId, place.next);
+  const placeDetail = place.next === undefined ? "" : `Factory ${factoryPlaceWord(placeBefore)} → ${factoryPlaceWord(place.next)}`;
+
+  await audit(me.id, "set-app-access", userId, [detail, powerDetail, hrmsPowerDetail, designationDetail, hireRoleDetail, placeDetail].filter(Boolean).join("; "));
   refresh();
 
   const said = [
