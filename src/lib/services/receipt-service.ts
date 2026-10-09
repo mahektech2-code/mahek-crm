@@ -1698,8 +1698,42 @@ export type LedgerEntry = {
   claimed?: number;
   /** Set on receipt lines only — what a reversal acts on. */
   receiptId?: string;
+  /** Set on bill lines only. */
+  billId?: string;
+  /**
+   * Bill lines: confirmed money that has landed on this bill
+   * (`bills.paidAmount`). Receipt lines: unset.
+   */
+  paid?: number;
+  /** Bill lines: nobody has stated whether this bill was paid. */
+  unstated?: boolean;
+  /**
+   * WHICH MONEY WENT WHERE, on the row itself. A receipt line lists the bills
+   * it was allocated to; a bill line lists the receipts allocated to it. One
+   * read of `payments`, folded both ways, so the two sides cannot disagree.
+   * Every allocation is listed whatever the receipt's status — a rejected
+   * receipt's lines are drawn struck through rather than hidden, for the same
+   * reason the receipt itself stays on the statement.
+   */
+  links?: LedgerLink[];
+  /** Receipt lines: the part of the receipt not against any bill. */
+  onAccount?: number;
   /** Running balance after this entry. Confirmed money only. */
   balance: number;
+};
+
+export type LedgerLink = {
+  /** The bill's id on a receipt line, the receipt's id on a bill line. */
+  id: string;
+  /** Bill number, or the receipt's reference (falling back to its mode). */
+  label: string;
+  /** Receipt lines: the receipt's mode. Bill lines: unset. */
+  mode?: string;
+  at: string;
+  /** Paise of this allocation. */
+  amount: number;
+  /** The RECEIPT's status — what decides whether this allocation counts. */
+  status: string;
 };
 
 export type CustomerLedger = {
@@ -1838,6 +1872,40 @@ export async function ledgerForCustomer(
   type Row = Omit<LedgerEntry, "balance"> & { sort: string };
   const rows: Row[] = [];
 
+  /* Every allocation line on the account, folded both ways. */
+  const billById = new Map(billRows.map((b) => [b.id, b]));
+  const receiptById = new Map(receiptRows.map(({ receipt }) => [receipt.id, receipt]));
+  const linksByBill = new Map<string, LedgerLink[]>();
+  const linksByReceipt = new Map<string, LedgerLink[]>();
+  for (const a of await db
+    .select({
+      receiptId: payments.receiptId,
+      billId: payments.billId,
+      amount: payments.amount,
+    })
+    .from(payments)
+    .where(and(eq(payments.customerId, customerId), isNotNull(payments.billId)))
+    .orderBy(asc(payments.paidAt))) {
+    if (!a.billId || !a.receiptId) continue;
+    const r = receiptById.get(a.receiptId);
+    const b = billById.get(a.billId);
+    if (!r || !b) continue;
+    const amount = Number(a.amount);
+    const onBill = linksByBill.get(b.id) ?? [];
+    onBill.push({
+      id: r.id,
+      label: r.reference ?? r.mode,
+      mode: r.mode,
+      at: r.receivedAt,
+      amount,
+      status: r.status,
+    });
+    linksByBill.set(b.id, onBill);
+    const onReceipt = linksByReceipt.get(r.id) ?? [];
+    onReceipt.push({ id: b.id, label: b.billNo, at: b.billDate, amount, status: r.status });
+    linksByReceipt.set(r.id, onReceipt);
+  }
+
   /*
    * What is CLAIMED against each bill and not yet confirmed, so the bill line
    * can say it. A telecaller writes down that the customer paid bill 0804; the
@@ -1875,6 +1943,10 @@ export async function ledgerForCustomer(
       credit: 0,
       status: b.status,
       claimed: claimedByBill.get(b.id) ?? 0,
+      billId: b.id,
+      paid: Number(b.paidAmount),
+      unstated: b.paymentPosition === "unstated",
+      links: linksByBill.get(b.id) ?? [],
     });
   }
 
@@ -1905,6 +1977,8 @@ export async function ledgerForCustomer(
       // Reversing a payment starts with finding it, and this is where anybody
       // looking for one already is.
       receiptId: r.id,
+      links: linksByReceipt.get(r.id) ?? [],
+      onAccount: Math.max(0, Number(r.amount) - Number(allocated)),
     });
   }
 

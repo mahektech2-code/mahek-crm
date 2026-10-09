@@ -1184,6 +1184,46 @@ describe("Bills, search and the statement", () => {
     // The last balance agrees with what the customer owes.
     assert.equal(ledger!.entries.at(-1)!.balance, 10_000_00);
   });
+
+  test("the statement says which bills each payment settled, both ways", async () => {
+    const customer = await makeCustomer();
+    const older = await makeBill(customer.id, 4_000_00, { billDate: addDays(TODAY, -20) });
+    const newer = await makeBill(customer.id, 10_000_00, { billDate: addDays(TODAY, -5) });
+
+    setTestUser(deepa);
+    const recorded = await recordReceipt({
+      customerId: customer.id,
+      amount: 6_000_00,
+      receivedAt: TODAY,
+      mode: "Bank transfer",
+      reference: "UTR5150",
+      allocation: "auto",
+      source: "accounts",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(recorded.ok, true, recorded.ok ? "" : recorded.error);
+    const waiting = (await pendingReceipts()).find((r) => r.customerId === customer.id);
+    if (waiting) await confirmReceipt(waiting.receiptId);
+
+    const ledger = await customerLedger(customer.id);
+    const receipt = ledger!.entries.find((e) => e.kind === "receipt")!;
+    assert.deepEqual(
+      receipt.links!.map((l) => [l.id, l.label, l.amount]),
+      [
+        [older.id, older.billNo, 4_000_00],
+        [newer.id, newer.billNo, 2_000_00],
+      ],
+      "oldest first, and the amounts add up to the receipt",
+    );
+    assert.equal(receipt.onAccount, 0);
+
+    const olderLine = ledger!.entries.find((e) => e.billId === older.id)!;
+    assert.equal(olderLine.paid, 4_000_00);
+    assert.deepEqual(olderLine.links!.map((l) => [l.label, l.amount]), [["UTR5150", 4_000_00]]);
+    const newerLine = ledger!.entries.find((e) => e.billId === newer.id)!;
+    assert.equal(newerLine.paid, 2_000_00);
+    assert.equal(newerLine.links![0].id, receipt.receiptId);
+  });
 });
 
 /* =============================================================== the badges */
