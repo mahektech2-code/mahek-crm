@@ -649,6 +649,33 @@ const requestSchema = z.object({
 });
 
 /**
+ * A LEAD STILL SPELLED THE OLD WAY IS A SUSPECT UNDER ITS NEW NAME.
+ *
+ * `new` and `contacted` are the legacy ladder's first two rungs, and `suspect` is
+ * the funnel's foot. The calling desk works all three as one thing (`isWorkingStage`),
+ * but the move to Prospect is judged against the lead's OWN ladder, and the Direct
+ * and Third-party ladders start at `suspect`. A lead raised before the funnel, or
+ * imported, has no sales type and sits at `new` or `contacted`; the desk then
+ * gives it one, and the very next step - `advanceLeadStage` to `prospect` - read
+ * the old spelling as "not on this ladder" and refused: "Prospect is not a rung on
+ * this lead's ladder". Every such lead was stuck, and the refusal was one the
+ * Telecaller could not act on.
+ *
+ * So putting such a lead on a funnel ladder relabels it as the rung it already is.
+ * It is the same state (nobody has decided anything yet) under the name the ladder
+ * knows, not a step forward, so no transition is recorded - only the audit row.
+ * Null where nothing needs doing: already a funnel rung, or the legacy ladder
+ * itself still applies.
+ */
+function funnelStageFor(
+  stage: string | null | undefined,
+  salesType: LeadSalesType | null | undefined,
+): "suspect" | null {
+  if (stage !== "new" && stage !== "contacted") return null;
+  return ladderFor(salesType).includes(stage) ? null : "suspect";
+}
+
+/**
  * Everything a Suspect must satisfy before it may become a Prospect —
  * shared between `requestProspect` (the Sales Manager verification path) and
  * `convertLeadToProspect` (the calling desk's own direct promotion).
@@ -933,6 +960,8 @@ export async function requestProspect(
       /* Only what the record is missing is written, so a request never
          overwrites a business type or a contact somebody already gave. */
       if (setsSalesType) set.leadSalesType = salesType;
+      const relabelled = funnelStageFor(lead.leadStage, salesType);
+      if (relabelled) set.leadStage = relabelled;
       if (!lead.customerType && p.customerType) set.customerType = p.customerType;
       if (!lead.contactPerson?.trim() && p.contactPerson) set.contactPerson = p.contactPerson;
       /* The seat is FILLED, never moved, and `lead_manager_decided_at` is left
@@ -976,6 +1005,19 @@ export async function requestProspect(
           actorApp: ctx.authorisedIn,
           beforeState: { salesType: null, stage: lead.leadStage },
           afterState: { salesType, reason: "Chosen by the calling desk when the Prospect was requested" },
+        });
+      }
+      if (relabelled) {
+        await tx.insert(auditLog).values({
+          id: gen("aud"),
+          actorId: ctx.user.id,
+          action: "lead.stage.relabel",
+          entityType: "customer",
+          entityId: p.customerId,
+          actorRole: ctx.authorisedBy,
+          actorApp: ctx.authorisedIn,
+          beforeState: { stage: lead.leadStage },
+          afterState: { stage: relabelled, reason: "The old spelling of Suspect, put on a funnel ladder by the calling desk" },
         });
       }
     });
@@ -1074,6 +1116,8 @@ export async function convertLeadToProspect(
          same discipline `requestProspect` keeps. */
       const set: Partial<typeof customers.$inferInsert> = { leadLastActivityDate: day, updatedAt: now };
       if (setsSalesType) set.leadSalesType = salesType;
+      const relabelled = funnelStageFor(lead.leadStage, salesType);
+      if (relabelled) set.leadStage = relabelled;
       if (!lead.customerType && p.customerType) set.customerType = p.customerType;
       if (!lead.contactPerson?.trim() && p.contactPerson) set.contactPerson = p.contactPerson;
       /* The seat is FILLED, never moved, and `lead_manager_decided_at` is left
@@ -1095,6 +1139,19 @@ export async function convertLeadToProspect(
           actorApp: ctx.authorisedIn,
           beforeState: { salesType: null, stage: lead.leadStage },
           afterState: { salesType, reason: "Chosen by the calling desk when converting to Prospect" },
+        });
+      }
+      if (relabelled) {
+        await tx.insert(auditLog).values({
+          id: gen("aud"),
+          actorId: ctx.user.id,
+          action: "lead.stage.relabel",
+          entityType: "customer",
+          entityId: p.customerId,
+          actorRole: ctx.authorisedBy,
+          actorApp: ctx.authorisedIn,
+          beforeState: { stage: lead.leadStage },
+          afterState: { stage: relabelled, reason: "The old spelling of Suspect, put on a funnel ladder by the calling desk" },
         });
       }
     });
