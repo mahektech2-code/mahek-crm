@@ -9,6 +9,7 @@ import {
   paymentWeekdays,
   payoutTone,
   plannedPayOn,
+  replannedPayOn,
   weekStart,
   weekdayOf,
   type RegisterLot,
@@ -108,4 +109,19 @@ test("a week starts on Monday", () => {
   assert.equal(weekStart("2026-10-08"), "2026-10-05");
   assert.equal(weekStart("2026-10-11"), "2026-10-05");
   assert.equal(weekStart("2026-10-12"), "2026-10-12");
+});
+
+test("payouts nobody moved leave days that stop being payment days", () => {
+  const TUE_FRI = paymentWeekdays(["Tuesday", "Friday"]);
+  const today = "2026-10-08"; // Thursday
+  // Planned for next Wednesday → that Friday.
+  assert.equal(replannedPayOn({ status: "open", payOn: "2026-10-14", decided: false }, today, TUE_FRI), "2026-10-16");
+  // Today, a Thursday → Friday.
+  assert.equal(replannedPayOn({ status: "on_hold", payOn: "2026-10-08", decided: false }, today, TUE_FRI), "2026-10-09");
+  // Already a payment day, chosen by a person, overdue, or settled → left alone.
+  assert.equal(replannedPayOn({ status: "open", payOn: "2026-10-13", decided: false }, today, TUE_FRI), null);
+  assert.equal(replannedPayOn({ status: "open", payOn: "2026-10-14", decided: true }, today, TUE_FRI), null);
+  assert.equal(replannedPayOn({ status: "open", payOn: "2026-10-07", decided: false }, today, TUE_FRI), null);
+  assert.equal(replannedPayOn({ status: "paid", payOn: "2026-10-14", decided: false }, today, TUE_FRI), null);
+  assert.match(moveRefusal("2026-10-14", today, TUE_FRI, "open")!, /Tuesday and Friday — not on a Wednesday/);
 });

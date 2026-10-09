@@ -13791,7 +13791,7 @@ export type HireAiTask = typeof hireAiTasks.$inferSelect;
 /* ---------------------------------------------------------------------------
  * VENDOR PAYOUTS — what Mahek owes its suppliers and the day it will be paid.
  *
- * Payments go out on the payment days (`payments.vendorPayoutDays`, Tuesday to
+ * Payments go out on the payment days (`payments.vendorPayoutDays`, Tuesday and
  * Friday by default, IST). `due_date` is when the money is OWED (purchase date
  * plus the supplier's credit days); `pay_on` is the payment day it is planned
  * for. A purchase payout is rebuilt from the ERP purchase register — one per

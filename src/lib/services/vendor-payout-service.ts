@@ -13,6 +13,7 @@ import {
   moveRefusal,
   paymentWeekdays,
   plannedPayOn,
+  replannedPayOn,
   type PayoutStatus,
   type RegisterLot,
 } from "@/lib/engines/vendor-payouts";
@@ -299,6 +300,20 @@ export async function syncPurchasePayouts(): Promise<{ created: number; updated:
       .set({ status: "cancelled", cancelReason: GONE, updatedAt: now })
       .where(eq(vendorPayouts.id, row.id));
     removed++;
+  }
+
+  // The payment days are configuration. When they change, a payout planned
+  // for a day still to come that is no longer one moves to the next that is —
+  // manual ones included — unless a person chose the day.
+  const planned = await db
+    .select({ id: vendorPayouts.id, status: vendorPayouts.status, payOn: vendorPayouts.payOn })
+    .from(vendorPayouts)
+    .where(and(inArray(vendorPayouts.status, ["open", "on_hold"]), isNull(vendorPayouts.payOnDecidedAt)));
+  for (const p of planned) {
+    const next = replannedPayOn({ status: p.status as PayoutStatus, payOn: p.payOn, decided: false }, day, days);
+    if (!next) continue;
+    await db.update(vendorPayouts).set({ payOn: next, updatedAt: now }).where(eq(vendorPayouts.id, p.id));
+    updated++;
   }
 
   return { created, updated, removed };

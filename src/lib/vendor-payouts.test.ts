@@ -44,7 +44,7 @@ import {
 } from "@/lib/services/vendor-payout-service";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
-const DAYS = paymentWeekdays(["Tuesday", "Wednesday", "Thursday", "Friday"]);
+const DAYS = paymentWeekdays(["Tuesday", "Friday"]);
 const msg = (r: { ok: boolean; fieldErrors?: { message: string }[]; error?: string }) =>
   r.ok ? "ok" : (r.fieldErrors?.[0]?.message ?? r.error ?? "?");
 
@@ -268,6 +268,44 @@ describe("manual payouts", () => {
     setTestUser(caller);
     const res = await createManualPayout({ payeeName: "X", description: "Y", amountPaise: 100, dueDate: day });
     assert.match(msg(res), /not on your account/);
+  });
+});
+
+describe("payment days", () => {
+  test("Tuesday and Friday: a planned payout off those days moves on, a chosen one stays", async () => {
+    setTestUser(clerk);
+    // The next Wednesday still to come, and the Friday after it.
+    let wed = addDays(day, 1);
+    while (weekdayOf(wed) !== 3) wed = addDays(wed, 1);
+    const fri = addDays(wed, 2);
+    const yesterdayWed = (() => {
+      let d = addDays(day, -1);
+      while (weekdayOf(d) !== 3) d = addDays(d, -1);
+      return d;
+    })();
+    const row = (payOn: string, decided: boolean) => ({
+      id: id("vpo"),
+      source: "manual",
+      payeeName: `Payee ${randomUUID().slice(0, 6)}`,
+      amountPaise: 100_00,
+      dueDate: payOn,
+      payOn,
+      payOnDecidedAt: decided ? new Date() : null,
+    });
+    const planned = row(wed, false);
+    const chosen = row(wed, true);
+    const missed = row(yesterdayWed, false);
+    await db.insert(vendorPayouts).values([planned, chosen, missed]);
+
+    await syncPurchasePayouts();
+    const on = async (pid: string) =>
+      (await db.select({ payOn: vendorPayouts.payOn }).from(vendorPayouts).where(eq(vendorPayouts.id, pid)))[0].payOn;
+    assert.equal(await on(planned.id), fri, "a Wednesday nobody chose moves to Friday");
+    assert.equal(await on(chosen.id), wed, "a day a person chose stays chosen");
+    assert.equal(await on(missed.id), yesterdayWed, "an overdue day stays where it was missed");
+
+    const refused = await reschedulePayout(planned.id, addDays(fri, -2));
+    assert.equal(refused.ok, false, "a Wednesday is not a payment day any more");
   });
 });
 

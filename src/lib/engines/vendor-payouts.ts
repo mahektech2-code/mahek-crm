@@ -2,7 +2,7 @@
  * VENDOR PAYOUTS — the rules, PURE.
  *
  * What a supplier is owed and the day accounts will pay it. Payments go out on
- * the PAYMENT DAYS (`payments.vendorPayoutDays`, Tuesday to Friday by default)
+ * the PAYMENT DAYS (`payments.vendorPayoutDays`, Tuesday and Friday by default)
  * and every date here is an IST calendar date written `YYYY-MM-DD` — the
  * business date is handed in, never read from a clock, so the same function
  * answers on the server, in the calendar the payouts are dragged around on,
@@ -98,6 +98,23 @@ export function dueDateFor(purchaseDate: string, creditDays: number | null | und
  */
 export function plannedPayOn(dueDate: string, today: string, days: Set<number>): string {
   return paymentDayOnOrAfter(dueDate < today ? today : dueDate, days);
+}
+
+/**
+ * Where a payout nobody moved by hand belongs once the payment days change: a
+ * day still to come that is no longer a payment day moves to the next one that
+ * is. A day a person chose stays chosen, and an overdue day stays where it was
+ * missed — rolling it forward would hide that it was missed. Null means leave it.
+ */
+export function replannedPayOn(
+  p: { status: PayoutStatus; payOn: string; decided: boolean },
+  today: string,
+  days: Set<number>,
+): string | null {
+  if (p.decided || (p.status !== "open" && p.status !== "on_hold")) return null;
+  if (p.payOn < today || isPaymentDay(p.payOn, days)) return null;
+  const next = paymentDayOnOrAfter(p.payOn, days);
+  return next === p.payOn ? null : next;
 }
 
 /**
