@@ -12,7 +12,7 @@ import { Empty, FilterChips, ScreenHeader } from "@/components/console/parts";
 import { ActivityTable } from "./activity-table";
 import { ReparseButton } from "./reparse-button";
 import { getCurrentUser } from "@/lib/auth";
-import { isPlatformAdmin } from "@/lib/access-control";
+import { isPlatformAdmin, levelInApp } from "@/lib/access-control";
 import { canOpenModule } from "@/lib/access";
 
 export const metadata = {
@@ -68,6 +68,10 @@ export default async function Page({
   const canReparse = !!me && (await isPlatformAdmin(me));
   // Standing behind or asking about a visit are Journeys & visits' actions.
   const canActOnVisits = !!me && (await canOpenModule(me.id, "sales.journeys"));
+  // Saying which account an old-app shop name is: a Sales manager's call.
+  const salesLevel = me ? await levelInApp(me, "sales") : null;
+  const canDecideShops =
+    canReparse || salesLevel === "manager" || salesLevel === "admin";
 
   const [people, counts, result] = await Promise.all([
     activityHistorySalesmen(),
@@ -250,6 +254,7 @@ export default async function Page({
           perPage={result.perPage}
           baseQuery={query({})}
           canActOnVisits={canActOnVisits}
+          canDecideShops={canDecideShops}
         />
       )}
     </div>

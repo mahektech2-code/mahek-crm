@@ -15,6 +15,15 @@ import type {
   VisitRow,
 } from "@/lib/services/sales-service";
 import { accountTypeLabel } from "@/lib/account-types";
+import { useToast } from "@/components/ui/toast";
+import {
+  activityShopChoices,
+  decideActivityShop,
+  searchActivityShops,
+  undoActivityShopDecision,
+  type ShopChoice,
+  type ShopChoices,
+} from "@/lib/actions/field-activity";
 import { VISIT_OUTCOME_LABEL, label } from "@/components/console/words";
 import { VisitDetail, VisitState, clock, useVisitActions } from "../journeys/visit-parts";
 
@@ -111,6 +120,7 @@ export function ActivityTable({
   perPage,
   baseQuery,
   canActOnVisits,
+  canDecideShops,
 }: {
   rows: ActivityHistoryRow[];
   total: number;
@@ -120,6 +130,8 @@ export function ActivityTable({
   baseQuery: string;
   /** Whether the visit actions (accept, ask, answer a pin) are this person's. */
   canActOnVisits: boolean;
+  /** Whether this person may say which account an old-app shop name is. */
+  canDecideShops: boolean;
 }) {
   const router = useRouter();
   const [openKey, setOpenKey] = React.useState<string | null>(null);
@@ -184,7 +196,7 @@ export function ActivityTable({
         onPerPage={(n) => go(1, n)}
       />
       {open?.source === "sheet" ? (
-        <ActivityDetail key={openKey} row={open.sheet} onClose={() => setOpenKey(null)} />
+        <ActivityDetail key={openKey} row={open.sheet} canDecide={canDecideShops} onClose={() => setOpenKey(null)} />
       ) : null}
       {open?.source === "mbos" ? (
         <MbosVisitModal key={openKey} v={open.visit} canAct={canActOnVisits} onClose={() => setOpenKey(null)} />
@@ -416,9 +428,11 @@ function rawCells(raw: Record<string, string>): [string, string][] {
 
 function ActivityDetail({
   row: r,
+  canDecide,
   onClose,
 }: {
   row: FieldActivityRow;
+  canDecide: boolean;
   onClose: () => void;
 }) {
   const warning = salesmanWarning(r);
@@ -560,8 +574,8 @@ function ActivityDetail({
               ) : (
                 <span className="text-muted">
                   {r.customerMatchStatus === "ambiguous"
-                    ? "Not decided — several are close"
-                    : "No customer close enough"}
+                    ? "Not linked — a person has to say which shop"
+                    : "Not linked to any account"}
                 </span>
               )}
             </Field>
@@ -574,6 +588,7 @@ function ActivityDetail({
           {r.matchNote ? (
             <p className="mt-2 text-[13px] text-muted">{r.matchNote}</p>
           ) : null}
+          {canDecide && r.customerNameRaw ? <ShopDecision rowId={r.id} onDone={onClose} /> : null}
         </Section>
 
         <Section title="Exactly as the sheet has it">
@@ -599,5 +614,140 @@ function ActivityDetail({
         </Section>
       </div>
     </Modal>
+  );
+}
+
+/* ------------------------------------------------------- which shop is it */
+
+/**
+ * WHICH ACCOUNT IS THIS SHOP — said once for the NAME, so every visit the
+ * old app typed under it moves together. Accounts carrying exactly the name
+ * come first; close names and a search are there to find the right one when
+ * the old app spelled it differently. Nothing here is ever picked for you.
+ */
+function ShopDecision({ rowId, onDone }: { rowId: string; onDone: () => void }) {
+  const router = useRouter();
+  const toast = useToast();
+  const [choices, setChoices] = React.useState<ShopChoices | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+  const [q, setQ] = React.useState("");
+  const [found, setFound] = React.useState<ShopChoice[] | null>(null);
+  const [busy, setBusy] = React.useState(false);
+
+  React.useEffect(() => {
+    let live = true;
+    void activityShopChoices({ rowId }).then((r) => {
+      if (!live) return;
+      if (r.ok) setChoices(r.data);
+      else setError(r.error);
+    });
+    return () => {
+      live = false;
+    };
+  }, [rowId]);
+
+  async function search(e: React.FormEvent) {
+    e.preventDefault();
+    const r = await searchActivityShops({ q });
+    if (r.ok) setFound(r.data);
+    else setError(r.error);
+  }
+
+  async function decide(customerId: string | null) {
+    setBusy(true);
+    try {
+      const r = await decideActivityShop({ rowId, customerId });
+      if (!r.ok) return setError(r.error);
+      toast.push(r.message ?? "Saved.");
+      router.refresh();
+      onDone();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function undo() {
+    setBusy(true);
+    try {
+      const r = await undoActivityShopDecision({ rowId });
+      if (!r.ok) return setError(r.error);
+      toast.push(r.message ?? "Taken back.");
+      router.refresh();
+      onDone();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (error) return <p className="mt-3 text-[13px] text-danger">{error}</p>;
+  if (!choices) return <p className="mt-3 text-[13px] text-muted">Looking for the shop…</p>;
+
+  const list = (title: string, items: ShopChoice[]) =>
+    items.length ? (
+      <div className="mt-2">
+        <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">{title}</div>
+        <ul className="mt-1 divide-y divide-divider rounded-[4px] border border-line">
+          {items.map((c) => (
+            <li key={c.id} className="flex items-center justify-between gap-3 px-3 py-1.5 text-[13px]">
+              <span className="min-w-0">
+                <span className="text-ink">{c.name}</span>
+                <span className="text-muted"> · {[c.city, c.type].filter(Boolean).join(" · ")}</span>
+              </span>
+              <button
+                disabled={busy || choices.decision?.customer?.id === c.id}
+                onClick={() => void decide(c.id)}
+                className="h-7 shrink-0 cursor-pointer rounded-[4px] border border-line bg-surface px-2.5 text-[12px] font-medium text-body hover:bg-canvas disabled:cursor-default disabled:opacity-50"
+              >
+                {choices.decision?.customer?.id === c.id ? "Linked" : "This is the shop"}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
+    ) : null;
+
+  return (
+    <div className="mt-3 rounded-[6px] border border-line bg-canvas p-3">
+      <p className="text-[13px] font-semibold text-ink">Which shop is this?</p>
+      <p className="text-[12px] text-muted">
+        Applies to all {choices.rows} visit{choices.rows === 1 ? "" : "s"}{" "}
+        the old app typed as &ldquo;{choices.shownName}&rdquo;. Only a name spelled exactly like one account is linked
+        without asking.
+      </p>
+      {choices.decision ? (
+        <p className="mt-2 text-[13px] text-body">
+          {choices.decision.customer
+            ? `Decided: ${choices.decision.customer.name}${choices.decision.customer.city ? ` (${choices.decision.customer.city})` : ""}`
+            : "Decided: not on MahekOne"}
+          {choices.decision.by ? ` — by ${choices.decision.by}` : ""}.{" "}
+          <button onClick={() => void undo()} disabled={busy} className="cursor-pointer text-brand underline-offset-2 hover:underline">
+            Take it back
+          </button>
+        </p>
+      ) : null}
+      {list("Exactly this name", choices.exact)}
+      {list("Close names — check the town", choices.near)}
+      <form onSubmit={search} className="mt-2 flex gap-2">
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search the book for the right shop"
+          className="h-8 min-w-0 flex-1 rounded-[4px] border border-line bg-surface px-2 text-[13px]"
+        />
+        <button className="h-8 cursor-pointer rounded-[4px] border border-line bg-surface px-3 text-[13px] font-medium text-body hover:bg-canvas">
+          Search
+        </button>
+      </form>
+      {found ? (found.length ? list("Found", found) : <p className="mt-2 text-[13px] text-muted">Nothing on the book by that name.</p>) : null}
+      <div className="mt-3">
+        <button
+          disabled={busy || (choices.decision !== null && choices.decision.customer === null)}
+          onClick={() => void decide(null)}
+          className="h-8 cursor-pointer rounded-[4px] border border-line bg-surface px-3 text-[13px] font-medium text-body hover:bg-canvas disabled:cursor-default disabled:opacity-50"
+        >
+          Not on MahekOne
+        </button>
+      </div>
+    </div>
   );
 }

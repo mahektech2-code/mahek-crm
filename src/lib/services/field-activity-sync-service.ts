@@ -1,7 +1,13 @@
 import "server-only";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { sheetFieldActivityRows, sheetSyncRuns, timelineEvents, users } from "@/db/schema";
+import {
+  fieldActivityCustomerDecisions,
+  sheetFieldActivityRows,
+  sheetSyncRuns,
+  timelineEvents,
+  users,
+} from "@/db/schema";
 import { readTab, sheetsConfigured, type SheetTable } from "@/lib/sheets";
 import {
   detectDateOrder,
@@ -15,10 +21,11 @@ import { MBOS_EVENT } from "@/lib/timeline";
 import { getConfig } from "@/lib/config/store";
 import {
   decideCustomerMatch,
+  foldShopName,
   matchSalesmanName,
-  type CustomerCandidate,
   type MatchResult,
 } from "@/lib/field-activity-match";
+import { loadNameDecisions, loadShopBook, nearShopNames, shopNameMatcher } from "./shop-name-match-service";
 import {
   hashRow,
   newSyncId,
@@ -54,6 +61,8 @@ import {
  * line of parsing, matching and staging with the live sheet read now.
  * ------------------------------------------------------------------------- */
 
+type ShopMatcher = Awaited<ReturnType<typeof shopNameMatcher>>;
+
 export const FIELD_ACTIVITY_SOURCE = "field_activity";
 export const FIELD_ACTIVITY_TAB = "Activity";
 export const FIELD_ACTIVITY_SPREADSHEET_ID = "1lo03cZH6LFAr5lWYm-U1wEzh9MvNqZT9R4ZBU_Vqfi4";
@@ -86,7 +95,7 @@ export async function syncFieldActivitySheet(
   }
 
   const salesmen = await db.select({ id: users.id, name: users.name }).from(users);
-  const customerCache = new Map<string, MatchResult>();
+  const matcher = await shopNameMatcher();
 
   return runSync(
     {
@@ -96,57 +105,15 @@ export async function syncFieldActivitySheet(
       mode,
       triggeredById: options.triggeredById,
     },
-    (syncId) => pullFromSheet(syncId, { ...options, tabTitle }, salesmen, customerCache),
+    (syncId) => pullFromSheet(syncId, { ...options, tabTitle }, salesmen, matcher),
   );
-}
-
-/**
- * A distinct customer name against `customers.name`, by the same
- * trigram/substring technique product search already uses. Cached across
- * the whole run — 32,928 rows share only 5,180 distinct names, and every
- * repeat of one is a cache hit rather than a second query.
- */
-async function matchCustomer(
-  name: string | null,
-  cache: Map<string, MatchResult>,
-): Promise<MatchResult> {
-  if (!name) return { status: "unmatched", matchedId: null, note: null };
-  const key = name.trim().toLowerCase();
-  if (!key) return { status: "unmatched", matchedId: null, note: null };
-
-  const cached = cache.get(key);
-  if (cached) return cached;
-
-  const like = `%${name}%`;
-  const rows = await db.execute<{ id: string; name: string; score: number }>(sql`
-    select id, name, similarity(lower(name), lower(${name})) as score
-      from customers
-     where name ilike ${like} or similarity(lower(name), lower(${name})) > 0.3
-     order by
-       case
-         when lower(name) = lower(${name}) then 0
-         when name ilike ${name + "%"} then 1
-         when name ilike ${like} then 2
-         else 3
-       end,
-       similarity(lower(name), lower(${name})) desc
-     limit 8
-  `);
-  const candidates: CustomerCandidate[] = rows.map((r) => ({
-    id: r.id,
-    name: r.name,
-    score: Number(r.score),
-  }));
-  const result = decideCustomerMatch(candidates);
-  cache.set(key, result);
-  return result;
 }
 
 async function pullFromSheet(
   syncId: string,
   { spreadsheetId, tabTitle, mode, reader }: FieldActivitySyncOptions & { tabTitle: string },
   salesmen: { id: string; name: string }[],
-  customerCache: Map<string, MatchResult>,
+  matcher: ShopMatcher,
 ): Promise<SyncCounts> {
   const read: SheetReader =
     reader ?? ((range) => readTab(spreadsheetId, tabTitle, range));
@@ -194,7 +161,7 @@ async function pullFromSheet(
       (await storedDateOrder()) ??
       "mdy";
 
-    const result = await writeWindow(syncId, { ...window, rows }, salesmen, customerCache, seen, order, cutover);
+    const result = await writeWindow(syncId, { ...window, rows }, salesmen, matcher, seen, order, cutover);
     afterCutover += result.afterCutover;
     created += result.created;
     updated += result.updated;
@@ -244,7 +211,7 @@ async function writeWindow(
   syncId: string,
   window: SheetTable,
   salesmen: { id: string; name: string }[],
-  customerCache: Map<string, MatchResult>,
+  matcher: ShopMatcher,
   seen: Set<string>,
   order: DateOrder,
   cutover: string,
@@ -311,7 +278,7 @@ async function writeWindow(
       else updated++;
 
       const salesman = matchSalesmanName(parsed.employeeName, salesmen);
-      const customer = await matchCustomer(parsed.customerName, customerCache);
+      const customer = await matcher.match(parsed.customerName);
 
       changed.push(toRow(syncId, row, key, parsed, hash, salesman, customer));
     }
@@ -477,6 +444,213 @@ export async function rematchFieldActivitySalesmen(): Promise<{
   }
 
   return { scanned: rows.length, matched, ambiguous, stillUnmatched };
+}
+
+/**
+ * RE-JUDGE WHICH SHOP EVERY STORED ROW IS, by the rule in force today.
+ *
+ * Rows were linked by a fuzzy rule that auto-matched close names, and a
+ * hash-driven sync never asks again about a row whose cells did not change —
+ * so the wrong links stayed, each one a visit on somebody else's timeline.
+ * This reads every row's name against the book and the people's decisions
+ * (`decideCustomerMatch`), and where the answer MOVED it rewrites the row and
+ * takes back the timeline entry the old link wrote; the projection writes the
+ * right one afterwards. Google is not touched.
+ *
+ * A name with no exact account and no decision keeps the note it had — the
+ * shortlist the import found — except that a row the old rule had LINKED is
+ * now a question, naming what it had been linked to so a person can confirm
+ * it in one click.
+ */
+export async function rematchFieldActivityCustomers(): Promise<{
+  scanned: number;
+  matched: number;
+  ambiguous: number;
+  unmatched: number;
+  moved: number;
+  timelineRemoved: number;
+}> {
+  const [book, decisions] = await Promise.all([loadShopBook(), loadNameDecisions()]);
+  const rows = await db
+    .select({
+      id: sheetFieldActivityRows.id,
+      customerName: sheetFieldActivityRows.customerName,
+      matchedCustomerId: sheetFieldActivityRows.matchedCustomerId,
+      status: sheetFieldActivityRows.customerMatchStatus,
+      note: sheetFieldActivityRows.matchNote,
+      timelineEventWritten: sheetFieldActivityRows.timelineEventWritten,
+    })
+    .from(sheetFieldActivityRows);
+
+  const nameOf = new Map<string, string>();
+  const linkedEarlier = rows.filter((r) => r.matchedCustomerId).map((r) => r.matchedCustomerId!);
+  if (linkedEarlier.length) {
+    const named = await db.execute<{ id: string; name: string; city: string | null }>(sql`
+      select id, name, city from customers
+       where id in (${sql.join([...new Set(linkedEarlier)].map((i) => sql`${i}`), sql`, `)})
+    `);
+    for (const n of named) nameOf.set(n.id, n.city ? `${n.name} (${n.city})` : n.name);
+  }
+
+  let matched = 0;
+  let ambiguous = 0;
+  let unmatched = 0;
+  let moved = 0;
+  let timelineRemoved = 0;
+
+  /* Grouped by what each row becomes, so a thousand rows of one shop are one
+     write rather than a thousand. */
+  const writes = new Map<string, { set: { matchedCustomerId: string | null; customerMatchStatus: MatchResult["status"]; matchNote: string | null }; ids: string[]; dropTimeline: string[] }>();
+
+  for (const row of rows) {
+    const key = foldShopName(row.customerName);
+    let result: MatchResult = decideCustomerMatch({
+      exact: key ? (book.get(key) ?? []) : [],
+      decision: key ? (decisions.get(key) ?? null) : null,
+    });
+    if (result.status === "unmatched" && !decisions.has(key)) {
+      // No exact account and nobody has decided: the import's shortlist
+      // stands, and an old link becomes a question rather than vanishing.
+      if (row.matchedCustomerId) {
+        result = {
+          status: "ambiguous",
+          matchedId: null,
+          note: `Linked earlier by a close name to ${nameOf.get(row.matchedCustomerId) ?? "an account"}, which is not the same name. Check it.`,
+        };
+      } else {
+        result = { status: row.status === "pending" ? "unmatched" : row.status, matchedId: null, note: row.note };
+      }
+    }
+
+    if (result.status === "matched") matched++;
+    else if (result.status === "ambiguous") ambiguous++;
+    else unmatched++;
+
+    if (
+      result.matchedId === row.matchedCustomerId &&
+      result.status === row.status &&
+      result.note === row.note
+    ) {
+      continue;
+    }
+    moved++;
+    const groupKey = JSON.stringify([result.matchedId, result.status, result.note]);
+    const group = writes.get(groupKey) ?? {
+      set: { matchedCustomerId: result.matchedId, customerMatchStatus: result.status, matchNote: result.note },
+      ids: [],
+      dropTimeline: [],
+    };
+    group.ids.push(row.id);
+    if (row.timelineEventWritten && result.matchedId !== row.matchedCustomerId) group.dropTimeline.push(row.id);
+    writes.set(groupKey, group);
+  }
+
+  for (const group of writes.values()) {
+    for (let i = 0; i < group.ids.length; i += 1000) {
+      const ids = group.ids.slice(i, i + 1000);
+      const drop = new Set(group.dropTimeline);
+      const dropping = ids.filter((id) => drop.has(id));
+      await db.transaction(async (tx) => {
+        if (dropping.length) {
+          const removed = await tx
+            .delete(timelineEvents)
+            .where(
+              and(
+                eq(timelineEvents.sourceApp, "mbos"),
+                eq(timelineEvents.eventType, MBOS_EVENT.visit),
+                inArray(timelineEvents.sourceRecordId, dropping),
+              ),
+            )
+            .returning({ id: timelineEvents.id });
+          timelineRemoved += removed.length;
+          await tx
+            .update(sheetFieldActivityRows)
+            .set({ timelineEventWritten: false })
+            .where(inArray(sheetFieldActivityRows.id, dropping));
+        }
+        await tx
+          .update(sheetFieldActivityRows)
+          .set({ ...group.set, updatedAt: new Date() })
+          .where(inArray(sheetFieldActivityRows.id, ids));
+      });
+    }
+  }
+
+  return { scanned: rows.length, matched, ambiguous, unmatched, moved, timelineRemoved };
+}
+
+/** The SQL spelling of `foldShopName`, for finding every row typed under one name. */
+const FOLDED_ROW_NAME = sql`btrim(regexp_replace(upper(coalesce(${sheetFieldActivityRows.customerName}, '')), '[^A-Z0-9]+', ' ', 'g'))`;
+
+/**
+ * Re-judge every row typed under ONE folded name, right now — after a person
+ * decides it or takes a decision back. The same rule and the same timeline
+ * clean-up as the nightly re-match, for one shop rather than the whole log.
+ */
+export async function rejudgeShopName(nameKey: string): Promise<{ rows: number; timelineRemoved: number }> {
+  const [decision] = await db
+    .select({ customerId: fieldActivityCustomerDecisions.customerId })
+    .from(fieldActivityCustomerDecisions)
+    .where(eq(fieldActivityCustomerDecisions.nameKey, nameKey));
+  const exact = await db.execute<{ id: string; name: string; city: string | null }>(sql`
+    select id, name, city from customers
+     where btrim(regexp_replace(upper(name), '[^A-Z0-9]+', ' ', 'g')) = ${nameKey}
+  `);
+  const rows = await db
+    .select({
+      id: sheetFieldActivityRows.id,
+      customerName: sheetFieldActivityRows.customerName,
+      matchedCustomerId: sheetFieldActivityRows.matchedCustomerId,
+      timelineEventWritten: sheetFieldActivityRows.timelineEventWritten,
+    })
+    .from(sheetFieldActivityRows)
+    .where(sql`${FOLDED_ROW_NAME} = ${nameKey}`);
+  if (!rows.length) return { rows: 0, timelineRemoved: 0 };
+
+  const near =
+    !decision && exact.length === 0 && rows[0].customerName
+      ? await nearShopNames(rows[0].customerName)
+      : [];
+  const result = decideCustomerMatch({ exact: [...exact], near, decision: decision ?? null });
+
+  let timelineRemoved = 0;
+  await db.transaction(async (tx) => {
+    const dropping = rows
+      .filter((r) => r.timelineEventWritten && r.matchedCustomerId !== result.matchedId)
+      .map((r) => r.id);
+    if (dropping.length) {
+      const removed = await tx
+        .delete(timelineEvents)
+        .where(
+          and(
+            eq(timelineEvents.sourceApp, "mbos"),
+            eq(timelineEvents.eventType, MBOS_EVENT.visit),
+            inArray(timelineEvents.sourceRecordId, dropping),
+          ),
+        )
+        .returning({ id: timelineEvents.id });
+      timelineRemoved = removed.length;
+      await tx
+        .update(sheetFieldActivityRows)
+        .set({ timelineEventWritten: false })
+        .where(inArray(sheetFieldActivityRows.id, dropping));
+    }
+    await tx
+      .update(sheetFieldActivityRows)
+      .set({
+        matchedCustomerId: result.matchedId,
+        customerMatchStatus: result.status,
+        matchNote: result.note,
+        updatedAt: new Date(),
+      })
+      .where(
+        inArray(
+          sheetFieldActivityRows.id,
+          rows.map((r) => r.id),
+        ),
+      );
+  });
+  return { rows: rows.length, timelineRemoved };
 }
 
 /**

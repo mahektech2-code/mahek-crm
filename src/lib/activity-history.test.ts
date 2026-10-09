@@ -29,6 +29,9 @@ import {
 } from "@/lib/services/sales-service";
 import { syncFieldActivitySheet } from "@/lib/services/field-activity-sync-service";
 import { projectFieldActivityTimeline } from "@/lib/services/field-activity-projection-service";
+import { rematchFieldActivityCustomers } from "@/lib/services/field-activity-sync-service";
+import { decideActivityShop, undoActivityShopDecision } from "@/lib/actions/field-activity";
+import { appAccess } from "@/db/schema";
 import type { SheetTable } from "@/lib/sheets";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
@@ -77,7 +80,7 @@ before(async () => {
 beforeEach(async () => {
   await db.execute(sql`
     truncate table
-      timeline_events, sheet_field_activity_rows, sheet_sync_runs,
+      timeline_events, field_activity_customer_decisions, sheet_field_activity_rows, sheet_sync_runs,
       mbos_visits, customers, users, app_settings
     restart identity cascade
   `);
@@ -214,5 +217,85 @@ describe("the sheet stops at the cutover", () => {
     const events = await db.select().from(timelineEvents).where(eq(timelineEvents.customerId, shop.id));
     assert.equal(events.length, 1);
     assert.equal(events[0].occurredAt.toISOString().slice(0, 10), "2026-10-05");
+  });
+});
+
+describe("which shop a typed name is", () => {
+  async function rowsNamed(name: string) {
+    return db
+      .select()
+      .from(sheetFieldActivityRows)
+      .where(eq(sheetFieldActivityRows.customerName, name));
+  }
+
+  test("the re-match takes back a link made on a close name, and its timeline entry", async () => {
+    // "Sai Paint" was linked to "Sai Paint Depot" by the old fuzzy rule.
+    await projectFieldActivityTimeline();
+    assert.equal((await db.select().from(timelineEvents)).length, 1);
+
+    const r = await rematchFieldActivityCustomers();
+    assert.ok(r.timelineRemoved >= 1);
+    const after = await rowsNamed("Sai Paint");
+    for (const row of after) {
+      assert.equal(row.matchedCustomerId, null);
+      assert.equal(row.customerMatchStatus, "ambiguous");
+      assert.match(row.matchNote ?? "", /Sai Paint Depot/);
+    }
+    assert.equal((await db.select().from(timelineEvents)).length, 0);
+  });
+
+  test("an exact name carried by one account is linked; by two, it is a question", async () => {
+    await sheetRow({ visitDate: "2026-10-01", rowNumber: 20, customerName: "sai paint depot.", customerMatchStatus: "unmatched" });
+    await db.insert(customers).values([
+      { id: id("cus"), name: "Balaji Traders", phone: "9822200021", city: "Ajmer", kind: "lead" },
+      { id: id("cus"), name: "BALAJI TRADERS", phone: "9822200022", city: "Mumbai", kind: "customer" },
+    ]);
+    await sheetRow({ visitDate: "2026-10-01", rowNumber: 21, customerName: "Balaji Traders", customerMatchStatus: "unmatched" });
+
+    await rematchFieldActivityCustomers();
+    const [exact] = await rowsNamed("sai paint depot.");
+    assert.equal(exact.matchedCustomerId, shop.id);
+    assert.equal(exact.customerMatchStatus, "matched");
+    const [twin] = await rowsNamed("Balaji Traders");
+    assert.equal(twin.matchedCustomerId, null);
+    assert.equal(twin.customerMatchStatus, "ambiguous");
+    assert.match(twin.matchNote ?? "", /Ajmer/);
+  });
+
+  test("a person's decision moves every row of the name, survives a re-match, and can be taken back", async () => {
+    const [manager] = await db
+      .insert(users)
+      .values({ id: id("usr"), name: "Pritesh", email: "pritesh@test.local", phone: "9820011099", passwordHash: "x", role: "manager", initials: "PD" })
+      .returning();
+    await db.insert(appAccess).values({ id: id("acc"), userId: manager.id, app: "sales", role: "manager" });
+    setTestUser(manager as never);
+
+    await sheetRow({ visitDate: "2026-10-02", rowNumber: 30, customerName: "SAI PAINT", customerMatchStatus: "unmatched" });
+    const [one] = await rowsNamed("Sai Paint");
+    const decided = await decideActivityShop({ rowId: one.id, customerId: shop.id });
+    assert.ok(decided.ok, decided.ok ? "" : decided.error);
+    // "Sai Paint" and "SAI PAINT" are one name.
+    assert.equal(decided.ok && decided.data.rows, 3); // two "Sai Paint" rows and one "SAI PAINT": one name
+
+    await rematchFieldActivityCustomers();
+    for (const row of [...(await rowsNamed("Sai Paint")), ...(await rowsNamed("SAI PAINT"))]) {
+      assert.equal(row.matchedCustomerId, shop.id);
+      assert.equal(row.customerMatchStatus, "matched");
+    }
+    assert.ok((await db.select().from(timelineEvents)).length >= 1);
+
+    const undone = await undoActivityShopDecision({ rowId: one.id });
+    assert.ok(undone.ok);
+    for (const row of await rowsNamed("Sai Paint")) assert.equal(row.matchedCustomerId, null);
+    assert.equal((await db.select().from(timelineEvents)).length, 0);
+    setTestUser(null);
+  });
+
+  test("a salesman cannot decide", async () => {
+    setTestUser(salesman as never);
+    const [one] = await rowsNamed("Sai Paint");
+    const r = await decideActivityShop({ rowId: one.id, customerId: shop.id });
+    assert.equal(r.ok, false);
+    setTestUser(null);
   });
 });

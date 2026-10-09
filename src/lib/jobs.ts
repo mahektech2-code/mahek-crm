@@ -61,6 +61,7 @@ import {
 import {
   fieldActivitySheetId,
   FIELD_ACTIVITY_TAB,
+  rematchFieldActivityCustomers,
   rematchFieldActivitySalesmen,
   reparseFieldActivityDates,
   syncFieldActivitySheet,
@@ -130,6 +131,7 @@ export type JobName =
   | "field-activity-project"
   | "field-activity-rematch"
   | "field-activity-reparse"
+  | "field-activity-shops"
   | "customer-master-sync"
   | "customer-master-project"
   /** Address to a coordinate, for the shops nobody has stood in. */
@@ -269,6 +271,20 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
       return {
         recordsAffected: r.linked + r.cleared,
         detail: `${r.linked} linked, ${r.cleared} cleared, ${r.unresolved} unmatched names`,
+      };
+    }, triggeredById),
+  );
+
+  /* Which shop each old-app row is, re-judged against today's book and the
+     names people have decided — so a shop added since is linked, and nothing
+     is ever linked on a close name. Cheap: an exact name is a map lookup. */
+  results.push(
+    await run("field-activity-shops", async () => {
+      const c = await rematchFieldActivityCustomers();
+      const p = await projectFieldActivityTimeline();
+      return {
+        recordsAffected: c.moved,
+        detail: `${c.moved} rows changed · ${c.timelineRemoved} timeline entries removed · ${p.written} written`,
       };
     }, triggeredById),
   );
@@ -1411,9 +1427,13 @@ async function runFieldActivityRematch(triggeredById?: string): Promise<JobResul
     "field-activity-rematch",
     async () => {
       const r = await rematchFieldActivitySalesmen();
+      const c = await rematchFieldActivityCustomers();
+      const p = await projectFieldActivityTimeline();
       return {
-        recordsAffected: r.matched,
-        detail: `${r.scanned} rows re-read · ${r.matched} matched to a salesman · ${r.ambiguous} ambiguous · ${r.stillUnmatched} belong to nobody with an account`,
+        recordsAffected: r.matched + c.moved,
+        detail:
+          `${r.scanned} rows re-read · ${r.matched} matched to a salesman · ${r.ambiguous} ambiguous · ${r.stillUnmatched} belong to nobody with an account · ` +
+          `shops: ${c.matched} linked, ${c.ambiguous} need review, ${c.unmatched} not on MahekOne, ${c.moved} changed, ${c.timelineRemoved} wrong timeline entries removed, ${p.written} written`,
       };
     },
     triggeredById,
