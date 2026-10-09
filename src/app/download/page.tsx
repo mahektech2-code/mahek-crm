@@ -3,9 +3,7 @@ import {
   BrandPanelHeading,
 } from "@/components/shell/brand-panel";
 
-export async function generateMetadata({ searchParams }: { searchParams: Promise<{ team?: string }> }) {
-  return { title: `Download ${appFor((await searchParams).team).name} - MahekOne` };
-}
+export const metadata = { title: "Download MBOS - MahekOne" };
 
 /**
  * The APK itself is a plain file at /opt/mahekone/downloads/mbos.apk on the
@@ -15,41 +13,18 @@ export async function generateMetadata({ searchParams }: { searchParams: Promise
  * built into the app image: a 90+ MB binary there would bloat every layer
  * and the container registry along with it.
  */
-/*
- * ONE PAGE, ONE APP PER TEAM. `?team=erp` is the factory floor — the ERP's
- * people — and gets the Factory app, a Trusted Web Activity around /factory
- * released by .github/workflows/factory-apk.yml. Anything else is MBOS, so
- * every link already given to a salesman keeps working.
- */
-type DownloadApp = { name: string; eyebrow: string; heading: string; pitch: string; apk: string; again: string };
-const APPS: Record<string, DownloadApp> = {
-  mbos: {
-    name: "MBOS",
-    eyebrow: "Field salesman app",
-    heading: "MBOS, on your phone",
-    pitch: "Visits, orders and payments, taken where the shop is — not typed in from memory back at the office.",
-    apk: "/downloads/mbos.apk",
-    again: "Already have MBOS installed? Downloading again updates it in place — no need to uninstall first.",
-  },
-  erp: {
-    name: "Mahek Factory",
-    eyebrow: "Factory floor app",
-    heading: "The factory, on your phone",
-    pitch: "Scan the label, see the picture, count, send — mixing, filling, packing and dispatch, straight into the ERP. Works without network.",
-    apk: "/downloads/factory.apk",
-    again: "Already installed? It updates itself from the server — download again only if your supervisor asks you to.",
-  },
-};
-const appFor = (team: string | undefined) => (team === "erp" || team === "factory" ? APPS.erp : APPS.mbos);
+const APK_PATH = "/downloads/mbos.apk";
 
-export default async function DownloadPage({ searchParams }: { searchParams: Promise<{ team?: string }> }) {
-  const app = appFor((await searchParams).team);
+export default function DownloadPage() {
   return (
     <div className="grid min-h-screen grid-cols-1 md:grid-cols-2">
       <BrandPanel>
-        <BrandPanelHeading eyebrow={app.eyebrow}>{app.heading}</BrandPanelHeading>
+        <BrandPanelHeading eyebrow="Field salesman app">
+          MBOS, on your phone
+        </BrandPanelHeading>
         <p className="animate-rise mt-4 text-sm leading-6 text-white/75 [animation-delay:80ms]">
-          {app.pitch}
+          Visits, orders and payments, taken where the shop is — not typed in
+          from memory back at the office.
         </p>
       </BrandPanel>
 
@@ -66,7 +41,7 @@ export default async function DownloadPage({ searchParams }: { searchParams: Pro
         </div>
 
         <div>
-          <h1 className="text-xl font-semibold text-ink">Download {app.name}</h1>
+          <h1 className="text-xl font-semibold text-ink">Download MBOS</h1>
           <p className="mt-1.5 max-w-[320px] text-sm text-muted">
             For Android. Your phone will warn you it&rsquo;s from outside the
             Play Store — that&rsquo;s expected for an internal app.
@@ -74,7 +49,7 @@ export default async function DownloadPage({ searchParams }: { searchParams: Pro
         </div>
 
         <a
-          href={app.apk}
+          href={APK_PATH}
           download
           className="hover:bg-brand-hover inline-flex h-11 items-center justify-center rounded-[var(--radius-control)] bg-brand px-6 text-sm font-medium text-white transition-colors"
         >
@@ -82,7 +57,8 @@ export default async function DownloadPage({ searchParams }: { searchParams: Pro
         </a>
 
         <p className="text-xs text-muted">
-          {app.again}
+          Already have MBOS installed? Downloading again updates it in place —
+          no need to uninstall first.
         </p>
       </div>
     </div>
