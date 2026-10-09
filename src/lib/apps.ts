@@ -20,6 +20,7 @@ export const APP_IDS = [
   "erp",
   "website",
   "hire",
+  "docs",
   "factory",
 ] as const;
 
@@ -249,16 +250,34 @@ export const APPS: AppDefinition[] = [
     built: true,
   },
   {
+    id: "docs",
+    /*
+     * Documentation for every app in MahekOne, read in MahekOne. Each page has
+     * three tabs for three readers — the person doing the work, the owner who
+     * wants the rule behind it, and the developer changing it — and every
+     * figure on a page that comes from configuration is read live from the
+     * database this deployment is connected to, so the docs on prod quote
+     * prod's settings rather than a copy typed into the page.
+     */
+    name: "Documentation",
+    initials: "DO",
+    description:
+      "How every MahekOne app works — step-by-step guides, the rules behind each screen, and the developer reference.",
+    href: "/docs",
+    tone: "neutral",
+    built: true,
+  },
+  {
     id: "factory",
     /*
      * The factory floor's phone app — scan a label, see the picture, enter
-     * the count, send. It is a WEB app sized for a phone, not a handset build:
-     * the people using it share a station phone, and a page needs no APK to
-     * be updated. Every stock movement it makes is an ERP document, posted
-     * through the ERP's own handlers (`lib/factory/post.ts`).
+     * the count, send. A web app sized for a phone, also shipped as a thin
+     * Android wrapper (factory-android/) so it has a home-screen icon; every
+     * screen still comes from the server. Every stock movement it makes is an
+     * ERP document, posted through the ERP's own handlers (`lib/factory/post.ts`).
      *
-     * Associate is a worker on the floor; manager is the Production Head,
-     * who assigns the work and reviews what the app could not accept alone.
+     * Associate is a worker on the floor; manager supervises a department, or
+     * the whole floor as the Production Head (`lib/factory/departments.ts`).
      */
     name: "Factory",
     initials: "FA",

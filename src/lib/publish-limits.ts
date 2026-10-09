@@ -35,3 +35,26 @@ export function tooLargeMessage(filename: string, bytes: number, triedCompressin
     ? `${base} It is still that size after compressing its photographs — split it into parts, or export it again at a lower resolution.`
     : `${base} Split it into parts, or export it again at a lower resolution.`;
 }
+
+/**
+ * PDF AND PICTURES, AND NOTHING ELSE — because the phone has to draw it.
+ *
+ * The handset previews a document inside the app, with no other app and no
+ * signal, and it can draw two things: a PDF's pages and a photograph. Android
+ * has no renderer for Word, PowerPoint or Excel, so a .docx published to the
+ * field is a row a salesman taps and cannot read. The office can make the PDF
+ * in two clicks, and is the only one who can; this says how, at the moment it
+ * matters, instead of the generic "not a JPG, PNG or PDF".
+ */
+const OFFICE: Record<string, string> = {
+  doc: "Word", docx: "Word", rtf: "Word", odt: "Word",
+  ppt: "PowerPoint", pptx: "PowerPoint", pps: "PowerPoint", ppsx: "PowerPoint", odp: "PowerPoint",
+  xls: "Excel", xlsx: "Excel", csv: "Excel", ods: "Excel",
+};
+
+export function officeFileRefusal(filename: string): string | null {
+  const ext = filename.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1];
+  const app = ext ? OFFICE[ext] : undefined;
+  if (!app) return null;
+  return `${filename} is a ${app} file, and phones can only show PDFs and pictures. In ${app}, use File → Save as → PDF, and choose that file instead.`;
+}

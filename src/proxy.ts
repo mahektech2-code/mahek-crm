@@ -61,6 +61,7 @@ const APP_ROUTES: ReadonlyArray<readonly [string, string]> = [
      be days old, so the app it belongs to is named by the path, not left to
      a Referer an offline-cached page may not carry. */
   ["/api/factory", "factory"],
+  ["/docs", "docs"],
 ];
 
 /**

@@ -3936,6 +3936,15 @@ export const SETTINGS = [
     max: 500,
   },
   {
+    key: "fieldActivity.cutoverDate",
+    type: "text",
+    category: "mbos-location",
+    label: "First day MBOS is the only record of a visit",
+    description:
+      "A date, YYYY-MM-DD. Before it, the Activity history screen shows the old field app's sheet (the Activity tab of Mahek EMP 2.0) beside MBOS; from it onwards only MBOS. A sheet row dated on or after it is not stored, not put on a customer's timeline and not counted anywhere — the old app is retired and its past stays exactly as it was read. Moving it later lets a straggler's late entries in; moving it earlier hides rows already stored without deleting them.",
+    default: "2026-10-10",
+  },
+  {
     key: "mbos.travel.maxLegKilometres",
     type: "integer",
     category: "mbos-location",
@@ -5203,6 +5212,15 @@ export function validateSetting(key: string, raw: unknown): ValidationResult {
 export function checkConsistency(config: Config): string[] {
   const problems: string[] = [];
 
+  /* A cutover nobody can read is a cutover that hides everything or nothing,
+     and which of the two depends on how Postgres happens to parse it. */
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(config["fieldActivity.cutoverDate"]) ||
+      Number.isNaN(Date.parse(`${config["fieldActivity.cutoverDate"]}T00:00:00Z`))) {
+    problems.push(
+      `The MBOS cutover date must be a date written YYYY-MM-DD, not "${config["fieldActivity.cutoverDate"]}".`,
+    );
+  }
+
   /* The effort is passed to OpenAI as written, and a word it does not know is
      a refused request on every question rather than a slower answer. */
   if (!["minimal", "low", "medium", "high"].includes(config["salesAsk.reasoningEffort"])) {
@@ -6184,6 +6202,7 @@ export type Config = {
   "mbos.approvals.escalationHours": number;
   "mbos.visits.minimumDwellSeconds": number;
   "mbos.visits.minimumNoteChars": number;
+  "fieldActivity.cutoverDate": string;
   "mbos.travel.maxLegKilometres": number;
   "mbos.sync.mediaWifiOnly": boolean;
   "mbos.ai.retainAudioAfterTranscription": boolean;

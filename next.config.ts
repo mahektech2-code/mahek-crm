@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import createMDX from "@next/mdx";
 import { ADMIN_REDIRECTS } from "./src/lib/admin-redirects";
 import { HRMS_RETIRED_SLUGS, hrmsLink } from "./src/lib/hrms/registry";
 
@@ -284,4 +285,22 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+/*
+ * THE DOCUMENTATION APP'S PAGES ARE MDX, compiled at build time.
+ *
+ * They are imported by `src/docs/content.ts`, never routed as files — so
+ * `pageExtensions` is untouched and the access gate in `src/app/docs/layout.tsx`
+ * stands in front of every one of them. Plugins are named as STRINGS because
+ * Turbopack cannot be handed a JavaScript function; their options have to be
+ * plain data for the same reason. Shiki colours the code fences here, at
+ * build, so no highlighter ships in the runtime image.
+ */
+const withMDX = createMDX({
+  extension: /\.mdx$/,
+  options: {
+    remarkPlugins: ["remark-gfm"],
+    rehypePlugins: ["rehype-slug", ["@shikijs/rehype", { theme: "github-light", addLanguageClass: true }]],
+  },
+});
+
+export default withMDX(nextConfig);

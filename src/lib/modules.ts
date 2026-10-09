@@ -650,7 +650,7 @@ export const APP_MODULES: AppModule[] = [
     "activity-history",
     "Activity history",
     "Field work",
-    "Field salesman visits and calls from before this app existed, imported from a prior system's own log — including the shop names that still need matching to a real account.",
+    "Every visit the field team logged on MBOS, newest first, and before the cutover date the old field app's (EMP 2.0) log beside it — including the shop names that still need matching to a real account.",
   ),
   sales("orders", "Orders", "Commercial", "Orders taken in the field, and the ones over a credit limit."),
   sales("payments", "Payments", "Commercial", "Money collected, and cash still in somebody's pocket."),
@@ -1006,9 +1006,22 @@ export const APP_MODULES: AppModule[] = [
     note: "What they can do inside Hire is their Hire role — recruiter, interviewer, hiring manager, onboarding, HR head or admin — set below, under Hire.",
   },
   /*
-   * THE FACTORY app is one module. A worker sees their own team's work and a
-   * Production Head sees the floor — that is the grant's LEVEL, not a screen
-   * somebody could be given without the other.
+   * DOCUMENTATION is one module. Everybody granted it reads every app's pages
+   * and all three tabs of each — the guide, how it works, and the developer
+   * reference — by decision rather than by omission: a telecaller who wants
+   * to see the rule behind their Call Log is reading the same truth the
+   * developer is, and splitting it would make two versions of one answer.
+   */
+  {
+    key: "docs.app",
+    app: "docs",
+    label: "Documentation",
+    group: "Documentation",
+    href: "/docs",
+  },
+  /*
+   * THE FACTORY app is one module. What somebody can do inside it is their
+   * department and level, set beside the grant in Admin Console → Access.
    */
   {
     key: "factory.app",
@@ -1016,7 +1029,7 @@ export const APP_MODULES: AppModule[] = [
     label: "Factory",
     group: "Factory",
     href: "/factory",
-    note: "Associate is a worker on the floor; manager is the Production Head. Their team and badge are set in the Factory app's staff list.",
+    note: "Associate works their department's jobs; manager supervises their department, or the whole floor as the Production Head. The department is set just below, under Factory.",
   },
   website("products", "Products", "Website", "The catalogue shown on the public site."),
   website("industries", "Industries", "Website", "The industries the public site says Mahek serves."),

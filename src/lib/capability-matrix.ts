@@ -802,6 +802,9 @@ export const MATRIX: Record<AppId, AppMatrix> = {
   /* The factory floor app checks its own two levels — a worker and the
      Production Head — in \`lib/factory/head.ts\`; it carries no book capability. */
   factory: { associate: [], manager: [] },
+  /* Documentation is read, never decided. Holding the app opens every page
+     and every tab, by decision — see `docs.app` in `lib/modules.ts`. */
+  docs: { associate: [], manager: [] },
   /* The ERP's decisions are POWERS granted to named people (`lib/erp/powers.ts`),
      not capabilities of a level — the CEO who verifies a test is one person,
      not every ERP manager. Holding the app and its modules is what opens the
