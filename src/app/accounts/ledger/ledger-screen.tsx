@@ -4,7 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { cx } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
-import { ConfirmDialog } from "@/components/ui/overlays";
+import { ConfirmDialog, RowMenu } from "@/components/ui/overlays";
 import { reverseReceiptAction } from "@/lib/actions/payments";
 import { CustomerSearch } from "../customer-search";
 import type { AccountServing } from "@/lib/services/distributor-service";
@@ -377,7 +377,7 @@ export function LedgerScreen({
                   <HeadCell align="right" width={104}>Billed</HeadCell>
                   <HeadCell align="right" width={104}>Received</HeadCell>
                   <HeadCell align="right" width={112}>Balance</HeadCell>
-                  {canReverse ? <HeadCell align="right" width={108}>Actions</HeadCell> : null}
+                  {canReverse ? <HeadCell align="right" width={72}>Actions</HeadCell> : null}
                 </>
               }
             >
@@ -430,7 +430,16 @@ export function LedgerScreen({
                     {canReverse ? (
                       <td className={cx(TD, "text-right")}>
                         {e.kind === "receipt" && e.status === "confirmed" && e.receiptId ? (
-                          <ReverseButton onClick={() => setReversing(e)} />
+                          <RowMenu
+                            items={[
+                              {
+                                label: "Reverse payment",
+                                destructive: true,
+                                title: "A bounced cheque, a duplicate entry, or money on the wrong customer",
+                                onSelect: () => setReversing(e),
+                              },
+                            ]}
+                          />
                         ) : null}
                       </td>
                     ) : null}
@@ -713,34 +722,6 @@ function AllocationNote({ link: l, receiptStatus }: { link: LedgerLink; receiptS
     <span className="text-xs text-warn-ink" title="What is due on the bill today, after every confirmed payment">
       part of {money(l.billAmount)} · {money(l.billDue)} due now
     </span>
-  );
-}
-
-/**
- * The one action on a statement line, drawn as a BUTTON — bordered, raised,
- * with an icon and its own column — so it cannot be mistaken for the bill
- * tags beside it, which only navigate. Danger-toned because it takes money
- * off an account.
- */
-function ReverseButton({ onClick }: { onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title="Reverse this payment — a bounced cheque, a duplicate, or money on the wrong customer"
-      className="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-[6px] border border-line-strong bg-surface px-2.5 text-xs font-semibold text-danger shadow-[0_1px_0_rgba(0,0,0,0.04)] transition-colors hover:border-danger hover:bg-danger-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-danger active:translate-y-px"
-    >
-      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-        <path
-          d="M5.5 3.5 2.5 6.5l3 3M2.75 6.5h6.75a4 4 0 0 1 0 8H7"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-      Reverse
-    </button>
   );
 }
 
