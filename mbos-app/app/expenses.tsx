@@ -1,6 +1,6 @@
 import React from 'react';
 import { Pressable, TextInput, View } from 'react-native';
-import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Badge, Card, Choice, ListCard, PrimaryButton, SecondaryButton, T } from '../src/components/ui/primitives';
@@ -14,11 +14,9 @@ import { getConfig } from '../src/data/config';
 import {
   activePolicy,
   previewClaim,
-  unsentDays,
   CLAIM_KINDS,
   type ClaimedLine,
   type LocalPolicy,
-  type UnsentDay,
 } from '../src/data/travel';
 import type { ExpenseKind } from '../src/engines/generated/expense-policy';
 import { pickDocuments, pickPhotos, takePhoto, type Picked } from '../src/native/capture';
@@ -30,7 +28,13 @@ import { useBoot } from '../src/state/boot';
 import { color as C, radius, weight, tabular, type BadgeTone } from '../src/theme/tokens';
 
 /**
- * Expenses — a claim, and the headroom it eats.
+ * Expenses — what he logged, what his manager decided, and his allowances.
+ *
+ * AN EXPENSE IS LOGGED, NOT SENT. Each one goes to his manager the moment he
+ * saves it — there is no day to close, and nothing holds it back. The meal and
+ * kilometre allowances are worked out at the office from his punches and trips
+ * and come back down to this screen on their own, listed apart, because they
+ * are his by the work log and wait for nobody.
  *
  * The cap line is the design's own three sentences: what is left before he
  * types, what would be left after, and how far over he has gone. A claim that
@@ -86,6 +90,20 @@ function amountWhy(typed: string): string | null {
   return v && !v.ok && v.why.startsWith('Type the rupees') ? v.why : null;
 }
 
+/**
+ * What a line IS, in his words. An allowance says which allowance — "Food ·
+ * ₹350" beside a ₹120 food bill would read as a second meal he claimed.
+ */
+function kindLabel(e: Expense): string {
+  const k = e.kind ?? e.category;
+  if (e.allowance) {
+    if (k === 'food') return 'Meal allowance';
+    if (k === 'travel') return 'Kilometre allowance';
+    return 'Allowance';
+  }
+  return CLAIM_KINDS.find((c) => c.key === k)?.label ?? k.charAt(0).toUpperCase() + k.slice(1).replace(/_/g, ' ');
+}
+
 export default function ExpensesScreen() {
   const back = useCameFrom('more');
   const notify = useStore((s) => s.notify);
@@ -98,7 +116,7 @@ export default function ExpensesScreen() {
      `rows` would drop a claim that has sat with a manager for two months —
      the one most worth chasing — out of the headline as it aged past the
      window. */
-  const [totals, setTotals] = React.useState<{ count: number; pendingPaise: number } | null>(null);
+  const [totals, setTotals] = React.useState<Awaited<ReturnType<typeof expenseTotals>> | null>(null);
   /* What he is allowed comes from the POLICY, not from configuration.
      This screen used to read `mbos.expenses.categoryCapsPaise` and show a
      monthly headroom off it — a different number, from a different source,
@@ -115,9 +133,6 @@ export default function ExpensesScreen() {
      claim, so a preview priced without these reports the whole cap however much
      of it has gone — and he finds out at approval. */
   const [dayLines, setDayLines] = React.useState<ClaimedLine[]>([]);
-  /* Days with claims on them that he has not closed. Until a day is closed the
-     office holds the claims and cannot decide them — see `unsentDays`. */
-  const [unsent, setUnsent] = React.useState<UnsentDay[]>([]);
 
   const [open, setOpen] = React.useState(false);
   const [fixing, setFixing] = React.useState(false);
@@ -141,11 +156,16 @@ export default function ExpensesScreen() {
 
   const bad = (k: FieldKey) => err.includes(k);
 
+  /* The clock is read ONCE, in a state initialiser rather than during render —
+     it is what the sheet falls back to before he has picked a day, and the
+     month the summary totals. */
+  const [todayIso] = React.useState(() => isoDate(new Date()));
+
   const load = React.useCallback(() => {
     let live = true;
     void Promise.all([
       listExpenses(EX_PAGE),
-      expenseTotals(),
+      expenseTotals(todayIso.slice(0, 7)),
       activePolicy(),
       /* The key the SERVER enforces, not a second one spelled differently.
          This screen read `mbos.expenses.maxClaimAgeDays`, which the office has
@@ -157,8 +177,7 @@ export default function ExpensesScreen() {
       getConfig<number>('mbos.expenses.backdatedDaysAllowed', 30),
       getConfig<number>('mbos.expenses.maxAttachments', 6),
       getConfig<number>('attachments.maxSizeMb', 5),
-      unsentDays(userId),
-    ]).then(([e, t, p, age, files, mb, u]) => {
+    ]).then(([e, t, p, age, files, mb]) => {
       if (!live) return;
       /* A claim just sent arrives at the top and pushes the rest down; that
          move eases rather than jumps. Capped, like every list here. */
@@ -169,12 +188,11 @@ export default function ExpensesScreen() {
       setMaxAgeDays(age);
       setMaxFiles(files);
       setMaxSizeMb(mb);
-      setUnsent(u);
     });
     return () => {
       live = false;
     };
-  }, [userId]);
+  }, [todayIso]);
 
   useFocusEffect(load);
 
@@ -192,6 +210,8 @@ export default function ExpensesScreen() {
   };
 
   const pending = totals?.pendingPaise ?? 0;
+  const logged = React.useMemo(() => rows.filter((r) => !r.allowance), [rows]);
+  const allowances = React.useMemo(() => rows.filter((r) => r.allowance), [rows]);
 
   const kinds = CLAIM_KINDS;
   const kind = ex.kind || kinds[0]!.key;
@@ -201,9 +221,6 @@ export default function ExpensesScreen() {
   const exAmtPaise = amountPaise(ex.amt);
   const amtWhy = amountWhy(ex.amt);
 
-  /* The clock is read ONCE, in a state initialiser rather than during render —
-     and it is what the sheet falls back to before he has picked a day. */
-  const [todayIso] = React.useState(() => isoDate(new Date()));
   const claimDay = ex.whenIso || todayIso;
 
   /* Re-read on `rows` as well as on the day, because sending a claim reloads
@@ -454,15 +471,15 @@ export default function ExpensesScreen() {
          engine, same day, same sentence. */
       notify(
         exOver
-          ? 'Claimed ' + inrFromPaise(exAmtPaise) + ' · above the limit. Your manager must allow it'
-          : 'Claimed ' + inrFromPaise(exAmtPaise) + ' · close the day to send it to your manager',
+          ? 'Logged ' + inrFromPaise(exAmtPaise) + ' · above the limit, so your manager decides how much'
+          : 'Logged ' + inrFromPaise(exAmtPaise) + ' · sent to your manager',
         exOver ? 'warn' : 'success',
       );
     } catch (e) {
       /* Said ON THE SHEET — a toast from here is drawn under it and nobody
          sees it — and the claim stays as typed so pressing again is all it
          takes. It used to fail in silence. */
-      setSendFail(e instanceof Error && e.message ? `Not saved: ${e.message}` : 'Not saved. Press Send claim again.');
+      setSendFail(e instanceof Error && e.message ? `Not saved: ${e.message}` : 'Not saved. Press Send to manager again.');
     } finally {
       setSending(false);
     }
@@ -473,98 +490,162 @@ export default function ExpensesScreen() {
       <BackLink label={back.label} onPress={back.go} />
       <T s="h1">Expenses</T>
       <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-        {inrFromPaise(pending) + ' claimed and not yet decided'}
+        {totals?.pendingCount
+          ? inrFromPaise(pending) +
+            ' waiting on your manager · ' +
+            totals.pendingCount +
+            (totals.pendingCount === 1 ? ' expense' : ' expenses')
+          : 'Nothing waiting on your manager'}
       </T>
 
-      {/* THE CLAIM IS NOT WITH HIS MANAGER UNTIL THE DAY IS CLOSED, and this
-          screen used to say it was. A day is what the office decides, so a
-          claim on a day he never closed was stored and drawn nowhere a manager
-          looks. Each day still open is named here, with the way to send it. */}
-      {unsent.length ? (
-        <Card style={{ marginTop: 12, backgroundColor: C.warnBg }}>
-          <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>Not sent to your manager yet</T>
-          <T s="small" style={{ color: C.ink, marginTop: 2 }}>
-            Your manager sees a claim only after you close its day.
-          </T>
-          {unsent.map((u) => (
-            <View
-              key={u.day}
-              style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 10 }}>
-              <T style={[{ flex: 1, minWidth: 0, fontSize: 14, color: C.ink }, tabular]}>
-                {(u.day === todayIso ? 'Today' : dmy(u.day)) +
-                  ' · ' +
-                  (u.claims
-                    ? inrFromPaise(u.claimedPaise) + ' in ' + u.claims + (u.claims === 1 ? ' claim' : ' claims')
-                    : u.legs + (u.legs === 1 ? ' trip' : ' trips'))}
-              </T>
-              <SecondaryButton
-                label="Close day"
-                onPress={() => router.push(`/eod?day=${u.day}&from=expenses` as never)}
-              />
-            </View>
-          ))}
-        </Card>
-      ) : null}
+      {/* THIS MONTH, in the three figures he actually asks about: what is
+          still with his manager, what has been allowed, and what the work log
+          earned him on its own. */}
+      <Card style={{ marginTop: 12, flexDirection: 'row', gap: 12 }}>
+        {[
+          { label: 'Waiting', value: pending },
+          { label: 'Approved this month', value: totals?.approvedMonthPaise ?? 0 },
+          { label: 'Allowances this month', value: totals?.allowanceMonthPaise ?? 0 },
+        ].map((f) => (
+          <View key={f.label} style={{ flex: 1, minWidth: 0 }}>
+            <T s="caption" numberOfLines={2}>
+              {f.label}
+            </T>
+            <T style={[{ fontSize: 16, lineHeight: 22, color: C.ink, marginTop: 2 }, weight(600), tabular]}>
+              {inrFromPaise(f.value)}
+            </T>
+          </View>
+        ))}
+      </Card>
 
       <PrimaryButton label="Add an expense" style={{ marginTop: 12, borderRadius: radius.xl }} onPress={add} />
       <T s="caption" style={{ marginTop: 10 }}>
         {exRule(maxAgeDays)}
       </T>
 
-      <ListCard style={{ marginTop: 16 }}>
-        {rows.map((e, i) => {
-          const tone: BadgeTone = e.state === 'Approved' ? 'success' : e.state === 'Pending' ? 'amber' : 'danger';
-          return (
+      <T s="label" style={{ marginTop: 20, marginBottom: 8 }}>
+        Your expenses
+      </T>
+      {logged.length ? (
+        <ListCard>
+          {logged.map((e, i) => {
+            const part = e.state === 'Approved' && e.approvedAmountPaise != null && e.approvedAmountPaise < e.amountPaise;
+            const word = e.state === 'Approved' ? (part ? 'Part approved' : 'Approved') : e.state === 'Pending' ? 'Waiting' : 'Not approved';
+            const tone: BadgeTone = e.state === 'Approved' ? (part ? 'amber' : 'success') : e.state === 'Pending' ? 'info' : 'danger';
+            const onPhone = e.syncState !== 'synced';
+            return (
+              <Stagger
+                key={e.id}
+                index={i}
+                style={{ paddingHorizontal: 16, paddingVertical: 14, borderTopWidth: i ? 1 : 0, borderTopColor: C.wash }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <T style={[{ flex: 1, minWidth: 0, fontSize: 15, lineHeight: 20, color: C.ink }, weight(500)]}>
+                    {kindLabel(e) + ' · ' + inrFromPaise(e.amountPaise)}
+                  </T>
+                  <Badge tone={tone}>{word}</Badge>
+                </View>
+                <T s="caption" style={{ marginTop: 3 }} numberOfLines={2}>
+                  {dmy(e.spentOn) + (e.remarks ? ' · ' + e.remarks : '')}
+                </T>
+                {part ? (
+                  <T style={{ fontSize: 13, lineHeight: 19, color: C.warnInk, marginTop: 2 }}>
+                    {inrFromPaise(e.approvedAmountPaise!) + ' of ' + inrFromPaise(e.amountPaise) + ' approved'}
+                  </T>
+                ) : null}
+                {/* Logged is logged: a row still on the phone is saved and
+                    will go the moment there is signal — said, so a salesman in
+                    a godown does not log it twice. */}
+                {onPhone && e.state === 'Pending' ? (
+                  <T style={{ fontSize: 13, lineHeight: 19, color: C.muted }}>
+                    Saved on this phone. It goes to your manager when there is signal.
+                  </T>
+                ) : (
+                  <T style={{ fontSize: 13, lineHeight: 19, color: e.billPhotoId ? C.muted : C.warn }}>
+                    {e.billPhotoId ? 'Bill added' : 'No bill. May not be accepted.'}
+                  </T>
+                )}
+                {e.state === 'Rejected' ? (
+                  <>
+                    {/* A rejection with no reason is NOT a missing bill. That
+                        guess was printed in danger red, sometimes directly under
+                        a row reading "Bill attached", and it sent him to
+                        photograph a bill that was never the problem. */}
+                    <T style={{ fontSize: 13, lineHeight: 19, color: C.danger, marginTop: 4 }}>
+                      {e.rejectionReason ?? e.decisionNote ?? 'Not approved. Your manager did not give a reason.'}
+                    </T>
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() => fix(e)}
+                      style={{ minHeight: 48, justifyContent: 'center', marginTop: 2 }}>
+                      <T style={[{ fontSize: 14, color: C.primary }, weight(600)]}>Fix and send again</T>
+                    </Pressable>
+                  </>
+                ) : e.decisionNote ? (
+                  <T style={{ fontSize: 13, lineHeight: 19, color: C.muted, marginTop: 2 }}>
+                    {'“' + e.decisionNote + '”'}
+                  </T>
+                ) : null}
+              </Stagger>
+            );
+          })}
+        </ListCard>
+      ) : (
+        <Card>
+          <T s="small" style={{ color: C.ink }}>No expenses logged yet.</T>
+          <T s="caption" style={{ marginTop: 4 }}>
+            Add a fare, a hotel, a food bill or any other cost with a photo of the bill. It goes to
+            your manager straight away.
+          </T>
+        </Card>
+      )}
+
+      {/* A capped list says what it is a slice of — a screen showing sixty of
+          seven hundred rows with nothing saying so is a screen that has lost the
+          one he is looking for. */}
+      {totals && totals.count > rows.length ? (
+        <T s="caption" style={{ marginTop: 10 }}>
+          {'Showing the latest ' + rows.length + ' of ' + totals.count + '. The office has all of them.'}
+        </T>
+      ) : null}
+
+      <T s="label" style={{ marginTop: 20, marginBottom: 4 }}>
+        Allowances
+      </T>
+      <T s="caption" style={{ marginBottom: 8 }}>
+        Worked out for you from your punch-in, punch-out and trips on your own bike or car. Nothing
+        to add and nothing to send.
+      </T>
+      {allowances.length ? (
+        <ListCard>
+          {allowances.map((e, i) => (
             <Stagger
               key={e.id}
               index={i}
               style={{ paddingHorizontal: 16, paddingVertical: 14, borderTopWidth: i ? 1 : 0, borderTopColor: C.wash }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                 <T style={[{ flex: 1, minWidth: 0, fontSize: 15, lineHeight: 20, color: C.ink }, weight(500)]}>
-                  {e.category + ' · ' + inrFromPaise(e.amountPaise)}
+                  {kindLabel(e) + ' · ' + inrFromPaise(e.amountPaise)}
                 </T>
-                <Badge tone={tone}>{e.state}</Badge>
+                <Badge tone="neutral">Automatic</Badge>
               </View>
-              <T s="caption" style={{ marginTop: 3 }}>
-                {dmy(e.spentOn) + ' · ' + (e.remarks ?? '')}
+              <T s="caption" style={{ marginTop: 3 }} numberOfLines={2}>
+                {dmy(e.spentOn) + (e.remarks ? ' · ' + e.remarks : '')}
               </T>
-              <T style={{ fontSize: 13, lineHeight: 19, color: e.billPhotoId ? C.muted : C.warn }}>
-                {e.billPhotoId ? 'Bill added' : 'No bill. May not be accepted.'}
-              </T>
-              {e.state === 'Rejected' ? (
-                <>
-                  {/* A rejection with no reason is NOT a missing bill. That
-                      guess was printed in danger red, sometimes directly under
-                      a row reading "Bill attached", and it sent him to
-                      photograph a bill that was never the problem. */}
-                  <T style={{ fontSize: 13, lineHeight: 19, color: C.danger, marginTop: 4 }}>
-                    {e.rejectionReason ?? 'Sent back. Your manager did not give a reason.'}
-                  </T>
-                  <Pressable
-                    accessibilityRole="button"
-                    onPress={() => fix(e)}
-                    style={{ minHeight: 48, justifyContent: 'center', marginTop: 2 }}>
-                    <T style={[{ fontSize: 14, color: C.primary }, weight(600)]}>Fix and send again</T>
-                  </Pressable>
-                </>
-              ) : null}
             </Stagger>
-          );
-        })}
-      </ListCard>
-
-      {/* A capped list says what it is a slice of — a screen showing sixty of
-          seven hundred claims with nothing saying so is a screen that has lost
-          the one he is looking for. */}
-      {totals && totals.count > rows.length ? (
-        <T s="caption" style={{ marginTop: 10 }}>
-          {'Latest ' + rows.length + ' of ' + totals.count + ' claims. The office has all of them.'}
-        </T>
-      ) : null}
+          ))}
+        </ListCard>
+      ) : (
+        <Card>
+          <T s="small" style={{ color: C.ink }}>No allowances yet.</T>
+          <T s="caption" style={{ marginTop: 4 }}>
+            They appear after you punch in and out. It can take a few minutes after the phone syncs.
+          </T>
+        </Card>
+      )}
 
       {/* ------------------------------------------------------ claim sheet */}
       <BottomSheet open={open} onClose={() => close()} scroll>
-        <T s="h2">{fixing ? 'Fix this claim' : 'Claim an expense'}</T>
+        <T s="h2">{fixing ? 'Fix this expense' : 'Add an expense'}</T>
 
         <View style={{ marginTop: 14 }}>
           <T s="label">What for</T>
@@ -768,7 +849,7 @@ export default function ExpensesScreen() {
         <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
           <SecondaryButton label="Cancel" onPress={() => close()} style={{ flex: 1 }} />
           <PrimaryButton
-            label={sending ? 'Sending…' : fixing ? 'Send again' : 'Send claim'}
+            label={sending ? 'Sending…' : fixing ? 'Send again' : 'Send to manager'}
             onPress={send}
             disabled={sending}
             whyDisabled="Sending this claim. Please wait."

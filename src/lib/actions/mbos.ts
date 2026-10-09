@@ -21,7 +21,6 @@ import {
   mbosConflicts,
   mbosDevices,
   mbosExpenseDays,
-  mbosExpenseExceptions,
   mbosExpenses,
   mbosTravelLegs,
   mbosTravelModes,
@@ -96,7 +95,7 @@ import { computeHealth, type HealthFacts } from "../engines/health";
 import { fileStorage } from "../storage";
 import { classOfCity } from "../services/expense-policy-service";
 import { ensureDay } from "../services/expense-service";
-import { submitDay } from "../services/expense-submit-service";
+import { refreshDayMoney } from "../services/expense-submit-service";
 import { transcribeSpeech } from "../dictation";
 import { sniffContentType, ACCEPTED_AUDIO_TYPES } from "../file-types";
 import { issueToken, verifyToken, signingKeyPresent } from "../mbos/token";
@@ -417,6 +416,8 @@ export async function ingestSyncBatch(
   /** Client ids refused in this batch, so their dependents can be blocked. */
   const refusedHere = new Set<string>();
   const touchedCustomers = new Set<string>();
+  /* Days whose money moved — see step 6. */
+  const moneyDays = new Set<string>();
 
   for (const item of items) {
     const receivedAt = Date.now();
@@ -503,6 +504,8 @@ export async function ingestSyncBatch(
       acceptedHere.add(item.entityId);
       const customerId = customerIdOf(item);
       if (customerId) touchedCustomers.add(customerId);
+      const moneyDay = moneyDayOf(item);
+      if (moneyDay) moneyDays.add(moneyDay);
     }
     if (result.status === "rejected") {
       refusedHere.add(item.entityId);
@@ -531,7 +534,37 @@ export async function ingestSyncBatch(
     await recomputeHealthScore(customerId).catch(() => {});
   }
 
+  /* 6 — the day's allowances, worked out the moment its records arrive.
+   * There is no closing a day: a punch, a trip or a logged expense is enough
+   * for the meal and kilometre allowances to be written and for what the
+   * policy allows on each expense to be shown to his manager. Once per day per
+   * batch, after every record of the batch has landed. A failure here costs
+   * the refresh and never the records — the nightly pass runs it again. */
+  for (const day of moneyDays) {
+    await refreshDayMoney(principal.user.id, day).catch(() => {});
+  }
+
   return results;
+}
+
+/**
+ * The day an accepted record moves the money of, or null.
+ *
+ * Read off the payload's own date, because that is the day the handset filed
+ * it under — a punch-out after midnight still belongs to the day it closes.
+ */
+function moneyDayOf(item: SyncItem): string | null {
+  const p = item.payload as Record<string, unknown>;
+  const day =
+    item.entityType === "expense"
+      ? p.expenseDate
+      : item.entityType === "expense_day" ||
+          item.entityType === "travel_leg" ||
+          item.entityType === "attendance" ||
+          item.entityType === "expense_day_submit"
+        ? p.day
+        : null;
+  return typeof day === "string" && /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : null;
 }
 
 /**
@@ -6439,6 +6472,13 @@ async function handleExpense(principal: MbosPrincipal, item: SyncItem): Promise<
     };
   }
 
+  /* Every expense is filed under its day, because the day is what the policy
+     prices it against and what the Expenses desk shows it beside. The handset
+     opens the day itself; an older build did not, and its claims floated free
+     of any day — so one is opened here rather than the claim landing nowhere. */
+  const expenseDayId =
+    p.expenseDayId ?? (await ensureDay(principal.user.id, p.expenseDate, principal.deviceId));
+
   await db
     .insert(mbosExpenses)
     .values({
@@ -6452,7 +6492,7 @@ async function handleExpense(principal: MbosPrincipal, item: SyncItem): Promise<
       claimId: p.claimId ?? null,
       kind: p.kind ?? p.category,
       sourceType: "manual",
-      expenseDayId: p.expenseDayId ?? null,
+      expenseDayId,
       vendorName: p.vendorName ?? null,
       billNumber: p.billNumber ?? null,
       billDate: p.billDate ?? null,
@@ -6508,20 +6548,10 @@ async function handleExpenseDay(principal: MbosPrincipal, item: SyncItem): Promi
   const p = parsed.data;
 
   const existing = await db
-    .select({ id: mbosExpenseDays.id, lockedAt: mbosExpenseDays.lockedAt })
+    .select({ id: mbosExpenseDays.id })
     .from(mbosExpenseDays)
     .where(and(eq(mbosExpenseDays.userId, principal.user.id), eq(mbosExpenseDays.day, p.day)))
     .limit(1);
-
-  if (existing[0]?.lockedAt) {
-    return {
-      kind: "rejected",
-      value: reject(
-        "day_locked",
-        `${p.day} has already been submitted and locked. Ask your manager to reopen it — what was submitted stays exactly as it was, and a correction is recorded beside it.`,
-      ),
-    };
-  }
 
   const cityClass = p.destinationCity ? await classOfCity(p.destinationCity) : null;
   const values = {
@@ -6657,23 +6687,6 @@ async function handleTravelLeg(principal: MbosPrincipal, item: SyncItem): Promis
   let dayId = p.expenseDayId ?? null;
   if (!dayId && p.day) {
     dayId = await ensureDay(principal.user.id, p.day, principal.deviceId);
-  }
-
-  if (dayId) {
-    const [day] = await db
-      .select({ lockedAt: mbosExpenseDays.lockedAt })
-      .from(mbosExpenseDays)
-      .where(eq(mbosExpenseDays.id, dayId))
-      .limit(1);
-    if (day?.lockedAt) {
-      return {
-        kind: "rejected",
-        value: reject(
-          "day_locked",
-          "That day has already been submitted and locked, so a leg cannot be added to it. Ask your manager to reopen it.",
-        ),
-      };
-    }
   }
 
   /* A customer named on a leg is checked the same way one named on an order
@@ -6858,14 +6871,14 @@ const submitSchema = z.object({
 });
 
 /**
- * The salesman closing his day.
+ * An older phone pressing Send day.
  *
- * **The server recomputes and the server's answer wins — and the difference is
- * RECORDED.** The handset ran the same engine offline against the policy it
- * last pulled, which may be a version behind. Silently overwriting his figure
- * is how somebody is told ₹450 and paid ₹250 with nothing on any screen
- * explaining it, and that is the fastest way to make a field app untrusted.
- * `sync_conflicts` already does exactly this for the order sheet.
+ * There is nothing to send any more: allowances are worked out as the day's
+ * records arrive and every expense he logged is already with his manager. A
+ * phone built before that still has the button, and refusing what it sends
+ * would park the item in his outbox for ever, so it is ACCEPTED, and the day
+ * is refreshed — which is all the button can usefully have meant. Nothing is
+ * locked and nothing is routed.
  */
 async function handleExpenseDaySubmit(
   principal: MbosPrincipal,
@@ -6873,42 +6886,10 @@ async function handleExpenseDaySubmit(
 ): Promise<Handled> {
   const parsed = submitSchema.safeParse(item.payload);
   if (!parsed.success) return validationRejection(parsed.error);
-  const p = parsed.data;
-
-  const outcome = await submitDay(principal.user.id, p.day, { note: p.note ?? null });
-  if (!outcome.ok) {
-    return { kind: "rejected", value: reject("day_locked", outcome.reason) };
-  }
-
-  if (
-    typeof p.clientClaimedPaise === "number" &&
-    p.clientClaimedPaise !== outcome.claimedPaise
-  ) {
-    await db
-      .insert(mbosExpenseExceptions)
-      .values({
-        id: gen("xexc"),
-        userId: principal.user.id,
-        expenseDayId: outcome.dayId,
-        kind: "client_disagreement",
-        severity: "info",
-        message: `The handset made this day ${rupees(p.clientClaimedPaise)} and the office makes it ${rupees(outcome.claimedPaise)}. The office figure is the one paid; the difference is usually a policy the phone had not yet pulled.`,
-        detail: {
-          clientClaimedPaise: p.clientClaimedPaise,
-          serverClaimedPaise: outcome.claimedPaise,
-        },
-      })
-      .onConflictDoNothing();
-  }
-
+  await refreshDayMoney(principal.user.id, parsed.data.day);
   return {
     kind: "accepted",
-    value: {
-      serverId: outcome.dayId,
-      /* The handset prints this, so the salesman learns what happened to his
-         day at the moment it syncs rather than at month end. */
-      serverNumber: outcome.autoApproved ? "Approved" : "With your manager",
-    },
+    value: { serverId: item.entityId, serverNumber: "With your manager" },
   };
 }
 

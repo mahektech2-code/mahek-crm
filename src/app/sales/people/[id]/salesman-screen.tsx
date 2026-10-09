@@ -542,7 +542,9 @@ export function SalesmanScreen({
                 <Cell align="right">{money(e.amountPaise)}</Cell>
                 <Cell truncate={340}>{e.remarks ?? <span className="text-muted">—</span>}</Cell>
                 <Cell>
-                  {e.state === "approved" ? (
+                  {e.state === "allowance" ? (
+                    <Pill tone="neutral">Allowance</Pill>
+                  ) : e.state === "approved" ? (
                     <Pill tone="success">Approved</Pill>
                   ) : e.state === "rejected" ? (
                     <Pill tone="danger">Refused</Pill>

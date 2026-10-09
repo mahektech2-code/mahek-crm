@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { expenseMonthSnapshots } from "@/db/schema";
 import { APP_TIMEZONE, endOfMonth } from "@/lib/business-date";
 import { orderCountsSql } from "@/lib/order-status";
+import { expenseStateSql, paidPaiseSql } from "@/lib/expense-money-sql";
 import { creditedToSql } from "@/lib/sales-attribution";
 import {
   coca,
@@ -38,39 +39,34 @@ export type SalesmanRoiRow = RankedSalesman & { employeeStatus: string | null };
 /**
  * Every salesman's period, in one query.
  *
- * The expense figures come from `mbos_expenses` joined to the APPROVED
- * approval on its day — so a day still waiting on a manager contributes
- * nothing to cost, which is correct and is also why a fresh month reads low
- * until the approvals catch up. The screen says so rather than leaving
- * somebody to wonder.
+ * The expense figures are what each line is WORTH ONCE DECIDED —
+ * `paidPaiseSql`, the one reading of it: every allowance, and every expense
+ * he logged that his manager has approved, at the amount allowed. An expense
+ * still waiting contributes nothing to cost, which is correct and is also why
+ * a fresh month reads low until the approvals catch up. The screen says so
+ * rather than leaving somebody to wonder.
  */
 export async function salesmanPeriods(from: string, to: string): Promise<SalesmanPeriod[]> {
   const scope = await managerScope();
   return db.execute<SalesmanPeriod>(sql`
-    with approved_days as (
-      select d.id, d.user_id, d.day
-        from mbos_expense_days d
-        join mbos_approvals a
-          on a.subject_type = 'mbos_expense_days' and a.subject_id = d.id
-       where a.state in ('approved', 'partially_approved')
-         and d.day between ${from}::date and ${to}::date
-    ),
-    spend as (
-      select ad.user_id,
-             coalesce(sum(e.eligible_paise) filter (where e.kind = 'travel'), 0) as travel,
-             coalesce(sum(e.eligible_paise) filter (where e.kind = 'food'), 0) as food,
-             coalesce(sum(e.eligible_paise) filter (where e.kind = 'lodging'), 0) as lodging,
-             coalesce(sum(e.eligible_paise) filter (
-               where e.kind not in ('travel', 'food', 'lodging')), 0) as other
-        from approved_days ad
-        join mbos_expenses e on e.expense_day_id = ad.id and e.superseded_by_id is null
-       group by ad.user_id
+    with spend as (
+      select e.user_id,
+             coalesce(sum(${paidPaiseSql("e")}) filter (where e.kind = 'travel'), 0) as travel,
+             coalesce(sum(${paidPaiseSql("e")}) filter (where e.kind = 'food'), 0) as food,
+             coalesce(sum(${paidPaiseSql("e")}) filter (where e.kind = 'lodging'), 0) as lodging,
+             coalesce(sum(${paidPaiseSql("e")}) filter (
+               where coalesce(e.kind, 'other') not in ('travel', 'food', 'lodging')), 0) as other
+        from mbos_expenses e
+       where e.superseded_by_id is null
+         and e.expense_date between ${from}::date and ${to}::date
+       group by e.user_id
     ),
     distance as (
-      select ad.user_id, coalesce(sum(l.chosen_metres), 0)::int as metres
-        from approved_days ad
-        join mbos_travel_legs l on l.expense_day_id = ad.id
-       group by ad.user_id
+      select d.user_id, coalesce(sum(l.chosen_metres), 0)::int as metres
+        from mbos_expense_days d
+        join mbos_travel_legs l on l.expense_day_id = d.id
+       where d.day between ${from}::date and ${to}::date
+       group by d.user_id
     )
     select u.id as "userId", u.name,
            /* Whose revenue this is comes from sales-attribution.ts and
@@ -125,7 +121,7 @@ export async function salesmanRoi(
 /* ---------------------------------------------------- §L acquisition split */
 
 /**
- * Every piece of approved spending in the period, with the one fact that
+ * Every trip's kilometre allowance in the period, with the one fact that
  * decides which side of §L's line it falls: had that customer ordered before?
  *
  * Asked in SQL rather than per item, because "before this leg" is a different
@@ -134,16 +130,16 @@ export async function salesmanRoi(
 export async function spendItems(from: string, to: string): Promise<SpendItem[]> {
   const scope = await managerScope();
   return db.execute<SpendItem>(sql`
-    with approved_days as (
+    with days as (
       select d.id, d.user_id, d.day
         from mbos_expense_days d
-        join mbos_approvals a
-          on a.subject_type = 'mbos_expense_days' and a.subject_id = d.id
-       where a.state in ('approved', 'partially_approved')
-         and d.day between ${from}::date and ${to}::date
+       where d.day between ${from}::date and ${to}::date
     )
     select l.id,
-           coalesce((select e.eligible_paise from mbos_expenses e
+           /* A trip's kilometre allowance — an allowance, so it counts as soon
+              as it exists. A trip with none (a fare, a walk) costs nothing
+              here; its fare is a logged expense and is in the breakdown. */
+           coalesce((select ${paidPaiseSql("e")} from mbos_expenses e
                       where e.source_type = 'travel_leg' and e.source_id = l.id
                       limit 1), 0) as paise,
            l.purpose,
@@ -155,7 +151,7 @@ export async function spendItems(from: string, to: string): Promise<SpendItem[]>
                      and ${orderCountsSql("o")}
                      and (o.ordered_at at time zone ${APP_TIMEZONE})::date < ad.day
                 ) end as "customerHadOrderedBefore"
-      from approved_days ad
+      from days ad
       join mbos_travel_legs l on l.expense_day_id = ad.id
       join users u on u.id = ad.user_id
      where true ${onlyMine(scope, "u.id")}
@@ -222,29 +218,27 @@ export type ExpenseBreakdown = {
 /** Requirements 66 and 67. */
 export async function expenseBreakdown(from: string, to: string): Promise<ExpenseBreakdown> {
   const scope = await managerScope();
+  /* Every line on its own, by the one rule: allowances count, an expense he
+     logged counts once approved and at the amount allowed. "Awaiting" is what
+     he has logged and nobody has decided yet — named, so a low month is not
+     read as a cheap one. */
   const [row] = await db.execute<ExpenseBreakdown>(sql`
     select
-      coalesce(sum(e.eligible_paise) filter (
-        where e.kind = 'travel' and a.state in ('approved','partially_approved')), 0) as "travelPaise",
-      coalesce(sum(e.eligible_paise) filter (
-        where e.kind = 'food' and a.state in ('approved','partially_approved')), 0) as "foodPaise",
-      coalesce(sum(e.eligible_paise) filter (
-        where e.kind = 'lodging' and a.state in ('approved','partially_approved')), 0) as "lodgingPaise",
-      coalesce(sum(e.eligible_paise) filter (
-        where e.kind = 'local_transport' and a.state in ('approved','partially_approved')), 0)
+      coalesce(sum(${paidPaiseSql("e")}) filter (where e.kind = 'travel'), 0) as "travelPaise",
+      coalesce(sum(${paidPaiseSql("e")}) filter (where e.kind = 'food'), 0) as "foodPaise",
+      coalesce(sum(${paidPaiseSql("e")}) filter (where e.kind = 'lodging'), 0) as "lodgingPaise",
+      coalesce(sum(${paidPaiseSql("e")}) filter (where e.kind = 'local_transport'), 0)
         as "localTransportPaise",
-      coalesce(sum(e.eligible_paise) filter (
-        where e.kind = 'other' and a.state in ('approved','partially_approved')), 0) as "otherPaise",
-      coalesce(sum(e.eligible_paise) filter (
-        where a.state in ('approved','partially_approved')), 0) as "totalPaise",
-      coalesce(sum(e.amount_paise) filter (where a.state = 'pending' or a.state is null), 0)
+      coalesce(sum(${paidPaiseSql("e")}) filter (
+        where coalesce(e.kind, 'other') not in ('travel', 'food', 'lodging', 'local_transport')), 0)
+        as "otherPaise",
+      coalesce(sum(${paidPaiseSql("e")}), 0) as "totalPaise",
+      coalesce(sum(e.amount_paise) filter (where ${expenseStateSql("e")} = 'pending'), 0)
         as "awaitingPaise"
-      from mbos_expense_days d
-      join users u on u.id = d.user_id
-      join mbos_expenses e on e.expense_day_id = d.id and e.superseded_by_id is null
-      left join mbos_approvals a
-        on a.subject_type = 'mbos_expense_days' and a.subject_id = d.id and a.step_index = 0
-     where d.day between ${from}::date and ${to}::date
+      from mbos_expenses e
+      join users u on u.id = e.user_id
+     where e.superseded_by_id is null
+       and e.expense_date between ${from}::date and ${to}::date
        ${onlyMine(scope, "u.id")}
   `);
   return (

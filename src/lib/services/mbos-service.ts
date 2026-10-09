@@ -36,6 +36,7 @@ import { findAccount, verifyOtp } from "./otp-service";
 import { bearerFrom, verifyToken, signingKeyPresent } from "../mbos/token";
 import { today } from "../recompute";
 import { addDays, addMonths, asDate, APP_TIMEZONE, monthKey, type BusinessDate } from "../business-date";
+import { approvedAmountSql, decisionNoteSql, expenseStateSql, isAllowanceSql, paidPaiseSql } from "@/lib/expense-money-sql";
 import { customerTargetsCreditedTo } from "./worklist-services";
 import { bandFor } from "../engines/inactivity";
 import {
@@ -1058,6 +1059,8 @@ export type BootstrapPayload = {
   performance: unknown[];
   /** His customers' targets, this month and last. See `customerTargetsFor`. */
   customerTargets: unknown[];
+  /** His expenses and allowances, the office's current word on each. See `expenseBookFor`. */
+  expenseBook: ExpenseBook;
   /** This month's and last's. See `salaryFor` — read-only, nothing here writes it. */
   salary: unknown[];
   /**
@@ -1273,6 +1276,7 @@ export async function buildBootstrap(
     notifications: notificationsForWire(notificationRows),
     performance: performanceRows,
     customerTargets: await customerTargetsFor(principal.user.id),
+    expenseBook: await expenseBookFor(principal.user.id),
     salary: salaryRows,
     travelModes: await travelModeRows(),
     myOrders: await myOrderStates(principal.user.id),
@@ -2741,6 +2745,52 @@ async function timelineSince(ids: string[], sinceIso: string) {
 }
 
 /**
+ * HIS EXPENSES AND ALLOWANCES, as the office now holds them.
+ *
+ * Sent WHOLE on every pull, over the window an expense may still be logged
+ * in — never `since`-gated, for the reason `customerTargetsFor` is not: what
+ * changes a row here is as often a decision on its approval, or an allowance
+ * re-worked from a trip the trail has only now measured, as the row itself.
+ * And an allowance can go away altogether (a trip re-moded to walking pays
+ * nothing, and a ₹0 line is never kept), which only a whole list can say.
+ *
+ * The handset upserts every row and drops any ALLOWANCE in the window this
+ * list no longer names. Expenses he logged are never dropped on the phone —
+ * they are his, and one the office lost is something he has to be able to see.
+ *
+ * Every state and amount comes from `lib/expense-money-sql.ts`, the same
+ * reading the Expenses desk and the salary screen make.
+ */
+export type ExpenseBook = { from: string; rows: unknown[] };
+
+const EXPENSE_BOOK_LIMIT = 400;
+
+export async function expenseBookFor(userId: string): Promise<ExpenseBook> {
+  const day = await today();
+  const window = (await getConfig())["mbos.expenses.backdatedDaysAllowed"];
+  const from = addDays(day, -Math.max(window, 31));
+  const rows = await db.execute<Record<string, unknown>>(sql`
+    select e.id, e.user_id as "userId", e.expense_date::text as "spentOn",
+           e.category::text as category, coalesce(e.kind, e.category::text) as kind,
+           e.amount_paise::int as "amountPaise", e.remarks,
+           e.bill_photo_id as "billPhotoId", e.expense_day_id as "expenseDayId",
+           (case when ${isAllowanceSql("e")} then 1 else 0 end) as allowance,
+           ${expenseStateSql("e")} as state,
+           ${approvedAmountSql("e")}::int as "approvedAmountPaise",
+           ${decisionNoteSql("e")} as "decisionNote",
+           (extract(epoch from coalesce(e.client_created_at, e.server_created_at)) * 1000)::double precision as "clientCreatedAt",
+           (extract(epoch from e.server_created_at) * 1000)::double precision as "serverCreatedAt"
+      from mbos_expenses e
+     where e.user_id = ${userId}
+       and e.superseded_by_id is null
+       and e.expense_date >= ${from}::date
+     order by e.expense_date desc, e.server_created_at desc
+     limit ${EXPENSE_BOOK_LIMIT}
+  `);
+  return { from, rows: rows as unknown[] };
+}
+
+/**
  * HIS OWN REQUESTS, for a phone that holds none of them — a reinstall, a new
  * handset.
  *
@@ -2785,9 +2835,16 @@ async function ownHistory(userId: string) {
     `),
     db.execute<Record<string, unknown>>(sql`
       select e.id, e.user_id as "userId", e.expense_date::text as "spentOn",
-             e.category::text as category, e.amount_paise as "amountPaise",
+             e.category::text as category, e.amount_paise::int as "amountPaise",
              e.remarks, e.kind,
-             coalesce(${verdict("expense", sql`e.id`)}, 'Pending') as state,
+             /* The one reading of a line's state, said in the handset's words:
+                an allowance and a part approval are both money he is getting. */
+             (case ${expenseStateSql("e")}
+                when 'pending' then 'Pending'
+                when 'rejected' then 'Rejected'
+                else 'Approved' end) as state,
+             (case when ${isAllowanceSql("e")} then 1 else 0 end) as allowance,
+             ${decisionNoteSql("e")} as "decisionNote",
              (extract(epoch from coalesce(e.client_created_at, e.server_created_at)) * 1000)::double precision as "clientCreatedAt",
              (extract(epoch from e.server_created_at) * 1000)::double precision as "serverCreatedAt"
         from mbos_expenses e
@@ -3144,12 +3201,12 @@ async function salaryFor(userId: string): Promise<Record<string, unknown>[]> {
              where d.user_id = ${userId} and d.status = 'on_leave'
                and d.day >= p."from" and d.day < p."to") as "daysOnLeave",
 
-           coalesce((select sum(coalesce(ap.approved_amount_paise, ex.amount_paise))
+           /* Approved expenses at the amount allowed, and every allowance —
+              the one reading of "what is he owed", from expense-money-sql. */
+           coalesce((select sum(${paidPaiseSql("ex")})
                        from mbos_expenses ex
-                       join mbos_approvals ap
-                         on ap.subject_id = ex.id and ap.type = 'expense_claim'
                       where ex.user_id = ${userId}
-                        and ap.state in ('approved', 'partially_approved')
+                        and ex.superseded_by_id is null
                         and ex.expense_date >= p."from" and ex.expense_date < p."to"), 0)
              as "reimbursedPaise"
 
@@ -3752,6 +3809,7 @@ export async function buildPull(
        this channel could carry a cursor on — and the handset replaces the
        table wholesale, so a shop that left his book leaves the screen too. */
     customerTargets: await customerTargetsFor(principal.user.id),
+    expenseBook: await expenseBookFor(principal.user.id),
     tasks: taskChanges as unknown[],
     salary: salaryRows as unknown[],
     travelModes: await travelModeRows(),

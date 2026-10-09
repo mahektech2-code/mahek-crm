@@ -42,7 +42,6 @@ export const ROUTE_MOTION: Record<string, ScreenMotion> = {
   expenses: 'deeper',
   travel: 'deeper',
   performance: 'deeper',
-  eod: 'deeper',
   docs: 'deeper',
   knowledge: 'deeper',
   policy: 'deeper',

@@ -1660,6 +1660,13 @@
       "when": 1792531775442,
       "tag": "0239_vendor_payout_days_tue_fri",
       "breakpoints": true
+    },
+    {
+      "idx": 237,
+      "version": "7",
+      "when": 1792531776442,
+      "tag": "0240_expenses_logged_not_sent",
+      "breakpoints": true
     }
   ]
 }

@@ -675,6 +675,12 @@ export type PullPayload = {
    * nothing, which is how an older server and the cursorless reply look.
    */
   customerTargets?: unknown[];
+  /**
+   * His expenses and allowances over the window an expense may still be
+   * logged in, with the office's current state and amount on each — sent
+   * WHOLE, like `customerTargets`. Absent changes nothing. See `applyExpenseBook`.
+   */
+  expenseBook?: { from: string; rows: unknown[] };
   /** His own pay, current month and last. Reference only, same as performance. */
   salary?: unknown[];
   /** The modes a leg may name. Upserted by key. */

@@ -6535,6 +6535,47 @@ old tables, actions and simulator are left in place and read by no screen. The
 manager's Expenses screen reads "Asked for / Policy allows / Status", one
 Review button a day.
 
+**THERE IS NO CLOSING A DAY, and that is a REVERSAL (Oct 2026).** A day used to
+reach a manager only when the salesman pressed Close the day → Send day on his
+phone, which priced it, LOCKED it and raised one approval for the whole day. In
+ten days on prod one day was sent; a fortnight of travel and claims sat on the
+server under "Not sent yet" and the field reported that expenses were broken.
+Mahek's answer splits the money in two, and `lib/expense-money-sql.ts` is the
+one statement of it:
+
+- **An ALLOWANCE is automatic.** The meal allowance from his punch-in and
+  punch-out, and the kilometre allowance on a trip by his own bike or car, are
+  lines the office writes (`source_type` `expense_day` / `travel_leg`). They
+  need nobody's approval and count as paid the moment they exist.
+  `refreshDayMoney` writes them, and runs after every sync batch that touches a
+  punch, a trip, a day or a logged expense, hourly over the last two days (the
+  trail arrives late) and nightly back as far as a claim may still be logged.
+  A trip that earns nothing — a walk, a company vehicle, no distance yet — gets
+  NO line: a ₹0 allowance reads as money withheld, so one is never written and
+  one written earlier is deleted when the trip stops earning.
+- **An EXPENSE is what he logs** — a hotel, a food bill, a bus, train or auto
+  fare. Each is its own `expense_claim` approval from the moment it lands,
+  decided one at a time on `/sales/expenses` through `decideExpense`, which
+  wraps `decideApproval` and adds only what is about money: a part approval
+  must be above ₹0 and below what he logged, and an expense whose approval has
+  not arrived yet gets one. A fare is NOT an allowance — the trip only earns
+  kilometres on his own vehicle, so a fare nobody logs is a fare nobody pays,
+  and "Bus or train" is a claim kind for exactly that.
+
+Nothing locks. `handleTravelLeg` and `handleExpenseDay` no longer refuse a
+"submitted" day, and an older phone's `expense_day_submit` is ACCEPTED as a
+refresh so its outbox drains; delete that case once no build older than the
+release carrying this is reporting. The handset learns all of it from
+`expenseBook`, sent WHOLE every pull (`expenseBookFor`), because a decision on
+an approval and an allowance re-worked from the trail move no row a cursor
+could follow; `applyExpenseBook` upserts and drops only ALLOWANCES the office no
+longer names — an expense he logged is never deleted on his phone. Every reader
+that adds money up — the salary screen's reimbursement, the expense ROI report,
+the salesman's profile — reads `paidPaiseSql` / `expenseStateSql`, never a day
+approval. The per-day approvals already decided stay as the record they are;
+`0240` deleted only the pending ones and the ₹0 lines the old close-the-day
+wrote.
+
 **TRAVEL IS ASKED TWICE A DAY, AND NEVER AT A SHOP — a reversal (Sep 2026).**
 The paragraphs below describe how a visit used to ask how he was travelling,
 open a meter camera, and ask for the bus fare on the way out. The field would

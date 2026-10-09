@@ -1808,7 +1808,7 @@ export default function Home() {
             {(claimPrompt?.modeLabel
               ? `You travelled by ${claimPrompt.modeLabel.toLowerCase()} today. `
               : '') +
-              'The office pays fares, food and other costs only if you add them. Add a photo or PDF of each bill. It takes a minute.'}
+              'Your meal and kilometre allowances are worked out for you. Fares, hotel, food bills and other costs are paid only if you add them, with a photo or PDF of each bill.'}
           </T>
           <View style={{ marginTop: 14 }}>
             <PrimaryButton

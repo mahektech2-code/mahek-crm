@@ -810,24 +810,23 @@ export default function JourneyScreen() {
           {/*
             THE DAY IS DONE, and the screen used to go quiet at exactly this point:
             `next` is undefined so the Next stop card is gone, and the empty state
-            is suppressed because there ARE stops. Every stop walked is the one
-            moment this screen has something unambiguous to say — and closing the
-            day was reachable only from More → Your day, which is two taps and a
-            guess away from the tab he is looking at.
+            is suppressed because there ARE stops. Every stop walked is the moment
+            to log what the day cost him — there is no day to close any more; his
+            allowances are worked out at the office, and what is left is the bills.
 
-            Not while a leg is open: "every stop is visited, close the day off" is
-            the wrong sentence to put in front of somebody who is on a bike on his
-            way to an off-plan shop.
+            Not while a leg is open: "every stop is visited" is the wrong sentence
+            to put in front of somebody who is on a bike on his way to an
+            off-plan shop.
           */}
           {!leg && !next && stops.length ? (
             <Card style={{ marginTop: 16 }}>
               <T style={[type.body, weight(600), { color: C.ink }]}>Day done</T>
               <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-                {'You visited every stop on the plan. Close the day now, while you remember it.'}
+                {'You visited every stop on the plan. Add any fare, food or other bill you paid today, while you remember it.'}
               </T>
               <PrimaryButton
-                label="Close the day"
-                onPress={() => router.push('/eod?from=journey')}
+                label="Add expenses"
+                onPress={() => router.push({ pathname: '/expenses', params: { add: '1', from: 'journey' } })}
                 style={{ marginTop: 12 }}
               />
             </Card>

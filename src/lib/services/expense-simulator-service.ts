@@ -42,7 +42,7 @@ export type Simulation = {
   to: string;
   policyId: string;
   versionNo: number;
-  /** How many submitted days were replayed. The denominator for everything. */
+  /** How many recorded days were replayed. The denominator for everything. */
   daysReplayed: number;
   /** Calendar days in the window, so "eleven days of data" is visible. */
   windowDays: number;
@@ -89,8 +89,10 @@ export async function simulatePolicy(
     select d.user_id as "userId", u.name as "userName", d.day::text as day
       from mbos_expense_days d
       join users u on u.id = d.user_id
-     where d.submitted_at is not null
-       and d.day between ${from}::date and ${to}::date
+     where d.day between ${from}::date and ${to}::date
+       and (exists (select 1 from mbos_travel_legs l where l.expense_day_id = d.id)
+            or exists (select 1 from mbos_expenses e where e.expense_day_id = d.id)
+            or d.departed_at is not null)
      order by d.day asc
   `);
 
@@ -181,11 +183,11 @@ export async function simulatePolicy(
   const caveats: string[] = [];
   if (days.length === 0) {
     caveats.push(
-      "No submitted days fall in this window, so there is nothing to replay. A simulation needs days that actually happened — it cannot invent them.",
+      "No recorded days fall in this window, so there is nothing to replay. A simulation needs days that actually happened — it cannot invent them.",
     );
   } else {
     caveats.push(
-      `Replayed ${days.length} submitted day${days.length === 1 ? "" : "s"} across ${windowDays} calendar days. Every figure below is that window and no more — scaling it to a month is your arithmetic, not this screen's.`,
+      `Replayed ${days.length} recorded day${days.length === 1 ? "" : "s"} across ${windowDays} calendar days. Every figure below is that window and no more — scaling it to a month is your arithmetic, not this screen's.`,
     );
   }
   if (daysWithoutBaseline > 0) {
