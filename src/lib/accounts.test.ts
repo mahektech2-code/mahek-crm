@@ -1223,6 +1223,14 @@ describe("Bills, search and the statement", () => {
     const newerLine = ledger!.entries.find((e) => e.billId === newer.id)!;
     assert.equal(newerLine.paid, 2_000_00);
     assert.equal(newerLine.links![0].id, receipt.receiptId);
+
+    // The older bill was cleared; the newer one was only part paid.
+    assert.equal(receipt.links![0].billDue, 0);
+    assert.equal(receipt.links![1].billDue, 8_000_00);
+    assert.equal(receipt.links![1].billAmount, 10_000_00);
+    // And each bill knows the payment was split across two of them.
+    assert.equal(newerLine.links![0].receiptAmount, 6_000_00);
+    assert.equal(newerLine.links![0].receiptBills, 2);
   });
 });
 

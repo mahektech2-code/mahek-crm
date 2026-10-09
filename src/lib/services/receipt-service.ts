@@ -1734,6 +1734,19 @@ export type LedgerLink = {
   amount: number;
   /** The RECEIPT's status — what decides whether this allocation counts. */
   status: string;
+  /**
+   * Receipt lines only: the bill's full amount and what is still due on it
+   * today (confirmed money only), so a payment can say whether it CLEARED a
+   * bill or paid PART of one.
+   */
+  billAmount?: number;
+  billDue?: number;
+  /**
+   * Bill lines only: the whole receipt and how many bills it was split
+   * across, so a bill can say it got ₹20,000 OF a ₹70,000 payment.
+   */
+  receiptAmount?: number;
+  receiptBills?: number;
 };
 
 export type CustomerLedger = {
@@ -1902,7 +1915,15 @@ export async function ledgerForCustomer(
     });
     linksByBill.set(b.id, onBill);
     const onReceipt = linksByReceipt.get(r.id) ?? [];
-    onReceipt.push({ id: b.id, label: b.billNo, at: b.billDate, amount, status: r.status });
+    onReceipt.push({
+      id: b.id,
+      label: b.billNo,
+      at: b.billDate,
+      amount,
+      status: r.status,
+      billAmount: Number(b.amount),
+      billDue: Math.max(0, Number(b.amount) - Number(b.paidAmount)),
+    });
     linksByReceipt.set(r.id, onReceipt);
   }
 
@@ -1981,6 +2002,16 @@ export async function ledgerForCustomer(
       onAccount: Math.max(0, Number(r.amount) - Number(allocated)),
     });
   }
+
+  for (const list of linksByBill.values()) {
+    for (const l of list) {
+      l.receiptAmount = Number(receiptById.get(l.id)?.amount ?? 0);
+      l.receiptBills = linksByReceipt.get(l.id)?.length ?? 1;
+    }
+  }
+  // A split payment lists its bills oldest first, which is how allocation
+  // spends money and how anybody reads a run of bills.
+  for (const list of linksByReceipt.values()) list.sort((a, b) => a.at.localeCompare(b.at));
 
   rows.sort((a, b) => a.sort.localeCompare(b.sort));
 

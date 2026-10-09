@@ -42,6 +42,10 @@ type LedgerLink = {
   at: string;
   amount: number;
   status: string;
+  billAmount?: number;
+  billDue?: number;
+  receiptAmount?: number;
+  receiptBills?: number;
 };
 
 type LedgerEntry = {
@@ -367,12 +371,13 @@ export function LedgerScreen({
               minWidth={1100}
               head={
                 <>
-                  <HeadCell width={120}>Date</HeadCell>
-                  <HeadCell width={220}>Bill / payment</HeadCell>
+                  <HeadCell width={112}>Date</HeadCell>
+                  <HeadCell width={200}>Bill / payment</HeadCell>
                   <HeadCell>Settlement</HeadCell>
-                  <HeadCell align="right" width={120}>Billed</HeadCell>
-                  <HeadCell align="right" width={120}>Received</HeadCell>
-                  <HeadCell align="right" width={130}>Balance</HeadCell>
+                  <HeadCell align="right" width={104}>Billed</HeadCell>
+                  <HeadCell align="right" width={104}>Received</HeadCell>
+                  <HeadCell align="right" width={112}>Balance</HeadCell>
+                  {canReverse ? <HeadCell align="right" width={108}>Actions</HeadCell> : null}
                 </>
               }
             >
@@ -403,15 +408,7 @@ export function LedgerScreen({
                       {e.kind === "bill" ? (
                         <BillSettlement entry={e} onLink={goTo} />
                       ) : (
-                        <ReceiptSettlement
-                          entry={e}
-                          onLink={goTo}
-                          onReverse={
-                            canReverse && e.status === "confirmed" && e.receiptId
-                              ? () => setReversing(e)
-                              : undefined
-                          }
-                        />
+                        <ReceiptSettlement entry={e} onLink={goTo} />
                       )}
                     </td>
                     <td className={cx(TD, "text-right tabular-nums text-body", dead && "line-through")}>
@@ -430,6 +427,13 @@ export function LedgerScreen({
                     <td className={cx(TD, "text-right font-medium tabular-nums text-ink")}>
                       {signedMoney(e.balance)}
                     </td>
+                    {canReverse ? (
+                      <td className={cx(TD, "text-right")}>
+                        {e.kind === "receipt" && e.status === "confirmed" && e.receiptId ? (
+                          <ReverseButton onClick={() => setReversing(e)} />
+                        ) : null}
+                      </td>
+                    ) : null}
                   </tr>
                 );
               })}
@@ -446,6 +450,7 @@ export function LedgerScreen({
                   <td className="px-4 py-2.5 text-right text-sm tabular-nums text-muted">
                     {money(ledger.openingBalance)}
                   </td>
+                  {canReverse ? <td /> : null}
                 </tr>
               ) : null}
             </Table>
@@ -551,8 +556,10 @@ function BillSettlement({
   onLink: (id: string) => void;
 }) {
   const paid = e.paid ?? 0;
-  const due = Math.max(0, e.debit - paid);
   const links = e.links ?? [];
+  // Only confirmed money counts towards the bill; a reported or rejected
+  // payment is listed but is not one of the "parts".
+  const counted = links.filter((l) => l.status === "confirmed").length;
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex flex-wrap items-center gap-2">
@@ -561,12 +568,11 @@ function BillSettlement({
         {(e.claimed ?? 0) > 0 ? (
           <Pill tone="warn">{money(e.claimed!)} claimed, not yet confirmed</Pill>
         ) : null}
-        {paid > 0 && due > 0 ? (
-          <span className="text-xs text-muted">
-            {money(paid)} paid of {money(e.debit)}
-          </span>
+        {counted > 1 ? (
+          <span className="text-xs text-muted">paid in {counted} parts</span>
         ) : null}
       </div>
+      {paid > 0 && paid < e.debit ? <PaidBar amount={e.debit} paid={paid} /> : null}
       {links.length ? (
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="text-xs text-muted">Paid by</span>
@@ -575,13 +581,28 @@ function BillSettlement({
               key={`${l.id}-${i}`}
               onClick={() => onLink(l.id)}
               status={l.status}
-              title={`${l.mode ?? "Payment"} received ${longDate(l.at)}${l.label !== l.mode ? ` · ref ${l.label}` : ""}`}
+              title={`${l.mode ?? "Payment"} received ${longDate(l.at)}${l.label !== l.mode ? ` · ref ${l.label}` : ""}${(l.receiptBills ?? 1) > 1 && l.receiptAmount ? ` · part of a ${money(l.receiptAmount)} payment split across ${l.receiptBills} bills` : ""}`}
             >
               {shortDate(l.at)} {l.mode ?? l.label} · {money(l.amount)}
             </LinkChip>
           ))}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/** How much of a part-paid bill is paid, at a glance. */
+function PaidBar({ amount, paid }: { amount: number; paid: number }) {
+  const pct = Math.min(100, Math.max(0, Math.round((paid / amount) * 100)));
+  return (
+    <div className="flex items-center gap-2">
+      <div className="h-1.5 w-40 overflow-hidden rounded-full bg-divider">
+        <div className="h-full rounded-full bg-success" style={{ width: `${pct}%` }} />
+      </div>
+      <span className="text-xs text-muted tabular-nums">
+        {money(paid)} of {money(amount)} paid
+      </span>
     </div>
   );
 }
@@ -597,11 +618,9 @@ function BillStatus({ amount, paid, unstated }: { amount: number; paid: number; 
 function ReceiptSettlement({
   entry: e,
   onLink,
-  onReverse,
 }: {
   entry: LedgerEntry;
   onLink: (id: string) => void;
-  onReverse?: () => void;
 }) {
   const links = e.links ?? [];
   const onAccount = e.onAccount ?? 0;
@@ -609,40 +628,59 @@ function ReceiptSettlement({
   const reason = status === "rejected" || status === "reversed"
     ? e.detail.split(" · ").slice(1).filter((p) => !p.endsWith("on account")).join(" · ")
     : "";
+  const parts = links.length + (onAccount > 0 ? 1 : 0);
+  const heading = !parts
+    ? "Not against any bill"
+    : links.length > 1
+      ? `Split across ${links.length} bills`
+      : links.length === 1
+        ? "Against"
+        : "Not against any bill";
+  const onAccountTag =
+    onAccount > 0 ? (
+      <span
+        className="inline-flex h-6 items-center rounded-full border border-dashed border-line-strong px-2.5 text-xs text-body"
+        title="Received and not yet put against a bill"
+      >
+        On account · {money(onAccount)}
+      </span>
+    ) : null;
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="flex flex-wrap items-center gap-1.5">
-        <span className="text-xs text-muted">
-          {links.length || onAccount ? "Against" : "Not against any bill"}
-        </span>
-        {links.map((l, i) => (
-          <LinkChip
-            key={`${l.id}-${i}`}
-            onClick={() => onLink(l.id)}
-            status={status ?? l.status}
-            title={`Bill ${l.label}, raised ${longDate(l.at)}`}
-          >
-            {l.label} · {money(l.amount)}
-          </LinkChip>
-        ))}
-        {onAccount > 0 ? (
-          <span
-            className="inline-flex h-6 items-center rounded-[4px] border border-dashed border-line-strong px-2 text-xs text-body"
-            title="Received and not yet put against a bill"
-          >
-            On account · {money(onAccount)}
-          </span>
-        ) : null}
-        {onReverse ? (
-          <button
-            type="button"
-            onClick={onReverse}
-            className="ml-1 cursor-pointer border-none bg-transparent px-0 text-xs font-medium text-muted underline-offset-2 hover:text-danger hover:underline"
-          >
-            Reverse…
-          </button>
-        ) : null}
-      </div>
+      {/*
+        ONE BILL fits on one line. SEVERAL get a line each, so each one can say
+        whether this payment cleared it or paid part of it — which is the
+        question somebody reading a split payment is actually asking.
+      */}
+      {links.length > 1 ? (
+        <>
+          <span className="text-xs font-medium text-muted">{heading}</span>
+          <ul className="flex flex-col gap-1">
+            {links.map((l, i) => (
+              <li key={`${l.id}-${i}`} className="flex flex-wrap items-center gap-2">
+                <LinkChip onClick={() => onLink(l.id)} status={status ?? l.status} title={`Bill ${l.label}, raised ${longDate(l.at)}`}>
+                  {l.label} · {money(l.amount)}
+                </LinkChip>
+                <AllocationNote link={l} receiptStatus={status} />
+              </li>
+            ))}
+          </ul>
+          {onAccountTag ? <div>{onAccountTag}</div> : null}
+        </>
+      ) : (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-xs text-muted">{heading}</span>
+          {links.map((l, i) => (
+            <React.Fragment key={`${l.id}-${i}`}>
+              <LinkChip onClick={() => onLink(l.id)} status={status ?? l.status} title={`Bill ${l.label}, raised ${longDate(l.at)}`}>
+                {l.label} · {money(l.amount)}
+              </LinkChip>
+              <AllocationNote link={l} receiptStatus={status} />
+            </React.Fragment>
+          ))}
+          {onAccountTag}
+        </div>
+      )}
       {status !== "confirmed" ? (
         <div className="flex flex-wrap items-center gap-2">
           {status === "reported" ? <Pill tone="warn">reported, waiting for accounts</Pill> : null}
@@ -653,6 +691,56 @@ function ReceiptSettlement({
         </div>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * What this payment did to the bill: cleared it, or paid part of it and how
+ * much is still due today. Money that has not counted says so instead —
+ * calling an unconfirmed payment "part" would be claiming it landed.
+ */
+function AllocationNote({ link: l, receiptStatus }: { link: LedgerLink; receiptStatus: string | null }) {
+  if (receiptStatus !== "confirmed") return null;
+  if (l.billAmount == null || l.billDue == null) return null;
+  if (l.billDue === 0) {
+    return (
+      <span className="text-xs font-medium text-success">
+        {l.amount >= l.billAmount ? "✓ cleared the bill" : "✓ bill now cleared"}
+      </span>
+    );
+  }
+  return (
+    <span className="text-xs text-warn-ink" title="What is due on the bill today, after every confirmed payment">
+      part of {money(l.billAmount)} · {money(l.billDue)} due now
+    </span>
+  );
+}
+
+/**
+ * The one action on a statement line, drawn as a BUTTON — bordered, raised,
+ * with an icon and its own column — so it cannot be mistaken for the bill
+ * tags beside it, which only navigate. Danger-toned because it takes money
+ * off an account.
+ */
+function ReverseButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title="Reverse this payment — a bounced cheque, a duplicate, or money on the wrong customer"
+      className="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-[6px] border border-line-strong bg-surface px-2.5 text-xs font-semibold text-danger shadow-[0_1px_0_rgba(0,0,0,0.04)] transition-colors hover:border-danger hover:bg-danger-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-danger active:translate-y-px"
+    >
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path
+          d="M5.5 3.5 2.5 6.5l3 3M2.75 6.5h6.75a4 4 0 0 1 0 8H7"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+      Reverse
+    </button>
   );
 }
 
@@ -675,12 +763,12 @@ function LinkChip({
       onClick={onClick}
       title={title}
       className={cx(
-        "inline-flex h-6 cursor-pointer items-center rounded-[4px] border px-2 text-xs font-medium whitespace-nowrap tabular-nums",
+        "inline-flex h-6 cursor-pointer items-center rounded-full border-none px-2.5 text-xs font-medium whitespace-nowrap tabular-nums underline-offset-2 hover:underline",
         dead
-          ? "border-line text-muted line-through"
+          ? "bg-divider text-muted line-through"
           : pending
-            ? "border-warn-edge bg-warn-soft text-warn-ink"
-            : "border-line bg-surface text-ink hover:border-brand hover:text-brand",
+            ? "bg-warn-soft text-warn-ink"
+            : "bg-brand-softer text-brand hover:bg-brand-soft",
       )}
     >
       {children}
@@ -760,6 +848,17 @@ function BillWise({
                 links.map((l, i) => {
                   const dead = deadStatus(l.status);
                   const pending = l.status === "reported" || l.status === "held";
+                  // What was left on the bill after this payment, walking the
+                  // payments in date order — confirmed money only, so a part
+                  // payment reads as the step it was.
+                  const leftAfter = Math.max(
+                    0,
+                    b.debit -
+                      links
+                        .slice(0, i + 1)
+                        .filter((x) => x.status === "confirmed")
+                        .reduce((sum, x) => sum + x.amount, 0),
+                  );
                   return (
                     <tr key={`${l.id}-${i}`} className="border-t border-divider bg-surface">
                       <td className={cx(TD, "pl-8 text-muted", dead && "line-through")}>{longDate(l.at)}</td>
@@ -770,6 +869,11 @@ function BillWise({
                             {l.mode ?? "Payment"}
                             {l.label !== l.mode ? <span className="text-muted"> · ref {l.label}</span> : null}
                           </span>
+                          {(l.receiptBills ?? 1) > 1 && l.receiptAmount ? (
+                            <span className="rounded-full bg-brand-softer px-2 py-0.5 text-[11px] font-medium text-brand">
+                              part of a {money(l.receiptAmount)} payment split across {l.receiptBills} bills
+                            </span>
+                          ) : null}
                         </span>
                       </td>
                       <td className={TD} />
@@ -782,7 +886,9 @@ function BillWise({
                       >
                         {money(l.amount)}
                       </td>
-                      <td className={TD} />
+                      <td className={cx(TD, "text-right text-xs tabular-nums text-muted")}>
+                        {l.status === "confirmed" ? (leftAfter ? `${money(leftAfter)} left` : "cleared") : ""}
+                      </td>
                       <td className={TD}>
                         {pending ? (
                           <Pill tone="warn">not yet confirmed</Pill>
