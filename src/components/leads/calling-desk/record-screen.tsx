@@ -1,5 +1,6 @@
 "use client";
 
+import type { OwnerPerson } from "@/components/leads/owner-options";
 import * as React from "react";
 import Link from "next/link";
 import { useToast } from "@/components/ui/toast";
@@ -102,7 +103,7 @@ export function RecordScreen({
   /** Whether this person may hand the lead to somebody — `lead.verify`, held by managers and administrators. */
   canAssign: boolean;
   /** Who it can be handed to: the people who hold the Calling desk. */
-  assignees: { id: string; name: string }[];
+  assignees: OwnerPerson[];
 }) {
   const [tab, setTab] = React.useState<Tab>("overview");
   const [dialog, setDialog] = React.useState<DialogState>(null);

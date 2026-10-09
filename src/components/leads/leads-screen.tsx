@@ -49,6 +49,7 @@ import {
   type LeadPriority,
 } from "@/lib/lead-priority";
 import { setLeadPriority } from "@/lib/actions/lead-priority";
+import { OwnerOptions, UNASSIGNED, firstChoosable, ownerIdFor, type OwnerPerson } from "@/components/leads/owner-options";
 import type { LeadRow } from "@/lib/services/sales-service";
 import {
   ALL_LEAD_STAGES,
@@ -230,7 +231,8 @@ export function LeadsScreen({
   healthAtRiskBelow: number;
   /** At or above this a score reads as strong. */
   healthStrongAtOrAbove: number;
-  team: Array<{ id: string; name: string }>;
+  /** Everybody the Change owner list shows; `canOwn` false is drawn disabled. See `OwnerOptions`. */
+  team: OwnerPerson[];
   /** What is waiting on the desks and worklists this screen is the way in to. */
   desks: {
     verification: number;
@@ -471,7 +473,7 @@ export function LeadsScreen({
 
   function beginBulk(kind: Bulk) {
     setBulk(kind);
-    setSalesmanId(team[0]?.id ?? "");
+    setSalesmanId(firstChoosable(team));
     setStage("contacted");
     setReason("");
     setLostCode("");
@@ -487,7 +489,7 @@ export function LeadsScreen({
     try {
       const result =
         bulk === "reassign"
-          ? await bulkAssignDeskLeads({ leadIds, ownerId: salesmanId })
+          ? await bulkAssignDeskLeads({ leadIds, ownerId: ownerIdFor(salesmanId) })
           : bulk === "stage"
             ? await bulkAdvanceLeadStage(bulkStagePayload(leadIds, stage, lostCode, lostNote))
             : bulk === "archive"
@@ -520,7 +522,8 @@ export function LeadsScreen({
 
   function begin(lead: LeadRow, kind: Acting["kind"]) {
     setActing({ lead, kind } as Acting);
-    setSalesmanId(team.find((t) => t.id !== lead.salesmanId)?.id ?? "");
+    /* Opened on who has it now (or Unassigned), so the list reads the way the lead stands. */
+    setSalesmanId(lead.salesmanId ?? UNASSIGNED);
     setReason("");
     /* Opened on what the lead ALREADY carries, unlike the lost-reason picker
        beside it which deliberately pre-selects nothing. The difference is what
@@ -548,7 +551,7 @@ export function LeadsScreen({
     try {
       const result =
         acting.kind === "reassign"
-          ? await assignDeskLead({ customerId: acting.lead.id, ownerId: salesmanId })
+          ? await assignDeskLead({ customerId: acting.lead.id, ownerId: ownerIdFor(salesmanId) })
           : acting.kind === "archive"
             ? await archiveLead({ leadId: acting.lead.id, reason })
             : acting.kind === "trash"
@@ -1085,11 +1088,7 @@ export function LeadsScreen({
               onChange={(e) => setSalesmanId(e.target.value)}
               className="h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand"
             >
-              {team.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
+              <OwnerOptions people={team} />
             </select>
             <span className="mt-1 block text-[12px] text-muted">
               One message each, naming how many — not one per lead. Anything already theirs, and
@@ -1293,13 +1292,7 @@ export function LeadsScreen({
                   onChange={(e) => setSalesmanId(e.target.value)}
                   className="h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand"
                 >
-                  {team
-                    .filter((t) => t.id !== acting.lead.salesmanId)
-                    .map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.name}
-                      </option>
-                    ))}
+                  <OwnerOptions people={team} />
                 </select>
                 <span className="mt-1 block text-[12px] text-muted">
                   Both sides are told — {acting.lead.salesmanName ?? "whoever has it now"} that it
@@ -1320,7 +1313,11 @@ export function LeadsScreen({
               </Button>
               <Button
                 tone="primary"
-                disabled={busy || (acting.kind === "reassign" && !salesmanId)}
+                disabled={
+                  busy ||
+                  (acting.kind === "reassign" &&
+                    (!salesmanId || salesmanId === (acting.lead.salesmanId ?? UNASSIGNED)))
+                }
                 onClick={() => void submit()}
               >
                 {busy ? "Saving…" : acting.kind === "reassign" ? "Reassign" : "Restore"}

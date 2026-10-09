@@ -6,8 +6,9 @@ import { Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { Button } from "@/components/console/parts";
 import { assignDeskLead } from "@/lib/actions/lead-desk-assignment";
+import { OwnerOptions, UNASSIGNED, ownerIdFor, type OwnerPerson } from "@/components/leads/owner-options";
 
-export type Assignee = { id: string; name: string };
+export type Assignee = OwnerPerson;
 
 /**
  * REASSIGN — hand this lead to another Telecaller.
@@ -50,10 +51,11 @@ export function ReassignLead({
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
-  const others = assignees.filter((a) => a.id !== currentId);
+  /* Opened on who has it now (or Unassigned) — the list reads the way the lead stands. */
+  const current = currentId ?? UNASSIGNED;
 
   function begin() {
-    setChosen(others[0]?.id ?? "");
+    setChosen(current);
     setError(null);
     setOpen(true);
   }
@@ -67,7 +69,7 @@ export function ReassignLead({
     setError(null);
     let result;
     try {
-      result = await assignDeskLead({ customerId, ownerId: chosen });
+      result = await assignDeskLead({ customerId, ownerId: ownerIdFor(chosen) });
     } finally {
       setBusy(false);
     }
@@ -105,32 +107,27 @@ export function ReassignLead({
           goes with it; one owed by the Sales Manager stays with the Sales Manager. Who raised the
           lead does not change.
         </p>
-        {others.length === 0 ? (
-          <p className="text-[13px] text-pretty text-warn-ink">
-            Nobody else holds the Calling desk. Grant it on the Access screen first.
+        <label className="block">
+          <span className="mb-1 block text-[13px] font-medium text-ink">Move it to</span>
+          <select
+            value={chosen}
+            onChange={(e) => setChosen(e.target.value)}
+            className="h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand"
+          >
+            <OwnerOptions people={assignees} />
+          </select>
+        </label>
+        {assignees.some((a) => a.canOwn === false) ? (
+          <p className="mt-2 mb-0 text-[12.5px] text-pretty text-muted">
+            People marked &ldquo;no Calling desk&rdquo; cannot be chosen until they are given it on the Access screen.
           </p>
-        ) : (
-          <label className="block">
-            <span className="mb-1 block text-[13px] font-medium text-ink">Move it to</span>
-            <select
-              value={chosen}
-              onChange={(e) => setChosen(e.target.value)}
-              className="h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand"
-            >
-              {others.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
+        ) : null}
         {error ? <p className="mt-2 text-[13px] text-danger">{error}</p> : null}
         <div className="mt-4 flex justify-end gap-2">
           <Button tone="quiet" onClick={() => setOpen(false)}>
             Cancel
           </Button>
-          <Button tone="primary" disabled={busy || !chosen || others.length === 0} onClick={() => void submit()}>
+          <Button tone="primary" disabled={busy || !chosen || chosen === current} onClick={() => void submit()}>
             {busy ? "Saving…" : "Reassign"}
           </Button>
         </div>

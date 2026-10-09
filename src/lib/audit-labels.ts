@@ -535,6 +535,7 @@ const DESCRIBE: Record<string, Describer> = {
   "lead.priority": (c) => ({ says: ["set the priority of", c.subject(), "to", strong(words(str(c.a.leadPriority) ?? "none"))], changes: false }),
   "lead.deskAssigned": (c) => ({ says: ["gave the lead", c.subject(), "to", c.user(c.a.ownerId)], changes: false }),
   "lead.reassigned": (c) => ({ says: ["moved the lead", c.subject(), "from", c.user(c.b.ownerId), "to", c.user(c.a.ownerId)], changes: false }),
+  "lead.unassigned": (c) => ({ says: ["took the lead", c.subject(), "off", c.user(c.b.ownerId), "— it is unassigned"], changes: false }),
   "lead.callingDesk.call": (c) => ({
     says: ["called the lead", c.subject(), ...(str(c.a.outcome) ? [`— ${words(str(c.a.outcome)!)}`] : [])],
     changes: false,

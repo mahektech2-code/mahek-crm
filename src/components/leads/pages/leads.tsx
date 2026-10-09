@@ -26,7 +26,7 @@ import {
   verificationQueue,
 } from "@/lib/services/lead-console-service";
 import { vantageViewer } from "@/lib/services/lead-vantage-service";
-import { DESK_MODULE, deskHolders } from "@/lib/services/lead-desk-assignment-service";
+import { DESK_MODULE, ownerChoices } from "@/lib/services/lead-desk-assignment-service";
 import { LeadsScreen } from "@/components/leads/leads-screen";
 
 
@@ -263,7 +263,7 @@ export async function Body({
       /* WHO A LEAD CAN BE MOVED TO is whoever holds the Calling desk. This was the
          field team — people holding the Salesman App — which offered a Telecaller
          nobody who could work the lead. */
-      team={await deskHolders()}
+      team={await ownerChoices()}
       canReassign={
         (await canLead(user, "lead.verify")) && (await canOpenModule(user.id, DESK_MODULE))
       }

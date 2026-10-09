@@ -146,6 +146,8 @@ const files = [
   // the atomic link, assignment and who sees an unowned lead, and the
   // migration that keeps the desk from reaching every existing CRM user.
   "src/lib/lead-from-enquiry.test.ts",
+  // Change owner: everybody listed, Unassigned a real choice, the desk rule unchanged.
+  "src/lib/lead-owner-choices.test.ts",
   // The telecaller's calling desk itself: three calls, Ready for Prospect, and
   // that asking for a Prospect is not being one.
   "src/lib/lead-calling-desk.test.ts",
