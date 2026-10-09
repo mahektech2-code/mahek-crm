@@ -1,28 +1,24 @@
 import type { Meal, Policy, PolicyRule } from "@/lib/engines/expense-policy";
 
 /* ---------------------------------------------------------------------------
- * THE expense policy — Mahek's one standard policy, written in code.
+ * The standard expense policy's SHIPPED FIGURES.
  *
- * **This is a deliberate reversal, and a temporary one.** The module shipped
- * as versioned rules typed into the Admin Console — thirteen rule kinds,
- * grades, city classes, drafts, a simulator and a publish step — and nobody
- * could read it, so nothing was ever published and every day reached a
- * manager unpriced. Mahek asked for it to be made simple and hard-coded first;
- * making it editable again is a later decision. Until then:
+ * The policy was hard-coded here for a while (the versioned rule builder was
+ * too much to use). It is editable again, as NAMED POLICIES in
+ * `expense_policy_sets` — see `lib/services/expense-policy-set-service.ts`.
+ * The standard one is a row like any other, seeded from `STANDARD_POLICY`
+ * below the first time it is read, and from then on the ROW is the policy:
+ * these figures are only what a fresh database starts with and what the
+ * editor's "Reset to shipped defaults" puts back.
  *
- * - every rate below is the whole policy, for everybody, everywhere (no grade
- *   and no city variation — `ANY` on every rule);
- * - it applies to every date, so a day is always priced;
- * - changing a figure is a code change and a deploy, on purpose.
- *
- * The ENGINE is untouched and still pure: it is handed this `Policy` exactly
- * as it was handed a published version, on the server and on the handset.
+ * The ENGINE is untouched and still pure: it is handed a `Policy` built from
+ * whichever named policy a salesman is on, on the server and on the handset.
  * The `id` matches the row migration 0228 writes, so every
  * `mbos_expense_days.policy_id` stamped with it satisfies its foreign key.
  *
- * Pure and client-safe: the Admin Console and the Sales Dashboard both render
- * `policyInWords()` from these same numbers, so the page cannot disagree with
- * the arithmetic.
+ * Pure and client-safe: `policyInWords(rules)` renders any policy's rules as
+ * the page the Admin Console previews and the Sales Dashboard shows, built
+ * from the same rules the engine prices with.
  * ------------------------------------------------------------------------- */
 
 export const STANDARD_POLICY_ID = "xpol_standard";
@@ -128,18 +124,41 @@ function clock(minutes: number): string {
   return m ? `${h12}:${String(m).padStart(2, "0")} ${suffix}` : `${h12} ${suffix}`;
 }
 
-function only<K extends PolicyRule["kind"]>(kind: K): Extract<PolicyRule, { kind: K }>[] {
-  return RULES.filter((r): r is Extract<PolicyRule, { kind: K }> => r.kind === kind);
+function onlyOf(rules: readonly PolicyRule[]) {
+  return <K extends PolicyRule["kind"]>(kind: K): Extract<PolicyRule, { kind: K }>[] =>
+    rules.filter((r): r is Extract<PolicyRule, { kind: K }> => r.kind === kind);
 }
 
+/** "Grade A, metro cities" — empty where a rule applies to everybody. */
+function whoFor(r: { grade: string | null; cityClass: string | null }, gradeLabel?: (k: string) => string): string {
+  const bits: string[] = [];
+  if (r.grade) bits.push(gradeLabel ? gradeLabel(r.grade) : r.grade);
+  if (r.cityClass) bits.push(`${r.cityClass} cities`);
+  return bits.join(", ");
+}
+
+const withWho = (label: string, r: { grade: string | null; cityClass: string | null }, gradeLabel?: (k: string) => string) => {
+  const who = whoFor(r, gradeLabel);
+  return who ? `${label} (${who})` : label;
+};
+
 /**
- * The policy as a short list a salesman, a manager and accounts can all read.
- * Built FROM the rules above, never typed beside them.
+ * A policy as a short list a salesman, a manager and accounts can all read.
+ * Built FROM the rules it is given — the standard policy's by default, or any
+ * named policy's from the database — never typed beside them. `modeLabel` lets
+ * the caller name travel modes from `mbos_travel_modes`, so a mode an admin
+ * added reads as its label rather than its key.
  */
-export function policyInWords(): PolicySection[] {
+export function policyInWords(
+  rules: readonly PolicyRule[] = RULES,
+  opts: { modeLabel?: (key: string) => string | undefined; gradeLabel?: (key: string) => string } = {},
+): PolicySection[] {
+  const only = onlyOf(rules);
+  const modeName = (k: string) => opts.modeLabel?.(k) ?? MODE_LABELS[k] ?? k.replace(/_/g, " ");
+  const g = opts.gradeLabel;
   const travel: PolicyLine[] = [
     ...only("per_km").map((r) => ({
-      label: MODE_LABELS[r.modeKey] ?? r.modeKey,
+      label: withWho(modeName(r.modeKey), r, g),
       value: `${money(r.paisePerKm)} per km`,
       note: r.dailyKmCap ? `up to ${r.dailyKmCap} km a day` : undefined,
     })),
@@ -152,13 +171,13 @@ export function policyInWords(): PolicySection[] {
           r.capPerDayPaise ? `up to ${money(r.capPerDayPaise)} a day` : null,
         ].filter(Boolean);
         return {
-          label: MODE_LABELS[mode] ?? mode,
+          label: withWho(modeName(mode), r, g),
           value: "Ticket price",
           note: limits.length ? limits.join(", ") : undefined,
         };
       }),
     ...only("zero_rated").map((r) => ({
-      label: MODE_LABELS[r.modeKey] ?? r.modeKey,
+      label: withWho(modeName(r.modeKey), r, g),
       value: "Not paid",
       note: "recorded only",
     })),
@@ -188,7 +207,7 @@ export function policyInWords(): PolicySection[] {
       w ? `if away between ${clock(w.windowFromMinutes)} and ${clock(w.windowToMinutes)}` : null,
       d ? `not if he left after ${clock(d.departedAfterMinutes)}` : null,
     ].filter(Boolean);
-    return { label: MEAL_LABELS[r.meal], value: money(r.amountPaise), note: notes.join(", ") || undefined };
+    return { label: withWho(MEAL_LABELS[r.meal], r, g), value: money(r.amountPaise), note: notes.join(", ") || undefined };
   });
   const dorm = only("dormitory")[0];
   if (dorm) {
@@ -199,31 +218,38 @@ export function policyInWords(): PolicySection[] {
     });
   }
 
-  const lodging = only("lodging")[0];
-  const hotel: PolicyLine[] = lodging
-    ? [
-        { label: "Hotel", value: `up to ${money(lodging.maxPerNightPaise)} a night` },
-        ...(lodging.dayUseAllowed ? [] : [{ label: "Room for the day only", value: "Not paid", note: "a stay needs a night" }]),
-      ]
-    : [];
+  const hotel: PolicyLine[] = only("lodging").flatMap((lodging) => [
+    { label: withWho("Hotel", lodging, g), value: `up to ${money(lodging.maxPerNightPaise)} a night` },
+    lodging.dayUseAllowed
+      ? { label: withWho("Room for the day only", lodging, g), value: "Paid", note: "within the night's limit" }
+      : { label: withWho("Room for the day only", lodging, g), value: "Not paid", note: "a stay needs a night" },
+  ]);
 
   const bills: PolicyLine[] = only("actuals")
     .filter((r) => r.scopeKey.startsWith("category:"))
     .map((r) => {
       const kind = r.scopeKey.slice("category:".length);
       return {
-        label: CATEGORY_LABELS[kind] ?? kind,
+        label: withWho(CATEGORY_LABELS[kind] ?? kind.replace(/_/g, " "), r, g),
         value: r.capPerDayPaise ? `up to ${money(r.capPerDayPaise)} a day` : "Bill amount",
         note: r.capPerInstancePaise ? `up to ${money(r.capPerInstancePaise)} a bill` : undefined,
       };
     });
 
-  const proof = only("proof_threshold")[0];
   /* Said as it now works, not as the `approval_route` rule reads: there is no
      closing a day, so nothing is "approved automatically up to a day's total".
      Allowances are automatic and every logged expense is decided on its own. */
   const approval: PolicyLine[] = [
-    ...(proof ? [{ label: "Bill or ticket photo", value: `needed from ${money(proof.atPaise)}` }] : []),
+    ...only("proof_threshold").map((p) => ({
+      label: withWho(
+        p.scopeKey === "*"
+          ? "Bill or ticket photo"
+          : `Bill or ticket photo — ${p.scopeKey.startsWith("travel_mode:") ? modeName(p.scopeKey.slice(12)) : (CATEGORY_LABELS[p.scopeKey.replace(/^category:/, "")] ?? p.scopeKey.replace(/^category:/, "").replace(/_/g, " "))}`,
+        p,
+        g,
+      ),
+      value: `needed from ${money(p.atPaise)}`,
+    })),
     { label: "Meal and kilometre allowances", value: "Automatic", note: "worked out from your punch times and trips, no approval needed" },
     { label: "Every expense you log", value: "Sales manager decides", note: "each one on its own, as soon as it is logged" },
     { label: "Over the limit", value: "Still recorded", note: "the extra is shown to the manager, who decides" },

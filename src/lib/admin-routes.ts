@@ -99,8 +99,8 @@ export const ADMIN = {
   /** One app's settings. The page id comes from `SETTINGS_PAGES`. */
   settingsFor: (page: string, tab?: string) => withTab(`/admin/settings/${page}`, tab),
   catalogue: (tab?: TabsOf<"catalogue">) => withTab("/admin/catalogue", tab),
-  /* One page, no tabs: the policy is hard-coded and read, not authored. */
-  expensePolicy: () => "/admin/expense-policy",
+  /** The named expense policies; with an id, that policy's editor. */
+  expensePolicy: (id?: string) => withTab("/admin/expense-policy", id),
   sheets: (tab?: TabsOf<"sheets">) => withTab("/admin/sheets", tab),
   deletedLeads: "/admin/deleted-leads",
   integrations: "/admin/integrations",

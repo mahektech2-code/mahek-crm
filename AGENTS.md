@@ -6536,6 +6536,32 @@ old tables, actions and simulator are left in place and read by no screen. The
 manager's Expenses screen reads "Asked for / Policy allows / Status", one
 Review button a day.
 
+**AND IT IS EDITABLE AGAIN, AS NAMED POLICIES — a second reversal (Oct 2026).**
+The paragraph above is history: the figures in `lib/expense-policy-standard.ts`
+are now only the standard policy's SHIPPED DEFAULTS. `expense_policy_sets`
+(0241) holds named policies — the standard one (`xpol_standard`, seeded from
+the code by `ensureStandardSet` the first time it is read, then the row is the
+policy) plus any number of others — each a whole `PolicyRule[]` in one jsonb
+column, saved whole with the revision it was edited from (a stale save is
+refused, never merged) and snapshotted in `expense_policy_set_revisions`, so
+History can restore any version as a new one. **No row in
+`expense_policy_assignments` means standard**, so adding a policy moves nobody;
+a switched-off policy hands its people back to standard without forgetting
+them; one that has priced a day cannot be deleted, only switched off; the
+standard one can be neither. `policyForDate(day, userId)` is the one lookup —
+the claim path, the handset's pull and the simulator all pass the person — and
+named policies carry no dates, so an edit applies from the next day worked out
+and the next handset sync (today's and yesterday's allowances are re-worked at
+once for whoever it moves). The editor (Admin Console → Expense policy → a
+policy) is drawn from the same `RULE_KINDS` specs, a dropdown wherever the
+answer is a list; `checkRules` in `lib/expense-policy-sets.ts` is run by the
+screen on every keystroke and by `savePolicySet` before it writes, and refuses
+two rules answering one question for the same grade and city class. Preview
+and "Try a day" run over the UNSAVED rules with the real engine. Every write is
+`expense.policy.write`. A named policy's id doubles as an archived anchor row in
+`expense_policies`, written when it is created, so a day stamped with it keeps
+its foreign key.
+
 **THERE IS NO CLOSING A DAY, and that is a REVERSAL (Oct 2026).** A day used to
 reach a manager only when the salesman pressed Close the day → Send day on his
 phone, which priced it, LOCKED it and raised one approval for the whole day. In

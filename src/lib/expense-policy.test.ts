@@ -35,7 +35,18 @@ import {
   policyReadiness,
 } from "@/lib/actions/expense-policy";
 import { policyForDate, readPolicy } from "@/lib/services/expense-policy-service";
-import { STANDARD_POLICY_ID } from "@/lib/expense-policy-standard";
+import { STANDARD_POLICY, STANDARD_POLICY_ID } from "@/lib/expense-policy-standard";
+import {
+  assignPolicySet,
+  createPolicySet,
+  deletePolicySet,
+  duplicatePolicySet,
+  restorePolicyRevision,
+  savePolicySet,
+  setPolicySetActive,
+} from "@/lib/actions/expense-policy-sets";
+import { policySetRevisions, readPolicySet } from "@/lib/services/expense-policy-set-service";
+import { ruleToDraft } from "@/lib/expense-policy-sets";
 import { priceDay } from "@/lib/services/expense-service";
 import { refreshDayMoney } from "@/lib/services/expense-submit-service";
 import { expenseLines } from "@/lib/services/expense-claims-service";
@@ -945,5 +956,97 @@ describe("the monthly trend", () => {
   test("a month with no snapshot is absent, never drawn as zero", async () => {
     const trend = await expenseTrend(12);
     assert.deepEqual(trend, [], "nothing snapshotted means nothing to show, not a flat line");
+  });
+});
+
+/* ------------------------------------------------- named, editable policies */
+
+describe("named policies", () => {
+  const bikeRate = async (setId: string, paisePerKm: number) => {
+    const set = await readPolicySet(setId);
+    const drafts = set!.rules.map(ruleToDraft).map((d) =>
+      d.kind === "per_km" && d.scopeKey === "own_bike" ? { ...d, value: { ...d.value, paisePerKm } } : d,
+    );
+    return savePolicySet({ id: setId, name: set!.name, description: set!.description, rules: drafts, expectedRevision: set!.revision });
+  };
+
+  test("editing the standard policy changes what a day is paid", async () => {
+    const saved = await bikeRate(STANDARD_POLICY_ID, 500);
+    assert.ok(saved.ok, saved.ok ? "" : saved.error);
+    const day = "2026-06-15";
+    const dayId = await openDay(day);
+    await addBikeLeg(dayId, day, 40);
+    await refreshDayMoney(salesman.id, day);
+    assert.equal((await priceDay(salesman.id, day))!.computation!.travelPaise, 20000, "40 km × ₹5");
+    assert.equal((await policySetRevisions(STANDARD_POLICY_ID)).length, 2, "the seed and the edit");
+  });
+
+  test("a copy, given to one salesman, prices only his days — and its id is a key his day can carry", async () => {
+    const copy = await createPolicySet({ name: "Outstation", description: null });
+    assert.ok(copy.ok, copy.ok ? "" : copy.error);
+    assert.ok((await bikeRate(copy.data.id, 1000)).ok);
+    const moved = await assignPolicySet({ userIds: [salesman.id], setId: copy.data.id, notify: false });
+    assert.ok(moved.ok && moved.data.moved === 1);
+
+    const day = "2026-06-16";
+    const dayId = await openDay(day);
+    await addBikeLeg(dayId, day, 40);
+    await refreshDayMoney(salesman.id, day);
+    assert.equal((await priceDay(salesman.id, day))!.computation!.travelPaise, 40000, "40 km × ₹10");
+    const [row] = await db.select({ policyId: mbosExpenseDays.policyId }).from(mbosExpenseDays).where(eq(mbosExpenseDays.id, dayId));
+    assert.equal(row!.policyId, copy.data.id);
+    assert.equal((await policyForDate(day, admin.id))!.id, STANDARD_POLICY_ID, "everybody else stays on standard");
+
+    /* Switched off, he is paid on standard again; deleting it is refused because it priced a day. */
+    assert.ok((await setPolicySetActive({ id: copy.data.id, active: false })).ok);
+    assert.equal((await policyForDate(day, salesman.id))!.id, STANDARD_POLICY_ID);
+    const del = await deletePolicySet({ id: copy.data.id });
+    assert.equal(del.ok, false);
+    assert.match(del.ok ? "" : del.error, /switch it off instead/i);
+  });
+
+  test("a stale save is refused rather than overwriting somebody else's", async () => {
+    const set = (await readPolicySet(STANDARD_POLICY_ID))!;
+    assert.ok((await bikeRate(STANDARD_POLICY_ID, 400)).ok);
+    const late = await savePolicySet({
+      id: set.id,
+      name: set.name,
+      description: set.description,
+      rules: set.rules.map(ruleToDraft),
+      expectedRevision: set.revision,
+    });
+    assert.equal(late.ok, false);
+    assert.equal(late.ok ? "" : late.code, "conflict");
+  });
+
+  test("a broken rule is refused with its field named, and an old revision can be restored", async () => {
+    const set = (await readPolicySet(STANDARD_POLICY_ID))!;
+    const drafts = set.rules.map(ruleToDraft);
+    drafts[0] = { ...drafts[0]!, value: { paisePerKm: -5, dailyKmCap: null } };
+    const bad = await savePolicySet({ id: set.id, name: set.name, description: null, rules: drafts, expectedRevision: set.revision });
+    assert.equal(bad.ok, false);
+    assert.ok(!bad.ok && bad.fieldErrors?.some((f) => f.field === "rules.0.paisePerKm"));
+
+    assert.ok((await bikeRate(STANDARD_POLICY_ID, 777)).ok);
+    const restored = await restorePolicyRevision({ id: STANDARD_POLICY_ID, revision: 1 });
+    assert.ok(restored.ok, restored.ok ? "" : restored.error);
+    const back = (await readPolicySet(STANDARD_POLICY_ID))!;
+    assert.deepEqual(back.rules, STANDARD_POLICY.rules);
+  });
+
+  test("a duplicate is a full copy nobody is on, and an unused one can be deleted", async () => {
+    const dup = await duplicatePolicySet({ id: STANDARD_POLICY_ID });
+    assert.ok(dup.ok);
+    const copy = (await readPolicySet(dup.data.id))!;
+    assert.match(copy.name, /^Copy of /);
+    assert.deepEqual(copy.rules, (await readPolicySet(STANDARD_POLICY_ID))!.rules);
+    assert.equal(copy.memberCount, 0);
+    assert.ok((await deletePolicySet({ id: copy.id })).ok);
+    assert.equal(await readPolicySet(copy.id), null);
+  });
+
+  test("the standard policy cannot be switched off or deleted", async () => {
+    assert.equal((await setPolicySetActive({ id: STANDARD_POLICY_ID, active: false })).ok, false);
+    assert.equal((await deletePolicySet({ id: STANDARD_POLICY_ID })).ok, false);
   });
 });

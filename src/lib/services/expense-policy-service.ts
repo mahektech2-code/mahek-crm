@@ -12,6 +12,7 @@ import { parseRule, describeRule } from "@/lib/expense-rule-forms";
 import { policyOn, type Policy, type PolicySubject } from "@/lib/engines/expense-policy";
 import { asDate } from "@/lib/business-date";
 import { STANDARD_POLICY, STANDARD_POLICY_TITLE } from "@/lib/expense-policy-standard";
+import { policyOfSet, policySetForUser } from "./expense-policy-set-service";
 
 /* ---------------------------------------------------------------------------
  * Reading the expense policy, and working out which one applies to whom.
@@ -193,15 +194,20 @@ async function loadPolicies(statuses: readonly string[]): Promise<Policy[]> {
 }
 
 /**
- * The policy in force on a date — the hard-coded standard policy, for every
- * date. See `lib/expense-policy-standard.ts` for why it is in code for now.
+ * The policy in force for a person on a date.
  *
- * Still async and still nullable so its callers (the claim path, the handset's
- * pull, the simulator) did not have to change shape, and so that making the
- * policy editable again is a change to this one function.
+ * Named policies (`lib/services/expense-policy-set-service.ts`): the one the
+ * person is assigned where it is active, otherwise the standard policy —
+ * which is a row too now, seeded from the code's defaults the first time it
+ * is asked for. Named policies carry no dates, so the date only matters for
+ * `policyOn`'s own contract. With no person it is the standard policy.
+ *
+ * Still async and still nullable so its callers (the claim path, the
+ * handset's pull, the simulator) keep their shape.
  */
-export async function policyForDate(onDate: string): Promise<Policy | null> {
-  return policyOn([STANDARD_POLICY], onDate);
+export async function policyForDate(onDate: string, userId: string | null = null): Promise<Policy | null> {
+  const set = await policySetForUser(userId);
+  return policyOn([policyOfSet(set)], onDate);
 }
 
 /** A draft, assembled for the engine — what the simulator runs against. */
@@ -211,18 +217,33 @@ export async function draftPolicy(id: string): Promise<Policy | null> {
 }
 
 /**
- * Make sure the hard-coded policy has its row before anything is stamped
- * with its id. Migration 0228 writes it; this is the net under the migration —
+ * Make sure a policy has its anchor row in `expense_policies` before anything
+ * is stamped with its id — the standard one (migration 0228 writes it) or a
+ * named one (written when it is created). This is the net under both —
  * for a database rebuilt by truncation, as the test suite does, and for a
  * row somebody deleted. One idempotent insert, on the write paths only.
  */
 export async function ensurePolicyRow(policyId: string): Promise<void> {
-  if (policyId !== STANDARD_POLICY.id) return;
+  if (policyId === STANDARD_POLICY.id) {
+    await db.execute(sql`
+      insert into expense_policies (id, version_no, title, status, effective_from, notes)
+      values (${STANDARD_POLICY.id}, ${STANDARD_POLICY.versionNo}, ${STANDARD_POLICY_TITLE}, 'archived',
+              ${STANDARD_POLICY.effectiveFrom}::date,
+              'The standard named policy. Its rules are in expense_policy_sets; this row is only the key expense days are stamped with.')
+      on conflict do nothing
+    `);
+    return;
+  }
+  /* A named policy's anchor: archived, outside the one-version-per-date
+     constraint, and numbered above everything already there. */
   await db.execute(sql`
     insert into expense_policies (id, version_no, title, status, effective_from, notes)
-    values (${STANDARD_POLICY.id}, ${STANDARD_POLICY.versionNo}, ${STANDARD_POLICY_TITLE}, 'archived',
-            ${STANDARD_POLICY.effectiveFrom}::date,
-            'The hard-coded standard policy. Its rules are in src/lib/expense-policy-standard.ts; this row is only the key expense days are stamped with.')
+    select s.id,
+           (select coalesce(max(version_no), ${STANDARD_POLICY.versionNo}) + 1 from expense_policies),
+           s.name, 'archived', date '2000-01-01',
+           'A named expense policy. Its rules are in expense_policy_sets; this row is only the key expense days are stamped with.'
+      from expense_policy_sets s
+     where s.id = ${policyId}
     on conflict do nothing
   `);
 }
@@ -407,7 +428,7 @@ export async function policyForUserOn(
   destinationCity: string | null,
 ): Promise<{ policy: Policy | null; subject: PolicySubject; gradeSource: string }> {
   const [policy, subject] = await Promise.all([
-    policyForDate(onDate),
+    policyForDate(onDate, userId),
     resolveSubject(userId, destinationCity),
   ]);
   return { policy, subject: { grade: subject.grade, cityClass: subject.cityClass }, gradeSource: subject.gradeSource };
