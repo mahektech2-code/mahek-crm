@@ -123,15 +123,23 @@ export async function createAttachment(input: {
   accepted?: string[];
   /** Store an MP4-family container as `video/mp4` rather than `audio/mp4`. */
   asVideo?: boolean;
+  /**
+   * A caller's own ceiling in megabytes, in place of `attachments.maxSizeMb`.
+   * The Documents library is the reason: a catalogue is thirty megabytes where
+   * a complaint photograph is three, and raising the shared setting for one
+   * would raise it for the other. See `lib/publish-limits.ts`.
+   */
+  maxSizeMb?: number;
 }): Promise<Result<{ id: string }>> {
   const ctx = await resolveScope();
   const config = await getConfig();
 
-  const maxBytes = config["attachments.maxSizeMb"] * 1024 * 1024;
+  const limitMb = input.maxSizeMb ?? config["attachments.maxSizeMb"];
+  const maxBytes = limitMb * 1024 * 1024;
   if (input.bytes.byteLength > maxBytes) {
     const mb = (input.bytes.byteLength / (1024 * 1024)).toFixed(1);
     return err(
-      `${input.filename} is ${mb} MB. The limit is ${config["attachments.maxSizeMb"]} MB.`,
+      `${input.filename} is ${mb} MB. The limit is ${limitMb} MB.`,
       "validation",
       [{ field: "file", message: "Too large." }],
     );

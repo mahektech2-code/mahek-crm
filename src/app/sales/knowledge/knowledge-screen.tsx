@@ -8,7 +8,8 @@ import {
   publishCourse,
   setCoursePublished,
 } from "@/lib/actions/sales";
-import { uploadPublishFile } from "../publish-upload";
+import { uploadPublishFile, type Uploaded, type UploadStage } from "../publish-upload";
+import { megabytes, PUBLISH_MAX_MB } from "@/lib/publish-limits";
 import type { CourseRow } from "@/lib/services/sales-service";
 import {
   Banner,
@@ -52,8 +53,9 @@ export function KnowledgeScreen({ rows }: { rows: CourseRow[] }) {
   const [minutes, setMinutes] = React.useState("");
   const [mandatory, setMandatory] = React.useState(false);
   const [dueDate, setDueDate] = React.useState("");
-  const [file, setFile] = React.useState<{ id: string; filename: string } | null>(null);
+  const [file, setFile] = React.useState<Uploaded | null>(null);
   const [uploading, setUploading] = React.useState(false);
+  const [stage, setStage] = React.useState<UploadStage>("sending");
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [pickerKey, setPickerKey] = React.useState(0);
@@ -63,7 +65,8 @@ export function KnowledgeScreen({ rows }: { rows: CourseRow[] }) {
     setUploading(true);
     setError(null);
     // Never rejects — every failure, the network's included, is a Result.
-    const result = await uploadPublishFile(chosen);
+    setStage("sending");
+    const result = await uploadPublishFile(chosen, setStage);
     setUploading(false);
     if (!result.ok) {
       setError(result.error);
@@ -235,9 +238,15 @@ export function KnowledgeScreen({ rows }: { rows: CourseRow[] }) {
 
         <p className="mt-2 text-[13px] text-pretty text-muted">
           {uploading
-            ? "Storing the material…"
+            ? stage === "compressing"
+              ? `It is over ${PUBLISH_MAX_MB} MB — compressing the photographs in it. Text and drawings are left exactly as they are.`
+              : "Storing the material…"
             : file
-              ? `${file.filename} is stored and will be attached when you publish.`
+              ? `${file.filename} is stored and will be attached when you publish.${
+                  file.compressedFrom
+                    ? ` It was compressed from ${megabytes(file.compressedFrom)} to ${megabytes(file.sizeBytes)} to fit.`
+                    : ""
+                }`
               : "Material is optional — a briefing somebody delivers in a meeting is still a course to record and tick off."}
         </p>
       </div>
