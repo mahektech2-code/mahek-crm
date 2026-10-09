@@ -40,6 +40,8 @@ export type ScreenModule = {
   forms?: Record<string, FormHandler>;
   /** Forms built for one record on demand — keyed by the action id that opens them. */
   formLoaders?: Record<string, (ctx: ErpContext, id: string) => Promise<FormSpec | null>>;
+  /** Header buttons that act on the screen rather than a record (`ListSpec.tools`), keyed by the tool's id. */
+  tools?: Record<string, (ctx: ErpContext, values: Values) => Promise<Result<unknown>>>;
 };
 
 /**

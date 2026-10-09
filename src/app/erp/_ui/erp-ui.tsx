@@ -275,7 +275,9 @@ function optsFor(f: FieldSpec, values: Record<string, string>): string[] | undef
 function PromptDialog({ state, onClose }: { state: PromptState; onClose: () => void }) {
   const { spec } = state;
   const [v, setV] = useState<Record<string, string>>(() => {
-    const init: Record<string, string> = {};
+    /* Every init key travels, as on a form: a request key the server minted
+       makes a retried prompt the same request rather than a second one. */
+    const init: Record<string, string> = { ...(spec.init ?? {}) };
     spec.fields.forEach((f) => (init[f.k] = spec.init?.[f.k] ?? f.def ?? ""));
     return init;
   });

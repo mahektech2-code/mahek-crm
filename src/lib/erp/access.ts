@@ -302,7 +302,10 @@ export function powerRefusal(power: ErpPower): string {
     employeeAdmin: "Only an ERP administrator manages godowns and ERP powers.",
     approveSfgQc: "Only the SFG QC approver decides an SFG lot's quality check.",
     dispatchOverride: "Only a dispatch-override approver lets a mismatched box go, or rejects or returns a box.",
-  };
+      pettyAccounts: "The petty-cash accounts team does this.",
+    pettyApprove: "Only a petty-cash approver does this.",
+    pettyOwner: "Only the owner does this.",
+};
   return map[power];
 }
 

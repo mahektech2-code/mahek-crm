@@ -12,13 +12,16 @@ import { recipesScreen } from "./recipes";
 import { alertsScreen } from "./alerts";
 import { inboxScreen } from "./inbox";
 import { UNIT_SCREENS } from "./units";
+import { PETTY_EXPENSE_SCREENS } from "./petty-expenses";
+import { PETTY_FUND_SCREENS } from "./petty-funds";
+import { PETTY_BOOK_SCREENS } from "./petty-books";
 
 /* ---------------------------------------------------------------------------
  * Every built ERP screen's server module, by screen key. A key with no module
  * here is a screen the registry lists but that is not built yet.
  * ------------------------------------------------------------------------- */
 
-const ALL: ScreenModule[] = [...MASTER_SCREENS, ...PURCHASE_FLOW_SCREENS, ...PURCHASE_SCREENS, ...PRODUCTION_SCREENS, ...MOVEMENT_SCREENS, ...SALES_SCREENS, ...LOGISTICS_SCREENS, ...COMPLAINT_SCREENS, recipesScreen, alertsScreen, inboxScreen, ...UNIT_SCREENS];
+const ALL: ScreenModule[] = [...MASTER_SCREENS, ...PURCHASE_FLOW_SCREENS, ...PURCHASE_SCREENS, ...PRODUCTION_SCREENS, ...MOVEMENT_SCREENS, ...SALES_SCREENS, ...LOGISTICS_SCREENS, ...COMPLAINT_SCREENS, recipesScreen, alertsScreen, inboxScreen, ...UNIT_SCREENS, ...PETTY_EXPENSE_SCREENS, ...PETTY_FUND_SCREENS, ...PETTY_BOOK_SCREENS];
 
 const BY_KEY = new Map(ALL.map((m) => [m.key, m]));
 

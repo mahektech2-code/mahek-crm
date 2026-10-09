@@ -4461,6 +4461,125 @@ export const SETTINGS = [
     default: true,
   },
   {
+    key: "erp.pettyCash.autoApproveUpToPaise",
+    type: "integer",
+    category: "erp",
+    label: "Petty cash · approved on submission up to (paise)",
+    description:
+      "An expense at or below this, in a category that does not always need an approver and with its receipt attached where the category needs one, is approved by policy the moment it is submitted — the approval row says so. Zero sends every expense to an approver. Paise: 50000 is ₹500.",
+    default: 50000,
+    min: 0,
+    max: 100000000,
+  },
+  {
+    key: "erp.pettyCash.approverLimitPaise",
+    type: "integer",
+    category: "erp",
+    label: "Petty cash · an approver decides up to (paise)",
+    description:
+      "Expenses up to this are decided by whoever holds “Approve petty-cash expenses”; above it they need the owner (“Owner-level petty-cash approvals”) or an ERP administrator. Also the line the split-near-limit check watches. Paise: 1000000 is ₹10,000.",
+    default: 1000000,
+    min: 0,
+    max: 10000000000,
+  },
+  {
+    key: "erp.pettyCash.budgetRule",
+    type: "text",
+    category: "erp",
+    label: "Petty cash · when an expense passes its budget",
+    description:
+      "warn: the expense is flagged and goes the ordinary way. approval: an expense that takes its category past the month's approved budget needs the owner's approval. Essential spending is never refused outright either way.",
+    default: "warn",
+    options: ["warn", "approval"],
+  },
+  {
+    key: "erp.pettyCash.reviewDays",
+    type: "integer",
+    category: "erp",
+    label: "Petty cash · days an expense may wait for a decision",
+    description: "A submitted expense still undecided after this many days raises an alert for the approvers.",
+    default: 2,
+    min: 1,
+    max: 60,
+  },
+  {
+    key: "erp.pettyCash.handoverHours",
+    type: "integer",
+    category: "erp",
+    label: "Petty cash · hours customer cash may be held",
+    description: "Customer cash not handed over or deposited within this many hours of being received raises an alert.",
+    default: 48,
+    min: 1,
+    max: 720,
+  },
+  {
+    key: "erp.pettyCash.dueSoonDays",
+    type: "integer",
+    category: "erp",
+    label: "Petty cash · days before a vendor due date to warn",
+    description: "A vendor bill falling due within this many days is listed as due soon; past it, as overdue.",
+    default: 3,
+    min: 0,
+    max: 60,
+  },
+  {
+    key: "erp.pettyCash.matchWindowDays",
+    type: "integer",
+    category: "erp",
+    label: "Petty cash · bank match date window (days)",
+    description:
+      "How far apart a statement line's date and a payment's date may be for an equal amount to be SUGGESTED as a match. A suggestion always waits for a person; only an exact reference/UTR matches on its own.",
+    default: 3,
+    min: 0,
+    max: 30,
+  },
+  {
+    key: "erp.pettyCash.splitWindowDays",
+    type: "integer",
+    category: "erp",
+    label: "Petty cash · split-near-limit window (days)",
+    description: "Two or more expenses to one payee within this many days, each under the approver's limit and together over it, are flagged for review.",
+    default: 3,
+    min: 1,
+    max: 30,
+  },
+  {
+    key: "erp.pettyCash.roundingTolerancePaise",
+    type: "integer",
+    category: "erp",
+    label: "Petty cash · rounding tolerance (paise)",
+    description: "An expense paid to within this many paise reads as completed. Keep it small: it exists for rounding, not to hide a difference.",
+    default: 0,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "erp.tally.mode",
+    type: "text",
+    category: "erp",
+    label: "TallyPrime · how vouchers reach Tally",
+    description:
+      "off: nothing is queued. export: eligible records are queued and accounts post them in Tally by hand from the voucher MahekOne writes out, then record the voucher number. live: “Post to Tally” sends the voucher to the Tally server below — switch it on only once ledger mappings, approvals and duplicate protection have been checked.",
+    default: "export",
+    options: ["off", "export", "live"],
+  },
+  {
+    key: "erp.tally.url",
+    type: "text",
+    category: "erp",
+    label: "TallyPrime · server address",
+    description: "Tally's XML port as MahekOne's server can reach it, e.g. http://192.168.1.20:9000. Blank: Tally is unavailable and a live post fails safely, to be retried.",
+    default: "",
+  },
+  {
+    key: "erp.tally.company",
+    type: "text",
+    category: "erp",
+    label: "TallyPrime · company name",
+    description: "The company in Tally that petty-cash vouchers are posted to, exactly as Tally names it.",
+    default: "",
+  },
+  {
     key: "erp.location.autoDetect",
     type: "boolean",
     category: "erp",
@@ -5943,6 +6062,18 @@ export type Config = {
   "erp.factory.shift": string;
   "erp.factory.dispatchDue": string;
   "erp.dispatch.requireScan": boolean;
+  "erp.pettyCash.autoApproveUpToPaise": number;
+  "erp.pettyCash.approverLimitPaise": number;
+  "erp.pettyCash.budgetRule": string;
+  "erp.pettyCash.reviewDays": number;
+  "erp.pettyCash.handoverHours": number;
+  "erp.pettyCash.dueSoonDays": number;
+  "erp.pettyCash.matchWindowDays": number;
+  "erp.pettyCash.splitWindowDays": number;
+  "erp.pettyCash.roundingTolerancePaise": number;
+  "erp.tally.mode": string;
+  "erp.tally.url": string;
+  "erp.tally.company": string;
   "erp.ai.voice.enabled": boolean;
   "erp.ai.alerts.enabled": boolean;
   "erp.ai.alerts.rateJumpPct": number;
