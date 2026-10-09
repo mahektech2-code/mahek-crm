@@ -81,6 +81,12 @@ npm run jobs -- resolve-places --dry-run   # the master it WOULD build, off
 npm run jobs -- resolve-places             # build `places` and point every
                            # shop at its leaf. Also the REPARSE: the one to
                            # run when the READING changed, not the answers
+npm run factory:seed       # a factory floor to look at locally — the design's
+                           # people and products, made through the ERP's own
+                           # handlers. Every PIN is 1234.
+npm run factory:staff -- 9850220231 --area=mixing --role="Machine operator" --crew=operator
+                           # put a real person on the floor (grants the app)
+npm run factory:staff -- --list
 npm run hrms:sync    # pull the employee sheet now
 npm run app:grant -- hrms vikram@mahek.in --level=manager
                      # give somebody an app; the level defaults to associate
@@ -2142,6 +2148,12 @@ src/
     apps/                  the launcher, 1–9 opens an app — `field` is never
                            one of the 1–9: it is `mobileOnly` in lib/apps.ts,
                            MBOS's own handset, and has no route here at all
+    factory/               the Factory app — the floor's PHONE app: one client
+                           screen (_ui/factory-app.tsx, the design ported screen
+                           for screen) and its label page; public/factory-sw.js
+                           is what lets it open with no network
+    api/factory/rpc/       the factory phone's one door, by op name — stable
+                           across deploys, unlike a server action
     accounts/              the Accounts app — today, order approvals, payments
                            to confirm, credit notes, record a payment,
                            outstanding, bills, customer account, on account,
@@ -8076,6 +8088,81 @@ else gets Hire, and their role in it, on the Access screen.
 `npm run hire:seed -- --demo --reset`
 wipes Hire and loads the demo pipeline, development only.
 
+## The factory floor app
+
+**THE FLOOR WORKS FROM A PHONE, AND THE ERP STAYS THE STOCK SYSTEM.** `/factory`
+is the mixing, filling, packing and dispatch teams' app — scan a label, see the
+picture, enter the count, send — and the Production Head's live view of the
+floor. It writes no stock table. A mixing batch is `sfgBatches.forms.new`, a
+fill is `fgFill.forms.new`, packing is one `packBatches.forms.new` per pallet
+per batch, all called with an `ErpContext` built for the person (`erpCtxFor`),
+so the lot locks, the QC gate, the can and box checks and the complete-batch
+rule apply to the floor exactly as they do to the office, and the worker is the
+author of every document. What the factory tables add is what the ERP never
+had: who was GIVEN the work (`factory_tasks`), who DID it by role
+(`factory_task_members` — owner, operator, helpers, verifier, kept apart from
+whoever pressed Send), why a machine stopped (`factory_downtime`), and what the
+Production Head still has to look at (`factory_reviews`). Team output is
+counted once, on the task, never once per person.
+
+**ONE KEY, ONE POSTING.** The phone mints `MOB-<task>-<random>` when a job is
+started and every attempt carries it; `factory_submissions` is the ledger. The
+first attempt claims the row, later ones are answered from it, and `progress`
+records each ERP document already written, so a packing count spanning two
+batches RESUMES rather than repeats. The ERP has no idempotency of its own —
+this is it.
+
+**THE PHONE KEEPS WORK FOR 48 HOURS, AND OPENS WITH NO NETWORK.** A service
+worker (`public/factory-sw.js`, scoped to `/factory`) keeps the page and its
+hashed scripts; the floor data and the queue live in the page's own storage,
+and a photo taken offline in IndexedDB. A job finished offline is queued with
+when it was finished, sent by itself when the network returns (on reconnect,
+on every return to the app, and every 30 seconds), and the ERP document is
+dated the day the work was DONE, not the day it arrived. Past `OFFLINE_HOURS`
+a job is still taken — it goes to the Production Head first, because stock
+read two days late cannot be trusted to still be there.
+
+**THE WORKER IS NEVER HANDED AN ERROR FOR SAVING OR SENDING.** Three answers:
+`done`; `held` — received, safe, and with the Production Head as an `unposted`
+review item, because the ERP refused it now (a drum used by somebody else while
+the phone was offline) and the worker cannot go back to Tuesday to fix it; and
+`retry` — not received, kept, and sent again by itself. A job the worker is
+still holding that the ERP refuses offers Fix it AND Send to supervisor, so
+there is always a way to finish. "Put it in the ERP" on the review posts it
+under the WORKER's name; the head's decision is the line in the history.
+
+**AN OLD PAGE STILL SENDS.** A station phone keeps its page for days. So the
+phone never calls a server action — their ids change on every deploy — but
+`/api/factory/rpc` by op NAME, and an op is added and never renamed or
+removed. The payload carries `v`, and `normalizeDraft` reads every shape there
+has been: numbers as text, a bare "HH:MM", fields an old page never had. A page
+that sees a newer build in an answer reloads itself, but only once nothing is
+in hand and nothing is waiting to send.
+
+**SIGNING IN IS A NUMBER AND FOUR DIGITS.** The mobile number, then a PIN
+(hashed like a password, throttled like one). A forgotten PIN is the SMS code
+the web sign-in already sends, then a new PIN. A badge QR only says WHO — the
+PIN is still asked.
+
+**STAFF ARE PLACED IN ADMIN CONSOLE → ACCESS, BESIDE THE FACTORY GRANT.**
+Ticking Factory draws a Department row: the department, their seat in its
+standing crew (in charge, operator, helpers, who checks), their badge, and
+whether HR has confirmed the name and role. With the grant's level it is a
+DEPARTMENT-LEVEL permission (`lib/factory/departments.ts`, read by the dialog
+and enforced by the server): an associate works their department's jobs only;
+a manager of a department supervises THAT department — its Today, its review
+items, its teams, Give a task for it — and nothing else; a manager of the whole
+floor is the Production Head. Picking the whole floor raises the level to
+manager, the way an ERP designation sets the ERP's. Taking Factory away takes
+the place with it. The seat writes `factory_team_defaults` — one person in
+charge and one operator per department, any number of helpers — which is what
+every new job starts with. `npm run factory:staff` does the same from a
+terminal, for a pilot.
+
+**Loading is CHECKED, never dispatched.** The dispatch team scans the
+allocated lots, loads exactly what the order takes, ticks the checklist and
+photographs the truck; the ERP's verification, transport row and order book
+stay with the office (PRD §7.4.6).
 ## The Documentation app
 
 **`/docs` is an app like any other**, granted in `app_access` and checked in

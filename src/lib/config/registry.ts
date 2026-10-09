@@ -4414,6 +4414,44 @@ export const SETTINGS = [
     max: 100,
   },
   {
+    key: "erp.factory.packBatchBoxes",
+    type: "integer",
+    category: "erp",
+    label: "Factory app · boxes in a packing batch",
+    description:
+      "How many boxes make one packing batch on the factory floor. The factory app opens an ERP packing batch of this many boxes and fills it from what the packers count; a batch short of it stays incomplete and is not packing stock until it is full.",
+    default: 50,
+    min: 1,
+    max: 1000,
+  },
+  {
+    key: "erp.factory.mixTolerancePercent",
+    type: "decimal",
+    category: "erp",
+    label: "Factory app · mixing output limit",
+    description:
+      "How far, in percent either way, the litres a mixing batch made may differ from its batch sheet before the Production Head is asked to check it. It never refuses the batch.",
+    default: 1.5,
+    min: 0,
+    max: 50,
+  },
+  {
+    key: "erp.factory.dispatchDue",
+    type: "text",
+    category: "erp",
+    label: "Factory app · loading due by",
+    description: "The time, as HH:MM, a loading job made from an ERP order is due by on the dispatch team's phones.",
+    default: "17:00",
+  },
+  {
+    key: "erp.factory.shift",
+    type: "text",
+    category: "erp",
+    label: "Factory app · shift line",
+    description: "The shift the factory app names under each person's work place, e.g. \"Shift A · 06:00–14:00\".",
+    default: "Shift A · 06:00–14:00",
+  },
+  {
     key: "erp.dispatch.requireScan",
     type: "boolean",
     category: "erp",
@@ -5900,6 +5938,10 @@ export type Config = {
   "erp.purchase.minQuotations": number;
   "erp.purchase.receiptTolerancePercent": number;
   "erp.production.recipeTolerancePercent": number;
+  "erp.factory.packBatchBoxes": number;
+  "erp.factory.mixTolerancePercent": number;
+  "erp.factory.shift": string;
+  "erp.factory.dispatchDue": string;
   "erp.dispatch.requireScan": boolean;
   "erp.ai.voice.enabled": boolean;
   "erp.ai.alerts.enabled": boolean;
