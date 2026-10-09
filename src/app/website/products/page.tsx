@@ -19,6 +19,8 @@ import { useToast } from "@/components/ui/toast";
 import { calendarDate } from "@/lib/business-date";
 import { StatusBadge } from "../status-badge";
 import { PRODUCTS, type Product, type Status } from "../mock-data";
+import { tempFeedback } from "../prototype";
+import { hasErrors, required, slugError, type Errors } from "../validation";
 
 type Filter = "all" | Status;
 
@@ -34,7 +36,7 @@ export default function ProductsPage() {
 
   function save(product: Product, isNew: boolean) {
     setProducts((all) => (isNew ? [product, ...all] : all.map((p) => (p.id === product.id ? product : p))));
-    toast.push(isNew ? "Product added." : "Product saved.");
+    toast.push(tempFeedback(isNew ? "Product added" : "Product saved"));
     setCreating(false);
     setEditing(null);
   }
@@ -100,10 +102,22 @@ export default function ProductsPage() {
       </Card>
 
       {creating ? (
-        <ProductEditor isNew product={null} onClose={() => setCreating(false)} onSave={(p) => save(p, true)} />
+        <ProductEditor
+          isNew
+          product={null}
+          takenSlugs={products.map((p) => p.slug)}
+          onClose={() => setCreating(false)}
+          onSave={(p) => save(p, true)}
+        />
       ) : null}
       {editing ? (
-        <ProductEditor isNew={false} product={editing} onClose={() => setEditing(null)} onSave={(p) => save(p, false)} />
+        <ProductEditor
+          isNew={false}
+          product={editing}
+          takenSlugs={products.filter((p) => p.id !== editing.id).map((p) => p.slug)}
+          onClose={() => setEditing(null)}
+          onSave={(p) => save(p, false)}
+        />
       ) : null}
 
       <ConfirmDialog
@@ -115,7 +129,7 @@ export default function ProductsPage() {
         onClose={() => setRemoving(null)}
         onConfirm={() => {
           setProducts((all) => all.filter((p) => p.id !== removing?.id));
-          toast.push("Product deleted.");
+          toast.push(tempFeedback("Product deleted"));
         }}
       />
     </div>
@@ -125,14 +139,18 @@ export default function ProductsPage() {
 function ProductEditor({
   isNew,
   product,
+  takenSlugs,
   onClose,
   onSave,
 }: {
   isNew: boolean;
   product: Product | null;
+  /** The OTHER products' slugs — this one's own is left out so editing it does not collide with itself. */
+  takenSlugs: string[];
   onClose: () => void;
   onSave: (product: Product) => void;
 }) {
+  const [errors, setErrors] = React.useState<Errors<"name" | "slug">>({});
   const [form, setForm] = React.useState<Product>(() =>
     product ?? {
       id: `p${Date.now()}`,
@@ -145,13 +163,37 @@ function ProductEditor({
     },
   );
 
+  function submit() {
+    const clean = { ...form, name: form.name.trim(), slug: form.slug.trim(), description: form.description.trim() };
+    const found = { name: required(clean.name, "Name"), slug: slugError(clean.slug, takenSlugs, "product") };
+    if (hasErrors(found)) {
+      setErrors(found);
+      return;
+    }
+    onSave({ ...clean, updatedAt: calendarDate(new Date()) });
+  }
+
   const fields = (
     <div className="flex flex-col gap-3.5">
-      <Field label="Name">
-        <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+      <Field label="Name" error={errors.name}>
+        <Input
+          value={form.name}
+          aria-invalid={!!errors.name}
+          onChange={(e) => {
+            setForm({ ...form, name: e.target.value });
+            setErrors((x) => ({ ...x, name: undefined }));
+          }}
+        />
       </Field>
-      <Field label="Slug" hint="Used in the product URL.">
-        <Input value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value })} />
+      <Field label="Slug" hint="Used in the product URL." error={errors.slug}>
+        <Input
+          value={form.slug}
+          aria-invalid={!!errors.slug}
+          onChange={(e) => {
+            setForm({ ...form, slug: e.target.value });
+            setErrors((x) => ({ ...x, slug: undefined }));
+          }}
+        />
       </Field>
       <Field label="Category">
         <Select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
@@ -176,7 +218,7 @@ function ProductEditor({
   const footer = (
     <>
       <Button variant="secondary" onClick={onClose}>Cancel</Button>
-      <Button variant="primary" onClick={() => onSave({ ...form, updatedAt: calendarDate(new Date()) })}>
+      <Button variant="primary" onClick={submit}>
         {isNew ? "Add product" : "Save"}
       </Button>
     </>

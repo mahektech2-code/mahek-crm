@@ -5,6 +5,8 @@ import { Button, Card, Field, Input, PageHeader, Td, Textarea, Th, Tr, EmptyStat
 import { Drawer, DrawerHeader } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { PAGES, PRODUCTS } from "../mock-data";
+import { tempFeedback } from "../prototype";
+import { hasErrors, required, type Errors } from "../validation";
 
 type SeoEntry = { id: string; path: string; label: string; title: string; description: string };
 
@@ -60,7 +62,7 @@ export default function SeoPage() {
             onClose={() => setEditing(null)}
             onSave={(e) => {
               setEntries((all) => all.map((x) => (x.id === e.id ? e : x)));
-              toast.push("SEO metadata saved.");
+              toast.push(tempFeedback("SEO metadata updated on this screen"));
               setEditing(null);
             }}
           />
@@ -80,6 +82,17 @@ function SeoEditor({
   onSave: (entry: SeoEntry) => void;
 }) {
   const [form, setForm] = React.useState(entry);
+  const [errors, setErrors] = React.useState<Errors<"title">>({});
+
+  function submit() {
+    const clean = { ...form, title: form.title.trim(), description: form.description.trim() };
+    const found = { title: required(clean.title, "Title") };
+    if (hasErrors(found)) {
+      setErrors(found);
+      return;
+    }
+    onSave(clean);
+  }
 
   return (
     <>
@@ -89,8 +102,15 @@ function SeoEditor({
           <Field label="Path">
             <Input value={form.path} disabled />
           </Field>
-          <Field label="Title">
-            <Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
+          <Field label="Title" error={errors.title}>
+            <Input
+              value={form.title}
+              aria-invalid={!!errors.title}
+              onChange={(e) => {
+                setForm({ ...form, title: e.target.value });
+                setErrors((x) => ({ ...x, title: undefined }));
+              }}
+            />
           </Field>
           <Field label="Description">
             <Textarea rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
@@ -99,7 +119,7 @@ function SeoEditor({
       </div>
       <div className="flex flex-none justify-end gap-2.5 border-t border-divider px-5 py-3">
         <Button variant="secondary" onClick={onClose}>Cancel</Button>
-        <Button variant="primary" onClick={() => onSave(form)}>Save</Button>
+        <Button variant="primary" onClick={submit}>Save</Button>
       </div>
     </>
   );

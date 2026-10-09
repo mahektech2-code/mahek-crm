@@ -5,6 +5,8 @@ import { Button, Card, CardHeader, Field, Input, PageHeader, Select, EmptyState 
 import { Drawer, DrawerHeader, Modal, RowMenu, ConfirmDialog } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { NAV, NAV_GROUP_LABEL, type NavGroup, type NavItem } from "../mock-data";
+import { tempFeedback } from "../prototype";
+import { hasErrors, linkError, required, type Errors } from "../validation";
 
 type Editing = { group: NavGroup; item: NavItem };
 
@@ -20,7 +22,7 @@ export default function NavigationPage() {
       ...all,
       [group]: isNew ? [...all[group], item] : all[group].map((x) => (x.id === item.id ? item : x)),
     }));
-    toast.push(isNew ? "Item added." : "Item saved.");
+    toast.push(tempFeedback(isNew ? "Menu item added" : "Menu item saved"));
     setCreating(false);
     setEditing(null);
   }
@@ -91,7 +93,7 @@ export default function NavigationPage() {
             ...all,
             [removing.group]: all[removing.group].filter((x) => x.id !== removing.item.id),
           }));
-          toast.push("Item deleted.");
+          toast.push(tempFeedback("Menu item deleted"));
         }}
       />
     </div>
@@ -109,10 +111,21 @@ function NavItemEditor({
   onClose: () => void;
   onSave: (group: NavGroup, item: NavItem) => void;
 }) {
+  const [errors, setErrors] = React.useState<Errors<"label" | "href">>({});
   const [group, setGroup] = React.useState<NavGroup>(entry?.group ?? "header");
   const [item, setItem] = React.useState<NavItem>(() =>
     entry?.item ?? { id: `n${Date.now()}`, label: "", href: "" },
   );
+
+  function submit() {
+    const clean = { ...item, label: item.label.trim(), href: item.href.trim() };
+    const found = { label: required(clean.label, "Label"), href: linkError(clean.href) };
+    if (hasErrors(found)) {
+      setErrors(found);
+      return;
+    }
+    onSave(group, clean);
+  }
 
   const fields = (
     <div className="flex flex-col gap-3.5">
@@ -123,11 +136,25 @@ function NavItemEditor({
           ))}
         </Select>
       </Field>
-      <Field label="Label">
-        <Input value={item.label} onChange={(e) => setItem({ ...item, label: e.target.value })} />
+      <Field label="Label" error={errors.label}>
+        <Input
+          value={item.label}
+          aria-invalid={!!errors.label}
+          onChange={(e) => {
+            setItem({ ...item, label: e.target.value });
+            setErrors((x) => ({ ...x, label: undefined }));
+          }}
+        />
       </Field>
-      <Field label="Link" hint="A path on the public site, e.g. /products.">
-        <Input value={item.href} onChange={(e) => setItem({ ...item, href: e.target.value })} />
+      <Field label="Link" hint="A path on the public site, e.g. /products." error={errors.href}>
+        <Input
+          value={item.href}
+          aria-invalid={!!errors.href}
+          onChange={(e) => {
+            setItem({ ...item, href: e.target.value });
+            setErrors((x) => ({ ...x, href: undefined }));
+          }}
+        />
       </Field>
     </div>
   );
@@ -135,7 +162,7 @@ function NavItemEditor({
   const footer = (
     <>
       <Button variant="secondary" onClick={onClose}>Cancel</Button>
-      <Button variant="primary" onClick={() => onSave(group, item)}>{isNew ? "Add item" : "Save"}</Button>
+      <Button variant="primary" onClick={submit}>{isNew ? "Add item" : "Save"}</Button>
     </>
   );
 

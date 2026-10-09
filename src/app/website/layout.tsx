@@ -6,6 +6,7 @@ import { FeedbackButton } from "@/components/shell/feedback-button";
 import { ToastProvider } from "@/components/ui/toast";
 import { initialsOf } from "@/lib/format";
 import { hatForHeader } from "@/lib/hat-for-header";
+import { PrototypeNotice } from "./prototype-notice";
 import { WebsiteShell } from "./website-shell";
 
 /**
@@ -40,6 +41,7 @@ export default async function WebsiteLayout({
         apps={webApps(apps)}
         feedback={<FeedbackButton />}
       >
+        <PrototypeNotice />
         {children}
       </WebsiteShell>
     </ToastProvider>

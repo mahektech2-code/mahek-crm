@@ -5,6 +5,7 @@ import { Card, PageHeader, Td, Th, Tr, EmptyState } from "@/components/ui/primit
 import { RowMenu, ConfirmDialog } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { MEDIA, type MediaItem } from "../mock-data";
+import { tempFeedback } from "../prototype";
 
 export default function MediaPage() {
   const toast = useToast();
@@ -58,7 +59,7 @@ export default function MediaPage() {
         onClose={() => setRemoving(null)}
         onConfirm={() => {
           setItems((all) => all.filter((m) => m.id !== removing?.id));
-          toast.push("File deleted.");
+          toast.push(tempFeedback("File removed from this list"));
         }}
       />
     </div>

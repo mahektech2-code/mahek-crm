@@ -19,6 +19,8 @@ import { useToast } from "@/components/ui/toast";
 import { calendarDate } from "@/lib/business-date";
 import { StatusBadge } from "../status-badge";
 import { INDUSTRIES, type Industry, type Status } from "../mock-data";
+import { tempFeedback } from "../prototype";
+import { hasErrors, required, slugError, type Errors } from "../validation";
 
 type Filter = "all" | Status;
 
@@ -34,7 +36,7 @@ export default function IndustriesPage() {
 
   function save(industry: Industry, isNew: boolean) {
     setIndustries((all) => (isNew ? [industry, ...all] : all.map((i) => (i.id === industry.id ? industry : i))));
-    toast.push(isNew ? "Industry added." : "Industry saved.");
+    toast.push(tempFeedback(isNew ? "Industry added" : "Industry saved"));
     setCreating(false);
     setEditing(null);
   }
@@ -98,10 +100,22 @@ export default function IndustriesPage() {
       </Card>
 
       {creating ? (
-        <IndustryEditor isNew industry={null} onClose={() => setCreating(false)} onSave={(i) => save(i, true)} />
+        <IndustryEditor
+          isNew
+          industry={null}
+          takenSlugs={industries.map((i) => i.slug)}
+          onClose={() => setCreating(false)}
+          onSave={(i) => save(i, true)}
+        />
       ) : null}
       {editing ? (
-        <IndustryEditor isNew={false} industry={editing} onClose={() => setEditing(null)} onSave={(i) => save(i, false)} />
+        <IndustryEditor
+          isNew={false}
+          industry={editing}
+          takenSlugs={industries.filter((i) => i.id !== editing.id).map((i) => i.slug)}
+          onClose={() => setEditing(null)}
+          onSave={(i) => save(i, false)}
+        />
       ) : null}
 
       <ConfirmDialog
@@ -113,7 +127,7 @@ export default function IndustriesPage() {
         onClose={() => setRemoving(null)}
         onConfirm={() => {
           setIndustries((all) => all.filter((i) => i.id !== removing?.id));
-          toast.push("Industry deleted.");
+          toast.push(tempFeedback("Industry deleted"));
         }}
       />
     </div>
@@ -123,14 +137,18 @@ export default function IndustriesPage() {
 function IndustryEditor({
   isNew,
   industry,
+  takenSlugs,
   onClose,
   onSave,
 }: {
   isNew: boolean;
   industry: Industry | null;
+  /** The OTHER industries' slugs — this one's own is left out so editing it does not collide with itself. */
+  takenSlugs: string[];
   onClose: () => void;
   onSave: (industry: Industry) => void;
 }) {
+  const [errors, setErrors] = React.useState<Errors<"name" | "slug">>({});
   const [form, setForm] = React.useState<Industry>(() =>
     industry ?? {
       id: `i${Date.now()}`,
@@ -142,13 +160,37 @@ function IndustryEditor({
     },
   );
 
+  function submit() {
+    const clean = { ...form, name: form.name.trim(), slug: form.slug.trim(), description: form.description.trim() };
+    const found = { name: required(clean.name, "Name"), slug: slugError(clean.slug, takenSlugs, "industry") };
+    if (hasErrors(found)) {
+      setErrors(found);
+      return;
+    }
+    onSave({ ...clean, updatedAt: calendarDate(new Date()) });
+  }
+
   const fields = (
     <div className="flex flex-col gap-3.5">
-      <Field label="Name">
-        <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+      <Field label="Name" error={errors.name}>
+        <Input
+          value={form.name}
+          aria-invalid={!!errors.name}
+          onChange={(e) => {
+            setForm({ ...form, name: e.target.value });
+            setErrors((x) => ({ ...x, name: undefined }));
+          }}
+        />
       </Field>
-      <Field label="Slug">
-        <Input value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value })} />
+      <Field label="Slug" error={errors.slug}>
+        <Input
+          value={form.slug}
+          aria-invalid={!!errors.slug}
+          onChange={(e) => {
+            setForm({ ...form, slug: e.target.value });
+            setErrors((x) => ({ ...x, slug: undefined }));
+          }}
+        />
       </Field>
       <Field label="Status">
         <Select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as Status })}>
@@ -166,7 +208,7 @@ function IndustryEditor({
   const footer = (
     <>
       <Button variant="secondary" onClick={onClose}>Cancel</Button>
-      <Button variant="primary" onClick={() => onSave({ ...form, updatedAt: calendarDate(new Date()) })}>
+      <Button variant="primary" onClick={submit}>
         {isNew ? "Add industry" : "Save"}
       </Button>
     </>
