@@ -107,7 +107,10 @@ export async function requireModule(userId: string, key: string): Promise<void> 
   // in the client React runtime, which the integration tests cannot load
   // outside a request.
   const { redirect } = await import("next/navigation");
-  redirect(allowed[0]?.href ?? "/apps");
+  // A write companion (a right such as publishing) is not a destination: sending
+  // somebody to it would send them to the screen it narrows, which they may not
+  // hold either — a redirect loop for an account holding only the companion.
+  redirect(allowed.find((m) => !m.writeOf)?.href ?? "/apps");
 }
 
 /**

@@ -1016,6 +1016,30 @@ export const APP_MODULES: AppModule[] = [
   website("navigation", "Navigation", "Website", "The header and footer menus."),
   website("seo", "SEO", "Website", "Per-page titles, descriptions and metadata."),
   website("settings", "Settings", "Website", "Company, social, contact and analytics settings for the public site."),
+  /*
+   * PUBLISHING IS NOT EDITING. Every Website screen above lets a person change a
+   * working copy, and nothing they type reaches mahekindia.com. This is the
+   * right to make a change LIVE — publish, unpublish, archive, refresh the site,
+   * import the site's current content — which is outward-facing and not
+   * something a person can take back before a visitor has seen it.
+   *
+   * `explicitOnly`: never implied — not by a whole-app grant, not by holding the
+   * app as an administrator. It is ticked, for a named person, on the Access
+   * screen. That is the whole reason it is a separate key, and the reason no
+   * migration writes it to anybody. `writeOf` so it is a narrowing of the
+   * dashboard (it opens nothing on its own; it is not a destination).
+   */
+  {
+    key: "website.publish",
+    app: "website",
+    label: "Publish to the live site",
+    group: "Website",
+    href: "/website",
+    writeOf: "website.dashboard",
+    explicitOnly: true,
+    offByDefault: true,
+    note: "Making a change live on mahekindia.com, taking it down, archiving, and refreshing the site. Without it a person can still edit and preview, but nothing they do reaches the public.",
+  },
 
   /*
    * THE ERP: one module per BUILT screen, read off its own registry so the

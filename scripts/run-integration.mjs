@@ -86,6 +86,8 @@ const files = [
   "src/lib/accounts.test.ts",
   // Vendor payouts: the purchase register as payouts, payment days, invoices.
   "src/lib/vendor-payouts.test.ts",
+  // The Website CMS: what is saved stays saved, publishing is atomic and honest about the live site, and the server refuses who may not.
+  "src/lib/website-cms/website-cms.test.ts",
   "src/lib/bill-paging.test.ts",
   // A call's own reminder is folded onto the call in the All view.
   "src/lib/timeline-fold.test.ts",

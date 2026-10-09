@@ -344,6 +344,15 @@ export async function integrationStatus(): Promise<Integration[]> {
         ? "The website's backend can forward a submitted enquiry. The secret it proves it holds is set below."
         : "No secret, so the website cannot forward an enquiry into MahekOne. Set one below and give the same value to the website.",
     },
+    {
+      name: "Website content (CMS)",
+      state: held("website.cmsReadSecret") && held("website.cmsPublishSecret") ? "Healthy" : "Not connected",
+      last: "—",
+      note:
+        held("website.cmsReadSecret") && held("website.cmsPublishSecret")
+          ? "The public site can read published content and a publish can tell it to refresh. Whether the site itself is switched on is checked from the Website dashboard."
+          : "One or both Website secrets are missing, so the public site cannot read content from here and a publish cannot refresh it. Set them below and give the same values to the website.",
+    },
   ];
 
   return list;
