@@ -111,6 +111,40 @@ describe("documentation coverage", () => {
     }
   });
 
+  test("every file the documentation quotes is in the image's build context", () => {
+    /* The Docker builder generates the index from its OWN context, which
+       .dockerignore trims hard (scripts/, deploy/, tests, workflows). A page
+       quoting a file the context excludes builds everywhere except the image
+       — so it is caught here, by name, instead. Only the pattern shapes
+       .dockerignore actually uses are understood: a directory/, a bare name,
+       a trailing *, a leading **, and ! to let one path back in. */
+    const rules = readFileSync(join(process.cwd(), ".dockerignore"), "utf8")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith("#"));
+    const matches = (pattern: string, file: string) => {
+      if (pattern.startsWith("**/")) return file.endsWith(pattern.slice(4).replace("*", ""));
+      if (pattern.endsWith("/")) return file.startsWith(pattern);
+      if (pattern.endsWith("*")) return file.startsWith(pattern.slice(0, -1));
+      return file === pattern || file.startsWith(pattern + "/");
+    };
+    const excluded = (file: string) => {
+      let out = false;
+      for (const r of rules) {
+        if (r.startsWith("!")) { if (matches(r.slice(1), file)) out = false; }
+        else if (matches(r, file)) out = true;
+      }
+      return out;
+    };
+    const quoted = new Set<string>();
+    for (const f of mdxFiles(DOCS)) {
+      const body = readFileSync(join(DOCS, `${f}.mdx`), "utf8");
+      for (const [, file] of body.matchAll(/<Code\b[^>]*\bfile="([^"]+)"/g)) quoted.add(file);
+    }
+    const missing = [...quoted].filter(excluded);
+    assert.deepEqual(missing, [], `quoted but excluded from the Docker build context — add a ! line to .dockerignore: ${missing.join(", ")}`);
+  });
+
   test("every piece of code the documentation quotes still exists", () => {
     /* The index itself is built, never committed (it would go stale every
        time main moved). What CAN be wrong in a PR is a quoted function that

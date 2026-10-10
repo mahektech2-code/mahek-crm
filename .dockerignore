@@ -21,6 +21,13 @@ npm-debug.log*
 **/*.test.ts
 drizzle.config.ts
 scripts/
+# ...except the one the BUILD runs: the docs index is generated in the builder
+# stage from this source, and only Next's standalone output reaches the runtime
+# stage, so the script itself never ships.
+!scripts/docs-index.mjs
+# A file a docs page QUOTES has to be in the context too, or the generator
+# cannot cut it; coverage.test.ts fails on one that is not.
+!scripts/migrate-deploy.mjs
 docs/
 deploy/
 DEPLOY.md
