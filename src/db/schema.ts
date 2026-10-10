@@ -633,6 +633,9 @@ export const attachmentParentEnum = pgEnum("attachment_parent", [
   "erp_video",
   /** A vendor's quotation, photographed or as its PDF. */
   "erp_quotation",
+  /** Retired with the petty cash module (0249). Postgres cannot drop an enum
+      value, so it stays declared; nothing writes it. */
+  "erp_petty",
   /* HRMS parents: read under the HRMS screen the record lives on (see
      lib/hrms/attachments.ts), never under a customer's scope. */
   "hrms_attendance",
