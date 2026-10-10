@@ -1,0 +1,134 @@
+Attendance is one row per salesman per day in `mbos_attendance_days`, written by the handset through `handleAttendance`, closed and judged by the MBOS jobs, and read by `attendanceForDay` for the roll-call. Photographs are `attachments` rows with `parent_type = 'mbos_attendance'`, gated by `canReadAttendanceSelfie` and swept by `sweepAttendanceSelfies`.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Route guard | `src/app/sales/attendance/layout.tsx` | `requireModule(user.id, "sales.attendance")` |
+| Page | `src/app/sales/attendance/page.tsx` | Day stepper, banner, metrics, roll-call, `COLUMNS` |
+| Photo strip | `src/app/sales/attendance/selfies.tsx` | `Selfies` — one square per mark, three states |
+| Day check | `src/app/sales/attendance/day-check.tsx` → `src/app/sales/people/[id]/day-check.tsx` | The same `DayCheck` the salesman record draws, in a dialog |
+| Read | `src/lib/services/sales-service.ts` | `attendanceForDay` |
+| Evidence | `src/lib/services/day-evidence-service.ts` | `dayEvidence`, `unreviewedCounts` |
+| Verdict words | `src/lib/attendance-labels.ts` | `readAttendanceVerdict` (pure, client-safe) |
+| Verdict rule | `src/lib/engines/attendance.ts`, `src/lib/services/attendance-verdict-service.ts` | `workedSecondsOf`, `attendanceVerdict`, `recomputeAttendanceVerdicts` |
+| Sync write | `src/lib/actions/mbos.ts` | `attendanceSchema`, `handleAttendance` |
+| Review | `src/lib/actions/sales.ts` | `reviewDayEvidence` |
+| Jobs | `src/lib/mbos-jobs.ts` | `markMissedCheckouts` (nightly), `judgeRecentDays` and `sweepSelfies` (hourly) |
+| Photo access | `src/lib/services/attachment-service.ts` | `canReadAttendanceSelfie`, `sweepAttendanceSelfies` |
+| Handset | `mbos-app/src/data/attendance.ts` | `checkIn`/`checkOut` take a non-nullable selfie id; geofence measured here |
+
+## A punch, end to end
+
+<Flow caption="Punch-in on the handset to a verdict on the screen" chart={`
+sequenceDiagram
+  autonumber
+  participant H as Handset
+  participant M as handleAttendance
+  participant DB as Postgres
+  participant J as mbos-jobs.ts
+  participant S as /sales/attendance
+  H->>H: selfie (required by type), geofence vs baseLocation
+  H->>M: attendance item (day, sessions, selfie ids, withinGeofence)
+  M->>DB: knownAttachments — keep a selfie id only if its row exists
+  M->>DB: upsert mbos_attendance_days (sessions jsonb always carries every id)
+  H->>DB: media queue drains, attachments land, re-send fills the FK columns
+  J->>DB: nightly markMissedCheckouts closes yesterday at the last evidence
+  J->>DB: recomputeAttendanceVerdicts writes status + worked_seconds
+  J->>DB: hourly sweepAttendanceSelfies removes images past retention
+  S->>DB: attendanceForDay(day) narrowed by onlyMine(scope, u.id)
+`} />
+
+## The write
+
+<Code file="src/lib/actions/mbos.ts" symbol="attendanceSchema" collapsed />
+
+<Code file="src/lib/actions/mbos.ts" symbol="handleAttendance" collapsed />
+
+- `selfieRef` keeps an id in the FK column only once the attachment row exists; `sessions` holds every id regardless.
+- `asksToRegularise` requires a non-empty reason; `within_geofence` is the fact either way.
+- On update, absent fields do not overwrite present ones.
+
+## Closing and judging
+
+<Code file="src/lib/mbos-jobs.ts" symbol="markMissedCheckouts" collapsed />
+
+<Code file="src/lib/engines/attendance.ts" symbol="workedSecondsOf" collapsed />
+
+<Code file="src/lib/engines/attendance.ts" symbol="attendanceVerdict" />
+
+<Code file="src/lib/attendance-labels.ts" symbol="readAttendanceVerdict" collapsed />
+
+`status` is NOT NULL and defaults to `absent`, so a day the engine refused to judge still stores `absent`. `readAttendanceVerdict` reads `worked_seconds IS NULL` with a check-in as *not measured* — never render `status` directly.
+
+## Photographs
+
+<Code file="src/lib/services/attachment-service.ts" symbol="canReadAttendanceSelfie" collapsed />
+
+<Code file="src/lib/services/attachment-service.ts" symbol="sweepAttendanceSelfies" />
+
+The sweep anchors on `uploaded_at` (arrival), removes the bytes before marking the row `removed`, and never touches the day row or `sessions`. `/api/attachments/[id]` answers 410 for a removed row. `Selfies` draws three states from `availableSelfieIds` (status `available`) against the ids in `sessions`.
+
+## The read
+
+<Code file="src/lib/services/sales-service.ts" symbol="attendanceForDay" collapsed />
+
+## Tables and enums
+
+<DbTable name="mbos_attendance_days" only={["user_id", "day", "check_in_at", "check_in_selfie_id", "check_out_at", "check_out_selfie_id", "sessions", "auto_checked_out", "worked_seconds", "status", "within_geofence", "geofence_distance_m", "regularisation_requested", "regularisation_reason", "setup_ready", "setup_unverified"]} note={{
+  sessions: "jsonb [{inAt, outAt, inSelfieId, outSelfieId, autoClosed?}] as the handset reported it. Not a cache.",
+  check_in_selfie_id: "First-in mirror. Written only once the attachment row exists.",
+  check_out_selfie_id: "Last-out mirror.",
+  auto_checked_out: "Closed by markMissedCheckouts, never by a person.",
+  worked_seconds: "Derived. Null with a check-in means not measured.",
+  status: "Derived cache, defaults to absent — read through readAttendanceVerdict.",
+  within_geofence: "Measured on the handset against mbos.attendance.baseLocation.",
+  regularisation_requested: "True only where a reason came with it.",
+  setup_ready: "What the phone said about its own tracking setup at punch-in.",
+}} />
+
+<DbEnum name="mbos_attendance_status" />
+
+## Access
+
+<ModuleRef k="sales.attendance" />
+
+- Roll-call: `onlyMine(managerScope(), "u.id")` over active holders of the `field` app.
+- Photographs: `canOpenModule("sales.attendance")` **first**, then `scopeCovers(managerScope(), owner)`. `managerScope` alone is national for anybody without a region row — every plain salesman — so it cannot be the whole check.
+- `reviewDayEvidence` refuses your own day and anybody outside `managerScope`.
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/engines/attendance.test.ts` | Worked seconds across sessions; present / half day / holiday / leave / absent; open sessions unjudged |
+| `npm run test` | `src/lib/attendance-labels.test.ts` | *not measured* over the stored default |
+| `npm run test:integration` | `src/lib/day-evidence.test.ts` | Evidence in day order, verdicts, corrections refused after a decided claim |
+| `npm run test:integration` | `src/lib/activity-location.test.ts`, `src/lib/positions-endpoint.test.ts` | Attendance payloads through the dispatcher; trail fixes judged against the session they belong to |
+| `npm run test` | `src/lib/punch-out-reminders.test.ts` | The punch-out prompt and its one follow-up |
+
+## Changing it safely
+
+<Steps>
+<Step title="Never null a selfie id">
+The sweep removes the image only. "Taken and deleted" and "never taken" must stay distinguishable on the record a payslip is read against.
+</Step>
+<Step title="Never invent a closing time">
+`markMissedCheckouts` closes at evidence or not at all. Do not add a fixed hour.
+</Step>
+<Step title="Gate any new photograph read on the module, then the scope">
+Anything reachable from `/api/attachments` must ask `canOpenModule` before `managerScope`.
+</Step>
+<Step title="Keep the handset's selfie parameter non-nullable">
+The type is the rule; a screen that forgets to ask cannot omit it.
+</Step>
+</Steps>
+
+## Known gaps
+
+| Gap | Where |
+|---|---|
+| `mbos.attendance.autoCheckOutHour` is read by nothing; its description promises a fixed closing hour | `registry.ts`; `mbos-jobs.ts` `markMissedCheckouts` |
+| `mbos.attendance.selfieRequired` is read by nothing; the photograph is mandatory in the handset's types | `registry.ts`; `mbos-app/src/data/attendance.ts` |
+| The geofence is not re-measured on the server; `within_geofence` is the handset's word | `actions/mbos.ts` `handleAttendance` |
+| The empty state says "Nobody holds the Salesman App" when the cause can also be scope narrowing | `attendance/page.tsx` |

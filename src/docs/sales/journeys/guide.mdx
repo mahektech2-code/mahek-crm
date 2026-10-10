@@ -1,0 +1,116 @@
+Journeys & visits is where you plan **where each salesman works**, and see **what came of it**. You propose a city for a day; he agrees, or refuses with a reason and sometimes a city he would rather work; then he picks the shops on his phone. Every visit he makes is logged here, with the ones the phone could not verify marked for you to read.
+
+## The four tabs
+
+| Tab | Answers |
+|---|---|
+| **Team** | The whole team over the last month and the next fortnight — who is planned, who refused, who has nothing. |
+| **Today** | Today's plans against today's visits and trails. |
+| **One salesman** | One person's month as a calendar or a list, and **Propose days**. |
+| **Visit log** | Every visit on a day, with the unverified and off-plan ones marked. |
+
+## Planning a salesman's days
+
+<Wireframe url="/sales/journeys?tab=salesman&view=propose" caption="Proposing a city for each of several days">
+  <WfTabs items={["Team", "Today", "One salesman", "Visit log"]} active="One salesman" />
+  <WfBar><WfButton>Salesman A ▾</WfButton><WfTabs items={["Calendar", "List", "Propose days", "Visit log"]} active="Propose days" /><Hotspot n={1} /></WfBar>
+  <WfTable columns={["Day", "State", "City"]} rows={[
+    ["Mon 12 Oct", <WfPill key="a" tone="success">Planned</WfPill>, "City 1 · 6 shops"],
+    ["Tue 13 Oct", <WfPill key="b" tone="brand">Agreed</WfPill>, <span key="c">City 2 — <i>Agreed — he picks the shops</i></span>],
+    ["Wed 14 Oct", <WfPill key="d" tone="danger">Refused</WfPill>, <span key="e">"Market shut on Wednesdays." He would rather City 3 <Hotspot n={2} /></span>],
+    ["Thu 15 Oct", <WfPill key="f">Proposed</WfPill>, <span key="g">City 4 — <i>Waiting on his answer</i></span>],
+    ["Fri 16 Oct", <WfText key="h" muted>Nothing proposed</WfText>, <span key="i"><WfInput placeholder="Propose a city" /> <Hotspot n={3} /></span>],
+  ]} />
+  <WfBar><WfSpacer /><WfButton primary>Propose 1 day</WfButton><Hotspot n={4} /></WfBar>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Whose days.</b> Pick the salesman, then <i>Propose days</i>. <i>Calendar</i> and <i>List</i> show the same month to read.</span>,
+  <span key="2"><b>A refusal.</b> His reason, and the city he would rather work if he named one. You answer it — you cannot overrule it.</span>,
+  <span key="3"><b>Propose a city.</b> Type a city; his book's cities are suggested. A city his book does not hold is still proposed.</span>,
+  <span key="4"><b>Send.</b> Proposes every day you filled in. Days already agreed or planned are left alone.</span>,
+]} />
+
+### The life of a day
+
+| State | Means | Who moves it next |
+|---|---|---|
+| <Pill>Proposed</Pill> | You named a city. | He agrees or refuses on his phone. |
+| <Pill tone="danger">Refused</Pill> | He said why it will not work. | You — take his city, or propose another. |
+| <Pill tone="brand">Agreed</Pill> | He accepted the city. | He picks the shops. |
+| <Pill tone="success">Planned</Pill> | He picked at least one shop. | He walks it. |
+
+A salesman can also start a day himself on his phone. It arrives **agreed**, marked *He planned this day himself*.
+
+<Steps>
+<Step title="Propose">
+On **One salesman → Propose days**, type a city against each day and press **Propose**. He is told *"N days proposed for you"*.
+</Step>
+<Step title="Answer a refusal">
+A refused day shows his reason. Press **take his city** to agree the day on the city he suggested, or type a different city to put back to him. [Today](/docs/sales/today) counts refused days as *Days he will not walk*.
+</Step>
+<Step title="Let him pick the shops">
+Once agreed, he picks the shops on his phone. If a shop has left his book since he picked it, it is dropped and he is told how many were left out.
+</Step>
+<Step title="Or pick them yourself">
+When you have to, **Pick the shops yourself** opens his book for the chosen city. Save a run of up to 31 days at once; a day with no shops in it clears that day.
+</Step>
+</Steps>
+
+<Callout kind="note">
+You propose a **city**, not shops. He knows which market shuts on a Wednesday and which two towns are too far apart for one day — the reason for asking is that his answer is worth more than a guess from the office.
+</Callout>
+
+## The Visit log
+
+<Wireframe url="/sales/journeys?tab=visits" caption="The Visit log with one unverified visit opened">
+  <WfBar><WfButton>‹ Mon 12 Oct ›</WfButton><WfPill tone="brand">Every visit</WfPill><WfPill>Unverified</WfPill><WfPill>Off plan</WfPill><Hotspot n={1} /></WfBar>
+  <WfTable columns={["Salesman", "Shop", "In", "Time in shop", "Outcome", ""]} rows={[
+    ["Salesman A", "Customer A", "10:12", "18 min", "Order taken", ""],
+    [<span key="a">Salesman B <WfPill tone="warn">Unverified</WfPill> <Hotspot n={2} /></span>, "Customer B", "11:40", "9 min", "Visited", <WfButton key="b">⋯</WfButton>],
+    [<span key="c">Salesman C <WfPill>Off plan</WfPill></span>, "Customer C", "12:05", "22 min", "Payment collected", ""],
+  ]} />
+  <WfPanel title="Customer B · Salesman B · 11:40" side>
+    <WfText>Checked in 240 m from the shop's pin. "The pin is at the old godown — the shop moved across the road."</WfText>
+    <WfPill tone="warn">Pin questioned</WfPill>
+    <WfBar><WfButton primary>Accept it anyway</WfButton><WfButton>Ask them to explain</WfButton><Hotspot n={3} /></WfBar>
+    <WfBar><WfButton>Move the shop's pin here</WfButton><WfButton>Leave the pin as it is</WfButton><Hotspot n={4} /></WfBar>
+  </WfPanel>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Day and filter.</b> Every visit, only the unverified ones, or only visits to shops that were not on his plan.</span>,
+  <span key="2"><b>Unverified.</b> The phone could not confirm the visit. Open it to read why.</span>,
+  <span key="3"><b>Your verdict on the visit.</b> <i>Accept it anyway</i> marks it verified with your name. <i>Ask them to explain</i> sends him a question.</span>,
+  <span key="4"><b>Your verdict on the pin.</b> When he said the shop's pin is wrong, move it to where he checked in, or leave it.</span>,
+]} />
+
+### Why a visit is unverified
+
+A salesman can only check in to a shop from within <Setting k="mbos.location.visitMismatchM" /> metres of its pin. When the pin is wrong, he can check in anyway by **writing why** — the visit then saves unverified with his words, and he may also say the pin is wrong. That is what you are reading.
+
+| Mark | Means | What you can do |
+|---|---|---|
+| <Pill tone="warn">Unverified</Pill> | Checked in away from the pin, or a check failed. The reason is shown. | Accept it anyway, or ask him to explain. |
+| <Pill tone="warn">Pin questioned</Pill> | He says the shop is not where the book has it. | Move the shop's pin here, or leave it. |
+| <Pill>Off plan</Pill> | The shop was not on his route for the day. | Read the reason he gave for going. |
+| *The visit never closed* | He walked out of signal or did not check out. | — |
+
+<Callout kind="note">
+Moving the pin and accepting the visit are separate. Moving it says the book was wrong; accepting says you stand behind the visit. You can do one, both or neither.
+</Callout>
+
+## Questions people ask
+
+<Faq q="He refused, and I want him to go anyway.">
+There is no overrule. Put the same city back with your reason in a call, or propose another. The refusal is the point of asking.
+</Faq>
+<Faq q="A day shows 'Agreed, no shops'.">
+He accepted the city and has not picked shops yet. Picking nothing leaves the day agreed — an empty day is never shown as a route.
+</Faq>
+<Faq q="A visit is missing.">
+Visits reach the office on the phone's next sync. A salesman with no signal appears later, not never.
+</Faq>
+<Faq q="I cannot accept a visit.">
+You cannot accept your own visits, or visits by somebody outside your team.
+</Faq>

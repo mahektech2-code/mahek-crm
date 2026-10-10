@@ -1,0 +1,88 @@
+Field reports and Activity history are both **readings of what the field said**, kept apart from what it sold. Field reports is a manager's window onto what salesmen file from shops. Activity history is the full record of visits — and the bridge from a retired field app whose shops were typed as names, which is why most of its rules are about **never linking a visit to the wrong customer**.
+
+## Field reports
+
+<Rule title="A window, not a desk">
+Each tab shows what was filed and where it stands. The work happens elsewhere: complaints on the CRM's complaint desk, tours on Approvals, order changes in Accounts. A manager comes here to see that their salesman raised something, not to answer it.
+</Rule>
+
+<Rule title="The last 90 days — except a tour still ahead">
+Every tab covers the last 90 days. A tour that has not ended yet is shown however long ago it was asked for, because a trip next week is still a trip next week.
+</Rule>
+
+<Rule title="Each count is the list it opens">
+The five tab counts and the five tables are built from one definition per tab. A count derived from a second spelling of the filter is a chip that disagrees with the table under it the first time either changes.
+</Rule>
+
+<Rule title="A restricted internal note keeps its restriction here">
+An internal note can be limited to certain roles. Its **body** is shown only to those roles, the platform administrator and its author; everybody else sees that it exists, who wrote it and who it is restricted to. The timeline never carries a note's body at all, for the same reason.
+</Rule>
+
+All five tabs are narrowed to your patch by whoever filed the item.
+
+## Activity history: one log, two sources
+
+<Flow caption="Where Activity history's rows come from" chart={`
+flowchart TD
+  M["MBOS visits<br/>(check-in and check-out on the phone)"] --> H["Activity history"]
+  S["EMP 2.0 Activity tab<br/>(Google Sheet, old field app)"] -->|"append every few minutes,<br/>full reconcile once a day"| ST["Staging rows<br/>one per sheet row, hashed"]
+  ST -->|"salesman name matched exactly<br/>shop name decided"| ST
+  ST -->|"rows before the switch-over date"| H
+  ST -->|"matched rows only"| T["Customer timeline<br/>(CRM record and the phone)"]
+`} />
+
+<Rule title="MBOS is the record from the switch-over date">
+Before <Setting k="fieldActivity.cutoverDate" />, the old app's rows are shown beside MBOS, marked *Old app*. A sheet row dated on or after it is not stored, not put on a timeline and not counted — the old app is retired, and its past stays as it was read.
+</Rule>
+
+### Reading the sheet
+
+The old app's log is tens of thousands of rows, so it is read the way the order sheet is: a **quick append pass** for new rows every few minutes, and a **full reconcile** once a day that notices an edited or withdrawn row. Every row carries a hash, so an unchanged sheet costs a read and no writes. The schedule runs from a script bound to that workbook, separate from the order workbook's.
+
+### Who did the visit
+
+<Rule title="A salesperson is a name, not an account">
+The old app's salesman names are matched to MahekOne accounts **exactly**. Most of them never had an account and never will; their rows belong to nobody and are shown to every manager — an unresolved row is the work, and hiding it by the very field that is not filled in would empty the screen exactly when it has most to show.
+</Rule>
+
+When somebody later gets an account, their old rows are re-matched by a pass that reads what is stored and never touches the sheet. A hash-driven sync never asks again about an unchanged row, so without that pass the rows would stay unmatched for ever.
+
+### Which shop it was
+
+<Rule title="A name is only linked on its own where nothing could be wrong">
+1. **A person's decision wins**, whatever it says — including "not on MahekOne".
+2. **Exactly one** account on the book with the same name is a match.
+3. **Several** with that exact name is a question, listing them with their towns.
+4. **A close name is never a match** — it is a question with the shortlist.
+5. **Nothing close** is unmatched.
+</Rule>
+
+<Callout kind="why" title="Why close names are never linked">
+The rule used to auto-link close names. That linked a shop to a similar-sounding one in another city, and every such link put somebody else's visit on a customer's timeline, read as fact. A held row is on the review list saying so; a wrong one is on nobody's.
+</Callout>
+
+<Rule title="A decision is made once per name">
+Deciding a shop moves **every row typed under that name** together, and the sync never overrides it. A decision can be taken back; the rows are re-judged at once and any timeline entry the old link wrote is removed.
+</Rule>
+
+### Onto the customer's timeline
+
+Matched rows are written to the customer's shared timeline as visits, so they show on the CRM record and on the salesman's phone. The summary sentence says plainly that it is history from the old app, not a live check-in. Only a row with a real matched customer can produce an entry at all; unmatched and ambiguous rows are never eligible.
+
+## Who may do what
+
+| Act | Needs |
+|---|---|
+| Read Field reports | <ModuleRef k="sales.field-reports" /> |
+| Read Activity history | <ModuleRef k="sales.activity-history" /> |
+| Decide which shop a name is | Manager level in the Sales Dashboard and Activity history |
+| Re-read the stored rows (the re-parse button, drawn for them only) | A platform administrator — running a scheduled job by hand rewrites figures for everybody |
+
+## Settings
+
+<SettingsTable keys={["fieldActivity.cutoverDate"]} />
+
+## Where the code and the intent disagree today
+
+- **The switch-over setting lives with the location settings** on the Settings screen, not with anything about the old app, which makes it hard to find.
+- **Order changes link nowhere.** A tour waiting for a decision links to Approvals; an order change shows accounts' answer but no way to the Accounts screen that gives it.

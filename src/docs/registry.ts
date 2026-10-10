@@ -445,7 +445,7 @@ export const DOC_APPS: DocApp[] = [
         summary: "Who uses the office end of MBOS, what a manager's day looks like, and how its screens fit together.",
         group: "Start here",
         modules: [],
-        written: [],
+        written: ALL,
       },
       {
         slug: "today",
@@ -454,7 +454,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Overview",
         modules: ["sales.today"],
         screen: "/sales",
-        written: [],
+        written: ALL,
       },
       {
         slug: "live-map",
@@ -463,7 +463,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Overview",
         modules: ["sales.live"],
         screen: "/sales/live",
-        written: [],
+        written: ALL,
       },
       {
         slug: "territory",
@@ -472,7 +472,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Overview",
         modules: ["sales.territory"],
         screen: "/sales/territory",
-        written: [],
+        written: ALL,
       },
       {
         slug: "performance",
@@ -481,7 +481,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Overview",
         modules: ["sales.performance", "sales.roi"],
         screen: "/sales/performance",
-        written: [],
+        written: ALL,
       },
       {
         slug: "approvals",
@@ -490,7 +490,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Decisions",
         modules: ["sales.approvals"],
         screen: "/sales/approvals",
-        written: [],
+        written: ALL,
       },
       {
         slug: "targets",
@@ -499,7 +499,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Decisions",
         modules: ["sales.targets"],
         screen: "/sales/targets",
-        written: [],
+        written: ALL,
       },
       {
         slug: "journeys",
@@ -508,7 +508,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Field work",
         modules: ["sales.journeys"],
         screen: "/sales/journeys",
-        written: [],
+        written: ALL,
       },
       {
         slug: "tasks",
@@ -517,7 +517,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Field work",
         modules: ["sales.tasks"],
         screen: "/sales/tasks",
-        written: [],
+        written: ALL,
       },
       {
         slug: "field-reports",
@@ -526,7 +526,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Field work",
         modules: ["sales.field-reports", "sales.activity-history"],
         screen: "/sales/field-reports",
-        written: [],
+        written: ALL,
       },
       {
         slug: "travel",
@@ -535,7 +535,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Field work",
         modules: ["sales.travel"],
         screen: "/sales/travel",
-        written: [],
+        written: ALL,
       },
       {
         slug: "commercial",
@@ -544,7 +544,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Commercial",
         modules: ["sales.orders", "sales.payments", "sales.invoices"],
         screen: "/sales/orders",
-        written: [],
+        written: ALL,
       },
       {
         slug: "lead-management",
@@ -553,7 +553,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Lead Management",
         modules: ["sales.leads", "sales.lead-pipeline", "sales.lead-funnel", "sales.lead-intake", "sales.lead-qualify", "sales.samples", "sales.lead-commercial", "sales.lead-appointments", "sales.lead-actions", "sales.lead-handovers", "sales.lead-oversight"],
         screen: "/sales/leads",
-        written: [],
+        written: ALL,
       },
       {
         slug: "attendance",
@@ -562,7 +562,7 @@ export const DOC_APPS: DocApp[] = [
         group: "People",
         modules: ["sales.attendance"],
         screen: "/sales/attendance",
-        written: [],
+        written: ALL,
       },
       {
         slug: "leave-and-holidays",
@@ -571,7 +571,7 @@ export const DOC_APPS: DocApp[] = [
         group: "People",
         modules: ["sales.leave", "sales.holidays"],
         screen: "/sales/leave",
-        written: [],
+        written: ALL,
       },
       {
         slug: "expenses",
@@ -580,7 +580,7 @@ export const DOC_APPS: DocApp[] = [
         group: "People",
         modules: ["sales.expenses", "sales.exceptions", "sales.expense-policy"],
         screen: "/sales/expenses",
-        written: [],
+        written: ALL,
       },
       {
         slug: "enablement",
@@ -589,7 +589,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Enablement",
         modules: ["sales.documents", "sales.knowledge"],
         screen: "/sales/documents",
-        written: [],
+        written: ALL,
       },
       {
         slug: "salesmen",
@@ -598,7 +598,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Administration",
         modules: ["sales.people"],
         screen: "/sales/people",
-        written: [],
+        written: ALL,
       },
       {
         slug: "administration",
@@ -607,7 +607,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Administration",
         modules: ["sales.prefs", "sales.logins", "sales.sync-health", "sales.notify", "sales.audit"],
         screen: "/sales/sync-health",
-        written: [],
+        written: ALL,
       },
     ],
   },

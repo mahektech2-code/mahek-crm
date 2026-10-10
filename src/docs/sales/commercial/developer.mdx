@@ -1,0 +1,152 @@
+Orders, receipts and bills are the CRM's own tables — `orders`, `payment_receipts`, `bills` — with `source = 'mbos'` marking what came from a handset. The handset writes them through the sync dispatcher in `src/lib/actions/mbos.ts`; the three Sales Dashboard screens are read-only views over them in `src/lib/services/sales-service.ts`, narrowed by `managerScope`. Approval and confirmation happen in the Accounts app.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Route guards | `src/app/sales/{orders,payments,invoices}/layout.tsx` | `requireModule` on `sales.orders`, `sales.payments`, `sales.invoices` |
+| Orders page | `src/app/sales/orders/page.tsx` | Banner, metrics, chips, table, `COLUMNS` sort map |
+| Payments page | `src/app/sales/payments/page.tsx` | Cash-by-person, deposit window, chips, photos |
+| Invoices | `src/app/sales/invoices/page.tsx`, `invoices-screen.tsx` | URL-driven chips/search/paging, ageing strip, order lines on expand |
+| Reads | `src/lib/services/sales-service.ts` | `fieldOrderSummary`, `fieldOrders`, `fieldReceipts`, `fieldInvoicesPage`, `fieldInvoiceTotals`, `fieldInvoiceAges` |
+| Scope | `src/lib/services/sales-service.ts`, `src/lib/sales-gate.ts` | `managerScope`, `onlyMine`, `scopeStanding` |
+| Sync writes | `src/lib/actions/mbos.ts` | `handleOrder`, `handleOrderProgress`, `handleOrderEdit`, `handleOrderChangeRequest`, `handlePayment`, `handlePaymentUpdate`, `notifyManagers` |
+| Handset credit check | `mbos-app/src/engines/credit.ts`, `mbos-app/src/data/orders.ts` | The pre-check the office repeats |
+| Decisions | Accounts app (`/accounts/approvals`, payments to confirm) | Not on this dashboard |
+
+## An order, end to end
+
+<Flow caption="sync item 'order' → orders row → Accounts" chart={`
+sequenceDiagram
+  autonumber
+  participant H as Handset
+  participant M as actions/mbos.ts handleOrder
+  participant DB as Postgres
+  participant A as Accounts
+  participant S as /sales/orders
+  H->>M: order payload (lines, total, outstandingAsOf)
+  M->>DB: customer in scope? credit blocked?
+  M->>M: checkOrderLines, price list rate, credit limit vs outstanding now
+  alt refused
+    M-->>H: rejected (credit_blocked, price_changed, credit_exceeded, outstanding_stale, duplicate)
+  else accepted
+    M->>DB: insert orders (source mbos, status pending_approval), convert a lead
+    M-->>H: accepted + order number
+  end
+  A->>DB: approve or decline (decline notifies the taker)
+  S->>DB: fieldOrderSummary + fieldOrders(show) with onlyMine(created_by_id)
+`} />
+
+## The writes
+
+<Code file="src/lib/actions/mbos.ts" symbol="orderSchema" collapsed />
+
+<Code file="src/lib/actions/mbos.ts" symbol="handleOrder" collapsed />
+
+Things a change must preserve:
+
+- **The same id from the same salesman is a resend**, accepted with the stored number. The same id from someone else is a `duplicate` rejection.
+- **The delivery party is not scope-checked** — it is an address on someone else's order and routinely in another book.
+- **The credit check reads outstanding now.** `outstanding_stale` is chosen over `credit_exceeded` when the handset's figure moved and was older than `mbos.credit.outstandingStaleHours`.
+- **Never bind a `Date` into raw SQL** here — pass `.toISOString()`. This handler once refused every order because of it.
+
+<Code file="src/lib/actions/mbos.ts" symbol="orderProgressSchema" />
+
+<Code file="src/lib/actions/mbos.ts" symbol="paymentSchema" collapsed />
+
+<Code file="src/lib/actions/mbos.ts" symbol="handlePaymentUpdate" collapsed />
+
+`handlePayment` writes the receipt at `reported` with `source = 'mbos'`, allocates it across bills with the same pure `allocate` the office uses (refusing `bill_settled` where a named bill is already settled), numbers it from the receipt series, writes a timeline row, binds the cheque photograph, and notifies above `mbos.payments.managerNotifyThresholdPaise`.
+
+<Code file="src/lib/actions/mbos.ts" symbol="notifyManagers" />
+
+## The reads
+
+<Code file="src/lib/services/sales-service.ts" symbol="OVER_LIMIT" />
+
+<Code file="src/lib/services/sales-service.ts" symbol="fieldOrderSummary" collapsed />
+
+<Code file="src/lib/services/sales-service.ts" symbol="fieldOrders" collapsed />
+
+<Code file="src/lib/services/sales-service.ts" symbol="CASH_IN_HAND" />
+
+<Code file="src/lib/services/sales-service.ts" symbol="fieldReceipts" collapsed />
+
+<Code file="src/lib/services/sales-service.ts" symbol="fieldInvoiceWhere" collapsed />
+
+### Scope
+
+<Code file="src/lib/services/sales-service.ts" symbol="onlyMine" />
+
+`managerScope` resolves the session itself — no call site can forget to pass it. `salesmanIds: null` means national; an associate gets `[self]`. Orders narrow on `o.created_by_id`, receipts on `r.reported_by_id`, invoices on `coalesce(c.sales_am_id, c.owner_id)` restricted to holders of the `field` app.
+
+## Tables
+
+<DbTable name="orders" only={["source", "order_no", "status", "total_amount", "line_items", "delivery_customer_id", "decline_reason", "approved_at", "customer_confirmed_at", "customer_confirmed_note", "delivery_confirmed_at", "delivery_discrepancy", "expected_dispatch", "credit_days", "created_by_id"]} note={{
+  source: "mbos for a handset order.",
+  status: "Ours. pending_approval until accounts decide.",
+  customer_confirmed_at: "The shop agreeing what was written down.",
+  delivery_confirmed_at: "The shop saying the goods came.",
+  delivery_discrepancy: "Null means nobody reported a mismatch — not that it was correct.",
+  created_by_id: "The salesman — what the Orders screen narrows on.",
+}} />
+
+<DbEnum name="order_status" />
+
+<DbTable name="payment_receipts" only={["source", "receipt_no", "amount", "mode", "reference", "received_at", "status", "reported_by_id", "deposited_at", "deposited_by_id", "deposit_proof_id", "note"]} note={{
+  status: "reported until accounts confirm. Only confirmed moves money.",
+  deposited_at: "Set from the handset when cash is banked. Clears it from Cash in hand.",
+  deposit_proof_id: "The deposit slip photograph.",
+  note: "A bounced cheque appends a dated line here.",
+}} />
+
+<DbEnum name="receipt_status" />
+
+<DbEnum name="bill_payment_position" />
+
+## Access
+
+<ModuleRef k="sales.orders" /> <ModuleRef k="sales.payments" /> <ModuleRef k="sales.invoices" />
+
+No capability is checked on these reads; scope is `managerScope`. Approving an order is `order.approve`, held by the Accounts manager:
+
+<CapabilityGrid names={["order.approve", "payment.confirm"]} />
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test:integration` | `src/lib/activity-location.test.ts` | Real order and payment payloads through the dispatcher (the Date-bind regressions) |
+| `npm run test:integration` | `src/lib/salesman-day.test.ts` | Field orders and receipts on a salesman's day |
+| `npm run test:integration` | `src/lib/order-change.test.ts` | Edits and change requests on a field order |
+| `npm run test` | `src/lib/order-status.test.ts` | Which statuses count as a sale |
+| `npm run test` | `src/lib/mbos-wire.test.ts` | Every handset write has a dispatcher case, and back |
+| `npm run test` | `mbos-app/src/engines/engines.test.ts` | The handset credit pre-check |
+
+## Changing it safely
+
+<Steps>
+<Step title="Re-check on the server anything the handset decides">
+A sync endpoint accepts payloads from a device somebody owns. A rule only in the APK is not a rule.
+</Step>
+<Step title="Count in SQL, page in SQL">
+Every figure above a table is an aggregate over the scoped book. Never derive a figure from the capped page.
+</Step>
+<Step title="Keep money paths keyed on confirmed">
+Nothing here may reduce a bill. A reported receipt changes no balance.
+</Step>
+<Step title="Add a new rejection code with words">
+The salesman reads the message on his Not accepted list; it must name the customer and the way forward.
+</Step>
+</Steps>
+
+## Known gaps
+
+| Gap | Where |
+|---|---|
+| `mbos.orders.approvalThresholdPaise` / `secondTierThresholdPaise` describe a manager sign-off the server never applies; only the handset credit engine reads the first | `registry.ts`; `mbos-app/src/engines/credit.ts` |
+| `mbos.credit.overdueDaysBlockOrders` is not re-checked by `handleOrder` | `actions/mbos.ts` `handleOrder` |
+| Deposit window shown as "working day(s)" but computed as `hours / 24` against calendar days (`current_date - received_at`) | `payments/page.tsx`; `sales-service.ts` `RECEIPT_COLUMNS` |
+| Invoices narrow on `coalesce(sales_am_id, owner_id)`, not `ASSIGNED_TO_SQL` | `sales-service.ts` `fieldInvoiceWhere` |
+| AGENTS.md: "`handleOrder` refuses one against a lead below negotiation" — the code converts the lead instead | `actions/mbos.ts` `handleOrder` |
+| A bounced cheque changes no status; reversal is left to accounts by notification | `actions/mbos.ts` `handlePaymentUpdate` |

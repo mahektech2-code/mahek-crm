@@ -1,0 +1,107 @@
+Tasks are rows in `mbos_tasks`. The Sales Dashboard reads them through `tasksList` (single tasks) and `task-campaign-service.ts` (assignments), and writes them through `assignTaskCampaign` and its siblings in `src/lib/actions/sales.ts`. Automatic tasks are inserted by the handset handlers in `src/lib/actions/mbos.ts`, the lead services and the scheduled jobs in `src/lib/mbos-jobs.ts`. The form model is pure, in `src/lib/task-form.ts` and `src/lib/task-audience.ts`, because the dialog, the server and the handset all read it.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Module guard | `src/app/sales/tasks/layout.tsx` | `requireModule(user.id, "sales.tasks")` |
+| Page (server) | `src/app/sales/tasks/page.tsx` | `?show=assignments|open|overdue|done|all`, sort, metrics |
+| Assign dialog | `src/app/sales/tasks/assign-task.tsx` | Title, form builder, audience, preview, AI draft |
+| Assignment page | `src/app/sales/tasks/[campaignId]/` | Progress, answers, export, remind, withdraw, AI summary |
+| Reads | `src/lib/services/sales-service.ts` | `tasksList` |
+| Reads | `src/lib/services/task-campaign-service.ts` | `taskCampaigns`, `taskCampaign`, `shopsForTarget`, `recentTaskForms` |
+| Form model (pure) | `src/lib/task-form.ts` | `TaskField`, field types, conditions, answer summaries |
+| Audience (pure) | `src/lib/task-audience.ts` | `TaskAudience`, `expandTaskAudience`, `MAX_TASKS_PER_ASSIGNMENT` |
+| Record links | `src/lib/services/task-link-service.ts` | Which fields a question can write, and whether a shop already holds them |
+| AI | `src/lib/services/task-ai-service.ts` | Drafting a form from a brief, suggesting links, summarising answers |
+| Writes | `src/lib/actions/sales.ts` | `assignTaskCampaign`, `previewTaskAudience`, `remindTaskCampaign`, `closeTaskCampaign`, `aiDraftTask` |
+| Handset | `src/lib/actions/mbos.ts` | `handleTask`, `handleTaskUpdate` — create, complete, answer, snooze |
+| Jobs | `src/lib/mbos-jobs.ts` | `escalateOverdueTasks`, `raiseReorderFollowUps`, nurture tasks |
+
+## An assignment, end to end
+
+<Flow caption="assignTaskCampaign" chart={`
+sequenceDiagram
+  autonumber
+  participant UI as assign-task.tsx
+  participant A as actions/sales.ts
+  participant S as task-campaign-service.ts
+  participant DB as Postgres
+  participant H as Handsets
+  UI->>A: previewTaskAudience(audience, form)
+  A->>S: shopsForTarget (narrowed by managerScope), fieldTeam
+  A-->>UI: tasks, noCarrier, outsideTeam, alreadyComplete
+  UI->>A: assignTaskCampaign(title, due, form, audience, expectedCount)
+  A->>A: requireSalesAccess — manager, sales.tasks
+  A->>A: tidy and validate the form, validate the audience
+  A->>A: resolveAudience again — refuse if count differs from expectedCount
+  A->>DB: ONE transaction — mbos_task_campaigns row, every mbos_tasks row, audit
+  A->>H: tell each salesman once`} />
+
+<Code file="src/lib/task-audience.ts" symbol="TaskAudience" />
+
+<Code file="src/lib/task-audience.ts" symbol="expandTaskAudience" collapsed />
+
+<Code file="src/lib/actions/sales.ts" symbol="assignTaskCampaign" collapsed />
+
+<Code file="src/lib/task-form.ts" symbol="TaskField" />
+
+## Escalation
+
+<Code file="src/lib/mbos-jobs.ts" symbol="escalateOverdueTasks" />
+
+The date boundary names the zone: the due date is read as midnight in Asia/Kolkata plus the configured hours.
+
+## Tables
+
+<DbTable name="mbos_tasks" only={["title", "assigned_to_user_id", "assigned_by_user_id", "priority", "due_date", "customer_id", "status", "completion_note", "completion_photo_id", "completed_at", "snoozed_to", "snooze_reason", "escalated_at", "source_type", "source_id", "campaign_id", "responses", "link_results", "completed_via"]} note={{
+  assigned_by_user_id: "Null for a task MahekOne raised — the list's 'Raised by' is blank.",
+  escalated_at: "Written once by escalateOverdueTasks; what makes the job idempotent.",
+  source_type: "What raised it — rejected_order, reorder, lead_validation, lead_verification, sample_in_transit, sample_review, negotiation_visit, lead_nurture… Null for manual tasks.",
+  source_id: "The row that caused it. With source_type, the guard against raising twice.",
+  responses: "Form answers, keyed by field id.",
+  link_results: "What each linked answer did to the customer record.",
+}} />
+
+<DbEnum name="mbos_task_status" />
+
+<DbTable name="mbos_task_campaigns" only={["title", "form", "audience", "audience_sentence", "priority", "due_date", "task_count", "closed_at", "skipped_complete"]} note={{
+  form: "The TaskField list every task in it asks.",
+  audience_sentence: "The audience in words, as reviewed.",
+  skipped_complete: "Shops not sent the task because the record already held every linked answer.",
+}} />
+
+## Access
+
+- **Module:** <ModuleRef k="sales.tasks" />; every write at manager level.
+- **Scope:** `tasksList` and every campaign read narrow by `managerScope`; the audience drops salesmen outside it.
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/task-form.test.ts` | Field types, conditions, answer summaries, audience expansion |
+| `npm run test:integration` | `src/lib/task-campaigns.test.ts` | Assigning, the count check, linked answers, carriers |
+
+## Changing it safely
+
+<Steps>
+<Step title="An automatic task needs a key">
+Set `source_type` and `source_id`, and check for an open task with the same pair before inserting.
+</Step>
+<Step title="Keep the form pure">
+New field types go in `task-form.ts` with a label and a summary, and must be mirrored on the handset.
+</Step>
+<Step title="Keep the expected-count check">
+It is what stops an assignment growing between review and save.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| `escalateOverdueTasks` notifies only the salesman, telling him his manager was told | `src/lib/mbos-jobs.ts` |
+| Only `status = 'open'` escalates; `in_progress` never does | `src/lib/mbos-jobs.ts` |
+| `createTask` has no caller and does not check the shop is in the assignee's book | `src/lib/actions/sales.ts` |
+| The notification href is `/field/tasks`, a MahekOne route the salesman cannot open (the `mbosHref` is correct) | `src/lib/mbos-jobs.ts` |
