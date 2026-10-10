@@ -192,6 +192,8 @@ export function ErpShell({
     <ToastProvider>
       <ErpUiProvider voice={voice}>
         <AppFrame
+          /* Used on a tablet at the godown gate as much as at a desk: no 1100px floor. */
+          floor={false}
           header={
             <header className="z-30 flex h-14 flex-none items-center gap-5 border-b border-line bg-surface px-4">
               <div className="flex w-[216px] flex-none items-center">
@@ -209,9 +211,12 @@ export function ErpShell({
 
               <div className="flex-1" />
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-none items-center gap-2">
                 <WorkingAt godowns={godowns} working={working} locate={locate} />
-                <FeedbackButton />
+                {/* Below 1280px the header has a tablet's width to fit in: the
+                    Feedback button and the account chip are drawn as icons. */}
+                <FeedbackButton compact className="xl:hidden" />
+                <FeedbackButton className="hidden xl:flex" />
                 <button
                   onClick={() => setShortcutsOpen(true)}
                   title="Keyboard shortcuts"
@@ -221,7 +226,7 @@ export function ErpShell({
                 </button>
                 <NotificationBell notifications={notifications} />
                 <span className="mx-1 h-6 w-px bg-divider" />
-                <AccountMenu user={user} hat={hat} variant="header" />
+                <AccountMenu user={user} hat={hat} variant="header" nameFromXl />
               </div>
             </header>
           }
@@ -493,7 +498,7 @@ function WorkingAt({
   }
   return (
     <div className="flex h-7.5 items-center gap-1.5 rounded-[4px] border border-dashed border-line-strong pr-1 pl-2">
-      <span className="text-[11px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase">Working at</span>
+      <span className="hidden text-[11px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase xl:inline">Working at</span>
       <GodownPicker
         look="chip"
         value={working?.id ?? ""}
@@ -589,7 +594,7 @@ function ErpSearch({ ask }: { ask: boolean }) {
     router.push(href);
   };
   return (
-    <div ref={wrapRef} className="relative w-[400px] min-w-0">
+    <div ref={wrapRef} className="relative w-[400px] min-w-[180px] shrink">
       <ShellIcon name="search" size={16} className="pointer-events-none absolute top-[9px] left-2.5 text-muted" />
       <input
         ref={ref}
