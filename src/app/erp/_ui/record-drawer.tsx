@@ -50,7 +50,7 @@ export function RecordDrawer({ screen, kind, row, onClose }: { screen: ListSpec;
           </div>
         ) : null}
       </DrawerHeader>
-      <div className="grid min-h-0 flex-1 auto-rows-max content-start gap-4 overflow-y-auto px-5 py-4">
+      <div className="grid min-h-0 flex-1 auto-rows-max grid-cols-[minmax(0,1fr)] content-start gap-4 overflow-y-auto px-5 py-4">
         {row.panel ? renderPanel(row.panel.kind, { data: row.panel.data, row, screen: screen.screen }) : null}
         {row.contacts?.length ? (
           <div className="flex flex-wrap gap-2">

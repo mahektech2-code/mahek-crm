@@ -16,6 +16,9 @@ import { useErpUi } from "./erp-ui";
 import { RecordDrawer } from "./record-drawer";
 import { SummaryCards } from "./summary";
 import { useKit } from "./kit";
+import { CHECK_COL, fitColumns } from "./fit-columns";
+import { ColumnsMenu } from "./columns-menu";
+import { useColumnChoice } from "./use-column-choice";
 
 /* ---------------------------------------------------------------------------
  * The generic ERP list, drawn the way the CRM draws a list: the page header
@@ -156,6 +159,21 @@ export function ListScreen({
   const home = tabKey ? `${path}?view=${encodeURIComponent(tabKey)}` : path;
 
   const cols = spec.cols;
+  /* The table never scrolls sideways: it draws the columns that fit the card
+     it is in (`fit-columns.ts`), measured as the card resizes, and folds the
+     rest into the record drawer. Before the first measurement it assumes a
+     tablet-width card, so the page as the server sent it never overflows —
+     on a wider screen the extra columns arrive with the measurement. */
+  const [avail, setAvail] = useState(760);
+  const tableBox = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = tableBox.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([e]) => setAvail(Math.floor(e.contentRect.width)));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [spec.cards]);
+  const [chosenCols, setChosenCols] = useColumnChoice(`${path}|${spec.screen}`);
   /* A group key that is not a declared column still gets words, not its
      identifier: "monthLbl" reads "Month". */
   const colOf = (k: string): ColSpec =>
@@ -228,6 +246,8 @@ export function ListScreen({
   const chosen = Object.keys(sel).filter((id) => sel[id] && inView.has(id));
   const allOnPage = pageRows.length > 0 && pageRows.every((r) => sel[r.id]);
   const bulkOn = !!spec.bulk?.length;
+  const fit = fitColumns({ cols, avail, check: bulkOn, chosen: chosenCols });
+  const shownCols = fit.shown;
 
   const exportCsv = () => {
     const head = cols.map((c) => c.l).join(",");
@@ -341,7 +361,8 @@ export function ListScreen({
       {spec.summary?.length ? <SummaryCards cards={spec.summary} /> : null}
       {metrics ? <MetricStrip metrics={metrics} /> : null}
 
-      <Card className="overflow-hidden">
+      {/* Not overflow-hidden: the filter bar's menus open over the rows, and on a short list they would be cut off at the card's edge. */}
+      <Card>
         {chips.length >= 2 && chips.length <= MAX_TABS ? (
           <Tabs
             className="px-4"
@@ -420,6 +441,7 @@ export function ListScreen({
             </span>
           ) : null}
           <span className="flex-1" />
+          {!spec.cards && cols.length > 1 ? <ColumnsMenu cols={cols} fit={fit} chosen={chosenCols} onChoose={setChosenCols} /> : null}
           {spec.hidden.length ? (
             <span className="flex items-center gap-1.5 text-[13px] text-muted" title={`Not on your account: ${spec.hidden.map((x) => x.l).join(", ")}`}>
               <Icon n="lock" s={14} />
@@ -486,12 +508,18 @@ export function ListScreen({
                 })}
               </div>
             ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full">
+            <div ref={tableBox} className="overflow-x-auto">
+              <table className="w-full table-fixed">
+                <colgroup>
+                  {bulkOn ? <col style={{ width: CHECK_COL }} /> : null}
+                  {shownCols.map((c) => (
+                    <col key={c.k} style={{ width: fit.widths[c.k] }} />
+                  ))}
+                </colgroup>
                 <thead>
                   <tr>
                     {bulkOn ? (
-                      <Th className="w-9">
+                      <Th>
                         <input
                           type="checkbox"
                           checked={allOnPage}
@@ -505,7 +533,7 @@ export function ListScreen({
                         />
                       </Th>
                     ) : null}
-                    {cols.map((c) => {
+                    {shownCols.map((c) => {
                       const on = !!view.srt && view.srt.k === c.k;
                       return (
                         <SortableTh
@@ -515,7 +543,8 @@ export function ListScreen({
                           direction={on && view.srt!.d < 0 ? "desc" : "asc"}
                           onSort={() => sortBy(c.k)}
                         >
-                          {c.l}
+                          {/* A heading wraps onto a second line rather than widening its column. */}
+                          <span className={cx("whitespace-normal leading-[1.3]", c.t === "n" || c.t === "m" ? "text-right" : "text-left")}>{c.l}</span>
                         </SortableTh>
                       );
                     })}
@@ -539,8 +568,8 @@ export function ListScreen({
                           const allSel = rs.every((x) => sel[x.id]);
                           out.push(
                             <tr key={`g:${g}`} className="border-b border-divider bg-canvas">
-                              <td colSpan={cols.length + (bulkOn ? 1 : 0)} className="px-3 py-2">
-                                <span className="sticky left-3 inline-flex items-center gap-2.5">
+                              <td colSpan={shownCols.length + (bulkOn ? 1 : 0)} className="px-3 py-2">
+                                <span className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
                                   <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">{gk.map((k) => colOf(k).l).join(" · ")}</span>
                                   <span className="text-[13px] font-semibold text-ink">{g || "—"}</span>
                                   <span className="text-xs text-muted">{aggText}</span>
@@ -567,7 +596,7 @@ export function ListScreen({
                       out.push(
                         <Tr key={r.id} onClick={() => setOpenId(r.id)} className={cx("cursor-pointer", sel[r.id] ? "bg-brand-soft" : "hover:bg-canvas")}>
                           {bulkOn ? (
-                            <Td className={cx("w-9", tone && EDGE[tone])} onClick={(e) => e.stopPropagation()}>
+                            <Td className={cx(tone && EDGE[tone])} onClick={(e) => e.stopPropagation()}>
                               <input
                                 type="checkbox"
                                 checked={!!sel[r.id]}
@@ -577,7 +606,7 @@ export function ListScreen({
                               />
                             </Td>
                           ) : null}
-                          {cols.map((c, i) => (
+                          {shownCols.map((c, i) => (
                             <Cell key={c.k} c={c} r={r} edge={!bulkOn && i === 0 && tone ? EDGE[tone] : undefined} />
                           ))}
                         </Tr>,
@@ -589,16 +618,18 @@ export function ListScreen({
               </table>
             </div>
             )}
-            <Pager
-              total={total}
-              page={pg}
-              perPage={size}
-              onPage={setPage}
-              onPerPage={(n) => {
-                setSize(n);
-                setPage(1);
-              }}
-            />
+            <div className="overflow-hidden rounded-b-[6px]">
+              <Pager
+                total={total}
+                page={pg}
+                perPage={size}
+                onPage={setPage}
+                onPerPage={(n) => {
+                  setSize(n);
+                  setPage(1);
+                }}
+              />
+            </div>
           </>
         )}
       </Card>
@@ -619,10 +650,15 @@ export function ListScreen({
 }
 
 function Cell({ c, r, edge }: { c: ColSpec; r: ListRow; edge?: string }) {
+  /* Every cell is held to its column: the table is fixed-width, so a long
+     value ends in "…" with the whole of it on hover, and badges that do not
+     fit are clipped rather than pushing the row wider. */
+  const { flags } = useKit();
   if (c.t === "f") {
+    const words = r.flags.map((f) => flags[f]?.[0] ?? f).join(", ");
     return (
-      <Td className={edge}>
-        <span className="flex gap-1">
+      <Td className={cx(edge, "overflow-hidden")} title={words || undefined}>
+        <span className="flex gap-1 overflow-hidden">
           {r.flags.map((f) => (
             <FlagBadge key={f} flag={f} />
           ))}
@@ -631,9 +667,12 @@ function Cell({ c, r, edge }: { c: ColSpec; r: ListRow; edge?: string }) {
     );
   }
   if (c.t === "s") {
+    const v = r.v[c.k];
     return (
-      <Td className={edge}>
-        <StatusBadge value={r.v[c.k]} />
+      <Td className={cx(edge, "overflow-hidden")} title={v == null ? undefined : String(v)}>
+        <span className="flex overflow-hidden">
+          <StatusBadge value={v} />
+        </span>
       </Td>
     );
   }
@@ -643,11 +682,11 @@ function Cell({ c, r, edge }: { c: ColSpec; r: ListRow; edge?: string }) {
   return (
     <Td
       align={num ? "right" : "left"}
-      title={c.t === "b" && txt.length > 40 ? txt : undefined}
+      title={empty ? undefined : txt}
       className={cx(
         edge,
-        "tabular-nums",
-        c.t === "b" ? "max-w-[320px] truncate text-brand" : empty ? "text-line-strong" : undefined,
+        "truncate tabular-nums",
+        c.t === "b" ? "font-medium text-ink" : empty ? "text-line-strong" : undefined,
         !empty && (c.t === "ph" || c.t === "em" || c.t === "map") && "text-brand",
         c.t === "mono" && "font-mono text-[13px]",
       )}

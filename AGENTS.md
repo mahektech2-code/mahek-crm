@@ -1727,6 +1727,21 @@ pasting `?f=` onto `erpHref` — a tab's link already carries a query.
 `0182_erp_screens_merged` moved every grant naming an old screen onto the
 screen it became; `next.config.ts` redirects the old URLs.
 
+**AN ERP LIST NEVER SCROLLS SIDEWAYS; it draws the columns that fit.** A
+server module names every column a person's powers reveal — order details
+names twenty-six — and drawn as they came the busiest lists were thousands of
+pixels wider than their card. `app/erp/_ui/fit-columns.ts` (pure, tested) takes
+the measured width and draws a prefix of the server's order, always keeping the
+first column, the record's name, its first status and its flags; the table is
+`table-fixed`, a long value ends in "…" with the whole of it on hover, and a
+heading wraps rather than widening its column. The rest are FOLDED, not lost:
+still searched, still exported, and in full in the record drawer a row opens.
+The Columns menu lets a person choose their own set, remembered per browser per
+list, and a column with no room at this width says so instead of being added.
+So the ORDER of a screen's `cols` is now its priority: put what is read first,
+first. HRMS draws the same list and gets the same behaviour. A drawer is 600px,
+so a panel table of more than four columns is drawn as a card per row.
+
 **Its decisions are POWERS granted to people, not capabilities of a level.**
 The source tied "verify a test", "see purchase money" and the rest to three
 email addresses and an admin role; a hat (app, level) cannot say "the CEO"
@@ -2114,7 +2129,9 @@ rows written before the ledger are `legacy`: still listed, in no balance and no
 payable. `erp-petty-cash.test.ts` is the PRD's fourteen acceptance tests.
 
 **The ERP drops the desktop floor** (`AppFrame floor={false}`) — it is used on
-a tablet at the godown gate — and every other app keeps it.
+a tablet at the godown gate — and every other app keeps it. It was lost once
+in a header refactor and every ERP page sat at 1100px; below 1280px the ERP
+header draws Feedback and the account chip as icons so it fits a tablet.
 
 **PRODUCTION & DISPATCH ARE TRACEABLE, BOX BY BOX.** SFG lot → refill (FG
 filling) lot → packing batch → BOX → order → customer, and back. The lots
