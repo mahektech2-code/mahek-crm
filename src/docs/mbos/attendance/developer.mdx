@@ -1,0 +1,138 @@
+The day is written locally in `mbos-app/src/data/attendance.ts`, gated by `data/day-gate.ts`, and synced as `entityType: 'attendance'` to `handleAttendance` in `src/lib/actions/mbos.ts`. The route is a separate pipeline — `mbos-app/src/sync/trail.ts` on the phone, `POST /api/mbos/positions` on the server — because a position is one of thousands and worth nothing alone, and queuing them in the outbox ahead of a visit on a 2G link buys nothing.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Screen | `mbos-app/app/home.tsx` | `startDay` (gate → selfie → vehicle → meter → `checkIn`), punch-out, the missed-day and unpaid-meter cards |
+| Screen | `mbos-app/app/attendance.tsx` | History, *Ask your manager to fix this day* |
+| Camera | `mbos-app/src/components/ui/selfie-camera.tsx`, `odometer-camera.tsx` | Our own camera — the only exits are the photo or abandoning |
+| Day (local) | `mbos-app/src/data/attendance.ts` | `checkIn`, `checkOut`, `sessionsOf`, `openSession`, `workedMinutes`, `autoCloseMissedCheckouts`, `requestRegularisation` |
+| Gate | `mbos-app/src/data/day-gate.ts` | `mayOpenDay` → `DayMayOpen` |
+| Status (pure) | `mbos-app/src/engines/attendance.ts` | `deriveStatus` — the phone's preview; the server derives its own |
+| Reminders (pure) | `mbos-app/src/engines/punch-out.ts`; `src/native/punch-out-reminder.ts` | When to prompt; local notifications |
+| Vehicle | `mbos-app/src/data/travel.ts` | `startSession`, `endSession`, `openSessionLeg`, `unpaidMeterDay`, `addLateClosingReading` |
+| Trail | `mbos-app/src/sync/trail.ts`; `src/native/location-service.ts` | Start/stop, the keep throttle, `flush`, watchdog, the OEM-proof native service |
+| Cadence (pure) | `mbos-app/src/engines/cadence.ts` | `shouldKeepFix` |
+| Server — day | `src/lib/actions/mbos.ts` `handleAttendance` | Upsert per person per day, bind selfies, derive worked seconds and status |
+| Server — trail | `src/app/api/mbos/positions/route.ts` | Batches of fixes, session matching, device state |
+| Server — jobs | `src/lib/mbos-jobs.ts` `markMissedCheckouts`; `src/lib/services/attachment-service.ts` `sweepAttendanceSelfies` | Nightly close at last evidence; hourly selfie sweep |
+
+## Punching in
+
+<Code file="mbos-app/src/data/attendance.ts" symbol="checkIn" collapsed />
+
+What to notice:
+
+- `selfieMediaId: string` and `mayOpen: DayMayOpen` are **non-optional by type**. A screen that forgets to ask is a screen; a parameter that cannot be omitted is the rule.
+- A second punch-in on the same day **appends a session** to the existing row (`op: 'update'`) rather than opening a new day. An already-open session returns `alreadyRunning` so the caller can drop the photos it just took.
+- The selfie is queued against `'pending'` before the row exists, then `bindSelfie` re-parents it. Only the first punch-in used to bind, so every afternoon selfie stayed parented to a string — which the nightly orphan sweep deletes.
+- `withinGeofence` is a fact sent with the mark; `regularisationRequested` travels only with a reason he typed.
+- `trail.start('check-in')` — the `check-in` reason lets a phone that was demoted earlier today retry the background recorder, because the gate just walked him to the autostart switch.
+
+<Code file="mbos-app/src/data/attendance.ts" symbol="checkOut" collapsed />
+
+`workedMinutes` and `status` ride on the payload for the record's sake. The server ignores both and derives its own from the sessions.
+
+<Code file="mbos-app/src/engines/attendance.ts" symbol="deriveStatus" collapsed />
+
+## On the server
+
+<Code file="src/lib/actions/mbos.ts" symbol="handleAttendance" collapsed />
+
+<DbTable name="mbos_attendance_days" only={["user_id", "day", "check_in_at", "check_in_selfie_id", "check_out_at", "check_out_selfie_id", "sessions", "within_geofence", "geofence_distance_m", "regularisation_requested", "regularisation_reason", "auto_checked_out", "worked_seconds", "status", "setup_ready", "setup_acknowledged_at", "setup_unverified"]} note={{
+  sessions: "jsonb — the list as the handset reported it, with inSelfieId and outSelfieId on each. Not a cache: never rebuilt from the two marks.",
+  check_in_selfie_id: "First-in mirror. Written only once the attachment row exists — a foreign key must not refuse a punch-in over a photo still uploading. The sessions list holds every id regardless.",
+  check_out_selfie_id: "Last-out mirror, same rule.",
+  auto_checked_out: "Closed by markMissedCheckouts rather than by a button press.",
+  worked_seconds: "Derived on the server from sessions. The handset's own figure is ignored.",
+  setup_unverified: "The readiness rows that were not ticked when the day opened.",
+}} />
+
+<DbEnum name="mbos_attendance_status" />
+
+### Forgotten punch-outs
+
+<Code file="src/lib/mbos-jobs.ts" symbol="markMissedCheckouts" collapsed />
+
+Activity first, position only where there is no activity, and the last open session is closed at the same instant and marked `autoClosed`. Without closing the session, `workedSecondsOf` read the day as still running and the verdict job skipped it for ever.
+
+### Selfie retention
+
+<Code file="src/lib/services/attachment-service.ts" symbol="sweepAttendanceSelfies" collapsed />
+
+Runs from `runHourly` (not nightly — the setting is in hours and a nightly sweep would make 72 mean up to 96). It removes the bytes and keeps the row, so the day still names the id and `/api/attachments/[id]` answers 410 rather than pretending nothing was taken. Who may open one is `canReadAttendanceSelfie`: the person in it, and a holder of the `sales` grant inside `managerScope`.
+
+## The trail
+
+<Flow caption="From a GPS fix to the Live map" chart={`
+sequenceDiagram
+  autonumber
+  participant OS as Android location
+  participant T as sync/trail.ts
+  participant C as engines/cadence.ts
+  participant Q as SQLite positions
+  participant R as api/mbos/positions
+  participant DB as mbos_positions
+  OS->>T: fix (every few seconds, OS decides)
+  T->>C: shouldKeepFix(at, lastKeptAt, gap)
+  C-->>T: keep or skip
+  T->>Q: INSERT OR IGNORE, id = at|lat|lng
+  Note over T: flush() on every sync pass
+  T->>R: batch of up to 500, oldest first, plus device state
+  R->>R: match each fix to the attendance session it falls in
+  R->>DB: insert, on conflict do nothing
+  R-->>T: stored, filed ids, or no-session-yet
+  T->>Q: delete what was filed, keep what was held
+`} />
+
+<Code file="mbos-app/src/engines/cadence.ts" symbol="shouldKeepFix" />
+
+<Callout kind="warn" title="timeInterval never reaches Android">
+expo-location reads `timeInterval` out of persisted JSON options with a strict `as? Long`; `org.json` hands back a boxed `Integer`, so the override is dropped silently and the accuracy preset's fallback stands (about 2–3 s). `deferredUpdatesInterval` does arrive but is bypassed in the foreground. The cadence that matters is the JavaScript throttle above, with its mark in `kv` (not read back off `positions`, which empties as it uploads). Do not trust the Android field.
+</Callout>
+
+The id is `at|lat|lng`, and the server has a matching unique key. Android redelivers a deferred batch whenever the task did not complete, and with random ids one fix was once stored ninety-three times. An old APK cannot reintroduce duplicates because the server half does not depend on the build.
+
+<Code file="mbos-app/src/sync/trail.ts" symbol="flush" collapsed />
+
+`flush` loops until the queue is short. It used to send one batch per tick, and a drain with a fixed rate in front of a queue with none reports success all the way down while the Live map shows last night.
+
+<DbTable name="mbos_positions" only={["id", "user_id", "at", "lat", "lng", "accuracy_m", "device_id"]} note={{
+  id: "at|lat|lng — derived from the reading, so a redelivered batch deduplicates.",
+}} />
+
+The server answers `tracking: "off"` when <Setting k="mbos.location.trackWhileWorking" /> is off (the phone stops and drops), and `no-session-yet` when nothing in the batch can be filed yet — the one answer that tells the phone to **hold** rather than delete, because its punch-in may still be in the outbox.
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `cd mbos-app && npm test` | `src/engines/cadence.test.ts` | Keep spacing, first fix, clock going backwards |
+| `cd mbos-app && npm test` | `src/engines/punch-out.test.ts` | Reminder times, missed punch-out counting |
+| `cd mbos-app && npm test` | `src/db/sessions.test.ts` | Sessions list read/write |
+| `cd mbos-app && npm test` | `src/engines/trail-watchdog.test.ts`, `trail-retry.test.ts`, `flush-answer.test.ts` | Stalled recorder detection; reading the server's answer |
+| `npm run test:integration` | `src/lib/salesman-day.test.ts` | The day as the office reads it |
+
+## Changing it safely
+
+<Steps>
+<Step title="Never make the selfie optional by a parameter">
+If a business ever needs it optional, the setting must be read in `startDay` and the types widened deliberately — today the type is the rule.
+</Step>
+<Step title="Derive on the server">
+Hours and status are always recomputed from `sessions`. Never write a figure the phone sent into a column pay is read from.
+</Step>
+<Step title="Keep the trail off the outbox">
+Positions stay on their own endpoint and id scheme. Folding a changing value into a position's id breaks deduplication.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| `mbos.attendance.selfieRequired` is never read; selfies are always required | `mbos-app/src/data/attendance.ts` `checkIn`/`checkOut` |
+| `mbos.attendance.autoCheckOutHour` is never read | `src/lib/mbos-jobs.ts` `markMissedCheckouts` |
+| `mbos.location.trackEverySeconds` reaches Android as `timeInterval`, which is ignored there | `mbos-app/src/sync/trail.ts` `start` |
+| The handset's `autoCloseMissedCheckouts` only flags local rows; the real close is the server job | `mbos-app/src/data/attendance.ts` |

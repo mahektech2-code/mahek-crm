@@ -1,0 +1,142 @@
+MBOS is an **Expo / React Native** app in `mbos-app/` (Expo SDK 57 per `mbos-app/package.json` — read the installed typings in `node_modules` before trusting any older note that says otherwise). It is a separate project: its own `tsconfig.json`, its own tests, and nothing in the Next.js app imports from it. The two meet only over HTTP, under `src/app/api/mbos/*`. The rules that both sides must agree on are either **shared numbers** (configuration sent down the pull) or **pinned by tests** that read both files as text.
+
+## Map of the code
+
+| Layer | Where | What lives there |
+|---|---|---|
+| Screens | `mbos-app/app/*.tsx` | One flat file per screen (expo-router). No nested routes: an address with a second path segment is never a screen |
+| Root | `mbos-app/app/_layout.tsx` | Fonts, the `ErrorBoundary`, `SignedOutGuard`, the Stack, and side-effect imports that register the two background tasks |
+| Shell | `mbos-app/src/components/shell/` | `AppFrame` (title bar, status strip, tab bar, + sheet), `Chrome.tsx` (`TabBar`), `routes.ts`, `TravelGate`, `AppLock`, `UpdatePrompt` |
+| Local data | `mbos-app/src/data/*.ts` | Reads and writes against SQLite; every write ends in `enqueue` |
+| Pure rules | `mbos-app/src/engines/*.ts`, `mbos-app/src/lib/*.ts` | No I/O, no clock — testable with `tsx --test` |
+| Database | `mbos-app/src/db/schema.ts`, `index.ts`, `migrate.ts` | The SQLite schema as an ordered list of migration blocks |
+| Sync | `mbos-app/src/sync/*.ts` | `api.ts` (HTTP + tokens), `queue.ts` (outbox), `engine.ts` (`syncNow`), `pull.ts` (`applyPull`), `trail.ts` (positions), `media.ts` |
+| Native | `mbos-app/src/native/*.ts` | Permissions, location service, push, biometrics, OTA updates |
+| Server routes | `src/app/api/mbos/*/route.ts` | `auth/login`, `auth/otp`, `auth/refresh`, `bootstrap`, `sync`, `positions`, `media`, `dictate/*`, `customer-account`, `order-products`, … |
+| Server rules | `src/lib/actions/mbos.ts` | `mbosLogin`, `ingestSyncBatch`, `dispatchItem` and every `handle*` |
+| Server reads | `src/lib/services/mbos-service.ts` | `runLoginChecks`, `checkDeviceBinding`, `authenticate`, `customerIdsInScope`, `buildBootstrap`, `buildPull` |
+
+## Navigation
+
+Four **tab roots** and a flat stack. A tab root is returned to with `router.dismissTo`, never stacked a second time, so Android's Back from a tab leaves the app rather than walking through copies of Home.
+
+<Code file="mbos-app/src/components/shell/routes.ts" symbol="TAB_ROOTS" />
+
+A notification or a deep link carries an `href`. It is checked against the screens this build actually has before anything navigates — the office used to send its own web routes, which landed on expo-router's "Unmatched Route" page:
+
+<Code file="mbos-app/src/components/shell/routes.ts" symbol="isMbosRoute" />
+
+`SignedOutGuard` in `_layout.tsx` is the single rule that sends a phone with no session back to `/` — once boot has read the stored session, never before, or every cold start would bounce a signed-in salesman.
+
+## The local database
+
+SQLite through `expo-sqlite`. The schema is **one ordered array of migration blocks**; `PRAGMA user_version` records how many have run.
+
+<Code file="mbos-app/src/db/schema.ts" symbol="SCHEMA_VERSION" />
+
+<Callout kind="warn" title="Adding a block IS adding a migration">
+`SCHEMA_VERSION` was once a literal and drifted: a block was added and the constant left one short, so `migrate()` returned before running it on every handset already in the field — while fresh installs were fine. Never reintroduce a literal. Statements are idempotent (`CREATE … IF NOT EXISTS`, and `alreadyApplied` tolerates a duplicate `ADD COLUMN`) so a phone that skipped two releases converges on the same schema.
+</Callout>
+
+<Code file="mbos-app/src/db/migrate.ts" symbol="runMigrations" />
+
+Tables fall into two groups, and a sync treats them differently:
+
+<Code file="mbos-app/src/db/schema.ts" symbol="OWNED_TABLES" collapsed />
+
+<Code file="mbos-app/src/db/schema.ts" symbol="REFERENCE_TABLES" collapsed />
+
+Ids are minted on the device (`newId` → `mbos_<entity>_<uuid>`) and are the real identity, not a placeholder — that is what lets an offline visit own an offline order that owns an offline payment.
+
+## Signing in and the bootstrap
+
+<Flow caption="POST /api/mbos/auth/login" chart={`
+sequenceDiagram
+  autonumber
+  participant App as data/session.ts signIn
+  participant Route as api/mbos/auth/login
+  participant Act as actions/mbos.ts mbosLogin
+  participant Svc as mbos-service.ts
+  participant DB as Postgres
+  App->>App: handoverVerdict — refuse if another person's work is unsent
+  App->>Route: mobile, password or otp, deviceId, appVersion
+  Route->>Act: mbosLogin(input)
+  Act->>Svc: runLoginChecks — account, credential, open, field grant
+  Act->>Svc: checkDeviceBinding(userId, deviceId)
+  Act->>DB: upsert mbos_devices, heartbeat
+  Act->>Svc: loadPrincipal, buildBootstrap(principal)
+  Act-->>App: accessToken, refreshToken, bootstrap
+  App->>App: applyPull(bootstrap), store pullCursor, persist session
+`} />
+
+<Code file="src/lib/actions/mbos.ts" symbol="mbosLogin" collapsed />
+
+`buildBootstrap` is the one large call. Everything after it is a delta on the cursor it returns, through `POST /api/mbos/sync`, which ingests the outbox batch **and then** builds the pull — so the delta already reflects what was just accepted.
+
+<Code file="src/lib/services/mbos-service.ts" symbol="buildBootstrap" collapsed />
+
+The handset applies it in one transaction:
+
+<Code file="mbos-app/src/sync/pull.ts" symbol="applyPull" collapsed />
+
+<Callout kind="rule" title="The handset's schema is the wire contract">
+`applyPull` inserts exactly the columns that arrive. A field the server sends that the handset has no column for used to throw and roll back the whole pull — the book, the prices, everything. `upsert` now drops unknown columns; `src/lib/mbos-wire.test.ts` reads both sides as text and pins it. Trim the payload to the handset, never widen the handset to the payload: an APK cannot be recalled.
+</Callout>
+
+## The server's dispatcher
+
+Every outbox item names an `entityType`. `dispatchItem` is the whole list of things a salesman can send:
+
+<Code file="src/lib/actions/mbos.ts" symbol="dispatchItem" collapsed />
+
+`ingestSyncBatch` wraps it: idempotency keys, dependency checks (`missingDependencies`), the activity location written beside every accepted item (`recordActivityLocation`), receipts, and a rejection task where one is owed.
+
+## Access
+
+- **Module:** <ModuleRef k="field.home" /> — the only module of the `field` app, `mobileOnly` in `src/lib/apps.ts`, so no launcher tile and no web route.
+- **Authentication:** a bearer access token on every call but login; `authenticate` reads role, app access and whether the account is open from the database every time, so taking the app away takes effect on the next request.
+- **Scope:** `customerIdsInScope` — the security clause (`principalBookClause`) ANDed with the territory clause. See [Customers](/docs/mbos/customers/developer).
+
+<DbTable name="mbos_devices" only={["user_id", "device_id", "app_version", "bound_at", "last_seen_at", "active", "released_at", "release_reason", "location_permission", "battery_percent", "device_state_at"]} note={{
+  device_id: "Unique across the table — one physical handset is one row, reassigned when an admin releases it.",
+  active: "False once released. Only an active row blocks another person signing in on this handset.",
+  last_seen_at: "Moves on sign-in and on every position batch, so it reads as last contact rather than last password typed.",
+  location_permission: "The OS's own four answers. Null means never reported, not refused.",
+  device_state_at: "When the battery and connection readings were taken. Every figure is at last contact, never live.",
+}} />
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `cd mbos-app && npm test` | `src/db/migrate.test.ts`, `schema-usage.test.ts` | Migrations converge; every column a query reads exists |
+| `cd mbos-app && npm test` | `src/components/shell/routes.test.ts` | `ROUTE_MOTION` lists every file in `app/` |
+| `cd mbos-app && npm test` | `src/data/reachable.test.ts` | Every export in `data/` has a caller (with a reasoned `PARKED` list) |
+| `cd mbos-app && npm test` | `src/engines/sign-in.test.ts` | Where each refusal is drawn; hand-over refusal |
+| `npm run test` | `src/lib/mbos-wire.test.ts` | Payload columns fit the handset schema; dispatcher cases match handset `entityType`s |
+| `npm run test:integration` | `src/lib/activity-location.test.ts` | The pull delta actually runs with a cursor and returns every channel |
+
+## Changing the app safely
+
+<Steps>
+<Step title="Put the rule in an engine">
+Anything that decides something goes in `mbos-app/src/engines/` or `src/lib/`, pure, with a test. `data/` files import SQLite at module scope and cannot be tested off a device.
+</Step>
+<Step title="Make it configuration, and publish it">
+A number a manager might change goes in `src/lib/config/registry.ts` with a `Config` type entry, and must be in the set the pull publishes — the handset's `getConfig` falls back silently to its own default when a key never arrives.
+</Step>
+<Step title="Re-check it on the server">
+A rule on the phone is a courtesy; the `handle*` function is the rule. Never trust a figure the handset computed (worked minutes, status, totals).
+</Step>
+<Step title="Ship server first">
+The server must accept old payloads and send nothing an old build cannot hold. Then bump the handset version and release through the workflow — see [Releasing the handset app](/docs/platform/handset-release).
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| The `field` app has one module, so Access cannot narrow handset screens | `src/lib/modules.ts` `field.home` |
+| `buildPull` and `buildBootstrap` build several channels with separate queries; a delta can omit a column the bootstrap sends, and nothing structural prevents it (the `DELTA` list in the wire test tracks known cases) | `src/lib/services/mbos-service.ts`; `src/lib/mbos-wire.test.ts` |
+| The login route comment speaks of five checks; the service runs four before device binding and calls the bootstrap the fifth | `src/app/api/mbos/auth/login/route.ts`; `mbos-service.ts` `runLoginChecks` |

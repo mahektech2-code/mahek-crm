@@ -1,0 +1,122 @@
+MBOS is **offline-first**: a salesman's phone is the record of his day until the office has it, and a phone in a market with no signal is the ordinary condition, not a fault. Every write lands in the phone's own database and an **outbox**; one round trip then carries the outbox up and the office's changes down. This page is the rules of that exchange, and why each exists.
+
+## One round trip, both directions
+
+<Flow caption="A sync pass" chart={`
+flowchart TD
+  S["Save on the phone<br/>(record + outbox item)"] --> T{"Signal?"}
+  T -- "no" --> W["Waits. Tried every minute,<br/>or within seconds of a save"]
+  T -- "yes" --> P["Send up to a batch of items<br/>with the pull cursor"]
+  P --> O["Office: each item in order<br/>replay · dependencies · handler"]
+  O --> A["Answers per item:<br/>accepted · rejected · retry · conflict"]
+  O --> D["Then the delta since the cursor"]
+  D --> M["Phone applies the delta,<br/>moves the cursor"]
+  M --> F["Then photos, then the trail"]
+`} />
+
+<Callout kind="why">
+A salesman who gets thirty seconds of signal between two shops should spend it on both directions, not on a push that leaves the book stale. The pull runs **after** the push, so a payment just accepted has already moved the figure the delta sends back.
+</Callout>
+
+## Bootstrap and delta
+
+| | When | What |
+|---|---|---|
+| **Bootstrap** | Sign-in, and automatically after an app upgrade | The whole book: customers, products, prices, tasks, leads, configuration |
+| **Delta** | Every sync pass | Only what changed since the cursor |
+
+<Rule title="A delta must send what the bootstrap sends">
+Each channel is built by **the same function** for both. The customers channel was once two queries that had drifted eleven columns apart, so a column added for a new screen reached a phone only if its owner happened to sign out and back in — a shop marked third-party on Tuesday still read as an ordinary customer weeks later.
+</Rule>
+
+An **upgrade re-bootstraps on its own**. Installing a new app over the old one keeps the session, so the sign-in snapshot never ran and a new build's new columns never arrived. The phone now notices the build changed and takes the whole book again with the token it holds — overwriting reference data, never touching the salesman's own unsent work.
+
+### Large changes arrive in pages
+
+A delta sends at most 2,000 changed customers (oldest change first) and 2,000 tombstones per pass. When a page is full, the cursor is **held back** to the last row sent, so the next pass carries on rather than skipping. Reallocating a whole territory is exactly the event that fills a page.
+
+## Tombstones: how a phone learns something stopped
+
+<Rule title="Only a tombstone says a record is gone">
+A pull says what exists; a deleted row has nothing to notice. So the office writes a **tombstone** when a document is withdrawn, a stop removed, a shop reassigned or a territory changed, and the phone removes that row on the next pull.
+</Rule>
+
+<Callout kind="why">
+Without it, a reassigned customer sits on the old salesman's phone for ever and he walks to a shop that is not his any more, with nothing looking wrong. Tombstones only ever remove **reference data** — nothing a salesman authored is deleted by a sync.
+</Callout>
+
+## The outbox
+
+### Order and dependencies
+
+Records go up oldest first. A record can **depend** on another — an expense line on its day, a visit's photographs on the visit. If what it depends on was refused, it is blocked too, with a message pointing at the first. If it simply has not arrived yet, the office answers **retry** and it waits.
+
+<Callout kind="note">
+An order or payment taken on a visit is deliberately **not** made to wait behind the visit: a visit that fails must not strand the money and the order behind it.
+</Callout>
+
+### Each item is answered once
+
+<Rule title="The same item sent twice is written once">
+Every item carries an **idempotency key** made from the record, the operation and a hash of its contents. The office keeps a receipt for every answer. An accepted answer is **replayed** exactly to a resend — including the number the record was given — so a slow batch the phone gave up on and sent again never makes a second order. On the phone, the same edit queued twice while the first is still waiting is one item.
+</Rule>
+
+### Four answers
+
+| Answer | Meaning | What the phone does |
+|---|---|---|
+| **accepted** | Written | Marked sent; any office number (order, receipt) stamped on the record |
+| **conflict** | Written; somebody else had changed it first | Treated as accepted |
+| **rejected** | Refused, with a reason | Moved to *Not accepted*; dependents blocked; a notification, and for an order a task |
+| **retry** | Not refused — not ready, or the office hiccupped | Tried again with growing back-off |
+
+<Rule title="A server failure is never a refusal">
+An unexpected error at the office answers **retry**, not rejected. A rejection tells a salesman his order was refused; a database that stumbled has refused nothing, and saying so would send him back to a shop for no reason.
+</Rule>
+
+A stored **rejection is judged again** when the same item comes back, rather than replayed. That is how a relaxed rule reaches an old handset that cannot be changed: the phone re-sends refused and exhausted items **automatically every few hours**, and the office re-reads them under today's rules.
+
+### Unknown columns are dropped, not refused
+
+<Rule title="The office may move first">
+When the office sends a field this build of the app has no place for, the phone **drops that field** and keeps the row. One bad row costs only that row, and is written down for the Sync screen to show.
+</Rule>
+
+<Callout kind="why">
+An APK cannot be recalled. One unknown column once threw inside the pull's single transaction and rolled back **everything** — no handset received a single row of reference data for months, while everything a salesman authored went up perfectly, so nothing looked broken.
+</Callout>
+
+## Photos go after their record
+
+Photographs and recordings have their own queue, drained **after** records on every pass — the record has to exist before its photograph has anything to attach to. A photo taken before its record is saved is held (up to six hours) until the save names its parent. While <Setting k="mbos.sync.mediaWifiOnly" /> is on, media waits for Wi-Fi; **records never do**.
+
+## Where each thing was done
+
+Every outbox item carries **where the salesman was** when he did it — from the freshest fix the phone already has, never waiting for a new one. It travels **beside** the record, never inside it, so the same order saved twice from two spots on a street is still one order. The office stores it only for **accepted** items, while <Setting k="mbos.location.logActivityLocation" /> is on. No fix is recorded as a fact (we asked, and could not), and a reading's age is kept: anything older than <Setting k="mbos.location.activityFixMaxAgeSeconds" /> seconds is drawn as stale. Paperwork — leave, agreeing a day — carries no location.
+
+## Device state
+
+While a salesman is checked in, his phone reports with its position batches: location permission (*always*, *while using*, *denied*), whether location is on, connection, battery and charging, and whether the battery manager is allowed to stop MBOS. Every reading carries the time it was taken.
+
+<Callout kind="why">
+"No fix today" was four different problems wearing one sentence — the permission, location switched off, no signal, a flat battery. The office's team list now says which. **Nothing reports that the internet is off**, because a phone with no connection cannot say so; silence is measured by when the phone was last heard from. A healthy phone says nothing at all.
+</Callout>
+
+## Fixing a stuck handset
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Items waiting with signal | Sign-in lapsed | Sign in again; items wait uncounted, nothing is lost |
+| New columns or settings never arrive | Old build | Update the app; an upgrade re-bootstraps |
+| *Your book did not refresh* | A row the build cannot hold | The Sync screen lists the problem rows; sign out and in after updating |
+| No trail | Location not *always*, battery optimised, or an OEM kill | Phone setup; restart the app |
+| A record refused for ever | A rule the office has since changed | It is re-sent every few hours; or *Send again* |
+
+The current release is <Setting k="mbos.sync.currentAppVersion" />; a phone more than <Setting k="mbos.sync.quietHours" /> hours silent is flagged on the office's sync-health screen.
+
+<SettingsTable keys={["mbos.sync.maxItemsPerRequest", "mbos.sync.retryBackoffSeconds", "mbos.sync.mediaWifiOnly", "mbos.sync.statementMonths", "mbos.sync.offlineLoginValidityDays", "mbos.sync.accessTokenMinutes", "mbos.sync.currentAppVersion", "mbos.sync.quietHours", "mbos.location.logActivityLocation", "mbos.location.activityFixMaxAgeSeconds"]} />
+
+## Where the code and the intent disagree today
+
+- **The back-off setting is read by nothing.** The phone retries on a fixed ladder (2 seconds up to 30 minutes, six attempts) in `mbos-app/src/sync/ordering.ts`; <Setting k="mbos.sync.retryBackoffSeconds" /> is on the Settings screen but no handset or server code reads it.
+- **A phone that has not pulled the batch limit sends up to 50.** `batchLimit` in `mbos-app/src/sync/queue.ts` takes the smaller of 50 and the synced <Setting k="mbos.sync.maxItemsPerRequest" />, falling back to 50; if the office lowers the limit, a phone still on the old value has its whole batch refused by `src/app/api/mbos/sync/route.ts` until it pulls the new one — which it cannot do while every push is refused.

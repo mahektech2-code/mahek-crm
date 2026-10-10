@@ -1,0 +1,112 @@
+The **Journey** tab is where you plan your days. The office proposes a city for a day; you say yes or send it back; then **you pick the shops**, because you know which doors are worth a Tuesday morning. On the day, the app puts your shops in a walking order and takes you to each one.
+
+## The screen at a glance
+
+<Wireframe url="MBOS · Journey" caption="The Journey tab on a working morning">
+  <WfCard title="A day is waiting for your answer" tone="warn">
+    <WfText>Thu 16 Oct · Wardha</WfText>
+    <WfBar><WfButton primary>Agree</WfButton><WfButton>Send it back</WfButton><Hotspot n={1} /></WfBar>
+  </WfCard>
+  <WfCard title="Today · Nagpur">
+    <WfBar><WfText>8 shops · 3 visited</WfText><WfSpacer /><WfText muted>On time</WfText><Hotspot n={2} /></WfBar>
+    <WfTable columns={["", "Shop", ""]} rows={[
+      ["1", "Customer A · 0.4 km", "✓"],
+      ["2", "Customer B · 1.1 km", <WfButton key="v" primary>Start visit</WfButton>],
+      ["3", "Customer C · no pin", ""],
+    ]} />
+    <Hotspot n={3} />
+  </WfCard>
+  <WfBar><WfButton>Navigate the whole day</WfButton><WfButton>Reorder the route</WfButton><Hotspot n={4} /></WfBar>
+  <WfBar><WfButton>Add an off-plan stop</WfButton><WfButton>Request a tour</WfButton><Hotspot n={5} /></WfBar>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>A proposed day.</b> The office suggests a city for a date. Agree, or send it back with a reason.</span>,
+  <span key="2"><b>Today.</b> How many shops you planned and how many you have visited, and whether you are on time.</span>,
+  <span key="3"><b>Your stops in order.</b> The order that saves the most walking. A shop with no map pin goes at the end — it is never left off.</span>,
+  <span key="4"><b>Navigate and reorder.</b> Open the whole route in your maps app, or drag the stops into your own order.</span>,
+  <span key="5"><b>Off-plan and tours.</b> Visit a shop that is not on today's plan (with a reason), or ask to work away for some days.</span>,
+]} />
+
+## Planning a day
+
+<Steps>
+<Step title="Answer a proposed day">
+When the office proposes a day you see **A day is waiting for your answer**. Press **Agree**, or **Send it back** and say why it will not work. You may name a city you would rather go to — that part is optional.
+</Step>
+<Step title="Or plan a day yourself">
+Press **Plan it**, pick a date and the city you will work in. You cannot plan a day that has already passed, or a date that is already on your plan.
+</Step>
+<Step title="Pick the shops">
+On an agreed day press **Pick shops**. The list shows **only shops in that day's city**, nearest first. Tick them in the order you mean to walk — the number beside each is the plan. Press save.
+</Step>
+<Step title="Change your mind">
+Open the day and pick again. Unticking a shop takes it off. Saving with nothing ticked clears the day back to agreed.
+</Step>
+</Steps>
+
+### How "nearest" is measured when you pick
+
+| Planning | Distances are measured from |
+|---|---|
+| **Today** | Where you are standing now. |
+| **Any other day** | The middle of our shops in that city — not your home. |
+
+Shops with no map pin are listed after the others, never dropped.
+
+## Working the day
+
+<Steps>
+<Step title="Open today's route">
+From Home, press **Today’s route**. Your stops are in walking order, starting from where you are.
+</Step>
+<Step title="Start the next visit">
+Press **Start visit** on the next shop. The app opens the visit and shows you how far the shop is. See [Visiting a shop](/docs/mbos/visit).
+</Step>
+<Step title="Get directions">
+Press **Navigate**. Your phone's maps app opens with the shop as the destination. If the shop has no pin, the maps app searches its name and town instead — that lands you near the name, not on the doorway.
+</Step>
+<Step title="A shop that is not on the plan">
+Press **Add an off-plan stop**, say why, then pick the shop. Your reason goes with that visit.
+</Step>
+</Steps>
+
+## Near me
+
+**More → Near me** lists shops around you that are **worth a stop right now**, best first — not simply the closest.
+
+| Reason shown | Why it counts |
+|---|---|
+| You have a task for this shop | The office asked you to do something here. |
+| Overdue to reorder | They usually order by now and are well past it. |
+| Payment pending | They owe money. |
+| Due to reorder | Their usual order day has come. |
+| An open lead | A new shop you are still working on. |
+| Never visited | Nobody has been. |
+
+A shop with none of these reasons is not listed. Distance counts against a shop, so a far one needs a better reason than a near one. The first shop on the list is the **Next Best Visit**. You can choose how far to look.
+
+## The map
+
+The Customers tab and the shop picker can show your shops on a map. It tells you in words when it cannot show something:
+
+| You see | It means |
+|---|---|
+| *The map is not set up yet. The office must set it up first.* | No map key is set in the office. The list still works. |
+| *None of these N shops has a location yet.* | No pins to draw. Checking in at a shop saves its pin. |
+| *No signal. No map is saved for this place.* | You have no signal and no offline map here. Save one on Wi-Fi — see [Offline maps](/docs/mbos/offline-maps). |
+| *N shops have no location yet, so they are not on the map.* | Some shops are missing from the map only because they have no pin. |
+
+## Questions people ask
+
+<Faq q="Why can I not see a shop in another town when I pick?">
+A day is one city. A shop elsewhere can be added on the day as an off-plan stop, with a reason.
+</Faq>
+
+<Faq q="The office did not accept the shops I picked.">
+The day says so, with the office's reason. Usually a shop has left your book since you picked it. Pick again.
+</Faq>
+
+<Faq q="Why is a shop at the bottom of my route?">
+It has no map pin, so the app cannot place it. It stays on the route. When you check in there, the shop gets its pin.
+</Faq>

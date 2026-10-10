@@ -625,7 +625,7 @@ export const DOC_APPS: DocApp[] = [
         summary: "What the handset is, who uses it, a salesman's day, and how it works with no signal.",
         group: "Start here",
         modules: ["field.home"],
-        written: [],
+        written: ALL,
       },
       {
         slug: "setup",
@@ -633,7 +633,7 @@ export const DOC_APPS: DocApp[] = [
         summary: "Getting the APK, signing in, the permissions and battery settings tracking needs, and the phone setup screens.",
         group: "Start here",
         modules: [],
-        written: [],
+        written: ALL,
       },
       {
         slug: "attendance",
@@ -641,7 +641,7 @@ export const DOC_APPS: DocApp[] = [
         summary: "Check-in and check-out with a selfie, sessions, breaks, the geofence, and tracking while working.",
         group: "The day",
         modules: [],
-        written: [],
+        written: ALL,
       },
       {
         slug: "journeys",
@@ -649,7 +649,7 @@ export const DOC_APPS: DocApp[] = [
         summary: "Agreeing a day, picking shops, the day's order, Next Best Visit, navigation and the map.",
         group: "The day",
         modules: [],
-        written: [],
+        written: ALL,
       },
       {
         slug: "visit",
@@ -657,7 +657,7 @@ export const DOC_APPS: DocApp[] = [
         summary: "Setting off, arriving within the radius, the visit form, photographs, the note and dictation, and closing a visit.",
         group: "The day",
         modules: [],
-        written: [],
+        written: ALL,
       },
       {
         slug: "customers",
@@ -665,7 +665,7 @@ export const DOC_APPS: DocApp[] = [
         summary: "The book on the phone, territory, the customer record, the statement and reorder due.",
         group: "Selling",
         modules: [],
-        written: [],
+        written: ALL,
       },
       {
         slug: "orders",
@@ -673,7 +673,7 @@ export const DOC_APPS: DocApp[] = [
         summary: "Taking an order in the field, prices, what accounts do with it, and delivery confirmation.",
         group: "Selling",
         modules: [],
-        written: [],
+        written: ALL,
       },
       {
         slug: "payments",
@@ -681,7 +681,7 @@ export const DOC_APPS: DocApp[] = [
         summary: "Recording money at a counter, cheques, cash in hand, deposits and bounced cheques.",
         group: "Selling",
         modules: [],
-        written: [],
+        written: ALL,
       },
       {
         slug: "leads",
@@ -689,7 +689,7 @@ export const DOC_APPS: DocApp[] = [
         summary: "Raising a lead, the ladder on the phone, the Suspect visit cap, qualifying, validation, samples and trials.",
         group: "Selling",
         modules: [],
-        written: [],
+        written: ALL,
       },
       {
         slug: "tasks",
@@ -697,7 +697,7 @@ export const DOC_APPS: DocApp[] = [
         summary: "What the office asks of a salesman, completing with evidence, and notifications.",
         group: "Selling",
         modules: [],
-        written: [],
+        written: ALL,
       },
       {
         slug: "expenses",
@@ -705,7 +705,7 @@ export const DOC_APPS: DocApp[] = [
         summary: "Logging travel and expenses, the policy, leave requests, holidays and the salary view.",
         group: "Money and time",
         modules: [],
-        written: [],
+        written: ALL,
       },
       {
         slug: "performance",
@@ -713,7 +713,7 @@ export const DOC_APPS: DocApp[] = [
         summary: "The salesman's own score, target, mix and forecast, and his reports.",
         group: "Money and time",
         modules: [],
-        written: [],
+        written: ALL,
       },
       {
         slug: "offline-maps",
@@ -721,7 +721,7 @@ export const DOC_APPS: DocApp[] = [
         summary: "Downloading areas of the book's map for no signal, sizes and keeping them fresh.",
         group: "No signal",
         modules: [],
-        written: [],
+        written: ALL,
       },
       {
         slug: "sync",
@@ -729,7 +729,7 @@ export const DOC_APPS: DocApp[] = [
         summary: "How the phone and the office stay in step, what a refused record means, and fixing a stuck handset.",
         group: "No signal",
         modules: [],
-        written: [],
+        written: ALL,
       },
     ],
   },
