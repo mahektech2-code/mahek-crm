@@ -1,5 +1,6 @@
 "use client";
 
+import { LedgerTab } from "./ledger-tab";
 import * as React from "react";
 import { placeLine } from "@/lib/place-tree";
 import type { PlaceNames } from "@/lib/place-filters";
@@ -114,6 +115,7 @@ type RecordTab =
   | "activity"
   | "orders"
   | "bills"
+  | "ledger"
   | "messages"
   | "prices"
   | "issues"
@@ -503,6 +505,12 @@ export function RecordScreen({
     { key: "contacts", label: "Contacts", count: contacts.length },
     { key: "orders", label: "Orders", count: detail.counts.orders },
     { key: "bills", label: "Bills", count: detail.counts.bills },
+    /* The Accounts customer account, statement only — see ledger-tab.tsx.
+       Not drawn for a lead that has never been billed: it would be an empty
+       statement saying nothing a lead does not already say. */
+    ...(customer.kind !== "lead" || detail.counts.bills > 0
+      ? [{ key: "ledger" as const, label: "Ledger" }]
+      : []),
     { key: "messages", label: "WhatsApp", count: messageTotal },
     ...(pricing ? [{ key: "prices" as const, label: "Prices" }] : []),
     {
@@ -923,6 +931,8 @@ export function RecordScreen({
               ))}
             </TabList>
           ) : null}
+
+          {activeTab === "ledger" ? <LedgerTab customerId={customer.id} /> : null}
 
           {activeTab === "bills" ? (
             /* Two questions always asked together — what they were billed and

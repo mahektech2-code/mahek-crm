@@ -5218,6 +5218,25 @@ over what is filtered IN, so the totals row, the aging strip and the export all
 describe the whole year while only the table is cut into pages — a page that
 changed the totals under it would show a different figure on every click.
 
+**A YEAR IS EITHER WAY OF COUNTING, AND THE CURRENT FINANCIAL YEAR IS THE
+DEFAULT.** `lib/year-period.ts` is the one rule: "26-27" is a financial year
+(1 April – 31 March, the shape `?fy=` links already carried) and "2026" a
+calendar year, so one value carries both and an old link keeps opening the
+year it named. `components/ui/year-filter.tsx` is the one picker — the kind,
+then the year, with the dates it covers beside it — on Accounts → Bills, CRM →
+Sales bills, Accounts → Customer account and the CRM record's Ledger tab.
+Outstanding is deliberately NOT year-cut (the oldest debt is usually last
+year's), and holidays and leave count in calendar years by nature.
+
+**A CUSTOMER'S STATEMENT IS ONE COMPONENT IN TWO APPS.**
+`components/ledger/customer-statement.tsx` draws the period bar, the opening
+balance + billed − received = closing balance sum and the statement table;
+Accounts → Customer account renders it with its export, By bill view and
+Reverse, and the CRM customer record's Ledger tab renders it compact and
+read-only through `/api/customer-statement`. Both read
+`customerStatement` (`services/customer-statement-service.ts`), so a
+telecaller and the ledger desk quote one customer one balance.
+
 **"Who owes us" is a different question to "what did we bill", and it has its
 own screen.** The ledger is a list of bills; Outstanding is a list of CUSTOMERS,
 one row each, with what they owe and the bills behind it opening on the same
