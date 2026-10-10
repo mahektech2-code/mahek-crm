@@ -72,7 +72,9 @@ export function phaseOf(t: { lrNo: string | null; materialStage: string }): Phas
 export function addDays(day: string, n: number): string {
   const d = new Date(`${day}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + n);
-  return d.toISOString().slice(0, 10);
+  // A date-only value moved in UTC and read back in UTC — no wall clock involved.
+  const pad = (v: number) => String(v).padStart(2, "0");
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
 }
 
 /** Whole days from `a` to `b` (both YYYY-MM-DD). */
