@@ -211,20 +211,9 @@ export const ERP_GROUPS: ErpGroup[] = [
     label: "Petty cash",
     icon: "wallet",
     screens: [
-      s("expenses", "expenses", "Petty cash", "Production expenses and their payments, the three funds and what each holds, customer cash, the bank statement and the daily cash count — every balance read off the ledger.", true, [
-        v("pettyOverview", "Overview"),
+      s("expenses", "expenses", "Petty cash", "Funds given to people and what they spent, per godown and mode, with what is left.", true, [
         v("expenses", "Expenses"),
-        v("pettyPayments", "Payments"),
-        v("credits", "Funds given / transfers"),
-        v("pettyReceipts", "Customer cash"),
-        v("pettyVendors", "Vendor outstanding"),
-        v("pettyClosing", "Daily closing"),
-        v("pettyBank", "Bank reconciliation"),
-        v("pettyLedger", "Fund ledger"),
-        v("pettyBudgets", "Budgets"),
-        v("pettyReports", "Reports"),
-        v("pettyTally", "Tally sync"),
-        v("pettySettings", "Settings"),
+        v("credits", "Funds given"),
       ]),
     ],
   },

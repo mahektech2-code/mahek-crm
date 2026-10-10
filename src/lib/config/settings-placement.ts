@@ -74,7 +74,6 @@ export const PAGE_TABS: Record<string, Array<{ slug: string; label: string }>> =
   ],
   erp: [
     { slug: "general", label: "Production & orders" },
-    { slug: "petty", label: "Petty cash & Tally" },
     { slug: "alerts", label: "Alerts" },
     { slug: "assistants", label: "AI assistants" },
   ],
@@ -214,8 +213,6 @@ const RULES: Rule[] = [
   { test: /^erp\.factory\./, page: "erp", tab: "general", group: "Factory app" },
   { test: /^erp\.(production|orders|dispatch)\./, page: "erp", tab: "general", group: "Production and orders" },
   { test: /^erp\.location\./, page: "erp", tab: "general", group: "Working location" },
-  { test: /^erp\.pettyCash\./, page: "erp", tab: "petty", group: "Petty cash" },
-  { test: /^erp\.tally\./, page: "erp", tab: "petty", group: "TallyPrime" },
   { test: /^erp\.ai\.alerts\.enabled$/, page: "erp", tab: "alerts", group: "Switch" },
   { test: /^erp\.ai\.alerts\./, page: "erp", tab: "alerts", group: "Thresholds" },
   { test: /^erp\.ai\./, page: "erp", tab: "assistants", group: (k) => ERP_ASSISTANT[k.split(".")[2]] ?? "Other" },
