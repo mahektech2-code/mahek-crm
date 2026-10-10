@@ -24,8 +24,13 @@ export function crmTone(t: Tone | undefined): CrmTone {
   return TO_CRM[t ?? "neutral"];
 }
 
+/** Never wider than what holds it: a long label ends in "…" inside a narrow column. */
 export function Badge({ label, tone }: { label: string; tone?: Tone }) {
-  return <CrmBadge tone={crmTone(tone)}>{label}</CrmBadge>;
+  return (
+    <CrmBadge tone={crmTone(tone)} className="max-w-full min-w-0 shrink-0">
+      <span className="truncate">{label}</span>
+    </CrmBadge>
+  );
 }
 
 /** A status value, in the tone that value is always drawn in. */

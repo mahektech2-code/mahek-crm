@@ -446,7 +446,7 @@ function FormDrawer({
         <div className="text-lg leading-6 font-semibold text-ink">{spec.title}</div>
         {spec.sub ? <div className="mt-0.5 text-[13px] text-muted">{spec.sub}</div> : null}
       </DrawerHeader>
-      <div className="grid min-h-0 flex-1 auto-rows-max content-start gap-3.5 overflow-y-auto px-5 py-4">
+      <div className="grid min-h-0 flex-1 auto-rows-max grid-cols-[minmax(0,1fr)] content-start gap-3.5 overflow-y-auto px-5 py-4">
         {spec.evidence ? <Evidence e={spec.evidence} /> : null}
         <Block title={spec.line ? (table ? "Details" : "Header") : ""}>
           {spec.header

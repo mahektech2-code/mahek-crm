@@ -97,45 +97,54 @@ function PurchaseFlow({ data }: PanelProps) {
             </span>
           </div>
           {f.quotes.rows.length ? (
-            <div className="overflow-x-auto rounded-[4px] border border-divider">
-              <table className="w-full min-w-[520px] text-[13px]">
-                <thead className="bg-canvas text-left text-xs text-muted">
-                  <tr>
-                    <th className="px-2 py-1.5 font-medium">Vendor</th>
-                    {f.quotes.money ? <th className="px-2 py-1.5 text-right font-medium">Rate</th> : null}
-                    <th className="px-2 py-1.5 text-right font-medium">GST</th>
-                    {f.quotes.money ? <th className="px-2 py-1.5 text-right font-medium">Freight</th> : null}
-                    {f.quotes.money ? <th className="px-2 py-1.5 text-right font-medium">Landed</th> : null}
-                    <th className="px-2 py-1.5 font-medium">Delivery</th>
-                    <th className="px-2 py-1.5 font-medium">Terms</th>
-                    <th className="px-2 py-1.5 font-medium">Valid</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {f.quotes.rows.map((q) => (
-                    <tr key={q.vendor} className={cx("border-t border-divider", q.selected && "bg-success-soft/60", q.expired && "text-muted")}>
-                      <td className="px-2 py-1.5">
-                        <span className="font-medium text-ink">{q.vendor}</span>
-                        {q.selected ? <span className="ml-1.5 rounded-[3px] bg-success-soft px-1 text-[11px] text-success">Selected</span> : null}
-                        {q.lowest ? <span className="ml-1.5 rounded-[3px] bg-brand-soft px-1 text-[11px] text-[#5223E0]">Lowest</span> : null}
-                        {q.expired ? <span className="ml-1.5 rounded-[3px] bg-canvas px-1 text-[11px]">Expired</span> : null}
-                        {q.document ? (
-                          <a href={`/api/attachments/${q.document}`} target="_blank" rel="noreferrer" className="ml-1.5 text-[11px] text-[#5223E0]">
-                            file
-                          </a>
-                        ) : null}
-                      </td>
-                      {f.quotes!.money ? <td className="px-2 py-1.5 text-right tabular-nums">{q.rate}</td> : null}
-                      <td className="px-2 py-1.5 text-right tabular-nums">{q.gst}</td>
-                      {f.quotes!.money ? <td className="px-2 py-1.5 text-right tabular-nums">{q.freight}</td> : null}
-                      {f.quotes!.money ? <td className="px-2 py-1.5 text-right font-semibold tabular-nums">{q.landed}</td> : null}
-                      <td className="px-2 py-1.5">{q.delivery}</td>
-                      <td className="px-2 py-1.5">{q.terms}</td>
-                      <td className="px-2 py-1.5">{q.validUntil}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            /* A card per quotation: eight figures across a 600px drawer would
+               scroll sideways, and the comparison is read vendor by vendor —
+               the landed cost on the right is the one being compared. */
+            <div className="grid gap-2">
+              {f.quotes.rows.map((q) => (
+                <div
+                  key={q.vendor}
+                  className={cx(
+                    "rounded-[4px] border px-3 py-2 text-[13px]",
+                    q.selected ? "border-success/40 bg-success-soft/50" : "border-divider",
+                    q.expired && "text-muted",
+                  )}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                      <span className="font-medium text-ink">{q.vendor}</span>
+                      {q.selected ? <span className="rounded-[3px] bg-success-soft px-1 text-[11px] text-success">Selected</span> : null}
+                      {q.lowest ? <span className="rounded-[3px] bg-brand-soft px-1 text-[11px] text-[#5223E0]">Lowest</span> : null}
+                      {q.expired ? <span className="rounded-[3px] bg-canvas px-1 text-[11px]">Expired</span> : null}
+                      {q.document ? (
+                        <a href={`/api/attachments/${q.document}`} target="_blank" rel="noreferrer" className="text-[11px] text-[#5223E0] hover:underline">
+                          file
+                        </a>
+                      ) : null}
+                    </div>
+                    {f.quotes!.money ? (
+                      <span className="flex-none text-right">
+                        <span className="block text-[11px] tracking-[0.04em] text-muted uppercase">Landed</span>
+                        <span className="font-semibold text-ink tabular-nums">{q.landed}</span>
+                      </span>
+                    ) : null}
+                  </div>
+                  <dl className="mt-1.5 grid grid-cols-3 gap-x-3 gap-y-1.5">
+                    {[
+                      ...(f.quotes!.money ? [["Rate", q.rate], ["Freight", q.freight]] : []),
+                      ["GST", q.gst],
+                      ["Delivery", q.delivery],
+                      ["Valid until", q.validUntil],
+                      ["Terms", q.terms],
+                    ].map(([l, v]) => (
+                      <div key={l} className="min-w-0">
+                        <dt className="text-[11px] tracking-[0.04em] text-muted uppercase">{l}</dt>
+                        <dd className="break-words text-body tabular-nums">{v || "—"}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </div>
+              ))}
             </div>
           ) : (
             <span className="text-[13px] text-muted">No quotations yet. Add each vendor&apos;s quotation as it comes in.</span>
@@ -171,47 +180,41 @@ function PurchaseOrder({ data }: PanelProps) {
         ) : null}
       </div>
       <Stepper steps={p.steps} step={p.step} label="Purchase flow" />
-      <div className="overflow-x-auto rounded-[4px] border border-divider">
-        <table className="w-full min-w-[520px] text-[13px]">
-          <thead className="bg-canvas text-left text-xs text-muted">
-            <tr>
-              <th className="px-2 py-1.5 font-medium">Item</th>
-              <th className="px-2 py-1.5 text-right font-medium">Ordered</th>
-              <th className="px-2 py-1.5 text-right font-medium">Received</th>
-              <th className="px-2 py-1.5 text-right font-medium">Pending</th>
-              {p.money ? <th className="px-2 py-1.5 text-right font-medium">Rate</th> : null}
-              <th className="px-2 py-1.5 text-right font-medium">GST</th>
-              {p.money ? <th className="px-2 py-1.5 text-right font-medium">Total</th> : null}
-            </tr>
-          </thead>
-          <tbody>
-            {p.lines.map((l, i) => (
-              <tr key={i} className="border-t border-divider">
-                <td className="px-2 py-1.5">
-                  <a href={l.requirement} className="font-medium text-ink hover:text-[#5223E0] hover:underline" title="Open its requirement">
-                    {l.item}
-                  </a>
-                </td>
-                <td className="px-2 py-1.5 text-right tabular-nums">{l.ordered}</td>
-                <td className={cx("px-2 py-1.5 text-right tabular-nums", l.done ? "text-success" : "")}>{l.received}</td>
-                <td className="px-2 py-1.5 text-right tabular-nums">{l.done ? "—" : l.pending}</td>
-                {p.money ? <td className="px-2 py-1.5 text-right tabular-nums">{l.rate}</td> : null}
-                <td className="px-2 py-1.5 text-right tabular-nums">{l.gst}</td>
-                {p.money ? <td className="px-2 py-1.5 text-right tabular-nums">{l.total}</td> : null}
-              </tr>
-            ))}
-          </tbody>
-          {p.totals ? (
-            <tfoot className="border-t border-line text-[13px]">
-              <tr>
-                <td colSpan={7} className="px-2 py-1.5 text-right text-body">
-                  Amount {p.totals.amount} · GST {p.totals.gst}
-                  {p.totals.freight !== "₹0" ? ` · freight ${p.totals.freight}` : ""} · <span className="font-semibold text-ink">Total {p.totals.total}</span>
-                </td>
-              </tr>
-            </tfoot>
-          ) : null}
-        </table>
+      {/* A row per line rather than a seven-column table: the item and what it
+          costs on top, the quantities beneath — readable at a drawer's width. */}
+      <div className="overflow-hidden rounded-[4px] border border-divider text-[13px]">
+        {p.lines.map((l, i) => (
+          <div key={i} className={cx("px-3 py-2", i > 0 && "border-t border-divider")}>
+            <div className="flex items-baseline justify-between gap-3">
+              <a href={l.requirement} className="min-w-0 font-medium break-words text-ink hover:text-[#5223E0] hover:underline" title="Open its requirement">
+                {l.item}
+              </a>
+              {p.money ? <span className="flex-none font-semibold text-ink tabular-nums">{l.total}</span> : null}
+            </div>
+            <dl className="mt-1 grid grid-cols-5 gap-x-3 text-[12px]">
+              {[
+                ["Ordered", l.ordered, ""],
+                ["Received", l.received, l.done ? "text-success" : ""],
+                ["Pending", l.done ? "—" : l.pending, ""],
+                ...(p.money ? [["Rate", l.rate ?? "—", ""]] : []),
+                ["GST", l.gst, ""],
+              ].map(([k, v, tone]) => (
+                <div key={k} className="min-w-0">
+                  <dt className="text-[11px] text-muted">{k}</dt>
+                  <dd className={cx("truncate text-body tabular-nums", tone)} title={v}>
+                    {v}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        ))}
+        {p.totals ? (
+          <div className="border-t border-line bg-canvas px-3 py-2 text-right text-body">
+            Amount {p.totals.amount} · GST {p.totals.gst}
+            {p.totals.freight !== "₹0" ? ` · freight ${p.totals.freight}` : ""} · <span className="font-semibold text-ink">Total {p.totals.total}</span>
+          </div>
+        ) : null}
       </div>
       <dl className="grid gap-1.5">
         {p.history.map((h) => (
