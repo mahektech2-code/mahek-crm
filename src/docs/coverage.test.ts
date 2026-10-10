@@ -111,8 +111,11 @@ describe("documentation coverage", () => {
     }
   });
 
-  test("the build-time index is current with the source it quotes", () => {
-    const run = spawnSync(process.execPath, ["scripts/docs-index.mjs", "--check"], { encoding: "utf8" });
+  test("every piece of code the documentation quotes still exists", () => {
+    /* The index itself is built, never committed (it would go stale every
+       time main moved). What CAN be wrong in a PR is a quoted function that
+       was renamed or deleted — that fails here, naming the page. */
+    const run = spawnSync(process.execPath, ["scripts/docs-index.mjs", "--verify"], { encoding: "utf8" });
     assert.equal(run.status, 0, run.stderr || run.stdout);
   });
 });

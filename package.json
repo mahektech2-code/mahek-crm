@@ -4,7 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "predev": "node scripts/docs-index.mjs",
     "prebuild": "node scripts/docs-index.mjs",
+    "prelint": "node scripts/docs-index.mjs",
+    "pretest": "node scripts/docs-index.mjs",
     "build": "next build",
     "docs:index": "node scripts/docs-index.mjs",
     "//deploy": "Migrations and the catalogue import used to run inside `build`, which worked while the build ran next to the database. It now runs on a GitHub runner with no route to Postgres, so they moved here and the deploy workflow calls this over an SSH tunnel.",
