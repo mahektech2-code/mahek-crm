@@ -47,7 +47,7 @@ The checks run in the hourly job and in the nightly one; a manager or ERP admini
 | Credit note not issued | Accepted more than <Setting k="erp.ai.alerts.stuckCnDays" /> days ago and not issued |
 | Packing batch incomplete | Cans short or over for more than <Setting k="erp.ai.alerts.stuckPackDays" /> days |
 | Duplicate-looking expense | One person, one amount, one particular, twice within <Setting k="erp.ai.alerts.duplicateExpenseDays" /> days |
-| Petty cash exception | Each entry on the petty-cash exception queue — see [petty cash](/docs/erp/petty-cash/how-it-works) |
+| Petty cash below zero | A person has spent more than they were given at a godown in one mode — see [petty cash](/docs/erp/petty-cash/how-it-works) |
 | Stock below re-order level | A followed level is short — see [levels](/docs/erp/stock-levels/how-it-works) |
 
 <Callout kind="why" title="Why each rule compares with the item's own history">
@@ -114,6 +114,5 @@ The model does not query the database. It picks from a fixed set of question too
 ## Where the code and the intent disagree today
 
 - **Resolving by hand does not stick while the condition holds.** A resolved alert no longer blocks the same kind and subject, so the next hourly run raises it again as a new alert.
-- **A "Petty cash below zero" alert kind exists but is never raised.** Its rule is written and labelled; nothing feeds it. A fund below zero arrives instead as a *Petty cash exception*.
 - **The summary is written by the dictation's language model**, not by the ERP's own reading model.
 - **"Below re-order level" alerts for raw materials fire below the maximum** — see [levels](/docs/erp/stock-levels/how-it-works).

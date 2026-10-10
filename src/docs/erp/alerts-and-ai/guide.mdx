@@ -11,7 +11,7 @@ Around the ERP there are also a handful of **AI helpers** that read things for y
     <WfButton primary>Run checks now</WfButton>
     <Hotspot n={1} />
   </WfBar>
-  <WfBar><WfPill>LR missing 2</WfPill><WfPill>Stock below re-order level 3</WfPill><WfPill>Purchase rate jump 1</WfPill><WfPill>Petty cash exception 4</WfPill><Hotspot n={2} /></WfBar>
+  <WfBar><WfPill>LR missing 2</WfPill><WfPill>Stock below re-order level 3</WfPill><WfPill>Purchase rate jump 1</WfPill><WfPill>Petty cash below zero 1</WfPill><Hotspot n={2} /></WfBar>
   <WfTable
     highlight={0}
     columns={["Raised", "Status", "Alert", "What is unusual", "Note"]}
@@ -71,7 +71,7 @@ If you resolve an alert whose condition is still true, the next hourly run raise
 | **LR missing** | A bill left days ago with no LR number | Transport → Pending LR |
 | **Credit note not issued** | A credit-note request was accepted days ago and not issued | Complaints & credit notes |
 | **Duplicate-looking expense** | One person recorded the same amount for the same particular twice within a few days | Petty cash → Expenses |
-| **Petty cash exception** | Anything on the petty-cash exception queue (waiting too long, cash not closed, a fund below zero…) | The petty-cash tab concerned |
+| **Petty cash below zero** | Somebody has spent more than they were given at a godown in one mode | Petty cash → Expenses |
 | **Stock below re-order level** | A followed level is short | Raw-material or Finished-goods levels |
 
 The thresholds behind each are on the [How it works](/docs/erp/alerts-and-ai/how-it-works) tab, read live.

@@ -25,7 +25,6 @@ export type AlertKind =
   | "packStuck"
   | "duplicateExpense"
   | "cashNegative"
-  | "pettyCash"
   | "belowLevel";
 
 export const ALERT_LABEL: Record<AlertKind, string> = {
@@ -43,7 +42,6 @@ export const ALERT_LABEL: Record<AlertKind, string> = {
   packStuck: "Packing batch incomplete",
   duplicateExpense: "Duplicate-looking expense",
   cashNegative: "Petty cash below zero",
-  pettyCash: "Petty cash exception",
   belowLevel: "Stock below re-order level",
 };
 

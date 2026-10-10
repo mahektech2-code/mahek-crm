@@ -1,162 +1,33 @@
-Petty cash is one ERP screen (`expenses`) with thirteen tabs, each its own server module across three files: `screens/petty-expenses.ts` (Expenses, Payments, Vendor outstanding), `screens/petty-funds.ts` (Overview, Funds given / transfers, Customer cash, Daily closing, Fund ledger, Settings) and `screens/petty-books.ts` (Bank reconciliation, Budgets, Reports, Tally sync). The screens never write to a table directly: every write is a function in `lib/erp/petty/`, and every balance movement goes through **one** function, `post` in `petty/core.ts`. The rules are pure, in `engines/petty-cash.ts`. This page covers the everyday half; the closing half is on [its own developer page](/docs/erp/petty-cash-closing/developer).
+Petty cash is one ERP screen (`expenses`) with two tabs, `expenses` and `credits`, both server modules in `src/lib/erp/screens/logistics.ts`. Writes go through the four generic ERP actions in `src/lib/actions/erp.ts`.
 
 ## Map of the code
 
 | Layer | File | What lives there |
 |---|---|---|
-| Registry | `src/lib/erp/registry.ts` | `expenses` screen, views `pettyOverview` … `pettySettings` |
-| Tabs | `src/lib/erp/screens/petty-expenses.ts` | `expenseForm`, `payForm`, `expenseRow`, the `expenses`, `pettyPayments`, `pettyVendors` modules |
-| Tabs | `src/lib/erp/screens/petty-funds.ts` | `overview`, `credits` (transfers), `pettyReceipts`, plus the closing-side tabs |
-| Shared | `src/lib/erp/screens/petty-shared.ts` | `lookups`, `paymentFields`, `requestKey`, `activeFunds` |
-| Machinery | `src/lib/erp/petty/core.ts` | `pettyConfig`, `pettyRoles`, `WHY`, `balances`, `balanceIn`, `lock`, `nextCode`, `post`, `reverseSource`, `audit`, `addEvidence`, `queueTally` |
-| Expenses and payments | `src/lib/erp/petty/expenses.ts` | `createExpense`, `editExpense`, `submitExpense` (`submitIn`), `decideExpense`, `cancelExpense`, `markReceived`, `approveDocException`, `recordPayment` (`payIn`), `confirmPaymentRequest`, `cancelPaymentRequest`, `reversePayment`, `verifyPayment`, `requestExpenseAdjustment`, `decideExpenseAdjustment` |
-| Funds | `src/lib/erp/petty/funds.ts` | `initiateTransfer`, `confirmTransfer`, `cancelTransfer`, `reverseTransfer`, `recordReceipt`, `verifyReceipt`, `reverseReceipt` (and closings, adjustments, fund accounts) |
-| Reading | `src/lib/erp/petty/facts.ts` | `loadExpenses` (each expense with its `payableState`, due date, ageing), `loadPayments`, `loadTransfers`, `loadReceipts`, `receiptCustody` |
-| Exceptions | `src/lib/erp/petty/insight.ts` | `exceptions` (and budgets) |
-| Bells | `src/lib/erp/petty/notify.ts` | `holdersOf`, `notifyPetty` |
-| Rules (pure) | `src/lib/erp/engines/petty-cash.ts` | Vocabulary, `payableState`, `paymentRefusal`, `fundsRefusal`, `transferRefusal`, `approvalRoute`, `decisionRefusal`, `ageing`, `dueDateFor`, `splitsNearLimit`, `duplicateOf` |
-| Legacy (pure) | `src/lib/erp/engines/cash.ts` | `cashBalances` — tested, read by no screen |
-| Writes | `src/lib/actions/erp.ts` | The four generic doors, `requireErpWrite(<tab key>)` |
+| Registry | `src/lib/erp/registry.ts` | The `expenses` screen and its two views |
+| Tabs | `src/lib/erp/screens/logistics.ts` | `cashForm`, the `credits` and `expenses` modules, `setExpenseStatus` |
+| Rules (pure) | `src/lib/erp/engines/cash.ts` | `cashBalances`, `cashKey` |
+| Alerts (pure) | `src/lib/erp/engines/alerts.ts` | `duplicateExpenses`, `cashNegative` |
 
-## A request, end to end
+## The balance
 
-<Flow caption="Record payment on an approved expense from production cash" chart={`
-sequenceDiagram
-  autonumber
-  participant UI as Expenses tab
-  participant Act as actions/erp.ts
-  participant X as petty/expenses.ts
-  participant Core as petty/core.ts
-  participant E as engines/petty-cash.ts
-  participant DB as Postgres
-  UI->>Act: erpSubmitForm("expenses", "pay", header, [], expenseId)
-  Act->>X: recordPayment(ctx, id, input)
-  X->>DB: an earlier payment with this request_key? return it
-  X->>DB: begin - lock expense and fund (advisory, sorted)
-  X->>E: payableState(amount, payments, adjustments), paymentRefusal
-  X->>X: mode for the fund, reference or acknowledgement, duplicate UTR
-  X->>Core: balanceIn(fund) then fundsRefusal
-  X->>DB: insert erp_expense_payments (confirmed)
-  X->>Core: post(debit, payment:id) - also reopens approved closings on or after the date
-  X->>Core: queueTally(payment)
-  X->>DB: audit in the same transaction, commit
-`} />
+<Code file="src/lib/erp/engines/cash.ts" symbol="cashBalances" />
 
-## The ledger
+Every load reads both tables whole and recomputes the balances; there is no cached figure to go stale.
 
-<Code file="src/lib/erp/petty/core.ts" symbol="post" />
+## Verifying
 
-<Code file="src/lib/erp/petty/core.ts" symbol="reverseSource" />
-
-<Code file="src/lib/erp/petty/core.ts" symbol="lock" />
-
-`erp_fund_ledger` is append-only at the database: `0248_petty_cash_funds_control.sql` installs a `before update or delete` trigger that raises. `post` reopens any **approved** closing of the same fund dated on or after the posting — so a back-dated entry cannot change a counted day silently.
-
-## The rules
-
-<Code file="src/lib/erp/engines/petty-cash.ts" symbol="payableState" />
-
-<Code file="src/lib/erp/engines/petty-cash.ts" symbol="paymentRefusal" />
-
-<Code file="src/lib/erp/engines/petty-cash.ts" symbol="approvalRoute" />
-
-<Code file="src/lib/erp/engines/petty-cash.ts" symbol="decisionRefusal" />
-
-<Code file="src/lib/erp/engines/petty-cash.ts" symbol="TRANSFER_TYPES" />
-
-<Code file="src/lib/erp/engines/petty-cash.ts" symbol="duplicateOf" />
-
-## Submitting and paying
-
-<Code file="src/lib/erp/petty/expenses.ts" symbol="submitIn" collapsed />
-
-<Code file="src/lib/erp/petty/expenses.ts" symbol="payIn" collapsed />
-
-## Transfers and customer cash
-
-<Code file="src/lib/erp/petty/funds.ts" symbol="initiateTransfer" collapsed />
-
-<Code file="src/lib/erp/petty/funds.ts" symbol="confirmTransfer" collapsed />
-
-<Code file="src/lib/erp/petty/funds.ts" symbol="recordReceipt" collapsed />
-
-## Roles
-
-<Code file="src/lib/erp/petty/core.ts" symbol="pettyRoles" />
-
-The powers `pettyAccounts`, `pettyApprove`, `pettyOwner` are in `lib/erp/powers.ts`; holding the `expenses` screen is the production head's role. Each refusal names the power in words through `WHY`.
+<Code file="src/lib/erp/screens/logistics.ts" symbol="setExpenseStatus" />
 
 ## Tables
 
-<DbTable name="erp_expenses" only={["code", "expense_date", "godown_id", "expense_by", "category_id", "txn_type", "vendor_name", "amount_paise", "bill_no", "due_date", "doc_status", "incurred", "is_advance", "approval_status", "approval_level", "approval_rule", "legacy", "version"]} note={{
-  amount_paise: "What was billed. Never changed by a payment; corrected only by an approved adjustment.",
-  doc_status: "attached, to_follow, not_available, exception_approved.",
-  incurred: "False is a commitment: budgeted as committed, not payable until marked received.",
-  approval_status: "draft, submitted, under_review, approved, rejected, returned, cancelled. Never the payment status.",
-  approval_level: "policy, approver or owner — decided at submit by approvalRoute.",
-  legacy: "Written before the fund ledger: listed as it was, in no balance and no payable.",
-  version: "Optimistic lock: an edit names the version it was made against.",
-}} />
+<DbTable name="erp_credits" />
 
-<DbTable name="erp_fund_ledger" note={{
-  direction: "credit raises the fund, debit lowers it.",
-  posting_key: "payment:…, transfer-in:…, reversal:… — one source posts once.",
-  reversal_of_id: "Set on a reversal row; the original is never changed.",
-}} />
+<DbTable name="erp_expenses" />
 
-<DbTable name="erp_expense_payments" only={["code", "expense_id", "payment_date", "amount_paise", "fund_account_id", "mode", "reference", "status", "approval", "urgent_reason", "overdraw_reason", "split_reference", "recon_status", "request_key"]} note={{
-  status: "requested, confirmed, cancelled, reversed. Only confirmed counts and posts.",
-  approval: "approved, or urgent when paid before the expense's approval.",
-  recon_status: "not_applicable for cash; unreconciled, matched, reconciled for a bank payment.",
-  request_key: "The form's key; a retried submit finds the first payment.",
-}} />
+## Tests
 
-<DbTable name="erp_fund_transfers" only={["code", "transfer_type", "transfer_date", "from_fund_id", "to_fund_id", "amount_paise", "linked_receipt_ids", "status", "initiated_by_id", "received_by_id"]} note={{
-  status: "initiated (in transit), confirmed, cancelled, reversed.",
-  linked_receipt_ids: "Customer receipts the transfer carries; one live transfer per receipt.",
-}} />
-
-<DbTable name="erp_customer_cash_receipts" only={["receipt_no", "customer_id", "receipt_date", "amount_paise", "fund_account_id", "allocations", "status", "verified_by_id", "crm_reference"]} note={{
-  allocations: "Bills named, oldest first, for the record. It does not confirm a payment in Accounts.",
-}} />
-
-## Access
-
-- **Module:** <ModuleRef k="erp.expenses" />; all thirteen tabs come with it.
-- **ERP powers:** `pettyAccounts`, `pettyApprove`, `pettyOwner` (read by `pettyRoles`); an ERP administrator holds all three.
-- Every write: `requireErpWrite(<tab key>)`, then the function's own role and maker-checker checks. The audit row is written inside the same transaction as the money (`petty/core.ts` `audit`).
-
-## Tests that pin this
-
-| Suite | File | What it pins |
+| Command | File | What it pins |
 |---|---|---|
-| `npm run test` | `src/lib/erp/engines/petty-cash.test.ts` | Payable state and tolerance, payment and fund refusals, approval routing in order, maker-checker, transfer kinds, ageing, matching, statement parsing, budgets, splits, duplicates |
-| `npm run test:integration` | `src/lib/erp/erp-petty-cash.test.ts` — `petty cash acceptance (PRD §22)` | The fourteen acceptance cases: approved-unpaid moves no cash; a withdrawal is no expense; partial and full payment; a request sent twice posts once; customer cash is no sale; deposit; a cash payment beyond the fund is refused and logged; nobody approves their own; a posted expense is never edited and a back-dated reversal reopens the closing; Tally failure is safe |
-| `npm run test:integration` | `src/lib/erp/erp-petty-cash.test.ts` — `controls around the acceptance tests` | The ledger cannot be edited or deleted; duplicate warning; urgent payment needs reason and evidence; approval by policy; every tab loads for the head and the owner |
-| `npm run test:integration` | `src/lib/erp/erp-logistics.test.ts` — `petty cash` | Pre-ledger records stay on their lists and reach no balance |
-
-## Changing it safely
-
-<Steps>
-<Step title="Move money only through post">
-A new kind of movement is a new `txnType` and `postingKey` shape passed to `post`. Never insert into `erp_fund_ledger` directly — the trigger will stop an update, but nothing stops a second insert path from skipping the closing reopen.
-</Step>
-<Step title="Lock before you read a balance you will refuse against">
-`lock(tx, "expense:…", "fund:…")` then `balanceIn(tx, …)`. Reading the balance outside the transaction lets two payments both pass.
-</Step>
-<Step title="Keep the rule in the engine">
-The screens, the exception queue and the tests all call `engines/petty-cash.ts`; a limit or a route typed into a screen is a second answer.
-</Step>
-<Step title="Give every form a request key">
-`requestKey()` in `petty-shared.ts`, stored on the row with a unique index, is what makes a retry harmless.
-</Step>
-</Steps>
-
-## Known gaps, with file references
-
-| Gap | Where |
-|---|---|
-| An urgent payment (before approval) can be recorded by anybody holding the screen | `petty/expenses.ts` `payIn` |
-| `cashBalances` (credits less expenses per employee) is tested but read by nothing | `engines/cash.ts` |
-| A bank fund may be sent more than it holds on a transfer (only cash funds are checked) | `petty/funds.ts` `initiateTransfer`, `confirmTransfer` |
-| An expense names its spender as free text, so maker-checker matches names case-insensitively — two staff with one name block each other | `engines/petty-cash.ts` `decisionRefusal`; `screens/petty-expenses.ts` `expenseRow` |
+| `npm run test` | `src/lib/erp/engines/cash.test.ts` | The balance arithmetic |
+| `npm run test` | `src/lib/erp/engines/alerts.test.ts` | The duplicate and below-zero alert rules |

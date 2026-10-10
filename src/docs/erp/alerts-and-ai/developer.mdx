@@ -30,7 +30,7 @@ sequenceDiagram
   Job->>Run: runErpAlerts()
   Run->>Run: thresholds() - skip if switched off
   Run->>DB: purchases, SFG lines, fills, write-offs, packs, tests, transports, complaints, expenses
-  Run->>Run: detailRows, orderLines, rmReorderRows, fgReorderRows, petty exceptions
+  Run->>Run: detailRows, orderLines, rmReorderRows, fgReorderRows, expenses, cash balances
   Run->>Rules: every rule over the facts
   Rules-->>Run: candidates (kind, subject, screen, record ids, power, sentence)
   Run->>DB: transaction - resolve open alerts no longer live
@@ -47,7 +47,7 @@ sequenceDiagram
 
 <Code file="src/lib/erp/engines/alerts.ts" symbol="belowLevel" />
 
-`cashNegative` is declared, labelled and tested, but `currentCandidates` never calls it — fund balances reach alerts as `pettyCash` exceptions instead.
+`duplicateExpenses` and `cashNegative` read `erp_expenses` and the balances from `erp_credits` less `erp_expenses`.
 
 ## The run
 
@@ -143,7 +143,6 @@ A new question is a tool in `askTools` that calls `fromScreen` on an existing sc
 | Gap | Where |
 |---|---|
 | A hand-resolved alert whose condition still holds is raised again as a new alert on the next run | `alerts.ts` `runErpAlerts`; `screens/alerts.ts` `resolve` |
-| `cashNegative` is never fed | `engines/alerts.ts` `cashNegative`; `alerts.ts` `currentCandidates` |
 | `erp_alerts_open_key` exists only in the migration, not in `schema.ts` | `drizzle/0180_erp_alerts_and_ai.sql`; `db/schema.ts` `erpAlerts` |
 | The digest's writing model is `voice.languageModel`, not `erp.ai.textModel` | `digest.ts` `writeErpDigest` |
 | `readyUnbilled` uses the line's `updated_at` as "Ready since" | `alerts.ts` `currentCandidates` |

@@ -29,9 +29,6 @@ export const ERP_POWERS = [
   "employeeAdmin",
   "approveSfgQc",
   "dispatchOverride",
-  "pettyAccounts",
-  "pettyApprove",
-  "pettyOwner",
 ] as const;
 
 export type ErpPower = (typeof ERP_POWERS)[number];
@@ -100,21 +97,6 @@ export const ERP_POWER_LABEL: Record<ErpPower, { label: string; source: string }
   dispatchOverride: {
     label: "Approve dispatch overrides; reject or return boxes",
     source: "Lets a box whose product or pack size does not match the order go anyway, with a reason, and marks boxes rejected or returned. Nobody approves their own override request unless they are an ERP administrator.",
-  },
-  pettyAccounts: {
-    label: "Petty cash: accounts team",
-    source:
-      "Imports and reconciles the bank statement, confirms withdrawals and payment requests, verifies bills, payments and customer receipts, and keeps the Tally queue (new in MahekOne).",
-  },
-  pettyApprove: {
-    label: "Approve petty-cash expenses",
-    source:
-      "Approves, rejects or returns expenses up to the approver's limit, approves missing-document and over-budget exceptions, adjustments, cash variances and daily closings. Never their own: nobody approves what they raised, submitted or spent.",
-  },
-  pettyOwner: {
-    label: "Owner-level petty-cash approvals",
-    source:
-      "Approves expenses above the approver's limit or in owner-only categories, verifies opening balances, and approves reversals, budgets and fund-account changes.",
   },
 };
 

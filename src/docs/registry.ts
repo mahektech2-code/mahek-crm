@@ -862,18 +862,10 @@ export const DOC_APPS: DocApp[] = [
       },
       {
         slug: "petty-cash",
-        title: "Petty cash: expenses, payments and funds",
-        summary: "Production expenses, paying them, the three funds, customer cash and vendor outstanding.",
+        title: "Petty cash: expenses and funds given",
+        summary: "Funds given to people, what they spent, and what each of them still holds.",
         group: "Money",
         modules: ["erp.expenses"],
-        written: ALL,
-      },
-      {
-        slug: "petty-cash-closing",
-        title: "Petty cash: closing, bank, budgets and Tally",
-        summary: "The daily cash count, bank reconciliation, the fund ledger, budgets, reports and the Tally sync.",
-        group: "Money",
-        modules: [],
         written: ALL,
       },
       {
