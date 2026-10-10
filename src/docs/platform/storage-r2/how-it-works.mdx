@@ -1,0 +1,111 @@
+Photographs and documents attached to records — a damaged can on a complaint, a cheque against a payment, a bill photograph on an expense, a check-in selfie, a meter reading on a journey, a screenshot on a feedback report, a price list PDF — all go through **one attachment system**. It decides what a file may be, how big, how many per record, who may open it, and what "delete" means, the same way everywhere.
+
+Where the bytes physically sit is a separate, quieter question. By default they sit **in the database** itself. Once a deployment configures a file bucket — Cloudflare R2, which Mahek already uses for backups — new files go there instead. Nobody using MahekOne can tell the difference.
+
+## Two places a file can live
+
+| | In the database (default) | In a Cloudflare R2 bucket |
+|---|---|---|
+| When | No bucket configured | A bucket for attachments is configured on the server |
+| Good for | A few complaint photographs a week | Field scale — bill and meter photographs run to hundreds of megabytes a month |
+| Backups | Included in every database backup and restore automatically | Not in the database backup; the bucket keeps them |
+| Cost | Counted as database storage, in every backup copy | Ordinary file storage, which is far cheaper |
+
+<Callout kind="why">
+Keeping files in the database means no second service, no second credential, and photographs restored together with the records they belong to — simpler in every way while the volume is small. At field scale that stops being true: every photograph is copied into every backup, nine times a week. The bucket exists for that moment, and switching to it moves nothing that is already stored.
+</Callout>
+
+<Rule title="Switching to a bucket never loses an old file">
+Files stored before the switch stay where they were. When a file is opened, the bucket is asked first and the database second, so a photograph from before the switch still opens.
+</Rule>
+
+<Rule title="Attachments never use the backup bucket">
+Database backups go to a bucket that deletes old copies on a schedule. If attachments were pointed at that same bucket, every photograph would quietly disappear on that schedule. The system refuses that combination and keeps using the database instead.
+</Rule>
+
+## What may be uploaded
+
+- **A file is judged by its contents, never its name.** Renaming a document to `.jpg` does not make it a photograph — the first bytes of the file decide what it is. A file that is not an accepted type is refused with a message naming what it actually is.
+- **Accepted types** are <Setting k="attachments.acceptedTypes" /> — photographs and PDFs. Some screens accept more for their own purpose (the ERP's test video, dictation audio).
+- **Size limit** is <Setting k="attachments.maxSizeMb" /> megabytes per file. The document library allows larger files for catalogues.
+- **How many per record**:
+
+<SettingsTable keys={["attachments.maxPerComplaint", "attachments.maxPerFollowUp", "attachments.maxPerFeedback"]} />
+
+A library document, a training course, a price list and a vendor invoice take exactly **one** file — the record *is* its file.
+
+## A file is uploaded before its record exists
+
+The upload starts **the moment you choose the file**, not when you press Save. That is what makes a form with six photographs save instantly, and it means the record the file belongs to usually does not exist yet when the bytes arrive. So every file starts **unattached**, and is attached ("bound") to its record when the record is saved.
+
+<Flow caption="From choosing a photograph to it appearing on a record" chart={`
+flowchart TD
+  A["You choose a photograph"] --> B["Uploaded straight away<br/>checked by its contents and size"]
+  B -- "refused" --> X["Message names the file and why"]
+  B -- "stored" --> C["Held unattached,<br/>visible only to you"]
+  C --> D["You press Save"]
+  D --> E["The record is written"]
+  E --> F["Your files are attached to it<br/>up to the limit for that record"]
+  F --> G["Anybody who can see the record<br/>can open its files"]
+  C -. "form abandoned" .-> H["Unattached files are swept<br/>after the cleanup window"]
+`} />
+
+<Rule title="A save is never blocked by an attachment">
+If a photograph fails to upload, the complaint, call or payment still saves, and the screen says how many files made it. Losing a call the telecaller just logged because a picture did not upload would be far worse than the missing picture.
+</Rule>
+
+### On the handset
+
+The salesman's phone works offline, so a photograph is queued and uploaded **after** the record it belongs to — often minutes or days later. The phone says which kind of record it belongs to (a visit, a payment, a journey, an attendance mark…), and the server attaches it as soon as both have arrived. Only the salesman's own photographs can be attached to his own records, or to customers in his own book.
+
+## Who can open a file
+
+**Anybody who can see the record can see what is attached to it, and nobody else.** A file you are not allowed to see and a file that does not exist give the same answer, so file links cannot be used to discover which customers exist.
+
+| Attached to | Who can open it |
+|---|---|
+| A call, complaint, payment or anything else about a customer | Whoever can see that customer |
+| A feedback report or reply | The person who reported it and whoever can answer it |
+| A check-in selfie | The salesman in it, and managers who hold the Sales Dashboard and can see his attendance |
+| A journey's meter or ticket photographs | The salesman who took it, and Sales Dashboard managers who can see him |
+| A library document | Whoever it was published to; a withdrawn document cannot be opened |
+| A training course | Anybody on the field app while the course is published |
+| A price list document | Whoever may read price lists |
+| An ERP or HRMS file | Whoever may open the screen it belongs to |
+| Not yet attached | Only the person who uploaded it |
+
+Files are never served from a public address. Every file is opened through MahekOne, which checks the rule above each time.
+
+## Check-in selfies are the one file with a clock
+
+Every check-in and check-out on the handset takes a selfie, and that photograph exists to answer one question — *was the person who marked the day the person who worked it* — which is asked within a day or two or not at all. Kept longer, it stops being verification and becomes a standing collection of photographs of employees.
+
+So selfies are deleted after <Setting k="mbos.attendance.selfieRetentionHours" /> hours, by a sweep that runs **every hour**. The clock starts when the photograph **arrived at the office**, not when it was taken — a salesman with no signal on Monday who syncs on Wednesday still gives his manager the full window to look.
+
+<Rule title="Deleting the image does not erase the fact">
+Only the image goes. The attendance record keeps the reference to it, so "a photograph was taken at 09:04 and has since been deleted" stays different from "no photograph was taken" — which is the one that would read as somebody cutting a corner.
+</Rule>
+
+## Removing a file
+
+Removing an attachment from a screen marks it **removed** and detaches it; the row stays, so the history of what was attached is not destroyed.
+
+## Unattached files are swept
+
+Files that were uploaded and never attached — a form abandoned mid-call — are swept by the nightly job once they are older than <Setting k="attachments.orphanCleanupHours" /> hours, and their bytes are deleted from storage.
+
+## R2 is used for three things
+
+| Use | What goes there |
+|---|---|
+| **Backups** | Encrypted database dumps — see [Backups](/docs/platform/backups) |
+| **Handset releases** | Every MBOS APK, under a versioned name — see [Handset release](/docs/platform/handset-release/developer) |
+| **Attachments** (optional) | Photographs and documents, once a bucket is configured |
+
+Each has its own bucket.
+
+## Where the code and the intent disagree today
+
+- **A removed attachment's bytes are deleted the next night.** The intent is that a removed file (a payment proof somebody tidied off a screen) is kept, with its bytes, until a retention period says otherwise. But removing a file also detaches it, and the nightly sweep of unattached files picks up exactly those, so the bytes go after <Setting k="attachments.orphanCleanupHours" /> hours (`removeAttachment` and `sweepOrphans` in `src/lib/services/attachment-service.ts`).
+- **The retention setting is not read.** <Setting k="attachments.retentionDays" /> says how long a removed file's bytes are kept, but no code reads it.
+- **"This file has been deleted" is never shown.** The file endpoint is meant to answer that a swept selfie existed and is gone; but the permission check refuses any file that is not live first, so a swept file answers "not found" like a file that never existed (`canRead` and `src/app/api/attachments/[id]/route.ts`).

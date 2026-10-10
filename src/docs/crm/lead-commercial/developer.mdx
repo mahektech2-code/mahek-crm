@@ -1,0 +1,145 @@
+The commercial end is **reads over existing columns** plus a handful of actions. There is no negotiation table: the Negotiation desk reads `customers` on the `negotiation` rung and its newest transition. Commitments are three `lead_expected_order_*` columns judged by one pure file, `lib/lead-commitment.ts`. Distributor appointments are `distributor_profiles` plus two `mbos_approvals` rows. Everything below is cut from the source this deployment was built from.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Routes | `src/app/crm/leads/commercial/{page,commitments,first-orders}`, `src/app/crm/leads/appointments/{page,prospective,[id]}` | Thin `<Body workspace="crm" />` pages; each folder's layout guards its module |
+| Screens | `src/components/leads/commercial/*`, `src/components/leads/appointments/*`, `first-order-panel.tsx`, `confirm-order-panel.tsx` | Desks and the two record panels |
+| Reads | `src/lib/services/lead-commercial-service.ts` | `negotiationDesk`, `commitments`, `firstOrderDesk` |
+| Rule (pure) | `src/lib/lead-commitment.ts` | `commitmentState`, `isConfirmedCommitment`, `commitmentGap`, `confirmedCommitmentSql` |
+| Writes | `src/lib/actions/leads.ts` | `askForFirstOrder`, `confirmFirstOrder` |
+| Appointment reads | `src/lib/services/distributor-appointment-service.ts`, `lead-console-service.ts` | `appointmentCandidate`, `appointmentSteps`, `distributorSalesmen`; `appointmentQueue`, `prospectiveDistributors` |
+| Appointment writes | `src/lib/actions/distributor-appointment.ts` | `saveDistributorProfile`, `submitForManagementReview`, `agreeCommercialTerms`, `decideDistributorAppointment`, `sendBackForCorrection`, `recordDistributorAgreement`, `createDistributorSalesman` |
+| Route reason (pure) | `src/lib/engines/lead-gates.ts` | `approvalRouteReason`, `managementRouteReason`, `DISTRIBUTOR_CONDITIONS` |
+| Conversion | `src/lib/services/lead-conversion-service.ts` | `convertLeadOnSecondOrder`, `convertIfNowQualified` |
+| Handset order | `src/lib/actions/mbos.ts` | The order handler — converts, does not refuse below negotiation |
+
+## The commitment rule
+
+<Code file="src/lib/lead-commitment.ts" symbol="commitmentState" />
+
+<Code file="src/lib/lead-commitment.ts" symbol="isConfirmedCommitment" />
+
+<Code file="src/lib/lead-commitment.ts" symbol="confirmedCommitmentSql" />
+
+The file imports nothing — not even drizzle — so the client form and the SQL desks draw the same verdict; the SQL half is a string the services wrap in `sql.raw`.
+
+<DbTable name="customers" only={["lead_expected_order_date", "lead_expected_order_cans", "lead_expected_order_value_paise", "lead_expected_order_blocker_code", "lead_agreed_terms", "lead_distributor_salesman_id"]} note={{
+  lead_expected_order_date: "Required by askForFirstOrder. Alone, it is a follow-up and is not counted.",
+  lead_expected_order_cans: "Cans — the unit the customer speaks in. Either this or the value makes a commitment.",
+  lead_expected_order_value_paise: "A FORECAST. Never added to a real order total.",
+  lead_expected_order_blocker_code: "A code from leads.orderBlockers — what is stopping it today.",
+}} />
+
+## Confirming the first order
+
+<Flow caption="confirmFirstOrder" chart={`
+sequenceDiagram
+  autonumber
+  participant UI as Confirm order panel
+  participant A as actions/leads.ts
+  participant DB as Postgres
+  UI->>A: orderedOn, valuePaise, reference, cans?
+  A->>A: requireCapability("order.capture"), reachableLead
+  A->>DB: read the expected-order columns and any live order
+  A->>A: isConfirmedCommitment? value above zero? day not in the future? no live order?
+  A->>DB: transaction — INSERT orders (status pending_approval, no line items),<br/>timeline, audit_log
+  Note over A,DB: The lead_stage is NOT written. The first_order gate counts<br/>only orders accounts accepted.
+  A-->>UI: recorded — moves on approval
+`} />
+
+<Code file="src/lib/actions/leads.ts" symbol="confirmFirstOrder" collapsed />
+
+<Code file="src/lib/actions/leads.ts" symbol="askForFirstOrder" collapsed />
+
+## The desks
+
+<Code file="src/lib/services/lead-commercial-service.ts" symbol="COMMITMENT_VIEWS" />
+
+<Code file="src/lib/services/lead-commercial-service.ts" symbol="FIRST_ORDER_STAGES" />
+
+`negotiationDesk`, `commitments` and `firstOrderDesk` all resolve scope inside with `managerScope()` + `leadsVisible`, qualify every outer column (`customers.id`, never `${customers.id}` inside a correlated subquery), and count orders with `orderCountsSql` via `COUNTING_ORDERS`.
+
+## Distributor appointments
+
+<Flow caption="Approval rows" chart={`
+sequenceDiagram
+  autonumber
+  participant A as actions/distributor-appointment.ts
+  participant G as engines/lead-gates.ts
+  participant DB as Postgres
+  A->>DB: submitForManagementReview — INSERT mbos_approvals (distributor_appointment, step_index 0, pending)
+  A->>DB: decideDistributorAppointment(step 0) — requireCapability("distributor.terms")
+  A->>A: agreeCommercialTerms — requireCapability("distributor.terms"), terms on distributor_profiles
+  A->>G: managementRouteReason(profile, thresholds)
+  A->>DB: INSERT mbos_approvals step_index 1, route_reason (exclusivity · over_discount · over_credit_limit · standard)
+  A->>DB: decideDistributorAppointment(step 1) — requireCapability("distributor.approve")
+  A->>A: appointed = approved AND step 1 AND nothing pending
+`} />
+
+<Code file="src/lib/engines/lead-gates.ts" symbol="approvalRouteReason" />
+
+<Code file="src/lib/engines/lead-gates.ts" symbol="managementRouteReason" />
+
+<Code file="src/lib/actions/distributor-appointment.ts" symbol="decideDistributorAppointment" collapsed />
+
+<DbTable name="mbos_approvals" only={["type", "subject_type", "subject_id", "step_index", "route_reason", "state", "approver_user_id", "decided_at", "decision_note", "sent_back_at", "sent_back_note"]} note={{
+  step_index: "0 = the sales manager's recommendation. 1 = management's appointment, created beside 0, never replacing it.",
+  route_reason: "Why step 1 reached management. 'standard' where no threshold was crossed.",
+  sent_back_note: "Cleared when the step is next answered; the send-back keeps its own timeline and audit row.",
+}} />
+
+<DbTable name="distributor_profiles" only={["customer_id", "exclusivity_requested", "exclusivity_granted", "special_discount_percent", "agreed_credit_limit_paise", "commercial_terms_agreed_at", "proposed_territory", "territory_conflict"]} note={{
+  exclusivity_requested: "The candidate's opening position. Routes nowhere.",
+  exclusivity_granted: "The term that always routes to management.",
+}} />
+
+<DbTable name="distributor_salesmen" note={{
+  name: "A person with no MahekOne login. Deliberately not a users row.",
+  distributor_customer_id: "The distributor account he works for.",
+}} />
+
+<DbEnum name="mbos_approval_type" />
+
+## Permissions
+
+<CapabilityGrid names={["lead.work", "order.capture", "distributor.terms", "distributor.approve"]} />
+
+Modules: <ModuleRef k="crm.lead-commercial" /> and <ModuleRef k="crm.lead-appointments" />, each guarded by its folder's layout.
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/lead-commitment.test.ts` | Day and size; day-only follow-up; size-only refusal |
+| `npm run test` | `src/lib/engines/lead-gates.test.ts` | Distributor conditions; route reasons |
+| `npm run test` | `src/lib/engines/distributor-migration.test.ts` | Leads on the retired distributor ladder |
+| `npm run test:integration` | `src/lib/send-back.test.ts` | Sending an appointment step back and resubmitting |
+| `npm run test:integration` | `src/lib/sales-manager-pipeline.test.ts` | The sales manager's side of commitments and orders |
+
+## Changing it safely
+
+<Steps>
+<Step title="Never add forecast to fact">
+Anything named `forecast…` or read from `lead_expected_order_*` stays in its own total. A screen that sums the two is the bug this file was written to prevent.
+</Step>
+<Step title="Change what a commitment is in lead-commitment.ts only">
+The record panel, the three desks and the confirm action all read it; the SQL string and the TypeScript function must change together.
+</Step>
+<Step title="Never write lead_stage from an order action">
+Rungs that read the ledger (`first_order`, `delivery`, `payment`, `second_order`) move through the gate when the ledger says so.
+</Step>
+<Step title="Routing is pure">
+A new reason to escalate goes in `approvalRouteReason`, which the handset, the console and the action all read.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| The Negotiation banner says `handleOrder` refuses orders below negotiation; it no longer does | `components/leads/commercial/negotiation-screen.tsx` banner; `actions/mbos.ts` order handler |
+| AGENTS.md "NO COMMERCIAL COMMITMENT BEFORE NEGOTIATION" describes the removed refusal | `AGENTS.md` |
+| AGENTS.md says step 1 is forced only by exclusivity or a threshold; it is always created | `engines/lead-gates.ts` `managementRouteReason`; `actions/distributor-appointment.ts` `agreeCommercialTerms` |
+| `askForFirstOrder` has no rung check — a commitment can be recorded on a Suspect | `actions/leads.ts` `askForFirstOrder` |

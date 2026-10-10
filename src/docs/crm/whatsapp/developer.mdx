@@ -1,0 +1,127 @@
+The WhatsApp screen is shared by the CRM and the Accounts app: `src/app/crm/whatsapp/page.tsx` renders `WhatsappPage` with `app="crm"`. Messages are rows in `wa_messages`, templates in `wa_templates`, inbound in `wa_replies`. Everything about preparing, copying, confirming and sending is in `whatsapp-service.ts`; conversations are `whatsapp-chat-service.ts`; the routing decision is the pure `deliveryRoute` in `lib/whatsapp-delivery.ts`; Wati is the provider.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Route guard | `src/app/crm/whatsapp/layout.tsx` | `requireModule(user.id, "crm.whatsapp")` |
+| Page | `src/app/crm/whatsapp/page.tsx` → `whatsapp-page.tsx` | `WhatsappPage({ app })` — every read in one wave; `canWrite = canOpenModule(user, "crm.whatsapp-reply")` |
+| Screen | `whatsapp-screen.tsx`, `chat-tab.tsx`, `reply-review.tsx`, `reply-media.tsx`, `image-viewer.tsx` | Chats, the tools (New message, Send run, Templates, Message log), reply review |
+| Status words | `src/lib/whatsapp-status.ts` | `statusView` — label, ticks, tone and the explanation for each status |
+| Routing (pure) | `src/lib/whatsapp-delivery.ts` | `deliveryRoute` — api or manual, and why |
+| Messages | `src/lib/services/whatsapp-service.ts` | `MERGE_FIELDS`, `applyMerge`, `prepareMessage`, `prepareLegs`, `markCopied`, `confirmSent`, `cancelMessage`, `sendAutomatic`, `sendNow`, `applyWatiEvent`, `listMessages`, `listReplies`, `actionReply`, `saveTemplate`, runs, `sweepUnconfirmed` |
+| Chats | `src/lib/services/whatsapp-chat-service.ts` | `listConversations` |
+| Automation | `src/lib/services/whatsapp-automation-service.ts` | Rules that send reminders on a schedule |
+| Undeliverable | `src/lib/services/whatsapp-undeliverable-service.ts`, `src/lib/whatsapp-undeliverable.ts` | Numbers WhatsApp says cannot receive |
+| Access | `src/lib/access.ts` | `whatsappLevel(userId)` → none / read / write |
+| Actions | `src/lib/actions/crm.ts` | `whatsappRefusal(kind)`, `queueMessage`, `markMessageCopied`, `confirmMessageSent`, `sendMessageAutomatic`, `cancelMessage`, `sendWhatsAppNow`, `sendChatMessage` |
+| Jobs | `src/lib/jobs.ts` `runHourly` | `sweep-unconfirmed`, reply-media backfill |
+
+## Sending one, both ways
+
+<Flow caption="New message → copy → confirm" chart={`
+sequenceDiagram
+  autonumber
+  participant UI as New message
+  participant A as actions/crm.ts
+  participant S as whatsapp-service
+  participant DB as Postgres
+  UI->>A: customerId, templateId, body, edited, destKind
+  A->>A: whatsappRefusal("send")
+  A->>S: prepareLegs
+  S->>S: destKind both? personal then group (group only if named)
+  loop each leg
+    S->>S: prepareMessage — merge, refuse empty fields, route
+    S->>DB: insert wa_messages (prepared), key = key:leg
+  end
+  A->>S: single leg? markCopied
+  S-->>UI: legs with resolved destinations
+  UI->>A: confirmMessageSent(id)
+  A->>S: confirmSent
+  S->>DB: tx — status sent_manually, last_confirmed_whatsapp_date,<br/>template usage, audit
+  S->>S: recomputeLastContact, recordReminderAttempt
+`} />
+
+<Code file="src/lib/whatsapp-delivery.ts" symbol="deliveryRoute" />
+
+<Code file="src/lib/services/whatsapp-service.ts" symbol="prepareLegs" collapsed />
+
+<Code file="src/lib/services/whatsapp-service.ts" symbol="markCopied" />
+
+<Code file="src/lib/services/whatsapp-service.ts" symbol="confirmSent" collapsed />
+
+<Code file="src/lib/services/whatsapp-service.ts" symbol="recordReminderAttempt" collapsed />
+
+## Read versus write
+
+<Code file="src/lib/access.ts" symbol="whatsappLevel" />
+
+`whatsappRefusal("chat")` demands **write**. `whatsappRefusal("send")` refuses only **read** — a person with no WhatsApp module at all may still send from the payment panel, because those screens always could.
+
+## Wati
+
+- Outbound: `sendAutomatic` posts the approved template and stores Wati's id in `provider_ref`.
+- Inbound and status: the webhook calls `applyWatiEvent`, which moves a message forward only (`advancedStatus`) — Wati retries, and a repeat changes nothing.
+- The key is read through `lib/secrets.ts`; the founder's on/off switch is `whatsappServiceState()`. Neither is a setting.
+
+## The tables
+
+<DbTable name="wa_messages" only={["customer_id", "template_id", "user_id", "mode", "dest_kind", "resolved_destination", "body", "edited", "status", "run_id", "copied_at", "confirmed_sent_at", "sent_at", "delivered_at", "read_at", "failure_reason", "provider_ref", "idempotency_key"]} note={{
+  dest_kind: "personal or group only — a message goes to one place. 'both' lives on the customer.",
+  status: "Only sent_manually, sent, delivered and read count as the customer having heard from us.",
+  confirmed_sent_at: "Set by a person confirming a pasted message.",
+  idempotency_key: "Unique. A both-ways pair uses key:personal and key:group.",
+}} />
+
+<DbTable name="wa_templates" only={["name", "category", "escalation_stage", "body", "applies_to", "active", "usage_count", "wati_template_name"]} note={{
+  category: "payment_reminder is what makes a confirmed send a collections attempt.",
+  escalation_stage: "Which collections stage the reminder belongs to.",
+  wati_template_name: "Null means manual only.",
+  usage_count: "Incremented on confirmation, not on copy.",
+}} />
+
+<DbEnum name="message_status" />
+<DbEnum name="dest_kind" />
+<DbEnum name="template_category" />
+
+<CapabilityGrid names={["whatsapp.bulk", "whatsapp.template.write", "whatsapp.activate"]} />
+
+- **Modules:** <ModuleRef k="crm.whatsapp" /> (read) and <ModuleRef k="crm.whatsapp-reply" /> (write).
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test:integration` | `src/lib/whatsapp-read-write.test.ts` | Read and write levels per app |
+| `npm run test` | `src/lib/whatsapp-delivery.test.ts` | Every manual reason in `deliveryRoute`, number normalisation |
+| `npm run test` | `src/lib/whatsapp-rules.test.ts` | Automatic reminder rules |
+| `npm run test:integration` | `src/lib/whatsapp-automation.test.ts` | Rules sending through the real services |
+| `npm run test` | `src/lib/wati-templates.test.ts`, `wati-receipts.test.ts` | Template specs, status receipts moving forward only |
+| `npm run test:integration` | `src/lib/journeys.test.ts` | Copied vs confirmed and the Call Log cooldown; both-ways legs |
+
+## Changing it safely
+
+<Steps>
+<Step title="Keep copied and confirmed apart">
+Nothing but `confirmSent` (and an accepted automatic send) may set `last_confirmed_whatsapp_date` or write a collections attempt. There is a test for each half.
+</Step>
+<Step title="Add a manual reason to deliveryRoute">
+It is pure; add the branch and its sentence, and a test.
+</Step>
+<Step title="Add a merge field to MERGE_FIELDS and mergeValuesFor together">
+Keep `unstated` bills out of money fields, on the server and in the page's preview payload.
+</Step>
+<Step title="Check write level in the action">
+Use `whatsappRefusal`. A hidden composer is not a permission.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| `whatsapp.mode` is presented on the Settings screen and read by nothing; the route is `serviceOn && hasToken` | `config/presentation.ts`; `whatsapp-service.ts` `deliveryContext` |
+| `markCopied`, `confirmSent`, `cancelMessage` load the message by id with no customer scope check | `whatsapp-service.ts` |
+| `sweepUnconfirmed` calls `confirmSent`, which calls `resolveScope()` → `requireUser()`; with `whatsapp.autoConfirmAfterHours` above zero the hourly job has no user | `whatsapp-service.ts`; `jobs.ts` `runHourly` |
+| `confirmSent` audit row has no `actorRole` / `actorApp` | `whatsapp-service.ts` |
+| Weekly limit uses `now() - interval '7 days'` (database clock) | `whatsapp-service.ts` `sendAutomatic` |

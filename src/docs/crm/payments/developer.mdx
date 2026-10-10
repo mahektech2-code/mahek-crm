@@ -1,0 +1,155 @@
+Collections is three pure engines wired to three services. **E3** (`engines/escalation.ts`) turns a customer's bills into a stage, cached in `follow_up_states` by `recomputeFollowUpState`. **E7** (`engines/payment-followup.ts`) turns those states into today's calls, messages and held-back list. `engines/allocation.ts` spreads an amount over bills. The services are `payment-service.ts` (worklist, metrics, ledger reads), `payment-followup-service.ts` (logging a collections call) and `receipt-service.ts` (recording and deciding money).
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Route guard | `src/app/crm/payments/layout.tsx` | `requireModule(user.id, "crm.payments")` |
+| Page (server) | `src/app/crm/payments/page.tsx` | `getPaymentFollowUpPlan`, `followUpWorklistPage`, `listBills({openOnly})`, `collectionsMetrics`, `stageOneBatch`, `offeredPayOutcomes`, WhatsApp tracker |
+| Screen (client) | `src/app/crm/payments/payments-screen.tsx` | KPIs, tabs, filters, held-back strip, rows, Record payment / Record promise modals |
+| Follow-up panel | `src/components/crm/payment-panel.tsx` | The six outcomes, chips, proof upload, the reminder preview, the next-step dialog |
+| Mode fields | `src/components/crm/payment-mode-fields.tsx` | Mode, reference, cheque date — one component for three screens |
+| Engine E3 | `src/lib/engines/escalation.ts` | `effectiveDueDate`, `escalationStage`, `prescribeChannel`, `isAttemptAllowed`, `isSlowPayer`, `agingBucket` |
+| Engine E7 | `src/lib/engines/payment-followup.ts` | `callingOpensOn`, `nextMessageOn`, `nextCallOn`, `planPaymentFollowUps`, `blockingReason`, `reportedQuiet`, `paidCooling` |
+| Allocation | `src/lib/engines/allocation.ts` | `allocate` — oldest first, newest first, settle these, split it myself |
+| Worklist reads | `src/lib/services/payment-service.ts` | `getPaymentFollowUpPlan`, `followUpWorklistPage`, `paymentCadenceFor`, `collectionsMetrics`, `recordFollowUpAttempt`, `recordPayment` |
+| Logging a call | `src/lib/services/payment-followup-service.ts` | `PAY_OUTCOMES`, `offeredPayOutcomes`, `logFollowUpSchema`, `logPaymentFollowUp`, `stageOneBatch`, `getFollowUpPanel` |
+| Money | `src/lib/services/receipt-service.ts` | `recordReceipt`, `holdReceipt`, `confirmReceipt`, `rejectReceipt`, `reverseReceipt`, `matchesForEntry`, `confirmAsMatch`, `receiptStatusSentence` |
+| Caches | `src/lib/recompute.ts` | `recomputeBillPaid`, `recomputeOutstanding`, `recomputeFollowUpState`, `recomputeAllFollowUpStates`, `recomputeSlowPayers` |
+| Actions | `src/lib/actions/crm.ts` | `logPaymentFollowUpAction`, `recordPayment`, `recordPromise`, `startStageOneBatch` |
+
+## Logging a collections call
+
+<Flow caption="logPaymentFollowUp" chart={`
+sequenceDiagram
+  autonumber
+  participant P as PaymentPanel
+  participant S as logPaymentFollowUp
+  participant TX as transaction
+  participant R as recompute
+  P->>S: outcome, amount, date, chips, attachmentIds, idempotencyKey
+  S->>S: parse (retired "part" refused), assertCustomerInScope
+  S->>S: amount/date required by PAY_OUTCOMES, date not past
+  S->>S: follow_up_states row must exist, isAttemptAllowed(stage, "call")
+  S->>S: duplicate key? return the stored next step
+  S->>S: paid → allocate(openBillsFor, auto)
+  S->>TX: follow_up_attempts, calls (source_module payment_follow_up), timeline
+  S->>TX: promised → reminder (next working day after the date)
+  S->>TX: callback → reminder
+  S->>TX: paid → payment_receipts (reported) + payments lines + timeline
+  S->>TX: dispute → complaints + history, oldest open bill disputed
+  S->>TX: refused / noanswer → manual_stage_floor
+  S->>TX: closeRemindersOnEvidence(call)
+  S->>TX: audit_log followup.log
+  S->>S: bindAttachments (outside, never fails the save)
+  S->>R: recomputeFollowUpState
+  S->>S: nextStepForCustomer → update calls.next_step_*
+  S-->>P: produced, cleared, remindersClosed, nextStep
+`} />
+
+<Code file="src/lib/services/payment-followup-service.ts" symbol="PAY_OUTCOMES" collapsed />
+
+<Code file="src/lib/services/payment-followup-service.ts" symbol="logFollowUpSchema" />
+
+<Code file="src/lib/services/payment-followup-service.ts" symbol="logPaymentFollowUp" collapsed />
+
+## The stage (E3)
+
+<Code file="src/lib/engines/escalation.ts" symbol="escalationStage" collapsed />
+
+<Code file="src/lib/engines/escalation.ts" symbol="isAttemptAllowed" />
+
+<Code file="src/lib/engines/escalation.ts" symbol="isSlowPayer" />
+
+## The cadence (E7)
+
+<Code file="src/lib/engines/payment-followup.ts" symbol="planPaymentFollowUps" collapsed />
+
+<Code file="src/lib/engines/payment-followup.ts" symbol="blockingReason" />
+
+<Code file="src/lib/engines/payment-followup.ts" symbol="reportedQuiet" collapsed />
+
+`paymentCadenceFor` in `payment-service.ts` gives the Call Log's next-step engine a **date** from `nextCallOn`, pushed out by a live promise and reported money — a verdict about today (`paymentCallDue`) cannot be rolled forward.
+
+## Money is rebuilt, never incremented
+
+<Code file="src/lib/recompute.ts" symbol="recomputeBillPaid" />
+
+<Code file="src/lib/recompute.ts" symbol="recomputeOutstanding" />
+
+<Code file="src/lib/recompute.ts" symbol="recomputeFollowUpState" collapsed />
+
+## The tables
+
+<DbTable name="follow_up_states" note={{
+  stage: "1, 2 or 3 — a cache, rebuilt by recomputeFollowUpState. The row is deleted when nothing is overdue.",
+  total_overdue: "Paise, stated overdue bills only.",
+  held: "A disputed bill is holding the stage.",
+  manual_stage_floor: "Raised by Refused / Not reachable. Leaves with the row.",
+  floor_reason: "e.g. 'Refused to commit on 2026-08-12'.",
+}} />
+
+<DbTable name="follow_up_attempts" note={{
+  channel: "whatsapp or call. A confirmed payment-reminder message writes a whatsapp attempt keyed wa:<message id>.",
+  outcome: "The outcome's label, as shown.",
+  promised_amount: "Paise, on Payment promised only.",
+  idempotency_key: "Shared with the calls row, so a duplicate save finds the stored next step.",
+}} />
+
+<DbTable name="payment_receipts" only={["amount", "received_at", "mode", "reference", "instrument_date", "status", "source", "reported_by_id", "confirmed_by_id", "confirmed_at", "reject_reason", "held_by_id", "held_at", "hold_reason"]} note={{
+  amount: "Paise.",
+  received_at: "A date — when we got it.",
+  instrument_date: "The date written on a cheque, for payments.datedModes.",
+  status: "Only confirmed moves a bill.",
+  source: "collections_call is always reported, whoever records it.",
+}} />
+
+<DbTable name="payments" only={["receipt_id", "bill_id", "amount", "paid_at", "recorded_by_id", "external_ref"]} note={{
+  bill_id: "Null means money on account.",
+  amount: "Paise — this line's share of the receipt.",
+  external_ref: "idempotencyKey:billId, so a retried save cannot double-apply a line.",
+}} />
+
+<DbEnum name="receipt_status" />
+<DbEnum name="follow_up_channel" />
+
+<CapabilityGrid names={["payment.record", "payment.confirm", "whatsapp.bulk", "customer.export"]} />
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/engines/engines.test.ts` | E3 stages, floor, dispute hold, slow payer and grace; E7 cadence, reported quiet expiry, hold not expiring, post-dated cheques, paid cooling |
+| `npm run test` | `src/lib/engines/allocation.test.ts` | The four allocation instructions, on-account remainders |
+| `npm run test` | `src/lib/engines/receipt-match.test.ts` | Duplicate detection at the point of entry |
+| `npm run test:integration` | `src/lib/journeys.test.ts` | A collections call in one transaction; reported money leaves outstanding alone; confirm / reject / reverse |
+| `npm run test:integration` | `src/lib/accounts.test.ts` | The accounts desk's confirmation queue |
+
+## Changing it safely
+
+<Steps>
+<Step title="Rules go in the engines">
+A new hold reason is a branch in `blockingReason` with its sentence; a new stage rule is in `escalationStage`. Both are pure — test them in `engines.test.ts`.
+</Step>
+<Step title="A new outcome is a PAY_OUTCOMES entry first">
+Then the `logFollowUpSchema` enum, then its branch inside the transaction. Retire, never delete — history reads labels back.
+</Step>
+<Step title="Never write paid_amount">
+Write receipts and payment lines; call `recomputeBillPaid` and `recomputeOutstanding`. Every money path keys on `confirmed`.
+</Step>
+<Step title="Join receipts when summing payments">
+A money figure from `payments` must join `payment_receipts` and filter `status = 'confirmed'`.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| `collectedThisMonth` / `collectedThisWeek` sum `payments` with no receipt-status join (reported, held, rejected included) | `payment-service.ts` `collectionsMetrics` |
+| `collectionsMetrics` outstanding and due-this-month include `unstated` bills | `payment-service.ts` `collectionsMetrics` |
+| The `paid` outcome's `consequence` text claims outstanding updates; it does not until confirmation | `payment-followup-service.ts` `PAY_OUTCOMES` |
+| Slow-payer counts payment lines, not bills; lookback is `30 × months` days | `recompute.ts` `recomputeSlowPayers`; `escalation.ts` `isSlowPayer` |
+| `followup.log` audit row has no `actorRole` / `actorApp` | `payment-followup-service.ts` |
+| Floor-raising outcomes are unreachable at stage 1 because `isAttemptAllowed` refuses every outcome there | `payment-followup-service.ts` |
+| `getScope(user)` without the app name | `app/crm/payments/page.tsx` |

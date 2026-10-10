@@ -1,0 +1,103 @@
+The **EOD Report** is your day in figures — calls, orders, payments, reminders, WhatsApp — worked out from what you logged, plus a ready-made message to paste into the team's WhatsApp group. At the end of the day you **submit** it. You can also look back at yesterday, the last seven days, this month, last month or any range you choose. A manager additionally sees the whole team side by side.
+
+<Callout kind="note">
+Nothing on this screen is typed in. Every figure is derived from the calls, orders, payments and reminders you recorded — so a thin report means thin logging, not a thin day.
+</Callout>
+
+## The screen at a glance
+
+<Wireframe url="/crm/eod" nav={["#Targets & reporting", "Monthly Targets", "My Performance", "EOD Report"]} active="EOD Report" caption="EOD report — today, before submitting">
+  <WfBar>
+    <WfTitle sub="Your book · Derived from what you logged">EOD report</WfTitle>
+    <WfSpacer />
+    <WfTabs items={["Today", "Yesterday", "Last 7 days", "This month", "Last month", "Custom range"]} active="Today" />
+    <Hotspot n={1} />
+  </WfBar>
+  <WfCard tone="warn" title="Due today">
+    <WfText>2 reminders due today are still open. Close or carry them forward before finalising.</WfText>
+    <WfText muted>Customer A — call after stock-take · Customer B — confirm cheque date</WfText>
+    <Hotspot n={2} />
+  </WfCard>
+  <WfCard title="Today's numbers">
+    <WfTable columns={["", ""]} rows={[
+      ["Customers called from the queue", "31"],
+      ["Calls attempted", "38"],
+      ["Connected", "29"],
+      ["Missed", "9"],
+      [<span key="a">Orders <Hotspot n={3} /></span>, "5 taken · 3 approved · ₹1,42,000"],
+      ["Promises obtained", "2 · ₹60,000"],
+      ["Monthly target", "₹6.1L of ₹9L (68%)"],
+    ]} />
+  </WfCard>
+  <WfCard title="WhatsApp message">
+    <WfBlock label="📊 EOD — your name · date · calls · orders · promises · month" h={70} />
+    <WfBar><WfButton>Copy</WfButton><WfSpacer /><WfButton primary>Submit EOD</WfButton><Hotspot n={4} /></WfBar>
+  </WfCard>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Period.</b> Today is the live report you submit. Every other choice is a <i>historical view</i> of the same figures over that span — there is nothing to submit for it.</span>,
+  <span key="2"><b>Due today.</b> Reminders due today that are still open. They block submitting. Make the call, carry the reminder forward, or — if you are allowed — close it.</span>,
+  <span key="3"><b>Orders.</b> How many you <b>took</b>, how many accounts have <b>approved</b>, and the approved value. Only approved orders carry money.</span>,
+  <span key="4"><b>Submit EOD.</b> Saves today's report. Submitting again replaces today's report.</span>,
+]} />
+
+## Submitting at the end of the day
+
+<Steps>
+<Step title="Clear the reminders due today">
+Each one must be called, carried forward to another day, or closed. Until then the button reads *Close or carry forward the reminders due today first*.
+</Step>
+<Step title="Read the figures">
+If something looks low, check that every call was logged — the report can only count what is recorded.
+</Step>
+<Step title="Copy the WhatsApp message">
+Press **Copy** and paste it into the team group. The message is built for WhatsApp: short lines, no tables.
+</Step>
+<Step title="Press Submit EOD">
+The report is saved with the time. If you submit again later the same day it replaces the earlier one (*Resubmit EOD*).
+</Step>
+</Steps>
+
+If you forget, a report is generated for you overnight — a day with no activity still produces a report, so nobody has to wonder whether you worked.
+
+## What each figure means
+
+| Figure | What it counts |
+|---|---|
+| **Customers called from the queue** | Different customers you called from your Call Log. |
+| **Calls attempted** | Outbound calls you logged. Inbound calls and orders logged without a call are **not** counted here. |
+| **Connected** | Outbound calls with any outcome other than no answer. |
+| **Inbound received** | Calls the customer made to you. |
+| **Missed** | Outbound calls logged as no answer. |
+| **Orders** | Orders you took (not cancelled), how many accounts approved, and the approved value. |
+| **Orders received without a call** | Orders you logged with no call behind them — real work, kept separate. |
+| **Payment follow-ups** | Follow-up attempts you made on money owed. |
+| **Promises obtained** | Payment promises you got, and their total. |
+| **Payments confirmed** | Payment amounts you recorded, by the payment date. |
+| **Reminders closed / created / carried forward** | Your reminders that were completed, the ones you created, and the ones moved to a later day. |
+| **Complaints logged** | Complaints you raised. |
+| **WhatsApp sent** | Messages confirmed as sent. A message copied and never confirmed does not count. |
+| **Monthly target** | Approved order value this month against the customer targets on accounts you own. |
+
+## The team roll-up
+
+A manager sees a table of the team for the same period — calls, connected, missed, orders, order value and target % per person — and on today's view a **Team roll-up** message to copy. Somebody who has not logged anything still appears.
+
+## Questions people ask
+
+<Faq q="I made 40 calls but it says 32 attempted.">
+Only outbound calls you logged count. Inbound calls are counted separately, and orders received without a call are on their own line.
+</Faq>
+<Faq q="My orders show a value of zero.">
+Value is counted only once accounts approve an order. The orders you took are still counted.
+</Faq>
+<Faq q="Why can I not submit?">
+A reminder due today is still open. Call the customer, carry it forward, or close it.
+</Faq>
+<Faq q="Can I submit for yesterday?">
+No — only today is submitted. Other periods are a historical view. Yesterday's report was generated overnight if you did not submit it.
+</Faq>
+<Faq q="Does the EOD compare me with last week?">
+No. The comparison with the period before is on the [Dashboard](/docs/crm/dashboard), which reads the same figures.
+</Faq>

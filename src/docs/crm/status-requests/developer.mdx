@@ -1,0 +1,160 @@
+Close/Reopen is a **flag on the customer row**, raised by two request actions and cleared by two decide actions, with one unscoped read (`listCustomerStatusRequests`) rendering both directions as one queue. There is no requests table: the pending state, the reason, who asked and when all live on `customers`. The status the decision writes, `deactivated`, is the one value of `customer_status` that the inactivity engine reads but never writes.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Module | `src/lib/modules.ts` | `crm.deactivations`, written longhand — the **key** stays `crm.deactivations`, the **route** is `/crm/status-requests` |
+| Old route | `next.config.ts` | Permanent redirect `/crm/deactivations` → `/crm/status-requests` |
+| Route guard | `src/app/crm/status-requests/layout.tsx` | `requireModule(…, "crm.deactivations")` then `canFor(user, "customer.deactivate")` |
+| Page (server) | `src/app/crm/status-requests/page.tsx` | `listCustomerStatusRequests()` + `today()`; unscoped by design |
+| Screen (client) | `src/app/crm/status-requests/requests-screen.tsx` | Metric strip, the table, `ConfirmDialog` wording (`confirmTitle`, `confirmBody`) |
+| Sidebar | `src/components/shell/nav.ts`, `src/app/crm/layout.tsx` | The *Close/Reopen* item, `managerOnly: true`, filtered on `customer.deactivate`; badge `statusRequests` |
+| Reads | `src/lib/queries.ts` | `listCustomerStatusRequests`, `customerStatusRequestCount` (the badge) |
+| Writes | `src/lib/actions/crm.ts` | `requestDeactivation`, `decideDeactivation`, `requestReactivation`, `decideReactivation` |
+| Request entry points | `src/app/crm/call-log/queue-screen.tsx`, `src/components/customers/customers-screen.tsx` | Row-menu and bulk-bar request dialogs; manager decide items on the customer list |
+| Derived status | `src/lib/engines/inactivity.ts`, `src/lib/recompute.ts` | `evaluateInactivity` skips `deactivated`; `recomputeInactivity` only flips `active` ↔ `inactive` |
+| Sheet guard | `src/lib/services/party-projection-service.ts` | `statusDecidedAt` set → the party sheet writes no status; a disagreement becomes a `sync_conflicts` row |
+
+## A decision, end to end
+
+<Flow caption="Approve on /crm/status-requests" chart={`
+sequenceDiagram
+  autonumber
+  participant UI as requests-screen.tsx
+  participant A as actions/crm.ts
+  participant DB as Postgres
+  participant R as recompute.ts
+  UI->>A: decideDeactivation(customerId, true)
+  A->>A: requireCapability("customer.deactivate") — returns the authorising hat
+  A->>DB: select the customer (404 if gone)
+  A->>A: approve needs a reason (argument or the stored one)
+  A->>DB: update customers — status deactivated, deactivated_at/by,<br/>reason, deactivation_requested false, status_decided_at
+  A->>DB: insert audit_log — action customer.deactivate, actor_role, actor_app
+  A->>R: recomputeInactivity(customerId) — clears the watch row
+  A->>A: refreshAll()
+  A-->>UI: ok "Customer deactivated"
+  UI->>UI: router.refresh()
+`} />
+
+## The four actions
+
+### Asking to close
+
+`requestDeactivation` takes ids and a reason. It resolves scope and — before writing — selects the ids through `scopedToUsers(scopedUserIds(ctx.scope))`; any shortfall refuses the whole call with `not_permitted`. It then stamps the flag, the reason, `deactivation_requested_by_id` and `deactivation_requested_at`, and inserts a `notifications` row per user whose `users.role` is `manager` or `admin`.
+
+<Code file="src/lib/actions/crm.ts" symbol="requestDeactivation" collapsed />
+
+### Deciding a close
+
+Approval sets `status_decided_at`, which is what keeps the party sheet's *Deactive* column from restating the status later. Rejection clears the flag **and** `deactivation_reason`.
+
+<Code file="src/lib/actions/crm.ts" symbol="decideDeactivation" collapsed />
+
+### Asking to reopen
+
+Filters the selection to rows already `deactivated` and flags only those; returns `conflict` if none qualify. Notifies through `notifyUsers` with `href: "/crm/status-requests"`.
+
+<Code file="src/lib/actions/crm.ts" symbol="requestReactivation" collapsed />
+
+### Deciding a reopen
+
+Approval sets `active`, nulls every deactivation column and the reactivation request, and **also** sets `status_decided_at` — clearing `deactivation_reason` destroyed the only evidence the projection used to read, so without the mark the next sync re-closed the account. `recomputeInactivity` then moves a long-quiet customer straight to `inactive`.
+
+<Code file="src/lib/actions/crm.ts" symbol="decideReactivation" collapsed />
+
+## The read
+
+One `union all` of the two flags, oldest first with undated (pre-asker-column) requests last. It is **not scoped**: a request is work for whoever decides it, and narrowing to the decider's book would hide most of them. It is not aliased because `ASSIGNED_TO_SQL` names `customers` directly.
+
+<Code file="src/lib/queries.ts" symbol="listCustomerStatusRequests" collapsed />
+
+The sidebar badge asks the same capability the route does, so a telecaller never gets a count for a screen they are refused:
+
+<Code file="src/lib/queries.ts" symbol="customerStatusRequestCount" />
+
+## The confirmation says what will happen
+
+`confirmBody` is where the outstanding balance and a recent order (inside 30 days) are surfaced before approval:
+
+<Code file="src/app/crm/status-requests/requests-screen.tsx" symbol="confirmBody" />
+
+## Deactivated is never derived
+
+The engine treats `deactivated` as out of scope; `recomputeInactivity` only pushes `active` → `inactive` and `inactive` → `active`.
+
+<Code file="src/lib/engines/inactivity.ts" symbol="evaluateInactivity" collapsed />
+
+<Code file="src/lib/recompute.ts" symbol="recomputeInactivity" collapsed />
+
+## Data
+
+<DbTable name="customers" only={["status", "deactivation_requested", "deactivation_reason", "deactivation_requested_by_id", "deactivation_requested_at", "deactivated_at", "deactivated_by_id", "status_decided_at", "reactivation_requested", "reactivation_reason", "reactivation_requested_by_id", "reactivation_requested_at"]} note={{
+  status: "Only a decide action writes 'deactivated'; recomputeInactivity owns active/inactive.",
+  deactivation_requested: "The pending close. Cleared by either decision.",
+  deactivation_reason: "The asker's reason while pending; the decision's reason once deactivated. Cleared on reject and on reopen.",
+  deactivation_requested_by_id: "Who asked. Null on requests raised before the column existed — the screen says 'Not recorded'.",
+  deactivation_requested_at: "When. Sort key for the queue (Asia/Kolkata date).",
+  deactivated_at: "Set on approve; nulled on reopen.",
+  deactivated_by_id: "The decider. Nulled on reopen — the audit log keeps the history.",
+  status_decided_at: "A person ruled on the status; the party projection stops writing it, in either direction.",
+  reactivation_requested: "The pending reopen. Only ever set on a deactivated row.",
+  reactivation_reason: "Cleared by either decision.",
+}} />
+
+<DbEnum name="customer_status" />
+
+The audit actions written are `customer.deactivate`, `customer.deactivation_rejected`, `customer.reactivate` and `customer.reactivation_rejected`, each with `actor_role` / `actor_app` from the hat `requireCapability` returned.
+
+## Access
+
+- **Module:** <ModuleRef k="crm.deactivations" /> — never rename the key; `app_module_access` rows join on it.
+- **Capability:**
+
+<CapabilityGrid names={["customer.deactivate"]} />
+
+- The **request** actions check no capability — any signed-in user can ask — but `requestDeactivation` enforces scope. The **decide** actions call `requireCapability("customer.deactivate")` themselves; the layout and sidebar only mirror it.
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/engines/engines.test.ts` — `E4 inactivity` | "a deactivated customer is never flagged" |
+| `npm run test:integration` | `src/lib/journeys.test.ts` — `Journey 5 - a customer goes quiet and gets a decision` | Deactivation is a decision no recompute reverses; a telecaller cannot ask for somebody else's customer; one customer outside the book refuses the whole request; a manager reaches the team's book; the way back is requested then decided; a rejected request leaves the customer where they were; a non-deactivated customer cannot be asked back; coming back does not fake activity |
+| `npm run test:integration` | `src/lib/journeys.test.ts` — `a status somebody decided survives the sheet` | A reactivated account is not re-closed by the next party sync |
+| `npm run test` | `src/lib/capability-labels.test.ts` | `customer.deactivate` is labelled and appears only for the hats that hold it |
+
+## Changing it safely
+
+<Steps>
+<Step title="Keep 'deactivated' out of every engine">
+No recompute, sync or job may write or clear `deactivated`. If a new automatic path needs to close accounts, route it through a request a person decides.
+</Step>
+<Step title="Set status_decided_at on every human status write">
+Any new action that changes a customer's status must stamp it, or the party projection will overwrite the decision on the next pass.
+</Step>
+<Step title="Gate deciding on the capability, never on isManager">
+The route, the sidebar, the badge and the actions all ask `customer.deactivate`. A screen that draws decide buttons from `isManager` will offer buttons the server refuses.
+</Step>
+<Step title="Re-run inactivity after a decision">
+Both decide actions call `recomputeInactivity(customerId)`; keep that, or a reopened quiet customer reads as active and a closed one keeps its watch row.
+</Step>
+<Step title="Add a Journey 5 test">
+Every behaviour on this page has an integration test; a new rule without one is a rule nobody can tell has broken.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| No notification to the asker on approve or reject | `actions/crm.ts` `decideDeactivation`, `decideReactivation` |
+| Close-request notification `href` is `/crm/customers`, not `/crm/status-requests` | `actions/crm.ts:1088` |
+| Requests notify `users.role in (manager, admin)` — widest level anywhere — not `customer.deactivate` holders | `actions/crm.ts:1076`, `:1227` |
+| `requestDeactivation` inserts `notifications` directly; `requestReactivation` uses `notifyUsers` — two paths | `actions/crm.ts` |
+| Request dialogs say the reason "is kept on the record either way"; rejecting a close nulls it | `queue-screen.tsx:777`, `customers-screen.tsx:1795`, `actions/crm.ts:1137` |
+| `requestReactivation` has no scope check (its sibling does) | `actions/crm.ts:1192` |
+| Neither request action refuses a duplicate; a second ask overwrites reason, asker and date | `actions/crm.ts` `requestDeactivation` |
+| `requestDeactivation` does not refuse an already-deactivated customer | `actions/crm.ts` `requestDeactivation` |
+| Customer-list decide items gate on `isManager`; on Accounts that is `isManager(user)`, so an Accounts manager is offered decisions the server refuses | `customers-screen.tsx:1302`, `:1332`; `src/app/accounts/customers/page.tsx:93` |
+| Stale comment: "there is no separate queue for it" | `customers-screen.tsx:1297` |

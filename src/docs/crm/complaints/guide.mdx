@@ -1,0 +1,256 @@
+The Complaints screen is where every complaint a customer has raised waits until somebody has dealt with it. You can raise one **in the middle of a call**, from a **customer's record**, or straight from this screen — all three write the same kind of record, with the same deadline and the same history. Whoever resolves it writes down what was done, and that note is what the customer record shows afterwards.
+
+<Callout kind="live">
+The limits on this page — how many photographs, how long before a complaint is overdue — are the settings your CRM is using right now, read live.
+</Callout>
+
+## The screen at a glance
+
+<Wireframe url="/crm/complaints" nav={["Dashboard", "#Daily calling", "Call Log", "Reminders", "#Customer records", "Customers", "Complaints", "Price lists"]} active="Complaints" caption="The Complaints screen, for a manager viewing the team">
+  <WfBar>
+    <WfTitle sub="Team · Logged at the point they are raised, routed to a resolver, visible on the customer record.">Complaints</WfTitle>
+    <WfSpacer />
+    <WfButton primary>Log complaint</WfButton>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfBar>
+    <WfCard title="Open"><WfText>4</WfText></WfCard>
+    <WfCard title="In progress"><WfText>3</WfText></WfCard>
+    <WfCard title="Resolved"><WfText>21</WfText></WfCard>
+    <WfCard title="Oldest open"><WfText>9 days</WfText></WfCard>
+    <WfCard title="Customer told"><WfText>18/21</WfText></WfCard>
+    <Hotspot n={2} />
+  </WfBar>
+  <WfCard>
+    <WfBar><WfText>Open complaints by age</WfText><WfPill tone="success">2 under 3 days</WfPill><WfPill tone="warn">3 3 to 7 days</WfPill><WfPill tone="danger">2 over 7 days</WfPill><WfSpacer /><WfText muted>Oldest open: Customer A · 9 days</WfText><Hotspot n={3} /></WfBar>
+  </WfCard>
+  <WfTabs items={["Open 4", "In progress 3", "Resolved 21", "All 28"]} active="Open 4" />
+  <Hotspot n={4} />
+  <WfTable
+    highlight={0}
+    columns={["Customer", "Category", "Description", "Logged by", "Logged", "Assigned to", "Status", "Age"]}
+    rows={[
+      [<b key="a">Customer A</b>, "Leakage / Packaging", "Two drums dented on arrival…", "a telecaller", "1 Oct", "Dispatch", <WfPill key="b" tone="danger">Open</WfPill>, <span key="c" className="text-danger">9 days <Hotspot n={5} /></span>],
+      [<b key="d">Customer B</b>, "Billing Issue", "Bill shows the old rate…", "a telecaller", "7 Oct", "Accounts", <WfPill key="e" tone="danger">Open</WfPill>, "3 days"],
+      [<b key="f">Customer C</b>, "Short Quantity", "One can short in the box…", "a manager", "9 Oct", "Operations", <WfPill key="g" tone="danger">Open</WfPill>, "1 day"],
+    ]}
+  />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Log complaint.</b> Raise a complaint without a call — you pick the customer in the dialog.</span>,
+  <span key="2"><b>Figures.</b> How many are open, being worked and resolved, the oldest one still open, and how many resolved complaints the customer was actually told about.</span>,
+  <span key="3"><b>Age strip.</b> Managers looking at the team see the open complaints split by age. The red group is the one to work first.</span>,
+  <span key="4"><b>Tabs.</b> <i>Open</i> is new and untouched; <i>In progress</i> includes anything waiting on the customer; <i>Resolved</i> includes closed and rejected; <i>All</i> is everything.</span>,
+  <span key="5"><b>Age.</b> Days since it was raised. Shown in red once the complaint is past its resolution deadline.</span>,
+]} />
+
+The list is sorted by **deadline**, soonest first, so the complaint most at risk of going overdue is at the top. You see complaints on customers in your own book; a manager sees the team's.
+
+## Raising a complaint
+
+There are three doors, and they ask nearly the same questions.
+
+### From a call
+
+When the customer complains while you are on the phone, choose the outcome **Complaint** in the call panel. The panel then asks:
+
+| Field | What to put in it |
+|---|---|
+| **What they are asking for** | A replacement, a credit note, a technical visit, a sales visit, a transport check, an accounts check, or management intervention. **This decides which desk the complaint goes to** — see below. Required. |
+| **Complaint category** | What kind of problem it is. |
+| **Complaint description** | The complaint in the customer's own words. If you leave it empty, your call notes are used instead — but one of the two must say something. |
+| **Upload picture** | Photographs of the damaged or short goods, if the customer sent any. |
+| **Request CN** | Yes if the customer asked for a credit note. Nothing else is asked. |
+
+Saving the call saves the complaint in the same go. If the customer **already has an open complaint in the same category**, nothing new is raised: the call is added to that complaint's history as *Raised again on a call: …*, and if they asked for a credit note this time, the request is added to it. The confirmation tells you which happened.
+
+<Callout kind="note">
+A complaint raised on a call always starts at **Normal** priority. If it is more urgent than that, open it on the Complaints screen afterwards and raise the priority — the deadline moves with it.
+</Callout>
+
+### From the Complaints screen or a customer's record
+
+<Wireframe url="/crm/complaints" caption="The Log complaint dialog">
+  <WfPanel title="Log complaint">
+    <WfField label="Company / Customer Name"><WfInput placeholder="Search by company, customer name or mobile number…" wide /><Hotspot n={1} /></WfField>
+    <WfField label="Mobile number"><WfInput placeholder="Filled from the customer" wide /></WfField>
+    <WfField label="Category"><WfBar><WfButton>Product Quality ▾</WfButton><Hotspot n={2} /></WfBar></WfField>
+    <WfField label="Priority"><WfBar><WfButton>Normal ▾</WfButton><WfText muted>Urgent and Critical shorten the deadline</WfText><Hotspot n={3} /></WfBar></WfField>
+    <WfField label="Complaint description"><WfBlock h={34} label="Describe the complaint in detail — the microphone works in any language" /></WfField>
+    <WfField label="Upload picture"><WfBar><WfButton>Choose files</WfButton><WfText muted>JPG, JPEG or PNG - photos of the damaged or short goods, if any.</WfText><Hotspot n={4} /></WfBar></WfField>
+    <WfField label="Request CN"><WfBar><WfPill tone="brand">No</WfPill><WfPill>Yes</WfPill><Hotspot n={5} /></WfBar></WfField>
+    <WfBar><WfSpacer /><WfButton>Cancel</WfButton><WfButton primary>Save</WfButton></WfBar>
+  </WfPanel>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Customer.</b> Type two letters or more and pick from the list. On a customer's record this is filled in for you and cannot be changed — you are already on that customer.</span>,
+  <span key="2"><b>Category.</b> The list a manager keeps in Settings.</span>,
+  <span key="3"><b>Priority.</b> Normal, Urgent or Critical. It sets the deadline.</span>,
+  <span key="4"><b>Photographs.</b> Add them one at a time or several at once. Each has a × to take it off again.</span>,
+  <span key="5"><b>Request CN.</b> Did the customer ask for a credit note? Accounts take it from there.</span>,
+]} />
+
+<Steps>
+<Step title="Press Log complaint">
+On the Complaints screen it is top right. On a customer's record it is the **Complaint** button in the header.
+</Step>
+<Step title="Pick the customer">
+Search by company, name or mobile number. The mobile number fills itself in from the customer and goes on the complaint, so whoever resolves it knows which number to ring back.
+</Step>
+<Step title="Choose the category and the priority">
+Normal is right for almost everything. Choose **Urgent** or **Critical** only when the customer is genuinely held up — a line stopped, an order unusable.
+</Step>
+<Step title="Describe it in the customer's words">
+Write what the customer said, not your summary of it. The description is required — *Describe the complaint in the customer's words* appears if you leave it empty.
+</Step>
+<Step title="Add photographs, and answer Request CN">
+Both are optional. Then press **Save**. The message says *Complaint logged*, or *Complaint logged — 2 of 3 files attached* if a picture did not make it.
+</Step>
+</Steps>
+
+## Categories
+
+The categories you can pick from are a list a manager keeps on the Settings screen, so the same list appears in the call panel, the Complaints dialog and the customer record. As shipped it is:
+
+| Category | Use it for |
+|---|---|
+| Product Quality | The product itself is wrong — drying, finish, consistency |
+| Short Quantity | Fewer cans or less in the can than billed |
+| Leakage / Packaging | Leaking, dented or broken containers |
+| Wrong Product | Goods arrived that are not what was ordered |
+| Delivery Delay | It came late |
+| Price Issue | The rate or discount is disputed |
+| Billing Issue | The bill is wrong |
+| Transport Issue | A problem with the transporter or the delivery itself |
+| Sales Service | A complaint about how they were served by our people |
+| Other | Anything else |
+
+## Photographs
+
+- You can attach up to <Setting k="attachments.maxPerComplaint" /> pictures to one complaint. The picker counts them — *3 of 6 pictures* — and stops at the limit, telling you how many it left off.
+- Only **JPG and PNG** photographs are offered. Each file can be up to <Setting k="attachments.maxSizeMb" /> MB.
+- A file is checked by **what it actually is**, not what it is called. A document renamed *photo.jpg* is refused.
+- Choosing the same picture twice adds it once.
+- A picture that fails to upload never loses the complaint. The complaint is saved and the message says how many files made it.
+
+Anybody who can see the complaint can open its photographs: they are thumbnails in the complaint's drawer, and clicking one opens it full size.
+
+## Asking for a credit note
+
+**Request CN** is a yes-or-no question, and that is all you answer. You do not need to find the bill or work out an amount — accounts hold the ledger, and they pick up the bill and the amount from the request. When you choose Yes, the dialog says *Accounts take it from here - they pick up the bill and the amount.*
+
+In the complaint's drawer the **Credit note** line then reads *Requested*, and later shows how far it has got (*Under review*, *Approved*, *Rejected*, *Issued*), the amount and the credit note's reference once accounts have issued one. If nobody asked, it reads *Not asked for*.
+
+## Where a complaint goes
+
+On a call, **what the customer is asking for** decides the desk:
+
+| They are asking for | It goes to |
+|---|---|
+| Replacement | Dispatch |
+| Credit note | Accounts |
+| Technical visit | Technical |
+| Sales visit | Sales |
+| Transport check | Logistics |
+| Accounts check | Accounts |
+| Management intervention | Management |
+
+A complaint raised from the Complaints dialog or a customer's record does not ask this, so it starts with **Operations**. The desk is shown in the **Assigned to** column. You can move a complaint to a different desk with **Reassign** (see below).
+
+## Working a complaint
+
+Click any row to open it.
+
+<Wireframe url="/crm/complaints" caption="A complaint, opened">
+  <WfPanel title="Customer A" side>
+    <WfBar><WfPill tone="danger">Open</WfPill><WfPill tone="danger">SLA breached</WfPill><WfButton>Normal ▾</WfButton><WfText muted>Leakage / Packaging · open 9 days</WfText><Hotspot n={1} /></WfBar>
+    <WfField label="Complaint"><WfText muted>Raised by · Raised · Category · Mobile · With · Goods · Credit note</WfText><Hotspot n={2} /></WfField>
+    <WfField label="What the customer reported"><WfText>Two drums dented on arrival, one leaking.</WfText></WfField>
+    <WfField label="Photographs · 2"><WfBar><WfBlock h={28} label="photo" /><WfBlock h={28} label="photo" /></WfBar></WfField>
+    <WfField label="Status history"><WfText muted>Open · Logged on a call by a telecaller</WfText><Hotspot n={3} /></WfField>
+    <WfField label="Resolution notes · required to close"><WfBlock h={34} label="What was done to close this" /></WfField>
+    <WfBar><WfText>☐ The customer has been told the outcome</WfText><Hotspot n={4} /></WfBar>
+    <WfBar><WfButton primary>Mark resolved</WfButton><WfButton>Reassign</WfButton><Hotspot n={5} /></WfBar>
+  </WfPanel>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Status, deadline and priority.</b> The deadline badge shows the date and time it is due, or <i>SLA breached</i>. The priority can be changed here while the complaint is open.</span>,
+  <span key="2"><b>The details.</b> Who raised it and when, the number the customer rang from, which desk has it, and where any credit note request has got to. A dash means nothing was recorded.</span>,
+  <span key="3"><b>Status history.</b> Every change, with who made it and when — raised, raised again on a call, reassigned, priority changed, resolved.</span>,
+  <span key="4"><b>Customer told.</b> Tick it once you have rung the customer with the outcome. The screen counts how many resolved complaints were.</span>,
+  <span key="5"><b>Resolve or reassign.</b> Resolving needs the right to resolve complaints — managers hold it.</span>,
+]} />
+
+### Changing the priority
+
+While a complaint is open, the priority is a drop-down at the top of the drawer. Changing it **moves the deadline**, counted from when the complaint was first raised — so a complaint three days old that you mark Critical shows as overdue straight away. That is deliberate: the customer has already been waiting three days. The change is written into the status history.
+
+### Reassigning
+
+Press **Reassign**, pick a desk (Operations, Accounts, Dispatch, Quality or Management) and confirm. The complaint moves to **In progress** and the history says who moved it where.
+
+### Resolving
+
+<Steps>
+<Step title="Write what was done">
+The resolution notes are required. Without them you see *Write what was done before closing - this is what the customer record will show.*
+</Step>
+<Step title="Tick whether the customer has been told">
+Be honest — an unticked box shows on the resolved complaint as *The customer has NOT been told the outcome.*
+</Step>
+<Step title="Press Mark resolved">
+The complaint moves to the Resolved tab. Its drawer then shows **How it was resolved**: your note, when, and whether the customer was told.
+</Step>
+</Steps>
+
+If **Mark resolved** is greyed out, hovering over it says why: *Closing a complaint needs the right to resolve complaints*, or *Already resolved*.
+
+## Statuses
+
+| Status | Tab | What it means |
+|---|---|---|
+| <Pill tone="danger">Open</Pill> | Open | Raised, nobody has moved it yet |
+| <Pill tone="warn">In progress</Pill> | In progress | Somebody is working it — reassigning sets this |
+| <Pill tone="warn">Awaiting customer</Pill> | In progress | Waiting for something from the customer |
+| <Pill tone="success">Resolved</Pill> | Resolved | Closed with a resolution note |
+| <Pill tone="success">Closed</Pill> | Resolved | Finished |
+| <Pill tone="success">Rejected</Pill> | Resolved | Not upheld |
+
+## Deadlines
+
+Every complaint gets a resolution deadline the moment it is raised, set by its priority:
+
+<SettingMap k="complaints.slaHours" keyHeading="Priority" valueHeading="Hours to resolve" unit="hours" labels={{ low: "Low (no longer offered)", medium: "Normal", high: "Urgent", critical: "Critical" }} />
+
+Once a complaint passes its deadline unresolved, its age turns red on the list, the drawer says *SLA breached*, and managers get a notification: *Complaint past its SLA*. A complaint still open after <Setting k="dashboard.complaintUnresolvedFlagDays" /> days is also counted on the manager's dashboard red-flag strip.
+
+## On the customer record
+
+Every complaint appears on the customer's record under its own tab. While a complaint is open, the record's alert line says so — *Open … complaint - mention it before anything else.* — and the call panel shows **Open complaint** at the top, so whoever rings the customer next raises it first.
+
+## Questions people ask
+
+<Faq q="I logged a complaint on a call, but no new row appeared.">
+The customer already had an open complaint in the same category. Your call was added to that one's history instead of creating a duplicate. Open it and look at the status history.
+</Faq>
+<Faq q="Can I log a complaint without a call?">
+Yes — **Log complaint** on this screen, or **Complaint** on the customer's record. Neither counts as a call.
+</Faq>
+<Faq q="My photograph did not attach.">
+Check it is a JPG or PNG under <Setting k="attachments.maxSizeMb" /> MB, and that you have not reached the limit of <Setting k="attachments.maxPerComplaint" />. The complaint itself is always saved.
+</Faq>
+<Faq q="Do I need to know which bill the credit note is against?">
+No. Answer Yes to Request CN and accounts find the bill and the amount.
+</Faq>
+<Faq q="Why can't I press Mark resolved?">
+Resolving a complaint is a manager's decision. Ask your manager, or reassign the complaint to the desk that should deal with it.
+</Faq>
+<Faq q="The category I need is not in the list.">
+Ask a manager — the list is on the Settings screen and can be changed without waiting for a release. Until then, choose **Other** and describe it.
+</Faq>
+<Faq q="I made it Critical and it immediately said SLA breached.">
+The deadline is counted from when the complaint was raised, not from when you changed the priority. If it has already been open longer than the Critical deadline, it is overdue — which is true.
+</Faq>

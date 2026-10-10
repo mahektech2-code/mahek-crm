@@ -1,0 +1,229 @@
+Scheduled work in MahekOne has no in-process scheduler. **The droplet's crontab** runs `deploy/sheet-sync.sh`, which calls **one HTTP endpoint**, `GET /api/sheets/sync?mode=…`, with a bearer `CRON_SECRET`. The route maps the mode to a **job name** and runs it through `runJob` in `src/lib/jobs.ts`. Every job writes a `job_runs` row; every sheet read additionally writes a `sheet_sync_runs` row and is guarded so only one run per source is in flight. The same jobs run from the Admin Console and from `npm run jobs -- <name>`.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Google client | `src/lib/sheets.ts` | Service-account JWT → read-only token, `readTab`, `listTabs`, `sheetsConfigured` |
+| Sync core | `src/lib/services/sheet-sync-core.ts` | `runSync` (one run per source, run row, stale-run rule), `hashRow`, `readWindows`, `watermark`, `SyncAlreadyRunningError` |
+| Order Details, Payment Status | `src/lib/services/sheet-sync-service.ts` | `syncOrderSheet`, `syncPaymentSheet` → `sheet_order_rows`, `sheet_payment_rows` |
+| Taken Order | `src/lib/services/taken-order-sync-service.ts`, `src/lib/taken-order-parse.ts` | → `sheet_taken_order_rows`, then `recomputeOrderSystemHolds` |
+| Sales Party | `src/lib/services/party-sync-service.ts`, `party-projection-service.ts` | → `sheet_party_rows`, `projectParties` |
+| Projection | `src/lib/services/sheet-projection-service.ts` | `projectSheet` → `projectCustomers`, `projectOrders`, `projectBillsFromOrders` / `projectBills`; `revertSheetSettledBills` |
+| Field activity | `src/lib/services/field-activity-sync-service.ts`, `field-activity-projection-service.ts` | → `sheet_field_activity_rows`, timeline events |
+| EMP 2.0 shop master | `src/lib/services/customer-master-sync-service.ts`, `customer-master-projection-service.ts` | → `sheet_customer_master_rows`, `projectCustomerMaster` (by hand only) |
+| Employees | `src/lib/services/employee-sync-service.ts`, `src/lib/hr-parse.ts` | → `employees` (full compare), via `/api/hrms/sync` or the open HRMS screen |
+| Endpoint | `src/app/api/sheets/sync/route.ts` | `JOBS` mode map, auth, 409 on a running source |
+| Jobs | `src/lib/jobs.ts`, `src/lib/mbos-jobs.ts` | `runJob`, `runNightly`, `runHourly`, `runDayBoundary`, every named job |
+| CLI | `scripts/run-job.ts`, `src/lib/job-args.ts` | `npm run jobs -- <name> [--owner=… --bills --dry-run …]` |
+| Callers | `deploy/sheet-sync.sh`, `scripts/sheet-sync-trigger.gs`, `scripts/field-activity-sync-trigger.gs`, `.github/workflows/sheet-sync*.yml` | Who hits the endpoint |
+| Console | `src/app/admin/sheets/`, `src/app/admin/jobs/page.tsx`, `triggerJob` in `src/lib/actions/crm.ts` | Run by hand |
+
+## The endpoint
+
+<Code file="src/app/api/sheets/sync/route.ts" symbol="JOBS" />
+
+| Response | Meaning |
+|---|---|
+| 503 | `CRON_SECRET` is not set — the endpoint is closed |
+| 401 | Wrong or missing bearer token |
+| 400 | Unknown `mode`; the body lists the valid ones |
+| 200 | `{ ok: true, job, recordsAffected, detail }` — for multi-step jobs, the **first** step's result |
+| 409 | `SyncAlreadyRunningError` — another run of that source started less than ten minutes ago. Not a failure; callers log and move on |
+| 500 | The job threw; `error` is the message |
+
+`maxDuration` is 300 seconds; callers use `curl --max-time 310`. Query options pass through to `runJob`: `owner` (who projected rows are created as — required by `project`), `bills=1` (project bills from the Payment Status tab instead of Order Details), `leads=1`, `reassign=1`.
+
+## One cycle
+
+<Flow caption="sheet-sync.sh cycle (every :07 and :37 UTC)" chart={`
+sequenceDiagram
+  autonumber
+  participant Cr as crontab
+  participant Sh as sheet-sync.sh
+  participant R as /api/sheets/sync
+  participant J as runJob
+  participant C as runSync
+  participant G as Google Sheets
+  participant DB as Postgres
+  Cr->>Sh: cycle
+  loop append, taken, payments, parties
+    Sh->>R: GET ?mode=m (Bearer CRON_SECRET)
+    R->>J: runJob(name)
+    J->>C: runSync(source, mode)
+    C->>DB: running row for this source in the last 10 min?
+    alt yes
+      C-->>R: SyncAlreadyRunningError - 409
+    end
+    C->>DB: insert sheet_sync_runs (running)
+    C->>G: read windows past the watermark (5,000 rows)
+    C->>DB: upsert staging rows whose hash changed
+    C->>DB: run row - ok, counts
+    R-->>Sh: 200
+  end
+  Sh->>R: ?mode=project with owner=SYNC_OWNER_EMAIL
+  R->>J: project-sheet - customers, orders, bills
+  Sh->>R: ?mode=field-activity, then field-activity-project
+  Sh->>R: ?mode=punch-out-reminders
+`} />
+
+The order matters: the read modes land rows in staging and `project` publishes what has landed. One caller doing them in sequence guarantees that; five independent schedulers could not.
+
+### `runSync`: one run per source
+
+<Code file="src/lib/services/sheet-sync-core.ts" symbol="runSync" collapsed />
+
+<Code file="src/lib/services/sheet-sync-core.ts" symbol="hashRow" />
+
+A hash over the row's cells, **sorted by column name**, so inserting a column in the middle of a sheet does not rewrite thirty thousand hashes. An unchanged hash is not written, which is why a quiet tab costs a read and nothing else.
+
+<DbEnum name="sheet_sync_mode" />
+
+| Mode | Reads | Notices |
+|---|---|---|
+| `append` | From the watermark (highest row seen) onward | New rows |
+| `reconcile` | The whole tab | Edits to old rows; rows gone from the sheet are **withdrawn** by difference, not by stamping |
+| `reparse` | Nothing from Google — re-reads what is stored | A change in the **parsing rule**; run it whenever the reading of a row changes rather than the row |
+
+<DbTable name="sheet_sync_runs" note={{
+  source: "Which source was read — one value per tab (e.g. field_activity, customer_master, employee_details). The one-run-per-source lock keys on it.",
+  rows_withdrawn: "Rows that left the sheet since the last full compare.",
+  rows_with_issues: "Rows that parsed with a problem worth a person's eye.",
+  highest_row: "The watermark the next append starts after.",
+  cursor_row: "Where a failed run got to — kept, so it can be resumed and diagnosed.",
+  feeds_crm: "Whether this batch may feed the CRM's derived state (cycles, outstanding, targets). Starts false: imported data is visible before it is believed.",
+}} />
+
+### Decisions the sheet does not override
+
+<DbTable name="sync_conflicts" note={{
+  entity_type: "orders, customers …",
+  field: "The column the sheet wanted to change, e.g. status or a manager seat.",
+  sheet_value: "What the sheet says.",
+  app_value: "What MahekOne holds, because a person decided it.",
+  decided_by_id: "Who made the decision being protected.",
+  resolved_at: "Null while open. A partial unique index keeps one open row per conflict, so an uncorrected sheet does not add a row every 30 minutes.",
+}} />
+
+- `orders.status` is kept wherever `approved_at` is set (accounts approved or declined it).
+- The four manager seats on a customer are kept wherever `am_decided_at` is set (a deliberate reassignment); the party projection **and** the nightly `recomputeSalesPeople` both honour it.
+
+<Callout kind="money" title="The sheet never writes money">
+No path writes a receipt, `paid_amount`, a bill status or outstanding from a sheet. New bills are inserted with `payment_position = 'unstated'` (held out of outstanding, ageing, collections, slow-payer and reminders) and only on INSERT. A person's receipt or the receivables report states them. `revert-sheet-paid` exists to undo receipts an older importer wrote with `source = 'sheet_import'`, and touches nothing else.
+</Callout>
+
+## The job runner
+
+<Code file="src/lib/jobs.ts" symbol="run" />
+
+<DbTable name="job_runs" note={{
+  job: "A JobName.",
+  records_affected: "What the job reports it touched.",
+  ok: "Null while running; false with the error in detail.",
+  triggered_by_id: "Null for the schedule; the user for a console run.",
+}} />
+
+### The three passes
+
+<Code file="src/lib/jobs.ts" symbol="runHourly" collapsed />
+
+<Code file="src/lib/jobs.ts" symbol="runNightly" collapsed />
+
+| Pass | Called by | Steps, in order |
+|---|---|---|
+| `hourly` | `sheet-sync.sh hourly` (`:22` UTC) | `erp-alerts`, `erp-inbox`, `mbos-hourly` (task/approval/sample escalations, push receipts, **selfie sweep**, attendance verdicts, holidays), `top-customers-report` catch-up, `whatsapp-automation`, `sweep-unconfirmed`, `whatsapp-receipts`, `wa-reply-media`, `escalate-complaint-sla`, `recompute-performance` (this month only) |
+| `nightly` | `sheet-sync.sh nightly` after reconcile and project | `mbos-nightly`, `hrms-leave-credit`, `erp-alerts`, `erp-digest`, `expense-month-snapshot`, `link-delivery-parties`, `field-activity-shops`, `recompute-cycles`, `recompute-sales-managers`, `self-raised-verifier-seats`, `resolve-typed-places`, `recompute-inactivity`, `recompute-followups`, `sweep-orphan-attachments`, `recompute-slow-payers`, `snapshot-queue`, `snapshot-customer-health`, `recompute-performance` (this and last month), `seed-targets`, `copy-forward-sales-targets`, `auto-eod`, `call-intel-train` |
+| `day-boundary` | Admin Console → Jobs only | `auto-eod`, `roll-reminders` |
+
+## Cadence
+
+| UTC | IST | Script mode | Endpoint modes |
+|---|---|---|---|
+| `:07`, `:37` | every 30 min | `cycle` | `append`, `taken`, `payments`, `parties`, `project&owner=…`, `field-activity`, `field-activity-project`, `punch-out-reminders` |
+| `:22` | hourly | `hourly` | `hourly` |
+| `20:13` | 01:43 | `nightly` | `reconcile`, `project&owner=…`, `field-activity-reconcile`, `field-activity-project`, `nightly` |
+| `04:30` on the 1st | 10:00 on the 1st | `monthly` | `top-customers` |
+
+`sheet-sync.sh` refuses to run if `DOMAIN`, `CRON_SECRET` or `SYNC_OWNER_EMAIL` is missing from `/opt/mahekone/.env`, and logs a `000` (no answer in 310 s) as "the server may still be running it" — the request reached the app and the job runs to completion server-side.
+
+### The other callers
+
+| Caller | Status | Notes |
+|---|---|---|
+| `scripts/sheet-sync-trigger.gs` | Optional | Apps Script time-driven trigger bound to the order workbook, every 30 minutes, the same read modes then `project`, with a 4.5-minute budget (Apps Script gives up near 60 s per fetch). Script properties: `SYNC_URL`, `CRON_SECRET`, `SYNC_OWNER_EMAIL` |
+| `scripts/field-activity-sync-trigger.gs` | Optional | The same for the EMP 2.0 workbook — a trigger belongs to the document it is bound to |
+| `Sheet sync`, `Sheet sync (nightly)` workflows | Manual | `workflow_dispatch` only; a "sync now" button from a browser. GitHub `schedule:` was dropped because it delivered roughly one tick in ten |
+| HRMS screen | While open | Polls the employee sync every minute; the action refuses to run twice within 20 seconds |
+| `/api/hrms/sync` | External | Same `CRON_SECRET`; no schedule calls it |
+
+## Job catalogue
+
+Run any of these with `npm run jobs -- <name>` (local `.env.local`) or `npm run jobs:prod -- <name>` through the tunnel.
+
+| Group | Jobs |
+|---|---|
+| Passes | `nightly`, `hourly`, `day-boundary`, `mbos-nightly`, `mbos-hourly` |
+| Order workbook | `sheet-append`, `sheet-reconcile`, `sheet-reparse`, `sheet-payments`, `taken-order-sync`, `taken-order-reparse`, `party-sync`, `project-sheet`, `revert-sheet-paid` |
+| Field and shop master | `field-activity-append`, `field-activity-sync`, `field-activity-project`, `field-activity-rematch`, `field-activity-reparse`, `field-activity-shops`, `customer-master-sync`, `customer-master-project` |
+| Employees | `hrms-sync`, `hrms-reparse`, `hrms-leave-credit` |
+| Caches | `recompute-cycles`, `recompute-sales-managers`, `recompute-inactivity`, `recompute-followups`, `recompute-slow-payers`, `recompute-performance`, `snapshot-queue`, `build-queues`, `snapshot-customer-health`, `expense-month-snapshot`, `seed-targets`, `copy-forward-sales-targets` |
+| Places | `geocode-customers`, `resolve-places-lookup`, `resolve-places`, `place-tree-import`, `resolve-typed-places`, `self-raised-verifier-seats`, `link-delivery-parties` |
+| Messaging and sweeps | `whatsapp-automation`, `whatsapp-receipts`, `sweep-unconfirmed`, `wa-reply-media`, `escalate-complaint-sla`, `auto-eod`, `roll-reminders`, `punch-out-reminders`, `top-customers-report`, `sweep-orphan-attachments` |
+| ERP | `erp-alerts`, `erp-inbox`, `erp-digest`, `erp-book-sync`, `erp-seed-profiles`, `erp-packing-import` |
+| One-offs | `provision-team`, `backfill-timeline`, `call-intel-train`, `call-intel-eval` |
+
+### By hand
+
+```bash
+npm run jobs -- nightly
+npm run jobs -- project-sheet --owner=example@mahek.in --bills
+npm run jobs -- taken-order-reparse             # the RULE changed, not the sheet
+npm run jobs -- revert-sheet-paid --dry-run
+npm run jobs -- customer-master-project --dry-run
+
+ssh -N -L 5433:127.0.0.1:5432 deploy@one.mahekindia.com &
+npm run jobs:prod:sheets -- customer-master-sync   # .env.local first, .env.prod.local second
+```
+
+Arguments are parsed by `src/lib/job-args.ts`: an unknown option, an `--owner` with no value, or a value given to a switch is **refused**, never silently dropped.
+
+From the console, `triggerJob` lets a platform administrator run `nightly`, `hourly`, `day-boundary` and the one-offs; holders of `sheet.import` (the accounts desk) may run `sheet-reconcile`, `sheet-payments` and `project-sheet`.
+
+## Tests that pin it
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/taken-order-parse.test.ts` | The open/dispatched rule, `Cancel` releases |
+| `npm run test` | `src/lib/hr-parse.test.ts`, `src/lib/field-activity-parse.test.ts`, `src/lib/customer-master-parse.test.ts` | Cell parsing, dates read two ways |
+| `npm run test` | `src/lib/sheet-net-amount.test.ts`, `src/lib/sync-dependencies.test.ts` | Bill amounts; mode ordering |
+| `npm run test:integration` | `src/lib/journeys.test.ts` and the sheet suites in `scripts/run-integration.mjs` | Decisions survive a sync; `sync_conflicts` written once; no money from the sheet |
+
+## Changing it safely
+
+<Steps>
+<Step title="A new source is a staging table plus runSync">
+Read with `readWindows`, hash with `hashRow`, write only changed rows, and wrap the work in `runSync` so the one-per-source rule and the run row come for free.
+</Step>
+<Step title="Never publish from the read step">
+Reading lands rows; a separate projection publishes them. Keep the two as separate modes and order them in the caller.
+</Step>
+<Step title="A new mode is three edits">
+The `JOBS` map in the route, a `case` in `runJob`, and the line in `sheet-sync.sh` (shipped automatically) — plus the crontab line on the droplet if it is a new cadence (not shipped).
+</Step>
+<Step title="When a parsing rule changes, ship a reparse">
+Hash-driven syncs never revisit an unchanged row; without a reparse the new rule never lands.
+</Step>
+<Step title="Never let a projection write money">
+No receipts, no `paid_amount`, no `status` or outstanding — and `payment_position = 'unstated'` on insert only.
+</Step>
+</Steps>
+
+## Known gaps
+
+| Gap | Where |
+|---|---|
+| The route returns only the first `JobResult` of a multi-step job (`const [result]`), so `?mode=nightly` reports `mbos-nightly` alone | `src/app/api/sheets/sync/route.ts` |
+| `roll-reminders` runs only in `runDayBoundary`, which no schedule calls | `src/lib/jobs.ts` |
+| `customer-master-sync` / `-project` have no mode in the route and no schedule | `src/app/api/sheets/sync/route.ts` |
+| Two possible half-hourly schedulers (crontab and Apps Script); which one a deployment runs is not recorded anywhere in the app | `deploy/sheet-sync.sh`, `scripts/sheet-sync-trigger.gs` |
+| The Apps Script header still calls itself the half-hourly cycle "instead of" the crontab that `DEPLOY.md` now documents | `scripts/sheet-sync-trigger.gs`; `DEPLOY.md` |

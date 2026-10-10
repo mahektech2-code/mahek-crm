@@ -66,12 +66,24 @@ export type DocPage = {
   modules: string[];
   /** The route the screen itself lives at, for the "Open the screen" link. */
   screen?: string;
+  /**
+   * Which tabs this page HAS. Most pages have all three; a deployment guide
+   * has nobody to write a Guide tab for, and drawing an empty one forever
+   * reads as a page somebody forgot. Omitted means all three.
+   */
+  tabs?: DocTab[];
   /** Which tabs have content. Order is irrelevant; `DOC_TABS` decides it. */
   written: DocTab[];
 };
 
 export type DocApp = {
-  app: AppId;
+  /** The URL segment: `/docs/<app>`. An app id, or `platform` for MahekOne itself. */
+  app: string;
+  /**
+   * The MahekOne app this section documents, where it documents one. The
+   * coverage test reads its modules; the platform section has none.
+   */
+  appId?: AppId;
   /** The app's name as its users say it. */
   title: string;
   summary: string;
@@ -81,10 +93,103 @@ export type DocApp = {
 };
 
 const ALL: DocTab[] = ["guide", "how-it-works", "developer"];
+const OWNER_AND_DEV: DocTab[] = ["how-it-works", "developer"];
+const DEV: DocTab[] = ["developer"];
 
 export const DOC_APPS: DocApp[] = [
   {
+    app: "platform",
+    title: "MahekOne platform",
+    summary:
+      "How the whole of MahekOne fits together, how to run it on a laptop, how it is deployed to DigitalOcean, and the outside services it leans on — Cloudflare R2, Google Sheets, WhatsApp and the rest.",
+    groups: ["Start here", "Run it", "Ship it", "Services"],
+    pages: [
+      {
+        slug: "architecture",
+        title: "Architecture, end to end",
+        summary: "The apps, the one database, the handset, the sheets, and how a request and a record travel through all of it.",
+        group: "Start here",
+        modules: [],
+        tabs: OWNER_AND_DEV,
+        written: OWNER_AND_DEV,
+      },
+      {
+        slug: "local-setup",
+        title: "Setup and installation",
+        summary: "From a fresh clone to the app running on a laptop: Node, Postgres, environment, migrations, seed data and the test suites.",
+        group: "Run it",
+        modules: [],
+        tabs: DEV,
+        written: DEV,
+      },
+      {
+        slug: "configuration",
+        title: "Configuration, settings and secrets",
+        summary: "Environment variables, the settings registry managers change from a screen, and the credentials kept in the console.",
+        group: "Run it",
+        modules: [],
+        tabs: OWNER_AND_DEV,
+        written: OWNER_AND_DEV,
+      },
+      {
+        slug: "deploy-digitalocean",
+        title: "Deploying to DigitalOcean",
+        summary: "One droplet, Docker Compose, Caddy, the image built in GitHub Actions, migrations over an SSH tunnel, rollbacks and day-to-day operation.",
+        group: "Ship it",
+        modules: [],
+        tabs: DEV,
+        written: DEV,
+      },
+      {
+        slug: "handset-release",
+        title: "Releasing the MBOS handset app",
+        summary: "Building, signing and publishing the APK, over-the-air updates, and push notifications.",
+        group: "Ship it",
+        modules: [],
+        tabs: DEV,
+        written: DEV,
+      },
+      {
+        slug: "storage-r2",
+        title: "Files and Cloudflare R2",
+        summary: "Where photographs and documents live, when they move to R2, how they are read back, and what deletes them.",
+        group: "Services",
+        modules: [],
+        tabs: OWNER_AND_DEV,
+        written: OWNER_AND_DEV,
+      },
+      {
+        slug: "backups",
+        title: "Backups and recovery",
+        summary: "What is backed up, where to, how often, how it is encrypted, and how to restore — with the drill.",
+        group: "Services",
+        modules: [],
+        tabs: OWNER_AND_DEV,
+        written: OWNER_AND_DEV,
+      },
+      {
+        slug: "sheets-and-jobs",
+        title: "Google Sheets sync and scheduled jobs",
+        summary: "What is read from the workbooks, on what cadence, what runs hourly and nightly, and how to run any of it by hand.",
+        group: "Services",
+        modules: [],
+        tabs: OWNER_AND_DEV,
+        written: OWNER_AND_DEV,
+      },
+      {
+        slug: "integrations",
+        title: "Outside services",
+        summary: "WhatsApp (Wati), sign-in codes (MiniMoth), maps (Ola), mail (Resend), dictation (Sarvam and OpenAI) — what each does and what happens without it.",
+        group: "Services",
+        modules: [],
+        tabs: OWNER_AND_DEV,
+        written: OWNER_AND_DEV,
+      },
+    ],
+  },
+  {
     app: "crm",
+    appId: "crm",
     title: "Telecaller CRM",
     summary:
       "The calling book: who to ring today and why, what each call produced, the money owed, and the leads being worked towards a first order.",
@@ -105,7 +210,7 @@ export const DOC_APPS: DocApp[] = [
         summary: "Who uses the CRM, what a day looks like, and how its screens fit together.",
         group: "Start here",
         modules: [],
-        written: [],
+        written: ALL,
       },
       {
         slug: "dashboard",
@@ -114,7 +219,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Overview",
         modules: ["crm.dashboard"],
         screen: "/crm/dashboard",
-        written: [],
+        written: ALL,
       },
       {
         slug: "call-log",
@@ -133,7 +238,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Daily calling",
         modules: ["crm.reminders"],
         screen: "/crm/reminders",
-        written: [],
+        written: ALL,
       },
       {
         slug: "history",
@@ -142,7 +247,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Daily calling",
         modules: ["crm.history"],
         screen: "/crm/history",
-        written: [],
+        written: ALL,
       },
       {
         slug: "opportunities",
@@ -151,7 +256,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Daily calling",
         modules: ["crm.opportunities"],
         screen: "/crm/opportunities",
-        written: [],
+        written: ALL,
       },
       {
         slug: "payments",
@@ -160,7 +265,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Collections",
         modules: ["crm.payments"],
         screen: "/crm/payments",
-        written: [],
+        written: ALL,
       },
       {
         slug: "whatsapp",
@@ -169,7 +274,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Collections",
         modules: ["crm.whatsapp", "crm.whatsapp-reply"],
         screen: "/crm/whatsapp",
-        written: [],
+        written: ALL,
       },
       {
         slug: "outstanding",
@@ -178,7 +283,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Collections",
         modules: ["crm.outstanding"],
         screen: "/crm/outstanding",
-        written: [],
+        written: ALL,
       },
       {
         slug: "bills",
@@ -187,7 +292,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Collections",
         modules: ["crm.bills"],
         screen: "/crm/bills",
-        written: [],
+        written: ALL,
       },
       {
         slug: "customers",
@@ -196,7 +301,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Customer records",
         modules: ["crm.customers"],
         screen: "/crm/customers",
-        written: [],
+        written: ALL,
       },
       {
         slug: "complaints",
@@ -205,7 +310,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Customer records",
         modules: ["crm.complaints"],
         screen: "/crm/complaints",
-        written: [],
+        written: ALL,
       },
       {
         slug: "price-lists",
@@ -214,7 +319,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Customer records",
         modules: ["crm.price-lists"],
         screen: "/crm/price-lists",
-        written: [],
+        written: ALL,
       },
       {
         slug: "status-requests",
@@ -223,7 +328,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Customer records",
         modules: ["crm.deactivations"],
         screen: "/crm/status-requests",
-        written: [],
+        written: ALL,
       },
       {
         slug: "leads",
@@ -232,7 +337,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Lead Management",
         modules: ["crm.leads"],
         screen: "/crm/leads",
-        written: [],
+        written: ALL,
       },
       {
         slug: "lead-calling-desk",
@@ -241,7 +346,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Lead Management",
         modules: ["crm.lead-calling-desk"],
         screen: "/crm/leads/calling-desk",
-        written: [],
+        written: ALL,
       },
       {
         slug: "lead-intake-and-qualification",
@@ -250,7 +355,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Lead Management",
         modules: ["crm.lead-intake", "crm.lead-qualify"],
         screen: "/crm/leads/intake",
-        written: [],
+        written: ALL,
       },
       {
         slug: "samples",
@@ -259,7 +364,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Lead Management",
         modules: ["crm.samples"],
         screen: "/crm/samples",
-        written: [],
+        written: ALL,
       },
       {
         slug: "lead-commercial",
@@ -268,7 +373,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Lead Management",
         modules: ["crm.lead-commercial", "crm.lead-appointments"],
         screen: "/crm/leads/commercial",
-        written: [],
+        written: ALL,
       },
       {
         slug: "lead-actions",
@@ -277,7 +382,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Lead Management",
         modules: ["crm.lead-actions", "crm.lead-handovers"],
         screen: "/crm/leads/actions",
-        written: [],
+        written: ALL,
       },
       {
         slug: "lead-oversight",
@@ -286,7 +391,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Lead Management",
         modules: ["crm.lead-oversight", "crm.sales-manager", "crm.lead-lost", "crm.lead-funnel"],
         screen: "/crm/leads/oversight",
-        written: [],
+        written: ALL,
       },
       {
         slug: "targets",
@@ -295,7 +400,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Targets & reporting",
         modules: ["crm.targets"],
         screen: "/crm/targets",
-        written: [],
+        written: ALL,
       },
       {
         slug: "performance",
@@ -304,7 +409,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Targets & reporting",
         modules: ["crm.performance"],
         screen: "/crm/performance",
-        written: [],
+        written: ALL,
       },
       {
         slug: "eod",
@@ -313,7 +418,7 @@ export const DOC_APPS: DocApp[] = [
         group: "Targets & reporting",
         modules: ["crm.eod"],
         screen: "/crm/eod",
-        written: [],
+        written: ALL,
       },
       {
         slug: "help-and-settings",
@@ -322,6 +427,308 @@ export const DOC_APPS: DocApp[] = [
         group: "Support",
         modules: ["crm.help", "crm.settings"],
         screen: "/crm/settings",
+        written: ALL,
+      },
+    ],
+  },
+  {
+    app: "sales",
+    appId: "sales",
+    title: "Sales Dashboard",
+    summary:
+      "The office end of MBOS: the field team's day, where they are, the journeys they walk, their targets and performance, and every decision waiting on a manager.",
+    groups: ["Start here", "Overview", "Decisions", "Field work", "Commercial", "Lead Management", "People", "Enablement", "Administration"],
+    pages: [
+      {
+        slug: "overview",
+        title: "The Sales Dashboard in one page",
+        summary: "Who uses the office end of MBOS, what a manager's day looks like, and how its screens fit together.",
+        group: "Start here",
+        modules: [],
+        written: [],
+      },
+      {
+        slug: "today",
+        title: "Today",
+        summary: "The field team's day at a glance and every decision waiting on you.",
+        group: "Overview",
+        modules: ["sales.today"],
+        screen: "/sales",
+        written: [],
+      },
+      {
+        slug: "live-map",
+        title: "Live map",
+        summary: "Where the team is now and everywhere they went today, on Ola Maps, with trails snapped to the road.",
+        group: "Overview",
+        modules: ["sales.live"],
+        screen: "/sales/live",
+        written: [],
+      },
+      {
+        slug: "territory",
+        title: "Territory",
+        summary: "The book's shops on a map, prospect pins, and allocating salesmen to states, cities and beats.",
+        group: "Overview",
+        modules: ["sales.territory"],
+        screen: "/sales/territory",
+        written: [],
+      },
+      {
+        slug: "performance",
+        title: "Performance and cost & return",
+        summary: "The six-component score, the mix, the forecast, and what each salesman costs against what he brings in.",
+        group: "Overview",
+        modules: ["sales.performance", "sales.roi"],
+        screen: "/sales/performance",
+        written: [],
+      },
+      {
+        slug: "approvals",
+        title: "Approvals",
+        summary: "Every decision the field sends the office, the two-step chain, and what each approval writes.",
+        group: "Decisions",
+        modules: ["sales.approvals"],
+        screen: "/sales/approvals",
+        written: [],
+      },
+      {
+        slug: "targets",
+        title: "Sales targets",
+        summary: "Setting, publishing and revising a salesman's monthly target, with the reason on every revision.",
+        group: "Decisions",
+        modules: ["sales.targets"],
+        screen: "/sales/targets",
+        written: [],
+      },
+      {
+        slug: "journeys",
+        title: "Journeys and visits",
+        summary: "Proposing a city, the salesman agreeing and picking shops, the day's route, and the visits it produced.",
+        group: "Field work",
+        modules: ["sales.journeys"],
+        screen: "/sales/journeys",
+        written: [],
+      },
+      {
+        slug: "tasks",
+        title: "Tasks",
+        summary: "Tasks raised for salesmen and managers, nurture tasks, escalation and completion with evidence.",
+        group: "Field work",
+        modules: ["sales.tasks"],
+        screen: "/sales/tasks",
+        written: [],
+      },
+      {
+        slug: "field-reports",
+        title: "Field reports and activity history",
+        summary: "What the field recorded, the old app's activity history, and how shops are matched.",
+        group: "Field work",
+        modules: ["sales.field-reports", "sales.activity-history"],
+        screen: "/sales/field-reports",
+        written: [],
+      },
+      {
+        slug: "travel",
+        title: "Travel ledger",
+        summary: "Every journey leg, meter photographs at both ends, and how a leg is priced.",
+        group: "Field work",
+        modules: ["sales.travel"],
+        screen: "/sales/travel",
+        written: [],
+      },
+      {
+        slug: "commercial",
+        title: "Orders, payments and invoices",
+        summary: "What salesmen take in the field, how it reaches accounts, and what the office sees of it.",
+        group: "Commercial",
+        modules: ["sales.orders", "sales.payments", "sales.invoices"],
+        screen: "/sales/orders",
+        written: [],
+      },
+      {
+        slug: "lead-management",
+        title: "Lead Management on the Sales Dashboard",
+        summary: "The same lead screens as the CRM, scoped to a manager's team — what differs and where each is documented.",
+        group: "Lead Management",
+        modules: ["sales.leads", "sales.lead-pipeline", "sales.lead-funnel", "sales.lead-intake", "sales.lead-qualify", "sales.samples", "sales.lead-commercial", "sales.lead-appointments", "sales.lead-actions", "sales.lead-handovers", "sales.lead-oversight"],
+        screen: "/sales/leads",
+        written: [],
+      },
+      {
+        slug: "attendance",
+        title: "Attendance",
+        summary: "Check-in and check-out with selfies, sessions in a day, geofence, missed check-outs and what a manager sees.",
+        group: "People",
+        modules: ["sales.attendance"],
+        screen: "/sales/attendance",
+        written: [],
+      },
+      {
+        slug: "leave-and-holidays",
+        title: "Leave and holidays",
+        summary: "Leave requests and decisions, and the holiday calendar the forecast and the working day read.",
+        group: "People",
+        modules: ["sales.leave", "sales.holidays"],
+        screen: "/sales/leave",
+        written: [],
+      },
+      {
+        slug: "expenses",
+        title: "Expenses and the expense policy",
+        summary: "Daily expense claims, the policy engine that prices them, and the flagged ones a manager reviews.",
+        group: "People",
+        modules: ["sales.expenses", "sales.exceptions", "sales.expense-policy"],
+        screen: "/sales/expenses",
+        written: [],
+      },
+      {
+        slug: "enablement",
+        title: "Documents and knowledge",
+        summary: "Publishing documents and training to the handsets, and withdrawing them.",
+        group: "Enablement",
+        modules: ["sales.documents", "sales.knowledge"],
+        screen: "/sales/documents",
+        written: [],
+      },
+      {
+        slug: "salesmen",
+        title: "Salesmen",
+        summary: "The team list, each salesman's record, devices and handset health.",
+        group: "Administration",
+        modules: ["sales.people"],
+        screen: "/sales/people",
+        written: [],
+      },
+      {
+        slug: "administration",
+        title: "App preferences, logins, sync health, notifications and audit",
+        summary: "Running the handsets from the office: preferences, who signed in, which phones are syncing, sending a notification, and the audit trail.",
+        group: "Administration",
+        modules: ["sales.prefs", "sales.logins", "sales.sync-health", "sales.notify", "sales.audit"],
+        screen: "/sales/sync-health",
+        written: [],
+      },
+    ],
+  },
+  {
+    app: "mbos",
+    appId: "field",
+    title: "MBOS handset app",
+    summary:
+      "The field salesman's Android app: the day, the visits, orders, payments and leads — built to work with no signal and sync when it can.",
+    groups: ["Start here", "The day", "Selling", "Money and time", "No signal"],
+    pages: [
+      {
+        slug: "overview",
+        title: "MBOS in one page",
+        summary: "What the handset is, who uses it, a salesman's day, and how it works with no signal.",
+        group: "Start here",
+        modules: ["field.home"],
+        written: [],
+      },
+      {
+        slug: "setup",
+        title: "Installing, signing in and phone setup",
+        summary: "Getting the APK, signing in, the permissions and battery settings tracking needs, and the phone setup screens.",
+        group: "Start here",
+        modules: [],
+        written: [],
+      },
+      {
+        slug: "attendance",
+        title: "Starting and ending the day",
+        summary: "Check-in and check-out with a selfie, sessions, breaks, the geofence, and tracking while working.",
+        group: "The day",
+        modules: [],
+        written: [],
+      },
+      {
+        slug: "journeys",
+        title: "Journeys, the route and what is near me",
+        summary: "Agreeing a day, picking shops, the day's order, Next Best Visit, navigation and the map.",
+        group: "The day",
+        modules: [],
+        written: [],
+      },
+      {
+        slug: "visit",
+        title: "Visiting a shop",
+        summary: "Setting off, arriving within the radius, the visit form, photographs, the note and dictation, and closing a visit.",
+        group: "The day",
+        modules: [],
+        written: [],
+      },
+      {
+        slug: "customers",
+        title: "Customers and the account record",
+        summary: "The book on the phone, territory, the customer record, the statement and reorder due.",
+        group: "Selling",
+        modules: [],
+        written: [],
+      },
+      {
+        slug: "orders",
+        title: "Orders and the catalogue",
+        summary: "Taking an order in the field, prices, what accounts do with it, and delivery confirmation.",
+        group: "Selling",
+        modules: [],
+        written: [],
+      },
+      {
+        slug: "payments",
+        title: "Collecting payments",
+        summary: "Recording money at a counter, cheques, cash in hand, deposits and bounced cheques.",
+        group: "Selling",
+        modules: [],
+        written: [],
+      },
+      {
+        slug: "leads",
+        title: "Leads, qualification and samples",
+        summary: "Raising a lead, the ladder on the phone, the Suspect visit cap, qualifying, validation, samples and trials.",
+        group: "Selling",
+        modules: [],
+        written: [],
+      },
+      {
+        slug: "tasks",
+        title: "Tasks and notifications",
+        summary: "What the office asks of a salesman, completing with evidence, and notifications.",
+        group: "Selling",
+        modules: [],
+        written: [],
+      },
+      {
+        slug: "expenses",
+        title: "Travel, expenses, leave and salary",
+        summary: "Logging travel and expenses, the policy, leave requests, holidays and the salary view.",
+        group: "Money and time",
+        modules: [],
+        written: [],
+      },
+      {
+        slug: "performance",
+        title: "Performance and reports",
+        summary: "The salesman's own score, target, mix and forecast, and his reports.",
+        group: "Money and time",
+        modules: [],
+        written: [],
+      },
+      {
+        slug: "offline-maps",
+        title: "Offline maps",
+        summary: "Downloading areas of the book's map for no signal, sizes and keeping them fresh.",
+        group: "No signal",
+        modules: [],
+        written: [],
+      },
+      {
+        slug: "sync",
+        title: "Sync, the outbox and rejections",
+        summary: "How the phone and the office stay in step, what a refused record means, and fixing a stuck handset.",
+        group: "No signal",
+        modules: [],
         written: [],
       },
     ],
@@ -336,13 +743,26 @@ export function docPage(app: string, slug: string): DocPage | undefined {
   return docApp(app)?.pages.find((p) => p.slug === slug);
 }
 
-export function pageHref(app: string, slug: string, tab: DocTab = "guide"): string {
-  return tab === "guide" ? `/docs/${app}/${slug}` : `/docs/${app}/${slug}/${tab}`;
+/** The tabs a page has, in `DOC_TABS` order. */
+export function tabsOf(page: DocPage): DocTab[] {
+  const has = page.tabs ?? ALL;
+  return DOC_TABS.map((t) => t.id).filter((t) => has.includes(t));
+}
+
+/**
+ * A page's URL. Its FIRST tab is the bare path, so `/docs/crm/call-log` is
+ * the guide and `/docs/platform/local-setup` is the developer tab — the only
+ * one it has. Any other tab is a segment beneath.
+ */
+export function pageHref(app: string, slug: string, tab?: DocTab): string {
+  const page = docPage(app, slug);
+  const first = page ? tabsOf(page)[0] : "guide";
+  return !tab || tab === first ? `/docs/${app}/${slug}` : `/docs/${app}/${slug}/${tab}`;
 }
 
 /** How much of an app is written, counted in tabs — the honest unit. */
 export function progressOf(app: DocApp): { written: number; total: number } {
-  const total = app.pages.length * DOC_TABS.length;
+  const total = app.pages.reduce((n, p) => n + tabsOf(p).length, 0);
   const written = app.pages.reduce((n, p) => n + p.written.length, 0);
   return { written, total };
 }

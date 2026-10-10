@@ -1,0 +1,116 @@
+"₹10 lakh billed" is not a measure of selling. A price revision raises every rupee figure without one extra can leaving the godown, and somebody who works only the products that sell themselves bills well and grows nothing. So a person's month is measured on **six components**, scored out of a hundred against what was actually asked of them. This tab is how that score is built, why each piece is shaped as it is, and why the CRM — not only the Sales Dashboard — shows it.
+
+<Callout kind="live">
+Values shown are read live from your CRM.
+</Callout>
+
+## Why a telecaller has a performance screen
+
+<Rule title="Whose number it is falls through, to exactly one person">
+An account's sales are credited to its **salesperson**; where it has none, to its **back-office person**; a lead's to its **owner**. Neither seat filled means **nobody** — the figure is reported as unattributed, never handed to somebody.
+</Rule>
+
+Back-office people carry a large part of this book under that fall-through, and they are redirected out of `/sales`. Without this CRM screen they would be measured against a number they had no way to read. It shows **one person, always the signed-in one**, and takes no id — a manager comparing people has the Sales Dashboard, and an id here would let anybody read anybody's appraisal.
+
+<Callout kind="why" title="Why the importer is not in the chain">
+Whose *book* an account is in ends with its owner, but on an imported customer the owner is whoever ran the import — one person on over a thousand rows. Ending the credit chain there would hand them the whole company's revenue the day they were given a target. An unattributed customer is a fact worth surfacing; a wrongly attributed one is a number somebody gets appraised on. Two people may both **see** an account; only one may be **credited**, or the team adds up to more than the company.
+</Callout>
+
+## The six components
+
+<Flow caption="From actuals to a score" chart={`
+flowchart TD
+  T["Published target<br/>(revenue, litres, new customers,<br/>collection %, activity %, mix bands)"] --> A["Achievement per component<br/>actual ÷ target"]
+  O["Approved orders, receipts, tasks<br/>credited to this person"] --> A
+  A --> D{"Target set<br/>for this component?"}
+  D -- "No" --> X["Dropped — its weight<br/>shared among the rest"]
+  D -- "Yes" --> C["Capped for scoring<br/>(display shows the real %)"]
+  C --> W["Weighted"]
+  X --> W
+  W --> S["Score out of 100 + rating word"]
+`} />
+
+| Component | Actual | Weight now |
+|---|---|---|
+| **Revenue** | Value of approved orders, excluding GST | <Setting k="performance.weightRevenue" /> |
+| **Volume** | Litres, from each product's millilitres per can × cans | <Setting k="performance.weightVolume" /> |
+| **Product mix** | Each target product's share of sales value, scored against its bands | <Setting k="performance.weightMix" /> |
+| **New customers** | Customers won this month (basis: <Setting k="performance.newCustomerBasis" />) | <Setting k="performance.weightNewCustomers" /> |
+| **Collection** | Confirmed money collected against bills already overdue on the 1st, as a share of that overdue | <Setting k="performance.weightCollection" /> |
+| **Activity** | Tasks due this month that were completed, as a share of tasks due this month | <Setting k="performance.weightActivity" /> |
+
+The weights must total 100 — the settings screen refuses a set that does not, because a score presented out of 100 and computed out of 95 is a different number wearing the same label.
+
+<Rule title="A component nobody set is dropped, not scored">
+A target of zero is not a target. Scoring it 0% marks somebody down for a question never asked; scoring it 100% pays them for it. So it leaves the score and the remaining weights are restated out of a hundred, and the screen names what was dropped. With nothing targeted at all there is no score — the screen says no target was set and shows the actuals only.
+</Rule>
+
+<Rule title="Achievement is capped for scoring, never for display">
+One extraordinary component cannot carry a score past everything else being wrong: achievement is capped at <Setting k="performance.maxAchievementPercent" />% when it is weighted. The screen still prints the real figure.
+</Rule>
+
+### What each actual deliberately excludes
+
+- **Revenue and volume** count orders accounts have approved — the same "did we sell anything" every report uses. Money whose product name matches nothing in the catalogue still counts as revenue, contributes no litres, and is **reported** as unmatched so a mix computed over 94% of the value says so.
+- **Revenue is not derived from the catalogue.** The product master holds no prices; the value of a line is what was billed.
+- **New customers** counts a customer once, the month their **first** counting order (or bill) lands. Creating a lead never counts — the one definition that cannot be worked from a desk.
+- **Collection** counts **confirmed** receipts only — reported or held money moves no figure anywhere in the product — and **not credit notes**, which are money given back, not collected. It measures old debt worked down: a bill that went overdue on the 15th and was paid on the 20th is ordinary business.
+- **Activity** counts tasks assigned **to** the person, due inside the month. A task with no due date counts nowhere; a task due on the 5th and done on the 20th still counts. Using one population for both sides stops somebody clearing an old backlog and showing 300%.
+
+## The product mix
+
+<Rule title="Weighted by what was asked, never by what arrived">
+Each product on the target carries three shares — **minimum**, **target**, **stretch** — and is weighted by its target share. Weighting by the actual share would let somebody who sold nothing but the easy line score a perfect mix. A product that came in at nothing drags the score down by exactly what it was meant to contribute.
+</Rule>
+
+- The mix is measured on **value**, not litres; litres are shown alongside.
+- Between the anchors the score is a straight line, so 24.9% and 25.0% are not a whole band apart. What each anchor pays is configuration: <Setting k="performance.mixScoreAtMinimum" />%, <Setting k="performance.mixScoreAtTarget" />%, <Setting k="performance.mixScoreAtStretch" />% of the product's points.
+- A target is now set on **formulations** — the liquid a salesman actually sells (one liquid sells under several brand names). One formulation is the **residual**, *Other*, which catches everything nobody classified and every line whose product matched nothing, so the shares always total 100%.
+- A target written before this, against the three broad **categories**, goes on scoring as categories. Nothing already set is reinterpreted.
+
+## Revenue against volume: the alert the module was built for
+
+Revenue at or above target while volume is more than <Setting k="performance.volumeDivergencePoints" /> points behind it means **the money came from the price list, not from selling more** — exactly the month somebody would otherwise be congratulated. It is raised beside the score. Other alerts: behind pace (projection below <Setting k="performance.paceWarningPercent" />%), a mix product below its minimum, no new customers, collection behind, activity behind.
+
+## The forecast: working days, never dates
+
+The month-end projection is the actual so far ÷ working days completed × working days in the month. Sundays (per the configured working week) and company holidays are excluded; **today is not counted as elapsed**, because dividing by a day still being worked makes everybody look behind every morning. With no completed working day there is no projection at all.
+
+## The rating word
+
+The word beside the score comes from <Setting k="performance.ratingBands" /> — a list of bands, each a minimum score and a word, read highest first. A list that does not reach the bottom returns its lowest band rather than nothing, because a score with no word reads as a screen that failed.
+
+## Where the score is kept
+
+The CRM screen computes the reading **live** on every load. A stored copy (the score cache) is rebuilt **hourly for this month** and **nightly for this month and the last**; that cache is what the handset and the Sales Dashboard read, with the time it was computed printed beside it. The score is a reading of the present, so rebuilding it is a correction, not a loss.
+
+## Targets: draft, published, revised
+
+A person's target is set on the Sales Dashboard (`/sales/targets`) or by accounts on `/accounts/targets`, with the target-setting permission. It is a **draft** until published — nothing reaches anybody until then — and a published target changes only with a coded reason from <Setting k="performance.revisionReasons" />, one revision row per figure that moved, and the person is told.
+
+## Settings
+
+<SettingsTable keys={[
+  "performance.weightRevenue",
+  "performance.weightVolume",
+  "performance.weightMix",
+  "performance.weightNewCustomers",
+  "performance.weightCollection",
+  "performance.weightActivity",
+  "performance.maxAchievementPercent",
+  "performance.mixScoreAtMinimum",
+  "performance.mixScoreAtTarget",
+  "performance.mixScoreAtStretch",
+  "performance.ratingBands",
+  "performance.volumeDivergencePoints",
+  "performance.paceWarningPercent",
+  "performance.newCustomerBasis",
+  "performance.revisionReasons",
+]} />
+
+## Where the code and the intent disagree today
+
+- **Activity is tasks, not visits.** AGENTS.md says a visit's activity is counted on the server's clock; the component now measures tasks due in the month and completed (`lib/services/performance-service.ts` `actualsForWindow`, activity block).
+- **Collection and activity are shares, not counts.** The target carries `collection_target_bp` and `activity_target_bp`; the older count column `activity_target` is retired in place, and the cache still names its collection target in paise (`collection_target_paise`, derived from the base × the share).
+- **The Overall tile's colour uses fixed thresholds** — green from 80, red below 60 — rather than the configured rating bands (`src/app/crm/performance/page.tsx`).
+- **The empty state says targets are set "on the Sales Dashboard"**, though accounts set them on `/accounts/targets` too (`src/app/crm/performance/page.tsx`).

@@ -1,0 +1,153 @@
+The Dashboard is the first screen you see. For a telecaller it greets you by name and shows the shape of your day: how far through the Call Log you are, what is waiting for you, your target for the month and whether you can submit your end-of-day report. For a manager it becomes the **Team overview**: red flags, the team's figures and a table comparing every telecaller.
+
+Every number on it opens the records behind it.
+
+## The screen at a glance (telecaller)
+
+<Wireframe url="/crm/dashboard" nav={["Dashboard", "#Daily calling", "Call Log", "Reminders", "Call History", "Opportunities", "#Collections", "Payment Follow-up"]} active="Dashboard" caption="A telecaller's Dashboard">
+  <WfBar>
+    <WfTitle sub="Your book · Everything below is live - the numbers open the records behind them">Good morning</WfTitle>
+    <WfSpacer />
+    <WfButton primary>Start calling</WfButton>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfBar>
+    <WfPill tone="brand">1 Work the queue · 28</WfPill><WfPill tone="warn">2 Close reminders · 4</WfPill><WfPill>3 Chase payments · 9</WfPill><WfPill>4 Clear complaints · 2</WfPill><WfPill>5 Submit EOD</WfPill>
+    <Hotspot n={2} />
+  </WfBar>
+  <WfBar>
+    <WfButton primary>Today</WfButton><WfButton>Yesterday</WfButton><WfButton>This week</WfButton><WfButton>This month</WfButton>
+    <WfText muted>12 Aug · vs 11 Aug</WfText><WfSpacer /><WfText muted>The queue and the list below always show today's work</WfText>
+    <Hotspot n={3} />
+  </WfBar>
+  <WfBar>
+    <WfCard title="Calling progress"><WfText>12/40</WfText></WfCard>
+    <WfCard title="Calls connected"><WfText>18</WfText></WfCard>
+    <WfCard title="Orders taken"><WfText>4</WfText></WfCard>
+    <WfCard title="Missed calls"><WfText>6</WfText></WfCard>
+    <Hotspot n={4} />
+  </WfBar>
+  <WfCard title="Needs you today">
+    <WfTable columns={["", ""]} rows={[
+      ["Reminders due today — 2 of them are already overdue", "4"],
+      ["Payment follow-ups open — ₹1,20,000 collectable", "9"],
+      ["Complaints unresolved — Mention these before anything else on the call", "2"],
+      ["Customers gone quiet — ₹3.4L of business at risk", "6"],
+      ["Queue still to work — Worked top to bottom, most urgent first", "28"],
+    ]} />
+    <Hotspot n={5} />
+  </WfCard>
+  <WfBar>
+    <WfCard title="Monthly target"><WfText>₹4.1L of ₹6L · 68% · Gap ₹1.9L · 11 working days left</WfText><Hotspot n={6} /></WfCard>
+    <WfCard title="End of day"><WfText>4 reminders due today are still open.</WfText><Hotspot n={7} /></WfCard>
+  </WfBar>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Start calling.</b> Opens the Call Log. It works even while the figures below are still loading.</span>,
+  <span key="2"><b>Your day in five steps.</b> Each step is ticked green when there is nothing left in it. The number is how much is left. Click a step to go there.</span>,
+  <span key="3"><b>Period.</b> Which days the activity figures cover, and what they are compared with. The dates are printed so you can see exactly which days.</span>,
+  <span key="4"><b>Your figures.</b> Calls connected, orders taken and missed calls over the period you picked, each with a change against the previous period.</span>,
+  <span key="5"><b>Needs you today.</b> Work waiting right now. Click a row to open that list.</span>,
+  <span key="6"><b>Monthly target.</b> What your book has achieved this month against its target, the gap, and how many working days are left.</span>,
+  <span key="7"><b>End of day.</b> Whether you can submit your EOD report yet, and a link to it.</span>,
+]} />
+
+## The five steps of your day
+
+| Step | Ticked when | Opens |
+|---|---|---|
+| **Work the queue** | Every customer on today's Call Log has been worked | Call Log |
+| **Close reminders** | No reminder due today or earlier is still open | Reminders |
+| **Chase payments** | Nobody is left on the collections worklist | Payment Follow-up |
+| **Clear complaints** | No complaint is open, in progress or awaiting the customer | Complaints |
+| **Submit EOD** | Never ticked here — it lights up once the queue is worked and reminders are closed | EOD Report |
+
+## What each figure means
+
+| Figure | What it counts | Note |
+|---|---|---|
+| **Calling progress** | Customers on today's Call Log you have worked, out of how many were on it | Always today, whatever period you picked |
+| **Calls connected** | Calls **you made** that were answered, out of calls you made. Calls that rang your phone are counted separately underneath. | Connect rate is connected ÷ placed. The team's rate is shown beside yours. |
+| **Orders taken** | Orders you logged in the period, whether or not accounts have approved them | Underneath: how many are still awaiting approval, and the **approved** value so far |
+| **Missed calls** | Calls you made that nobody answered | Fewer is better — a fall shows green |
+
+<Callout kind="note">
+An order you took counts as **taken** the moment you save it. Its value only counts once the accounts desk approves it — that is why the line under *Orders taken* can say "2 awaiting approval".
+</Callout>
+
+## Picking a period
+
+<Steps>
+<Step title="Pick Today, Yesterday, This week or This month">
+The buttons sit above your figures. The choice is in the page address, so you can bookmark it.
+</Step>
+<Step title="Read what it is compared with">
+Beside the buttons: the dates covered and what they are measured against — *vs 11 Aug* for a day, *vs the previous 7 days* for a span.
+</Step>
+<Step title="Remember what does not change">
+The progress bar, the five steps and **Needs you today** are always **today's** work. A month of waiting work is not a thing — only the activity figures follow the period.
+</Step>
+</Steps>
+
+| Period | Covers | Compared with |
+|---|---|---|
+| Today | Today | The previous working day |
+| Yesterday | The previous **working** day (Saturday, on a Monday) | The working day before that |
+| This week | Monday to today | The same number of days immediately before |
+| This month | The 1st to today | The same number of days immediately before |
+
+## For managers: the Team overview
+
+<Wireframe url="/crm/dashboard?period=week" caption="A manager's Team overview, this week">
+  <WfCard tone="warn">
+    <WfBar><WfText>RED FLAGS · 14 missed calls this week, up from 9 · 3 reminders overdue more than 3 days · Overdue balance grew ₹42,000 this week</WfText><WfSpacer /><WfButton>Review collections</WfButton><Hotspot n={1} /></WfBar>
+  </WfCard>
+  <WfBar>
+    <WfCard title="Team calls this week"><WfText>412 · 301 connected</WfText></WfCard>
+    <WfCard title="Orders booked"><WfText>₹8.2L · +12% vs the previous 5 days</WfText></WfCard>
+    <WfCard title="Outstanding"><WfText>₹14L · ₹2.1L over 60 days</WfText></WfCard>
+    <WfCard title="Team target"><WfText>61%</WfText></WfCard>
+    <Hotspot n={2} />
+  </WfBar>
+  <WfTable columns={["Telecaller", "Queue calls", "Overdue reminders", "Connected", "Missed", "Orders", "Value", "Collected", "Target"]} rows={[
+    ["Telecaller A", "88", "1", "71", "9", "12", "₹2.1L", "₹80K", "72%"],
+    ["Telecaller B", "64", "5", "50", "14", "6", "₹1.1L", "₹40K", "48%"],
+    ["Team average", "76", "3", "60", "11", "9", "₹1.6L", "₹60K", "60% of team target"],
+  ]} />
+  <Hotspot n={3} />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Red flags.</b> Only what is actually wrong is shown. A clean day reads <i>All clear — Nothing overdue, unresolved or growing.</i></span>,
+  <span key="2"><b>Team figures</b> over the period you picked.</span>,
+  <span key="3"><b>Telecaller comparison.</b> One row per person on your team, with the team average at the bottom. Overdue reminders above three and missed calls above five are drawn red.</span>,
+]} />
+
+| Red flag | Raised when |
+|---|---|
+| Missed calls | Anybody on the team missed a call in the period. Says whether that is up or down. |
+| Reminders overdue | A reminder is still open more than <Setting k="dashboard.reminderOverdueFlagDays" /> days past its date |
+| Complaints unresolved | A complaint is still open more than <Setting k="dashboard.complaintUnresolvedFlagDays" /> days after it was raised |
+| Overdue balance grew | Bills that fell due in the last seven days are still unpaid |
+
+## Questions people ask
+
+<Faq q="Why does my Calling progress not change when I pick This month?">
+The Call Log is today's list. Its progress is always today's, so it has no month to show. The activity figures beside it do follow the period.
+</Faq>
+<Faq q="Yesterday shows Saturday's figures on a Monday.">
+Yesterday means the previous working day. Sunday is not a working day, so on a Monday it is Saturday. The dates are printed beside the buttons.
+</Faq>
+<Faq q="Orders taken says 5 but the value is lower than I expected.">
+The value underneath counts only orders accounts have approved. The line above it says how many are still waiting.
+</Faq>
+<Faq q="Why do inbound calls not count towards my connect rate?">
+You cannot fail to connect a call that rang your own phone. Counting them would push your connect rate up on a day you made fewer calls. They are shown separately.
+</Faq>
+<Faq q="The Missed calls card says 'retry after 4 pm'.">
+That line is fixed text on the card, not a rule. When to try again is decided by the Call Log's no-answer ladder.
+</Faq>
+<Faq q="Where did the Inactive Watch go?">
+Customers who have gone quiet are worked from the Call Log now. The *Customers gone quiet* row opens the Call Log filtered to exactly those customers.
+</Faq>

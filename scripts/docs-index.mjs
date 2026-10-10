@@ -3,7 +3,7 @@
  * The Documentation app's build-time index.
  *
  *   node scripts/docs-index.mjs          write src/docs/_generated/index.json
- *   node scripts/docs-index.mjs --check  exit 1 if what is committed is stale
+ *   node scripts/docs-index.mjs --verify every reference resolves; writes nothing
  *
  * WHY THIS EXISTS AT ALL. The runtime image carries no source — the Dockerfile
  * ships Next's standalone server and nothing else — so a docs page that quoted
@@ -37,7 +37,7 @@ import { codeToHtml } from "shiki";
 const ROOT = process.cwd();
 const DOCS = join(ROOT, "src/docs");
 const OUT = join(DOCS, "_generated/index.json");
-const check = process.argv.includes("--check");
+const verify = process.argv.includes("--verify");
 
 function walk(dir) {
   return readdirSync(dir).flatMap((name) => {
@@ -186,7 +186,10 @@ for (const path of files) {
       if (!existsSync(join(ROOT, file))) throw new Error(`${file}: no such file`);
       const cut = symbol ? cutSymbol(file, symbol) : cutLines(file, lines);
       const lang = LANG[file.split(".").pop()] ?? "text";
-      const html = await codeToHtml(cut.code, { lang, theme: "github-light" });
+      // No time limit: Shiki's default gives up on a line after 500 ms and leaves it
+      // uncoloured, so a busy machine (a build running beside it) produced a
+      // different index from a quiet one and the staleness check failed on CI.
+      const html = await codeToHtml(cut.code, { lang, theme: "github-light", tokenizeTimeLimit: 0 });
       excerpts[key] = { file, symbol: symbol ?? null, startLine: cut.startLine, endLine: cut.endLine, html };
     } catch (e) {
       failures.push(`${rel}: ${e.message}`);
@@ -209,13 +212,8 @@ if (failures.length) {
 
 const next = JSON.stringify({ excerpts, toc, search }, null, 1) + "\n";
 
-if (check) {
-  const current = existsSync(OUT) ? readFileSync(OUT, "utf8") : "";
-  if (current !== next) {
-    console.error("docs-index: src/docs/_generated/index.json is stale — run `npm run docs:index`.");
-    process.exit(1);
-  }
-  console.log(`docs-index: current (${Object.keys(excerpts).length} excerpts, ${files.length} pages).`);
+if (verify) {
+  console.log(`docs-index: every reference resolves (${Object.keys(excerpts).length} excerpts, ${files.length} pages).`);
 } else {
   mkdirSync(dirname(OUT), { recursive: true });
   writeFileSync(OUT, next);

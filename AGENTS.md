@@ -8291,11 +8291,13 @@ mistake rather than a confident fiction.
 **Code is quoted by SYMBOL, cut at build.** The runtime image carries no
 source, so `<Code file="…" symbol="buildQueue"/>` is resolved by
 `scripts/docs-index.mjs`, which `prebuild` runs: a renamed symbol fails the
-build instead of quoting whatever now sits on those lines. Run
-`npm run docs:index` after editing MDX or a quoted file — `coverage.test.ts`
-fails on a stale index, on a module of a documented app that no page claims,
-and on a `;` inside a Mermaid chart, which Mermaid reads as the end of a
-statement.
+build instead of quoting whatever now sits on those lines. The index
+(`src/docs/_generated/`) is BUILT, never committed: npm runs it before `dev`,
+`lint`, `test` and `build`, because a committed copy quotes the source as it
+was and went stale — failing CI on unrelated PRs — the moment main moved.
+`coverage.test.ts` fails on a quoted symbol that no longer exists, on a module
+of a documented app that no page claims, and on a `;` inside a Mermaid chart,
+which Mermaid reads as the end of a statement.
 
 **Wireframes, never screenshots, and no names.** A screenshot carries real
 customers into a page every grantee can read and goes stale when a column

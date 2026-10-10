@@ -1,0 +1,140 @@
+Payment Follow-up is the collections list. It shows **who owes money that is past its due date**, how late it is, what they last promised, and whether today is a day to **message** them or **call** them. You work it the same way as the Call Log: open the customer, chase, log what they said, move on.
+
+<Callout kind="live">
+The day counts on this page — when calling opens, how often a reminder goes, how long a reported payment buys — are the settings your CRM is using right now.
+</Callout>
+
+## The screen at a glance
+
+<Wireframe url="/crm/payments" nav={["Dashboard", "#Collections", "Payment Follow-up", "WhatsApp", "Outstanding", "Sales Bills"]} active="Payment Follow-up" caption="Payment Follow-up, Call today tab">
+  <WfBar>
+    <WfTitle sub="Your book">Payment follow-up</WfTitle>
+    <WfSpacer />
+    <WfButton>Send stage 1 reminders</WfButton><WfButton>Export</WfButton>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfBar>
+    <WfCard title="To call today"><WfText>6</WfText></WfCard>
+    <WfCard title="To message today"><WfText>11</WfText></WfCard>
+    <WfCard title="Outstanding"><WfText>₹9,40,000 · 38 customers</WfText></WfCard>
+    <WfCard title="Collected this month"><WfText>₹3,10,000 of ₹7,00,000 due</WfText></WfCard>
+    <Hotspot n={2} />
+  </WfBar>
+  <WfText muted>More details — ageing, promises, reminders ▾</WfText>
+  <WfTabs items={["Call today 6", "Message today 11", "Promised 4", "All 38"]} active="Call today 6" />
+  <WfBar><WfInput placeholder="Search customer" /><WfInput placeholder="All stages ▾" /><WfPill>Slow payers</WfPill><WfButton>Sort by amount</WfButton><Hotspot n={3} /></WfBar>
+  <WfCard tone="warn"><WfBar><WfText>4 customers kept off today's list, and why</WfText><Hotspot n={4} /></WfBar></WfCard>
+  <WfTable highlight={0} columns={["Customer", "Stage", "Overdue", "Oldest", "Last chased", "WhatsApp", ""]} rows={[
+    [<span key="a"><b>Customer A</b> <WfPill tone="danger">Promise broken</WfPill> <WfPill tone="warn">Slow payer</WfPill><br/><WfText muted>Last called 3 days ago, still unpaid</WfText> <Hotspot n={5} /></span>, <WfPill key="b" tone="danger">3 · Urgent</WfPill>, "₹1,20,000", "62 days", "9 Aug, 11:02", "Read", <span key="c"><WfButton primary>Call & log</WfButton> ⋯ <Hotspot n={6} /></span>],
+    [<span key="d"><b>Customer B</b> <WfPill tone="warn">Paid ₹40,000?</WfPill></span>, <WfPill key="e" tone="warn">2 · Call</WfPill>, "₹55,000", "24 days", "Never", "None sent", <WfButton key="f">Send reminder</WfButton>],
+  ]} />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Bulk and export.</b> Send the stage 1 WhatsApp reminder to everybody due one today (needs the right to send in bulk), or download the list.</span>,
+  <span key="2"><b>The four figures.</b> Customers due a call today, due a message today, what your book owes, and what has come in this month.</span>,
+  <span key="3"><b>Filters.</b> Search, narrow to one stage, show only slow payers, or sort biggest-first for the month-end push.</span>,
+  <span key="4"><b>Kept off today's list.</b> Customers who would be due today but are being left alone — each with the reason.</span>,
+  <span key="5"><b>Flags.</b> A broken promise, a dispute holding the account, money the customer says they paid that accounts have not confirmed (<i>Paid ₹…?</i>), and the slow-payer mark.</span>,
+  <span key="6"><b>The action.</b> <i>Call & log</i> or <i>Send reminder</i>, depending on what is due. The ⋯ menu opens the follow-up, records a payment or a promise, opens the WhatsApp chat, the bills or the record.</span>,
+]} />
+
+## The three stages
+
+Every customer on the list sits at a stage, worked out from how late their oldest unpaid bill is:
+
+| Stage | Badge | How you chase |
+|---|---|---|
+| **1** | 1 · Nudge | WhatsApp only. You cannot log a call at stage 1. |
+| **2** | 2 · Call | Calls and messages alternate. Get a dated promise. |
+| **3** | 3 · Urgent | Call, and be firm. |
+
+Stage 2 starts at <Setting k="escalation.stage2Days" /> days overdue and stage 3 at <Setting k="escalation.stage3Days" /> days. A customer who refuses to commit or cannot be reached is moved up a stage and kept there, even if their bill dates alone would put them lower.
+
+## Message first, then call
+
+A bill a few days late is usually paperwork, not refusal. So:
+
+<Steps>
+<Step title="The bill falls due">
+For the first <Setting k="escalation.quietCallDays" /> days nobody rings. The customer gets a WhatsApp reminder every <Setting k="escalation.messageIntervalDays" /> days instead — they appear on **Message today** when one is due.
+</Step>
+<Step title="Calling opens">
+The day after that window closes, they appear on **Call today**.
+</Step>
+<Step title="After each call">
+They rest <Setting k="escalation.callIntervalDays" /> days before coming back to Call today. Messages carry on alongside.
+</Step>
+</Steps>
+
+## Logging a collections call
+
+<Steps>
+<Step title="Open the follow-up">
+Press **Call & log**, or open the follow-up from the ⋯ menu. The panel shows what they owe, the oldest bill, when they were last chased, their credit terms, every open bill and every promise so far.
+</Step>
+<Step title="Ring them, then answer: What did they say?">
+Pick one of the outcomes below. Quick-pick phrases are offered for each; you can type your own note.
+</Step>
+<Step title="Save">
+Everything the outcome produces is saved in one go. The window afterwards says **when this customer comes back to your Call Log**, the same as after any other call.
+</Step>
+</Steps>
+
+| Outcome | You must fill in | What saving does |
+|---|---|---|
+| **Payment promised** | Amount promised, Promised by (today or later) | Records the promise and creates a reminder for the working day after, so a broken promise is chased |
+| **Already paid** | Amount already paid; a payment proof photo is optional | Records the money as **reported** — waiting for accounts. The customer is not chased for it for a few days. Nothing they owe changes yet. |
+| **Call back later** | Call back on | Creates a callback reminder for that date |
+| **Dispute raised** | — | Raises a billing complaint and marks their oldest bill disputed. The account is held where it is until the complaint is closed. |
+| **Refused to commit** | — | Moves the account up a stage and keeps it there |
+| **Not reachable** | — | Moves the account up a stage and keeps it there. Closes no reminder. |
+
+<Callout kind="money" title="'Already paid' does not reduce what they owe">
+A customer saying they paid is not the money arriving. It sits with accounts as *reported* until they find it in the bank. Until then the bills stay open, the customer stays on the list, and the row shows **Paid ₹…?** — but nobody chases them for <Setting k="payments.reportedQuietDays" /> days.
+</Callout>
+
+## Recording a payment from the list
+
+From the ⋯ menu, **Record a payment** opens a form against one open bill: amount received, how it came (mode), the reference, the date received and — for a cheque — the date written on it.
+
+- If you hold the accounts desk's right to confirm money, it is recorded as **confirmed**.
+- Otherwise it is recorded as **reported** and waits for accounts, exactly like *Already paid*.
+
+**Record a promise** writes a dated promise without logging a call outcome.
+
+## Why somebody is not on today's list
+
+| Reason shown | What it means |
+|---|---|
+| Marked do not contact | A standing instruction |
+| Held - a bill is disputed | A dispute is open on one of their bills |
+| ₹X on hold with accounts - … | Accounts are checking the money. Not chased until they decide. |
+| ₹X cheque dated … - not chased until it can be banked | A post-dated cheque. Quiet until its date, then the usual window. |
+| ₹X reported paid N days ago - waiting for accounts to confirm it | Reported money buys <Setting k="payments.reportedQuietDays" /> days of quiet |
+| Paid today / yesterday - not chased about money until … | They paid something recently; quiet for <Setting k="payments.paidCoolingDays" /> day(s) |
+| Payment promised by … - not chased until it passes | A live promise |
+| Already contacted today | One contact a day |
+| Only N days overdue - messages only until … | Still in the message-only window |
+| Called N days ago - due again on … | Resting after the last call |
+
+## Questions people ask
+
+<Faq q="The customer says they paid. Why are they still on the list?">
+The money is reported, not confirmed. They stay on the list with a **Paid ₹…?** flag and are not chased for a few days. Once accounts confirm it, the bills close and they leave the list.
+</Faq>
+<Faq q="Why can I not log a call for a stage 1 customer?">
+Stage 1 is a WhatsApp nudge only. Send the reminder, or wait for the account to reach stage 2.
+</Faq>
+<Faq q="They promised to pay on the 20th. What happens on the 21st?">
+A payment-promise reminder falls due on the working day after the 20th. If the money has been confirmed by then, the reminder closes on its own.
+</Faq>
+<Faq q="They gave a cheque dated next month.">
+Report it with the cheque date. They are not chased until the date on the cheque, and then only after the usual window for it to clear.
+</Faq>
+<Faq q="What is a slow payer?">
+A customer who has paid at least <Setting k="escalation.slowPayerLateCount" /> bills more than <Setting k="escalation.slowPayerGraceDays" /> days after their due date in the last <Setting k="escalation.slowPayerLookbackMonths" /> months. The flag appears beside their name everywhere.
+</Faq>
+<Faq q="Somebody I expected is missing.">
+Open **kept off today's list**. If they are not there either, they owe nothing past its due date, or their bills have not been stated as owed.
+</Faq>
