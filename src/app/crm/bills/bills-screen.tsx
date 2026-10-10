@@ -22,7 +22,8 @@ import {
 } from "@/components/ui/primitives";
 import { Modal, RowMenu } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
-import { financialYearLabel } from "@/lib/financial-year";
+import { yearLabel } from "@/lib/year-period";
+import { YearFilter } from "@/components/ui/year-filter";
 import { BillDetailPanel } from "@/components/bills/bill-detail-panel";
 import { recordPayment } from "@/lib/actions/crm";
 import {
@@ -116,8 +117,8 @@ export function BillsScreen({
   filteredTotals,
   yearTotals,
   customerFilter,
-  financialYear,
-  financialYears,
+  year,
+  years,
 }: {
   /** `payments.modes` — the list is configuration, never a literal on a screen. */
   modes: string[];
@@ -146,9 +147,10 @@ export function BillsScreen({
   /** The whole year, for the strip above it. */
   yearTotals: Totals;
   customerFilter: { id: string; name: string } | null;
-  /** The year on screen, and every year that has bills in it. */
-  financialYear: string;
-  financialYears: string[];
+  /** The year on screen — "26-27" (financial) or "2026" (calendar). */
+  year: string;
+  /** Every year that has bills in it, both ways of counting. */
+  years: { fy: string[]; cy: string[] };
 }) {
   const router = useRouter();
   const { run, push } = useToast();
@@ -168,7 +170,8 @@ export function BillsScreen({
     const params = new URLSearchParams();
     const base: Record<string, string | number | null> = {
       customer: customerFilter?.id ?? null,
-      fy: financialYear,
+      year,
+      fy: null,
       status,
       bucket,
       sort: sort.key,
@@ -210,7 +213,7 @@ export function BillsScreen({
      whole point of the filters being in the URL: one address, and the file and
      the screen cannot describe two different sets of bills. */
   const exportHref = (() => {
-    const params = new URLSearchParams({ fy: financialYear });
+    const params = new URLSearchParams({ year });
     if (customerFilter) params.set("customer", customerFilter.id);
     if (status) params.set("status", status);
     if (bucket) params.set("bucket", bucket);
@@ -351,20 +354,14 @@ export function BillsScreen({
             </option>
           ))}
         </Select>
-        <Select
-          value={financialYear}
-          /* A different year starts at its first page — carrying page seven
-             across would land on an empty table in a year that has six. */
-          onChange={(e) => narrow({ fy: e.target.value })}
-          className="h-8"
-          aria-label="Financial year"
-        >
-          {financialYears.map((y) => (
-            <option key={y} value={y}>
-              {financialYearLabel(y)}
-            </option>
-          ))}
-        </Select>
+        {/* A different year starts at its first page — carrying page seven
+            across would land on an empty table in a year that has six. */}
+        <YearFilter
+          value={year}
+          options={years}
+          today={businessDay}
+          onChange={(y) => narrow({ year: y })}
+        />
         {status || bucket ? (
           <button
             onClick={() => narrow({ status: null, bucket: null })}
@@ -376,7 +373,7 @@ export function BillsScreen({
         <span className="flex-1" />
         <span className="text-[13px] text-muted">
           {total.toLocaleString("en-IN")} of {yearTotals.count.toLocaleString("en-IN")} bills ·{" "}
-          {financialYearLabel(financialYear)}
+          {yearLabel(year)}
         </span>
       </Card>
 
@@ -538,7 +535,7 @@ export function BillsScreen({
         ) : (
           <EmptyState
             title="No bills match these filters"
-            body={`Clear the status or aging filter, or try another year — this is ${financialYearLabel(financialYear)}.`}
+            body={`Clear the status or aging filter, or try another year — this is ${yearLabel(year)}.`}
           />
         )}
       </Card>

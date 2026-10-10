@@ -1,8 +1,5 @@
 import { getConfig } from "@/lib/config/store";
-import {
-  financialYearOf,
-  financialYearsBetween,
-} from "@/lib/financial-year";
+import { pickYear, yearOptions } from "@/lib/year-period";
 import {
   billLedgerPage,
   billLedgerTotals,
@@ -18,7 +15,7 @@ export const metadata = { title: "Bills — Accounts — MahekOne" };
 export default async function Page({
   searchParams,
 }: {
-  searchParams: Promise<{ fy?: string; page?: string; per?: string }>;
+  searchParams: Promise<{ year?: string; fy?: string; page?: string; per?: string }>;
 }) {
   const params = await searchParams;
   const [day, earliest, config] = await Promise.all([
@@ -27,11 +24,11 @@ export default async function Page({
     getConfig(),
   ]);
 
-  const current = financialYearOf(day);
   // Only years that actually have bills in them are offered — a filter that
-  // returns an empty screen reads as a broken ledger.
-  const years = financialYearsBetween(earliest ?? day, day);
-  const financialYear = params.fy && years.includes(params.fy) ? params.fy : current;
+  // returns an empty screen reads as a broken ledger. Financial or calendar,
+  // defaulting to the current financial year; `?fy=` is the older link shape.
+  const years = yearOptions(earliest ?? day, day);
+  const year = pickYear(params.year ?? params.fy, years, day);
 
   /*
    * THREE READS SHAPED TO THREE QUESTIONS, instead of one read shaped to none.
@@ -50,10 +47,10 @@ export default async function Page({
   const page = Math.max(Number(params.page) || 1, 1);
 
   const [ledger, totals, ages] = await Promise.all([
-    billLedgerPage({ financialYear }, { page, perPage }),
-    billLedgerTotals({ financialYear }),
+    billLedgerPage({ year }, { page, perPage }),
+    billLedgerTotals({ year }),
     // The strip describes what is OPEN in this year, not what was billed in it.
-    openBillAges({ financialYear }),
+    openBillAges({ year }),
   ]);
 
   const aging = bucketise(ages, config["bills.agingBuckets"]);
@@ -81,7 +78,8 @@ export default async function Page({
       buckets={aging.buckets}
       openBills={ages.length}
       years={years}
-      financialYear={financialYear}
+      year={year}
+      today={day}
     />
   );
 }

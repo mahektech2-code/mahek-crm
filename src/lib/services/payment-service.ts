@@ -44,7 +44,7 @@ import {
   onOrAfterWorkingDay,
   type BusinessDate,
 } from "../business-date";
-import { financialYearRange } from "../financial-year";
+import { yearKindOf, yearRange } from "../year-period";
 import { err, ok, type Result } from "../result";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
@@ -879,7 +879,12 @@ export type BillFilters = {
    * `customerIds` above states, for the same reason.
    */
   billIds?: string[];
-  /** "26-27". Absent means every year, which the export uses. */
+  /**
+   * A year, either kind: "26-27" (financial) or "2026" (calendar) — see
+   * `year-period.ts`. Absent means every year, which the export uses.
+   */
+  year?: string;
+  /** The older name for `year`, still read so existing callers keep working. */
   financialYear?: string;
   /**
    * Only bills with something still open on them.
@@ -935,10 +940,14 @@ export type BillFilters = {
   customerIds?: string[];
 };
 
-/** 1 April to 31 March, as SQL. The end is exclusive — see financial-year.ts. */
-function financialYearWhere(fy?: string) {
-  if (!fy) return undefined;
-  const { start, end } = financialYearRange(fy);
+/**
+ * A financial or calendar year, as SQL. The end is exclusive — see
+ * year-period.ts. A string that is neither shape filters nothing rather than
+ * guessing: the screens only ever send a year they offered.
+ */
+function yearWhere(year?: string) {
+  if (!year || !yearKindOf(year)) return undefined;
+  const { start, end } = yearRange(year);
   return and(gte(bills.billDate, start), lt(bills.billDate, end));
 }
 
@@ -984,7 +993,7 @@ function billsWhere(ids: string[] | null, filters?: BillFilters) {
         ? inArray(bills.customerId, filters.customerIds)
         : sql`false`
       : undefined,
-    financialYearWhere(filters?.financialYear),
+    yearWhere(filters?.year ?? filters?.financialYear),
     filters?.status ? eq(bills.status, filters.status as "unpaid") : undefined,
     filters?.billIds
       ? filters.billIds.length
