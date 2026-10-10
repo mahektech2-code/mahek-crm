@@ -1,0 +1,140 @@
+When a lorry arrives at the gate, three things happen in the ERP: the goods are **received against their purchase order** (a GRN, numbered as a PR), a chemical is **tested** before anybody may use it, and every lot ends up in the **purchase register** with a rate — which is what puts it into stock. The Purchases screen has three tabs for this — Goods receipt (GRN), Register and Drum labels — and Purchase testing is its own screen.
+
+## Receiving goods at the gate
+
+<Wireframe url="/erp/register" nav={["Dashboard", "#Purchase", "Purchase requirements", "Purchase orders", "Purchases", "Purchase testing"]} active="Purchases" caption="Purchases → Goods receipt (GRN)">
+  <WfBar>
+    <WfTitle sub="Goods received against an approved PO and the lots they become.">Purchases</WfTitle>
+    <WfSpacer /><WfButton primary>New goods receipt</WfButton><Hotspot n={1} />
+  </WfBar>
+  <WfTabs items={["Goods receipt (GRN)", "Register", "Drum labels"]} active="Goods receipt (GRN)" />
+  <WfTable
+    columns={["PR no", "PO", "Date", "Supplier", "Item", "Drums", "Weight with drum", "Empty drum weight", "Weight without drum", "Testing required", "Sent to"]}
+    rows={[
+      ["1230", "PO-90", "6 Oct", "Supplier D", <b key="a">Solvent A</b>, "4", "820", "18", "748 Kg", "Yes", <span key="b">Testing <Hotspot n={2} /></span>],
+      ["1230", "PO-90", "6 Oct", "Supplier D", <b key="c">Tin can 5 L</b>, "—", "—", "—", "600 Pcs", "No", "Purchase"],
+    ]}
+  />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>New goods receipt.</b> Or press <b>Receive goods</b> on the purchase order itself — the PO and its pending items are then already filled in.</span>,
+  <span key="2"><b>Sent to.</b> Where each line went the moment it was saved: <b>Testing</b> for an item with a testing list, <b>Purchase</b> (the register) for everything else.</span>,
+]} />
+
+<Steps>
+<Step title="Pick the purchase order">
+Only approved POs that still have something to receive are offered. The vendor comes from the PO. The **Godown** starts as the PO's deliver-to godown — change it if the goods came somewhere else.
+</Step>
+<Step title="One line per item that arrived">
+Pick the **PO item**. "Against the PO" shows what is still pending. For a chemical, enter the **Drums**.
+</Step>
+<Step title="Enter what actually came">
+For a chemical bought in kilograms, enter the **Weight with drum** off the scale and the **Empty drum weight** (per drum); the **Weight without drum** is worked out for you, whatever anybody typed elsewhere. For anything else, the **Quantity received** starts at what is pending — change it to what actually arrived.
+</Step>
+<Step title="Transport and landing cost">
+How the goods came: **Supplier Transport**, **Mahek Own Vehicle**, **Third-Party Transport** or **No Transport Charges**. For supplier or third-party transport enter the cost from their bill; for our own vehicle enter the **kilometres** and the **tempo number** — the cost is worked out from the approved rate per kilometre. Add any **other direct inward cost** (loading, unloading, octroi) and what it was.
+</Step>
+<Step title="Save">
+"PR 1230 · 2 lines received against PO-90 · 1 to testing, 1 in the register". Every line is saved under one PR number.
+</Step>
+</Steps>
+
+<Callout kind="warn" title="More than the PO allows is refused">
+A line may take a little more than was ordered — drums never weigh exactly — but beyond that the receipt is refused: "More than the PO allows: … Raise a requirement for the extra."
+</Callout>
+
+### After saving
+
+| On a receipt line | What it does |
+|---|---|
+| **Add more** | Adds another line to the same PR and PO |
+| **Transport & costs** | Records or corrects the PR's transport and other cost — once per PR |
+| **Send to Testing / Send to Purchase** | Only on a line that did not go anywhere — usually because the register refused its lot number. Change the PR number and send it again |
+
+## Testing a chemical
+
+Every chemical lot is tested before it reaches the register. The tester records evidence for the tests the item requires; only the **verifier** decides.
+
+<Wireframe url="/erp/testing" nav={["Dashboard", "#Purchase", "Purchases", "Purchase testing"]} active="Purchase testing" caption="Purchase testing">
+  <WfBar><WfTitle sub="Evidence for the tests each chemical requires. Only the verifier can verify.">Purchase testing</WfTitle></WfBar>
+  <WfTable
+    highlight={0}
+    columns={["Verification", "Date", "PR no", "Item", "Tests required", "Smell", "Density", "Tester", "Godown"]}
+    rows={[
+      [<span key="a"><WfPill tone="warn">Pending</WfPill> <Hotspot n={1} /></span>, "6 Oct", "1230", <b key="b">Solvent A</b>, "Smell, Density", "Good", "0.87", "A tester", "Godown A"],
+      [<WfPill key="c" tone="success">Verified</WfPill>, "3 Oct", "1224", <b key="d">Solvent C</b>, "PH, Color", "—", "—", "A tester", "Godown A"],
+    ]}
+  />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Verification.</b> Pending until the verifier presses <b>Do Verify</b> or <b>Do Not Verified</b>.</span>,
+]} />
+
+<Steps>
+<Step title="Record evidence">
+Open the test and press **Record evidence**. The form asks only for the tests this item requires.
+</Step>
+<Step title="Take the photos and readings">
+| Test | Evidence |
+|---|---|
+| PH | pH photo (and the pH value, read from the photo when AI is on — confirm it) |
+| Smell | Good, Moderate or Bad |
+| Color | Colour photo |
+| Oil Paint, Fast Paints, Nc Paints, Primer | A photo of each |
+| Density | The density value (0.5 to 1.5) and its photo |
+| Tharmakol Pass | Thermocol-pass photo |
+</Step>
+<Step title="The verifier decides">
+**Do Verify** is refused while any required evidence is missing ("Evidence missing: …"). Verifying creates the lot's register row, once.
+</Step>
+</Steps>
+
+**ADD More Lot** copies a test to another lot of the same delivery. If AI photo reading is on, **Read test photos** fills the readings for you to review; nothing is saved until you save the review.
+
+## The purchase register
+
+Every lot bought, with what it cost. A row arrives on its own — from a receipt line that needed no test, or from a verified test — at the PO line's rate and GST.
+
+### A purchase moves along one line
+
+**Arrived** (or **Tested**) → **Bill received** → **Matched** → **Verified**.
+
+| Action | Who | What it does |
+|---|---|---|
+| **Enter rate** | Purchase money | Only on a row with no rate. "Posted · … of lot … now in stock" |
+| **Bill Received** | Purchase money | Records the supplier's bill number; the stage becomes Bill received |
+| **Bill Not Received** | Purchase money | Undoes it — refused once the purchase is matched |
+| **Change Status** | Purchase money | Invoice Received or Purchase Matched; the verifier sets only Purchase Verified |
+| **Do Pending** | The reopen power (an admin) | Sets a verified purchase back to Pending |
+| **Read supplier bill** | Purchase money, AI bills on | Reads a photo or PDF of the bill and matches it to this PR's rows for you to review |
+| **New purchase**, **Edit**, **Add More** | The screen | Enter a lot by hand against an approved PO, correct a row, or add another lot to the PR |
+
+<Callout kind="money">
+A lot is in stock only once it has a rate above zero. A row from a PO already has the PO's rate, so it is in stock the moment it is saved. "Not posted: rate missing" in the Inventory column says why one is not.
+</Callout>
+
+Flags on a row: **Purchase rate empty**, **Rate differs from PO** (the bill moved the rate away from the PO's), **Before POs** (bought before purchase orders), **Filled from bill** (AI read the bill).
+
+## Drum labels
+
+A list of chemical purchases at **your working godown**, with each lot's short label name, litres, drums, litres per drum, density and PR bill number — the figures printed on a drum label. Download it for the label printer.
+
+## Common questions
+
+<Faq q="The PO I need is not in the receipt form.">
+It is not approved yet, it is already fully received, or it was closed or cancelled. Only an approved PO with something pending can be received against.
+</Faq>
+
+<Faq q="'! Please Change 4 Digit PR Num Manually or Generate New PR Num!'">
+The lot number (party code, item code and PR number) is already used by another register row. The line is kept without a register row; change the PR number and press Send to Purchase.
+</Faq>
+
+<Faq q="Own vehicle says there is no approved rate per kilometre.">
+Nobody has set the rate yet. Until an administrator sets it in the Admin Console's ERP settings, an own-vehicle receipt cannot be saved — choose the transport that applies or ask for the rate.
+</Faq>
+
+<Faq q="A test was verified by mistake.">
+The verifier can mark it **Do Not Verified**. The register row it created stays — correct or remove that with the office.
+</Faq>

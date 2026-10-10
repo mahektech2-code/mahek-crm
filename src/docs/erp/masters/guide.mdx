@@ -1,0 +1,152 @@
+The Masters are the lists every other ERP screen picks from: what the business buys, who it buys from, what it makes, who it sells to, where it keeps stock, at what price, and the small value lists behind every drop-down. Get these right and every form further on fills itself in; get one wrong and every record that names it carries the mistake.
+
+<Callout kind="note">
+Several of these are not the ERP's own lists. **Sales parties** are MahekOne's customers, **Products** are the catalogue's SKUs, and **Price lists** are the Price Desk's. The ERP adds what it needs beside them — so a change you make here is seen in the CRM and Accounts too.
+</Callout>
+
+## Raw materials
+
+Every item the business buys: chemicals, cans, drums, boxes, packing stationery.
+
+<Wireframe url="/erp/raw-materials" nav={["Dashboard", "#Masters", "Raw materials", "Purchase parties", "Products", "Sales parties", "Godowns", "Price lists", "Reference lists"]} active="Raw materials" caption="Raw materials, grouped by material type">
+  <WfBar>
+    <WfTitle sub="Every material the business buys. Chemicals carry a density and the tests each lot must pass.">Raw materials</WfTitle>
+    <WfSpacer /><WfButton primary>New raw material</WfButton><Hotspot n={1} />
+  </WfBar>
+  <WfBar><WfInput placeholder="Search" /><WfPill tone="brand">Active</WfPill><WfPill>Inactive</WfPill><Hotspot n={2} /></WfBar>
+  <WfTable
+    columns={["S.no", "Item", "Code", "Unit", "Material type", "Density", "Testing list", "Purchase rule", "Default vendor", "Total stock"]}
+    rows={[
+      ["14", <b key="a">Solvent A</b>, "SOA", "Kg", "Chemical", "0.87", "Smell, Density", <span key="b">Quotation <Hotspot n={3} /></span>, "—", "1,240"],
+      ["15", <b key="c">Tin can 5 L</b>, "TC5", "Unit", "Can", "—", "—", "Direct purchase", "Supplier B", "3,600"],
+      ["16", <b key="d">Empty Box 5 Liter</b>, "EB5", "Unit", "Box", "—", "—", "Direct purchase", "Supplier C", "500"],
+    ]}
+  />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>New raw material.</b> Opens the form described below.</span>,
+  <span key="2"><b>Active and Inactive.</b> A retired item stays on every record that already names it and is no longer offered on new ones.</span>,
+  <span key="3"><b>Purchase rule.</b> How this item is bought — it decides where a requirement for it goes the moment it is raised.</span>,
+]} />
+
+### The fields
+
+| Field | What to put | Notes |
+|---|---|---|
+| **Raw item** | The name everybody uses | Must be unique, whatever its capitals |
+| **Item code** | A short code | It becomes part of every lot number bought of this item |
+| **Item unit** | Kg, Litre or Unit | Unit is for things counted in pieces |
+| **Material type** | Chemical, Can, Drum, Box, Stationary… | From the Material type reference list |
+| **Density (kg to litre)** | Chemicals only, between 0.1 and 3 | Turns kilograms bought into litres in stock |
+| **Testing list** | Chemicals only, at least one test | Every lot of it must pass these before it reaches stock |
+| **Price (₹)** | Only if you can see purchase money | Used as the packing rate for cans and drums |
+| **Purchase rule** | Direct purchase, Quotation, or Buyer decision | Chemicals start on Quotation, everything else on Direct |
+| **Default vendor** | For Direct or Buyer decision | Offered automatically when a direct purchase is raised |
+| **Remark** | Anything worth knowing | Has a microphone if voice notes are on |
+
+### Who does what, for one material
+
+An ERP administrator sees **Who does what** on each raw material. It names, for this one item, who may **request it**, **raise its PO**, **approve that PO**, and — chemicals only — **test its lots**. Each can be people, departments, or both. Left empty, the duty stays open to whoever could do it before. See [Purchase requirements](/docs/erp/purchase-requirements/how-it-works) for what it changes.
+
+## Purchase parties
+
+Suppliers, grouped by state. **Party name** and **Own party code** are required; the code is part of every lot number bought from them, so choose it once and keep it. The record shows a call and WhatsApp button and how many purchases they have. **Retire** a party instead of deleting it: existing purchases keep the name, and new receipts stop offering it.
+
+## Products
+
+Every active SKU in the catalogue, from the liquid (SFG) to the boxed SKU. The catalogue itself is kept in the Admin Console → Catalogue; here you set only **how it is packed**:
+
+<Steps>
+<Step title="Open the SKU and press Edit packing">
+</Step>
+<Step title="Choose the Can use">
+The raw material of type Can or Drum this SKU is filled into.
+</Step>
+<Step title="Set the boxes">
+**No. of empty boxes required** per box and the **Box type**. Zero boxes with one can per box makes this a **loose** SKU — sold as cans from FG stock. Anything else is **boxed** — sold as boxes from packing stock.
+</Step>
+<Step title="Box rate">
+Only if you can see cost and margin; it is used in packing costing.
+</Step>
+</Steps>
+
+## Sales parties
+
+MahekOne's customers, as the ERP sees them, grouped by status.
+
+| Status | What it means | What it allows |
+|---|---|---|
+| **Pending** | Created but not yet verified by an admin or the office | Orders can be taken but not billed until approved |
+| **Active** | Verified | Orders move normally |
+| **Deactive** | Closed | Closed in the CRM too — it is the same customer |
+
+### Adding a customer
+
+<Steps>
+<Step title="New customer">
+**Business name**, **City** and a ten-digit **Mobile** are required. Add the area, state, tagged sales person, price list and credit days (thirty unless you say otherwise).
+</Step>
+<Step title="It is created Pending">
+"… created as Pending · an admin activates it". Until then, its orders wait for approval.
+</Step>
+<Step title="Somebody with the status power activates it">
+**Activate** asks "Are You Sure! This Party Is Verified By Admin". **Deactivate** and **Mark Pending** are beside it.
+</Step>
+</Steps>
+
+**Edit details** changes the grade, area, location, state, transporter, payment type (Paid / To Pay), delivery type (Door / Godown), weight type, contacts, counter types, credit days, segment, standing instructions, GST number and company name. Emptying the city or the mobile keeps what was there, because the CRM needs both.
+
+## My customers
+
+The customers tagged to **you** as their sales person, with their grade, area, transport, payment type, credit days, this month's target and how many of their complaints are still open. Open one to see their latest complaints, call them, or edit their details. You may edit the same fields as on Sales parties except the GST number, company name, segment, standing instructions and allocation email.
+
+## Godowns
+
+Every godown by region, with the address, map pin and the people assigned to it. Only an ERP administrator registers, edits, switches off a godown or assigns its employees.
+
+- **Assign employees** decides who may choose it as their working location. Only people who hold the ERP are listed.
+- **Latitude and longitude** are the map pin. Without one, the ERP cannot find the godown by where somebody is standing.
+- **Item Lost Record** is a reserved godown. It cannot be edited or switched off, and stock goes into it only as a write-off — see [Stock](/docs/erp/stock).
+
+## Price lists
+
+A read-only view of every **published** price list from the Price Desk: list, product, rate including GST and excluding GST, and discount. Rates are visible only with the sales-rate power. Lists are written and published on the Price Desk, never here — see [Price lists in the CRM](/docs/crm/price-lists).
+
+## Reference lists
+
+The editable value lists every form picks from: material type, testing list, area, state, transporter, segment, counter type, complaint type, expense category and particular, credit note fund reference, zone, godown city, video search tag, short label names (Item=Label), and payment terms.
+
+<Steps>
+<Step title="Add a value">
+Open the list and press **Add a value**. It is offered on every form at once.
+</Step>
+<Step title="Retire a value">
+"Records that already carry it keep it; new forms stop offering it." Nothing is ever deleted.
+</Step>
+<Step title="Restore a value">
+Brings a retired value back onto the forms.
+</Step>
+</Steps>
+
+<Callout kind="warn">
+Some words are not reference lists, because a rule depends on their exact spelling: the item units (Kg, Litre, Unit), box types, payment types, delivery types, weight types, grades (A+ to C) and regions. They cannot be changed from here.
+</Callout>
+
+## Common questions
+
+<Faq q="It says 'Duplicate Entry!' but I cannot see the item.">
+The name exists already, perhaps with different capitals, or retired. Switch the chip to Inactive and restore it rather than creating a second one.
+</Faq>
+
+<Faq q="Why can't I see the Price column?">
+It needs the purchase-money power. The list says which columns it withheld.
+</Faq>
+
+<Faq q="A new customer's order is stuck.">
+The customer is Pending. Somebody with the status power must activate it, or — once the ERP takes the orders — Accounts approves the order from their queue.
+</Faq>
+
+<Faq q="Can I delete a godown?">
+No. Mark it Inactive. Its stock history stays where it is.
+</Faq>

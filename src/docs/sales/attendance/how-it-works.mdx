@@ -1,0 +1,91 @@
+Field attendance answers two questions: **did this person work today, and for how long** — which a payslip is read against — and **is the person who marked the day the person who worked it**. The handset records the marks; the office closes forgotten days, judges each day, and keeps the photographs just long enough for a manager to check them.
+
+This is the field team's attendance on MBOS. Office staff check in through HRMS, which has its own rules.
+
+## A day is a list of sessions
+
+<Rule title="Every punch-in opens a session and every punch-out closes one">
+A salesman breaks for lunch and comes out again in the evening, so a day is stored as a list of `{in, out}` pairs, not one pair of times. The first punch-in and the last punch-out are also kept as the day's headline times.
+</Rule>
+
+<Callout kind="why">
+The office used to keep two timestamps per day while the handset kept a list. A day of 9-to-1 plus 2-to-6 reached the office as nine hours, with the break invisible — on the record that feeds a payslip. The list is stored as the handset reports it and is **not** a cache: rebuilding it from the two headline times would lose exactly what it exists to keep.
+</Callout>
+
+## A photograph at both ends of every session
+
+<Rule title="The selfie is the record, not an attachment to it">
+Every punch-in and every punch-out takes a front-camera photograph inside the app; the camera screen's only exits are the photograph or abandoning the punch. An attendance mark on its own is a claim that somebody was somewhere at a time — the photograph is the only part of it that is evidence.
+</Rule>
+
+<Callout kind="why">
+It used to be skippable, under a button reading "Start the day without a photo", and the two kinds of day were indistinguishable afterwards. It also used to be required only at the morning check-in — which proved that somebody arrived once, and nothing about when they stopped, the half that decides the hours.
+</Callout>
+
+<Rule title="A punch is never refused because a photograph is still uploading">
+Photographs upload after the record they belong to, so a punch routinely names a file whose bytes are still on the phone. The office keeps the mark regardless and fills in the photograph once it lands; the handset re-sends as its upload queue drains.
+</Rule>
+
+## Off site is flagged, never blocked
+
+The handset measures the punch-in against the office location (<Setting k="mbos.attendance.baseLocation" />) and a radius of <Setting k="mbos.attendance.geofenceRadiusM" /> m. Outside it, the day **still starts**: the distance is recorded and the row is marked *Off site*. With no office location set, nothing is measured — rather than measuring against a guess.
+
+A **correction request** counts only when the salesman wrote a reason. The handset marks every off-site punch-in as a request, but with a single company-wide office location that would be every salesman who starts from home, burying the real ones — so the office records the distance as the fact and the request only when somebody actually asked.
+
+## Closing a day nobody closed
+
+<Flow caption="What happens overnight to a day with no punch-out" chart={`
+flowchart TD
+  A["Day before today:<br/>punched in, never punched out"] --> B{"Anything the app saw<br/>him do that day?"}
+  B -- "An activity filed or a visit closed" --> C["Closed at the LAST thing he did"]
+  B -- "Only phone positions" --> D["Closed at his last position"]
+  B -- "Nothing" --> E["Left open<br/>verdict: not measured"]
+  C --> F["Open session closed at the same instant<br/>marked closed for them"]
+  D --> F
+  F --> G["Verdict worked out<br/>from the hours"]
+`} />
+
+<Rule title="The closing time is evidence, never a guess">
+Picking an hour — six o'clock, or the end of the working day — would be inventing attendance, and attendance is where an invented figure is least forgivable because somebody is paid against it. Work is preferred over the phone: a forgotten punch-out leaves the tracker recording through the evening at home, and closing at the last position once produced a sixteen-hour shift.
+</Rule>
+
+A day closed this way is always marked *closed for them*, so it is never mistaken for one somebody pressed the button on.
+
+## The verdict
+
+Each day is judged from the hours inside its sessions:
+
+1. At least <Setting k="mbos.attendance.fullDayHours" /> hours — **present**.
+2. At least <Setting k="mbos.attendance.halfDayHours" /> hours — **half day**.
+3. Otherwise, a holiday that applies to him — **holiday**; approved leave — **on leave**.
+4. Otherwise — **absent**.
+
+**Work first, above everything**: a day somebody worked reads as worked whatever the calendar or the leave register says. A day with an open session is **not judged**; the screen says *not measured* rather than showing the stored default of *absent*. The verdict is recomputed nightly and again for recent days on the hour.
+
+## Photographs are kept for a short time
+
+<Rule title="A selfie is deleted after its retention window">
+<Setting k="mbos.attendance.selfieRetentionHours" /> hours after it **reaches the office**, the image is deleted. Everything else is kept for ever: the punch, its time, its place, and the fact that a photograph was taken.
+</Rule>
+
+<Callout kind="why">
+A check-in photograph exists so a manager can verify the right person marked the day, and that question is asked within a day or two or not at all. Held longer it becomes a standing collection of photographs of employees — worse to hold, worse to leak. The window runs from **arrival**, not from when the photograph was taken: a salesman with no signal on Monday who syncs on Wednesday would otherwise have his photograph deleted within hours of landing, before anybody could look. The sweep runs **hourly**, so "72 hours" means 72, not up to 96.
+</Callout>
+
+A deleted photograph and a photograph never taken are **different facts** and are drawn differently. A sweep that blanked the record would rewrite "a photograph was taken at 09:04 and has since been deleted" into "no photograph was taken" — which reads as somebody cutting a corner.
+
+## Who can see what
+
+- **The list** is everybody active who holds the Salesman App, narrowed to the manager's team (see [Salesmen](/docs/sales/salesmen/how-it-works)).
+- **A photograph** opens for the person in it, and for somebody who holds the **Attendance** module **and** has him inside their team. Holding the Sales Dashboard without Attendance ticked opens no photograph — there would be no screen on which to see his attendance, and a photograph is not a back door to one.
+- **Accepting or declining** a photograph is done on the day check; a decline asks for a reason and is sent to the salesman.
+
+## Settings that change this
+
+<SettingsTable keys={["mbos.attendance.baseLocation", "mbos.attendance.geofenceRadiusM", "mbos.attendance.fullDayHours", "mbos.attendance.halfDayHours", "mbos.attendance.selfieRetentionHours", "mbos.attendance.missedPunchOutWindowDays", "mbos.attendance.punchOutPromptHour", "mbos.attendance.punchOutSecondReminderMinutes", "mbos.attendance.autoCheckOutHour", "mbos.attendance.selfieRequired"]} />
+
+## Where the code and the intent disagree today
+
+- **"Auto check-out hour" is not read anywhere.** Its description says a forgotten day is closed at that hour; the overnight job closes it at the last evidence instead, and never at a fixed hour.
+- **"Selfie required" is not read anywhere.** The design makes the photograph mandatory at both ends with no switch; the setting exists on the screen and changes nothing.
+- **Geofence is measured only on the handset.** The office stores what the phone reported and does not re-measure the distance.

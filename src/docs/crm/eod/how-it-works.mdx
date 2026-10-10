@@ -1,0 +1,99 @@
+The EOD Report exists so that a telecaller's day is **reported from what they recorded**, not from what they remember at six o'clock — and so that the report reaches the team in the one place they already read, WhatsApp. This tab explains how a span of days is measured, what each figure counts and deliberately does not, the gate on submitting, and what happens to a day nobody submitted.
+
+<Callout kind="live">
+Values shown are read live from your CRM.
+</Callout>
+
+## A span of days is one window, not a loop over days
+
+Every figure — for today, yesterday, the last seven days, this month, last month or a custom range — comes from **one function** that runs the same twenty-odd counts over a wider window. A day is simply a range of one.
+
+<Callout kind="why">
+Two copies of twenty counts is how the Dashboard and the EOD report come to disagree about how many calls somebody made. One function means a day and a one-day range cannot answer differently, and a month costs what a day costs.
+</Callout>
+
+| Period | Span |
+|---|---|
+| **Today** | Today — the live report, the only one you submit |
+| **Yesterday** | The previous **working** day, so Monday reads Saturday rather than a Sunday of zeroes |
+| **Last 7 days** | Today and the six days before |
+| **This month** | The 1st up to today — never to a future end date |
+| **Last month** | The whole previous month |
+| **Custom range** | Any from–to; typed backwards, it is swapped rather than refused |
+
+An unrecognised period in the address reads as today rather than as a broken page.
+
+<Rule title="Where the working day starts">
+The day runs on Asia/Kolkata, starting at <Setting k="workingDay.dayBoundaryHour" />:00. Every window is two instants with the zone named, so a 9am call can never fall outside "today" because a database connection happened to be set to another zone.
+</Rule>
+
+### The comparison with the span before
+
+The EOD Report itself shows no comparison. The **Dashboard** reads the same figures and measures a span against **the equally long span immediately before it** — never against a whole previous month, because a twelve-day month-to-date beside a full month reads as a collapse every time. A single day is compared with the previous working day. See [the Dashboard](/docs/crm/dashboard/how-it-works).
+
+## What each figure counts — and what it refuses to
+
+<Rule title="Calls attempted and connected are outbound only">
+An order logged with no call is not a call: counting it would inflate attempts, the connect rate and every per-call conversion. An **inbound** call is not an attempt either — you cannot fail to connect a call that rang your own phone, so counting it would push the connect rate towards 100% on a day you made fewer calls. Inbound and order-without-a-call are counted on their own lines.
+</Rule>
+
+- **Missed** reads the call's **outcome** (no answer), not the retired connection-status field — reading that would quietly make the number zero.
+- **Customers called from the queue** is distinct customers called from the Call Log. It is deliberately **not** "x of y": the denominator can only be had by building the queue, and a second, cheaper count once produced "3 of 8" against the Call Log's "3 of 4".
+
+<Rule title="Two questions about the same orders">
+**Orders taken** — the telecaller's own work, true the moment the customer said yes; cancelled orders excluded. **Orders approved** — the sale, and the only figure that carries a **value**. The report says both, because a day's work reported as nothing because accounts have not reached it yet is the telecaller's own record being wrong.
+</Rule>
+
+- **Boxes and loose cans** are worked out per line from that product's own pack; a product name the catalogue does not recognise contributes nothing.
+- **WhatsApp sent** counts messages confirmed as sent. *Copied* is not sent.
+- **Monthly target** is the approved order value this month against the sum of customer targets on the accounts the person owns.
+
+## The gate on submitting
+
+<Rule title="Reminders due today block finalising">
+A report cannot be submitted while reminders due today are still open. Each must be called, carried forward, or closed (closing needs the reminder-close permission). The gate is enforced on the server, not only by a disabled button.
+</Rule>
+
+<Callout kind="why">
+A reminder is a promise to a customer. The end of the day is the last moment it can still be kept or honestly moved; a report that could be finalised over it would close the day on a broken promise nobody had to look at.
+</Callout>
+
+The gate and the "submitted" banner are always about the **real today**, whatever period is on screen — browsing the last seven days does not change which reminders block the next submission.
+
+## Submitted, resubmitted, or generated
+
+| State | How it happens |
+|---|---|
+| **Submitted** | *Submit EOD* saves the message and the figures with the time. |
+| **Resubmitted** | Submitting again the same day replaces the earlier report. |
+| **Auto-generated** | The nightly job writes a report for every active person who did not submit, for the day just ended. It never overwrites a report that exists. |
+
+<Callout kind="why">
+A zero-activity day must still produce a report. Absence must never be ambiguous — "no report" could mean a day off, a forgotten button or a broken screen, and nobody can tell which.
+</Callout>
+
+## The WhatsApp message
+
+The message is built to paste: short lines, a few symbols, no tables, nothing that renders badly on a phone. It carries order calls, orders (with boxes and cans), no-answers, no-order reasons, payment calls and payment WhatsApps against the payment list, assigned and called from the day's settled Call Log, who promised to pay and when, and the month against target. *All high priority customers called!* appears only when there was a queue to clear and nothing high-priority is left.
+
+## The team roll-up
+
+A manager in the CRM with the team-report permission sees every active person in their scope for the same period, with a team message on today's view. Both conditions are required — a telecaller who is a manager in some other app is not drawn a "team" here.
+
+## Settings
+
+<SettingsTable keys={[
+  "workingDay.dayBoundaryHour",
+  "workingDay.workingDays",
+  "workingDay.timezone",
+  "interactions.singleSelectOutcomes",
+]} />
+
+## Where the code and the intent disagree today
+
+- **Approved orders are counted with a typed list of three statuses.** AGENTS.md says every "did we sell anything" read derives from `PURCHASE_STATUSES`, which now also includes *in transit* and *delivered*; the EOD counts `('captured','confirmed','dispatched')` only, so an approved order that has been marked in transit or delivered drops out of EOD value and the monthly target line (`lib/services/eod-service.ts` `eodMetricsForRange`).
+- **"Payments confirmed" is not confirmed money.** It sums payment lines the person recorded, by payment date, without checking the receipt was confirmed by accounts — a telecaller's reported payment counts (`eod-service.ts`, `payments_confirmed`).
+- **The target line uses the account owner**, not whose book the account is in or who is credited with it (`eod-service.ts`, `target_amount` and `target_achieved` join on `owner_id`).
+- **Order value is the order's total amount**, while targets and performance use the net-of-GST value (`eod-service.ts` vs `orderValueSql`).
+- **"Order Calls" in the WhatsApp message is attempted calls over pending queue**, two numbers from different populations (`lib/engines/eod.ts` `aggregateEod`).
+- **The overnight report is for the previous calendar day**, not the previous working day, and is written for every active user, not only CRM users (`lib/jobs.ts` auto-eod step; `autoGenerateEodReports`).

@@ -1,0 +1,122 @@
+Territory answers **who covers which part of the book**. Pick a role — field sales, sales account manager, back-office account manager or sales manager — and the screen shows everybody holding that role, the cities their shops are in, and a map of every shop. It is also where the gaps show: shops with nobody in a role, and shops with no pin on the map.
+
+Deciding **where a salesman works** — which states, cities or beats reach his phone — is done from the [Salesmen](/docs/sales/salesmen) screen, with **Where they work**. This page explains both, because the two are read together.
+
+## The screen at a glance
+
+<Wireframe url="/sales/territory" nav={["Today", "#Overview", "Live map", "Territory", "Performance"]} active="Territory" caption="Territory, by field sales, on the People tab">
+  <WfTitle sub="Whole book · by field sales">Territory</WfTitle>
+  <WfBar>
+    <WfField label="Role"><WfButton>Field sales ▾</WfButton></WfField>
+    <WfField label="Person"><WfButton>Everyone ▾</WfButton></WfField>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfBar>
+    <WfCard title="Customers"><WfText>1,240</WfText></WfCard>
+    <WfCard title="Leads"><WfText>860</WfText></WfCard>
+    <WfCard title="Cities"><WfText>96</WfText></WfCard>
+    <WfCard title="Without a pin" tone="warn"><WfText>412</WfText></WfCard>
+    <WfCard title="No field sales" tone="warn"><WfText>1,105</WfText></WfCard>
+    <Hotspot n={2} />
+  </WfBar>
+  <WfTabs items={["People 11", "Cities 96", "Map"]} active="People 11" />
+  <Hotspot n={3} />
+  <WfTable columns={["Name", "Main cities", "Customers", "Leads"]} rows={[
+    ["Salesman A", "City 1, City 2", "140", "62"],
+    ["Salesman B", "City 3", "88", "40"],
+    [<span key="c">Salesman C <Hotspot n={4} /></span>, <WfText key="d" muted>No book</WfText>, "0", "0"],
+    ["Nobody", "City 4, City 5, …", "1,105", "720"],
+  ]} />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Role and person.</b> Which seat on the account you are looking at, and optionally one person in it — or <i>Nobody assigned</i> for the accounts nobody holds in that seat.</span>,
+  <span key="2"><b>The book in five numbers.</b> Customers, leads, cities, shops with no pin, and shops with nobody in this role. The last two are amber when they are not zero.</span>,
+  <span key="3"><b>Three views.</b> People (who holds what), Cities (where the book is and who covers it), Map (every shop as a pin).</span>,
+  <span key="4"><b>No book.</b> A salesman with nothing named against him is listed, not hidden — his phone opens on an empty list.</span>,
+]} />
+
+## The four roles
+
+| Role | Who it is on an account |
+|---|---|
+| **Field sales** | The salesman who visits the shop, on MBOS. Lists every active salesman, including those with no shops. |
+| **Sales account manager** | Whose book the account is in for revenue and targets. |
+| **Back-office account manager** | Who raises its paperwork, dispatch and billing. |
+| **Sales manager** | Who the salesperson answers to. Moves no revenue. |
+
+## The map
+
+<Wireframe url="/sales/territory?view=map" caption="The Map tab, with the filter box open">
+  <WfBar>
+    <WfBlock h={200} label="Clustered pins — zoom in to split them into shops" />
+    <WfCard title="Show">
+      <WfText>☑ Customers · ☑ Leads</WfText>
+      <WfText>☑ Active · ☑ Inactive · ☐ Deactivated</WfText>
+      <WfText>Industry colours</WfText>
+      <Hotspot n={1} />
+    </WfCard>
+  </WfBar>
+  <WfPanel title="Customer A · City 1" side>
+    <WfText>Buys every 30 days · last order 12 days ago</WfText>
+    <WfText>Outstanding ₹42,300</WfText>
+    <WfText>Last three calls</WfText>
+    <WfButton>Open record →</WfButton>
+    <Hotspot n={2} />
+  </WfPanel>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Filters.</b> Turn kinds and statuses on and off. The number beside each is the whole book, not just what is drawn.</span>,
+  <span key="2"><b>Quick view.</b> Click a shop pin to see its profile, buying cycle and recent calls — the same figures the CRM record shows. A shop outside your view shows nothing.</span>,
+]} />
+
+- **Pins are clustered** at a distance; zoom in to split them.
+- **Hollow pins are prospects** — shops a salesman pinned in the field that do not match any account yet. They show a plain label, because there is no record behind them.
+- **A shop with no pin is not drawn.** The *Without a pin* tile counts them.
+- **No streets?** The map needs an Ola Maps key; the screen says so rather than drawing a blank. See [Live map](/docs/sales/live-map).
+
+## Setting where a salesman works
+
+<Steps>
+<Step title="Open Salesmen and find him">
+Go to [Salesmen](/docs/sales/salesmen) and press **Where they work** on his row.
+</Step>
+<Step title="Pick the states first">
+*Pick the states they cover.* Each state shows how many shops it holds, biggest first.
+</Step>
+<Step title="Narrow to cities, and beats, if you want to">
+*Narrow to cities, if you want to.* Picking Pune inside Maharashtra means **Pune only** — the narrowest pick in a branch is what he works.
+</Step>
+<Step title="Save">
+His phone drops the shops outside the new area on its next sync and he is told *"Where you work has changed"*. Nothing is taken out of his book — only off his phone.
+</Step>
+</Steps>
+
+<Callout kind="warn" title="No area means an empty phone">
+A salesman with no area set sees **no customers at all** on his phone, and the row says *No area · empty handset*. This does not apply to managers or admins carrying a phone — their phone shows their whole scope.
+</Callout>
+
+The row also says *Not yet accepted on the handset* until his phone has picked up the change, and *The areas have changed since he accepted them* if you change them again before it does.
+
+### Setting a manager's regions
+
+On the same screen, a **national** manager sets each regional manager's patch with **Set the patch**. *Give them everything* clears it, which means the whole country. A regional manager cannot change regions, and nobody can set their own.
+
+## Questions people ask
+
+<Faq q="Why are there so many shops under 'Nobody'?">
+Most of an imported book has never been allocated to anybody. The Territory screen shows them on purpose — they are the shops a coverage map most needs to show.
+</Faq>
+<Faq q="I allocated a salesman a city and he still sees a shop in another city.">
+A shop he raised himself as a lead on his phone stays on his phone wherever it is. Everything else follows the area.
+</Faq>
+<Faq q="Does giving a salesman a city let him see another salesman's shops there?">
+No. An area only narrows his own book. Whose shops are whose is decided separately.
+</Faq>
+<Faq q="A city appears as a whole postal address.">
+Cities come from what was typed into the customer records, and some of them are addresses. The tree puts the real cities with the most shops at the top.
+</Faq>
+<Faq q="A salesman asked for different cities on his phone.">
+His request lands on [Approvals](/docs/sales/approvals). Approving it says yes; you still change his area here on Salesmen.
+</Faq>

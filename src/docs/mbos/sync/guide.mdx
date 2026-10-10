@@ -1,0 +1,108 @@
+Everything you do in MBOS is **saved on the phone first**, then sent to the office when there is signal. No signal is normal — your work waits safely on the phone and goes up by itself. This page explains how to see what is waiting, what *Not accepted* means, and what to do when the phone seems stuck.
+
+## How your work reaches the office
+
+<Steps>
+<Step title="You save">
+A visit, an order, a payment, a lead — it is saved on the phone at once, even in a basement.
+</Step>
+<Step title="The phone sends it">
+Within a few seconds if there is signal; otherwise every minute until there is. Photographs go **after** the record they belong to.
+</Step>
+<Step title="The office answers">
+Most things are accepted. A few are refused, with a reason — they go to **Not accepted**.
+</Step>
+<Step title="Your book comes back updated">
+The same round trip brings down what changed at the office: new shops, approved orders, tasks, messages.
+</Step>
+</Steps>
+
+## Waiting to send
+
+**More → Waiting to send** is the outbox.
+
+<Wireframe url="MBOS · Waiting to send" caption="The outbox, with two records waiting">
+<div className="mx-auto max-w-[300px] space-y-3">
+  <WfTitle>Waiting to send</WfTitle>
+  <WfCard><WfText>2 records · 3 photos waiting</WfText><WfText muted>Last sent 10:42 am</WfText><Hotspot n={1} /></WfCard>
+  <WfButton primary>Send now</WfButton><Hotspot n={2} />
+  <WfTable columns={["Record", "State"]} rows={[
+    ["Visit · Customer A", <WfPill key="a">Waiting</WfPill>],
+    ["Order · Customer A", <WfPill key="b">Waits for the visit</WfPill>],
+  ]} />
+  <Hotspot n={3} />
+  <WfText muted>App version: as installed</WfText><Hotspot n={4} />
+</div>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>What is waiting.</b> Records and photos still on the phone, and when the phone last reached the office.</span>,
+  <span key="2"><b>Send now.</b> Tries straight away and tells you what happened: <i>All sent to the office</i>, or <i>Nothing was sent. Your work is still safe on this phone.</i></span>,
+  <span key="3"><b>Each record.</b> Some wait for another — an order or payment taken on a visit can wait until the visit has gone.</span>,
+  <span key="4"><b>App version.</b> If a newer version is out, it says <i>Update to …</i>.</span>,
+]} />
+
+## After a visit: the receipt
+
+When you finish a visit, **Visit saved** lists every part with a dot: **green** is done, **amber** is saved but not finished yet — for example *Your manager will see it when this phone sends*, or *Voice note kept. The office will type it out when you are online.* Amber is not a problem; it means *waiting for signal*.
+
+## Not accepted
+
+<Wireframe url="MBOS · Not accepted" caption="A refused order and a refused payment">
+<div className="mx-auto max-w-[300px] space-y-3">
+  <WfTitle>Not accepted</WfTitle>
+  <WfCard tone="warn" title="Order · Customer B">
+    <WfText>Accounts have stopped this shop. Call accounts before you promise anything more.</WfText>
+    <WfBar><WfButton>Take the order again</WfButton><WfButton>Remove</WfButton><Hotspot n={1} /></WfBar>
+  </WfCard>
+  <WfCard tone="warn" title="Payment · Customer C">
+    <WfText>Bill MMI/26-27/087 has already been settled…</WfText>
+    <WfBar><WfButton>Collect it again</WfButton><Hotspot n={2} /></WfBar>
+  </WfCard>
+  <WfCard title="Lead · Customer D"><WfText>…</WfText><WfButton>Send again</WfButton><Hotspot n={3} /></WfCard>
+</div>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>What the office said.</b> Every refusal shows the reason in words. <i>Take the order again</i> opens a new order for the same shop; the refused one is removed.</span>,
+  <span key="2"><b>Collect it again.</b> For a payment — record it again correctly. Nothing was counted, so the shop is not paying twice.</span>,
+  <span key="3"><b>Send again.</b> For a record you have fixed, or where the rule may have changed.</span>,
+]} />
+
+<Callout kind="warn">
+**Not accepted is not the same as waiting.** A record waiting for signal will go by itself. A record that was *Not accepted* will not, until you fix it — the phone does try refused records again every few hours in case the office's rule changed.
+</Callout>
+
+Something you depended on being refused (say, a visit) stops the records behind it (the order and payment taken on it). Fix the first, and the rest follow.
+
+Nothing on this screen deletes anything unless you press **Remove** and confirm.
+
+## When the phone seems stuck
+
+| What you see | What to do |
+|---|---|
+| Things waiting for a long time with signal | Press **Send now** on *Waiting to send* and read the message. |
+| *Sign in again to send this* | Your sign-in has lapsed. Sign in — nothing waiting is lost. |
+| New shops or settings never arrive | Update the app if *Update to …* shows. If it still does not arrive, sign out and sign in again. |
+| *Your book did not refresh* | Something on the phone could not take the office's data. Tell your manager the exact words; your own work is still being sent. |
+| No trail on the Live map, or the office says your phone is quiet | Open **More → Phone setup** and fix every red line — location set to *Allow all the time*, battery saver off for MBOS. Then restart the app (not the phone). |
+| Photos stuck | If the office has set photos to Wi-Fi only, they wait for Wi-Fi. Records still go on mobile data. |
+
+<Callout kind="note">
+**Signing out does not lose waiting work** if it has already been sent. Before signing out, open *Waiting to send* and make sure it is empty.
+</Callout>
+
+## Questions people ask
+
+<Faq q="Does the app work with no signal?">
+Yes. Everything is saved on the phone and sent later. Your book, prices and tasks are on the phone too.
+</Faq>
+<Faq q="Will I lose work if the phone dies?">
+No. It is saved the moment you press save. It is sent when the phone is back on with signal.
+</Faq>
+<Faq q="The office says they cannot see my order, but it is not in Not accepted.">
+Check *Waiting to send*. If it is waiting behind a visit, the visit has not gone yet. Press **Send now**.
+</Faq>
+<Faq q="Why does my phone tell the office my battery level?">
+So your manager can tell a flat battery from a switched-off phone when your trail stops. It is only sent while you are checked in.
+</Faq>

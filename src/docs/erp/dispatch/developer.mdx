@@ -1,0 +1,137 @@
+The desk is a bespoke route, `src/app/erp/dispatch`, not a generic list. Its rules are one pure function, `scanVerdict` in `engines/trace.ts`; the reading and the transaction that acts on a verdict are `lib/erp/dispatch.ts`; the writes are four server actions in `actions/erp-trace.ts`. Do Verified is not reimplemented here — the desk calls the Billing & dispatch tab's own bulk handler.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Route | `src/app/erp/dispatch/page.tsx` | `ctx.screens.has("dispatch")`; no `?order=` → `dispatchQueue()`; with one → `dispatchBoard(orderNo)` |
+| Desk (client) | `src/app/erp/dispatch/desk.tsx` | Scan box, verdict panels, override request and decision, lines, boxes (Take off), Do Verified, scan log; `canVerify` = holds `orderDetails`, `canAllocate` = holds `orders` |
+| Rules (pure) | `src/lib/erp/engines/trace.ts` | `normaliseCode`, `scanVerdict`, `scanGate`, `packLabel`, `UNIT_STATUS_LABEL`, `manualMove` |
+| Reading and acting | `src/lib/erp/dispatch.ts` | `scanLines`, `unitFor`, `dispatchBoard`, `dispatchQueue`, `scanOntoOrder`, `unscanUnit`, `requestOverride`, `decideOverride`, `scanGateFor`, `markDispatched`, `scannedOnAllocation` |
+| Unit history | `src/lib/erp/units.ts` | `unitEvent` |
+| Writes | `src/lib/actions/erp-trace.ts` | `erpDispatchScan`, `erpDispatchUnscan`, `erpDispatchRequestOverride`, `erpDispatchDecideOverride`, `erpDispatchVerify` |
+| Verify | `src/lib/erp/screens/sales.ts` | `orderDetails.bulk.verify` → `verify`, which calls `scanGateFor` and `markDispatched` |
+| Hand allocation | `src/lib/erp/screens/sales.ts` | `allocateForm` / `saveAllocation`, opened by the desk as `ui.act("orders", { id: "allocate" })` |
+| Stickers | `src/app/erp/print-labels/page.tsx` | `?order=` → stickers for units `scanned` or `dispatched` on the order |
+
+## A scan, end to end
+
+<Flow caption="erpDispatchScan(orderNo, code)" chart={`
+sequenceDiagram
+  autonumber
+  participant Desk as desk.tsx
+  participant Act as actions/erp-trace.ts
+  participant D as dispatch.ts
+  participant E as engines/trace.ts
+  participant DB as Postgres
+  Desk->>Act: erpDispatchScan(1256, code)
+  Act->>Act: requireErpWrite("dispatch")
+  Act->>D: scanOntoOrder(ctx, 1256, code)
+  D->>D: normaliseCode(code)
+  D->>DB: begin - unitFor(code) FOR UPDATE, scanLines(order), approved override
+  D->>E: scanVerdict(unit, lines, override)
+  alt refused
+    E-->>D: ok false, result, message
+  else allowed
+    E-->>D: ok true, line, matched or allocate or swap
+    D->>DB: lockLot, check a free unit, adjust erp_batch_codes
+    D->>DB: erp_units scanned, unitEvent scanned, override Used
+  end
+  D->>DB: commit, then insert erp_dispatch_scans (always)
+  D->>DB: audit erp.dispatch.scan (allowed only)
+  D-->>Desk: verdict and code
+`} />
+
+## The verdict
+
+<Code file="src/lib/erp/engines/trace.ts" symbol="normaliseCode" />
+
+<Code file="src/lib/erp/engines/trace.ts" symbol="scanVerdict" collapsed />
+
+`productId` on a `ScanUnit` / `ScanLine` is the **brand line** (`product_brands.id` via `finished_goods.brand_id`), which is what makes a same-brand SKU a "size" mismatch.
+
+## Acting on it
+
+<Code file="src/lib/erp/dispatch.ts" symbol="scanOntoOrder" collapsed />
+
+The scan log is written **after** the transaction, from `logged`, so a refused scan is recorded even though nothing in the transaction changed.
+
+<Code file="src/lib/erp/dispatch.ts" symbol="unscanUnit" />
+
+## Overrides
+
+<Code file="src/lib/erp/dispatch.ts" symbol="requestOverride" />
+
+<Code file="src/lib/erp/dispatch.ts" symbol="decideOverride" />
+
+The action re-checks the power before `decideOverride` does: `requireErpWrite("dispatch", "dispatchOverride")`.
+
+## The scan gate and dispatch
+
+<Code file="src/lib/erp/engines/trace.ts" symbol="scanGate" />
+
+<Code file="src/lib/erp/dispatch.ts" symbol="scanGateFor" />
+
+<Code file="src/lib/erp/dispatch.ts" symbol="markDispatched" />
+
+`erpDispatchVerify` selects the order's billed lines still `Pending` and runs `screenModule("orderDetails").bulk.verify` with `requireErpWrite("orderDetails")`, so Billing & dispatch's rules hold from the desk too.
+
+## Tables
+
+<DbTable name="erp_units" only={["id", "kind", "sku_id", "lot_from", "lot_code", "seq", "cans", "godown_id", "status", "order_id", "scanned_at", "scanned_by_id", "dispatched_at"]} note={{
+  id: "BX-yymmdd-nnnnnn or LU-…, one series. What the QR carries.",
+  status: "available, scanned, dispatched, hold, rejected, returned, lost, cancelled (check constraint).",
+  order_id: "The line it is scanned against, or left on once dispatched.",
+}} />
+
+<DbTable name="erp_dispatch_scans" note={{
+  result: "ok, duplicate, mismatch, blocked, unknown.",
+  message: "The sentence the desk showed.",
+}} />
+
+<DbTable name="erp_dispatch_overrides" note={{
+  mismatch: "product or size.",
+  status: "Pending, Approved, Declined, Used. A partial unique index allows one Pending-or-Approved row per (unit, line).",
+  reason: "At least ten characters, checked in requestOverride.",
+}} />
+
+<DbTable name="erp_unit_events" note={{
+  event: "created, labelled, scanned, unscanned, dispatched, transfer, hold, release, reject, return, cancel, lost, override. Appended, never edited.",
+}} />
+
+## Access
+
+- **Module:** <ModuleRef k="erp.dispatch" />.
+- **Power:** `dispatchOverride` to decide an override (and, on Boxes & labels, to reject or return a box).
+- **Cross-screen:** Do Verified needs `orderDetails` (a tab of Orders); hand allocation needs `orders`. The desk hides both buttons without them and the actions refuse them.
+- A preview refuses every write (`requireErpWrite`).
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/erp/engines/trace.test.ts` | `normaliseCode` with links, `scanVerdict` for every refusal, matched / allocate / swap, override substitution, `scanGate` with and without units, `manualMove` |
+| `npm run test:integration` | `src/lib/erp/erp-traceability.test.ts` — `the dispatch desk` | An order for 3 boxes; Do Verified waits for every box; a matching box counts and the same box, an unknown code and a wrong pack size are stopped; another lot of the same SKU takes its place; an override is asked, decided by somebody else and used once; once all are scanned the boxes become dispatched |
+
+## Changing it safely
+
+<Steps>
+<Step title="Put a new check in scanVerdict">
+It is pure and runs before any lock — a rule added in `scanOntoOrder` instead cannot be tested without a database and is invisible to `requestOverride`, which calls the same verdict.
+</Step>
+<Step title="Keep refused scans logged">
+`logScan` runs whatever the verdict. The dashboard's mismatch and duplicate counts read `erp_dispatch_scans`.
+</Step>
+<Step title="Never let the desk verify by its own rules">
+`erpDispatchVerify` delegates to `orderDetails.bulk.verify`. A second verify path would drift from the transport record and the order-book sync.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| A different SKU of the same brand line is always a "size" mismatch, even when both pack labels are equal (boxed vs loose of one finished good) | `engines/trace.ts` `scanVerdict`; `dispatch.ts` `lineRows`, `unitFor` (`b.id as productId`) |
+| `unscanUnit` leaves the allocation where the scan put it, so a swap is not reversed | `dispatch.ts` `unscanUnit` |
+| A boxed SKU whose `cans_per_box` is 1 needs 0 boxes (`boxQuantity` returns 0 for `cpb` of 1 or less), so its line reads allocated in full with no lot, has nothing to scan, and the queue counts it as 0 | `engines/sales.ts` `boxQuantity`; `dispatch.ts` `scanLines`, `dispatchQueue` |
+| `decideOverride` names the decider by `ctx.user` rather than `ctx.actor` (harmless today because previews refuse writes) | `dispatch.ts` `decideOverride` |

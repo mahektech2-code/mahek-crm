@@ -1,0 +1,215 @@
+The **Orders** screen follows a customer's order from the moment it is taken to the moment its bill leaves the godown. Each tab is one step: what is still pending, what is being prepared and is ready, what has been billed and is waiting to be dispatched, which lots went on which order, the label list, every line ever taken, and the WhatsApp messages the ERP read as possible orders.
+
+How these orders then reach MahekOne's order book — the CRM, targets and outstanding — is on its own page: [The ERP and MahekOne's order book](/docs/erp/order-book).
+
+## The screen at a glance
+
+<Wireframe url="/erp/orders" nav={["Dashboard", "Alerts", "#Orders", "Orders", "Dispatch desk", "#Traceability", "Traceability", "#Logistics", "Transport"]} active="Orders" caption="Orders, on its Under process & ready tab, for somebody who can see the sales rate">
+  <WfBar>
+    <WfTitle sub="From the order being taken to the bill leaving the godown. Each tab is one step of it.">Orders</WfTitle>
+    <WfSpacer />
+    <WfButton primary>New order</WfButton>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfTabs items={["Pending", "Under process & ready", "Billing & dispatch", "Batch codes", "Labels", "All lines", "WhatsApp inbox"]} active="Under process & ready" />
+  <Hotspot n={2} />
+  <WfBar><WfText muted>3 selected</WfText><WfButton>Ready</WfButton><WfButton>Under Process</WfButton><WfButton>Bill it</WfButton><WfButton>Undo billing</WfButton><Hotspot n={3} /></WfBar>
+  <WfTable
+    highlight={0}
+    columns={["Order no", "Status", "Billing party", "Description of goods", "Order qty", "Boxes", "Rate", "Can quantity verification", "Tally bill no", "Flags"]}
+    rows={[
+      ["1256", "Ready", <b key="a">Customer A</b>, "Nano Thinner – 1 Liter (12 Can/Box)", "36", "3", "₹210", <span key="b">Done <Hotspot n={4} /></span>, "", <span key="c"><WfPill tone="success">Ready · fully allocated</WfPill> <WfPill tone="warn">Bill no / rate missing</WfPill> <Hotspot n={5} /></span>],
+      ["1256", "Ready", <b key="d">Customer A</b>, "PU Sealer – 4 Liter (4 Can/Box)", "8", "2", "₹890", "Add More Quantity", "", <WfPill key="e" tone="danger">Ready · short of allocation</WfPill>],
+      ["1257", "Under Process", <b key="f">Customer B</b>, "Nano Thinner – 20 Liter (Loose)", "6", "", "₹3,900", "Add More Quantity", "", <span key="g"><WfPill tone="info">Under process</WfPill> <WfPill tone="brand">Dispatch today</WfPill></span>],
+    ]}
+  />
+  <WfPanel title="Customer A" side>
+    <WfText muted>Dispatch today · standing instructions</WfText>
+    <WfBar><WfButton primary>Bill it</WfButton><WfButton>Edit</WfButton><WfButton>ADD More</WfButton><WfButton>Scan boxes at dispatch</WfButton><Hotspot n={6} /></WfBar>
+  </WfPanel>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>New order.</b> One order, one line per SKU. The order number is given when you save.</span>,
+  <span key="2"><b>Tabs.</b> Each is one step. Holding the Orders screen opens all seven.</span>,
+  <span key="3"><b>Bulk actions.</b> Tick rows (or a whole order number group) and act on them together.</span>,
+  <span key="4"><b>Can quantity verification.</b> Whether the lots set aside for the line add up to what it needs: <i>Done</i>, <i>Add More Quantity</i> or <i>Remove Some Quantity</i>.</span>,
+  <span key="5"><b>Flags.</b> What state the line is in and what it is still missing.</span>,
+  <span key="6"><b>The line's drawer.</b> Every action on one line. A button that cannot be used yet says why when you hover it.</span>,
+]} />
+
+## The tabs
+
+| Tab | What it lists |
+|---|---|
+| **Pending** | Every order that has not reached billing yet — not cancelled, not an empty-drum line. Grouped by date and order number. Once any line of an order is billed, the whole order leaves this tab. |
+| **Under process & ready** | Lines that are **Under Process** or **Ready** and not yet billed. This is the working list for the office. |
+| **Billing & dispatch** | Lines that have been billed. Here you set the dispatch date and mark them **Verified** once the goods leave. |
+| **Batch codes** | Every lot set aside for an order line, and how many. |
+| **Labels** | The same lines as *Under process & ready*, laid out for the label maker and downloadable. Read only. |
+| **All lines** | Every order line ever taken, whatever its state. |
+| **WhatsApp inbox** | Messages the ERP read as possible orders, each with a drafted order you can accept. |
+
+## Taking an order
+
+<Steps>
+<Step title="Press New order">
+Pick the **Date**, the **Godown** it leaves from and the **Billing party**. A deactivated party is not offered.
+</Step>
+<Step title="Pick the delivery party, if it is different">
+Leave **Delivery party** blank to deliver to the billing party. **Area** and **Standing instructions** fill in from the delivery party. Leave **Transporter** blank to use the delivery party's usual transporter.
+</Step>
+<Step title="Set Dispatch on">
+The day it should leave the godown. The lists then say **Dispatch today**, **Dispatch tomorrow** or **Dispatch late** from this date — you never have to update it by hand.
+</Step>
+<Step title="Add a line per SKU">
+Pick the **Description of goods** and type the **Order qty** in **cans**. For a boxed SKU the **Box quantity** is worked out for you, and it must be a whole number of boxes — otherwise it reads *INVALID — 12 cans a box* and the order will not save.
+</Step>
+<Step title="Rate and discount, if you can see them">
+If your account can see the sales rate, a **Rate** box and the **Price-list rate** appear. Leave the rate blank to take the price list's. The same goes for **Discount %**. If you cannot see them, the price list decides both.
+</Step>
+<Step title="Save">
+You are told the order number and how many lines were saved. If a line has no rate, the message says so: *1 without a rate: none on price list "…"* — a line with no rate cannot be billed until somebody adds one.
+</Step>
+</Steps>
+
+To add another SKU to an order already saved, open any of its lines and press **ADD More**. The order number, date, godown and parties stay as they were.
+
+<Callout kind="note" title="Orders from a Pending customer">
+An order whose billing party is still **Pending** is marked *Pending customer* and cannot be billed until it is approved. Who approves it depends on whether the ERP is where orders are taken — see [The ERP and MahekOne's order book](/docs/erp/order-book).
+</Callout>
+
+## From Under Process to Ready
+
+A new line starts **Under Process**. Press **Ready** when the goods are on the shelf.
+
+<Callout kind="rule" title="Ready is refused without stock">
+The ERP only marks a line Ready if the godown holds the boxes (or cans) it needs, **after** what the lines already Ready and not yet allocated will take. If it does not, you see: *Stock is not there: order 1256 · Nano Thinner – 1 Liter at Godown A needs 3 boxes, 1 in stock. Pack or move the stock first, then mark it Ready.* When you mark several lines Ready together, those that have stock are marked and the rest are named.
+</Callout>
+
+**Under Process** takes a Ready line back. The other statuses — **Hold From Office** and **Cancel** — are set from **Edit**.
+
+## Allocating lots
+
+Before a line can be billed, the exact lots it will leave from must be set aside — this is the **allocation**. A lot allocated to an order takes that stock the moment it is written, so nobody else can promise it.
+
+Lots are allocated **at the Dispatch desk, by scanning the boxes**. Each box scanned onto a line sets aside one unit of its lot. For stock packed before box labels existed, the desk offers **Allocate a lot by hand**. See [The dispatch desk](/docs/erp/dispatch).
+
+The **Batch codes** tab lists every allocation. From a row you can:
+
+- **Change quantity** — not below the boxes already scanned against that lot, not above what the line still needs, and not above the lot's stock.
+- **Release** — gives the stock back to the lot. Refused once the line is billed (*Undo its billing first*) or while boxes are scanned against it (take them off at the Dispatch desk first).
+
+## Billing a line
+
+Once the office has entered the bill in Tally, press **Bill it**. It needs, in this order:
+
+1. approval, if the customer is Pending;
+2. status **Ready**;
+3. lots allocated in full (*Can quantity verification* reads **Done**);
+4. a **Tally bill no.** (set it from **Edit**);
+5. a **rate**.
+
+If anything is missing, hovering the button says exactly what: *Needs a Tally bill no., a rate.* A billed line moves to **Billing & dispatch** and is marked *In order details*.
+
+**Undo billing** takes a billed line back, as long as it has not been dispatch-verified.
+
+## Billing & dispatch
+
+<Wireframe url="/erp/orders?view=orderDetails" caption="Billing & dispatch, for somebody who can see sales amounts">
+  <WfTable
+    columns={["Order date", "Order no", "Billing party", "Description of goods", "Bill total", "Dispatch date", "Verification", "Flags"]}
+    rows={[
+      ["8 Oct", "1256", <b key="a">Customer A</b>, "Nano Thinner – 1 Liter (12 Can/Box)", "₹9,410", "", "Pending", <span key="b"><WfPill tone="warn">Not dispatch-verified</WfPill> <WfPill tone="warn">Boxes still to scan</WfPill> <Hotspot n={1} /></span>],
+      ["7 Oct", "1249", <b key="c">Customer C</b>, "PU Sealer – 4 Liter (4 Can/Box)", "₹21,240", "8 Oct", "Verified", <WfPill key="d" tone="success">Sales target reached</WfPill>],
+    ]}
+  />
+  <WfBar><WfButton primary>Do Verified</WfButton><WfButton>Extra Expenses</WfButton><WfButton>Change GST</WfButton><WfButton>Dispatch stickers</WfButton><Hotspot n={2} /></WfBar>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Boxes still to scan.</b> Every box on the line has to be scanned at the Dispatch desk before it can be verified.</span>,
+  <span key="2"><b>The line's actions.</b> Verify, add freight, change GST, print stickers, open the desk or trace the order.</span>,
+]} />
+
+| Action | What it does |
+|---|---|
+| **Do Verified** | Asks for the **dispatch date** and marks the line **Verified** and **Dispatched**. Needs the lots allocated in full and every box scanned. The date cannot be before the order date. The first verified line of a bill opens its record on [Transport](/docs/erp/transport). |
+| **Extra Expenses** | Records extra freight on the line, once. It is added to the line's cost. |
+| **Change GST** | 18% or 0%, until the line is verified. 18% bills from *Mahek Marketing India*, 0% from *Mylac*. |
+| **Not Verify** | ERP administrators only. Marks a line *Not Verify*. |
+| **Dispatch stickers** | Prints a sticker for every box scanned onto the order. |
+| **Scan its boxes / Dispatch desk** | Opens the order at the Dispatch desk. |
+| **Trace this order** | Opens [Traceability](/docs/erp/traceability) on the order. |
+
+Do Verified and Extra Expenses can also be done to a selection of lines at once.
+
+### What the drawer shows
+
+Besides the columns, a billed line shows the delivery party, litres dispatched, which company bills it, the **final amount** (with GST), the **lot-code costing** and **cost per can** (if you can see cost), the credit notes issued against it, **order fulfil days**, the customer's **credit days** and the **due date** that gives, the delivery party's segment and salesman, and the customer's **monthly target** from the CRM. The row is flagged *Sales target reached* when the customer's sales in the dispatch month meet that target.
+
+## Labels
+
+The **Labels** tab is a list for the label maker: every line being prepared, with its order id, parties, area, transporter, weight and **No of label** — one a box on a boxed line, one a can otherwise. Press download to take it as a file.
+
+Printing the labels themselves — the QR labels on each box and the dispatch stickers — is done from the label sheet, reached from a packing batch, the Boxes & labels screen, or **Dispatch stickers** on a billed line.
+
+## The WhatsApp inbox
+
+<Wireframe url="/erp/orders?view=orderInbox" caption="The WhatsApp inbox, with one message drafted">
+  <WfBar><WfSpacer /><WfButton primary>Read a message</WfButton><Hotspot n={1} /></WfBar>
+  <WfTable
+    columns={["Received", "Status", "From", "Customer", "Message", "Draft lines", "Order no"]}
+    rows={[
+      ["10 Oct", <WfPill key="a" tone="warn">New</WfPill>, "WhatsApp", <b key="b">Customer A</b>, "20 peti NC 1L, kal bhejo", "1", ""],
+      ["9 Oct", "Converted", "Pasted", <b key="c">Customer B</b>, "5 drum stoving", "1", "1251"],
+    ]}
+  />
+  <WfBar><WfButton primary>Accept the draft</WfButton><WfButton>Not an order</WfButton><WfButton>Duplicate</WfButton><Hotspot n={2} /></WfBar>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Read a message.</b> Paste or speak a customer's message, or screen the WhatsApp replies that came in.</span>,
+  <span key="2"><b>On a New message.</b> Accept the draft through the normal order form, or close it as not an order or a duplicate.</span>,
+]} />
+
+<Steps>
+<Step title="Read a message">
+Choose **Paste a message** and paste (or speak) what the customer sent. If you know who it is, pick the **Customer**; if it came from a number, type the **Sender's number**. Or choose **Screen new WhatsApp replies** to read the replies that came in over the last few days. The replies are also screened every hour on their own.
+</Step>
+<Step title="Read what was drafted">
+The message is read into a draft: the customer, and a line for each product mentioned with its quantity in cans. Anything the ERP could not decide is left for you: *Several SKUs fit "NC 1L" — choose one*, *No quantity was said*, or *no customer matched — pick one*. A message that is not an order is filed as **Not an order**.
+</Step>
+<Step title="Accept the draft">
+**Accept the draft** opens the ordinary new-order form with the draft in it, the original message beside it and a note on how each line was read. Check every line against the message. Nothing is an order until you press **Create the order**. Saving closes the message as **Converted** with the order number.
+</Step>
+</Steps>
+
+If drafting is switched off or has used up this month's allowance, the tab says so instead of offering the button.
+
+## Questions people ask
+
+<Faq q="I pressed Ready and it said the stock is not there, but I can see it on the Stock screen.">
+Other lines already marked Ready at the same godown are counted first. If they will take what is on the shelf, your line has to wait until more is packed or moved in.
+</Faq>
+<Faq q="Bill it is greyed out.">
+Hover it: it names everything still missing — approval, Ready, the allocation, the Tally bill number or the rate.
+</Faq>
+<Faq q="Where do I allocate lots?">
+At the Dispatch desk, by scanning each box onto the order. For old stock with no box labels, the desk has **Allocate a lot by hand**.
+</Faq>
+<Faq q="Do Verified says 'Scan the boxes first'.">
+At least one lot on the line has box ids, so every box has to be scanned at the Dispatch desk before the line can be verified.
+</Faq>
+<Faq q="An order disappeared from Pending but one of its lines is not billed.">
+Pending hides a whole order once any of its lines is billed. The unbilled lines are still on **Under process & ready** and **All lines**.
+</Faq>
+<Faq q="I cannot change the quantity on a line.">
+It has been billed. Undo billing first (only possible before it is dispatch-verified).
+</Faq>
+<Faq q="I cannot delete a line.">
+A billed line has to have its billing undone first, and a line with lots allocated has to have them released first — they hold stock.
+</Faq>
+<Faq q="I don't see Rate or Discount columns.">
+They need the *See sales rate* and *See sales amounts* powers. Without them the price list sets the rate and discount for you, and the list's toolbar says *2 columns hidden* — hover it to see which.
+</Faq>

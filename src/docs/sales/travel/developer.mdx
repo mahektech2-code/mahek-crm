@@ -1,0 +1,156 @@
+A leg is written by the handset through the MBOS sync dispatcher (`handleTravelLeg`), measured by `rescoreLeg`, priced by the pure expense-policy engine through `refreshDayMoney`, and read back by `travelLedger` for the screen. Nothing on `/sales/travel` writes; corrections happen on the day check (`reviewDayEvidence`).
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Route guard | `src/app/sales/travel/layout.tsx` | `requireModule(user.id, "sales.travel")` |
+| Page (server) | `src/app/sales/travel/page.tsx` | Month nav, banners, chips, sort, table; `DISAGREEMENT_BPS` |
+| Read | `src/lib/services/expense-service.ts` | `travelLedger`, `gpsForLeg`, `trailOptions`, `priceDay`, `travelModes` |
+| Measure and price | `src/lib/services/expense-submit-service.ts` | `rescoreLeg`, `refreshDayMoney`, `repriceDay` |
+| Engine (pure) | `src/lib/engines/travel-distance.ts` | `gpsDistanceForLeg`, `trailDistance`, `straightLineEstimate` |
+| Engine (pure) | `src/lib/engines/expense-policy.ts` | `chooseDistance`, `computeLeg`, `computeDay`, `varianceBps` |
+| Sync write | `src/lib/actions/mbos.ts` | `travelLegSchema`, `handleTravelLeg` (dispatched as `travel_leg`) |
+| Office correction | `src/lib/actions/sales.ts` | `reviewDayEvidence` — re-checks and re-prices |
+| Photo access | `src/lib/services/attachment-service.ts` | `canReadTravelLegPhoto` → `canReadSalesmansOwnEvidence` |
+| Handset | `mbos-app/src/lib/travel-leg.ts`, `mbos-app/src/components/ui/odometer-camera.tsx`, `mbos-app/src/data/travel.ts` | Meter checks at the camera, the camera, the outbox writes |
+| Migrations | `drizzle/0118_odometer_at_both_ends.sql`, `0127_the_day_says_how_he_travels.sql`, `0190_punch_in_survives_visits.sql` | End photo, `origin`, the two partial unique indexes |
+
+## A leg, end to end
+
+<Flow caption="From the camera screen to an eligible figure" chart={`
+sequenceDiagram
+  autonumber
+  participant H as Handset
+  participant D as actions/mbos.ts
+  participant S as expense-submit-service.ts
+  participant E as engines/expense-policy.ts
+  participant DB as Postgres
+  H->>H: checkOdometer() at the meter
+  H->>D: sync item travel_leg (open, then closed)
+  D->>DB: mode active? customer in scope?
+  D->>D: unevidenced? sets claim_excluded + reason
+  D->>DB: upsert mbos_travel_legs, bindMbosMedia x3
+  S->>DB: rescoreLeg — trail from mbos_positions, odometer metres
+  S->>E: priceDay → computeDay(policy, subject, facts)
+  E-->>S: legs, meals, lines, exceptions
+  S->>DB: eligible on mbos_expenses, replace unresolved exceptions
+`} />
+
+## The write: `handleTravelLeg`
+
+<Code file="src/lib/actions/mbos.ts" symbol="travelLegSchema" collapsed />
+
+<Code file="src/lib/actions/mbos.ts" symbol="handleTravelLeg" collapsed />
+
+Points worth knowing before changing it:
+
+- **Absent is "unchanged", never "false".** `claimExcluded`, its reason and `manualReason` are read from the prior row when an update omits them. The handset opens a visit leg excluded and then sends arrival/abandon updates without those columns; upserting blindly re-claimed bus-day legs.
+- **Unevidenced is an exclusion, not a rejection.** Only an unknown mode or an out-of-scope customer rejects.
+- **`closedAtOwnReading`** (end equals start) needs no second photograph — it is how the handset closes an abandoned trip or an un-punched session.
+- Media is bound after the upsert, because the camera may have closed before the leg existed.
+
+## The handset's check
+
+<Code file="mbos-app/src/lib/travel-leg.ts" symbol="checkOdometer" />
+
+## Measuring
+
+<Code file="src/lib/services/expense-submit-service.ts" symbol="rescoreLeg" collapsed />
+
+<Code file="src/lib/engines/travel-distance.ts" symbol="gpsDistanceForLeg" collapsed />
+
+<Code file="src/lib/engines/expense-policy.ts" symbol="chooseDistance" />
+
+<Code file="src/lib/engines/expense-policy.ts" symbol="varianceBps" />
+
+## Pricing
+
+<Code file="src/lib/engines/expense-policy.ts" symbol="computeLeg" collapsed />
+
+`refreshDayMoney` is the single entry point that re-measures every leg of a day, prices the day and replaces the **unresolved** exceptions (an answer a manager already gave survives). It runs whenever a record of the day arrives; there is no submit step any more.
+
+<Code file="src/lib/services/expense-submit-service.ts" symbol="refreshDayMoney" collapsed />
+
+## The read
+
+<Code file="src/lib/services/expense-service.ts" symbol="travelLedger" collapsed />
+
+`eligiblePaise` is read from `mbos_expenses` where `source_type = 'travel_leg'` — the line `refreshDayMoney` writes. The figures above the table are computed over every row; chips and sorting never move them.
+
+## Tables
+
+<DbTable name="mbos_travel_legs" only={["mode_key", "origin", "started_at", "ended_at", "expense_day_id", "visit_id", "customer_id", "gps_metres", "gps_method", "gps_coverage_pct", "gps_reason", "manual_metres", "manual_reason", "odometer_start_km", "odometer_end_km", "odometer_metres", "odometer_photo_id", "odometer_end_photo_id", "chosen_metres", "chosen_source", "variance_bps", "ticket_amount_paise", "ticket_photo_id", "claim_excluded", "claim_excluded_reason"]} note={{
+  origin: "day_log · visit · session. Decides how strict the server is about readings.",
+  ended_at: "Null while he is on the road. Two partial unique indexes: one open non-session leg and one open session leg per user.",
+  odometer_metres: "Derived by rescoreLeg. Null when the pair runs backwards — never made positive.",
+  odometer_photo_id: "The departure (or the only) meter photograph.",
+  odometer_end_photo_id: "The arrival meter photograph (0118).",
+  gps_method: "trail · straight_line_factored · null. The screen names the method beside the number.",
+  claim_excluded: "Movement recorded but not a claim — unevidenced, or priced by the session / claimed as fares instead.",
+}} />
+
+<DbTable name="mbos_travel_modes" note={{
+  key: "What a leg's mode_key names. A policy rule refers to a mode by this key.",
+  requires_odometer: "Whether a visit or session leg on this mode must carry meter readings and photographs.",
+  requires_ticket: "Whether the handset asks for a ticket.",
+  active: "An inactive mode is refused, and the refusal lists the active ones.",
+}} />
+
+<DbTable name="mbos_expense_days" only={["user_id", "day", "departed_from_hometown", "destination_city", "overnight", "opening_odometer_km", "closing_odometer_km", "policy_id", "resolved_grade", "resolved_city_class", "submitted_at", "locked_at", "reopened_at", "reopen_reason"]} note={{
+  policy_id: "The policy version stamped on the day, so a later policy does not reprice it.",
+  resolved_grade: "Stamped so a promotion next month does not reprice this day.",
+  submitted_at: "Legacy — an older handset's Send day is accepted and only refreshes the day.",
+}} />
+
+## Who can open the photographs
+
+<Code file="src/lib/services/attachment-service.ts" symbol="canReadTravelLegPhoto" />
+
+<Code file="src/lib/services/attachment-service.ts" symbol="canReadSalesmansOwnEvidence" collapsed />
+
+The module grant is asked **before** `managerScope`, because `managerScope` answers "national" for anybody without a region row — every plain salesman.
+
+## Access
+
+- **Module:** <ModuleRef k="sales.travel" />. No capability is checked on the read.
+- **Scope:** none on `travelLedger` (see Known gaps).
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test:integration` | `src/lib/travel-on-visit.test.ts` | Open then closed with both photographs; unevidenced kept and unclaimed; day-log untouched; backwards meter; called off at its own reading; sessions; own-vehicle-day visit legs |
+| `npm run test` | `mbos-app/src/lib/travel-leg.test.ts` | `checkOdometer`, `checkFare`, `visitLegPlan` |
+| `npm run test` | `src/lib/engines/expense-policy.test.ts`, `expense-policy-standard.test.ts` | `chooseDistance`, per-km, actuals, zero-rated, variance flags against the issued policy |
+
+## Changing it safely
+
+<Steps>
+<Step title="Never reject for missing evidence">
+A rejected leg blocks the visit that depends on it in the handset's outbox. Exclude it from the claim with a reason instead.
+</Step>
+<Step title="Treat an omitted field as unchanged">
+Handsets in the field are several builds behind; read the prior row for anything an update may not carry.
+</Step>
+<Step title="Keep money in the policy">
+No rate or cap belongs in this code. A new way of paying a mode is a new policy rule kind in `expense-policy.ts`, with a form and validation.
+</Step>
+<Step title="Re-price through refreshDayMoney">
+Anything that changes a leg's evidence calls `repriceDay`; nothing writes `mbos_expenses` figures directly.
+</Step>
+<Step title="Bind new media parents in MBOS_PARENTS">
+A photograph with no parent is swept by the nightly orphan job.
+</Step>
+</Steps>
+
+## Known gaps
+
+| Gap | Where |
+|---|---|
+| `travelLedger` takes no scope — any holder of `sales.travel` sees every salesman's legs | `expense-service.ts` `travelLedger`; `travel/page.tsx` |
+| `mbos.travel.maxLegKilometres` is not re-checked on arrival, only on an office correction (AGENTS.md says both) | `actions/mbos.ts` `handleTravelLeg`; `actions/sales.ts` `reviewDayEvidence` |
+| Empty state and *Not yet* tooltip still speak of "submitting" the day | `travel/page.tsx` |
+| The ledger marks only `odometer_photo_id`; the arrival photograph has no pill | `travel/page.tsx` |
+| Comment says the ledger "shows a leg's meter photographs"; it shows a pill only | `attachment-service.ts` `canReadTravelLegPhoto` |
+| AGENTS.md says unevidenced visit legs are refused; the code accepts them unclaimed | `actions/mbos.ts` `handleTravelLeg` |

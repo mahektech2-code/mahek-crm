@@ -1,0 +1,105 @@
+The Dispatch desk exists to answer one question at the lorry: **is this box allowed on this order?** Before it, the only check between the shelf and the customer was a person reading a label. Now every box carries its own id in a QR, and every scan is judged against the order's lines — product, pack size, quantity, godown and the box's own state — before it counts. A wrong box is stopped, and the only way past is a second person agreeing in writing.
+
+## What a box is
+
+A **box** is one physical unit with its own id — `BX-…` for a box from a packing batch, `LU-…` for a labelled loose can or drum from an FG lot. The id is what the QR carries. The lot it came from is linked data, so one lot makes many boxes and one order can carry boxes of several lots. Every change to a box is appended to its history and never edited. Minting and labelling boxes is on [Stock](/docs/erp/stock); tracing one is on [Traceability](/docs/erp/traceability).
+
+| Box state | Meaning |
+|---|---|
+| In stock | On the shelf, can be scanned |
+| Scanned for dispatch | On an order, waiting for Do Verified |
+| Dispatched | Gone |
+| On hold | Cannot be scanned until released |
+| Rejected / Returned / Written off / Cancelled | Cannot be scanned |
+
+## The scan, rule by rule
+
+The checks run in this order, and the first that fails is the sentence the godown sees:
+
+<Flow caption="Is this box allowed on this order?" chart={`
+flowchart TD
+  A["Scanned code"] --> B{"A box the ERP made?"}
+  B -- "No" --> X1["Not allowed: unknown code"]
+  B -- "Yes" --> C{"In stock?"}
+  C -- "Already dispatched or scanned here" --> X2["Already scanned"]
+  C -- "Elsewhere, on hold, rejected..." --> X3["Not allowed"]
+  C -- "Yes" --> D{"A Ready line of the<br/>same SKU, not full?"}
+  D -- "No, but same product<br/>other pack size" --> M1["Blocked: pack size mismatch"]
+  D -- "No, nothing like it" --> M2["Blocked: product mismatch"]
+  D -- "Yes" --> E{"Box or loose as the line?<br/>Same godown?"}
+  E -- "No" --> X4["Not allowed"]
+  E -- "Yes" --> F{"Which allocation?"}
+  F --> G1["Matched: its lot is on the line"]
+  F --> G2["Allocate: line short, takes its lot"]
+  F --> G3["Swap: another lot gives one up"]
+`} />
+
+<Rule title="The allocation follows the box">
+Scanning is where a lot allocation becomes a box:
+
+- **Matched** — the box's lot is allocated to the line and still has unscanned room.
+- **Allocate** — the line is not yet allocated in full, so the box's lot is allocated by one more.
+- **Swap** — the line is allocated in full with other lots; one of them gives up one unit and the box's lot takes it.
+
+An allocate or swap needs one unit of the box's lot to be free in the stock ledger. If every unit of that lot at that godown is promised to other orders, the scan is refused: *Scan a box of an allocated lot.*
+</Rule>
+
+<Callout kind="why" title="Why a different lot of the same SKU is accepted">
+The office allocates lots, but the godown picks boxes off a shelf. Refusing a perfectly good box because it was from the next lot along would stop the lorry over paperwork. So the paperwork moves to match the box — and says so in the scan message and in the box's history — which is what traceability needs anyway: the record says which lot actually left.
+</Callout>
+
+<Rule title="Two desks cannot count one box">
+A scan runs in one transaction under the box's row lock and the lots' locks. Two people scanning the same box at two desks get one success and one *already scanned*.
+</Rule>
+
+## Overrides take two people
+
+<Rule title="Only a product or pack-size mismatch can be overridden">
+The person at the desk asks with a reason of at least a sentence — who agreed to the change and what the customer was told. Somebody holding the *Approve dispatch overrides* power approves or declines it; declining needs a note. Nobody decides their own request unless they are an ERP administrator. An approved override lets that one box onto that one line once, and is then **Used**.
+</Rule>
+
+<Callout kind="why">
+A mismatch override is the company deciding to send something the customer did not order. The person loading the lorry is under the most pressure to let it go, so the decision is somebody else's, and the reason stays on the record next to who asked and who agreed.
+</Callout>
+
+Only one override per box per order line can be open (waiting or approved) at a time. The same power also lets a person reject a box, or mark one returned by the customer, on Boxes & labels.
+
+## Do Verified waits for every box
+
+<Rule title="The scan gate">
+A line must have every box scanned before it can be dispatch-verified **if any lot allocated to it has box ids**. A line whose lots have none — stock packed before box ids existed — is not held back, because there is nothing to scan. The whole gate is switched by <Setting k="erp.dispatch.requireScan" />.
+</Rule>
+
+<Callout kind="why" title="Why old stock is let through">
+Refusing every line without box labels would have stopped dispatch on the day scanning shipped. Old stock runs down on its own; new packing batches always mint their boxes.
+</Callout>
+
+Do Verified then marks each scanned box **dispatched** with the date, the line Verified and Dispatched, and opens the bill's transport record. It is the same action as on [Orders → Billing & dispatch](/docs/erp/orders), with the same rules, from whichever screen it is pressed.
+
+## What is recorded
+
+| Record | What it holds |
+|---|---|
+| Every scan | The code, the order, the result (ok, duplicate, mismatch, blocked, unknown), the sentence shown, who and when — refused scans included |
+| Every box change | Scanned, taken off, dispatched, override — appended to the box's history |
+| Every override | The box, the line, the SKU ordered and the SKU scanned, product or size, the reason, who asked, who decided and their note, when it was used |
+| Every successful scan | An audit-log row naming the allocation (matched, allocate, swap) and whether it was an override |
+
+The [Traceability](/docs/erp/traceability) dashboard counts today's mismatches, duplicates and refused scans, and the overrides still waiting.
+
+## Who can do what
+
+| Act | Needs |
+|---|---|
+| Open the desk, scan, take off, request an override | The Dispatch desk screen |
+| Approve or decline an override | The Dispatch desk and *Approve dispatch overrides* — and not your own request, unless an ERP administrator |
+| Allocate a lot by hand | The Orders screen as well |
+| Do Verified from the desk | The Orders screen as well |
+| Print dispatch stickers | Any of Boxes & labels, Dispatch desk, Packing batches, Stock or Orders |
+
+<SettingsTable keys={["erp.dispatch.requireScan"]} />
+
+## Where the code and the intent disagree today
+
+- **"Pack size mismatch" is judged by brand line, not by size.** Any SKU of the same brand line that is not the ordered SKU is reported as a pack-size mismatch. Two SKUs of one finished good that differ only in packing (a 5 L can sold boxed and sold loose) therefore read *Pack size mismatch. Ordered: … – 5 L. Scanned: … – 5 L.* — the sizes in the sentence are the same.
+- **Taking a box off leaves its allocation where the scan put it.** A swap is not undone, so taking off a box scanned as a swap leaves the order allocated to the box's lot rather than the one it replaced.

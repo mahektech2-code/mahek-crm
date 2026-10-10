@@ -1,0 +1,160 @@
+The two levels screens tell the store **what is running low before it runs out**. Every raw material and every finished-goods SKU you care about gets a level at each godown. The ERP reads what is actually in stock against that level, puts anything short on a **Below minimum** tab, and lets you raise a purchase requirement from the row in one press.
+
+There are two screens, one for each kind of stock:
+
+- **Raw-material levels** — chemicals, cans, drums, boxes and stationery. Each has a **minimum and a maximum**.
+- **Finished-goods levels** — the SKUs you sell. Each has a **minimum** only.
+
+<Callout kind="live">
+The numbers on this page that come from settings — how far back the suggestions look, how many days of cover they aim for — are read live from your ERP. If somebody changes them, this page changes with them.
+</Callout>
+
+## The screen at a glance
+
+<Wireframe url="/erp/rm-levels" nav={["Dashboard", "Alerts", "#Stock", "Stock", "Boxes & labels", "Item transfers", "Raw-material levels", "Finished-goods levels"]} active="Raw-material levels" caption="Raw-material levels, opened on its Below minimum tab">
+  <WfBar>
+    <WfTitle sub="Minimum and maximum per godown. Raise a requisition from any item below its minimum.">Raw-material levels</WfTitle>
+    <WfSpacer />
+    <WfButton primary>New level</WfButton>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfTabs items={["Below minimum", "All levels"]} active="Below minimum" />
+  <WfBar><WfText muted>Grouped by godown and material type</WfText><Hotspot n={2} /></WfBar>
+  <WfTable
+    highlight={0}
+    columns={["Item", "Available", "Re-order %", "Min", "Godown", "Material type", "Flags"]}
+    rows={[
+      [<span key="a"><b>Toluene</b> <Hotspot n={3} /></span>, "120", "-60", "200", "Godown A", "Chemical", <WfPill key="b" tone="danger">Below level</WfPill>],
+      [<b key="c">Tin can 5L</b>, "340", "-15", "300", "Godown A", "Can", <WfPill key="d" tone="danger">Below level</WfPill>],
+      [<b key="e">Box6</b>, "55", "-8", "40", "Godown A", "Box", <span key="f"><WfPill tone="danger">Below level</WfPill> <Hotspot n={4} /></span>],
+    ]}
+  />
+  <WfPanel title="Toluene" side>
+    <WfText muted>Godown A · Chemical · buy 480 to reach the maximum</WfText>
+    <WfBar><WfButton primary>Raise requisition</WfButton><Hotspot n={5} /></WfBar>
+  </WfPanel>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>New level.</b> Only on the <i>All levels</i> tab. Sets a minimum and maximum for one item at one godown.</span>,
+  <span key="2"><b>Groups.</b> Rows are grouped by godown and by material type, and the list follows your working godown when you pick one.</span>,
+  <span key="3"><b>Re-order %.</b> How far the stock is from the middle of its minimum and maximum. Zero is exactly in the middle; a negative figure is below it. The most short rows sit at the top.</span>,
+  <span key="4"><b>Below level.</b> The red flag on any followed row that needs buying.</span>,
+  <span key="5"><b>Raise requisition.</b> Opens a new purchase requirement with the godown, the item and the quantity to buy already filled in.</span>,
+]} />
+
+## The tabs
+
+| Screen | Tab | What it lists |
+|---|---|---|
+| Raw-material levels | **Below minimum** | Every **followed** item whose stock is short of its **maximum** — the ones you would buy today. Read only: you raise requisitions here, you do not edit levels. |
+| Raw-material levels | **All levels** | Every level set, followed or not, with its suggested minimum and maximum. This is where you add, edit, copy and delete levels. |
+| Finished-goods levels | **Below minimum** | Every **followed** SKU whose stock is under its **minimum**. Read only. |
+| Finished-goods levels | **All levels** | Every SKU level set, with its suggested minimum. |
+
+<Callout kind="warn" title="The raw-material Below minimum tab is wider than its name">
+On the raw-material screen, an item appears on **Below minimum** as soon as its stock is under the **maximum**, even if it is still above the minimum. The row's header says how much to buy to reach the maximum. Read the **Re-order %** and **Min** columns to see whether it is genuinely below the minimum.
+</Callout>
+
+## Reading a row
+
+| Column | What it means |
+|---|---|
+| **Item / Product** | The raw material, or the SKU. |
+| **Required** (raw material, All levels only) | How much to buy to bring the stock up to the maximum. Blank when you are already at or above it. |
+| **Available** | What is in stock at that godown now, read from the lots. Raw material is in litres or pieces; a loose SKU in cans; a boxed SKU in boxes. |
+| **Re-order %** | Raw material: stock against the midpoint of min and max (0 means bang in the middle, -50 means half of it). Finished goods: stock as a percentage of the minimum (100 means exactly at the minimum). |
+| **Min / Max** | The level somebody set. Finished goods have no maximum. |
+| **Status** | **Follow** — the ERP watches this level. **UnFollow** — it is kept but never flagged. |
+| **Suggested min / max** | What the ERP would set from recent use. See [Suggested levels](#suggested-levels). |
+| **Material type / Type** | For raw material: Chemical, Can, Drum, Box or Stationary. For finished goods: *Finish Goods Inventory* (a loose SKU) or *FG Packing Inventory* (a boxed SKU). |
+
+<Callout kind="note" title="Drums are counted for the whole company">
+A **Drum** level does not read one godown's stock. It reads every empty drum ever bought less every drum sold on an order, across all godowns, because that is how drums were counted before. Set drum levels with that in mind.
+</Callout>
+
+## Setting a level
+
+<Steps>
+<Step title="Open All levels and press New level">
+On the raw-material screen, pick the **Godown**, then the **Material type**, then the **Raw item** (the list follows the type you picked). On the finished-goods screen, pick the **Godown** and the **Product (SKU)**.
+</Step>
+<Step title="Type the minimum (and the maximum for raw material)">
+The maximum may not be below the minimum. The finished-goods form reminds you: *A loose SKU is counted in cans from FG stock; a boxed SKU in boxes from packing stock.*
+</Step>
+<Step title="Choose Follow or UnFollow">
+Follow is the default. UnFollow keeps the level on the list but never puts the item on Below minimum, never flags it and never raises an alert.
+</Step>
+<Step title="Save">
+One level per item per godown. Saving a second one for the same item and godown is refused with *Duplicate Entry!* — edit the existing one instead.
+</Step>
+</Steps>
+
+From any row's menu on **All levels** you can also:
+
+- **Edit** — change the minimum, maximum or status. The godown and the item are fixed once set.
+- **Add More** — open a fresh form with the same godown (and, for raw material, the same type) already picked, for setting several levels in a row.
+- **Delete** — remove the level. Nothing else changes.
+
+## Raising a requirement from a shortfall
+
+<Steps>
+<Step title="Open the row on Below minimum">
+Or any row on **All levels** that has a **Required** figure.
+</Step>
+<Step title="Press Raise requisition">
+A new purchase requirement opens with the **godown**, **material type**, **item** and **quantity** filled in. The quantity is what you need to reach the maximum. The priority is set to **For Stock**, and the department is the team that buys that kind of material (or your own, if you only raise for one team).
+</Step>
+<Step title="Check it and save">
+Change the quantity if you want to buy more or less. From here it is an ordinary purchase requirement — see [Purchase requirements](/docs/erp/purchase-requirements).
+</Step>
+</Steps>
+
+<Callout kind="note">
+Finished goods have no **Raise requisition** button. A short SKU is made, not bought — it goes to production, not to purchase.
+</Callout>
+
+## Suggested levels
+
+When the suggestion feature is on (currently <Setting k="erp.ai.reorder.enabled" />), each level shows what the ERP would set it to, worked out from how much that godown actually used:
+
+| Kind of item | Use is read from |
+|---|---|
+| Chemical | The SFG batches made at that godown |
+| Can | The FG fills at that godown |
+| Box | The packing batches at that godown (boxes used per box packed) |
+| Finished-goods SKU | The dispatch-verified orders that left that godown |
+
+The suggestion is the average daily use over the last <Setting k="erp.ai.reorder.lookbackDays" /> days, times <Setting k="erp.ai.reorder.minCoverDays" /> days' cover for the minimum and <Setting k="erp.ai.reorder.maxCoverDays" /> days' cover for the maximum, rounded up. Open the row to read the **Suggestion basis** — for example *Used 12.5 L/day over 90 days; 14–30 days' cover.* — and, where the last 30 days ran much faster or slower than that, a **Recent use** line saying so.
+
+Nothing changes until somebody presses a button:
+
+- **Apply suggestion** on one row, which asks you to confirm with the basis shown.
+- **Apply suggestions** on a selection of rows.
+
+For finished goods only the minimum is applied, since there is no maximum.
+
+## When stock falls below a level
+
+Besides the tab, the ERP checks every hour. When an item first falls short, a **Stock below re-order level** alert is raised on the [Alerts](/docs/erp/alerts-and-ai) screen, and everybody assigned to that godown who can raise purchase requirements gets a notification once: *Below re-order level: Toluene*. They are not told again on every hourly run while it stays short. The alert closes itself once the stock is back.
+
+## Questions people ask
+
+<Faq q="An item is on Below minimum but its stock is above the minimum.">
+On the raw-material screen the tab lists anything short of its **maximum**. The header on the row says how much brings it to the maximum. If you only want to buy below the minimum, check the Re-order % and Min columns before raising.
+</Faq>
+<Faq q="An item I know is low is not on the list.">
+Its level is set to **UnFollow**, or it has no level at that godown at all. Check **All levels** for that godown.
+</Faq>
+<Faq q="The suggestion says 'No use recorded at this godown in the look-back yet.'">
+Nothing was made, filled, packed or dispatched with that item at that godown in the look-back window. Drum and stationery levels never get a suggestion, because nothing in production records using them.
+</Faq>
+<Faq q="Why is the drum count the same at every godown?">
+Drums are counted company-wide: every empty drum bought, less every drum sold on an order.
+</Faq>
+<Faq q="Can I change the godown on a level?">
+No. Delete it and set a new one at the right godown.
+</Faq>
+<Faq q="Available looks wrong for a boxed SKU.">
+A boxed SKU is counted in **boxes** from packing stock, a loose SKU in **cans** from FG stock. A level set as if boxes were cans will look very short or very full.
+</Faq>

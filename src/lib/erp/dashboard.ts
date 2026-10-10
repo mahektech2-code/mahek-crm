@@ -354,21 +354,22 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
   push("Requests and credit notes", req);
 
   /* ======================================================== petty cash */
-  if (has("expenses")) {
-    /* The funds as the ledger holds them, and what waits on somebody — the same figures the Petty cash overview opens with. */
-    const [funds, waiting, requests, unmatched] = await Promise.all([
-      q(sql`
-        select f.id, f.name, f.fund_type as type,
-               coalesce((select sum(case when l.direction = 'credit' then l.amount_paise else -l.amount_paise end) from erp_fund_ledger l where l.fund_account_id = f.id), 0)::float8 as bal
-          from erp_fund_accounts f where f.status = 'active' order by f.code`),
-      q(sql`select id, amount_paise::float8 as amount from erp_expenses where not legacy and approval_status in ('submitted', 'under_review')`),
-      q(sql`select id from erp_expense_payments where status = 'requested'`),
-      q(sql`select id from erp_bank_lines where recon_status in ('unmatched', 'exception', 'correction', 'suggested')`),
+  if (has("expenses") || has("credits")) {
+    const [credits, expenses] = await Promise.all([
+      q(sql`select c.employee_name as who, g.name as godown, c.mode, c.amount_paise::float8 as amount from erp_credits c join erp_godowns g on g.id = c.godown_id`),
+      q(sql`select e.id, e.expense_by as who, g.name as godown, e.mode, e.amount_paise::float8 as amount, e.status from erp_expenses e join erp_godowns g on g.id = e.godown_id`),
     ]);
-    const tiles: Tile[] = funds.map((f) => ({ l: String(f.name), v: rupees(Number(f.bal)), sub: "balance, from the ledger", tone: Number(f.bal) < 0 ? "danger" : undefined, href: tileHref("pettyOverview", null, "") }));
-    tiles.push({ l: "Expenses awaiting approval", v: String(waiting.length), sub: rupees(waiting.reduce((s, e) => s + Number(e.amount), 0)), tone: waiting.length ? "warn" : undefined, href: tileHref("expenses", waiting.map((e) => String(e.id)), "Awaiting approval") });
-    if (requests.length) tiles.push({ l: "Payment requests to pay", v: String(requests.length), tone: "warn", href: tileHref("pettyPayments", requests.map((r) => String(r.id)), "Requested") });
-    if (unmatched.length) tiles.push({ l: "Bank lines to reconcile", v: String(unmatched.length), tone: "warn", href: tileHref("pettyBank", unmatched.map((r) => String(r.id)), "To reconcile") });
+    /* Everyone's with the Expenses screen; otherwise the person's own (spec §13.6). */
+    const everyone = has("expenses");
+    const mine = (who: unknown) => everyone || String(who).trim().toLowerCase() === ctx.user.name.trim().toLowerCase();
+    const place = new Map<string, number>();
+    for (const c of credits) if (mine(c.who) && inG(c.godown)) place.set(`${c.godown} · ${c.mode}`, (place.get(`${c.godown} · ${c.mode}`) ?? 0) + Number(c.amount));
+    for (const e of expenses) if (mine(e.who) && inG(e.godown)) place.set(`${e.godown} · ${e.mode}`, (place.get(`${e.godown} · ${e.mode}`) ?? 0) - Number(e.amount));
+    const tiles: Tile[] = [...place.entries()].map(([k, v]) => ({ l: `Petty cash · ${k}`, v: rupees(v), sub: everyone ? "everyone's balance" : "your balance", tone: v < 0 ? "danger" : undefined, href: tileHref(has("expenses") ? "expenses" : "credits", null, "") }));
+    if (has("expenses")) {
+      const pend = expenses.filter((e) => e.status === "Pending").map((e) => String(e.id));
+      tiles.push({ l: "Expenses pending verification", v: String(pend.length), href: tileHref("expenses", pend, "Pending") });
+    }
     push("Petty cash", tiles);
   }
 

@@ -1,0 +1,157 @@
+Production is `lib/erp/screens/production.ts` (SFG batches, FG filling, packing batches, and the stock and log tabs of each stage) and `lib/erp/screens/recipes.ts`. The arithmetic is pure in `lib/erp/engines/production.ts`; QC and box ids are rules in `lib/erp/engines/trace.ts`, with the box register in `lib/erp/units.ts`. Every consuming save runs inside `inTx`, takes `lockLot`, and reads stock through the transaction.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Engine (pure) | `src/lib/erp/engines/production.ts` | `sfgTotalUse`, `sfgYield`, `sfgLotCode`, `sfgRate`, `fgLotCode`, `packBatchNo`, `fillFigures`, `fillRefusal`, `batchState`, `boxFigures`, `packCosting` |
+| QC rule (pure) | `src/lib/erp/engines/trace.ts` | `SFG_QC`, `qcRefusal`, `unitId`, `boxLots` |
+| SFG | `src/lib/erp/screens/production.ts` | `sfgForm`, `saveSfg`, `syncSfgEntry`, `decideQc`, `sfgBatches` module |
+| Filling | same | `fgCatalogue`, `fillForm`, `saveFill`, `syncFgEntry`, `looseSku`, `fgFill` module |
+| Packing | same | `boxedSkus`, `packForm`, `savePack`, `syncPackEntry`, `packBatches` module |
+| Recipes | `src/lib/erp/screens/recipes.ts` | `recipeMap`, `recipeQtyByName`, `recipeLinesByProduct`, `recipesScreen` |
+| Box register | `src/lib/erp/units.ts` | `ensureBatchBoxes`, `cancelBatchBoxes`, `looseHeadroom`, `trimLooseUnits` |
+| Stock | `src/lib/erp/stock.ts` | `rmLots`, `sfgLots`, `fgLots`, `packLots`, `lockLot`, `sfgRates`, `fgRates`, `packBatchCosting` |
+| Helpers | `src/lib/erp/screens/common.ts` | `inTx`, `refuse`, `godownOptions` |
+
+## A batch, end to end
+
+<Flow caption="saveSfg — two lines on one lot" chart={`
+sequenceDiagram
+  autonumber
+  participant F as saveSfg
+  participant S as stock.ts
+  participant DB as Postgres
+  F->>F: validate header and every line (no cans, qty above zero, adjusted not above use)
+  F->>DB: inTx begin
+  loop each line
+    F->>S: lockLot(tx, rm, lot, godown)
+    F->>S: rmLots(tx) - stock read inside the transaction
+    F->>F: avail = stock - what earlier lines of this save already take
+    alt total use above avail
+      F-->>F: refuse(fieldErr qty Low Stock!) - whole save rolls back
+    end
+  end
+  F->>DB: nextNumber(sfg) unless adding to a batch, lot code from the first line
+  loop each line
+    F->>DB: insert erp_sfg_lines, syncSfgEntry -> erp_sfg_entries (yield)
+  end
+  F->>DB: commit, erpAudit erp.sfg.create
+`} />
+
+<Code file="src/lib/erp/screens/production.ts" symbol="saveSfg" collapsed />
+
+<Code file="src/lib/erp/engines/production.ts" symbol="sfgTotalUse" />
+
+<Code file="src/lib/erp/engines/production.ts" symbol="sfgYield" />
+
+<Code file="src/lib/erp/engines/production.ts" symbol="sfgLotCode" />
+
+<Code file="src/lib/erp/engines/production.ts" symbol="sfgRate" />
+
+<Code file="src/lib/erp/stock.ts" symbol="lockLot" />
+
+<Code file="src/lib/erp/screens/common.ts" symbol="inTx" />
+
+## QC
+
+<Code file="src/lib/erp/engines/trace.ts" symbol="qcRefusal" />
+
+<Code file="src/lib/erp/screens/production.ts" symbol="decideQc" />
+
+<DbTable name="erp_sfg_qc" note={{
+  lot_code: "The SFG lot code — the key, so a transfer carries the verdict. No row reads as Pending.",
+  status: "Pending · Approved · Rejected (check constraint).",
+  note: "Readings on approval; the reason on rejection (required).",
+}} />
+
+## Filling
+
+<Code file="src/lib/erp/screens/production.ts" symbol="saveFill" collapsed />
+
+<Code file="src/lib/erp/engines/production.ts" symbol="fillFigures" />
+
+<Code file="src/lib/erp/engines/production.ts" symbol="fillRefusal" />
+
+The packing availability `fillRefusal` reads is `rmLevelAvailable()` — the can item's lot stock at the godown, or the company-wide drum count for a Drum item. `syncFgEntry` posts `cans − can_adjusted` under the FG lot code and carries the loose SKU (`looseSku`: this FG product, one can a box, no empty box, same packing item).
+
+## Packing
+
+<Code file="src/lib/erp/screens/production.ts" symbol="savePack" collapsed />
+
+<Code file="src/lib/erp/engines/production.ts" symbol="batchState" />
+
+<Code file="src/lib/erp/screens/production.ts" symbol="syncPackEntry" />
+
+<Code file="src/lib/erp/engines/production.ts" symbol="packCosting" />
+
+## Recipes
+
+<Code file="src/lib/erp/screens/recipes.ts" symbol="recipeMap" />
+
+The batches list flags a line `overRecipe` when the batch's total use of that raw material (across its lots) exceeds recipe × batches × (1 + tolerance). Writes check `ctx.administrator || ctx.level === "manager"`.
+
+## Tables
+
+<DbTable name="erp_sfg_lines" note={{
+  sfg_no: "SFG-n (series 'sfg'); ADD More SFG keeps it.",
+  batches: "Number of batches for the whole SFG.",
+  rm_lot_no: "The raw-material lot consumed.",
+  total_use: "batches × qty_per_batch — read as the RM outflow.",
+  litres_adjusted: "Loss; the yield is total_use − this.",
+  lot_code: "The SFG lot, named by the first line.",
+}} />
+
+<DbTable name="erp_fg_fills" note={{
+  sfg_lot_code: "The SFG lot consumed: can_size × cans is read as its outflow.",
+  can_use_id: "The Can or Drum raw material; null for Naket.",
+  packing_type: "Can · Drum · Naket. Can fills are subtracted from the can item's lots, oldest first.",
+  can_adjusted: "Cans lost; FG stock is cans − this.",
+  lot_code: "FG + fg_num + godown's first two letters.",
+}} />
+
+<DbTable name="erp_pack_lines" note={{
+  batch_no: "FP + batch_serial + godown's first two letters.",
+  boxes: "Boxes in the WHOLE batch — every line carries it.",
+  fg_lot_code: "The FG lot this line draws cans from (read as its outflow).",
+  cans: "Cans this line draws.",
+}} />
+
+<DbTable name="erp_recipes" note={{ qty_per_batch: "Litres, whatever the material's purchase unit." }} />
+
+## Permissions
+
+- **Modules:** <ModuleRef k="erp.sfgBatches" />, <ModuleRef k="erp.fgFill" />, <ModuleRef k="erp.packBatches" />, <ModuleRef k="erp.recipes" />.
+- **Powers:** `approveSfgQc` (QC), `viewCost` (rate, costing and value columns, the form's derived rate fields).
+- **Level:** manager for recipe writes; administrator for deleting posted lines.
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/erp/engines/production.test.ts` | Use and yield; weighted SFG rate, unknown when any line's is; lot codes; can / drum / Naket costing; each failed fill check; batch completeness; boxes paid once |
+| `npm run test` | `src/lib/erp/engines/trace.test.ts` | Only an Approved SFG lot may be filled; no QC row is Pending; box ids |
+| `npm run test:integration` | `src/lib/erp/erp-production.test.ts` — "semi-finished", "filling", "packing" | Two lines on one lot cannot overspend; batches × qty less loss; no cans in a batch; QC gates filling and only the approver decides; each check says its own thing; a fill posts net of lost cans, costed; a line cannot overdraw its lot; a batch posts once, only when complete |
+| | "costs stay behind their power", "what filling and packing use comes out of stock", "recipes" | No costs for a clerk; cans and boxes leave their lots; refused without boxes at the godown; recipe lines and the over-recipe flag |
+| `npm run test:integration` | `src/lib/erp/erp-traceability.test.ts` | QC first, then refill, then a complete packing batch mints one id per box; loose labels never exceed the lot's cans |
+
+## Changing it safely
+
+<Steps>
+<Step title="Consume only inside inTx with lockLot">
+Read stock with the transaction (`rmLots(tx)`, `sfgLots(tx)`, `fgLotStock(…, tx)`) after taking the lock, and refuse with `refuse(...)`. Reading with the pool is how two saves both spend the last litre.
+</Step>
+<Step title="Post through the sync functions">
+`syncSfgEntry`, `syncFgEntry`, `syncPackEntry` own their stage's entries; an edit calls them again rather than writing a second entry.
+</Step>
+<Step title="Keep the lot codes">
+`12…`, `FG12NA`, `FP40NA` are join keys across the ledgers and are on labels already in the godowns. New ids sit beside them.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| Deleting an SFG line or a fill removes the consumption but leaves its output entry, so its stock is counted in both stages until corrected | `sfgBatches.actions.delete`, `fgFill.actions.delete` |
+| Drum fills are never subtracted from drum availability (company-wide drums bought on purchases − drums sold) | `stock.ts` `rmLevelAvailable`, `packingUse` (`packing_type = 'Can'` only) |

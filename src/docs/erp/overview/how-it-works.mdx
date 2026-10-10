@@ -1,0 +1,84 @@
+The ERP is the client's AppSheet system, "Mahek Plus", rebuilt as a MahekOne app. It keeps every field, formula and status the team already knew, and it changes the places where the old system let two records disagree. This tab explains the ideas that run through every ERP screen — the ones each of the other pages relies on — and why they were chosen.
+
+## One database, one copy of everything
+
+<Rule title="The ERP extends MahekOne's records; it never copies them">
+A **sales party** is a MahekOne customer with an ERP profile beside it. A **product** is the catalogue's own SKU with its packing beside it. **Price lists** are the Price Desk's, read. **Employees** come from HRMS. A **complaint** raised in the ERP is the same record the CRM telecaller sees on the customer's next call.
+</Rule>
+
+<Callout kind="why">
+Mahek Plus kept its own customer list, its own products and its own complaints. Every one of them drifted from the copy somebody else kept. A customer deactivated in the ERP is now `deactivated` everywhere, because there is only one customer.
+</Callout>
+
+## The material moves in one direction, and every step consumes the one before
+
+<Flow caption="Stock stages and what moves between them" chart={`
+flowchart LR
+  RM["Raw material<br/>litres or pieces, by lot"] -- "SFG batch" --> SFG["Semi-finished<br/>litres, by SFG lot"]
+  SFG -- "FG filling<br/>(QC approved only)" --> FG["Finished goods<br/>cans, by FG lot"]
+  FG -- "Packing batch" --> PK["Packed<br/>boxes, by batch"]
+  FG -- "allocated to an order" --> OUT["Sold"]
+  PK -- "allocated to an order" --> OUT
+`} />
+
+Four stages, four ledgers. What makes stock trustworthy:
+
+<Rule title="Stock is read, never typed">
+Current stock of a lot at a godown is everything that came in, less everything that consumed it. Inflows are ledger entries written by exactly one document each (a rated purchase, a batch line, a fill, a complete packing batch, a transfer in). Outflows are read straight from the documents that consume stock — transfers out, batch lines, fills, packing lines and allocations to orders. Delete a consuming document and the stock comes back by itself.
+</Rule>
+
+<Rule title="Two people cannot spend the last litre">
+Every save that consumes a lot locks that lot at that godown for the length of the save, reads its stock inside the same save, and refuses in the old system's own words — "Low Stock!", "Low SFG Stock", "Select Correct Quantity!" — when there is not enough.
+</Rule>
+
+<Rule title="Automations happen in the save that qualifies them">
+A purchase with a rate posts to stock as it is saved. An inward line goes to testing or to the register as it is saved. A packing batch posts its boxes the moment its cans match. Mahek Plus asked a person to press "Send to Testing", "Send to Purchase" or "Post" on each one; the item's own data already answered which, so the press is gone — kept only as the way out when something refused.
+</Rule>
+
+## Who can do what: screens, powers and designations
+
+Access to the ERP has three layers. They are explained fully on [Access and designations](/docs/erp/access-and-designations).
+
+| Layer | Answers | Example |
+|---|---|---|
+| **Screen** | Can this person open it? | Purchase testing, Stock |
+| **Power** | May they see this money, or make this decision? | See purchase money; Verify quality tests; Approve purchase orders |
+| **Duty on a material** | For this one item, who requests, raises the PO, approves it, tests it? | Only the Mixing & Blending team requests a particular solvent |
+
+<Callout kind="why">
+In Mahek Plus "verify a test" belonged to one email address and "see purchase money" to three. A level like "manager" cannot say "the CEO" without making every manager the CEO, so decisions became named powers given to named people.
+</Callout>
+
+A column a power reveals is removed **on the server** before the page is built: a clerk without "See purchase money" is never sent the rate, not merely shown a blank. Every list says which columns it withheld.
+
+## The dashboard: attention, not a report
+
+<Rule title="Every figure names the rows it counted">
+A dashboard tile is built from the same function as the list it opens, and the link carries the exact ids it counted. Opening it lands on precisely those rows with a pill naming them. A badge in the sidebar is the same count again, so a badge can never disagree with its list.
+</Rule>
+
+<Rule title="A tile you could not open is never built">
+Sections are drawn only for screens the person holds, and money tiles only with the power that reveals them. A storekeeper's dashboard has no sales value on it — not a blurred one, none.
+</Rule>
+
+<Rule title="Godown figures follow the working location">
+Stock, production and transfer figures are for the godown in the header. Purchase, sales and money figures are company-wide, because they are not about one godown.
+</Rule>
+
+### Yesterday's summary
+
+Every night the ERP writes a paragraph about the previous day: orders taken, lines dispatch-verified, inward lines received, SFG batches made and open alerts by kind. It is **counts only** — no rate, amount, cost or margin — so anyone who can open the dashboard may read it.
+
+The figures are always gathered by code. When <Setting k="erp.ai.alerts.enabled" /> is on and a writing model is configured, the model is asked to put those figures into two or three plain sentences and told to add nothing; otherwise the plain rule-built paragraph is shown as it is. The dashboard says which one you are reading.
+
+## Settings that shape the whole ERP
+
+<SettingsTable keys={["erp.orders.live", "erp.location.autoDetect", "erp.location.godownRadiusM", "erp.ai.voice.enabled", "erp.ai.alerts.enabled"]} />
+
+`erp.orders.live` is the largest switch in the ERP: it decides whether the ERP or the order sheet writes MahekOne's order book. Read [the order book](/docs/erp/order-book) before changing it.
+
+## Where the code and the intent disagree today
+
+- The Settings screen's subtitle reads "Your working location and profile." while the sidebar registry describes it as "Your working location and what your account can do." Both describe the same screen.
+- The departments module still describes a step-by-step **Departments** page and "the figures" it reads, but that page was removed; the steps survive only to drive the purchase forms.
+- The dashboard's stock tiles call the packed stage "Boxed lots", while the Stock screen's tab for the same stage is "Packed".

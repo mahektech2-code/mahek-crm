@@ -1,0 +1,118 @@
+**Monthly Targets** is a list of the customers in your book, each with what they are expected to buy this month and what they have bought so far. Its second tab, **Top customers**, is the company's best customers over the last 3, 6 or 12 months, showing which of them are in your book. A manager or accounts sets the targets; everybody else reads them.
+
+<Callout kind="live">
+Numbers on this page are your CRM's current settings.
+</Callout>
+
+## The screen at a glance
+
+<Wireframe url="/crm/targets" nav={["#Targets & reporting", "Monthly Targets", "My Performance", "EOD Report"]} active="Monthly Targets" caption="Monthly targets, for a manager">
+  <WfTabs items={["Targets", "Top customers"]} active="Targets" />
+  <WfBar>
+    <WfTitle sub="Your team · this month">Monthly targets</WfTitle>
+    <WfSpacer />
+    <WfButton>Allocate target</WfButton>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfBar>
+    <WfInput placeholder="Search customer, phone or town" />
+    <WfButton>All sales people</WfButton><WfButton>All sales managers</WfButton><WfButton>All back office</WfButton><WfButton>All statuses</WfButton>
+    <Hotspot n={2} />
+  </WfBar>
+  <WfTable
+    highlight={0}
+    columns={["Customer", "Target (Rs)", "Achieved (Rs)", "Gap (Rs)", "Bill target", ""]}
+    rows={[
+      [<b key="a">Customer A</b>, <span key="b">₹1,20,000 <WfPill>Set by hand</WfPill> <Hotspot n={3} /></span>, "₹84,000", "₹36,000", "4 bills · 2 raised", <WfButton key="c">Change target</WfButton>],
+      [<b key="d">Customer B</b>, <span key="e">₹45,000 <WfPill tone="warn">Auto default</WfPill></span>, "₹51,000", "—", <span key="f">No bill target this month <Hotspot n={4} /></span>, <WfButton key="g">Change target</WfButton>],
+      [<b key="h">Customer C</b>, <span key="i">₹60,000 <WfPill>Carried forward</WfPill></span>, "₹0", "₹60,000", "—", <WfButton key="j">Change target</WfButton>],
+    ]}
+  />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Allocate target.</b> Set a target for one customer, or for everyone the current filters match. Only managers and accounts see this.</span>,
+  <span key="2"><b>Filters.</b> The same salesperson, sales manager and back-office names as the Customers list, plus status, source and progress. Every filter is in the address bar.</span>,
+  <span key="3"><b>Where the number came from.</b> <i>Set by hand</i>, <i>Auto default</i> or <i>Carried forward</i> — see below.</span>,
+  <span key="4"><b>Bill target.</b> How many sales bills the account is asked for this month, and how many have been raised. Optional.</span>,
+]} />
+
+## What the badges mean
+
+| Badge | Means |
+|---|---|
+| **Set by hand** | A manager or accounts typed this target for this month. |
+| **Carried forward** | Set by hand last month and continuing unchanged — nobody has touched it this month. |
+| **Auto default** | Derived from what the customer bought in recent months; nobody chose this number. |
+
+## Who is on the list
+
+Only **direct customers** — accounts we invoice ourselves. A **lead** has never bought from us, so a target against it could never be met. A **third-party shop** is billed through its distributor, so its sales already count on that distributor's target. Both join the list on their own once they start buying from us directly.
+
+A customer who has gone quiet keeps their target — that gap is exactly what the month has to explain. Only a **deactivated** account leaves.
+
+## Setting a target
+
+<Steps>
+<Step title="Press Change target on a row, or Allocate target">
+Choose one customer, or apply to every customer your filters currently match.
+</Step>
+<Step title="Enter the rupees, the bills, or both">
+The **target** is the rupee amount for the month. The **bill target** is how many sales bills you want raised, one or more. A target has to ask for at least one of the two.
+</Step>
+<Step title="Save target">
+The row now says <i>Set by hand</i>. Next month it carries forward unless somebody changes it.
+</Step>
+</Steps>
+
+<Callout kind="note">
+If you cannot see **Allocate target** or **Change target**, setting targets is a manager or accounts action. You can still read every figure.
+</Callout>
+
+## How achieved is counted
+
+**Achieved** is the value of the customer's orders this month that accounts have approved — the same figure every sales report uses. An order still waiting for approval, or one that was declined, does not count. The figure is net of GST, after discount, the same unit a target is written in.
+
+## Top customers
+
+<Wireframe url="/crm/targets?view=top" caption="Top customers — the company list, filtered to your book">
+  <WfTabs items={["Targets", "Top customers"]} active="Top customers" />
+  <WfBar>
+    <WfPill tone="brand">3 months</WfPill><WfPill>6 months</WfPill><WfPill>1 year</WfPill>
+    <WfPill>Their sales</WfPill><WfPill>Their orders</WfPill>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfTable
+    columns={["#", "Party name", "Location", "Their sales", "Share of all sales", "Per month"]}
+    rows={[
+      [<span key="a">4 <Hotspot n={2} /></span>, <b key="b">Customer A</b>, "Town X", "₹9.6L", "3.1%", "₹3.2L"],
+      ["11", <b key="c">Customer D</b>, "Town Y", "₹5.2L", "1.7%", "₹1.7L"],
+    ]}
+  />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Span and ranking.</b> The last 3, 6 or 12 whole months, ranked by sales value or by number of orders.</span>,
+  <span key="2"><b>Rank.</b> The customer's place across the <b>whole company</b>, not only this list — so a gap in the numbers means somebody else's customer sits there.</span>,
+]} />
+
+- The report is made on the **1st of each month at 10:00**, covering whole months ending with the one just finished, and is then frozen for the month. Before 10:00 on the 1st you still see last month's.
+- The company's top <Setting k="topCustomers.count" /> are chosen across every book first; then you are shown the ones in **your** book. An administrator sees all of them. If none are yours: *None of the top customers are in your book*.
+
+## Questions people ask
+
+<Faq q="Why is this lead not on the targets list?">
+A lead has never bought from us. It appears once it becomes a customer by ordering.
+</Faq>
+<Faq q="The customer ordered yesterday but Achieved has not moved.">
+The order is waiting for accounts to approve it. Achieved counts approved orders only.
+</Faq>
+<Faq q="Where did an Auto default come from?">
+From what the customer bought over recent months, with an uplift. Change it and it becomes Set by hand.
+</Faq>
+<Faq q="Why is the top customers list missing rank 3?">
+Rank 3 is somebody else's customer. Ranks are company-wide.
+</Faq>
+<Faq q="Is this my own sales target?">
+No. These are per-customer targets. Your own target is on [My Performance](/docs/crm/performance).
+</Faq>

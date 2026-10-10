@@ -1,0 +1,113 @@
+The **Transport** screen follows every bill after it leaves the godown: which lorry receipt (LR) it went on, where the consignment is now, and when to ring to check it arrived. A bill appears here by itself the moment its first line is dispatch-verified — nobody has to add it.
+
+## The screen at a glance
+
+<Wireframe url="/erp/transport" nav={["Dashboard", "Alerts", "#Orders", "Orders", "Dispatch desk", "#Logistics", "Transport"]} active="Transport" caption="Transport, on its Pending LR tab">
+  <WfBar>
+    <WfTitle sub="Every dispatched bill, its LR and where the consignment is.">Transport</WfTitle>
+  </WfBar>
+  <WfTabs items={["Pending LR", "On the road", "All bills", "Paid freight"]} active="Pending LR" />
+  <Hotspot n={1} />
+  <WfTable
+    highlight={0}
+    columns={["Order no", "Bill date", "Billing party", "Bill no", "LR no", "Transporter", "Material stage", "Reminder call"]}
+    rows={[
+      ["1256", "10 Oct", <b key="a">Customer A</b>, "T-1119", "", "Transporter X", <span key="b">Dispatched from Godown A <Hotspot n={2} /></span>, ""],
+      ["1251", "9 Oct", <b key="c">Customer B</b>, "T-1112", "", "Transporter Y", "Dispatched from Godown A", "12 Oct"],
+    ]}
+  />
+  <WfPanel title="Customer A · bill T-1119" side>
+    <WfText muted>Transporter X · Dispatched from Godown A</WfText>
+    <WfBar><WfButton primary>Enter LR</WfButton><WfButton>Read LR photo</WfButton><Hotspot n={3} /></WfBar>
+  </WfPanel>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Tabs.</b> What still needs an LR, what is on the road, every bill, and paid-freight lines still waiting for their freight figure.</span>,
+  <span key="2"><b>Material stage.</b> Where the consignment is. A freshly dispatched bill names the godown it left from.</span>,
+  <span key="3"><b>Enter LR.</b> Type the LR number and the stage. Or photograph the lorry receipt and let the ERP read the number for you.</span>,
+]} />
+
+## The tabs
+
+| Tab | What it lists |
+|---|---|
+| **Pending LR** | Every dispatched bill that has no LR number yet. Grouped by transporter. |
+| **On the road** | Bills with an LR that have not reached the party. Grouped by transporter. |
+| **All bills** | Every dispatched bill, grouped by bill date. |
+| **Paid freight** | Billed lines for customers whose freight is **Paid**, still waiting for the freight amount to be entered. |
+
+A bill moves between the first two tabs on its own: entering the LR takes it off **Pending LR** and puts it **on the road**; setting the stage to **Close - Received to Party** takes it off the road.
+
+## Reading a row
+
+| Column | What it means |
+|---|---|
+| **Order no / Bill no** | The order number, and the Tally bill number from the order. |
+| **Bill date** | The dispatch date the bill was verified with. |
+| **LR no** | The lorry receipt number, once entered. |
+| **Transporter / Area** | Copied from the order when it was dispatched. |
+| **On the road** | **Yes** once there is an LR and the goods have not reached the party. |
+| **Payment type** | Who pays freight, from the billing party. |
+| **Extra expense** | The freight entered for a *Paid* bill. Blank on other payment types. |
+| **Material stage** | Where it is: *Dispatched* (shown as *Dispatched from* the godown), *In Transit*, *On the way to Destination area*, *Reached Destination Area*, *Close - Received to Party*. |
+| **Reminder call** | A date you set to ring and check on it. The row is flagged on and after that day until the bill is closed. |
+| **Tag sales man** | The customer's salesperson. |
+| **Monthly sales** | The customer's sales in the bill's month. Only for people who can see sales amounts. |
+
+## Entering an LR and keeping a consignment up to date
+
+<Steps>
+<Step title="Open the bill and press Enter LR">
+(Once it has an LR, the button reads **Update consignment**.)
+</Step>
+<Step title="Fill in what you know">
+**Despatch LR no**, the **Material stage** (required), a **Reminder call** date if you want to be reminded to ring, and a **Note** — you can speak it into the microphone.
+</Step>
+<Step title="Save">
+*LR 4471 recorded* the first time, *Consignment updated* after. When the stage changes, the order's record in MahekOne is updated too, so the CRM sees where the goods are.
+</Step>
+</Steps>
+
+### Reading the LR from a photograph
+
+If the photo-reading feature is on, a bill with no LR offers **Read LR photo**.
+
+<Steps>
+<Step title="Photograph the lorry receipt">
+The ERP reads the LR number, the transporter and the date off the photo.
+</Step>
+<Step title="Review the reading">
+The row now offers **Review LR reading**. It shows the photo, the number it read (marked if it is unsure), and checks: whether the transporter on the receipt matches the bill's, and whether that LR number is already on another order. Correct the number if you need to.
+</Step>
+<Step title="Save, or reject">
+**Save the LR** records it on the bill. A number already on another order is refused. **Reject LR reading** throws the reading away and changes nothing.
+</Step>
+</Steps>
+
+## Paid freight
+
+For a customer whose freight is **Paid**, the company pays the transporter and that cost belongs on the bill. The **Paid freight** tab lists every such billed line still without its freight figure.
+
+Press **Extra Expenses** on a line — or select several and use the bulk button — and type the amount. It is recorded once: a line that already has one is refused. The same figure is copied onto the bill's transport record if that has none yet, and it counts in the order line's cost and margin on [Orders → Billing & dispatch](/docs/erp/orders).
+
+## Questions people ask
+
+<Faq q="A bill I dispatched is not here.">
+A bill appears once its first line is **dispatch-verified** (Do Verified on Orders or at the Dispatch desk). Billing alone is not enough.
+</Faq>
+<Faq q="The row says 'Transferred today'.">
+That flag means your **Reminder call** date has arrived. It stays until the bill is closed as received.
+</Faq>
+<Faq q="I typed an LR number that is already on another bill and it saved.">
+Only a reading from a photograph is checked for a repeated number. When typing it by hand, check the number yourself.
+</Faq>
+<Faq q="Why is Extra expense blank on some bills?">
+It is only shown when the payment type is **Paid**.
+</Faq>
+<Faq q="Can a bill have two LRs?">
+No. A bill has one transport record and one LR. A bill split across two lorries is recorded with one LR and a note.
+</Faq>
+<Faq q="Read LR photo is not offered.">
+Reading photos is switched off, there is no provider key, or this month's allowance is used up — or the bill already has an LR.
+</Faq>

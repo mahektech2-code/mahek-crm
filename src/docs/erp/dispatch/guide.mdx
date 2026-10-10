@@ -1,0 +1,151 @@
+The **Dispatch desk** is where every box going onto a lorry is scanned against its order before it leaves. Each scan is checked the moment it is made — right product, right pack size, right godown, not already gone — and a box that is wrong is **stopped**. A wrong box can still go, but only on an **override** that somebody else approved, with a reason.
+
+Scanning is also how the lots on an order get set aside: the box you scan decides which lot the order leaves from.
+
+## The queue
+
+When you open the desk with no order chosen, you see every order with a **Ready** line that has not been dispatch-verified yet, the soonest to leave first.
+
+<Wireframe url="/erp/dispatch" nav={["Dashboard", "Alerts", "#Orders", "Orders", "Dispatch desk", "#Traceability", "Traceability"]} active="Dispatch desk" caption="The Dispatch desk queue">
+  <WfBar>
+    <WfTitle sub="Choose an order, then scan every box going onto the lorry. Each box is checked against the order's product, pack size and quantity as it is scanned.">Dispatch desk</WfTitle>
+  </WfBar>
+  <WfBar><WfInput placeholder="Order number" /><WfButton primary>Open</WfButton><Hotspot n={1} /></WfBar>
+  <WfTable
+    highlight={0}
+    columns={["Order", "Delivery party", "Godown", "Dispatch on", "Billed", "Scanned"]}
+    rows={[
+      ["1256", <b key="a">Customer A</b>, "Godown A", "10 Oct", <WfPill key="b" tone="warn">Not billed</WfPill>, <span key="c">0 / 5 <Hotspot n={2} /></span>],
+      ["1251", <b key="d">Customer B</b>, "Godown A", "11 Oct", "2 of 2", "12 / 12"],
+      ["1249", <b key="e">Customer C</b>, "Godown B", "—", "1 of 3", "3 / 9"],
+    ]}
+  />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Open an order.</b> Type its number, or click a row. A date in red is already late.</span>,
+  <span key="2"><b>Scanned.</b> Boxes scanned so far against how many the order's Ready lines need. A loose line counts cans.</span>,
+]} />
+
+An order reaches the queue the moment one of its lines is marked **Ready** on [Orders](/docs/erp/orders). It does not have to be billed yet — you can scan while the office bills it.
+
+## Scanning an order
+
+<Wireframe url="/erp/dispatch?order=1256" caption="Order 1256 at the desk, after a box of the wrong pack size was scanned">
+  <WfBar><WfTitle sub="Customer A · Area 1 · Transporter X · leaves 2026-10-10">Dispatch · order 1256</WfTitle><WfSpacer /><WfText muted>← Queue · Dispatch stickers · Trace</WfText></WfBar>
+  <WfCard>
+    <WfBar><WfInput placeholder="Scan a box QR, or type its id and press Enter" wide /><WfButton primary>Scan</WfButton><Hotspot n={1} /></WfBar>
+    <WfBar><WfText>3 of 5 scanned</WfText><Hotspot n={2} /></WfBar>
+  </WfCard>
+  <WfCard tone="warn" title="✗ DISPATCH BLOCKED">
+    <WfText>Pack size mismatch. Ordered: Nano Thinner – 1 L. Scanned: Nano Thinner – 500 ml.</WfText>
+    <WfField label="Request an override"><WfBlock h={30} label="Why must this box go: who agreed, what the customer was told" /></WfField>
+    <WfBar><WfButton>Cancel</WfButton><WfButton>Request override</WfButton><Hotspot n={3} /></WfBar>
+  </WfCard>
+  <WfTable
+    columns={["Line", "Lots", "Scanned", ""]}
+    rows={[
+      ["Nano Thinner – 1 Liter (12 Can/Box)", "Lots FP40NA × 3", "3 / 3", <WfPill key="a" tone="success">All scanned</WfPill>],
+      ["PU Sealer – 4 Liter (4 Can/Box)", "No lot allocated yet — scanning allocates", "0 / 2", <span key="b"><WfPill tone="warn">To scan</WfPill> <Hotspot n={4} /></span>],
+    ]}
+  />
+  <WfCard title="Dispatch verification">
+    <WfText muted>PU Sealer – 4 Liter: 2 of 2 still to scan. Do Verified waits for every box.</WfText>
+    <WfBar><WfInput placeholder="2026-10-10" /><WfButton primary>Do Verified</WfButton><Hotspot n={5} /></WfBar>
+  </WfCard>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>The scan box.</b> A barcode scanner types the box id and presses Enter for you. You can also type an id. A scanned link from a QR works too.</span>,
+  <span key="2"><b>Progress.</b> Boxes scanned across the order's Ready lines.</span>,
+  <span key="3"><b>A stopped box.</b> What was wrong, in words, with the way to ask for an override when the box is the wrong product or pack size.</span>,
+  <span key="4"><b>Each line.</b> Its lots and how many boxes are scanned. The badge says Dispatched, Not Ready, All scanned, To scan, or Scan optional.</span>,
+  <span key="5"><b>Do Verified.</b> Once every box is scanned and the lines are billed, this marks the order dispatched.</span>,
+]} />
+
+<Steps>
+<Step title="Open the order">
+From the queue, or from **Scan boxes at dispatch** on an order line.
+</Step>
+<Step title="Scan each box as it goes onto the lorry">
+A good box shows **✓ Matched** with the box id, the SKU and its lot. A box from a lot nobody had set aside for this order takes that lot onto the order — the message says *lot allocated* or *instead of* the lot it replaced.
+</Step>
+<Step title="Deal with anything stopped">
+A red panel says why. See [What stops a box](#what-stops-a-box) below.
+</Step>
+<Step title="Verify once everything is scanned">
+When every box is scanned and the lines are billed, pick the dispatch date and press **Do Verified**. The boxes become **dispatched**, the order leaves the queue, and the bill appears on [Transport](/docs/erp/transport).
+</Step>
+</Steps>
+
+<Callout kind="note" title="Who can press Do Verified">
+Verifying is the office's step on **Orders → Billing & dispatch**. The desk offers the same button to people who also hold the Orders screen. Anybody else sees *Billing & dispatch is not on your account, so somebody in the office verifies.*
+</Callout>
+
+## What stops a box
+
+| What you see | Why | What to do |
+|---|---|---|
+| **✗ NOT ALLOWED** — *No box or label carries this code.* | The id is not a box the ERP made. | Check the label; re-scan. |
+| **✗ ALREADY SCANNED** — *… is already scanned onto this order.* | You scanned the same box twice. | Nothing — it already counts. |
+| **✗ ALREADY SCANNED** — *… has already been dispatched on order …* | The box left on another lorry. | Find out which box this really is. |
+| **✗ NOT ALLOWED** — *… is already scanned onto order …* | The box is on another order's lorry. | Take it off that order first. |
+| **✗ NOT ALLOWED** — *… is on hold and cannot be dispatched.* | The box is on hold, rejected, returned, written off or cancelled. | Release it on Boxes & labels, if it should go. |
+| **✗ NOT ALLOWED** — *Nothing on this order is Ready to dispatch* | No line of the order is Ready. | Mark the lines Ready on Orders. |
+| **✗ NOT ALLOWED** — *Every box of … on this order is already scanned* | The line has all its boxes. | Do not load this one. |
+| **✗ NOT ALLOWED** — *… leaves in boxes; … is a loose unit* (or the reverse) | A loose can was scanned for a boxed line, or a box for a loose line. | Use the right kind. |
+| **✗ NOT ALLOWED** — *… is at Godown B; order … leaves from Godown A. Transfer it first.* | The box is booked at another godown. | Record an item transfer, then scan again. |
+| **✗ NOT ALLOWED** — *… whose stock here is all set aside for other orders* | The box's lot is fully promised to other orders. | Scan a box of a lot already on this order. |
+| **✗ DISPATCH BLOCKED** — *Pack size mismatch. Ordered: … – 1 L. Scanned: … – 500 ml.* | Same product, different pack size. | Load the right box, or request an override. |
+| **✗ DISPATCH BLOCKED** — *Product mismatch. Nothing on this order is …* | A product the order does not have. | Load the right box, or request an override. |
+
+Every scan — good or stopped — is written to the **Scan log** on the right of the desk, with who scanned it.
+
+## When the wrong box has to go: the override
+
+Sometimes the wrong pack size really is going — the customer agreed to two 500 ml boxes instead of one 1 L box. That is an **override**, and it takes two people.
+
+<Steps>
+<Step title="Request it">
+On the red **✗ DISPATCH BLOCKED** panel, write why it must go in a sentence — *who agreed, and what the customer was told* — at least ten characters, and press **Request override**. Only a product or pack-size mismatch can be overridden; a box on hold, a duplicate or a wrong godown cannot.
+</Step>
+<Step title="Somebody else decides it">
+The request appears under **Overrides** on the desk. A person with the *Approve dispatch overrides* power presses **Approve**, or **Decline** with a note saying why. You cannot decide your own request — the desk says *You asked for this one; somebody else decides it.* (An ERP administrator may.)
+</Step>
+<Step title="Scan the box again">
+Once approved, scan the same box. It goes onto the line it stood in for, the message ends *(approved override)*, and the override is marked **Used**. It cannot be used a second time.
+</Step>
+</Steps>
+
+## Taking a box off
+
+A box scanned by mistake can be taken off the order before dispatch: press **Take off** beside it in the list of boxes scanned. It goes back into stock as **In stock**; the lot it set aside stays on the order. Once the order is verified, a box cannot be taken off.
+
+## Stock packed before box labels
+
+Stock packed before box ids existed has no label to scan. On such a line the badge reads **Scan optional**, and people who hold the Orders screen see **Allocate a lot by hand** — pick the lot and the quantity as you would have before. Do Verified does not wait for scans on these lines.
+
+## Printing dispatch stickers
+
+**Dispatch stickers** prints one sticker per box scanned onto the order, with the customer, the order and the same box id in its QR — so whichever sticker the lorry scan hits, it reads the same box. If nothing is scanned yet, the sheet says *No box is scanned onto this order yet.*
+
+## Questions people ask
+
+<Faq q="The order is not in the queue.">
+None of its lines is Ready yet, or every Ready line is already dispatch-verified. Mark the lines Ready on Orders.
+</Faq>
+<Faq q="Do Verified is greyed out.">
+Either a line still has boxes to scan (the panel above the button says how many), or nothing on the order is billed yet. Bill the lines on Orders → Under process & ready first.
+</Faq>
+<Faq q="I scanned a box from a different lot than the one on the order. Is that wrong?">
+No. As long as it is the same SKU, it takes the place of a box of the allocated lot, and the order's lots are updated to say so.
+</Faq>
+<Faq q="My override was approved but the box is still refused.">
+Scan it onto the **same order** it was requested for. An override is for one box on one order, and it is used once.
+</Faq>
+<Faq q="Can I approve my own override?">
+No, unless you are an ERP administrator. Somebody else with the override power has to decide it.
+</Faq>
+<Faq q="A box was scanned onto the wrong order.">
+Take it off that order (before dispatch), then scan it onto the right one.
+</Faq>

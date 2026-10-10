@@ -1,0 +1,104 @@
+The Sales Dashboard is a manager's view of the field team, and almost every rule behind it answers one of three questions: **who may this manager see**, **what may this manager decide**, and **does what the phone sent agree with what the office sees**. This tab explains each, and why it is built that way.
+
+## Who sees whom: the patch
+
+A manager does not see the whole company by default. What they see is decided by their **level** in the Sales Dashboard and by the **regions** allocated to them.
+
+<Flow caption="How far a person looks" chart={`
+flowchart TD
+  A["Signed-in person"] --> P{"Platform administrator<br/>or the founder's desk?"}
+  P -- "Yes" --> N["National<br/>every salesman"]
+  P -- "No" --> L{"Level in the app<br/>this request is in"}
+  L -- "associate" --> O["Own book only"]
+  L -- "manager or admin" --> R{"Any regions allocated?"}
+  R -- "No" --> N
+  R -- "Yes" --> T["Salesmen whose shops sit in those regions<br/>+ salesmen with no shops at all"]
+`} />
+
+<Rule title="No regions means national — for a manager only">
+A manager with no regions allocated sees every salesman. That is what let regions arrive without changing what any existing grant meant. An **associate** never reaches that rule: they see their own book, however many regions are empty.
+</Rule>
+
+<Callout kind="why" title="Why an associate is checked first">
+The region rule used to be applied to everybody. An associate given the Sales Dashboard to read his own day was answered "national" — and could open any colleague's trail and check-in photograph. The level is now read before a single region is.
+</Callout>
+
+<Rule title="A salesman is in a region if any shop in his book is">
+The book is the territory: a regional manager sees a salesman when any of his customers' states is one of the manager's regions. Every spelling of a state counts — "Gujarat" and "Gujrat" are one region.
+</Rule>
+
+<Rule title="A salesman with no book is in everybody's patch">
+A brand-new salesman with no shops yet matches no region. Rather than be invisible to every manager, he is shown to all of them until somebody gives him a book. An empty screen is the one outcome nobody debugs.
+</Rule>
+
+### Coverage screens ask a different question
+
+The Territory screen and the shop maps ask **"which shops sit in my regions"**, not **"which shops belong to my salesmen"**. A shop nobody has been given would match no salesman, so on those screens a shop is the manager's if it sits in one of their regions *or* belongs to one of their salesmen. An admin is never narrowed by regions on those screens. This widening is deliberately not applied to the patch itself, because the patch is also what guards check-in photographs and odometer pictures.
+
+## Who may decide
+
+<Rule title="Reading needs the grant; deciding needs the manager level">
+Holding the Sales Dashboard lets somebody **read**. Every action that decides something — answering a request, planning a day, allocating territory, assigning a task, publishing to the field, accepting a visit — also requires the **manager or admin level** in the Sales Dashboard, and the **screen it belongs to**. Unticking Holidays from somebody takes away the action that writes a holiday, not only the screen.
+</Rule>
+
+<Rule title="Only for your own team">
+Every write that lands on a person checks that the person is inside your patch. A regional manager cannot plan a route, decide leave or move the territory of a salesman in another region by sending his id.
+</Rule>
+
+<Rule title="Nobody answers their own request">
+A manager who also carries a phone raises leave and expenses like anybody else. Their own requests are refused to them with *"Somebody else has to answer it — that is what makes it an approval."*
+</Rule>
+
+## What the salesman sees of it
+
+- **Every decision is told to the person it is about.** Approving leave, proposing a day, assigning a task, changing a territory — each sends a notification to the phone, with the screen to open.
+- **The phone hears it on its next sync.** There is no live push of the record itself; the notification is the push.
+- **Paperwork carries no location.** Requests made from home are not mapped. Where an order or a visit happened is.
+
+## How the Sales Dashboard relates to the CRM
+
+| Question | Sales Dashboard | CRM |
+|---|---|---|
+| Who works it | Field salesmen, via MBOS | Telecallers |
+| Whose book a customer is in | The same definition | The same definition |
+| Who approves orders | Accounts, never the sales desk | Accounts, never the sales desk |
+| Leads | One feature, two doors — see [Leads](/docs/crm/leads) | |
+| Performance engine | The same six-component score — see [Performance](/docs/crm/performance) | |
+
+<Callout kind="rule">
+A field salesman never has a CRM queue and a telecaller never has a route. A lead the field team is working on the lead ladder is held back from the CRM's Call Log so two people do not chase one shop.
+</Callout>
+
+## The counts in the sidebar
+
+The numbers beside sidebar items are worked out once per page load, all through the same patch:
+
+| Item | Counts |
+|---|---|
+| Tasks | Open and in-progress tasks on your team |
+| Journeys & visits | Days your salesmen have refused, from today on |
+| Orders | Field orders still waiting for accounts |
+| Samples | Samples past their follow-up date with no feedback |
+| Leave | Leave requests waiting, not withdrawn |
+| Expenses | Expense claims waiting |
+| All Leads | Leads past their next-action day, otherwise those due today |
+
+A count appears only where something is waiting. A zero beside a heading reads as a problem rather than an empty queue.
+
+## Settings that shape the whole app
+
+Most thresholds belong to one screen and are on that screen's page. The ones that apply everywhere:
+
+<SettingsTable keys={[
+  "mbos.location.trackWhileWorking",
+  "mbos.location.visitMismatchM",
+  "mbos.approvals.escalationHours",
+  "mbos.tasks.escalationHours",
+]} />
+
+## Where the code and the intent disagree today
+
+- **The Performance screen is not narrowed by your patch.** It scores everybody in the company with a target or a sale, for a regional manager too. See [Performance](/docs/sales/performance/how-it-works).
+- **"Lately decided" on Approvals is not narrowed either** — a regional manager sees decisions on other regions' requests.
+- **Salary is no longer on the Sales Dashboard.** The project notes describe a salary screen reading HRMS; it is gone, and Cost & return now says only that "pay is in HRMS".
+- **Map keys live under Admin Console → Integrations**, not under a Maps section as older notes say.

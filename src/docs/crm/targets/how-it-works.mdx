@@ -1,0 +1,89 @@
+Monthly Targets measures the month **per customer**: what each account we invoice is expected to buy, what it has bought, and the gap. It is a different grain from a **person's** target on [My Performance](/docs/crm/performance/how-it-works) — one asks "which of our shops are short", the other "how is this salesperson's month going" — and the two are deliberately two screens. Top customers, the second tab, is a frozen monthly report of the company's best accounts.
+
+<Callout kind="live">
+Values shown are read live from your CRM.
+</Callout>
+
+## Every customer has a target, and says where it came from
+
+<Flow caption="Where a customer's monthly target comes from" chart={`
+flowchart TD
+  M["1st of the month — the nightly job"] --> H{"Target already<br/>set for this month?"}
+  H -- "Yes" --> K["Left alone"]
+  H -- "No" --> P{"Set BY HAND<br/>last month?"}
+  P -- "Yes" --> C["Carried forward<br/>(same rupees and bills)"]
+  P -- "No" --> D["Auto default from<br/>recent approved sales"]
+  C --> E["A manager or accounts<br/>can change it any time"]
+  D --> E
+  E --> S["Set by hand"]
+`} />
+
+<Rule title="Only a decision carries forward">
+A target somebody typed carries into next month unchanged. A default does **not** — a default is this month's guess at what somebody will buy, computed fresh, and carrying a guess forward as though it were a decision is how a customer ends up with a target nobody asked for.
+</Rule>
+
+The **default** is <Setting k="targets.defaultMethod" /> over the last <Setting k="targets.trailingMonths" /> months, plus <Setting k="targets.defaultUpliftPercent" />%. Those months are measured in the same unit a target is written in — net of GST, after discount — or the proposal would be about 18% above the month it came from. A customer who joined mid-month has their first month's default pro-rated while <Setting k="targets.proRateNewCustomers" /> is on.
+
+## Who is measured
+
+<Rule title="A target is set on an account we invoice, and nothing else">
+Only **direct customers** are on the list, using the same definition the Customers list's type filter reads. A **lead** has never bought from us, so a target against it is one nobody could meet, and it dragged the whole list's achievement down. A **third-party shop** is billed to its distributor, so its sales already count on that account — counting them here would be the same money twice. Setting a target on either is refused by the server, not only hidden.
+</Rule>
+
+A customer who has gone **inactive** keeps their target — that gap is what the month must explain. Only **deactivation** removes them.
+
+## What "achieved" means
+
+Achieved is the value of **approved** orders in the month, net of GST and after discount. An order waiting for accounts or declined by them does not count — "did we sell anything" has one definition across the product. The bill count is the number of sales bills raised in the month.
+
+## Rupees, bills, or both
+
+A target asks for a rupee amount, a number of bills, or both — it must ask for at least one. A bulk change of rupees leaves each account's stored bill target alone.
+
+## Who sees which rows
+
+| Person | Sees |
+|---|---|
+| Telecaller or accounts user | Exactly the accounts they hold a seat on — sales, back office, or **sales manager** |
+| Manager | Their team's book, as on every other CRM list |
+| Admin | The whole company |
+
+<Callout kind="why" title="Why the sales manager seat counts here, and nowhere else">
+The sales manager seat drives no queue, no scope and no target anywhere in the product — but a sales manager reviewing the month has no other way to find the accounts they are named on. So it widens visibility on this screen only. Accounts users, who see the whole book on the approval queue, see only their own seats here: "every account in the company" is not an answer to "which targets are mine to review".
+</Callout>
+
+The filters (search, status, salesperson, sales manager, back office) narrow **within** that visibility and use the same clause the Customers list runs, so a filtered total and a filtered list cannot disagree.
+
+## Who may set targets
+
+<Rule title="Managers and accounts">
+Setting a customer target needs the target-setting permission, which managers **and** the accounts desk hold. The accounts desk is where targets are actually managed here, so Accounts has its own door onto this same screen at `/accounts/customer-targets` — not a second target system. It differs only in where a customer's name links: to the account statement, because Accounts has no CRM record page.
+</Rule>
+
+The screen checks the permission itself rather than "is this person a manager", which used to be the same thing and stopped being so the day accounts were given it.
+
+## Top customers
+
+<Rule title="Ranked company-wide, then narrowed to your book">
+The top <Setting k="topCustomers.count" /> customers are chosen **across every book first**, each keeps its company rank, and only then does your scope decide which of them you are shown. "Top 60 of my own book" would put a telecaller's sixtieth-best shop on a list called Top customers.
+</Rule>
+
+- **Frozen for the month.** Generated on the 1st at 10:00 IST for spans of 3, 6 and 12 whole months ending with the month just finished, and stored. A report somebody works from for a month must not move because a sheet reconcile edited an old order.
+- **Idempotent.** The 10:00 job, the hourly pass that catches a missed one, and the screen itself (if opened first) all call the same generator; a report is claimed once and cannot be written twice.
+- Sales and orders use the same "approved" definition as everything else; a pending or declined order never ranks anybody.
+
+## Settings
+
+<SettingsTable keys={[
+  "targets.defaultMethod",
+  "targets.trailingMonths",
+  "targets.defaultUpliftPercent",
+  "targets.proRateNewCustomers",
+  "topCustomers.count",
+]} />
+
+## Where the code and the intent disagree today
+
+- **The shortfall split is not on any screen.** The engine that sorts short customers into a *coverage gap* (under-contacted — a telecaller problem) and a *customer gap* (contacted on schedule and still short — a market problem) exists and is tested, but nothing in this build calls it (`lib/engines/targets.ts` `classifyShortfall`). AGENTS.md names a `shortfallAnalysis` service that is not in the tree.
+- **The refusal message for a lead is out of date.** Setting a target on a lead says it "becomes a customer on its first order"; conversion happens on the second (`lib/services/worklist-services.ts` `setTarget`; `lib/engines/lead-ladder.ts` `promotesToCustomerAt`).
+- **Seeding reads every active row.** The 1st-of-month seed loops over `customers` with status active, which includes leads and third-party shops, though the list hides them and the action refuses them (`lib/recompute.ts` `seedMonthlyTargets`).

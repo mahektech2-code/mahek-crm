@@ -437,18 +437,20 @@ on your own phone.
 
 ## Releasing the Factory app (Android)
 
-The Factory app is a Trusted Web Activity around `/factory`
-(`factory-android/`). Its screens update with every deploy, so it only needs
-releasing when the wrapper itself changes — and once, the first time.
+The Factory app is a native Android app (`factory-mobile/`, Expo). Its
+screens are on the phone, so a change to them reaches the floor only through
+a release; what the server accepts and posts to the ERP changes with every
+deploy, because every job goes through `/api/factory/rpc`.
 
 ```bash
-gh workflow run "Factory APK" --ref main -f site=https://one.mahekindia.com -f version=1.0.0 -f publish=true
+gh workflow run "Factory APK" --ref main -f site=https://one.mahekindia.com -f version=2.0.0 -f publish=true
 ```
 
-It signs with the MBOS release key, puts `factory.apk` on the droplet beside
-`mbos.apk`, and publishes `factory-assetlinks.json` with the key's fingerprint;
-the site serves that at `/.well-known/assetlinks.json`, which is what lets the
-app open without a browser bar. Floor staff install it from
+`site` is baked into the APK and cannot be changed afterwards. It signs with
+the MBOS release key and puts `factory.apk` and `factory.json` on the droplet
+beside `mbos.apk`. Every build's versionCode is 100 + the run number, so it
+installs over the earlier Trusted Web Activity build (same package, same key)
+as an update. Floor staff install it from
 `https://one.mahekindia.com/download?team=erp`.
 
 ## Push notifications

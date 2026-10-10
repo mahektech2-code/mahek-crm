@@ -1,0 +1,105 @@
+The team is `users` joined to `app_access` where `app = 'field'`, narrowed by `managerScope`. Each row adds the active `mbos_devices` binding, the territories in `mbos_user_territories`, and the hometown in `expense_hometowns`. The record at `/sales/people/[id]` is `salesmanRecord` plus `performance` for this month and last, plus `dayEvidence` for the chosen day. Handset health is a pure function, `handsetNotes`, drawn on the Live map.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Route guard | `src/app/sales/people/layout.tsx` | `requireModule("sales.people")` |
+| Team page | `src/app/sales/people/page.tsx` | Banners (no area, no hometown), chips, rows, `COLUMNS` |
+| Row tools | `src/app/sales/people/territories.tsx`, `credentials.tsx`, `managers.tsx` | Where they work (tree), sign-in menu, managers' regions |
+| Hometown picker | `src/components/expenses/hometown-picker.tsx`, `src/lib/services/hometown-service.ts` | `hometownTree` |
+| Record | `src/app/sales/people/[id]/page.tsx`, `salesman-screen.tsx`, `day-check.tsx` | Ten tabs, month figures, `DayCheck` |
+| Reads | `src/lib/services/sales-service.ts` | `fieldTeam`, `salesmanRecord`, `performance`, `managers`, `knownPlaces`, `knownRegions`, `managerScope` |
+| Scope gate (pure) | `src/lib/sales-gate.ts` | `scopeStanding` |
+| Territory rules (pure) | `src/lib/territory-rules.ts` | `TERRITORY_KINDS`, `PARENT_KIND`, `territoryClause` |
+| Writes | `src/lib/actions/sales.ts` | `setSalesmanTerritories`, `setManagerTerritories`, `setSalesmanHometown`, `releaseDevice` |
+| Credentials | `src/lib/actions/people.ts` | Reset link, end sessions — `requirePlatformAdminUser` |
+| Handset health (pure) | `src/lib/handset-health.ts` | `handsetNotes`, `buildIsBehind`, `trailIsDead`, `trackerStalled`, `ageWords` |
+| Device state in | `src/lib/mbos/device-state.ts`, `src/app/api/mbos/positions/route.ts` | Partial device reports, written only inside a session |
+
+## Scope
+
+<Code file="src/lib/sales-gate.ts" symbol="scopeStanding" collapsed />
+
+<Code file="src/lib/services/sales-service.ts" symbol="managerScope" />
+
+<Code file="src/lib/services/sales-service.ts" symbol="fieldTeam" collapsed />
+
+`managerScope` (the base one) reads the level first, then `mbos_user_territories` rows of `kind = 'region'` only — a salesman's working cities must never narrow a manager's console. Regions are folded across spellings, and salesmen with no book at all are added so a new phone is visible.
+
+## Territories
+
+<Code file="src/lib/territory-rules.ts" symbol="PARENT_KIND" />
+
+<Code file="src/lib/territory-rules.ts" symbol="territoryClause" collapsed />
+
+`territoryClause([])` answers a false condition, never `undefined`: no allocation is no book, and the dangerous answer should be the loud one. Managers and admins are carved out by the caller.
+
+<Code file="src/lib/actions/sales.ts" symbol="setSalesmanTerritories" collapsed />
+
+It refuses a child without its parent, prunes to the leaves on the server (a server action is a URL), tombstones the shops that left **his** book (an empty before is read as everything he could see), rebuilds holiday membership, and notifies him.
+
+## Handsets
+
+<Code file="src/lib/actions/sales.ts" symbol="releaseDevice" collapsed />
+
+<Code file="src/lib/handset-health.ts" symbol="HandsetFacts" collapsed />
+
+<Code file="src/lib/handset-health.ts" symbol="handsetNotes" collapsed />
+
+<DbTable name="mbos_devices" only={["user_id", "device_id", "model", "app_version", "bound_at", "last_seen_at", "active", "released_at", "release_reason", "background_location_granted", "location_permission", "location_services_enabled", "connection_type", "battery_percent", "battery_charging", "device_state_at"]} note={{
+  last_seen_at: "Moves on sign-in AND on every position batch — silence is measured from here.",
+  background_location_granted: "Old boolean, still written by builds in the field; false renders as restricted.",
+  location_permission: "always · while_using · denied · undetermined. Null means never reported, not refused.",
+  battery_percent: "At last contact. A check constraint requires device_state_at beside it.",
+  device_state_at: "When the device readings were taken — the screen prints the age.",
+  release_reason: "Required to release; lets whoever holds the old phone bind again.",
+}} />
+
+<DbTable name="mbos_user_territories" note={{
+  kind: "state · region · city · beat. managerScope reads region only; the handset book reads the rest.",
+  parent: "What a row was picked under. Empty means not stated — matches the place wherever it is.",
+}} />
+
+<DbTable name="expense_hometowns" />
+
+## Access
+
+<ModuleRef k="sales.people" /> <ModuleRef k="sales.territory" />
+
+`setSalesmanTerritories` and `setManagerTerritories` accept `sales.people` or `sales.territory` at a manager's level; `setSalesmanHometown` needs `sales.people`. A salesman outside `managerScope` is simply absent from `fieldTeam`, so the record 404s.
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/handset-health.test.ts` | Healthy says nothing; null is not refusal; three location answers; battery carries its age; switched-off outranks permission |
+| `npm run test` | `src/lib/sales-gate.test.ts` | Associate own, manager regional, platform admin national |
+| `npm run test` | `src/lib/territory-rules.test.ts` | Parent kinds, leaves, AND down a branch, OR across |
+| `npm run test:integration` | `src/lib/territory-sql.test.ts`, `lead-territory.test.ts` | The clause against a real book; no allocation is no book |
+| `npm run test:integration` | `src/lib/positions-endpoint.test.ts`, `src/lib/mbos/device-state.test.ts` | Device state written only inside a session; partial reports never wipe fields |
+
+## Changing it safely
+
+<Steps>
+<Step title="Read scope inside the service">
+Never take a scope argument from a page — call `managerScope()` in the read.
+</Step>
+<Step title="Anything that removes rows from a phone tombstones them">
+Diff over his own book, not over `customers`.
+</Step>
+<Step title="Add a handset fact as nullable and optional on the wire">
+An APK cannot be recalled; omit rather than null so an old build never wipes a newer one's answer.
+</Step>
+<Step title="Put a new health sentence in handsetNotes">
+Not in a screen. Give it a threshold in configuration if it decides what a screen asserts.
+</Step>
+</Steps>
+
+## Known gaps
+
+| Gap | Where |
+|---|---|
+| No salary view exists under `/sales` in this tree, though AGENTS.md describes one | `src/app/sales/` |
+| Handset health lines are drawn only on the Live map, not on the team list or the record | `src/app/sales/live/live-panel.tsx`; `people/page.tsx` |
+| The empty state tells a manager "Nobody holds the Salesman App" when scope narrowing can be the cause | `people/page.tsx` |

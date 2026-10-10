@@ -1,0 +1,139 @@
+Production turns raw material into boxes on a shelf in three steps, each on its own screen: **SFG batches** mix raw-material lots into semi-finished liquid, **FG filling** fills approved liquid into cans or drums, and **Packing batches** put loose cans into boxes. **Recipes** say what one batch should take. Each step can only use what the step before it put in stock at the same godown.
+
+<Flow caption="The three production steps" chart={`
+flowchart LR
+  RM["Raw-material lots<br/>at the godown"] -- "SFG batch" --> SFG["SFG lot<br/>e.g. 12 + first RM lot"]
+  SFG -- "QC approves" --> OK["Approved SFG lot"]
+  OK -- "FG filling" --> FG["FG lot<br/>e.g. FG12NA (cans)"]
+  FG -- "Packing batch" --> PK["Packing batch<br/>e.g. FP40NA (boxes, each with an id)"]
+`} />
+
+## SFG batches
+
+An SFG batch blends raw-material lots into one lot of semi-finished liquid. One line per raw-material lot consumed.
+
+<Wireframe url="/erp/sfg-batches" nav={["Dashboard", "#Production", "SFG batches", "FG filling", "Packing batches", "Recipes"]} active="SFG batches" caption="SFG batches, grouped by godown">
+  <WfBar>
+    <WfTitle sub="Liquid made from raw-material lots. One line per lot consumed.">SFG batches</WfTitle>
+    <WfSpacer /><WfButton primary>New SFG batch</WfButton><Hotspot n={1} />
+  </WfBar>
+  <WfTable
+    highlight={0}
+    columns={["SFG no", "Date", "SFG product", "Batches", "Raw item", "RM lot", "Qty per batch", "Total use", "Litres adjusted", "SFG lot code", "QC"]}
+    rows={[
+      ["12", "6 Oct", <b key="a">Nano Thinner</b>, "2", "Solvent A", "SDSOA1230", "150", "300", "4", "12SDSOA1230", <span key="b"><WfPill tone="warn">Pending</WfPill> <Hotspot n={2} /></span>],
+      ["12", "6 Oct", <b key="c">Nano Thinner</b>, "2", "Solvent C", "SDSOC1224", "50", <span key="d">110 <WfPill tone="warn">Above the recipe</WfPill> <Hotspot n={3} /></span>, "0", "12SDSOA1230", "Pending"],
+    ]}
+  />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>New SFG batch.</b> Pick the SFG product and its recipe lays out the raw materials for you.</span>,
+  <span key="2"><b>QC.</b> Pending until somebody with the QC power approves or rejects the lot. Only an approved lot can be filled.</span>,
+  <span key="3"><b>Above the recipe.</b> This raw material was used more than the recipe allows for this many batches. It asks somebody to look; it never stops the batch.</span>,
+]} />
+
+<Steps>
+<Step title="New SFG batch">
+**Date**, **Godown** (your working location), **SFG product** and **Number of batches**. If the product has a recipe, its raw materials appear as lines with their quantity per batch, in litres.
+</Step>
+<Step title="Pick the lot for each line">
+**Raw item** offers only items with stock at this godown — cans are never consumed here. **Raw-material lot** offers that item's lots at the godown, with what is **Available (litres)**.
+</Step>
+<Step title="Check the quantities">
+**Quantity per batch** × batches = **Total use incl. batches**. Enter any **Litres adjusted (loss)**; **Available SFG** is what reaches stock.
+</Step>
+<Step title="Save batch">
+"SFG 12 saved · 406 Ltr of Nano Thinner in stock · lot 12SDSOA1230 waits for QC before it can be filled."
+</Step>
+</Steps>
+
+If a lot has less than a line needs, the save is refused with "Low Stock!" — including when two lines of the same save draw on the same lot. **ADD More SFG** adds another lot to the same batch.
+
+### SFG QC
+
+Somebody with the QC power opens a line and presses **QC approve** (with an optional note of readings) or **QC reject** (with the reason it failed). Rejecting an approved lot stops any further filling from it; what was already filled stays traceable to it. A rejected lot is flagged "Failed SFG QC".
+
+## FG filling
+
+<Steps>
+<Step title="New FG filling">
+**Date** and **Godown**, then **SFG product** and **SFG lot code** — only lots QC has approved, with stock at this godown.
+</Step>
+<Step title="What it is filled into">
+**FG product**, **Can size (litres)** and **Can use** — the can or drum. Leave Can use blank for a **Naket** fill, which takes no packing item.
+</Step>
+<Step title="How many">
+**Cans or drums filled**, and **Cans adjusted (lost)**. You see the litres it uses, the **FG cans available** that reach stock, and the **Finished lot code**.
+</Step>
+<Step title="Save filling">
+"Filled 120 × 5 L · lot FG14NA · 118 cans in stock".
+</Step>
+</Steps>
+
+| Refusal | Means |
+|---|---|
+| Low SFG Stock | The lot does not hold the litres the fill uses |
+| Low Packing Quantity | No cans (or drums) of that packing item are available |
+| Minus Quantity Not Allowed | Cans must be above zero |
+| SFG lot … is waiting for QC approval / was rejected at QC | Only an approved lot can be filled |
+
+On a filling: **Add to this run** adds another fill under the same FG number, **Edit cans adjusted** corrects the cans lost (refused if those cans were already packed or moved), **Trace this lot** opens [Traceability](/docs/erp/traceability).
+
+## Packing batches
+
+A packing batch puts loose cans into boxes of one boxed SKU. It may draw its cans from more than one FG lot, one line per lot.
+
+<Steps>
+<Step title="New packing batch">
+**Date**, **Godown**, **FG product**, the boxed SKU (**Description of goods**) and **Boxes in the whole batch**. **Total cans** = boxes × cans per box.
+</Step>
+<Step title="The first lot">
+Pick the **Finished lot** and how many **Cans from this lot** — blank takes as many as the batch still needs.
+</Step>
+<Step title="Add More until the cans match">
+"FP40NA saved · 24 cans still to draw from another lot". Add More takes the next lot.
+</Step>
+<Step title="Complete">
+When the cans used match the boxes exactly: "FP40NA complete · 50 boxes of … in packing stock, each with its own box id · print their labels from the batch". **Print box labels** is now the batch's main button.
+</Step>
+</Steps>
+
+<Callout kind="rule" title="A batch posts only when the cans match">
+Until the lines draw exactly boxes × cans per box, the batch's boxes are **not** in packing stock, and the dashboard counts it under "Incomplete packing batches". The empty boxes must be at the godown on the first line: "Low Box Quantity · … needed, … at …".
+</Callout>
+
+## Recipes
+
+A recipe is what **one batch** of an SFG product takes, in litres, of each raw material.
+
+- **Start a batch** on a recipe line opens a new SFG batch with the recipe's lines already listed — you still pick each lot.
+- A batch line that used more than the recipe allows (plus a tolerance) is flagged **Above the recipe** on the SFG batches list. Nothing is refused.
+- Setting, changing and removing a recipe line is for ERP managers. Everybody holding the screen can read it.
+
+## What the codes mean
+
+| Code | Example | Made of |
+|---|---|---|
+| SFG lot | `12SDSOA1230` | The SFG number and the batch's first raw-material lot |
+| FG lot | `FG14NA` | "FG", the FG number and the godown's first two letters |
+| Packing batch | `FP40NA` | "FP", the batch serial and the godown's first two letters |
+| Box id | `BX-261006-000125` | One per box, printed in the box's QR |
+
+## Common questions
+
+<Faq q="My SFG lot is not offered on FG filling.">
+It is waiting for QC, it was rejected, or it has no stock at the godown you picked.
+</Faq>
+
+<Faq q="The packing batch is saved but its boxes are not in stock.">
+The cans drawn do not yet equal boxes × cans per box. Add More from another lot until they match.
+</Faq>
+
+<Faq q="Why can't I see rates or costing on these screens?">
+Purchase rate, costing, SFG rate and FG costing need the cost-and-margin power.
+</Faq>
+
+<Faq q="I need to delete a batch line.">
+Only an ERP administrator can. For an SFG line or a filling, the stock entry it made stays in the log, flagged, so the change is visible; deleting a packing line takes its batch's boxes back out of stock.
+</Faq>

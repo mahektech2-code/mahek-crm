@@ -1,0 +1,143 @@
+On the handset a lead is a row in SQLite `leads` (keyed on the same id as the office's `customers` row), samples are rows in `samples`, and every change goes up as an outbox item: `entityType: "lead"`, `"sample"`, `"lead_validation"`, `"lead_communication"`. The rules are **not reimplemented** — `mbos-app/src/engines/funnel/` is a byte-for-byte copy of the office's funnel files, pinned by a test. The server re-checks everything in `handleLead`, `handleSample` and `handleLeadValidation`.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Screens | `mbos-app/app/leads.tsx` → `src/components/leads/leads-book.tsx` | The list and the new-lead form (scan, voice, area picker, duplicate check) |
+| Screen | `mbos-app/app/lead.tsx` | The record: ladder, *Still to do*, moves, hold, lost, parties, notes |
+| Screens | `mbos-app/app/lead-prospect.tsx`, `lead-qualify.tsx` | Prospect details (eight answers) and the checklist (12 shop / 30 distributor) |
+| Screen | `mbos-app/app/lead-actions.tsx` | Pending today, late, on hold, nothing pending — `engines/lead-worklist.ts` |
+| Screen | `mbos-app/app/validate.tsx` | The validation call, from `mbos.leads.validationScript` |
+| Screens | `mbos-app/app/samples.tsx`, `sample.tsx` | Sample list and one sample's journey and review |
+| Funnel (copied) | `mbos-app/src/engines/funnel/*` | `ladderFor`, `gateTo`, `ladderVerdicts`, `roleAction`, reason lists |
+| Handset rules | `mbos-app/src/engines/leads.ts` | `visitCapState`, `capStageOf`, `gateAsRun`, `gstinRefusal`, `sampleAsk` |
+| Data | `mbos-app/src/data/leads.ts` | `createLead`, `visitsHere`, `findDuplicate`, thresholds |
+| Data | `mbos-app/src/data/lead-funnel.ts` | `leadGateInput`, `advanceStage`, `decideSuspect`, `markLost`, `putOnHold`, the field saves |
+| Data | `mbos-app/src/data/lead-samples.ts`, `validations.ts` | Sample transitions, review, chase; validation answers |
+| Wire words | `mbos-app/src/lib/wire.ts` | Handset vocabulary to the office's (`wireStage`, `wireNotes`) |
+| Pull | `mbos-app/src/sync/pull.ts` | `upsertLeads`, `upsertSamples`, guarded by `noPending` |
+| Handlers | `src/lib/actions/mbos.ts` | `handleLead`, `handleLeadUpdate`, `moveLeadFromHandset`, `handleSample`, `afterSampleVerdict`, `handleLeadValidation` |
+| Service | `src/lib/services/lead-qualification-service.ts` | `qualifyLead` |
+
+## A move, end to end
+
+<Flow caption="Move up to Prospect, with no signal, then sync" chart={`
+sequenceDiagram
+  autonumber
+  participant UI as lead.tsx
+  participant F as data/lead-funnel.ts
+  participant G as engines/funnel (copy)
+  participant DB as SQLite
+  participant Q as outbox
+  participant H as handleLead (update)
+  participant PG as Postgres
+  UI->>F: advanceStage(id, "prospect")
+  F->>F: leadGateInput(lead) — counts visits incl. outbox
+  F->>G: gateTo(input, to) then gateAsRun
+  alt gate shut
+    G-->>UI: "Not yet. ..." (nothing written)
+  else open
+    F->>DB: UPDATE leads funnelStage, stage, notes
+    F->>Q: enqueue lead update, stage = wireFunnelStage(to)
+    F->>DB: lead_events row (local history)
+  end
+  Q->>H: push
+  H->>H: same gate, GST check for legacy 'qualified'
+  H->>PG: update customers, lead_stage_transitions, timeline
+  opt to = qualified (legacy)
+    H->>PG: qualifyLead — seat, task, notify (idempotent)
+  end
+`} />
+
+## The rules on the handset
+
+<Code file="mbos-app/src/engines/leads.ts" symbol="capStageOf" />
+
+<Code file="mbos-app/src/engines/leads.ts" symbol="visitCapState" />
+
+`visitsHere` adds the outbox's unsent visits to the office's `visitCount`, so a visit made offline still counts toward the cap.
+
+<Code file="mbos-app/src/engines/leads.ts" symbol="gateAsRun" />
+
+<Code file="mbos-app/src/engines/leads.ts" symbol="gstinRefusal" />
+
+<Code file="mbos-app/src/engines/leads.ts" symbol="sampleAsk" />
+
+<Code file="mbos-app/src/engines/funnel/lead-ladder.ts" symbol="ladderFor" />
+
+<Code file="mbos-app/src/data/lead-funnel.ts" symbol="advanceStage" collapsed />
+
+## The server
+
+<Code file="src/lib/actions/mbos.ts" symbol="handleLeadUpdate" collapsed />
+
+<Code file="src/lib/services/lead-qualification-service.ts" symbol="qualifyLead" collapsed />
+
+<Code file="src/lib/actions/mbos.ts" symbol="afterSampleVerdict" collapsed />
+
+<Code file="src/lib/actions/mbos.ts" symbol="leadValidationSchema" collapsed />
+
+The visit handler's cap is in `handleVisit`: it counts `mbos_visits` for the customer and, past `mbos.leads.maxSuspectVisits` with no `suspectDecision` on the payload, **accepts** the visit and notifies the manager rather than refusing.
+
+## Pull protection
+
+<Code file="mbos-app/src/sync/pull.ts" symbol="noPending" />
+
+<Code file="mbos-app/src/sync/pull.ts" symbol="PENDING_STATES" />
+
+`leads` and `samples` are upserted with that guard on the `ON CONFLICT` clause. The lead note list is written on **insert only**: it is appended to locally and the wire carries one flattened string, so restating it each pull would replace the salesman's notes with the office's rendering.
+
+## Tables
+
+<DbTable name="customers" only={["id", "kind", "lead_sales_type", "lead_stage", "lead_stage_since", "lead_suspect_decided_at", "gstin", "lead_manager_id", "lead_manager_decided_at", "lead_requirement", "lead_monthly_volume_litres", "lead_next_action", "lead_next_action_date", "lead_next_action_owner_id", "lead_hold_reason_code", "lead_hold_resume_date", "lead_lost_reason", "lead_verified_at"]} note={{
+  lead_stage: "A rung of mbos_lead_stage — the legacy six and every funnel rung in one enum.",
+  lead_manager_id: "The coordinating seat. Read by scope, not by ASSIGNED_TO_SQL — the lead stays in the salesman's book.",
+  lead_manager_decided_at: "Set only when a person chose. qualifyLead never sets it.",
+}} />
+
+<DbEnum name="mbos_lead_stage" />
+
+<DbEnum name="lead_sales_type" />
+
+<DbTable name="lead_stage_transitions" note={{
+  overridden_conditions: "What was still missing when a manager passed a shut gate.",
+}} />
+
+<DbTable name="mbos_samples" only={["id", "customer_id", "salesman_id", "state", "requested_date", "dispatched_at", "received_at", "trial_started_at", "trial_completed_at", "trial_outcome", "rejection_reason", "review_chase_count", "last_review_chase_at", "cancel_reason_code"]} />
+
+<DbEnum name="mbos_sample_state" />
+
+<DbTable name="mbos_lead_validations" only={["customer_id", "called_by_user_id", "called_at", "reached", "confirmed_requirement", "confirmed_monthly_volume_litres", "confirmed_competitor", "confirmed_potential_paise"]} />
+
+## Tests that pin it
+
+| Test | Pins |
+|---|---|
+| `src/lib/mbos-wire.test.ts` | The four funnel files are identical on both sides apart from imports; lead and sample payloads against the handset's writes |
+| `mbos-app/src/engines/leads.test.ts`, `lead-audit-fixes.test.ts` | Cap states, exemptions, GST checksum, sample ask |
+| `mbos-app/src/data/leads.test.ts`, `leads-query.test.ts` | Creation, duplicates, the book's views |
+| `mbos-app/src/lib/sample-chase.test.ts` | Review chase schedule |
+| `mbos-app/src/engines/lead-worklist.test.ts` | The four Lead actions views |
+
+## Changing it safely
+
+<Steps>
+<Step title="Change a gate or a ladder on the SERVER copy">
+Edit `src/lib/engines/lead-gates.ts` (or the ladder, labels, role-action), then copy it over the handset file. Never edit `mbos-app/src/engines/funnel/` directly — the mirror test fails. Watch the one import line that differs (`cp` breaks it; CI catches it).
+</Step>
+<Step title="Add a lead field">
+Add the column to the handset's `leads` table, the office's `customers`, `leadSchema`/the update schema, and `upsertLeads`. A field the hand-rolled pull reads but the server does not send is written as NULL over the local value.
+</Step>
+<Step title="Ship a new APK">
+The funnel copy ships in the bundle; a gate change does not reach phones until they update. The server still enforces the new rule meanwhile.
+</Step>
+</Steps>
+
+## Known gaps
+
+| Gap | Where |
+|---|---|
+| Cap read from two keys on the phone, one on the server | `funnelConfig` in `mbos-app/src/data/lead-funnel.ts`; `handleVisit` |
+| GST only demanded for the legacy `qualified` rung | `gateAsRun`; `handleLeadUpdate` |
+| Distributor sales type is retired for new leads but its ladder and 30-question checklist remain reachable for old ones | `SALES_TYPES` in `lead-labels.ts`; `lead-qualify.tsx` |

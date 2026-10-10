@@ -1,0 +1,102 @@
+Opportunities are rows in `call_opportunities`, inserted by `saveInteraction` inside the call's transaction and worked through `opportunity-service.ts`. The screen is a server page reading `listOpportunities()` and a client screen that calls `setOpportunityStatusAction`.
+
+<Callout kind="note">
+`lib/engines/opportunity.ts` is **not** this feature. It is the pure arithmetic for a shop's estimated potential against its current sales (`opportunity`, `annualise`) used by the field product. The call-opportunity worklist has no engine.
+</Callout>
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Route guard | `src/app/crm/opportunities/layout.tsx` | `requireModule(user.id, "crm.opportunities")` |
+| Page (server) | `src/app/crm/opportunities/page.tsx` | `listOpportunities()`; `isTeamView = scope === "team" && isManager(user)` |
+| Screen (client) | `src/app/crm/opportunities/opportunities-screen.tsx` | Tabs, buckets, close dialog, `STATUS_LABEL`, `STATUS_TONE` |
+| Question on the call | `src/components/crm/call-panel.tsx` | `offersOpportunity` — inbound calls, or when the assistant heard a sale; the four fields |
+| Write on save | `src/lib/services/interaction-service.ts` | Schema fields `opportunity`, `opportunityAnswer`; insert into `call_opportunities`; owner notification |
+| Service | `src/lib/services/opportunity-service.ts` | `OPPORTUNITY_STATUSES`, `listOpportunities`, `setOpportunityStatus`, `visibleTo` |
+| Action | `src/lib/actions/crm.ts` | `setOpportunityStatusAction` |
+| Labels | `src/lib/call-reasons.ts` | `CALL_REASON_LABEL`, `CALLER_ROLE_LABEL` for "They rang about …" |
+
+## Raising one, inside the call save
+
+<Flow caption="saveInteraction, the opportunity block" chart={`
+sequenceDiagram
+  autonumber
+  participant P as Call panel
+  participant S as saveInteraction
+  participant TX as transaction
+  participant N as notifyUsers
+  P->>S: opportunity {product, quantity, valueRupees, date} or opportunityAnswer "no"
+  S->>S: refuse "no" with an opportunity, refuse on order_received,<br/>refuse an expected date before today
+  S->>TX: insert calls row (opportunity_answer yes / no / null)
+  S->>TX: insert call_opportunities — owner = liveSeat(assignedUserId(customer)) or caller
+  S->>TX: timeline event naming the opportunity as its source
+  S-->>N: after commit, if owner is not the caller —<br/>"A call turned up an opportunity on your account"
+`} />
+
+The opportunity row is written **before** the timeline block, because the timeline entry names it as its source record.
+
+## The service
+
+<Code file="src/lib/services/opportunity-service.ts" symbol="OPPORTUNITY_STATUSES" />
+
+<Code file="src/lib/services/opportunity-service.ts" symbol="visibleTo" />
+
+<Code file="src/lib/services/opportunity-service.ts" symbol="listOpportunities" collapsed />
+
+<Code file="src/lib/services/opportunity-service.ts" symbol="setOpportunityStatus" collapsed />
+
+## The table
+
+<DbTable name="call_opportunities" note={{
+  call_id: "The call it came out of.",
+  user_id: "Who logged the call. Part of who can see the row.",
+  assigned_user_id: "Who is expected to work it — whose book the account was in at save time. Null on older rows; read as the logger.",
+  product: "Free text: what they might buy.",
+  estimated_quantity: "Free text, e.g. about 20 cans a month.",
+  estimated_value_paise: "Paise. Null is nobody estimated; zero would mean judged worthless.",
+  expected_order_date: "A business date; refused if before today at save time.",
+  status: "Text: open, in_progress, won or lost. Anything else reads as open.",
+  worked_note: "The sentence written when it was last moved. Kept across a reopen.",
+  closed_at: "Set on won or lost, cleared on reopen.",
+}} />
+
+<DbTable name="calls" only={["opportunity_answer"]} note={{ opportunity_answer: "yes, no, or null for nobody asked." }} />
+
+## Access
+
+- **Module:** <ModuleRef k="crm.opportunities" />.
+- **No capability.** Anybody who can see a row may move it; `setOpportunityStatus` re-runs `visibleTo` in its `where`, so a URL-posted id outside scope answers `not_found`.
+- **Scope:** `resolveScope()` → `scopedUserIds` → `visibleTo(ids)` (assignee or logger in the ids).
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test:integration` | `src/lib/they-called-us.test.ts` | Opportunity Yes / No / unanswered kept apart, the row written with the call, and listed on the Opportunities worklist |
+| `npm run test` | `src/lib/engines/opportunity.test.ts` | The potential/gap arithmetic in `engines/opportunity.ts` (a different feature) |
+
+## Changing it safely
+
+<Steps>
+<Step title="Keep it off customers.kind">
+An opportunity must never promote or demote an account. If a won opportunity should create something, create an order or a reminder through their own services.
+</Step>
+<Step title="Add a status to the constant and the screen together">
+`OPPORTUNITY_STATUSES`, `STATUS_LABEL`, `STATUS_TONE`. The column is text, so the database will not refuse a typo — the constant is the only guard.
+</Step>
+<Step title="Page in SQL before the list outgrows 500">
+Move the counts to a `count(*)`/`sum` query so the cards describe every opportunity, not the loaded page.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| `limit(500)`; buckets, counts and open value are computed over the loaded rows only | `opportunity-service.ts` `listOpportunities`; `opportunities-screen.tsx` |
+| Team view uses `isManager(user)` (widest level anywhere) and `getScope(user)` without the app | `app/crm/opportunities/page.tsx` |
+| Audit insert omits `actorRole` / `actorApp` | `opportunity-service.ts` `setOpportunityStatus` |
+| `status` is a text column with no check constraint | `schema.ts` `call_opportunities` |
+| No reassign or edit path; owner is fixed at save time | `opportunity-service.ts` |
+| Nothing raises a reminder or notification when `expected_order_date` passes | — |

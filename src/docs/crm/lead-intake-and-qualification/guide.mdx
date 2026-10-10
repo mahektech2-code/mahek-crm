@@ -1,0 +1,148 @@
+This page covers the two desks a lead passes through before it can have a sample: **Intake**, where a lead is raised, and **Qualification**, where it is checked, called and qualified. Intake is where a shop that rang the office, or a website form that landed in somebody's inbox, becomes a lead. Qualification is everything between a **Suspect** and a lead that is ready for a trial.
+
+<Callout kind="live">
+Numbers on this page — how many visits, how many days — are your CRM's current settings, read live.
+</Callout>
+
+## Intake: the three tabs
+
+| Tab | What it is for |
+|---|---|
+| **Capture a lead** | Raise one lead from a phone call or an enquiry. |
+| **Bulk intake** | Paste or upload a list of leads, see what would happen to each row, then raise them. |
+| **Duplicates** | Pairs of accounts that look like the same shop, for somebody to check. |
+
+### Capture a lead at a glance
+
+<Wireframe url="/crm/leads/intake" nav={["#Lead Management", "All Leads", "Calling desk", "Intake", "Qualification"]} active="Intake" caption="Capture a lead">
+  <WfTabs items={["Capture a lead", "Bulk intake", "Duplicates"]} active="Capture a lead" />
+  <WfCard title="How will this be sold?">
+    <WfBar><WfPill tone="brand">Direct customer</WfPill><WfPill>Third Party Customer</WfPill><WfPill>Not Decided</WfPill><Hotspot n={1} /></WfBar>
+  </WfCard>
+  <WfCard title="The shop">
+    <WfField label="Shop name"><WfInput placeholder="As it is written above the door" wide /></WfField>
+    <WfField label="Mobile"><WfInput placeholder="Ten digits" /></WfField>
+    <WfField label="Town"><WfInput placeholder="Which town?" /></WfField>
+    <WfField label="Lead source"><WfInput placeholder="Website, WhatsApp, a reference…" /><Hotspot n={2} /></WfField>
+  </WfCard>
+  <WfCard title="What they want (all optional)">
+    <WfField label="What product they want"><WfInput placeholder="Search Mahek products, or type what they want" wide /></WfField>
+    <WfField label="Monthly requirement, litres (optional)"><WfInput placeholder="200" /><Hotspot n={3} /></WfField>
+    <WfField label="Buying from now (optional)"><WfInput placeholder="Brand" /></WfField>
+    <WfField label="Owner (optional)"><WfInput placeholder="Unassigned" /><Hotspot n={4} /></WfField>
+  </WfCard>
+  <WfBar><WfSpacer /><WfButton primary>Raise the lead</WfButton><Hotspot n={5} /></WfBar>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>How it will be sold.</b> Decides which ladder the lead climbs. Leave it at <i>Not Decided</i> if nobody knows yet — it is never chosen for you. For a third-party shop you are also asked <b>who bills it</b>.</span>,
+  <span key="2"><b>Lead source.</b> Where it came from. <i>Other</i> needs a few words.</span>,
+  <span key="3"><b>Litres, not cans.</b> A shop tells you "about 200 litres a month" long before anybody knows which pack they will buy.</span>,
+  <span key="4"><b>Owner.</b> Who works it. Leaving it unassigned is allowed — the lead waits for somebody to pick it up.</span>,
+  <span key="5"><b>Raise the lead.</b> The lead is created at the first rung of its ladder: <b>Suspect</b>, or <b>New</b> if no sales type was chosen.</span>,
+]} />
+
+### Raising a lead, step by step
+
+<Steps>
+<Step title="Choose how it will be sold">
+Direct customer, Third Party Customer, or Not Decided.
+</Step>
+<Step title="Fill in the shop">
+Name, ten-digit mobile, town and where the lead came from are required. Everything else is optional — you are on the phone, and a lead with a name and a number is better than one never raised.
+</Step>
+<Step title="Add what they told you">
+What they want (pick a product, or type it in their words), roughly how many litres a month, which brand they use now, what they will use it on.
+</Step>
+<Step title="Press Raise the lead">
+If the mobile number already belongs to an account, you see <i>That telephone number is already on the book</i> with the account it reaches. Raise it anyway only if it really is a different shop — two separate leads cannot be merged back later.
+</Step>
+</Steps>
+
+<Callout kind="note">
+**GST is not asked here.** It is collected during Qualification and validated by your sales manager before any sample goes out.
+</Callout>
+
+### Bulk intake
+
+Upload or paste a list. Before anything is written you see **each row's verdict** — will be raised, a duplicate of an account already on the book, or refused with the reason. You then raise the good rows in one go; one next action can be set for the whole batch.
+
+### Duplicates
+
+Pairs of accounts with the same phone number or very similar names (how similar is <Setting k="leads.duplicateNameSimilarity" />). Open both, decide, and press **Not a duplicate** to take a pair off the list for good.
+
+## Qualification: the four tabs
+
+| Tab | What it is for |
+|---|---|
+| **Suspect decisions** | Suspects that have been visited enough times that somebody must decide: Prospect, or not. |
+| **Verification queue** | Prospects waiting for the sales manager's verification call. |
+| **Validation calls** | The calls that were made, and where what the shop said differs from what the salesman reported. |
+| **Checklists** | Leads at Qualification and exactly which of the eight answers each is still missing. |
+
+### Suspect decisions
+
+A field salesman gets <Setting k="mbos.leads.visitsBeforeDecision" /> visits to work out whether a Suspect is worth anything, and <Setting k="mbos.leads.maxSuspectVisits" /> at the outside. The list shows every undecided Suspect, **furthest past the cap first**, with its visit count.
+
+| You choose | What happens |
+|---|---|
+| **Prospect** | The lead moves to Prospect through its gate (all seven Prospect answers needed) with a coded reason. |
+| **Not a prospect** | The lead is closed as Lost with a coded reason. |
+| **Keep as Suspect** | It stays a Suspect and you write why. It stays on this list so the question keeps being asked. |
+
+Nothing refuses a visit past the cap — the visit is real work. What changes is that the lead now has to be **decided**.
+
+### Verification queue and the validation call
+
+When a lead becomes a Prospect, the sales manager rings the shop to check that the visit happened, that Mahek was explained properly, and that the opportunity is real. The form asks seventeen questions in four groups (about the salesman, the opportunity, any objections, and how ready they are) and ends with one of three outcomes:
+
+| Outcome | Means |
+|---|---|
+| **Checked. The visit happened and Mahek was explained** | Verified. Qualification opens. |
+| **Follow-up needed. This call could not confirm the visit** | Needs another call; the lead waits. |
+| **Check failed. There is no business here** | Closes the lead as Lost. A note is required. |
+
+When a lead is qualified from the field, its **lead manager** is filled in from the org chart and a validation call lands on their list for the **next working day**, holidays skipped.
+
+### Validation calls
+
+Every call made, newest first, with the four things both sides answered set side by side: what the salesman **reported** on the lead and what the shop **confirmed** on the phone — the requirement, the monthly litres, the competitor and the potential. A row where they differ is marked. That difference is the most useful thing the call produces, so neither answer ever overwrites the other.
+
+### Checklists: the eight qualification answers
+
+Before a sample can go out, the lead needs all eight:
+
+| # | The answer | Who gives it |
+|---|---|---|
+| 1 | **GST number** | You record it; your sales manager validates it at review |
+| 2 | What they will use it on | You |
+| 3 | The trial: product and pack, quantity, who will test it, for how long | You |
+| 4 | Who decides, who places the order, who pays (*the same person* is a real answer) | You |
+| 5 | Price and credit discussed, and how they took it | You |
+| 6 | Where we deliver, how long it takes, whether that suits them | You |
+| 7 | Still willing to test, now they know price, credit and delivery | You |
+| 8 | What happens if the trial goes well, and by when | You |
+
+Then your sales manager **reviews** the qualification (verified, incomplete, or needs clarification), and the figures — monthly need, product, competitor — must have been confirmed within <Setting k="leads.figuresFreshDays" /> days.
+
+<Callout kind="warn" title="A refused GST number blocks the sample">
+If your sales manager refuses the GST number, no sample can go out until a corrected number is validated. You do not need to redo anything else — the lead carries on from where it was the moment the corrected number is accepted.
+</Callout>
+
+## Questions people ask
+
+<Faq q="Do I need GST to raise a lead?">
+No. It is asked at Qualification, before a sample.
+</Faq>
+<Faq q="The customer said cans, not litres.">
+Convert roughly to litres a month. There is no pack chosen yet, so litres are the one unit everybody agrees on.
+</Faq>
+<Faq q="Why can I not see the Verification queue?">
+Verifying is a manager's job and needs the verify permission. You will still see your own leads waiting there on their records.
+</Faq>
+<Faq q="A Suspect has had five visits and nothing stops the salesman visiting again.">
+Correct — visits are never refused. The lead is on Suspect decisions until somebody answers Prospect, not a prospect, or keep as Suspect with a reason.
+</Faq>
+<Faq q="The shop told the sales manager a different litre figure from the salesman.">
+Both are kept. Validation calls marks the row so somebody can find out which is true.
+</Faq>

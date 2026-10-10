@@ -1,0 +1,138 @@
+Two modules share this page. **Next actions & nurture** (<ModuleRef k="crm.lead-actions" />) is reads over four `customers` columns plus a pure engine that turns events into `mbos_tasks` rows keyed for idempotency. **Handovers** (<ModuleRef k="crm.lead-handovers" />) writes one seat — `relationship_owner_id` — with its history and timeline in one transaction. Everything below is cut from the source this deployment was built from.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Routes | `src/app/crm/leads/actions/{page,overdue,none,parked,nurture,communication}`, `src/app/crm/leads/handovers/page.tsx` | Thin pages; each folder layout guards its module |
+| Screens | `src/components/leads/pages/leads-actions*.tsx`, `leads-handovers.tsx`, `src/components/leads/record/handover-panel.tsx` | The six tabs, the handover list, the record's handover panel |
+| Reads | `src/lib/services/lead-actions-service.ts` | `nextActions`, `nextActionsDue`, `nextActionsOverdue`, `communicationLog`, `communicationTally` |
+| Reads | `src/lib/services/lead-hold-service.ts` | `parkedLeads`, `parkedLeadsDueCount` |
+| Reads | `src/lib/services/lead-console-service.ts` | `leadsWithoutNextAction`, `nurtureSchedule`, `handoverCandidates` |
+| Writes | `src/lib/actions/leads.ts` | `setLeadNextAction`, `recordCommunication`, `advanceLeadStage` (park / lost) |
+| Engine (pure) | `src/lib/engines/lead-nurture.ts` | `nurtureKey`, `tasksDueFor`, `sampleChaseDue`, `expectedReorderEvent` |
+| Sequence | `src/lib/lead-labels.ts` | `NURTURE_SEQUENCE`, `NurtureTrigger`, `COMMUNICATION_ACTIONS` |
+| Job | `src/lib/mbos-jobs.ts` | `raiseNurtureTasks`, `closeNurtureTasks`, `openNurtureTaskIdsFor`, `runNurturePass` (in `mbosNightly`) |
+| Handover | `src/lib/services/handover-service.ts`, `src/lib/actions/relationship-handover.ts` | `handoverRefusal`, `handOverRelationship`, `pendingHandoverClause`; `handOverRelationships` |
+
+## The next-action columns
+
+<DbTable name="customers" only={["lead_next_action", "lead_next_action_date", "lead_next_action_owner_id", "lead_next_action_outcome", "lead_hold_reason_code", "lead_hold_reason", "lead_hold_resume_date"]} note={{
+  lead_next_action_date: "A DATE string — never bind a JS Date into a template here.",
+  lead_next_action_owner_id: "Must be an active user; the gate needs action, date and owner.",
+  lead_next_action_outcome: "Optional. What the owner should come back with.",
+  lead_hold_reason_code: "A code from leads.holdReasons, cleared when the park ends.",
+}} />
+
+<Code file="src/lib/actions/leads.ts" symbol="setLeadNextAction" collapsed />
+
+`setLeadNextAction` validates through `nextActionSchema` and does **not** read `leads.requireNextAction`; the setting is read in `evaluateLeadStageMove`, which lifts the `next_action` gate condition by id when it is off.
+
+## The nurture engine
+
+<Code file="src/lib/engines/lead-nurture.ts" symbol="NURTURE_SOURCE_TYPE" />
+
+<Code file="src/lib/engines/lead-nurture.ts" symbol="nurtureKey" />
+
+<Code file="src/lib/engines/lead-nurture.ts" symbol="tasksDueFor" />
+
+<Code file="src/lib/lead-labels.ts" symbol="NURTURE_SEQUENCE" collapsed />
+
+### Raising, closing, and the nightly pass
+
+<Flow caption="An event to a task" chart={`
+sequenceDiagram
+  autonumber
+  participant Act as An action (sample, move, order)
+  participant J as mbos-jobs.ts
+  participant E as engines/lead-nurture.ts
+  participant DB as Postgres
+  Act->>J: raiseNurtureTasks(tx, customerId, events, today, config)
+  J->>E: tasksDueFor(events, today, config)
+  E-->>J: candidates with sourceId = trigger:owner:after:row
+  J->>DB: SELECT mbos_tasks where source_type = lead_nurture and source_id in candidates
+  J->>DB: nurtureOwners — lead_manager_id, sales_am_id or owner_id
+  J->>DB: INSERT the missing ones (skip any with no assignee)
+  Note over J,DB: runNurturePass (nightly) rebuilds events from<br/>transitions, visits, samples, orders and calls the same function
+`} />
+
+<Code file="src/lib/mbos-jobs.ts" symbol="raiseNurtureTasks" collapsed />
+
+<Code file="src/lib/mbos-jobs.ts" symbol="closeNurtureTasks" collapsed />
+
+<Code file="src/lib/mbos-jobs.ts" symbol="runNurturePass" collapsed />
+
+There is **no unique index** behind the keys — `mbos_tasks` is a general table — so the guard is the read inside the same transaction. Event days are taken `AT TIME ZONE` the app zone in SQL so a 1 am event is not a day early.
+
+<DbTable name="mbos_tasks" only={["title", "description", "assigned_to_user_id", "customer_id", "due_date", "status", "priority", "source_type", "source_id", "completion_note"]} note={{
+  source_type: "lead_nurture for the sequence; sample_review / sample_in_transit and others for the chases.",
+  source_id: "The stable key. Never derived from the due date or the wording.",
+  status: "A chase is closed (done or cancelled) with a note — never deleted.",
+}} />
+
+<DbEnum name="mbos_task_status" />
+
+## Handovers
+
+<Code file="src/lib/services/handover-service.ts" symbol="handoverRefusal" />
+
+<Code file="src/lib/services/handover-service.ts" symbol="handOverRelationship" collapsed />
+
+<Code file="src/lib/services/handover-service.ts" symbol="pendingHandoverClause" />
+
+<Code file="src/lib/actions/relationship-handover.ts" symbol="handOverRelationships" collapsed />
+
+The action: `requireCapability("customer.handOver")`, the reason checked against `people.amChangeReasons` (*Other* needs a note), the target user active, the accounts filtered by `customerScopeClause()`, per-row `handoverRefusal`, then one transaction of `handOverRelationship` per account and one notification per person.
+
+<DbTable name="customers" only={["relationship_owner_id", "handed_over_at", "lead_converted_at", "sales_am_id", "am_decided_at"]} note={{
+  relationship_owner_id: "Read by scopedToUsers and assertCustomerInScope (sight). NOT read by ASSIGNED_TO_SQL (money).",
+  handed_over_at: "When it last changed hands. Outstanding = lead_converted_at set and this null.",
+  sales_am_id: "Untouched by a handover — handover.test.ts asserts it.",
+  am_decided_at: "Untouched by a handover.",
+}} />
+
+<DbTable name="customer_am_changes" only={["customer_id", "role", "from_user_id", "from_name", "to_user_id", "to_name", "reason_code", "note", "changed_by_id", "changed_at"]} note={{
+  role: "relationship for a handover.",
+  from_name: "Stored by name so the history stays readable after the person leaves.",
+}} />
+
+## Permissions
+
+<CapabilityGrid names={["lead.work", "customer.handOver", "customer.reassign"]} />
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/engines/lead-nurture.test.ts` | Keys, due days, catch-up, the review ladder row, reorder dating |
+| `npm run test` | `src/lib/handover.test.ts` | Every `am_role` value has a seat label; refusals |
+| `npm run test:integration` | `src/lib/relationship-handover.test.ts` | A handover moves sight and leaves `sales_am_id`, `owner_id`, `kind`, `am_decided_at` alone |
+| `npm run test:integration` | `src/lib/lead-worklist-views.test.ts` | Due / overdue / nothing scheduled / parked views |
+| `npm run test:integration` | `src/lib/lead-resume-hold.test.ts` | Parking and resuming |
+
+## Changing it safely
+
+<Steps>
+<Step title="A new nurture row is a row in NURTURE_SEQUENCE">
+Add a trigger to `NurtureTrigger` if needed, then make sure something raises it — an action calling `raiseNurtureTasks` and an event query in `runNurturePass`. A row nothing raises is a promise nothing keeps.
+</Step>
+<Step title="Never put a moving value in the key">
+Not the due date, not the title. Changing either would re-raise every outstanding task.
+</Step>
+<Step title="Do not let the relationship seat leak into ASSIGNED_TO_SQL">
+That expression credits revenue. Reading the handover seat there would move money between people as a side effect of naming a relationship manager.
+</Step>
+<Step title="Handover refusals are pure">
+Add a refusal to `handoverRefusal` and `HANDOVER_REFUSALS` so the screen's disabled button and the action say the same thing.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| Service header says `setLeadNextAction` enforces `leads.requireNextAction`; it does not read it | `lead-actions-service.ts` header; `actions/leads.ts` `setLeadNextAction` |
+| Handover service header says `kind` flips on the first order | `handover-service.ts` header |
+| `delivery_completed` has a sequence row but no trigger is ever raised | `mbos-jobs.ts` `runNurturePass` (TODO) |
+| No unique index on `(source_type, source_id)`; idempotency relies on a read in the transaction | `mbos-jobs.ts` `raiseNurtureTasks` |
+| Next-action notification `href` is always `/crm/customers/…` | `actions/leads.ts` `setLeadNextAction` |

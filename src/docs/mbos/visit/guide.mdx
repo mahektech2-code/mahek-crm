@@ -1,0 +1,105 @@
+A visit has four moments: you **set off**, you **arrive**, you **check in** when you walk into the shop, and you **check out** when you leave. In between you write what happened and take an order, a payment or a complaint if there is one. This page walks you through each.
+
+## The screen at a glance
+
+<Wireframe url="MBOS · Visit" caption="A visit in progress, after checking in">
+  <WfBar><WfTitle sub="Lead · Suspect · Visit 2 / 3">Customer A</WfTitle><Hotspot n={1} /></WfBar>
+  <WfCard tone="brand"><WfBar><WfText>Checked in here · At the shop · 38 m</WfText><Hotspot n={2} /></WfBar></WfCard>
+  <WfField label="How did it go?">
+    <WfBar><WfPill>Just a visit</WfPill><WfPill tone="brand">Order</WfPill><WfPill>Payment</WfPill><WfPill>Complaint</WfPill><WfPill>Sample</WfPill><WfPill>Owner away</WfPill><WfPill>Shop closed</WfPill><Hotspot n={3} /></WfBar>
+  </WfField>
+  <WfBar><WfButton primary>Take order</WfButton><Hotspot n={4} /></WfBar>
+  <WfField label="Visit notes"><WfBlock h={46} label="What you talked about · 🎤" /><Hotspot n={5} /></WfField>
+  <WfBar><WfBlock h={34} label="Shop photo" /><WfBlock h={34} label="Owner photo" /><Hotspot n={6} /></WfBar>
+  <WfCard title="Before you save"><WfText muted>In the shop 4m 10s · Visit notes written · Next step done</WfText><Hotspot n={7} /></WfCard>
+  <WfButton primary>Check out of the shop and save the visit</WfButton>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>The shop.</b> For a lead, its stage — and for a Suspect, how many visits so far out of the most allowed before you must decide.</span>,
+  <span key="2"><b>Where you checked in.</b> How far you were from the shop's saved location.</span>,
+  <span key="3"><b>How it went.</b> Pick one. It decides what else the visit asks for.</span>,
+  <span key="4"><b>The next step.</b> If you picked Order, Payment, Complaint or Sample, do it here, inside the visit.</span>,
+  <span key="5"><b>Your note.</b> Type, or tap the microphone and speak in any language.</span>,
+  <span key="6"><b>Photos.</b> Optional. A visit is never refused for want of a photo.</span>,
+  <span key="7"><b>The checklist.</b> What is still missing before you save. When everything is done it says <i>All done</i>.</span>,
+]} />
+
+## 1. Set off
+
+Press **Start visit** — on today's route, a customer's record, the customer list, or the **+** button. If you are punched in, the trip is recorded under the vehicle you chose this morning; you are not asked anything. The screen shows **On your way** with how far the shop is, and a **Navigate** button that opens your maps app.
+
+You can only be on your way to one shop at a time. If you have arrived at a shop and not checked in, the app asks you to check in there (or save that visit) first.
+
+## 2. Arrive
+
+When you reach the shop, press **I am at the shop**. The app takes a careful GPS reading and checks you are close to the shop's saved location.
+
+| What happens | Why | What to do |
+|---|---|---|
+| *At the shop · 38 m from its saved location.* | You are within <Setting k="mbos.location.visitMismatchM" /> m. | Carry on. |
+| *You are 420 m from this shop's saved location. You must be within N m to check in.* | You are too far — or the saved location is wrong. | Walk to the shop and press again. Nothing has been saved. |
+| *No GPS signal yet. You need it to check in.* | The phone has no reading. | Step outside or near a window and press again. |
+| *GPS signal is weak.* | The reading is not good enough to tell. | Step outside and press again. |
+| *Are you at Customer A?* | The shop has no saved location yet. | Press **Yes, I am at the shop** only if you are. Where you stand becomes the shop's location. |
+
+### When the shop's saved location is wrong
+
+If you are standing in the right shop and the app still says you are too far, the saved location is wrong. After being refused you can go on: press **I am at the shop** anyway and **say why** in a sentence. The visit is saved as **not checked**, and your manager reads your reason.
+
+The app then asks whether the shop's pin is wrong. Say **yes** and your manager is asked to move it to where you checked in. You cannot move it yourself.
+
+## 3. Check in
+
+When you walk in, press **Check in at the shop**. The time in the shop counts from here. This works even with no signal.
+
+## 4. Fill in the visit
+
+<Steps>
+<Step title="Pick how it went">
+**Just a visit**, **Order**, **Payment**, **Complaint**, **Sample**, **Owner away** or **Shop closed**.
+</Step>
+<Step title="Do the next step">
+For Order, Payment, Complaint or Sample, the button below does it inside the visit. The checklist waits until it is done.
+</Step>
+<Step title="Write what happened">
+What you talked about, what they said, what happens next. At least <Setting k="mbos.visits.minimumNoteChars" /> letters. Not needed for **Shop closed**.
+</Step>
+<Step title="Set the next contact">
+The day you will contact them next. Change it if they asked for another day.
+</Step>
+</Steps>
+
+### Speaking instead of typing
+
+Tap the microphone on the note and speak — in any language. With signal, the app shows you the English it heard; correct it and it goes into the note. With **no signal**, the recording is kept and sent with the visit, and the office writes it out. On a visit the recording always goes to the office with the note.
+
+### Visiting a Suspect lead
+
+A Suspect is a shop you have not yet decided about. The card shows *Visit 2 / 3*.
+
+| Visit | What the app asks |
+|---|---|
+| Below <Setting k="mbos.leads.visitsBeforeDecision" /> | Nothing extra. |
+| From <Setting k="mbos.leads.visitsBeforeDecision" /> | *On the next visit you must decide. Think about it now.* |
+| At <Setting k="mbos.leads.maxSuspectVisits" /> and after | **Choose which way this lead goes before you close the visit.** Prospect, Not a prospect, or keep it a Suspect — and if you keep it, say why. Your manager is told. |
+
+The visit itself is **always saved** — the question is about the lead, not the visit.
+
+## 5. Check out and save
+
+Press **Check out of the shop and save the visit**. If the checklist is complete, it saves. If something is missing — too short a time in the shop (less than <Setting k="mbos.visits.minimumDwellSeconds" /> seconds), no note, no result — you can add it, or choose **Save as not checked** and say why. Your manager sees it.
+
+## Questions people ask
+
+<Faq q="I am in the shop but the app says I am 300 m away.">
+The shop's saved location is wrong. Press I am at the shop again, give the reason, and say yes when asked if the pin is wrong.
+</Faq>
+
+<Faq q="I pressed Start visit by mistake.">
+Press **Cancel trip** on the On your way screen. Nothing is lost.
+</Faq>
+
+<Faq q="Where do I claim the auto fare to this shop?">
+In **Expenses**, once, for the day. Fares are not asked at each shop.
+</Faq>

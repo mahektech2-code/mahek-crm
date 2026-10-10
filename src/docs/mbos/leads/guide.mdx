@@ -1,0 +1,153 @@
+A **lead** is a shop that has not bought from us yet. You add it on the phone the first time you meet them, and then you move it up, step by step, until it orders. The phone tells you at every step **what is still missing** before it can move — and it works with no signal.
+
+## Adding a lead
+
+Open **Customers → Leads** (or **More → Leads**) and press **Add a lead**.
+
+<Wireframe url="MBOS · Add a lead" caption="The new-lead form">
+<div className="mx-auto max-w-[300px] space-y-3">
+  <WfTitle>Add a lead</WfTitle>
+  <WfField label="Kind of sale"><WfBar><WfButton primary>Direct customer</WfButton><WfButton>Third-party customer</WfButton><Hotspot n={1} /></WfBar></WfField>
+  <WfInput placeholder="Name or shop name" wide />
+  <WfInput placeholder="Mobile (10 digits)" wide />
+  <WfField label="Area"><WfInput placeholder="Choose the area this shop is in" wide /><Hotspot n={2} /></WfField>
+  <WfField label="How you found them"><WfBar><WfPill>Walk-in</WfPill><WfPill>Referral</WfPill><WfPill>Other</WfPill></WfBar></WfField>
+  <WfBar><WfButton>Scan a card</WfButton><WfButton>Speak it</WfButton><Hotspot n={3} /></WfBar>
+  <WfButton primary>Add lead</WfButton>
+</div>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Kind of sale.</b> Choose this first. <i>Direct customer</i>: we sell to them and send them the bill. <i>Third-party customer</i>: the goods go to them, a distributor gets the bill. It decides which steps the lead climbs.</span>,
+  <span key="2"><b>Area.</b> Only the areas the office has given you. If you have none, the form says <i>No area is set for you yet. You cannot add a lead. Ask the office to set one.</i></span>,
+  <span key="3"><b>Scan or speak.</b> Photograph a visiting card or describe the shop out loud. The phone fills the form. <i>Check each field before adding.</i></span>,
+]} />
+
+You need only the kind of sale, a name, a 10-digit mobile, the area and how you found them. Everything else — address, what they want, monthly litres, the decision maker, a photo of the shop front, the GST number — can be added later from the lead.
+
+<Callout kind="warn" title="A common mistake">
+Adding a shop that is already on the book. If the mobile number matches a customer or another lead, the phone tells you and shows the match. Open that one instead.
+</Callout>
+
+## The lead's page
+
+Tap a lead to open it. The top says **which step it is on** and **what you are expected to do next**.
+
+<Wireframe url="MBOS · Lead" caption="A lead at Suspect, on its second visit">
+<div className="mx-auto max-w-[300px] space-y-3">
+  <WfTitle sub="Direct · Visit 2 / 3">Customer A</WfTitle>
+  <WfCard title="Lead stage"><WfBar><WfPill tone="brand">Suspect</WfPill><WfText muted>→ Prospect</WfText><Hotspot n={1} /></WfBar></WfCard>
+  <WfCard tone="warn" title="Still to do"><WfText>Add what they want. Add their monthly litres. Set the next action.</WfText><Hotspot n={2} /></WfCard>
+  <WfButton>Prospect details</WfButton>
+  <WfButton>Set next action</WfButton><Hotspot n={3} />
+  <WfBar><WfButton primary>Move up to Prospect</WfButton><WfButton>Mark lost</WfButton><Hotspot n={4} /></WfBar>
+</div>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Where it is.</b> The current step and the next one. The visit counter shows only while it is a Suspect.</span>,
+  <span key="2"><b>Still to do.</b> Exactly what is missing before it can move up. The office checks the same list.</span>,
+  <span key="3"><b>The forms.</b> <i>Prospect details</i> (eight answers), the <i>Qualification checklist</i>, and the next action — what, when, who, and what they should come back with.</span>,
+  <span key="4"><b>Move.</b> <i>Move up to …</i> stays grey until nothing is missing. <i>Mark lost</i> and <i>On hold</i> are always there.</span>,
+]} />
+
+## The steps a lead climbs
+
+Which steps depends on the kind of sale:
+
+| Kind of sale | Steps |
+|---|---|
+| **Direct customer** (we bill the shop) | Suspect → Prospect → Qualification → Sample trial → Sample received → Sample review → Negotiation → First order → Delivery → Payment → Second order → Customer |
+| **Third-party customer** (a distributor bills the shop) | The same, without *Sample received* |
+| **Distributor** (appointing one — no longer offered for new leads, but older leads still climb it) | Suspect → Prospect → Qualification → Management review → Commercial discussion → Distributor approval → Agreement → Initial stock order → Active distributor |
+
+A lead added before these steps existed has no kind of sale and climbs the old six: New → Contacted → Qualified → Negotiation → Won (or Lost).
+
+<Steps>
+<Step title="Read Still to do">
+Every step has its own list. Fill what it asks — a tick is not enough where there is a box for the actual answer.
+</Step>
+<Step title="Press Move up">
+When nothing is missing, the button turns on. If you press it while something is missing, the phone says <i>Not yet</i> and names what.
+</Step>
+<Step title="Set the next action">
+Every move asks what happens next, on which day, by whom. A lead may never sit with nothing promised.
+</Step>
+</Steps>
+
+## Suspect or Prospect: deciding after a few visits
+
+A new lead is a **Suspect**. You have about two visits to decide if it is worth working.
+
+- From visit <Setting k="mbos.leads.visitsBeforeDecision" />, the card warns you to decide.
+- At visit <Setting k="mbos.leads.maxSuspectVisits" />, you **must answer before you can close the visit**: **Make it a Prospect** or **No, not a Prospect**. Keeping it a Suspect asks you why.
+
+Your visit is never refused. If you go past the limit, your manager is told.
+
+## GST number
+
+For a lead on the old six steps, the office needs the shop's **GST number** before it can become *Qualified*. Add it in **Prospect details**. The phone checks it as you type — *One character of that GST number is wrong. Check it against their certificate.*
+
+## What happens when a lead is qualified
+
+When a lead on the old six steps becomes *Qualified*, your **lead manager** (the person you report to) is told, and a **validation call** appears on their list for the next working day. They ring the shop to check your visit: did you come, did you explain Mahek, is the need real. Their answers sit beside yours — they do not replace them.
+
+What the office found is shown on the lead page under **The office called them**, beside what you recorded. If the call is made from a phone, turning a Prospect down needs a reason.
+
+## Samples
+
+From the *Sample trial* step you can **Request a sample**. The phone refuses a sample for a Suspect, or for a distributor (a distributor is appointed, not sampled).
+
+<Wireframe url="MBOS · Samples" caption="Samples, with what is owed on each">
+<div className="mx-auto max-w-[300px] space-y-3">
+  <WfTitle>Samples</WfTitle>
+  <WfTable columns={["Shop", "What is owed"]} rows={[
+    ["Customer A · 6 days", <WfPill key="a" tone="warn">Did it arrive? Ask them</WfPill>],
+    ["Customer B · 3 days", <WfPill key="b">Waiting for the trial</WfPill>],
+    ["Customer C · 9 days", <WfPill key="c" tone="danger">Review asked 3 times</WfPill>],
+  ]} />
+  <Hotspot n={1} />
+</div>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Each sample</b> says its age and what is owed on it, in words. Tap one to mark it received, trial started, tried, or record the review.</span>,
+]} />
+
+<Steps>
+<Step title="Confirm it arrived">
+When the shop has it, press **Received**. Add a photo if you can. The review is timed from this day, not from when it was sent.
+</Step>
+<Step title="Mark the trial">
+**Trial started**, then **Tried**.
+</Step>
+<Step title="Record the review">
+Seven answers — quality, performance, application, drying, how it compares, price, and anything else — and a verdict: **Approved**, **Rejected**, **More testing**, or still **Pending**. A rejection must say why.
+</Step>
+</Steps>
+
+An **approved** sample moves the lead to **Negotiation**, which is what lets you take its first order.
+
+## On hold and lost
+
+- **On hold** — a real prospect that is not moving right now (a shutdown, a budget quarter). Pick why, the day it comes back, and the next action. It comes back to your **Lead actions** list by itself on that day.
+- **Lost** — nobody will call this shop again. Pick why. It stays on the list under *Lost*.
+
+## Lead actions
+
+**Lead actions** is your morning list for leads, with four views: **Pending today**, **Late**, **On hold** (and coming back), and **Nothing pending** — leads with no next action at all. Fix the last one first.
+
+## Questions people ask
+
+<Faq q="The Move up button is grey.">
+Something on the *Still to do* list is missing. The phone checks the same rule the office does, so pressing it with something missing would only be refused later.
+</Faq>
+<Faq q="A lead the office added is not on my phone.">
+It arrives on your next sync. If you are editing that lead and your change has not gone yet, the office's version waits until yours has gone.
+</Faq>
+<Faq q="My lead says Not accepted.">
+The office refused the change. Open **Not accepted** to see why — often a missing GST number or reason.
+</Faq>
+<Faq q="Can I take an order from a lead?">
+Only once it reaches Negotiation. No price or order is promised before then.
+</Faq>

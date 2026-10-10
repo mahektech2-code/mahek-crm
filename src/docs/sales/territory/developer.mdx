@@ -1,0 +1,131 @@
+Territory is two features that share one table. The **Territory screen** (`/sales/territory`) is a read-only coverage view over the four account seats, narrowed geographically by `placeScope`. **Allocation** is written from the Salesmen screen by `setSalesmanTerritories` (working areas) and `setManagerTerritories` (regions), both in `src/lib/actions/sales.ts`, into `mbos_user_territories`. The handset's book is then `customerIdsInScope` in `src/lib/services/mbos-service.ts`, which ANDs `territoryClause` onto the seat-based visibility clause.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Module guard | `src/app/sales/territory/layout.tsx` | `requireModule(user.id, "sales.territory")` |
+| Page (server) | `src/app/sales/territory/page.tsx` | `?seat`, `?person` (an id or `none`), `?view=people|cities|map` |
+| Controls | `src/app/sales/territory/territory-controls.tsx` | Role/person filters, tabs, People and Cities tables |
+| Shop map | `src/app/sales/territory/shop-map.tsx` | Clustered MapLibre map, filters, prospect pins, `CustomerQuickView` |
+| Quick view | `src/components/console/customer-quick-view.tsx`, `src/app/api/sales/customer-quick-view/route.ts` | `getCustomer` + `customerInformation`, on click |
+| Seats | `src/lib/territory-seats.ts` | `TERRITORY_SEATS`, `parseSeat`, `NOBODY` |
+| Reads | `src/lib/services/sales-service.ts` | `territorySeatPeople`, `territoryCities`, `territoryTotals`, `shopPins`, `prospectPins`, `knownPlaces`, `placeScope`, `mineByPlace` |
+| Pure rules | `src/lib/territory-rules.ts` | `TERRITORY_KINDS`, `PARENT_KIND`, `territoryClause` |
+| Service | `src/lib/services/territory-service.ts` | `territoriesFor`, `setWorkingTerritories` |
+| Allocation UI | `src/app/sales/people/territories.tsx`, `managers.tsx` | "Where they work", "Set the patch" |
+| Writes | `src/lib/actions/sales.ts` | `setSalesmanTerritories`, `shopsLeavingTheBook`, `setManagerTerritories` |
+| Handset scope | `src/lib/services/mbos-service.ts` | `customerIdsInScope`, `territoryExempt`, `mbosTerritoryState` |
+
+## The table
+
+<DbTable name="mbos_user_territories" note={{
+  kind: "state · region · city · beat. 'region' rows are a manager's patch and are read only by managerScope.",
+  region: "The value itself — the state, city or beat name. Kept under this column name for anybody querying it.",
+  parent: "What the row was picked under. Empty means not stated — every row written before the column, read as 'this place wherever it is'.",
+}} />
+
+Unique on `(user_id, kind, region, parent)`. One table with each consumer asking for its own kinds: two tables would be two places for one region to be spelled differently.
+
+## The rules
+
+<Code file="src/lib/territory-rules.ts" symbol="PARENT_KIND" />
+
+`territoryClause` answers **`false`** for an empty list — never `undefined`. An absent clause and a false one look alike in a type signature and are opposite answers to "what may this person see"; the dangerous one should be the loud one.
+
+<Code file="src/lib/territory-rules.ts" symbol="territoryClause" />
+
+## Allocating a working area
+
+<Flow caption="setSalesmanTerritories" chart={`
+sequenceDiagram
+  autonumber
+  participant UI as people/territories.tsx
+  participant A as actions/sales.ts
+  participant T as territory-service.ts
+  participant DB as Postgres
+  UI->>A: salesmanId, territories with kind, value, parent
+  A->>A: requireSalesAccess — manager, sales.people or sales.territory
+  A->>A: salesmanOutsideScope — refuse another region's man
+  A->>A: drop region rows, refuse unknown kinds and parentless cities and beats
+  A->>A: prune to leaves (drop any row that is another row's parent)
+  A->>DB: shopsLeavingTheBook — his book under old clause minus new
+  A->>T: setWorkingTerritories (delete non-region rows, insert, rebuild holidays)
+  A->>DB: tombstone('customers', id, 'territory', salesmanId) per leaving shop
+  A->>DB: audit_log mbos.salesman.territories
+  A-->>UI: tell the salesman, revalidate /sales/people`} />
+
+<Code file="src/lib/actions/sales.ts" symbol="setSalesmanTerritories" collapsed />
+
+<Code file="src/lib/actions/sales.ts" symbol="shopsLeavingTheBook" />
+
+<Callout kind="rule" title="Diff over HIS book, and an empty before is everything">
+`bookIdsIgnoringTerritory` is his seats-only book. Diffing over `customers` would tombstone thousands of shops that were never on the phone. A salesman with no previous working area is read as having had his whole book — which is the deploy case, where a phone synced under the old rule still holds shops `territoryClause([])` says it never had.
+</Callout>
+
+<DbTable name="mbos_deletions" note={{
+  entity: "'customers' for a shop leaving a salesman's area.",
+  user_id: "The salesman — null would mean every handset.",
+  reason: "'territory' here.",
+}} />
+
+`deletionsSince` holds the pull cursor back on a full page, because one reallocation can produce thousands of tombstones in one click.
+
+## Regions
+
+<Code file="src/lib/actions/sales.ts" symbol="setManagerTerritories" collapsed />
+
+Refused unless the caller's own `managerScope()` is national, and refused on your own id. Deletes and inserts only `kind = 'region'` rows.
+
+## The handset's book
+
+<Code file="src/lib/services/mbos-service.ts" symbol="customerIdsInScope" collapsed />
+
+<Code file="src/lib/services/mbos-service.ts" symbol="territoryExempt" />
+
+`mbosTerritoryState` rides on the bootstrap and on every delta, so the phone can say "no area set for you yet" and print its places. The handset's acknowledgement of a territory signature is what drives *Not yet accepted on the handset* on the Salesmen row.
+
+## The Territory screen's scope
+
+<Code file="src/lib/services/sales-service.ts" symbol="placeScope" collapsed />
+
+<Code file="src/lib/services/sales-service.ts" symbol="mineByPlace" collapsed />
+
+`territorySeatPeople` narrows with `mineByPlace` and, for the field seat only, also lists active field-app holders in `onlyMine` with no book at all.
+
+## Access
+
+- **Module:** <ModuleRef k="sales.territory" /> for the screen. The allocation actions accept <ModuleRef k="sales.people" /> or `sales.territory`, at manager level.
+- **Quick view:** any Sales Dashboard module, or `crm.samples`; out-of-scope or missing customers answer `{ customer: null }`.
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/territory-rules.test.ts` | Hierarchy, AND down / OR across, state spellings, `false` on empty |
+| `npm run test` | `src/lib/territory-sql.test.ts` | The region expression and state keys |
+| `npm run test` | `src/lib/territory-signature.test.ts` | What the handset accepts as "the areas it has seen" |
+| `npm run test:integration` | `src/lib/territory-requests.test.ts` | A salesman's request for different cities, end to end |
+| `npm run test:integration` | `src/lib/lead-territory.test.ts` | Leads placed by territory |
+
+## Changing it safely
+
+<Steps>
+<Step title="Never make territory a permission">
+New visibility rules belong in the seat clause (`principalBookClause`). The territory clause is ANDed on and may only remove rows.
+</Step>
+<Step title="Keep the parent">
+Any new kind needs an entry in `PARENT_KIND` and a matching branch in `territoryClause`; the dialog, the action and the clause all read that map.
+</Step>
+<Step title="Tombstone what leaves">
+Any new path that changes a salesman's area must diff his own book and write `mbos_deletions` rows, or shops stay on phones for ever.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| The comment in `customerIdsInScope` still says no territory keeps the whole book; the code returns `[]` | `src/lib/services/mbos-service.ts` |
+| `decideApproval` on a `territory` request writes the state only; the area is changed by hand, but the salesman is told it was "approved" | `src/lib/actions/sales.ts` `decideApproval` |
+| `setSalesmanTerritories` returns `err(..., "validation")` for any thrown error, including a permission refusal | `src/lib/actions/sales.ts` |

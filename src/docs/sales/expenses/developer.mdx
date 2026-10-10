@@ -1,0 +1,143 @@
+Expense money lives in `mbos_expenses`: a logged expense is a row the handset (or the office) wrote, an **allowance** is a row `refreshDayMoney` writes with `source_type` `expense_day` or `travel_leg`. Each logged expense has an `mbos_approvals` row of type `expense_claim`. The pure engine `engines/expense-policy.ts` prices a day; named policies in `expense_policy_sets` feed it. Flags are `mbos_expense_exceptions`.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Route guards | `src/app/sales/{expenses,exceptions,expense-policy}/layout.tsx` | `sales.expenses`, `sales.exceptions`, `sales.expense-policy` |
+| Claims tab | `src/app/sales/expenses/page.tsx`, `filters.tsx`, `line-filters.ts`, `decide-expense.tsx`, `add-expense.tsx` | Period/filters, chips, `DecideExpense`, office entry |
+| Ledger tab | `src/app/sales/expenses/ledger/page.tsx`, `ledger/[userId]/page.tsx`, `ledger-actions.tsx` | Per-person totals, lines, payouts |
+| Flags | `src/app/sales/exceptions/page.tsx`, `resolve.tsx` | Severity banners, `ResolveException` |
+| Policy page | `src/app/sales/expense-policy/page.tsx` | `policyInWords` over the shown set |
+| Reads | `src/lib/services/expense-claims-service.ts`, `expense-service.ts` | `expenseLines` (scoped); `priceDay`, `listExceptions`, `duplicatesForDay` |
+| Money SQL | `src/lib/expense-money-sql.ts` | `isAllowanceSql`, `expenseStateSql`, `paidPaiseSql` — one definition of each |
+| Pricing | `src/lib/services/expense-submit-service.ts` | `refreshDayMoney`, `rescoreLeg`, `repriceDay` |
+| Engines (pure) | `src/lib/engines/expense-policy.ts`, `expense-fraud.ts`, `expense-ledger.ts` | `computeDay`, `computeLeg`, `computeMeals`, `routeDay`; `duplicateCandidates`, `kmAnomalies`, `spendAnomalies` |
+| Policies | `src/lib/services/expense-policy-service.ts`, `expense-policy-set-service.ts`, `src/lib/expense-policy-sets.ts`, `src/lib/expense-policy-standard.ts` | `policyForDate`, `policySetForUser`, `checkRules`, `STANDARD_POLICY`, `policyInWords` |
+| Hometown | `src/lib/expense-hometown.ts` | `awayFromHometown` (pure) |
+| Writes | `src/lib/actions/sales.ts` | `decideExpense`, `addExpenseFor`, `recordExpensePayout`, `voidExpensePayout`, `decideApproval` |
+| Flag answers | `src/lib/actions/expenses.ts` | `resolveException` |
+| Policy writes | `src/lib/actions/expense-policy-sets.ts` | `savePolicySet`, `assignPolicySet`, `setExpenseHometown`, `resetStandardToDefaults` (Admin Console) |
+| Sync | `src/lib/actions/mbos.ts` | `handleExpense`, `handleExpenseDay`, `handleExpenseDaySubmit` |
+
+## Pricing a day
+
+<Flow caption="refreshDayMoney, run whenever a record of the day lands" chart={`
+sequenceDiagram
+  autonumber
+  participant M as actions/mbos.ts
+  participant R as refreshDayMoney
+  participant P as expense-policy-service
+  participant E as engines (pure)
+  participant DB as Postgres
+  M->>R: expense / leg / attendance landed for (user, day)
+  R->>DB: awayFromHometown from visits, destination, overnight
+  R->>P: resolveSubject (grade), classOfCity
+  R->>DB: rescoreLeg for every leg of the day
+  R->>P: priceDay → policyForDate(day, user) → named set or standard
+  P->>E: computeDay(policy, subject, facts)
+  E-->>R: legs, meals, lines, exceptions
+  R->>DB: writeLineFigures (allowance rows, eligible on each expense)
+  R->>E: kmAnomalies, spendAnomalies, duplicatesForDay
+  R->>DB: replaceExceptions — unresolved only
+`} />
+
+<Code file="src/lib/services/expense-submit-service.ts" symbol="refreshDayMoney" collapsed />
+
+<Code file="src/lib/engines/expense-policy.ts" symbol="computeDay" collapsed />
+
+<Code file="src/lib/engines/expense-policy.ts" symbol="RuleQualifier" />
+
+<Code file="src/lib/engines/expense-policy.ts" symbol="EXCEPTION_KINDS" collapsed />
+
+<Code file="src/lib/expense-hometown.ts" symbol="awayFromHometown" />
+
+<Code file="src/lib/services/expense-policy-service.ts" symbol="policyForDate" />
+
+<Code file="src/lib/services/expense-policy-set-service.ts" symbol="policySetForUser" collapsed />
+
+<Code file="src/lib/expense-policy-sets.ts" symbol="checkRules" collapsed />
+
+`checkRules` runs in the editor on every keystroke and again in `savePolicySet` before it writes. The standard set is a row seeded from `STANDARD_POLICY` (id `xpol_standard`) on first read; an unedited standard row moves to a newer `STANDARD_DEFAULTS_VERSION` on its next read, an edited one is left alone.
+
+## Deciding
+
+<Code file="src/lib/actions/sales.ts" symbol="decideExpense" collapsed />
+
+`decideExpense` refuses allowances, normalises a "part" at or above the claim to a full approval, lazily creates the `expense_claim` approval if the line has none, and hands off to `decideApproval` — which enforces not-your-own, in-scope, still-pending and a reason on refusal.
+
+<Code file="src/lib/actions/expenses.ts" symbol="resolveException" collapsed />
+
+## Tables
+
+<DbTable name="mbos_expenses" only={["user_id", "expense_date", "kind", "category", "amount_paise", "source_type", "source_id", "expense_day_id", "eligible_paise", "excess_paise", "policy_id", "vendor_name", "bill_number", "bill_hash", "remarks", "superseded_by_id"]} note={{
+  source_type: "Null for a logged expense; expense_day (meals) or travel_leg (km) for an allowance.",
+  eligible_paise: "Cache of what the engine allows — a test asserts it equals the derived value.",
+  bill_hash: "Used by the duplicate check across expenses.",
+}} />
+
+<DbEnum name="mbos_expense_category" />
+
+<DbTable name="mbos_expense_exceptions" only={["user_id", "expense_day_id", "expense_id", "travel_leg_id", "kind", "severity", "message", "detail", "raised_at", "resolved_at", "resolved_by_id", "resolution", "resolution_note"]} note={{
+  severity: "info · warn · block_route.",
+  resolved_at: "Set once. refreshDayMoney replaces only rows where this is null.",
+  resolution: "accepted · corrected · rejected, always with a note.",
+}} />
+
+<DbTable name="expense_policy_sets" note={{
+  rules: "The engine's PolicyRule[] as JSON.",
+  is_standard: "Exactly one — the policy everybody is on unless assigned another.",
+  revision: "Bumped on every save; history in expense_policy_set_revisions.",
+  defaults_version: "Which edition of the shipped standard figures this row was seeded from.",
+}} />
+
+<DbTable name="expense_policy_assignments" />
+
+<DbTable name="expense_hometowns" />
+
+## Access
+
+<ModuleRef k="sales.expenses" /> <ModuleRef k="sales.exceptions" /> <ModuleRef k="sales.expense-policy" />
+
+<CapabilityGrid names={["order.approve", "expense.policy.write"]} />
+
+`expenseLines` narrows with `onlyMine(managerScope(), "e.user_id")`; `listExceptions` does not narrow.
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/engines/expense-policy.test.ts`, `expense-policy-standard.test.ts` | Every rule kind; the standard policy against the issued document's figures |
+| `npm run test` | `src/lib/engines/expense-ledger.test.ts`, `expense-analytics.test.ts` | Owed, paid, cut; anomaly bands |
+| `npm run test` | `src/lib/expense-hometown.test.ts`, `src/lib/expense-rule-forms.test.ts` | Away-from-home; rule forms round-trip |
+| `npm run test:integration` | `src/lib/expense-policy.test.ts`, `expense-policy-sets.test.ts` | Pricing through the services; named sets, assignment, revisions |
+| `npm run test:integration` | `src/lib/expense-attachments.test.ts`, `expense-period.test.ts` | Who opens a bill; period windows |
+
+## Changing it safely
+
+<Steps>
+<Step title="No number in code">
+A rate, cap or time belongs in a policy rule. A new kind of rule is a new `POLICY_RULE_KINDS` entry with a form, a validation in `checkRules`, a branch in the engine and words in `policyInWords`.
+</Step>
+<Step title="Never refuse a record">
+Raise an exception and let a person decide.
+</Step>
+<Step title="Re-price through refreshDayMoney">
+It is the one writer of allowance rows and eligible figures; a second writer drifts.
+</Step>
+<Step title="Gate a new decision through decideApproval">
+It holds the own-request, scope and reason rules.
+</Step>
+</Steps>
+
+## Known gaps
+
+| Gap | Where |
+|---|---|
+| `resolveException` requires `order.approve` (an Accounts capability); the Flagged expenses screen offers the buttons to sales managers who lack it | `actions/expenses.ts` `resolveException`; `exceptions/resolve.tsx` |
+| "Refused. The salesman is told." — no notification is sent | `actions/expenses.ts` `resolveException` |
+| `listExceptions` takes no scope | `services/expense-service.ts` `listExceptions` |
+| `approval_route` (auto-approve, escalation) is computed by `routeDay` and never applied | `engines/expense-policy.ts` `routeDay`; `expense-service.ts` `priceDay` |
+| `client_disagreement` is declared and never raised | `engines/expense-policy.ts` `EXCEPTION_KINDS` |
+| Two hometown setters with different guards: `setSalesmanHometown` (`sales.people`, manager) and `setExpenseHometown` (`expense.policy.write`) | `actions/sales.ts`; `actions/expense-policy-sets.ts` |
+| Empty state still says "a day is flagged when it is sent" | `exceptions/page.tsx` |

@@ -30,6 +30,9 @@ import type { NextRequest } from "next/server";
 
 /** The header the app id travels on. Read by `requestAppId()`. */
 export const APP_HEADER = "x-mahek-app";
+/** The native Factory app's session, sent where a browser would send a cookie. */
+export const FACTORY_SESSION_HEADER = "x-factory-session";
+const SESSION_COOKIE_NAME = "mahekone_session";
 
 /**
  * URL prefix → app id. The `field` app is deliberately absent: it is MBOS's
@@ -162,6 +165,20 @@ export function proxy(request: NextRequest) {
   headers.delete(WORKSPACE_HEADER);
   const workspace = workspaceFor(request.nextUrl.pathname);
   if (workspace) headers.set(WORKSPACE_HEADER, workspace);
+
+  /*
+   * THE FACTORY APP ON A PHONE HAS NO COOKIE JAR. The native app holds the
+   * same session id a browser would, and sends it as `x-factory-session` on
+   * its own API only; it becomes the session cookie here, so every action
+   * behind /api/factory resolves the person exactly as it does for the web
+   * page. It is a session id, not a grant — an id that names no live session
+   * is nobody, the same as a stale cookie.
+   */
+  const native = request.nextUrl.pathname.startsWith("/api/factory/") ? request.headers.get(FACTORY_SESSION_HEADER) : null;
+  if (native && /^[0-9a-f-]{36}$/i.test(native)) {
+    const rest = (headers.get("cookie") ?? "").split(/;\s*/).filter((c) => c && !c.startsWith(SESSION_COOKIE_NAME + "="));
+    headers.set("cookie", [SESSION_COOKIE_NAME + "=" + native, ...rest].join("; "));
+  }
 
   return NextResponse.next({ request: { headers } });
 }

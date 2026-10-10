@@ -1,0 +1,106 @@
+The book on a salesman's phone is a **narrowed copy** of MahekOne's own customer list: the accounts he may see, inside the area he works, with just enough history to answer the shopkeeper at the counter. Every word on a card — what the account is, how it is doing, whether an order is due — is computed by the same rules the office uses, so a salesman and an accounts clerk never quote one shop two different ways.
+
+## Whose shops reach the phone
+
+Two questions, answered separately and combined with **and**:
+
+<Flow caption="From the whole book to the phone" chart={`
+flowchart TD
+  ALL["Every customer and lead"] --> SEC{"May he see it?<br/>(his seats on the account,<br/>or the shop master names him)"}
+  SEC -- "no" --> X["Not sent"]
+  SEC -- "yes" --> MGR{"Manager or admin<br/>on the Salesman App?"}
+  MGR -- "yes, no area set" --> PH["On the phone"]
+  MGR -- "no" --> T{"Inside an area<br/>allocated to him?"}
+  T -- "yes" --> PH
+  T -- "no area at all" --> EMPTY["Nothing sent<br/>phone says No area set for you yet"]
+  T -- "outside his areas" --> X
+  OWN["A shop he added himself<br/>from the phone"] --> PH
+`} />
+
+<Rule title="A territory narrows a book. It is not a permission.">
+Who may see a record is decided by the account's seats — the same rule every CRM list uses. A territory can only **remove** shops from what those already allow; allocating a city never gives anybody sight of another salesman's customer. A reader who mistakes the territory for the security boundary might delete a real check believing it redundant.
+</Rule>
+
+<Rule title="No area means no book, for a field salesman">
+An unallocated salesman used to carry the **whole** book — thousands of shops on one phone with nothing saying he should not have them. Now nothing is sent until an area is set, and the emptiness is **named**: the Customers tab says *No area set for you yet*, the line under the search shows his area where there is one, and the Sales Dashboard counts the handsets switched off for want of one. An empty screen that does not say why is a fortnight of somebody assuming the sync is broken.
+</Rule>
+
+Managers and admins are exempt — a manager on a phone is not walking a beat. A shop the salesman **added himself** stays in his book whatever its address says; otherwise a shop typed with no state would be removed seconds after he created it.
+
+### A territory is a hierarchy
+
+Areas are allocated on the Sales Dashboard as state → city → area or beat. Down a branch the choices are **and**: Maharashtra with Pune inside it means Pune. Across branches they are **or**: two states is both. See [Territory](/docs/sales/territory).
+
+### When the area changes
+
+Changing where somebody works removes the shops that left from his phone on the next pull, so a salesman moved from one state to another does not keep walking to shops that are no longer his. The salesman can also accept his areas or ask for different ones from the phone; a manager decides.
+
+## Customers and Leads
+
+The tab is split into two halves, **Customers** and **Leads**, because they are two different jobs and which one he is doing must be on the screen the whole time. Both are only his own book.
+
+- **Leads** are shops still being worked towards a first business — a lead row the office sent, not archived, not won or converted, and not already a customer.
+- **Customers** are everything else in his book.
+
+## What a card says the account is
+
+| Word | When |
+|---|---|
+| **Third party** | A shop we deliver to and bill somebody else for. The mark wins over everything else. |
+| **Lead · stage** | A lead, with its rung — Suspect, Prospect, Negotiation and so on. "Lead" alone answers a question nobody asked. |
+| **Customer** | An account we invoice. |
+| nothing | The row has not re-synced since the phone could tell; the phone does not guess. |
+
+A lead's card opens the **lead** screen with its ladder and forms; everything else opens the customer record.
+
+## How the account is doing
+
+The word comes from the **band**, computed once by the office and sent with the shop — never worked out on the phone from a stale book:
+
+| Band | Meaning |
+|---|---|
+| Active | Within their own buying rhythm |
+| At risk | Past it by a margin |
+| Dormant | Past the point the office marks them inactive |
+| Lost | Long past |
+| **Closed** | Somebody deactivated the account. It always wins — it is a decision, not a derivation. |
+| (none) | Never ordered. Not "Active" — nothing has been measured. |
+
+The bands are measured in multiples of the customer's **own** cycle, so a fortnightly buyer and a twice-a-year buyer are both "a quarter late" at the same point in their rhythm. The phrase **"At risk" belongs to the band**; the separate health score beside it is coloured strong at <Setting k="mbos.health.strongAtOrAbove" /> and above and watch below <Setting k="mbos.health.atRiskBelow" />, and never borrows the band's words.
+
+## Reorder due
+
+<Rule title="Derived on the phone, from the customer's own cycle">
+A shop is **due** once the days since its last order reach its measured cycle, and **late** at twice the cycle. No cycle, or no order ever, means nothing is said — "due" about a shop that has never ordered would be an invention.
+</Rule>
+
+It is deliberately not a copy of the Call Log's ranking: it answers one question about one shop he is standing outside, with no signal.
+
+## The statement on the phone
+
+A shopkeeper asks what was billed in July and what he has paid against it in one breath, and there is no signal in a paint market. So the phone keeps a **window** of bills and receipts — <Setting k="mbos.sync.statementMonths" /> months — and builds a running balance locally.
+
+<Rule title="Only confirmed money moves the balance">
+Reported, held, rejected and reversed receipts are listed with their words and move nothing — the same rule as the Accounts statement. A bill the office has not yet stated as paid or owed is listed and **not** added as debt.
+</Rule>
+
+<Callout kind="money">
+**The outstanding figure is the office's.** The running total on the phone is arithmetic over the rows the office sent, not a second opinion. The screen says which figure is which, because a salesman and a clerk quoting one shopkeeper two different debts with him listening is the failure this prevents.
+</Callout>
+
+The tab says how far back **this phone** actually goes, read off the rows rather than the window: a shop billed for three months reaches back three months. A lead or a third-party shop has no statement and the tab says so — an empty list with nothing explaining it reads as a sync that has not finished.
+
+**More → Customer accounts** goes one step further: with signal it fetches the whole account from the office and remembers it per shop, so it opens offline later, saying how old it is. Three answers are never blended — the office's today, the office's remembered, or the phone's own window.
+
+## Potential ("Can buy")
+
+A potential is somebody's **estimate** of what a shop could spend in a month, stored with who made it and when — an estimate with no date is one nobody can weigh. The gap between potential and current sales is never negative (a shop buying more than guessed has overtaken the estimate), and **no estimate is not a gap of zero**.
+
+## Settings
+
+<SettingsTable keys={["mbos.sync.statementMonths", "mbos.health.strongAtOrAbove", "mbos.health.atRiskBelow", "mbos.health.componentWeights", "mbos.health.staleAfterHours"]} />
+
+## Where the code and the intent disagree today
+
+- AGENTS.md describes three view chips, **Everything / Customers / Leads**; the phone ships two, **Customers / Leads** (`mbos-app/app/customers.tsx`).
+- The comment inside `customerIdsInScope` still says a person with no territory "keeps the whole book they had"; the code a few lines below returns an empty book (`src/lib/services/mbos-service.ts`).

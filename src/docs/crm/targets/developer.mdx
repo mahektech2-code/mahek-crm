@@ -1,0 +1,118 @@
+Monthly Targets is one **shared screen component** (`MonthlyTargetsScreen`) mounted by the CRM at `/crm/targets` and by Accounts at `/accounts/customer-targets`. Reads and writes are in `worklist-services.ts`; the default target and the shortfall split are a pure engine (`engines/targets.ts`); defaults are seeded by the nightly job on the 1st. Top customers is a stored, idempotently generated monthly report read through the second tab. Everything below is cut from the source this deployment was built from.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Route guard | `src/app/crm/targets/layout.tsx` | `requireModule(user.id, "crm.targets")` |
+| Page (CRM) | `src/app/crm/targets/page.tsx` | Reads filters from the URL, `listTargetsPage`, `listAmFilterOptions`, `canFor(user, "target.set")`, `readTopCustomersTab` |
+| Page (Accounts) | `src/app/accounts/customer-targets/page.tsx` | The same component with `app="accounts"` and statement links |
+| Old address | `src/app/crm/top-customers/page.tsx` | Redirects to `/crm/targets?view=top` |
+| Screen | `src/components/customers/monthly-targets-screen.tsx` | Table, filters, badges, the allocate dialog, both tabs |
+| Top customers | `src/components/customers/top-customers-tab.tsx`, `top-customers-table.tsx` | Span and metric pickers, the table |
+| Service | `src/lib/services/worklist-services.ts` | `targetVisibilityClause`, `targetListClause`, `targetMonth`, `listTargets`, `listTargetsPage`, `targetTotals`, `setTarget`, `setTargetsBulk`, `customerTargetsCreditedTo` |
+| Actions | `src/lib/actions/crm.ts` | `setTarget`, `setTargetsBulk` (wrap the service) |
+| Engine (pure) | `src/lib/engines/targets.ts` | `resolveTarget`, `classifyShortfall` |
+| Seeding | `src/lib/recompute.ts` | `seedMonthlyTargets` (nightly, on the 1st) |
+| Top customers | `src/lib/services/top-customers-service.ts`, `src/lib/top-customers-period.ts` | `generateTopCustomerReports`, `ensureCurrentTopCustomerReports`, `topCustomersReport`; `currentReportMonth`, `monthsCovered` |
+
+## Reading the list
+
+<Flow caption="GET /crm/targets" chart={`
+sequenceDiagram
+  autonumber
+  participant P as targets/page.tsx
+  participant S as worklist-services.ts
+  participant DB as Postgres
+  P->>S: listTargetsPage(period, filters, page, perPage)
+  S->>S: targetListClause — resolveScope, targetVisibilityClause,<br/>customerFiltersOnly, targetMonth(period).population
+  S->>DB: count + page + totals over the SAME where clause
+  DB-->>S: rows with target, isDefault, carriedForward, achieved, bills
+  S-->>P: rows, pageInfo, totals
+  P->>P: readTopCustomersTab (when view=top)
+`} />
+
+<Code file="src/lib/services/worklist-services.ts" symbol="targetVisibilityClause" />
+
+<Code file="src/lib/services/worklist-services.ts" symbol="targetListClause" />
+
+`targetMonth(period).population` is "not deactivated AND `DIRECT_CUSTOMER_SQL`" — leads and third-party shops never appear. The filters are `customerFiltersOnly` (filters without scope): ANDing `customerFilterClause` would intersect with `scopedToUsers` and take away the sales manager seat the visibility clause adds.
+
+## Writing a target
+
+<Code file="src/lib/services/worklist-services.ts" symbol="setTarget" collapsed />
+
+`setTarget` asks `target.set`, refuses a third-party shop and a lead with a sentence, requires rupees or bills (reading the stored bill target back when the caller left it `undefined`), and upserts `monthly_targets` with `is_default = false`. `setTargetsBulk` applies one amount to every customer the current filters match, re-running the same clause the screen ran.
+
+<DbTable name="monthly_targets" note={{
+  target_amount: "Paise. Net of GST, after discount — the unit achievement is measured in.",
+  is_default: "True for an auto default; false once somebody types it.",
+  carried_forward: "Set by the seed when last month's hand-set target was copied. The screen badges it.",
+  bill_target: "Sales bills asked for. Null = no bill target.",
+}} />
+
+## Defaults and the shortfall engine
+
+<Code file="src/lib/engines/targets.ts" symbol="resolveTarget" />
+
+<Code file="src/lib/recompute.ts" symbol="seedMonthlyTargets" collapsed />
+
+<Code file="src/lib/engines/targets.ts" symbol="classifyShortfall" collapsed />
+
+`classifyShortfall` is pure and tested in `engines.test.ts`, but has **no caller** in this build.
+
+## Top customers
+
+<Code file="src/lib/top-customers-period.ts" symbol="currentReportMonth" />
+
+<Code file="src/lib/services/top-customers-service.ts" symbol="generateTopCustomerReports" collapsed />
+
+<DbTable name="top_customer_reports" note={{
+  month: "The report month — generated on its 1st at 10:00 IST.",
+  span_months: "3, 6 or 12.",
+  total_paise: "Company-wide sales over the span — the denominator of 'Share of all sales'.",
+}} />
+
+<DbTable name="top_customer_report_rows" only={["report_id", "customer_id", "orders", "value_paise", "bills", "months"]} />
+
+`topCustomersReport` ranks company-wide with `rank <= topCustomers.count`, then filters the rows by `scopedToUsers` — rank first, scope second.
+
+## Permissions
+
+<CapabilityGrid names={["target.set"]} />
+
+<ModuleRef k="crm.targets" /> guards the CRM route. The screen reads `canFor(user, "target.set")` — the capability, not `isManager`.
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/engines/engines.test.ts` (E5) | Default methods, uplift, pro-rating, coverage vs customer gap |
+| `npm run test` | `src/lib/top-customers-period.test.ts` | Months covered; the report is last month's before 10:00 on the 1st |
+| `npm run test:integration` | `src/lib/monthly-targets.test.ts` | Population, visibility by seat, refusals, carried forward, bills |
+
+## Changing it safely
+
+<Steps>
+<Step title="One population, one clause">
+Totals, page, count and bulk writes all go through `targetListClause`. A new filter goes into `customerFiltersOnly` so the Customers list gets it too.
+</Step>
+<Step title="Only decisions carry">
+If you add a field to a target, decide whether it travels with a hand-set carry in `seedMonthlyTargets` — bills travel with rupees for that reason.
+</Step>
+<Step title="Gate on the capability">
+Both doors read `target.set`. Never reintroduce an `isManager` check.
+</Step>
+<Step title="Freeze reports, scope at read">
+Never re-rank a stored Top customers report; change what a viewer sees only in the read.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| `classifyShortfall` (coverage vs customer gap) has no caller; AGENTS.md's `shortfallAnalysis` does not exist | `engines/targets.ts`; `worklist-services.ts` |
+| Lead refusal says conversion is on the first order | `worklist-services.ts` `setTarget` |
+| `seedMonthlyTargets` loops over every active `customers` row (leads, third-party) though the list excludes them | `recompute.ts` `seedMonthlyTargets` |
+| `seedMonthlyTargets` runs one query per customer per trailing month | `recompute.ts` |

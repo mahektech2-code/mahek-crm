@@ -31,6 +31,27 @@ export function Wireframe({
   caption?: string;
   children: React.ReactNode;
 }) {
+  /* A `url` that is not a web path is a HANDSET screen's title ("MBOS · Pay"),
+     drawn in a phone's frame — a browser bar reading "one.mahekindia.comMBOS"
+     would be a screen that does not exist. */
+  if (!url.startsWith("/")) {
+    return (
+      <figure className="my-6">
+        <div className="mx-auto w-[340px] max-w-full rounded-[28px] border-[6px] border-ink bg-ink p-0 shadow-[0_12px_32px_-14px_rgba(22,22,22,0.45)]">
+          <div className="overflow-hidden rounded-[22px] bg-canvas">
+            <div className="flex items-center justify-between bg-surface px-4 pt-2 pb-1 text-[10px] font-medium text-ink">
+              <span>9:41</span>
+              <span className="h-1.5 w-12 rounded-full bg-ink/80" />
+              <span>▮▮▮ 4G</span>
+            </div>
+            <div className="border-b border-line bg-surface px-4 py-2 text-[13px] font-semibold text-ink">{url}</div>
+            <div className="space-y-3 p-3 [&_.max-w-\[300px\]]:max-w-none">{children}</div>
+          </div>
+        </div>
+        {caption ? <figcaption className="mt-2 text-center text-[12px] text-muted">{caption}</figcaption> : null}
+      </figure>
+    );
+  }
   return (
     <figure className="my-6">
       <div className="overflow-hidden rounded-[8px] border border-line-strong bg-canvas shadow-[0_8px_24px_-12px_rgba(22,22,22,0.18)]">

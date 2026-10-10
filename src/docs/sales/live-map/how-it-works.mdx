@@ -1,0 +1,106 @@
+The Live map is built on a handful of rules that all come from one idea: **a map of where people are must never show something it does not know.** No invented pins, no trail joined across a gap as though it were travelled, no battery figure that pretends to be live, and no tracking outside the working day.
+
+## When positions are recorded
+
+<Rule title="Between check-in and check-out, and not one second either side">
+The phone takes positions only while the salesman's day is open. A track that carried on after the day was closed would be following somebody home. Tracking can be switched off for everybody — currently <Setting k="mbos.location.trackWhileWorking" /> — and the server refuses positions when it is off, not only the phone.
+</Rule>
+
+The phone aims for one position every <Setting k="mbos.location.trackEverySeconds" /> seconds while the day is open and sends them in batches. A batch that arrives late is filed against the day the positions were **taken**, so a phone catching up in the evening still fills in the morning.
+
+<Callout kind="why" title="Why late positions are judged by their own day">
+Positions used to be accepted only while the sender was checked in *now*. A phone that sent the morning's backlog after check-out had the whole morning refused — and the forgotten-check-out job then closed the day early because the trail was missing. Each batch is now checked against the attendance rows it actually spans.
+</Callout>
+
+## A pin is only drawn where there is a fix
+
+<Rule title="Nobody is placed by guesswork">
+A salesman with no position today is in the team list saying exactly that, and nowhere on the map. The list reads the newest of the trail, the check-in and each visit, so a salesman whose tracking is off still appears where his last visit was.
+</Rule>
+
+<Rule title="An imprecise fix is dropped, not corrected">
+A position the phone itself rated worse than <Setting k="mbos.location.gpsAccuracyThresholdM" /> metres is left off the trail. One 300-metre-wide fix between two tight ones would invent a detour nobody made. It is the same threshold visit verification uses.
+</Rule>
+
+## Reading a day: trails, gaps and stops
+
+- **A gap** is two consecutive positions more than <Setting k="mbos.location.trailGapMeters" /> metres apart. It is drawn dashed: the road between is not known.
+- **A stop** is a run of positions that stayed within <Setting k="mbos.location.dwellRadiusMeters" /> metres for at least <Setting k="mbos.location.dwellMinMinutes" /> minutes — long enough to be more than a red light.
+- **Distance** is the sum of the hops between positions, never a straight line from start to end.
+- **Visits and other work** are marked where the phone was standing when it was done. A mark from a position older than <Setting k="mbos.location.activityFixMaxAgeSeconds" /> seconds is drawn hollow: the act is certain, its place is not.
+
+### Laying the trail on the roads
+
+When a manager selects one salesman on the day view, the trail is sent to Ola Maps' Snap-to-Road and drawn along the roads. Short gaps are filled with a driving route **only when that route is believable** for the time and distance; otherwise the gap stays dashed.
+
+<Rule title="Snapping is a refinement, never the map">
+If the road service fails, the raw line is drawn exactly as it was. Snapping is asked for **one person at a time, when somebody looks**, and remembered — never for the whole team on every refresh. The raw positions are never changed.
+</Rule>
+
+## Staying current without reloading
+
+The map keeps itself up to date as phones report: the server pushes new positions every <Setting k="mbos.location.livePushSeconds" /> seconds over a live connection, and falls back to asking every <Setting k="mbos.location.livePollSeconds" /> seconds where the connection cannot be held. Only what arrived since the last update is sent.
+
+## Explaining a quiet phone
+
+"No fix today" used to cover four completely different problems. Each row now names which one, because three of them are something a salesman can fix and a manager cannot tell which from a blank row.
+
+<Flow caption="What the row says about a phone" chart={`
+flowchart TD
+  A["Row for a salesman"] --> B{"On leave or not checked in?"}
+  B -- "Yes" --> X["Says so — no fault"]
+  B -- "No" --> C{"Phone reported a tracker stall,<br/>a refused recorder or no background sync?"}
+  C -- "Yes" --> F["Names it, with the fix on the phone"]
+  C -- "No" --> D{"Location permission or switch wrong?"}
+  D -- "Yes" --> G["Names the setting"]
+  D -- "No" --> E{"Out with no positions, or<br/>positions stopped arriving?"}
+  E -- "Yes" --> H["Says how long, and whether the phone is holding them"]
+  E -- "No" --> OK["Healthy — the row says nothing"]
+`} />
+
+<Rule title="A healthy phone says nothing at all">
+A row listing four green facts is a specification sheet, and the one line that matters gets read as furniture. A note appears only past a threshold: no contact for <Setting k="mbos.location.handsetQuietMinutes" /> minutes, no position for <Setting k="mbos.location.noTrailMinutes" /> minutes while out, battery below <Setting k="mbos.location.lowBatteryPercent" />%.
+</Rule>
+
+<Rule title="There is no live battery reading, and the screen never implies one">
+A phone speaks when it syncs, so every battery figure is "at last contact" and printed with its age — *Battery 8% — read 12 min ago*. A bare "8%" reads as now.
+</Rule>
+
+<Rule title="Nothing claims somebody's internet is off">
+A phone with no connection cannot report having no connection. Silence carries it, measured from the last time the phone spoke.
+</Rule>
+
+<Callout kind="why" title="Why permission is shown as four answers, not yes/no">
+"Background location: no" covered both *only while the app is open* (a settings trip) and *refused outright* (a different conversation). The phone now reports the operating system's own answer. Older app versions still send only yes/no; their "no" reads as *restricted* without inventing a reason.
+</Callout>
+
+## The map supplier
+
+Streets come from **Ola Maps**. The pins, trails and marks are drawn from MahekOne's own data; the supplier is only ever asked for squares of map, never a coordinate. The key is the one credential that reaches the browser — a map key has to, because the browser asks for tiles — so it should be restricted to this deployment's domain in Ola's own console. Several keys can be held; when one runs out of monthly quota the next is used, and when all have, the screen says so rather than drawing a blank.
+
+## Who sees whom
+
+The Live map is the module <ModuleRef k="sales.live" />. It shows the salesmen in your patch. A salesman outside it gets an empty day rather than somebody else's trail — the check is made on the person being asked about, in every read and in the road-snapping request too.
+
+## Settings
+
+<SettingsTable keys={[
+  "mbos.location.trackWhileWorking",
+  "mbos.location.trackEverySeconds",
+  "mbos.location.gpsAccuracyThresholdM",
+  "mbos.location.trailGapMeters",
+  "mbos.location.dwellRadiusMeters",
+  "mbos.location.dwellMinMinutes",
+  "mbos.location.activityFixMaxAgeSeconds",
+  "mbos.location.handsetQuietMinutes",
+  "mbos.location.noTrailMinutes",
+  "mbos.location.lowBatteryPercent",
+  "mbos.location.livePushSeconds",
+  "mbos.location.livePollSeconds",
+]} />
+
+## Where the code and the intent disagree today
+
+- **The cadence setting is not what Android delivers.** The phone's location library ignores the interval it is given on Android and falls back to about three seconds; the handset throttles in its own code instead. A change to <Setting k="mbos.location.trackEverySeconds" /> is enforced by that throttle, not by the operating system.
+- **Map keys are set in Admin Console → Integrations**, while older project notes say Platform → Maps.
+- **Snapping is no longer once per person per day.** It refreshes on a timer while the person stays selected, and can fill gaps with a driving route — the project notes describe a single snap and nothing more.

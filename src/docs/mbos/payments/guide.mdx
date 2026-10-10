@@ -1,0 +1,127 @@
+When a shop hands you money, you record it on the phone **before you leave the counter**. The phone makes a receipt straight away — even with no signal — and you can send it to the shop on WhatsApp. The office checks the money later. Until then, the shop's balance does not change.
+
+<Callout kind="money">
+Recording a payment does **not** reduce what the shop owes. It tells the office the money is coming. Accounts reduce the balance only when they find the money in the bank.
+</Callout>
+
+## Collecting a payment
+
+Open **Collect payment** from a visit, or from the **+** button. The screen has three steps, and each one opens when the one above is done.
+
+<Wireframe url="MBOS · Collect payment" caption="Collect payment, with a cheque">
+<div className="mx-auto max-w-[300px] space-y-3">
+  <WfTitle>Collect payment</WfTitle>
+  <WfCard title="1 · Shop"><WfText>Customer A · Owes ₹42,300</WfText><Hotspot n={1} /></WfCard>
+  <WfCard title="2 · Which bill">
+    <WfTable columns={["Bill", "Left to pay"]} rows={[["MMI/26-27/101 · 2 Aug", "₹12,000"], ["MMI/26-27/087 · 9 Jul", "₹30,300"]]} />
+    <WfText muted>1 picked.</WfText><Hotspot n={2} />
+  </WfCard>
+  <WfCard title="3 · Payment">
+    <WfBar><WfButton>Cash</WfButton><WfButton primary>Cheque</WfButton><WfButton>UPI</WfButton><Hotspot n={3} /></WfBar>
+    <WfInput placeholder="Amount ₹" wide />
+    <WfInput placeholder="Cheque number and bank" wide />
+    <WfBar><WfButton>Pick the date</WfButton><WfButton>Photo of cheque</WfButton><Hotspot n={4} /></WfBar>
+  </WfCard>
+  <WfButton primary>Collect and make receipt</WfButton><Hotspot n={5} />
+</div>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Shop.</b> Opens on the shops that owe the most. Search by name, phone or city for anybody else.</span>,
+  <span key="2"><b>Which bill.</b> Only bills with something left to pay are listed, oldest first. Tick the bill or bills they are paying. If none, tick <i>Not against a particular bill</i>.</span>,
+  <span key="3"><b>How they are paying.</b> The modes the office has set up. Adjustments and credit notes are never offered here — those are accounts' work.</span>,
+  <span key="4"><b>Cheque details.</b> A cheque needs its number, the date written on it, and a photograph. For UPI or a bank transfer you are asked for the transaction ID (UTR) if they have it.</span>,
+  <span key="5"><b>Collect.</b> The phone asks you to confirm the amount once more, then makes the receipt.</span>,
+]} />
+
+<Steps>
+<Step title="Pick the shop">
+If you are on a visit, the shop is already chosen. Otherwise pick from the list of shops that owe money, or search.
+</Step>
+<Step title="Pick the bill">
+Tick the bill they are paying. If they pay more than the bills you ticked, the screen says how much is extra: *It is kept as advance on the account.* If they are not paying a particular bill, tick **Not against a particular bill** — the money goes against their oldest bills first, and anything over sits on account.
+</Step>
+<Step title="Say how they paid and how much">
+Pick the mode and type the amount. For a cheque, read the number and the date **off the paper** and take a photo before you give it back.
+</Step>
+<Step title="Confirm">
+The phone shows *Take ₹X?* with the shop, mode and cheque details. **You cannot change it later on this phone**, so check it now.
+</Step>
+<Step title="Send the receipt">
+The phone offers **Open WhatsApp** with the receipt already written. You press send. If the shop has no number saved, you can only copy it.
+</Step>
+</Steps>
+
+<Callout kind="note">
+The receipt number starts with **TMP-**. That is a temporary number. The office gives the real receipt number when the phone syncs.
+</Callout>
+
+## Money you collected
+
+**More → Money you collected** lists everything you have taken, newest first. At the top is **Cash on you** — the cash you are carrying that is not yet in the bank.
+
+<Wireframe url="MBOS · Money you collected" caption="Your collections, with cash still to bank">
+<div className="mx-auto max-w-[300px] space-y-3">
+  <WfTitle>Money you collected</WfTitle>
+  <WfCard tone="warn" title="Cash on you"><WfText>₹18,500 · 1 collection past the deposit deadline. Put them in the bank today.</WfText><Hotspot n={1} /></WfCard>
+  <WfButton primary>Bank all 3 on one slip</WfButton><Hotspot n={2} />
+  <WfTable columns={["Shop", "State"]} rows={[
+    ["Customer A · Cash ₹6,000", <WfPill key="a" tone="warn">On you</WfPill>],
+    ["Customer B · Cheque ₹12,000", <WfPill key="b">With you</WfPill>],
+    ["Customer C · UPI ₹4,000", <WfPill key="c">Paid to bank</WfPill>],
+    ["Customer D · Cheque ₹9,000", <WfPill key="d" tone="danger">Bounced</WfPill>],
+  ]} />
+  <Hotspot n={3} />
+</div>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Cash on you.</b> Only cash counts here. Each collection has its own deadline to be banked; any that are late are named.</span>,
+  <span key="2"><b>Bank all on one slip.</b> Marks every cash collection banked at once, then asks for a photo of the deposit slip.</span>,
+  <span key="3"><b>Each collection.</b> What it is doing now — see the table below. Tap a row for <i>I banked it</i>, <i>I handed it in</i> or <i>It bounced</i>.</span>,
+]} />
+
+| State | What it means |
+|---|---|
+| **On you** | Cash in your pocket. Bank it before its deadline. |
+| **With you** | A cheque still in your bag. Hand it in or bank it. |
+| **Paid to bank** | UPI or a transfer — it went to the company's account at the shop. Nothing to do. |
+| **Banked** / **Handed in** | You have said it has left you. The office still checks it with the bank. |
+| **Bounced** | You reported the cheque came back unpaid. |
+| **Not accepted** | The office would not take this receipt. The reason is under it. It is not money you carry — take it again correctly. |
+
+### Banking cash or handing in a cheque
+
+<Steps>
+<Step title="Tap I banked it (or Bank all on one slip)">
+The phone asks *Yes, I banked it?* For a cheque it asks *Yes, handed in?*
+</Step>
+<Step title="Photograph the slip">
+Take a photo of the bank slip. Without one the row says *no slip photo. The office has only your word.*
+</Step>
+</Steps>
+
+### A cheque that bounced
+
+Tap the cheque and choose **It bounced**. You must say what the bank said. The office is told, and a high-priority task appears on your Tasks: *Call the shop. The cheque bounced.* The shop believes it has paid — somebody has to ring them.
+
+## Questions people ask
+
+<Faq q="I recorded the payment. Why does the shop still owe the same amount?">
+Because the office has not found the money in the bank yet. A payment from the field is *reported*. Accounts confirm it, and only then does the balance go down.
+</Faq>
+<Faq q="My payment says Not accepted. What happened?">
+Usually the bill you named was already paid by the time the phone synced. The message says which bill. Record the payment again against the bills that are open now. Nothing was counted, so you are not taking the money twice.
+</Faq>
+<Faq q="Can I edit a payment after I confirmed it?">
+No. The confirm screen says so. If you made a mistake, tell accounts — they can reject or reverse it at their desk.
+</Faq>
+<Faq q="How long can I keep cash before banking it?">
+<Setting k="mbos.payments.cashDepositSlaHours" /> hours from when you collected each one. Each collection has its own clock.
+</Faq>
+<Faq q="My manager got a message about my collection. Why?">
+Collections of <Setting k="mbos.payments.managerNotifyThresholdPaise" /> paise or more are reported to your manager. It is not a complaint — large amounts are simply told.
+</Faq>
+<Faq q="Where do I see what the shop owes and has paid?">
+Open the shop, then the **Account** tab. It shows their bills and payments for the last <Setting k="mbos.sync.statementMonths" /> months.
+</Faq>

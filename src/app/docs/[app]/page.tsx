@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { DOC_TABS, docApp, pageHref, progressOf } from "@/docs/registry";
+import { DOC_TABS, docApp, pageHref, progressOf, tabsOf } from "@/docs/registry";
 
 export async function generateMetadata({ params }: { params: Promise<{ app: string }> }): Promise<Metadata> {
   const app = docApp((await params).app);
@@ -39,7 +39,7 @@ export default async function DocAppIndex({ params }: { params: Promise<{ app: s
                   <div className="text-[15px] font-semibold text-ink group-hover:text-brand-hover">{p.title}</div>
                   <p className="mt-1 text-[13px] leading-[19px] text-body">{p.summary}</p>
                   <div className="mt-3 flex gap-1.5">
-                    {DOC_TABS.map((t) => {
+                    {DOC_TABS.filter((t) => tabsOf(p).includes(t.id)).map((t) => {
                       const has = p.written.includes(t.id);
                       return (
                         <span

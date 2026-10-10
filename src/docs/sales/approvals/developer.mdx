@@ -1,0 +1,114 @@
+Approvals is one table, `mbos_approvals`, written by the handset when a salesman asks for something and decided from the Sales Dashboard by `decideApproval` in `src/lib/actions/sales.ts`. The queue is `pendingApprovals()` in `src/lib/services/sales-service.ts`, which reads a sentence for each row out of the subject table in SQL. Three kinds are deliberately refused by the generic action and decided on their own desks; orders are accounts'.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Module guard | `src/app/sales/approvals/layout.tsx` | `requireModule(user.id, "sales.approvals")` |
+| Page (server) | `src/app/sales/approvals/page.tsx` | `pendingApprovals()`, `recentDecisions(25)`, `oldestApprovalHours()`, the stale threshold |
+| Screen (client) | `src/app/sales/approvals/approvals-screen.tsx` | Banner, metrics, table, the decide dialog |
+| Labels | `src/components/console/words.ts` | `APPROVAL_LABEL`, `label()` |
+| Reads | `src/lib/services/sales-service.ts` | `pendingApprovals`, `pendingApprovalCount`, `oldestApprovalHours`, `recentDecisions` |
+| Decide | `src/lib/actions/sales.ts` | `decideApproval`, `approvalHref`, `tell` |
+| Raised by | `src/lib/actions/mbos.ts` | The handset handlers for leave, expenses, tours, attendance, territory requests, orders over limit, samples |
+| Other desks | Expenses (`decideExpense`), samples desk, distributor appointments | The three kinds refused here |
+| Escalation | `src/lib/mbos-jobs.ts` | `escalateApprovals` (hourly) |
+
+## The table
+
+<DbTable name="mbos_approvals" only={["type", "requested_by_user_id", "subject_type", "subject_id", "reason", "requested_at", "approver_user_id", "state", "decided_at", "decision_note", "approved_amount_paise", "step_index", "route_reason"]} note={{
+  subject_type: "The table the subject lives in. An expense claim is either one mbos_expenses row or, since the day-submit flow, an mbos_expense_days row.",
+  decision_note: "Required on a refusal and on a part approval.",
+  approved_amount_paise: "Set on a part approval, and on a full approval only where the policy pays more than was logged.",
+  step_index: "0 is the ordinary decider, 1 management. The subject's state is the state of its highest step.",
+  route_reason: "Why this step exists — normal, over_cap, high_value, …",
+}} />
+
+<DbEnum name="mbos_approval_type" />
+
+<DbEnum name="mbos_approval_state" />
+
+## Deciding, end to end
+
+<Flow caption="decideApproval" chart={`
+sequenceDiagram
+  autonumber
+  participant UI as approvals-screen.tsx
+  participant A as actions/sales.ts
+  participant DB as Postgres
+  participant H as Handset
+  UI->>A: approvalId, decision, note, approvedAmountPaise
+  A->>A: requireSalesAccess — manager level, no module yet
+  A->>DB: read the approval
+  A->>A: refuse sample, distributor_appointment, mbos_expense_days subjects
+  A->>A: requireSalesAccess — sales.approvals or the kind's own module
+  A->>A: refuse own request, requester outside scope, not pending, order
+  A->>DB: leave — refuse if the request was withdrawn
+  A->>A: refuse without a note (non-approve) or amount (part)
+  A->>DB: UPDATE ... WHERE id AND state = 'pending'
+  A->>DB: audit_log mbos.approval.<decision>
+  A->>H: tell(requester, title, note, approvalHref(type))`} />
+
+<Code file="src/lib/actions/sales.ts" symbol="decideApproval" collapsed />
+
+<Code file="src/lib/actions/sales.ts" symbol="approvalHref" />
+
+<Callout kind="rule" title="Nothing here debits a leave balance">
+The action used to increment `mbos_leave_balances.used_days`, creating the row at zero entitlement. Days used are now **derived** from approved requests in `leaveBalances`; `mbos_leave_balances` is the entitlement override table and `used_days` is read by nothing.
+</Callout>
+
+## The queue
+
+`pendingApprovals` builds the *What* sentence per type with a `CASE` over correlated lookups into the subject table, and falls back to "… the office cannot find" when the subject is gone. Withdrawn leave is removed by `NOT_WITHDRAWN`. It is narrowed by `onlyMine(scope, "ap.requested_by_user_id")` and capped at 200, oldest first.
+
+<Code file="src/lib/services/sales-service.ts" symbol="PendingApproval" />
+
+<Code file="src/lib/services/sales-service.ts" symbol="pendingApprovals" collapsed />
+
+<Code file="src/lib/services/sales-service.ts" symbol="recentDecisions" />
+
+## Escalation
+
+<Code file="src/lib/mbos-jobs.ts" symbol="escalateApprovals" />
+
+It runs in the hourly MBOS pass. It counts, and returns the count to the job log — it notifies nobody.
+
+## Access
+
+- **Module:** <ModuleRef k="sales.approvals" /> to open the screen; deciding needs `sales.approvals` **or** the kind's own module — <ModuleRef k="sales.leave" />, <ModuleRef k="sales.expenses" />, <ModuleRef k="sales.attendance" />, <ModuleRef k="sales.territory" />.
+- **Level:** manager or admin in the Sales Dashboard (`salesGateRefusal`).
+- **Scope:** the requester must be inside `managerScope` (`salesmanOutsideScope`).
+- **Elsewhere:**
+
+<CapabilityGrid names={["order.approve", "sample.approve", "distributor.approve"]} />
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/sales-gate.test.ts` | Associate refused; module refusals |
+| `npm run test:integration` | `src/lib/territory-requests.test.ts` | A territory request raised on the handset and decided through `decideApproval`, including outside-scope refusal |
+
+## Changing it safely
+
+<Steps>
+<Step title="A new kind needs five things">
+An enum value (in its own migration — a value added to an enum may not be used in the same transaction), a `summary` arm in `pendingApprovals`, a label in `APPROVAL_LABEL`, an `owning` module in `decideApproval`, and an `approvalHref` for the handset.
+</Step>
+<Step title="Keep the state derived">
+Never add a status column to the subject table. Read the approval.
+</Step>
+<Step title="Keep the pending guard in the WHERE">
+Two managers on one queue is ordinary; the update must only land on a pending row.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| `escalateApprovals` notifies nobody; it only counts | `src/lib/mbos-jobs.ts` |
+| `recentDecisions` is unscoped | `src/lib/services/sales-service.ts` |
+| Approve/Part/Refuse are drawn for `sample`, `distributor_appointment` and day-expense rows the action refuses | `approvals-screen.tsx` vs `decideApproval` |
+| `territory` and `distributor_appointment` have no entry in `APPROVAL_LABEL` | `src/components/console/words.ts` |
+| A territory approval changes no territory but tells the salesman it was approved | `decideApproval` |

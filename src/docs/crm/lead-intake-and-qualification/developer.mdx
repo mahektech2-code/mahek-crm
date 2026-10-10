@@ -1,0 +1,136 @@
+Intake and Qualification are two lead modules (<ModuleRef k="crm.lead-intake" /> and <ModuleRef k="crm.lead-qualify" />), each guarded by its own folder layout and each rendering a shared page from `src/components/leads/pages/`. Raising a lead has **one writer**, `captureLead`, used by the form, bulk intake and the enquiry screen. Qualification's screens are reads over the gate engine; every write on them is an existing lead action, and every stage change goes through `advanceLeadStage`.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Routes | `src/app/crm/leads/intake/{page,bulk,duplicates}`, `src/app/crm/leads/qualify/{page,verification,validation,checklist}` | `<Body workspace="crm" />`; layouts call `requireModule` |
+| Screens | `src/components/leads/pages/leads-intake*.tsx`, `leads-qualify*.tsx`, `src/components/leads/intake/intake-form.tsx` | Capture form, bulk preview, duplicate pairs, the four qualification tabs |
+| Intake writes | `src/lib/actions/lead-intake.ts` | `captureLead`, `previewBulkIntake`, `captureLeadBatch`, `dismissDuplicatePair` |
+| Intake reads | `src/lib/services/lead-intake-service.ts` | `phoneAlreadyOnTheBook`, `duplicateCandidates`, `nextActionOwners`, `leadSourceOptions` |
+| Qualification reads | `src/lib/services/lead-qualify-service.ts`, `lead-console-service.ts` | `suspectDecisions`, `validationCalls`, `qualificationDesk`, `verificationQueue` |
+| Qualification writes | `src/lib/actions/leads.ts` | `decideSuspect`, `keepAsSuspect`, `saveLeadQualification`, `saveProspectFields`, `recordLeadValidationCall` |
+| GST | `src/lib/actions/lead-gst.ts`, `src/lib/services/lead-verifier.ts` | `validateGstin`; `gstValidatorRefusal` |
+| Qualification flow | `src/lib/services/lead-qualification-flow-service.ts` | Opening Qualification after verification, review hand-backs, `sampleEligibility` |
+| Qualifying from the field | `src/lib/services/lead-qualification-service.ts` | `qualifyLead`, `nextWorkingDate` |
+| Rules (pure) | `src/lib/engines/lead-ladder.ts`, `lead-gates.ts` | `plantableStage`, `isUndecidedSuspect`, `PROSPECT_CONDITIONS`, `QUALIFICATION_CONDITIONS`, `mustDecideSuspect` |
+
+## Raising a lead
+
+<Flow caption="captureLead" chart={`
+sequenceDiagram
+  autonumber
+  participant F as Intake form / bulk / enquiry
+  participant A as actions/lead-intake.ts
+  participant S as lead-intake-service.ts
+  participant DB as Postgres
+  F->>A: captureLead(input)
+  A->>A: zod parse, requireCapability("lead.work"), priority needs lead.verify
+  A->>A: source validated against leads.sources, distributor eligibility (third-party only)
+  A->>S: phoneAlreadyOnTheBook(phone)
+  alt number on the book and allowDuplicate not set
+    A-->>F: refusal naming the existing account
+  end
+  A->>DB: transaction — INSERT customers (kind lead, stage at the ladder's foot, next action),<br/>customer_distributors (third-party), timeline event, audit_log, enquiry link
+  A->>DB: notify the owner — or, unowned, whoever can hand out desk leads
+  A-->>F: customerId, stage
+`} />
+
+<Code file="src/lib/engines/lead-ladder.ts" symbol="plantableStage" />
+
+The capture schema documents every field's reasoning; the two worth knowing before editing it:
+
+- `monthlyLitres` is **litres** — there is no SKU at capture.
+- `requirement` / `requirementProductId` both write `lead_requirement` (a product pick writes the product's **name**, server-side). Neither writes `lead_required_product_id`, which is the Prospect and calling-desk answer.
+
+<Code file="src/lib/actions/lead-intake.ts" symbol="captureLead" collapsed />
+
+<Code file="src/lib/services/lead-intake-service.ts" symbol="duplicateCandidates" collapsed />
+
+## The Suspect cap
+
+<Code file="src/lib/engines/lead-ladder.ts" symbol="isUndecidedSuspect" />
+
+<Code file="src/lib/engines/lead-gates.ts" symbol="mustDecideSuspect" />
+
+The office list reads the count from `mbos_visits` with `count(*)` — never a stored counter — and compares against `mbos.leads.maxSuspectVisits` cast `::int` in SQL.
+
+<Code file="src/lib/services/lead-qualify-service.ts" symbol="suspectDecisions" collapsed />
+
+<Code file="src/lib/actions/leads.ts" symbol="decideSuspect" />
+
+`decideSuspect` writes `lead_suspect_decided_at` **after** the move, so a refused move never silences the question. `keepAsSuspect` writes `lead_hold_reason` and does not move the stage.
+
+## Qualifying a lead from the field
+
+<Code file="src/lib/services/lead-qualification-service.ts" symbol="qualifyLead" collapsed />
+
+Called from `actions/mbos.ts` — the handset's lead handler (on reaching Prospect) and its visit-decision path — after the stage write has committed, with `.catch(() => {})`. The seat is the idempotency guard. It does **not** set `lead_manager_decided_at`.
+
+<Code file="src/lib/services/lead-qualification-service.ts" symbol="nextWorkingDate" />
+
+## The verification call and validation answers
+
+`recordLeadValidationCall` (`lead.verify`) writes one row per call to `mbos_lead_validations` — the same table the handset writes — using `VERIFICATION_COLUMNS` in `lead-labels.ts` as the one statement of which answer lands in which column. `not_qualified` requires a note and closes the lead through `advanceLeadStage` with the verification-failed code. A desk request is then settled by `settleProspectRequest`.
+
+<DbTable name="mbos_lead_validations" only={["customer_id", "called_by_user_id", "called_at", "reached", "salesman_visited", "mahek_explained", "product_understood", "confirmed_requirement", "confirmed_monthly_volume_litres", "confirmed_competitor", "confirmed_potential_paise"]} note={{
+  confirmed_requirement: "What the SHOP said. Never written over customers.lead_requirement, which is what the salesman was told.",
+  confirmed_monthly_volume_litres: "Compared against customers.lead_monthly_volume_litres on the Validation calls screen.",
+}} />
+
+<Code file="src/lib/services/lead-qualify-service.ts" symbol="ValidationDisagreement" />
+
+## Qualification
+
+<Code file="src/lib/engines/lead-gates.ts" symbol="QUALIFICATION_CONDITIONS" />
+
+The answers live in `customers.lead_qualification` (jsonb) under `QUALIFICATION_ANSWER_KEYS`; `saveLeadQualification` drops any other key and checks each with `qualificationAnswerFault`. GST reads the **columns** `gstin` + `gst_verified`, never a tick in the jsonb.
+
+<Code file="src/lib/engines/lead-gates.ts" symbol="qualificationReadyForReview" />
+
+<DbTable name="customers" only={["lead_monthly_volume_litres", "lead_requirement", "lead_competitor", "lead_required_product_id", "lead_qualification", "lead_suspect_decided_at", "lead_manager_id", "lead_manager_decided_at", "lead_verified_at", "gstin", "gst_verified", "gst_verified_at", "gst_verified_by_id", "lead_figures_confirmed_at", "lead_qualification_review"]} />
+
+<DbEnum name="lead_qualification_review" />
+
+## Permissions
+
+<CapabilityGrid names={["lead.work", "lead.verify", "lead.gstValidate"]} />
+
+For a funnel lead, `validateGstin` asks `gstValidatorRefusal` (the lead's sales manager, an admin, or a `lead.verify` holder where no seat is held — never the owner) instead of `lead.gstValidate`; the capability and the back-office seat still apply to accounts that were never leads.
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/engines/suspect-cap.test.ts` | Which rungs the cap applies to, warn and decide thresholds |
+| `npm run test` | `src/lib/engines/lead-gates.test.ts` | Prospect and Qualification conditions; ready-for-review |
+| `npm run test:integration` | `src/lib/qualification-flow.test.ts` | Verification → Qualification → review → GST validation and refusal |
+| `npm run test:integration` | `src/lib/gst-validation-grant.test.ts` | Who may validate GST |
+| `npm run test:integration` | `src/lib/lead-intake-product.test.ts`, `src/lib/lead-from-enquiry.test.ts` | Requirement product pick; raising from an enquiry |
+| `npm run test:integration` | `src/lib/lead-verification-corrections.test.ts`, `src/lib/lead-verifier-seat.test.ts` | Corrections on verification; whose call it is |
+
+## Changing it safely
+
+<Steps>
+<Step title="One way to raise a lead">
+Any new door (an import, an API) calls `captureLead` or `captureLeadBatch`. A second insert path would skip the duplicate guard, the foot-of-ladder rule, the distributor link and the timeline row.
+</Step>
+<Step title="Never make a capture field required to fix a gate">
+If the gate needs something, it asks at the rung. Capture stays four fields.
+</Step>
+<Step title="Validation answers are a row, not columns on the lead">
+Add a confirmed answer as a column on `mbos_lead_validations`, map it in `VERIFICATION_COLUMNS`, and add it to `disagreementsIn` if both sides answer it.
+</Step>
+<Step title="Keep counts live">
+Visit counts stay `count(*)` over `mbos_visits`; numbers beside parameters get `::int`.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| `qualifyLead` (org-chart lead manager + next-working-day validation task) runs only from the handset paths; a CRM Prospect move does not call it | `actions/mbos.ts` (two call sites); `actions/leads.ts` `advanceLeadStage` |
+| `leads.suspectMaxVisits` retired but still registered | `config/registry.ts` |
+| AGENTS.md places the GST demand at the legacy `qualified` transition; on funnel ladders it gates `sample_trial` | `engines/lead-gates.ts` `conditionsToEnter` |
+| `STILL_WORKING` is duplicated between two services by the author's own note | `lead-qualify-service.ts`, `lead-console-service.ts` |

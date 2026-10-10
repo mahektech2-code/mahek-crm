@@ -1,0 +1,287 @@
+MahekOne is **one Next.js 16 application** (App Router, React 19, Server Components and Server Actions) over **one Postgres database** reached through **Drizzle ORM**, plus a separate **Expo project** in `mbos-app/` for the field salesman's Android handset. Every app — the CRM, Accounts, the Sales Dashboard, HRMS, the ERP, the Admin Console, these docs — is a route tree in the same application, reading the same tables. Nothing is split into services, and nothing is synced between apps, because there is nothing to sync.
+
+This page is the map a developer needs before changing anything: where each kind of code lives, how a request travels from the browser to the database, how sign-in and access control work, how the handset talks to the server, and the rules that keep the data honest. The [owner's tab](/docs/platform/architecture/how-it-works) explains the same shape in plain words; [Local setup](/docs/platform/local-setup/developer) gets a laptop running.
+
+## The stack
+
+| Piece | What | Where it is configured |
+|---|---|---|
+| Framework | Next.js 16, App Router, React 19 with the React Compiler lint rules on | `next.config.ts`, `eslint.config.mjs` |
+| Rendering | Server Components by default; client components only where there is state or an event handler | per file (`"use client"`) |
+| Writes | Server Actions in `src/lib/actions/`, plus route handlers in `src/app/api/` for anything a browser action cannot carry (audio, uploads over 1 MB, cron, the handset) | — |
+| Database | Postgres 17 in a container beside the app in production; 16 locally and in CI | `deploy/docker-compose.yml`, `docker-compose.yml` |
+| ORM | Drizzle, driver `postgres` (postgres-js) | `src/db/schema.ts`, `src/db/index.ts`, `drizzle.config.ts` |
+| Migrations | Hand-written SQL in `drizzle/`, applied by `drizzle-kit migrate` (never generated here — see [Local setup](/docs/platform/local-setup/developer)) | `drizzle/meta/_journal.json` |
+| Styling | Tailwind v4; every colour, radius and type size is a design token under `@theme` | `src/app/globals.css` |
+| Handset | Expo (SDK 54) + React Native, its own SQLite, its own `package.json` | `mbos-app/` |
+| Hosting | One DigitalOcean droplet: Caddy → the app container → Postgres | [Deploying](/docs/platform/deploy-digitalocean/developer) |
+
+<Callout kind="warn" title="This is not the Next.js in your training data">
+Next.js 16 renamed and moved several conventions — the request interceptor is `src/proxy.ts` (exporting `proxy`), not `middleware.ts`. `AGENTS.md` tells every contributor to read `node_modules/next/dist/docs/` before writing framework code, and that applies here too.
+</Callout>
+
+## Folder layout
+
+```text
+src/
+  app/                 one folder per app, plus /login, /apps (launcher), /api
+    crm/ accounts/ sales/ hrms/ erp/ admin/ founder/ enquiries/ hire/ website/ docs/
+    api/               route handlers: cron endpoints, the handset (api/mbos/*),
+                       attachments, dictation, webhooks
+  components/          shared UI: primitives, the shell (header, sidebar, switcher),
+                       screens rendered by more than one app
+  db/                  schema.ts (every table and enum), index.ts (the client), seed
+  lib/
+    engines/           PURE business rules — no I/O, configuration passed in
+    services/          engines wired to data; one file per module
+    actions/           every write ("use server")
+    queries.ts         scope-aware reads shared by dashboards and screens
+    recompute.ts       the rebuild path for every cached derived value
+    config/            registry.ts (every setting) and store.ts (cached reads, audited writes)
+    access.ts          which apps and modules a person holds
+    access-control.ts  scope, capabilities, the audit hat
+    capability-matrix.ts  the per-app capability table
+    jobs.ts            scheduled work, idempotent and hand-triggerable
+  proxy.ts             names the app on every request
+  docs/                these pages (MDX) and their components
+mbos-app/              the Expo handset project
+deploy/                the droplet's compose file and shell scripts
+drizzle/               migrations
+scripts/               one-off and operational scripts (run-job.ts, setup-db.mjs, …)
+```
+
+## Layering
+
+The rule that holds the codebase together is that each layer only reaches down.
+
+| Layer | Lives in | May do | May not do |
+|---|---|---|---|
+| Route / layout | `src/app/**/layout.tsx`, `page.tsx` | Read the user, gate on apps and modules, call services and queries, render | Contain business rules |
+| Client screen | `*-screen.tsx`, components | Hold UI state, call server actions | Import `server-only` modules |
+| Action | `src/lib/actions/*.ts` | Check capability and scope, validate, write in one transaction, audit, call recomputes | Be trusted because a button was hidden |
+| Service | `src/lib/services/*.ts` | Fetch data, call engines, compose results | Hold rules an engine should own |
+| Engine | `src/lib/engines/*.ts` | Pure functions: inputs, config and the business date in, a value out | Any I/O, any clock read, any `getConfig()` |
+| Cache rebuild | `src/lib/recompute.ts` | Rebuild buying cycles, outstanding, follow-up stages, slow-payer flags | Be bypassed by a hand-edit of a cached column |
+| Data | `src/db/schema.ts` | Declare tables, enums, indexes | Hold operator-class indexes (those are in the SQL migrations) |
+
+<Rule title="Reads in queries.ts, writes in lib/actions">
+A figure on a dashboard and the same figure on its own screen come from the **same function**, so the two cannot drift. Every write is a server action (or a route handler where an action cannot carry the body) that checks permission on the server, whatever the screen drew.
+</Rule>
+
+<Rule title="Engines are pure">
+`src/lib/engines/` performs no I/O. That is what lets `npm run test` pin every business rule without a database, and what lets the handset compile some of the same engines (`npm run mbos:sync-engines` mirrors them into `mbos-app/`).
+</Rule>
+
+## A request, end to end
+
+<Flow caption="A browser opening a CRM screen" chart={`
+sequenceDiagram
+  autonumber
+  participant B as Browser
+  participant C as Caddy
+  participant P as src/proxy.ts
+  participant L as app layout
+  participant Pg as page.tsx
+  participant S as service / queries.ts
+  participant DB as Postgres
+  B->>C: GET /crm/call-log (cookie mahekone_session)
+  C->>P: reverse_proxy app:3000
+  P->>P: appFor(pathname) names the app<br/>strip any incoming x-mahek-app, write our own
+  P->>L: request with x-mahek-app: crm
+  L->>DB: getCurrentUser() - session row, active user
+  L->>DB: listUserApps(user) - app_access
+  alt app not granted
+    L-->>B: redirect to /apps
+  end
+  L->>DB: requireModule(user, "crm.call-log") - app_module_access
+  alt module withheld
+    L-->>B: redirect to the first module they hold
+  end
+  L->>Pg: render
+  Pg->>S: getQueue()
+  S->>S: resolveScope() reads x-mahek-app<br/>and the hat in that app
+  S->>DB: scoped SQL (ASSIGNED_TO_SQL)
+  DB-->>S: rows
+  S-->>Pg: view model
+  Pg-->>B: HTML + RSC payload
+`} />
+
+### The proxy names the app
+
+`src/proxy.ts` runs on every request. It does **not** authenticate — it names which app the request is in, from the URL prefix, and writes it into the `x-mahek-app` header after deleting any value the client sent.
+
+<Code file="src/proxy.ts" symbol="appFor" />
+
+<Code file="src/proxy.ts" symbol="proxy" collapsed />
+
+Shared API routes (`/api/search` and friends) have no app in their path, so `appForApi` takes it from a **same-host** `Referer`. That is safe because naming an app grants nothing: `requestHat` still requires a real grant in that app.
+
+### The layout gates the app and the module
+
+Each app's `layout.tsx` calls `listUserApps()` and redirects anybody without the grant; each module folder's layout calls `requireModule`. API routes that serve a module use `canOpenModule`, which asks both halves in one call.
+
+<Code file="src/lib/access.ts" symbol="requireModule" />
+
+The launcher, every app switcher and the "straight into it" redirect read one function, so a mobile-only app (the handset's `field`) can never become a browser tile in one place and not another:
+
+<Code file="src/lib/apps.ts" symbol="webApps" />
+
+## Sign-in and sessions
+
+| Concern | How | Where |
+|---|---|---|
+| Identifier | Work number, email, or the HRMS personal mobile (asked last, only via the explicit employee link, and only if it names exactly one account) | `findAccount` in `src/lib/services/otp-service.ts` |
+| Password | scrypt hash on `users.password_hash`; throttled per account and per address | `src/lib/auth.ts`, `auth.password.*` settings |
+| One-time code | Sent through **MiniMoth** (WhatsApp, then SMS) when its key is held; otherwise a Wati authentication template if one is named | `otpAvailability` — see [Integrations](/docs/platform/integrations/developer) |
+| Session | A row in `sessions`, id in the `mahekone_session` cookie, 30 days ("remember me") or browser-session | `createSession`, `getCurrentUser` in `src/lib/auth.ts` |
+| Password reset | Emailed single-use link (SHA-256 of the token stored, 30 minutes) or a code to the phone; spending it deletes every session | `src/lib/password-reset.ts`, `resetPasswordWithOtp` |
+| Disabled account | `getCurrentUser` refuses an inactive user; disabling also deletes their sessions; grants are kept | `src/lib/auth.ts`, the Access screen |
+| Handset | Its own bearer tokens (JWT signed with `MBOS_JWT_SECRET`), bound to one device | `src/lib/mbos/token.ts`, `src/app/api/mbos/auth/*` |
+
+A sign-in also writes one row per person per day to `attendance` — a **sign-in log**, not attendance.
+
+## Access control
+
+Three layers, each narrower than the last: **the app**, **the module inside it**, and **the level** (associate, manager, admin) the grant carries.
+
+<DbTable name="app_access" note={{
+  user_id: "Whose grant.",
+  app: "Which app — one row per person per app.",
+  role: "The LEVEL in this app: associate, manager or admin. The job comes from the app.",
+  granted_by_id: "Who granted it.",
+}} />
+
+<DbTable name="app_module_access" note={{
+  app: "The app the module belongs to.",
+  module: "A module key from src/lib/modules.ts. NO rows for an app means every module of it.",
+}} />
+
+<DbEnum name="app_id" />
+
+### Capabilities: what a person may DO
+
+A **hat** is an app plus a level. `can` answers whether one hat carries a capability; `canFor` takes the union over every hat a person wears, and `requireCapability` (117 call sites) does the same and returns the narrowest granting hat for the audit log.
+
+<Code file="src/lib/capability-matrix.ts" symbol="can" />
+
+<Code file="src/lib/access-control.ts" symbol="canFor" />
+
+- **Admin of the Admin Console** is the platform administrator and holds everything.
+- **Admin of any other app** holds that app's manager list only; what else an app gives its own admins is that app's own access file.
+- The ledger capabilities (`order.approve`, `payment.confirm`, `creditnote.issue`, `customer.reassign`) live on the **Accounts** app, so a CRM manager cannot approve an order.
+
+<CapabilityGrid names={["config.write", "sheet.import", "access.manage", "order.approve"]} />
+
+### Scope: what a person may SEE
+
+`resolveScope()` (cached per request) reads the user, the app from `x-mahek-app`, and that app's grant, and returns `mine`, `team` or `all`. Lists narrow with `scopedToUsers(ids)`, which reads every seat a person can hold on a customer. **Whose book** an account is — who is credited and whose queue it lands on — is one expression:
+
+<Code file="src/lib/access-control.ts" symbol="ASSIGNED_TO_SQL" />
+
+<Callout kind="rule">
+Resolving scope per app can only **narrow**: the account's own `users.role` is the widest level held anywhere, and a per-app hat is by construction no wider. The proxy strips any client-sent `x-mahek-app`, so a request cannot name its own app.
+</Callout>
+
+## The MBOS handset
+
+`mbos-app/` is an offline-first Expo app with its own SQLite schema (`mbos-app/src/db/schema.ts`). It never reads Postgres directly; it talks to `src/app/api/mbos/*` with a bearer token.
+
+<Flow caption="How a handset stays in step" chart={`
+sequenceDiagram
+  autonumber
+  participant H as Handset (SQLite + outbox)
+  participant A as /api/mbos/*
+  participant Svc as mbos-service.ts / actions/mbos.ts
+  participant DB as Postgres
+  H->>A: auth/login or auth/otp
+  A-->>H: access + refresh token, bound to the device
+  H->>A: GET bootstrap
+  A->>Svc: buildBootstrap(user)
+  Svc->>DB: his book, products, price lists, tasks, config
+  A-->>H: full payload, cursor
+  loop every sync tick, when there is signal
+    H->>A: POST sync (outbox items + cursor)
+    A->>Svc: dispatchItem per item, in one pass
+    Svc->>DB: write, idempotent on the item key
+    A->>Svc: buildPull(since cursor)
+    Svc->>DB: rows changed since, plus mbos_deletions tombstones
+    A-->>H: receipts + delta + new cursor
+  end
+  H->>A: POST media (photographs, after their parent)
+  H->>A: POST positions (the day's trail, own endpoint)
+`} />
+
+| Concept | What to know | Where |
+|---|---|---|
+| Bootstrap vs delta | The delta must send exactly what the bootstrap sends; channels converge on one function each | `buildBootstrap`, `buildPull` in `src/lib/services/mbos-service.ts` |
+| Outbox | Everything the salesman authors is queued locally and pushed; each item carries an idempotency key | `mbos-app/src/sync/`, `dispatchItem` in `src/lib/actions/mbos.ts` |
+| Wire contract | A column the handset's SQLite does not have would roll back the whole pull; the handset drops unknown columns and `mbos-wire.test.ts` pins both sides | `src/lib/mbos-wire.test.ts` |
+| Tombstones | A pull says what exists; only `mbos_deletions` says what stopped existing | `mbos_deletions` |
+| Territory | Narrows a salesman's book; no territory means no book (managers excepted) | `territoryClause` |
+| Media | Uploaded after its parent, bound when the parent is written | [Storage](/docs/platform/storage-r2/developer) |
+| Releases | APK by workflow; JavaScript over the air | [Handset release](/docs/platform/handset-release/developer) |
+
+## Scheduled work
+
+There is no in-process scheduler. The droplet's cron calls `/api/sheets/sync?mode=…` with `CRON_SECRET`, and that route runs a named job from `src/lib/jobs.ts`. Every job writes a `job_runs` row, is idempotent, and can be run by hand with `npm run jobs -- <name>`. The cadence and catalogue are on [Sheets and jobs](/docs/platform/sheets-and-jobs/developer).
+
+## Configuration
+
+Every business threshold is a setting in `src/lib/config/registry.ts`, stored in `app_settings` and read through `getConfig()`, which caches for 30 seconds:
+
+<Code file="src/lib/config/store.ts" symbol="getConfig" />
+
+Credentials are separate (`app_secrets`, `readSecret`). See [Configuration](/docs/platform/configuration/developer).
+
+## Time zone rules
+
+| Rule | Why | Guard |
+|---|---|---|
+| Never cast a stored timestamp to a date without naming the zone (`at time zone 'Asia/Kolkata'`) | The session zone decides a bare `::date`; a 1 am IST row lands on the previous day under GMT | A test forces GMT; a grep test fails on bare casts in `lib/` |
+| Never turn a stored DATE into an instant without naming midnight (`::timestamp at time zone …`) | A pooled connection's zone leaks into the result | A third grep test |
+| Never `toISOString().slice(0, 10)` or `getHours()` on the server | Both answer in UTC/the machine zone; use `calendarDate()`, `stamp`, `clock` | Grep tests over `src/` |
+| Bind dates as ISO strings and type integer parameters (`::int`) | `postgres` serialising a JS `Date` throws on Node 25; `date - $n` resolves as `date - date` | `date-arithmetic-bind.test.ts` |
+| The zone is spelled once | `APP_TIMEZONE` in `src/lib/business-date.ts` for SQL and client code; <Setting k="workingDay.timezone" /> for anything that reads config | — |
+
+## Adding the next MahekOne app
+
+<Steps>
+<Step title="Tables in the same schema">
+Add them to `src/db/schema.ts` and hand-write the migration. Reference `customers` and `users` directly — never copy them.
+</Step>
+<Step title="Register the app">
+Add its id to `app_id` (a rename uses `ALTER TYPE … RENAME VALUE`; a new value cannot be used in the migration that adds it), its entry in `APPS` in `src/lib/apps.ts`, its URL prefix in `APP_ROUTES` in `src/proxy.ts`, its modules in `src/lib/modules.ts` and its row in the capability matrix.
+</Step>
+<Step title="Gate its layout">
+Call `listUserApps()` in `src/app/<app>/layout.tsx` the way `src/app/crm/layout.tsx` does, and `requireModule` in each module folder.
+</Step>
+<Step title="Give the launcher something to say">
+A count and status line in `launcherApps()`, where the badge counts what the sentence describes.
+</Step>
+<Step title="Reads and writes in their places">
+Reads in `lib/queries.ts` or a service; writes in `lib/actions/<app>.ts`, each checking a capability.
+</Step>
+<Step title="Grant it from a terminal or the Access screen">
+`npm run app:grant -- <app> example@mahek.in`, or Admin Console → Access.
+</Step>
+</Steps>
+
+## Tests that pin the architecture
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/app-routing.test.ts` | Every app's URL prefix names the right app |
+| `npm run test` | `src/lib/admin-is-per-app.test.ts` | An app admin is not a platform admin |
+| `npm run test` | `src/lib/modules.test.ts` | Module registry shape, no-rows-means-everything |
+| `npm run test` | `src/lib/mbos-wire.test.ts` | Server payload columns exist on the handset; dispatcher matches handset writes |
+| `npm run test` | `src/lib/sql-backticks.test.ts`, `src/lib/date-arithmetic-bind.test.ts` | Two ways a raw SQL template breaks silently |
+| `npm run test:integration` | `src/lib/journeys.test.ts` | The six end-to-end journeys through the real services |
+
+## Known gaps
+
+| Gap | Where |
+|---|---|
+| The comment above `can` still says "an administrator is an administrator in every app"; the code makes only the Admin Console's admin a platform administrator | `src/lib/capability-matrix.ts`, `can` |
+| <Setting k="workingDay.timezone" /> is configurable but SQL day windows use the `APP_TIMEZONE` constant, so changing the setting would split the two | `src/lib/business-date.ts` |
+| `listUserModules` answers "every module" for a person who holds none of the app; only callers that first ran `listUserApps` (or use `canOpenModule`) are safe | `src/lib/access.ts` |
+| `appForApi` trusts a same-host `Referer` to pick the app for shared API routes; a missing referrer falls back to the widest level held | `src/proxy.ts` |

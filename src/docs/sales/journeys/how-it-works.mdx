@@ -1,0 +1,93 @@
+A journey plan is **agreed, not issued**. The office proposes where a salesman works; he answers; and he picks the shops, because he is the one who knows which doors are worth a Tuesday morning. A visit is then checked against where he actually stood, and what could not be proved is put in front of a manager rather than thrown away.
+
+## The day
+
+<Flow caption="One plan day" chart={`
+stateDiagram-v2
+  [*] --> proposed: office proposes a city
+  [*] --> agreed: salesman starts his own day
+  proposed --> agreed: he agrees
+  proposed --> refused: he refuses — reason required,<br/>city he would rather is optional
+  refused --> agreed: office takes his city
+  refused --> proposed: office proposes another city
+  agreed --> planned: he picks at least one shop
+  planned --> agreed: he unpicks every shop
+`} />
+
+<Rule title="The manager proposes a city and nothing more">
+Only the salesman picks customers. He knows that a market shuts on a Wednesday, or that two towns back to back are 340 km in a day — real refusals, and neither something an office screen could have worked out.
+</Rule>
+
+<Rule title="A day already agreed or planned is left alone">
+Proposing over a day he has already picked shops for would throw away his morning's thinking. Those days are skipped and named in the reply.
+</Rule>
+
+<Rule title="A refusal needs a reason, and cannot be overruled">
+He must say why. The office can take the city he suggested — which agrees the day at once — or put a different city back to him. There is no way to force a day, because the reason for asking was that his answer is worth more than a guess.
+</Rule>
+
+<Rule title="A day he starts himself needs a city and a date not yet gone">
+The city is required because the shop picker is filtered by it — without one it would offer his whole book. A day from his phone arrives agreed and marked self-planned; it can never arrive already walked.
+</Rule>
+
+## Picking shops
+
+<Rule title="The whole list, every time">
+When he picks shops, his phone sends the **entire** list for the day, in walking order. Sending a shorter list is how a shop is unpicked; a merge would make unpicking impossible.
+</Rule>
+
+<Rule title="Picking nothing leaves the day agreed">
+An empty day claiming to be a route is exactly the state the model exists to prevent.
+</Rule>
+
+<Rule title="A shop that has left his book is dropped, counted and told">
+If a shop he picked is no longer in his book, it is dropped and he is told *"… shops left out. The rest are not in your book any more — ask your manager if one of them should be."* Refusing the whole day would lose the nineteen he got right; dropping it silently is how somebody walks a day missing a stop they chose.
+</Rule>
+
+### The office can still arrange a day
+
+**Pick the shops yourself** is kept as the exception it should be. It saves a run of up to 31 days in **one transaction** — every day validates before any day writes — because a beat plan is a cycle, and a half-saved fortnight is a plan nobody agreed to. A day with no shops in it deletes that day's plan, which is how a manager clears a Sunday; that is refused where the day has already been walked. Beyond a month a route is a forecast — the book moves under it.
+
+## Visits: what the phone proves
+
+<Rule title="The check-in is refused past the radius — at the door">
+A salesman can check in to a shop only from within <Setting k="mbos.location.visitMismatchM" /> metres of its pin. The refusal is at arrival, before anything has been typed, so the cost is walking to the right shop. Saving is never refused: by then the note, photograph and order are already on the phone.
+</Rule>
+
+Three answers let the check-in through: no position, a position too imprecise to trust, and a **shop with no pin** — about half of a real book. A check-in at an unpinned shop becomes its pin, unless the position was poor.
+
+<Rule title="The way past a refusal costs a sentence">
+Refused, he can check in anyway by writing why. The visit saves **unverified** with his words, and his manager reads them. Offered before a refusal, it would be a way round the radius nobody was refused by.
+</Rule>
+
+<Rule title="'The pin is wrong' is a request, never a write">
+He can say the pin is wrong. That raises a question for a manager, answered on the Visit log: **Move the shop's pin here** sets the shop to the check-in position already on the visit, **Leave the pin as it is** declines. No coordinates are sent with the request — what is accepted is the fix already recorded.
+</Rule>
+
+<Rule title="Accepting a visit and moving a pin are two questions">
+Moving the pin says the book was wrong. **Accept it anyway** says the manager stands behind the visit, and marks it verified with their name. Neither implies the other.
+</Rule>
+
+<Callout kind="why" title="Why the server never refuses a visit">
+An app version already on phones cannot be recalled. Older builds send check-ins they never refused. The server measures the same distance, marks the visit unverified with the distance said plainly, and — where no reason came with it — says so. Rejecting would lose the note, the photograph and the order behind it.
+</Callout>
+
+## Who may decide
+
+Every action here — propose, answer a refusal, arrange days, accept a visit, decide a pin, ask about a visit — needs the **manager level** in the Sales Dashboard and <ModuleRef k="sales.journeys" />, and the salesman must be in your patch. Nobody accepts their own visit or decides a pin they asked to move.
+
+<Callout kind="rule">
+Withholding Journeys & visits from somebody leaves the handset's route screen empty for the salesmen they plan, because nothing else writes a plan.
+</Callout>
+
+## Settings
+
+<SettingsTable keys={[
+  "mbos.location.visitMismatchM",
+  "mbos.location.gpsAccuracyThresholdM",
+]} />
+
+## Where the code and the intent disagree today
+
+- **Accepting a visit and deciding a pin tell the salesman nothing.** Every other decision on this screen notifies him; these two only write the verdict and the audit row.
+- **Asking about a visit is a notification only.** There is no reply channel on the record; the answer comes back however he chooses to reply.

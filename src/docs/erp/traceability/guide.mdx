@@ -1,0 +1,133 @@
+**Traceability** answers two questions about anything you have in hand — a box off a shelf, a lot number, a packing batch, an order or a bill: **what was it made from**, and **where did it go**. Type or scan the code and the screen walks back through every document that made it, down to the raw-material purchase and its test, and forward to every customer it reached and whatever is still in stock.
+
+With nothing typed in, the same screen is a dashboard of **today's production and dispatch**, the **exceptions** that need somebody, and the **latest scans** at the Dispatch desk.
+
+## The dashboard
+
+<Wireframe url="/erp/trace" nav={["Dashboard", "Alerts", "#Orders", "Orders", "Dispatch desk", "#Traceability", "Traceability"]} active="Traceability" caption="Traceability with no code typed: the day's dashboard">
+  <WfBar>
+    <WfTitle sub="Any box id, lot, batch, order or bill — where it came from, and where it went.">Traceability</WfTitle>
+  </WfBar>
+  <WfBar><WfInput placeholder="Scan or type: BX-261008-000125, an SFG lot, FG12NA, FP40NA, order 1256, a bill number…" wide /><WfButton primary>Trace</WfButton><Hotspot n={1} /></WfBar>
+  <WfBar>
+    <WfCard title="SFG produced"><WfText>420 L</WfText></WfCard>
+    <WfCard title="Refilled"><WfText>180 cans</WfText></WfCard>
+    <WfCard title="Packed"><WfText>15 boxes</WfText></WfCard>
+    <WfCard title="Labels printed"><WfText>15</WfText></WfCard>
+    <WfCard title="Scanned at dispatch"><WfText>22</WfText></WfCard>
+    <WfCard title="Boxes dispatched"><WfText>18</WfText></WfCard>
+    <Hotspot n={2} />
+  </WfBar>
+  <WfCard tone="warn" title="Exceptions">
+    <WfBar><WfPill tone="danger">Pack-size / product mismatches today 1</WfPill><WfPill tone="warn">Overrides waiting for approval 1</WfPill><WfPill tone="warn">SFG lots waiting for QC 2</WfPill><Hotspot n={3} /></WfBar>
+  </WfCard>
+  <WfTable columns={["When", "Code", "Order", "Result", "Message", "By"]} rows={[
+    ["10:42", "BX-261010-000311", "1256", <WfPill key="a" tone="danger">mismatch</WfPill>, "Pack size mismatch…", "a dispatcher"],
+    ["10:41", "BX-261010-000310", "1256", <WfPill key="b" tone="success">ok</WfPill>, "BX-261010-000310 ✓ …", "a dispatcher"],
+  ]} />
+  <Hotspot n={4} />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>The trace box.</b> Type or scan any code. A QR that carries a link works too.</span>,
+  <span key="2"><b>Today.</b> SFG made, cans refilled, boxes packed (and box ids minted), labels printed, boxes scanned at dispatch and boxes dispatched — each opens its list.</span>,
+  <span key="3"><b>Exceptions.</b> Things that need somebody, with a count. Each opens the place to fix it.</span>,
+  <span key="4"><b>Latest scans.</b> The last scans at the Dispatch desk, refused ones included.</span>,
+]} />
+
+### The exceptions
+
+| Exception | What it means | Where it takes you |
+|---|---|---|
+| **Pack-size / product mismatches today** | Scans stopped at the desk for the wrong product or pack size | The scan list |
+| **Duplicate scans today** | A box scanned twice, or one already gone | The scan list |
+| **Other refused scans today** | Unknown code, wrong godown, box on hold | The scan list |
+| **Overrides waiting for approval** | A mismatched box somebody asked to send | The Dispatch desk |
+| **Boxes scanned, not yet dispatched** | On an order, waiting for Do Verified | Boxes & labels |
+| **Boxes on hold** | Cannot be scanned until released | Boxes & labels |
+| **Boxes in stock without a printed label** | Print before they go to the shelf | Boxes & labels |
+| **SFG lots waiting for QC** | Cannot be refilled until approved | SFG batches |
+| **SFG lots rejected at QC** | Trace them to see what was filled | SFG batches |
+
+## Tracing something
+
+<Steps>
+<Step title="Type or scan the code">
+A box id (`BX-…` or `LU-…`), a packing batch, a refill (FG) lot, an SFG lot, a raw-material lot, an order number (`1256`, `ORDER-1256` or `SO 1256`), or a Tally bill number. Case does not matter; everything else must be exact.
+</Step>
+<Step title="Read what it is">
+The title says what the ERP found — *Packing batch FP40NA*, *Refill lot FG12NA*, *Order 1256* — with a line summing it up and its key facts.
+</Step>
+<Step title="Read backward: what it was made from">
+One card per stage, in order: packing, FG filling, SFG QC, SFG batch, raw material (with supplier and purchase test). Each line links to the next code, so you can keep tracing.
+</Step>
+<Step title="Read forward: where it went">
+What it was refilled into, packed into, the boxes made, the orders and customers it reached, and whatever is **still in stock**, by godown.
+</Step>
+</Steps>
+
+<Wireframe url="/erp/trace?q=BX-261008-000125" caption="Tracing one box">
+  <WfBar><WfTitle sub="Nano Thinner – 1 Liter (12 Can/Box) · 1 L · 12 cans · Dispatched">BX-261008-000125</WfTitle><WfSpacer /><WfButton>Print label</WfButton><WfButton>Box register</WfButton></WfBar>
+  <WfTable columns={["", ""]} rows={[
+    ["Status", "Dispatched"],
+    ["Where", "Godown A"],
+    ["Packing batch", "FP40NA · box 3"],
+    ["Refill lot", "FG12NA (8 cans), FG13NA (4 cans)"],
+    ["Dispatched to", "Customer A · order 1256 · bill T-1119"],
+    ["Label", "Printed 1×"],
+  ]} />
+  <Hotspot n={1} />
+  <WfCard title="Backward · what it was made from"><WfText>Packing → FG filling → SFG QC → SFG batch → Raw material → Purchase test</WfText><Hotspot n={2} /></WfCard>
+  <WfCard title="History"><WfText muted>created · labelled · scanned — Order 1256 · dispatched — Dispatch verified</WfText><Hotspot n={3} /></WfCard>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>The box's facts.</b> Where it is now, which batch and box number it is, which refill lots its cans came from, and who it went to.</span>,
+  <span key="2"><b>Backward.</b> Every document that made it, each linked.</span>,
+  <span key="3"><b>History.</b> Every change to the box, newest first, with who made it.</span>,
+]} />
+
+### What each code shows
+
+| You trace | You see |
+|---|---|
+| **A box** | Its status, godown, batch and box number, the refill lot(s) its cans came from, the order it is on or went out on, who scanned it, whether its label was printed, the chain back to raw material, and its full history. |
+| **A packing batch** | The SKU, boxes and date; the chain back; every box it made; the orders and customers they reached; what is still in stock. Links to print all its box labels. |
+| **A refill (FG) lot** | The finished good, cans and size, date and godown; the chain back; what it was packed into; customers; stock. Links to print its loose labels. |
+| **An SFG lot** | The batch that made it and its QC verdict; every refill lot, batch and customer it reached; stock. |
+| **A raw-material lot** | The SFG batches that used it and what they were refilled into, forward to customers. |
+| **An order or a bill** | Each line with its lots, how many boxes are scanned and whether it was dispatched; the boxes; the chain back from the lots. Links to the Dispatch desk and dispatch stickers. |
+
+<Callout kind="note" title="A box that falls between two refill lots">
+A packing batch draws cans from one or more refill lots, in order, and fills its boxes in the same order. A box that falls on the boundary holds cans of **both** lots, and the trace says so — *FG12NA (8 cans), FG13NA (4 cans)* — rather than picking one. A recall that named only one lot would miss half the box.
+</Callout>
+
+## When a link is missing
+
+The screen never guesses. If a step cannot be found, it says so in words rather than leaving a gap:
+
+- *No packing lines for … here — moved in by transfer from another godown's batch, or from before the ERP.*
+- *No SFG batch for lot … — moved in by transfer, or from before the ERP.*
+- *No purchase for raw-material lot ….*
+- *Nothing upstream is recorded.*
+
+If nothing carries the code at all, you see: *Nothing carries … A box id looks like BX-261008-000125; lots, packing batches, order numbers and Tally bill numbers are matched exactly, ignoring case.*
+
+## Getting to Traceability from elsewhere
+
+Most screens link straight in: **Trace this order** on an order line, **Trace this box** on Boxes & labels, the code under a refused scan at the Dispatch desk, and **Trace** at the top of an order at the desk.
+
+## Questions people ask
+
+<Faq q="I typed a number and got an order, but I meant a lot.">
+A code that is all digits is read as an order number first, if such an order exists. Type the lot exactly as it is written, with its letters.
+</Faq>
+<Faq q="The trace stops at the packing batch.">
+The batch's packing lines are not at this godown — the stock was moved in by transfer — or it was packed before the ERP. The missing line says which.
+</Faq>
+<Faq q="Can I change anything from here?">
+No. Traceability only reads. Holds, rejections and labels are on Boxes & labels; scans on the Dispatch desk.
+</Faq>
+<Faq q="A box shows 'Label: Not printed'.">
+Its label has never been sent to the printer from the label sheet. Use **Print label**.
+</Faq>

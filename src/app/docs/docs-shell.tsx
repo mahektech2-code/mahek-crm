@@ -206,7 +206,7 @@ function SearchDialog({ entries, onClose }: { entries: SearchEntry[]; onClose: (
     : [];
 
   const go = (e: SearchEntry) => {
-    const href = pageHref(e.app, e.slug, (e.tab ?? "guide") as DocTab) + (e.id ? `#${e.id}` : "");
+    const href = pageHref(e.app, e.slug, (e.tab ?? undefined) as DocTab | undefined) + (e.id ? `#${e.id}` : "");
     onClose();
     router.push(href);
   };

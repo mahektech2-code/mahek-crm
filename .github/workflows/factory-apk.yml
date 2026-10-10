@@ -1,27 +1,30 @@
 # Build, sign and publish the Factory app for Android.
 #
-# The APK is a Trusted Web Activity around /factory (factory-android/): the
-# screens, the rules and every update come from the server, so this only has
-# to run when the WRAPPER changes — a deploy reaches every phone by itself.
+# A NATIVE app (factory-mobile/, Expo + React Native): its screens are on the
+# phone, so a change to them reaches the floor only through a new APK from
+# here. The RULES are not on the phone alone — every job goes to
+# /api/factory/rpc, where the server checks and posts it to the ERP — so a
+# server deploy still changes what is accepted without a release.
 #
-# Signed with the MBOS release key. One team, one key, and the key's SHA-256
-# is published as /downloads/factory-assetlinks.json, which the site serves
-# at /.well-known/assetlinks.json — that is what lets Android open the app
-# without a browser bar. Released by a person (`workflow_dispatch`), like
-# MBOS: sideloading has no staged rollout and no rollback.
+# Signed with the MBOS release key (mbos-app/keystore/). The first Factory
+# APK was a Trusted Web Activity signed with the same key under the same
+# package, in.mahek.factory, so this installs over it as an update — which
+# is also why every versionCode here is 100 + the run number, above the
+# wrapper's. Released by a person (`workflow_dispatch`), like MBOS:
+# sideloading has no staged rollout and no rollback.
 name: Factory APK
 
 on:
   workflow_dispatch:
     inputs:
       site:
-        description: "The MahekOne the app opens (no trailing slash)."
+        description: "The MahekOne the app talks to (no trailing slash). Baked into the APK."
         required: true
         default: https://one.mahekindia.com
       version:
-        description: "Version name shown on the phone, e.g. 1.0.0"
+        description: "Version name shown on the phone, e.g. 2.0.0"
         required: true
-        default: "1.0.0"
+        default: "2.0.0"
       publish:
         description: "Publish: put it on the droplet as /downloads/factory.apk. Off = build and attach to this run only."
         type: boolean
@@ -34,7 +37,7 @@ concurrency:
 jobs:
   apk:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4
@@ -43,6 +46,12 @@ jobs:
         run: |
           case "${{ inputs.site }}" in https://*) ;; *) echo "::error::site must be an https URL"; exit 1 ;; esac
           case "${{ inputs.site }}" in */) echo "::error::site must not end in a slash"; exit 1 ;; esac
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: factory-mobile/package-lock.json
 
       - uses: actions/setup-java@v4
         with:
@@ -53,18 +62,22 @@ jobs:
         with:
           packages: ''
 
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.9"
+      - name: Install dependencies
+        working-directory: factory-mobile
+        run: npm ci
 
-      - name: Build the release APK
-        working-directory: factory-android
+      # Every release must carry a higher code than the last, or a phone that
+      # has the app refuses the update.
+      - name: Stamp the version
+        working-directory: factory-mobile
+        run: |
+          node -e "const f='app.json',fs=require('fs'),j=JSON.parse(fs.readFileSync(f,'utf8'));j.expo.version='${{ inputs.version }}';j.expo.android.versionCode=100+Number('${{ github.run_number }}');j.expo.extra.site='${{ inputs.site }}';fs.writeFileSync(f,JSON.stringify(j,null,2)+'\n')"
+          node -p "const e=require('./app.json').expo; e.version+' (code '+e.android.versionCode+') → '+e.extra.site"
+
+      - name: Prebuild the native project
+        working-directory: factory-mobile
         env:
-          FACTORY_SITE: ${{ inputs.site }}
-          FACTORY_VERSION_NAME: ${{ inputs.version }}
-          # Every release must carry a higher code than the last, or a phone
-          # that has the app refuses the update.
-          FACTORY_VERSION_CODE: ${{ github.run_number }}
+          EXPO_PUBLIC_SITE: ${{ inputs.site }}
           MBOS_KEYSTORE_STORE_PASSWORD: ${{ secrets.MBOS_KEYSTORE_STORE_PASSWORD }}
           MBOS_KEYSTORE_KEY_PASSWORD: ${{ secrets.MBOS_KEYSTORE_KEY_PASSWORD }}
           MBOS_KEYSTORE_KEY_ALIAS: ${{ secrets.MBOS_KEYSTORE_KEY_ALIAS }}
@@ -73,41 +86,49 @@ jobs:
             echo "::error::The release key's secrets are not set; a debug-signed APK could never be updated in place."
             exit 1
           fi
-          gradle assembleRelease --no-daemon
+          npx expo prebuild --platform android --no-install
+
+      # The MBOS build ran out of heap at Gradle's defaults; same project shape.
+      - name: Give Gradle enough memory to finish
+        working-directory: factory-mobile/android
+        run: |
+          {
+            echo ""
+            echo "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m -XX:+HeapDumpOnOutOfMemoryError"
+            echo "kotlin.daemon.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=768m"
+          } >> gradle.properties
+
+      - name: Build the release APK
+        working-directory: factory-mobile/android
+        env:
+          EXPO_PUBLIC_SITE: ${{ inputs.site }}
+        run: ./gradlew assembleRelease --no-daemon
 
       # The same proof MBOS's release makes: the signature is the release key,
-      # never a debug fallback — and its SHA-256 is what asset links vouches for.
-      - name: Check the signature and write asset links
-        id: sig
+      # never a debug fallback.
+      - name: Check the signature
         env:
           STORE_PASSWORD: ${{ secrets.MBOS_KEYSTORE_STORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.MBOS_KEYSTORE_KEY_ALIAS }}
         run: |
-          APK=factory-android/app/build/outputs/apk/release/app-release.apk
+          APK=factory-mobile/android/app/build/outputs/apk/release/app-release.apk
           test -f "$APK" || { echo "::error::No APK at $APK"; exit 1; }
           APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1)
           norm() { tr -d ': ' | tr '[:upper:]' '[:lower:]'; }
           ACTUAL=$("$APKSIGNER" verify --print-certs "$APK" | grep -m1 -i "certificate SHA-256 digest" | awk '{print $NF}' | norm)
-          EXPECTED_RAW=$(keytool -list -v -keystore mbos-app/keystore/mbos-release.keystore -storepass "$STORE_PASSWORD" -alias "$KEY_ALIAS" 2>/dev/null | grep -m1 "SHA256:" | awk '{print $NF}')
-          EXPECTED=$(echo "$EXPECTED_RAW" | norm)
+          EXPECTED=$(keytool -list -v -keystore mbos-app/keystore/mbos-release.keystore -storepass "$STORE_PASSWORD" -alias "$KEY_ALIAS" 2>/dev/null | grep -m1 "SHA256:" | awk '{print $NF}' | norm)
           echo "APK signed by:  ${ACTUAL:-<none>}"
           echo "Keystore holds: ${EXPECTED:-<none>}"
           if [ -z "$ACTUAL" ] || [ "$ACTUAL" != "$EXPECTED" ]; then
             echo "::error::This APK is not signed with the release key. Do not publish it."
             exit 1
           fi
-          # Asset links wants the colon-separated uppercase form keytool prints.
-          printf '[{"relation":["delegate_permission/common.handle_all_urls"],"target":{"namespace":"android_app","package_name":"in.mahek.factory","sha256_cert_fingerprints":["%s"]}}]\n' \
-            "$(echo "$EXPECTED_RAW" | tr '[:lower:]' '[:upper:]')" > factory-assetlinks.json
-          cat factory-assetlinks.json
           ls -lh "$APK"
 
       - uses: actions/upload-artifact@v4
         with:
           name: factory-apk
-          path: |
-            factory-android/app/build/outputs/apk/release/app-release.apk
-            factory-assetlinks.json
+          path: factory-mobile/android/app/build/outputs/apk/release/app-release.apk
           retention-days: 30
 
       # The droplet is what /downloads serves (Caddy's handle_path). Written to
@@ -126,36 +147,34 @@ jobs:
           mkdir -p ~/.ssh
           echo "${KEY}" > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519
           echo "${HOSTS}" > ~/.ssh/known_hosts
-          APK=factory-android/app/build/outputs/apk/release/app-release.apk
+          APK=factory-mobile/android/app/build/outputs/apk/release/app-release.apk
+          CODE=$((100 + ${{ github.run_number }}))
           printf '{"version":"%s","versionCode":%s,"url":"%s/downloads/factory.apk"}\n' \
-            "${{ inputs.version }}" "${{ github.run_number }}" "${{ inputs.site }}" > factory.json
+            "${{ inputs.version }}" "$CODE" "${{ inputs.site }}" > factory.json
           ssh -o BatchMode=yes "deploy@${HOST}" 'mkdir -p /opt/mahekone/downloads'
           scp -o BatchMode=yes "$APK" "deploy@${HOST}:/opt/mahekone/downloads/.factory.apk.incoming"
-          scp -o BatchMode=yes factory-assetlinks.json "deploy@${HOST}:/opt/mahekone/downloads/.factory-assetlinks.json.incoming"
           scp -o BatchMode=yes factory.json "deploy@${HOST}:/opt/mahekone/downloads/.factory.json.incoming"
           ssh -o BatchMode=yes "deploy@${HOST}" '
             cd /opt/mahekone/downloads &&
             mv .factory.apk.incoming factory.apk &&
-            mv .factory-assetlinks.json.incoming factory-assetlinks.json &&
             mv .factory.json.incoming factory.json &&
-            ls -l factory.apk factory-assetlinks.json factory.json'
+            ls -l factory.apk factory.json'
 
       - name: Check the live download is this build
         if: ${{ inputs.publish }}
         run: |
-          APK=factory-android/app/build/outputs/apk/release/app-release.apk
+          APK=factory-mobile/android/app/build/outputs/apk/release/app-release.apk
           BUILT=$(sha256sum "$APK" | cut -d' ' -f1)
           LIVE=$(curl -fsSL "${{ inputs.site }}/downloads/factory.apk" | sha256sum | cut -d' ' -f1)
           [ "$BUILT" = "$LIVE" ] || { echo "::error::${{ inputs.site }}/downloads/factory.apk is not this build."; exit 1; }
           echo "Live download matches this build ($BUILT)."
-          curl -fsS "${{ inputs.site }}/.well-known/assetlinks.json" || echo "::warning::/.well-known/assetlinks.json is not answering yet — the app opens with a browser bar until it does."
 
       - name: Say what happened
         run: |
           {
-            echo "### Factory app ${{ inputs.version }} (code ${{ github.run_number }})"
+            echo "### Factory app ${{ inputs.version }} (code $((100 + ${{ github.run_number }})))"
             echo ""
-            echo "- Opens \`${{ inputs.site }}/factory\`, signed with the MBOS release key."
+            echo "- Native app, talks to \`${{ inputs.site }}\`, signed with the MBOS release key."
             if [ "${{ inputs.publish }}" = "true" ]; then
               echo "- Serving at \`${{ inputs.site }}/downloads/factory.apk\` and offered on \`/download?team=erp\`."
             else

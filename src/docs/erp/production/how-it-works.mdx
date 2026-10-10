@@ -1,0 +1,120 @@
+Production in the ERP is three documents — the SFG batch, the FG fill and the packing batch — each of which **consumes** stock from the stage before and **posts** stock into its own. The rules below exist so that no litre is spent twice, no lot goes into a can before quality has passed it, every box can be traced back to the lots in it, and every lot carries a cost that includes what it took to make.
+
+## Every step consumes the one before, at the same godown
+
+<Rule title="Consumption is read from the document, never written">
+A batch line's total use comes out of its raw-material lot; a fill's litres come out of its SFG lot; a packing line's cans come out of its FG lot. Nothing writes a "minus" entry: the stock screens read consumption straight from these documents, so editing one moves the stock with it. See [Stock](/docs/erp/stock/how-it-works).
+</Rule>
+
+<Rule title="Two people cannot spend the last litre">
+Each consuming save locks the lot at that godown, reads its stock inside the same save, and refuses in the source's words. Two lines of one save that draw on the same lot are counted together: the second may use only what the first left.
+</Rule>
+
+<Rule title="Each document posts its own stock, once">
+An SFG batch line posts its yield to SFG stock; a fill posts its cans to FG stock; a packing batch posts its boxes when it is complete. The entry follows its document through every edit.
+</Rule>
+
+## SFG batches
+
+| Figure | How |
+|---|---|
+| Total use | batches × quantity per batch, taken from the raw-material lot |
+| Available SFG (yield) | total use − litres adjusted (loss), posted to SFG stock |
+| SFG lot code | the SFG number and the **first** line's raw-material lot; later lines copy it |
+| SFG rate | Σ (lot's landed litre rate × total use) ÷ Σ total use — blank if any line's raw-material lot has no rate |
+
+<Callout kind="why" title="Why a missing rate blanks the SFG rate">
+An average over only the lines that happen to have a rate would be a lower number wearing the same name. A blank rate is honest; a believable wrong one is not.
+</Callout>
+
+Cans are never consumed by a batch, and litres adjusted may not exceed the line's use. A line can be edited, but never shrunk below what has already been filled or moved out of its SFG lot.
+
+### Recipes
+
+<Rule title="A recipe is expected, never a gate">
+A recipe lists, in litres, what one batch of an SFG product takes. Picking the product on a new batch lays out its lines (the lots are still the person's to pick); "Start a batch" from Recipes does the same. A batch that used a raw material more than <Setting k="erp.production.recipeTolerancePercent" />% above the recipe × its batches is flagged **Above the recipe**. Nothing is refused: a batch can genuinely need more.
+</Rule>
+
+A recipe is always in litres — even for a raw material bought in kilograms — because it is compared against batch lines, which are litres. Writing a recipe is a production decision, so it needs the ERP's **manager** level; reading it needs only the screen.
+
+## SFG QC
+
+<Rule title="An SFG lot is filled only once QC approves it">
+A lot with no QC decision is **Pending**. FG filling offers approved lots only, and the save refuses any other. Deciding needs the **Approve or reject SFG QC** power; a reject needs a reason. Rejecting an approved lot stops further filling; what was already filled stays where it is, traceable to the lot that failed.
+</Rule>
+
+The verdict is kept against the **lot code**, so a transfer of the lot to another godown carries it. An SFG lot is in SFG stock from the moment the batch is saved — QC decides whether it may be **filled**, not whether it exists.
+
+## FG filling
+
+| Figure | How |
+|---|---|
+| Use (litres) | can size × cans, taken from the SFG lot |
+| FG cans available | cans − cans adjusted (lost), posted to FG stock |
+| FG lot code | "FG", the FG number, the godown's first two letters |
+| Packing type | the can-use item's type: Can or Drum; none chosen is a **Naket** fill |
+| FG costing | SFG rate × litres used + cans × the packing item's price (nothing for Naket) |
+| Rate | per can for a can fill, per litre for a drum or Naket fill |
+
+<Rule title="The checks speak for themselves">
+"Minus Quantity Not Allowed" for no cans; "Low SFG Stock" when the lot does not hold the litres; "Low Packing Quantity" when there are no cans or drums of the packing item — each failed check says its own thing.
+</Rule>
+
+The cans a fill uses come out of the can item's stock at that godown, **oldest lot first**, because the fill does not name a can lot. Correcting cans adjusted is refused if it would take back cans already packed or moved, and it trims any loose-can labels the lot can no longer carry.
+
+## Packing batches
+
+<Rule title="A batch posts only when its cans match its boxes">
+Every line draws cans towards boxes × cans per box. Until the lines draw exactly that, the batch posts nothing to packing stock; the moment they do, it posts its boxes once, and **every box gets its own id**. If an edit un-completes it, the posting is taken back and the box ids are cancelled — never deleted — and a re-completion restores the same ids, whose labels may already be on the boxes.
+</Rule>
+
+<Rule title="The empty boxes have to be there">
+On a batch's first line, its empty boxes (boxes × empty boxes per box, of the SKU's box type) must be at the godown: "Low Box Quantity · … needed, … at …". Mahek Plus never checked, so a batch could be packed into boxes nobody had bought. A box type that names no raw material is not counted anywhere, so it is not refused either.
+</Rule>
+
+| Figure | How |
+|---|---|
+| Batch number | "FP", the batch serial, the godown's first two letters |
+| Total cans | boxes × cans per box |
+| Line costing | its cans × their FG lot's per-can rate + a share of the batch's box cost by cans, so a two-line batch pays for its boxes once |
+
+A line may not draw more cans than its FG lot holds ("Low Stock"), nor more than the batch still needs ("You Cant Select More Than … Can"). Cans that leave an FG lot into a box take any loose-can labels the lot can no longer carry with them.
+
+## Where production costs come from
+
+<Flow caption="How cost flows through the stages" chart={`
+flowchart TD
+  P["Purchase rate + share of the PR's transport and other cost<br/>(landed rate)"] --> RMR["Raw-material litre rate"]
+  RMR --> SR["SFG rate = weighted average over the batch's lines"]
+  SR --> FC["FG costing = SFG rate × litres + cans × packing price"]
+  FC --> PC["Packing costing = cans × FG per-can rate + share of box cost"]
+  PC --> M["Margin on an order line<br/>(cost and margin power)"]
+`} />
+
+Every cost figure on these screens is visible only with the **cost and margin** power, and is withheld on the server for everybody else.
+
+## Deleting
+
+Deleting a posted SFG line, a filling or a packing line is an **ERP administrator's** act.
+
+- An **SFG line** or a **filling** goes; its stock entry stays in the stage's log, flagged as orphaned, and the dashboard counts "Orphaned inventory entries" until somebody deals with it.
+- A **packing line** un-completes its batch: the batch's boxes leave packing stock and their ids are cancelled. It is refused once boxes of the batch have moved on.
+
+## Who can do what
+
+| Act | Needs |
+|---|---|
+| Make SFG batches, fills, packing batches | The screen |
+| Approve or reject SFG QC | Approve or reject SFG QC |
+| Set, change, remove a recipe line | ERP manager level (or administrator) |
+| Delete a posted line | ERP administrator |
+| See rates, costing, stock value | See cost and margin |
+
+## Settings
+
+<SettingsTable keys={["erp.production.recipeTolerancePercent"]} />
+
+## Where the code and the intent disagree today
+
+- Deleting a posted SFG line or filling gives its **input** back (the raw material, the SFG) while its **output** entry stays in stock, flagged as orphaned — so until somebody corrects it, the deleted document's stock is counted in both stages. The stated rule is that deleting a consuming document gives the stock back on its own.
+- Filling into **drums** does not reduce any drum stock: drum availability is counted company-wide as drums bought on chemical purchases less drums sold, and fills are not subtracted.

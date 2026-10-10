@@ -1,0 +1,110 @@
+You can take an order at the counter with no signal. You pick the products and the number of **cans**, the app shows litres and boxes, checks the customer's credit, and saves it. Accounts then approve or decline it, and you are told either way.
+
+## The screen at a glance
+
+<Wireframe url="MBOS · Order" caption="Taking an order inside a visit">
+  <WfTitle sub="Billed to Customer A · Deliver to Customer A">ORDER FOR THIS VISIT</WfTitle>
+  <Hotspot n={1} />
+  <WfCard title="Their usual products">
+    <WfBar><WfPill>Nano Thinner – 20 Liter (Loose)</WfPill><WfPill>PU Sealer – 4 Liter (4 Can/Box)</WfPill><Hotspot n={2} /></WfBar>
+  </WfCard>
+  <WfInput placeholder="Search product, pack size or code…" wide />
+  <WfTable columns={["Product", "Cans", ""]} rows={[["Nano Thinner – 20 Liter (Loose)", "6", "120 L"], ["PU Sealer – 4 Liter (4 Can/Box)", "8", "2 boxes · 32 L"]]} />
+  <Hotspot n={3} />
+  <WfCard title="Credit"><WfText>Within the credit limit.</WfText><Hotspot n={4} /></WfCard>
+  <WfButton primary>Submit order</WfButton><Hotspot n={5} />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Who is billed and where it goes.</b> Usually the same shop. For a shop we deliver to and bill someone else for, the bill goes to that account.</span>,
+  <span key="2"><b>Their usual products.</b> What this shop buys most, or our best sellers for a new shop. Tap to add.</span>,
+  <span key="3"><b>The lines.</b> Quantities are always in cans. Litres and boxes are worked out for you.</span>,
+  <span key="4"><b>The credit check.</b> Whether the order fits the customer's credit, worked out from what they owe.</span>,
+  <span key="5"><b>Submit.</b> Reads <i>Send for approval</i> when the order is over the credit limit.</span>,
+]} />
+
+## Taking an order
+
+<Steps>
+<Step title="Start it">
+Inside a visit, pick **Order** and press **Take order**. Or press **+ → Punch order**, or **New order** on a customer's record.
+</Step>
+<Step title="Check who gets the bill">
+For a third-party shop, the bill goes to the account that serves it — the screen says *The office bills this shop to …*. You can change it if the customer asks.
+</Step>
+<Step title="Add products">
+Tap a usual product, or search by name, pack size or code. Set the number of cans on each line.
+</Step>
+<Step title="Read the credit line">
+See the table below for what it says and what happens.
+</Step>
+<Step title="Submit">
+The order is saved on the phone. *Order saved · sending to the office now* or *will send when you have signal*.
+</Step>
+</Steps>
+
+### The credit check
+
+| You see | What happens |
+|---|---|
+| *Within the credit limit.* | Submit. Accounts approve it as usual. |
+| *A little over the credit limit, but within the allowed extra.* | Submit. No extra approval needed. |
+| *This is over the credit limit. Your manager must approve it before it is sent.* | The button reads **Send for approval**. Tell the customer the order is subject to approval. |
+| *This is far over the credit limit. A senior must approve it before it is sent.* | The same, but a senior decides. |
+| *This customer is credit-blocked.* | You cannot take the order. Accounts must remove the block first. |
+| *No credit limit on file for this customer.* | The order goes; the limit could not be checked. |
+| *This order has no price yet.* | The order goes; the office prices it. |
+
+<Callout kind="note">
+The phone checks credit with what it last heard. The office checks again with today's figures when the order arrives — and may refuse it if the customer's balance has changed.
+</Callout>
+
+## After you submit
+
+| Status | Means |
+|---|---|
+| **Not sent** | Still on your phone. It goes when there is signal. |
+| **Pending approval** | Accounts have it and are checking. |
+| **Approved** | Accounts accepted it. |
+| **Declined** | Accounts refused it. You get a notification with their reason — you will need to ring the customer. |
+| **Dispatched / In transit / Delivered** | Where the goods are. |
+
+See your orders under **More → Orders**.
+
+### Changing an order
+
+Until accounts decide it, open the order and **edit** it — change quantities or take a line off. Once accounts have decided, press **Send change request to accounts** and **say why it needs to change**. Accounts decide.
+
+### When the office does not accept an order
+
+It appears under **More → Not accepted** with the reason. The common ones:
+
+| Reason starts with | What to do |
+|---|---|
+| *… is credit-blocked* | Ring accounts before promising anything. |
+| *… is now ₹… a can on the … list, not the ₹… quoted* | The price changed. Confirm the new rate with the shop and take the order again. |
+| *… owed ₹… on your handset but owes ₹… today* | The balance changed since you last synced. Sync, check with them, try again. |
+| *… would take them past their ₹… limit* | Collect against old bills, or ask accounts to raise the limit. |
+| *This order has already been recorded* | Nothing to do — it is in. |
+
+## Products and prices
+
+**More → Product catalogue** lists everything we sell, on your phone, with pack sizes. Prices shown are the customer's own price list where the office uses price lists. Every SKU is a pack and a packing — "5 Liter (6 Can/Box)" and "5 Liter (Loose)" are two different things to order.
+
+## A lead that orders
+
+You can take an order from a lead. The lead becomes a customer when it places its **second** order.
+
+## Questions people ask
+
+<Faq q="Why cans and not litres?">
+Cans are what the customer counts and says. The app works out litres and boxes from the pack.
+</Faq>
+
+<Faq q="Where do I mark that the goods arrived?">
+Not on the phone yet. The office records delivery.
+</Faq>
+
+<Faq q="The order total says the office has not turned on order value yet.">
+The office has not chosen where prices come from. The order is still taken; accounts value it.
+</Faq>

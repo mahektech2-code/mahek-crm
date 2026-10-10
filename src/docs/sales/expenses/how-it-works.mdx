@@ -1,0 +1,111 @@
+A salesman spends money to do his job — fuel, fares, meals, a hotel. The company pays it back according to an **expense policy**: a written set of rules that says what each kind of spending is worth. MahekOne prices every day with that policy, automatically pays what the work log proves, sends everything he logged himself to his manager, and flags anything worth a second look. It **never refuses to record** an expense: the money is already spent, and a system that refuses to record it has not saved the money — it has only made sure nobody finds out.
+
+## Two kinds of money
+
+<Rule title="Allowances are automatic">
+The **meal allowance** is worked out from his punch-in and punch-out times; the **kilometre allowance** for his own bike or car from the trips he records (see [Travel ledger](/docs/sales/travel/how-it-works)). Both are recalculated every time a record of the day reaches the office, and need nobody's approval — they are his by the work log.
+</Rule>
+
+<Rule title="Expenses he logs are decided one at a time">
+A hotel, a meal bill, a fare, local transport or anything else is its own line, with its own approval raised in his name the moment it arrives. His manager approves it, approves part of it, or refuses it with a reason.
+</Rule>
+
+<Callout kind="why" title="There is no 'send the day' any more">
+A day used to be priced, locked and sent to the manager only when the salesman pressed *Send day* — and almost nobody did, so a fortnight of claims sat on the server on no screen anybody decided from. An older phone that still has the button is accepted; pressing it only refreshes the day.
+</Callout>
+
+## How a day is priced
+
+<Flow caption="Every time a record of the day arrives" chart={`
+flowchart TD
+  A["A punch, a trip or an expense<br/>reaches the office"] --> B["Away from his hometown today?<br/>from where the day actually went"]
+  B --> C["Who he is under the policy:<br/>his grade, the city's class"]
+  C --> D["Re-measure every trip<br/>(odometer, GPS, typed)"]
+  D --> E["The policy he is on prices the day:<br/>trips, meals, hotel, bills"]
+  E --> F["Allowance lines written<br/>eligible amount on each expense"]
+  F --> G["Flags replaced —<br/>only the ones nobody has answered"]
+`} />
+
+<Rule title="Away from home is decided from the day, not the phone">
+Meals are paid only on a day spent away from where he lives. The phone cannot know where home is and always says yes, so the office decides: an overnight stay, a trip to a named city that is not home, or a shop visited in another town. **With no hometown set, the rule is off for him** — every day reads as he recorded it, rather than every day being read as a day at home.
+</Rule>
+
+<Rule title="Who he is is stamped on the day">
+His grade and the destination city's class decide which rules apply. Once a day is priced they are stamped on it, so a promotion next month does not reprice last month.
+</Rule>
+
+<Rule title="A flag that has been answered is never raised again">
+Each re-pricing replaces only the flags nobody has answered. An answer a manager gave survives the day being priced again.
+</Rule>
+
+## The policy
+
+The policy is **rules, not formulas**. There are thirteen kinds of rule, each with its own form and its own checks:
+
+| Rule | What it says |
+|---|---|
+| **Per kilometre** | A travel mode (own bike, own car) is paid a rate per km, optionally up to a daily cap. |
+| **Actuals** | A mode or category (bus, train, local transport, other) is paid what it cost, up to a cap per trip or per day. |
+| **Zero-rated** | Recorded, never paid — a customer's vehicle, walking. |
+| **Distance source** | Which distance is paid on first (odometer, GPS, typed), and how much disagreement raises a flag. |
+| **Meter photograph** | When a meter photograph is demanded. |
+| **Meal rate** | What breakfast, lunch and dinner are each worth. |
+| **Meal entitlement** | When each meal is earned — away during a window, left before or returned after a time, away from home. |
+| **Meal disqualifier** | Left home after a time, so that meal is not earned. |
+| **Dormitory** | A dormitory morning, paid instead of the meals. |
+| **Lodging** | Hotel limits by grade and city class. |
+| **Proof threshold** | Above this amount a bill is required (or, for travel, a trip the app recorded counts as proof). |
+| **Approval route** | Who decides, and when a day is escalated. |
+| **Exception bands** | What counts as abnormal — kilometres in a day, spend against his own and the team's usual day. |
+
+Each rule can be narrowed to a **grade** and a **city class**; the most specific matching rule wins, and a grade match outranks a city match.
+
+<Callout kind="why">
+A formula the admin types is a second programming language inside MahekOne — unreviewable, untestable, and one stray character from paying a whole team nothing. A closed list of rule kinds is the trade. Nothing in the code holds a rate; every figure arrives inside the policy, which is what lets the same calculation run on a phone with no signal and in the office an hour later and produce the same rupee.
+</Callout>
+
+### Named policies
+
+The company can keep **several named policies**. The **standard** policy is the one everybody is on unless they are put on another; it starts from the figures in the company's issued policy document, including its written guidelines ("Bills or travel logs must be submitted with every claim…"). A named policy can be duplicated, edited, deactivated or reset to the shipped figures, and every save keeps a revision. A person is moved onto a named policy in the Admin Console; an inactive policy falls back to standard.
+
+The Sales Dashboard's **Expense policy** page shows any active policy in plain words, built from the same rules the calculation uses — so what a manager reads to a salesman is what the system paid.
+
+## Flags
+
+| Flag | Severity | Raised when |
+|---|---|---|
+| Missing proof | Missing a bill | A claim above the proof threshold has no bill. |
+| Over a cap | To check | A claim exceeds the limit for its kind. |
+| Over the daily km ceiling | To check | More kilometres in a day than the policy calls normal. |
+| GPS and odometer disagree | To check | Beyond the policy's variance. |
+| Typed distance disagrees | To check | A hand-typed distance against what was measured. |
+| Unpriced mode / unpriced hotel | To check | The policy names no rate — so nothing is paid, and the flag is the only thing saying so. |
+| Possible duplicate | Missing a bill / to check / note | A bill that looks like one already claimed — by number, amount, date. |
+
+Answering a flag — **Allow**, **Corrected** or **Refuse** — always needs a sentence.
+
+## Who can do what
+
+| Action | Needs |
+|---|---|
+| See Expenses and the Ledger | **Expenses** module |
+| Decide an expense | Expenses (or Approvals), a manager's level, not your own, inside your team |
+| Add an expense for a salesman | Expenses, a manager's level, inside your team |
+| Record or void a payment to a salesman | Expenses, a manager's level, inside your team |
+| See Flagged expenses | **Flagged expenses** module |
+| Answer a flag | The `order.approve` capability (see below) |
+| Read the policy | **Expense policy** module |
+| Edit policies, assign people, set hometowns | `expense.policy.write`, in the Admin Console |
+
+## Settings that change this
+
+<SettingsTable keys={["expenses.duplicateWindowDays", "expenses.anomalyLookbackDays", "expenses.anomalyMinHistoryDays", "expenses.gpsMinCoveragePct", "expenses.gpsRoadFactorBps", "expenses.odometerPhotoRandomPct", "expenses.trendMonths"]} />
+
+## Where the code and the intent disagree today
+
+- **Answering a flag needs the accounts desk's approval capability.** The Flagged expenses screen draws Allow / Corrected / Refuse for anybody who can open it, but the action requires `order.approve` — which a sales manager normally does not hold — so his answer is refused.
+- **"Refused. The salesman is told."** The confirmation says so, but answering a flag sends no notification.
+- **Flagged expenses is not narrowed to a manager's team** — every open flag in the company is listed.
+- **The approval route rule is calculated and not acted on.** Auto-approval under an amount and escalation to the owner are worked out with each day but nothing applies them; every logged expense waits for a person.
+- **A "handset disagreed" flag is declared and never raised.** The phone and the office pricing a day differently is meant to be recorded rather than silently resolved in the office's favour; nothing raises it today.
+- **The empty Flagged expenses state says "a day is flagged when it is sent"** — days are no longer sent; flags are raised as records arrive.

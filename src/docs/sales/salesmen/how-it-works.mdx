@@ -1,0 +1,95 @@
+The field team is **whoever holds the Salesman App** — there is no separate list of salesmen to keep. Holding the app is what lets a person sign in to an MBOS handset, so it is what puts them on this screen, on Attendance, on Leave and everywhere else a manager reads the field. This page explains three things the screen controls or reports: **who a manager sees**, **where a salesman works**, and **whether his phone is healthy**.
+
+## Who a manager sees
+
+<Rule title="A manager sees his team; his team is decided by regions">
+Every list on the Sales Dashboard is narrowed by the same rule:
+
+- An **associate** given the dashboard sees only himself.
+- A **manager** with regions allocated (the *Managers* section on this screen) sees the salesmen whose books lie in those regions — plus any salesman nobody has given a book yet, so a new phone is never invisible to everybody.
+- A **manager with no regions** is national — the widest scope there is.
+- A **platform administrator** is national.
+</Rule>
+
+<Callout kind="why">
+The narrowing is resolved inside every read rather than passed in, because a filter a screen can forget to pass is a filter that leaks — silently, showing a regional manager the whole country. And it reads the person's level first: "no regions means national" is a rule about managers, and applied to everybody it once let a salesman given the dashboard open any colleague's trail and check-in photograph.
+</Callout>
+
+## Where a salesman works
+
+<Rule title="A territory narrows a book. It is not a permission.">
+A salesman sees **his own** customers and leads — the ones whose salesperson he is. His allocated places can only remove shops from that, never add another salesman's. The two are easy to confuse; the territory is not the security boundary.
+</Rule>
+
+<Rule title="No area means no book">
+A salesman with nothing allocated sees **no customers** on his handset. Managers and administrators are exempt.
+</Rule>
+
+<Callout kind="why" title="A reversal, and what pays for it">
+No area used to mean no narrowing — every shop he could see. That is safe against forgetting the ninth person, but an unallocated salesman then carried the whole book on one phone. The cost of the reversal is that an empty phone looks like a broken sync, so the emptiness is **named at both ends**: this screen's red banner counts the handsets with no area, and his phone says "no area set for you yet".
+</Callout>
+
+<Rule title="A territory is a hierarchy, and the narrowest pick wins">
+Places nest — a city in a state, a beat in a city. Down one branch, picks combine as AND: Maharashtra plus Pune inside it means **Pune**. Across branches they combine as OR: Pune plus Nashik is both. The office keeps only the leaves of what you picked, so "Maharashtra, Pune" can never quietly hand him the whole state.
+</Rule>
+
+<Rule title="Shops that leave his area leave his phone">
+A sync says what exists; only a removal notice says what stopped. Changing where he works sends removal notices for the shops that left **his own** book, so a salesman moved from one state to another does not walk to a shop that is no longer his.
+</Rule>
+
+The place tree is built from the cities the book actually holds, with a shop count on every node, biggest first — so the city somebody means is near the top of what is otherwise a long tail of addresses.
+
+## Hometown
+
+A salesman's **hometown** decides when meals are paid: only on days spent away from it (see [Expenses](/docs/sales/expenses/how-it-works)). With no hometown set the rule is off for him and every day reads as he recorded it — the screen counts the people with none so it gets filled in.
+
+## Handsets
+
+<Rule title="One phone per person">
+With <Setting k="mbos.devices.onePerPerson" /> on, an account is bound to one handset. A new phone cannot sign in until the old binding is **released**, and releasing asks for a reason, because whoever holds the old phone could otherwise bind it again.
+</Rule>
+
+Credentials are a separate matter. Sending a password-reset link and signing somebody out everywhere are **platform administrator** acts — handing out credentials is an account decision, not a sales one — so those menu items are not drawn for anybody else.
+
+### Handset health
+
+Why a phone is not reporting is put into words by one rule set, shown on the [Live map](/docs/sales/live-map)'s team list:
+
+<Rule title="Four problems used to wear one sentence">
+"No fix today" covered location switched off on the phone, permission set to *while using the app*, no signal since breakfast, and a flat battery. Three of those somebody can act on, and they were drawn identically — so a manager rang the salesman and asked him to describe his settings screen. Each is now its own line, with what to do about it on hover.
+</Rule>
+
+<Rule title="The permission is the phone's own answer">
+The handset reports its location permission in the operating system's own four words — always, while using the app, refused, not yet asked. Older builds send only a yes/no for background tracking, and the office still reads that: its *no* is shown as "background location off — trail has real gaps", which says the trail has gaps without inventing why.
+</Rule>
+
+<Rule title="There is no live battery reading">
+A phone speaks only when it syncs, so every figure is "at last contact": *Battery 8% — read 12 min ago*. A bare 8% would read as now, and send somebody ringing a salesman whose phone charged overnight. The battery is reported only inside a working day, with the trail — a phone still reporting after check-out would be a beacon on somebody's evening.
+</Rule>
+
+<Rule title="Nothing claims somebody's internet is off">
+A phone with no connection cannot report having no connection. **Silence** carries it: *Not heard from for …*, measured from the last time the phone reached the office, which now moves on every batch of positions rather than only at sign-in.
+</Rule>
+
+A healthy phone says **nothing** — a row of four green facts would make the one line that matters read as furniture. The thresholds for saying something:
+
+<SettingsTable keys={["mbos.location.handsetQuietMinutes", "mbos.location.noTrailMinutes", "mbos.location.lowBatteryPercent", "mbos.sync.currentAppVersion", "mbos.devices.onePerPerson"]} />
+
+## The salesman record
+
+The record collects one person's work from every MBOS table — visits, orders, money, attendance, leave, expenses, samples, leads, tasks — and shows this month's figures beside last month's, taken from the **same calculation** as the Performance screen so a person's record and the team list cannot disagree. The **Day check** tab is one day at a time, photograph by photograph: it answers "do I believe what he sent me on Tuesday", a different question from the month-long lists beside it.
+
+## Who can do what
+
+| Action | Needs |
+|---|---|
+| See the team and records | **Salesmen** module (narrowed to your team) |
+| Set where somebody works, or a manager's regions | Salesmen or Territory, at a manager's level |
+| Set a hometown | Salesmen, at a manager's level |
+| Release a handset | Salesmen, at a manager's level, with a reason |
+| Password reset, end sessions | Platform administrator |
+
+## Where the code and the intent disagree today
+
+- **There is no salary view on this screen in this build.** AGENTS.md describes the Sales Dashboard reading salary from the HRMS mirror; no salary page or tab exists under `/sales` here.
+- **Handset health is not on the salesman record.** The record shows only "last synced"; the health lines live on the Live map's team list.

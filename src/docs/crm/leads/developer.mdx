@@ -1,0 +1,196 @@
+Lead Management is **one workspace mounted twice**. The screens live in `src/components/leads/pages/*` and take a `workspace` prop (`"crm"` or `"sales"`); the CRM routes under `src/app/crm/leads/**` are thin files that pass `workspace="crm"`. The rules live in two pure engines — the **ladder** (what comes next) and the **gates** (may we) — and every stage move goes through one service function that writes an append-only transition row. Every block below is cut from the source this deployment was built from.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Workspace list | `src/lib/lead-workspace.ts` | `LEAD_SECTIONS` — every lead module, its tabs and relative paths; `leadHref`, `leadModuleKey` |
+| Routes (CRM) | `src/app/crm/leads/**/page.tsx` | One line each: `<Body workspace="crm" />` |
+| Route guard | `src/app/crm/leads/layout.tsx` | `requireUser` only — **each module folder guards itself**, so holding Qualification without All Leads still works |
+| Screens | `src/components/leads/pages/leads.tsx`, `leads-board.tsx`, `leads-dashboard.tsx`, `leads-record.tsx`, `leads-record-transitions.tsx` | The book, the board, the seven queues, the record and its stage history |
+| Engine (pure) | `src/lib/engines/lead-ladder.ts` | The four ladders, `ladderFor`, `nextStage`, `directionOf`, `bandOf`, `promotesToCustomerAt` |
+| Engine (pure) | `src/lib/engines/lead-gates.ts` | `conditionsToEnter`, `gateTo`, `gateForNext`, `checklistFor`, `mustDecideSuspect` |
+| Vocabulary | `src/lib/lead-labels.ts` | `LeadStage`, `LeadSalesType`, every rung's words, the coded reason lists (defaults for the `leads.*Reasons` settings) |
+| Service | `src/lib/services/lead-service.ts` | `leadGateInput`, `evaluateLeadStageMove`, `applyLeadStageMove`, `leadTransitions` |
+| Conversion | `src/lib/services/lead-conversion-service.ts` | `hasOrderedBefore`, `conversionColumns`, `convertLeadOnSecondOrder`, `convertIfNowQualified` |
+| Actions | `src/lib/actions/leads.ts` | `advanceLeadStage`, `bulkAdvanceLeadStage`, `setLeadSalesType`, `setLeadNextAction`, `decideSuspect` … |
+| Scope | `src/lib/services/sales-service.ts`, `src/lib/services/lead-scope.ts` | `managerScope`, `leadsVisible`, `assertLeadInScope` |
+| Call Log hold | `src/lib/engines/queue.ts` | `funnelHold` — a lead with a sales type is held back from prospecting |
+
+<Callout kind="rule">
+The ladder and gate engines perform **no I/O and read no clock**. The handset compiles the same files so a salesman with no signal sees the same missing list the server would refuse on. Anything that needs configuration or the database — the override switch, reason-code validation, the parked-from rung — is settled in `evaluateLeadStageMove`, never inside the engine.
+</Callout>
+
+## A stage move, end to end
+
+<Flow caption="advanceLeadStage — one lead, one rung" chart={`
+sequenceDiagram
+  autonumber
+  participant UI as Record / bulk bar
+  participant A as actions/leads.ts
+  participant S as lead-service.ts
+  participant G as engines/lead-gates.ts
+  participant DB as Postgres
+  UI->>A: advanceLeadStage(customerId, to, reasonCode?, override?, nextAction?, hold?)
+  A->>A: zod parse, requireCapability("lead.work")
+  A->>S: reachableLead() — assertLeadInScope
+  A->>S: leadGateInput(lead) — counts, sample state, verification, qualification
+  A->>S: evaluateLeadStageMove(lead, gate, to, reason, override, canOverride)
+  S->>G: gateTo(gate, to)
+  G-->>S: open / missing conditions
+  S-->>A: passed · overridden · reverted, or a refusal code
+  A->>S: applyLeadStageMove(decision, expectFrom)
+  S->>DB: ONE transaction — lock the row, INSERT lead_stage_transitions,<br/>UPDATE customers (stage, since, next action, hold, conversion),<br/>cancel tasks on Lost, timeline event, notification, audit_log
+  S-->>A: stage, promoted
+  A-->>UI: "Moved to …" or "… is on the book" 
+`} />
+
+`expectFrom` is the optimistic lock: the row is re-read `for update` and a lead that moved since the screen drew it throws `StageAlreadyMoved` rather than being moved twice.
+
+## The ladders
+
+<Code file="src/lib/engines/lead-ladder.ts" symbol="DIRECT_LADDER" />
+
+<Code file="src/lib/engines/lead-ladder.ts" symbol="ladderFor" />
+
+`LEGACY_LADDER` is what `leadSalesType === null` means. Nothing backfills a sales type; a migration that guessed one would change which gates apply.
+
+### Bands
+
+<Code file="src/lib/engines/lead-ladder.ts" symbol="bandOf" collapsed />
+
+`lead-ladder.test.ts` walks every value of the stage enum through `bandOf`, so a rung added without a band fails the build rather than a report. `on_hold` returns `null` deliberately — count parked leads with `isParked`.
+
+### Where a lead becomes a customer
+
+<Code file="src/lib/engines/lead-ladder.ts" symbol="promotesToCustomerAt" />
+
+The stage move promotes when the destination is at or past this rung. The order paths ask a different question — has the account ordered before — through one function:
+
+<Code file="src/lib/services/lead-conversion-service.ts" symbol="hasOrderedBefore" />
+
+<Code file="src/lib/services/lead-conversion-service.ts" symbol="convertLeadOnSecondOrder" />
+
+| Path | Where it converts |
+|---|---|
+| CRM call with an order | `interaction-service.ts` — spreads `conversionColumns` into the customer update when `hasOrderedBefore` |
+| Accounts approving an order | `order-approval-service.ts` → `convertIfNowQualified`, outside the approval transaction |
+| Handset order | `actions/mbos.ts` → `convertLeadOnSecondOrder` |
+| Stage move | `applyLeadStageMove` — `promoted` sets `kind`, `lead_converted_at`, `sales_am_id`, clears `lead_manager_id` |
+
+## The gates
+
+<Code file="src/lib/engines/lead-gates.ts" symbol="Condition" />
+
+<Code file="src/lib/engines/lead-gates.ts" symbol="PROSPECT_CONDITIONS" collapsed />
+
+<Code file="src/lib/engines/lead-gates.ts" symbol="conditionsToEnter" collapsed />
+
+`gateTo` adds §24's next-action condition to every upward move on a real ladder (not the legacy one, not `won`, and not twice where the destination already asks for it). `lost` is always open — the reason is demanded by the action, not the engine.
+
+<Code file="src/lib/engines/lead-gates.ts" symbol="gateTo" />
+
+<Code file="src/lib/engines/lead-gates.ts" symbol="gateForNext" />
+
+## Deciding a move
+
+<Code file="src/lib/services/lead-service.ts" symbol="LeadMoveRefusalCode" />
+
+<Code file="src/lib/services/lead-service.ts" symbol="evaluateLeadStageMove" collapsed />
+
+The order of its checks matters: not on a funnel → same stage → leaving `on_hold` (judged against `parkedFromRung`) → down (needs `lead.override` and a reason) → off ladder → `lost` (needs a code from `leads.lostReasons`) → `prospect` (needs a code from `leads.prospectReasons`) → gate open → override (needs `leads.allowManagerOverride`, the capability, and a code from `leads.overrideReasons`). `leads.requireNextAction` off lifts **only** the `next_action` condition, by id.
+
+<Code file="src/lib/services/lead-service.ts" symbol="applyLeadStageMove" collapsed />
+
+### The stage history
+
+<DbTable name="lead_stage_transitions" note={{
+  from_stage: "Null for a lead's first placement. For a move out of on_hold, on_hold itself — the parked-from rung is the from_stage of the newest transition INTO on_hold.",
+  sales_type: "The ladder the move was judged on, kept because the lead's sales type can change later.",
+  kind: "passed · overridden · reverted.",
+  reason_code: "A code from the matching leads.*Reasons list — never a label.",
+  overridden_conditions: "Condition ids still missing when a manager passed the gate. Empty on a passed move.",
+  actor_role: "The level of the hat that allowed it.",
+  actor_app: "The app of that hat — crm or sales.",
+}} />
+
+<DbEnum name="lead_transition_kind" />
+
+<Callout kind="warn" title="Append-only">
+Nothing updates or deletes a transition row. A wrong move is corrected by another move. The record's history tab (`leadTransitions`, keyset-paged on `(at, id)`) and the Oversight overrides list both read this table.
+</Callout>
+
+### The lead columns on `customers`
+
+<DbTable name="customers" only={["kind", "lead_sales_type", "lead_stage", "lead_stage_since", "lead_last_activity_date", "lead_next_action", "lead_next_action_date", "lead_next_action_owner_id", "lead_next_action_outcome", "lead_lost_reason", "lead_hold_reason_code", "lead_hold_resume_date", "lead_converted_at"]} note={{
+  lead_sales_type: "Null = the legacy six-rung ladder.",
+  lead_stage: "The rung. on_hold displaces it while parked.",
+  lead_lost_reason: "Holds a code since the funnel; older rows keep their free text and still read.",
+}} />
+
+<DbEnum name="lead_sales_type" />
+
+## Bulk moves
+
+<Code file="src/lib/actions/leads.ts" symbol="bulkAdvanceLeadStage" collapsed />
+
+`LEAD_BULK_CAP` is shared with the screen's *Select all*, so the button and the server cannot disagree about how many. `lib/lead-bulk-stage.ts` (`pickableLostReasons`, `bulkStagePayload`) shapes the bulk bar's request and is unit-tested.
+
+## The Call Log hold
+
+<Code file="src/lib/engines/queue.ts" symbol="funnelHold" />
+
+Suppression is a return value: the lead appears in the held-back strip with this sentence. Only the prospect / order reasons are stripped; reminders, payments and order status still list it.
+
+## Scope and permissions
+
+<CapabilityGrid names={["lead.work", "lead.override", "lead.verify", "lead.trash", "lead.restore"]} />
+
+- Modules: <ModuleRef k="crm.leads" /> guards the book and the record (a `requireModule` call for the workspace's own `leads` module inside the page body). Every other lead module guards its own folder.
+- **Reads** narrow through `leadsVisible(managerScope())`. A telecaller sees their own leads and unowned leads no sales manager holds; managers see unowned leads too; the CRM Sales Manager workspace reads `sales_manager_id` only.
+
+<Code file="src/lib/services/sales-service.ts" symbol="leadsVisible" />
+
+- **Writes** ask `requireCapability("lead.work")` first, then `assertLeadInScope`: if the lead is on your list you may work it, otherwise the CRM's seat check answers.
+
+<Code file="src/lib/services/lead-scope.ts" symbol="assertLeadInScope" />
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/engines/lead-ladder.test.ts` | Every rung has a band; ladders; promotion rung; the Call Log funnel hold |
+| `npm run test` | `src/lib/engines/lead-gates.test.ts` | Every condition per destination; next action; override lists |
+| `npm run test` | `src/lib/engines/lead-funnel-shape.test.ts`, `lead-sales-type-retirement.test.ts` | Ladder shape; distributor no longer offered for new leads |
+| `npm run test` | `src/lib/lead-bulk-stage.test.ts`, `src/lib/lead-workspace.test.ts` | Bulk payload; every section names a real module in both workspaces |
+| `npm run test:integration` | `src/lib/lead-bulk-lost.test.ts`, `lead-resume-hold.test.ts`, `lead-move-to-suspect.test.ts`, `leads-list.test.ts`, `lead-scope.test.ts`, `lead-owner-visibility.test.ts` | Bulk lost, resuming a park, legacy to Suspect, list order and views, scope |
+| `npm run test:integration` | `src/lib/journeys.test.ts` | Second-order conversion through the call save |
+
+## Changing it safely
+
+<Steps>
+<Step title="A new rung goes in the ladder, the enum and the band map together">
+Add it to `LeadStage` and `mbos_lead_stage` (hand-written migration), to the right ladder array, and to `bandOf`. The band test fails until you do.
+</Step>
+<Step title="Its conditions go in conditionsToEnter, keyed by destination">
+Read a stored value, not a tick. Write `says` as an instruction. The handset compiles this file, so no imports beyond `lead-labels` and `lead-ladder`.
+</Step>
+<Step title="Never add a second path that writes lead_stage">
+Every move — record, bulk, handset, calling desk conversion — goes through `evaluateLeadStageMove` + `applyLeadStageMove`. A direct `update customers set lead_stage` skips the gate, the transition row and the timeline.
+</Step>
+<Step title="Reason lists are settings">
+A new coded list is a structured `leads.*` key in `registry.ts` with a `Config` type entry, defaulted from `lead-labels.ts`. Store the code; resolve the label with `labelOf`.
+</Step>
+<Step title="Conversion stays in lead-conversion-service">
+If a new order path appears, call `convertLeadOnSecondOrder` from it. Count orders with `orderCountsSql`, never `status <> 'cancelled'`.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| AGENTS.md "§22" says `kind` flips at the first order; code converts on the second | `AGENTS.md` §22 paragraph; `lead-ladder.ts` `promotesToCustomerAt`; `lead-conversion-service.ts` |
+| Conversion service header names two callers; four paths convert, and the interaction save spreads `conversionColumns` instead of calling the shared function | `lead-conversion-service.ts` header; `interaction-service.ts` order block; `order-approval-service.ts` |
+| `leads.suspectMaxVisits` is retired but still registered and shown | `config/registry.ts` |
+| `advanceLeadStage`'s hand-written parameter type duplicates `advanceSchema`; a field added to one is not added to the other | `actions/leads.ts` `advanceLeadStage` |

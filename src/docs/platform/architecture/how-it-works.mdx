@@ -1,0 +1,237 @@
+MahekOne is Mahek Marketing India's connected workspace: **one sign-in, one database, many apps**. The Telecaller CRM, the Sales Dashboard, Accounts, HRMS, the ERP and the rest are not separate systems that exchange files — they are screens over the same tables, so a customer, an order or a payment is one record that every app reads. The field salesman's phone app (MBOS) is the one exception to "screens on this site": it keeps its own copy of the salesman's book on the handset and syncs with the same database.
+
+This page is the map for the rest of the documentation. It says what the apps are, who works in each, how information gets in, and the handful of rules that every app follows. The [developer tab](/docs/platform/architecture/developer) explains how it is built.
+
+## The big picture
+
+<Flow caption="Everything MahekOne talks to, and where it runs" chart={`
+flowchart TD
+  subgraph People["People"]
+    O["Office staff in a browser<br/>telecallers, accounts, managers, HR, factory"]
+    H["Field salesmen<br/>MBOS app on an Android phone"]
+  end
+  subgraph Outside["Outside sources and services"]
+    GS["Google Sheets workbooks<br/>orders, payments, parties, employees, field activity"]
+    WA["WhatsApp through Wati"]
+    WEB["The public website<br/>enquiries"]
+    SVC["Sign-in codes (MiniMoth), mail (Resend),<br/>maps (Ola), dictation (Sarvam, OpenAI)"]
+  end
+  subgraph Droplet["One DigitalOcean droplet, Bangalore"]
+    C["Caddy<br/>HTTPS, certificates, the APK download"]
+    N["Next.js app<br/>every app's screens and APIs"]
+    P[("Postgres<br/>the one database")]
+    CRON["The droplet's cron<br/>sheet sync, hourly, nightly, backups"]
+  end
+  R2[("Cloudflare R2<br/>encrypted backups,<br/>optionally photographs")]
+  O -- "HTTPS" --> C
+  H -- "sync over HTTPS" --> C
+  WEB -- "forwards enquiries" --> C
+  WA -- "delivery and reply webhooks" --> C
+  C --> N
+  N --> P
+  CRON -- "calls the app's sync endpoints" --> C
+  N -- "reads, never writes" --> GS
+  N -- "sends templates, reads history" --> WA
+  N --> SVC
+  CRON -- "database dumps" --> R2
+  N -. "attachment bytes, when configured" .-> R2
+`} />
+
+Three things about this shape are deliberate:
+
+1. **Only Caddy faces the internet.** The app and the database publish no public port. Postgres is reachable only from the droplet itself, so a leaked database password is not, on its own, a way in.
+2. **The database sits next to the app.** Every query is a loopback on the same machine rather than a round trip to another continent. That is most of why the screens are fast, and why the whole thing costs a few dollars a month.
+3. **Google Sheets are read, never written.** The team still types into its workbooks; MahekOne pulls what they typed on a schedule and publishes it into the database. Nothing MahekOne does can change a cell.
+
+<Callout kind="note">
+MahekOne ran on Vercel with a Neon database until August 2026. Some comments and older notes still talk about "a database in GMT" — that was Neon. The rule it produced (never turn a stored time into a date without naming the zone) still holds; see [The working day](#the-working-day-is-asiakolkata) below.
+</Callout>
+
+## The apps
+
+Every app is an entry in one registry. Granting somebody an app is a row in the database, not a change to the code. Fourteen ids exist today:
+
+| App | Who works in it | What it is for |
+|---|---|---|
+| **Telecaller CRM** | Telecallers and their managers | The daily Call Log, payment follow-up, reminders, customers, leads and the end-of-day report. |
+| **Salesman App** (mobile only) | Field salesmen | MBOS, the Android app. Granting it gives a phone sign-in and **nothing in the browser** — there is no web screen and there never will be. |
+| **Sales Dashboard** | Sales managers and the office end of the field team | The field team's day, the journeys they walk, live location, approvals, targets and expenses. |
+| **Accounts** | The accounts desk | Order approvals, money coming in, the bill ledger, credit notes, outstanding, the sheet import. Formerly called Orders; old `/orders` links still work. |
+| **Attendance and People** (retired) | — | Its work moved into HRMS. The id is kept so old grants still resolve, but nothing draws it. |
+| **Reports** (retired) | — | The owner's figures moved into the Founder Command Centre. Kept for the same reason. |
+| **HRMS** | HR, and every employee for their own check-in and leave | Check in and out, leave, payroll, tasks, performance and the employee master. |
+| **Admin Console** | Platform administrators | Who opens what, settings, credentials, sheets, jobs, handsets, the audit log. |
+| **Founder Command Centre** | The owner and named delegates | Every app's figures on one screen, and what needs the owner today. |
+| **Website Enquiries** | Whoever works enquiries in Sales, Accounts or HR | Enquiries from the website and elsewhere, from first contact to delivery. |
+| **ERP** | The factory and the godowns | Purchase, quality tests, stock, production, packing, orders, dispatch and transport. |
+| **Website** | Whoever edits the public site | Products, pages, gallery and careers content for the public website. |
+| **Hire** | Recruiters, interviewers, HR | Role blueprints, the hiring pipeline, interviews, offers and onboarding — ending in a working MahekOne account. |
+| **Documentation** | Anybody given it | These pages. |
+
+<Rule title="A mobile-only app never becomes a browser tile">
+The Salesman App is a real, grantable app — the Access screen offers it and the phone refuses to sign in without it — but the launcher, the app switcher and the "straight into it" redirect all leave it out. A salesman who holds only the Salesman App and signs in on the web lands on the launcher, which tells him there is nothing for him there.
+</Rule>
+
+<Rule title="A retired app is kept, and hidden">
+Attendance and People and Reports are retired into HRMS and the Founder Command Centre. Their ids stay so that a grant made before the retirement still means something, but no list ever draws them — two tiles for one job is how people end up keeping two records of it.
+</Rule>
+
+## Signing in, and where you land
+
+There is **one sign-in for all of MahekOne**, at `/login`. You can sign in with your **work number or your email** (or the personal mobile number HR holds for you), and either a **password** or a **one-time code** sent to your phone over WhatsApp, with SMS when WhatsApp does not deliver.
+
+Where you land depends on what you can open:
+
+- **One app** (in the browser) — straight into it. A single option is not a choice.
+- **Several** — the launcher at `/apps`.
+- **None** — the launcher, which says so plainly instead of showing a blank screen.
+
+A forgotten password is reset by the person themselves, either with an emailed link or with a code to their phone. Resetting ends every session on the account.
+
+<Callout kind="note">
+A sign-in is also recorded as a row per person per day. That is a **sign-in log, not attendance** — attendance is the check-in in HRMS and on the handset, with its own screens.
+</Callout>
+
+## Who can open what
+
+Access is decided in three layers, each narrower than the last.
+
+<Flow caption="From a person to what they can do on one screen" chart={`
+flowchart TD
+  U["A person"] --> A{"Granted this app?<br/>(one row per person per app)"}
+  A -- "No" --> X["The app is not on their launcher,<br/>and a bookmark to it redirects away"]
+  A -- "Yes" --> M{"Narrowed to some screens?"}
+  M -- "No module rows" --> ALL["Every screen of the app"]
+  M -- "Some ticked" --> SOME["Only the ticked screens<br/>(a bookmark past them redirects)"]
+  ALL --> L["Their LEVEL in this app<br/>associate · manager · admin"]
+  SOME --> L
+  L --> CAP["What they may DO<br/>(capabilities)"]
+  L --> SC["What they may SEE<br/>(scope: own book, team, everybody)"]
+`} />
+
+### An app, then its screens
+
+- **An app is granted to a person**, from Admin Console → Access. The employee must be active in HRMS. Granting from the console can create the MahekOne account in the same step; the account starts unusable and the person sets a password from a single-use link.
+- **Inside an app, screens (modules) can be withheld.** Anything with a place in the app's sidebar or header is a module. **No module rows means every module** — so granting an app opens all of it, and it narrows only once somebody unticks a screen. A few desks (the lead calling desk, for example) are marked "off by default" and are not included in a whole-app grant.
+- **Revoking an app removes its module rows too**, so re-granting it later does not quietly come back narrowed.
+- **Disabling a sign-in is not revoking access.** A disabled account keeps its apps — somebody away for a month comes back to the book they left — but cannot sign in, and every session it had is ended.
+
+### A role is a level; the app is the job
+
+There are **three levels, and the same three in every app**: **associate**, **manager**, **admin**. The level is held *per app*, on the grant.
+
+<Callout kind="why">
+There used to be four roles — telecaller, manager, accounts, admin — which mixed two ideas: two levels of seniority and two job titles borrowed from two particular apps. A field salesman ended up stored as a "telecaller". Now the job comes from the app: **an associate in the CRM is a telecaller; an associate in Accounts is the accounts clerk; an associate on the Salesman App is the field salesman.** One level, three jobs, decided by the grant.
+</Callout>
+
+- **What you may do is the union.** Holding a power under any of your grants is holding it.
+- **What you may see is decided per app.** A person who is a manager on the Sales Dashboard and an associate in the CRM sees their team on the Sales Dashboard and only their own book in the CRM.
+- **The money decisions belong to the Accounts app.** Approving orders, confirming payments, issuing credit notes and moving an account to another salesperson are Accounts powers. A CRM manager cannot approve an order — the person chasing a target must not sign off the orders that hit it.
+- **Admin of an app is admin of that app.** Only Admin on the Admin Console is a platform administrator. An admin of HRMS or the ERP holds that app's manager powers plus whatever that app gives its own administrators — not the whole company.
+- **Two powers that should not meet are named, not refused.** When one person's grants combine roles that normally stay apart (taking an order and approving it, for instance), the Access review page says so in words, and every action carries the grant that allowed it in the audit log.
+
+### Scope: my book or my team
+
+Every list in MahekOne is narrowed by **scope**:
+
+| Level in the app | What a list shows |
+|---|---|
+| Associate | Only their own book. Nothing they choose can widen it. |
+| Manager | Their team — the people who report directly to them, and themselves — by default. They can switch to **My book**. |
+| Admin | Everybody, with the same switch to narrow to their own book. |
+| Anybody in **Accounts** | Every book. The approval queue is nobody's own book. |
+| Anybody in the **Founder Command Centre** | The whole company; delegates are narrowed by which screens they hold, not by whose book. |
+
+*Whose book* a customer is in is one definition used by every list: **a lead belongs to its owner; a customer to its sales account manager**, falling back to the owner only where nobody has set one. A team list says whose each row is, and says **Unassigned** in words.
+
+## How information gets in
+
+<Flow caption="The five ways data reaches the database" chart={`
+flowchart TD
+  T["People typing in the apps<br/>calls, orders, payments, approvals, HR"] --> DB[("Postgres")]
+  H["The MBOS handset<br/>visits, orders, payments, attendance, photos, location"] -- "outbox, then sync" --> DB
+  S["Google Sheets workbooks"] -- "read on a schedule,<br/>staged, then published" --> DB
+  W["WhatsApp (Wati)"] -- "replies and delivery ticks" --> DB
+  E["Website enquiry forms"] -- "forwarded by the website's backend" --> DB
+`} />
+
+### People typing in the apps
+
+Most writes are a person pressing Save on a screen. Each save is checked on the server — whether the person may do it, whether the record is in their scope — however the button was drawn. A save that produces several records (a call that also takes an order and sets a reminder) is **one transaction**: all of it lands, or none of it.
+
+### The MBOS handset
+
+The field salesman works **offline first**. Everything he records — a visit, an order, a payment, a check-in selfie, a photograph of a meter — is written to the phone's own database and queued. When there is signal, the phone sends the queue and pulls back what changed in the office: his customers, products, price lists, tasks, approvals, the configuration. A record is never lost because a market had no signal; it waits in the queue until it can go.
+
+<Callout kind="note">
+The office decides what the phone may hold. A salesman's phone carries only his own book, narrowed to the territory he has been allocated. With no territory allocated, a salesman's phone holds **no** shops — and says so — rather than carrying the whole company's book.
+</Callout>
+
+### Google Sheets
+
+The team's workbooks — the order sheet (Order Details, Payment Status, Taken Order, Sales Party), the employee sheet, and the older field app's shop master and activity log — are read by a Google service account with **read-only** access. Each run lands rows in staging tables first, then a separate step **publishes** them into customers, orders and bills. A run that changes nothing in the sheet writes nothing.
+
+The droplet's cron runs the cycle every half hour, a lighter pass every hour, and a full compare plus every recompute once a night. See [Google Sheets sync and scheduled jobs](/docs/platform/sheets-and-jobs).
+
+<Rule title="The sheet never writes money">
+No sync, by any path, records a payment, sets what was paid on a bill, or changes outstanding. Whether money arrived is for a person to record. A bill imported from the sheet with no payment recorded either way is held out of outstanding and collections until somebody speaks for it.
+</Rule>
+
+<Rule title="The sheet wins every column except a decision somebody made">
+If accounts approved or declined an order, or somebody reassigned an account, the next sync keeps that decision and records the disagreement for review rather than overwriting it.
+</Rule>
+
+### WhatsApp
+
+WhatsApp runs through Wati. Wati reports delivery and replies back to MahekOne; MahekOne sends templates only when the owner has switched sending on. A message a telecaller copies to send by hand counts as sent **only when they confirm it**.
+
+### The public website
+
+Enquiries submitted on the public website are forwarded by the website's own backend to MahekOne, which refuses any request that does not carry the shared secret.
+
+## Rules every app follows
+
+<Rule title="Nothing business-critical is a constant">
+Every threshold a manager might want to change — how many days before a customer counts as inactive, how far a salesman may be from a shop to check in, how long a payment promise buys — is a **setting**, changed from a screen and audited. See [Configuration, settings and secrets](/docs/platform/configuration).
+</Rule>
+
+<Rule title="Derived values are caches, rebuilt — never hand-edited">
+Buying cycles, outstanding balances, follow-up stages, slow-payer flags, last-contact dates and salesman scores are all **worked out from the records underneath**. If one is wrong, the fix is to re-run the rebuild, never to type over the number. The nightly job rebuilds all of them; the important ones are also rebuilt the moment something they depend on changes.
+</Rule>
+
+<Callout kind="why">
+A stored figure that somebody can edit is a figure that can disagree with the orders and payments behind it, and nobody can tell which is right. A figure that is always rebuilt from the records cannot drift.
+</Callout>
+
+<Rule title="Money is paise">
+Every amount is stored as a whole number of paise (₹1 = 100 paise) and only turned into rupees on the way to the screen. Rupees with decimals are never stored, so no amount is ever off by a rounding error.
+</Rule>
+
+<Rule title="The same number comes from the same place">
+A figure on a dashboard and the same figure on its own screen are read by the same function. Two screens never compute "outstanding" or "orders this month" two different ways.
+</Rule>
+
+<Rule title="Suppressed, never silently dropped">
+Where a rule keeps something off a list — a customer held back from the Call Log, a shop with no map pin — the screen says so and says why. An empty screen with no explanation reads as broken.
+</Rule>
+
+### The working day is Asia/Kolkata
+
+Every "today", "this week" and "this month" is the **business date in India**, whatever machine is asking. The day changes at the hour set in <Setting k="workingDay.dayBoundaryHour" /> (0 means midnight), the working week is <Setting k="workingDay.workingDays" />, and the zone itself is <Setting k="workingDay.timezone" />.
+
+<Callout kind="why">
+A server's clock and a database's clock can each be in any zone. A call logged at 1 am IST is 7:30 pm the previous day in GMT, and a report that turned a stored time into a date without naming the zone would have put it on the wrong day. So the zone is always named, and automated tests fail the build on any query or screen that forgets.
+</Callout>
+
+## Keeping it safe
+
+- **Backups**: the database is dumped nightly and three times during the working day, encrypted, and copied to Cloudflare R2; a weekly drill restores the newest copy and compares it. See [Backups and recovery](/docs/platform/backups).
+- **Credentials** for outside services are held separately from ordinary settings and are never shown on a screen beyond their last four characters. See [Configuration, settings and secrets](/docs/platform/configuration).
+- **Every decision is audited** — who did it, under which app and level, and when.
+
+## Where the code and the intent disagree today
+
+- **Admin of an app is no longer admin everywhere**, but some project notes still say "admin holds everything everywhere". The code (`can` in `src/lib/capability-matrix.ts`) gives an app admin that app's manager powers only; only Admin on the Admin Console is a platform administrator. The comment directly above `can` still describes the old behaviour.
+- **The "manager configuration screen" in the CRM is gone.** Older notes place settings in the CRM; `/crm/settings` now permanently redirects to the Admin Console, where every app's settings live (the Sales Dashboard keeps its own screen for the field app's settings).
+- **The time zone is a setting, but the database queries do not read it.** <Setting k="workingDay.timezone" /> decides the business date in the app, while every day window in SQL uses a fixed Asia/Kolkata constant. Changing the setting would make the two disagree.
+- **A manager's team is direct reports only.** Somebody who reports to a person who reports to the manager is not in the manager's team view.

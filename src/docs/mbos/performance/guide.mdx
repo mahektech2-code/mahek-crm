@@ -1,0 +1,68 @@
+**Performance** shows your month against the target the office set for you: rupees, litres, the mix of products, new customers, collection and tasks, and one score out of 100. **Reports** is simpler — a plain count of what you did this month, straight from your phone.
+
+## Your performance
+
+<Wireframe url="MBOS · Performance" caption="Performance, this month">
+<div className="mx-auto max-w-[300px] space-y-3">
+  <WfBar><WfTitle>Performance</WfTitle><WfSpacer /><WfButton>This month ▾</WfButton><Hotspot n={1} /></WfBar>
+  <WfCard title="Score"><WfText>72 out of 100 · Good</WfText><WfText muted>synced 2:00 pm</WfText><Hotspot n={2} /></WfCard>
+  <WfCard>
+    <WfBar><WfText>Revenue excl. GST · 104%</WfText></WfBar>
+    <WfBar><WfText>Litres · 88%</WfText></WfBar>
+    <Hotspot n={3} />
+  </WfCard>
+  <WfCard tone="warn"><WfText>You reached your rupee target but not your litres target. Prices went up, but you sold less quantity.</WfText><Hotspot n={4} /></WfCard>
+  <WfCard title="Product mix">
+    <WfTable columns={["Product", "Share", "Target"]} rows={[["Nano Thinner", "22%", "25%"], ["PU Sealer", "18%", "15%"], ["Other", "60%", "—"]]} />
+    <Hotspot n={5} />
+  </WfCard>
+  <WfCard title="What is short"><WfText muted>Customer A · ₹12,000 short of their target</WfText><Hotspot n={6} /></WfCard>
+</div>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Period.</b> This month and last month open instantly, even with no signal. A quarter, a financial year or two days you pick are asked from the office, so they need signal.</span>,
+  <span key="2"><b>Score and when.</b> The time says when the office last worked it out — <i>synced</i> for the monthly figure, <i>worked out</i> for a period you picked.</span>,
+  <span key="3"><b>Rupees and litres together.</b> The two numbers that matter most, side by side.</span>,
+  <span key="4"><b>The warning.</b> Appears when you hit the rupee target but not the litres target.</span>,
+  <span key="5"><b>Mix.</b> How much of what you sold was each product your target names. <i>Other</i> is everything else.</span>,
+  <span key="6"><b>Your shops.</b> Which shops are behind their own monthly target, and orders you took that accounts have not approved yet.</span>,
+]} />
+
+### What each part means
+
+| Part | What it measures |
+|---|---|
+| **Revenue** | The value of your **approved** orders, excluding GST. An order waiting for accounts does not count yet. |
+| **Litres** | How much you sold, worked out from each product's pack size. Prices cannot move this. |
+| **Mix** | Whether you sold the products your target asked for, in the shares it asked. |
+| **New customers** | Shops whose **first** order landed this month. Adding a lead does not count. |
+| **Collection** | Money accounts have **confirmed** in the bank, as a share of what was overdue on your book when the month began. A reported payment does not count until confirmed. |
+| **Activity** | Tasks done, out of the tasks set for you. |
+
+If a part has no target, the screen says *You have no target for … So it is left out, and the other parts count more. The score is still out of 100.*
+
+<Callout kind="note">
+The score is **worked out at the office**, not on your phone. It refreshes every hour during the day. A few orders this morning may not be in it yet — the time under the score tells you how fresh it is.
+</Callout>
+
+If no target has been published for you this month, there is nothing to score and the screen says so.
+
+## Reports
+
+**More → Reports** counts what you did this month and last, from your own phone: visits, orders taken (and how many were refused), litres, order value, and money collected. It needs no signal and is not a score — it is what happened.
+
+## Questions people ask
+
+<Faq q="I took a big order this morning but my revenue has not moved.">
+Revenue counts approved orders only. Your order is waiting for accounts. It is listed under your shops as taken but not yet approved.
+</Faq>
+<Faq q="My rupees are over 100% but the screen says the month is not as good as it looks.">
+Prices went up, so the same quantity earns more rupees. Your litres are below target, which means you sold less. The warning is there so the month is read honestly.
+</Faq>
+<Faq q="Reports and Performance show different order values.">
+Reports counts every order you took on this phone. Performance counts only orders accounts have approved, from the office's records.
+</Faq>
+<Faq q="Can I see a colleague's performance?">
+No. The phone only ever shows yours.
+</Faq>

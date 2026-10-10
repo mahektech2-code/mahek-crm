@@ -1,0 +1,92 @@
+MahekOne has **one order book**: the orders and bills that the CRM, the Accounts app, targets and outstanding all read. For years it was filled from the order spreadsheet. Once the ERP is where orders are taken, the ERP fills it instead — every ERP order appears as an ordinary order, and every bill that leaves the godown appears as an ordinary bill. This page is for the accounts desk and the back office: what you will see, and what changes for you on the day it is switched on.
+
+<Callout kind="warn" title="Only one of the two may be in use">
+The ERP and the order sheet must never both be writing orders. The day the team stops typing orders into the sheet is the day the owner switches the ERP on — not before, or every order is counted twice.
+</Callout>
+
+## Before and after the switch
+
+| | Before (sheet takes the orders) | After (the ERP takes the orders) |
+|---|---|---|
+| Where an order is typed | The Taken Order sheet | ERP → Orders |
+| Where the CRM's orders and bills come from | The order sheet, every thirty minutes | The ERP, the moment an order changes |
+| An order from a **Pending** customer | Approved inside the ERP with "Approved By Admin" | Waits in **Accounts → Order approvals** like any other order needing a check |
+| What holds a customer off the Call Log | An open line on the Taken Order tab | An ERP order of theirs not yet dispatch-verified |
+| Customers (names, phones, credit terms) | From the party sheet | Still from the party sheet — unchanged |
+
+## What you will see in Accounts and the CRM
+
+### An ERP order
+
+Every ERP order number becomes **one** order in MahekOne, numbered `ERP-` followed by the ERP's order number — for example `ERP-1256`. Its lines are the ERP's lines (the SKU, the cans and the rate), and its value is what the ERP will bill: the amount less discount, plus freight, plus GST.
+
+| Order status you see | What it means in the ERP |
+|---|---|
+| **Pending approval** | The customer is still Pending in the ERP and Accounts has not decided the order |
+| **Confirmed** | The order is in the ERP and not every line has been dispatch-verified yet |
+| **Dispatched** | Every line has left and been verified; the consignment has not moved on the road yet |
+| **In transit** | The transport record shows the consignment on the road |
+| **Delivered** | Transport marked it "Close - Received to Party" |
+| **Cancelled** | Every line was cancelled in the ERP |
+| **Declined** | Accounts declined it |
+
+### An ERP bill
+
+As soon as the first line of an order is **dispatch-verified** in the ERP, one bill appears for that order. It carries the Tally bill number the order desk entered; if that number is already taken by an older bill, it becomes the Tally number followed by `/ERP` and the order number, or `ERP-` and the order number. Its amount is the value of the lines that have left so far, and its date is the earliest dispatch date.
+
+<Callout kind="money">
+An ERP bill is a real invoice the business raised, so it counts as **owed** from the moment it appears: it is on [Outstanding](/docs/crm/outstanding), in the aging, and on the collections worklist like any bill. That is different from a sheet bill, which nobody had vouched for either way. Recording and confirming payments against it works exactly as on [Bills](/docs/crm/bills).
+</Callout>
+
+## Approving an order from a Pending customer
+
+<Steps>
+<Step title="The order desk takes the order in the ERP">
+The customer is still Pending on Sales parties. The order cannot be billed yet.
+</Step>
+<Step title="It appears in Accounts → Order approvals">
+As an `ERP-` order at Pending approval, with its value.
+</Step>
+<Step title="Approve or decline it there">
+**Approve**: the ERP lines are marked "Approved By Admin" and the order desk can bill them. **Decline** with a reason: every Pending line of that order is cancelled in the ERP, and the reason is added to the line's remark ("Declined by Accounts: …") so the godown does not prepare goods for a sale that will not happen.
+</Step>
+</Steps>
+
+<Callout kind="note">
+Once the ERP takes the orders, the ERP's own "Approved By Admin" button disappears from Orders, and pressing it from an old link answers "Accounts approve a new customer's order now, from their approval queue." There is one door, so an order cannot be approved twice.
+</Callout>
+
+## Go-live day, for the back office
+
+<Steps>
+<Step title="Stop typing orders into the sheet">
+Agree the cut-off time with the order desk.
+</Step>
+<Step title="The owner switches the ERP on">
+Admin Console → Settings → ERP → Production & orders → "The ERP takes the orders".
+</Step>
+<Step title="Rebuild the book from the ERP">
+Whoever runs MahekOne's jobs runs the "ERP book sync" job once — it has no button in the Admin Console yet. It writes every ERP order already in the ERP into the book and rebuilds who is held off the Call Log.
+</Step>
+<Step title="Check one order end to end">
+Find a recent ERP order in Accounts, compare its value with the ERP, and confirm the bill of a dispatched order is on Outstanding.
+</Step>
+</Steps>
+
+## Common questions
+
+<Faq q="Can I edit an ERP- order or bill in Accounts?">
+Change it in the ERP. The book's copy is rewritten from the ERP every time the order changes, so an edit made in Accounts would be overwritten.
+</Faq>
+
+<Faq q="An order disappeared from Outstanding after the godown undid a verification.">
+If no payment had been recorded, the bill goes with the lines that made it, and comes back when they are verified again. A bill with a payment against it is never removed.
+</Faq>
+
+<Faq q="Why is a customer we just took an order from still on today's Call Log?">
+The hold that keeps customers with an open order off the Call Log is rebuilt by the scheduled passes, not at the moment an order is saved. It catches up on the next pass.
+</Faq>
+
+<Faq q="The bill number has '/ERP' in it.">
+The Tally number the order desk entered was already on another bill — usually one the sheet wrote before the switch. Bill numbers must be unique, so the order number was added rather than overwrite the older bill.
+</Faq>

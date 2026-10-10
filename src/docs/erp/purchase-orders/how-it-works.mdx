@@ -1,0 +1,99 @@
+A purchase order is the point where a decision about money is made by somebody other than the person who wants the goods. Everything about it follows from three rules: **no purchase without a PO**, **a PO is raised for approval and approved by somebody else**, and **what has been received against it is read from the gate, never typed**.
+
+## The life of a PO
+
+<Flow caption="Purchase order statuses" chart={`
+flowchart TD
+  R["Raised from ready requirements<br/>Pending approval"] -- "Approve<br/>(not your own)" --> A["Approved<br/>requirements: Order Placed"]
+  R -- "Send back with a reason" --> X["Rejected<br/>requirements back to Ready for PO"]
+  A -- "Send to vendor<br/>WhatsApp, email, print, phone" --> S["Sent"]
+  A -- "goods received<br/>without being marked sent" --> PR
+  S -- "some goods received" --> PR["Partly received"]
+  PR -- "all lines in full" --> RC["Received<br/>requirements: Received"]
+  S -- "all lines in full" --> RC
+  PR -- "Close short with a reason" --> CL["Closed<br/>requirements: Received"]
+  R -- "Cancel (nothing received)" --> CN["Cancelled<br/>requirements back to Ready for PO"]
+  A -- "Cancel" --> CN
+  S -- "Cancel" --> CN
+`} />
+
+## Raising
+
+<Rule title="A PO is built from requirements, never typed">
+A PO line is a requirement that is Ready for PO, for this PO's vendor, not already on another live PO. There is no free-typed item or supplier: a PO can only buy what a department asked for, from the vendor that was chosen for it.
+</Rule>
+
+<Rule title="The rate of a quotation item is the quotation's">
+A requirement bought by quotation must be ordered at the selected quotation's rate. Negotiation is recorded on the quotation, where it can be compared, rather than hidden on the PO.
+</Rule>
+
+<Rule title="Money is needed to raise one">
+Raising or editing a PO needs the **purchase money** power, because it sets rates.
+</Rule>
+
+The form fills itself from what is known: delivery date from the quotation's delivery days (or the requirement's required-by date), payment terms from the quotation (or the vendor's credit days), freight from the quotation, GST at eighteen per cent unless changed. The delivery date may not be before the PO date. The value is the sum of each line's quantity × rate plus its GST, plus freight once for the whole PO.
+
+## Approving
+
+<Rule title="Raised for approval, approved by somebody else">
+Approve and Send back need the **Approve purchase orders** power — or, for a PO carrying a material with named approvers, to be one of them. Whoever raised a PO cannot approve it unless they are an ERP administrator.
+</Rule>
+
+<Callout kind="why">
+The person who wants the goods should not be the person who commits the business to paying for them. Making the PO a separate, approved record is what gives every purchase a second pair of eyes — and a name against the decision in the audit log.
+</Callout>
+
+<Rule title="Every line must be approvable by you">
+A PO carries several materials. Where an ERP administrator has named who approves a material, a PO carrying it can be decided only by somebody named for **every** line; where no approver is named, the power decides as before.
+</Rule>
+
+Approving moves the PO's requirements to **Order Placed**. Sending back marks the PO Rejected and returns its requirements to Ready for PO with their vendor, so they can be raised again with the correction.
+
+## Sending
+
+<Rule title="Only an approved PO goes to the vendor">
+Send is offered on Approved, Sent and Partly received POs. A Pending approval PO is refused: "A PO is approved before it goes to the vendor."
+</Rule>
+
+Sending records **how** (WhatsApp, Email, Printed copy, Phone), **who** and **when**, moves an Approved PO to **Sent**, and hands back the PO written out for the vendor — with a WhatsApp or email link pre-filled where the vendor master has a number or address, and a plain "copy the PO and send it yourself" where it does not. The printed PO at its own address is for approved POs only and needs the purchase-money power.
+
+## Receiving
+
+<Rule title="Only an approved PO is received against">
+Goods inward names an approved, sent or partly received PO and one of its lines. Nothing is received against a PO awaiting approval, closed, cancelled or rejected. See [Goods receipt](/docs/erp/goods-receipt-and-testing/how-it-works).
+</Rule>
+
+<Rule title="What has been received is read, never stored">
+A PO line's received quantity is the sum of the inward lines and hand-entered register lots against it, read each time. After every receipt the PO's status and its requirements' status are rewritten from that figure in the same save: some received is Partly received, every line in full is Received.
+</Rule>
+
+<Rule title="A little over is fine; a lot over needs its own PO">
+A line may receive up to <Setting k="erp.purchase.receiptTolerancePercent" />% more than was ordered — drums never weigh exactly what was ordered. Beyond that the receipt is refused: "Raise a requirement for the extra."
+</Rule>
+
+## Ending a PO early
+
+| | Close short | Cancel |
+|---|---|---|
+| When | Partly received | Pending approval, Approved or Sent, nothing received |
+| Its requirements | Count as Received | Return to Ready for PO, with their vendor |
+| Reason | Required | Required |
+
+<Callout kind="why">
+A PO with goods against it has become a purchase. Cancelling it would make goods in the godown belong to nothing, so it is closed short instead and the reason says why the rest never came.
+</Callout>
+
+## On the dashboard
+
+POs awaiting approval ("you approve these" for an approver), POs to send to the vendor, POs awaiting delivery, deliveries overdue, and — with purchase money — the open PO value (approved, not yet fully received). The sidebar badge counts POs waiting on approval or on being sent.
+
+## Settings
+
+<SettingsTable keys={["erp.purchase.receiptTolerancePercent", "erp.purchase.minQuotations"]} />
+
+## Where the code and the intent disagree today
+
+- **Send to vendor** does not check the purchase-money power, yet its dialog shows the PO written out with every rate and total; the printed PO, by contrast, refuses somebody without the power.
+- Send marks the PO Sent when the button is pressed, before the person has actually sent the WhatsApp or email it opens.
+- **Close short** and **Cancel PO** need only the screen — no power or duty — although each changes what its requirements say.
+- The company name on the written-out PO is fixed in the code.

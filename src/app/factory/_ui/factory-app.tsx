@@ -926,7 +926,7 @@ export class FactoryApp extends Component<Props, State> {
     return (
       <div className="fx-stage">
         <div className="fx-phone">
-          <div style={sbStyle}>
+          <div className="fx-sb" style={sbStyle}>
             <span>{st.clock}</span>
             <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
               {ic(st.net === "offline" ? "wifioff" : "wifi", 14)}

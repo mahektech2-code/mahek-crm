@@ -1,0 +1,111 @@
+Four modules, almost all reads. **Oversight**, **Lost** and **Funnel & conversion** are services over `customers`, `lead_stage_transitions`, `audit_log` and `app_settings` that write nothing. The **Sales Manager desk** is the same pipeline the Sales Dashboard draws, narrowed by a different scope that travels on the request. Trash, restore and reopen are the only writes. Everything below is cut from the source this deployment was built from.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Routes | `src/app/crm/leads/oversight/{page,audit,settings}`, `funnel/{page,sources,reasons}`, `lost/page.tsx`, `sales-manager/**` | Each folder's layout calls `requireModule` |
+| Oversight reads | `src/lib/services/lead-oversight-service.ts` | `overrideLog`, `leadAudit`, `leadThresholds`, `outstandingHandovers` |
+| Funnel reads | `src/lib/services/lead-funnel-service.ts` | `funnelByRung`, `leadCohort`, `tallyCohort`, `leadSources`, `reasonAnalytics` |
+| Lost reads | `src/lib/services/lead-lost-service.ts` | `lostLeadsPage`, `lostLeadTiles`, `lostLeadFilterClause` |
+| Reopen | `src/lib/engines/lead-reopen.ts`, `src/lib/actions/lead-reopen.ts`, `actions/lead-calling-desk.ts` | `reopenTarget`, `reopenSalesManagerLead`, `reopenDeskLead` |
+| Trash | `src/lib/services/lead-trash-service.ts`, `src/lib/actions/lead-trash.ts` | `trashLeads`, `restoreLeads`, `listTrash`, `trashHistory` |
+| Sales Manager scope | `src/lib/services/crm-sales-manager-scope.ts`, `src/proxy.ts` | `inCrmSalesManagerWorkspace`, `crmSalesManagerScopeFor`, `leadInSalesManagersBook` |
+| Sales Manager desk | `src/lib/sales-lead-pipeline/desk.ts`, `sales-manager-pipeline-service.ts`, `src/lib/actions/sales-manager-pipeline.ts`, `src/components/sales-lead-pipeline/*` | Queues, `pipelineDesk`, convert / verify / lost / sample actions |
+| Screens | `src/components/leads/oversight/*`, `leads/funnel/*`, `leads/lost/*`, `leads/pages/leads-oversight*.tsx` | — |
+
+## Overrides
+
+<Code file="src/lib/services/lead-oversight-service.ts" symbol="overrideLog" collapsed />
+
+The log selects transitions whose `overridden_conditions` jsonb array is non-empty, scoped through `leadsVisible(scope, BOOK_OF_C)`, and resolves each condition id to its sentence through `CONDITION_SAYS` (built from `PROSPECT_CONDITIONS`, `QUALIFICATION_CONDITIONS` and `DISTRIBUTOR_CONDITIONS`), so the log and the gate cannot word a condition differently.
+
+<DbTable name="lead_stage_transitions" only={["kind", "reason_code", "overridden_conditions", "actor_id", "actor_role", "actor_app", "at"]} />
+
+## Thresholds are read-only
+
+<Code file="src/lib/services/lead-oversight-service.ts" symbol="leadThresholds" collapsed />
+
+`src/components/leads/pages/leads-oversight-settings.tsx` deliberately has no edit control. Writes go through the Admin Console, which runs `checkConsistency` and audits before and after.
+
+## The Sales Manager scope
+
+<Code file="src/lib/services/crm-sales-manager-scope.ts" symbol="crmSalesManagerScopeFor" />
+
+<Code file="src/lib/services/crm-sales-manager-scope.ts" symbol="leadInSalesManagersBook" />
+
+`managerScope()` in `sales-service.ts` returns this scope **only** when `inCrmSalesManagerWorkspace()` is true — the proxy writes the workspace header from the URL (stripping any the client sent), and a server action posts to the URL it was rendered from, so reads and writes agree. `leadsVisible` then renders `and c.sales_manager_id = $me`; an owner-less lead is not added back for this scope.
+
+<Code file="src/lib/sales-lead-pipeline/desk.ts" symbol="QUEUE_LABEL" />
+
+## Lost and reopen
+
+<Code file="src/lib/services/lead-lost-service.ts" symbol="lostLeadsPage" collapsed />
+
+The rung a lead was lost from is the `from_stage` of its newest `to_stage = 'lost'` transition, joined laterally — never a column on `customers`.
+
+<Code file="src/lib/engines/lead-reopen.ts" symbol="reopenTarget" collapsed />
+
+`reopenSalesManagerLead` asks `lead.verify` and hands the move to `lead-reopen-service.ts`, which validates the code against `leads.reopenReasons` and writes a transition whose note is built by `reopenNote` (it begins "Reopened from Lost"). `reopenDeskLead` is the calling desk's door onto the same rule (it also restarts the three-call count when the target is Suspect).
+
+## Trash
+
+<Code file="src/lib/services/lead-trash-service.ts" symbol="trashLeads" collapsed />
+
+<DbTable name="lead_trash_events" note={{
+  action: "trashed or restored.",
+  reason: "Required (3–500 characters) — shown to whoever looks in the trash.",
+  actor_name: "Stored by name, so the history reads after the person leaves.",
+}} />
+
+`customers.deleted_at` is the mark; `leadsVisible` adds `and c.deleted_at is null` for every viewer, so a trashed lead leaves every list, count and record loader.
+
+## The cohort
+
+<Code file="src/lib/services/lead-funnel-service.ts" symbol="Cohort" />
+
+<Code file="src/lib/services/lead-funnel-service.ts" symbol="tallyCohort" />
+
+Windows are half-open IST instants (`istWindow`), and every numeric parameter beside a date is cast `::int` — an untyped parameter beside a date resolves as `date - date` and throws in the driver.
+
+## Permissions
+
+<CapabilityGrid names={["lead.override", "lead.verify", "lead.trash", "lead.restore"]} />
+
+Modules: <ModuleRef k="crm.lead-oversight" />, <ModuleRef k="crm.sales-manager" /> (off by default, not explicit-only), <ModuleRef k="crm.lead-lost" /> (off by default), <ModuleRef k="crm.lead-funnel" />.
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/engines/lead-reopen.test.ts` | Where a reopened lead lands, every basis |
+| `npm run test` | `src/lib/sales-manager-desk-queues.test.ts` | Queue counting and grouping |
+| `npm run test:integration` | `src/lib/crm-sales-manager.test.ts` | The seat scope, reads and writes; admin unnarrowed |
+| `npm run test:integration` | `src/lib/lead-lost.test.ts`, `src/lib/lead-reopen.test.ts` | Lost-from rung, filters, reopen |
+| `npm run test:integration` | `src/lib/lead-trash.test.ts` | Trash refusals, restore, every list leaving trashed leads out |
+| `npm run test:integration` | `src/lib/sales-manager-pipeline.test.ts`, `src/lib/sales-manager-pipeline-guards.test.ts` | Desk actions and their guards |
+
+## Changing it safely
+
+<Steps>
+<Step title="Oversight never writes">
+A new oversight question is a new read in the service. If it needs a stored answer, the answer belongs on the record it is about.
+</Step>
+<Step title="Resolve scope inside the service">
+Every function here calls `managerScope()` itself. A scope passed in is a scope some caller will forget.
+</Step>
+<Step title="Never let the Sales Manager scope leak">
+`crmSalesManagerScopeFor` applies only when the request is in that workspace. A test that needs it uses `setTestWorkspace`.
+</Step>
+<Step title="Say legacy gaps in words">
+A lost lead with no closing transition shows *Not recorded*; an uncoded move is counted as uncoded. Never infer.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| The funnel's cohort rate divides by decided leads; the owner KPI divides by every lead in the cohort | `lead-funnel-service.ts` `tallyCohort`; `engines/owner-kpis.ts` |
+| `/crm/settings` permanently redirects to `/admin`, but `crm.settings` and its layout guard remain | `src/app/crm/settings/page.tsx`, `layout.tsx` |
+| The desk loads at most five pages of 200 and then reports truncation | `sales-manager-pipeline-service.ts` `DESK_PAGES` |

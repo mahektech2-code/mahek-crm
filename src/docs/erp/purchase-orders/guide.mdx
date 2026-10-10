@@ -1,0 +1,113 @@
+Nothing is bought without a purchase order. A PO is raised from requirements whose vendor has been chosen, approved by somebody other than the person who raised it, sent to the vendor, and then received against at the gate. This page is for the store and whoever raises, approves or sends POs.
+
+## The screen at a glance
+
+<Wireframe url="/erp/purchase-orders" nav={["Dashboard", "#Purchase", "Purchase requirements", "Purchase orders", "Purchases", "Purchase testing"]} active="Purchase orders" caption="Purchase orders">
+  <WfBar>
+    <WfTitle sub="No purchase without a PO. Raised from requirements whose vendor is chosen, approved, sent to the vendor and received against at the gate.">Purchase orders</WfTitle>
+    <WfSpacer /><WfButton primary>New purchase order</WfButton><Hotspot n={1} />
+  </WfBar>
+  <WfTable
+    highlight={0}
+    columns={["PO no", "PO date", "Vendor", "Items", "Deliver to", "Delivery date", "PO value", "Received", "Status", "Flags"]}
+    rows={[
+      ["PO-91", "6 Oct", <b key="a">Supplier B</b>, "Tin can 5 L", "Godown A", "12 Oct", "₹54,000", "—", <span key="b"><WfPill tone="warn">Pending approval</WfPill> <Hotspot n={2} /></span>, "Awaiting approval"],
+      ["PO-90", "4 Oct", <b key="c">Supplier D</b>, "Solvent A, Solvent C", "Godown A", "9 Oct", "₹2,10,400", "1 of 2 items in full", "Partly received", <span key="d"><WfPill tone="danger">Delivery overdue</WfPill> <Hotspot n={3} /></span>],
+      ["PO-88", "1 Oct", <b key="e">Supplier C</b>, "Empty Box 5 Liter", "Godown B", "8 Oct", "₹18,880", "500 of 500 Pcs", "Received", "—"],
+    ]}
+  />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>New purchase order.</b> Only offers vendors that have a requirement ready for a PO. Needs the purchase-money power.</span>,
+  <span key="2"><b>Status.</b> Pending approval → Approved → Sent → Partly received → Received, or Closed short, Cancelled, Rejected (sent back).</span>,
+  <span key="3"><b>Flags.</b> "Awaiting approval" while it waits; "Delivery overdue" once the delivery date has passed and goods are still due.</span>,
+]} />
+
+## Raising a PO
+
+<Steps>
+<Step title="Start from a requirement, or from New purchase order">
+**Create PO** on a requirement that is Ready for PO opens the form with that vendor and their ready requirements already on it.
+</Step>
+<Step title="Check the header">
+**Vendor**, **Deliver to** (the godown), **Delivery date** (filled from the quotation's delivery days, or the requirement's required-by date), **Payment terms** (from the quotation, or the vendor's credit days), **Freight** for the whole PO, and **Remarks for the vendor**.
+</Step>
+<Step title="Check each line">
+One line per requirement: **Quantity**, **Rate per unit** and **GST %** (eighteen unless changed). A requirement bought by quotation must keep the selected quotation's rate — "change the quotation, not the PO".
+</Step>
+<Step title="Raise PO for approval">
+"PO-91 raised · ₹54,000 · waiting for approval". Its requirements now read "PO awaiting approval".
+</Step>
+</Steps>
+
+Every requirement on a PO must be for that PO's vendor, may appear only once, and may not already be on another live PO.
+
+## Approving or sending back
+
+The approver opens a PO that is **Pending approval**:
+
+- **Approve** (with an optional note) — "PO-91 approved · send it to the vendor". Its requirements become Order Placed.
+- **Send back** with what needs changing — the PO is marked Rejected, and its requirements return to **Ready for PO**, keeping their vendor, to be raised again corrected.
+
+<Callout kind="rule" title="Nobody approves their own PO">
+If you raised the PO, Approve is greyed out: "You raised this PO — another approver approves it." Only an ERP administrator may approve their own.
+</Callout>
+
+If some of the PO's materials have **named approvers**, only they may approve or send it back, and the button names who the duty belongs to.
+
+While it is still Pending approval, **Edit** corrects it (purchase money needed); saving keeps it waiting for approval.
+
+## Sending it to the vendor
+
+<Steps>
+<Step title="Send to vendor">
+Choose how: **WhatsApp**, **Email**, **Printed copy** or **Phone**. WhatsApp is offered first when the vendor has a mobile number.
+</Step>
+<Step title="Send it">
+The PO is marked Sent, and a dialog shows the PO written out — every item, quantity, rate, GST, the totals, where to deliver, by when, payment terms, and "Please quote PO-91 on your invoice and delivery challan." **Open WhatsApp** or **Open email** starts the message with the text in it; **Copy** copies it.
+</Step>
+</Steps>
+
+**Print PO** opens the PO as the vendor receives it, ready to print or save as a PDF from the browser. Only an approved PO can be printed, and printing needs the purchase-money power because the rates are on the paper. **Send again** records another send.
+
+## Receiving, closing and cancelling
+
+| Action | When | What it does |
+|---|---|---|
+| **Receive goods** | Approved, Sent or Partly received | Opens the goods receipt with this PO and its pending items — see [Goods receipt](/docs/erp/goods-receipt-and-testing) |
+| **Close short** | Partly received | Nothing more is expected; its requirements count as received. Needs a reason |
+| **Cancel PO** | Pending approval, Approved or Sent, with nothing received | Its requirements return to Ready for PO, keeping their vendor. Needs a reason |
+
+Once anything has been received against a PO it cannot be cancelled — close it short instead.
+
+## What the statuses mean
+
+| Status | Meaning |
+|---|---|
+| **Pending approval** | Raised, waiting for the approver |
+| **Approved** | Approved, not yet sent |
+| **Sent** | Sent to the vendor; nothing received yet |
+| **Partly received** | Some items, or part of one, have arrived |
+| **Received** | Every line received in full |
+| **Closed** | Closed short with a reason |
+| **Cancelled** | Cancelled before anything arrived |
+| **Rejected** | Sent back by the approver |
+
+## Common questions
+
+<Faq q="The vendor I want is not in the New purchase order list.">
+Only vendors with a requirement that is Ready for PO are offered. Choose the vendor on the requirement first (Select vendor, or select their quotation).
+</Faq>
+
+<Faq q="Can I change the rate on a quotation item?">
+No. The PO keeps the selected quotation's rate. If the vendor agreed a new price, edit or re-add their quotation and select it again.
+</Faq>
+
+<Faq q="Goods arrived but Receive goods is greyed out.">
+Goods receipt is a separate screen ("Purchases"). If it is not on your account, ask the store to receive it.
+</Faq>
+
+<Faq q="Why does Print PO say the PO is pending?">
+A PO is printed once it is approved. A PO awaiting approval is not an order anybody may send.
+</Faq>

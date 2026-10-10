@@ -31,6 +31,7 @@ const eslintConfig = defineConfig([
      * left unchecked by being taken out of this one.
      */
     "mbos-app/**",
+    "factory-mobile/**",
   ]),
 ]);
 

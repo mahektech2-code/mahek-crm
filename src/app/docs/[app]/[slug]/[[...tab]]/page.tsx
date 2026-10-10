@@ -3,21 +3,23 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import index from "@/docs/_generated/index.json";
 import { loadContent, contentKey } from "@/docs/content";
-import { DOC_TABS, docApp, docPage, isDocTab, pageHref, type DocTab } from "@/docs/registry";
+import { DOC_TABS, docApp, docPage, isDocTab, pageHref, tabsOf, type DocPage, type DocTab } from "@/docs/registry";
 import { cx } from "@/components/ui/primitives";
 
 type Params = { app: string; slug: string; tab?: string[] };
 
-function resolve(p: Params): { tab: DocTab } | null {
-  if (!p.tab || p.tab.length === 0) return { tab: "guide" };
-  if (p.tab.length === 1 && isDocTab(p.tab[0]) && p.tab[0] !== "guide") return { tab: p.tab[0] };
+function resolve(page: DocPage | undefined, p: Params): { tab: DocTab } | null {
+  if (!page) return null;
+  const tabs = tabsOf(page);
+  if (!p.tab || p.tab.length === 0) return { tab: tabs[0] };
+  if (p.tab.length === 1 && isDocTab(p.tab[0]) && tabs.includes(p.tab[0])) return { tab: p.tab[0] };
   return null;
 }
 
 export async function generateMetadata({ params }: { params: Promise<Params> }): Promise<Metadata> {
   const p = await params;
   const page = docPage(p.app, p.slug);
-  const r = resolve(p);
+  const r = resolve(page, p);
   if (!page || !r) return { title: "Not found" };
   const tab = DOC_TABS.find((t) => t.id === r.tab)!;
   return { title: `${page.title} — ${tab.label}`, description: page.summary };
@@ -36,8 +38,9 @@ export default async function DocPageRoute({ params }: { params: Promise<Params>
   const p = await params;
   const app = docApp(p.app);
   const page = docPage(p.app, p.slug);
-  const r = resolve(p);
+  const r = resolve(page, p);
   if (!app || !page || !r) notFound();
+  const tabs = DOC_TABS.filter((t) => tabsOf(page).includes(t.id));
   const { tab } = r;
 
   const Content = await loadContent(p.app, p.slug, tab);
@@ -79,7 +82,7 @@ export default async function DocPageRoute({ params }: { params: Promise<Params>
         </div>
 
         <div role="tablist" aria-label="Who this is for" className="mt-6 flex gap-1 border-b border-line">
-          {DOC_TABS.map((t) => {
+          {tabs.map((t) => {
             const active = t.id === tab;
             const has = page.written.includes(t.id);
             return (

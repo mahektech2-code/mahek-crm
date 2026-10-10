@@ -1,0 +1,115 @@
+Before your first day you need three things: the app on your phone, a sign-in, and your phone set up so it can record your route. This page walks you through all three, and explains every message the sign-in screen can show you.
+
+## 1. Get the app
+
+<Steps>
+<Step title="Open the download page on your phone">
+Open **one.mahekindia.com/download** in your phone's browser and tap the **Mahek MBOS** download. Your manager can also send you the link.
+</Step>
+<Step title="Allow the install">
+Android asks whether your browser may install apps. Say yes for this once. The app is not on the Play Store — it comes straight from MahekOne.
+</Step>
+<Step title="Open Mahek MBOS">
+It appears on your phone as **Mahek MBOS**.
+</Step>
+</Steps>
+
+<Callout kind="note">
+When a new version is ready, the app tells you itself and offers to update. You do not need to come back to the download page.
+</Callout>
+
+## 2. Sign in
+
+<Wireframe url="MBOS · Sign in" caption="The sign-in screen">
+  <WfTitle sub="Sign in with your work number">Mahek MBOS</WfTitle>
+  <WfField label="Work number or email"><WfInput placeholder="98xxxxxxxx" wide /><Hotspot n={1} /></WfField>
+  <WfField label="Password"><WfInput placeholder="••••••••" wide /><Hotspot n={2} /></WfField>
+  <WfBar><WfButton primary>Sign in</WfButton><WfSpacer /><WfText muted>Get a code instead</WfText><Hotspot n={3} /></WfBar>
+  <WfText muted>Forgot password</WfText>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Your number.</b> Your work mobile number, or your work email.</span>,
+  <span key="2"><b>Your password.</b> The same one you use for MahekOne. At least eight characters.</span>,
+  <span key="3"><b>A code instead.</b> You can sign in with a one-time code sent to your mobile instead of a password.</span>,
+]} />
+
+The first time, sign in **where there is signal**. The phone fetches your customers, products and prices — on a big book this can take a minute. Do not close the app while it says it is loading.
+
+### Signing in with no signal
+
+After you have signed in once with signal, you can sign in again **without signal** — with your password, on the same phone, as the same person. This works for <Setting k="mbos.sync.offlineLoginValidityDays" /> days after the last time the phone reached MahekOne. After that you need signal once.
+
+A one-time code needs signal; it cannot be used offline.
+
+## What a sign-in message means
+
+| You see | What it means | What to do |
+|---|---|---|
+| *That number and password do not match an account that can use Mahek MBOS.* | The number or the password is wrong. | Check both, or use Forgot password. |
+| *… has a MahekOne account but has not been given Mahek MBOS.* | Your account exists but the app has not been granted. | Ask your manager to grant it. |
+| *…'s MahekOne account has been closed.* | Your account is switched off. | Ask your manager. Nothing on the phone is lost. |
+| *You are already signed in on another phone.* | Your account is tied to a different phone. | Ask your manager to release the old phone, then sign in here. |
+| *This handset can't be used to sign in right now. Contact your admin.* | This phone belongs to somebody else's account. | Ask your admin. |
+| *This phone still has N entries from … that have not reached the office.* | The last person on this phone has unsent work. | They must sign in here once, with signal, to send it. |
+| *Signed in, but your book could not be loaded.* | The office could not prepare your data just now. | Try again in a moment. |
+| *Signed in, but your data could not be saved on this phone.* | Your phone's storage refused. | Free some space and try again. |
+| *No internet. You need signal to sign in on this phone the first time.* | First sign-in, no signal. | Go where there is signal. |
+| *This phone has not reached MahekOne for N days.* | Offline sign-in has expired. | Sign in once with signal. |
+| *Mahek MBOS sign-in is not switched on yet.* | The office has not finished setting MBOS up. | Tell your manager. |
+
+## 3. Set up your phone
+
+Straight after your first sign-in the app opens **Set up your phone**. It shows one step at a time with one button. Do every step — they are what let the app record your route when the phone is in your pocket.
+
+<Wireframe url="MBOS · Set up your phone" caption="One step open at a time">
+  <WfCard title="1 · Allow Mahek MBOS what it needs" tone="brand">
+    <WfText>Your phone will ask about location, notifications, camera and microphone, one after another. Tap Allow each time.</WfText>
+    <WfBar><WfButton primary>Allow all 4</WfButton><Hotspot n={1} /></WfBar>
+  </WfCard>
+  <WfCard title="2 · Switch on location"><WfText muted>Done</WfText></WfCard>
+  <WfCard title="3 · Allow location all the time"><WfText muted>To do</WfText><Hotspot n={2} /></WfCard>
+  <WfCard title="4 · Stop the battery saver switching MBOS off"><WfText muted>To do</WfText><Hotspot n={3} /></WfCard>
+  <WfCard title="5 · Autostart (named for your phone)"><WfText muted>Check it once</WfText><Hotspot n={4} /></WfCard>
+  <WfBar><WfSpacer /><WfText muted>Do this later</WfText></WfBar>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>The permissions.</b> Location, notifications, camera and microphone. For location, choose "While using the app" here — the next step asks for more.</span>,
+  <span key="2"><b>Location all the time.</b> The phone sends you to its Settings. Choose <b>Allow all the time</b>. Without this, your route stops when the screen goes off.</span>,
+  <span key="3"><b>Battery saver.</b> Tap the button and choose Allow. Many phones stop apps to save battery; this tells yours not to stop MBOS.</span>,
+  <span key="4"><b>Start on its own (autostart).</b> On some phones (vivo, OPPO, Xiaomi and others) there is a separate switch. The app opens the right page and tells you what to tap. The phone does not tell MBOS whether you did it, so the app cannot tick this one for you.</span>,
+]} />
+
+### Why each permission is needed
+
+| Permission | Used for |
+|---|---|
+| **Location — all the time** | Recording your route while you are punched in, and checking you are at a shop when you check in. Never used after you punch out. |
+| **Camera** | The selfie at punch-in and punch-out, shop photos, cheque and bill photos. |
+| **Microphone** | Speaking a note instead of typing it. |
+| **Notifications** | The office telling you an order was approved or declined, a task, a reminder to punch out. |
+
+## If the app stops you at punch-in
+
+When you press **Punch in**, the app checks your phone first. If something is wrong it opens **Before you start** instead of starting the day. Each row says what is wrong and has one button to fix it. There is no skip button — fix the row, come back, and press Punch in again.
+
+If a row says Android will not ask again, the app cannot fix it for you. Open your phone's Settings → Apps → Mahek MBOS → Permissions yourself, or ring the office.
+
+### Keep tracking on
+
+**More → Send to office** shows whether your route is being recorded. If it says the phone is stopping MBOS, tap **Keep tracking on**: it walks you through the battery and autostart switches for your phone's make. After changing them, **restart the app** (not the phone).
+
+## Questions people ask
+
+<Faq q="I got a new phone. What do I do?">
+Make sure everything on the old phone is sent (More → Send to office shows nothing waiting). Ask your manager to release the old phone. Then install and sign in on the new one.
+</Faq>
+
+<Faq q="My colleague wants to use my phone tomorrow.">
+They can sign in only after everything you did on it has reached the office. When they sign in, your data is cleared from the phone — the office already has it.
+</Faq>
+
+<Faq q="Do I have to do the setup steps?">
+Set up your phone itself never blocks you. But Punch in will not start the day while location is off, a permission is missing or the battery saver says it will stop the app.
+</Faq>

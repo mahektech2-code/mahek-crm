@@ -1,0 +1,119 @@
+Mahek's team still types much of its work into Google Sheets — the orders as they are billed, the payment status of each order, orders as they are first taken, the party list, the employee list, and the older field app's shop master and activity log. MahekOne **reads** those workbooks on a schedule and publishes what it finds into its own database, so the CRM, Accounts and the field app see the same customers, orders and bills the team is typing. Alongside the sync, the same schedule runs the **jobs** that keep every derived figure current: buying cycles, outstanding balances, follow-up stages, salesman scores, the next day's calling lists.
+
+This page explains what is read, how often, the rules that keep a spreadsheet from overriding a decision somebody made in MahekOne, and what runs each night. The [developer tab](/docs/platform/sheets-and-jobs/developer) has the endpoint, the modes and the commands.
+
+## What MahekOne reads
+
+| Workbook / tab | What it holds | What MahekOne does with it |
+|---|---|---|
+| Order sheet → **Order Details** | Every billed order line | Customers, orders and **bills** (one bill per order) |
+| Order sheet → **Payment Status** | Whether each order was received or not | Held as **evidence** for accounts — it never records money |
+| Order sheet → **Taken Order** | Orders as first taken, before billing | Holds a customer back from order-chasing calls while their order is still open |
+| **Sales Party** sheet | The party list: who sells to whom, phone numbers, areas | Fills in customer details and the salesperson's name |
+| **Employee** workbook → Employee Details | The employee master | The HRMS employee list (a mirror nobody edits in MahekOne) |
+| EMP 2.0 → **Activity** | The older field app's visit log | Attached to customers' histories |
+| EMP 2.0 → **Customer Details** | The older app's shop master | Run by hand only — creates shops and leads |
+
+<Rule title="Read-only, by construction">
+MahekOne reads through a Google service account that has **view** access to each workbook and asks Google only for a **read-only** permission. Even a bug could not write a cell. Nothing MahekOne does changes a spreadsheet.
+</Rule>
+
+## How a sync works
+
+Every read follows the same two steps.
+
+<Flow caption="One sync cycle" chart={`
+flowchart TD
+  S["Scheduler"] --> R1["Read Order Details"]
+  R1 --> R2["Read Taken Order"]
+  R2 --> R3["Read Payment Status"]
+  R3 --> R4["Read Sales Party"]
+  R4 --> ST[("Staging tables<br/>one row per sheet row,<br/>with a fingerprint")]
+  ST --> P["Publish: customers,<br/>orders and bills"]
+  P --> F["Field activity:<br/>read, then publish"]
+  F --> PO["Punch-out reminders"]
+`} />
+
+1. **Read into staging.** Each row of the sheet lands in a staging table, with a fingerprint of its contents. A row whose fingerprint has not changed is not written again, so a sheet nobody touched costs one read and no writes. That is what makes a run every half hour affordable.
+2. **Publish.** A separate step turns what has landed into real customers, orders and bills. Reading always comes before publishing in the same cycle — publishing first would ship the previous cycle's data as if it were new.
+
+### Catching up versus a full compare
+
+| Pass | How often | What it notices |
+|---|---|---|
+| **Append** (the half-hourly read) | Every 30 minutes | New rows added to the bottom of a sheet |
+| **Reconcile** (full compare) | Once a night | Edits to old rows, and rows deleted from the sheet |
+
+A row deleted from the sheet is **withdrawn** — marked as gone — never silently forgotten.
+
+## The rules that keep a sheet in its place
+
+<Rule title="The sheet never writes money">
+No sync records a payment, sets what was paid on a bill, or changes what a customer owes. Whether money arrived is for a person to record. A bill imported from the sheet starts with **no payment position at all** — held out of outstanding, the ageing strip, the collections list and the reminders — until somebody records or confirms a payment against it, or the accounts team's receivables report names it.
+</Rule>
+
+<Callout kind="why" title="Why not just assume?">
+The order sheet records what was billed, never what was received. Assuming everything was owed would put the whole order book — crores — on the collections list; assuming everything was paid would hide real debt with nobody's name behind the decision. The honest third answer is "nobody has said yet", and that is what an imported bill carries.
+</Callout>
+
+<Rule title="The sheet wins every column except a decision somebody made">
+For almost everything — a phone number, an area, a bill amount — the sheet is right and overwrites. But if accounts approved or declined an order in MahekOne, or an account was deliberately reassigned to another salesperson, the next sync **keeps that decision** and records the disagreement in a list for review, rather than undoing it every half hour.
+</Rule>
+
+<Rule title="One sync per source at a time">
+If a sync of one sheet is still running when the next is due, the new one is skipped and says so ("already running"). A run stuck for more than ten minutes is treated as dead, so one hung run never blocks every later one.
+</Rule>
+
+### When the rule changes, not the sheet
+
+Because unchanged rows are skipped, changing how MahekOne *reads* a row — for example, deciding that a "Cancel" status no longer holds a customer back — changes nothing on its own: every fingerprint still matches. A **reparse** re-reads what is already stored, without asking Google, and applies the new rule. It is run by a developer when the reading changes.
+
+## The schedule
+
+All times India time. The server's scheduler runs these; an Apps Script trigger inside the order workbook can also run the half-hourly cycle, and the "one sync per source" rule makes it harmless if both fire.
+
+| When | What runs |
+|---|---|
+| Every 30 minutes | Read the four order-workbook tabs, publish customers/orders/bills, read and publish field activity, punch-out reminders |
+| Every hour | Salesman scores for this month, handset sweeps and escalations (overdue tasks, approvals, samples), check-in selfie deletion, WhatsApp automation and delivery receipts, complaint deadline escalation, ERP alerts and inbox, the Top customers report if the 1st's run was missed |
+| 01:43 nightly | Full compare of the order workbook and field activity, publish, then **every recompute** |
+| 02:15 nightly | Database backup — after the nightly has settled ([Backups](/docs/platform/backups)) |
+| 10:00 on the 1st | The Top customers report for the month just finished |
+
+### What the nightly rebuilds
+
+Every derived figure in MahekOne is a cache rebuilt from the records underneath. The nightly pass rebuilds all of them, in order:
+
+- Field-app housekeeping: closing visits left open, marking missed check-outs, ageing leads, raising reorder follow-ups, the lead nurture pass.
+- The HRMS monthly leave credit (a no-op after the first run each month), ERP alerts and digest, the expense month snapshot.
+- Buying cycles, sales managers, places, inactivity, follow-up stages, slow-payer flags.
+- Sweeping uploaded files that were never attached to anything.
+- Tomorrow's calling lists, the month-end customer-health snapshot, salesman scores for this and last month, copying targets forward.
+- Automatic end-of-day reports.
+
+<Callout kind="why">
+A figure that somebody can edit by hand is a figure that can disagree with the orders and payments behind it. A figure that is always rebuilt cannot drift — so if one looks wrong, the fix is to run the rebuild, never to type over the number.
+</Callout>
+
+### The employee list
+
+The employee workbook is small (tens of rows), so it is read with a **full compare** every time, and it is read **while HRMS is open** — the screen asks every minute — rather than on a fixed schedule. A sheet edited on a Friday evening is picked up the next time somebody opens HRMS. The password column in that sheet never reaches the database, and bank and Aadhaar numbers are kept as their last four digits.
+
+## Running things by hand
+
+| Who | Where | What |
+|---|---|---|
+| Accounts (holders of the sheet import permission) | Admin Console → Sheets | Full compare of the order sheet, Payment Status read, publish |
+| Platform administrators | Admin Console → Jobs | The nightly, the hourly, the day-boundary pass (end-of-day reports and rolling reminders off non-working days), and the sheet passes |
+| A developer | The command line | Any job by name, including reparses and one-off imports |
+
+<CapabilityGrid names={["sheet.import"]} />
+
+Every run, scheduled or by hand, is recorded — what ran, when, how many records it touched, and whether it succeeded — and the sheet syncs keep a record per run of rows read, created, updated, unchanged, withdrawn and with problems.
+
+## Where the code and the intent disagree today
+
+- **Two schedulers may be configured.** The server's crontab is the documented schedule; the Apps Script trigger files in the repository still describe themselves as the half-hourly cycle. Both are safe together, but which one a deployment actually runs is only visible on the server and in the workbook (`deploy/sheet-sync.sh`, `scripts/sheet-sync-trigger.gs`).
+- **The nightly endpoint reports only its first step.** Running the nightly through the sync endpoint returns the result of the first job in the pass rather than all of them; the full list is in the job history (`src/app/api/sheets/sync/route.ts`).
+- **Rolling reminders off non-working days is never scheduled.** It lives only in the day-boundary pass, which no schedule calls; it runs when an administrator presses it (`runDayBoundary` in `src/lib/jobs.ts`).
+- **The EMP 2.0 shop master has no schedule.** It is run by hand only, so changes in that workbook do not reach MahekOne until somebody runs it.

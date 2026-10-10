@@ -1,0 +1,158 @@
+The receipt side of the purchase flow is `lib/erp/screens/purchase.ts`: the `inward` (Goods receipt), `register` and `barcode` (Drum labels) tabs of the Purchases screen, the `testing` screen, and the raw-material stock tabs `rmStock` / `rmLog` that the Stock screen draws. The arithmetic is pure in `lib/erp/engines/purchase.ts`; the PO side it reports back to is `screens/purchase-flow.ts`; landed cost is read in `lib/erp/stock.ts`.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Engine (pure) | `src/lib/erp/engines/purchase.ts` | `purchaseFigures`, `lotNumber`, `shortLabel`, `prBillLabel`, `postsToStock`, `settableStatuses`, `netWeight`, `TRANSPORT_MODES`, `transportCostPaise`, `shareInwardCost`, `landingFigures` |
+| Inward | `src/lib/erp/screens/purchase.ts` | `receivable`, `inwardForm`, `inwardFormForPo`, `inward` module (`forms.new`, `costs`, `toTesting`, `toPurchase`), `readPrCosts` |
+| Register row | same | `createPurchase`, `syncPurchaseEntry`, `refreshCache`, `savePurchase`, `register` module, `purchaseStage` |
+| Testing | same | `TEST_FIELDS`, `missingEvidence`, `testForm`, `saveTest`, `testing` module (`verify`, `unverify`, AI read) |
+| Drum labels | same | `barcode` module — working godown's chemical lots |
+| Landed cost | `src/lib/erp/stock.ts` | `lotLandings` — shares by PR on read; `rmLots` values stock at the landed litre rate |
+| PO back-link | `src/lib/erp/screens/purchase-flow.ts` | `refreshPurchaseOrder`, `receivedByLine` |
+| AI | `src/lib/erp/ai-bills.ts`, `src/lib/erp/ai-photos.ts` | Bill reading for the register, test-photo reading for testing |
+| Badges | `src/lib/erp/counts.ts` | `inwardAwaitingIds`, `testsAwaitingIds`, `rateMissingIds`, `billsAwaitingIds` |
+
+## A receipt, end to end
+
+<Flow caption="erpSubmitForm('inward', 'new', header, lines)" chart={`
+sequenceDiagram
+  autonumber
+  participant UI as Goods receipt form
+  participant I as screens/purchase.ts inward
+  participant DB as Postgres
+  participant PF as purchase-flow refreshPurchaseOrder
+  UI->>I: forms.new(h, lines)
+  I->>I: receivable(tolerance) - the PO by label, still receivable?
+  loop each line
+    I->>I: PO line, drums, net weight off the scale or typed qty, within tolerance
+  end
+  I->>I: readPrCosts (new PR only) - mode, cost, km x approved rate
+  I->>DB: tx: nextNumber(pr), erp_pr_costs
+  loop each line
+    I->>DB: erp_inward row
+    alt item has a testing list
+      I->>DB: routed = Testing
+    else
+      I->>DB: createPurchase at the PO line's rate and GST -> syncPurchaseEntry -> erp_rm_entries
+      I->>DB: routed = Purchase (or left unrouted if the lot number is taken)
+    end
+  end
+  I->>PF: refreshPurchaseOrder(tx, poId)
+  I-->>UI: "PR n · k lines received against PO-m · ..."
+`} />
+
+<Code file="src/lib/erp/screens/purchase.ts" symbol="receivable" collapsed />
+
+<Code file="src/lib/erp/engines/purchase.ts" symbol="netWeight" />
+
+<Code file="src/lib/erp/screens/purchase.ts" symbol="readPrCosts" collapsed />
+
+<Code file="src/lib/erp/engines/purchase.ts" symbol="transportCostPaise" />
+
+## The register row and its posting
+
+<Code file="src/lib/erp/screens/purchase.ts" symbol="createPurchase" collapsed />
+
+<Code file="src/lib/erp/engines/purchase.ts" symbol="lotNumber" />
+
+<Code file="src/lib/erp/engines/purchase.ts" symbol="purchaseFigures" />
+
+<Code file="src/lib/erp/screens/purchase.ts" symbol="syncPurchaseEntry" />
+
+<Code file="src/lib/erp/engines/purchase.ts" symbol="postsToStock" />
+
+<Code file="src/lib/erp/screens/purchase.ts" symbol="purchaseStage" />
+
+<Code file="src/lib/erp/engines/purchase.ts" symbol="settableStatuses" />
+
+## Testing
+
+<Code file="src/lib/erp/screens/purchase.ts" symbol="missingEvidence" />
+
+`verify` checks `verifyTest`, refuses on missing evidence, then in one transaction marks the test Verified and — if no register row names this test — calls `createPurchase` with `source: "test"`, the tested density and the PO terms of its inward line (`poTermsOfInward`). A refused lot number rolls the whole verification back.
+
+## Landed cost on read
+
+<Code file="src/lib/erp/engines/purchase.ts" symbol="shareInwardCost" />
+
+<Code file="src/lib/erp/engines/purchase.ts" symbol="landingFigures" />
+
+<Code file="src/lib/erp/stock.ts" symbol="lotLandings" collapsed />
+
+Shares are computed every time stock is read, so a rate entered later moves the split with nothing to rebuild.
+
+## Tables
+
+<DbTable name="erp_inward" note={{
+  pr_number: "One PR per delivery (series 'pr'); Add more keeps it.",
+  weight_with_drum: "Gross off the scale (kg).",
+  empty_drum_weight: "Per drum.",
+  quantity: "Net weight for a kg chemical, otherwise the typed quantity.",
+  testing_required: "The item had a testing list when received.",
+  po_id: "The approved PO received against.",
+  po_line_id: "Its line.",
+  routed: "Testing · Purchase · null (refused by the register, waiting for Send to …).",
+}} />
+
+<DbTable name="erp_pr_costs" note={{
+  transport_mode: "supplier · own_vehicle · third_party · none.",
+  transport_cost_paise: "From a bill, or km × rate_per_km_paise for our own vehicle.",
+  rate_per_km_paise: "Copied from the setting when the PR was saved.",
+  other_cost_paise: "Loading, unloading, octroi.",
+}} />
+
+<DbTable name="erp_tests" only={["inward_id", "pr_number", "raw_material_id", "tests", "ph_photo_id", "ph_value", "smell", "density", "density_photo_id", "tester_id", "testing_date", "status", "decided_by_id", "decided_at"]} note={{
+  tests: "The item's testing list at the time of the test.",
+  status: "Pending · Verified · Not Verified.",
+  decided_at: "Null while nobody has decided — what the badge counts.",
+}} />
+
+<DbTable name="erp_purchases" only={["pr_number", "purchase_date", "po_number", "supplier_id", "raw_material_id", "lot_no", "quantity", "unit", "rate_paise", "density", "drums", "gst_bp", "available_litres", "status", "bill_received", "bill_number", "godown_id", "test_id", "inward_id", "po_id", "po_line_id", "source", "ai_filled"]} note={{
+  lot_no: "party code + item code + PR number. Unique.",
+  rate_paise: "The PO line's on creation; the bill's once corrected. Above zero = posted.",
+  available_litres: "Cached from purchaseFigures by refreshCache.",
+  status: "Pending · Invoice Received · Purchase Matched · Purchase Verified.",
+  bill_received: "Received · Bill Not Received · null.",
+  source: "inward · test · manual.",
+}} />
+
+<DbTable name="erp_rm_entries" note={{ source_type: "purchase · transfer.", source_id: "The register row or transfer that wrote it — one entry per source." }} />
+
+## Permissions
+
+- **Modules:** <ModuleRef k="erp.register" /> (Goods receipt, Register, Drum labels), <ModuleRef k="erp.testing" />.
+- **Powers:** `viewPurchaseMoney`, `verifyTest`, `verifyPurchase`, `reopenPurchase`.
+- **Duty:** `test`, per material.
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/erp/engines/purchase.test.ts` | kg → litres by density; feed adjustment; GST and final; no rate, no posting; lot number and labels; settable statuses; own-vehicle cost; sharing by value to the paisa; landing cost; net weight |
+| `npm run test:integration` | `src/lib/erp/erp-purchase.test.ts` — "inward" | One PR for all lines, each routed as saved; tolerance; minus quantities; routes once; untested lines go straight to stock at the PO's rate |
+| | "testing" | No verification on missing evidence, nor by a clerk; density 0.5–1.5; verifying creates the register row once with the tested density |
+| | "register and stock" | Lot number clash message; an edit moves the stock entry; money hidden from a clerk; bill and status cannot disagree; only the verifier sets Purchase Verified; the log flags an orphaned entry |
+| | "transport and landing cost" / "net quantity off the scale" | Weight rules; own vehicle refused without a rate; shares by value; the stock rate is the landed rate; costs corrected once per PR |
+
+## Changing it safely
+
+<Steps>
+<Step title="Every receipt path ends in refreshPurchaseOrder">
+Inside its own transaction, so the PO and the stock land together.
+</Step>
+<Step title="A register row posts through syncPurchaseEntry only">
+One entry per purchase, rewritten on every edit. Never insert into `erp_rm_entries` for a purchase anywhere else.
+</Step>
+<Step title="Keep money behind its power in the save, not just the column">
+`savePurchase` falls back to the PO's rate for a caller without `viewPurchaseMoney`; a new money field needs the same.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| The own-vehicle refusal points to "ERP settings"; the key lives in the Admin Console settings | `screens/purchase.ts` `readPrCosts` |
+| A hand-entered register row (`source: "manual"`) is posted to stock at the PO line's rate without passing testing, even for an item with a testing list | `screens/purchase.ts` `savePurchase` |

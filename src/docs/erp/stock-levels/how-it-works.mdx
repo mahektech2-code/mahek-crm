@@ -1,0 +1,116 @@
+Levels answer one question for the store: **of everything we keep, what needs buying or making now?** They are deliberately simple — a minimum (and for raw material a maximum) per item per godown — and every figure beside them is worked out from the stock ledger at the moment the screen opens. Nothing on these screens is a stored balance.
+
+## Two kinds of level
+
+| | Raw-material level | Finished-goods level |
+|---|---|---|
+| Set per | item and godown | SKU and godown |
+| Figures | minimum and maximum | minimum only |
+| Stock read from | the raw-material lots at that godown (drums: company-wide) | FG stock in cans for a loose SKU; packing stock in boxes for a boxed SKU |
+| Shortfall acted on by | a purchase requirement | production |
+
+<Callout kind="why" title="Why a finished-goods level has no maximum">
+A raw material is bought, and a purchase needs a quantity — "buy enough to reach the maximum" gives one. A finished good is made in batches whose size is set by the recipe and the packing plan, so a maximum would be a number nobody acts on.
+</Callout>
+
+## What counts as available
+
+<Rule title="Available is read from the lots, never typed">
+Raw material reads every lot's remaining stock at that godown. Lot stock is already net of the cans filled and the boxes packed, so it is not subtracted again. A boxed SKU reads **packing stock** (boxes); a loose SKU reads **FG stock** (cans) — a boxed SKU is one whose packing record needs empty boxes.
+</Rule>
+
+<Rule title="Drums are company-wide">
+A **Drum** level reads every drum bought on a purchase less every drum sold on an order, whatever the godown. That is how the source system counted drums, and the ERP kept it.
+</Rule>
+
+## The re-order figures
+
+| Figure | Raw material | Finished goods |
+|---|---|---|
+| **Re-order %** | available ÷ midpoint of min and max, minus one | available ÷ minimum |
+| At the level | 0 at the midpoint | 100 at the minimum |
+| **Required** | maximum − available, blank when at or above the maximum | — |
+
+A raw-material item with min 100 and max 200 holding 75 reads **-50%** and needs **125**. A finished good with min 60 holding 30 reads **50%**.
+
+## When is something "below"
+
+<Rule title="Finished goods: under the minimum">
+A **followed** SKU is short when its minimum is greater than what is available. That is the whole rule, and it is what puts the SKU on Below minimum and raises the alert.
+</Rule>
+
+<Rule title="Raw material: under the maximum">
+A **followed** raw-material level is listed, flagged and alerted as soon as **Required** is above zero — that is, the moment stock is below the **maximum**. The screen and the alert both call it "below minimum", which is the source system's word; the rule underneath is "you could top this up now".
+</Rule>
+
+<Callout kind="why" title="Why UnFollow exists">
+Some items are worth keeping a level for — a reference figure for the buyer — without wanting the store nagged about them. UnFollow keeps the level and silences every consequence: the tab, the flag, the alert and the notification.
+</Callout>
+
+## Raising a requirement
+
+From a raw-material row the **Raise requisition** action opens the ordinary new purchase-requirement form with these answers already in it:
+
+| Field | Filled with |
+|---|---|
+| Godown | The level's godown |
+| Material type and item | The level's |
+| Required quantity | **Required** — enough to reach the maximum |
+| Priority | For Stock |
+| Department | The person's own team where they raise for only one; otherwise the team that asks for that material category |
+
+Everything after that — the purchase rule, quotations, the PO — is the normal purchase flow. See [Purchase requirements](/docs/erp/purchase-requirements).
+
+## Suggested levels
+
+<Rule title="A suggestion is arithmetic, and it is never applied by itself">
+Average daily use over the look-back, times the cover days, rounded up to whole units:
+
+- **Look-back** — <Setting k="erp.ai.reorder.lookbackDays" /> days
+- **Minimum** — <Setting k="erp.ai.reorder.minCoverDays" /> days of cover
+- **Maximum** — <Setting k="erp.ai.reorder.maxCoverDays" /> days of cover
+
+The feature is switched by <Setting k="erp.ai.reorder.enabled" />. A person applies a suggestion with a button; nothing moves a level on its own.
+</Rule>
+
+Where the last 30 days (or the whole look-back, if shorter) ran at more than one and a half times, or less than half, the look-back's average, the row says so in a **Recent use** line.
+
+<Callout kind="why" title="Why the swing is said out loud">
+A level set from a slack quarter runs out in a busy month. The suggestion is the long average because a single week is noise; the swing line is there so a person who knows the season is coming can set the level higher than the arithmetic does.
+</Callout>
+
+What counts as "use" depends on the item:
+
+| Item | Use |
+|---|---|
+| Chemical | Litres consumed on SFG batch lines at that godown |
+| Can | Cans filled at that godown |
+| Box | Boxes packed at that godown × empty boxes each needs, matched by the box type's name |
+| Finished-goods SKU | Quantity on lots allocated to dispatch-verified orders from that godown |
+
+Drum and Stationary levels never get a suggestion — nothing in production records consuming them.
+
+## The hourly alert and who is told
+
+The hourly ERP checks raise one **Stock below re-order level** alert per short level, naming the item, the godown, what is available and the minimum. It is raised once and stays open until the stock recovers, at which point the next run resolves it with *Condition cleared*.
+
+When the alert is **first** raised, a notification goes to every active person who is assigned to that godown, holds the ERP, and can raise purchase requirements (they hold the Purchase requirements screen, or their ERP grant is not narrowed at all). Nobody assigned to the godown means nobody is told — the alert is still on the Alerts screen. See [Alerts and the AI helpers](/docs/erp/alerts-and-ai).
+
+<SettingsTable keys={["erp.ai.reorder.enabled", "erp.ai.reorder.lookbackDays", "erp.ai.reorder.minCoverDays", "erp.ai.reorder.maxCoverDays", "erp.ai.alerts.enabled"]} />
+
+## Who can do what
+
+| Act | Needs |
+|---|---|
+| Open either screen and its tabs | The screen on the person's ERP grant (Raw-material levels, Finished-goods levels) |
+| Add, edit, copy, delete, apply suggestions | The same screen — there is no separate power |
+| Raise a requisition from a row | The levels screen to open the form; the save is checked against Purchase requirements |
+| Be notified of a new shortfall | Assigned to the godown, and able to raise requirements |
+
+Every change is written to the audit log with the before and after values.
+
+## Where the code and the intent disagree today
+
+- **"Below minimum" on raw materials means "below maximum".** The screen's sub-title says *Raise a requisition from any item below its minimum* and the empty-tab sentence says *Every followed item is at or above its level*, but the tab, the red flag and the hourly alert all fire when stock is under the **maximum**. The alert's own sentence then quotes the minimum, so a reader can see "available 150 against a minimum of 100" on an alert titled below re-order level.
+- **Drum and stationery levels never get a suggestion**, though the bulk **Apply suggestions** button is offered on them and answers *No suggestion to apply*.
+- **Drums ignore the godown.** A drum level at two godowns shows the same Available at both.

@@ -1,0 +1,134 @@
+The commercial end of the funnel turns on one distinction the rest of Lead Management never has to make: **a forecast is not a sale**. What a customer said on a call — a day, a quantity, a value — is kept, shown and chased, but it is never added to anything real. This tab explains how a commitment is defined, how the first order is confirmed without bypassing accounts, how a lead becomes a customer, and how a distributor is appointed through two approvals.
+
+<Callout kind="live">
+Values shown are read live from your CRM.
+</Callout>
+
+## The arc from negotiation to customer
+
+<Flow caption="Negotiation to customer — direct and third-party ladders" chart={`
+flowchart TD
+  S["Sample approved"] --> N["Negotiation"]
+  N --> A["Ask for the first order<br/>(eight questions)"]
+  A --> C{"Day AND a size?"}
+  C -- "Day only" --> F["Follow-up — recorded,<br/>not counted"]
+  C -- "Day and cans or value" --> K["Commitment — counted<br/>on the forecast"]
+  F --> A
+  K --> O["Confirm the actual order<br/>(value, reference, day placed)"]
+  O --> P["Order waiting for accounts"]
+  P -- "Approved" --> FO["1st order rung"]
+  P -- "Declined" --> N
+  FO --> D["Delivery (from the ledger)"]
+  D --> PY["Payment (accounts confirmed the money)"]
+  PY --> SO["2nd order — the account becomes a CUSTOMER"]
+`} />
+
+## Negotiation
+
+There is no negotiation table. A negotiation is a lead standing on the **Negotiation** rung, with a reason on its newest stage move, a credit ask against the standard term, and a commitment or the absence of one. Every one of those already exists; a separate table would be a fourth place the same facts live.
+
+Entering Negotiation needs a sample sent, its feedback written down and the trial **approved** — see [Samples](/docs/crm/samples/how-it-works). The sample review is what authorises a commercial conversation, not the salesman deciding he is ready for one.
+
+<Callout kind="warn" title="Orders below Negotiation are no longer refused">
+The rule "no commercial commitment before negotiation" used to mean the handset refused an order against a lead below Negotiation. **Mahek reversed it:** a shop that is ready to buy is a customer, whatever rung it was filed under, and a salesman holding an order must not be told to come back later. An order on a lead now goes through and counts toward converting it. The Negotiation desk still shows an old banner saying no order may be taken below this rung — see the end of this page.
+</Callout>
+
+## A commitment is a day AND a size
+
+<Rule title="§3.4 — the definition, in one place">
+A commitment is an **expected order date** and **either** an expected quantity in cans **or** an expected value. Either size will do, never both required, because at this point there is often no pack chosen and the catalogue holds no prices to convert one into the other.
+</Rule>
+
+- **A day alone is still recorded.** It shows on the record, it is chased on that day, and it is listed on the desk marked *Day but no size* — but it is not counted on the forecast or in "expected this week". A form that refused the save would lose the one fact the salesman did come back with.
+- **A size with no day is refused.** "Two hundred cans" with nothing saying when is a sentence nobody can chase and no view can put in a week.
+- **Zero is refused** — zero is a customer declining, not committing.
+
+<Callout kind="why">
+The rule used to accept either half. A date alone then put a lead on the forecast board, added it to "expected this week" and escalated the sales manager's next step to "Confirm actual order" — four screens saying a customer had promised something, and not one able to say how much.
+</Callout>
+
+## Confirming the first order
+
+**Confirm the actual order** creates a real order from what the customer placed. It refuses unless a commitment exists, the value is above zero, and the day is not in the future; it warns if a live order (anything not declined or cancelled) is already on the account, so the same order is not taken twice.
+
+<Rule title="The rung is not written here">
+The order is written **waiting for accounts' approval**, like every other order. The *1st order* gate counts only orders accounts have accepted, so the lead moves when accounts accept — not when this is saved. Writing the rung here would walk a lead onto the book on the strength of an order accounts were about to decline.
+</Rule>
+
+<Rule title="No line items are invented">
+The manager confirmed a value and a reference on the phone; nobody picked a product. A line made up from the lead's product answer would put litres into somebody's product mix on the strength of a guess. The money still counts as revenue and is reported as unmatched to any product — the honest answer.
+</Rule>
+
+## When the lead becomes a customer
+
+<Rule title="On its second counting order">
+A first order from a shop that has just finished a trial is the tail of the trial. The **second** approved order makes the account a customer — on every path: a call logged in the CRM, accounts approving an order, a handset order, or a gated stage move to *2nd order*. The person who owned the lead becomes its sales account manager. A distributor is the exception: there is no trial order in an appointment, so it is invoiced from **Distributor approval**.
+</Rule>
+
+Delivery and payment are **read from the ledger, never written here**. Order status comes from the order sheet and from accounts' approval; a second status ladder would be overwritten by the sheet every half hour or fight it. *Payment* needs money accounts have confirmed in the bank, not money somebody reported.
+
+## Appointing a distributor (§11, §12)
+
+The distributor ladder is retired for **new** leads; appointments already started run to the end.
+
+<Flow caption="Two approval steps" chart={`
+sequenceDiagram
+  autonumber
+  actor S as Salesman / telecaller
+  actor M as Sales manager
+  actor X as Management
+  S->>S: Distributor profile — the thirty questions
+  S->>M: Submit for management review (approval step 0)
+  M-->>S: Recommend, refuse, or send back for correction
+  M->>M: Record commercial terms — discount, credit limit, exclusivity
+  M->>X: Approval step 1 — ALWAYS created, with the reason
+  X-->>M: Approve, refuse, or send back
+  Note over S,X: Appointed only when step 1 is approved and nothing is pending
+`} />
+
+<Rule title="A salesman may never appoint a distributor, and a manager may not do it alone">
+Step 0 is the sales manager putting a candidate forward. Recording the commercial terms needs the distributor-terms permission (a manager). Step 1 is **management's** — the distributor-approval permission, which only an administrator holds — and it is created every time terms are agreed, beside step 0 rather than replacing it, because the sales manager is the only person who has met the candidate.
+</Rule>
+
+The terms decide **why** the request reached management, written on the request:
+
+| Reason on the request | When |
+|---|---|
+| **exclusivity** | Territory exclusivity was **granted** — always, whatever the numbers. *Requested* exclusivity routes nowhere; it is an opening position. |
+| **over discount** | The special discount is above <Setting k="leads.distributorDiscountApprovalPercent" /> % |
+| **over credit limit** | The agreed credit limit is above <Setting k="leads.distributorCreditLimitApprovalPaise" /> paise |
+| **standard** | None of the above |
+
+<Callout kind="why">
+The person carrying the target must not be the person allowing the discount that hits it — the same reasoning that keeps order approval away from managers entirely. Management used to see only escalated appointments, but the gate on *Distributor approval* has always demanded management's signature, so an ordinary candidate sat at *Commercial discussion* for ever with nothing anybody could approve. Now every appointment reaches management, and the thresholds only decide the words.
+</Callout>
+
+A step can be **sent back for correction** with a note. The note is cleared when the step is next answered; the send-back keeps its own timeline entry and audit row.
+
+### The distributor's salesman is a name, not an account
+
+A distributor's own salesman has no MahekOne login and never will. He is recorded as a name, mobile and territory against the distributor, and the shop's distributor link can point at him — so the chain *Mahek → distributor → his salesman → the shop* is recorded from the first visit rather than reconstructed later. Giving him a user account would put him in every person picker in the product.
+
+## Who can do what
+
+| Action | Who |
+|---|---|
+| Ask for the first order, record a commitment | Lead work — every associate |
+| Confirm the actual order | Order capture — every associate |
+| Fill the profile, submit for review | Lead work |
+| Recommend (step 0), record commercial terms | Distributor terms — managers |
+| Appoint (step 1) | Distributor approval — administrators only |
+
+## Settings
+
+<SettingsTable keys={[
+  "leads.distributorDiscountApprovalPercent",
+  "leads.distributorCreditLimitApprovalPaise",
+  "leads.orderBlockers",
+]} />
+
+## Where the code and the intent disagree today
+
+- **The Negotiation desk's banner is out of date.** It reads *"No order may be taken below this rung … handleOrder refuses one against a lead below negotiation"* (`components/leads/commercial/negotiation-screen.tsx`). The handset's order handler no longer refuses; it converts (`actions/mbos.ts`, the order handler's "AN ORDER ON A LEAD CONVERTS IT" block). AGENTS.md's "NO COMMERCIAL COMMITMENT BEFORE NEGOTIATION" section is likewise stale.
+- **Management always reviews.** AGENTS.md says step 1 is *forced* by exclusivity or a threshold; the code creates step 1 for every appointment and records `standard` when no threshold is crossed (`engines/lead-gates.ts` `managementRouteReason`).
+- **AGENTS.md says `kind` flips at the first order**; the code converts on the second (`lead-conversion-service.ts`).

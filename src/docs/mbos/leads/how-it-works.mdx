@@ -1,0 +1,121 @@
+The handset runs the **same lead funnel** the office does — the same ladders, the same gates, the same reasons — compiled onto the phone. A salesman standing in a shop with no signal is told which condition is missing by the very function the office refuses on, so a rung he cannot pass on the phone is a rung the office also refuses, in the same words.
+
+The office end of this — the lead list, the calling desk, verification, samples at a desk — is documented under [CRM → Leads](/docs/crm/leads/how-it-works), [Intake and qualification](/docs/crm/lead-intake-and-qualification/how-it-works), [Samples](/docs/crm/samples/how-it-works) and the Sales Dashboard's [Lead management](/docs/sales/lead-management/how-it-works). This page covers what is different on the phone.
+
+## One rule, two runtimes
+
+<Flow caption="Where the funnel's rules live" chart={`
+flowchart TD
+  S["The office's own files<br/>lead-labels · lead-ladder · lead-gates · lead-role-action"] -->|"copied byte for byte"| H["The handset's copy"]
+  S --> O["Office screens and the sync handler"]
+  H --> P["Phone: grey 'Move up', 'Still to do' list"]
+  O --> R["Server: refuses the same move<br/>if a payload skips the phone's check"]
+  T["Wire test compares the two copies"] -.-> H
+`} />
+
+<Callout kind="why">
+The salesman deciding whether he can request a sample is standing in a shop, and a rule that only exists on the server is a rule he finds out about on the drive home. A copy can drift, so a test compares both copies on every build and fails if they differ by more than an import line.
+</Callout>
+
+## Three ladders, chosen first
+
+The **kind of sale** is the first question on the new-lead form because it decides which ladder the lead climbs and which questions the gates ask:
+
+| Kind | Ladder ends at | What is different |
+|---|---|---|
+| Direct customer | Customer | Has *Sample received* as its own rung — a courier problem and a customer problem are different calls |
+| Third-party customer | Customer | Drops *Sample received*; the gates ask who invoices the shop |
+| Distributor (retired for new leads) | Active distributor | No samples at all; two approvals instead |
+| None (raised before the funnel) | Won | The original six rungs; nothing backfills a kind |
+
+<Callout kind="why">
+Guessing which ladder an old lead was on would be a decision dressed up as a migration — and the ladder decides which gates apply, so a wrong guess would block the salesman working it.
+</Callout>
+
+## The gates
+
+<Rule title="No lead moves because somebody pressed a button">
+Every upward move is checked against the gate for the rung it is entering. Where it is shut, the phone draws the button disabled and lists what is missing underneath; the office refuses the same move with the same words. Where the column exists, the **value** answers the condition, not a tick beside it.
+</Rule>
+
+<Rule title="Every active lead owes a next action">
+An upward move needs four answers: the action, the day, the person, and what that person should come back with. This is on while <Setting k="leads.requireNextAction" /> is on. Legacy leads with no kind of sale are exempt.
+</Rule>
+
+A manager may pass a shut gate with a reason while <Setting k="leads.allowManagerOverride" /> is on; what was still missing is stored with the move. The override is the office's — the handset offers no override.
+
+## The Suspect cap asks, it never refuses
+
+<Rule title="A Suspect must be decided after a few visits">
+From visit <Setting k="mbos.leads.visitsBeforeDecision" /> the lead card warns. At visit <Setting k="mbos.leads.maxSuspectVisits" /> the salesman must answer **Prospect or not** before the visit can be closed. Keeping it a Suspect asks why. Past the cap the manager is notified.
+</Rule>
+
+<Callout kind="why">
+Refusing a visit loses the GPS, the competitor note and the reason in order to stop a number reaching four — and a salesman whose visit is refused stops recording visits. What the rule actually wants is that nobody keeps visiting a shop nobody has decided about, and that is bought by demanding an **answer**.
+</Callout>
+
+The count on the phone is the office's count plus any visits still in the outbox, so a second visit made with no signal still triggers the question on the third. A Suspect already decided, and any third-party shop, is exempt at both ends.
+
+The office **never refuses** a visit over the cap either. Where the phone could not see the cap (another salesman's visit not yet pulled), the visit lands and the manager is told the decision is missing.
+
+## GST at the qualify step
+
+<Rule title="No GST number, no 'Qualified'">
+A legacy lead cannot move to *Qualified* without a GST number — stored already or arriving with the move. The phone adds *Add their GST number in Prospect details* to the missing list and checks the number's checksum as it is typed; the office refuses the move if one still arrives without it.
+</Rule>
+
+<Callout kind="why">
+Making a prospect real means we could invoice them, and that is what the number is for. It is required at the **move**, never on the column: thousands of shops imported from the old master have no GSTIN, and a required column would refuse the whole book.
+</Callout>
+
+## What qualifying sets in motion
+
+When a legacy lead reaches *Qualified*, the office:
+
+1. Fills the **Lead Manager** seat from the org chart (the salesman's line manager) — unless a person has already chosen one.
+2. Writes a timeline entry, *Qualified — a Lead Manager is now running it*.
+3. Raises a **validation call** for the Lead Manager on the next working day, holidays included.
+4. Notifies them: *You are running a new Prospect*. If the org chart names nobody, the salesman's own manager is told instead.
+
+It runs once: a second qualification from a retried sync finds the seat filled and does nothing. The salesman **keeps the lead on his phone** — the Lead Manager seat decides who may see and coordinate it, not whose book it is in.
+
+On the funnel ladders this call is the Sales Manager's verification at *Qualification*, asked for by the next action rather than raised automatically.
+
+## The validation call
+
+The validation answers are stored on their **own row**, never over the salesman's. What the salesman was told in the shop and what the office was told on the phone disagreeing is the single most useful thing the call produces. The script the caller reads is configuration (<Setting k="mbos.leads.validationScript" />), so it can be improved without a new app. Turning a Prospect down must say why.
+
+## Samples
+
+| State | Who moves it | Chased when |
+|---|---|---|
+| Requested → Approved | The office | — |
+| Dispatched | The office (back office) | Not received after <Setting k="mbos.samples.transitChaseAfterDays" /> days — a courier problem |
+| Received | The salesman, from the shop | Review due <Setting k="mbos.samples.reviewAfterDays" /> days after **receipt** |
+| Trial done → Reviewed | The salesman | Review chased on the days in <Setting k="leads.sampleReviewChaseDays" />, the last interval repeating |
+
+<Rule title="A rejected sample has to say why">
+A **Rejected** verdict needs at least one of: other comments, price feedback, or the comparison with what they use now. The phone says so before the button is pressed; the office checks again.
+</Rule>
+
+<Rule title="An approved sample opens negotiation">
+An approved verdict moves the lead to *Negotiation* on every ladder — which is the rung an order needs. The gate and the thing that opens it are one mechanism.
+</Rule>
+
+A sample is refused at request for a Suspect, for any rung below the sample step, and for a distributor lead.
+
+## On hold and lost
+
+**On hold** is a live prospect that is not moving. It asks for a reason code (<Setting k="leads.holdReasons" />), the day it comes back, and a next action; it stays on the phone. **Lost** asks for a code (<Setting k="leads.lostReasons" />) or, where the office has emptied that list, a sentence. Both are codes because "how many did we lose on credit terms" has to be countable.
+
+## Keeping the phone and the office in step
+
+Leads and samples come down on **every** sync, not only at sign-in. A row the salesman has changed and not yet sent is **not overwritten** by the pull — his edit is the newer fact until it reaches the office. Once the office has answered it (accepted or refused), the office's version lands.
+
+<SettingsTable keys={["mbos.leads.visitsBeforeDecision", "mbos.leads.maxSuspectVisits", "leads.suspectMaxVisits", "leads.requireNextAction", "leads.allowManagerOverride", "mbos.leads.staleDays", "mbos.leads.escalateAfterDays", "mbos.samples.reviewAfterDays", "mbos.samples.transitChaseAfterDays"]} />
+
+## Where the code and the intent disagree today
+
+- **Two settings for one cap.** The handset reads <Setting k="mbos.leads.maxSuspectVisits" /> and falls back to <Setting k="leads.suspectMaxVisits" />; the office's visit handler reads only the first (`mbos-app/src/data/lead-funnel.ts` `funnelConfig`, `src/lib/actions/mbos.ts` `handleVisit`). Set both to the same number.
+- **AGENTS.md says a lead becomes a customer at the first order**; the code promotes at the second (`promotesToCustomerAt` in `lead-ladder.ts`). The ladder's *Second order* rung is where the record becomes a customer.
+- **GST is required only on the legacy ladder.** The funnel ladders' *Qualification* rung does not ask for it on the phone (`gateAsRun` in `mbos-app/src/engines/leads.ts`), though the brief says GST is mandatory at the Prospect transition.

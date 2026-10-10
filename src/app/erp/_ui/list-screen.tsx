@@ -14,7 +14,6 @@ import { GodownPicker, type PickItem } from "./godown-picker";
 import { Icon } from "./icons";
 import { useErpUi } from "./erp-ui";
 import { RecordDrawer } from "./record-drawer";
-import { SummaryCards } from "./summary";
 import { useKit } from "./kit";
 import { CHECK_COL, fitColumns } from "./fit-columns";
 import { ColumnsMenu } from "./columns-menu";
@@ -343,22 +342,6 @@ export function ListScreen({
       {tabs && tabs.length > 1 ? <ListTabs label={label} tabs={tabs} toggle={toggle} /> : null}
 
       {above}
-      {spec.notes?.length ? (
-        <div className="mb-4 grid gap-2">
-          {spec.notes.map((n) => (
-            <div
-              key={n.text}
-              className={cx(
-                "rounded-[4px] border px-3.5 py-2.5 text-[13px] leading-5",
-                n.tone === "danger" ? "border-danger/30 bg-danger-soft text-danger" : n.tone === "warn" ? "border-warn/30 bg-warn-soft text-ink" : "border-line bg-canvas text-body",
-              )}
-            >
-              {n.text}
-            </div>
-          ))}
-        </div>
-      ) : null}
-      {spec.summary?.length ? <SummaryCards cards={spec.summary} /> : null}
       {metrics ? <MetricStrip metrics={metrics} /> : null}
 
       {/* Not overflow-hidden: the filter bar's menus open over the rows, and on a short list they would be cut off at the card's edge. */}

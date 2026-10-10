@@ -1,0 +1,100 @@
+Approvals is the queue of things your salesmen have asked you for and are waiting on: leave, expense claims, tours, corrections to a day's attendance, and requests to work different cities. The oldest is at the top. The person who asked is usually still standing in a shop, so the screen is built to answer quickly — and to make you say why when the answer is no.
+
+You reach it from the **Review** button on [Today](/docs/sales/today). It is not in the sidebar.
+
+## The screen at a glance
+
+<Wireframe url="/sales/approvals" caption="Approvals with four requests waiting, the oldest past the warning">
+  <WfTitle sub="Everything the field team is waiting on, oldest first. A refusal needs a reason — whoever asked is usually still standing in the shop.">Approvals</WfTitle>
+  <WfCard tone="warn"><WfText>The oldest request has been waiting 2 days</WfText><Hotspot n={1} /></WfCard>
+  <WfBar>
+    <WfCard title="Waiting"><WfText>4</WfText></WfCard>
+    <WfCard title="Oldest"><WfText>2 days</WfText></WfCard>
+    <WfCard title="Leave"><WfText>2</WfText></WfCard>
+    <WfCard title="Tour"><WfText>1</WfText></WfCard>
+    <WfCard title="Order over limit"><WfText>1</WfText></WfCard>
+    <Hotspot n={2} />
+  </WfBar>
+  <WfTable columns={["Asked for", "By", "What", "Amount", "Waiting", ""]} rows={[
+    [<WfPill key="a" tone="brand">Leave</WfPill>, "Salesman A", "casual leave, 14 Oct to 15 Oct", "—", "2 days", <span key="b"><WfButton primary>Approve</WfButton> <WfButton>Refuse</WfButton> <Hotspot n={3} /></span>],
+    [<WfPill key="c" tone="brand">Tour</WfPill>, "Salesman B", "Tour to City 1, City 2, 20 Oct to 24 Oct — new distributor visits", "₹12,000", "6 hr", <span key="d"><WfButton primary>Approve</WfButton> <WfButton>Part</WfButton> <WfButton>Refuse</WfButton></span>],
+    [<WfPill key="e">Order over limit</WfPill>, "Salesman C", "Order not yet numbered · Customer A", "₹86,000", "3 hr", <span key="f">Accounts decide this → <Hotspot n={4} /></span>],
+    [<WfPill key="g" tone="brand">territory</WfPill>, "Salesman D", "Wants to work City 3 instead of City 4", "—", "1 hr", <span key="h"><WfButton primary>Approve</WfButton> <WfButton>Refuse</WfButton></span>],
+  ]} />
+  <WfCard title="Lately decided"><WfText muted>Asked by · Answer · by whom · when · note</WfText><Hotspot n={5} /></WfCard>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Stale warning.</b> Appears when the oldest request has waited longer than the warning time. Until it is answered his phone shows it as pending and he cannot move.</span>,
+  <span key="2"><b>The queue in numbers.</b> How many are waiting, the oldest, and one tile per kind.</span>,
+  <span key="3"><b>Answer.</b> <i>Approve</i>, <i>Part</i> (only where there is an amount) or <i>Refuse</i>. Each opens a short confirmation.</span>,
+  <span key="4"><b>Not yours to decide.</b> An order over the credit limit is accounts' decision. The link opens their queue.</span>,
+  <span key="5"><b>Lately decided.</b> Recent answers, so you can see your own record.</span>,
+]} />
+
+## What lands here
+
+| Kind | What he asked for | Where else you see it |
+|---|---|---|
+| **Leave** | Days off, with the type and whether half a day | [Leave and holidays](/docs/sales/leave-and-holidays) |
+| **Expense claim** | Money back for something he paid | [Expenses](/docs/sales/expenses) |
+| **Tour** | To work away from base for some days, with cities and an estimated cost | [Field reports](/docs/sales/field-reports) → Tours |
+| **Attendance correction** | To fix a day's check-in or check-out | [Attendance](/docs/sales/attendance) |
+| **Territory** | To work different cities from the ones he was given | [Territory](/docs/sales/territory) |
+| **Order** | An order over the credit limit — **shown here, decided by accounts** | Accounts → Order approvals |
+| **Sample**, **Distributor appointment** | Listed if raised, but decided on their own desks | [Lead management](/docs/sales/lead-management) |
+
+## Answering a request
+
+<Steps>
+<Step title="Read the row">
+*What* is the request in words, read from the thing he asked about — the dates of the leave, the cities of the tour. Hover for any reason he gave.
+</Step>
+<Step title="Approve, approve part, or refuse">
+**Approve** — say anything you want to add, or nothing. **Part** — type the amount you are allowing; it is only offered where the request has an amount. **Refuse** — you must say why.
+</Step>
+<Step title="Confirm">
+The answer goes to his phone at once as a notification, with your note as the message. The row leaves the queue and appears under *Lately decided*.
+</Step>
+</Steps>
+
+<Callout kind="warn" title="A refusal needs a reason">
+*"Say why. Whoever asked has to be able to do something differently, and they cannot work it out from the word alone."* The confirm button stays disabled until you type one.
+</Callout>
+
+## What each answer does
+
+| Answer | Stored as | He is told |
+|---|---|---|
+| Approve | approved | *Your … request was approved* — with your note, or "… approved it." |
+| Part | approved in part, with the amount | *Your … request was approved in part* — with your note |
+| Refuse | not approved, with the reason | *Your … request was not approved* — with your reason |
+
+Tapping the notification on his phone opens the screen the request belongs to — his leave, his expenses, his attendance.
+
+## Things the screen will refuse
+
+| You see | Because |
+|---|---|
+| *This is your own request. Somebody else has to answer it…* | Nobody approves their own leave or expenses. |
+| *That request is from somebody outside your team.* | It belongs to another region's manager. |
+| *This was already approved on …* | Another manager answered first. The first answer stands. |
+| *This leave was withdrawn by the person who asked for it…* | He took it back; there is nothing to decide. |
+| *A sample is decided on the samples desk…* | Samples have their own rules about stock and the lead. |
+| *Appointing a distributor is a two-step decision with its own screen…* | It needs management as well as you. |
+| *A day's expenses are priced and decided on Expenses & claims…* | Day claims have per-line amounts and policy limits. |
+
+## Questions people ask
+
+<Faq q="Approving a request for different cities did not change his cities.">
+Approving says yes. You still change his area on [Salesmen](/docs/sales/salesmen) → *Where they work*.
+</Faq>
+<Faq q="Two of us approved the same leave.">
+Only the first answer is saved. The second manager is told it was already decided.
+</Faq>
+<Faq q="Does a request approve itself if nobody answers?">
+No. Nothing is ever approved by a timer. The stale warning is how it gets noticed.
+</Faq>
+<Faq q="Why can I not see an Approve button on the order row?">
+Orders over the credit limit are accounts' decision. The person chasing a target must not sign off the orders that hit it.
+</Faq>

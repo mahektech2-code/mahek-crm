@@ -1,0 +1,148 @@
+Intake and Qualification are the bottom of every ladder: **Suspect → Prospect → Qualification → ready for a sample**. The rules here exist to make sure that by the time a can of stock leaves the godown, somebody has established who the shop is, what they use, what they want, whether they can be invoiced, and whether the salesman's account of the visit matches the shop's. This tab is the reasoning; the [ladder and gate rules](/docs/crm/leads/how-it-works) apply throughout.
+
+<Callout kind="live">
+Values shown are the ones your CRM is using now.
+</Callout>
+
+## From capture to a sample
+
+<Flow caption="The bottom of the direct and third-party ladders" chart={`
+flowchart TD
+  A["Raised — at the foot of its ladder<br/>(Suspect, or New with no sales type)"] --> B{"Suspect visited<br/>past the warning?"}
+  B -- "Not yet" --> P["Gather the seven Prospect answers"]
+  B -- "At the cap" --> D["A decision is demanded:<br/>Prospect · not a prospect · keep, with why"]
+  D --> P
+  P --> Q["Prospect<br/>(coded reason recorded)"]
+  Q --> LM["Lead manager filled from the org chart<br/>validation call next working day"]
+  LM --> V{"Sales manager's<br/>verification call"}
+  V -- "Verified" --> QQ["Qualification<br/>(the eight answers)"]
+  V -- "Follow-up" --> V
+  V -- "No business here" --> X["Lost"]
+  QQ --> R["GST validated + qualification reviewed<br/>+ figures fresh"]
+  R --> S["Sample / trial may be requested"]
+`} />
+
+## Raising a lead
+
+<Rule title="A lead is planted at the foot of its own ladder">
+Whatever a form or a handset claims, a new lead starts at **Suspect** (or **New** when no sales type was chosen). §28's gates are asked when a lead **moves**, and creating one is not a move — so a create that named a later rung would otherwise skip every gate. The only other rung a create may name is **Lost**, which is a closure, not a climb.
+</Rule>
+
+- **Only four things are required**: the shop's name, a ten-digit mobile, the town and the source. The four Prospect facts (litres, competitor, what they want, application) are optional at capture. This is a phone call, not a visit; demanding them here loses the lead rather than improving it — the gate asks for them at the rung where they matter.
+- **The requirement is stored in the customer's own words.** "Thinner for a spray booth" is not resolved to a product while somebody waits on the phone. Picking a product from the catalogue writes its name as the requirement, never the product the Prospect gate reads; that one is answered separately.
+- **A third-party shop says who bills it at capture**, picked from accounts that may be named as a distributor (direct customers not themselves marked third-party).
+- **Priority is a manager's judgement.** It is only accepted from somebody who may set it.
+- **A phone number already on the book stops the form** and shows the account it reaches. Raising it anyway is a deliberate second click, because two rows for one business cannot be merged back.
+
+<Callout kind="why" title="Why litres, when everything else is cans">
+Every other quantity in MahekOne is cans, because cans are what a customer orders. A lead has no pack yet — "about two hundred litres a month" comes long before anybody knows if that is 5-litre or 20-litre cans — so cans would be a unit nobody has agreed the size of.
+</Callout>
+
+### Bulk intake and duplicates
+
+Bulk intake runs **the same writer** for every row, so a file cannot raise a lead that the single form would refuse. It previews first — each row's verdict, nothing written — and then raises. Duplicates pairs accounts by phone number and by name similarity above <Setting k="leads.duplicateNameSimilarity" />; a pair dismissed as "not a duplicate" is recorded and never offered again.
+
+## The Suspect visit cap: a decision is demanded, never a visit refused
+
+<Rule title="Two visits to decide, a maximum before a decision is forced">
+After <Setting k="mbos.leads.visitsBeforeDecision" /> visits a Suspect starts to warn. At <Setting k="mbos.leads.maxSuspectVisits" /> visits the lead becomes a single question — Prospect or not a prospect — and the visit cannot be closed on the handset without an answer. Past the cap the manager is told instead. Only undecided rungs are capped: Suspect, and the legacy New and Contacted. A Prospect is never asked again.
+</Rule>
+
+<Callout kind="why">
+A salesman whose visit is refused stops recording visits, and the company loses the GPS, the competitor note and the reason in order to stop a number reaching four. What the rule actually wants is that nobody keeps visiting a shop nobody has decided about — and that is bought by demanding an **answer**, not by blocking the work.
+</Callout>
+
+The count is the number of real visits recorded, worked out each time rather than kept as a running counter — a visit that syncs from a handset two days late must still count in the right place. The **Suspect decisions** list sorts furthest past the cap first, and includes leads approaching the warning, because its job is to stop leads reaching the cap.
+
+The three answers:
+
+| Answer | What it writes |
+|---|---|
+| Prospect | A gated move to Prospect with a coded reason from <Setting k="leads.prospectReasons" />, then a mark that the Suspect was decided |
+| Not a prospect | A move to Lost with a coded reason from <Setting k="leads.lostReasons" />, then the same mark |
+| Keep as Suspect | No move — a written reason, so the lead stays on the list that keeps asking |
+
+## Becoming a Prospect
+
+The seven Prospect answers (kind of business, litres a month, current brand, which of our products, contact person, a next action, and the coded reason) are described on [All Leads](/docs/crm/leads/how-it-works). Telephone leads reach Prospect through the [Calling desk](/docs/crm/lead-calling-desk/how-it-works).
+
+### What qualifying a lead does
+
+When a field lead becomes a Prospect from a handset, three things happen, in this order:
+
+1. **The lead manager seat is filled from the org chart** — the person the salesman reports to, read from the same employee hierarchy the nightly sales-manager pass uses, so the two can never disagree about who reports to whom.
+2. **That person is told**: *"You are running a new Prospect."*
+3. **A validation call is put on their list for the next working day** — the working week and the company's holidays from configuration, so a task never lands on a Sunday already overdue.
+
+<Rule title="Idempotent, and it never overrules a person">
+The seat itself is the guard: if a lead manager is already set — by a previous pass or by somebody's own choice — nothing is assigned and nobody new is told. A handset that retries sends the same qualification twice; the second pass does nothing. Filling the seat from the org chart does **not** mark it as decided, so a later org change can still move it; only a person's own pick freezes it.
+</Rule>
+
+If the org chart names nobody, the person the salesman reports to in MahekOne is told *"A Prospect has no Lead Manager"*, rather than the lead sitting unowned in silence. All of this runs after the move has been saved and can never undo it.
+
+## The verification call (§8)
+
+The sales manager rings the shop and records **the answers, not just a verdict**: did the salesman visit, was Mahek explained well, what the shop thought of him, what they use now and how much, whether it could grow, objections on price, quality, delivery and credit, and how ready they are for a trial, rates and an order. Two of those questions are about the **salesman** rather than the sale, and they are why the call exists at all — no amount of GPS proves Mahek was explained properly.
+
+| Outcome | Effect |
+|---|---|
+| Verified | Qualification opens. A desk request (if any) settles and the lead becomes a Prospect under the manager's own authority. |
+| Follow-up | The lead waits; a follow-up note says what is wanted. |
+| Not qualified | Closes the lead as Lost through the ordinary gated move, with a written reason. Only somebody who may verify can do this — a salesman cannot close his own leads as fabrications. |
+
+<Rule title="The shop's answers never overwrite the salesman's">
+What the salesman was told standing in the shop stays on the lead. What the shop told the office is stored on the validation call. A lead is often validated twice, and the first call usually matters most, so each call is its own row. The **Validation calls** screen compares the requirement, the litres, the competitor and the potential, case- and space-insensitively and numbers as numbers; a question one side never answered is shown as "not comparable", never as a disagreement.
+</Rule>
+
+<Callout kind="why">
+The two accounts disagreeing is the single most useful thing the call produces — it is how anybody finds out the report and the shop did not match. Collapsing them would destroy exactly that.
+</Callout>
+
+The script the caller reads is configuration, so it can be improved after a bad call or translated without a release: <Setting k="mbos.leads.validationScript" />.
+
+## Qualification: eight answers, read from real values
+
+To leave Qualification for a sample, a direct or third-party lead needs:
+
+- **The eight answers** — each read from a stored answer, never a tick: GST, application, the trial plan (product, pack, quantity, tester, duration), who decides / orders / pays, price and credit with how they took it, delivery, still willing to test, and a dated next step.
+- **The figures confirmed within <Setting k="leads.figuresFreshDays" /> days** — monthly need, how much they can buy, the product and the competitor.
+- **The sales manager's review**, marked verified. *Incomplete* and *clarification* hand it back.
+- **For a third-party shop**, the distributor who bills it.
+
+<Rule title="GST is collected once and validated once — by two different people">
+The salesman or telecaller records the GSTIN. On a funnel lead, the **sales manager the lead is under** validates it as part of the qualification review — or an administrator, or, where nobody holds that seat, somebody who may verify leads — and **never the lead's owner**, who entered it. The gate reads that validation, not a tick the salesman could set. A **refused** number blocks the sample while it stands and needs no separate un-blocking: the moment a corrected number is validated, the lead carries on from where it was. The refusal stays on the timeline and in the audit log.
+</Rule>
+
+<Callout kind="why">
+Before this, the man who typed the number into his handset was also the man certifying it was a business we could invoice. A warning would not do: by the time somebody read it, the sample would already be dispatched.
+</Callout>
+
+## Who can do what
+
+| Action | Who |
+|---|---|
+| Raise a lead, record qualification answers, decide a Suspect | Anybody with lead work — every associate |
+| Set a lead's priority at capture | A manager (the verify permission) |
+| Verification call, *not qualified* closure, review the qualification | The verify permission — a manager |
+| Validate or refuse a GST number | On a funnel lead: its sales manager, an admin, or (no seat) a verifier — never its owner. On an account that was never a lead: the back-office person or the GST-validate permission |
+| See Intake, Qualification | Each is its own module, granted separately |
+
+## Settings
+
+<SettingsTable keys={[
+  "mbos.leads.visitsBeforeDecision",
+  "mbos.leads.maxSuspectVisits",
+  "mbos.leads.validationScript",
+  "leads.prospectReasons",
+  "leads.figuresFreshDays",
+  "leads.duplicateNameSimilarity",
+  "leads.verificationDueDays",
+  "leads.verificationFailureReasons",
+  "leads.sources",
+]} />
+
+## Where the code and the intent disagree today
+
+- **Qualifying fills the lead manager only from the handset.** `qualifyLead` is called by the MBOS lead and visit handlers (`actions/mbos.ts`); a Prospect move made from the CRM record or Suspect decisions does not call it, so no org-chart seat or next-working-day validation task is raised on that path. The calling desk resolves a verifier separately (`actions/lead-calling-desk.ts` `preparePromotion`).
+- **The retired setting is still listed.** `leads.suspectMaxVisits` says "no longer read"; the cap is `mbos.leads.maxSuspectVisits`.
+- **AGENTS.md says GST is asked "at the qualify transition"** on the legacy `qualified` rung (`handleLead`). On the funnel ladders it is a condition of leaving Qualification for a sample, not of entering it (`engines/lead-gates.ts` `QUALIFICATION_CONDITIONS`).

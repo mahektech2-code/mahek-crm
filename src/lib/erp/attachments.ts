@@ -13,7 +13,7 @@ import { listUserApps, listUserModules } from "@/lib/access";
  * none of these has a customer behind it that decides who should see it.
  * ------------------------------------------------------------------------- */
 
-export type ErpParent = "erp_test" | "erp_purchase" | "erp_transport" | "erp_video" | "erp_quotation" | "erp_petty";
+export type ErpParent = "erp_test" | "erp_purchase" | "erp_transport" | "erp_video" | "erp_quotation";
 
 /*
  * The screen each kind of file is read under. `complaint` is not an ERP parent
@@ -28,8 +28,6 @@ const SCREENS: Record<ErpParent | "complaint", string[]> = {
   erp_video: ["videos"],
   /* A quotation is a tab of Purchase requirements; holding the screen opens its files. */
   erp_quotation: ["requisitions"],
-  /* Petty-cash evidence — bills, receipts, handover and closing photographs. */
-  erp_petty: ["expenses"],
   complaint: ["requests", "myCustomers"],
 };
 

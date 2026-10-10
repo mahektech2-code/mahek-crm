@@ -299,7 +299,7 @@ const withMDX = createMDX({
   extension: /\.mdx$/,
   options: {
     remarkPlugins: ["remark-gfm"],
-    rehypePlugins: ["rehype-slug", ["@shikijs/rehype", { theme: "github-light", addLanguageClass: true }]],
+    rehypePlugins: ["rehype-slug", ["@shikijs/rehype", { theme: "github-light", addLanguageClass: true, tokenizeTimeLimit: 0 }]],
   },
 });
 

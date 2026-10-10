@@ -1,0 +1,105 @@
+Your working day starts when you **punch in** and ends when you **punch out**. Both need a selfie. While you are punched in, the app records your route; the moment you punch out, it stops. You can punch out for lunch and punch in again — each stretch is kept separately, and your hours are the total.
+
+## The screen at a glance
+
+<Wireframe url="MBOS · Home" caption="The Your day card, before and after punching in">
+  <WfCard title="Your day">
+    <WfText muted>Not punched in</WfText>
+    <WfBar><WfButton primary>Punch in</WfButton><Hotspot n={1} /></WfBar>
+  </WfCard>
+  <WfCard title="Your day" tone="brand">
+    <WfBar><WfText>Punched in 9:12 · 3h 05m</WfText><Hotspot n={2} /></WfBar>
+    <WfBar><WfPill>Bike · meter 24,310 km</WfPill><Hotspot n={3} /></WfBar>
+    <WfBar><WfSpacer /><WfButton>Punch out</WfButton><Hotspot n={4} /></WfBar>
+  </WfCard>
+  <WfCard tone="warn"><WfText>Keep tracking on — your phone may stop MBOS</WfText><Hotspot n={5} /></WfCard>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Punch in.</b> Starts your day. The phone checks it can record your route, then asks for a selfie and your vehicle.</span>,
+  <span key="2"><b>Hours today.</b> How long you have worked so far, adding up every stretch.</span>,
+  <span key="3"><b>Your vehicle.</b> What you said you are travelling on today, and the meter reading if it has one.</span>,
+  <span key="4"><b>Punch out.</b> Ends this stretch. From the evening it becomes the main button on Home.</span>,
+  <span key="5"><b>A warning about tracking.</b> Your phone may be stopping the app. Tap it and follow the steps.</span>,
+]} />
+
+## Punching in
+
+<Steps>
+<Step title="Press Punch in">
+If the app opens **Before you start** instead, your phone is not ready to record your route. Fix each row it lists, come back and press Punch in again. See [Installing and phone setup](/docs/mbos/setup).
+</Step>
+<Step title="Take a selfie">
+The front camera opens inside the app. Take the photo. **There is no way to start the day without it** — if you cancel, nothing is saved and you can try again.
+</Step>
+<Step title="Say what you are travelling on">
+Pick your vehicle for today — bike, car, bus or train, walking, a customer's vehicle. If it has a meter, the app asks you to **photograph the meter**: today's kilometres are counted from this reading.
+</Step>
+<Step title="Your day has started">
+The timer starts and the app begins recording your route. If you were far from your base, the day still starts — you may be asked afterwards why.
+</Step>
+</Steps>
+
+<Callout kind="note">
+No GPS, or a weak one, does not stop you punching in. The day starts and the app records that the location was missing. Only the selfie and a phone that cannot record your route stop a punch-in.
+</Callout>
+
+## Breaks
+
+Going for lunch? Press **Punch out** (with a selfie). When you are back, press **Punch in again** (with another selfie). Your route stops while you are on a break and starts again when you return. Your hours for the day are the stretches added together — the break is not counted.
+
+## Punching out
+
+<Steps>
+<Step title="Press Punch out">
+On Home. From the evening the app reminds you, and the button moves to the top.
+</Step>
+<Step title="Take a selfie">
+The same as the morning. The day does not close without it.
+</Step>
+<Step title="Photograph the meter, if you have one">
+On a metered vehicle, photograph the closing reading. The two readings are your day's mileage — you do not type kilometres anywhere else.
+</Step>
+<Step title="Add expenses if prompted">
+On a day without a meter — bus, train, auto — the app asks you to add today's fares in **Expenses** now, while you remember them. You can say **Later**.
+</Step>
+</Steps>
+
+## If you forgot to punch out
+
+The next morning Home tells you. The office closes a forgotten day at the **last thing you did** — your last visit or entry — not at a made-up time. If that is wrong, open **More → Attendance**, find the day and press **Ask your manager to fix this day**. Write what happened. Your manager decides.
+
+If you rode a metered vehicle that day, Home also asks you to photograph the meter now if it has not moved, so that day's kilometres are counted.
+
+## Your attendance history
+
+**More → Attendance** lists your recent days.
+
+| You see | It means |
+|---|---|
+| **Present** | You worked a full day. |
+| **Half Day** | You worked more than half a day but less than a full one. |
+| **Absent** | Not punched in on a working day, or worked too little. |
+| **On Leave** | An approved leave day. |
+| **Weekly Off** | A day you were not expected to work. |
+| *Away from base* | You punched in outside the distance from your base. |
+| *No punch-out* | You did not punch out; the office closed the day for you. |
+| *Sent to your manager* | You asked for this day to be fixed and are waiting for an answer. |
+
+## Questions people ask
+
+<Faq q="Does the app track me after I punch out?">
+No. Recording starts at punch-in and stops at punch-out — on a break too.
+</Faq>
+
+<Faq q="Why does the app need location all the time?">
+So it can keep recording your route while your phone is in your pocket with the screen off. It still stops the moment you punch out.
+</Faq>
+
+<Faq q="My camera will not open.">
+The app needs camera permission for the selfie. Open phone Settings → Apps → Mahek MBOS → Permissions → Camera and allow it.
+</Faq>
+
+<Faq q="How long are the selfies kept?">
+Only long enough for your manager to check them — about <Setting k="mbos.attendance.selfieRetentionHours" /> hours after they reach the office. After that the photo is deleted; the record that a photo was taken stays.
+</Faq>
