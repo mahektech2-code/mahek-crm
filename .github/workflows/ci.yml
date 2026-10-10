@@ -92,6 +92,15 @@ jobs:
           cd mbos-app
           npm run test
 
+      # The Factory app is a second React Native package. It imports the
+      # server's pure factory rules from ../src, so its types are checked
+      # against them on every change to either side.
+      - name: Factory app types
+        run: |
+          cd factory-mobile
+          npm ci
+          npm run typecheck
+
       - name: Engine tests
         run: npm run test
 

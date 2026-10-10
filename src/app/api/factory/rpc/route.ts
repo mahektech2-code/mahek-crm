@@ -1,3 +1,4 @@
+import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import * as A from "@/lib/actions/factory";
 
@@ -35,6 +36,7 @@ const OPS = {
 export type FactoryOp = keyof typeof OPS;
 
 const BUILD = process.env.FACTORY_BUILD ?? "dev";
+const SESSION = "mahekone_session";
 
 export async function POST(request: Request) {
   let body: { op?: string; args?: unknown[] };
@@ -46,8 +48,16 @@ export async function POST(request: Request) {
   const fn = OPS[body.op as FactoryOp] as ((...a: unknown[]) => Promise<unknown>) | undefined;
   if (!fn) return NextResponse.json({ error: "unknown-op" }, { status: 404, headers: { "x-factory-build": BUILD } });
   try {
+    const jar = await cookies();
+    const before = jar.get(SESSION)?.value ?? "";
     const value = await fn(...(Array.isArray(body.args) ? body.args : []));
-    return NextResponse.json({ value: value ?? null }, { headers: { "x-factory-build": BUILD, "cache-control": "no-store" } });
+    const headers: Record<string, string> = { "x-factory-build": BUILD, "cache-control": "no-store" };
+    /* The native app keeps its session itself (proxy.ts reads it back from
+       `x-factory-session`), so a sign-in or sign-out says what it now is. A
+       browser ignores this and keeps using its cookie. */
+    const after = jar.get(SESSION)?.value ?? "";
+    if (after !== before) headers["x-factory-session"] = after;
+    return NextResponse.json({ value: value ?? null }, { headers });
   } catch (e) {
     /* A 5xx tells the phone "not received — keep it and try again", which is
        the one honest answer when the server itself failed. */

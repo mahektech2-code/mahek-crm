@@ -8203,6 +8203,43 @@ terminal, for a pilot.
 allocated lots, loads exactly what the order takes, ticks the checklist and
 photographs the truck; the ERP's verification, transport row and order book
 stay with the office (PRD §7.4.6).
+
+**THE ANDROID APP IS NATIVE, AND IT IS THE WEB APP'S SCREENS.** `factory-mobile/`
+is an Expo app — the APK on `/download?team=erp` — and it was first a Trusted
+Web Activity around `/factory`. Floor staff asked for an app rather than a
+website in one, so the screens moved onto the phone: `factory-mobile/src/
+factory-app.tsx` is `src/app/factory/_ui/factory-app.tsx` with its elements
+swapped for `web.tsx`'s and its browser parts for the phone's. `web.tsx` is
+the reason that is a port and not a redesign: `Div`, `Span`, `Btn` and
+`Input` take the design's own inline CSS and draw View, Text, Pressable and
+TextInput, doing what the web does and native does not — text style
+inherits, `display: flex` is a row, flex items shrink, a run of words is one
+paragraph, `display: grid` with N columns, `overflow: auto` scrolls. A screen
+changed on one side and not the other is a regression on the floor, so a
+change to either file is a change to both.
+
+**THE RULES ARE NOT COPIED.** The phone imports `lib/factory/rules`, `types`
+and `i18n` from `../src` through its Metro config, so a scan is judged by the
+same function on the phone and on the server, and the phone still decides
+nothing the server does not decide again. `native-imports.test.ts` pins that
+list and walks it for server code, because a database driver reached from
+there would ship inside an APK nobody can recall.
+
+**THE SESSION IS A HEADER.** A phone has no cookie jar, so the rpc route
+returns the session id as `x-factory-session` when a call changes it, the app
+keeps it in SQLite, and `proxy.ts` turns the header back into the
+`mahekone_session` cookie on `/api/factory/*` — every action resolves the
+person exactly as for the browser. The page at `/factory` still works and is
+what a laptop opens; the queue, the 48 hours, the idempotency key and the old
+-version rules above are the server's and hold for both.
+
+**A SCREEN CHANGE NEEDS A RELEASE; A RULE CHANGE DOES NOT.** The screens are
+in the APK now, so they reach the floor only through the Factory APK
+workflow (DEPLOY.md); what the server accepts and posts still changes with
+every deploy. Test the app with no device: `cd factory-mobile &&
+EXPO_PUBLIC_SITE=http://localhost:3000 npx expo start --web` runs the same
+code in a browser, where the scanner takes its no-camera path and offers the
+floor's real labels to tap.
 ## The Documentation app
 
 **`/docs` is an app like any other**, granted in `app_access` and checked in
