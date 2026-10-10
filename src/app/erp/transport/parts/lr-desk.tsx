@@ -6,7 +6,7 @@ import { Badge, Button, Card, cx } from "@/components/ui/primitives";
 import { erpLogisticsAttach, erpLogisticsEditLr, erpLogisticsVoidLr } from "@/lib/actions/erp-logistics";
 import { addDays, rankForLr, shortDay } from "@/lib/erp/engines/logistics";
 import type { Consignment, UploadedLr } from "@/lib/erp/logistics";
-import { BillRef, DuePill, Empty, LrThumb, NotifyToggle, plural, sumPackages, useAct } from "./common";
+import { BillRef, DuePill, Empty, LrThumb, NotifyToggle, plural, sumPackages, useAct, lrLabel } from "./common";
 import { LrUpload } from "./lr-upload";
 
 /**
@@ -104,7 +104,7 @@ export function LrDesk({
               <button key={l.id} onClick={() => choose(l.id)} className={cx("flex w-full cursor-pointer gap-3 border-b border-divider px-4 py-3 text-left last:border-0", pick === l.id ? "bg-brand-soft" : "hover:bg-canvas")}>
                 <LrThumb fileId={l.fileId} size={52} />
                 <span className="min-w-0 flex-1">
-                  <span className="block font-mono text-[14px] font-semibold text-ink">LR {l.lrNo}</span>
+                  <span className="block font-mono text-[14px] font-semibold text-ink">{lrLabel(l.lrNo)}</span>
                   <span className="block truncate text-[12px] text-body">{l.transporter ?? "Transporter not given"}</span>
                   <span className="block truncate text-[12px] text-muted">
                     {[l.destination, l.packages != null ? plural(l.packages, "box", "boxes") : null, l.lrDate ? shortDay(l.lrDate) : null].filter(Boolean).join(" · ") || "—"}
@@ -127,7 +127,7 @@ export function LrDesk({
             <>
               <LrThumb fileId={lr.fileId} size={72} />
               <div className="min-w-0 flex-1">
-                <div className="text-[15px] font-semibold text-ink">Which bills does LR {lr.lrNo} carry?</div>
+                <div className="text-[15px] font-semibold text-ink">Which bills does {lrLabel(lr.lrNo)} carry?</div>
                 <div className="text-[12px] text-muted">
                   {[lr.transporter, lr.destination, lr.packages != null ? plural(lr.packages, "box", "boxes") : null, lr.freightTerm ? `freight ${lr.freightTerm}${lr.freightPaise != null ? ` ₹${(lr.freightPaise / 100).toLocaleString("en-IN")}` : ""}` : null].filter(Boolean).join(" · ")}
                 </div>

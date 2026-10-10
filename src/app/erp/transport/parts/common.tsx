@@ -43,13 +43,13 @@ export function StageStrip({ stage, compact = false }: { stage: string; compact?
           <span
             className={cx(
               "block rounded-full",
-              compact ? "h-1.5 w-5" : "h-2 w-8",
+              compact ? "h-1.5 w-5" : "h-2 w-6",
               i < at ? "bg-brand" : i === at ? (s === "Close - Received to Party" ? "bg-success" : "bg-brand") : "bg-divider",
             )}
           />
         </span>
       ))}
-      {!compact ? <span className="ml-2 text-[12px] font-medium text-body">{STAGE_SHORT[STAGES[at] as Stage]}</span> : null}
+      {!compact ? <span className="ml-2 text-[12px] font-medium whitespace-nowrap text-body">{STAGE_SHORT[STAGES[at] as Stage]}</span> : null}
     </div>
   );
 }
@@ -164,4 +164,10 @@ export function NotifyToggle({ value, onChange, disabled }: { value: boolean; on
       </span>
     </label>
   );
+}
+
+/** "LR 1048821", but never "LR LR77005" when the number already says so. */
+export function lrLabel(no: string | null | undefined): string {
+  if (!no) return "No LR";
+  return /^LR\b|^LR[-\s\d]/i.test(no) ? no : `LR ${no}`;
 }

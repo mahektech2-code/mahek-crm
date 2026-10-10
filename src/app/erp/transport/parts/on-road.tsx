@@ -8,7 +8,7 @@ import { Badge, Button, Card, cx } from "@/components/ui/primitives";
 import { erpLogisticsClearIssue, erpLogisticsDelivered, erpLogisticsIssue, erpLogisticsUpdate } from "@/lib/actions/erp-logistics";
 import { addDays, callDue, daysBetween, ISSUES, ROAD_STAGES, runningLate, shortDay, STAGE_SHORT, trackingLink, type Stage } from "@/lib/erp/engines/logistics";
 import type { Consignment } from "@/lib/erp/logistics";
-import { BillRef, byLr, CallLink, DuePill, Empty, LrThumb, NotifyToggle, plural, StageStrip, sumPackages, useAct } from "./common";
+import { BillRef, byLr, CallLink, DuePill, Empty, LrThumb, NotifyToggle, plural, StageStrip, sumPackages, useAct, lrLabel } from "./common";
 
 /**
  * STEP 5 AND 6 — following the lorry. One card per LR (one LR is one
@@ -75,7 +75,7 @@ export function OnRoad({ rows, today, callEveryDays, lateAfterDays, notifyOn, ca
               <LrThumb fileId={c.lrFileId} size={60} />
               <div className="min-w-[220px] flex-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-mono text-[15px] font-semibold text-ink">LR {c.lrNo}</span>
+                  <span className="font-mono text-[15px] font-semibold text-ink">{lrLabel(c.lrNo)}</span>
                   <span className="text-[13px] text-body">· {c.transporter ?? "—"}</span>
                   {issue ? <Badge tone="danger">{issue.issue}</Badge> : null}
                   {late && !issue ? <Badge tone="warn">Running late</Badge> : null}
@@ -100,7 +100,7 @@ export function OnRoad({ rows, today, callEveryDays, lateAfterDays, notifyOn, ca
                 {issue?.issueNote ? <div className="mt-1 text-[12px] text-danger">{issue.issueNote}</div> : null}
                 {c.lastEventNote ? <div className="mt-1 truncate text-[12px] text-body">Last: {c.lastEventNote}</div> : null}
               </div>
-              <div className="w-[240px] space-y-1.5">
+              <div className="w-[270px] space-y-1.5">
                 <StageStrip stage={c.stage} />
                 <div className="flex flex-wrap items-center gap-2 text-[12px] text-muted">
                   <span>Expected</span>
@@ -165,7 +165,7 @@ function ActionDialog({ dialog, today, callEveryDays, notifyOn, onClose }: { dia
   const [notify, setNotify] = useState(true);
   const cls = "mt-0.5 block h-8.5 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand";
 
-  const title = dialog.kind === "update" ? `Update LR ${c.lrNo}` : dialog.kind === "issue" ? `A problem with LR ${c.lrNo}` : `LR ${c.lrNo} delivered`;
+  const title = dialog.kind === "update" ? `Update ${lrLabel(c.lrNo)}` : dialog.kind === "issue" ? `A problem with ${lrLabel(c.lrNo)}` : `${lrLabel(c.lrNo)} delivered`;
   const save = () => {
     const done = (r: { ok: boolean }) => r.ok && onClose();
     if (dialog.kind === "update") return run(() => erpLogisticsUpdate(ids, { stage, note, expectedOn: expected || null, nextCallOn: nextCall || null, notify }), done);

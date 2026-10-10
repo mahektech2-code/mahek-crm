@@ -6,7 +6,7 @@ import { Badge, Button, Card, cx } from "@/components/ui/primitives";
 import { erpLogisticsReopen } from "@/lib/actions/erp-logistics";
 import { callDue, daysBetween, runningLate, shortDay } from "@/lib/erp/engines/logistics";
 import type { Consignment } from "@/lib/erp/logistics";
-import { BillRef, byLr, CallLink, DuePill, Empty, plural, StageStrip, sumPackages, useAct } from "./common";
+import { BillRef, byLr, CallLink, DuePill, Empty, plural, StageStrip, sumPackages, useAct, lrLabel } from "./common";
 import { useState } from "react";
 import { Modal } from "@/components/ui/modal";
 
@@ -83,7 +83,7 @@ export function Overview({
                 <div key={g.key} className="flex items-center gap-3 border-b border-divider px-4 py-2.5 text-sm last:border-0">
                   <div className="min-w-0 flex-1">
                     <div className="truncate font-medium text-ink">
-                      LR {c.lrNo} · {c.deliveryParty}
+                      {lrLabel(c.lrNo)} · {c.deliveryParty}
                     </div>
                     <div className="truncate text-[12px] text-muted">
                       {c.transporter ?? "—"} · {c.lastEventNote ?? "no update yet"}
@@ -105,8 +105,8 @@ export function Overview({
             <div className="text-[15px] font-semibold text-ink">Needs attention</div>
             <div className="text-[12px] text-muted">Everything that is not moving the way it should.</div>
           </div>
-          <Attention label="Problems on the road" tone="danger" href="/erp/transport?view=trackLr&filter=issue" items={issues.map((g) => ({ key: g.key, main: `LR ${g.bills[0].lrNo} · ${g.bills[0].deliveryParty}`, sub: `${g.bills.find((b) => b.issue)?.issue}${g.bills.find((b) => b.issue)?.issueNote ? ` — ${g.bills.find((b) => b.issue)?.issueNote}` : ""}` }))} />
-          <Attention label="Running late" tone="warn" href="/erp/transport?view=trackLr&filter=late" items={late.map((g) => ({ key: g.key, main: `LR ${g.bills[0].lrNo} · ${g.bills[0].deliveryParty}`, sub: g.bills[0].expectedDeliveryOn ? `Expected ${shortDay(g.bills[0].expectedDeliveryOn)}` : `${daysBetween(g.bills[0].billDate ?? today, today)} days since dispatch` }))} />
+          <Attention label="Problems on the road" tone="danger" href="/erp/transport?view=trackLr&filter=issue" items={issues.map((g) => ({ key: g.key, main: `${lrLabel(g.bills[0].lrNo)} · ${g.bills[0].deliveryParty}`, sub: `${g.bills.find((b) => b.issue)?.issue}${g.bills.find((b) => b.issue)?.issueNote ? ` — ${g.bills.find((b) => b.issue)?.issueNote}` : ""}` }))} />
+          <Attention label="Running late" tone="warn" href="/erp/transport?view=trackLr&filter=late" items={late.map((g) => ({ key: g.key, main: `${lrLabel(g.bills[0].lrNo)} · ${g.bills[0].deliveryParty}`, sub: g.bills[0].expectedDeliveryOn ? `Expected ${shortDay(g.bills[0].expectedDeliveryOn)}` : `${daysBetween(g.bills[0].billDate ?? today, today)} days since dispatch` }))} />
           <Attention label="At the transporter 2+ days with no LR" tone="warn" href="/erp/transport?view=pendingLr" items={stuck.map((c) => ({ key: c.id, main: `${c.billNo ?? `Order ${c.orderNo}`} · ${c.deliveryParty}`, sub: `${c.transporter ?? "—"} since ${shortDay(c.atTransportAt!.slice(0, 10))}` }))} />
           <Attention label="Customer messages to send by hand" tone="warn" href="/erp/transport?view=lrMessages" items={messagesWaiting ? [{ key: "m", main: plural(messagesWaiting, "message"), sub: "Open WhatsApp from the Customer messages tab and mark each sent." }] : []} />
           {!issues.length && !late.length && !stuck.length && !messagesWaiting ? <Empty>Nothing needs attention.</Empty> : null}
