@@ -1,0 +1,90 @@
+The **Help Center** is where the CRM's SOPs and call scripts live — search it mid-call for "payment" or "short supply" and read the answer. **Manager settings** are the numbers and switches that decide how the CRM behaves: when a customer comes back to the Call Log, when a debt escalates, how targets default. They are changed in the **Admin Console**, under **Telecaller CRM**, by a manager of the CRM.
+
+## The Help Center at a glance
+
+<Wireframe url="/crm/help" nav={["#Support", "Help Center"]} active="Help Center" caption="Help center — SOPs and call scripts">
+  <WfBar>
+    <WfTitle sub="SOPs and call scripts, filtered to your role.">Help center</WfTitle>
+    <WfSpacer />
+    <WfButton>Report a problem on WhatsApp</WfButton>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfBar>
+    <WfInput placeholder={'Search scripts and SOPs - try "payment" or "short supply"'} wide />
+    <WfButton>Telecaller</WfButton>
+    <Hotspot n={2} />
+  </WfBar>
+  <WfPanel title="Categories" side>
+    <WfText>All</WfText><WfText>Collections</WfText><WfText>Orders</WfText><WfText>Complaints</WfText>
+    <Hotspot n={3} />
+  </WfPanel>
+  <WfCard title="Chasing an overdue bill">
+    <WfText muted>Telecaller · Collections · updated 12 Aug</WfText>
+    <WfBlock label="Say this — Good morning, am I speaking to {contact name}? …" h={60} />
+    <Hotspot n={4} />
+  </WfCard>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Report a problem.</b> Opens WhatsApp to the support line. For anything about the app itself, the <b>Tell us</b> button in the header is the better route — it keeps a thread you can follow.</span>,
+  <span key="2"><b>Search and audience.</b> Search looks through titles, articles and script text. The audience filter starts on <i>Telecaller</i> for an associate; pick <i>All roles</i> to see the managers' articles too.</span>,
+  <span key="3"><b>Categories.</b> Browse one category at a time. Searching ignores the category.</span>,
+  <span key="4"><b>An article.</b> Who it is for, its category, and when it was last updated. A call script shows the lines to say.</span>,
+]} />
+
+## Call scripts
+
+A **call script** is a help article written to be read aloud. The same scripts appear in the **call panel** when you ring somebody from the Call Log — the panel picks the one that fits.
+
+Words in braces are placeholders. In the call panel, the CRM fills in the ones it knows for the customer you are calling, and leaves the rest in braces for you to say in your own words:
+
+| Placeholder | Filled with |
+|---|---|
+| `{contact name}` | The contact person on the account |
+| `{customer}`, `{customer name}` | The shop's name |
+| `{city}` | Their town |
+| `{your name}`, `{my name}` | Your name |
+| `{outstanding}`, `{outstanding amount}` | What they owe |
+| `{last order date}`, `{last order value}` | Their last order |
+| `{bill number}`, `{bill no}`, `{invoice number}` | The bill being chased |
+| `{amount}`, `{bill amount}`, `{due date}`, `{days overdue}` | That bill's balance, due date and lateness |
+
+A filled-in placeholder reads as part of the sentence; one still in braces is highlighted so you never say "bill number" out loud by accident. In the Help Center itself, placeholders are shown as written.
+
+## Manager settings
+
+<Steps>
+<Step title="Open the Admin Console">
+From the app launcher, open **Admin Console**, then **Settings → Telecaller CRM**. The old address `/crm/settings` takes you there.
+</Step>
+<Step title="Pick a tab">
+**Call queue**, **Collections**, **Targets & cycles**, **Interactions**, **Products**, **WhatsApp**, **Reminders** and **Complaints**. Each setting shows what it does, its current value and its shipped default.
+</Step>
+<Step title="Change values">
+Edit as many as you need on the tab. Anything that does not fit with another setting is flagged before you can save — *Fix the flagged relationships first*.
+</Step>
+<Step title="Review this change set">
+You see every change, old and new, and which worklists it alters tomorrow. Confirm to apply. It takes effect at once, and can be undone in one action from the save bar.
+</Step>
+</Steps>
+
+If you see *You can see these settings but not change them*, you hold the CRM but not as a manager, or the setting is one only a platform administrator may change.
+
+### The lead funnel, workday and voice
+
+The lead funnel's gates and reason lists are on **Settings → Lead funnel**; the working day, attachments and sign-in on **Platform**; dictation on **Voice & AI**. A CRM manager can change the lead funnel page too.
+
+## Questions people ask
+
+<Faq q="I cannot find the Settings page in the CRM.">
+It moved to the Admin Console. The old address forwards there.
+</Faq>
+<Faq q="I changed a setting. When does it take effect?">
+Immediately — the CRM reads settings fresh at least every 30 seconds. Some (the Call Log's) change tomorrow's list, because today's is already settled; the review step says which.
+</Faq>
+<Faq q="Can I write a new help article?">
+Not from a screen yet. Ask whoever maintains the CRM.
+</Faq>
+<Faq q="Why does a script still show a placeholder in braces?">
+The CRM does not know that value for this customer — say it in your own words.
+</Faq>

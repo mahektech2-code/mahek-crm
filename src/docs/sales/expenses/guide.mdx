@@ -1,0 +1,88 @@
+Three screens cover what the field spends. **Expenses** is every expense a salesman logs on his phone, waiting for your decision, plus the allowances his work earns him automatically — and a **Ledger** of what each person was claimed, approved, refused, paid and is still owed. **Flagged expenses** is what the expense policy wants a person to look at twice. **Expense policy** shows, in plain words, what a salesman is paid back.
+
+## Expenses
+
+<Wireframe url="/sales/expenses" nav={["#People", "Attendance", "Leave", "Holidays", "Expenses", "Flagged expenses", "Expense policy"]} active="Expenses" caption="Expenses, on the Claims tab">
+  <WfBar><WfTitle sub="Every expense a salesman logs arrives here straight away for you to approve. Allowances are worked out from his punch times and trips.">Expenses</WfTitle><WfSpacer /><WfButton>Add an expense</WfButton><Hotspot n={1} /></WfBar>
+  <WfTabs items={["Claims", "Ledger"]} active="Claims" />
+  <WfBar><WfButton>This month ▾</WfButton><WfButton>Salesman ▾</WfButton><WfButton>Type ▾</WfButton><WfButton>Policy ▾</WfButton><WfButton>Bill ▾</WfButton><Hotspot n={2} /></WfBar>
+  <WfBar>
+    <WfCard title="To approve"><WfText>₹6,850 · 9</WfText></WfCard>
+    <WfCard title="Claimed"><WfText>₹42,300</WfText></WfCard>
+    <WfCard title="Approved"><WfText>₹31,200</WfText></WfCard>
+    <WfCard title="Refused"><WfText>₹1,900</WfText></WfCard>
+    <WfCard title="Allowances"><WfText>₹14,480</WfText></WfCard>
+  </WfBar>
+  <WfBar><WfPill tone="brand">To approve 9</WfPill><WfPill>Approved 41</WfPill><WfPill>Refused 3</WfPill><WfPill>Allowances 120</WfPill><WfPill>All 173</WfPill><Hotspot n={3} /></WfBar>
+  <WfTable columns={["Salesman", "Day", "What", "Amount", "Status", ""]} rows={[
+    ["Salesman A", "8 Oct", <span key="a"><b>Hotel</b><br/><WfText muted>1 bill attached</WfText></span>, <span key="b">₹2,400<br/><WfText muted>₹400 over policy</WfText> <Hotspot n={4} /></span>, <span key="c"><WfPill tone="warn">Waiting</WfPill><br/><WfText muted>1 thing to check</WfText> <Hotspot n={5} /></span>, <span key="d"><WfButton primary>Decide</WfButton> <Hotspot n={6} /></span>],
+    ["Salesman B", "8 Oct", <span key="e"><b>Meal allowance</b></span>, "₹250", <WfPill key="f">Automatic</WfPill>, ""],
+  ]} />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Add an expense.</b> Enter an expense on a salesman's behalf — a bill he handed in on paper — with the bill attached. You can add and approve in one go.</span>,
+  <span key="2"><b>Filters.</b> The period, one salesman, the kind of expense, whether it is within policy, and whether a bill is attached. Every figure on the screen follows the filters.</span>,
+  <span key="3"><b>Chips.</b> What to list: waiting for you (the default), approved, refused, the automatic allowances, or everything.</span>,
+  <span key="4"><b>Amount.</b> What he logged, and how much of it is over what the policy allows.</span>,
+  <span key="5"><b>Things to check.</b> Flags the policy raised on this expense. The link opens Flagged expenses.</span>,
+  <span key="6"><b>Decide.</b> Opens the expense with its bills, what the policy allows, and Approve, Approve part or Refuse.</span>,
+]} />
+
+### Expenses and allowances are different
+
+<Cards cols={2}>
+<Card title="Expenses — you decide" tone="brand">What he logs himself: a hotel, a meal bill, a bus or train fare, local transport, anything else. Each one is its own line and waits for your decision the moment it reaches the office. There is no day to close.</Card>
+<Card title="Allowances — automatic">The meal allowance worked out from his punch-in and punch-out, and the kilometre allowance for his own bike or car worked out from his trips. They are his by the work log and need nobody's approval. They show as <i>Automatic</i>.</Card>
+</Cards>
+
+### Deciding an expense
+
+<Steps>
+<Step title="Open it">
+Press **Decide**. You see the bills he attached, the vendor and bill number, his remarks, what he claimed and what the policy allows.
+</Step>
+<Step title="Approve, approve part, or refuse">
+**Approve** pays what he claimed (or what the policy allows, where a fixed allowance is worth more than the bill). **Approve part** asks for the amount you are allowing. **Refuse** asks you to say why — he is told.
+</Step>
+<Step title="Check the flags first">
+If the row says *things to check*, open [Flagged expenses](#flagged-expenses) — a missing bill or an amount over the limit is usually why.
+</Step>
+</Steps>
+
+You cannot decide your own expense or one from outside your team.
+
+### The Ledger
+
+The **Ledger** tab is one row per salesman for the period: approved, refused or cut, waiting, allowances, and **owed now** — what the company still owes him after the payments recorded against him. Open a person to see every line and every payment. Recording a payment to a salesman, and voiding one recorded by mistake, is done there.
+
+## Flagged expenses
+
+Flagged expenses are things the policy wants you to check **before** you approve. Nothing here stopped a claim being recorded.
+
+| Severity | Shown as | Typical cause |
+|---|---|---|
+| **Missing a bill** | red | A claim above the amount that needs proof, with no bill attached. |
+| **To check** | amber | Over a limit; the meter and the GPS track disagree; a typed distance disagrees; an unpriced travel mode or hotel; a bill that looks like one already claimed. |
+| **Note** | grey | Information only. |
+
+Answer each one with **Allow**, **Corrected** or **Refuse** — every answer needs a sentence, because the question is asked months later ("why was that 240 km day allowed?"). An answer is kept even when the day is re-priced.
+
+## Expense policy
+
+A read-only page showing the policy in plain words: what each travel mode is paid, the meal allowances and when they apply, hotel limits, which bills need proof, and the written guidelines. If your company has more than one policy, a button for each lets you switch, and each says how many people are on it. Policies are written in the Admin Console.
+
+## Common questions
+
+<Faq q="He says the app showed a bigger allowance than the office.">
+His phone works the day out with the policy it last downloaded. If the policy changed since, the office's figure is the one paid.
+</Faq>
+<Faq q="Why no meal allowance on a day he worked?">
+Meals are paid only on a day spent away from his hometown. A day where every shop he visited was in his hometown is a day at home. If nobody has set his hometown, the rule is off for him.
+</Faq>
+<Faq q="Can I approve an allowance?">
+No — there is nothing to approve. It is worked out from the work log.
+</Faq>
+<Faq q="Where do I change what we pay per kilometre?">
+In the Admin Console's expense policy editor. This dashboard only shows the policy.
+</Faq>

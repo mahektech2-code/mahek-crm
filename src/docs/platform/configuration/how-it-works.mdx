@@ -1,0 +1,126 @@
+Almost every number that shapes how MahekOne behaves — how many days before a customer counts as inactive, how far a salesman may stand from a shop and still check in, how long a payment promise keeps a customer off the calling list, how big a photograph may be — is a **setting**. Settings are changed from a screen, take effect within about half a minute, and every change is recorded with who made it and what it was before. Nothing about a setting needs a developer or a redeploy.
+
+This page explains the three kinds of configuration MahekOne has, who can change which, and why credentials are kept apart from everything else. The [developer tab](/docs/platform/configuration/developer) has the code.
+
+## The three kinds of configuration
+
+| Kind | Examples | Who changes it | Where |
+|---|---|---|---|
+| **Settings** | Call Log windows, collection stages, check-in radius, attachment size limit, the working day | Managers who may change configuration, for the apps they hold; platform administrators for everything | Admin Console → Settings, one page per app |
+| **Credentials** (keys) | The WhatsApp (Wati) key, the sign-in code (MiniMoth) key, dictation keys, the maps keys, the website enquiry secret | Platform administrators only | Admin Console → Integrations (and the Voice and Maps sections) |
+| **Server environment** | Where the database is, the Google service account, the backup bucket, the cron secret | Whoever holds shell access to the droplet | The file `/opt/mahekone/.env` on the droplet |
+
+<Callout kind="why">
+The first two are on screens because a deployment that nobody has shell access to must still be able to be tuned and connected. An environment variable is a door somebody else has to open; a setting is a decision the business can make for itself. Only the things the app needs before it can even start — where its database is — have to live in the environment.
+</Callout>
+
+## Settings
+
+<Rule title="Nothing business-critical is a constant">
+If a manager might one day want to change a number, it is a setting, not a value typed into the code. Each setting has a label, a description, a default, and limits (a minimum and maximum, or a list of allowed values). A value outside those limits is refused when it is saved.
+</Rule>
+
+### Where they are changed
+
+Admin Console → **Settings** has one page per app that has something to configure:
+
+| Page | What it decides | Who can open it besides a platform administrator |
+|---|---|---|
+| Platform | Sign-in, the working day, file uploads, and the other settings every app shares | Nobody — these decide things for everybody |
+| Telecaller CRM | The call queue, collections, buying cycles | Managers holding the CRM |
+| Lead funnel | The gates a lead must pass, the reason lists, lead behaviour on the handset | Managers holding the CRM or the Sales Dashboard |
+| Sales and field app | Attendance, tracking, visits, orders, expenses, salesman targets | Managers holding the Sales Dashboard or the Salesman App |
+| Accounts | How money is recorded and confirmed; how price lists are read and discounted | Managers holding Accounts |
+| HRMS | Check-in, overtime, payroll deductions, performance points | Managers holding HRMS |
+| ERP | Production tolerances, whether the ERP takes orders, its alerts | Managers holding the ERP |
+| Hire | Which models evaluate candidates, how sure they must be, the AI budget | Managers holding Hire |
+| Reports | How the owner's figures are measured | Holders of the Founder Command Centre |
+| Voice and AI | Dictation and the assistants | Managers holding the CRM |
+
+An app with nothing to configure has **no page**, rather than a page that says so.
+
+### What happens when you save
+
+<Flow caption="Saving a settings page" chart={`
+flowchart TD
+  A["Manager changes values on a page"] --> B{"Each value within its limits?"}
+  B -- "No" --> R["Refused, with the field and the reason"]
+  B -- "Yes" --> C{"Does the page, as a whole,<br/>introduce a contradiction?"}
+  C -- "Yes" --> R2["Refused: names the clash<br/>(e.g. a window shorter than the stage it feeds)"]
+  C -- "No" --> W["All values written together"]
+  W --> AU["One audit entry per setting:<br/>who, when, before and after"]
+  AU --> E["In force on the next read<br/>(within about 30 seconds)"]
+`} />
+
+- **A page saves as one change.** Related settings — three escalation thresholds, a set of age bands — are written together or not at all, so the system never briefly describes something nobody agreed to.
+- **Contradictions are refused only if the save introduces them.** If two settings already disagree, saving a fix to one half is allowed; refusing would trap whoever is trying to repair it.
+- **Every change is audited** with the value before and after, and who made it.
+- **There is no restart.** Values are read through a short cache, so a change is in force within about thirty seconds everywhere.
+
+<Callout kind="note">
+A setting nobody has ever changed uses its **default**. Adding a new setting therefore needs no data change — it simply starts at its default on every deployment.
+</Callout>
+
+### Some settings that matter everywhere
+
+<SettingsTable keys={["workingDay.timezone", "workingDay.dayBoundaryHour", "workingDay.workingDays", "attachments.maxSizeMb", "attachments.orphanCleanupHours", "voice.enabled"]} />
+
+## Credentials
+
+Credentials — the keys MahekOne uses to call outside services — are kept in a **separate place** from settings, and treated differently in four ways:
+
+1. **They are never shown.** A screen shows only the last four characters, so two keys can be told apart and nobody can read one off a screen.
+2. **The audit records that a key changed, never what to.** Settings are audited with their before and after values; a key logged that way would sit readable in an audit log nobody prunes.
+3. **They are not exported.** Settings can be exported and are rendered on screens; keys are read only by the request about to use them.
+4. **Only platform administrators can set or clear them.**
+
+<Callout kind="why">
+A key kept with the ordinary settings would be readable in four places — the screen, the export, the audit log and the database — and one of those is a log that keeps everything for ever. Keeping keys in their own place, read only at the moment they are spent, removes three of the four.
+</Callout>
+
+### The console wins over the server environment
+
+Most keys can be set either on the Integrations screen or as a variable in the server's environment file. Where both are set, **the one set on the screen wins**; where only the environment has one, that one is used. So a deployment that already had its keys in the environment needed no change, and a key can be rotated from a screen without anybody logging into the server.
+
+<Callout kind="warn" title="A key is stored as written">
+There is nowhere to keep an encryption key that MahekOne can read and a database backup cannot, so credentials set on the screen are stored as typed. Backups are encrypted before they leave the server (see [Backups](/docs/platform/backups)), but if a database dump ever leaves your hands unencrypted, **rotate every key at its provider**. The Integrations screen says this too.
+</Callout>
+
+### What each credential switches on
+
+| Credential | What it enables | Without it |
+|---|---|---|
+| WhatsApp (Wati) | Sending templates and reading replies; also the delivery webhook address | Nothing is sent through the API; copy-and-confirm still works |
+| Sign-in codes (MiniMoth) | One-time codes to the phone | Codes fall back to a Wati template if one is named, or are not offered; passwords still work |
+| Dictation (Sarvam, OpenAI) | The microphone on prose fields | No microphone is drawn |
+| Maps (Ola, up to five keys) | Street maps, snapping trails to roads, geocoding | Map screens say there is no key rather than drawing a blank |
+| Website enquiries secret | The public website forwarding enquiries | Enquiries from the website are refused |
+
+See [Integrations](/docs/platform/integrations) for each service in detail.
+
+## The server environment
+
+A handful of things cannot be settings, because the app needs them before it can read the database, or because they belong to the machine rather than the business:
+
+- **Where the database is** — the only one the app refuses to start without.
+- **The Google service account** that reads the team's spreadsheets.
+- **The cron secret** that the server's own scheduler presents to run syncs and nightly jobs.
+- **The backup bucket and its encryption key file**.
+- **The file store** for photographs, when they move out of the database.
+- **The sign-in signing secret** for the handset.
+
+These live in `/opt/mahekone/.env` on the droplet, readable only by the deploy user. A missing one does **not** crash the app: the feature that needs it goes quiet and says so (the sync reports "not configured", the microphone is not drawn, reset mail is written to the log). That is deliberate — but it also means a mistyped name is silent, which is why a test compares the example file's names against the names the code reads.
+
+## Who can do what
+
+<CapabilityGrid names={["config.write", "access.manage"]} />
+
+- **Changing settings** needs `config.write` **and** a grant in an app that owns the page; Platform settings are for platform administrators only.
+- **Setting or clearing credentials** is for platform administrators only.
+- **Server environment** changes need shell access to the droplet.
+
+## Where the code and the intent disagree today
+
+- **The time zone setting is not read by the database queries.** <Setting k="workingDay.timezone" /> decides the business date in the app, but every day window written in SQL uses a fixed Asia/Kolkata constant. Changing the setting would make the two disagree.
+- **A credential is declared that nothing uses.** The list of known credentials includes an SMS provider key (`msg91.authKey`) that can be set on the screen, but no code reads it; sign-in codes go through MiniMoth (`src/lib/secrets.ts`).
+- **Some settings are shown but never read.** For example <Setting k="attachments.retentionDays" /> describes how long removed attachments are kept, but no code reads it (see [Storage](/docs/platform/storage-r2/how-it-works)).

@@ -1,0 +1,106 @@
+Outstanding is `outstandingPage` in `payment-service.ts`: a grouped SQL read that counts and pages customers, then — for the 25 on the page only — `listBills({ openOnly, customerIds })` fed through the pure `groupOutstanding` in `engines/outstanding.ts`. The Accounts app's Outstanding page calls the same function. `listOutstandingByCustomer` is the unpaged version; today only `bill-paging.test.ts` calls it, to prove the paged read and the whole-book read agree.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Route guard | `src/app/crm/outstanding/layout.tsx` | `requireModule(user.id, "crm.outstanding")` |
+| Page (server) | `src/app/crm/outstanding/page.tsx` | `readOutstandingParams` → `outstandingPage(params)` |
+| Params | `src/lib/outstanding-params.ts` | `?q=`, `?sort=`, `?overdue=1`, `?page=`, `?per=` |
+| Screen (client) | `src/app/crm/outstanding/outstanding-screen.tsx` | Metrics, filters, expandable rows, bill status words; links to `/crm/customers/[id]` and `/crm/whatsapp` |
+| Engine (pure) | `src/lib/engines/outstanding.ts` | `groupOutstanding`, `outstandingTotals` |
+| Service | `src/lib/services/payment-service.ts` | `outstandingPage`, `listOutstandingByCustomer`, `listBills`, `overdueDaysSql` |
+| Export | `src/app/accounts/outstanding/export/route.ts` | CSV of everybody the filters match, one line per bill |
+| The other door | `src/app/accounts/outstanding/page.tsx` | Same `outstandingPage`, Accounts' own screen |
+| Cache it agrees with | `src/lib/recompute.ts` | `recomputeOutstanding` — stated bills only |
+
+## A request, end to end
+
+<Flow caption="GET /crm/outstanding?sort=oldest&page=2" chart={`
+sequenceDiagram
+  autonumber
+  participant P as outstanding/page.tsx
+  participant S as outstandingPage
+  participant DB as Postgres
+  participant L as listBills
+  participant E as groupOutstanding
+  P->>S: query, sort, overdueOnly, page, perPage
+  S->>S: resolveScope → scopedToUsers(ids)
+  S->>DB: with per_customer (grouped, filter by stated) — totals and matched count
+  S->>S: clamp page to a page that exists
+  S->>DB: per_customer order by sort, customer_id — limit, offset
+  S->>L: listBills({ openOnly, customerIds: page ids })
+  L-->>S: rows with due date, bucket, payment position
+  S->>E: groupOutstanding(rows)
+  E-->>S: customers with their bills
+  S-->>P: rows in the database's order, total, totals
+`} />
+
+<Code file="src/lib/services/payment-service.ts" symbol="outstandingPage" collapsed />
+
+<Code file="src/lib/engines/outstanding.ts" symbol="groupOutstanding" collapsed />
+
+<Code file="src/lib/engines/outstanding.ts" symbol="OutstandingCustomer" />
+
+<Code file="src/lib/recompute.ts" symbol="recomputeOutstanding" />
+
+## Rules the SQL and the engine share
+
+| Rule | In SQL (`outstandingPage`) | In the engine (`groupOutstanding`) |
+|---|---|---|
+| Only a balance counts | `bills.amount > bills.paid_amount` | `if (r.balance <= 0) continue` |
+| Unstated is not debt | `filter (where payment_position = 'stated')` | `unstated` branch adds to `unstatedAmount` |
+| Overdue is stated only | `max(overdue) filter (where stated)` | `oldestOverdueDays` updated in the stated branch |
+| Order | `outstanding desc, unstated_amount desc, customer_name, customer_id` | same, without the id (it sorts a page already cut) |
+
+The page reorders `groupOutstanding`'s output back into the database's order, because the engine's own sort is wrong for a page cut by name or by age.
+
+## The columns it reads
+
+<DbTable name="bills" only={["customer_id", "bill_no", "bill_date", "due_date", "amount", "paid_amount", "payment_position", "disputed"]} note={{
+  paid_amount: "A cache: confirmed receipts only, rebuilt by recomputeBillPaid. Never written by hand or by the sheet.",
+  payment_position: "stated is owed; unstated is shown and never added to debt.",
+  due_date: "Null means bill date + credit period (order term, customer term, then bills.defaultCreditDays).",
+}} />
+
+<DbEnum name="bill_payment_position" />
+
+## Access
+
+- **Module:** <ModuleRef k="crm.outstanding" />.
+- **Scope:** `scopedToUsers(scopedUserIds(scope))` — sales or back-office seat (plus lead manager and relationship).
+- **Export:** the Accounts route checks a signed-in user holding the CRM or Accounts app; scope is applied inside `listBills`.
+
+<CapabilityGrid names={["customer.read", "customer.export"]} />
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/engines/outstanding.test.ts` | Grouping, unstated kept out of the figure but listed, stated-first bill order, customer order |
+| `npm run test:integration` | `src/lib/bill-paging.test.ts` | Paging with tie-breaks, totals over the filtered set, the page and the engine agreeing |
+| `npm run test:integration` | `src/lib/journeys.test.ts` | Reported money leaves the balance alone; confirmed reduces it |
+
+## Changing it safely
+
+<Steps>
+<Step title="Change the rule in both places, with a test for each">
+Any change to what counts goes in `groupOutstanding` and in the `filter (where …)` of `outstandingPage` — and in `recomputeOutstanding`, which is the figure every other screen shows.
+</Step>
+<Step title="Keep the tie-break">
+Every `order by` ends with `customer_id`. Without it a customer appears on two pages and another on none.
+</Step>
+<Step title="Never cut by financial year">
+The year cut belongs to Sales Bills.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| Comments and screen text describe `unstated` as "nobody has spoken for"; since Oct 2026 the projection writes `unstated` only when the Payment Status tab says Received (`positionFor`) | `engines/outstanding.ts` header; `outstanding-screen.tsx`; `sheet-projection-service.ts` `positionFor` |
+| CRM Export links to `/accounts/outstanding/export`, which checks app membership only — no `crm.outstanding` module or `customer.export` check — and ignores `?sort=` | `outstanding-screen.tsx`; `app/accounts/outstanding/export/route.ts` |
+| CRM and Accounts render two separate `outstanding-screen.tsx` components | `app/crm/outstanding/`, `app/accounts/outstanding/` |
+| `listOutstandingByCustomer` has no caller outside a test | `payment-service.ts` |
+| `getScope(user)` without the app name for the scope label | `app/crm/outstanding/page.tsx` |

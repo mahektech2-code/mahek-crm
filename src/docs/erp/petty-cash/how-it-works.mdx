@@ -1,0 +1,23 @@
+Petty cash keeps two lists — money given to a person and money that person spent — and works out what each person still holds from the two. Nothing is stored as a balance.
+
+<Rule title="A balance is per person, godown and mode">
+What somebody holds is everything given to them at a godown in one mode (Bank Cash, Cash or Other), less everything spent by them there in that mode. The spender is who the expense names under *Expense by*, not who typed it.
+</Rule>
+
+<Rule title="A manager verifies, and a verified expense is closed">
+Anybody with the screen records funds and expenses. Verifying, and moving an expense back to Pending, is an ERP manager's or administrator's, checked in the action as well as on the button. A verified expense's amount cannot be changed.
+</Rule>
+
+## Alerts
+
+| Alert | When it is raised |
+|---|---|
+| Duplicate-looking expense | One person records the same amount for the same particular within <Setting k="erp.ai.alerts.duplicateExpenseDays" /> days |
+| Petty cash below zero | A person has spent more than they were given at a godown in a mode |
+
+Both clear themselves once the condition is gone — see [alerts](/docs/erp/alerts-and-ai/how-it-works).
+
+## Access
+
+- **Module:** <ModuleRef k="erp.expenses" />; both tabs come with it.
+- Categories, particulars and credit notes are the ERP's reference lists, edited in ERP Settings.

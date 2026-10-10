@@ -1,0 +1,120 @@
+The **Alerts** screen lists the unusual things the ERP noticed — a purchase rate that jumped, an LR that never arrived, a credit note accepted and never issued, stock below its level — each with a sentence saying what is unusual, in figures you can check, and a button that opens the records behind it. The checks run every hour; an alert closes itself once whatever it is about is put right.
+
+Around the ERP there are also a handful of **AI helpers** that read things for you — a supplier's bill, a customer's WhatsApp message, a lorry receipt, a test photograph, a complaint — and **never save anything until you have checked it**. This page shows where each one is.
+
+## The Alerts screen
+
+<Wireframe url="/erp/alerts" nav={["Dashboard", "Alerts", "#Masters", "Raw materials", "…"]} active="Alerts" caption="Alerts, for a manager">
+  <WfBar>
+    <WfTitle sub="Unusual activity the ERP noticed overnight and through the day. Each alert names the records and the figures behind it.">Alerts</WfTitle>
+    <WfSpacer />
+    <WfButton primary>Run checks now</WfButton>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfBar><WfPill>LR missing 2</WfPill><WfPill>Stock below re-order level 3</WfPill><WfPill>Purchase rate jump 1</WfPill><WfPill>Petty cash below zero 1</WfPill><Hotspot n={2} /></WfBar>
+  <WfTable
+    highlight={0}
+    columns={["Raised", "Status", "Alert", "What is unusual", "Note"]}
+    rows={[
+      ["10 Oct", <WfPill key="a" tone="danger">Open</WfPill>, <b key="b">Purchase rate jump</b>, <span key="c">Toluene from Supplier A at ₹92/Ltr is 18% above the median ₹78 of its last 5 purchases. <Hotspot n={3} /></span>, ""],
+      ["9 Oct", "Acknowledged", <b key="d">LR missing</b>, "Bill T-1119 for Customer A left 4 days ago and has no LR number.", "Rang the transporter"],
+    ]}
+  />
+  <WfPanel title="Purchase rate jump" side>
+    <WfBar><WfButton primary>Open the records</WfButton><WfButton>Acknowledge</WfButton><WfButton>Resolve</WfButton><Hotspot n={4} /></WfBar>
+  </WfPanel>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Run checks now.</b> Managers and ERP administrators only. The checks also run every hour by themselves.</span>,
+  <span key="2"><b>Chips.</b> Filter by kind of alert.</span>,
+  <span key="3"><b>What is unusual.</b> One sentence, with the figures it was judged on.</span>,
+  <span key="4"><b>On an alert.</b> Open the records it names, acknowledge it with a note, or resolve it with a reason.</span>,
+]} />
+
+### What you see
+
+You see an alert only if you can open the screen its records are on — and, for an alert that shows money, cost or write-offs, only if your account can see those too. A storekeeper never sees a purchase-rate alert; somebody without the Transport screen never sees an LR alert.
+
+### Working an alert
+
+<Steps>
+<Step title="Open the records">
+**Open the records** takes you to the list the alert is about, filtered to exactly the rows it counted.
+</Step>
+<Step title="Acknowledge it">
+Say what is being done about it — the note is required. The alert stays on the list as **Acknowledged** so others know somebody has it.
+</Step>
+<Step title="It resolves itself">
+When the condition clears — the rate is entered, the LR recorded, the credit note issued — the next hourly run marks the alert **Resolved** with *Condition cleared*. You can also **Resolve** it by hand with a reason.
+</Step>
+</Steps>
+
+<Callout kind="warn" title="Resolving by hand does not make the problem go away">
+If you resolve an alert whose condition is still true, the next hourly run raises it again as a new alert. Resolve by hand only when the thing is genuinely dealt with.
+</Callout>
+
+### The kinds of alert
+
+| Alert | Raised when | Screen it opens |
+|---|---|---|
+| **Purchase rate jump** | A purchase's litre rate is far from the median of the same supplier's recent rates for that item | Purchases register |
+| **Rate missing too long** | A lot has had no rate for days, so it is not in stock | Purchases register |
+| **High SFG loss** | An SFG batch line lost more than the allowed share of what it used | SFG batches |
+| **High filling loss** | A filling lost more than the allowed share of its cans | FG filling |
+| **Repeated write-offs** | Several write-offs to Item Lost Record by one person, or from one godown, in a short time | Item transfers |
+| **Packing batch incomplete** | A packing batch has been short of (or over) its cans for days | Packing batches |
+| **Test unverified** | A purchase test has waited too long for the verifier | Purchase testing |
+| **Negative or thin margin** | A dispatched order line lost money, or made less than the minimum margin | Orders → Billing & dispatch |
+| **Slow fulfilment** | An order line took more than the allowed days from order to dispatch | Orders → Billing & dispatch |
+| **Ready but not billed** | A line has been Ready and fully allocated for hours with no Tally bill number | Orders |
+| **LR missing** | A bill left days ago with no LR number | Transport → Pending LR |
+| **Credit note not issued** | A credit-note request was accepted days ago and not issued | Complaints & credit notes |
+| **Duplicate-looking expense** | One person recorded the same amount for the same particular twice within a few days | Petty cash → Expenses |
+| **Petty cash below zero** | Somebody has spent more than they were given at a godown in one mode | Petty cash → Expenses |
+| **Stock below re-order level** | A followed level is short | Raw-material or Finished-goods levels |
+
+The thresholds behind each are on the [How it works](/docs/erp/alerts-and-ai/how-it-works) tab, read live.
+
+## The morning summary
+
+The ERP **dashboard** opens with a short paragraph about yesterday: how many orders were taken, lines dispatched, inward lines received, SFG batches made, and which alerts are open. It carries **counts only** — never a rate, amount, cost or margin — so everybody who can open the dashboard may read it. It is written overnight; where an AI writer is available it puts the figures into sentences (the line says *summarised by AI from the figures below*), and otherwise a plain sentence built from the same figures stands in.
+
+## The AI helpers, and where they are
+
+Every helper follows the same rules: it **reads**, you **check**, and nothing is saved until you press the save button on the review. Each says plainly when it is unavailable — switched off, no provider key, or this month's allowance used — instead of failing.
+
+| Helper | Where | What it reads | What you check | More |
+|---|---|---|---|---|
+| **Read a supplier bill** | Purchases → Register (for people who can see purchase money) | A photo or PDF of the supplier's bill | Supplier and GSTIN, which register row each line is, quantities and rates, a bill number already used | [Goods receipt, testing and the register](/docs/erp/goods-receipt-and-testing) |
+| **Draft an order from a message** | Orders → WhatsApp inbox | A pasted or spoken message, or WhatsApp replies | The customer, each SKU and its quantity in cans | [Orders](/docs/erp/orders) |
+| **Read LR photo** | Transport | A lorry receipt | The LR number; a transporter mismatch or a repeated LR is flagged | [Transport](/docs/erp/transport) |
+| **Read test photos** | Purchase testing | The density meter, pH and test photos | Density and pH; a density far from the master is flagged. It never sets the verification. | [Goods receipt, testing and the register](/docs/erp/goods-receipt-and-testing) |
+| **Suggest type and summary** | Complaints & credit notes | The complaint's description | The type (only from the existing list) and a one-line summary | [Complaints and credit notes](/docs/erp/complaints-and-credit-notes) |
+| **Suggested levels** | Raw-material and Finished-goods levels | — (arithmetic on recent use, no AI model) | The suggested minimum and maximum | [Minimum levels and reordering](/docs/erp/stock-levels) |
+| **Ask the ERP** | The search box at the top of every ERP screen | Your question | The answer and the links under it | Below |
+| **Dictation** | The microphone on note and remark boxes | What you say | The text before it goes into the box | — |
+
+### Ask the ERP
+
+Type a question in the ERP's search box **ending with a question mark** and press Enter — *how many lines are Ready at Godown A?* or *which bills have no LR?* The answer comes back in one to three sentences, in the language you asked in, with the figure first, and with links to the lists it read.
+
+It only ever answers from **the screens you can open**, and only with **the columns you can see**: if you cannot see sales amounts, it cannot tell you them. If the question needs a screen you do not have, it says so. It never changes anything.
+
+## Questions people ask
+
+<Faq q="I fixed the problem but the alert is still Open.">
+It resolves at the next hourly run. A manager can press **Run checks now** to run them at once.
+</Faq>
+<Faq q="Why can't I see an alert my colleague can see?">
+You don't hold the screen it is about, or it shows money or cost your account cannot see.
+</Faq>
+<Faq q="A helper says 'This month's … readings are used'.">
+Each helper has a monthly allowance. It comes back on the 1st, or when the allowance is raised in settings.
+</Faq>
+<Faq q="Did the AI change my record?">
+No. Every helper saves only when you press save on its review, and the review shows exactly what was read and how sure it is (marked *check* where it is not).
+</Faq>
+<Faq q="I got a notification 'Below re-order level'.">
+You are assigned to that godown and can raise purchase requirements, and an item there just fell short. Open it and raise a requisition from the levels list.
+</Faq>

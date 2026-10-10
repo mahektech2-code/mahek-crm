@@ -1,0 +1,195 @@
+A complaint is the customer's account of something that went wrong, written down at the moment they said it, given a deadline, routed to a desk, and closed only when somebody writes down what was done. This tab explains the rules behind each of those steps, why each rule exists, and the settings that change them. Every value quoted is the one your CRM is using right now.
+
+## The life of a complaint
+
+<Flow caption="From the customer's words to a resolved complaint" chart={`
+flowchart TD
+  A["Customer complains"] --> B{"Where?"}
+  B -- "on a call" --> C{"Open complaint,<br/>same category?"}
+  C -- "yes" --> D["Added to that complaint's history<br/>(credit note request added if new)"]
+  C -- "no" --> E["New complaint<br/>Normal priority<br/>desk from what they ask for"]
+  B -- "Complaints screen or<br/>customer record" --> F["New complaint<br/>priority as picked<br/>desk: Operations"]
+  B -- "collections call:<br/>'disputes the bill'" --> G["New Billing Issue complaint<br/>bill marked disputed"]
+  E --> H["Deadline = raised + hours for its priority<br/>opening history line"]
+  F --> H
+  G --> H
+  H --> I["Open"]
+  I -->|"Reassign"| J["In progress"]
+  I -->|"Mark resolved<br/>(note required)"| K["Resolved"]
+  J -->|"Mark resolved"| K
+  I -.->|"deadline passes"| L["SLA breached<br/>managers notified once"]
+`} />
+
+## One record, whichever door it came through
+
+A complaint raised on a call, from the Complaints screen, from a customer's record, from a collections call or from a salesman's handset is the **same record**: the customer, a category, the customer's words, a priority, a deadline, a desk, a status, and a history line saying who raised it.
+
+<Callout kind="why">
+The customer record used to have its own, smaller complaint form — category and description and nothing else. So a telecaller standing on the customer's record while the customer described a damaged can could not attach the photograph or record that they asked for a credit note. The two forms had drifted because nobody went back to the small one when the big one grew. There is now one dialog, and the only thing that differs between the screen and the record is whether it asks who the complaint is about.
+</Callout>
+
+<Rule title="A complaint raised on a call does not duplicate an open one">
+If the customer already has a complaint in the same category that is Open, In progress or Awaiting customer, a call that raises it again **adds a line to that complaint's history** — *Raised again on a call: …* — instead of opening a second one. If the customer asks for a credit note this time and had not before, the request is added to the existing complaint. A request already made is never withdrawn by a later call: withdrawing it is the resolver's decision.
+</Rule>
+
+<Rule title="A complaint is never refused for its heading">
+A category that does not match a known one is stored as **Other** rather than refused. A complaint filed under the wrong heading is still a complaint; one refused at the door is a customer nobody rings back.
+</Rule>
+
+<Rule title="Raising a complaint is not a call">
+A complaint logged from the Complaints screen or the record does not create a call. The dialog does not ask how the complaint reached us, and inventing an inbound call would inflate the call counts. A complaint raised **on** a call is linked to that call.
+</Rule>
+
+## Categories: words people use, values the system stores
+
+The list a person picks from is configuration — `complaints.categories` on the Settings screen (currently <Setting k="complaints.categories" />) — so the call panel, the Complaints dialog and the customer record all offer the same list, and a manager can change it without a release.
+
+What is **stored** is a fixed set of ten values. Several words people use land on the same stored value: "Leakage / Packaging", the older "Packaging Damage" and "Leakage" are all stored as packaging damage. Because of that, neither direction can be worked out from the other, so both are written down once:
+
+| Offered as | Stored as | Shown as |
+|---|---|---|
+| Product Quality | product quality | Product Quality |
+| Short Quantity | shortage | Short Quantity |
+| Leakage / Packaging | packaging damage | Leakage / Packaging |
+| Wrong Product | wrong product | Wrong Product |
+| Delivery Delay | dispatch delay | Delivery Delay |
+| Price Issue | pricing | Price Issue |
+| Billing Issue | billing issue | Billing Issue |
+| Transport Issue | delivery | Transport Issue |
+| Sales Service | service | Sales Service |
+| Other | other | Other |
+
+Older words the app has offered or received (Packaging, Staff, Transport, Rate Dispute, Late Delivery and more) still resolve to the right stored value, so a deployment whose list was curated before the current wording keeps working.
+
+<Callout kind="warn" title="Adding a category">
+A new word added on the Settings screen is stored correctly only if its name, lower-cased with spaces turned into underscores, **is already one of the ten stored values**. Anything else is stored as **Other**. Adding a genuinely new kind of complaint needs a release.
+</Callout>
+
+## Priority and the deadline
+
+Every complaint has a priority — **Normal**, **Urgent** or **Critical** — and the priority decides how long it has to be resolved:
+
+<SettingMap k="complaints.slaHours" keyHeading="Priority" valueHeading="Hours to resolve" unit="hours" labels={{ low: "Low (kept for old rows)", medium: "Normal", high: "Urgent", critical: "Critical" }} />
+
+A complaint whose priority nobody chose takes <Setting k="complaints.defaultSeverity" /> (Normal is stored as *medium*). That applies to complaints raised on a call, on a collections call and from the handset — none of those ask.
+
+<Rule title="Changing the priority moves the deadline, measured from when it was raised">
+When somebody changes an open complaint's priority, the deadline is recalculated as **raised time + the new priority's hours** — not from now. A three-day-old complaint reclassified Critical reads as breached at once.
+</Rule>
+
+<Callout kind="why">
+The deadline is a promise about how long the **customer** waits, not about how long we have left once we notice. Measuring from now would hand a fresh eight hours to the complaint that has already had seventy-two, and the deadline figures would flatter exactly the cases that went worst. The change is written into the complaint's history so the resolver can see why the deadline under their nose moved.
+</Callout>
+
+<Rule title="Breaching the deadline">
+Once an hour, every unresolved complaint past its deadline that has not been escalated before is marked escalated, and every manager and admin gets a notification: *Complaint past its SLA*. Each complaint escalates **once**. On the list, the complaint's age turns red; in the drawer the badge reads *SLA breached*.
+</Rule>
+
+A complaint still open after <Setting k="dashboard.complaintUnresolvedFlagDays" /> days is counted on the manager's red-flag strip on the dashboard.
+
+## Routing: what the customer asks for decides the desk
+
+Who deals with a complaint is not a second question for the telecaller; it follows from **what the customer is asking for**, which the call panel requires:
+
+| Asking for | Desk |
+|---|---|
+| Replacement | Dispatch |
+| Credit note | Accounts |
+| Technical visit | Technical |
+| Sales visit | Sales |
+| Transport check | Logistics |
+| Accounts check | Accounts |
+| Management intervention | Management |
+
+<Callout kind="why">
+Every complaint used to be assigned to "Operations", which is not a routing decision — it is the absence of one. A replacement is the godown's, a credit note is accounts', a technical visit is technical's. The telecaller knows what the customer asked for; they cannot know which desk handles it. So the desk is derived.
+</Callout>
+
+The desk is a **name**, not a person. Nobody is notified when a complaint lands on a desk, and nobody is notified when its priority changes — there is no single person behind "Dispatch" to tell.
+
+## Photographs
+
+<Rule title="Validated on the bytes, never the name">
+A file is checked by reading its first bytes — the signature every JPG, PNG or PDF begins with. The file name and the type the browser reports both come from the person's phone and prove nothing; anybody can rename a file *.jpg*. A refused file is named precisely: *… is not a JPG, PNG or PDF, whatever it is named.*
+</Rule>
+
+- Accepted types are configuration (currently <Setting k="attachments.acceptedTypes" />). The complaint picker offers only JPG and PNG photographs.
+- Each file may be up to <Setting k="attachments.maxSizeMb" /> MB.
+- One complaint carries at most <Setting k="attachments.maxPerComplaint" />. The picker refuses the extras on the screen, by count, so nothing silently disappears after Save.
+
+<Rule title="A photograph never blocks the complaint">
+The complaint is written first. Each photograph is then stored and attached on its own; one that fails does not stop the others, and the message says *2 of 3 files attached* rather than pretending all or nothing.
+</Rule>
+
+<Rule title="Whoever can see the complaint can see its photographs">
+A photograph is read only through the CRM itself, which checks that the person asking can see the customer the complaint belongs to. A file you may not see and a file that does not exist answer the same way, so the photographs cannot be used to find out which customers exist.
+</Rule>
+
+Files uploaded for a form that was then abandoned belong to nothing and are swept after <Setting k="attachments.orphanCleanupHours" /> hours.
+
+## Credit notes: the telecaller answers yes, accounts do the rest
+
+<Rule title="A credit-note request is a yes, and nothing more">
+The telecaller answers one question — did the customer ask for a credit note? Which bill it is against and what it is worth are accounts' work, because they hold the ledger. A request starts as **Requested** and appears on accounts' list of credit notes to issue.
+</Rule>
+
+<Callout kind="why">
+The form used to ask for the bill mid-call, three fields deep behind a radio button, with the customer waiting. It produced either the wrong bill or no request at all. Asking only for the yes means every request made is recorded, and the person who knows the ledger fills in the rest.
+</Callout>
+
+<Rule title="An amount without a request is refused">
+If a credit-note amount arrives on a complaint with no request, the save is refused: *There is a credit note amount but no credit note request.* A figure sitting on a complaint nobody asked a credit note for would read as an approved amount to whoever opened it next.
+</Rule>
+
+Issuing or refusing the credit note is the accounts desk's decision (see the capabilities below). The complaint's drawer shows where the request has got to, the amount and the reference once issued.
+
+## Statuses and history
+
+<DbEnum name="complaint_status" />
+
+- **Moving an open complaint along** — to In progress, or Awaiting customer — is anybody's who works that customer.
+- **Finishing one** (resolved, closed, rejected) or **re-opening a finished one** needs the right to resolve complaints. Otherwise it would be the same decision through a side door.
+- **Resolving requires a note.** The resolution note is what the customer record shows afterwards. A complaint closed with nothing written explains nothing to the next person who rings.
+- **"Customer told" is recorded separately.** Resolving a complaint and telling the customer are two different things; the screen counts how many resolved complaints the customer actually heard about.
+
+Every change — raised, raised again on a call, reassigned, priority changed, resolved — is a line in the complaint's **status history**, with who and when. Nothing is edited or deleted.
+
+## Who can see and do what
+
+<CapabilityGrid names={["complaint.resolve", "creditnote.issue"]} />
+
+| Action | Who |
+|---|---|
+| See the Complaints screen | Anybody holding the <ModuleRef k="crm.complaints" /> module |
+| See a complaint | Anybody whose book (or team) the customer is in |
+| Raise a complaint | Any CRM user |
+| Change priority, reassign | Anybody who can work the customer |
+| Resolve, close, reject or re-open | Holders of *complaint.resolve* — managers |
+| Issue or refuse a credit note | Holders of *creditnote.issue* — the accounts desk |
+
+## Every setting that shapes complaints
+
+<SettingsTable keys={[
+  "complaints.categories",
+  "complaints.defaultSeverity",
+  "complaints.slaHours",
+  "dashboard.complaintUnresolvedFlagDays",
+  "attachments.maxPerComplaint",
+  "attachments.maxSizeMb",
+  "attachments.acceptedTypes",
+  "attachments.orphanCleanupHours",
+  "attachments.retentionDays",
+]} />
+
+## Where the code and the intent disagree today
+
+- **Four writers, not one.** The complaint writer describes itself as "the one way it is done", but the call path, the collections "dispute" path and the handset each insert complaints themselves. They agree on the essentials today; they can drift.
+- **A complaint raised on a call cannot be given a priority.** It always takes the default, though the dialog on the Complaints screen asks.
+- **Reassign offers five desks; routing writes seven.** The Reassign list (Operations, Accounts, Dispatch, Quality, Management) has no Technical, Sales or Logistics — the desks the call panel routes to — and no Quality desk is ever routed to.
+- **Reassign is offered on a resolved complaint, and re-opens it.** For somebody holding *complaint.resolve*, reassigning a resolved complaint moves it back to In progress.
+- **Awaiting customer, Closed and Rejected cannot be set from any CRM screen.** Only Resolve and Reassign are offered.
+- **The deadline checks look at "resolved at", not the status.** A complaint moved to Closed or Rejected by any other route would still read as breached and still escalate.
+- **Every manager and admin is notified of every breach**, whatever their team.
+- **Raising from the Complaints dialog does not check the customer is in your book.** The search narrows who you can pick; the save does not check again.
+- **Large photographs.** Photographs travel with the form's save, which has a 1 MB body limit by default; a phone photograph over that may fail to arrive with no clear message.
+- **The record's "open complaint" alert** treats a Closed or Rejected complaint as still open.

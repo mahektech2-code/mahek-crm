@@ -1,0 +1,127 @@
+The Sales Dashboard is the App Router tree under `src/app/sales/`, one layout that gates the `sales` grant and draws `SalesShell`, and a large read service — `src/lib/services/sales-service.ts` — whose every query narrows itself through `managerScope()`. Writes are server actions in `src/lib/actions/sales.ts` (plus `sales-targets.ts`, `field-activity.ts` and the lead actions), each opened by `requireSalesAccess`. The handset writes through a different door entirely: `src/lib/actions/mbos.ts`, authenticated by a device token.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| App gate + shell data | `src/app/sales/layout.tsx` | Redirects without the `sales` grant or with no module; reads `consoleCounts`, `leadSidebarCounts`, notifications |
+| Shell | `src/app/sales/sales-shell.tsx` | Header (team line, scope hover, search, Ask), frame, "Live now" |
+| Sidebar | `src/app/sales/sidebar-nav.tsx`, `src/app/sales/nav.ts` | `SALES_PINNED`, `SALES_NAV`, `NOT_IN_SIDEBAR` — data, checked against the module registry |
+| Module registry | `src/lib/modules.ts` | Every `sales.*` key, its label, group, href and note |
+| Module guards | `src/app/sales/<module>/layout.tsx` | `requireModule(user.id, "sales.<module>")`; Today guards in `page.tsx` |
+| Scope | `src/lib/services/sales-service.ts` | `managerScope`, `onlyMine`, `placeScope`, `mineByPlace`, `leadsVisible` |
+| Pure gate rules | `src/lib/sales-gate.ts` | `salesGateRefusal`, `scopeStanding`, `scopeCovers` |
+| Writes | `src/lib/actions/sales.ts` | `requireSalesAccess`, `salesmanOutsideScope`, `tell`, every manager decision |
+| Ask drawer | `src/app/sales/ask-panel.tsx`, `src/app/api/sales/ask` | Streams model reads limited to the asker's own access |
+| Handset writes | `src/lib/actions/mbos.ts` | `dispatchItem` and one handler per entity type |
+| Scheduled work | `src/lib/mbos-jobs.ts`, `src/lib/jobs.ts` | Escalations, reorder follow-ups, nurture tasks, copy-forward targets |
+
+## A request, end to end
+
+<Flow caption="GET /sales/journeys (any module screen)" chart={`
+sequenceDiagram
+  autonumber
+  participant L as sales/layout.tsx
+  participant M as journeys/layout.tsx
+  participant P as journeys/page.tsx
+  participant S as sales-service.ts
+  participant DB as Postgres
+  L->>DB: listUserApps — no 'sales' grant redirects to /apps
+  L->>DB: listUserModules(user, 'sales') — none redirects to /apps
+  L->>S: consoleCounts(day, tomorrow) — all through managerScope()
+  M->>DB: requireModule(user, 'sales.journeys')
+  P->>S: fieldTeam(), journeyPlansFor(day), visitsList(day)
+  S->>S: managerScope() — cached per request
+  S->>DB: queries with onlyMine(scope, column)
+  S-->>P: rows already narrowed to the patch`} />
+
+### The layout gate
+
+The layout checks the **grant** and that at least one module is held, then hands the shell an `allowed` list of hrefs so the sidebar draws only what the person may open. Each module folder repeats the check for its own key, so a bookmark past a withheld module redirects.
+
+<Code file="src/app/sales/nav.ts" symbol="NOT_IN_SIDEBAR" />
+
+`modules.test.ts` compares `SALES_NAV` with the registry, so a module declared and never drawn fails the build — four screens once drifted out of the sidebar unnoticed.
+
+## Scope: `managerScope`
+
+Resolved **inside the service, from the session**, never passed in: a filter a caller can forget to pass is a filter that leaks.
+
+<Code file="src/lib/services/sales-service.ts" symbol="ManagerScope" />
+
+<Code file="src/lib/services/sales-service.ts" symbol="baseManagerScope" collapsed />
+
+<Code file="src/lib/sales-gate.ts" symbol="scopeStanding" />
+
+`onlyMine` turns the scope into a clause. `null` means national and renders nothing; an empty list renders an `in ('')` that matches nothing.
+
+<Code file="src/lib/services/sales-service.ts" symbol="onlyMine" />
+
+<Callout kind="warn" title="managerScope guards photographs too">
+`canReadAttendanceSelfie` and `canReadTravelLegPhoto` narrow through `managerScope`. Never widen it for a coverage screen — use `placeScope` / `mineByPlace`, which widen three WHERE clauses on Territory and nothing else. Both photo checks also ask for the `sales` grant first, because the scope is national for anybody with no region rows.
+</Callout>
+
+## Writes: `requireSalesAccess`
+
+<Code file="src/lib/actions/sales.ts" symbol="requireSalesAccess" />
+
+<Code file="src/lib/sales-gate.ts" symbol="salesGateRefusal" />
+
+A write that lands on a person then asks `salesmanOutsideScope(id)`, which reads `scopeCovers` against the same `managerScope` the screen drew from. Every decision tells the person through `tell`, which writes a notification row and a push with an MBOS deep link (`mbosHref`), never a MahekOne route the salesman cannot open.
+
+<CapabilityGrid names={["target.set", "order.approve", "sample.approve", "distributor.approve", "team.report"]} />
+
+The Sales Dashboard mostly gates on **level + module**, not on capabilities. `target.set` (Sales Targets), `order.approve` (accounts' order queue) and the two lead approvals are the exceptions.
+
+## Where each module's code lives
+
+| Module | Route | Read | Write |
+|---|---|---|---|
+| <ModuleRef k="sales.today" /> | `/sales` | `teamDay`, `consoleCounts` | — |
+| <ModuleRef k="sales.approvals" /> | `/sales/approvals` | `pendingApprovals`, `recentDecisions` | `decideApproval` |
+| <ModuleRef k="sales.live" /> | `/sales/live`, `/sales/live/[id]` | `lastKnownPositions`, `tracksForDay`, `liveDeltaFor` | — |
+| <ModuleRef k="sales.territory" /> | `/sales/territory` | `territorySeatPeople`, `territoryCities`, `shopPins`, `prospectPins` | `setSalesmanTerritories` (from Salesmen) |
+| <ModuleRef k="sales.performance" /> | `/sales/performance` | `performance-service.ts` `readingsForPeriod` | — |
+| <ModuleRef k="sales.roi" /> | `/sales/roi` | `expense-roi-service.ts` | — |
+| <ModuleRef k="sales.targets" /> | `/sales/targets` | `sales-target-service.ts` | `actions/sales-targets.ts` |
+| <ModuleRef k="sales.journeys" /> | `/sales/journeys` | `journey-service.ts`, `journeyPlansFor`, `visitsList` | `proposeJourneyDays`, `saveJourneyPeriod`, `answerRefusal`, `acceptVisit`, `decidePinCorrection` |
+| <ModuleRef k="sales.tasks" /> | `/sales/tasks` | `tasksList`, `task-campaign-service.ts` | `createTask`, `assignTaskCampaign` |
+| <ModuleRef k="sales.field-reports" /> | `/sales/field-reports` | `field-reports-service.ts` | — |
+| <ModuleRef k="sales.activity-history" /> | `/sales/activity-history` | `activityHistory` | `actions/field-activity.ts` |
+| <ModuleRef k="sales.people" /> | `/sales/people` | `fieldTeam`, `salesmanRecord` | territories, hometown, handset release |
+
+The remaining modules — orders, payments, invoices, attendance, leave, holidays, expenses, travel, documents, knowledge, prefs, logins, sync health, notify, audit and the lead screens — follow the same pattern and are covered on their own pages.
+
+## Tests that pin the shell
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/sales-gate.test.ts` | Grant, manager level and module refusals; `scopeStanding` for every level and app; `scopeCovers` |
+| `npm run test` | `src/lib/modules.test.ts` | The sidebar and the module registry agree |
+| `npm run test:integration` | `src/lib/lead-scope.test.ts`, `src/lib/territory-requests.test.ts` | Scope through real sessions; approvals refused outside the team |
+
+## Adding a Sales Dashboard screen safely
+
+<Steps>
+<Step title="Declare the module">
+Add a `sales(...)` entry to `lib/modules.ts`, then the same href to `SALES_NAV` in `nav.ts` with an icon — or to `NOT_IN_SIDEBAR` with a reason.
+</Step>
+<Step title="Guard the folder">
+Give it a `layout.tsx` calling `requireModule(user.id, "sales.<key>")`.
+</Step>
+<Step title="Read through managerScope">
+Put the query in a service and narrow it with `onlyMine(await managerScope(), column)`. Never accept a scope argument from the page.
+</Step>
+<Step title="Gate every write">
+Open the action with `requireSalesAccess(SALES_MANAGER("sales.<key>"))` and check `salesmanOutsideScope` for every person it touches. Tell the person with `tell(...)` and a handset href.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| `readingsForPeriod` is called without `userIds`, so Performance is national for every viewer | `src/app/sales/performance/page.tsx` |
+| `recentDecisions` has no scope clause | `src/lib/services/sales-service.ts` `recentDecisions` |
+| The Salary screen described in AGENTS.md no longer exists under `/sales` | `src/app/sales/` |
+| AGENTS.md points map keys at "Platform → Maps"; the screens say Admin Console → Integrations | `src/app/sales/live/street-map.tsx` |

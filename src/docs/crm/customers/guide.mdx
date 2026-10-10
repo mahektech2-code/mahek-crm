@@ -1,0 +1,147 @@
+Customers is the list of every account we **invoice or deliver to** in your book, with the figures you need mid-call, and the door to each customer's **record** — one page with everything about them: who they are, who looks after them, what they buy, what they owe, and every call, order, bill and message.
+
+Leads are not on this list. A lead is an account that has never ordered, and it is worked in Lead Management.
+
+## The list at a glance
+
+<Wireframe url="/crm/customers" nav={["Dashboard", "#Customer records", "Customers", "Complaints", "Price lists", "Close/Reopen"]} active="Customers" caption="The customers list, filtered to one salesperson">
+  <WfBar>
+    <WfTitle sub="Your book · Every account we invoice or deliver to, with the figures a telecaller needs mid-call. Leads are in Lead Management.">Customers</WfTitle>
+    <WfSpacer /><WfButton>Export</WfButton><WfButton>Import CSV</WfButton><WfButton>Transfer sales manager</WfButton>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfBar>
+    <WfCard title="Customers"><WfText>412</WfText></WfCard>
+    <WfCard title="Direct customers"><WfText>360</WfText></WfCard>
+    <WfCard title="Third-party customers"><WfText>52</WfText></WfCard>
+    <WfCard title="Outstanding"><WfText>₹9.4L</WfText></WfCard>
+    <WfCard title="Slow payers"><WfText>14</WfText></WfCard>
+    <WfCard title="With open complaints"><WfText>6</WfText></WfCard>
+    <Hotspot n={2} />
+  </WfBar>
+  <WfBar><WfInput placeholder="Search name, contact, phone, city" /><WfInput placeholder="Status ▾" /><WfInput placeholder="Sales ▾" /><WfInput placeholder="Sales manager ▾" /><WfInput placeholder="Back office ▾" /><WfInput placeholder="Place ▾" /><WfInput placeholder="All types ▾" /><Hotspot n={3} /></WfBar>
+  <WfTable highlight={0} columns={["", "Customer", "Contact person", "Phone", "Type", "Account managers", "Last contact", "Next call", "Outstanding", ""]} rows={[
+    ["☐", <span key="a"><b>Customer A</b> <WfPill tone="success">Active</WfPill> <Hotspot n={4} /></span>, "Contact A", "98•••••001", "Direct customer", <span key="b">Telecaller A<br/><WfText muted>Sales manager: </WfText>Manager A<br/><WfPill>Back office</WfPill> Clerk A <Hotspot n={5} /></span>, "2 days", <span key="c">20 Aug <WfText muted>Scheduled</WfText></span>, "₹42,300", "⋯"],
+    ["☐", <span key="d"><b>Customer B</b> <WfPill tone="warn">Slow payer</WfPill></span>, "Contact B", "98•••••002", "Third-party customer", "Unassigned", "11 days", "-", "₹0", <span key="e">⋯ <Hotspot n={6} /></span>],
+  ]} />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Header actions.</b> Export the list (managers), import a customer CSV (if you may import), and move the sales manager on <b>every</b> account the filters match.</span>,
+  <span key="2"><b>Tiles.</b> Counts and money for everything the filters match — not just this page.</span>,
+  <span key="3"><b>Filters.</b> Search, status, the three account-manager seats (including <i>Unassigned</i>), place and account type. Pick several values in one filter to match any of them.</span>,
+  <span key="4"><b>Status.</b> Active, New (never ordered), Slow payer, Inactive or Deactivated.</span>,
+  <span key="5"><b>Account managers.</b> The salesperson, the sales manager they answer to, and the back-office person — the three seats, side by side.</span>,
+  <span key="6"><b>Row menu.</b> Edit details, convert to (or from) a third-party customer, send WhatsApp, see their bills, and decide a pending close or reopen request.</span>,
+]} />
+
+## Three kinds of account
+
+| Type | Means |
+|---|---|
+| **Direct customer** | We sell to them and we invoice them. |
+| **Third-party customer** | A shop we **deliver** to but do not bill — a distributor buys the goods and sells them on. Never asked for a first order on the Call Log. |
+| **Lead** | Has never ordered. Not on this list; open it from Lead Management. |
+
+The type filter also offers two working lists: **Delivered to on another's bill** — accounts the order sheet shows receiving goods somebody else was invoiced for, whether or not anybody has converted them yet — and **Third party, nobody billing**, which should be empty.
+
+## Status words
+
+| Status | Means |
+|---|---|
+| **Active** | Buying |
+| **New** | Has never ordered |
+| **Slow payer** | Has paid several bills well past their due date recently |
+| **Inactive** | Has gone well past their own buying cycle without an order |
+| **Deactivated** | Closed deliberately by a manager |
+
+## The customer record
+
+<Wireframe url="/crm/customers/[id]" caption="A customer record">
+  <WfBar>
+    <WfTitle sub="Direct customer · Thane, Maharashtra · Contact A">Customer A</WfTitle>
+    <WfPill tone="success">Active</WfPill>
+    <WfSpacer /><WfButton>Phone</WfButton><WfButton>Reminder</WfButton><WfButton>Complaint</WfButton><WfButton>WhatsApp</WfButton><WfButton primary>Log a call</WfButton>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfBar>
+    <WfCard title="Outstanding"><WfText>₹42,300 · See all bills →</WfText></WfCard>
+    <WfCard title="Last order"><WfText>8 Aug</WfText></WfCard>
+    <WfCard title="Pays on average"><WfText>34 days</WfText></WfCard>
+    <WfCard title="Next call"><WfText>20 Aug · Scheduled</WfText></WfCard>
+    <Hotspot n={2} />
+  </WfBar>
+  <WfBar>
+    <WfPanel title="Activity">
+      <WfTabs items={["Activity", "Contacts", "Orders", "Bills", "WhatsApp", "Prices", "Complaints & reminders", "Delivery"]} active="Activity" />
+      <WfBar><WfPill tone="brand">All 1,204</WfPill><WfPill>Call 310</WfPill><WfPill>Order 280</WfPill><WfPill>Bill 290</WfPill><WfPill>Payment 300</WfPill></WfBar>
+      <WfBlock h={70} label="Ten entries, newest first · Load older" />
+      <Hotspot n={3} />
+    </WfPanel>
+    <WfPanel title="Buying pattern · Account managers · Details" side>
+      <WfText>Buying cycle 30 days · Order expected 7 Sep</WfText>
+      <WfText>Sales: Telecaller A · Sales manager: Manager A · Back office: Clerk A · Relationship: Not handed over</WfText>
+      <WfText muted>GSTIN · Credit terms · Billed by</WfText>
+      <Hotspot n={4} />
+    </WfPanel>
+  </WfBar>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Header.</b> The type and status, then call, set a reminder, raise a complaint, open WhatsApp, or log a call in the call panel.</span>,
+  <span key="2"><b>At a glance.</b> What they owe, their last order, how long they take to pay, and when they next come back to the Call Log.</span>,
+  <span key="3"><b>Activity.</b> Every call, order, bill, payment, complaint and message, ten at a time. The pills count everything of each kind; pick one to see only that kind; <i>Load older</i> goes further back.</span>,
+  <span key="4"><b>Side cards.</b> The buying pattern, the account managers and the account's details.</span>,
+]} />
+
+Every panel on the record is the same height and scrolls inside itself, so the bills, payments and account managers are always on the first screen, however long the customer's history is.
+
+## Changing who looks after an account
+
+<Steps>
+<Step title="Tick the accounts, or open one record">
+On the list, tick rows and press **Update account manager**. On a record, use the Account managers card.
+</Step>
+<Step title="Pick the new sales and/or back-office person">
+Leave a seat untouched to keep it as it is. *Unassigned* empties it.
+</Step>
+<Step title="Say why">
+Pick a reason from the list. It is kept with the change.
+</Step>
+<Step title="Save">
+Both the person who gains the accounts and the person who loses them are told — once each, not once per account.
+</Step>
+</Steps>
+
+<Callout kind="note">
+Moving the **sales** or **back-office** seat is an accounts or admin action, because it moves whose numbers the account counts towards. The **sales manager** — who the salesperson answers to — can be set by a CRM manager.
+</Callout>
+
+### Moving a whole book of sales managers
+
+When somebody leaves, filter the list to everything they managed, press **Transfer sales manager**, pick the new person and confirm. The accounts that move are exactly the accounts the filters match. If the count changed between your review and the save — say an import landed — it stops and asks you to look again. With no filters at all it says, in red, that this is the whole book.
+
+## Converting a shop to third party
+
+From the row menu or the record: **Convert to third-party customer**, then name the distributor who bills them. A shop cannot be marked third party without somebody billing it. **No longer a third-party customer** undoes it and keeps the record of who used to bill them. An account we invoice ourselves cannot be converted.
+
+## Questions people ask
+
+<Faq q="Where are the leads?">
+In Lead Management. The customers list is accounts we invoice or deliver to.
+</Faq>
+<Faq q="Why is the Update account manager button greyed out?">
+Moving the sales or back-office seat is an accounts or admin action. The button says so when you hover it.
+</Faq>
+<Faq q="I changed the salesperson and the old name came back.">
+A change made here is marked as a decision and the sheet sync keeps its hands off it. If the old name came back, check whether the change saved — the history on the record lists every move.
+</Faq>
+<Faq q="Export only gave me 25 customers.">
+Export writes the rows on the page you are looking at. Raise the page size, or ask accounts for a full extract.
+</Faq>
+<Faq q="Next call is blank for most customers.">
+It shows what the last call said would happen next. A customer nobody has called yet has nothing to show.
+</Faq>
+<Faq q="Why does the Activity tab say 1,204 but show ten?">
+The counts are the whole history; the list loads ten at a time so the page stays fast. Press **Load older**, or pick a kind.
+</Faq>

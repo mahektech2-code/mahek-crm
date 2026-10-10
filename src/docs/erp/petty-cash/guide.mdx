@@ -1,0 +1,45 @@
+Petty cash is money handed to somebody at a godown to spend on the factory's small costs. The screen has two tabs: **Funds given**, what was handed over, and **Expenses**, what was spent. Each row shows what that person still holds at that godown in that mode.
+
+<Wireframe url="/erp/expenses" nav={["Dashboard", "Alerts", "#Money", "Petty cash"]} active="Petty cash" caption="Petty cash, on its Expenses tab, for a manager">
+  <WfBar>
+    <WfTitle sub="Funds given to people and what they spent, per godown and mode, with what is left.">Petty cash</WfTitle>
+    <WfSpacer />
+    <WfButton primary>New expense</WfButton>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfTabs items={["Expenses", "Funds given"]} active="Expenses" />
+  <WfBar><WfPill tone="warn">Pending 4</WfPill><WfPill tone="success">Verify 12</WfPill><Hotspot n={2} /></WfBar>
+  <WfTable
+    highlight={0}
+    columns={["Date", "Particular", "Amount", "Available", "Mode", "Godown", "Status", "Expense by"]}
+    rows={[
+      ["9 Oct", <b key="a">Tea and snacks</b>, "₹240", "₹1,760", "Cash", "Godown A", <WfPill key="b" tone="warn">Pending</WfPill>, "Person A"],
+      ["8 Oct", <b key="c">Courier</b>, "₹180", "₹2,000", "Cash", "Godown A", <WfPill key="d" tone="success">Verify</WfPill>, "Person A"],
+    ]}
+  />
+  <Hotspot n={3} />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>New expense.</b> Date, godown, who spent it, the mode, a category, a particular and the amount. Funds given has <b>Give funds</b> in the same place.</span>,
+  <span key="2"><b>Status chips.</b> Pending is waiting for a manager; Verify is checked and closed.</span>,
+  <span key="3"><b>Available.</b> What that person still holds at that godown in that mode: everything given, less everything spent.</span>,
+]} />
+
+## Doing the work
+
+<Steps>
+  <Step title="Give funds">On **Funds given**, press **Give funds** and enter the date, godown, employee, mode and amount. Choose a credit note if one applies.</Step>
+  <Step title="Record an expense">On **Expenses**, press **New expense**. The message after saving says what is left with that person, and warns if they have spent more than they were given.</Step>
+  <Step title="Verify">A manager opens an expense and presses **Verify**, or ticks several and verifies them together. **Back to Pending** reopens one.</Step>
+</Steps>
+
+<Faq q="Why can I not change the amount?">
+A verified expense is closed. A manager can move it back to Pending first.
+</Faq>
+<Faq q="Verify is greyed out.">
+A manager verifies expenses.
+</Faq>
+<Faq q="The available figure is negative.">
+More has been spent than was given to that person at that godown in that mode. The row is flagged, and the overnight alerts list it.
+</Faq>

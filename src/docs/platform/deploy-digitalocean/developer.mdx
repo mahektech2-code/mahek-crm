@@ -1,0 +1,267 @@
+Production is **one DigitalOcean droplet in Bangalore** (1 GiB / 1 vCPU / 25 GiB, Ubuntu 24.04) running three containers under Docker Compose: **Caddy** (TLS and the APK download), the **app** (the Next.js standalone server) and **Postgres 17**. The image is built on GitHub's runners, pushed to the DigitalOcean Container Registry, and pulled by the droplet; migrations run from the runner through an SSH tunnel. Only Caddy publishes a port. The whole thing costs a few dollars a month, and the database sitting next to the app is most of why screens are fast.
+
+This page is the operator's reference: the topology, what one deploy does step by step, the secrets it needs (by name), first-time provisioning, day-to-day operations, rollback, and the traps that have actually bitten. The source of truth is `DEPLOY.md` in the repository root; this page follows it and the files it describes.
+
+## Topology
+
+<Flow caption="What runs where" chart={`
+flowchart TD
+  subgraph GH["GitHub"]
+    CI["ci.yml<br/>lint, types, engine tests,<br/>migrations, integration"]
+    DEP["deploy.yml<br/>test, build, deploy, prune"]
+    SHIP["ship-sync-schedule.yml"]
+    APK["mbos-apk.yml"]
+  end
+  REG[("DigitalOcean Container Registry<br/>mahekone/app, 500 MB")]
+  subgraph D["Droplet, /opt/mahekone"]
+    CAD["caddy:2-alpine<br/>:80 :443, /downloads"]
+    APP["app (node:24-alpine)<br/>:3000, internal only"]
+    PG[("postgres:17-alpine<br/>127.0.0.1:5432 only")]
+    CRON["host crontab (UTC)<br/>sheet-sync.sh, backup.sh"]
+  end
+  R2[("Cloudflare R2<br/>backups, APK archive,<br/>optional attachments")]
+  DEP -- "docker push" --> REG
+  DEP -- "SSH tunnel: npm run deploy:db" --> PG
+  DEP -- "SSH: pull + restart.sh" --> APP
+  REG -- "docker compose pull" --> APP
+  SHIP -- "scp sheet-sync.sh" --> CRON
+  APK -- "scp mbos.apk + mbos.json" --> CAD
+  APK -- "rclone" --> R2
+  CAD -- "reverse_proxy app:3000" --> APP
+  APP --> PG
+  CRON -- "https://DOMAIN/api/sheets/sync" --> CAD
+  CRON -- "pg_dump, gpg, rclone" --> R2
+`} />
+
+| File | What it is |
+|---|---|
+| `Dockerfile` | Three stages on `node:24-alpine`: `npm ci`, `next build` (standalone), a runner as uid 1001 with only `.next/standalone`, `.next/static` and `public` |
+| `deploy/docker-compose.yml` | `caddy`, `app`, `postgres` on one bridge network; volumes `pgdata`, `caddy_data`, `caddy_config` |
+| `Caddyfile` | `{$DOMAIN}`: compression, `/downloads/*` served from `/srv/downloads`, everything else to `app:3000` with 300 s timeouts, immutable cache on `/_next/static/*` |
+| `deploy/bootstrap.sh` | One-time host preparation (swap, sysctls, Docker, firewall, unattended upgrades) |
+| `deploy/restart.sh` | `docker compose up -d --remove-orphans` and wait for every container to report healthy |
+| `deploy/sheet-sync.sh` | What the crontab calls for the sync cycles — see [Sheets and jobs](/docs/platform/sheets-and-jobs/developer) |
+| `deploy/backup.sh`, `deploy/restore.sh` | See [Backups](/docs/platform/backups/developer) |
+| `deploy/cleanup.sh` | Weekly tidy: old APK copies, old images by name, the journal, the sync log |
+
+### The containers
+
+| Service | Notes |
+|---|---|
+| `caddy` | Only container with published ports. Mounts `./downloads` read-only for the handset APK and its `mbos.json` manifest. Obtains the certificate for `DOMAIN` on first start. |
+| `app` | `NODE_OPTIONS=--max-old-space-size=320`. `env_file: .env`. Healthcheck fetches `/login` every 30 s. Waits for Postgres to be healthy. |
+| `postgres` | `TZ` and `PGTZ` set to Asia/Kolkata (the code still names the zone everywhere — see [Architecture](/docs/platform/architecture/developer#time-zone-rules)). Tuned for 1 GiB: `shared_buffers=128MB`, `work_mem=8MB`, `max_connections=20`, `jit=off`, `pg_stat_statements` loaded, slow-query log at 500 ms. Port bound to `127.0.0.1` only. |
+
+<Callout kind="rule">
+The database password never leaves the droplet and the deploy runner. Postgres listens on loopback, and the firewall (`ufw`) allows only 22, 80 and 443.
+</Callout>
+
+## One deploy, end to end
+
+<Flow caption="push to main → production" chart={`
+sequenceDiagram
+  autonumber
+  participant Dev as Merged PR
+  participant T as job: test
+  participant Bld as job: build
+  participant Reg as DO registry
+  participant Dp as job: deploy
+  participant Dr as Droplet
+  participant Pr as job: prune
+  Dev->>T: push to main
+  T->>T: npm ci, tsc --noEmit, eslint src, npm test
+  T->>Bld: needs: test
+  Bld->>Bld: tag = first 12 chars of the SHA
+  Bld->>Reg: wait out any garbage collection (if DO_API_TOKEN)
+  Bld->>Reg: docker login (DOCR_USERNAME, DOCR_TOKEN)
+  Bld->>Reg: build-push :sha and :latest (GHA cache)
+  Bld->>Dp: needs: build
+  Dp->>Dp: is main still at this SHA? if not, skip
+  Dp->>Dr: ssh -L 5433:127.0.0.1:5432
+  Dp->>Dr: npm run deploy:db through the tunnel<br/>(migrate, catalogue, hire)
+  Dp->>Dr: sed IMAGE= in .env, compose pull app, restart.sh
+  Dr->>Dr: remove local images beyond the newest 3
+  Dp->>Dr: curl https://DOMAIN/login until 200 (5 min)
+  Dp->>Pr: needs: deploy
+  Pr->>Reg: keep latest + live + newest 3, delete the rest
+  Pr->>Reg: start garbage collection
+`} />
+
+<Steps>
+<Step title="Test">
+`npm ci`, `npx tsc --noEmit`, `npx eslint src`, `npm test` (the pure suites). The full CI — migrations from scratch, integration journeys, the handset's lint, types and engine tests, the link crawl — runs separately in `ci.yml` on every PR.
+</Step>
+<Step title="Build on GitHub's runners">
+The droplet never builds: at 1 GiB it cannot. `DATABASE_URL` is set to a deliberately unresolvable host during `next build`, because `src/db/index.ts` throws without one and the build must never reach a real database. `GIT_SHA` becomes `NEXT_DEPLOYMENT_ID`, so a browser holding the previous build's chunks is told to reload rather than failing on a missing file.
+</Step>
+<Step title="Refuse a stale commit">
+`concurrency: deploy-production` with `cancel-in-progress` usually handles two quick merges, but a run that has already built may still reach the deploy job. It asks GitHub where `main` is now and skips if it has moved past — deploying would put an older commit back.
+</Step>
+<Step title="Migrate through a tunnel">
+`deploy:db` is `db:deploy` (migrations via `scripts/migrate-deploy.mjs`), then `catalogue:deploy` (the idempotent product import), then `hire:deploy`. It runs on the runner against `127.0.0.1:5433`, forwarded to the droplet's loopback Postgres. Migrations run **before** the new image starts, so new code never meets an old schema; old code briefly meets the new one, which is why migrations here are additive.
+</Step>
+<Step title="Swap the image">
+`IMAGE=` in `/opt/mahekone/.env` is rewritten to the new tag, `docker compose pull app`, then `restart.sh` brings everything up and waits for healthy. A few seconds of downtime; a save in flight sees an error and is retried.
+</Step>
+<Step title="Prove it is serving">
+`https://$DOMAIN/login` must return 200 within five minutes or the run fails, naming the log command.
+</Step>
+<Step title="Prune the registry — last">
+See [The registry quota](#the-registry-quota).
+</Step>
+</Steps>
+
+## GitHub secrets and variables
+
+Names only; the values are in the repository's settings (Settings → Secrets and variables → Actions) and, for the server-side copies, in `/opt/mahekone/.env`.
+
+| Name | Kind | Used by | What it is |
+|---|---|---|---|
+| `DROPLET_HOST` | secret | deploy, prune, ship, APK | The droplet's reserved IP |
+| `SSH_PRIVATE_KEY` | secret | same | Key for the `deploy` user |
+| `SSH_KNOWN_HOSTS` | secret | same | `ssh-keyscan` output, pinned rather than trust-on-first-use |
+| `POSTGRES_PASSWORD` | secret | deploy | Same value as in `.env`; builds the tunnel `DATABASE_URL` |
+| `DOCR_USERNAME`, `DOCR_TOKEN` | secret | build | Registry-scoped push credentials |
+| `DO_API_TOKEN` | secret | build, prune, registry-prune | **Account** token: list tags, garbage-collect. Optional — without it the prune warns and is skipped |
+| `DOMAIN` | secret | deploy | The site name, e.g. `one.mahekindia.com` |
+| `CRON_SECRET` | secret | sheet-sync, sheet-sync-nightly | For the manual sync workflows |
+| `SYNC_URL`, `SYNC_OWNER_EMAIL` | variables | sheet-sync workflows | The sync endpoint and projection owner |
+| `MBOS_*`, `R2_*` | secret | mbos-apk | See [Handset release](/docs/platform/handset-release/developer) |
+
+`deploy`, `ship-sync-schedule` run in the `production` environment.
+
+## First-time provisioning
+
+<Steps>
+<Step title="Create the droplet">
+Regular 1 GiB, BLR1, Ubuntu 24.04, daily backups and monitoring on, your SSH key added, a **reserved IP** attached. Create the registry (`mahekone`) and an R2 bucket for backups with an S3 API token.
+</Step>
+<Step title="Prepare the host">
+```bash
+ssh root@<droplet-ip> 'bash -s' < deploy/bootstrap.sh
+```
+Then create the `deploy` user in the `docker` group, copy the authorised keys, and give it `/opt/mahekone`.
+</Step>
+<Step title="Copy the files">
+```bash
+scp deploy/docker-compose.yml Caddyfile \
+    deploy/restart.sh deploy/backup.sh deploy/restore.sh deploy/sheet-sync.sh \
+    deploy@<droplet-ip>:/opt/mahekone/
+scp .env.production.example deploy@<droplet-ip>:/opt/mahekone/.env
+ssh deploy@<droplet-ip> 'chmod 600 /opt/mahekone/.env'
+```
+Fill in `.env`. Generate the Postgres password with `openssl rand`, and put the same value in the `POSTGRES_PASSWORD` GitHub secret.
+</Step>
+<Step title="DNS before the first start">
+An `A` record for the domain to the reserved IP, propagated (`dig +short one.mahekindia.com`) **before** Caddy starts — Let's Encrypt verifies by connecting, and a failed challenge costs a rate-limit wait.
+</Step>
+<Step title="Start Postgres alone, then deploy">
+```bash
+cd /opt/mahekone
+docker compose up -d postgres
+docker compose logs -f postgres   # until "ready to accept connections"
+```
+Then push to `main` or run **Deploy** by hand.
+</Step>
+<Step title="Install the schedules">
+`bash /opt/mahekone/backup.sh --install-cron`, and add the `sheet-sync.sh` lines to the deploy user's crontab by hand (see below).
+</Step>
+</Steps>
+
+## Operations
+
+### Day to day
+
+```bash
+ssh deploy@one.mahekindia.com
+cd /opt/mahekone
+docker compose ps                       # what is running, and health
+docker compose logs -f app              # the app
+docker compose logs --tail=100 postgres
+docker compose restart app
+free -h                                 # memory: the number to watch on 1 GiB
+docker stats --no-stream
+```
+
+### Rolling back
+
+A rollback is naming an earlier image tag that is still in the registry or on the droplet:
+
+```bash
+sed -i 's|^IMAGE=.*|IMAGE=registry.digitalocean.com/mahekone/app:<sha>|' .env
+docker compose up -d app
+```
+
+The registry keeps the newest three tags plus `latest` and whatever production is on; the droplet keeps its newest three images. A rollback across a migration is a different thing — **restore the dump** instead (see [Backups](/docs/platform/backups/developer)).
+
+### Running a job by hand against production
+
+```bash
+ssh -N -L 5433:127.0.0.1:5432 deploy@one.mahekindia.com &
+npm run jobs:prod -- nightly
+npm run jobs:prod:sheets -- customer-master-sync   # needs the Google key from .env.local
+```
+
+<Callout kind="warn" title="Two traps in one command">
+`jobs:prod:sheets` loads `.env.local` first and `.env.prod.local` second so production's `DATABASE_URL` wins; reversed, it writes to your laptop's database and reports success. And either form runs **your checkout's** code against production — be on current `main`.
+</Callout>
+
+### The droplet's crontab
+
+The host clock is **UTC**. `backup.sh --install-cron` writes its own three lines and leaves the rest alone; the sync lines are added by hand.
+
+| UTC | IST | Command |
+|---|---|---|
+| `:07`, `:37` every hour | — | `sheet-sync.sh cycle` |
+| `:22` every hour | — | `sheet-sync.sh hourly` |
+| `20:13` | 01:43 | `sheet-sync.sh nightly` |
+| `20:45` | 02:15 | `backup.sh` |
+| `02:45`, `08:45`, `14:45` | 08:15, 14:15, 20:15 | `backup.sh --intraday` |
+| `22:30` Sunday | 04:00 Monday | `backup.sh --verify` |
+| `04:30` on the 1st | 10:00 on the 1st | `sheet-sync.sh monthly` |
+
+```text
+22 * * * * /usr/bin/env bash /opt/mahekone/sheet-sync.sh hourly >> /var/log/mahekone-sync.log 2>&1
+30 4 1 * * /usr/bin/env bash /opt/mahekone/sheet-sync.sh monthly >> /var/log/mahekone-sync.log 2>&1
+```
+
+`sheet-sync.sh` itself is shipped by the **Ship sync schedule** workflow whenever it changes on `main` (it is syntax-checked on the runner and again on the droplet before it replaces the old one). The crontab **lines** are not shipped — check with `crontab -l` after adding a new cycle.
+
+## The registry quota
+
+The free registry holds **500 MB** and an image is about 130 MB. When it is full, the push fails with `denied: quota exceeded`, the `build` job goes red, and `deploy` is **skipped** — which reads as nothing having happened rather than as a storage problem.
+
+- The `prune` job runs **after** the deploy: keep `latest`, the live tag (read from the droplet's `.env`) and the newest three; delete the rest; start a garbage collection.
+- It runs last because DigitalOcean will not start collecting until every write-scoped push token has expired; collecting right before this run's own push produced `401 Unauthorized`. The `build` job instead **waits** (up to 10 minutes) for any collection still running.
+- **Registry prune** (`registry-prune.yml`) is the same thing by hand, with a `keep` input.
+
+If a deploy has already failed on the quota, clear space by hand — the prune cannot unblock the run it is inside:
+
+```bash
+doctl registry repository list-tags app
+doctl registry repository delete-tag app <old-sha> --force
+doctl registry garbage-collection start --include-untagged-manifests
+```
+
+## Protecting main
+
+Every push to `main` deploys, so `main` moves only through a pull request with green CI. The rules are a repository ruleset defined in `.github/rulesets/main.json` and applied with `scripts/apply-branch-ruleset.sh`: no direct or force pushes, PR only, all required CI jobs green, review threads resolved, admin bypass through a PR only. Renaming or adding a CI job means editing the ruleset in the same PR — `src/lib/branch-ruleset.test.ts` fails when the two disagree.
+
+## Cost and capacity
+
+| Item | Notes |
+|---|---|
+| Droplet | The 1 GiB plan plus daily backups. Resize to 2 GiB (RAM and CPU only — a disk resize cannot be undone) when swap sits above about 500 MB, the memory alert fires often, or the projection or nightly start timing out. |
+| Registry | Free tier, 500 MB — the binding constraint, see above. |
+| R2 | Backups and the APK archive; pennies at this volume. |
+| What you give up | No preview deployments, a few seconds of downtime per deploy, rollback in a minute rather than a click, and nobody else watching the machine (unattended security upgrades reboot it at 03:30 when needed). |
+
+## Known gaps
+
+| Gap | Where |
+|---|---|
+| `deploy/cleanup.sh` is not in the provisioning copy list, not installed by any script, and no crontab line for it is documented | `DEPLOY.md` step 2; `deploy/cleanup.sh` |
+| `cleanup.sh` trims `backups/sync.log`, but the documented crontab writes the sync log to `/var/log/mahekone-sync.log` | `deploy/cleanup.sh`; `DEPLOY.md` "What the droplet runs" |
+| `cleanup.sh` keeps 2 app images; the deploy workflow keeps 3 on the droplet — two policies for one thing | `deploy/cleanup.sh` `KEEP_IMAGE_TAGS`; `.github/workflows/deploy.yml` |
+| `DEPLOY.md`'s secrets table omits `DOCR_USERNAME`, which the build step uses | `.github/workflows/deploy.yml` |
+| `DEPLOY.md` gives `crm.mahek.in` as the example domain; the live name is `one.mahekindia.com` | `DEPLOY.md` §3–4 |

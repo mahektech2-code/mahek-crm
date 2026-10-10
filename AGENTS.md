@@ -2048,71 +2048,6 @@ accepted or edited. Each feature splits `read…` (the model) from `record…`
 through its tools, and each tool calls the SCREEN'S OWN LOADER as the person
 asking, so an answer can never hold a row or column their screen would not.
 
-**PETTY CASH IS THE PRODUCTION FUNDS MODULE, and every balance is READ OFF A
-LEDGER.** ERP → Petty cash is thirteen tabs of one screen (`erp.expenses`, so
-every grant that held it still does): Overview, Expenses, Payments, Funds given
-/ transfers, Customer cash, Vendor outstanding, Daily closing, Bank
-reconciliation, Fund ledger, Budgets, Reports, Tally sync, Settings. Three fund
-accounts — Kotak bank, production bank cash, production customer cash —
-are rows of `erp_fund_accounts`, and what each holds is the sum of
-`erp_fund_ledger`, which a trigger makes append-only: a correction is a new row
-that reverses or adjusts, never an edit. Every movement goes through `post` in
-`lib/erp/petty/core.ts`, keyed on a `posting_key` so one source posts once.
-The rules are pure in `engines/petty-cash.ts`; the writes are
-`lib/erp/petty/` (expenses, funds, bank, tally, insight); the tabs are
-`screens/petty-*.ts`.
-
-**An expense and its payments are separate records.** The expense is what was
-billed and who must approve it; a payment is money that left a fund. Payment
-status (Pending / Partially paid / Completed) is DERIVED from confirmed
-payments less approved adjustments and nobody sets it. A payment REQUEST moves
-nothing until accounts confirm it; a confirmed payment is refused past what is
-left, past what the fund holds (an approver may authorise it, in words), and on
-a reference already used (unless it is one transfer paying several bills). A
-form mints a `requestKey` when it opens, so a retried submission returns the
-payment it already made. Approval routes by `erp.pettyCash.*`: at or under the
-auto-approve limit with its bill attached, approved by POLICY and the approval
-row says so; up to the approver's limit, `pettyApprove`; above it or in an
-owner-only category, `pettyOwner`. Nobody approves what they raised, submitted
-or spent — an administrator included. Paying before approval is an URGENT
-payment: a reason and evidence, and flagged until approved.
-
-**A transfer is not an expense, and customer cash is not a sale.** A transfer
-is in transit until whoever receives it confirms; only then do both legs post,
-together. A customer's cash is a receipt into the customer-cash fund, queued
-for accounts to reconcile with the ledger; depositing it is a transfer that
-names the receipts it carries, so the same cash is never deposited twice and
-never counted as a second collection. `payment_receipts` is never written.
-
-**The day's count is a variance, never an expense.** Expected cash is opening
-plus confirmed movements of the day; a difference needs an explanation and an
-approver who resolves it as explained or by a SEPARATE adjustment. A posting
-dated into a day whose closing was approved reopens that closing with the
-reason, rather than changing it silently.
-
-**The bank statement confirms; it never creates.** MahekOne had no statement
-module, so `erp_bank_lines` is the one, keyed by fund. A line already imported
-is recognised by its hash and skipped, and a repeated file is named. Only an
-exact reference/UTR matches on its own; an equal amount is a suggestion a
-person confirms; two candidates are an exception. A split may not exceed its
-line. An unexplained withdrawal can be raised from its line, still waiting for
-the custodian to confirm the cash.
-
-**Tally has its own status.** `erp_tally_sync` queues each eligible record
-under `MAHEKONE-<code>` as Tally's REMOTEID, so a retry alters rather than
-duplicates. `erp.tally.mode` is `export` by default: accounts post by hand from
-the written-out voucher and record its number; `live` posts to `erp.tally.url`,
-and Tally unreachable is a failed attempt with the record untouched. A
-reversal flags a posted voucher for correction.
-
-**The four roles are ERP powers**: holding the screen is the production head;
-`pettyAccounts` imports and reconciles, confirms and verifies; `pettyApprove`
-decides expenses, adjustments and closings; `pettyOwner` decides above the
-limit, verifies opening balances and sets budgets and limits. An opening
-balance is proposed by one person and verified (and posted) by another. The
-rows written before the ledger are `legacy`: still listed, in no balance and no
-payable. `erp-petty-cash.test.ts` is the PRD's fourteen acceptance tests.
-
 **The ERP drops the desktop floor** (`AppFrame floor={false}`) — it is used on
 a tablet at the godown gate — and every other app keeps it.
 
@@ -8328,16 +8263,20 @@ mistake rather than a confident fiction.
 **Code is quoted by SYMBOL, cut at build.** The runtime image carries no
 source, so `<Code file="…" symbol="buildQueue"/>` is resolved by
 `scripts/docs-index.mjs`, which `prebuild` runs: a renamed symbol fails the
-build instead of quoting whatever now sits on those lines. Run
-`npm run docs:index` after editing MDX or a quoted file — `coverage.test.ts`
-fails on a stale index, on a module of a documented app that no page claims,
-and on a `;` inside a Mermaid chart, which Mermaid reads as the end of a
-statement.
+build instead of quoting whatever now sits on those lines. The index
+(`src/docs/_generated/`) is BUILT, never committed: npm runs it before `dev`,
+`lint`, `test` and `build`, because a committed copy quotes the source as it
+was and went stale — failing CI on unrelated PRs — the moment main moved.
+`coverage.test.ts` fails on a quoted symbol that no longer exists, on a module
+of a documented app that no page claims, and on a `;` inside a Mermaid chart,
+which Mermaid reads as the end of a statement.
 
 **Wireframes, never screenshots, and no names.** A screenshot carries real
 customers into a page every grantee can read and goes stale when a column
 moves. Wireframes are built from the design tokens (`components/wireframe.tsx`)
 and use placeholders — "Customer A" — never seed or production names.
+A `url` that is not a web path ("MBOS · Pay") draws a handset screen in a phone
+frame instead of a browser window.
 
 **A page describes the code as it stands.** Where the code and the intent
 disagree, the How it works and Developer tabs say so under "Where the code and

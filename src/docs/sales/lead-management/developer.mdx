@@ -1,0 +1,97 @@
+The Sales Dashboard's lead routes are thin wrappers: each `page.tsx` under `src/app/sales/leads/**` and `src/app/sales/samples/**` renders a shared `Body` from `src/components/leads/pages/*` with `workspace="sales"`. The workspace decides the base path and the module key; `managerScope` decides the rows. The full engine, service and action documentation is on the CRM lead pages — start at [Leads → Developer](/docs/crm/leads/developer).
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Section list (pure) | `src/lib/lead-workspace.ts` | `LeadWorkspace`, `LEAD_SECTIONS`, `leadHref`, `leadModuleKey`, `sectionForPath`, `NAV_RETIRED_SLUGS`, `OTHER_DESK_SLUGS` |
+| Modules | `src/lib/modules.ts` | `sales.leads` … `sales.lead-oversight`, and `sales.lead-pipeline` (`offByDefault`, `explicitOnly`) |
+| Routes | `src/app/sales/leads/**`, `src/app/sales/samples/**` | `<Body workspace="sales" />`; each module folder carries its own `requireModule` |
+| Folder layout | `src/app/sales/leads/layout.tsx` | Deliberately **no** guard — nine modules live under this path |
+| Sales Manager workspace | `src/app/sales-lead-pipeline/**` | Own layout: `sales` grant, then `requireModule("sales.lead-pipeline")`; dashboard, pipeline, list, record |
+| Shared screens | `src/components/leads/pages/*` | One body per screen, both apps |
+| Sidebar | `src/app/sales/nav.ts`, `sidebar-nav.tsx` | Four visible rows; seven `legacy` rows drawn only without All Leads |
+| Request app | `src/proxy.ts` | `APP_ROUTES` maps `/sales` and `/sales-lead-pipeline` to `sales`; `WORKSPACE_HEADER` marks the CRM's Sales Manager desk |
+| Scope | `src/lib/services/sales-service.ts` | `managerScope`, `leadsVisible`, `scopeNarrowing` |
+
+## Paths and keys
+
+<Code file="src/lib/lead-workspace.ts" symbol="LeadWorkspace" />
+
+<Code file="src/lib/lead-workspace.ts" symbol="leadHref" />
+
+<Code file="src/lib/lead-workspace.ts" symbol="leadModuleKey" />
+
+<Code file="src/lib/lead-workspace.ts" symbol="sectionForPath" />
+
+<Code file="src/lib/lead-workspace.ts" symbol="NAV_RETIRED_SLUGS" />
+
+`LEAD_SECTIONS` is the single list both sidebars and tab strips read; a path in it is relative and never starts with a slash. The first tab of every section is the section's own route, so a sidebar click never lands on a redirect.
+
+## How a request finds its app and scope
+
+<Flow caption="GET /sales-lead-pipeline/pipeline" chart={`
+sequenceDiagram
+  autonumber
+  participant P as proxy.ts
+  participant L as sales-lead-pipeline/layout.tsx
+  participant B as shared Body
+  participant S as sales-service.ts
+  P->>P: appFor(path) gives sales, sets x-mahek-app
+  P->>P: workspaceFor(path) gives null (only /crm/leads/sales-manager sets x-mahek-workspace)
+  L->>L: listUserApps includes sales? else /apps
+  L->>L: requireModule sales.lead-pipeline (explicitOnly)
+  B->>S: managerScope()
+  S->>S: inCrmSalesManagerWorkspace()? no, so baseManagerScope
+  S-->>B: national, own, or salesmen in the manager's regions
+  B->>S: reads narrowed by leadsVisible(scope) — unowned leads included
+`} />
+
+<Code file="src/proxy.ts" symbol="APP_ROUTES" collapsed />
+
+<Code file="src/proxy.ts" symbol="workspaceFor" />
+
+Without the `/sales-lead-pipeline` line, a request there names no app and scope falls back to the widest level the account holds anywhere — an associate on the Sales Dashboard would read and write as a manager elsewhere.
+
+<Code file="src/lib/services/sales-service.ts" symbol="managerScope" />
+
+<Code file="src/lib/services/sales-service.ts" symbol="leadsVisible" collapsed />
+
+## Modules
+
+<ModuleRef k="sales.leads" /> <ModuleRef k="sales.lead-pipeline" /> <ModuleRef k="sales.lead-funnel" /> <ModuleRef k="sales.lead-intake" /> <ModuleRef k="sales.lead-qualify" /> <ModuleRef k="sales.samples" /> <ModuleRef k="sales.lead-commercial" /> <ModuleRef k="sales.lead-appointments" /> <ModuleRef k="sales.lead-actions" /> <ModuleRef k="sales.lead-handovers" /> <ModuleRef k="sales.lead-oversight" />
+
+<CapabilityGrid names={["lead.work"]} />
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/lead-workspace.test.ts` | Every section names a real module in both workspaces; every `*.lead*` module appears once; `sectionForPath` longest match; the folder guards nothing; Sales Manager screens hard-code no app route |
+| `npm run test` | `src/lib/lead-nav.test.ts` | The seven retired rows are the same in both sidebars; nobody is stranded by hiding a row |
+| `npm run test` | `src/lib/sales-gate.test.ts` | `scopeStanding` — associate own, manager regional, platform admin national |
+| `npm run test:integration` | `src/lib/lead-scope.test.ts`, `lead-owner-visibility.test.ts`, `lead-territory.test.ts` | Territory narrowing and unowned leads |
+| `npm run test:integration` | `src/lib/sales-manager-pipeline.test.ts`, `sales-manager-pipeline-guards.test.ts` | The pipeline workspace and its guards |
+
+## Changing it safely
+
+<Steps>
+<Step title="Add a screen once">
+Write the body in `src/components/leads/pages`, add a tab to `LEAD_SECTIONS`, and add a two-line route in each app. Never spell `/sales` or `/crm` inside a shared screen — use `leadHref`.
+</Step>
+<Step title="A new section is a module in both apps">
+Add `sales.<slug>` and `crm.<slug>` in `modules.ts`; `lead-workspace.test.ts` fails until both exist.
+</Step>
+<Step title="Put the guard in the module folder">
+Not in `src/app/sales/leads/layout.tsx`, which would refuse a grant it knows nothing about.
+</Step>
+<Step title="Route a new top-level path through the proxy">
+Any lead route outside `/sales` needs an `APP_ROUTES` entry, or its scope resolves against the wrong app.
+</Step>
+</Steps>
+
+## Known gaps
+
+| Gap | Where |
+|---|---|
+| The Sales Manager workspace carries no workspace header of its own; it is distinguished only by `x-mahek-app: sales` and its module. The `x-mahek-workspace` header belongs to the CRM's `/crm/leads/sales-manager` | `src/proxy.ts` `workspaceFor` |

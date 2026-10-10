@@ -1,0 +1,106 @@
+WhatsApp is how most payment reminders reach customers and how most customers answer. The rules on this screen exist to keep one thing honest: **whether a customer has actually heard from us**. That decides whether the Call Log holds them back, whether collections counts a reminder as sent, and what a manager reads about the day.
+
+## Read, and reply-and-send, are two grants
+
+<Rule title="Reading the chats and writing to customers are separate">
+The screen is one module; **reply and send** is a second module beside it. Somebody given only the first can open every chat and the message log, and nothing else. The server checks the level on every write — a reply box that is not drawn is not a permission.
+</Rule>
+
+| Level | Can |
+|---|---|
+| Read | Read chats and the message log |
+| Reply and send | Reply in a chat, mark replies handled, send templates, work send runs, edit templates |
+
+Sending a reminder from **other** screens — the payment follow-up panel, for example — is refused only for somebody deliberately narrowed to **read**. People who were never given the WhatsApp screen at all could always send a reminder from those screens, and still can.
+
+## How a message is routed
+
+<Flow caption="Automatic or manual" chart={`
+flowchart TD
+  M["A message to send"] --> A{"Founder switch on?"}
+  A -- "No" --> X["Manual: copy and paste"]
+  A -- "Yes" --> K{"A Wati key configured?"}
+  K -- "No" --> X
+  K -- "Yes" --> G{"Going to a group?"}
+  G -- "Yes" --> X
+  G -- "No" --> T{"Template linked to an<br/>approved Wati template?"}
+  T -- "No" --> X
+  T -- "Yes" --> E{"Words edited?"}
+  E -- "Yes" --> X
+  E -- "No" --> API["Automatic, through Wati"]
+`} />
+
+<Callout kind="why" title="Manual stays fully usable">
+Automatic sending is an addition, never a replacement. A deployment with sending switched off works entirely by copy, paste and confirm. A group cannot be reached through the API at all, and an edited message is no longer the approved wording WhatsApp allows a business to send.
+</Callout>
+
+<Rule title="A message that would read badly is refused">
+Every merge field the template uses must have a value for this customer. "Dear ," never reaches a customer — the message is refused naming the empty field.
+</Rule>
+
+Merge fields a template can use: customer, contact, city, phone, outstanding, last order date and value, the oldest bill's number and due date, **every** stated open bill as a list, today's date, the latest dated promise, and the owner.
+
+<Callout kind="money">
+Outstanding and the bills list in a message include **stated** bills only. A balance nobody has stated is not something to compose a message about.
+</Callout>
+
+## Copied is not sent
+
+<Rule title="Only a confirmed send counts">
+A manual message moves **prepared → copied → confirmed sent**. Only confirming it sets the customer's *last confirmed WhatsApp* date, which is what holds them back from the Call Log for <Setting k="queue.whatsappCooldownDays" /> days; only confirming a payment reminder records a collections attempt on the WhatsApp channel. Copying touches none of it.
+</Rule>
+
+<Callout kind="why">
+A copied-but-unconfirmed message is a customer who may or may not have been contacted. Treating it as sent would hold somebody back from a call on the strength of a message that never left the telecaller's clipboard; treating it as not sent would ring a customer who heard from us an hour ago. It is shown as exactly what it is.
+</Callout>
+
+### Copies nobody confirmed
+
+Every hour, copies older than <Setting k="whatsapp.unconfirmedExpiryHours" /> hours are counted for the manager. If <Setting k="whatsapp.autoConfirmAfterHours" /> is above zero, copies older than that are confirmed automatically; at zero nothing ever is, because asserting that a message was sent when the system cannot know is exactly the failure the confirm step exists to prevent.
+
+### Automatic sends
+
+Wati reports *sent*, *delivered* and *read*. Its updates are applied in order and only ever move forward, so a retried or late notification changes nothing. A message Wati accepts counts as sent for the Call Log and for collections, just as a confirmed paste does.
+
+<Rule title="A weekly limit on automatic messages">
+No customer receives more than <Setting k="whatsapp.contactsPerWeekLimit" /> messages a week through the API (zero means no limit). A person pasting by hand is exercising judgement; a button that sends is not.
+</Rule>
+
+## Customers reached two ways
+
+<Rule title="Both is an instruction about a customer, never a message">
+A message goes to exactly one place. A customer set to **both** produces **two** messages — personal first, because it can complete without a person, then the group. Each has its own state; one idempotency key covers the pair, so a retried click cannot double-send either half.
+</Rule>
+
+- One confirmed leg **does** set the last-WhatsApp date — waiting for the second would chase somebody who has already heard from us.
+- Neither leg may borrow the other's confirmation: the group can be confirmed while the personal one is still copied, and both are shown that way.
+- **Both** with no group recorded makes only the personal message.
+
+## Payment reminders and collections
+
+A payment reminder is a template whose purpose is *payment reminder*, with a stage it belongs to. When one is confirmed sent (or accepted by Wati) for a customer on the collections worklist, a WhatsApp **attempt** is written, keyed on the message, and the collections cadence dates the next reminder from it. See [Payment Follow-up](/docs/crm/payments/how-it-works).
+
+<Callout kind="why">
+No path that sent a reminder used to write that attempt, so a stage 1 customer came back due a message every single day.
+</Callout>
+
+## Replies
+
+Inbound messages arrive from Wati and are matched to a customer by the last ten digits of the number. A reply is **to action** until somebody replies or marks it handled. A number that WhatsApp says cannot receive messages is listed as undeliverable, and automatic rules stop trying it rather than reporting "sending failing".
+
+## Every setting that shapes WhatsApp
+
+<SettingsTable keys={[
+  "whatsapp.contactsPerWeekLimit",
+  "whatsapp.unconfirmedExpiryHours",
+  "whatsapp.autoConfirmAfterHours",
+  "whatsapp.mode",
+  "queue.whatsappCooldownDays",
+]} />
+
+## Where the code and the intent disagree today
+
+- **"WhatsApp mode" changes nothing.** The setting is on the Settings screen, but whether a message goes automatically is decided by the founder's switch and whether a key exists — the setting is never read.
+- **Copy, confirm and cancel do not check the message is in your book.** They act on whatever message id they are given, for anybody who is not narrowed to read-only.
+- **Automatic confirmation of old copies would fail if switched on.** The hourly job calls the same confirm step a person uses, and that step requires a signed-in user to record who confirmed — a scheduled job has none.
+- **The weekly limit is counted over the last seven days in the database's own clock**, not the business week.

@@ -1,0 +1,107 @@
+Transport is four list modules in `screens/logistics.ts`: `transportList` built for three scopes (`transport`, `pendingLr`, `trackLr`) and `paidFreight`. The record they read, `erp_transports`, is written in exactly one place — the dispatch verification in `screens/sales.ts` — and updated by the `update` action and the AI LR review. (`calcs/logistics.ts`, despite its name, holds the complaint form's calculators; see [Complaints and credit notes](/docs/erp/complaints-and-credit-notes/developer).)
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Registry | `src/lib/erp/registry.ts` | `transport` screen with views `pendingLr`, `trackLr`, `transport`, `paidFreight` |
+| Screens | `src/lib/erp/screens/logistics.ts` | `MATERIAL_STAGES`, `onTheRoad`, `transportList`, `paidFreight`, `setExtra` (also `myCustomers` and `videos`, documented elsewhere) |
+| Record opened | `src/lib/erp/screens/sales.ts` | `verify` inserts `erp_transports` with `onConflictDoNothing` |
+| LR photo reading | `src/lib/erp/ai-photos.ts` | `readLr`, `recordLrReading`, `lrReviewForm`, `applyLr`, `rejectPhotoReading` |
+| Gate | `src/lib/erp/ai.ts` | `featureState("photos", true)`, `pendingFor("photos")` |
+| Order book | `src/lib/erp/book.ts` | `syncBookOrders` after a stage change |
+| Alert | `src/lib/erp/engines/alerts.ts` | `lrsMissing` |
+| Writes | `src/lib/actions/erp.ts` | `erpRunAction`, `erpRunBulk`, `erpSubmitForm`, `erpLoadForm` |
+
+## A request, end to end
+
+<Flow caption="From Do Verified to an LR on the road" chart={`
+sequenceDiagram
+  autonumber
+  participant Bill as sales.ts verify
+  participant DB as Postgres
+  participant T as logistics.ts transportList
+  participant AI as ai-photos.ts
+  Bill->>DB: insert erp_transports (id = first line, unique order_no)
+  Note over DB: later lines of the same order conflict and do nothing
+  T->>DB: load - pendingLr lists rows with no lr_no
+  T->>AI: aiLrRead - readLr(ctx, id, photo)
+  AI->>AI: featureState photos, readImages, recordLrReading checks
+  AI->>DB: erp_ai_suggestions pending
+  T->>AI: aiLr form - applyLr(suggestion, lr)
+  AI->>DB: refuse a repeated lr_no, else set lr_no, decideSuggestion
+  T->>DB: update action - lr_no, material_stage, reminder, note
+  T->>T: syncBookOrders only when the stage changed
+`} />
+
+## The rules
+
+<Code file="src/lib/erp/screens/logistics.ts" symbol="MATERIAL_STAGES" />
+
+<Code file="src/lib/erp/screens/logistics.ts" symbol="onTheRoad" />
+
+<Code file="src/lib/erp/screens/logistics.ts" symbol="transportList" collapsed />
+
+The `update` action still writes `track_status` (`Track` / `Don't Track`) from `onTheRoad`, but nothing reads it: every list derives the answer.
+
+## Paid freight
+
+<Code file="src/lib/erp/screens/logistics.ts" symbol="setExtra" />
+
+`paidFreight.load` reads `detailRows()` from `screens/sales.ts` and keeps lines whose billing party's `freightTerm` is `Paid` and whose `extra_expenses_paise` is null.
+
+## Reading an LR
+
+<Code file="src/lib/erp/ai-photos.ts" symbol="recordLrReading" />
+
+<Code file="src/lib/erp/ai-photos.ts" symbol="applyLr" />
+
+## Tables
+
+<DbTable name="erp_transports" note={{
+  id: "The id of the first order line verified for the bill.",
+  order_no: "Unique: one record per bill.",
+  bill_date: "The dispatch date the first line was verified with.",
+  payment_type: "The billing party's freight term at dispatch (Paid, To pay…).",
+  extra_expense_paise: "Copied from the line on dispatch, or by setExtra when it is entered later.",
+  track_status: "Track or Don't Track — written, never read; onTheRoad derives it.",
+  material_stage: "One of MATERIAL_STAGES.",
+  reminder_date: "Flags the row on and after this date until the stage is Close - Received to Party.",
+}} />
+
+## Access
+
+- **Module:** <ModuleRef k="erp.transport" />; its four tabs come with it.
+- **Powers:** only `viewSalesAmounts`, for the Monthly sales column.
+- Writes go through `requireErpWrite(<tab key>)`.
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test:integration` | `src/lib/erp/erp-logistics.test.ts` — `dispatch opens the transport record (§18)` | One record per bill; an LR puts a consignment on the road and takes it off Pending LR, and reaching the party takes it off the road; paid freight lists a line until its extra expense is entered, and the transport record follows |
+| `npm run test:integration` | `src/lib/erp/erp-ai-reading.test.ts` — `LR and test photos (AI-8)` | An LR reading is checked against the bill's transporter, and saving records it |
+| `npm run test` | `src/lib/erp/engines/alerts.test.ts` | The alert rules, LR missing among them |
+
+## Changing it safely
+
+<Steps>
+<Step title="Open the record only from verify">
+A second writer of `erp_transports` would race the unique index and lose the copied figures.
+</Step>
+<Step title="Derive, do not store, where the goods are">
+Add a stage to `MATERIAL_STAGES`; keep `onTheRoad` the only reading of "on the road".
+</Step>
+<Step title="Sync the order book on anything the CRM shows">
+`syncBookOrders` is called on a stage change. Anything new that the book projects needs the same call.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| The reminder flag is `today`, whose label is "Transferred today" | `screens/logistics.ts` `transportList` flags; `ui.ts` `FLAG.today` |
+| The `update` action does not refuse an LR number already on another bill; only `applyLr` does | `screens/logistics.ts` `update`; `ai-photos.ts` `applyLr` |
+| An LR recorded without a stage change, and every `applyLr`, skip `syncBookOrders` | `screens/logistics.ts` `update`; `ai-photos.ts` `applyLr` |
+| `track_status` is written and never read | `screens/logistics.ts` `update` |

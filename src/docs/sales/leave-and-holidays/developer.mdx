@@ -1,0 +1,128 @@
+Leave is `mbos_leave_requests` (what was asked) plus an `mbos_approvals` row of type `leave` (whether it was granted), written by the handset and decided through `decideApproval`. Holidays are `mbos_holidays` with a level, per-person allocations in `mbos_holiday_assignments`, and a resolved audience in `mbos_holiday_members`. Every per-person reader asks one SQL predicate, `holidayAppliesSql`.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Route guards | `src/app/sales/leave/layout.tsx`, `src/app/sales/holidays/layout.tsx` | `sales.leave`, `sales.holidays` |
+| Leave page | `src/app/sales/leave/page.tsx` | Overlap banner, chips, `Decide`, the year's leave taken |
+| Holidays | `src/app/sales/holidays/page.tsx`, `holidays-screen.tsx`, `holiday-editor.tsx` | Calendar / By level / By employee; the add-edit dialog; give/take per person |
+| Reads | `src/lib/services/sales-service.ts` | `leaveRequests`, `leaveTakenByPerson`, `holidays` |
+| Holiday service | `src/lib/services/holiday-service.ts` | `rebuildHolidayMembers`, `holidayCalendar`, `previewAudience`, `searchPlaces`, `syncHolidayToHrms` |
+| Engines (pure) | `src/lib/engines/leave.ts`, `src/lib/engines/holiday-audience.ts` | `leaveWorkingDays`, `leaveDebitDays`, `leaveBalances`; `resolveHoliday`, `territoryReaches` |
+| Predicate | `src/lib/holiday-sql.ts` | `holidayAppliesSql`, `companyHolidaySql` |
+| Sync write | `src/lib/actions/mbos.ts` | `leaveSchema`, `leaveTypeOf`, `leaveCalendarFor`, `handleLeave` |
+| Office writes | `src/lib/actions/sales.ts` | `decideApproval`, `saveHoliday`, `setHolidayPerson`, `removeHoliday`, `previewHolidayAudience`, `searchHolidayPlaces` |
+| Jobs | `src/lib/mbos-jobs.ts` | `rebuildHolidays` (hourly) |
+| Forecast | `src/lib/services/performance-service.ts` | `workingDaysIn` |
+
+## A leave request, end to end
+
+<Flow caption="Handset request to a decision on the phone" chart={`
+sequenceDiagram
+  autonumber
+  participant H as Handset
+  participant M as handleLeave
+  participant DB as Postgres
+  participant D as decideApproval
+  H->>M: leave item (kind, from, to, halfDay, reason) + approval item
+  M->>DB: leaveCalendarFor — working week + holidayAppliesSql for him
+  M->>M: leaveWorkingDays, refuse 0 days or an overlap with his own request
+  M->>DB: insert mbos_leave_requests, notifyManagers
+  D->>D: requireSalesAccess(sales.approvals or sales.leave, manager)
+  D->>DB: not own, in scope, still pending, not withdrawn, reason on refusal
+  D->>DB: mbos_approvals decided, notification to the salesman
+  H->>DB: next pull carries the decision
+`} />
+
+<Code file="src/lib/actions/mbos.ts" symbol="leaveSchema" />
+
+<Code file="src/lib/actions/mbos.ts" symbol="leaveCalendarFor" collapsed />
+
+<Code file="src/lib/actions/mbos.ts" symbol="handleLeave" collapsed />
+
+<Code file="src/lib/engines/leave.ts" symbol="leaveWorkingDays" />
+
+<Code file="src/lib/engines/leave.ts" symbol="leaveBalances" collapsed />
+
+`mbos_leave_balances` is the entitlement **override**; the used figure is derived from approved, unwithdrawn requests, never incremented on decision.
+
+<Code file="src/lib/actions/sales.ts" symbol="decideApproval" collapsed />
+
+## Holidays
+
+<Code file="src/lib/holiday-sql.ts" symbol="holidayAppliesSql" />
+
+<Code file="src/lib/engines/holiday-audience.ts" symbol="resolveHoliday" />
+
+<Code file="src/lib/services/holiday-service.ts" symbol="rebuildHolidayMembers" collapsed />
+
+The rebuild takes an advisory transaction lock (two interleaved would delete each other's rows) and moves `updated_at` only on holidays whose audience changed, so a no-op rebuild sends nothing to any phone. It runs after every holiday write, allocation and territory change, and hourly.
+
+<Code file="src/lib/actions/sales.ts" symbol="saveHoliday" collapsed />
+
+### The forecast's working days
+
+<Code file="src/lib/services/performance-service.ts" symbol="workingDaysIn" collapsed />
+
+## Tables
+
+<DbTable name="mbos_leave_requests" only={["user_id", "leave_type", "from_date", "to_date", "half_day", "days", "reason", "cancelled_at", "cancel_reason"]} note={{
+  days: "Working days in the range for him — the working week minus his holidays.",
+  half_day: "Kept only on a single-day request.",
+  cancelled_at: "Withdrawn by the person who asked. Not an approval decision.",
+}} />
+
+<DbEnum name="mbos_leave_type" />
+
+<DbTable name="mbos_holidays" only={["on_date", "name", "level", "category", "place_ids", "audience_label", "note", "scope"]} note={{
+  level: "company · state · district · city · area · people.",
+  place_ids: "Place-tree node ids the holiday is for, at its level.",
+  scope: "Legacy free text from before levels existed; the screen banners rows that still rely on it.",
+}} />
+
+<DbTable name="mbos_holiday_assignments" note={{
+  mode: "include gives the day to a person; exclude takes it away.",
+  reason: "Required to take a day away — he will ask.",
+}} />
+
+<DbTable name="mbos_holiday_members" note={{
+  reason: "Why this person is reached — the place or the allocation. Company-wide holidays are never listed here.",
+}} />
+
+## Access
+
+<ModuleRef k="sales.leave" /> <ModuleRef k="sales.holidays" /> <ModuleRef k="sales.approvals" />
+
+`decideApproval` requires the owning module **or** Approvals at a manager's level, then refuses your own request and anybody outside `managerScope`. `saveHoliday` requires `sales.holidays` at a manager's level.
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/engines/leave.test.ts` | What a day off costs, what is debited, what is left |
+| `npm run test` | `src/lib/engines/holiday-audience.test.ts` | Who each level reaches; include and exclude |
+| `npm run test:integration` | `src/lib/holidays.test.ts` | Saving, rebuilding membership, per-person readers |
+| `npm run test` | `src/lib/engines/attendance.test.ts` | A holiday or leave covers a day only when too little was worked |
+
+## Changing it safely
+
+<Steps>
+<Step title="Ask holidayAppliesSql">
+Any new per-person reader of holidays goes through it. A bare `from mbos_holidays` gives everybody every state's holidays.
+</Step>
+<Step title="Rebuild after anything that changes an audience">
+A new territory, place or allocation path must call `rebuildHolidayMembers`.
+</Step>
+<Step title="Never store a used-leave counter">
+Derive it from approved requests in `leaveBalances`.
+</Step>
+</Steps>
+
+## Known gaps
+
+| Gap | Where |
+|---|---|
+| The forecast counts company-wide holidays only; every other reader uses his own | `performance-service.ts` `workingDaysIn` |
+| `saveHoliday` checks named people exist, not that they are in the manager's team | `actions/sales.ts` `saveHoliday` |
+| A leave span of up to 400 days passes; the refusal text implies a much shorter stretch | `engines/leave.ts` `MAX_LEAVE_SPAN_DAYS`; `handleLeave` |

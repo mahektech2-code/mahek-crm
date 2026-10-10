@@ -1,0 +1,164 @@
+ERP access is resolved **once per request** by `erpContext` (`lib/erp/access.ts`, wrapped in React `cache`): the level on the `erp` grant, the screens it opens (with every tab of each), the powers, the godowns, the designation and its department. The layout, the page and every write ask that same object. Designations are pure arithmetic in `lib/erp/designations.ts`, applied by `lib/actions/erp-designations.ts`; the Access dialog writes through `setAccess` and the shared writers in `lib/services/access-writes.ts`.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Context | `src/lib/erp/access.ts` | `erpContext`, `resolveFor`, `resolveForDesignation`, `requireErpApp`, `requireErpWrite`, `requireErpForm`, `powerRefusal`, preview cookie |
+| Powers (pure) | `src/lib/erp/powers.ts` | `ERP_POWERS`, `ERP_POWER_LABEL`, `isErpPower` |
+| Designations (pure) | `src/lib/erp/designations.ts` | `heldShape`, `designationShape`, `diffFromDesignation`, `draftFor`, `describeDiff` |
+| Departments (pure) | `src/lib/erp/departments.ts` | `ERP_DEPARTMENTS`, seats, `requirementRefusal`, `requirementVisibleTo` |
+| Material duties (pure) | `src/lib/erp/material-duties.ts` | Who requests, raises the PO, approves it and tests a material |
+| Designation writes | `src/lib/actions/erp-designations.ts` | `saveErpDesignation`, `deleteErpDesignation` (platform admins only) |
+| Designation reads | `src/lib/services/erp-designation-service.ts` | `listErpDesignations`, `erpHeldBy`, `designationStandings`, `designationRoster`, `erpPreviewTargets` |
+| Access writes | `src/lib/actions/access.ts` → `src/lib/services/access-writes.ts` | `setAccess` (ERP powers, designation link); `writeModules`, `writeErpPowers` |
+| Admin screens | `src/app/admin/access-section.tsx`, `src/app/admin/designations/designations-screen.tsx` | The ERP block of Manage access; Admin Console → ERP designations |
+| ERP settings | `src/app/erp/settings/page.tsx`, `working-location.tsx` | Working location card, powers card |
+| Working godown | `src/lib/actions/erp.ts`, `src/lib/erp/engines/godown-fence.ts` | `erpSetWorkingGodown`, `erpLocateWorkingGodown`, `godownAt` |
+| Preview | `src/lib/actions/erp.ts`, `src/app/erp/_ui/erp-shell.tsx` | `erpStartViewAs`, `erpStopViewAs`; `PreviewAs`, `PreviewBanner` |
+| Help videos | `src/lib/erp/screens/logistics.ts` (`videos`) | YouTube or uploaded file, tags from the `videoTag` reference list |
+
+## Resolving the context
+
+<Flow caption="erpContext() on every ERP request" chart={`
+sequenceDiagram
+  autonumber
+  participant C as erpContext (cached)
+  participant R as resolveFor
+  participant DB as Postgres
+  C->>C: actor = requireUser()
+  C->>R: resolveFor(actor)
+  R->>DB: levelInApp(actor, erp)
+  R->>DB: erp_user_powers, app_module_access (erp), erp_godown_staff, erp_user_settings, erp_user_designations
+  R-->>C: level, administrator, powers, screens (+ tabs + always-open), godowns, working godown, designation, department
+  alt actor is an ERP administrator and the view-as cookie is set
+    C->>R: resolveForDesignation(real, id) or resolveFor(target user)
+    R-->>C: the previewed shape, viewingAs set
+  end
+  C-->>C: ErpContext { user, actor, viewingAs, ... }
+`} />
+
+<Code file="src/lib/erp/access.ts" symbol="ErpContext" />
+
+<Code file="src/lib/erp/access.ts" symbol="resolveFor" collapsed />
+
+Tabs ride with their screen — this is the whole implementation of "a tab is never granted":
+
+<Code file="src/lib/erp/access.ts" symbol="screensFrom" />
+
+### The gates
+
+<Code file="src/lib/erp/access.ts" symbol="requireErpWrite" />
+
+<Code file="src/lib/erp/access.ts" symbol="requireErpScreen" />
+
+The layout uses `requireErpApp` (redirects to `/apps`); `[slug]/page.tsx` redirects to `/erp` when `ctx.screens` lacks the screen. Every refusal for a missing power is a fixed sentence:
+
+<Code file="src/lib/erp/access.ts" symbol="powerRefusal" collapsed />
+
+## Powers
+
+<Code file="src/lib/erp/powers.ts" symbol="ERP_POWERS" />
+
+<DbTable name="erp_user_powers" note={{ user_id: "Who holds it.", power: "One of ERP_POWERS. An unknown value is ignored by resolveFor.", granted_by_id: "Who gave it on the Access dialog." }} />
+
+An ERP administrator (admin level on the `erp` grant, or `users.role = 'admin'`, i.e. a platform administrator) holds every power without a row. `setAccess` takes `erpPowers` beside the ERP's modules; taking the ERP away clears them (`wantedErpPowers`).
+
+## Designations
+
+<DbTable name="erp_designations" note={{
+  level: "associate · manager · admin — the level written onto the erp grant of every holder.",
+  all_screens: "Every screen, including ones built later. Its module rows are then ignored.",
+  department: "mixing · refilling · packing · head, or null. Read live through the designation, so it is not part of 'customised'.",
+  sort_order: "Display order on the designations page.",
+}} />
+
+<DbTable name="erp_designation_modules" note={{ module: "An erp.<key> module key. Dashboard and Settings are never stored." }} />
+
+<DbTable name="erp_designation_powers" />
+
+<DbTable name="erp_user_designations" note={{ user_id: "At most one designation per person.", designation_id: "ON DELETE RESTRICT — the delete action unlinks holders first, in the same transaction." }} />
+
+### Matching is on effective access
+
+<Code file="src/lib/erp/designations.ts" symbol="heldShape" />
+
+<Code file="src/lib/erp/designations.ts" symbol="designationShape" />
+
+<Code file="src/lib/erp/designations.ts" symbol="diffFromDesignation" />
+
+<Code file="src/lib/erp/designations.ts" symbol="draftFor" />
+
+### Editing one moves those who matched it as it was
+
+<Code file="src/lib/actions/erp-designations.ts" symbol="saveErpDesignation" collapsed />
+
+Holders are measured against the designation **before** the edit, then each match gets the new level on `app_access`, new module rows (`writeModules` — every module stores none), new power rows, and a recomputed `users.role` (`widestRole`), all in one transaction. Audit: `access.erp-designation.create` / `.edit` with `moved` and `leftAlone`, plus a `set-app-access` row per moved person. Moved people are notified with a link to `/erp/settings`.
+
+<Code file="src/lib/actions/erp-designations.ts" symbol="deleteErpDesignation" />
+
+## Working location
+
+<DbTable name="erp_godown_staff" note={{ godown_id: "A godown the person may work at.", user_id: "The person." }} />
+
+<DbTable name="erp_user_settings" note={{ working_godown_id: "Their chosen godown. If it stops being one they are assigned to, resolveFor falls back to the first assigned godown." }} />
+
+<Code file="src/lib/actions/erp.ts" symbol="erpSetWorkingGodown" />
+
+<Code file="src/lib/actions/erp.ts" symbol="erpLocateWorkingGodown" />
+
+<Code file="src/lib/erp/engines/godown-fence.ts" symbol="godownAt" />
+
+## Preview as
+
+<Code file="src/lib/actions/erp.ts" symbol="erpStartViewAs" collapsed />
+
+The cookie is `mahekone_erp_view_as` (`designation:<id>` or `user:<id>`), http-only, four hours. `erpContext` reads it only when the signed-in person is an ERP administrator; `setTestViewAs` is the test seam. `erpAudit` writes `actor_id = ctx.actor.id` and leaves `actor_role` null while previewing.
+
+## Help videos
+
+<DbTable name="erp_videos" note={{ source: "youtube or file.", file_id: "An attachment bound to parent erp_video.", tags: "Values from the videoTag reference list." }} />
+
+Add and delete are allowed to `ctx.administrator || ctx.level === "manager"` and re-checked in the handler.
+
+## Permissions
+
+- **Modules:** <ModuleRef k="erp.settings" /> and <ModuleRef k="erp.dashboard" /> are always open (`ERP_ALWAYS_OPEN`, mirrored into `ALWAYS_OPEN_MODULES` so the Access screen draws them as always on); <ModuleRef k="erp.videos" /> is granted like any other screen.
+- **Designations and powers** are changed only by a platform administrator (`requirePlatformAdminUser` in `erp-designations.ts`; the Access dialog's own guard in `setAccess`).
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/erp/designations.test.ts` | Matching, always-open screens never customise, no rows = whole app, admin holds every power, drafting, the seed migration names only real screens and powers |
+| `npm run test` | `src/lib/erp/departments.test.ts` | Categories per department, the four teams, visibility, every step names a built screen |
+| `npm run test` | `src/lib/erp/registry.test.ts` | Tabs are never modules; every power has a label |
+| `npm run test` | `src/lib/erp/engines/godown-fence.test.ts` | Inside, outside, imprecise, unpinned, nearer pin wins |
+| `npm run test:integration` | `src/lib/erp/erp-designations.test.ts` | Platform admin only; assigning; customised by hand; an edit moves matches and leaves the customised; level change moves the account level; delete keeps access; preview is admin-only, read-only, and forms still open |
+| `npm run test:integration` | `src/lib/erp/erp-foundation.test.ts` | Admin holds every power; narrowed grants; writes need the screen and the power; tabs open with their screen; the reserved godown; working location |
+| `npm run test:integration` | `src/lib/erp/erp-departments.test.ts` | Departments raise and see their own requirements |
+
+## Changing it safely
+
+<Steps>
+<Step title="A new power">
+Add it to `ERP_POWERS`, give it a label and a source sentence in `ERP_POWER_LABEL` (the registry test fails otherwise), a sentence in `powerRefusal`, and check it inside the handler of every write it guards — never only in the screen.
+</Step>
+<Step title="A power that reveals a column">
+Put `pw` on the column and let `visibleCols`/`withoutHidden` drop it. Never blank a value in the browser.
+</Step>
+<Step title="A new always-open screen">
+Add it to `ERP_ALWAYS_OPEN`; `ALWAYS_OPEN_MODULES` and `grantableModules` follow.
+</Step>
+<Step title="Seeding designations">
+Do it in a migration that names only real `erp.<key>` modules and real powers — `designations.test.ts` reads the seed and refuses anything else.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| A designation's department is read live and is not part of the match, so editing a designation's department reaches customised holders too | `designations.ts` `designationShape`; `access.ts` `resolveFor` |
+| The own-vehicle refusal points at "ERP settings", but the rate lives in the Admin Console settings | `screens/purchase.ts` `readPrCosts` |
+| Settings page subtitle differs from the registry's description of the screen | `app/erp/settings/page.tsx`; `registry.ts` |

@@ -187,17 +187,18 @@ describe("complaints and credit notes are the CRM's complaints", () => {
 });
 
 describe("petty cash", () => {
-  test("what was recorded before the fund ledger stays on its lists, and reaches no balance", async () => {
+  test("available is credits less what that person spent, on both screens (A-24)", async () => {
     const ctx = await as(admin);
-    await db.execute(sql`insert into erp_credits (id, credit_date, godown_id, employee_name, mode, amount_paise, legacy) values ('cr_old', '2026-08-01', 'erpg_bhiwandi', 'Ravi Sales', 'Cash', 500000, true)`);
-    await db.execute(sql`insert into erp_expenses (id, expense_date, godown_id, expense_by, mode, particular, amount_paise, status, legacy, approval_status) values ('exp_old', '2026-08-02', 'erpg_bhiwandi', 'Ravi Sales', 'Cash', 'Fuel', 120000, 'Verify', true, 'approved')`);
-    const cr = (await mod("credits").load(ctx)).rows.find((r) => r.id === "cr_old")!;
-    const ex = (await mod("expenses").load(ctx)).rows.find((r) => r.id === "exp_old")!;
-    assert.equal(cr.v.status, "Before the ledger");
-    assert.equal(ex.v.approval, "Before the ledger");
-    assert.ok(ex.flags.includes("legacy"));
-    assert.equal(ex.v.outstanding, null, "a legacy expense is in no payable");
-    assert.ok(!(ex.actions ?? []).some((a) => a.id === "pay"), "and takes no payment");
+    assert.ok((await mod("credits").forms!.new(ctx, { date: "2026-08-01", godown: "Bhiwandi", who: "Ravi Sales", mode: "Cash", amount: "5000" }, [])).ok);
+    assert.ok((await mod("expenses").forms!.new(ctx, { date: "2026-08-02", godown: "Bhiwandi", who: "Ravi Sales", mode: "Cash", particular: "Fuel", amount: "1200" }, [])).ok);
+    const cr = (await mod("credits").load(ctx)).rows[0];
+    const ex = (await mod("expenses").load(ctx)).rows[0];
+    assert.equal(cr.v.available, 380000);
+    assert.equal(ex.v.available, 380000);
+    const c = await as(clerk);
+    assert.equal(msg(await mod("expenses").actions!.verify(c, ex.id, {})), "A manager verifies expenses.");
+    assert.ok((await mod("expenses").actions!.verify(ctx, ex.id, {})).ok);
+    assert.equal(msg(await mod("expenses").actions!.amount(ctx, ex.id, { amount: "1" })), "A verified expense is closed.");
   });
 });
 

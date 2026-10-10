@@ -1,0 +1,144 @@
+The customers list is `CustomersScreen` (`src/components/customers/customers-screen.tsx`), shared by the CRM and the Accounts app, fed by `listCustomersPage` in `lib/queries.ts`. What a set of filters **means** is one function, `customerFilterClause` — the list, its tiles, its total and both bulk actions run it. The record is `src/app/crm/customers/[id]`, a server page assembling a dozen reads into `RecordScreen`.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Route guard | `src/app/crm/customers/layout.tsx` | `requireModule(user.id, "crm.customers")` (covers `[id]` and `import`) |
+| List page | `src/app/crm/customers/page.tsx` | Parses filters; `listCustomersPage`, `listAssignableUsers`, `listAmFilterOptions`, `listPlaceFilterOptions`, `salesManagerSuggestions`; capabilities |
+| List screen | `src/components/customers/customers-screen.tsx` | Filters, tiles, table, selection bar, dialogs (edit, account manager, sales manager, third party) |
+| Record page | `src/app/crm/customers/[id]/page.tsx` | `getCustomer` → `assertCustomerInScope` (404 if not) → `customerRecordDetail`, timeline, contacts, distributors, pricing, target |
+| Record screen | `src/app/crm/customers/[id]/record-screen.tsx`, `message-history.tsx` | Header, tabs, side cards, dialogs |
+| Import | `src/app/crm/customers/import/*`, `src/lib/actions/import.ts` | `importCustomers`, `importBills` — `sheet.import` |
+| Reads | `src/lib/queries.ts` | `listCustomersPage`, `customerFilterClause`, `customerFiltersOnly`, `customerScopeClause`, `NOT_A_LEAD_SQL`, `DIRECT_CUSTOMER_SQL`, `getCustomer`, `customerTimeline`, `customerTimelineCounts` |
+| Type words | `src/lib/account-types.ts` | `accountTypeLabel`, `ACCOUNT_TYPE_FILTERS`, `ACCOUNT_TYPE_PARAM`, `accountTypeParam` |
+| Seat words | `src/lib/seat-labels.ts` | `SEAT_LABELS`, `seatLabel` |
+| Reassign | `src/lib/actions/account-manager.ts` → `src/lib/services/account-manager-service.ts` | `updateAccountManagers` → `applyAccountManagerChange` |
+| Sales manager | `src/lib/actions/sales-manager.ts` | `assignSalesManager` — by ids or by filters with `expectedCount` |
+| Handover | `src/lib/actions/relationship-handover.ts` | `handOverRelationships` — `customer.handOver` |
+| Third party | `src/lib/actions/third-party.ts`, `services/distributor-service.ts` | `convertToThirdParty`, `revertThirdParty`, `recordDeliveryAddress`, `addDistributor`, `updateDistributor`, `removeDistributor` |
+| Status word | `src/lib/format.ts` | `customerStatusLabel` |
+
+## Filters mean one thing
+
+<Code file="src/lib/queries.ts" symbol="customerFilterClause" />
+
+<Code file="src/lib/queries.ts" symbol="customerFiltersOnly" collapsed />
+
+`customerScopeClause` is the scope **without** the not-a-lead narrowing — used when a bulk action is given ids (for example from a lead's own record), where the question is "may this person act on this record", not "is it on that screen".
+
+<Code file="src/lib/account-types.ts" symbol="accountTypeLabel" />
+
+<Code file="src/lib/account-types.ts" symbol="accountTypeParam" />
+
+<Code file="src/lib/seat-labels.ts" symbol="SEAT_LABELS" />
+
+## Reassigning the sales and back-office seats
+
+<Flow caption="updateAccountManagers" chart={`
+sequenceDiagram
+  autonumber
+  participant UI as Account manager dialog
+  participant A as updateAccountManagers
+  participant S as applyAccountManagerChange
+  participant TX as transaction
+  participant N as notifyUsers
+  UI->>A: customerIds, salesAmId? backOfficeAmId?, reasonCode, note
+  A->>A: requireCapability("customer.reassign")
+  A->>S: change, actor (with authorisedBy / authorisedIn)
+  S->>S: load accounts in the actor's scope
+  S->>TX: seats + name mirrors, am_decided_at, customer_am_changes rows, audit
+  S-->>N: one notification per person gaining, one per person losing
+`} />
+
+<Code file="src/lib/services/account-manager-service.ts" symbol="applyAccountManagerChange" collapsed />
+
+<Code file="src/lib/actions/sales-manager.ts" symbol="assignSalesManager" collapsed />
+
+`assignSalesManager` takes **no** `am_decided_at`: the customer master states no sales manager, so there is nothing to hold off, and stamping it would freeze the other two seats as a side effect.
+
+## The record's timeline
+
+<Code file="src/lib/queries.ts" symbol="customerTimeline" collapsed />
+
+<Code file="src/lib/queries.ts" symbol="customerTimelineCounts" collapsed />
+
+<Code file="src/lib/timeline-kinds.ts" symbol="TIMELINE_PAGE" />
+
+<Callout kind="rule">
+Every timeline branch sorts `at desc, id desc` and the cursor is `(at, id) <` the last row. A stored **date** (bill date, receipt date) becomes an instant only through `::timestamp at time zone` the business zone — a bare `::timestamptz` reads in the session's zone and pages the same bill twice.
+</Callout>
+
+## The tables
+
+<DbTable name="customers" only={["kind", "third_party", "status", "owner_id", "sales_am_id", "sales_person_name", "back_office_am_id", "back_office_name", "sales_manager_id", "sales_manager_person_name", "relationship_owner_id", "handed_over_at", "lead_manager_id", "am_decided_at", "credit_term_days", "outstanding", "slow_payer", "do_not_contact", "deleted_at"]} note={{
+  kind: "lead until the first order, then customer. Read by about thirty places.",
+  third_party: "The mark. Wins over kind on a list. Never set by an import.",
+  status: "Derived by recomputeInactivity — except deactivated, which only a person sets.",
+  owner_id: "A lead's book. On an imported book, often whoever ran the import.",
+  sales_am_id: "A customer's book (ASSIGNED_TO_SQL) and who is credited.",
+  sales_person_name: "The sheet's name; rebuilt nightly unless am_decided_at is set.",
+  am_decided_at: "A person decided the seats; the sheet and recomputeSalesPeople keep off.",
+  relationship_owner_id: "Sight only (scopedToUsers), never credit.",
+  outstanding: "Cache: stated bills minus confirmed payments.",
+}} />
+
+<DbTable name="customer_am_changes" note={{
+  role: "Which seat moved — see am_role.",
+  from_name: "Stored with the id so the history reads after the person leaves.",
+  reason_code: "A code from people.amChangeReasons.",
+}} />
+
+<DbTable name="customer_distributors" note={{
+  distributor_customer_id: "An unmarked direct customer — somebody holding the invoice.",
+  is_primary: "At most one per shop, by a partial unique index.",
+}} />
+
+<DbEnum name="customer_kind" />
+<DbEnum name="am_role" />
+<DbEnum name="customer_status" />
+
+## Access
+
+- **Module:** <ModuleRef k="crm.customers" />.
+- **Read scope:** `customerFilterClause` → `scopedToUsers`; the record runs `assertCustomerInScope` and answers 404 for out of scope, so the page cannot be used to enumerate customers.
+
+<CapabilityGrid names={["customer.read", "customer.write", "customer.export", "customer.reassign", "customer.assignSalesManager", "customer.handOver", "customer.classify", "sheet.import"]} />
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/handover.test.ts` | Every `am_role` has a seat label; who can and cannot be handed over |
+| `npm run test` | `src/lib/seat-effects.test.ts` | Moving the back-office seat does not leave the book behind |
+| `npm run test:integration` | `src/lib/seat-mirrors.test.ts` | A seat's name mirror moves with its id once `am_decided_at` is stamped |
+| `npm run test:integration` | `src/lib/journeys.test.ts` | Reassignment history and notifications, sales manager by filters and the count guard, conversion to third party, timeline keyset paging |
+| `npm run test` | `src/lib/timeline-coverage.test.ts`, `timeline-fold.test.ts` | Timeline kinds are constants; folding |
+| `npm run test:integration` | `src/lib/customer-create.test.ts` | Adding a direct customer from Accounts |
+
+## Changing it safely
+
+<Steps>
+<Step title="A new filter goes in customerFiltersOnly">
+Never in the screen alone — the bulk actions must move exactly what the list shows.
+</Step>
+<Step title="A new seat needs a label and a scope decision">
+Add it to `am_role`, `SEAT_LABELS` (the handover test fails otherwise), and decide whether it is sight (`scopedToUsers`) or credit (`ASSIGNED_TO_SQL`). Never both by accident.
+</Step>
+<Step title="Moving money between people is customer.reassign">
+Any write to `sales_am_id`, `owner_id` or `back_office_am_id` goes through `applyAccountManagerChange`, writes history, notifies and stamps `am_decided_at`. `updateCustomer` refuses those fields.
+</Step>
+<Step title="Cap and count every record panel">
+A new panel on the record reads a capped page and a `count(*)`, never "everything".
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| Export writes `visible` (the current page) client-side and is gated on `isManager`, not `customer.export` | `customers-screen.tsx` `exportCsv` |
+| Import CSV link drawn on `isManager`; the page requires `sheet.import` | `customers-screen.tsx`; `app/crm/customers/import/page.tsx` |
+| Record re-derives the type label instead of `accountTypeLabel` | `record-screen.tsx` `typeLabel` |
+| `lib/customer-health.ts` words are not used by the CRM list or record | `customers-screen.tsx`, `record-screen.tsx` |
+| List page asks `getScope(user)` without the app name | `app/crm/customers/page.tsx` |

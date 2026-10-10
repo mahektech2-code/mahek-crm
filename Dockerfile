@@ -64,7 +64,10 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # connection attempt, it must fail loudly instead of quietly finding something.
 ENV DATABASE_URL=postgres://build:build@build-time-no-database.invalid:5432/build
 
-RUN npx next build
+# The docs index is built, not committed (see .gitignore): it cuts the code the
+# documentation quotes out of THIS source. `npx next build` skips npm's
+# `prebuild` hook, so it is run by name rather than relied on.
+RUN node scripts/docs-index.mjs && npx next build
 
 # ------------------------------------------------------------------- runtime
 FROM public.ecr.aws/docker/library/node:24-alpine AS runner

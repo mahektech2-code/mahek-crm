@@ -5,7 +5,7 @@ import { join, relative } from "node:path";
 import { spawnSync } from "node:child_process";
 import { modulesForApp } from "@/lib/modules";
 import { APP_IDS } from "@/lib/apps";
-import { DOC_APPS, DOC_TABS } from "./registry";
+import { DOC_APPS, DOC_TABS, tabsOf } from "./registry";
 
 /* ---------------------------------------------------------------------------
  * The Documentation app cannot drift silently from the product it describes.
@@ -31,21 +31,33 @@ function mdxFiles(dir: string): string[] {
 }
 
 describe("documentation coverage", () => {
-  test("every documented app is a real app", () => {
-    for (const a of DOC_APPS) assert.ok((APP_IDS as readonly string[]).includes(a.app), a.app);
+  test("every documented app is a real app, and section slugs are unique", () => {
+    for (const a of DOC_APPS) if (a.appId) assert.ok((APP_IDS as readonly string[]).includes(a.appId), a.appId);
+    assert.equal(new Set(DOC_APPS.map((a) => a.app)).size, DOC_APPS.length);
+  });
+
+  test("a page marks written only tabs it has", () => {
+    for (const a of DOC_APPS)
+      for (const p of a.pages)
+        for (const t of p.written) assert.ok(tabsOf(p).includes(t), `${a.app}/${p.slug}: "${t}" is written but not one of its tabs`);
   });
 
   test("every module of a documented app is claimed by a page", () => {
     for (const a of DOC_APPS) {
+      if (!a.appId) continue;
       const claimed = new Set(a.pages.flatMap((p) => p.modules));
-      const missing = modulesForApp(a.app).filter((m) => !claimed.has(m.key)).map((m) => m.key);
+      const missing = modulesForApp(a.appId).filter((m) => !claimed.has(m.key)).map((m) => m.key);
       assert.deepEqual(missing, [], `${a.app}: no documentation page claims ${missing.join(", ")}`);
     }
   });
 
   test("a page claims only modules that exist, and no module is claimed twice", () => {
     for (const a of DOC_APPS) {
-      const real = new Set(modulesForApp(a.app).map((m) => m.key));
+      if (!a.appId) {
+        for (const p of a.pages) assert.deepEqual(p.modules, [], `${a.app}/${p.slug}: a section with no app claims modules`);
+        continue;
+      }
+      const real = new Set(modulesForApp(a.appId).map((m) => m.key));
       const seen = new Set<string>();
       for (const p of a.pages) {
         for (const k of p.modules) {
@@ -99,8 +111,45 @@ describe("documentation coverage", () => {
     }
   });
 
-  test("the build-time index is current with the source it quotes", () => {
-    const run = spawnSync(process.execPath, ["scripts/docs-index.mjs", "--check"], { encoding: "utf8" });
+  test("every file the documentation quotes is in the image's build context", () => {
+    /* The Docker builder generates the index from its OWN context, which
+       .dockerignore trims hard (scripts/, deploy/, tests, workflows). A page
+       quoting a file the context excludes builds everywhere except the image
+       — so it is caught here, by name, instead. Only the pattern shapes
+       .dockerignore actually uses are understood: a directory/, a bare name,
+       a trailing *, a leading **, and ! to let one path back in. */
+    const rules = readFileSync(join(process.cwd(), ".dockerignore"), "utf8")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith("#"));
+    const matches = (pattern: string, file: string) => {
+      if (pattern.startsWith("**/")) return file.endsWith(pattern.slice(4).replace("*", ""));
+      if (pattern.endsWith("/")) return file.startsWith(pattern);
+      if (pattern.endsWith("*")) return file.startsWith(pattern.slice(0, -1));
+      return file === pattern || file.startsWith(pattern + "/");
+    };
+    const excluded = (file: string) => {
+      let out = false;
+      for (const r of rules) {
+        if (r.startsWith("!")) { if (matches(r.slice(1), file)) out = false; }
+        else if (matches(r, file)) out = true;
+      }
+      return out;
+    };
+    const quoted = new Set<string>();
+    for (const f of mdxFiles(DOCS)) {
+      const body = readFileSync(join(DOCS, `${f}.mdx`), "utf8");
+      for (const [, file] of body.matchAll(/<Code\b[^>]*\bfile="([^"]+)"/g)) quoted.add(file);
+    }
+    const missing = [...quoted].filter(excluded);
+    assert.deepEqual(missing, [], `quoted but excluded from the Docker build context — add a ! line to .dockerignore: ${missing.join(", ")}`);
+  });
+
+  test("every piece of code the documentation quotes still exists", () => {
+    /* The index itself is built, never committed (it would go stale every
+       time main moved). What CAN be wrong in a PR is a quoted function that
+       was renamed or deleted — that fails here, naming the page. */
+    const run = spawnSync(process.execPath, ["scripts/docs-index.mjs", "--verify"], { encoding: "utf8" });
     assert.equal(run.status, 0, run.stderr || run.stdout);
   });
 });

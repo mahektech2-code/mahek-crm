@@ -809,25 +809,6 @@ const APPS: Record<string, string> = {
 
 /** Past-tense verbs. A token found here, at the END of a code, is the verb. */
 export const VERBS: Record<string, string> = {
-  /* Petty cash (ERP → Petty cash). */
-  exception: "marked {} as an exception",
-  matchManual: "matched {} by hand",
-  reconcile: "reconciled",
-  toWithdrawal: "raised a cash withdrawal from {}",
-  unmatch: "unmatched",
-  submit: "submitted",
-  decisionRefused: "was refused a decision on",
-  docException: "excused the missing bill on",
-  evidence: "added a document to",
-  received: "marked {} received",
-  request: "requested",
-  propose: "proposed",
-  record: "recorded",
-  refused: "was refused paying",
-  reverse: "reversed",
-  failed: "failed to post",
-  posted: "posted",
-  initiate: "started",
   create: "added",
   created: "added",
   add: "added",
@@ -1028,18 +1009,6 @@ export const VERBS: Record<string, string> = {
 
 /** Nouns. A code's middle tokens are looked up here. */
 export const NOUNS: Record<string, string> = {
-  petty: "petty-cash",
-  bank: "bank statement line",
-  budget: "budget",
-  closing: "cash closing",
-  expenseAdjustment: "expense adjustment",
-  fund: "fund account",
-  fundAdjustment: "fund adjustment",
-  fundTransfer: "fund transfer",
-  cashReceipt: "customer cash receipt",
-  opening: "opening balance",
-  payment: "payment",
-  tally: "Tally voucher",
   rawMaterial: "raw material",
   supplier: "supplier",
   product: "product",

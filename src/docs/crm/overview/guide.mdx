@@ -1,0 +1,190 @@
+The CRM is where the office team rings customers, takes orders over the phone, chases money that is owed, and keeps a record of every conversation. It is one app inside MahekOne: you sign in once, and if the CRM is the only app you have been given, you land straight in it.
+
+This page is the map. It tells you who the CRM is for, what a normal day looks like, what every screen in the sidebar is for, and what the words the CRM uses actually mean. Each screen has its own page with the details — follow the links.
+
+## Who uses the CRM
+
+<Cards cols={3}>
+<Card title="Telecaller" tone="brand">Rings customers from the **Call Log** every day, logs what happened on each call, takes orders, sets callbacks and chases payments. Sees **only their own book** of customers.</Card>
+<Card title="Manager">Runs a team of telecallers. Sees the **whole team** by default and can switch to their own book. Reads the team overview, sets targets, decides close/reopen requests and can close a reminder by hand.</Card>
+<Card title="Accounts">The ledger desk mostly works in the Accounts app. Somebody on that desk who has **also** been given the CRM reads customers, bills and outstanding here, and approves orders back in Accounts.</Card>
+</Cards>
+
+What you can open inside the CRM is decided by your manager on the Access screen. If a screen in this guide is missing from your sidebar, you have not been given it — ask your manager.
+
+## A telecaller's day
+
+<Steps>
+<Step title="Open the Dashboard">
+It greets you by name and shows the shape of your day as five steps: **Work the queue → Close reminders → Chase payments → Clear complaints → Submit EOD**. Each step is ticked when there is nothing left in it. Press **Start calling** to begin. See [Dashboard](/docs/crm/dashboard).
+</Step>
+<Step title="Work the Call Log from the top">
+The [Call Log](/docs/crm/call-log) lists today's customers in the order you should ring them, each with the reason. Call, log what happened, move to the next row.
+</Step>
+<Step title="Keep your promises">
+Any callback you promised shows on [Reminders](/docs/crm/reminders) and jumps to the top of the Call Log on the day it is due. Making the call closes it.
+</Step>
+<Step title="Chase money">
+[Payment Follow-up](/docs/crm/payments) is the collections list: who owes money, how late, and what was last promised.
+</Step>
+<Step title="Deal with complaints">
+Open [Complaints](/docs/crm/complaints) and mention any open complaint before anything else on the next call to that customer.
+</Step>
+<Step title="Submit your EOD report">
+At the end of the day, the [EOD Report](/docs/crm/eod) adds up what you did. It will not let you submit while a reminder due today or earlier is still open.
+</Step>
+</Steps>
+
+## A manager's day
+
+<Steps>
+<Step title="Read the team overview">
+The Dashboard shows **Team overview** instead of a greeting: today's red flags, the team's calls, orders booked, outstanding, and a comparison table of every telecaller. Switch the period to Yesterday, This week or This month.
+</Step>
+<Step title="Look for what is stuck">
+Overdue reminders by telecaller (on [Reminders](/docs/crm/reminders)), opportunities past their expected day (on [Opportunities](/docs/crm/opportunities)), and **Unassigned** rows on the team Call Log.
+</Step>
+<Step title="Decide what is waiting for you">
+Requests to close or reopen an account are on [Close/Reopen](/docs/crm/status-requests). Monthly targets are on [Monthly Targets](/docs/crm/targets).
+</Step>
+<Step title="Switch between team and your own book">
+The **My book / Team** switch in the header changes every list in the CRM at once. It is a view, not a permission — it never lets anyone see more than they are allowed.
+</Step>
+</Steps>
+
+## How the screens fit together
+
+Almost everything in the CRM starts with a call and ends with the CRM telling you when that customer comes back.
+
+<Flow caption="The main loop of the CRM" chart={`
+flowchart TD
+  A["Call Log<br/>who to ring today, and why"] --> B["Call panel<br/>log the call and its outcome"]
+  R["Reminders<br/>promises falling due"] --> A
+  B --> O["Order<br/>waits for Accounts"]
+  B --> M["Reminder<br/>a callback or promise"]
+  B --> C["Complaint"]
+  B --> P["Payment promised<br/>or reported"]
+  B --> Q["Opportunity<br/>something they may buy"]
+  O --> AC["Accounts approve<br/>or decline it"]
+  P --> AC2["Accounts confirm<br/>the money in the bank"]
+  M --> R
+  B --> N["Next step<br/>'Comes back to your Call Log on …'"]
+  N --> A
+`} />
+
+A few things to know about this loop:
+
+- **An order you take is not yet a sale.** It waits for the accounts desk to approve it. Your Dashboard counts it as *taken* straight away; the money only counts once it is approved.
+- **A payment the customer says they made is not yet money.** It waits for accounts to find it in the bank. Until then the customer is left alone for a few days rather than chased.
+- **Every save tells you when the customer comes back.** That sentence is kept on the call, so [Call History](/docs/crm/history) can show you later what you were told.
+
+## Every screen in the sidebar
+
+The sidebar is grouped. Only one group is open at a time; the Dashboard is pinned above them all.
+
+### Pinned
+
+| Screen | What it is for |
+|---|---|
+| [Dashboard](/docs/crm/dashboard) | Your day at a glance, or the team overview for a manager. |
+
+### Daily calling
+
+| Screen | What it is for |
+|---|---|
+| [Call Log](/docs/crm/call-log) | Today's calling list, in order, with the reason for each call. |
+| [Reminders](/docs/crm/reminders) | Every callback and promise you made, and which are due or late. |
+| [Call History](/docs/crm/history) | Every call logged, newest first, and what each call said would happen next. |
+| [Opportunities](/docs/crm/opportunities) | Things a customer said they might buy, to be worked to won or lost. |
+
+### Collections
+
+| Screen | What it is for |
+|---|---|
+| [Payment Follow-up](/docs/crm/payments) | The collections list — who owes money and what was promised. |
+| [WhatsApp](/docs/crm/whatsapp) | Payment reminders and the customers' replies. Reading and sending are granted separately. |
+| [Outstanding](/docs/crm/outstanding) | Who owes what, one row per customer, with the bills behind each balance. |
+| [Sales Bills](/docs/crm/bills) | The bills ledger, by financial year. |
+
+### Customer records
+
+| Screen | What it is for |
+|---|---|
+| [Customers](/docs/crm/customers) | The customer list and every customer record. |
+| [Complaints](/docs/crm/complaints) | Open and resolved complaints. |
+| [Price lists](/docs/crm/price-lists) | What each customer pays, and special prices asked for on a call. |
+| [Close/Reopen](/docs/crm/status-requests) | Requests to close or reopen an account. Only shown to people who can decide them. |
+
+### Lead Management
+
+| Screen | What it is for |
+|---|---|
+| [All Leads](/docs/crm/leads) | Every lead, its stage, and what it is waiting on. |
+| [Intake & qualification](/docs/crm/lead-intake-and-qualification) | Raising a lead, bulk imports, duplicates, and qualifying a Suspect into a Prospect. |
+| [Calling desk](/docs/crm/lead-calling-desk) | Qualifying online leads by phone. Only for people given it. |
+| [Samples & trials](/docs/crm/samples) | Samples out with customers and what they thought. |
+| [Commercial](/docs/crm/lead-commercial) | Negotiation, distributor appointments and first orders. |
+| [Next actions & handovers](/docs/crm/lead-actions) | What is owed on every lead, and converted accounts waiting for an owner. |
+| [Oversight](/docs/crm/lead-oversight) | Gates somebody overrode, and the lead audit trail. |
+
+Some of these are reached from **All Leads** rather than drawn in the sidebar. They only appear in the sidebar for somebody who has not been given All Leads.
+
+### Targets & reporting
+
+| Screen | What it is for |
+|---|---|
+| [Monthly Targets](/docs/crm/targets) | Each customer's monthly target and how it is going. Top customers is a tab here. |
+| [My Performance](/docs/crm/performance) | Your own target and score for the month. |
+| [EOD Report](/docs/crm/eod) | The end-of-day summary of your work. |
+
+### Support
+
+| Screen | What it is for |
+|---|---|
+| [Help Center](/docs/crm/help-and-settings) | The SOPs. Manager settings are reached from here. |
+
+### Numbers beside the links
+
+| Link | The number means |
+|---|---|
+| Reminders | Reminders due today **or overdue** that are still open. |
+| Complaints | Complaints still open, in progress, or waiting on the customer. |
+| Close/Reopen | Requests nobody has decided yet. |
+| All Leads | Leads past the day something was owed (red), otherwise leads with something due today. |
+
+## Words the CRM uses
+
+| Word | What it means |
+|---|---|
+| **Book** | The customers that are yours. A lead belongs to whoever owns it; a customer belongs to their sales account manager. Every list in the CRM is cut to a book. |
+| **Scope** | Whose book you are looking at — **your book** or **the whole team**. A telecaller is always on their own book. A manager can switch. |
+| **Held back** | A customer the Call Log deliberately left off today's list. The held-back strip says why for each one — nobody disappears silently. |
+| **Buying cycle** | How many days a customer usually goes between orders, worked out from their own approved orders. The Call Log times its calls from it. |
+| **Stock check** | A call partway through a customer's buying cycle to ask what is left on the shelf. |
+| **Stage floor** | On a late payment, the lowest follow-up stage a customer can be at. A customer who refuses to commit or cannot be reached is kept at a higher stage even if their bill dates alone would put them lower. |
+| **Reported money** | A payment the customer *says* they made. It stops the chasing for a few days but does not reduce what they owe. |
+| **Confirmed money** | A payment accounts have found in the bank. Only this reduces outstanding. |
+| **Lead** | An account that has never ordered. |
+| **Customer** | An account we have invoiced — they have placed an order. |
+| **Third-party customer** | A shop we deliver to but do not bill; a distributor buys from us and sells to them. The CRM never asks them for a first order. |
+| **Reminder** | A promise somebody made to a customer — a callback, a payment to check, information to send. |
+| **Opportunity** | Something a customer said on a call they might buy. It is not a lead. |
+| **Next step** | The sentence you see after saving a call — *Comes back to your Call Log on …* — and the badge saying whether it is a promise or a scheduled date. |
+
+## Questions people ask
+
+<Faq q="I cannot see a screen my colleague can see.">
+Your manager has given you a narrower set of screens. The Access screen decides it per person. Typing the address of a screen you were not given takes you to the first screen you do have.
+</Faq>
+<Faq q="Why does my manager see more customers than I do?">
+A manager sees their whole team's books. A telecaller always sees only their own. The **My book / Team** switch is only drawn for managers.
+</Faq>
+<Faq q="I took an order but my Dashboard says it is 'awaiting approval'.">
+Orders wait for the accounts desk to approve them. It counts as **taken** at once; it counts as money only once approved.
+</Faq>
+<Faq q="The customer says they paid. Why do they still show as owing?">
+Money a customer reports is not counted until accounts confirm it reached the bank. Until then the customer is held back from chasing for a few days, and the screens say so.
+</Faq>
+<Faq q="Where do I change a setting like how many days of quiet after an order?">
+Settings are changed by a manager in the Admin Console. The Help Center has a link for managers.
+</Faq>

@@ -1,0 +1,74 @@
+The handset shows a salesman the **office's score** for his month — never a second calculation of it. The target is set and published on the Sales Dashboard ([Targets](/docs/sales/targets/how-it-works)), the score is computed by the performance engine ([Performance](/docs/sales/performance/how-it-works)), and the phone reads the cached result. This page is about what the phone shows and why it reads a cache.
+
+## The phone reads a cache, and says how old it is
+
+<Rule title="Nothing on the phone recalculates the score">
+The office rebuilds the score cache hourly for the current month and nightly for this month and last. The phone receives the two most recent months on every sync, with the time they were computed, and prints that time under the score.
+</Rule>
+
+<Callout kind="why">
+The number a man is appraised on is the office's, and a second implementation of it on a phone is how the two come to disagree. A phone deriving its own score would derive it from a book hours old. Printing the computed time is what stops a cached figure being believed as live.
+</Callout>
+
+<Flow caption="Where the figures come from" chart={`
+flowchart TD
+  T["Target published<br/>(Sales Dashboard)"] --> E["Performance engine scores the month<br/>hourly: this month · nightly: this and last"]
+  L["Ledger: approved orders,<br/>confirmed receipts, tasks"] --> E
+  E --> C["Score cache<br/>one row per person per month"]
+  C -->|"every sync, two months"| P["Phone: this month and last<br/>open with no signal"]
+  L -->|"asked live, same scoring"| R["Phone: any other period<br/>needs signal"]
+`} />
+
+Any other period — a quarter, a financial year, two dates — is asked of the office, which reads it off the ledger with the **same** scoring the monthly cache uses, so September picked as a range and September off the sync are one figure. A range that cuts a month part-way prorates that month's target, and the screen says so.
+
+## Six parts, one score
+
+| Part | Weight | Counts |
+|---|---|---|
+| Revenue | <Setting k="performance.weightRevenue" /> | Approved order value, excluding GST |
+| Volume | <Setting k="performance.weightVolume" /> | Litres, from each SKU's packing |
+| Mix | <Setting k="performance.weightMix" /> | Share of value per formulation named in the target |
+| New customers | <Setting k="performance.weightNewCustomers" /> | First counting order in the period |
+| Collection | <Setting k="performance.weightCollection" /> | Confirmed receipts as a share of the overdue book at month start |
+| Activity | <Setting k="performance.weightActivity" /> | Tasks completed out of tasks assigned |
+
+<Rule title="A part with no target is dropped, not scored zero">
+Scoring an unset part 0% marks somebody down for a question never put to them; scoring it 100% pays them for it. It leaves the score and the remaining weights are restated out of 100. The phone names the dropped parts, because an 84 across six parts and an 84 across three are different months.
+</Rule>
+
+## Rupees beside litres
+
+<Rule title="The price-not-volume warning">
+When revenue is at or above target and volume is below it, the phone shows: *You reached your rupee target but not your litres target. Prices went up, but you sold less quantity.*
+</Rule>
+
+<Callout kind="why">
+A price revision moves every rupee figure without one extra can leaving the godown. A book measured on revenue alone reports the month prices went up 30% as the month everybody improved 30%. The person being congratulated is the one who most needs to know.
+</Callout>
+
+## The mix is by formulation
+
+A target names the **formulations** a salesman should push (Nano, PU and so on) with a target share and a minimum. Everything else falls into the residual *Other*, so the shares always total 100%. Each band's status — below minimum, below target, on target, stretch — comes from the office. Value whose product name matches no catalogue entry still counts as revenue but contributes no litres; the office reports it as unmatched.
+
+## The shops behind it
+
+Below the score the phone lists the salesman's customers' own monthly targets — which shops are short and by how much — and orders he took that accounts have not yet approved. Revenue counts approved orders only, so on a busy morning the score lags what he sold; this list is what says so.
+
+## Reports is a count, not a score
+
+The **Reports** screen is computed on the phone from the salesman's own visits, orders and payments. It needs no signal and no new data. It deliberately answers a plainer question — what happened — and includes orders still pending or refused, which is why its order value differs from Performance.
+
+## The forecast is the office's
+
+The month-end forecast — working days elapsed, holidays excluded, no forecast before a whole working day has passed — is drawn on the Sales Dashboard and the web performance screen. **The handset does not show one**; it shows achievement to date.
+
+## Who sees what
+
+The phone's performance request takes **no user id**: the person is whoever the device belongs to. It cannot be turned into a way to read a colleague's appraisal.
+
+<SettingsTable keys={["performance.weightRevenue", "performance.weightVolume", "performance.weightMix", "performance.weightNewCustomers", "performance.weightCollection", "performance.weightActivity", "performance.volumeDivergencePoints", "performance.ratingBands"]} />
+
+## Where the code and the intent disagree today
+
+- **The warning ignores the divergence setting.** The office raises its alert only when volume trails by more than <Setting k="performance.volumeDivergencePoints" /> points; the phone shows it whenever revenue is at least 100% and volume is under 100% (`priceNotVolume` in `mbos-app/src/data/performance.ts` vs `src/lib/engines/performance.ts`). A salesman can see a warning his manager does not.
+- **No forecast on the handset.** The office computes one per person (`performance-service.ts`), but it is not on the wire and the phone shows achievement to date only (`performanceFor` in `src/lib/services/mbos-service.ts`).

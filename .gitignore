@@ -15,6 +15,11 @@
 
 # next.js
 /.next/
+
+# The docs index is BUILT, like .next: it quotes the source as it is at build
+# time, so a committed copy goes stale the moment main moves. See
+# scripts/docs-index.mjs; npm runs it before dev, lint, test and build.
+/src/docs/_generated/
 /out/
 
 # production

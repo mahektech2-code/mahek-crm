@@ -87,20 +87,6 @@ export async function erpSubmitForm(
   }
 }
 
-/** A header tool on a screen: an import, a re-run, a report — anything that acts on the screen rather than one record. */
-export async function erpRunTool(screen: string, tool: string, values: Record<string, string> = {}): Promise<Result<unknown>> {
-  try {
-    const ctx = await requireErpWrite(screen);
-    const handler = screenModule(screen)?.tools?.[tool];
-    if (!handler) return err("That tool is not available.", "not_found");
-    const res = await handler(ctx, values);
-    if (res.ok) revalidate(screen);
-    return res;
-  } catch (e) {
-    return refused(e);
-  }
-}
-
 export async function erpLoadForm(screen: string, action: string, id: string): Promise<Result<FormSpec>> {
   try {
     const ctx = await requireErpForm(screen);

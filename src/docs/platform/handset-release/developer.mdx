@@ -1,0 +1,200 @@
+The field salesman's app (MBOS, `mbos-app/`, Android package `in.mahek.mbos`) reaches phones two ways. **Native changes** — a new native module, a permission, an Expo SDK bump, the API base — ship as a signed **APK**, built and published by the `MBOS APK` GitHub workflow and installed by sideloading. **JavaScript changes** — screens, copy, engine rules — ship **over the air** with `eas update`, and a handset picks them up in the background without a reinstall. Push notifications ride on Expo's push service through Firebase, and need two credentials set once.
+
+There is no store, no staged rollout and no rollback for a sideloaded APK, so a release is a decision somebody makes by pressing a button — never a push trigger, and never a file copied up from a laptop.
+
+## Map of the release machinery
+
+| Piece | File | What it does |
+|---|---|---|
+| APK workflow | `.github/workflows/mbos-apk.yml` | `workflow_dispatch` with `api_base` and `publish`; prebuild, gradle release build, signature check, R2 archive, droplet copy, manifest, byte-for-byte check |
+| Release key | `mbos-app/keystore/mbos-release.keystore`, `mbos-app/keystore/README.md` | The committed keystore; passwords and alias are GitHub secrets |
+| App identity | `mbos-app/app.json` | `expo.version`, `android.versionCode`, `runtimeVersion` (fingerprint policy), `updates` (channel pinned to `production`), `extra.eas.projectId` |
+| Update nudge (handset) | `mbos-app/src/native/update-check.ts`, `mbos-app/src/engines/app-update.ts` | Reads `/downloads/mbos.json`, compares `versionCode` |
+| Version table (office) | `src/lib/handset-versions.ts`, `src/app/admin/handsets-section.tsx` | Admin Console → Handsets: which build each phone runs |
+| Push (server) | `src/lib/mbos/push.ts`, `src/lib/mbos/push-rules.ts` | `pushReadiness`, `pushToUsers`, receipts, quiet hours, Android channels |
+| Push token | `src/app/api/mbos/push-token/route.ts` | The handset registers its Expo push token |
+| Download | `Caddyfile` `handle_path /downloads/*` | Serves `/opt/mahekone/downloads` off the droplet's disk |
+
+## Releasing an APK
+
+<Flow caption="MBOS APK workflow, publish: true" chart={`
+sequenceDiagram
+  autonumber
+  participant Op as Whoever releases
+  participant W as mbos-apk.yml
+  participant R2 as Cloudflare R2
+  participant D as Droplet /downloads
+  participant H as Handsets
+  Op->>W: gh workflow run MBOS APK, api_base and publish=true
+  W->>W: refuse api_base that is not https or ends in a slash
+  W->>W: npm ci, write google-services.json if the secret is set
+  W->>W: expo prebuild (refuses without the keystore password)
+  W->>W: gradlew assembleRelease (EXPO_PUBLIC_API_BASE baked in)
+  W->>W: apksigner cert SHA-256 == keystore SHA-256 ?
+  alt mismatch or unreadable
+    W-->>Op: fail - do not publish
+  end
+  W->>W: upload artifact (30 days)
+  W->>R2: mbos-VERSION-SHA7.apk and mbos.apk
+  W->>D: scp, then mv into place: mbos.apk
+  W->>D: mbos.json = version, versionCode, url
+  W->>D: curl the live download, sha256 == built?
+  H->>D: GET /downloads/mbos.json on open
+  H-->>H: newer versionCode - show the update card
+`} />
+
+<Steps>
+<Step title="Bump both version numbers first">
+In `mbos-app/app.json`, raise `expo.version` **and** `expo.android.versionCode` — in the same PR as the change or in a PR of its own, merged before you run the workflow. `versionCode` is the integer Android compares to decide an install is an upgrade, and what the update nudge compares; the version string is for people and is what Admin Console → Handsets shows. Left unbumped, every phone reports the same build and nobody can tell whether a fix has reached a salesman.
+</Step>
+<Step title="Try it without publishing">
+```bash
+gh workflow run "MBOS APK" --ref main \
+  -f api_base=https://one.mahekindia.com -f publish=false
+```
+The APK is attached to the run (Artifacts) and goes in front of nobody.
+</Step>
+<Step title="Publish">
+```bash
+gh workflow run "MBOS APK" --ref main \
+  -f api_base=https://one.mahekindia.com -f publish=true
+```
+</Step>
+<Step title="Optionally set the reference build">
+<Setting k="mbos.sync.currentAppVersion" /> tells Admin Console → Handsets which build every phone should be on; empty, it uses the newest version any phone has reported.
+</Step>
+</Steps>
+
+### What the workflow refuses
+
+| Check | Why it refuses |
+|---|---|
+| `api_base` not `https://…`, or ending in `/` | It is **baked into the bundle** at build time (`EXPO_PUBLIC_API_BASE`) and cannot be changed afterwards — a wrong one is a broken binary, not a wrong setting |
+| `MBOS_KEYSTORE_STORE_PASSWORD` empty | Without the release key gradle would sign with a debug key; Android treats that as a different app, and every salesman would have to uninstall — losing anything unsynced — to update |
+| Signer certificate does not match the committed keystore | Same consequence, and invisible on a clean test phone. Checked with `apksigner verify --print-certs`, not `keytool -printcert -jarfile`, which finds no JAR signature on a modern APK and silently verifies nothing |
+| Live `/downloads/mbos.apk` hash differs from the build | The publish did not land; nothing anybody downloads is this build |
+
+### Where it is published, and why twice
+
+| Destination | Name | Purpose |
+|---|---|---|
+| R2 (`R2_DOWNLOADS_BUCKET`) | `mbos-<version>-<sha7>.apk` and `mbos.apk` | The versioned archive; outlives any droplet |
+| Droplet `/opt/mahekone/downloads/` | `mbos.apk`, `mbos.json` | What people are given a link to: `https://one.mahekindia.com/downloads/mbos.apk`. Caddy serves it off local disk; nothing serves `/downloads` from R2 |
+
+Files are copied to a dot-prefixed temporary name and `mv`'d into place, so a download never sees half a file. `deploy/cleanup.sh` keeps `mbos.apk` plus one older local copy.
+
+### Repository secrets the workflow reads
+
+| Secret | Required | Purpose |
+|---|---|---|
+| `MBOS_KEYSTORE_STORE_PASSWORD`, `MBOS_KEYSTORE_KEY_PASSWORD`, `MBOS_KEYSTORE_KEY_ALIAS` | Yes | Unlock the committed release keystore |
+| `MBOS_GOOGLE_SERVICES_JSON` | For push | The Firebase Android config; without it the build warns and the APK cannot receive pushes |
+| `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ENDPOINT`, `R2_DOWNLOADS_BUCKET` | To publish | The archive |
+| `SSH_PRIVATE_KEY`, `SSH_KNOWN_HOSTS`, `DROPLET_HOST` | To publish | The droplet copy |
+
+<Callout kind="warn" title="Never build a release by hand and copy it up">
+It skips the signature check, the versioned archive and the record of what shipped. Local `gradlew assembleRelease` is for trying a change on your own phone. A hand-copied release has happened once; the workflow exists so it does not happen again.
+</Callout>
+
+## The update nudge
+
+The handset fetches `${API_BASE}/downloads/mbos.json` (cache-busted, six-second timeout) on open and hands it to a pure rule. It is a static file rather than an API route on purpose: the moment a salesman most needs to update is the moment his build is too old to sign in.
+
+<Code file="mbos-app/src/engines/app-update.ts" symbol="updateVerdict" collapsed />
+
+Anything missing, malformed, non-https, or not strictly newer answers `current` and draws nothing. The app cannot install an APK itself; the card hands the link to the browser.
+
+## Over-the-air updates
+
+`expo-updates` is enabled in `app.json` against the EAS project in `extra.eas.projectId`, with the channel pinned in `updates.requestHeaders["expo-channel-name"] = "production"`. Builds are made by gradle in the workflow, not by `eas build`, so nothing else stamps a channel in — without the pinned header a handset asks for updates on no channel and receives none.
+
+```bash
+cd mbos-app && npx eas-cli@latest update --branch production --message "what changed"
+```
+
+| Rule | Why |
+|---|---|
+| **`runtimeVersion` uses the `fingerprint` policy** | It hashes the native project, so a native change produces a new runtime whether or not anybody remembered to bump the version — and an update is only delivered to builds of the same runtime. |
+| **An update reaches only builds of its runtime** | A phone on an older APK keeps the JavaScript it has until it installs a newer APK. To patch an old build, publish against that build's runtime (read it out of the APK) — see the team's notes. |
+| **Native changes never go over the air** | A new native module, a permission, an SDK bump, and `EXPO_PUBLIC_API_BASE` are always an APK. |
+| **An update never delays a launch** | `fallbackToCacheTimeout: 0`, `checkAutomatically: ON_LOAD`: the app opens on what it has, downloads behind it, and runs the new bundle next time. It never reloads under somebody's half-filled form. |
+| **The Sync screen says which bundle is running** | "Running the build that was installed" or the update's id, so "the fix is not on my phone" and "the fix does not work" can be told apart. |
+
+## Push notifications
+
+Every notification is written to the in-app bell whatever happens to the push. Push only adds the lock-screen banner.
+
+<Flow caption="From a notification to a phone" chart={`
+flowchart TD
+  N["Something notifies a person<br/>(lib/notify.ts)"] --> B["Row on the bell - always"]
+  N --> P["pushToUsers(targets)"]
+  P --> R{"pushReadiness:<br/>enabled, project id,<br/>handsets with tokens?"}
+  R -- "no" --> S["Nothing sent - the bell still has it"]
+  R -- "yes" --> Q{"Inside quiet hours?"}
+  Q -- "yes" --> SIL["Sent silently: no sound, normal priority"]
+  Q -- "no" --> LOUD["Sent with sound on the kind's channel"]
+  SIL --> X["Expo push API, 100 per request"]
+  LOUD --> X
+  X --> RC["collectPushReceipts later:<br/>dead tokens are cleared"]
+`} />
+
+<Code file="src/lib/mbos/push.ts" symbol="pushReadiness" collapsed />
+
+Settings: <Setting k="mbos.push.enabled" />, <Setting k="mbos.push.expoProjectId" />, <Setting k="mbos.push.quietHours" />, <Setting k="mbos.push.failureRetentionDays" />.
+
+### Turning push on, once
+
+<Steps>
+<Step title="Create a Firebase project and register the Android app">
+Package name exactly `in.mahek.mbos`. Download `google-services.json`.
+</Step>
+<Step title="Give it to the APK build">
+Paste the whole file as the repository secret `MBOS_GOOGLE_SERVICES_JSON`. The workflow writes it and names it in `app.json` for that build only; its log says "Firebase configured for this build".
+</Step>
+<Step title="Let Expo send through it">
+Generate a Firebase service-account key and upload it to the EAS project's credentials as the FCM V1 Google Service Account (`npx eas-cli@latest credentials -p android`, or expo.dev → Credentials). Without this the handsets get tokens and Expo refuses to deliver.
+</Step>
+<Step title="Ship an APK">
+Firebase is native, so this cannot go over the air.
+</Step>
+<Step title="Check">
+`mbos_devices.push_token` fills in as salesmen open the new build, and the handset's Profile says push is on. The handset's own punch-out reminder switches itself off once the office's notification takes over.
+</Step>
+</Steps>
+
+<DbTable name="mbos_devices" only={["user_id", "device_id", "app_version", "app_version_reported_at", "app_version_changed_at", "push_token", "active", "last_seen_at"]} note={{
+  app_version: "The label the handset reports: version (versionCode) and the running bundle.",
+  push_token: "The Expo push token. Null means push cannot reach this phone.",
+  active: "False once a device is released; only active devices are pushed to.",
+}} />
+
+## Tests that pin it
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/handset-versions.test.ts` | Build labels, behind/latest, presence |
+| `npm run test` | `src/lib/mbos/push-rules.test.ts` | Token shape, chunking, quiet hours, channels by kind and build |
+| `mbos-app` `npm run test` | `mbos-app/src/engines/app-update.test.ts` | The update verdict |
+
+## Changing the release process safely
+
+<Steps>
+<Step title="Keep the signature check">
+Any change to signing must keep the `apksigner` comparison against the committed keystore. A mis-signed APK installs on a clean phone and fails only on the phones that matter.
+</Step>
+<Step title="Keep publishing atomic">
+Copy to a temporary name, then `mv`; write `mbos.json` only after the APK is in place, so the nudge never points at a file that is not there yet.
+</Step>
+<Step title="Never relax the api_base guard">
+The value is compiled in. A staging build checks its own droplet's manifest for the same reason.
+</Step>
+</Steps>
+
+## Known gaps
+
+| Gap | Where |
+|---|---|
+| The workflow uses `node-version: 22` while the server builds on Node 24 | `.github/workflows/mbos-apk.yml` |
+| `mbos.json` is written with a hardcoded `https://one.mahekindia.com/downloads/mbos.apk` URL, whatever `api_base` the build was made against | `.github/workflows/mbos-apk.yml`, "Serve it from the droplet" |
+| R2 also receives a copy named `mbos.apk`, though nothing serves `/downloads` from R2 | `.github/workflows/mbos-apk.yml`, "Publish to R2" |
+| Nothing enforces the version bump; a release with an unchanged `versionCode` publishes and the nudge never fires | `mbos-app/app.json` |

@@ -1,0 +1,118 @@
+Samples are rows in `mbos_samples` — the same table the handset writes — worked from the CRM's own desk at `/crm/samples`. Every CRM write is in `actions/lead-samples.ts` and begins with one loader that checks scope and the state machine; the review chase is a pure engine run hourly; the seven feedback answers are their own table, one row per sample. Every block below is cut from the source this deployment was built from.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Route guard | `src/app/crm/samples/layout.tsx` | `requireModule(user.id, "crm.samples")` |
+| Routes | `src/app/crm/samples/{page,desk,chases,feedback,[id]}` → `src/components/leads/pages/samples*.tsx` | All samples, Desk, Review chases, Trial feedback, one sample |
+| Writes | `src/lib/actions/lead-samples.ts` | `requestSample`, `decideSample`, `dispatchSample`, `confirmSampleReceived`, `recordSampleFeedback`, `cancelSample` |
+| Reads | `src/lib/services/sample-service.ts`, `sample-trials-service.ts`, `lead-console-service.ts` (`sampleDesk`) | Desk queues and counts, a sample's detail, chase days, the feedback library and facets, cancellations |
+| Engine (pure) | `src/lib/engines/lead-nurture.ts` | `chaseOffset`, `sampleChaseDue`, `tasksDueFor` |
+| Engine (pure) | `src/lib/engines/lead-ladder.ts` | `sampleReadyStage`, `qualifiedForSample` |
+| Flow | `src/lib/services/lead-qualification-flow-service.ts` | `sampleEligibility` — Qualification complete and verified |
+| Job | `src/lib/mbos-jobs.ts` | `chaseSampleReviews`, inside `mbosHourly` |
+| Handset paths | `src/lib/actions/mbos.ts` | Dispatch transit chase, receipt review task, `afterSampleVerdict` (opens Negotiation) |
+| Vocabulary | `src/lib/lead-labels.ts` | `SampleState`, `FEEDBACK_FIELDS`, `SAMPLE_REASONS`, `SAMPLE_CANCEL_REASONS`, `SAMPLE_CANCEL_PROBLEM` |
+
+## Recording a verdict, end to end
+
+<Flow caption="recordSampleFeedback" chart={`
+sequenceDiagram
+  autonumber
+  participant UI as Sample record
+  participant A as actions/lead-samples.ts
+  participant DB as Postgres
+  UI->>A: verdict + seven fields
+  A->>A: only known field ids, at least one answered,<br/>rejected needs other / price / comparison
+  A->>A: requireCapability("lead.work")
+  A->>A: loadForTransition(sampleId, "reviewed") — scope + ALLOWED
+  A->>DB: transaction — INSERT sample_feedback (on conflict do nothing),<br/>UPDATE mbos_samples (state reviewed, trial_outcome, reviewed_at, rejection_reason),<br/>timeline event, close open chase tasks,<br/>approved → raise the sample_approved nurture task, audit_log
+  A-->>UI: recorded
+`} />
+
+## The state machine
+
+<Code file="src/lib/actions/lead-samples.ts" symbol="ALLOWED" />
+
+<Code file="src/lib/actions/lead-samples.ts" symbol="loadForTransition" collapsed />
+
+`loadForTransition` is the first line of every action: it loads the sample and its customer, calls `assertLeadInScope`, answers a same-state click as a polite conflict, and refuses any move `ALLOWED` does not list with `refuseTransition`.
+
+<DbEnum name="mbos_sample_state" />
+
+<DbEnum name="mbos_sample_outcome" />
+
+<DbTable name="mbos_samples" only={["state", "trial_outcome", "reason_code", "lead_stage_at_request", "approved_at", "approved_by_id", "dispatched_at", "courier_name", "tracking_number", "expected_delivery_date", "delivered_at", "received_at", "received_reported_by_id", "trial_started_at", "trial_completed_at", "reviewed_at", "review_chase_count", "last_review_chase_at", "rejection_reason", "cancel_reason_code", "cancelled_at"]} note={{
+  state: "The journey. Never moves backwards.",
+  trial_outcome: "The customer's verdict — a separate question from state.",
+  lead_stage_at_request: "The rung the lead stood on when asked; drives the 'Lead not qualified' mark.",
+  delivered_at: "The carrier's word. Never filled from received_at.",
+  received_at: "The SHOP's word. The review chase counts from this date only.",
+  review_chase_count: "How many times the review has been asked for — what lets a screen say 'asked three times'.",
+  rejection_reason: "Derived on save from other_comments, price_feedback or competitor_comparison, whichever is filled.",
+}} />
+
+<DbTable name="sample_feedback" note={{
+  sample_id: "Unique — one review per sample. A second save is ignored, not merged.",
+  competitor_comparison: "The comparison against what they use now — the whole point of a trial.",
+}} />
+
+## Eligibility
+
+<Code file="src/lib/engines/lead-ladder.ts" symbol="qualifiedForSample" />
+
+On the funnel ladders `requestSample` asks `sampleEligibility` (Qualification complete and the review verified) and refuses with the missing list. On the legacy ladder it records `lead_stage_at_request` and marks rather than blocks.
+
+## The review chase
+
+<Code file="src/lib/engines/lead-nurture.ts" symbol="chaseOffset" />
+
+<Code file="src/lib/engines/lead-nurture.ts" symbol="sampleChaseDue" />
+
+<Code file="src/lib/mbos-jobs.ts" symbol="chaseSampleReviews" collapsed />
+
+The task's `sourceId` is `sample_review:<sampleId>:<n>`, checked before insert, so re-running the job never raises an ask twice; `last_review_chase_at` makes two passes on one day one ask. `received_at` is converted with `AT TIME ZONE` before taking the date.
+
+## Permissions
+
+<CapabilityGrid names={["lead.work", "sample.approve"]} />
+
+- <ModuleRef k="crm.samples" /> guards the route.
+- `decideSample` asks `sample.approve`; every other action asks `lead.work` and scope.
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/engines/lead-nurture.test.ts` | Chase offsets, the repeating last gap, one ask per day |
+| `npm run test` | `src/lib/engines/lead-ladder.test.ts` | `qualifiedForSample`, `sampleReadyStage` |
+| `npm run test:integration` | `src/lib/sample-logistics.test.ts` | Dispatch, receipt, the transit chase and its back-office fallthrough, closing chases |
+| `npm run test:integration` | `src/lib/qualification-flow.test.ts` | A sample refused until Qualification is verified |
+| `npm run test:integration` | `src/lib/mbos-wire.test.ts` | The handset's sample payload and its columns |
+
+## Changing it safely
+
+<Steps>
+<Step title="A new state is a new edge in ALLOWED, and nowhere else">
+Add it to `mbos_sample_state` (hand-written migration, cast enum literals `::text`), to `SampleState`, to `ALLOWED`, to `STATE_WORDS`, and to the handset's own machine.
+</Step>
+<Step title="Never default one date from another">
+`received_at` is the shop's; `delivered_at` the carrier's. A new date gets its own column and its own assertion.
+</Step>
+<Step title="Chases close, they do not delete">
+Use `closeNurtureTasks` with a sentence. A deleted chase loses the record that the parcel was slow.
+</Step>
+<Step title="Keep the rejection check and the derivation on the same three fields">
+If you change which fields feed `rejection_reason`, change the validation with it, on both the CRM and the handset.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| CRM approval does not move the lead to Negotiation; the handset's does | `actions/lead-samples.ts` `recordSampleFeedback`; `actions/mbos.ts` `afterSampleVerdict` |
+| Handset receipt raises a single `mbos.samples.reviewAfterDays` task as well as the hourly chase ladder | `actions/mbos.ts` (sample review task); `mbos-jobs.ts` `chaseSampleReviews` |
+| The handset review task's due date is `now + days × 86 400 000 ms`, not working days | `actions/mbos.ts` |
+| `chaseSampleReviews` skips a sample with neither a lead manager nor a salesman, silently | `mbos-jobs.ts` |

@@ -1,0 +1,119 @@
+Purchase orders are the `purchaseOrders` screen module in `lib/erp/screens/purchase-flow.ts`, with the arithmetic and status rules in `lib/erp/engines/purchase-flow.ts`. The receiving side lives in `screens/purchase.ts` and calls back into `refreshPurchaseOrder`. The printable PO is its own route, `app/erp/po/[id]/page.tsx`.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Engine (pure) | `src/lib/erp/engines/purchase-flow.ts` | `LIVE_PO`, `RECEIVABLE_PO`, `poLabel`, `poLineFigures`, `poTotals`, `poStatusAfterReceipt`, `receivableQuantity`, `poMessage` |
+| Reading | `src/lib/erp/screens/purchase-flow.ts` | `purchaseOrderViews`, `receivedByLine`, `poOption` |
+| Form | same | `poFormData`, `purchaseOrderForm` (header + lines, filled from the selected quotation / vendor) |
+| Writes | same | `savePurchaseOrder`; actions `approve`, `sendBack`, `send`, `close`, `cancel`; form loader `receive` → `inwardFormForPo` |
+| Approval rule | same | `approvalRefusal` — duties per line, else the power |
+| After a receipt | same | `refreshPurchaseOrder(tx, poId)` |
+| Print | `src/app/erp/po/[id]/page.tsx` | Approved POs only; needs `viewPurchaseMoney` |
+| Badge | same | `purchaseFlowCounts` |
+
+## Raising, end to end
+
+<Flow caption="Raise, approve, send" chart={`
+sequenceDiagram
+  autonumber
+  participant U as Store (purchase money)
+  participant F as screens/purchase-flow.ts
+  participant AP as Approver
+  participant DB as Postgres
+  U->>F: forms.new -> savePurchaseOrder(h, lines)
+  F->>F: vendor, deliver-to, dates, terms, freight
+  loop each line
+    F->>F: requirement ready for PO, this vendor, raisePo duty, qty, rate (= selected quotation), GST
+  end
+  F->>DB: tx: nextNumber(po), erp_purchase_orders (Pending approval), erp_po_lines - refuse a requirement already on a live PO
+  AP->>F: actions.approve
+  F->>F: approvalRefusal (duties or approvePurchaseOrder), not the raiser unless administrator
+  F->>DB: tx (row locked): status Approved, requirements Order Placed
+  U->>F: actions.send (via)
+  F->>DB: status Sent, sent_via, sent_at
+  F-->>U: dialog with poMessage() and a wa.me / mailto / print link
+`} />
+
+<Code file="src/lib/erp/screens/purchase-flow.ts" symbol="savePurchaseOrder" collapsed />
+
+<Code file="src/lib/erp/screens/purchase-flow.ts" symbol="approvalRefusal" />
+
+## The arithmetic
+
+<Code file="src/lib/erp/engines/purchase-flow.ts" symbol="poLineFigures" />
+
+<Code file="src/lib/erp/engines/purchase-flow.ts" symbol="poTotals" />
+
+<Code file="src/lib/erp/engines/purchase-flow.ts" symbol="poMessage" collapsed />
+
+## Receiving moves the PO
+
+<Code file="src/lib/erp/screens/purchase-flow.ts" symbol="receivedByLine" />
+
+<Code file="src/lib/erp/engines/purchase-flow.ts" symbol="poStatusAfterReceipt" />
+
+<Code file="src/lib/erp/engines/purchase-flow.ts" symbol="receivableQuantity" />
+
+<Code file="src/lib/erp/screens/purchase-flow.ts" symbol="refreshPurchaseOrder" />
+
+`refreshPurchaseOrder` runs inside the receipt's own transaction (inward save, register save, test verification), so a receipt and the PO's new status land together.
+
+## Tables
+
+<DbTable name="erp_purchase_orders" note={{
+  po_number: "PO-n (series 'po').",
+  godown_id: "Deliver to.",
+  freight_paise: "Freight for the whole PO, added once to the total.",
+  status: "Pending approval · Approved · Sent · Partly received · Received · Closed · Cancelled · Rejected.",
+  approved_by_id: "Also written by Send back (with status Rejected).",
+  decision_note: "The approval note, or what needs changing.",
+  sent_via: "WhatsApp · Email · Printed copy · Phone — the latest send.",
+  close_reason: "Why it was closed short or cancelled.",
+}} />
+
+<DbTable name="erp_po_lines" note={{
+  requisition_id: "The requirement this line buys — one live PO per requirement.",
+  quantity: "In the requirement's purchase unit.",
+  rate_paise: "Per unit; equal to the selected quotation's for a quotation requirement.",
+  gst_bp: "1800 = 18%.",
+}} />
+
+## Permissions
+
+- **Module:** <ModuleRef k="erp.purchaseOrders" />. Receive goods also needs <ModuleRef k="erp.register" /> (the Purchases screen, whose Goods receipt tab is `inward`).
+- **Powers:** `viewPurchaseMoney` (raise, edit, print), `approvePurchaseOrder` (approve, send back — unless the material names its approvers).
+- **Duties:** `raisePo` (raise / edit, every line), `approve` (every line).
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/erp/engines/purchase-flow.test.ts` | The PO drives the requirement's stage; status follows what was received, only in the receiving states; tolerance is a share of what was ordered; totals add GST per line and freight once |
+| `npm run test:integration` | `src/lib/erp/erp-purchase.test.ts` | The PO is raised from the vendor's ready requirements at the quotation's rate; nothing is received against a PO awaiting approval; nobody approves their own; sending records how and hands back the PO written out |
+| `npm run test:integration` | `src/lib/erp/erp-material-duties.test.ts` | A named approver approves without the power; an unnamed power holder may not |
+
+## Changing it safely
+
+<Steps>
+<Step title="Never store what was received">
+Read it with `receivedByLine`. A stored figure needs a recompute path and a way to be wrong.
+</Step>
+<Step title="Every receipt path calls refreshPurchaseOrder in its transaction">
+A new way of receiving goods that forgets leaves the PO at Sent with the goods in stock.
+</Step>
+<Step title="Keep the self-approval check inside the locked transaction">
+`approve` re-reads the PO `for update` before checking status and raiser, so two approvers cannot both approve.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| `send` has no `viewPurchaseMoney` check, but returns `poMessage` with rates and totals | `screens/purchase-flow.ts` `purchaseOrders.actions.send` |
+| `send` sets Sent before the message leaves | same |
+| `close` and `cancel` check no power or duty | `purchaseOrders.actions.close`, `.cancel` |
+| The company on the written-out PO is the literal "Mahek Marketing India" | `purchaseOrders.actions.send` |
+| Send back writes `approved_by_id` / `approved_at` for a rejection | `purchaseOrders.actions.sendBack` |

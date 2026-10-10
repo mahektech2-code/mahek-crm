@@ -1,0 +1,33 @@
+Petty cash is one ERP screen (`expenses`) with two tabs, `expenses` and `credits`, both server modules in `src/lib/erp/screens/logistics.ts`. Writes go through the four generic ERP actions in `src/lib/actions/erp.ts`.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Registry | `src/lib/erp/registry.ts` | The `expenses` screen and its two views |
+| Tabs | `src/lib/erp/screens/logistics.ts` | `cashForm`, the `credits` and `expenses` modules, `setExpenseStatus` |
+| Rules (pure) | `src/lib/erp/engines/cash.ts` | `cashBalances`, `cashKey` |
+| Alerts (pure) | `src/lib/erp/engines/alerts.ts` | `duplicateExpenses`, `cashNegative` |
+
+## The balance
+
+<Code file="src/lib/erp/engines/cash.ts" symbol="cashBalances" />
+
+Every load reads both tables whole and recomputes the balances; there is no cached figure to go stale.
+
+## Verifying
+
+<Code file="src/lib/erp/screens/logistics.ts" symbol="setExpenseStatus" />
+
+## Tables
+
+<DbTable name="erp_credits" />
+
+<DbTable name="erp_expenses" />
+
+## Tests
+
+| Command | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/erp/engines/cash.test.ts` | The balance arithmetic |
+| `npm run test` | `src/lib/erp/engines/alerts.test.ts` | The duplicate and below-zero alert rules |

@@ -1,0 +1,121 @@
+The customer table is the centre of MahekOne: every app reads the same `customers` rows. This tab explains the rules the CRM's customer list and record follow — which accounts are on the list, what each kind of account means, who may move an account between people and why that is narrower than it looks, and why a record is the same height however old the account is.
+
+## Which accounts are on the list
+
+<Rule title="A lead is not on the customer table">
+The list, its tiles, its total and both bulk actions are narrowed to accounts that are **not leads**, and to accounts not in the lead trash. It is not a filter anybody can switch off. A lead's record is still reachable from Lead Management.
+</Rule>
+
+<Callout kind="why">
+Leads were most of the rows — more than half the real book — and were worked from a screen that offered none of the controls for working them. Enforced in one place, a bulk "Transfer sales manager" over a filtered list cannot move thousands of leads nobody saw on the screen they pressed it from.
+</Callout>
+
+## What an account is
+
+| Type | Decided by | Means |
+|---|---|---|
+| Direct customer | `kind = customer` and not marked | We sell to them and invoice them |
+| Third-party customer | The **third-party mark** — wins over the kind | A shop we deliver to; a distributor bills it |
+| Lead | `kind = lead` | Has never ordered |
+
+<Rule title="The mark wins over the kind, on a list">
+A third-party customer is still a lead or a customer underneath — that is what lets us bill one when it starts ordering — but "Lead · Third party" is two facts fighting over one glance. The list says how the account is worked; the record says the kind underneath.
+</Rule>
+
+<Rule title="A lead becomes a customer at its first order">
+`kind` flips when the first order is taken, and about thirty parts of the product read it that way. The lead funnel's own "customer" rung is a separate statement about the relationship.
+</Rule>
+
+### Third-party customers and who bills them
+
+<Rule title="The mark and the distributor are written together">
+Converting a shop names at least one distributor in the same save. A shop with the mark and nobody billing it is not a state the screen can create; the *Third party, nobody billing* filter exists for accounts converted before that was true, and should be empty.
+</Rule>
+
+- **Only a lead is converted.** An account we invoice cannot be said not to bill with us; the option is absent and the server refuses it.
+- **A distributor must be an unmarked direct customer** — somebody has to hold the invoice.
+- **A shop may have several distributors**, one marked primary. The last one cannot be removed from a marked account.
+- **Reverting keeps the links** — who used to bill a shop is a fact about it.
+- A marked account is never **prospected** on the Call Log. Its own orders, debts and promises still reach it.
+
+<CapabilityGrid names={["customer.classify"]} />
+
+## The seats on an account
+
+| Seat | Answers | Moves numbers? | Who may move it |
+|---|---|---|---|
+| **Sales** | Whose book the account is in, and who is credited with its orders | Yes | Accounts and admin (`customer.reassign`) |
+| **Back office** | Who handles dispatch, billing and paperwork | Sees the account; credited only where there is no salesperson | Accounts and admin (`customer.reassign`) |
+| **Sales manager** | Who the salesperson answers to | No | CRM managers (`customer.assignSalesManager`) |
+| **Relationship** | Who runs the relationship after a lead converts | No — sight only | Managers (`customer.handOver`) |
+| **Lead owner** | Whose lead it is, before the first order | Yes, for a lead | Lead Management |
+
+<Callout kind="why" title="Why moving the sales seat is narrower than a manager">
+Whose book an account is in decides who is credited for its orders and whose target it counts toward. A manager reassigning accounts would be moving numbers between their own people, including themselves — the same conflict that keeps order approval off managers. The sales-manager and relationship seats move no rupee, which is exactly why a manager can set them.
+</Callout>
+
+<CapabilityGrid names={["customer.reassign", "customer.assignSalesManager", "customer.handOver"]} />
+
+### A reassignment is a decision, and it is kept
+
+<Flow caption="Moving the sales seat" chart={`
+sequenceDiagram
+  autonumber
+  actor A as Accounts
+  participant S as Server
+  participant DB as Database
+  actor N as New person
+  actor O as Old person
+  A->>S: new sales and/or back-office person, reason
+  S->>S: customer.reassign? every account in your scope?
+  S->>DB: one transaction — seats, their name mirrors,<br/>am_decided_at, one history row per seat moved
+  S-->>N: "Accounts assigned to you" (once)
+  S-->>O: "Accounts moved from you" (once)
+`} />
+
+- **Why is a column, not a sentence.** Each move stores a reason code from <Setting k="people.amChangeReasons" />, the from and to (with names, so the history reads after a person leaves), and who did it.
+- **The sheet keeps its hands off.** A decided account is skipped by the order sheet's party projection and by the nightly rebuild of salesperson names; a disagreement is written down as a sync conflict instead of silently restated.
+- **Untouched seats are not sent.** Changing only the back-office person does not stamp a decision on the sales seat.
+- **An emptied seat means nobody** — not whoever ran the import.
+- A change that changes nothing notifies nobody.
+
+### Moving a sales manager by filter
+
+The question this seat answers is asked hardest on the day somebody leaves, and the answer is "everything they had" — far more accounts than anybody would tick by hand. So **Transfer sales manager** sends the **filters**, and the server runs the same clause the list ran. The count on the screen is sent too, and the save refuses if it no longer matches. A tick-list is reviewed row by row; a filtered move is reviewed as the count, the destination and the filters said back in words.
+
+## The customer record
+
+<Rule title="A record is a fixed-length page">
+Every panel is the same height and scrolls inside itself, and every read behind it is capped — the timeline at ten entries a page, messages at fifty, the rest at two hundred. The accounts with the most history are the ones somebody most needs to read before ringing, and they used to be the ones whose orders and bills sat a hundred screens below the fold.
+</Rule>
+
+<Rule title="A capped list says what it is a slice of">
+The timeline's pills are counted in the database over the whole history. *Load older* pages backwards by a cursor on (time, id) — never by an offset, so an entry never appears twice or not at all — and picking a kind asks the server for that kind's newest page rather than filtering what the browser happens to hold.
+</Rule>
+
+The record shows the next call **as it stands today**, worked out live — compare with Call History, which shows what each call said at the time.
+
+## Health and status words
+
+| Word | From |
+|---|---|
+| Deactivated | A manager closed the account — the one status no rule writes |
+| Inactive | The customer has gone <Setting k="inactive.cycleMultiplier" />× their own buying cycle without an order |
+| New | Never ordered |
+| Slow payer | The slow-payer flag (see [Payment Follow-up](/docs/crm/payments/how-it-works)) |
+| Active | None of the above |
+
+Inactive outranks slow payer on the list; the record still shows both.
+
+## Importing customers
+
+**Import CSV** brings customers in from a spreadsheet. Re-importing the same sheet updates rows it already knows rather than duplicating them. Rows with no telecaller named go to the owner you pick. It needs `sheet.import`.
+
+<CapabilityGrid names={["sheet.import", "customer.export", "customer.write"]} />
+
+## Where the code and the intent disagree today
+
+- **Export writes only the page on screen**, and is allowed for any CRM manager rather than for the right to export customers. Elsewhere in the CRM, exports write the whole filtered set.
+- **The Import CSV link is drawn for every CRM manager**, but the page needs `sheet.import`; a manager without it is sent back to the list.
+- **The record works out its type label itself** instead of using the one shared wording; they agree today.
+- **The health score words used elsewhere in MahekOne** (strong, watch) are not shown on the CRM's customer list or record; the CRM shows the status words above.

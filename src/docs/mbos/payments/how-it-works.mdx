@@ -1,0 +1,91 @@
+A field collection is the customer **saying** they have paid, with a salesman as witness. It is not the business having the money. Everything on the handset's payment screens follows from keeping those two apart: the receipt is made instantly and offline, the chasing stops, the amount goes into the salesman's cash-in-hand with a deadline — and **outstanding does not move** until accounts confirm the money in the bank.
+
+What accounts then do with a reported receipt — confirm, hold, reject, reverse — is the same desk work described on [Payment Follow-up](/docs/crm/payments/how-it-works) and [Outstanding](/docs/crm/outstanding/how-it-works). This page covers what happens before it reaches them.
+
+## The life of a field collection
+
+<Flow caption="From the counter to the ledger" chart={`
+flowchart TD
+  A["Salesman confirms<br/>'Take ₹X?'"] --> B["Receipt made on the phone<br/>TMP- number, works offline"]
+  B --> C["Queued for the office"]
+  C --> D{"Office checks it"}
+  D -- "bill named is already settled" --> R["Not accepted<br/>(bill_settled)"]
+  D -- "same receipt again" --> OK["Accepted<br/>(a resend, not a duplicate)"]
+  D -- "fine" --> E["Receipt written as REPORTED<br/>real receipt number issued"]
+  E --> F["Accounts find it in the bank"]
+  F -- "confirm" --> G["Bills paid down,<br/>outstanding falls"]
+  F -- "not found" --> H["Rejected — never counted"]
+`} />
+
+<Rule title="A field receipt is always 'reported'">
+The office writes every handset collection with status *reported*, source *mbos*. Every money figure — outstanding, ageing, the collections list, the slow-payer flag — counts **confirmed** money only, so nothing moves until accounts confirm it.
+</Rule>
+
+<Callout kind="why">
+A telecaller's word once reduced outstanding on the spot, and a transfer that never landed erased real debt from every screen with nobody's name against the decision. The salesman's receipt is evidence; the bank statement is proof. The reported receipt still **stops the chasing** — the customer is held off the collections list for a few days rather than being rung about money they say they handed over.
+</Callout>
+
+## Which bill the money is for
+
+The bill picker shows only bills with a balance above zero, oldest first, from the bills the phone holds for the last <Setting k="mbos.sync.statementMonths" /> months.
+
+- **Bills ticked** — the office settles exactly those, in that order. Any amount over what they owe becomes **money on account**, and the screen says so before the salesman confirms.
+- **"Not against a particular bill"** — the office spreads the money oldest bill first. Anything left sits on account.
+
+<Rule title="A bill already settled is refused, not re-pointed">
+If a bill the salesman named has been paid by something else by the time the phone syncs, the office refuses the receipt with the code `bill_settled` and the message names the bill. It does **not** quietly move the money to another bill.
+</Rule>
+
+<Callout kind="why">
+The money is real, but where it was going no longer exists. Re-allocating it silently is a decision about money, and code does not take those on its own. The salesman sees the refusal under **Not accepted** and records it again against the bills that are open.
+</Callout>
+
+## Cheques have two dates
+
+A cheque must carry its **number**, the **date written on it**, and a **photograph** before the button will save. The written date travels in its own field (`instrument_date` on the receipt), separate from the day it was collected.
+
+<Callout kind="why">
+A cheque handed over on the 3rd and dated the 20th cannot be banked until the 20th. Without the written date a post-dated cheque reaches accounts looking bankable today, and the customer gets chased for money sitting in our own drawer. The salesman is holding the paper, so he can read it off.
+</Callout>
+
+For UPI and bank transfers the transaction ID (UTR) is **asked, never demanded** — it is what accounts match against the statement, but a customer often does not have it to hand.
+
+## Payment modes
+
+The modes offered are the office's own list, `payments.modes`, sent to the phone on every sync — so a new mode added at a desk appears on handsets without a new app. Two are always removed: **Adjustment** and **Credit note**. Both are accounts' decisions against the ledger; neither is money arriving at a counter, and offering them would put money in a salesman's cash-in-hand that no bank will ever show.
+
+## Cash in hand
+
+<Rule title="Every cash collection has its own deadline">
+Cash must be banked within <Setting k="mbos.payments.cashDepositSlaHours" /> hours **of that collection**. The handset lists each collection past its deadline by name, oldest first, and puts the total on the home screen.
+</Rule>
+
+<Callout kind="why">
+A salesman who banks every Friday has an average age of three days and a note from Monday that has been in his bag for five. Averaging hides the one that matters. Only **cash** counts: a cheque is already an instrument with somebody's name on it, and a UPI receipt was in the company's account before he left the shop.
+</Callout>
+
+### Deposits are two halves
+
+The salesman marks cash **banked** (or a cheque **handed in**), with a photo of the slip. A whole day's cash can go on one slip in one step. The office records *who* said it was deposited and *when*, and keeps the slip photo against the receipt. The bank statement is still what confirms it — either half alone leaves a gap somebody reconciles from memory.
+
+### Bounced cheques
+
+The salesman reports a bounce with the bank's reason. On the phone this writes a timeline entry with the reason, raises a **high-priority task to call the customer today**, and tells the office. At the office it adds a line to the receipt's note and notifies the salesman's managers — saying plainly whether accounts must **reverse** it (it was already confirmed and is still counting) or whether nothing was counting yet.
+
+<Callout kind="money">
+Reporting a bounce never changes what the customer owes on the phone. If accounts had confirmed the cheque, reversing it is their decision, taken on their screen.
+</Callout>
+
+## Who is told
+
+- A collection at or above <Setting k="mbos.payments.managerNotifyThresholdPaise" /> paise notifies the salesman's managers when it syncs, saying it is *reported, not confirmed*.
+- A bounced cheque always notifies managers.
+- Nothing is ever sent to the customer automatically. WhatsApp opens with the receipt ready; the salesman presses send.
+
+<SettingsTable keys={["mbos.payments.cashDepositSlaHours", "mbos.payments.managerNotifyThresholdPaise", "mbos.payments.receiptSeriesPrefix", "mbos.sync.statementMonths"]} />
+
+## Where the code and the intent disagree today
+
+- **The bounce reason never reaches the office.** It is kept on the phone's timeline and in the call task title only; the server's update schema takes `bounced` and `bouncedAt` and nothing else, so the office's note says only "Cheque returned unpaid" (`mbos-app/src/data/payments.ts` `markBounced`, `src/lib/actions/mbos.ts` `handlePaymentUpdate`).
+- **The handset's fallback deadline differs from the shipped default.** If the setting has not reached the phone, it uses 36 hours; the registry default is 48 (`mbos-app/src/data/payments.ts` `collectPayment`/`cashInHand`).
+- **A threshold of zero means opposite things at each end.** The phone treats 0 as "never tell" and the server as "tell on every collection" (`collectPayment` checks `notifyThreshold > 0`; `handlePayment` checks `amountPaise >= threshold`).

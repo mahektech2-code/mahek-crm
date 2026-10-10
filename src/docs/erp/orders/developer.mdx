@@ -1,0 +1,178 @@
+The Orders screen is seven tabs, each its own server module: five built in `screens/sales.ts` (`orderList` for four scopes, plus `batchCodes` and `orderDetails`) and the inbox in `screens/inbox.ts`. Every list reads one function, `orderLines()`, so a line cannot be Ready on one tab and something else on another. The arithmetic is pure in `engines/sales.ts`; every write ends with `syncBookOrders`, which projects the change into MahekOne's order book (covered on [the order book page](/docs/erp/order-book/developer)).
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Registry | `src/lib/erp/registry.ts` | The `orders` screen and its seven views: `pendingOrders`, `readyOrders`, `orderDetails`, `batchCodes`, `labels`, `orders`, `orderInbox` |
+| Page | `src/app/erp/[slug]/page.tsx` | Generic list page; `?view=` picks the tab |
+| Lines | `src/lib/erp/screens/sales.ts` | `orderLines`, `priceBook`, `orderForm`, `editForm`, `allocateForm`, `orderList`, `lineHandlers`, `doReady`, `doBill`, `doUnbill`, `doApprove`, `saveOrder`, `saveEdit`, `saveAllocation`, `stockShortfalls`, `billBlockers` |
+| Batch codes / billing | `src/lib/erp/screens/sales.ts` | `batchCodes`, `orderDetails`, `detailRows`, `allocationCosts`, `verify`, `extra` |
+| Arithmetic (pure) | `src/lib/erp/engines/sales.ts` | `orderType`, `boxQuantity`, `labelCount`, `allocationState`, `allocationTarget`, `billFigures`, `lotCosting`, `margin`, `standingInstructions`, `targetReached`, `readyStockCheck` |
+| Form calculators | `src/lib/erp/calcs/sales.ts` | `order.boxes`, `order.listRate`, `alloc.*` — what the browser shows before save; the server recomputes |
+| Dispatch hooks | `src/lib/erp/dispatch.ts` | `scanGateFor`, `markDispatched`, `scannedOnAllocation` |
+| Order book | `src/lib/erp/book.ts` | `syncBookOrders`, `orderNosOf`, `erpOrdersLive` |
+| Inbox | `src/lib/erp/screens/inbox.ts`, `src/lib/erp/ai-orders.ts` | `inboxScreen`; `draftFromText`, `resolveDraft`, `draftForm`, `markConverted`, `closeInbox`, `screenWhatsApp` |
+| Label sheet | `src/app/erp/print-labels/page.tsx`, `print-button.tsx` | `?batch=`, `?lot=`, `?ids=`, `?order=`; `erpMarkLabelsPrinted` |
+| Writes | `src/lib/actions/erp.ts` | `erpRunAction`, `erpRunBulk`, `erpSubmitForm`, `erpLoadForm` |
+| Jobs | `src/lib/jobs.ts` | `erpInboxStep` in `runHourly` |
+
+## A request, end to end
+
+<Flow caption="Bill it on Under process and ready" chart={`
+sequenceDiagram
+  autonumber
+  participant UI as ListScreen (client)
+  participant Act as actions/erp.ts
+  participant Mod as sales.ts lineHandlers
+  participant DB as Postgres
+  participant Book as book.ts
+  UI->>Act: erpRunAction("readyOrders", "bill", id)
+  Act->>Act: requireErpWrite("readyOrders")
+  Act->>Mod: actions.bill(ctx, id)
+  Mod->>Mod: orderLines() then billBlockers(line)
+  alt something missing
+    Mod-->>UI: Not yet - status Ready, a Tally bill no.
+  else all five present
+    Mod->>DB: one transaction - entry_status Done and insert erp_order_details
+    Mod->>DB: audit erp.order.bill
+    Mod->>Book: syncBookOrders(order numbers)
+    Mod-->>UI: 1 line billed
+  end
+`} />
+
+## The one reading
+
+<Code file="src/lib/erp/screens/sales.ts" symbol="orderLines" collapsed />
+
+<Code file="src/lib/erp/screens/sales.ts" symbol="dueOf" />
+
+Which lines each tab shows:
+
+<Code file="src/lib/erp/screens/sales.ts" symbol="inScope" />
+
+`labels` falls to the last branch, so it lists exactly what `readyOrders` lists.
+
+## Prices
+
+<Code file="src/lib/erp/screens/sales.ts" symbol="priceBook" collapsed />
+
+`saveOrder` takes the typed rate only from a holder of `viewSalesRate` and the typed discount only from a holder of `viewSalesAmounts`; otherwise the price list decides.
+
+## Ready
+
+<Code file="src/lib/erp/engines/sales.ts" symbol="readyStockCheck" />
+
+<Code file="src/lib/erp/screens/sales.ts" symbol="stockShortfalls" />
+
+<Code file="src/lib/erp/screens/sales.ts" symbol="doReady" />
+
+## Allocation
+
+<Code file="src/lib/erp/engines/sales.ts" symbol="allocationState" />
+<Code file="src/lib/erp/engines/sales.ts" symbol="boxQuantity" />
+
+<Code file="src/lib/erp/screens/sales.ts" symbol="saveAllocation" collapsed />
+
+`saveAllocation` is reached only from the Dispatch desk's **Allocate a lot by hand** (`ui.act("orders", { id: "allocate" … })`); no row on the Orders tabs offers it. The normal path is the scan in `dispatch.ts`.
+
+## Billing
+
+<Code file="src/lib/erp/screens/sales.ts" symbol="billBlockers" />
+
+<Code file="src/lib/erp/screens/sales.ts" symbol="doBill" />
+
+## Dispatch verification
+
+<Code file="src/lib/erp/screens/sales.ts" symbol="verify" collapsed />
+
+The Dispatch desk's **Do Verified** calls this same bulk handler through `erpDispatchVerify` in `actions/erp-trace.ts`, after `requireErpWrite("orderDetails")`, so every rule here — the scan gate included — holds from both doors.
+
+## The bill's figures
+
+<Code file="src/lib/erp/engines/sales.ts" symbol="billFigures" />
+<Code file="src/lib/erp/engines/sales.ts" symbol="lotCosting" />
+<Code file="src/lib/erp/engines/sales.ts" symbol="margin" />
+
+<Code file="src/lib/erp/screens/sales.ts" symbol="creditOf" />
+
+## The inbox
+
+<Code file="src/lib/erp/ai-orders.ts" symbol="resolveDraft" collapsed />
+
+<Code file="src/lib/erp/ai-orders.ts" symbol="screenWhatsApp" />
+
+Accepting a draft is `draftForm(orderForm(ctx), id)`: the ordinary order form with `initLines`, an `evidence` panel and `inboxId` in `init`. `saveOrder` reads `inboxId` after commit and calls `markConverted`, which also marks the logged AI suggestion accepted.
+
+## Tables
+
+<DbTable name="erp_orders" only={["order_no", "order_date", "godown_id", "billing_customer_id", "delivery_customer_id", "sku_id", "qty_cans", "status", "dispatch_on", "rate_paise", "discount_bp", "tally_bill_no", "transport_cost_paise", "entry_status", "party_status"]} note={{
+  order_no: "From erp_series 'order' under a row lock (nextNumber). Shared by every line of one order.",
+  qty_cans: "Always cans. Boxes are derived (boxQuantity).",
+  status: "Under Process, Ready, Hold From Office, Cancel. Today / Tomorrow / Delay were moved to dispatch_on by 0183.",
+  rate_paise: "Per can, or per litre on a drum line. Ex-GST.",
+  discount_bp: "Basis points: 1000 is 10%.",
+  entry_status: "Done or Not Done — whether the line is BILLED. Set together with the erp_order_details row.",
+  party_status: "Pending when the billing party was pending on entry; Approved By Admin once approved in the ERP.",
+}} />
+
+<DbTable name="erp_batch_codes" note={{
+  lot_from: "pack (boxes from a packing batch) or fg (cans from an FG lot).",
+  quantity: "Boxes or cans. Taken out of the lot's stock the moment the row exists.",
+}} />
+
+<DbTable name="erp_order_details" note={{
+  order_id: "One row per billed line; deleting it is Undo billing.",
+  gst_bp: "1800 or 0 — decides the billing company.",
+  verification: "Verified, Not Verify, Pending or null.",
+  dispatch_date: "Set by Do Verified. Drives the month a line's sale counts in.",
+}} />
+
+<DbTable name="erp_order_inbox" note={{
+  source: "paste, voice or whatsapp. A WhatsApp reply's id is 'wa_' + the reply id, so each is screened once.",
+  draft: "The resolved draft, or { notAnOrder: true }.",
+  status: "New, Converted, Not an order, Duplicate.",
+}} />
+
+## Access
+
+- **Module:** <ModuleRef k="erp.orders" />. All seven tabs come with it; none is grantable alone.
+- **Powers** read here: `viewSalesRate`, `viewSalesAmounts`, `viewCost` (columns and fields, via `visibleCols` / `withoutHidden` — values are stripped server-side), `approveParty` (Approved By Admin, and only while `erpOrdersLive()` is false). `notVerify` checks `ctx.administrator`.
+- Every write is `requireErpWrite(<tab key>)`; a preview refuses all of them.
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/erp/engines/sales.test.ts` | Order type, whole boxes, label count, allocation state, bill figures, lot costing and margin, `readyStockCheck` spending in order |
+| `npm run test:integration` | `src/lib/erp/erp-sales.test.ts` | Boxes must be whole; rate and discount from the price list; no rate without the power; Ready refused without stock; allocation only once Ready and never past need or lot stock; Bill it in one step; dispatch verification freezes lots; the bill arithmetic; dispatch-on wording; releasing an allocation |
+| `npm run test:integration` | `src/lib/erp/erp-ai-reading.test.ts` — `orders from messages (AI-2)` | The sender's number finds the customer, past purchases break a tie, *peti* become cans; unclear lines are left to choose |
+| `npm run test:integration` | `src/lib/erp/erp-traceability.test.ts` | Do Verified waits for every box |
+
+## Changing it safely
+
+<Steps>
+<Step title="Read orderLines, never re-query a line">
+Every tab, the alerts and Ask the ERP read `orderLines()` / `detailRows()`. A screen with its own SQL for "is this line Ready" will disagree with the Dispatch desk.
+</Step>
+<Step title="Keep the arithmetic in engines/sales.ts">
+And keep `calcs/sales.ts` as a preview only — the server recomputes everything on save.
+</Step>
+<Step title="Call syncBookOrders after every write that changes a line">
+The CRM, targets and outstanding read the projection, not `erp_orders`. A write that forgets it leaves the order book stale until the next change to that order.
+</Step>
+<Step title="Withhold money server-side">
+A new money column takes a `pw:` on its `Col` so `visibleCols` drops it and `withoutHidden` strips its value.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| Pending hides every line of an order once any line of it is billed (`detailedOrders` keys on order number) | `screens/sales.ts` `inScope` |
+| `allocateForm` / `saveAllocation` have no row action on any Orders tab; reachable only from the Dispatch desk | `screens/sales.ts` `orderList`; `app/erp/dispatch/desk.tsx` |
+| A line set **Not Verify** cannot be verified again (verify accepts only null or Pending) | `screens/sales.ts` `verify` |
+| `saveEdit`'s reset of `entry_status` when a Done line's quantity moves is unreachable: a billed line's quantity is refused first | `screens/sales.ts` `saveEdit` |
+| The `readyUnbilled` alert dates Ready from `updated_at` | `lib/erp/alerts.ts` `currentCandidates` |
+| `issuedCreditNotes` keys on the CRM bill number and goods text, and `creditOf` on the line's Tally bill no. and SKU name; a credit note whose goods text differs from the SKU name never reaches the margin | `screens/complaints.ts` `issuedCreditNotes`; `screens/sales.ts` `creditOf` |

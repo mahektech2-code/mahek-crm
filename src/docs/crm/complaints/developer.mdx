@@ -1,0 +1,124 @@
+A complaint is a row in `complaints` with an opening line in `complaint_status_history`, photographs in `attachments`, and an SLA deadline computed from configuration. One writer, `createComplaint`, is shared by the Complaints dialog and the ERP's "Raise a customer request"; three other paths — the call panel, the collections *Dispute raised* outcome and the handset — insert complaints themselves. Reads, status changes, priority and resolution live in `worklist-services.ts`; the hourly job escalates deadlines that pass.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Route guard | `src/app/crm/complaints/layout.tsx` | `requireModule(user.id, "crm.complaints")` |
+| Page / screen | `src/app/crm/complaints/page.tsx`, `complaints-screen.tsx` | List, filters, the raise dialog, resolve / reassign / priority |
+| Picker | `src/components/crm/image-picker.tsx` | One photo picker for the dialog and the call panel; `ACCEPTED_IMAGE_TYPES` |
+| The writer | `src/lib/services/complaint-create.ts` | `createComplaint(input, tx?)` — category via `categoryValue`, severity and `sla_due_at` from config, opening history line |
+| Reads and changes | `src/lib/services/worklist-services.ts` | `listComplaints`, `complaintHistories`, `complaintAttachments`, `complaintHistory`, `STATUS_LABEL`, `changeComplaintStatus`, `setComplaintPriority`, `resolveComplaint` |
+| Actions | `src/lib/actions/crm.ts` | `logComplaint`, `resolveComplaint`, `reassignComplaint`, `setComplaintPriorityAction` |
+| Labels (pure) | `src/lib/complaint-labels.ts` | `COMPLAINT_CATEGORY_LABEL`, `categoryLabel`, `categoryValue`, `COMPLAINT_PRIORITIES`, `priorityLabel`, `isEscalatedPriority`, `CN_STATUS_LABEL` |
+| Routing | `src/lib/call-outcomes.ts` | `COMPLAINT_ACTIONS`, `deskForAction` — what the customer asks for decides the desk |
+| Other writers | `interaction-service.ts` `saveInteraction`; `payment-followup-service.ts` `logPaymentFollowUp` (dispute); MBOS sync handler | Insert complaints directly |
+| Credit notes | `src/lib/services/credit-note-service.ts` | `pendingCreditNotes`, `issueCreditNote`, `refuseCreditNote` (Accounts) |
+| Deadline job | `src/lib/jobs.ts` `runHourly` | `escalate-complaint-sla` |
+| Badge | `src/lib/queries.ts` `crmBadgeCounts` | Open, in progress, awaiting customer |
+
+## Raising one from the dialog
+
+<Flow caption="logComplaint → createComplaint" chart={`
+sequenceDiagram
+  autonumber
+  participant UI as Complaints dialog
+  participant A as logComplaint
+  participant W as createComplaint
+  participant TX as transaction
+  participant AT as attachments
+  UI->>A: customer, category label, description, priority, CN yes/no, images
+  A->>A: description required, resolveScope()
+  A->>W: input (label, priority)
+  W->>W: categoryValue(label), priority from COMPLAINT_PRIORITIES or default,<br/>slaHours[severity] → sla_due_at
+  W->>TX: insert complaints + complaint_status_history (null → open)
+  W-->>A: complaint id
+  A->>AT: store and bind images (outside — never fails the complaint)
+`} />
+
+<Code file="src/lib/services/complaint-create.ts" symbol="createComplaint" collapsed />
+
+<Code file="src/lib/complaint-labels.ts" symbol="categoryValue" collapsed />
+
+<Code file="src/lib/complaint-labels.ts" symbol="COMPLAINT_PRIORITIES" />
+
+<Code file="src/lib/call-outcomes.ts" symbol="deskForAction" />
+
+## Changing status, priority and resolving
+
+<Code file="src/lib/services/worklist-services.ts" symbol="changeComplaintStatus" collapsed />
+
+<Code file="src/lib/services/worklist-services.ts" symbol="setComplaintPriority" collapsed />
+
+<Code file="src/lib/services/worklist-services.ts" symbol="resolveComplaint" collapsed />
+
+- A status into **or out of** a finished state (resolved, closed, rejected) requires `complaint.resolve`.
+- Changing priority recomputes `sla_due_at` from the complaint's **creation** time and the new priority's hours.
+- Every change writes a `complaint_status_history` row.
+
+<CapabilityGrid names={["complaint.resolve", "creditnote.issue"]} />
+
+## The deadline job
+
+`runHourly` selects complaints with `sla_due_at` in the past, `resolved_at` null and `sla_escalated_at` null, stamps `sla_escalated_at`, and notifies managers and admins. It runs once per complaint.
+
+## The tables
+
+<DbTable name="complaints" only={["customer_id", "logged_by_user_id", "call_id", "category", "description", "severity", "required_action", "assigned_to", "status", "resolution_notes", "resolved_at", "resolved_by_id", "customer_informed", "sla_due_at", "sla_escalated_at", "request_cn", "bill_id", "goods_description", "cn_amount", "cn_status", "mobile_number", "salesman_name"]} note={{
+  category: "The enum value; several picked labels fold onto one value. Read back with categoryLabel.",
+  severity: "Priority: Normal is stored as medium.",
+  required_action: "What the customer asked for — decides the desk via deskForAction.",
+  assigned_to: "A desk name (text), not a user id.",
+  sla_due_at: "created_at + complaints.slaHours[severity].",
+  sla_escalated_at: "Set once by the hourly job.",
+  request_cn: "The telecaller's yes. Bill and amount are accounts' to fill.",
+  cn_amount: "Paise. Refused without request_cn.",
+}} />
+
+<DbTable name="complaint_status_history" />
+
+<DbEnum name="complaint_status" />
+<DbEnum name="complaint_category" />
+
+## Access
+
+- **Module:** <ModuleRef k="crm.complaints" />.
+- **Scope:** `listComplaints` is narrowed to the reader's book; status and priority changes run `customerOfComplaintInScope`.
+- **Photographs** are read through `/api/attachments/[id]`, which follows the parent complaint's customer scope.
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/complaint-labels.test.ts` | Every category label folds to a value and reads back; priorities and their labels |
+| `npm run test:integration` | `src/lib/journeys.test.ts` — "Journey 7" | A complaint carries its SLA and its credit-note request |
+| `npm run test:integration` | `src/lib/journeys.test.ts` — "Complaints raised on a call we made" | The call path writes the complaint in the call's transaction |
+| `npm run test:integration` | `src/lib/they-called-us.test.ts` | A complaint reason on an inbound call runs the same pipeline |
+
+## Changing it safely
+
+<Steps>
+<Step title="Write through createComplaint">
+A new door that raises complaints should call `createComplaint` (passing its transaction) rather than insert — that is how the deadline and the opening history line are guaranteed.
+</Step>
+<Step title="Labels in, values stored, labels out">
+Categories a person picks are configuration (`complaints.categories`); stored values are the enum. Map with `categoryValue` and back with `categoryLabel` — never show a stored enum.
+</Step>
+<Step title="Finishing needs the capability, both ways">
+Keep the `FINISHED_COMPLAINT` check in `changeComplaintStatus` for any new status.
+</Step>
+<Step title="Photographs through the picker">
+`ACCEPTED_IMAGE_TYPES` and `attachments.maxPerComplaint`; never a literal accept list.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| Four writers: only the dialog and the ERP use `createComplaint`; the call path, the collections dispute and the handset insert directly | `interaction-service.ts`, `payment-followup-service.ts` (dispute branch), MBOS sync |
+| `logComplaint` does not run `assertCustomerInScope` on the customer it is given | `actions/crm.ts` `logComplaint` |
+| Images travel in the server action body (default 1 MB limit) | `actions/crm.ts` `logComplaint` (`images?: File[]`) |
+| `reassignComplaint` writes `assigned_to` with raw SQL after the status change, outside its transaction | `actions/crm.ts` `reassignComplaint` |
+| The deadline job and the breach flag read `resolved_at`, not the status | `jobs.ts` `escalate-complaint-sla`; `worklist-services.ts` `listComplaints` (`slaBreached`) |
+| The badge filters by `cu.owner_id` rather than `ASSIGNED_TO_SQL` | `queries.ts` `crmBadgeCounts` |

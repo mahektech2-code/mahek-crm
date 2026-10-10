@@ -1,0 +1,80 @@
+The handset records what a salesman's day **cost** and asks for his **time off**. It never decides either: expenses go to his manager the moment they are saved, leave is the office's decision, and the reimbursement for travel is priced by the same policy engine the office pays from. The office end — approving claims, the allowance book, the policy editor, leave decisions — is on the Sales Dashboard's [Travel](/docs/sales/travel/how-it-works), [Expenses](/docs/sales/expenses/how-it-works) and [Leave and holidays](/docs/sales/leave-and-holidays/how-it-works) pages.
+
+## Travel is asked twice a day
+
+<Rule title="The vehicle at punch-in, the meter at punch-out — nowhere else">
+The punch-in asks how he travels and, for a metered vehicle, the opening reading **and** its photograph. The punch-out asks the closing reading. Every visit in between records a leg **silently** under the day's mode. Fares are claimed once, in Expenses.
+</Rule>
+
+<Callout kind="why">
+The phone used to ask at every stop on a public-transport day — the bus, the auto, the fare — and the field would not answer it. A man with eleven shops to walk into is not going to type a ₹20 auto fare eleven times. Asking twice gets answered.
+</Callout>
+
+| The day's mode | What a visit leg records | Where the money is |
+|---|---|---|
+| A metered vehicle (own bike or car) | A leg under that mode, **excluded from the claim** | The punch-in and punch-out readings, priced per kilometre |
+| Bus or train | A leg, excluded — *On a bus or train day, claim fares in Expenses* | Fares claimed in Expenses |
+| On foot, customer's vehicle | A leg, nothing priced | Nothing to claim |
+| Not punched in | **No leg at all** | Nothing — no vehicle was named |
+
+<Callout kind="why">
+A visit leg on a meter day is excluded because the day's two readings already paid those kilometres; pricing the leg too would pay the same ride twice. With no punch-in there is no leg, because a silent default would put somebody's mileage on a vehicle nobody named.
+</Callout>
+
+### Why visit legs still exist
+
+A leg opens when the salesman presses **Start visit** and closes at **I have arrived**. That gap is the point: starting the dwell clock at the tap would count the ride as time in the shop. A leg is a **row**, not a screen state, because Android kills the app on the road and a "travelling" flag in memory would be gone by arrival. One open leg per person, at both ends.
+
+### The meter
+
+<Rule title="A reading is checked while he is still at the meter">
+A closing reading below the opening one, or a distance above <Setting k="mbos.travel.maxLegKilometres" /> km, is refused on the phone — and refused again by the office, because a mileage claim is money and a check that lives only in an interface is not a check. The reading and its photograph are both required; two photographs cannot be subtracted, and a number with no picture cannot be checked.
+</Rule>
+
+A forgotten closing reading is asked for the next morning and stored with *Closing meter reading entered the next morning. Nobody read the meter at punch-out.* A journey called off is closed at its own reading so it measures nothing, with the reason — never deleted.
+
+### Legs typed from memory
+
+Older builds and the office can still write **day-log** legs: a journey typed up afterwards, both readings at once. Those are held to a looser standard on purpose — the photograph is optional, because refusing a journey for a picture nobody can now take would refuse to record a journey that happened. The office tells the two apart by the leg's **origin**.
+
+## Expenses
+
+<Rule title="A claim over the limit is flagged, never refused">
+The phone shows what is left under the policy before he types, what would be left after, and how far over he goes — and he can give a reason. The claim is still sent. Money already spent is recorded; refusing it only means nobody finds out.
+</Rule>
+
+The office **does** refuse two things:
+
+- A claim of <Setting k="mbos.expenses.billPhotoThresholdPaise" /> paise or more with **no bill attached** — *A claim of ₹X needs the bill photographed.*
+- A claim dated more than <Setting k="mbos.expenses.backdatedDaysAllowed" /> days back — *Ask your manager to enter it for you.*
+
+Every claim belongs to a **day** (opened automatically), because the day is what the meal allowance is worked out from and what the office locks. The vendor and bill number travel with it so a duplicate can be caught.
+
+<Callout kind="money">
+The meal and kilometre **allowances** are worked out at the office from his punches and trips and come back down to the Expenses screen on their own, listed apart from claims. He never types an allowance.
+</Callout>
+
+### The policy on the phone
+
+The policy engine runs on the handset so the amount appears beside each leg, and the **Policy** screen renders the whole policy as sentences generated from the same rules the money is computed from, with its version and start date. The commonest cause of a pay dispute is a rule that changed on a phone that had not heard yet; the version on screen settles it.
+
+## Leave
+
+- A request counts **working days** only — holidays and the weekly off are excluded — and is refused on the phone if it counts to nothing or overlaps an existing request.
+- The office decides every request. The yearly entitlement the office keeps balances against is <Setting k="mbos.leave.annualEntitlementDays" /> days.
+- **No balance is shown**, anywhere. The screen counts days **taken** this year. Whether a request is paid is the office's decision, and a balance on the phone would be read as a promise.
+
+## Holidays
+
+Who a holiday reaches is the office's answer, sent **per salesman**: company-wide days, his state's, district's, city's or area's, and any given to him by name. The phone never works it out, so a holiday added at the office reaches every phone on the next sync with no new app. Holidays also feed the leave day count and the performance forecast's working days.
+
+## Salary
+
+Salary is **read, never written**. HR keeps the employee workbook, HRMS mirrors it, and the phone shows the salary **as HR holds it today**, once. Days worked and reimbursements sit **beside** it, never added — a reimbursement is money owed back, not earnings. There is no incentive figure, because no monthly target is set for a field salesman and a figure with nothing to compute it from would be an invention.
+
+<SettingsTable keys={["mbos.travel.maxLegKilometres", "mbos.expenses.billPhotoThresholdPaise", "mbos.expenses.maxAttachments", "mbos.expenses.backdatedDaysAllowed", "mbos.leave.noticeDays", "mbos.leave.allowLossOfPay", "mbos.leave.annualEntitlementDays"]} />
+
+## Where the code and the intent disagree today
+
+- **The phone does not enforce the bill-photo threshold.** It saves a large claim with no bill and shows *No bill. May not be accepted.*; the office then refuses it, so it lands in *Not accepted* (`mbos-app/app/expenses.tsx`; `handleExpense` in `src/lib/actions/mbos.ts`).
+- **Two leave settings are read by nothing.** <Setting k="mbos.leave.noticeDays" /> ("applying later is allowed and flagged") and <Setting k="mbos.leave.allowLossOfPay" /> appear on the Settings screen, but no handset or server code reads them, so no late request is flagged (`src/lib/config/registry.ts`; `applyForLeave` in `mbos-app/src/data/requests.ts`; `handleLeave`).

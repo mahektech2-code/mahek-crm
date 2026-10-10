@@ -1,0 +1,107 @@
+Oversight is the set of screens that answer the questions nobody can answer from a worklist: **which gates did somebody walk past, what was done to the funnel and under whose authority, what did we lose and why, and how is the book's shape changing?** Every one of them is a **read** of something that already exists — the stage history, the audit log, the lead columns, the settings. None of them stores its own answer, because an oversight screen with its own copy of the facts is a second copy of the thing it is meant to be watching.
+
+<Callout kind="live">
+Values shown are read live from your CRM.
+</Callout>
+
+## Overrides: the gates somebody walked past
+
+A manager may pass a shut gate (switched by <Setting k="leads.allowManagerOverride" />), but never silently. Every override writes the stage-history row with the coded reason (<Setting k="leads.overrideReasons" />) **and the exact list of conditions still missing at that moment**.
+
+The override log lists every move that carried a non-empty missing list, newest first, with who did it and under which app and level, and counts which condition is waived most often across the book.
+
+<Callout kind="why">
+A system that refuses everything is defeated in a week by people recording the work after the event. The override exists so the rule survives contact with a Tuesday — and this log exists so that it does not become the ordinary way through. A condition that is waived again and again is either a rule that does not fit the work or a habit that needs a conversation; the count says which to look at.
+</Callout>
+
+## Audit and thresholds
+
+- **Audit** pages through every audited lead action — stage moves, reassignments, verifications, priority, trash and restore — with the actor's hat. Keyset-paged, so an action added while you read never appears twice.
+- **Thresholds** lists every `leads.*` and handset `mbos.leads.*` setting with its value in force, whether it is still the shipped default, and who last changed it. **It has no edit control.** Settings are authored in the Admin Console, which validates against the setting's bounds, checks the whole set for consistency and writes an audit row; a second form doing three quarters of that would be a way to store a value the first would refuse.
+
+## The Sales Manager desk
+
+<Rule title="Scope is the seat, and nothing else">
+The CRM Sales Manager desk shows a lead only if **its sales manager seat is the signed-in person**. An administrator is not narrowed. A lead with an owner and no sales manager, or with neither, is on nobody's desk until somebody names a sales manager.
+</Rule>
+
+<Callout kind="why">
+The territory-based scope the rest of Lead Management uses is national for a manager with no region, which would show a CRM sales manager every lead in the company. The reporting line is not filled for field staff. The one thing the book reliably carries is the sales manager seat on each lead — so that is the scope, for reads **and** writes: the workspace is named on the request, so the read that draws a lead and the action that works it resolve the same answer. A lead you can see is a lead you can act on.
+</Callout>
+
+Every live lead in the seat is loaded once (up to five pages of 200 — past that the desk says it is truncated) and sorted into six queues on the server from the real queue readers: verify prospect, qualification review, sample, order confirmation, overdue and nurture. The browser only counts and groups, so a tile and the list it opens can never disagree.
+
+The module is **off by default** even on a whole-CRM grant, and independent of any Sales Dashboard access: it is a job held through the CRM, granted a person at a time.
+
+## Lost
+
+Lost is a read of the same lead rows, filtered to those closed lost. The one fact it adds is **which rung the lead was lost from**, read from the closing stage-history row — the lead row itself only says *lost*. A lead lost before the history existed shows *Not recorded* rather than a guessed rung.
+
+The reason is the code from <Setting k="leads.lostReasons" />; older leads carry free text and still read. It is scoped exactly like the working list — a lead you cannot see there cannot be seen here.
+
+### Reopening
+
+Reopening is not a move along a ladder — Lost is on none — so it has its own rule for **where** the lead comes back, which the dialog shows before you confirm:
+
+| Lost from | Comes back to |
+|---|---|
+| A rung still on its ladder | That rung |
+| A failed verification | Prospect, to be verified again |
+| A rung its ladder no longer has, On hold, or nothing recorded | The foot of its ladder |
+| The rung that makes it a customer, or beyond | One rung below |
+
+Nothing opens a gate and nothing promotes: from the rung it returns to, every ordinary gate applies. A reason from <Setting k="leads.reopenReasons" /> is required, and reopening from this screen needs the verify permission. The reopen is a stage-history row whose note begins *Reopened from Lost*.
+
+### Trash and restore
+
+Deleting moves leads to the trash with a sentence of reason. Only a **lead** can be trashed — an account we have billed is deactivated instead — and only one in your book. Deleted leads leave every list for every viewer. Trashing is a manager's; restoring is an administrator's.
+
+## Funnel & conversion
+
+### By rung
+
+Counts every lead by ladder and rung, with the median days on the rung and the potential. Every rung the ladder has is drawn, **even at zero** — a funnel that omits empty rungs redraws itself every time somebody works it. Parked leads are counted beside the funnel, not in it.
+
+### Cohort conversion
+
+<Rule title="Measured by cohort, never this month over this month">
+Leads raised in a window are followed forward for <Setting k="owner.conversionWindowDays" /> days. Dividing this month's orders by this month's leads asks a lead raised on the 29th to have converted by the 31st, and mixes in conversions from leads raised months ago.
+</Rule>
+
+| Outcome | Means |
+|---|---|
+| **Converted** | Reached the rung that puts it on the book |
+| **Lost, or past its window** | Closed lost, or its window ran out without converting |
+| **Not yet** | Still inside its window — counted, never divided |
+| **No sales type** | Raised without a ladder; outside the cohort and said so |
+
+The rate on this screen is **converted ÷ (converted + lost or past its window)**. With nothing decided yet the screen says *Nothing has closed its window* — a rate over zero decided leads is not a low rate, it is no rate.
+
+### Sources and reasons
+
+**Sources** groups lead sources by a fingerprint — case, punctuation and spacing folded — so "Website", "website" and "WEB SITE" show as one source spelled three ways. It deliberately does **not** guess that "Referral" and "Reference" are the same; that is a judgement for whoever merges them. **Reasons** tallies the coded reasons for Prospects, samples, losses and overrides, by salesman and by town, and counts moves that carried **no** code as *uncoded* so totals still add up.
+
+## Who can do what
+
+| Screen | Module | Note |
+|---|---|---|
+| Oversight | <ModuleRef k="crm.lead-oversight" /> | Read-only |
+| Sales Manager desk | <ModuleRef k="crm.sales-manager" /> | Off by default; scope is the seat |
+| Lost | <ModuleRef k="crm.lead-lost" /> | Off by default; reopen needs verify |
+| Funnel & conversion | <ModuleRef k="crm.lead-funnel" /> | Read-only |
+
+## Settings
+
+<SettingsTable keys={[
+  "leads.allowManagerOverride",
+  "leads.overrideReasons",
+  "leads.lostReasons",
+  "leads.reopenReasons",
+  "owner.conversionWindowDays",
+  "leads.sources",
+]} />
+
+## Where the code and the intent disagree today
+
+- **Two conversion rates.** AGENTS.md says the owner's cohort denominator is *every lead in the cohort*; this screen divides by decided leads only (`lib/services/lead-funnel-service.ts` `tallyCohort`). The owner's Reports app and this screen can print different rates for the same window.
+- **The oversight service says thresholds are authored in the Admin Console**, which is right; `/crm/settings` now permanently redirects there (`src/app/crm/settings/page.tsx`), though the module and its guard remain.

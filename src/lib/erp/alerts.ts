@@ -8,6 +8,7 @@ import { purchaseFigures } from "./engines/purchase";
 import { batchState } from "./engines/production";
 import {
   belowLevel,
+  cashNegative,
   cnsNotIssued,
   duplicateExpenses,
   fillLosses,
@@ -24,6 +25,7 @@ import {
   type Candidate,
   type Thresholds,
 } from "./engines/alerts";
+import { cashBalances, cashKey } from "./engines/cash";
 import { today } from "./screens/common";
 import { fgReorderRows, rmReorderRows } from "./screens/movement";
 import { detailRows, orderLines } from "./screens/sales";
@@ -66,7 +68,7 @@ export async function thresholds(): Promise<Thresholds & { enabled: boolean }> {
 /** Every alert condition that holds right now. */
 export async function currentCandidates(t: Thresholds, now = new Date()): Promise<Candidate[]> {
   const day = today();
-  const [purchases, sfg, fills, lost, packs, tests, details, lines, transports, reqs, expenses, rmRe, fgRe, petty] = await Promise.all([
+  const [purchases, sfg, fills, lost, packs, tests, details, lines, transports, reqs, credits, expenses, rmRe, fgRe] = await Promise.all([
     q(sql`
       select p.id, m.name as item, p.raw_material_id as "itemId", s.name as supplier, p.supplier_id as "supplierId", p.lot_no as lot,
              p.purchase_date::text as date, p.created_at as "createdAt", p.rate_paise::float8 as rate, p.unit, p.density::float8 as density, p.quantity::float8 as qty
@@ -87,12 +89,10 @@ export async function currentCandidates(t: Thresholds, now = new Date()): Promis
                  (select min(h.at) from complaint_status_history h where h.complaint_id = r.id and h.to_status = 'in_progress') as "approvedAt",
                  r.cn_status = 'issued' as issued, r.status = 'in_progress' as accepted, r.request_cn as cn
             from complaints r join customers c on c.id = r.customer_id`),
-    /* Petty cash: duplicates among live expenses; the rest is the module's own exception queue below. */
-    q(sql`select e.id, e.expense_by as by, e.amount_paise::float8 as amount, e.particular, e.expense_date::text as date from erp_expenses e
-           where not e.legacy and e.approval_status in ('submitted', 'under_review', 'approved')`),
+    q(sql`select c.id, c.employee_name as employee, c.godown_id as "godownId", g.name as godown, c.mode, c.amount_paise::float8 as amount from erp_credits c join erp_godowns g on g.id = c.godown_id`),
+    q(sql`select e.id, e.expense_by as by, e.godown_id as "godownId", g.name as godown, e.mode, e.amount_paise::float8 as amount, e.particular, e.expense_date::text as date from erp_expenses e join erp_godowns g on g.id = e.godown_id`),
     rmReorderRows(),
     fgReorderRows(),
-    import("./petty/insight").then((m) => m.exceptions()),
   ]);
 
   const purchaseFacts = purchases.map((p) => ({
@@ -115,6 +115,18 @@ export async function currentCandidates(t: Thresholds, now = new Date()): Promis
     batches.set(k, b);
   }
 
+  const bal = cashBalances(
+    credits.map((c) => ({ employee: String(c.employee), godownId: String(c.godownId), mode: String(c.mode), amountPaise: Number(c.amount) })),
+    expenses.map((e) => ({ employee: String(e.by), godownId: String(e.godownId), mode: String(e.mode), amountPaise: Number(e.amount) })),
+  );
+  const balanceRows = new Map<string, { key: string; employee: string; godown: string; mode: string; availablePaise: number; ids: string[] }>();
+  for (const e of expenses) {
+    const k = cashKey(String(e.by), String(e.godownId), String(e.mode));
+    const b = balanceRows.get(k) ?? { key: k, employee: String(e.by), godown: String(e.godown), mode: String(e.mode), availablePaise: bal.get(k) ?? 0, ids: [] };
+    b.ids.push(String(e.id));
+    balanceRows.set(k, b);
+  }
+
   return [
     ...rateJumps(purchaseFacts, t),
     ...ratesMissing(purchases.map((p) => ({ id: String(p.id), item: String(p.item), lot: String(p.lot), date: String(p.date), ratePaise: p.rate == null ? null : Number(p.rate) })), day, t),
@@ -130,7 +142,7 @@ export async function currentCandidates(t: Thresholds, now = new Date()): Promis
     ...lrsMissing(transports.map((x) => ({ id: String(x.id), billNo: (x.billNo as string) ?? null, party: String(x.party), billDate: (x.billDate as string) ?? null, lr: (x.lr as string) ?? null })), day, t),
     ...cnsNotIssued(reqs.map((r) => ({ id: String(r.id), party: String(r.party), approvedAt: r.approvedAt ? asDate(r.approvedAt) : null, issued: Boolean(r.issued), accepted: Boolean(r.accepted), cn: Boolean(r.cn) })), now, t),
     ...duplicateExpenses(expenses.map((e) => ({ id: String(e.id), by: String(e.by), amountPaise: Number(e.amount), particular: (e.particular as string) ?? null, date: String(e.date) })), t),
-    ...petty.map((x) => ({ kind: "pettyCash" as const, subject: x.key, screen: x.view, recordIds: x.open ? [x.open] : x.ids, values: { label: x.label, tone: x.tone }, explanation: `${x.label}: ${x.text}` })),
+    ...cashNegative([...balanceRows.values()]),
     ...belowLevel([
       ...rmRe.map((r) => ({ id: r.id, screen: "reorderRm" as const, item: r.item, godown: r.godown, available: r.available ?? 0, min: r.min })),
       ...fgRe.map((r) => ({ id: r.id, screen: "reorderFg" as const, item: r.sku, godown: r.godown, available: r.available, min: r.min })),

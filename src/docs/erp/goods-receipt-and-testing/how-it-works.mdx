@@ -1,0 +1,131 @@
+This is where a purchase stops being a promise and becomes stock. The rules here exist so that every litre in raw-material stock can answer three questions: **which PO bought it**, **did it pass its tests**, and **what did it really cost to get through the gate**.
+
+<Flow caption="From the gate to stock" chart={`
+flowchart TD
+  G["Goods receipt against an approved PO<br/>one PR number for the delivery"] --> L{"Each line: does the item<br/>have a testing list?"}
+  L -- "Yes" --> T["Purchase test<br/>evidence per required test"]
+  T --> V{"Verifier"}
+  V -- "Do Verify" --> RG["Register row<br/>at the PO line's rate and GST"]
+  V -- "Do Not Verified" --> NV["Not verified<br/>no register row"]
+  L -- "No" --> RG
+  RG --> R{"Rate above zero?"}
+  R -- "Yes" --> S["Raw-material stock entry<br/>litres, at its godown, under its lot"]
+  R -- "No" --> W["Waits: 'Not posted: rate missing'"]
+  G --> PO["The PO's received quantity<br/>and status are rewritten"]
+`} />
+
+## Nothing is received without a PO
+
+<Rule title="A receipt names an approved PO, and every line one of its items">
+Goods inward picks a purchase order that is Approved, Sent or Partly received, and every line picks one of its lines. There is no typed supplier and no typed item. A hand-entered register row names an approved PO's line in the same way.
+</Rule>
+
+<Callout kind="why">
+In Mahek Plus anything could be received from anybody. Tying every receipt to an approved PO means every lot in stock was asked for by a department and approved by somebody who was not the person who wanted it.
+</Callout>
+
+<Rule title="A little over, never a lot over">
+A line may receive up to <Setting k="erp.purchase.receiptTolerancePercent" />% more than its PO line ordered, counting everything already received against it and the other lines of the same save. Beyond that the receipt is refused and the extra needs its own requirement and PO.
+</Rule>
+
+<Rule title="A kilogram chemical is weighed, not typed">
+For a chemical bought in kg the quantity is the **net weight off the scale**: weight with drums, less drums × the empty drum weight. A scale reading where the drums weigh as much as the load is refused as a misread scale, not recorded as a delivery of nothing.
+</Rule>
+
+## Every line goes where it is going, as it is saved
+
+<Rule title="The item's testing list decides, not a person">
+A line whose item has a testing list goes to the tester's queue; any other line becomes a register row at once. Mahek Plus asked somebody to press "Send to Testing" or "Send to Purchase" on every line — the item already answered which.
+</Rule>
+
+The buttons survive only as the way out for a line that went nowhere — almost always because the register refused its **lot number**. A lot number is the supplier's party code, the item code and the PR number joined together; a number already taken is refused with the old system's message, "! Please Change 4 Digit PR Num Manually or Generate New PR Num!", and the line waits rather than failing the whole delivery.
+
+## Testing
+
+<Rule title="Evidence for exactly the tests the item requires">
+The test asks for what the item's testing list names: a pH photo, a smell (Good, Moderate, Bad), a colour photo, oil-paint, fast-paint, NC-paint and primer photos, a density reading between 0.5 and 1.5 with its photo, a thermocol-pass photo. Recording a test is the department's job — limited to the people named for the material's **test** duty where an administrator has named any.
+</Rule>
+
+<Rule title="Only the verifier decides, and only on complete evidence">
+**Do Verify** needs the **Verify quality tests** power and is refused while any required evidence is missing. A verified test is closed: its evidence cannot be changed until it is marked Not Verified.
+</Rule>
+
+<Rule title="Verifying creates the register row, once">
+The first verification writes the lot's register row, carrying the tested density, at the PO line's rate and GST. Verifying again never writes a second. Marking a verified test **Not Verified** leaves the register row in place and says so — removing it is a separate act.
+</Rule>
+
+With AI photo reading on, the test photos can be read into readings for the tester to confirm; a reading is a suggestion until somebody saves the review. See [Alerts and AI](/docs/erp/alerts-and-ai).
+
+## The register and stock
+
+<Rule title="A lot is registered at the PO line's rate and GST">
+Goods received against a PO reach stock without anybody typing a rate. The supplier's bill may still move the register's rate; a rate that no longer matches the PO line is flagged **Rate differs from PO**. Rows from before POs carry none and are flagged **Before POs** — nothing back-fills one.
+</Rule>
+
+<Rule title="Only a rated purchase posts to stock">
+A register row with a rate above zero posts exactly one raw-material stock entry: its **available litres** at its godown under its lot. The entry follows the row through every edit — change the quantity and the stock moves with it. A row with no rate is not in stock and says why.
+</Rule>
+
+### The register's arithmetic
+
+| Figure | How it is worked out |
+|---|---|
+| In litre | kg ÷ density for a kg purchase; otherwise the quantity |
+| Available litres | In litre, less any feed-adjusted litres — what is posted to stock |
+| Litre rate | rate × density for a kg purchase; otherwise the rate |
+| Sub total | quantity × rate |
+| GST | sub total × GST % |
+| Final amount | sub total + GST, less any feed-adjusted amount |
+| Litres per drum | available litres ÷ drums |
+
+### One progress line for the bill
+
+<Rule title="A purchase moves Arrived (or Tested) → Bill received → Matched → Verified">
+The bill and the status are one line, so they cannot disagree. Recording the bill **is** the Invoice Received step; a status past Pending means the bill is in hand; a matched purchase cannot be marked "Bill Not Received". Everybody with purchase money may set Invoice Received or Purchase Matched; only somebody with **Set a purchase to Purchase Verified** sets Verified; only somebody with **Set a verified purchase back to Pending** undoes it.
+</Rule>
+
+<Callout kind="why">
+Mahek Plus carried the test's verdict, a purchase status and a separate "bill received" toggle, and they could disagree — "Purchase Matched" with no bill. Making them one progress line removes the state that cannot be true.
+</Callout>
+
+## Landing cost
+
+<Rule title="The stock rate is the landed rate">
+What a lot cost is its material (the bill's value before GST — GST on a purchase is input credit, not cost) **plus its share** of the PR's transport and other inward cost. That landed rate, turned into a litre rate by density, is the rate raw-material stock is valued at — so an SFG batch's cost includes getting its raw material through the gate.
+</Rule>
+
+| How it came | Transport cost |
+|---|---|
+| Supplier Transport, Third-Party Transport | The amount from their bill |
+| Mahek Own Vehicle | Kilometres × <Setting k="erp.purchase.ownVehicleRatePerKmPaise" /> paise, copied onto the PR so a later rate change never reprices the journey |
+| No Transport Charges | Zero |
+
+<Rule title="Shared by value, to the paisa">
+A PR's transport and other cost is shared across its lots **in proportion to their material value**, so freight does not land on cheap bulky items. The shares always add up to exactly what was spent. A lot with no rate yet takes no share until it has one.
+</Rule>
+
+With our own vehicle and no approved rate per kilometre, the receipt is refused rather than costed at nothing. A PR whose transport nobody recorded says so on the register rather than reading as free delivery.
+
+## Drum labels
+
+The Drum labels tab is the register's chemical lots **at your working godown only**, with the short label name from the "Short label name (Item=Label)" reference list, ready to download for the label printer.
+
+## Who can do what
+
+| Act | Needs |
+|---|---|
+| Receive goods, add lines, transport and costs | The Purchases screen |
+| Record test evidence | The Purchase testing screen, and the material's test duty if one is named |
+| Do Verify / Do Not Verified | Verify quality tests |
+| See rates, GST, amounts, landing cost, the stage; enter a rate; record the bill; change status | See purchase money |
+| Set Purchase Verified | Set a purchase to Purchase Verified |
+| Do Pending | Set a verified purchase back to Pending |
+
+## Settings
+
+<SettingsTable keys={["erp.purchase.receiptTolerancePercent", "erp.purchase.ownVehicleRatePerKmPaise", "erp.ai.photos.enabled", "erp.ai.qc.densityTolerancePct", "erp.ai.bills.enabled"]} />
+
+## Where the code and the intent disagree today
+
+- The refusal for a missing own-vehicle rate says the rate is set "in ERP settings"; it is a MahekOne setting in the Admin Console, not on the ERP's Settings screen.
+- A lot entered by hand on the register (**New purchase** or **Add More**) is registered — and, with a rate, put into stock — without a test, even for a chemical whose item requires one. Only lots that come through goods receipt are sent to the tester.

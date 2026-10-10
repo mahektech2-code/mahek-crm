@@ -1,0 +1,129 @@
+Traceability is a bespoke, read-only route. `lib/erp/traceability.ts` resolves a code and walks the chain with raw SQL; the pure pieces (ids, code cleaning, which refill lots a box holds) are in `engines/trace.ts`; `trace-links.ts` is the one place a link into the trace or the label sheet is spelled. A second, narrower trace — `lib/erp/trace.ts`, from a bill — serves the complaint panel and Ask the ERP. The only writes nearby are the label-printed stamp and the dispatch desk, both in `actions/erp-trace.ts`.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Route | `src/app/erp/trace/page.tsx` | `ctx.screens.has("trace")`; `?q=` → `traceCode`, else `traceDashboard`; renders facts, Backward, Forward, customers, stock, history |
+| Resolve and walk | `src/lib/erp/traceability.ts` | `resolveTrace`, `traceCode`, `traceUnit`, `tracePack`, `traceFg`, `traceSfg`, `traceRm`, `traceOrders`, `backward`, `backFromPack`/`Fg`/`Sfg`/`Rm`, `destinations`, `stockOf`, `forwardFromFg`, `unitHistory`, `traceDashboard` |
+| Rules (pure) | `src/lib/erp/engines/trace.ts` | `unitId`, `normaliseCode`, `looksLikeUnitId`, `boxLots`, `UNIT_STATUS`, `UNIT_STATUS_LABEL`, `manualMove`, `scanVerdict`, `scanGate`, `qcRefusal`, `packLabel` |
+| Links | `src/lib/erp/trace-links.ts` | `erpTraceHref`, `erpLabelsHref` (pure, client-safe) |
+| Complaint trace | `src/lib/erp/trace.ts` | `traceBill`, `traceFromOrders` |
+| Writes | `src/lib/actions/erp-trace.ts` | `erpMarkLabelsPrinted` (and the dispatch desk's four) |
+| Label sheet | `src/app/erp/print-labels/page.tsx` | Reuses `boxLots` and `packLabel` to print refill lots beside each QR |
+
+## A request, end to end
+
+<Flow caption="GET /erp/trace?q=BX-261008-000125" chart={`
+sequenceDiagram
+  autonumber
+  participant Page as trace/page.tsx
+  participant T as traceability.ts
+  participant E as engines/trace.ts
+  participant DB as Postgres
+  Page->>Page: erpContext() and ctx.screens.has("trace")
+  Page->>T: traceCode(q)
+  T->>E: normaliseCode, looksLikeUnitId
+  T->>DB: resolveTrace - unit, order, pack, fg, sfg, rm, bill in that order
+  T->>DB: traceUnit - the unit, its order, customer, scanner
+  T->>DB: erp_pack_lines for the batch
+  T->>E: boxLots(seq, cans per box, lines)
+  T->>T: backward - pack, fg, sfg with QC, rm with purchase and test
+  T->>DB: unitHistory from erp_unit_events
+  T-->>Page: TraceResult - facts, back, forward, customers, stock, history, missing
+`} />
+
+## Resolving a code
+
+<Code file="src/lib/erp/engines/trace.ts" symbol="normaliseCode" />
+
+<Code file="src/lib/erp/traceability.ts" symbol="resolveTrace" />
+
+## Which refill lots a box holds
+
+<Code file="src/lib/erp/engines/trace.ts" symbol="boxLots" />
+
+## Walking the chain
+
+<Code file="src/lib/erp/traceability.ts" symbol="traceUnit" collapsed />
+
+<Code file="src/lib/erp/traceability.ts" symbol="backFromPack" collapsed />
+
+Every `backFrom*` pushes onto `missing` when a stage cannot be found, rather than returning less silently.
+
+## The dashboard
+
+<Code file="src/lib/erp/traceability.ts" symbol="traceDashboard" collapsed />
+
+"Today" starts at local midnight: `(${day}::date)::timestamp at time zone ${APP_TIMEZONE}`, the AGENTS.md rule for turning a date into an instant.
+
+## The complaint trace
+
+<Code file="src/lib/erp/trace.ts" symbol="traceBill" />
+
+<Code file="src/lib/erp/trace.ts" symbol="traceFromOrders" collapsed />
+
+It returns `lots` prefixed `fg:`, `sfg:`, `rm:`, `pack:` — the complaint cluster compares those, ignoring `pack:`.
+
+## Box lifecycle
+
+<Code file="src/lib/erp/engines/trace.ts" symbol="UNIT_STATUS_LABEL" />
+
+<Code file="src/lib/erp/engines/trace.ts" symbol="manualMove" />
+
+<Code file="src/lib/erp/engines/trace.ts" symbol="qcRefusal" />
+
+## Tables read
+
+<DbTable name="erp_units" only={["id", "kind", "lot_from", "lot_code", "seq", "cans", "status", "status_note", "order_id", "label_printed_at", "label_prints"]} note={{
+  seq: "Box number within its batch (or label number within its lot) — what boxLots slices by.",
+  label_prints: "Bumped by erpMarkLabelsPrinted each time the sheet is sent to the printer.",
+}} />
+
+<DbTable name="erp_unit_events" note={{
+  event: "Appended by every change: created, labelled, scanned, unscanned, dispatched, transfer, hold, release, reject, return, cancel, lost, override.",
+}} />
+
+<DbTable name="erp_sfg_qc" note={{
+  lot_code: "Keyed on the lot, not the batch line, because a lot is what moves between godowns.",
+  status: "Pending, Approved, Rejected. No row reads as Pending.",
+}} />
+
+## Access
+
+- **Module:** <ModuleRef k="erp.trace" />.
+- No power is read: a trace carries no money.
+- The label sheet opens for anybody holding any of `units`, `dispatch`, `packBatches`, `stock` or `orders`; `erpMarkLabelsPrinted` re-checks the same list.
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/erp/engines/trace.test.ts` | `unitId` format, `normaliseCode` (case, links, query strings), `boxLots` at and across a boundary, `manualMove`, `qcRefusal`, `packLabel` |
+| `npm run test:integration` | `src/lib/erp/erp-traceability.test.ts` — `production makes boxes with ids` | QC first, then refill, then a complete packing batch mints one id per box; loose labels |
+| `npm run test:integration` | `src/lib/erp/erp-traceability.test.ts` — `tracing` | A box traces back to batch, refill lot and SFG QC and forward to the customer; an SFG lot forward to every refill lot, batch and customer; an order and its bill back to their lots; the dashboard's counts |
+| `npm run test:integration` | `src/lib/erp/erp-ai.test.ts` — `batch trace and complaint clusters (AI-6)` | The complaint trace runs from the bill back to the supplier |
+
+## Changing it safely
+
+<Steps>
+<Step title="Keep it read-only">
+Nothing under `traceability.ts` writes. A fix to data belongs on the screen that owns it.
+</Step>
+<Step title="Say what is missing">
+A new stage that can fail to resolve must push a sentence onto `missing`.
+</Step>
+<Step title="Spell links through trace-links.ts">
+Every screen links in through `erpTraceHref` / `erpLabelsHref`; a hand-built URL drifts the day a query key changes.
+</Step>
+<Step title="Change both traces, or merge them">
+`trace.ts` and `traceability.ts` walk the same chain. A new production stage has to be added to both.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| A code made only of digits resolves as an order number before it is tried as a lot or a Tally bill number | `traceability.ts` `resolveTrace` |
+| Two independent chain-walkers; the complaint trace has no SFG QC step and does not split a boundary box | `trace.ts` `traceFromOrders`; `traceability.ts` `backward` |

@@ -1,0 +1,115 @@
+Sales Targets is where you decide **what each person is asked for in a month** and show it to them. A target is five figures — revenue, volume, new customers, collection and activity — plus a product mix by formulation. It stays a **draft** while you work it out and reaches the person only when you **publish** it. Once published, changing it needs a reason.
+
+How the target is turned into a score is on [Performance](/docs/sales/performance) and, in full, on [Performance in the CRM](/docs/crm/performance).
+
+## The screen at a glance
+
+<Wireframe url="/sales/targets" nav={["Today", "#Overview", "Live map", "Territory", "Performance", "Sales Targets", "Cost & return"]} active="Sales Targets" caption="Sales Targets for one month">
+  <WfBar>
+    <WfTitle>Sales targets</WfTitle>
+    <WfSpacer />
+    <WfButton>‹ Oct 2026 ›</WfButton>
+    <WfButton>Add someone to this month's targets</WfButton>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfTable columns={["Person", "Status", "Revenue excl. GST", "Volume", "Collection", "Activity", ""]} rows={[
+    ["Salesman A", <span key="a"><WfPill tone="success">Published</WfPill> <WfPill tone="brand">Carried forward</WfPill> <Hotspot n={2} /></span>, "₹9,00,000", "2,600 L", "60%", "90%", <WfButton key="b">Change target</WfButton>],
+    ["Salesman B", <WfPill key="c" tone="warn">Draft</WfPill>, "₹6,00,000", "1,800 L", "—", "—", <WfButton key="d">Change target</WfButton>],
+    ["Back office C", <WfText key="e" muted>No target</WfText>, "—", "—", "—", "—", <span key="f"><WfButton>Set target</WfButton> <Hotspot n={3} /></span>],
+  ]} />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Month and people.</b> Targets are set one month at a time. The list starts with the people who actually sell; <i>Add someone</i> brings in anybody else.</span>,
+  <span key="2"><b>Status.</b> <i>Published</i> means they can see it. <i>Carried forward</i> means it is last month's number continuing — nobody has chosen a figure for this month yet.</span>,
+  <span key="3"><b>No target.</b> Somebody with no target is not scored at all — they show their figures with no percentage.</span>,
+]} />
+
+## Setting a target
+
+<Wireframe url="/sales/targets" caption="The target drawer, for a draft">
+  <WfPanel title="Set target · Salesman B" side>
+    <WfCard title="Against their own average"><WfText>Last 3 months: ₹5.4L a month, 1,700 L</WfText><Hotspot n={1} /></WfCard>
+    <WfField label="Revenue target (excl. GST)"><WfInput placeholder="600000" /></WfField>
+    <WfField label="Volume target"><WfInput placeholder="1800 litres" /></WfField>
+    <WfField label="New customers"><WfInput placeholder="3" /></WfField>
+    <WfField label="Collection target"><WfInput placeholder="60 % of what was overdue on the 1st" /></WfField>
+    <WfField label="Tasks target"><WfInput placeholder="90 %" /></WfField>
+    <Hotspot n={2} />
+    <WfTable columns={["Formulation", "Minimum %", "Target %", "Stretch %"]} rows={[["Nano", "20", "30", "40"], ["PU", "10", "15", "20"]]} />
+    <WfBar><WfButton>Add formulation</WfButton><Hotspot n={3} /></WfBar>
+    <WfCard title="From existing customers"><WfText>Their customers' monthly targets already total ₹5,10,000</WfText><Hotspot n={4} /></WfCard>
+    <WfBar><WfButton>Save as draft</WfButton><WfButton primary>Save and publish</WfButton><Hotspot n={5} /></WfBar>
+  </WfPanel>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Their own history.</b> What this person actually did over the last few months, so the number is grounded in something.</span>,
+  <span key="2"><b>The five figures.</b> Leave a figure empty to <b>not ask</b> it — that part is dropped from the score rather than scored zero.</span>,
+  <span key="3"><b>Mix by formulation.</b> Add the formulations that matter for this person, with a minimum, a target and a stretch share each. Everything else falls into <i>Other</i>.</span>,
+  <span key="4"><b>Cross-check.</b> What their customers' own monthly targets (set in the CRM) already add up to. Amber if that is already more than this revenue target.</span>,
+  <span key="5"><b>Save.</b> A draft is invisible to them. <i>Save and publish</i> shows it at once.</span>,
+]} />
+
+<Steps>
+<Step title="Pick the month and the person">
+Use ‹ › for the month. Press **Set target** on a row, or **Add someone** for somebody not listed.
+</Step>
+<Step title="Fill in what you are asking for">
+Only fill the figures you want to measure. An empty figure is not asked; a zero is a target nobody can fail.
+</Step>
+<Step title="Set the mix">
+Press **Add formulation** for each liquid you want a share of. Each needs minimum ≤ target ≤ stretch.
+</Step>
+<Step title="Save as draft, or save and publish">
+Publishing needs at least one of the five figures. They are told *"Your target for … is set"*.
+</Step>
+</Steps>
+
+## Changing a published target
+
+Once a target is published, the drawer's button reads **Save the change** and asks for a reason.
+
+<Steps>
+<Step title="Change the figures">
+Edit what needs to move.
+</Step>
+<Step title="Pick a reason">
+Choose from the list (*Pick a reason…*) and add a note if it helps.
+</Step>
+<Step title="Save the change">
+Each figure that moved is recorded with its old value, new value and the reason, and the person is told *"Your target for this month has changed"*.
+</Step>
+</Steps>
+
+<Callout kind="note">
+A draft is simply edited — nothing has been promised, so nothing is logged figure by figure.
+</Callout>
+
+## What each status means
+
+| Status | Means |
+|---|---|
+| <Pill tone="warn">Draft</Pill> | Your working-out. Not on their phone, not scored. |
+| <Pill tone="success">Published</Pill> | They can see it; Performance scores against it. |
+| <Pill tone="brand">Carried forward</Pill> | Copied automatically from last month's published target on the 1st. Saving any change clears it. |
+| No target | Not scored. |
+
+## The same screen in Accounts
+
+The accounts desk sets targets too. **Accounts → Sales targets** is the same feature — the same people, figures and drafts — with one addition: a **Revision history** drawer listing every published change, its reason and who made it. Per-customer monthly targets are a different screen: [Monthly targets in the CRM](/docs/crm/targets).
+
+## Questions people ask
+
+<Faq q="I cannot open Sales Targets.">
+You need permission to set targets as well as the screen. Managers and accounts hold it.
+</Faq>
+<Faq q="A salesman says his target changed and nobody told him.">
+Every change to a published target notifies him and is recorded with a reason. Check Accounts → Sales targets → Revision history.
+</Faq>
+<Faq q="Why did last month's target appear on its own?">
+On the first of the month, anybody with no target yet gets last month's published one, marked *Carried forward*. Drafts are never carried.
+</Faq>
+<Faq q="Why is 'Other' always in the mix?">
+It catches every formulation nobody classified and every order line whose product name did not match the catalogue, so the shares always add up to 100%.
+</Faq>
