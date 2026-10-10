@@ -1,0 +1,150 @@
+Alerts are three files: the pure rules in `engines/alerts.ts`, the run that gathers facts and raises or resolves in `lib/erp/alerts.ts`, and the list module in `screens/alerts.ts`. The morning summary is `digest.ts`. Every AI helper goes through `lib/erp/ai.ts` — one gate (`featureState`), two readers (`readImages`, `readText`) and one log (`erp_ai_suggestions`) — and then a helper file per feature that turns a reading into a review form and applies it through the owning screen's rules.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Rules (pure) | `src/lib/erp/engines/alerts.ts` | `AlertKind`, `ALERT_LABEL`, `Candidate`, `Thresholds`, one function per rule (`rateJumps`, `ratesMissing`, `sfgLosses`, `fillLosses`, `writeOffs`, `packsStuck`, `testsStuck`, `thinMargins`, `slowFulfilment`, `readyUnbilled`, `lrsMissing`, `cnsNotIssued`, `duplicateExpenses`, `cashNegative`, `belowLevel`) |
+| The run | `src/lib/erp/alerts.ts` | `thresholds`, `currentCandidates`, `runErpAlerts`, `tellRequisitioners`, `visibleAlerts` |
+| Screen | `src/lib/erp/screens/alerts.ts` | `alertsScreen` — list, `run` form (manager), `ack`, `resolve` |
+| Summary | `src/lib/erp/digest.ts` | `plainDigest`, `writeErpDigest`; read by `latestDigest` in `dashboard.ts` |
+| Jobs | `src/lib/jobs.ts` | `erpAlertsStep` in `runHourly` and `runNightly`; `erp-digest` in `runNightly`; `erpInboxStep` (WhatsApp screening) in `runHourly` |
+| AI plumbing | `src/lib/erp/ai.ts` | `featureState`, `readImages`, `readText`, `logSuggestion`, `decideSuggestion`, `outcomeOf`, `pendingSuggestion`, `pendingFor` |
+| Supplier bills (AI-1) | `src/lib/erp/ai-bills.ts` | `readBill`, `recordBillReading`, `billReviewForm`, `applyBill`, `rejectBill` — wired into `screens/purchase.ts` |
+| Order messages (AI-2) | `src/lib/erp/ai-orders.ts`, `screens/inbox.ts` | See [Orders, developer](/docs/erp/orders/developer) |
+| Ask the ERP (AI-5) | `src/lib/erp/ai-ask.ts` | `askTools`, `askErp`; called by `erpAsk` in `actions/erp.ts` from the shell's search box |
+| Complaints (AI-6) | `src/lib/erp/ai-complaints.ts`, `trace.ts` | See [Complaints, developer](/docs/erp/complaints-and-credit-notes/developer) |
+| Levels (AI-7) | `src/lib/erp/suggest.ts` | See [Levels, developer](/docs/erp/stock-levels/developer) |
+| Photos (AI-8) | `src/lib/erp/ai-photos.ts` | LR: `readLr`, `recordLrReading`, `lrReviewForm`, `applyLr`; tests: `readTestPhotos`, `recordTestReading`, `testReviewForm`, `decideTestReading` |
+| Dictation | `src/app/erp/_ui/voice.ts`, `src/app/erp/layout.tsx` | Draws the microphone where `erp.ai.voice.enabled` |
+
+## A request, end to end
+
+<Flow caption="The hourly alert run" chart={`
+sequenceDiagram
+  autonumber
+  participant Job as jobs.ts runHourly
+  participant Run as alerts.ts
+  participant Rules as engines/alerts.ts
+  participant DB as Postgres
+  Job->>Run: runErpAlerts()
+  Run->>Run: thresholds() - skip if switched off
+  Run->>DB: purchases, SFG lines, fills, write-offs, packs, tests, transports, complaints, expenses
+  Run->>Run: detailRows, orderLines, rmReorderRows, fgReorderRows, petty exceptions
+  Run->>Rules: every rule over the facts
+  Rules-->>Run: candidates (kind, subject, screen, record ids, power, sentence)
+  Run->>DB: transaction - resolve open alerts no longer live
+  Run->>DB: insert each new candidate, on conflict nothing (open kind and subject)
+  Run->>Run: tellRequisitioners(new belowLevel alerts)
+  Run-->>Job: raised, resolved, open
+`} />
+
+## The rules
+
+<Code file="src/lib/erp/engines/alerts.ts" symbol="Candidate" />
+
+<Code file="src/lib/erp/engines/alerts.ts" symbol="rateJumps" />
+
+<Code file="src/lib/erp/engines/alerts.ts" symbol="belowLevel" />
+
+`cashNegative` is declared, labelled and tested, but `currentCandidates` never calls it — fund balances reach alerts as `pettyCash` exceptions instead.
+
+## The run
+
+<Code file="src/lib/erp/alerts.ts" symbol="runErpAlerts" />
+
+<Code file="src/lib/erp/alerts.ts" symbol="tellRequisitioners" collapsed />
+
+<Code file="src/lib/erp/alerts.ts" symbol="visibleAlerts" />
+
+The "raise once" guarantee is the partial unique index `erp_alerts_open_key` on `(kind, subject) where status <> 'Resolved'`, created in `drizzle/0180_erp_alerts_and_ai.sql` (it is not declared in `schema.ts`).
+
+## The summary
+
+<Code file="src/lib/erp/digest.ts" symbol="plainDigest" />
+
+<Code file="src/lib/erp/digest.ts" symbol="writeErpDigest" />
+
+## The AI gate and log
+
+<Code file="src/lib/erp/ai.ts" symbol="featureState" />
+
+<Code file="src/lib/erp/ai.ts" symbol="logSuggestion" />
+
+<Code file="src/lib/erp/ai.ts" symbol="outcomeOf" />
+
+## Ask the ERP
+
+<Code file="src/lib/erp/ai-ask.ts" symbol="fromScreen" collapsed />
+
+<Code file="src/lib/erp/ai-ask.ts" symbol="askErp" collapsed />
+
+`fromScreen` calls the screen module's own `load(ctx)`, so `visibleCols` / `withoutHidden` have already stripped what the person may not see before the model is given anything.
+
+## Tables
+
+<DbTable name="erp_alerts" note={{
+  subject: "The condition's identity within its kind (a purchase id, 'by:<person>', a fund key…).",
+  screen: "The module key Open the records links to, through erpLink.",
+  power: "viewPurchaseMoney, viewCost or lostStock, where the alert shows those figures.",
+  status: "Open, Acknowledged, Resolved.",
+  resolve_reason: "Condition cleared (by a run) or the reason a person gave.",
+}} />
+
+<DbTable name="erp_ai_suggestions" note={{
+  feature: "bills, orders, ask, photos, complaints. featureState counts rows per feature since the 1st for the monthly cap.",
+  proposed: "What the model and the rules proposed, flags included.",
+  confidence: "high, check or not found, per field.",
+  outcome: "pending, accepted, edited, rejected.",
+  served_by: "provider:model, or rules.",
+}} />
+
+<DbTable name="erp_digests" note={{
+  day: "Yesterday's business date; rewritten if the nightly runs twice.",
+  served_by: "rules when no writing model answered.",
+}} />
+
+## Access
+
+- **Module:** <ModuleRef k="erp.alerts" />.
+- `visibleAlerts(ctx.screens, ctx.powers)` filters every list, acknowledgement and resolution; `ack` and `resolve` refuse an alert not in it.
+- **Run checks now:** `ctx.administrator || ctx.level === "manager"`.
+- Helpers inherit the screen they sit on; bill reading also needs `viewPurchaseMoney`. Ask the ERP needs only an ERP level, then each tool checks `ctx.screens`.
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/erp/engines/alerts.test.ts` | The rules' conditions and sentences |
+| `npm run test` | `src/lib/erp/engines/match.test.ts` | The name matching the bill and order readers use |
+| `npm run test:integration` | `src/lib/erp/erp-ai.test.ts` — `alerts (AI-4)` | An alert is raised once however often the checks run, only its power sees money alerts, and it resolves itself once its condition clears |
+| `npm run test:integration` | `src/lib/erp/erp-ai.test.ts` — `the dashboard` | Money tiles need their power; every tile links to the rows it counted |
+| `npm run test:integration` | `src/lib/erp/erp-ai-reading.test.ts` | Absent when unavailable; supplier bill reading and its flags; orders from messages; LR and test photos; complaint review; Ask the ERP's tools answer with the person's own screen |
+
+## Changing it safely
+
+<Steps>
+<Step title="A new alert is a pure rule plus a fact query">
+Write the rule in `engines/alerts.ts` with a test, give it a label in `ALERT_LABEL`, add its fact query to `currentCandidates`, and its thresholds to `Thresholds` and the registry. Set `power` if the sentence shows money or cost.
+</Step>
+<Step title="Pick a stable subject">
+The subject is what makes "once" hold. A subject that changes between runs raises a new alert every hour.
+</Step>
+<Step title="A new helper goes through featureState and logSuggestion">
+Give it a switch and a monthly cap in the registry, add it to `AiFeature`, `SWITCH` and `CAP`, log the reading before anybody decides, and save only through the owning screen's own form with `decideSuggestion` on the way out.
+</Step>
+<Step title="Ask the ERP gets a tool, never SQL">
+A new question is a tool in `askTools` that calls `fromScreen` on an existing screen module, so it answers with exactly the person's view.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| A hand-resolved alert whose condition still holds is raised again as a new alert on the next run | `alerts.ts` `runErpAlerts`; `screens/alerts.ts` `resolve` |
+| `cashNegative` is never fed | `engines/alerts.ts` `cashNegative`; `alerts.ts` `currentCandidates` |
+| `erp_alerts_open_key` exists only in the migration, not in `schema.ts` | `drizzle/0180_erp_alerts_and_ai.sql`; `db/schema.ts` `erpAlerts` |
+| The digest's writing model is `voice.languageModel`, not `erp.ai.textModel` | `digest.ts` `writeErpDigest` |
+| `readyUnbilled` uses the line's `updated_at` as "Ready since" | `alerts.ts` `currentCandidates` |
+| `belowLevel` for raw materials is fed by rows below the maximum | `screens/movement.ts` `rmReorderRows` |

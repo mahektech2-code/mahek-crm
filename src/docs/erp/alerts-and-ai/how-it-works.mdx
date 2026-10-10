@@ -1,0 +1,119 @@
+The ERP's alerts and its AI helpers share one principle: **the machine notices and reads; a person decides**. Every alert rule is ordinary code over the records the ERP already holds, compared with each item's own history, with no model involved. Every AI helper reads something into a draft that a person confirms before anything is written, and every reading is logged with what the person then did with it.
+
+## Alerts
+
+### How an alert lives
+
+<Flow caption="Raised once, cleared by the facts" chart={`
+flowchart TD
+  A["Hourly run<br/>(and Run checks now)"] --> B["Every rule over the current records"]
+  B --> C{"Condition holds?"}
+  C -- "Yes, and no open alert<br/>of this kind and subject" --> D["Raise: Open"]
+  C -- "Yes, already open" --> E["Nothing (no duplicate)"]
+  C -- "No, but an alert is open" --> F["Resolve: Condition cleared"]
+  D --> G["Acknowledged<br/>(with a note)"]
+  G --> F
+  D --> H["Resolved by hand<br/>(with a reason)"]
+`} />
+
+<Rule title="One condition, one alert">
+Each alert has a **kind** and a **subject** — the purchase, the bill, the godown — and while one of that kind and subject is open or acknowledged, the same condition is never raised again. A database index enforces it, so an hourly run cannot pile up copies.
+</Rule>
+
+<Rule title="Cleared by the facts, not by a person">
+On every run, any open or acknowledged alert whose condition no longer holds is resolved with *Condition cleared*. Acknowledging changes nothing about that; it only tells others somebody has it.
+</Rule>
+
+<Rule title="You see what your screens and powers allow">
+An alert is shown to somebody who holds the screen it points at, and — for the rate-jump (purchase money), thin-margin (cost) and write-off (lost stock) alerts — the power that reveals those figures.
+</Rule>
+
+The checks run in the hourly job and in the nightly one; a manager or ERP administrator can run them at once. The whole set is switched by <Setting k="erp.ai.alerts.enabled" />.
+
+### The rules and their thresholds
+
+| Alert | Condition |
+|---|---|
+| Purchase rate jump | A litre rate more than <Setting k="erp.ai.alerts.rateJumpPct" />% from the median of the same supplier's last <Setting k="erp.ai.alerts.rateLookback" /> rates for the item |
+| Rate missing too long | No rate for more than <Setting k="erp.ai.alerts.rateMissingDays" /> days |
+| High SFG loss | Adjusted litres more than <Setting k="erp.ai.alerts.sfgLossPct" />% of the line's use |
+| High filling loss | Adjusted cans more than <Setting k="erp.ai.alerts.fillLossPct" />% of the cans filled |
+| Repeated write-offs | <Setting k="erp.ai.alerts.writeOffCount" /> or more to Item Lost Record by one person, or from one godown, within <Setting k="erp.ai.alerts.writeOffDays" /> days |
+| Negative or thin margin | A dispatched line's margin below zero or below <Setting k="erp.ai.alerts.marginPct" />% of its amount |
+| Slow fulfilment | More than <Setting k="erp.ai.alerts.fulfilDays" /> days from order to dispatch |
+| Ready but not billed | Ready and allocated in full, no Tally bill number, for more than <Setting k="erp.ai.alerts.readyUnbilledHours" /> hours |
+| Test unverified | A test undecided for more than <Setting k="erp.ai.alerts.stuckTestHours" /> hours |
+| LR missing | A bill without an LR more than <Setting k="erp.ai.alerts.stuckLrDays" /> days after it left |
+| Credit note not issued | Accepted more than <Setting k="erp.ai.alerts.stuckCnDays" /> days ago and not issued |
+| Packing batch incomplete | Cans short or over for more than <Setting k="erp.ai.alerts.stuckPackDays" /> days |
+| Duplicate-looking expense | One person, one amount, one particular, twice within <Setting k="erp.ai.alerts.duplicateExpenseDays" /> days |
+| Petty cash exception | Each entry on the petty-cash exception queue — see [petty cash](/docs/erp/petty-cash/how-it-works) |
+| Stock below re-order level | A followed level is short — see [levels](/docs/erp/stock-levels/how-it-works) |
+
+<Callout kind="why" title="Why each rule compares with the item's own history">
+A ₹10 change is noise on one chemical and a scandal on another. The rate rule compares a purchase with the same supplier's own recent rates for that item, and a margin with the line's own amount, so one threshold means the same thing everywhere.
+</Callout>
+
+### Who is told
+
+An alert sits on the screen; it does not ring anybody — with one exception. When a **Stock below re-order level** alert is first raised, every active person assigned to that godown who can raise purchase requirements gets a notification, once. Waiting for somebody to open the Alerts screen is how an item runs out.
+
+## The morning summary
+
+<Rule title="Counts only, written from code">
+Yesterday's orders taken, lines dispatched, inward lines received, SFG batches made and open alerts by kind are counted by code. A writing model may turn them into two or three sentences — instructed to use only the figures given and add no causes, advice or praise — and where none answers, the plain rule-built sentence stands. It carries no money, so everybody who can open the dashboard may read it.
+</Rule>
+
+## The AI helpers
+
+### One gate for every helper
+
+<Rule title="A helper runs only when it is switched on, keyed, and under its cap">
+Each helper has its own switch and its own monthly allowance, counted from the readings logged since the 1st (India time). A helper that reads images needs an OpenAI key; one that reads text needs any configured provider. When a helper cannot run, the screen says why in a sentence — *This AI feature is switched off in Settings*, *Reading images needs an OpenAI key, set in Admin Console → Integrations*, *This month's … readings are used* — and offers no button that would fail.
+</Rule>
+
+| Helper | Switch | Monthly allowance | Model |
+|---|---|---|---|
+| Supplier bills | <Setting k="erp.ai.bills.enabled" /> | <Setting k="erp.ai.bills.monthlyCap" /> | vision |
+| Order messages | <Setting k="erp.ai.orders.enabled" /> | <Setting k="erp.ai.orders.monthlyCap" /> | text |
+| Ask the ERP | <Setting k="erp.ai.ask.enabled" /> | <Setting k="erp.ai.ask.monthlyCap" /> | text (OpenAI) |
+| LR and test photos | <Setting k="erp.ai.photos.enabled" /> | <Setting k="erp.ai.photos.monthlyCap" /> | vision |
+| Complaints | <Setting k="erp.ai.complaints.enabled" /> | <Setting k="erp.ai.complaints.monthlyCap" /> | text |
+
+The vision model is <Setting k="erp.ai.visionModel" /> and the text model <Setting k="erp.ai.textModel" />. Suggested levels use no model at all and are switched by <Setting k="erp.ai.reorder.enabled" />; the dictation microphone is switched by <Setting k="erp.ai.voice.enabled" />.
+
+### The model reads; rules decide
+
+<Rule title="Nothing a model reads is trusted on its own">
+- **Supplier bills** — the model reads the bill; which register row each line belongs to, whether the quantity (beyond <Setting k="erp.ai.bill.qtyTolerancePct" />%) or the rate (beyond <Setting k="erp.ai.bill.rateDeviationPct" />%) is unusual, whether the GSTIN is the supplier's, and whether the bill number was used before, are decided by rules. Saving goes through the register's own rules.
+- **Order messages** — the customer, the SKU and the quantity in cans are decided by rules; several possible SKUs are left for the person to choose.
+- **LR photos** — the transporter match and repeated-LR check are rules.
+- **Test photos** — a density more than <Setting k="erp.ai.qc.densityTolerancePct" />% from the material's master density is flagged; the reading never sets the verification, which stays the verifier's.
+- **Complaints** — the category is accepted only if it is one of the configured categories; the helper never proposes a credit-note amount.
+</Rule>
+
+<Rule title="Every reading is logged with its outcome">
+Each suggestion is stored before anybody decides, with what was proposed, how sure the model was, which model served it, and who asked. When the person saves, the outcome is recorded: **accepted** as proposed, **edited**, or **rejected** — so how often a helper is right is a query, not an impression.
+</Rule>
+
+### Ask the ERP answers as you
+
+The model does not query the database. It picks from a fixed set of question tools — stock, order lines, billed lines, purchases, a bill's trace, items to re-order, transport, complaints, petty cash — and each tool answers by loading **that screen exactly as the person asking would see it**. Rows they cannot see are not there; columns their powers hide are removed and listed as hidden, and the model is told never to guess them. It answers in one to three sentences, figure first, links to the filtered lists it read, and writes nothing.
+
+## Who can do what
+
+| Act | Needs |
+|---|---|
+| Open the Alerts screen | The Alerts screen |
+| See an alert | Its screen, and its power where it shows money, cost or write-offs |
+| Acknowledge or resolve | Being able to see it |
+| Run checks now | ERP manager level, or an ERP administrator |
+| Use a helper | The screen it sits on (and, for bills, *See purchase money*) |
+| Ask the ERP | The ERP app |
+
+## Where the code and the intent disagree today
+
+- **Resolving by hand does not stick while the condition holds.** A resolved alert no longer blocks the same kind and subject, so the next hourly run raises it again as a new alert.
+- **A "Petty cash below zero" alert kind exists but is never raised.** Its rule is written and labelled; nothing feeds it. A fund below zero arrives instead as a *Petty cash exception*.
+- **The summary is written by the dictation's language model**, not by the ERP's own reading model.
+- **"Below re-order level" alerts for raw materials fire below the maximum** — see [levels](/docs/erp/stock-levels/how-it-works).

@@ -1,0 +1,135 @@
+The ERP decides what somebody may do in four layers, and each answers a different question. Keeping them apart is what lets the owner say "the godown team opens Stock" without also saying "the godown team sees what we paid for it".
+
+| Layer | Question | Where it is set |
+|---|---|---|
+| **The ERP grant and its level** | Does this person have the ERP at all, and are they an associate, a manager or an administrator in it? | Admin Console → Access |
+| **Screens** | Which sidebar entries can they open? | Admin Console → Access (ticked, or from a designation) |
+| **Powers** | Which money may they see, and which decisions may they take? | Admin Console → Access, beside the screens |
+| **Duties on a material** | For one item, who requests it, raises its PO, approves the PO and tests its lots? | ERP → Raw materials → the item → Who does what |
+
+The fifth fact, the **department**, rides on the designation and narrows what a production person may ask to be bought. It is explained below and on [Purchase requirements](/docs/erp/purchase-requirements/how-it-works).
+
+## Screens: one grant per sidebar entry
+
+<Rule title="A screen is the smallest thing that can be granted">
+Each ERP screen in the sidebar is a separate module. A tab inside a screen is not: Transport's "Pending LR", "On the road", "All bills" and "Paid freight" are one screen, and holding Transport opens all four.
+</Rule>
+
+<Callout kind="why">
+Mahek Plus drew a separate view for every filter of one table, and the first build copied every one into its own grant — fifty-four screens. Somebody given "Pending LR" but not "All bills" was looking at a slice of a list with no way to see the rest of it. A tab is that list again, so it comes with the list.
+</Callout>
+
+<Rule title="Dashboard and Settings are always open">
+Whoever holds the ERP reaches the dashboard and their own Settings whatever was ticked. Withholding either would leave somebody an app with no front door. The Access screen draws them as always on rather than as a checkbox that does nothing.
+</Rule>
+
+<Rule title="No screens ticked means every screen">
+A grant that ticks every screen stores no list at all, so a screen built next month reaches everybody who holds the whole ERP — and nobody who was deliberately narrowed.
+</Rule>
+
+## Levels
+
+| Level | What it adds |
+|---|---|
+| **Associate** | Works the screens ticked. Reads help videos; reads recipes. |
+| **Manager** | Also adds and removes help videos, sets recipes, verifies expenses and runs the alert checks. |
+| **Admin** (ERP administrator) | Every power without a tick, every godown without being assigned, may set who does what on a material, may delete posted production lines, may preview the ERP as anybody. |
+
+A platform administrator is also an ERP administrator. Everything an administrator does is still audited under their own name.
+
+## Powers: the decisions and the money
+
+The source system tied these to the AppSheet admin role and three email addresses. Here each is a named power given to a named person.
+
+| Power | What it lets somebody do |
+|---|---|
+| See purchase money | Rates, GST, amounts and bill status on purchases, quotations and POs; adding quotations; raising POs; entering a purchase rate |
+| See cost and margin | Costing on batches, fills, packing and stock; margin on order lines; the box rate on products |
+| See sales rate | The rate on orders and on price lists |
+| See sales amounts | Discount, amount and final amount on orders; a customer's monthly target on Sales parties |
+| Verify quality tests | "Do Verify" / "Do Not Verified" on a purchase test — which creates the register row |
+| Set a purchase to Purchase Verified | The only status the verifier sets on the register |
+| Set a verified purchase back to Pending | "Do Pending" on the register |
+| Decide how a requirement is bought (the buyer) | For a "Buyer decides" item: direct purchase or quotations, per requirement |
+| Approve purchase orders | Approve or send back a PO — never one you raised, unless you are an administrator |
+| Write off to Item Lost Record | Pick the reserved write-off godown on a transfer |
+| Activate or deactivate customers | Activate, Deactivate and Mark Pending on Sales parties |
+| Approve orders from pending customers | "Approved By Admin" on an order — only while the sheet still takes orders |
+| Decide customer requests | Accept or reject complaints and credit-note requests |
+| Administer the ERP: godowns and ERP powers | Register and edit godowns, assign their staff, switch a godown off |
+| Approve or reject SFG QC | Only an approved SFG lot can be filled |
+| Approve dispatch overrides; reject or return boxes | Let a mismatched box go with a reason; mark boxes rejected or returned |
+| Petty cash: accounts team | Bank statement, confirmations and verifications, the Tally queue |
+| Approve petty-cash expenses | Up to the approver's limit, never their own |
+| Owner-level petty-cash approvals | Above the limit, owner-only categories, opening balances, budgets |
+
+<Rule title="A power hides a column on the server, not on the screen">
+Somebody without "See purchase money" is never sent the rate. The list says how many columns were withheld and which power reveals them. Every write that needs a power checks it again in the save, because a hidden button is not a permission.
+</Rule>
+
+## Designations: the job, linked rather than stamped
+
+A designation is a level, a set of screens, a set of powers and optionally a production department, with a name on it. The designations live in Admin Console → **ERP designations**; a person is given one on the Access dialog.
+
+<Flow caption="What an edit to a designation does" chart={`
+flowchart TD
+  E["An administrator edits<br/>the Quality tester designation"] --> R["Review page names<br/>who moves and who is left alone"]
+  R --> S{"For each holder:<br/>does their access equal the<br/>designation AS IT WAS?"}
+  S -- "Yes, exactly" --> M["Moved in the same save:<br/>level, screens, powers<br/>+ a notification"]
+  S -- "No, changed by hand" --> C["Customised:<br/>left exactly as they are"]
+`} />
+
+<Rule title="Customised is worked out, never stored">
+Two people with the same effective access are the same, however their access was saved. "No screens ticked" counts as every screen; Dashboard and Settings are never a difference; an administrator holds every power whatever rows say. So nobody turns "customised" because of how a row happened to be written.
+</Rule>
+
+<Callout kind="why">
+A designation stamped onto people would go stale the first time the job changed: every edit would have to be repeated by hand on every holder. A designation that overwrote everybody would destroy the exceptions somebody made on purpose about one person. Linking only those who still match does what each decision meant.
+</Callout>
+
+- **An all-screens designation** gains every screen built later.
+- **Deleting a designation** takes no access from anybody; its holders keep what they have and lose only the name.
+- **Taking the ERP away** takes the designation and the powers with it.
+- Only a **platform administrator** creates, edits or deletes a designation — a designation is access, granted to several people at once.
+
+## Production departments
+
+A designation may say which production department the job works in: **Mixing & Blending**, **Refilling**, **Packing**, or **Production Head** (all three).
+
+| Department | May ask to be bought | Works |
+|---|---|---|
+| Mixing & Blending | Chemicals | Raises chemical requirements, tests chemical lots, makes SFG |
+| Refilling | Cans and drums | Raises can and drum requirements, fills FG |
+| Packing | Boxes and packing stationery | Raises box and stationery requirements, makes packing batches |
+| Production Head | All of the above | Every step of all three |
+
+A department person raises requirements for their own department only, sees only their department's requirements (and the ones they raised themselves), and cannot cancel another department's. Somebody in no department — the office, the store, an administrator — raises for any of the four teams, and the team decides the categories. A department **narrows**; it never opens a screen.
+
+## Where somebody is working
+
+<Rule title="The working location is chosen from assigned godowns, never typed">
+An ERP administrator assigns people to godowns on Masters → Godowns. The working location is one of those. An administrator is assigned everywhere. Nobody assigned means no working location, said in words, not a guessed default.
+</Rule>
+
+<Rule title="It can be found by standing in the godown">
+With <Setting k="erp.location.autoDetect" /> on, opening the ERP inside the fence of one of your godowns switches your working location to it. The fence is <Setting k="erp.location.godownRadiusM" /> metres from the godown's map pin. Where two fences overlap the nearer pin wins; a fix whose accuracy circle is wider than the fence is "too vague" rather than a guess.
+</Rule>
+
+<Callout kind="why">
+A wrong godown pre-fills every form with it, so a guess is worse than asking. The measurement is made on the server against only the godowns you are assigned to, so a crafted location can never pick a godown the menu would not have offered. The fix itself is not kept — only the godown chosen and its distance from the pin, which answers "why did my location change" without recording where anybody was.
+</Callout>
+
+The browser's location prompt is never raised unasked: the location button beside the chip is how permission is given the first time. A godown picked by hand stays picked for the rest of the tab.
+
+## Previewing as somebody
+
+An ERP administrator can see the ERP as a designation or as one person sees it. It is **read-only**: every save refuses while it is on, though a form may be opened to see its fields. A preview of a designation has nobody behind it, so lists that belong to a person ("My customers", "my expenses") show the administrator's own, and the banner says so. The preview lasts at most four hours and is honoured only while the person holding it is still an ERP administrator. Audit rows always name the person actually signed in.
+
+## Settings that change this
+
+<SettingsTable keys={["erp.location.autoDetect", "erp.location.godownRadiusM"]} />
+
+## Where the code and the intent disagree today
+
+- The own-vehicle refusal on goods receipt says "an admin sets it in ERP settings", but the rate is a MahekOne setting in the Admin Console; the ERP's own Settings screen shows only the working location and powers.
+- The Settings screen's subtitle ("Your working location and profile.") differs from the sidebar's description of the same screen ("Your working location and what your account can do.").

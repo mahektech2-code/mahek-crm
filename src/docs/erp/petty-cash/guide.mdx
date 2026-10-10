@@ -1,0 +1,190 @@
+**Petty cash** is where the factory's day-to-day spending is recorded, approved and paid: tea and diesel, a loading crew, a part for a machine, an advance to a vendor. It keeps three things apart that people usually blur together — **what was spent** (the expense), **what was paid against it** (the payments) and **where the money came from** (the funds) — and every balance on the screen is read off a ledger, never typed.
+
+This page covers the everyday tabs: **Overview**, **Expenses**, **Payments**, **Funds given / transfers**, **Customer cash** and **Vendor outstanding**. The daily cash count, the bank statement, the fund ledger, budgets, reports, Tally and settings are on [Petty cash: closing, bank, budgets and Tally](/docs/erp/petty-cash-closing).
+
+<Callout kind="live">
+Limits on this page — how much is approved automatically, how much an approver can decide — are read live from your ERP.
+</Callout>
+
+## The three funds
+
+| Fund | What it is | Pays by |
+|---|---|---|
+| **Bank** | The company's bank account | UPI / GPay, bank transfer, cheque |
+| **Bank cash (physical)** | Cash drawn from the bank, held in production | Cash |
+| **Customer cash** | Cash customers handed over at the factory | Cash |
+
+Each fund has a **custodian** — the person who signs in to confirm money reaching it and to count it at the end of the day.
+
+## Overview
+
+<Wireframe url="/erp/expenses" nav={["Dashboard", "Alerts", "#Petty cash", "Petty cash"]} active="Petty cash" caption="Petty cash → Overview">
+  <WfBar><WfTitle sub="Production expenses and their payments, the three funds and what each holds, customer cash, the bank statement and the daily cash count — every balance read off the ledger.">Petty cash</WfTitle></WfBar>
+  <WfTabs items={["Overview", "Expenses", "Payments", "Funds given / transfers", "Customer cash", "Vendor outstanding", "Daily closing", "Bank reconciliation", "…"]} active="Overview" />
+  <WfBar>
+    <WfCard title="Bank account"><WfText>₹1,42,300</WfText><WfText muted>Statement less book ₹0</WfText></WfCard>
+    <WfCard title="Production cash"><WfText>₹8,450</WfText><WfText muted>Last closing 9 Oct · approved</WfText></WfCard>
+    <WfCard title="Customer cash"><WfText>₹3,000</WfText><WfText muted>In transit (out) ₹3,000</WfText></WfCard>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfBar>
+    <WfCard title="This month"><WfText>₹46,200 · 38 expenses</WfText><WfText muted>Pending payment · Partially paid · Vendor outstanding · Budget used</WfText><Hotspot n={2} /></WfCard>
+    <WfCard title="Pending actions"><WfText muted>Awaiting approval 3 · Missing bill 2 · Customer cash held · Bank lines to reconcile · Today's cash closing 1 of 2 · Cash variances</WfText><Hotspot n={3} /></WfCard>
+  </WfBar>
+  <WfTable columns={["Exception", "What", "Date", "Severity"]} rows={[
+    ["Waiting for approval too long", "EXP-118 · ₹6,500 has waited 4 days for an approver.", "6 Oct", "Pending"],
+    ["Cash closing not submitted", "Production cash: no closing for 2026-10-09.", "9 Oct", "Pending"],
+  ]} />
+  <Hotspot n={4} />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>One card per fund.</b> Its balance from the ledger, money in transit to or from it, and — for a bank — how the statement compares; for cash, the last daily count. A fund whose opening balance is not verified says so.</span>,
+  <span key="2"><b>This month.</b> What was spent, what is still to pay, and how much of the month's budgets is used.</span>,
+  <span key="3"><b>Pending actions.</b> What is waiting on somebody. Each line opens the list behind it.</span>,
+  <span key="4"><b>Exceptions.</b> Everything the module thinks somebody should look at, each with a link to the record.</span>,
+]} />
+
+## Expenses
+
+An **expense** is one bill or one spend. It records what was bought, from whom, for how much, and whether the bill is attached — never how it was paid.
+
+<Steps>
+<Step title="Press New expense">
+Fill in **What it was** — date, particular, category, transaction type, godown, who spent it, department — and **The bill** — vendor or payee, total amount, bill number and date, payment terms or due date, whether the goods or service were **Received** or are **Not yet received (a commitment)**, and whether the **Bill / receipt** is *Attached*, *To follow* or *Not available*. Attach the photo when it is attached.
+</Step>
+<Step title="Say what happened to the payment">
+**Unpaid — pending payment** is the usual answer. If the money already went — *Paid in full now*, *Part paid now* or *Advance paid now* — fill in what was paid, from which fund, the payee's acknowledgement, and, because the expense is not yet approved, **why it could not wait for approval**.
+</Step>
+<Step title="Submit for approval, or save as a draft">
+A draft can be edited and is not a record of spending yet. Submitting decides who must approve it — see the table below — and sends it to them.
+</Step>
+</Steps>
+
+<Callout kind="warn" title="Possible duplicates">
+If the same payee already has an expense with the same bill number, or the same amount on the same day, saving stops with *Possible duplicate of EXP-…*. If it really is a separate expense, choose **Yes — it is a separate expense** under *If warned of a duplicate* and save again.
+</Callout>
+
+### Who approves it
+
+| When you submit | It goes to |
+|---|---|
+| At or below <Setting k="erp.pettyCash.autoApproveUpToPaise" /> paise, in a category that allows it, with its bill attached | **Approved by policy** on the spot |
+| Up to <Setting k="erp.pettyCash.approverLimitPaise" /> paise | An **approver** |
+| Above that, in an owner-only category, or over the month's budget (when the budget rule says so) | The **owner** |
+
+The row says which and why under **Approval needed from** and **Rule applied**. Nobody can approve an expense they raised, submitted or spent — not even an administrator.
+
+### Actions on an expense
+
+| Action | When | Who |
+|---|---|---|
+| **Submit for approval** / **Edit** | Draft or returned | Whoever raised it |
+| **Approve** / **Return for correction** / **Reject** / **Take for review** | Submitted or under review | An approver (or the owner, for owner-level) — never your own |
+| **Record payment** / **Pay the advance** | Submitted, under review or approved, and something left to pay | Anybody holding the screen (before approval it is an *urgent* payment) |
+| **Request payment** | Approved | Anybody — nothing moves until accounts confirm it |
+| **Mark received** | A commitment whose goods have arrived | Anybody |
+| **Allow without a bill** | Bill not attached | An approver, not on their own expense |
+| **Add a document** | Any time | Anybody |
+| **Request an adjustment** | Submitted or approved | Anybody — another approver decides it |
+| **Set against a bill** / **Recovered in cash** | An advance with money still open | Anybody — an approver decides it |
+| **Cancel expense** | Before approval, nothing paid | Whoever raised it, or an approver |
+
+An approved expense is never edited — it is corrected by an **adjustment** (*Vendor credit / return*, *Correction — less is payable*, *Correction — more is payable*, *Write-off*, or setting an advance against it), which somebody else approves.
+
+## Payments
+
+A **payment** is money leaving a fund against one expense. The **Payments** tab lists every one: the fund it came from, the mode, the reference, its status, whether the bank statement has matched it, and whether it is in Tally.
+
+<Steps>
+<Step title="Record payment">
+Pick **Paid from** (the fund) and the **Mode** that fund pays by, the date, and the amount — never more than what is left. A bank payment needs its **UPI / UTR / cheque reference**. A cash payment needs the payee's acknowledgement: their name, or a photo of the signed slip.
+</Step>
+<Step title="Or Request payment">
+If accounts will pay it, raise a **payment request** instead. Nothing leaves any fund until somebody in accounts presses **Confirm it was paid** with the date, reference and proof. The person who asked cannot confirm it.
+</Step>
+</Steps>
+
+<Callout kind="money" title="A fund cannot go below what it holds">
+A payment larger than the fund holds is refused: *Production cash holds ₹2,000; ₹3,000 cannot be paid from it.* Record a payment request, or move money into the fund first. Only an approver can authorise paying beyond the fund, with a reason — and the refused attempt is logged either way.
+</Callout>
+
+| Payment status | Meaning |
+|---|---|
+| **Requested** | Asked for; no money has moved. |
+| **Confirmed** | Paid; the fund has gone down. |
+| **Cancelled** | A request withdrawn. |
+| **Reversed** | Undone by an approver, with a reason. The fund goes back up by a new entry; the original stays. |
+
+Accounts mark confirmed payments **verified** after checking them — never their own. An approver can **Reverse** a payment, dated today or on its own date (which reopens that day's cash closing); a payment already matched to the bank statement has to be unmatched first.
+
+## Funds given / transfers
+
+Money moving **between funds** — not spending — is a transfer.
+
+| Kind | From → to |
+|---|---|
+| **Bank cash withdrawal** | Bank → production cash |
+| **Cash handed over to production** | Production cash → production cash |
+| **Cash returned to accounts** | Production or customer cash → bank or production cash |
+| **Customer cash handed over** | Customer cash → production or customer cash |
+| **Customer cash deposited into bank** | Customer cash → bank |
+| **Transfer between fund accounts** | Any → any |
+
+<Steps>
+<Step title="Press New transfer">
+Pick the **Kind**, date, **From**, **To** and amount. A withdrawal or a deposit needs its **Bank reference / slip no.** When moving customer cash, pick the **Customer receipts it carries**.
+</Step>
+<Step title="It is In transit until received">
+Nothing moves yet. The receiving fund's custodian (or accounts) is told to confirm it.
+</Step>
+<Step title="The receiver presses Confirm received">
+Both sides post at once. **Whoever sent the money cannot confirm it.** A transfer still in transit can be **Cancelled** by whoever started it or accounts; a confirmed one can only be **Reversed** by an approver.
+</Step>
+</Steps>
+
+Money given to employees before the fund ledger existed is still listed here as it was, marked *Before the ledger*, and counts in no balance.
+
+## Customer cash
+
+When a customer hands over cash at the factory, record it on **Customer cash → Cash received**: the customer, the date, the amount, the **customer-cash fund** it is held in, the **invoices it is against** (spread over the oldest first), and the customer's acknowledgement or the receipt you gave them — one of the two is required.
+
+The cash is now in the customer-cash fund — it is **not a sale** and not a payment against the bill yet. Accounts are told to reconcile it.
+
+| Column | Meaning |
+|---|---|
+| **Where it is** | *Held*, *Handed over*, or *Deposited* — read from the transfers that carried it |
+| **Accounts** | Whether accounts have verified it against the customer's ledger |
+| **Tally** | Whether its voucher has reached Tally |
+
+Select receipts and use **Deposit into bank** or **Hand over** to move them — the same cash is never deposited twice. Accounts **Verify against the ledger** (not their own recording), with the accounts receipt reference. An approver can **Reverse** a receipt that is still held.
+
+## Vendor outstanding
+
+Every approved, received bill with money still owed, one row per bill: the vendor, the original amount, what is paid, what is **Outstanding**, its **Status** (pending, partially paid), **Days overdue**, an **Ageing** bucket (*Not yet due*, *1–7 days overdue*, *8–15*, *16–30*, *More than 30 days overdue*) and the **Next action**. The summary lists the largest balances; the chips filter by ageing. **Record payment** and **Request payment** work here exactly as on Expenses.
+
+A bill's due date is the one typed, else the bill date plus the payment terms; a bill falling due within <Setting k="erp.pettyCash.dueSoonDays" /> days is flagged as due.
+
+## Questions people ask
+
+<Faq q="I approved an expense but the fund did not go down.">
+Approval does not pay. A payment — recorded, or a request confirmed by accounts — is what takes money out of a fund.
+</Faq>
+<Faq q="Why can't I approve this expense?">
+You raised it, submitted it, or are the person who spent it; or it needs the owner. The button's hover says which.
+</Faq>
+<Faq q="Record payment says 'Submit it first'.">
+A draft or returned expense cannot be paid. Submit it.
+</Faq>
+<Faq q="It says 'Not received yet — mark it received first'.">
+The expense is a commitment. Mark it received when the goods or service arrive. An advance is paid as its own expense.
+</Faq>
+<Faq q="I recorded a transfer but the balance has not changed.">
+It is in transit until the receiving side confirms it.
+</Faq>
+<Faq q="The same payment request was sent twice by mistake.">
+Each form carries its own key; the second send is recognised and nothing is paid twice.
+</Faq>
+<Faq q="Can I edit an approved expense?">
+No — request an adjustment. The original amount and its approval stay on the record.
+</Faq>

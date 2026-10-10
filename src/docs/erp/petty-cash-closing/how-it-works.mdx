@@ -1,0 +1,135 @@
+The control tabs exist so that every rupee the production funds hold can be shown three ways that must agree: by **counting the cash box**, by **reading the bank statement**, and by **adding up the ledger**. Where they disagree, the difference is recorded as what it is — a variance, an unmatched line — and resolved by a person, separately, with the original left in place.
+
+The everyday tabs — expenses, payments, transfers, customer cash — are on [Petty cash: expenses, payments and funds](/docs/erp/petty-cash/how-it-works).
+
+## The daily cash count
+
+<Rule title="Expected is worked out, never typed">
+For one cash fund and one day: **opening** (everything posted before the day) **+ in** (credits posted that day) **− out** (debits posted that day) = **expected**. Only posted ledger entries count, so an unpaid bill, a payment request and a handover still in transit cannot reach it.
+</Rule>
+
+<Rule title="A variance is reviewed, never absorbed">
+Counted less expected is the variance. A non-zero variance needs an explanation to submit, and a **resolution** to approve: *explained and accepted as it stands*, or *adjusted* — which posts a separate adjustment for the variance on that day. Either way the original count, the expected figure and the variance stay on the closing. A shortage is never turned into an expense.
+</Rule>
+
+<Rule title="Counter and reviewer are two people">
+Whoever submitted the count cannot approve or return it — whatever their powers. Approving needs *Approve petty-cash expenses* or the owner's power.
+</Rule>
+
+<Rule title="A closed day reopens if it changes">
+Any posting dated on or before an approved closing's day reopens it, with the reason (*… was posted after the day was closed*). Approving a variance adjustment is the one posting that does not reopen its own closing — it is set approved after posting.
+</Rule>
+
+<Callout kind="why">
+A count that could be quietly edited, or a shortage that became "miscellaneous expense", is how a cash box drifts away from its book a few hundred rupees at a time with nobody's name on any of it.
+</Callout>
+
+A cash fund that had movements on a day in the last week with no closing for that day raises *Cash closing not submitted*; a variance waiting for review raises *Cash shortage* or *Cash overage*; a reopened day raises *Backdated entry reopened a closed day*.
+
+## The bank statement
+
+<Rule title="A statement line confirms; it never creates">
+An imported line can be matched to a recorded payment, transfer or fund adjustment through the same bank fund — never to nothing. A line nothing explains is an exception for a person. The two conversions offered (*it is a cash withdrawal*, *it is a bank charge*) create the transfer or the adjustment request through their own rules first, and then match to it.
+</Rule>
+
+### How lines are matched
+
+In this order, per line, against movements no line has claimed yet:
+
+| Rule | Result |
+|---|---|
+| The line's reference (or a long reference inside its narration) is exactly one recorded movement's reference, with the same amount | **Matched** — settled on its own |
+| Several movements share that reference | **Exception** — ambiguous |
+| One movement in the same direction has the same amount within <Setting k="erp.pettyCash.matchWindowDays" /> days | **Suggested** — a person confirms |
+| Several do, and exactly one shares a word with the narration (the payee) | **Suggested** — by narration |
+| Several do, and the narration does not settle it | **Exception** — ambiguous |
+| Nothing fits | **Unmatched** |
+
+<Callout kind="why" title="Why only a reference settles a line on its own">
+Two vendors paid ₹5,000 in the same week is an ordinary week. An amount and a date are evidence, not proof; a UTR names one transfer.
+</Callout>
+
+<Rule title="Re-importing adds nothing">
+Each line is fingerprinted by the fund, date, amounts, reference, running balance, narration and the bank's own id — the balance is in it so two genuine ₹500 debits on one day are still two lines. A second import of the same file, or an overlapping one, adds only lines it has not seen, and says so.
+</Rule>
+
+The **statement less book** figure compares the balance on the last statement line with the fund's ledger balance up to that line's date.
+
+## The ledger
+
+<Rule title="Append-only, by the database">
+`Fund ledger` is every posting, ever. The database refuses an edit or a delete, whatever the application does. A correction is a new posting: a reversal names the entry it reverses; an adjustment names its kind and reason.
+</Rule>
+
+<Rule title="Adjustments take two people">
+A fund adjustment — a bank charge, a correction, an advance recovered in cash, a variance — is requested with a reason and posted only once somebody else with the approver's or owner's power approves it.
+</Rule>
+
+## Budgets
+
+<Rule title="Budgets are controlled on incurred spending">
+A month's budget for a category (at a godown, or all godowns) is compared with what was **incurred** — received expenses, submitted or approved — not with what was paid. **Remaining** also takes off what is **committed** (ordered, not received), because money promised is not money free. Paid is shown beside incurred, never instead of it.
+</Rule>
+
+| Figure | Rule |
+|---|---|
+| Forecast | This month: incurred ÷ days gone × days in the month. A past month: incurred. A future month: none. |
+| Variance | (incurred − budget) ÷ budget |
+
+Only an **approved** budget counts. The owner approves (never one they set); an approver or the owner sets; changing an approved amount returns it to draft. What happens when an expense would pass its approved budget is <Setting k="erp.pettyCash.budgetRule" />: *warn* flags it, *approval* routes it to the owner.
+
+## Tally
+
+<Rule title="A completed payment is not a posted voucher">
+MahekOne keeps the operational record and a queue of what should reach Tally, with a status of its own. Tally stays the authority for the books.
+</Rule>
+
+| What is queued | Voucher type |
+|---|---|
+| An approved, received expense | Journal |
+| A confirmed payment | Payment |
+| A confirmed transfer | Contra |
+| A customer cash receipt | Receipt |
+| An approved fund adjustment | Journal |
+
+How vouchers reach Tally is <Setting k="erp.tally.mode" />:
+
+| Mode | Behaviour |
+|---|---|
+| off | Nothing is queued |
+| export | Queued; accounts export each voucher's XML, post it by hand, and record the voucher number |
+| live | Queued; accounts post from the screen to the Tally server, retrying on failure |
+
+<Rule title="A retry alters, never duplicates">
+Every voucher carries the record's fixed MahekOne id as Tally's remote id. A post that timed out but reached Tally is altered by the retry rather than created twice. Tally being unreachable fails the attempt safely and leaves the record untouched. A record reversed after posting moves its entry to **correction**; one reversed before posting becomes **not required**.
+</Rule>
+
+## Settings
+
+<Rule title="A fund starts from a verified opening">
+An opening balance is proposed (accounts or the owner) and verified and posted by somebody else (an approver or the owner). After that it is changed only by an adjustment. A fund whose opening is not verified is flagged.
+</Rule>
+
+Adding and editing fund accounts and expense categories, and the **Approval limits** button (which writes the five `erp.pettyCash.*` limits and timings through the same audited settings store the Admin Console uses), are the owner's or an ERP administrator's. Expense categories carry the **approval rule** that routes an expense, whether a **bill is required** (which stops approval by policy and raises *Bill or receipt missing*), whether it is **budgeted**, and the Tally ledger the voucher posts to.
+
+<SettingsTable keys={["erp.pettyCash.matchWindowDays", "erp.pettyCash.budgetRule", "erp.tally.mode", "erp.tally.url", "erp.tally.company"]} />
+
+## Who does what
+
+| Tab | Accounts team | Approver | Owner |
+|---|---|---|---|
+| Daily closing | — | Review (not your own count) | Review |
+| Bank reconciliation | Import, match, reconcile, convert, unmatch | — | — |
+| Fund ledger — adjustments | Request | Approve / reject (not your own) | Approve / reject |
+| Budgets | — | Set | Set, approve (not your own) |
+| Tally sync | Post, export, record, mark | — | — |
+| Settings — funds | Propose opening | Verify opening (not your own) | Edit funds, propose and verify opening |
+| Settings — categories, approval limits | — | — | Edit |
+
+Counting a fund is the custodian's job; anybody holding the Petty cash screen can submit a count.
+
+## Where the code and the intent disagree today
+
+- **The statement balance assumes oldest-first files.** The last balance is taken from the latest date, and among lines of that date the one imported last. A statement exported newest-first gives the balance of that day's earliest transaction.
+- **An approved variance adjustment reopens later approved days.** It is posted on the closing's own date, so any later day of the same fund already approved reopens and must be counted again.
+- **Bank matching treats an in-transit transfer as a candidate.** A withdrawal still waiting for the custodian's confirmation can be matched and reconciled before it has posted to the ledger.
