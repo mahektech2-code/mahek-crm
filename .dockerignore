@@ -30,3 +30,7 @@ README.md
 Dockerfile
 docker-compose.yml
 Caddyfile
+
+# The phone apps build their own APKs in their own workflows.
+mbos-app/
+factory-mobile/

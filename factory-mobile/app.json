@@ -1,0 +1,33 @@
+{
+  "expo": {
+    "name": "Mahek Factory",
+    "slug": "mahek-factory",
+    "version": "2.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#FFFFFF",
+    "android": {
+      "package": "in.mahek.factory",
+      "versionCode": 100,
+      "adaptiveIcon": {
+        "backgroundColor": "#6835FB",
+        "foregroundImage": "./assets/android-icon-foreground.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "softwareKeyboardLayoutMode": "resize",
+      "permissions": ["android.permission.CAMERA"],
+      "blockedPermissions": ["android.permission.RECORD_AUDIO"]
+    },
+    "ios": { "bundleIdentifier": "in.mahek.factory", "supportsTablet": false },
+    "plugins": [
+      ["expo-splash-screen", { "backgroundColor": "#FFFFFF", "image": "./assets/splash-icon.png", "imageWidth": 120 }],
+      "expo-sqlite",
+      ["expo-camera", { "cameraPermission": "The Factory app scans the QR on task sheets, drums and pallets, and photographs the loaded truck.", "recordAudioAndroid": false }],
+      ["expo-image-picker", { "cameraPermission": "The Factory app photographs the loaded truck as proof.", "photosPermission": false, "microphonePermission": false }],
+      "./plugins/withReleaseSigning.js",
+      "./plugins/withNoForceDark.js"
+    ],
+    "extra": { "site": "https://one.mahekindia.com" }
+  }
+}

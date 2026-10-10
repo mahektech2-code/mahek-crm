@@ -26,10 +26,9 @@ const TEAMS: { id: Team; label: string; app: AppId }[] = [
  * built into the app image: a 90+ MB binary there would bloat every layer
  * and the container registry along with it.
  *
- * The Factory app's APK sits beside it as factory.apk — a Trusted Web
- * Activity around `/factory`, released by .github/workflows/factory-apk.yml.
- * Its screens come from the server, so a phone that has it installed is
- * updated by every deploy; the APK itself is downloaded once.
+ * The Factory app's APK sits beside it as factory.apk — a native app
+ * (factory-mobile/), released by .github/workflows/factory-apk.yml. Like
+ * MBOS, a new release is downloaded again and installs over the old one.
  */
 const APPS: Record<
   AppId,
@@ -62,7 +61,7 @@ const APPS: Record<
     href: "/downloads/factory.apk",
     action: "Download for Android",
     download: true,
-    note: "Your phone will warn you it’s from outside the Play Store — that’s expected for an internal app. Once installed it updates itself from the server, so download again only if your supervisor asks you to.",
+    note: "Your phone will warn you it’s from outside the Play Store — that’s expected for an internal app. Already installed? Downloading again updates it in place, and work waiting to send is kept.",
   },
 };
 
