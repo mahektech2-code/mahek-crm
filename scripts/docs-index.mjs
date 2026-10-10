@@ -186,7 +186,10 @@ for (const path of files) {
       if (!existsSync(join(ROOT, file))) throw new Error(`${file}: no such file`);
       const cut = symbol ? cutSymbol(file, symbol) : cutLines(file, lines);
       const lang = LANG[file.split(".").pop()] ?? "text";
-      const html = await codeToHtml(cut.code, { lang, theme: "github-light" });
+      // No time limit: Shiki's default gives up on a line after 500 ms and leaves it
+      // uncoloured, so a busy machine (a build running beside it) produced a
+      // different index from a quiet one and the staleness check failed on CI.
+      const html = await codeToHtml(cut.code, { lang, theme: "github-light", tokenizeTimeLimit: 0 });
       excerpts[key] = { file, symbol: symbol ?? null, startLine: cut.startLine, endLine: cut.endLine, html };
     } catch (e) {
       failures.push(`${rel}: ${e.message}`);
