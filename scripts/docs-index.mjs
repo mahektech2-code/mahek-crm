@@ -22,7 +22,14 @@
  *             twenty lines.
  *   toc       each page's ## and ### headings, slugged exactly as rehype-slug
  *             slugs them, for the "On this page" rail.
- *   search    each section's heading and plain text, for ⌘K.
+ *
+ * And a second file, `ask.json`, for the search engine behind ⌘K and "Ask the
+ * docs" (`lib/docs-ask/`): every section's FULL text, read by the server alone
+ * and never shipped to a browser (it used to be, cut short, into every page), with
+ * each `<Setting k="…"/>` kept as `{setting:…}` so the assistant knows which
+ * setting a sentence quotes and can read its live value, and each diagram and
+ * wireframe kept as its source so an answer can draw them. It is read by the
+ * server alone and never sent to a browser.
  *
  * Settings are NOT read here. A setting's value is a fact about the database a
  * deployment is connected to, not about the source, and the docs read it live
@@ -37,6 +44,7 @@ import { codeToHtml } from "shiki";
 const ROOT = process.cwd();
 const DOCS = join(ROOT, "src/docs");
 const OUT = join(DOCS, "_generated/index.json");
+const ASK_OUT = join(DOCS, "_generated/ask.json");
 const verify = process.argv.includes("--verify");
 
 function walk(dir) {
@@ -143,10 +151,33 @@ function plain(md) {
     .trim();
 }
 
+/**
+ * What the assistant reads: `plain`, keeping which setting and which code a
+ * sentence names — and the page's own DIAGRAMS and WIREFRAMES as source, so an
+ * answer can draw the same flowchart or screen the page draws rather than
+ * inventing one. They are lifted out before `plain` (which folds whitespace,
+ * and Mermaid needs its line breaks) and put back after.
+ */
+function plainForAsk(md) {
+  const figures = [];
+  const hold = (text) => `\u27E6FIG${figures.push(text) - 1}\u27E7`;
+  const lifted = md
+    .replace(/<Flow\b([^>]*?)\bchart=\{`([\s\S]*?)`\}([^>]*?)\/>/g, (_, a, chart, b) => {
+      const caption = attr(a + b, "caption");
+      return hold(`\n\`\`\`mermaid\n${chart.trim()}\n\`\`\`${caption ? `\n(diagram: ${caption})` : ""}\n`);
+    })
+    .replace(/<Wireframe\b[\s\S]*?<\/Wireframe>/g, (w) =>
+      hold(`\n\`\`\`wireframe\n${w.replace(/^[ \t]+/gm, "").replace(/\{\/\*[\s\S]*?\*\/\}/g, "")}\n\`\`\`\n`),
+    )
+    .replace(/<Setting\b[^>]*?\bk="([^"]+)"[^>]*\/>/g, " {setting:$1} ")
+    .replace(/<Code\b[^>]*?\bfile="([^"]+)"[^>]*?\bsymbol="([^"]+)"[^>]*\/>/g, " (code: $1 › $2) ");
+  return plain(lifted).replace(/\u27E6FIG(\d+)\u27E7/g, (_, n) => figures[Number(n)]);
+}
+
 function sections(body) {
   const slugger = new GithubSlugger();
   const toc = [];
-  const out = [{ heading: null, id: null, text: [] }];
+  const out = [{ heading: null, id: null, depth: 1, text: [] }];
   let fenced = false;
   for (const line of body.split("\n")) {
     if (line.startsWith("```")) fenced = !fenced;
@@ -155,12 +186,15 @@ function sections(body) {
       const text = h[2].replace(/[`*_]/g, "");
       const id = slugger.slug(text);
       toc.push({ depth: h[1].length, text, id });
-      out.push({ heading: text, id, text: [] });
+      out.push({ heading: text, id, depth: h[1].length, text: [] });
     } else {
       out[out.length - 1].text.push(line);
     }
   }
-  return { toc, sections: out.map((s) => ({ ...s, text: plain(s.text.join("\n")).slice(0, 2400) })) };
+  return {
+    toc,
+    sections: out.map((s) => ({ ...s, text: plainForAsk(s.text.join("\n")) })),
+  };
 }
 
 /* ------------------------------------------------------------------- run */
@@ -168,7 +202,7 @@ function sections(body) {
 const files = walk(DOCS).sort();
 const excerpts = {};
 const toc = {};
-const search = [];
+const ask = [];
 const failures = [];
 
 for (const path of files) {
@@ -200,8 +234,7 @@ for (const path of files) {
   const parsed = sections(body.replace(/^---[\s\S]*?---/, ""));
   toc[rel] = parsed.toc;
   for (const s of parsed.sections) {
-    if (!s.text && !s.heading) continue;
-    search.push({ app, slug, tab: tab ?? null, heading: s.heading, id: s.id, text: s.text });
+    if (s.text) ask.push({ app, slug, tab: tab ?? null, heading: s.heading, id: s.id, text: s.text });
   }
 }
 
@@ -210,12 +243,13 @@ if (failures.length) {
   process.exit(1);
 }
 
-const next = JSON.stringify({ excerpts, toc, search }, null, 1) + "\n";
+const next = JSON.stringify({ excerpts, toc }, null, 1) + "\n";
 
 if (verify) {
   console.log(`docs-index: every reference resolves (${Object.keys(excerpts).length} excerpts, ${files.length} pages).`);
 } else {
   mkdirSync(dirname(OUT), { recursive: true });
   writeFileSync(OUT, next);
+  writeFileSync(ASK_OUT, JSON.stringify({ sections: ask }) + "\n");
   console.log(`docs-index: wrote ${Object.keys(excerpts).length} excerpts, ${files.length} pages.`);
 }
