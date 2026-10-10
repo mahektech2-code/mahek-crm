@@ -2,23 +2,14 @@ import "server-only";
 import { createOpenAI } from "@ai-sdk/openai";
 import { isStepCount, streamText, tool, type ModelMessage } from "ai";
 import { z } from "zod";
-import ask from "@/docs/_generated/ask.json";
 import { DOC_APPS, DOC_TABS, docApp, docPage, tabsOf } from "@/docs/registry";
 import { definition } from "@/lib/config/registry";
 import { getConfig } from "@/lib/config/store";
 import { readSecret } from "@/lib/secrets";
 import { isPermanentRefusal } from "@/lib/voice-readiness";
 import { TtlCache, normaliseQuestion } from "@/lib/team-ask/cache";
-import {
-  buildIndex,
-  excerpt,
-  hrefOf,
-  refOf,
-  searchDocs,
-  type AskSection,
-  type DocsIndex,
-  type SearchHit,
-} from "@/lib/docs-ask/retrieve";
+import { NAMED_SETTINGS, docsIndex as index, firstTabOf as firstTab, pageTitleOf as pageTitle } from "@/lib/docs-ask/corpus";
+import { excerpt, hrefOf, refOf, searchDocs, type AskSection, type SearchHit } from "@/lib/docs-ask/retrieve";
 
 /* ---------------------------------------------------------------------------
  * "Ask the docs" — a question in plain words, answered from the written pages.
@@ -64,19 +55,7 @@ export type DocsAskEvent =
 export type DocsAskTurn = { role: "user" | "assistant"; text: string };
 export type DocsAskPlace = { app: string; slug?: string | null; tab?: string | null };
 
-const SECTIONS = (ask as { sections: AskSection[] }).sections.filter((s) => docPage(s.app, s.slug));
 const TAB_LABEL = Object.fromEntries(DOC_TABS.map((t) => [t.id, t.label])) as Record<string, string>;
-const pageTitle = (s: Pick<AskSection, "app" | "slug">) => docPage(s.app, s.slug)?.title ?? s.slug;
-const firstTab = (s: Pick<AskSection, "app" | "slug">) => {
-  const page = docPage(s.app, s.slug);
-  return page ? tabsOf(page)[0] : "guide";
-};
-
-/** The settings a page names — the only ones the panel may read. */
-const NAMED_SETTINGS = new Set(SECTIONS.flatMap((s) => [...s.text.matchAll(/\{setting:([\w.]+)\}/g)].map((m) => m[1])));
-
-let built: DocsIndex | null = null;
-const index = () => (built ??= buildIndex(SECTIONS, pageTitle));
 
 const answers = new TtlCache<{ text: string; sources: Extract<DocsAskEvent, { type: "source" }>[] }>(300);
 const ANSWER_TTL_MS = 10 * 60 * 1000;
@@ -120,7 +99,7 @@ function hitLine(h: SearchHit, query: string, chars: number): string {
     `ref: ${h.ref}`,
     `page: ${pageTitle(s)} (${s.app}) · tab: ${TAB_LABEL[s.tab ?? "guide"] ?? s.tab}${s.heading ? ` · section: ${s.heading}` : ""}`,
     `link: ${hrefOf(s, firstTab(s))}`,
-    `text: ${excerpt(s.text, query, chars)}`,
+    `text: ${excerpt(s.text, h.matched, chars)}`,
   ].join("\n");
 }
 
@@ -178,7 +157,7 @@ export async function askDocsStream(
 
     // A first search on the question itself, so most questions need no tool call at all.
     emit({ type: "step", text: scope ? `Searched the ${scope.title} documentation` : "Searched the documentation" });
-    const first = searchDocs(index(), question, { app: scope?.app, prefer, limit: 6 });
+    const first = searchDocs(index(), question, { app: scope?.app, prefer, limit: 6, perPage: 2 });
 
     let lookups = 0;
     const max = Math.max(1, config["docsAsk.maxLookups"]);
@@ -219,7 +198,7 @@ export async function askDocsStream(
             lookups += 1;
             if (lookups > max) return { error: "No more lookups for this question — answer with what you have." };
             emit({ type: "step", text: `Searched for “${query}”${app ? ` in ${docApp(app)?.title ?? app}` : ""}` });
-            const hits = searchDocs(index(), query, { app, prefer, limit: 8 });
+            const hits = searchDocs(index(), query, { app, prefer, limit: 8, perPage: 3 });
             return hits.length ? hits.map((h) => hitLine(h, query, 500)).join("\n\n") : "Nothing matched. Try other words.";
           },
         }),

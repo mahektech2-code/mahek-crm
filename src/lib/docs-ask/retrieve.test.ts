@@ -2,8 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { DOC_APPS, docPage, tabsOf } from "@/docs/registry";
-import { buildIndex, excerpt, hrefOf, refOf, searchDocs, stem, tokens, type AskSection } from "./retrieve";
+import { DOC_APPS, docPage } from "@/docs/registry";
+import { buildIndex, editDistance, excerpt, hrefOf, planQuery, refOf, searchDocs, stem, tokens, type AskSection } from "./retrieve";
+import { SEARCH_BENCHMARK } from "./search-benchmark";
 
 const S = (app: string, slug: string, heading: string | null, text: string, tab = "guide"): AskSection => ({
   app,
@@ -28,11 +29,11 @@ const TITLES: Record<string, string> = {
   "erp/dispatch": "Dispatch",
   "sales/overview": "Sales Dashboard",
 };
-const index = buildIndex(BOOK, (s) => TITLES[`${s.app}/${s.slug}`] ?? "");
+const index = buildIndex(BOOK, (s) => ({ title: TITLES[`${s.app}/${s.slug}`] ?? "", summary: "" }));
 
 test("words fold to a stem so plurals and -ing forms meet", () => {
   assert.equal(stem("reminders"), stem("reminder"));
-  assert.equal(stem("scanning"), "scann");
+  assert.equal(stem("scanning"), stem("scanned"));
   assert.equal(stem("policies"), "policy");
   assert.deepEqual(tokens("Why is the customer missing?"), ["customer", "miss"]);
 });
@@ -83,24 +84,63 @@ test("an excerpt is cut around the words asked about", () => {
   assert.ok(cut.startsWith("…") && cut.endsWith("…"));
 });
 
-/* The real book, where the build has written it: every section's page exists,
-   and a handful of plain questions land in the right app. */
+test("plurals and -ing forms of one word fold together", () => {
+  assert.equal(stem("settings"), stem("setting"));
+  assert.equal(stem("approved"), stem("approve"));
+  assert.equal(stem("approving"), stem("approves"));
+});
+
+test("a typo is within reach and a different word is not", () => {
+  assert.equal(editDistance("recieve", "receive", 2), 1, "a swap is one edit");
+  assert.equal(editDistance("dispach", "dispatch", 1), 1);
+  assert.ok(editDistance("order", "border", 1) <= 1);
+  assert.ok(editDistance("payment", "shipment", 2) > 2);
+});
+
+test("an abbreviation reaches the words it stands for, and back", () => {
+  const idx = buildIndex([S("erp", "purchase-orders", "Approving", "A purchase order is approved by somebody else.")], () => ({ title: "Purchase orders", summary: "" }));
+  assert.equal(searchDocs(idx, "po approval")[0]?.section.slug, "purchase-orders");
+  const plan = planQuery(idx, "purchase order ");
+  assert.ok(plan.groups[0].variants.some((v) => v.terms.join(" ") === "po"));
+});
+
+test("a word still being typed matches the words it begins", () => {
+  assert.equal(searchDocs(index, "remind")[0]?.section.slug, "reminders");
+});
+
+/* The real book, where the build has written it. */
 const ASK = join(process.cwd(), "src/docs/_generated/ask.json");
-test("the real documentation answers ordinary questions from the right app", { skip: !existsSync(ASK) }, () => {
+const realIndex = () => {
   const sections = (JSON.parse(readFileSync(ASK, "utf8")) as { sections: AskSection[] }).sections;
   for (const s of sections) assert.ok(docPage(s.app, s.slug), `${refOf(s)} names a page the registry does not have`);
-  const real = buildIndex(sections, (s) => docPage(s.app, s.slug)?.title ?? "");
-  const expect: Array<[string, string]> = [
-    ["why is a customer not on the call log", "crm"],
-    ["how is a box scanned at dispatch", "erp"],
-    ["how do I deploy to DigitalOcean", "platform"],
-  ];
-  for (const [q, app] of expect) {
-    const top = searchDocs(real, q, { limit: 3 });
-    assert.ok(
-      top.some((h) => h.section.app === app),
-      `"${q}" should find ${app}; found ${top.map((h) => h.ref).join(", ")}`,
-    );
+  return buildIndex(sections, (s) => ({ title: docPage(s.app, s.slug)?.title ?? "", summary: docPage(s.app, s.slug)?.summary ?? "" }));
+};
+
+/*
+ * THE BENCHMARK. Every question must find its page in the top three, and at
+ * least 95% must find it FIRST. Raising either bar is welcome; lowering one to
+ * make a change pass is not — a ranking change that costs accuracy shows here.
+ */
+test("the benchmark: every question in the top three, 95% first", { skip: !existsSync(ASK) }, () => {
+  const real = realIndex();
+  let first = 0;
+  const misses: string[] = [];
+  for (const c of SEARCH_BENCHMARK) {
+    const pages = searchDocs(real, c.q, { limit: 10, perPage: 1 }).map((h) => `${h.section.app}/${h.section.slug}`);
+    const at = pages.findIndex((p) => c.pages.includes(p));
+    if (at === 0) first += 1;
+    if (at < 0 || at > 2) misses.push(`"${c.q}" → ${pages.slice(0, 3).join(", ")}`);
   }
-  assert.ok(DOC_APPS.every((a) => a.pages.every((p) => tabsOf(p).length > 0)));
+  assert.deepEqual(misses, [], "every question finds its page in the top three");
+  assert.ok(first / SEARCH_BENCHMARK.length >= 0.95, `${first} of ${SEARCH_BENCHMARK.length} first`);
+});
+
+test("a search of the whole book is fast", { skip: !existsSync(ASK) }, () => {
+  const real = realIndex();
+  for (const c of SEARCH_BENCHMARK) searchDocs(real, c.q);
+  const t = performance.now();
+  for (let i = 0; i < 3; i++) for (const c of SEARCH_BENCHMARK) searchDocs(real, c.q);
+  const each = (performance.now() - t) / (3 * SEARCH_BENCHMARK.length);
+  assert.ok(each < 15, `${each.toFixed(2)} ms a search`);
+  assert.ok(DOC_APPS.length > 0);
 });

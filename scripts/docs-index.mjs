@@ -22,10 +22,10 @@
  *             twenty lines.
  *   toc       each page's ## and ### headings, slugged exactly as rehype-slug
  *             slugs them, for the "On this page" rail.
- *   search    each section's heading and plain text, for ⌘K.
  *
- * And a second file, `ask.json`, for "Ask the docs": every section's FULL text
- * (search's is cut at 2,400 characters because it ships to every browser), with
+ * And a second file, `ask.json`, for the search engine behind ⌘K and "Ask the
+ * docs" (`lib/docs-ask/`): every section's FULL text, read by the server alone
+ * and never shipped to a browser (it used to be, cut short, into every page), with
  * each `<Setting k="…"/>` kept as `{setting:…}` so the assistant knows which
  * setting a sentence quotes and can read its live value, and each diagram and
  * wireframe kept as its source so an answer can draw them. It is read by the
@@ -193,7 +193,7 @@ function sections(body) {
   }
   return {
     toc,
-    sections: out.map((s) => ({ ...s, ask: plainForAsk(s.text.join("\n")), text: plain(s.text.join("\n")).slice(0, 2400) })),
+    sections: out.map((s) => ({ ...s, text: plainForAsk(s.text.join("\n")) })),
   };
 }
 
@@ -202,7 +202,6 @@ function sections(body) {
 const files = walk(DOCS).sort();
 const excerpts = {};
 const toc = {};
-const search = [];
 const ask = [];
 const failures = [];
 
@@ -235,9 +234,7 @@ for (const path of files) {
   const parsed = sections(body.replace(/^---[\s\S]*?---/, ""));
   toc[rel] = parsed.toc;
   for (const s of parsed.sections) {
-    if (!s.text && !s.heading) continue;
-    search.push({ app, slug, tab: tab ?? null, heading: s.heading, id: s.id, text: s.text });
-    if (s.ask) ask.push({ app, slug, tab: tab ?? null, heading: s.heading, id: s.id, text: s.ask });
+    if (s.text) ask.push({ app, slug, tab: tab ?? null, heading: s.heading, id: s.id, text: s.text });
   }
 }
 
@@ -246,7 +243,7 @@ if (failures.length) {
   process.exit(1);
 }
 
-const next = JSON.stringify({ excerpts, toc, search }, null, 1) + "\n";
+const next = JSON.stringify({ excerpts, toc }, null, 1) + "\n";
 
 if (verify) {
   console.log(`docs-index: every reference resolves (${Object.keys(excerpts).length} excerpts, ${files.length} pages).`);

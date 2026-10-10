@@ -10,7 +10,7 @@ import { SignOutButton } from "@/components/shell/sign-out-button";
 import { FeedbackButton } from "@/components/shell/feedback-button";
 import type { AppDefinition } from "@/lib/apps";
 import { SalesIcon } from "@/components/console/icons";
-import { DOC_TABS, docApp, pageHref, type DocTab } from "@/docs/registry";
+import { docApp } from "@/docs/registry";
 import { DocsSidebar } from "./docs-sidebar";
 import { AskPanel, type AskPlace } from "./ask-panel";
 
@@ -24,25 +24,14 @@ import { AskPanel, type AskPlace } from "./ask-panel";
  * one they are reading. ⌘K hands a question it cannot match to the panel.
  * ------------------------------------------------------------------------- */
 
-export type SearchEntry = {
-  app: string;
-  slug: string;
-  tab: string | null;
-  title: string;
-  heading: string | null;
-  id: string | null;
-  text: string;
-};
 
 export function DocsShell({
   user,
   apps,
-  search,
   children,
 }: {
   user: { name: string; initials: string; role: string };
   apps: AppDefinition[];
-  search: SearchEntry[];
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -144,41 +133,46 @@ export function DocsShell({
           }}
         />
       ) : null}
-      {searching ? <SearchDialog entries={search} onClose={() => setSearching(false)} onAsk={askAbout} /> : null}
+      {searching ? <SearchDialog place={place} onClose={() => setSearching(false)} onAsk={askAbout} /> : null}
     </AppFrame>
   );
 }
 
 /* ----------------------------------------------------------------- search */
 
-const TAB_LABEL = Object.fromEntries(DOC_TABS.map((t) => [t.id, t.label])) as Record<DocTab, string>;
+type Result = { href: string; app: string; title: string; heading: string | null; tab: string; snippet: string; marks: string[] };
 
-function score(entry: SearchEntry, words: string[]): number {
-  const title = entry.title.toLowerCase();
-  const heading = (entry.heading ?? "").toLowerCase();
-  const text = entry.text.toLowerCase();
-  let s = 0;
-  for (const w of words) {
-    if (title.includes(w)) s += 6;
-    else if (heading.includes(w)) s += 4;
-    else if (text.includes(w)) s += 1;
-    else return 0;
-  }
-  return s + (entry.heading ? 0 : 1);
+/** The words the engine matched, marked where they appear — a typo's correction included. */
+function Marked({ text, marks }: { text: string; marks: string[] }) {
+  if (!marks.length) return <>{text}</>;
+  const re = new RegExp(`\\b(${marks.map((m) => m.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})\\b`, "gi");
+  const parts = text.split(re);
+  return (
+    <>
+      {parts.map((p, i) =>
+        i % 2 ? (
+          <mark key={i} className="rounded-[2px] bg-brand-soft px-0.5 text-brand-hover">
+            {p}
+          </mark>
+        ) : (
+          p
+        ),
+      )}
+    </>
+  );
 }
 
-function snippet(text: string, words: string[]): string {
-  const lower = text.toLowerCase();
-  const at = Math.max(0, Math.min(...words.map((w) => lower.indexOf(w)).filter((i) => i >= 0), text.length) - 40);
-  return (at > 0 ? "…" : "") + text.slice(at, at + 150) + (at + 150 < text.length ? "…" : "");
-}
-
+/**
+ * ⌘K. Every keystroke asks `/api/docs/search` — the engine "Ask the docs"
+ * reads with — a moment after typing pauses, and an answer to an older
+ * keystroke is dropped rather than shown over a newer one.
+ */
 function SearchDialog({
-  entries,
+  place,
   onClose,
   onAsk,
 }: {
-  entries: SearchEntry[];
+  place: AskPlace;
   onClose: () => void;
   /** Hand the typed words to "Ask the docs" as a question. */
   onAsk: (question: string) => void;
@@ -186,24 +180,42 @@ function SearchDialog({
   const router = useRouter();
   const [q, setQ] = React.useState("");
   const [cursor, setCursor] = React.useState(0);
-  const words = q.toLowerCase().split(/\s+/).filter((w) => w.length > 1);
-  const results = words.length
-    ? entries
-        .map((e) => ({ e, s: score(e, words) }))
-        .filter((r) => r.s > 0)
-        .sort((a, b) => b.s - a.s)
-        .slice(0, 12)
-        .map((r) => r.e)
-    : [];
+  const [found, setFound] = React.useState<{ q: string; results: Result[] }>({ q: "", results: [] });
+  const [failed, setFailed] = React.useState(false);
+  const typed = q.trim().length > 1;
+  const results = typed ? found.results : [];
+  const waiting = typed && found.q !== q;
+
+  React.useEffect(() => {
+    if (q.trim().length < 2) return;
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      const params = new URLSearchParams({ q });
+      if (place?.app) params.set("app", place.app);
+      if (place?.slug) params.set("slug", place.slug);
+      fetch(`/api/docs/search?${params}`, { signal: controller.signal })
+        .then((r) => r.json() as Promise<{ ok: boolean; results?: Result[] }>)
+        .then((j) => {
+          setFailed(!j.ok);
+          setFound({ q, results: j.results ?? [] });
+        })
+        .catch((e: unknown) => {
+          if (!(e instanceof DOMException && e.name === "AbortError")) setFailed(true);
+        });
+    }, 70);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [q, place?.app, place?.slug]);
 
   const askIt = () => {
     onClose();
     onAsk(q.trim());
   };
-  const go = (e: SearchEntry) => {
-    const href = pageHref(e.app, e.slug, (e.tab ?? undefined) as DocTab | undefined) + (e.id ? `#${e.id}` : "");
+  const go = (r: Result) => {
     onClose();
-    router.push(href);
+    router.push(r.href);
   };
 
   return (
@@ -233,35 +245,47 @@ function SearchDialog({
                 else if (q.trim()) askIt();
               }
             }}
-            placeholder="Why is a customer not on my Call Log?"
+            placeholder="Search any screen, rule or setting — typos are fine"
             className="h-12 flex-1 bg-transparent text-[15px] text-ink outline-none placeholder:text-faint"
           />
+          {waiting ? <span className="block h-3.5 w-3.5 flex-none animate-spin rounded-full border-2 border-brand-softer border-t-brand" /> : null}
           <kbd className="rounded-[3px] border border-line px-1.5 font-mono text-[11px] text-muted">esc</kbd>
         </div>
         <div className="max-h-[56vh] overflow-y-auto">
-          {words.length === 0 ? (
+          {!typed ? (
             <p className="px-4 py-6 text-center text-[13px] text-muted">Type a screen, a rule or a question.</p>
-          ) : results.length === 0 ? (
-            <p className="px-4 pt-6 pb-3 text-center text-[13px] text-muted">No page title or heading matches that.</p>
+          ) : failed ? (
+            <p className="px-4 pt-6 pb-3 text-center text-[13px] text-muted">Search is not answering just now.</p>
+          ) : results.length === 0 && !waiting ? (
+            <p className="px-4 pt-6 pb-3 text-center text-[13px] text-muted">Nothing in the documentation matches that.</p>
           ) : (
-            results.map((e, i) => (
+            results.map((r, i) => (
               <button
-                key={`${e.app}/${e.slug}/${e.tab}/${e.id}/${i}`}
+                key={`${r.href}/${i}`}
                 type="button"
                 onMouseEnter={() => setCursor(i)}
-                onClick={() => go(e)}
-                className={cx("block w-full cursor-pointer border-b border-divider px-4 py-2.5 text-left last:border-0", i === cursor && "bg-brand-soft")}
+                onClick={() => go(r)}
+                className={cx("block w-full cursor-pointer border-b border-divider px-4 py-2.5 text-left last:border-0", i === cursor && "bg-brand-soft", waiting && "opacity-70")}
               >
                 <div className="flex items-center gap-2 text-[13px]">
-                  <span className="font-semibold text-ink">{e.title}</span>
-                  {e.tab ? <span className="rounded-[3px] bg-canvas px-1.5 text-[11px] text-muted">{TAB_LABEL[e.tab as DocTab] ?? e.tab}</span> : null}
-                  {e.heading ? <span className="truncate text-muted">› {e.heading}</span> : null}
+                  <span className="font-semibold text-ink">
+                    <Marked text={r.title} marks={r.marks} />
+                  </span>
+                  {r.tab ? <span className="rounded-[3px] bg-canvas px-1.5 text-[11px] text-muted">{r.tab}</span> : null}
+                  {r.heading ? (
+                    <span className="truncate text-muted">
+                      › <Marked text={r.heading} marks={r.marks} />
+                    </span>
+                  ) : null}
+                  <span className="ml-auto flex-none text-[10px] tracking-[0.05em] text-faint uppercase">{docApp(r.app)?.short}</span>
                 </div>
-                <div className="mt-0.5 line-clamp-2 text-[12px] leading-[17px] text-body">{snippet(e.text, words)}</div>
+                <div className="mt-0.5 line-clamp-2 text-[12px] leading-[17px] text-body">
+                  <Marked text={r.snippet} marks={r.marks} />
+                </div>
               </button>
             ))
           )}
-          {words.length ? (
+          {typed ? (
             <button
               type="button"
               onMouseEnter={() => setCursor(results.length)}

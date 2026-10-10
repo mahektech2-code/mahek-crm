@@ -8291,19 +8291,41 @@ header's "Ask the docs" docks a chat on the right (`app/docs/ask-panel.tsx`) —
 docked rather than modal, so following a citation keeps the conversation — and
 ⌘K offers any typed words to it. `/api/docs/ask` (behind the `docs` grant)
 streams `askDocsStream` (`services/docs-ask-service.ts`): the model is given
-the contents, a first search already run, and three tools — `search_docs` and
-`read_section` over `_generated/ask.json` (every section's FULL text, written
-by `docs-index.mjs` beside the search index and never sent to a browser), and
-`read_setting`, which reads the live value of a setting some page names, so an
-answer quotes this deployment's number exactly as the page would. Ranking is
-`lib/docs-ask/retrieve.ts`, pure BM25 with the page title and heading counted
-again, nudged towards the page the reader is on. "Search in" above the box
-asks ONE app's documentation or all of it: it starts on the app being read and
-follows the reader until they pick, and a one-app question is held to that
-app's sections in the first search and in both tools, not merely asked nicely.
-It is OpenAI only, on
-`openai.apiKey`, and the `docsAsk.*` settings sit on Admin Console → Settings →
-AI assistants.
+the contents, a first search already run, and three tools — `search_docs`,
+`read_section`, and `read_setting`, which reads the live value of a setting
+some page names, so an answer quotes this deployment's number exactly as the
+page would. "Search in" above the box asks ONE app's documentation or all of
+it: it starts on the app being read and follows the reader until they pick,
+and a one-app question is held to that app's sections in the first search and
+in both tools, not merely asked nicely. It is OpenAI only, on `openai.apiKey`,
+and the `docsAsk.*` settings sit on Admin Console → Settings → AI assistants.
+
+**AN ANSWER MAY BE A PICTURE.** Fenced blocks in the answer are drawn by
+`app/docs/answer-blocks.tsx`: ```` ```mermaid ```` with the pages' own `<Flow>`,
+```` ```wireframe ```` in the pages' own `<Wireframe>`/`Wf*` markup, read by
+`lib/docs-ask/wire-markup.ts` — PARSED, never compiled: known tags and literal
+props only, so an event handler, a style or an unknown tag in model output is
+dropped — and ```` ```svg ```` shown through `<img>` from a data URL, where it
+cannot run or fetch anything. Markdown tables render too. `ask.json` keeps
+every page's diagrams and wireframes as source, so the usual picture is the
+page's own, trimmed; a test parses every wireframe in the book.
+
+**ONE SEARCH ENGINE, ON THE SERVER, MEASURED.** ⌘K and the assistant both read
+`lib/docs-ask/retrieve.ts` (pure): BM25F over an inverted index built once per
+process from `_generated/ask.json` (`docs-ask/corpus.ts`, server-only — the
+browser no longer receives a search index). Fields are weighted title >
+heading > summary > body; each word of a query is a group of spellings — its
+light stem, completions while it is still being typed, typo corrections within
+one or two edits (only where the word as typed is not one the docs use), and
+MahekOne's abbreviations both ways (`SYNONYMS`: PO, GRN, LR, CN, OTP…). A
+section covering every word, naming it in its title or heading, or holding the
+words side by side ranks higher; the Developer tab is held back unless the
+question is about code, and overview pages yield to particular ones.
+`search-benchmark.ts` is real questions with the page that answers each —
+typos, abbreviations and half-typed words included — and `retrieve.test.ts`
+fails unless every one finds its page in the top three and 95% find it first
+(64 of 66 today), and unless a search of the whole book stays fast (about 1 ms
+warm). Add a question there whenever a search goes wrong; lower neither bar.
 
 **A page describes the code as it stands.** Where the code and the intent
 disagree, the How it works and Developer tabs say so under "Where the code and
