@@ -34,6 +34,7 @@ export function AccountMenu({
   variant,
   hat,
   collapsed = false,
+  nameFromXl = false,
 }: {
   user: {
     name: string;
@@ -65,6 +66,8 @@ export function AccountMenu({
   hat: { label: string; sentence: string };
   variant: "sidebar" | "header";
   collapsed?: boolean;
+  /** Header only: below 1280px draw the avatar alone, for a header that has to fit a tablet. */
+  nameFromXl?: boolean;
 }) {
   const [open, setOpen] = React.useState(false);
   /*
@@ -101,7 +104,7 @@ export function AccountMenu({
   );
 
   const identity = (
-    <span className="min-w-0 flex-1 text-left">
+    <span className={cx("min-w-0 flex-1 text-left", nameFromXl && "hidden xl:block")}>
       <span className="block truncate text-[13px] leading-4 font-medium text-ink">
         {user.name}
       </span>
@@ -145,6 +148,7 @@ export function AccountMenu({
               size={14}
               className={cx(
                 "flex-none text-muted transition-transform duration-100",
+                nameFromXl && "hidden xl:block",
                 variant === "sidebar"
                   ? open
                     ? "rotate-90"

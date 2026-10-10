@@ -1058,19 +1058,19 @@ const orderDetails: ScreenModule = {
     rows.forEach((r) => byNo.set(r.l.o.orderNo, [...(byNo.get(r.l.o.orderNo) ?? []), r.l.o.id]));
     const gates = await scanGateFor(db, rows.filter((r) => r.d.verification !== "Verified").map((r) => r.l.o.id));
     const all: Col[] = [
-      { k: "follow", l: "Transport follow-up", t: "t" },
       { k: "date", l: "Order date", t: "d" },
       { k: "orderNo", l: "Order no", t: "mono" },
       { k: "billing", l: "Billing party", t: "b" },
       { k: "sku", l: "Description of goods", t: "t", w: 240 },
+      { k: "qty", l: "Qty", t: "n" },
+      { k: "amount", l: "Amount", t: "m", pw: "viewSalesAmounts" },
       { k: "rate", l: "Rate", t: "m", pw: "viewSalesRate" },
       { k: "billTotal", l: "Bill total", t: "m", pw: "viewSalesAmounts" },
       { k: "discount", l: "Discount %", t: "n", pw: "viewSalesAmounts" },
       { k: "dispatchDate", l: "Dispatch date", t: "d" },
       { k: "verification", l: "Verification", t: "s" },
-      { k: "qty", l: "Qty", t: "n" },
+      { k: "follow", l: "Transport follow-up", t: "t" },
       { k: "monthly", l: "Monthly sale", t: "m", pw: "viewSalesAmounts" },
-      { k: "amount", l: "Amount", t: "m", pw: "viewSalesAmounts" },
       { k: "si", l: "Standing instructions", t: "t" },
       { k: "discounted", l: "Discounted amount", t: "m", pw: "viewSalesAmounts" },
       { k: "orderId", l: "Order id", t: "mono" },
