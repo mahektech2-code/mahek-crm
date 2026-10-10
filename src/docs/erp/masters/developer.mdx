@@ -1,0 +1,153 @@
+The Masters are seven screen modules in `lib/erp/screens/masters.ts` (raw materials, purchase parties, products, sales parties, godowns, price lists, reference lists) plus **My customers** in `screens/logistics.ts`. Three of them write MahekOne's own tables (`customers`, and the catalogue's `products` through a side table); the rest write `erp_*` tables. Per-material duties are pure in `lib/erp/material-duties.ts` and wired in `material-duties-server.ts`.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Screen modules | `src/lib/erp/screens/masters.ts` | `rawMaterials`, `suppliers`, `productsScreen`, `customersScreen`, `godowns`, `priceListsScreen`, `refListsScreen` |
+| My customers | `src/lib/erp/screens/logistics.ts` | `myCustomers` — reads `loadCustomers` narrowed to the person, edits through `saveCustomerDetails(…, mine = true)` |
+| Value lists | `src/lib/erp/refs.ts` | `REF_LISTS` (open, in `erp_ref_values`), `refValues`, and the fixed lists (`RM_UNITS`, `BOX_TYPES`, `GRADES`, `REGIONS`…) |
+| Purchase rule | `src/lib/erp/engines/purchase-flow.ts` | `PURCHASE_METHODS`, `methodLabel`, `methodByLabel` |
+| Duties (pure) | `src/lib/erp/material-duties.ts` | `MATERIAL_DUTIES`, `dutyAllows`, `dutyAllowsAll`, `dutyRefusal`, `dutyBookFrom` |
+| Duties (data) | `src/lib/erp/material-duties-server.ts` | `dutyKit(ctx)`, `dutyFieldsFor`, `dutyCandidates`, `replaceMaterialDuties` |
+| Shared helpers | `src/lib/erp/screens/common.ts` | `godownOptions` (Item Lost Record only with `lostStock`), `godownIdByName`, `materials` |
+| Customer status | `src/lib/erp/screens/masters.ts` | `partyStatus`, `loadCustomers`, `saveCustomerDetails` |
+
+## Saving a raw material
+
+<Code file="src/lib/erp/screens/masters.ts" symbol="saveRawMaterial" collapsed />
+
+Notes on what it does:
+
+- `density` and `testing_list` are written only for a Chemical; otherwise `null` and `[]`.
+- A save that sends no purchase rule keeps the stored one, or starts from Quotation for a chemical and Direct otherwise.
+- A Quotation item's `preferred_supplier_id` is cleared.
+- `price_paise` is in the update only when the caller holds `viewPurchaseMoney` — a clerk's save never overwrites it.
+- New `serial_no` is `max + 1` under `lock table … in share row exclusive mode`.
+
+<DbTable name="erp_raw_materials" note={{
+  serial_no: "Issued under a table lock, so two saves never share one.",
+  code: "Item code. Part of every lot number: party code + item code + PR number.",
+  unit: "Kg · Litre · Unit (RM_UNITS).",
+  material_type: "From the materialType reference list.",
+  density: "Chemicals only; kg ÷ density = litres.",
+  testing_list: "Chemicals only; the tests every lot must evidence.",
+  price_paise: "Packing rate for cans and drums. Written only with viewPurchaseMoney.",
+  purchase_method: "direct · quotation · buyer — copied onto each requirement as it is raised.",
+  preferred_supplier_id: "The default vendor for a direct purchase.",
+  active: "Retire sets false; never deleted.",
+}} />
+
+## Who does what
+
+<Code file="src/lib/erp/material-duties.ts" symbol="dutyAllows" />
+
+<Code file="src/lib/erp/material-duties.ts" symbol="dutyRefusal" />
+
+<DbTable name="erp_material_duties" note={{
+  duty: "request · raisePo · approve · test (test only applies to a Chemical).",
+  user_id: "A named person, or null.",
+  designation_id: "A named ERP designation (a department), or null.",
+}} />
+
+The form is `dutiesForm`, opened by the administrator-only **Who does what** action; `saveDuties` refuses anybody but `ctx.administrator`, and refuses a named person who no longer holds the ERP or a designation that no longer exists. `dutyKit(ctx)` is what every purchase screen asks: `kit.allows(materialId, duty, fallback)` and `kit.refusal(material, duty)`.
+
+## Suppliers
+
+<DbTable name="erp_suppliers" only={["name", "party_code", "area", "location", "state", "credit_days", "mobile", "whatsapp", "broker", "grade", "email", "gstin", "active"]} note={{ party_code: "Own party code — the first part of every lot number bought from them.", active: "Retire sets false." }} />
+
+## Products and packing
+
+<DbTable name="erp_product_packing" note={{
+  product_id: "The catalogue SKU (products.id).",
+  can_use_material_id: "A raw material of type Can or Drum.",
+  empty_boxes_required: "0 with products.cans_per_box = 1 makes the SKU loose.",
+  box_type: "One of BOX_TYPES; matched by name to a raw material to count its stock.",
+  box_rate_paise: "Written only with viewCost.",
+}} />
+
+## Sales parties
+
+<Code file="src/lib/erp/screens/masters.ts" symbol="loadCustomers" />
+
+<Code file="src/lib/erp/screens/masters.ts" symbol="partyStatus" />
+
+<DbTable name="erp_customer_profiles" note={{
+  pending_activation: "The source's 'Pending'. True on every customer created in the ERP.",
+  activated_at: "When an admin or the office activated it.",
+  counter_types: "From the counterType reference list.",
+  grade: "A+ · A · B+ · B · C (GRADES).",
+}} />
+
+New customers are inserted as `kind = 'lead'`, `status = 'active'`, `lead_source = 'erp'`, `owner_id` = the creator, with the profile's `pending_activation = true`, in one transaction. Activate / Deactivate / Mark Pending each check `customerStatus` in the handler; Deactivate writes `customers.status = 'deactivated'` with `deactivation_reason = 'Deactivated in the ERP'` and `status_decided_at`.
+
+<Code file="src/lib/erp/screens/masters.ts" symbol="saveCustomerDetails" collapsed />
+
+## Godowns
+
+<Code file="src/lib/erp/screens/masters.ts" symbol="saveGodown" />
+
+<DbTable name="erp_godowns" note={{
+  status: "active · inactive (check constraint).",
+  reserved: "True only for Item Lost Record. Refused by edit and status toggle.",
+  lat: "Map pin; with lng, what the godown fence measures from.",
+}} />
+
+<Code file="src/lib/erp/screens/common.ts" symbol="godownOptions" />
+
+## Reference lists
+
+<Code file="src/lib/erp/refs.ts" symbol="REF_LISTS" />
+
+<DbTable name="erp_ref_values" note={{ list_key: "One of REF_LISTS.", active: "Retire sets false; records keep the value." }} />
+
+## Permissions
+
+| Module | Screen |
+|---|---|
+| <ModuleRef k="erp.rawMaterials" /> | Raw materials |
+| <ModuleRef k="erp.suppliers" /> | Purchase parties |
+| <ModuleRef k="erp.products" /> | Products |
+| <ModuleRef k="erp.customers" /> | Sales parties |
+| <ModuleRef k="erp.myCustomers" /> | My customers |
+| <ModuleRef k="erp.godowns" /> | Godowns |
+| <ModuleRef k="erp.priceLists" /> | Price lists |
+| <ModuleRef k="erp.refLists" /> | Reference lists |
+
+Powers checked in these handlers: `viewPurchaseMoney` (raw material price), `viewCost` (box rate), `viewSalesRate` (price list rates), `viewSalesAmounts` (monthly target on Sales parties), `customerStatus`, `employeeAdmin` (godowns and staff).
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test:integration` | `src/lib/erp/erp-foundation.test.ts` — "raw materials" | A chemical needs a density and a testing list; serials follow on and names are unique ignoring case; the price never reaches a clerk and a clerk's save cannot overwrite it |
+| | "customers" | Created Pending, only a status-holder activates; deactivating is the customer's own status, so the CRM sees it |
+| | "powers and godowns" | The reserved godown cannot be switched off; staff decide the working location |
+| `npm run test:integration` | `src/lib/erp/erp-material-duties.test.ts` | Only an administrator sets duties; an empty duty is open; a named requester / approver / tester is enforced; clearing reopens |
+| `npm run test` | `src/lib/erp/material-duties.test.ts` | The duty rules, pure |
+
+## Changing it safely
+
+<Steps>
+<Step title="A new field on a MahekOne record">
+Put it on the MahekOne table if the CRM should know it, or on the ERP side table (`erp_customer_profiles`, `erp_product_packing`) if only the ERP does. Never a second copy of a field the other app already holds.
+</Step>
+<Step title="A new drop-down">
+Open values belong in `REF_LISTS`. A value a rule compares against belongs in a fixed list in `refs.ts`, because a manager rewording it would silently break the rule.
+</Step>
+<Step title="A new money column">
+Mark it `pw` with the power that reveals it, and make the save leave it alone for a caller without that power.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| Raw material name uniqueness is across all categories, but `itemPickLabels` is written for names shared across categories | `screens/masters.ts` `saveRawMaterial`; `engines/purchase-flow.ts` `itemPickLabels` |
+| Item code is `req` on the form only; the save stores null and the lot number is built without it | `saveRawMaterial`; `engines/purchase.ts` `lotNumber` |
+| My customers shows `monthlyTargetPaise` with no `viewSalesAmounts` check | `screens/logistics.ts` `myCustomers` |
+| Clearing credit days on a customer saves null (city and phone are protected; credit days is not) | `saveCustomerDetails` |
+| A price list's discount is the first `price_list_discount_terms` row read, with no ordering | `priceListsScreen` |
+| The 18% used to derive a missing incl./excl. rate is a literal | `priceListsScreen` |
+| Retire / restore on raw materials and suppliers, and every reference-list change, need only the screen | `masters.ts` actions |

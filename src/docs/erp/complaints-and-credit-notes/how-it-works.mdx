@@ -1,0 +1,87 @@
+A customer complaint is one record in MahekOne, whichever app it was raised in. The ERP's screen reads and writes the CRM's complaints directly, decides them under its own *decide requests* power, and hands every credit note to Accounts to issue — because a credit note is money coming off a bill, and that is the ledger's decision, not the complaint desk's.
+
+The CRM side — categories, severities, the call panel and the complaint SLA — is on [the CRM's Complaints page](/docs/crm/complaints).
+
+## One record, two doors
+
+<Rule title="The ERP writes the CRM's complaints">
+Raising goes through the same writer the CRM uses. Accepting and rejecting set the complaint's own status and write its status history. Issuing a credit note goes through the Accounts credit-note service. Nothing is copied to a second table.
+</Rule>
+
+<Callout kind="why" title="Why the ERP's own request table was retired">
+Mahek Plus kept customer requests in a sheet of their own, and the first ERP copied it into a table of its own with the same fields as a CRM complaint. A complaint a salesman raised in the ERP never reached the telecaller on the customer's next call, and credit notes lived in two ledgers. Every old request was carried across under the same id; the old table is kept, unread, because deleting what people typed is a decision nobody has made.
+</Callout>
+
+## How a request moves
+
+<Flow caption="A complaint through the ERP" chart={`
+flowchart TD
+  A["Raised<br/>(ERP or CRM)"] --> B["Requested"]
+  B -- "Accepted<br/>(decide requests)" --> C["Accepted"]
+  B -- "Rejected" --> R["Rejected"]
+  C -- "Rejected" --> R
+  C -- "No credit note:<br/>Resolve with remark<br/>and responsible employee" --> D["Resolved"]
+  C -- "Credit note:<br/>Accounts issue it" --> E["Credit note off the bill<br/>Resolved"]
+`} />
+
+| ERP word | CRM complaint status underneath |
+|---|---|
+| Requested | open |
+| Accepted | in progress (or any other open-but-decided state) |
+| Rejected | rejected |
+| Resolved | resolved, closed, or a credit note issued |
+
+<Rule title="Accepting a credit-note request does not issue it">
+Accepting moves the credit note to *under review*; rejecting a credit-note request rejects the credit note too. A credit note already issued is never changed by a later decision.
+</Rule>
+
+## Credit notes are Accounts'
+
+<Rule title="Issuing needs Accounts' creditnote.issue">
+The ERP's **Issue Credit Note** calls the same service Accounts use. It checks the person holds `creditnote.issue`, refuses a complaint that never asked for a credit note, and limits the amount to what is still open on the bill. The credit note is written as a confirmed receipt against the bill, so it reduces what the customer owes like every other credit note. Only then is the complaint marked resolved, with the number and remark.
+</Rule>
+
+<CapabilityGrid names={["creditnote.issue"]} />
+
+<Callout kind="money" title="Where a credit note shows up afterwards">
+On the customer's bill and statement in Accounts, in outstanding, and in the **margin** of the order line on [Orders → Billing & dispatch](/docs/erp/orders): the issued amount is taken back to before GST and subtracted from that line's margin. The margin reads the credit note where it is — nothing copies it onto the order line.
+</Callout>
+
+## What a credit-note request names
+
+A credit note is asked for against **a real bill and the goods on it**. The bills offered are the customer's own bills from the last 365 days, and the goods suggested are the products on the order behind that bill. The save refuses a bill that is not the customer's, and refuses a credit-note request with no goods named.
+
+## The trace and the batch notice
+
+With <Setting k="erp.ai.complaints.enabled" /> on, every complaint that names a bill is traced from the bill and its goods back to the lots, production steps, suppliers and tests — by ordinary queries, nothing guessed. Two things are built on that trace:
+
+<Rule title="A possible batch problem is a count, not a verdict">
+When at least <Setting k="erp.ai.complaints.clusterThreshold" /> complaints (this one included) raised within <Setting k="erp.ai.complaints.clusterDays" /> days trace to a common refill, SFG or raw-material lot, the complaint shows the count, the customers and the shared lots. Rejected complaints are not counted. Packing batches are not compared — a batch can be packed from several lots.
+</Rule>
+
+The people who made or dispatched the traced goods are listed beside it, as a starting point for naming the responsible employee — which is still a person's choice.
+
+## The AI suggestion
+
+**Suggest type and summary** asks a model for a category **from the configured list only** and a one-line summary. A category it invents is dropped. The person confirms or changes it; the confirmed type becomes the complaint's category everywhere, and the outcome (accepted as suggested, edited, rejected) is logged. Each reading counts against <Setting k="erp.ai.complaints.monthlyCap" /> a month. More in [Alerts and the AI helpers](/docs/erp/alerts-and-ai).
+
+## Alerts
+
+An accepted credit-note request still not issued after <Setting k="erp.ai.alerts.stuckCnDays" /> days raises a **Credit note not issued** alert, which resolves itself when it is issued.
+
+<SettingsTable keys={["complaints.categories", "erp.ai.complaints.enabled", "erp.ai.complaints.clusterThreshold", "erp.ai.complaints.clusterDays", "erp.ai.complaints.monthlyCap", "erp.ai.alerts.stuckCnDays"]} />
+
+## Who can do what
+
+| Act | Needs |
+|---|---|
+| Open the screen and its three tabs, raise a complaint | The Complaints & credit notes screen |
+| Accept, reject, resolve | *Decide customer requests* (ERP power) |
+| Issue a credit note | `creditnote.issue` (Accounts) |
+| Suggest, confirm or reject an AI type and summary | The screen |
+
+## Where the code and the intent disagree today
+
+- **Confirming an AI suggestion changes a complaint's category without the decide power.** Anybody who holds the screen can change a CRM complaint's type through *Review the suggestion*, though accepting, rejecting and resolving all need *Decide customer requests*.
+- **Issuing a credit note and resolving the complaint are two writes.** The credit note is issued first; the complaint is then marked resolved in a second transaction. A failure between them leaves the credit note on the bill and the complaint still *Accepted*.
+- **"Add More Credit" is offered on every complaint**, including ones that never asked for a credit note, though its form is titled *Raise another credit note for this bill*.

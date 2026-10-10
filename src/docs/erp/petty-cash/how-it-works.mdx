@@ -1,0 +1,141 @@
+Production petty cash is built on four separations, and every rule on this page is one of them being kept:
+
+1. **An expense is not a payment.** What was spent, and what was paid against it, are two records. A bill can be unpaid, part-paid or paid in instalments from different funds.
+2. **A balance is never typed.** Every fund's balance is the sum of an append-only ledger. Nothing reaches a balance except a posting.
+3. **Nobody approves their own money.** Whoever raises, submits or spends an expense cannot approve it; whoever sends money cannot confirm receiving it; whoever counts cash cannot approve the count.
+4. **Moving money is not spending it.** A withdrawal, a handover or a deposit moves money between funds and is never an expense; customer cash is never a sale.
+
+The closing, bank, budget and Tally side is on [Petty cash: closing, bank, budgets and Tally](/docs/erp/petty-cash-closing/how-it-works).
+
+## The funds and the ledger
+
+<Rule title="A fund's balance is its ledger">
+Credits less debits, posted entries only. The ledger is **append-only** — the database itself refuses an edit or a delete — so a mistake is corrected by a further entry (a reversal, an adjustment), and the original stays.
+</Rule>
+
+<Rule title="One source posts once">
+Every posting carries a key naming its source — `payment:…`, `transfer-in:…`, `receipt:…`. Posting the same source again returns the first entry and moves nothing. A form carries its own request key too, so a submission sent twice (a double-click, a retry on a bad connection) is recognised as the same submission.
+</Rule>
+
+<Rule title="A back-dated entry reopens a closed day">
+A posting dated into a day whose cash count was already approved reopens that day's closing with the reason. The day has to be counted again; nothing changes it silently.
+</Rule>
+
+## An expense, from draft to paid
+
+<Flow caption="Approval and payment are two tracks" chart={`
+flowchart TD
+  A["Draft"] --> B{"Submit"}
+  B -- "small, bill attached,<br/>category allows" --> P["Approved by policy"]
+  B -- "otherwise" --> S["Submitted<br/>to an approver or the owner"]
+  S --> R{"Decision<br/>(not by the maker)"}
+  R -- "Approve" --> P2["Approved"]
+  R -- "Return" --> A
+  R -- "Reject" --> X["Rejected"]
+  P --> Pay["Payments against it<br/>Pending, Partially paid, Completed"]
+  P2 --> Pay
+  S -.->|"urgent payment<br/>with reason and evidence"| Pay
+`} />
+
+### Who must approve
+
+<Rule title="The route is decided when the expense is submitted">
+In this order — the first that applies wins:
+
+1. Over the month's approved budget for its category, **and** the budget rule is *approval* → **owner**.
+2. The category always needs the owner → **owner**.
+3. Above <Setting k="erp.pettyCash.approverLimitPaise" /> paise → **owner**.
+4. The category always needs an approver → **approver**.
+5. At or below <Setting k="erp.pettyCash.autoApproveUpToPaise" /> paise (0 switches this off), with its bill attached where the category needs one → **approved by policy**.
+6. Otherwise → **approver**.
+
+The level and the rule are stored on the expense and on its approval history, so "why did this need the owner" is answered by the record.
+</Rule>
+
+<Rule title="Maker-checker, without exceptions">
+Nobody decides an expense they created, submitted or are named as having spent — matched by account and by name. This applies to administrators too, because the rule exists for exactly the person with the most power. A refused decision is written to the audit log.
+</Rule>
+
+<Callout kind="why" title="Why approval by policy">
+Requiring a person to approve every ₹200 tea bill teaches approvers to approve without reading. A small amount, with its bill, in a category that allows it, is approved on submission — and the approval row says it was the policy, not a person, so no one appears to have approved their own expense.
+</Callout>
+
+### A commitment is not a payable
+
+An expense recorded as *Not yet received* is a **commitment**: it counts against the month's budget as committed, but it cannot be paid until it is marked received. An **advance** is its own expense (transaction type *Advance to employee/vendor*), can be paid before anything is received, and is later set against a bill or recovered in cash.
+
+## Payments
+
+<Rule title="What is owed is derived">
+**Outstanding = amount − approved adjustments − confirmed payments.** The payment status — *Pending*, *Partially paid*, *Completed*, *Overpaid* — is derived from that, never set. A payment request moves nothing; a reversed payment simply stops counting. Within <Setting k="erp.pettyCash.roundingTolerancePaise" /> paise reads as completed, for rounding.
+</Rule>
+
+<Rule title="A payment cannot exceed what is left, or what the fund holds">
+The amount may not be more than what is left after confirmed payments **and** requests already waiting. A confirmed payment may not take a fund below zero; an approver can authorise it with a reason, and a refused attempt is logged. Both checks run inside the transaction, under a lock on the expense and the fund, so two people paying at once cannot overspend either.
+</Rule>
+
+| What a payment needs | Why |
+|---|---|
+| A fund and a mode that fund pays by | A bank pays by UPI, transfer or cheque; a cash box pays cash |
+| A reference, for a bank payment | It is how the statement line is matched later |
+| The payee's acknowledgement, for cash — or an approver's written exception | Cash with no acknowledgement is money nobody can show was received |
+| A reference nobody else has used — unless it is marked as one transfer paying several bills | A repeated UTR is the commonest double payment |
+| A reason and evidence, if the expense is not yet approved | An urgent payment is flagged until the approval catches up, and flagged harder if the expense is then rejected |
+
+**Requests** split the job: anybody holding the screen asks, accounts (or an approver) confirm with the date and reference — never the person who asked — and only then does the fund go down.
+
+## Transfers and customer cash
+
+<Rule title="A transfer posts only when the receiver confirms">
+A transfer is *in transit* until the receiving fund's custodian, accounts or an approver confirms it. Then both sides post together, under one transfer id. The sender cannot confirm — unless an administrator. A fund cannot send more than it holds less what is already in transit out of it (a bank fund is not held to this).
+</Rule>
+
+The kinds of transfer and which funds each may run between are fixed: a withdrawal starts in a bank and ends in a cash box, a deposit starts in customer cash and ends in a bank, and so on. A withdrawal and a deposit need a bank reference.
+
+<Rule title="Customer cash is held, not sold">
+Cash from a customer is credited to a **customer-cash** fund. It needs the customer's acknowledgement or the receipt given to them. It is allocated to the invoices named, oldest first, for the record — it does **not** confirm a payment in Accounts; accounts verify it against the customer's ledger. A receipt can be carried by only one live transfer, so the same cash is never deposited twice.
+</Rule>
+
+Customer cash still held after <Setting k="erp.pettyCash.handoverHours" /> hours is flagged.
+
+## Who does what
+
+The roles are ERP powers given on the Access dialog; an ERP administrator holds them all.
+
+| Role | Power | Does |
+|---|---|---|
+| Production head | (holds the Petty cash screen) | Records expenses, payments, transfers and customer cash; counts cash |
+| Accounts team | *Petty cash: accounts team* | Confirms payment requests and transfers, verifies payments and receipts, imports the bank statement, keeps the Tally queue |
+| Approver | *Approve petty-cash expenses* | Decides expenses up to the approver's limit, adjustments, missing-document exceptions, overdrawn payments, reversals, closings |
+| Owner | *Owner-level petty-cash approvals* | Everything above the limit or in owner-only categories, budgets, fund accounts, opening balances |
+
+Every decision sends a notification to whoever must act next: a submitted expense to the approvers (or owners), a transfer to the receiving custodian, a receipt to accounts, a decision back to whoever raised the expense.
+
+<SettingsTable keys={["erp.pettyCash.autoApproveUpToPaise", "erp.pettyCash.approverLimitPaise", "erp.pettyCash.budgetRule", "erp.pettyCash.reviewDays", "erp.pettyCash.handoverHours", "erp.pettyCash.dueSoonDays", "erp.pettyCash.splitWindowDays", "erp.pettyCash.roundingTolerancePaise", "erp.ai.alerts.duplicateExpenseDays"]} />
+
+## The exception queue
+
+The Overview's exceptions are read off the records as they stand, so one clears itself the moment its cause is fixed:
+
+| Exception | When |
+|---|---|
+| Waiting for approval too long | Submitted more than <Setting k="erp.pettyCash.reviewDays" /> days ago |
+| Above the approver's limit | Waiting for the owner |
+| Bill or receipt missing | A category that needs one, and it is to follow or not available |
+| Vendor payment overdue / due | Past its due date / within the due-soon window |
+| Paid without approval | An urgent payment on an expense still waiting — or now rejected |
+| Advance not settled | Open more than 30 days |
+| Possible split near the limit | Two or more to one payee within <Setting k="erp.pettyCash.splitWindowDays" /> days, each under the limit, together over it — *for review, not an accusation* |
+| Duplicate payment reference | One reference on two payments not marked as one transfer |
+| Payment requests to pay | Requests waiting for accounts |
+| Unidentified bank transaction / Bank line needs attention | See the bank tab |
+| Customer cash not handed over / Handover not confirmed | Held too long / still in transit |
+| Cash shortage / overage, Backdated entry reopened a closed day, Cash closing not submitted | See daily closing |
+| Fund below zero, Opening balance not verified, Budget exceeded, Tally sync failed | See the closing page |
+
+The hourly ERP checks copy each into an alert so its history — when raised, when cleared — is kept (see [Alerts](/docs/erp/alerts-and-ai)).
+
+## Where the code and the intent disagree today
+
+- **An urgent payment can be recorded by anybody holding the screen.** It needs a reason and evidence, and is flagged, but the record is not limited to accounts or approvers.
+- **The older "cash each employee holds" arithmetic is no longer read.** The petty-cash engine for credits-less-expenses per person still exists and is tested, but no screen uses it; balances are per fund now.

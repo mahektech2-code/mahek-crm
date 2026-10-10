@@ -1,0 +1,157 @@
+The ERP is **data-driven**. One registry (`lib/erp/registry.ts`) lists every screen and its tabs; one context (`erpContext`) says who the person is inside the ERP; one dynamic route (`app/erp/[slug]/page.tsx`) draws any list screen from a **screen module** in `lib/erp/screens/`; and every write goes through four server actions in `lib/actions/erp.ts`. The handful of bespoke screens — dispatch, trace, the PO print, labels, settings — live in their own route folders. This tab is the map; each area's page has its own developer tab.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Registry (pure) | `src/lib/erp/registry.ts` | `ERP_GROUPS` — sidebar groups, screens, tabs (`views`); `erpLink`, `erpPlace`, `erpKeysOf`, `ERP_ALWAYS_OPEN` |
+| Modules | `src/lib/modules.ts` | One `erp.<key>` module per **built** screen, read off the registry |
+| Context | `src/lib/erp/access.ts` | `erpContext` (cached per request), `requireErpApp`, `requireErpWrite`, `requireErpForm`, preview-as |
+| Layout | `src/app/erp/layout.tsx` | Gate, sidebar built from the registry and `ctx.screens`, badges from `erpNavCounts`, preview targets |
+| Dashboard | `src/app/erp/page.tsx`, `src/lib/erp/dashboard.ts`, `src/lib/erp/digest.ts` | Sections and tiles; yesterday's paragraph |
+| List route | `src/app/erp/[slug]/page.tsx` | Resolves screen and `?view=`, calls the module's `load(ctx)`, renders `ListScreen` |
+| Screen modules | `src/lib/erp/screens/*.ts` (index in `screens/index.ts`) | Per screen/tab: columns, rows, actions, forms, form loaders, tools |
+| Module contract | `src/lib/erp/server.ts` | `ScreenModule`, `nextNumber`, `erpId`, `erpAudit`, `visibleCols`, `withoutHidden` |
+| Generic UI | `src/app/erp/_ui/` | `erp-shell.tsx`, `list-screen.tsx`, `record-drawer.tsx`, form drawer, `line-table.tsx`, prompts |
+| UI contract | `src/lib/erp/ui.ts` | `ListSpec`, `FormSpec`, `ActionSpec`, the flag vocabulary |
+| Writes | `src/lib/actions/erp.ts` | `erpRunAction`, `erpRunBulk`, `erpSubmitForm`, `erpRunTool`, `erpLoadForm`, working godown, preview |
+| Stock | `src/lib/erp/stock.ts` | One reading of current stock per stage: `rmLots`, `sfgLots`, `fgLots`, `packLots`, `lockLot` |
+| Engines (pure) | `src/lib/erp/engines/*.ts` | purchase-flow, purchase, production, sales, trace, alerts, petty-cash, match, godown-fence, cash |
+| Badges | `src/lib/erp/counts.ts` | `erpNavCounts` — the same id lists the dashboard tiles use |
+| Order book | `src/lib/erp/book.ts` | Projection into `orders`/`bills` when `erp.orders.live` is on |
+| Bespoke routes | `src/app/erp/{dispatch,trace,po,print-labels,settings}` | Dispatch desk, traceability, PO print, label sheets, settings |
+
+<Callout kind="rule">
+The engines in `lib/erp/engines/` perform **no I/O**, like every engine in MahekOne. The form previews a figure with the same function the server stores it with (`calc` names on derived fields map to `lib/erp/calcs/`), so the preview and the save cannot disagree.
+</Callout>
+
+## A request, end to end
+
+<Flow caption="GET /erp/stock?view=fgStock" chart={`
+sequenceDiagram
+  autonumber
+  participant L as erp/layout.tsx
+  participant P as erp/[slug]/page.tsx
+  participant A as erp/access.ts
+  participant M as screens/production.ts
+  participant S as erp/stock.ts
+  participant DB as Postgres
+  L->>A: requireErpApp() -> erpContext()
+  A->>DB: level on the erp grant, module rows, powers, godown staff, settings, designation
+  A-->>L: ErpContext (screens incl. every tab key, powers, working godown)
+  L->>L: sidebar = ERP_GROUPS filtered by ctx.screens, badges = erpNavCounts(ctx)
+  P->>P: erpScreenBySlug("stock"), view "fgStock" is one of its tabs
+  P->>A: erpContext() (cached) - ctx.screens has "stock"?
+  P->>M: screenModule("fgStock").load(ctx)
+  M->>S: fgLots()
+  S->>DB: inflow entries minus outflow documents
+  M-->>P: spec (columns minus withheld ones) + rows
+  P-->>P: ListScreen with tabs, toggle, filter pill
+`} />
+
+## The registry
+
+Every screen and tab is declared once. A tab (`ErpView`) keeps its own server module under its own key but is **never a module** — it is opened by holding its screen.
+
+<Code file="src/lib/erp/registry.ts" symbol="ERP_GROUPS" collapsed />
+
+<Code file="src/lib/erp/registry.ts" symbol="erpPlace" />
+
+<Code file="src/lib/erp/registry.ts" symbol="erpKeysOf" />
+
+Link to a list with `erpLink(key, query)` — never by pasting `?f=` onto `erpHref`, because a tab's link already carries `?view=`.
+
+<Code file="src/lib/erp/registry.ts" symbol="erpLink" />
+
+## A screen module
+
+<Code file="src/lib/erp/server.ts" symbol="ScreenModule" />
+
+Columns that need a power carry `pw`; `visibleCols` drops them and names them in `hidden` (the list shows "N columns withheld"), and `withoutHidden` strips the values so they never reach the browser.
+
+<Code file="src/lib/erp/server.ts" symbol="visibleCols" />
+
+Numbers that must be unique under concurrency come from `erp_series`, under a row lock, inside the caller's transaction:
+
+<Code file="src/lib/erp/server.ts" symbol="nextNumber" />
+
+<DbTable name="erp_series" note={{ key: "pr · sfg · fg · packBatch · order · po · requirement · unit", last: "The last number handed out." }} />
+
+Every write is audited with the actor (never the person being previewed) and `actor_app = 'erp'`:
+
+<Code file="src/lib/erp/server.ts" symbol="erpAudit" />
+
+## The four doors for writes
+
+<Code file="src/lib/actions/erp.ts" symbol="erpRunAction" />
+
+`erpRunBulk`, `erpSubmitForm` and `erpRunTool` have the same shape. Each calls `requireErpWrite(screen)` — the screen must be held and no preview may be on — before the module's own handler checks any power. `erpLoadForm` uses `requireErpForm`, which a preview may pass, because building a form writes nothing.
+
+## The dashboard
+
+<Code file="src/lib/erp/dashboard.ts" symbol="tileHref" />
+
+<Code file="src/lib/erp/dashboard.ts" symbol="dashboardSections" collapsed />
+
+Shared readings (`orderLines`, `detailRows`) are wrapped in a per-request `memo` so ten tiles reading the order lines run one query. The section order is fixed: Alerts, Purchase, Stock, Production and re-order, Sales, Logistics, Requests and credit notes, Petty cash, Customers.
+
+### Yesterday's paragraph
+
+<Code file="src/lib/erp/digest.ts" symbol="plainDigest" />
+
+<Code file="src/lib/erp/digest.ts" symbol="writeErpDigest" />
+
+It runs in the nightly pass (`runNightly` in `lib/jobs.ts`, right after `erp-alerts`) and by hand as `npm run jobs -- erp-digest`. It summarises the business day before the one it runs on, and upserts one row per day:
+
+<DbTable name="erp_digests" note={{ day: "The day summarised (yesterday when the job ran).", text: "The paragraph as shown.", served_by: "rules, or the writing model's provider." }} />
+
+## The sidebar badges
+
+<Code file="src/lib/erp/counts.ts" symbol="erpNavCounts" collapsed />
+
+A badge for a screen with tabs is the sum over `erpKeysOf(screen)` in the layout, so Transport's badge is its Pending LR count.
+
+## Access and modules
+
+- **Modules:** one per built screen, e.g. <ModuleRef k="erp.dashboard" />, <ModuleRef k="erp.stock" />. Tabs are not modules.
+- **No capabilities.** The ERP's row in `capability-matrix.ts` is empty on purpose; decisions are ERP **powers** (`lib/erp/powers.ts`). See [Access and designations](/docs/erp/access-and-designations/developer).
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/erp/registry.test.ts` | Every built screen is exactly one module; keys and slugs unique; dashboard is the root; a tab is never a module and every link to one lands on its screen's tab; every power has a label |
+| `npm run test` | `src/lib/erp/engines/*.test.ts` | Each engine's rules |
+| `npm run test:integration` | `src/lib/erp/erp-foundation.test.ts` | Access, masters, powers and godowns end to end |
+| `npm run test:integration` | `src/lib/erp/erp-*.test.ts` | One suite per area: purchase, production, sales, logistics, traceability, petty cash, book, AI |
+
+## Adding a screen safely
+
+<Steps>
+<Step title="Declare it in the registry">
+Add it to its group in `ERP_GROUPS` with `built: false` while it is being written — an unbuilt screen is not a module, so nothing can be granted onto a page that does not exist. Its key becomes `erp.<key>` and is a grant: never rename it.
+</Step>
+<Step title="Write its module">
+A `ScreenModule` in `lib/erp/screens/`, registered in `screens/index.ts`. Mark money columns with `pw`, run every list through `visibleCols`/`withoutHidden`, and give every refused action a `why`.
+</Step>
+<Step title="Check the power inside every handler">
+The four doors check the screen; the handler checks the power. A hidden button is not a permission.
+</Step>
+<Step title="Consume stock only inside a transaction that locks the lot">
+`lockLot`, then read stock with the transaction (`rmLots(tx)` etc.), then refuse with `refuse(...)` inside `inTx`.
+</Step>
+<Step title="Flip built, add a dashboard tile and a badge from the same function">
+A tile and a badge that count with different queries will disagree.
+</Step>
+<Step title="Claim the new module in the docs registry">
+`src/docs/coverage.test.ts` fails until a documentation page claims it.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| Settings page subtitle differs from the registry's `sub` for the same screen | `src/app/erp/settings/page.tsx`; `registry.ts` `settings` |
+| The departments module still documents a removed Departments page | `src/lib/erp/departments.ts` header and `DepartmentStep.key` |
+| The units register reads at most the newest 5,000 boxes, with nothing on the screen saying so | `src/lib/erp/screens/units.ts` `unitRows` |

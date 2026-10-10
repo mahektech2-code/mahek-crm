@@ -1,0 +1,88 @@
+Traceability is what makes a complaint or a recall answerable in minutes rather than days. Every box carries its own id, every step of production records the lots it consumed, and every box is scanned onto its order at dispatch — so from any one code the ERP can walk the whole chain in both directions, and say plainly where a link is missing.
+
+## The chain
+
+<Flow caption="Backward is up the chain, forward is down it" chart={`
+flowchart TD
+  P["Purchase<br/>supplier, raw-material lot, test"] --> S["SFG batch<br/>lines consume raw-material lots"]
+  S --> Q["SFG QC<br/>Pending, Approved or Rejected"]
+  Q --> F["FG filling<br/>the refill lot"]
+  F --> K["Packing batch"]
+  F --> L["Loose labelled unit (LU)"]
+  K --> B["Box (BX)"]
+  B --> D["Scanned onto an order line<br/>at the Dispatch desk"]
+  L --> D
+  D --> V["Dispatched<br/>to the customer"]
+`} />
+
+<Rule title="A box's id is not its lot">
+A box id — `BX-yymmdd-nnnnnn`, or `LU-…` for a labelled loose can or drum — is a serial. The lot it came from is linked data. That is what lets one lot make many boxes, one order carry boxes of several lots, and a box be traced to two refill lots when it falls between them.
+</Rule>
+
+<Rule title="Only an approved SFG lot can be filled">
+An SFG lot with no QC verdict is **Pending**. Filling refuses anything but **Approved**, so every refill lot in a trace sits on a QC decision with a name and a date against it. Deciding QC needs the *Approve or reject SFG QC* power — see [Production](/docs/erp/production).
+</Rule>
+
+## Which refill lots are in a box
+
+A packing batch draws its cans line by line from one or more refill lots, and the boxes are filled in that same order: box *n* holds cans (n−1) × cans-per-box up to n × cans-per-box − 1 of the batch. A box on a boundary holds cans of both lots, and the trace lists both with how many cans of each.
+
+<Callout kind="why">
+Assigning a single lot to a boundary box would be a guess, and a recall that trusted the guess would miss part of that box. The label sheet prints the refill lot(s) the same way, from the same rule.
+</Callout>
+
+## What a code is read as
+
+Codes are matched in this order, ignoring case and stray spaces (and taking the last part of a link, if a QR carried one):
+
+| Order | Read as |
+|---|---|
+| 1 | A box id, if it looks like `BX-` or `LU-` and the box exists |
+| 2 | An order number — digits, optionally with `ORDER` or `SO` in front |
+| 3 | A packing batch |
+| 4 | A refill (FG) lot |
+| 5 | An SFG lot |
+| 6 | A raw-material lot |
+| 7 | A Tally bill number on an order |
+
+## Never guessing
+
+<Rule title="A missing link is said to be missing">
+When a step cannot be found — stock transferred in from another godown's batch, a lot from before the ERP, a purchase that was never recorded — the trace says so in a sentence and carries on from what it does know. It never fills the gap with the nearest likely record.
+</Rule>
+
+The trace reads only. It writes nothing, so it is safe to give to anybody who needs to answer a customer.
+
+## The dashboard
+
+Today is the business day in India, from midnight.
+
+| Today | Counted from |
+|---|---|
+| SFG produced | Litres made on today's SFG batch lines, less adjustments, and how many lots |
+| Refilled | Cans filled today, less adjustments |
+| Packed | Boxes from packing batches completed today, and box ids minted today |
+| Labels printed | Boxes whose label was sent to the printer today |
+| Scanned at dispatch | Successful scans today |
+| Boxes dispatched | Boxes dispatched today |
+| Packing batches open | Batches still drawing cans |
+
+The exceptions are live counts — overrides waiting, boxes on hold, scanned but not dispatched, unlabelled boxes in stock, SFG lots waiting for or rejected at QC — plus today's refused scans by kind. Each links to the screen that fixes it.
+
+## Who can see it
+
+| Act | Needs |
+|---|---|
+| Open Traceability and trace any code | The Traceability screen |
+| Follow a link from a trace | The screen the link opens |
+
+A trace shows names, dates, lots and customers — no rates, costs or amounts — so it needs no money power.
+
+## The complaint trace
+
+Complaints use a narrower trace of their own, from a **bill and the goods on it**: the order lines for that bill, their allocated lots, the packing, filling, SFG batch and raw-material lots, the purchases and their tests, and the people who made each step. It powers the panel beside a complaint and the "three complaints on one lot" notice — see [Complaints and credit notes](/docs/erp/complaints-and-credit-notes).
+
+## Where the code and the intent disagree today
+
+- **A numeric lot or bill number is read as an order number first.** If an order with that number exists, the trace opens the order, and the lot or bill cannot be reached by typing its number.
+- **There are two traces.** The screen's trace and the complaint trace are written separately and walk the same chain differently — the complaint trace has no SFG QC step and does not split a boundary box between its refill lots. A fix to one does not reach the other.
