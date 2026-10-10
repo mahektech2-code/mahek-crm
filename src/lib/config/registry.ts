@@ -5030,6 +5030,58 @@ export const SETTINGS = [
     min: 0,
     max: 3600,
   },
+  /* ---------------------------------------------- ask the documentation
+   *
+   * The Documentation app's "Ask the docs" panel. The model searches the
+   * written pages through a tool and answers with links to the sections it
+   * read; it never reads the database except to quote a setting's live value.
+   */
+  {
+    key: "docsAsk.enabled",
+    type: "boolean",
+    category: "voice",
+    label: "Ask the docs",
+    description:
+      "Let anybody who holds the Documentation app ask a question in plain words and have it answered from the written pages, with links to the sections it came from. Off hides the answers immediately.",
+    default: true,
+  },
+  {
+    key: "docsAsk.model",
+    type: "text",
+    category: "voice",
+    label: "Ask the docs · model",
+    description: "The OpenAI model that searches the documentation and writes the answer.",
+    default: "gpt-5-mini",
+  },
+  {
+    key: "docsAsk.reasoningEffort",
+    type: "text",
+    category: "voice",
+    label: "Ask the docs · thinking effort",
+    description:
+      "How long a reasoning model thinks before answering: minimal, low, medium or high. Lower is faster. Ignored by models that do not reason.",
+    default: "low",
+  },
+  {
+    key: "docsAsk.maxLookups",
+    type: "integer",
+    category: "voice",
+    label: "Ask the docs · lookups per question",
+    description: "The most searches and section reads one question may make before it has to answer with what it has found.",
+    default: 8,
+    min: 1,
+    max: 20,
+  },
+  {
+    key: "docsAsk.timeoutSeconds",
+    type: "integer",
+    category: "voice",
+    label: "Ask the docs · time limit",
+    description: "Seconds before a question is given up on and the reader is asked to narrow it.",
+    default: 60,
+    min: 10,
+    max: 240,
+  },
   /* ------------------------------------------------------------------ hire */
   {
     key: "hire.ai.enabled",
@@ -5271,6 +5323,9 @@ export function checkConsistency(config: Config): string[] {
      a refused request on every question rather than a slower answer. */
   if (!["minimal", "low", "medium", "high"].includes(config["salesAsk.reasoningEffort"])) {
     problems.push("Ask about the team's thinking effort must be minimal, low, medium or high.");
+  }
+  if (!["minimal", "low", "medium", "high"].includes(config["docsAsk.reasoningEffort"])) {
+    problems.push("Ask the docs' thinking effort must be minimal, low, medium or high.");
   }
 
   /* A suggested minimum at or above the suggested maximum is a level nobody can hold. */
@@ -6041,6 +6096,11 @@ export type Config = {
   "salesAsk.resultCacheSeconds": number;
   "salesAsk.answerCacheSeconds": number;
   "salesAsk.contextCacheSeconds": number;
+  "docsAsk.enabled": boolean;
+  "docsAsk.model": string;
+  "docsAsk.reasoningEffort": string;
+  "docsAsk.maxLookups": number;
+  "docsAsk.timeoutSeconds": number;
   "hire.ai.enabled": boolean;
   "hire.ai.reasoningModel": string;
   "hire.ai.fastModel": string;

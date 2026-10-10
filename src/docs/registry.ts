@@ -86,6 +86,10 @@ export type DocApp = {
   appId?: AppId;
   /** The app's name as its users say it. */
   title: string;
+  /** The sidebar's glyph for it, from `components/shell/icons.tsx`. */
+  icon: string;
+  /** One word for it where space is short — the Ask panel's scope chips. */
+  short: string;
   summary: string;
   /** Groups in sidebar order. Pages appear under the group they name. */
   groups: string[];
@@ -100,6 +104,8 @@ export const DOC_APPS: DocApp[] = [
   {
     app: "platform",
     title: "MahekOne platform",
+    icon: "settings",
+    short: "Platform",
     summary:
       "How the whole of MahekOne fits together, how to run it on a laptop, how it is deployed to DigitalOcean, and the outside services it leans on — Cloudflare R2, Google Sheets, WhatsApp and the rest.",
     groups: ["Start here", "Run it", "Ship it", "Services"],
@@ -191,6 +197,8 @@ export const DOC_APPS: DocApp[] = [
     app: "crm",
     appId: "crm",
     title: "Telecaller CRM",
+    icon: "phone",
+    short: "CRM",
     summary:
       "The calling book: who to ring today and why, what each call produced, the money owed, and the leads being worked towards a first order.",
     groups: [
@@ -435,6 +443,8 @@ export const DOC_APPS: DocApp[] = [
     app: "sales",
     appId: "sales",
     title: "Sales Dashboard",
+    icon: "chart",
+    short: "Sales",
     summary:
       "The office end of MBOS: the field team's day, where they are, the journeys they walk, their targets and performance, and every decision waiting on a manager.",
     groups: ["Start here", "Overview", "Decisions", "Field work", "Commercial", "Lead Management", "People", "Enablement", "Administration"],
@@ -615,6 +625,8 @@ export const DOC_APPS: DocApp[] = [
     app: "mbos",
     appId: "field",
     title: "MBOS handset app",
+    icon: "person",
+    short: "MBOS",
     summary:
       "The field salesman's Android app: the day, the visits, orders, payments and leads — built to work with no signal and sync when it can.",
     groups: ["Start here", "The day", "Selling", "Money and time", "No signal"],
@@ -736,6 +748,8 @@ export const DOC_APPS: DocApp[] = [
     app: "erp",
     appId: "erp",
     title: "ERP",
+    icon: "clipboard",
+    short: "ERP",
     summary:
       "The factory and back office: buying raw materials, making and packing paint, stock by godown, orders, dispatch, transport and petty cash.",
     groups: ["Start here", "Masters", "Purchase", "Make and store", "Sell and ship", "Money"],
