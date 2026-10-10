@@ -1,0 +1,120 @@
+The screen is three list modules from one factory, `complaintList("requests" | "issueCn" | "complaints")`, in `screens/complaints.ts`. It has no table of its own: it reads `complaints` joined to `customers` and `bills`, raises through `createComplaint` (the CRM's writer), decides by updating `complaints` and appending `complaint_status_history`, and issues credit notes through `issueCreditNote` in the Accounts service. The trace panel is `trace.ts`; the AI helper is `ai-complaints.ts`; the form's derived fields are in `calcs/logistics.ts`.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Registry | `src/lib/erp/registry.ts` | `requests` screen with views `requests` (All), `issueCn` (Credit notes), `complaints` (Without a credit note) |
+| Screen | `src/lib/erp/screens/complaints.ts` | `requestStatus`, `complaintRows`, `billChoices`, `requestForm`, `saveRequest`, `decide`, `assist`, `toRow`, `complaintList`, `issuedCreditNotes`, `openRequestIds` |
+| Form calculators | `src/lib/erp/calcs/logistics.ts` | `request.mobile`, `request.billDate` |
+| CRM writer | `src/lib/services/complaint-create.ts` | `createComplaint` |
+| Credit note | `src/lib/services/credit-note-service.ts` | `issueCreditNote` — `requireCapability("creditnote.issue")`, bill balance limit, confirmed receipt keyed `creditnote:<complaint>` |
+| Trace | `src/lib/erp/trace.ts` | `traceBill`, `traceFromOrders` |
+| AI | `src/lib/erp/ai-complaints.ts` | `suggestComplaint`, `complaintReviewForm`, `applyComplaint`, `rejectComplaint`, `confirmedSummaries` |
+| Margin | `src/lib/erp/screens/sales.ts` | `detailRows` reads `issuedCreditNotes()` through `creditOf` |
+| Alert | `src/lib/erp/engines/alerts.ts` | `cnsNotIssued` |
+| Elsewhere | `src/lib/erp/screens/logistics.ts` | `myCustomers` counts each party's Requested complaints with `complaintRows` |
+
+## A request, end to end
+
+<Flow caption="Issue Credit Note from the ERP" chart={`
+sequenceDiagram
+  autonumber
+  participant UI as ListScreen
+  participant Act as actions/erp.ts
+  participant C as complaints.ts
+  participant CN as credit-note-service.ts
+  participant DB as Postgres
+  UI->>Act: erpRunAction("issueCn", "issue", id, amount, date, number)
+  Act->>Act: requireErpWrite("issueCn")
+  Act->>C: actions.issue(ctx, id, values)
+  C->>DB: complaint must read Accepted and request_cn
+  C->>CN: issueCreditNote(complaintId, amount, reference)
+  CN->>CN: requireCapability("creditnote.issue"), bill balance
+  CN->>DB: confirmed receipt against the bill, cn_status issued
+  CN-->>C: ok
+  C->>DB: transaction - status resolved, cn_date, resolution notes, history, bind file
+  C->>DB: audit erp.request.issueCn
+`} />
+
+## The status words
+
+<Code file="src/lib/erp/screens/complaints.ts" symbol="requestStatus" />
+
+## Raising
+
+<Code file="src/lib/erp/screens/complaints.ts" symbol="billChoices" />
+
+<Code file="src/lib/erp/screens/complaints.ts" symbol="saveRequest" collapsed />
+
+## Deciding
+
+<Code file="src/lib/erp/screens/complaints.ts" symbol="decide" />
+
+## The assist panel
+
+<Code file="src/lib/erp/screens/complaints.ts" symbol="assist" collapsed />
+
+It traces **every** complaint row that names a bill on every load (one `traceBill` per row), then compares lots in memory.
+
+## Credit notes in the margin
+
+<Code file="src/lib/erp/screens/complaints.ts" symbol="issuedCreditNotes" />
+
+## The AI suggestion
+
+<Code file="src/lib/erp/ai-complaints.ts" symbol="suggestComplaint" />
+
+## Tables
+
+<DbTable name="complaints" only={["customer_id", "category", "description", "status", "request_cn", "bill_id", "goods_description", "cn_amount", "cn_status", "cn_reference", "cn_date", "mobile_number", "salesman_name", "resolution_notes", "resolved_at"]} note={{
+  status: "The CRM's complaint status. requestStatus turns it into Requested / Accepted / Rejected / Resolved.",
+  request_cn: "Decides the tab: Credit notes or Without a credit note.",
+  goods_description: "Free text from the bill's goods; part of the key issuedCreditNotes sums by.",
+  cn_status: "under_review on accept, rejected on reject, issued by the Accounts service.",
+  cn_reference: "The credit note number typed at issue.",
+  salesman_name: "Who raised it for the customer, as picked on the ERP form.",
+}} />
+
+`erp_requests` is retired: nothing reads or writes it since 0184 carried its rows into `complaints` under the same ids.
+
+## Access
+
+- **Module:** <ModuleRef k="erp.requests" />; its three tabs come with it.
+- **ERP power** `decideRequests`: accept, reject (single and bulk), resolve.
+- **Capability** `creditnote.issue` (Accounts), read with `canFor(ctx.user, …)` to draw the button and enforced inside `issueCreditNote`:
+
+<CapabilityGrid names={["creditnote.issue"]} />
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test:integration` | `src/lib/erp/erp-logistics.test.ts` — `complaints and credit notes are the CRM's complaints` | A credit-note request names a real bill and goods, lands as a CRM complaint, and only the office decides; an accepted credit note is issued through Accounts, comes off the bill, closes the complaint, and the margin takes it |
+| `npm run test:integration` | `src/lib/erp/erp-ai.test.ts` — `batch trace and complaint clusters (AI-6)` | The trace runs from the bill back to the supplier, and three on one lot flag a batch problem |
+| `npm run test:integration` | `src/lib/erp/erp-ai-reading.test.ts` — `complaint review (AI-6)` | A confirmed suggestion sets the type, and the summary is kept |
+| `npm run test` | `src/lib/complaint-labels.test.ts` | The category labels both apps read |
+
+## Changing it safely
+
+<Steps>
+<Step title="Write complaints only through the CRM's paths">
+`createComplaint` to raise, the status plus `complaint_status_history` to decide, `issueCreditNote` for money. A shortcut that updates `cn_amount` directly would put a credit note on a complaint that never came off a bill.
+</Step>
+<Step title="Keep the power and the capability apart">
+Deciding is the ERP's `decideRequests`; issuing is Accounts' `creditnote.issue`. Folding one into the other is how the person chasing a customer ends up crediting them.
+</Step>
+<Step title="Watch the cost of assist">
+`assist` traces every row with a bill on every load. A long complaint list is one trace query chain per row.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| `applyComplaint` changes a CRM complaint's category with no `decideRequests` check | `ai-complaints.ts` `applyComplaint`; `screens/complaints.ts` `forms.aiComplaint` |
+| Issuing the credit note and resolving the complaint are separate transactions | `screens/complaints.ts` `actions.issue` |
+| **Add More Credit** is offered on complaints that asked for no credit note | `screens/complaints.ts` `toRow` |
+| `issuedCreditNotes` keys on `goods_description` text, which must equal the SKU name for the margin to pick it up | `screens/complaints.ts` `issuedCreditNotes`; `screens/sales.ts` `creditOf` |
+| `assist` runs one `traceBill` per complaint row on every load | `screens/complaints.ts` `assist` |

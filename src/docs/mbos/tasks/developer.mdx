@@ -1,0 +1,111 @@
+Tasks live in SQLite `tasks` on the handset and in `mbos_tasks` at the office. They come **down** on every pull (the `tasks` channel) and go **up** as `entityType: "task"` outbox items — `create` for one the salesman added, `update` for done, answers and moves. Notifications come down on the `notifications` channel into a local table; push is sent by the office through Expo and routed on tap by `PushTaps`.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Screen | `mbos-app/app/tasks.tsx` | Buckets, *Mark as done* sheet, *Answer and finish*, *Move it*, new task |
+| Screen | `mbos-app/app/notifications.tsx` | The bell list; `CTA` names each destination |
+| Data | `mbos-app/src/data/tasks.ts` | `createTask`, `completeTask`, `snoozeTask`, `snoozeTarget`, `bucketOf`, `escalateOverdue`, drafts |
+| Form engine (pure) | `mbos-app/src/engines/task-form.ts` | Field types, conditions, linked questions — same engine as the office's |
+| Data | `mbos-app/src/data/notifications.ts` | Local `notify`, `listNotifications`, `markRead` |
+| Push (native) | `mbos-app/src/native/push.ts` | Channels, `registerForPush`, `routeForNotification`, foreground handler |
+| Push taps | `mbos-app/src/state/push-taps.tsx` | `openFrom`, `PushTaps` — listener and cold-start response |
+| Token route | `src/app/api/mbos/push-token/route.ts` | Stores the Expo token on the device row |
+| Handlers | `src/lib/actions/mbos.ts` | `handleTask`, `handleTaskUpdate`, `taskSchema` |
+| Escalation | `src/lib/mbos-jobs.ts` | `escalateOverdueTasks` (hourly) |
+| Push sender | `src/lib/mbos/push.ts` | `pushToUsers`, `collectPushReceipts`, `prunePushFailures` |
+
+## Completing a task, end to end
+
+<Flow caption="Mark as done → office" chart={`
+sequenceDiagram
+  autonumber
+  participant UI as tasks.tsx
+  participant D as data/tasks.ts
+  participant Q as outbox
+  participant H as handleTaskUpdate
+  participant PG as Postgres
+  UI->>D: completeTask(id, note, photoId, responses)
+  D->>D: updateAndQueue — status done, completionNote, completionPhotoId
+  D->>Q: task update item
+  Q->>H: push batch
+  H->>PG: find mbos_tasks row (missing = retry)
+  H->>H: expand campaign form against the shop, cleanTaskAnswers
+  H->>H: requireCompletionNote and no note and no answers = reject
+  H->>PG: update status, completion_note, responses, link_results
+  H->>PG: bindMbosMedia(completion photo)
+`} />
+
+## The handset side
+
+<Code file="mbos-app/src/data/tasks.ts" symbol="completeTask" />
+
+<Code file="mbos-app/src/data/tasks.ts" symbol="snoozeTarget" />
+
+<Code file="mbos-app/src/data/tasks.ts" symbol="bucketOf" />
+
+The pull's `upsertTasks` is hand-rolled (the two sides name columns differently), which is exactly the shape that once NULLed every completed task's note: it read `completionNote`, `completionPhotoId` and `escalatedAt`, none of which the server sent, and the `ON CONFLICT` wrote the NULLs over the phone's values. Every column it reads must be on the wire.
+
+## The server side
+
+<Code file="src/lib/actions/mbos.ts" symbol="taskSchema" collapsed />
+
+<Code file="src/lib/actions/mbos.ts" symbol="handleTaskUpdate" collapsed />
+
+<Code file="src/lib/mbos-jobs.ts" symbol="escalateOverdueTasks" collapsed />
+
+<DbTable name="mbos_tasks" only={["id", "title", "assigned_to_user_id", "assigned_by_user_id", "priority", "due_date", "customer_id", "status", "completion_note", "completion_photo_id", "completed_at", "snoozed_to", "snooze_reason", "escalated_at", "source_type", "source_id", "campaign_id", "responses", "link_results", "completed_via"]} note={{
+  source_type: "What raised it — lead_validation, requirement_visit, a sample chase. The handset draws Call now / Open shop from it.",
+  source_id: "With source_type, the natural key that stops a rule raising the same task twice.",
+  escalated_at: "Written once by the hourly sweep; the idempotency guard.",
+}} />
+
+<DbEnum name="mbos_task_status" />
+
+<DbTable name="mbos_task_campaigns" only={["id", "title", "form", "audience", "due_date", "task_count"]} />
+
+## Push
+
+<Code file="mbos-app/src/native/push.ts" symbol="routeForNotification" />
+
+<Code file="mbos-app/src/state/push-taps.tsx" symbol="openFrom" collapsed />
+
+Two ways in: a tap while the app runs raises a listener event; a tap that **cold-starts** the app must be asked for with `getLastNotificationResponseAsync`. `PushTaps` handles both and waits for a session, so it never routes behind the sign-in form.
+
+<Code file="src/lib/mbos/push.ts" symbol="pushToUsers" collapsed />
+
+Push is two-phase: `send` returns tickets ("accepted"), `getReceipts` returns verdicts — the only place `DeviceNotRegistered` is reported. `collectPushReceipts` reads them and clears dead tokens.
+
+<DbTable name="notifications" note={{
+  href: "The web route.",
+  mbos_href: "The handset route. Null falls through to the bell list on the phone.",
+}} />
+
+## Tests that pin it
+
+| Test | Pins |
+|---|---|
+| `src/lib/task-form.test.ts`, `task-campaigns.test.ts` | Form fields, conditions, linked questions, answer cleaning |
+| `src/lib/mbos/push-rules.test.ts` | Quiet hours, token shape, chunking |
+| `src/lib/mbos-wire.test.ts` | Task columns the pull reads are on the wire; the escalation key is published |
+
+## Changing it safely
+
+<Steps>
+<Step title="Add a task column">
+Add it to `mbos_tasks`, the bootstrap/delta SELECT, the handset's `tasks` table and `upsertTasks` — all four, or the pull NULLs it.
+</Step>
+<Step title="Send a new kind of notification">
+Write it through `notifyUser`/`notifyUsers` with an `mbosHref` that is a real handset route, or null. Never a web path.
+</Step>
+<Step title="Add a sound or channel">
+Channels are native on Android; a new channel id needs a new APK, and release builds strip sounds named only at runtime.
+</Step>
+</Steps>
+
+## Known gaps
+
+| Gap | Where |
+|---|---|
+| Handset escalation is day-granular and silent; only the office sweep notifies | `escalateOverdue` vs `escalateOverdueTasks` |

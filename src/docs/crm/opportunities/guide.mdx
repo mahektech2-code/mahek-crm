@@ -1,0 +1,107 @@
+An opportunity is **something a customer said on a call that they might buy** — "we may need PU sealer next month", "send me a rate for 20-litre thinner". Opportunities is the list of those, with who is expected to follow each one up, so that what a call turned up is worked rather than forgotten on the customer's timeline.
+
+An opportunity is not a lead. It can be on a customer who has bought from us for years.
+
+## The screen at a glance
+
+<Wireframe url="/crm/opportunities" nav={["Dashboard", "#Daily calling", "Call Log", "Reminders", "Call History", "Opportunities"]} active="Opportunities" caption="Opportunities, on the Being worked tab">
+  <WfBar>
+    <WfTitle sub="Your book — what customers' calls turned up that somebody may buy.">Opportunities</WfTitle>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfBar>
+    <WfCard title="Being worked"><WfText>7</WfText></WfCard>
+    <WfCard title="Past their expected day"><WfText>2</WfText></WfCard>
+    <WfCard title="Estimated value open"><WfText>₹1,85,000</WfText></WfCard>
+    <WfCard title="Won"><WfText>3</WfText></WfCard>
+    <Hotspot n={2} />
+  </WfBar>
+  <WfTabs items={["Being worked 7", "Past due 2", "Won 3", "Lost 1", "All 11"]} active="Being worked 7" />
+  <WfCard>
+    <WfBar><b>Customer A</b><WfPill tone="brand">Open</WfPill><WfPill tone="danger">Past its expected day</WfPill><Hotspot n={3} /></WfBar>
+    <WfText>PU Sealer · about 20 cans a month · ₹40,000 · expected 5 Aug</WfText>
+    <WfText muted>They rang about a price · Owner · logged by Telecaller A on 1 Aug</WfText>
+    <WfBar><WfButton>Start working it</WfButton><WfButton primary>Won</WfButton><WfButton>Lost</WfButton><Hotspot n={4} /></WfBar>
+  </WfCard>
+  <WfCard>
+    <WfBar><b>Customer B</b><WfPill tone="warn">Being worked</WfPill></WfBar>
+    <WfText>Nano Thinner – 20 Liter (Loose) · expected 22 Aug</WfText>
+    <WfText muted>They rang about an order · logged by Telecaller B on 9 Aug · for Telecaller A</WfText>
+    <WfText>"Sent the rate, waiting for their purchase person"</WfText>
+    <WfBar><WfButton primary>Won</WfButton><WfButton>Lost</WfButton></WfBar>
+  </WfCard>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Your list.</b> Opportunities on accounts in your book, plus any you raised yourself on somebody else's account.</span>,
+  <span key="2"><b>The counts.</b> How many are being worked, how many have passed the day an order was expected, the estimated value still open, and how many were won.</span>,
+  <span key="3"><b>The opportunity.</b> What they might buy, the quantity and value if somebody estimated them, and the expected order date. A red badge means that date has passed.</span>,
+  <span key="4"><b>Work it.</b> <i>Start working it</i> marks it as being worked. <i>Won</i> and <i>Lost</i> close it; <i>Lost</i> asks why.</span>,
+]} />
+
+## Where opportunities come from
+
+Opportunities are raised from the call panel, when somebody answers **Yes** to:
+
+> **Did this call turn up a sales opportunity?**
+
+| Field | Required | Example |
+|---|---|---|
+| Product | Yes | What they might buy |
+| Estimated quantity | No | About 20 cans a month |
+| Estimated value | No | In rupees |
+| Expected order date | No | Must be today or later |
+
+The question is asked on **every call the customer made to us**. On a call we made, it appears only when the call assistant heard a "maybe" in your notes and filled it in for you to check. Answering **No** is recorded too, so a manager can tell "nobody asked" from "asked, and there was nothing".
+
+<Callout kind="note">
+An opportunity lands on the list of the person **whose book the account is in**, not necessarily whoever took the call. If that is somebody else, they get a notification: *A call turned up an opportunity on your account*.
+</Callout>
+
+## Working one
+
+<Steps>
+<Step title="Open Being worked">
+Everything open or being worked, newest first. Check **Past due** first — the expected order day has gone.
+</Step>
+<Step title="Start working it">
+Moves it from *Open* to *Being worked*, so the team can see somebody has picked it up.
+</Step>
+<Step title="Close it as Won or Lost">
+**Won** asks *What came of it? (optional)*. **Lost** asks *Why was it lost?* — and will not save without an answer, because the next call to that customer needs it.
+</Step>
+<Step title="Reopen if you closed it by mistake">
+A won or lost opportunity shows **Reopen**. The note written when it was last worked is kept.
+</Step>
+</Steps>
+
+## Statuses
+
+| Status | Badge | Means |
+|---|---|---|
+| Open | Open | Raised on a call, nobody has picked it up |
+| In progress | Being worked | Somebody is following it up |
+| Won | Won | It turned into business — **your** judgement, nothing is worked out from their orders |
+| Lost | Lost | It did not, and the reason is on the card |
+
+<Callout kind="warn" title="Won is what you say, not what the system checks">
+Marking an opportunity won does not look for an order. Mark it won when it became business, and say so in the note.
+</Callout>
+
+## Questions people ask
+
+<Faq q="Is an opportunity the same as a lead?">
+No. A lead is an account that has never ordered and is worked in Lead Management. An opportunity is one thing a customer — new or old — might buy, raised from a single call.
+</Faq>
+<Faq q="Why did the opportunity box not appear on my call?">
+It is asked on calls the customer made to us. On a call we made, it only appears if the call assistant picked up a possible sale in your notes.
+</Faq>
+<Faq q="I raised one and it says 'for' somebody else.">
+It went to the person whose book the account is in. You can still see it and work it, because you raised it.
+</Faq>
+<Faq q="Can I change the product or the value?">
+Not from this screen. Write what changed in the note when you close it.
+</Faq>
+<Faq q="Does Lost stop the customer being called?">
+No. It only closes the opportunity. The Call Log decides calls from the customer's own buying pattern.
+</Faq>

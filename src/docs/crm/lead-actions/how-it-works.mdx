@@ -1,0 +1,120 @@
+A lead does not stall because nobody knows what to do next. It stalls because the thing to do next lives in somebody's head, and the head is busy. This desk is built on three rules that move that into the record: **every active lead owes somebody something** (§24), **events raise dated tasks on their own** (§13's nurture sequence), and **a customer is handed to a named person to run** (§Q) — without moving a rupee.
+
+<Callout kind="live">
+Values shown are read live from your CRM.
+</Callout>
+
+## §24: an active lead may not sit with nothing owed
+
+A next action is **four answers, not a date**: the action, the day, the person, and what that person is expected to come back with.
+
+<Callout kind="why">
+A date alone is what the funnel had before, and a date alone is how a lead sits for six weeks with everybody assuming somebody else is holding it.
+</Callout>
+
+| Where the rule bites | How |
+|---|---|
+| **Every upward move** on a lead with a sales type | The gate adds *"Say what happens next, on which day, and who will do it"* unless the action, day and person are all present. Switched by <Setting k="leads.requireNextAction" />. |
+| **Setting a next action** directly | The action, the day and the person are required, and the person must have an active account. The expected outcome is optional — a call that has not happened does not always have a stated objective, and demanding one produces a box people type a full stop into. |
+| **Closing a lead as lost** | The next action is **cleared** — a closed lead owes nobody anything — and its open follow-up tasks are cancelled. |
+| **Legacy leads** (no sales type) | Exempt. Demanding a next action to move a four-year-old lead would freeze the book the rule exists to unstick. |
+
+When the next action is owed by somebody other than the person setting it, they are notified — work arriving on a list unasked is otherwise found out by the lead going overdue against their name.
+
+### The four windows on one column group
+
+The **Due**, **Overdue** and **Nothing scheduled** tabs are three views of the same four columns, read as stored. None of them decides anything:
+
+- **Due** — a next action dated today.
+- **Overdue** — dated before today, with nothing recorded since.
+- **Nothing scheduled** — an active lead with no next action, then leads whose action has gone past. On a lead with a sales type this list should be empty; it is not decoration.
+- **On hold** — parked leads by the day each returns. A park needs a coded reason from <Setting k="leads.holdReasons" />, a return day and a next action.
+
+## §13: the nurture sequence
+
+An event happens, and some days later a task with a name and a date appears on somebody's list. The sequence is **a table, not fifteen rules scattered through the code** — each row names the trigger, the delay, whose task it is and the sentence:
+
+<Flow caption="Where the nurture rows hang" chart={`
+flowchart TD
+  P["Becomes a Prospect"] --> P1["day 0 · lead manager: Check the customer and the salesman"]
+  P --> P2["day 0 · salesman: Get and check GST"]
+  P --> P3["day 2 · Send the company profile"]
+  P --> P4["day 4 · Send the brochure and video"]
+  V["Salesman visit"] --> V1["day 1 · Check call after the visit"]
+  S["Sample requested"] --> S1["day 0 · Check the sample request"]
+  SD["Sample dispatched"] --> S2["day 2 · Check it is moving"]
+  SR["Sample received"] --> S3["first rung of the review ladder · Sample review call"]
+  SA["Sample approved"] --> S4["day 0 · Call about the order"]
+  N["Negotiation"] --> N1["day 3 · Follow up the negotiation"]
+  E["Expected order date"] --> E1["day 0 · Ask for the first order"]
+  O["Order received"] --> O1["day 1 · Follow the delivery"]
+  R["Expected reorder"] --> R1["day 0 · Repeat-order call"]
+`} />
+
+<Rule title="Raised once, however often it is checked">
+Each task carries a key built from things that do not move: the trigger, whose task it is, the row's declared delay and the record that caused it. The nightly pass and the action that caused the event both raise through the same function, which reads the keys already held first — so the usual case is that the action raised it seconds ago and the nightly finds nothing to do.
+</Rule>
+
+<Callout kind="why">
+A scheduled pass that raised a second copy every time it ran would be worse than one that never ran: forty identical "Sample review call" rows is a list somebody stops opening, and the one real task goes with them. The key deliberately leaves out the due date and the wording — a manager editing the review ladder, or somebody improving a sentence, must not duplicate every outstanding task overnight.
+</Callout>
+
+- **Owner is a role, resolved per lead.** "Lead manager" is the lead's lead-manager seat; "salesman" is the account's sales seat, falling back to its owner. A task whose person cannot be resolved is **skipped**, never given to whoever is handy — the lead shows up on the lists of leads with nobody running them instead.
+- **Missed days catch up.** A row comes due when its trigger day plus its delay has arrived, so a pass that did not run for a week raises the week's worth; nothing is raised ahead of its day.
+- **The sample-received row follows the review ladder.** Its delay is the first rung of <Setting k="leads.sampleReviewChaseDays" />, so it cannot disagree with the review chase.
+- **The repeat-order call** is dated by the Call Log's own stock-check day (<Setting k="queue.routineCallPercent" />% of the customer's measured cycle), and only for accounts that have a lead manager.
+- **Answers close tasks.** Confirming a sample's receipt closes the transit chases; recording a verdict closes the review chases; losing a lead cancels its nurture tasks. Closed tasks keep their record.
+
+The pass runs once a night; its longest delay is four days, so an hourly pass would re-derive the same events twenty-four times to raise nothing.
+
+## §14: communication actions
+
+Eleven company-communication actions — calling, the company profile, a product image, the brochure, the video, the price list, a sample follow-up, a negotiation call, asking for the first order, a payment follow-up and a repeat-order call — are recorded against the lead and written to its timeline. The Communication tab counts them across the book and names the ones **never used**, which is how a manager notices that nobody ever sends the video.
+
+## §Q: handing a customer over
+
+The brief says "on the second order the lead becomes a customer **and** the relationship moves to a customer manager". Those are two independent facts joined by an "and". The first is the account's `kind`, decided by conversion. The second is a separate seat: **who runs the relationship**.
+
+<Rule title="A handover moves sight, and never a rupee">
+The relationship seat is read by the rules that decide who may **see and work** an account, so the person handed it can open it. It is **not** read by the rule that decides whose book an account is in — so no order, target, collections list or Call Log moves. Moving revenue is a reassignment, which is accounts' and administrators' only.
+</Rule>
+
+<Callout kind="why">
+That is exactly why a handover can be a **manager's** act (the hand-over permission) while reassignment cannot: moving the sales seat moves numbers between a manager's own people, and moving this one moves none. A seat that did not carry sight would tell somebody an account was theirs and then refuse them the screen.
+</Callout>
+
+| Rule | Detail |
+|---|---|
+| Only a customer can be handed over | A lead is run by its lead manager — a different seat. Refused with *"A lead has no relationship to hand over yet…"* |
+| A reason is required | From <Setting k="people.amChangeReasons" />; *Other* needs a note |
+| The new person must be active | And the accounts must be in your scope |
+| Three writes, one transaction | The seat and its date, a history row with the reason, a timeline entry |
+| Both sides are told | One message each, however many accounts moved; nobody is told about an account that had no previous holder |
+| No "decided" mark | The customer master never states this seat, so there is nothing to hold off — and stamping the mark would freeze the other two seats against a sync |
+
+**Whether a handover is outstanding is derived**, never stored: converted, and nobody named yet. A flag would be a cache with nothing to rebuild it from but the two columns it would be caching. The Handovers list should be empty, and it is a list for exactly that reason.
+
+## Who can do what
+
+| Action | Who |
+|---|---|
+| Set a next action, record a communication, park a lead | Lead work — every associate in scope |
+| Hand a relationship over | The hand-over permission — managers |
+| See these desks | <ModuleRef k="crm.lead-actions" /> and <ModuleRef k="crm.lead-handovers" />, granted separately |
+
+## Settings
+
+<SettingsTable keys={[
+  "leads.requireNextAction",
+  "leads.holdReasons",
+  "leads.sampleReviewChaseDays",
+  "people.amChangeReasons",
+  "queue.routineCallPercent",
+]} />
+
+## Where the code and the intent disagree today
+
+- **`setLeadNextAction` does not read `leads.requireNextAction`.** The service header says the rule is "enforced by `setLeadNextAction`"; the action always requires the action, day and person and never reads the setting (`lib/services/lead-actions-service.ts` header; `lib/actions/leads.ts` `setLeadNextAction`). The setting only switches the gate condition on moves.
+- **The handover service says `kind` flips on the first order.** Its header (`lib/services/handover-service.ts`) says so; conversion happens on the second.
+- **`delivery_completed` is never raised by the nightly pass** — the row exists in the sequence, but nothing records a dispatch to trigger it (`mbos-jobs.ts` `runNurturePass`, TODO).
+- **A next action's notification links to the CRM customer record** (`/crm/customers/…`) even when it was set from the Sales Dashboard.

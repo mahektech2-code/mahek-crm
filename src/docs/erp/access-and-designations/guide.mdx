@@ -1,0 +1,152 @@
+This page is about what the ERP lets **you** do and where you are working: the Settings screen, the godown you are working at, the help videos, and — for the owner and the ERP administrator — how somebody is given the ERP and how to see it exactly as they do.
+
+## Settings: your working location and what you can do
+
+Settings is always in your sidebar, whatever else you hold. It has two cards.
+
+<Wireframe url="/erp/settings" nav={["Dashboard", "#Purchase", "Purchase testing", "#Help videos", "Help videos", "#Settings", "Settings"]} active="Settings" caption="Settings for a quality tester">
+  <WfBar>
+    <WfTitle sub="Your working location and profile.">Settings</WfTitle>
+  </WfBar>
+  <WfBar>
+    <WfCard title="Working location">
+      <WfText muted>Pre-fills godown on every form and scopes godown lists. Only godowns you are assigned to.</WfText>
+      <WfButton>Godown A ▾</WfButton>
+      <WfText muted>Assigned to 2 godowns · current: Godown A</WfText>
+      <Hotspot n={1} />
+    </WfCard>
+    <WfCard title="A quality tester">
+      <WfText muted>Quality tester · Mixing & Blending department · access is set in the MahekOne Admin Console</WfText>
+      <WfText>See purchase money · <b>No</b></WfText>
+      <WfText>Verify quality tests · <b>No</b></WfText>
+      <WfText>Approve or reject SFG QC · <b>Yes</b></WfText>
+      <WfText muted>… every ERP power, Yes or No</WfText>
+      <Hotspot n={2} />
+    </WfCard>
+  </WfBar>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Working location.</b> The godown your forms fill in for you, and the godown your stock figures and godown lists are for. You can pick only from the godowns you are assigned to. If you are assigned to none, the card says "You are not assigned to any godown yet. Ask an ERP administrator to add you on the Godowns screen."</span>,
+  <span key="2"><b>Your profile.</b> Your name, your designation (your job in the ERP), your production department if you have one, and every ERP power with a plain Yes or No. Nobody can change these from here — they are set in the Admin Console.</span>,
+]} />
+
+### Changing your working location
+
+<Steps>
+<Step title="Pick the godown">
+From Settings, or from the **Working at** chip in the header of any screen. The list holds only the godowns you are assigned to.
+</Step>
+<Step title="Read the message">
+"Working location is Godown A · forms now pre-fill it". Every new form now starts with that godown, and godown-scoped lists (such as Drum labels) show it.
+</Step>
+</Steps>
+
+### Letting the ERP find your godown for you
+
+Beside the **Working at** chip is a location button: "Find my godown from where I am standing". Press it once and allow location in your browser. From then on, when you open the ERP standing inside one of your godowns, it switches your working location by itself and says so: "You are at Godown A (40 m from its pin) · working location switched".
+
+| What it says | What it means |
+|---|---|
+| You are at … · working location switched | You are inside one of your godowns and it is now your working location |
+| Not inside any of your godowns | You are outside every godown fence; nothing changed |
+| Location is only good to … m here — too vague to tell which godown. Pick it from the list. | Your phone's fix is not precise enough. Choose the godown from the chip |
+| None of your godowns has a map pin yet — set one under Masters → Godowns | The ERP cannot find a godown that has no pin |
+| Location is blocked for MahekOne in this browser | You refused location; allow it in the address bar |
+| Finding the godown by location is switched off in ERP settings | The owner has turned the feature off |
+
+<Callout kind="note">
+A godown you pick by hand stays picked for the rest of that browser tab, even if you walk into another godown's yard. Where you are standing is never stored — only which godown you were switched to, and how far from its pin.
+</Callout>
+
+## Help videos
+
+Help videos are short walkthroughs of ERP screens, newest first. Search by title or by tag, and click a row to play it. A video is either a YouTube link or a file uploaded straight into the ERP.
+
+If you are an ERP manager you also see **Add video**:
+
+<Steps>
+<Step title="Add video">
+Give it a **Title**, choose **Video from**: "From YouTube URL" (paste the link) or "From File Upload" (upload the file).
+</Step>
+<Step title="Tag it">
+Pick **Search tags** from the list, so people find it by the screen or the task. The tag list is a reference list on Masters → Reference lists.
+</Step>
+<Step title="Remove one that is out of date">
+Open it and press **Delete**. Only managers see the button.
+</Step>
+</Steps>
+
+## Getting access to the ERP
+
+Nobody gives themselves the ERP. A platform administrator does it in the Admin Console → **Access**, on the person's **Manage access** dialog:
+
+<Steps>
+<Step title="Tick the ERP">
+The ERP block opens underneath with the screens in a grid, grouped the way the ERP's sidebar groups them.
+</Step>
+<Step title="Pick an ERP designation">
+"ERP designation" is offered first: Owner / CEO, Office / accounts, Quality tester, Godown / dispatch and the production departments. Picking one sets the level, the screens and the powers in one move. "No designation — set by hand" leaves you to tick them yourself.
+</Step>
+<Step title="Adjust if this person is different">
+Untick a screen or tick a power. The dialog then says the person is **Customised** from their designation, and what is different.
+</Step>
+<Step title="Review and save">
+The review page says in words what is granted, narrowed and taken away before anything is written.
+</Step>
+</Steps>
+
+<Callout kind="rule" title="Screens come whole, with their tabs">
+You are given a **screen**, never one tab of it. Holding Stock opens all four of its stages and their logs; holding Orders opens all seven of its tabs; holding Petty cash opens both Expenses and Funds given. Dashboard and Settings are open to everybody who holds the ERP.
+</Callout>
+
+### What a designation is
+
+A designation is the name of a job — "Quality tester" — and it carries the screens and powers that job needs. Two things make it useful:
+
+- **Editing the designation moves everybody who holds exactly it.** If the owner adds a screen to "Godown / dispatch", every godown person who still holds exactly that designation gets the screen, and is told by a notification.
+- **Somebody changed by hand is left alone.** If one godown person was given an extra screen on purpose, they are **Customised**: they keep the designation's name, but an edit to the designation does not touch them.
+
+Deleting a designation never takes a screen away from anybody. The people who held it keep exactly their access and simply no longer have the name.
+
+## Previewing the ERP as somebody else
+
+An ERP administrator sees **Preview access as** at the foot of the sidebar. Pick a designation or a person and the ERP redraws exactly as they would see it: the same sidebar, the same columns withheld, the same lists narrowed.
+
+<Wireframe url="/erp" nav={["Dashboard", "#Stock", "Stock", "Boxes & labels", "Item transfers", "#Settings", "Settings"]} active="Dashboard" caption="Previewing as a designation">
+  <WfCard tone="warn">
+    <WfBar><WfText>Previewing the ERP as <b>Godown / dispatch</b> (designation) — read-only. Nothing you do here is saved, and lists that belong to a person show yours.</WfText><WfSpacer /><WfButton>Back to my ERP</WfButton><Hotspot n={1} /></WfBar>
+  </WfCard>
+  <WfBar>
+    <WfTitle sub="Good afternoon · stock and godown figures for Godown A">Dashboard</WfTitle>
+  </WfBar>
+  <WfBlock label="Only the sections a godown person would see" h={70} />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>The preview banner.</b> Always across the top while you preview. Nothing can be saved: every button that writes answers "You are previewing the ERP as …, so nothing can be saved. Leave the preview to work as yourself." Forms still open, so you can see exactly which fields that person is offered. <b>Back to my ERP</b> ends it.</span>,
+]} />
+
+The preview ends by itself after four hours, and at once if you stop being an ERP administrator.
+
+## Common questions
+
+<Faq q="A screen my colleague has is not in my sidebar.">
+Screens are given one by one. Ask a platform administrator to look at your access in the Admin Console. If you share a designation and your colleague has more, one of you has been customised.
+</Faq>
+
+<Faq q="Why can't I pick the godown I am standing in?">
+You can only work at godowns you are assigned to. An ERP administrator assigns people on Masters → Godowns → Assign employees.
+</Faq>
+
+<Faq q="Settings says 'No' beside a power my manager says I have.">
+Settings shows what the ERP will actually allow you. If it says No, the power was not saved on your access — ask for it to be added in the Admin Console.
+</Faq>
+
+<Faq q="My access changed and I did not ask for it.">
+Your designation was probably edited. You will have a notification titled "Your ERP access changed — …" that names the designation.
+</Faq>
+
+<Faq q="Can an ERP administrator do something while previewing as me?">
+No. A preview is read-only, and every action records the administrator's own name, never yours.
+</Faq>

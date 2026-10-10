@@ -1,0 +1,126 @@
+The Masters decide what every later record can say. Three principles run through all of them: **one copy of each real thing** (the ERP extends MahekOne's records rather than keeping its own), **retire, never delete** (records already carry the value), and **the source's own words** (every refusal reads the way Mahek Plus said it, because that is what the team recognises).
+
+## One copy of each real thing
+
+| ERP master | What it really is | What the ERP adds beside it |
+|---|---|---|
+| Sales parties | MahekOne's `customers` | An ERP profile: state, transporter, weight type, segment, counter types, grade, standing instructions, allocation email, and whether it is **pending activation** |
+| Products | The catalogue's SKUs | Packing: the can or drum it is filled into, empty boxes per box, box type, box rate |
+| Price lists | The Price Desk's published lists | Nothing — read only |
+| Godown staff | People who hold the ERP | Which godowns each may work at |
+| Raw materials, Purchase parties, Godowns | The ERP's own | — |
+
+<Callout kind="why">
+Mahek Plus kept its own copy of customers and products, and they drifted from MahekOne's. "Deactive" is now the customer's own MahekOne status, so the CRM and the ERP cannot disagree about whether a customer is closed; a new ERP customer is a MahekOne customer the moment it is saved.
+</Callout>
+
+## Raw materials
+
+<Rule title="A chemical is defined by its density and its tests">
+A chemical must carry a density (between 0.1 and 3) and at least one test. The density turns kilograms bought into litres in stock; the testing list is what every lot of it must prove before it reaches the register. For any other type both are meaningless and are cleared.
+</Rule>
+
+<Rule title="The item master says how an item is bought">
+Every item carries a **purchase rule**: **Direct purchase** (pick the vendor, raise the PO — boxes, cans, stationery, routine chemicals), **Quotation** (collect and compare quotations first — price-sensitive chemicals), or **Buyer decision** (the buyer chooses, requirement by requirement). A new chemical starts on Quotation and anything else on Direct. A **default vendor** is offered on a direct purchase; it is cleared on a Quotation item, where the vendor is whoever's quotation is chosen.
+</Rule>
+
+<Callout kind="note">
+The rule is copied onto a requirement when it is raised, so changing an item's rule never re-routes a requirement already in flight. See [Purchase requirements](/docs/erp/purchase-requirements/how-it-works).
+</Callout>
+
+- The **name** is unique, ignoring capitals: "Duplicate Entry!".
+- The **item code** and the supplier's **party code** together make the lot number of everything bought — so a code is chosen once and kept.
+- **Serial numbers** follow on, issued one at a time even when two people save together.
+- The **price** is saved only by somebody who can see purchase money; a clerk saving the item never overwrites it.
+- **Retire** takes an item off new forms and keeps it on every record that names it. **Restore** brings it back.
+
+### Who does what on one material
+
+<Rule title="An empty duty is the old rule; a named duty belongs to those named">
+For each material an ERP administrator may name who **requests** it, who **raises its PO**, who **approves** that PO and, for a chemical, who **tests** its lots — people, departments (ERP designations), or both. A duty nobody is named for is open as it always was: whoever holds the screen, and for approval whoever holds "Approve purchase orders". Once a duty names anybody, it is theirs alone, plus an ERP administrator's.
+</Rule>
+
+It decides who may **do** a thing, never who may **see** a screen. A named approver approves without the power; an unnamed power holder no longer does. A PO carries several materials, so raising or approving it needs the duty for every line. The other rules still apply on top: nobody approves a PO they raised, a department raises for its own categories, and verifying a test is still the verifier's power.
+
+## Purchase parties
+
+Name and own party code are required; the name is unique ignoring capitals. The list is grouped by state; the record counts the party's purchases. Retired parties stay on existing purchases and drop off new receipts.
+
+## Products and their packing
+
+<Rule title="Loose or boxed is read off the packing">
+A SKU with one can per box and no empty boxes is **loose**: it is sold as cans out of FG stock. Anything else is **boxed**: sold as boxes out of packing stock. The same reading decides which stock a finished-goods minimum level counts.
+</Rule>
+
+The **can use** must be a raw material of type Can or Drum — it is the packing item a fill of this SKU consumes. The **box type** is one of the fixed box types and must match a raw material's name for its empty boxes to be counted out of stock when a batch is packed. The **box rate** is saved only with the cost power. The catalogue itself — names, pack sizes, cans per box — is maintained in the Admin Console, never here.
+
+## Sales parties
+
+<Flow caption="A customer's three ERP statuses" chart={`
+flowchart LR
+  N["New customer<br/>saved in the ERP"] --> P["Pending"]
+  P -- "Activate<br/>(status power)" --> A["Active"]
+  A -- "Mark Pending" --> P
+  A -- "Deactivate" --> D["Deactive<br/>= deactivated in MahekOne"]
+  P -- "Deactivate" --> D
+  D -- "Activate" --> A
+`} />
+
+<Rule title="A new customer is a lead, and Pending">
+A customer created in the ERP is a MahekOne **lead** (it has never ordered — the meaning `kind` has everywhere in MahekOne) with an ERP profile marking it **pending activation**. Its orders can be taken but cannot move until an admin or the office activates it, or — once [the ERP takes the orders](/docs/erp/order-book) — until Accounts approves the order.
+</Rule>
+
+<Rule title="Deactivating is the customer's own status">
+Deactivate sets the MahekOne customer to `deactivated`, with "Deactivated in the ERP" as the reason, so the CRM stops working it too. Activating a deactivated customer sets it back to active.
+</Rule>
+
+- Activate, Deactivate and Mark Pending need the **customer status** power, checked in the save.
+- Creating a customer needs a business name, a city and a ten-digit mobile, and a name not already used (ignoring capitals).
+- Editing details needs only the screen. An emptied city or mobile keeps the old value, because every MahekOne customer must have both.
+- The list holds every MahekOne **customer**, plus every lead that has an ERP profile.
+- A customer's **monthly target** is the CRM's Monthly Targets figure for this month, shown only with the sales-amounts power — the ERP keeps no target of its own.
+
+## My customers
+
+The customers whose sales seat is you, or whose sales person name is your name. Their complaints are the CRM's complaints — one record, whichever app raised it — so the open count matches what the telecaller sees. The tagged person may edit their details except GST number, company name, segment, standing instructions and allocation email; the save re-checks that the customer is still tagged to them.
+
+## Godowns
+
+<Rule title="Item Lost Record is a real, reserved godown">
+Stock written off is moved **into** a reserved godown rather than simply vanishing, so every ledger records the loss. It cannot be edited or switched off, and only somebody with the write-off power may pick it on a form.
+</Rule>
+
+- Registering, editing, switching off and assigning staff need the **ERP administration** power.
+- A godown's name is unique (ignoring capitals).
+- **Assigned employees** are chosen from people who hold the ERP; the working location is picked from these.
+- The **map pin** lets the ERP find the godown from where somebody stands; the fence is <Setting k="erp.location.godownRadiusM" /> metres.
+
+## Price lists
+
+The ERP reads the **published** lists of the Price Desk. Where a list states only one of the two rates, the other is worked out at 18% GST. The sales rate is visible only with the sales-rate power.
+
+## Reference lists
+
+Sixteen open lists a manager can grow without a deploy. A value is **retired**, never deleted, because records already carry it; a duplicate value in one list is refused. Lists whose exact spelling a rule depends on — units, box types, payment, delivery and weight types, grades, regions — are fixed in the code instead.
+
+## Who can change what
+
+| Master | Create / edit | Status changes | Money columns |
+|---|---|---|---|
+| Raw materials | Anyone holding the screen | Retire / restore: anyone holding the screen | Price: purchase money |
+| Who does what | ERP administrator | — | — |
+| Purchase parties | Anyone holding the screen | Retire / restore: anyone holding the screen | — |
+| Products (packing) | Anyone holding the screen | — | Box rate: cost and margin |
+| Sales parties | Anyone holding the screen | Customer status power | Monthly target: sales amounts |
+| My customers | The tagged sales person | — | — |
+| Godowns | ERP administration power | ERP administration power | — |
+| Price lists | Read only (Price Desk) | — | Rates: sales rate |
+| Reference lists | Anyone holding the screen | Anyone holding the screen | — |
+
+## Where the code and the intent disagree today
+
+- A raw material's name is refused if **any** category already uses it, while the requirement form is written to tell apart two items that share a name across categories ("name · category") — a situation the save never lets arise.
+- "Item code" is marked required on the form but the save accepts an item without one, and the lot number is then built without it.
+- **My customers** shows each customer's monthly target to the tagged person without the sales-amounts power that hides the same figure on Sales parties.
+- The **tagged sales person** can change their own customers' credit days, and clearing the field saves it empty rather than keeping the old term.
+- Price lists show one discount per list, whichever discount term is read first, where a list may have several.

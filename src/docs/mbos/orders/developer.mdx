@@ -1,0 +1,118 @@
+The order form is `mbos-app/app/order.tsx`. It prices and assesses the cart with `assessCart` (`mbos-app/src/data/orders.ts`), which calls the pure engines `engines/order.ts` and `engines/credit.ts`, then `saveOrder` writes `orders` + `order_lines` locally and enqueues `entityType: 'order'`. On the server `handleOrder` re-validates everything and writes the same `orders` row the CRM writes. An `op: 'update'` on an order is routed by shape: with `lines` it is an edit (`handleOrderEdit`), without them a progress update (`handleOrderProgress`).
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Screens | `mbos-app/app/order.tsx`, `orders.tsx`, `catalogue.tsx` | Take / edit / change-request an order; Your orders; the catalogue |
+| Local data | `mbos-app/src/data/orders.ts` | `assessCart`, `saveOrder`, `editableStatus`, `editOrder`, `requestOrderChange`, `listOrders` |
+| Local data | `mbos-app/src/data/pricing.ts`, `order-suggestions.ts` | `ratesForTag`, `lastOrderLines`; usual products fetched and remembered |
+| Engines | `mbos-app/src/engines/order.ts` | `derivedQuantities`, `canValueOrders`, `lineValuePaise` |
+| Engines | `mbos-app/src/engines/credit.ts` | `availableCreditPaise`, `assessOrder` |
+| Engines | `mbos-app/src/engines/schemes.ts`; `src/lib/sku-lines.ts` | Scheme discounts; SKU line words |
+| Server | `src/app/api/mbos/order-products/route.ts` | Usual products and best sellers for one shop (a request, not a pull channel) |
+| Server | `src/lib/actions/mbos.ts` | `orderSchema`, `handleOrder`, `checkOrderLines`, `handleOrderEdit`, `handleOrderChangeRequest`, `handleOrderProgress` |
+| Server | `src/lib/services/lead-conversion-service.ts` | `convertLeadOnSecondOrder` |
+| Server | `src/lib/services/order-approval-service.ts` | `approveOrder`, `declineOrder`, `tellTheAuthor` |
+
+## The phone's assessment
+
+<Code file="mbos-app/src/engines/credit.ts" symbol="assessOrder" collapsed />
+
+<Code file="mbos-app/src/engines/credit.ts" symbol="availableCreditPaise" />
+
+<Code file="mbos-app/src/engines/order.ts" symbol="canValueOrders" />
+
+<Code file="mbos-app/src/data/orders.ts" symbol="assessCart" collapsed />
+
+The rate on a `pricelist` source is looked up **here**, off the **biller's** `priceTag`, and handed to `lineValuePaise` as the line's figure — the engine is ported from MahekOne and looks nothing up, and before this every order went up valued at ₹0 beside a real list value the same screen had drawn.
+
+<Code file="mbos-app/src/data/orders.ts" symbol="saveOrder" collapsed />
+
+`needs_approval` raises an approval record (`order_over_credit` or `order_over_threshold`) and the order's state is derived from it — nothing sets a flag on the order independently. `deliveryCustomerId` equal to the biller is folded to null so one arrangement never reaches the column two ways.
+
+## On the server
+
+<Code file="src/lib/actions/mbos.ts" symbol="orderSchema" collapsed />
+
+<Code file="src/lib/actions/mbos.ts" symbol="handleOrder" collapsed />
+
+The checks, in order, with their rejection codes:
+
+| Check | Code |
+|---|---|
+| Customer in his book (`scopedCustomer`) | `not_in_scope` family |
+| Delivery shop exists (not scope-checked) | `delivery_party_unknown` |
+| Same id from another salesman | `duplicate` — from **him** it is accepted as a resend |
+| Credit-blocked | `credit_blocked` |
+| Products real and orderable, minimum cans (`checkOrderLines`) | from `checkOrderLines` |
+| Quoted rate equals today's list rate for `priceTag` | `price_changed` |
+| Over the limit today, with `mbos.credit.blockOnLimitExceeded` | `outstanding_stale` or `credit_exceeded` |
+
+Then, in one transaction: the order number from the series, `status: 'pending_approval'`, lines, the conversion check, `last_order_date` (on capture, not approval), the timeline. `orderedAt` is bound as `toISOString()` — a bound JS `Date` once made every field order a **retry** for ever.
+
+<Code file="src/lib/actions/mbos.ts" symbol="checkOrderLines" collapsed />
+
+<Code file="src/lib/services/lead-conversion-service.ts" symbol="convertLeadOnSecondOrder" />
+
+<DbTable name="orders" only={["customer_id", "delivery_customer_id", "user_id", "source", "order_no", "approved_by_id", "approved_at", "decline_reason", "customer_confirmed_at", "delivery_confirmed_at", "delivery_discrepancy", "ordered_at"]} note={{
+  customer_id: "Who we invoice. Every credit and outstanding figure is read from this account.",
+  delivery_customer_id: "Where the lorry stops, when that is not the biller. Null means the biller received them.",
+  user_id: "Who took it — the person told when accounts decide. Null for sheet orders.",
+  approved_at: "The mark of a decision, written by decline as well as approve; the sheet projection never overwrites a decided status.",
+  customer_confirmed_at: "The shop agreeing to what was written down.",
+  delivery_confirmed_at: "The shop saying the goods came. Days apart from the above, either first.",
+  delivery_discrepancy: "Null means nobody reported a mismatch — not that it was correct.",
+}} />
+
+<DbEnum name="order_status" />
+
+## Decisions back to the phone
+
+<Code file="src/lib/services/order-approval-service.ts" symbol="tellTheAuthor" collapsed />
+
+Runs after the decision's transaction and can never fail it. `mbosHref` is `/orders` for an order with `source = 'mbos'`; a decline is `kind: "warn"` with the reason in the body. The author who is also the approver is not told.
+
+## Progress and delivery
+
+<Code file="src/lib/actions/mbos.ts" symbol="orderProgressSchema" />
+
+<Code file="src/lib/actions/mbos.ts" symbol="handleOrderProgress" collapsed />
+
+A declined order cannot be marked delivered. A discrepancy notifies; it does not raise a complaint.
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `cd mbos-app && npm test` | `src/engines/engines.test.ts` | `assessOrder` tiers, blocked beats headroom, unvalued orders pass unchecked; `derivedQuantities` |
+| `cd mbos-app && npm test` | `src/lib/sku-lines.test.ts` | SKU line words |
+| `npm run test` | `src/lib/engines/mbos-payload-contract.test.ts` | The order payload the handset sends parses on the server |
+| `npm run test:integration` | `src/lib/order-change.test.ts` | Edit before a decision, change request after, the handset hears every decision |
+| `npm run test:integration` | `src/lib/price-lists.integration.test.ts` | List rates on the handset and the server |
+| `npm run test:integration` | `src/lib/salesman-day.test.ts`, `activity-location.test.ts` | A real order payload through the handler and the endpoint |
+
+## Changing it safely
+
+<Steps>
+<Step title="Keep the credit rule in one engine per side">
+The handset's tiers live in `engines/credit.ts`; the server's refusals in `handleOrder`. If the business rule changes, change both and say in the how-it-works tab which one wins.
+</Step>
+<Step title="Never bind a Date">
+Any new raw SQL in `handleOrder` takes ISO strings.
+</Step>
+<Step title="Count orders through the one list">
+"Did we sell anything" is `lib/order-status.ts`; never write a status literal in a new query.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| Conversion is on the second order; AGENTS.md says first | `lead-conversion-service.ts` `convertLeadOnSecondOrder` |
+| `mbos.credit.overdueDaysBlockOrders` is never read | `src/lib/config/registry.ts` only |
+| No handset screen sends customer/delivery confirmation; `handleOrderProgress` is server-only in practice | `src/lib/actions/mbos.ts`; no `customerConfirmedAt` in `mbos-app/` |
+| Over-limit is an approval on the phone but a refusal on the server when `mbos.credit.blockOnLimitExceeded` is on | `engines/credit.ts` vs `handleOrder` |
+| AGENTS.md says the decline notice carries no `mbosHref`; it carries `/orders` | `order-approval-service.ts` `tellTheAuthor` |
+| The handset's fallback for `mbos.orders.approvalThresholdPaise` differs between `data/orders.ts` and `data/config.ts` | `mbos-app/src/data/orders.ts`, `mbos-app/src/data/config.ts` |

@@ -1,0 +1,108 @@
+A visit is assembled across three local records — a **travel leg** (`data/travel.ts`), an **arrival** kept on disk (`data/arrival.ts`), and the **visit** itself (`data/visits.ts`) — and sent as one `entityType: 'visit'` item to `handleVisit` in `src/lib/actions/mbos.ts`. The gate is pure (`engines/geo.ts` `checkInVerdict`); the checklist is pure (`lib/visit.ts`); the server recomputes both and never refuses on distance.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Setting off | `mbos-app/src/components/shell/TravelGate.tsx` | Mounted once in `AppFrame`; reacts to `travelTo` on the store; opens a leg per `visitLegPlan` |
+| Travel rules | `mbos-app/src/lib/travel-leg.ts` | `visitLegPlan`, `arrivalNeedsMeter`, `checkOdometer`, `navigationLine` |
+| Travel data | `mbos-app/src/data/travel.ts` | `departForVisit`, `arriveForVisit`, `abandonLeg`, `bindLegToVisit`, `openSessionLeg` |
+| Arrival | `mbos-app/src/data/arrival.ts` | `recordArrival`, `checkInAtShop`, `patchArrival` — on disk, because Android reaps the app between arriving and walking in |
+| Gate | `mbos-app/src/engines/geo.ts` | `assessFix`, `checkInVerdict`, `visitLocationVerdict` |
+| Screen | `mbos-app/app/visit.tsx` | `arriveHere`, the pin question, the form, Suspect decision, save |
+| Checklist | `mbos-app/src/lib/visit.ts` | `visitChecks`, `visitVerdict`, `FOLLOW_ON`, `outcomeNeedsNote` |
+| Cap | `mbos-app/src/engines/leads.ts` | `visitCapState`, `visitCapLabel` |
+| Dictation | `mbos-app/src/components/ui/dictate.tsx` | `VoiceField`, `useDictation`; server `src/app/api/mbos/dictate/*` |
+| Save | `mbos-app/src/data/visits.ts` | `saveVisit` |
+| Server | `src/lib/actions/mbos.ts` | `visitSchema`, `handleVisit`, `suspectDecisionRung`, `storeMbosMedia`, `transcribeVoiceNote` |
+
+## The gate
+
+<Code file="mbos-app/src/engines/geo.ts" symbol="checkInVerdict" collapsed />
+
+The order of the first two branches is load-bearing: the fix is judged **before** the pin is looked for, so an unpinned shop is never pinned from a fix too wide to trust.
+
+`arriveHere` in `visit.tsx` calls it with `getFix({ precise: true })` (`Accuracy.High`, the only high-accuracy fix in the app), `mbos.location.gpsAccuracyThresholdM` and `mbos.location.visitMismatchM`. An override reason opens a `too_far` refusal and nothing else. Nothing is written on refusal — the leg stays open, no meter photo exists, no dwell clock. The **one fix** taken there closes the leg and checks the visit in, so the arrival and the check-in can never disagree about where the shop is.
+
+## Setting off
+
+<Code file="mbos-app/src/lib/travel-leg.ts" symbol="visitLegPlan" />
+
+<Code file="mbos-app/src/lib/travel-leg.ts" symbol="arrivalNeedsMeter" />
+
+A partial unique index on the server keeps one open leg per person. A leg's `origin` (`visit` or `day_log`) is what lets `handleTravelLeg` be strict about a visit leg's meter photos and lenient about a day-log leg typed from memory. Readings are checked by `checkOdometer` on the phone and again on the server against <Setting k="mbos.travel.maxLegKilometres" />.
+
+## The checklist
+
+<Code file="mbos-app/src/lib/visit.ts" symbol="visitChecks" collapsed />
+
+<Code file="mbos-app/src/lib/visit.ts" symbol="visitVerdict" collapsed />
+
+`complete` keeps the save bar live; `verified` draws the words and badge. They were one value, and an overridden check-in read "Everything checks out" on a visit about to be marked unverified.
+
+<Code file="mbos-app/src/engines/leads.ts" symbol="visitCapState" />
+
+The cap is in two runtimes and shares its **numbers**, not a module: the handset count is the office's count plus whatever is still in the outbox, so visit two made with no signal still triggers the question on visit three.
+
+## Saving
+
+<Code file="mbos-app/src/data/visits.ts" symbol="saveVisit" collapsed />
+
+## On the server
+
+<Code file="src/lib/actions/mbos.ts" symbol="handleVisit" collapsed />
+
+Highlights:
+
+- **Never refuses on distance.** Computes `verified`, `unverified_reason` and `distance_from_shop_m` itself. A missing override reason is said in words — it is also the only trace of a payload that did not come from the app.
+- **Pins an unpinned shop** from a good fix, guarded by `gps_lat is null` in the statement, not only in the branch.
+- **`pin_correction = 'requested'`** where the phone asked and the shop has a pin. No coordinates are stored with it: what is accepted is the check-in fix already on the row.
+- **Suspect cap**: a missing decision at the cap does not refuse; it becomes a sentence for the manager. `still_suspect` without a reason is the same.
+- **Binds media**: shop and owner photos and the voice note were uploaded naming `parentId: 'pending'`; `bindMbosMedia` re-parents them after the row is safe, or the nightly orphan sweep deletes them.
+- **No JS `Date` is bound** in raw SQL — `checkInAt.toISOString()`. A bound Date once made every visit a retry, and the order and payment behind it waited for ever.
+
+<DbTable name="mbos_visits" only={["customer_id", "salesman_id", "check_in_at", "check_in_lat", "check_in_lng", "check_in_accuracy_m", "check_out_at", "duration_seconds", "outcome", "notes", "voice_note_id", "transcript", "verified", "unverified_reason", "distance_from_shop_m", "check_in_override_reason", "pin_correction", "was_planned", "deviation_reason", "next_follow_up_date"]} note={{
+  verified: "Recomputed by the server; never the handset's word.",
+  check_in_override_reason: "His sentence for going on past the radius.",
+  pin_correction: "requested · accepted · rejected — a request for a manager, never a write to the customer's pin.",
+  voice_note_id: "The kept recording, transcribed by the office where the phone could not.",
+  was_planned: "False for an off-plan stop, which carries deviation_reason.",
+}} />
+
+<DbEnum name="mbos_visit_outcome" />
+
+<DbEnum name="mbos_pin_correction" />
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `cd mbos-app && npm test` | `src/lib/visit.test.ts` | Checklist lines, complete vs verified, closed shop needs no note |
+| `cd mbos-app && npm test` | `src/lib/travel-leg.test.ts` | Leg plan by session, meter rules, odometer checks |
+| `cd mbos-app && npm test` | `src/engines/lead-audit-fixes.test.ts` | `visitCapState` thresholds |
+| `cd mbos-app && npm test` | `src/engines/left-shop.test.ts` | Leaving the shop without checking out |
+| `npm run test:integration` | `src/lib/check-in-gate.test.ts` | Server recompute: at the shop verifies, an old handset is recorded not refused, past the radius with words is unverified, weak or missing fix is not a mismatch |
+| `npm run test:integration` | `src/lib/visit-intel.test.ts` | The visit assistant's draft and how a saved visit is written onto it |
+
+## Changing it safely
+
+<Steps>
+<Step title="Refuse only at the arrival">
+Any new refusal belongs before anything is written. Never refuse at the save or on the server.
+</Step>
+<Step title="Keep one number for the radius">
+`mbos.location.visitMismatchM` is both the refusal distance and the flag distance. Do not split it.
+</Step>
+<Step title="Bind media after the parent">
+Any new photo on a visit must be named in `MBOS_PARENTS` and bound by `bindMbosMedia`, or the orphan sweep deletes it.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| No fix / weak fix refuse arrival, though AGENTS.md says they go through | `mbos-app/src/engines/geo.ts` `checkInVerdict` |
+| AGENTS.md's per-visit mode, departure meter and ticket prompt are gone; the meter-at-arrival path survives only for day-log legs | `TravelGate.tsx`; `lib/travel-leg.ts` |
+| A "No GPS — going on without location" branch remains on the visit screen | `mbos-app/app/visit.tsx` |
+| `mbos.visit.forgotCheckoutMetres` and the dwell radius settings drive the left-shop prompt, not the checklist; a visit's dwell is check-in to check-out regardless of where he stood | `engines/left-shop.ts`; `lib/visit.ts` |

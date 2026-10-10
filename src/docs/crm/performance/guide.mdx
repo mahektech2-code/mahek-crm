@@ -1,0 +1,115 @@
+**My Performance** is your own month: the target your manager or accounts set for you, what you have actually done against it, a score out of 100, and — first on the page — **what is short**, in rupees, litres and customers. It always shows **you**, and nobody else. If you carry customers in the CRM, you have a number here, even if you never go into the field.
+
+<Callout kind="live">
+Numbers on this page are your CRM's current settings.
+</Callout>
+
+## The screen at a glance
+
+<Wireframe url="/crm/performance" nav={["#Targets & reporting", "Monthly Targets", "My Performance", "EOD Report"]} active="My Performance" caption="My performance, part way through a month">
+  <WfBar>
+    <WfTitle sub="August — 14 of 25 working days gone">My performance</WfTitle>
+    <WfSpacer />
+    <WfButton>‹ Month ›</WfButton>
+    <WfButton>Export</WfButton>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfBar>
+    <WfCard title="Overall"><WfText>72.4 / 100 · Good</WfText><Hotspot n={2} /></WfCard>
+    <WfCard title="Revenue excl. GST"><WfText>₹8.2L · of ₹13L</WfText></WfCard>
+    <WfCard title="Volume"><WfText>2,140 L · of 3,500 L</WfText></WfCard>
+    <WfCard title="New customers"><WfText>1 · of 3</WfText></WfCard>
+    <WfCard title="Collected"><WfText>₹2.1L of ₹4.0L overdue</WfText></WfCard>
+    <WfCard title="Tasks done"><WfText>18 of 22</WfText></WfCard>
+  </WfBar>
+  <WfCard title="What is short">
+    <WfText>₹4.8 lakh short on revenue · PU is below its minimum share · 2 new customers to go</WfText>
+    <WfText muted>₹43,600 a day over the 11 working days left would reach the revenue target. At the rate so far the month lands at 98%.</WfText>
+    <Hotspot n={3} />
+  </WfCard>
+  <WfCard title="Product mix">
+    <WfTable columns={["Product", "Share", "Minimum · target · stretch", "Status"]} rows={[
+      ["Nano Thinner", "34%", "25% · 30% · 35%", <WfPill key="a" tone="brand">On target</WfPill>],
+      ["PU Sealer", "8%", "12% · 15% · 20%", <span key="b"><WfPill tone="warn">Below minimum</WfPill> <Hotspot n={4} /></span>],
+      ["Other", "58%", "—", "—"],
+    ]} />
+  </WfCard>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Month.</b> Move back to earlier months. Export gives the six components, the score and the rating as a file.</span>,
+  <span key="2"><b>Overall.</b> Your score out of 100 and its rating word. Only shown when a target has been set for you.</span>,
+  <span key="3"><b>What is short.</b> The gaps, worst first, and how much a day would get you there over the working days left.</span>,
+  <span key="4"><b>Mix.</b> The products your target asks you to sell a share of, and where you stand on each.</span>,
+]} />
+
+## The six things you are measured on
+
+| Component | What counts |
+|---|---|
+| **Revenue** | The value of approved orders from customers credited to you, **excluding GST**. |
+| **Volume** | The **litres** in those orders, worked out from each product's pack. A price rise moves revenue; it cannot move litres. |
+| **Product mix** | Each product's share of your sales value, against the minimum, target and stretch share you were asked for. |
+| **New customers** | Customers whose **first** counting order landed this month. Raising a lead does not count. |
+| **Collection** | How much of the money that was **already overdue on the 1st** you collected this month — confirmed by accounts. |
+| **Activity** | Of the tasks given to you that were **due this month**, how many you completed. |
+
+<Callout kind="note">
+A component nobody set a target for is **left out**, and its weight is shared among the others. The score is always out of 100 *against what was actually asked of you*. The screen names any component that was left out.
+</Callout>
+
+## How the weights are set now
+
+| Component | Weight |
+|---|---|
+| Revenue | <Setting k="performance.weightRevenue" /> |
+| Volume | <Setting k="performance.weightVolume" /> |
+| Product mix | <Setting k="performance.weightMix" /> |
+| New customers | <Setting k="performance.weightNewCustomers" /> |
+| Collection | <Setting k="performance.weightCollection" /> |
+| Activity | <Setting k="performance.weightActivity" /> |
+
+## Reading your month, step by step
+
+<Steps>
+<Step title="Read What is short first">
+It says what you are behind on in your own units — rupees, litres, customers, a product's share — worst first. Everything else on the page is the working-out.
+</Step>
+<Step title="Check the per-day figure">
+"₹X a day over the N working days left" is what it would take to reach the revenue target. Sundays and company holidays are not counted.
+</Step>
+<Step title="Look at the mix">
+A product **below minimum** costs you the most. Selling more of what already sells well does not make up for it.
+</Step>
+<Step title="Check where your customers are short">
+Your per-customer targets are on [Monthly Targets](/docs/crm/targets).
+</Step>
+</Steps>
+
+## Whose sales are yours
+
+Every rupee belongs to **one** person:
+
+1. The account's **salesperson**, if it has one.
+2. Otherwise its **back-office person**.
+3. A lead counts for its **owner** (that is how a lead's first order becomes your new customer).
+
+Nobody else. Two people can both see an account; only one is credited with what it bought.
+
+## Questions people ask
+
+<Faq q="It says no target has been set for me.">
+You see what you have done, but no score — a percentage against a target nobody set would be invented. Targets are set by your manager or by accounts.
+</Faq>
+<Faq q="I took an order this morning and Revenue has not moved.">
+Orders count once accounts approve them.
+</Faq>
+<Faq q="Why is my collection figure lower than what I collected?">
+It only counts money against bills that were already overdue on the 1st, and only once accounts confirm it. A bill that fell due mid-month and was paid is ordinary business, not collection.
+</Faq>
+<Faq q="Can my manager see this screen for me?">
+This screen only ever shows the person signed in. Managers compare people on the Sales Dashboard.
+</Faq>
+<Faq q="It is the 1st and the forecast is missing.">
+With no working day finished yet there is no projection — one day multiplied by thirty is not a forecast.
+</Faq>

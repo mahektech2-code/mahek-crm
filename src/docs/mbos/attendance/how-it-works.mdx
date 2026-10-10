@@ -1,0 +1,96 @@
+Attendance on MBOS is the record a salesman's pay is read against, so it is built to be **evidence rather than a claim**: a photograph at both ends of every working stretch, a route recorded only while he is working, and a closing time for a forgotten day that is always something he actually did. This tab covers the day on the phone; the office's view of it is [Attendance on the Sales Dashboard](/docs/sales/attendance).
+
+## A day is a list of sessions
+
+A salesman breaks for lunch, or goes out again in the evening. So a day is not one pair of times; it is a list of **sessions**, each with an in-time and an out-time and a selfie at both ends.
+
+<Flow caption="One working day" chart={`
+flowchart TD
+  G["Punch in"] --> GATE{"Phone ready to<br/>record the route?"}
+  GATE -- "no" --> PS["Before you start<br/>(fix the rows)"]
+  GATE -- "yes" --> SF["Selfie (required)"]
+  SF --> MODE["Vehicle for today<br/>meter photo if it has one"]
+  MODE --> S1["Session 1 open<br/>route recording"]
+  S1 --> OUT1["Punch out + selfie"]
+  OUT1 --> BR["Break — nothing recorded"]
+  BR --> IN2["Punch in again + selfie"]
+  IN2 --> S2["Session 2 open"]
+  S2 --> OUT2["Punch out + selfie<br/>closing meter reading"]
+  OUT2 --> V["Hours = sum of sessions<br/>Present / Half Day / Absent"]
+`} />
+
+<Callout kind="why">
+**The office used to receive one pair of times.** Nine-to-one plus two-to-six reached it as nine hours on the record that feeds a payslip, with the break invisible. The day is stored as the list the phone reports, and it is not rebuilt from the first and last marks — that rebuild is exactly the loss it exists to prevent.
+</Callout>
+
+## The selfie is required, at both ends of every session
+
+<Rule title="No photograph, no mark">
+Punch-in and punch-out each take a front-facing photo inside the app. The camera's only exits are the photograph and abandoning the action. A refused camera permission is a real dead end and the screen says so in words.
+</Rule>
+
+<Callout kind="why">
+Every other photograph in MahekOne is optional, because it is a picture **of** something attached to a record that stands without it. This one **is** the record: a mark on its own is a claim somebody was somewhere; the photograph is the only part that is evidence. When it was skippable, days that proved something and days that proved nothing looked identical afterwards.
+</Callout>
+
+Check-out used to take no photograph at all, so a day proved when somebody arrived and nothing about when they stopped — the half that decides the hours. Both are now required by the code itself, not by a screen remembering to ask.
+
+### How long selfies are kept
+
+A selfie answers "is the person who marked this day the person who worked it", and that question is asked within a day or two or never. Kept longer it becomes a standing collection of photographs of employees. So each one is deleted <Setting k="mbos.attendance.selfieRetentionHours" /> hours after it **reached the office** (not after it was taken — a phone with no signal for two days must not lose the manager's chance to look). The record that a photo was taken is kept, so "taken and since deleted" never reads as "no photo".
+
+## The geofence: recorded, never blocking
+
+If a base location is set (<Setting k="mbos.attendance.baseLocation" />), a punch-in further than <Setting k="mbos.attendance.geofenceRadiusM" /> m from it is marked **away from base**. The day starts regardless.
+
+<Rule title="Location never stops a punch-in">
+No fix, a poor fix, or a fix outside the radius are all recorded as what they are, and the day starts. A reason for being away is asked **after** the day has started — asking first, and losing the punch-in to a dismissed dialog, is exactly the failure this module exists to avoid.
+</Rule>
+
+Being outside the radius does not file a correction request on its own. Only a reason the salesman actually writes does — otherwise everybody who starts from home "asks" for a correction every morning and buries the real ones.
+
+## The vehicle and the meter
+
+Travel is asked **twice a day and nowhere else**: the vehicle at punch-in, the meter at punch-out where there is one. On a metered vehicle those two photographed readings are the day's mileage. On a bus, train or auto day, the fares are claimed in Expenses and the punch-out prompts for them. See [Travel and expenses](/docs/mbos/expenses).
+
+## Tracking only while working
+
+<Rule title="Between the punch-in and the punch-out, not one second either side">
+The route recorder starts with a session and stops with it — including at a lunch break. A track that carried on after the day was closed would be following somebody home. <Setting k="mbos.location.trackWhileWorking" /> switches route recording off entirely; it is checked on the server as well as on the phone.
+</Rule>
+
+The phone takes a reading every few seconds and **keeps** one at most every <Setting k="mbos.location.trailKeepEverySeconds" /> seconds. Readings are uploaded in batches whenever the phone syncs. A batch is judged against the **session it belongs to**, not against "is he punched in right now" — a queue catching up after a day without signal is still filed on the day it was taken. A batch whose punch-in has not reached the office yet is held on the phone rather than thrown away, for up to <Setting k="mbos.location.queueRetentionDays" /> days.
+
+<Callout kind="warn">
+Most "my route is a straight line" reports are the phone's battery manager killing the app, not a map problem. The phone setup gate and **Keep tracking on** exist for this. See [Installing and phone setup](/docs/mbos/setup/how-it-works).
+</Callout>
+
+## Hours and the day's status
+
+Hours are the sum of closed sessions. The office derives the status from those hours — it never trusts a status or a worked-minutes figure the phone sends, because a handset that could type them could type a full day onto an hour's work.
+
+| Status | When |
+|---|---|
+| Present | Worked at least <Setting k="mbos.attendance.fullDayHours" /> hours |
+| Half Day | Worked at least <Setting k="mbos.attendance.halfDayHours" /> hours |
+| Absent | A working day with less, or no punch-in |
+| On Leave | An approved leave covers the day (a half-day leave lowers the full-day bar to the half-day one) |
+| Weekly Off | Not a working day and nothing logged — never counted as an absence |
+
+## Forgotten punch-outs
+
+The phone reminds from <Setting k="mbos.attendance.punchOutPromptHour" />:00 and again <Setting k="mbos.attendance.punchOutSecondReminderMinutes" /> minutes later.
+
+If a day is still open at night, the office closes it — and **the closing time is evidence, never a guess**: the last activity he filed or the last visit he closed, and his last reported position only where he did neither. A position alone is evidence the phone was on, not that he was working; a forgotten punch-out once closed a day at midnight on the strength of a phone recording through the evening at home. A day with no evidence at all keeps no closing time and is flagged. Every such day is marked as auto-closed, so it is never mistaken for one somebody pressed the button on.
+
+The phone and the Sales Dashboard both count missed punch-outs over the last <Setting k="mbos.attendance.missedPunchOutWindowDays" /> days. A correction is asked for with **Ask your manager to fix this day**, which raises an approval; the day changes only if the manager approves.
+
+## Settings
+
+<SettingsTable keys={["mbos.attendance.baseLocation", "mbos.attendance.geofenceRadiusM", "mbos.attendance.fullDayHours", "mbos.attendance.halfDayHours", "mbos.attendance.punchOutPromptHour", "mbos.attendance.punchOutSecondReminderMinutes", "mbos.attendance.missedPunchOutWindowDays", "mbos.attendance.selfieRetentionHours", "mbos.location.trackWhileWorking", "mbos.location.trailKeepEverySeconds", "mbos.location.trackEverySeconds", "mbos.location.queueRetentionDays", "mbos.location.startOfDayGate"]} />
+
+## Where the code and the intent disagree today
+
+- <Setting k="mbos.attendance.selfieRequired" /> is on the Settings screen, but no code reads it: the selfie is required by the type of `checkIn` and `checkOut` whatever the setting says (`mbos-app/src/data/attendance.ts`).
+- <Setting k="mbos.attendance.autoCheckOutHour" /> is not read by any code; forgotten days are closed at the last evidence instead (`src/lib/mbos-jobs.ts` `markMissedCheckouts`).
+- <Setting k="mbos.location.trackEverySeconds" /> is passed to Android as `timeInterval`, which expo-location drops on Android; the effective cadence is the JavaScript throttle above.

@@ -1,0 +1,159 @@
+The ERP is where the factory and the back office keep their work: what is bought, what is tested, what is mixed, filled and packed, where every lot and box is sitting, which orders are being made ready, what has left on a lorry, and the petty cash that keeps production moving. Every screen reads from one database, so a lot received at the gate this morning is the same lot a batch consumes this afternoon and the same lot a box can be traced back to next month.
+
+<Callout kind="note">
+You only see the parts of the ERP your job needs. If a screen mentioned on this page is not in your sidebar, it has not been given to you — ask whoever manages access. Nothing is hidden by mistake.
+</Callout>
+
+## The journey of the material
+
+Everything in the ERP follows the paint from the supplier to the customer. Each step happens on its own screen, and each step can only use what the step before it produced.
+
+<Flow caption="From a department's need to money in the bank" chart={`
+flowchart TD
+  A["A department needs something<br/>Purchase requirements"] --> B["How is it bought?<br/>direct · quotation · buyer decides"]
+  B --> C["Purchase order<br/>raised, approved, sent to the vendor"]
+  C --> D["Goods arrive at the gate<br/>Goods receipt (GRN) against the PO"]
+  D --> E{"Does the item<br/>need testing?"}
+  E -- "Yes, a chemical" --> F["Purchase testing<br/>evidence, then the verifier decides"]
+  E -- "No" --> G["Purchase register<br/>a lot with a rate"]
+  F --> G
+  G --> H["Raw-material stock<br/>lot by lot, godown by godown"]
+  H --> I["SFG batch<br/>raw-material lots mixed into liquid"]
+  I --> J{"SFG QC"}
+  J -- "Approved" --> K["FG filling<br/>liquid into cans or drums"]
+  K --> L["Packing batch<br/>loose cans into boxes, each box gets an id"]
+  K --> M["Loose cans sold as cans"]
+  L --> N["Orders<br/>lots allocated, billed"]
+  M --> N
+  N --> O["Dispatch desk<br/>every box scanned against its order"]
+  O --> P["Transport<br/>LR, tracking, delivered"]
+  P --> Q["The bill in MahekOne's ledger<br/>outstanding, collections"]
+`} />
+
+Read it top to bottom and you have the whole ERP:
+
+1. **Buy.** A department raises a [purchase requirement](/docs/erp/purchase-requirements). The item's purchase rule decides whether the store buys it directly, collects quotations first, or lets the buyer decide.
+2. **Order.** Nothing is bought without a [purchase order](/docs/erp/purchase-orders). Somebody other than the person who raised it approves it, and then it is sent to the vendor.
+3. **Receive and test.** Goods are received at the gate [against the PO](/docs/erp/goods-receipt-and-testing). A chemical goes to the tester; everything else goes straight into the register and into stock.
+4. **Make.** [Production](/docs/erp/production) mixes raw-material lots into semi-finished liquid (SFG), fills approved SFG into cans or drums (FG), and packs loose cans into boxes.
+5. **Stock.** [Stock](/docs/erp/stock) shows what is in every godown at every stage, every box by its own id, and every movement between godowns — including write-offs.
+6. **Sell and ship.** [Orders](/docs/erp/orders) are made ready and billed, the [dispatch desk](/docs/erp/dispatch) scans every box onto its order, and [transport](/docs/erp/transport) follows the consignment until the customer has it.
+7. **Money.** Once the ERP takes the orders, every bill lands in MahekOne's own ledger — see [the order book](/docs/erp/order-book). [Petty cash](/docs/erp/petty-cash) records funds given to people and what they spent.
+
+## The dashboard
+
+The dashboard is the first screen you see. It answers one question: **what needs attention now?**
+
+<Wireframe url="/erp" nav={["Dashboard", "Alerts", "#Masters", "Raw materials", "Purchase parties", "#Purchase", "Purchase requirements", "Purchase orders", "Purchases", "Purchase testing", "#Production", "SFG batches", "FG filling", "#Stock", "Stock", "Boxes & labels"]} active="Dashboard" caption="The dashboard for somebody who works purchase and stock">
+  <WfBar>
+    <WfTitle sub="Good morning · Monday, 6 Oct 2026 · stock and godown figures for Godown A. Every figure opens the records behind it.">Dashboard</WfTitle>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfCard tone="brand">
+    <WfText muted>YESTERDAY · 2026-10-05</WfText>
+    <WfText>On 2026-10-05: 6 orders taken, 14 lines dispatched, 3 inward lines received and 2 SFG batches made. No alerts are open.</WfText>
+    <Hotspot n={2} />
+  </WfCard>
+  <WfBar>
+    <WfCard title="Purchase">
+      <WfText>Urgent open requirements · 2</WfText>
+      <WfText>POs awaiting approval · 1</WfText>
+      <WfText>Goods received awaiting routing · 0</WfText>
+      <WfText>Tests awaiting verification · 3</WfText>
+      <Hotspot n={3} />
+    </WfCard>
+    <WfCard title="Stock">
+      <WfText>Raw material lots · 48</WfText>
+      <WfText>SFG lots · 12 · 3,400 Ltr</WfText>
+      <WfText>Boxed lots · 9 · 210 boxes</WfText>
+      <Hotspot n={4} />
+    </WfCard>
+    <WfCard title="Production and re-order">
+      <WfText>Incomplete packing batches · 1</WfText>
+      <WfText>Raw items to re-order · 4</WfText>
+      <WfText>Transfers today · 2</WfText>
+    </WfCard>
+  </WfBar>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Greeting and scope.</b> Today's date, and which godown the stock figures are for — your working location, or "all godowns" if you have none. If money figures are not on your account, the line says so.</span>,
+  <span key="2"><b>Yesterday in one paragraph.</b> Counts only: orders taken, lines dispatched, goods received, SFG batches made, and the open alerts. Everybody who opens the dashboard may read it, because it carries no rate or amount. When it says "summarised by AI", a writing model has put the same figures into sentences.</span>,
+  <span key="3"><b>A section per area you hold.</b> Each line is a count of records that need somebody. A count above zero that matters is coloured.</span>,
+  <span key="4"><b>Every line opens its records.</b> Click a line and the list it counts opens filtered to exactly those rows, with a pill naming the filter. Clear the pill to see the whole list.</span>,
+]} />
+
+### What the sections are
+
+| Section | Appears when you hold | What it counts |
+|---|---|---|
+| **Alerts** | Alerts | Open unusual-activity alerts by kind — see [Alerts and AI](/docs/erp/alerts-and-ai) |
+| **Purchase** | Requirements, Purchase orders, Purchases, Testing | Urgent and late requirements, POs waiting for approval or to be sent or delivered, goods awaiting routing, tests waiting for the verifier, purchases with no rate or no bill |
+| **Stock** | Any stock tab | Lots and quantity at each stage; stock value only with the cost power |
+| **Production and re-order** | Production screens, Transfers, Levels | Incomplete packing batches, production today and this month, transfers today, write-offs this month, items below their minimum |
+| **Sales** | Orders, Billing & dispatch | Orders by status, allocation short, ready to bill, dispatch today and late, pending-customer orders, dispatched today and this month |
+| **Logistics** | Transport | Pending LRs, consignments by tracking stage, reminder calls due |
+| **Requests and credit notes** | Complaints & credit notes | Complaints by status, credit notes to issue, average response time |
+| **Petty cash** | Petty cash | What each person holds per godown and mode, expenses waiting to be verified |
+| **Customers** | Sales parties (with the status power), My customers | Customers pending activation; how many of your customers are at their monthly target |
+
+<Callout kind="note" title="Godown figures and company figures">
+Stock and godown figures follow your **working location**: change it in the header and the dashboard changes with it. Purchase, sales and money figures are company-wide.
+</Callout>
+
+## The screen layout
+
+Every ERP screen has the same parts, so once you know one you know them all.
+
+- **The header** — the search box ("Search customers, orders, lots, PRs, bills, LRs…"), the **Working at** godown chip with a button that finds your godown from where you are standing, the notification bell, and the app switcher.
+- **The sidebar** — the screens you hold, grouped by area. A number beside a screen is work waiting there: tests the verifier has not decided, pending LRs, boxes with no label yet.
+- **The list** — search, a godown filter, grouping with totals, chips for the commonest filter, and a download button on most lists.
+- **The record drawer** — click a row to open it. It shows every field, the record's history line ("Created by … on …") and the actions you may take. An action you may not take is drawn greyed out with the reason beside it.
+- **The form drawer** — new records and edits open in a drawer from the side. Fields marked as derived are calculated as you type, exactly as the server will calculate them when you save.
+
+### Keyboard shortcuts
+
+| Key | What it does |
+|---|---|
+| <Kbd>/</Kbd> | Focus the search box |
+| <Kbd>?</Kbd> then <Kbd>Enter</Kbd> | Ask the ERP — end the search with a question mark |
+| <Kbd>Esc</Kbd> | Close a drawer or dialog |
+| <Kbd>?</Kbd> | Show the shortcuts list |
+
+## How the sidebar groups map to the work
+
+| Group | Screens | Who usually works it |
+|---|---|---|
+| **Dashboard, Alerts** | Dashboard, Alerts | Everyone (Alerts only if given) |
+| **Masters** | Raw materials, Purchase parties, Products, Sales parties, My customers, Godowns, Price lists, Reference lists | The office, the store, the owner — see [Masters](/docs/erp/masters) |
+| **Purchase** | Purchase requirements (with Quotations), Purchase orders, Purchases (Goods receipt, Register, Drum labels), Purchase testing | Production departments, the store, the buyer, the PO approver, the tester |
+| **Production** | SFG batches, FG filling, Packing batches, Recipes | Mixing & Blending, Refilling, Packing, the Production Head |
+| **Stock** | Stock, Boxes & labels, Item transfers, Raw-material levels, Finished-goods levels | The store and the godowns |
+| **Orders** | Orders (seven tabs), Dispatch desk | The order desk and the godown |
+| **Traceability** | Traceability | Quality, the owner |
+| **Logistics** | Transport | Back office |
+| **Complaints & credit notes** | Complaints & credit notes | The office, the owner |
+| **Petty cash** | Petty cash (Expenses, Funds given) | Godown staff, and managers to verify |
+| **Help videos, Settings** | Help videos, Settings | Everyone; Settings is always open |
+
+## Common questions
+
+<Faq q="Why does a number on the dashboard not match the list I open from it?">
+It always matches the rows it opens on — the tile and the list are the same function. If you then clear the filter pill, or your godown filter is set to a different godown, the list shows more than the tile counted.
+</Faq>
+
+<Faq q="The dashboard says 'Nothing on your account has figures to show yet'.">
+None of the screens you hold has recorded any work yet, or you hold only screens without dashboard figures. Sections appear by themselves as soon as there is something to count.
+</Faq>
+
+<Faq q="Why can I see a quantity but not its rate or value?">
+Money columns are given separately from screens. Purchase money, cost and margin, the sales rate and sales amounts are each a power somebody is given on purpose. Without it the column is not sent to your screen at all, and the list says which columns are withheld.
+</Faq>
+
+<Faq q="Why is the summary at the top of the dashboard missing?">
+It is written by the ERP's nightly pass, for the day before. Until the first one has been written, or if the job did not run, there is nothing to show and the box is simply not drawn.
+</Faq>
+
+<Faq q="Where do I set my godown?">
+In the header's **Working at** chip, or on [Settings](/docs/erp/access-and-designations). You can only pick godowns you are assigned to.
+</Faq>

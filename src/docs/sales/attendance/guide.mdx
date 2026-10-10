@@ -1,0 +1,107 @@
+Attendance is the roll-call for one day: everybody who holds the Salesman App, when they punched in and out on their handset, where they were, how long they worked, and the photograph taken at every punch. You use it each morning to see who has started, and afterwards to check that the person who marked the day is the person who worked it.
+
+<Callout kind="live">
+Hours, windows and distances on this page are the settings your deployment is using now.
+</Callout>
+
+## The screen at a glance
+
+<Wireframe url="/sales/attendance" nav={["Today", "#People", "Attendance", "Leave", "Holidays", "Expenses"]} active="Attendance" caption="Attendance for one day">
+  <WfBar>
+    <WfTitle sub="Who punched in and from where. A punch-in outside the permitted radius is flagged, never blocked.">Attendance</WfTitle>
+    <WfSpacer /><WfButton>←</WfButton><WfText muted>10 Oct</WfText><WfButton>→</WfButton><Hotspot n={1} />
+  </WfBar>
+  <WfCard tone="warn"><WfBar><WfText>2 salesmen have not checked in — Salesman C, Salesman D. Nothing refused them.</WfText><Hotspot n={2} /></WfBar></WfCard>
+  <WfBar>
+    <WfCard title="Punched in"><WfText>9 of 11</WfText></WfCard>
+    <WfCard title="Never started"><WfText>2</WfText></WfCard>
+    <WfCard title="Off site"><WfText>1</WfText></WfCard>
+    <WfCard title="Still open"><WfText>7</WfText></WfCard>
+    <WfCard title="Missed punch-outs"><WfText>6 of 180</WfText></WfCard>
+    <WfCard title="Photographs to check"><WfText>14</WfText></WfCard>
+    <Hotspot n={3} />
+  </WfBar>
+  <WfTable columns={["Salesman", "In", "Out", "Missed, 30d", "Worked", "Visits", "Verdict", "Photographs", "Day check", "Notes"]} rows={[
+    ["Salesman A", "09:12", <span key="a">18:40</span>, "1 of 22", "8h 41m", "7", <WfPill key="b" tone="success">present</WfPill>, <span key="c">▣ ▣ ▣ ▣ <Hotspot n={4} /></span>, <span key="d"><WfButton>Check 4</WfButton> <Hotspot n={5} /></span>, ""],
+    ["Salesman B", "09:40", <span key="e">21:05<br/><WfText muted>closed for them</WfText> <Hotspot n={6} /></span>, "9 of 20", "—", "3", <WfPill key="f" tone="warn">not measured</WfPill>, <span key="g">▣ <WfText muted>none</WfText></span>, <WfButton key="h">Check 1</WfButton>, <span key="i"><WfPill tone="warn">Off site · 2400m</WfPill> <Hotspot n={7} /></span>],
+    ["Salesman C", <span key="j">Not started</span>, "—", "—", "—", "—", <WfPill key="k" tone="danger">absent</WfPill>, "—", "", ""],
+  ]} />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Day.</b> Step back and forward a day at a time. Sorting a column keeps the day.</span>,
+  <span key="2"><b>Not checked in.</b> Who has not started. Nothing stopped them — they have not opened the app or not pressed the button.</span>,
+  <span key="3"><b>The day's figures.</b> Counted over everybody, whatever the sort.</span>,
+  <span key="4"><b>Photographs.</b> One per mark — every punch-in and every punch-out of every session, left to right. Click to open full size.</span>,
+  <span key="5"><b>Day check.</b> Opens this person's day photograph by photograph, so you can accept or decline each one without leaving the list.</span>,
+  <span key="6"><b>Closed for them.</b> Nobody punched out, so the overnight job closed the day at the last thing the app saw him do.</span>,
+  <span key="7"><b>Notes.</b> <i>Off site</i> with the distance from the office, and <i>Correction asked for</i> with the salesman's own words.</span>,
+]} />
+
+## A day can be several sessions
+
+A salesman punches in in the morning, can punch out for lunch, and punches in again in the afternoon. Each punch-in and each punch-out takes a photograph, so a day with a lunch break has **four** photographs, and the strip shows all of them. *Worked* is the time inside the sessions, not the time between the first punch-in and the last punch-out.
+
+## The three kinds of photograph square
+
+| You see | It means |
+|---|---|
+| A thumbnail | The photograph, still kept. Click to open it. |
+| A dashed box reading **gone** | A photograph was taken, and the image has since been deleted because it is older than the retention window. The punch, its time and place are kept. |
+| An amber dashed box reading **none** | No photograph was taken for that mark. This is the one worth asking about. |
+
+Photographs are deleted <Setting k="mbos.attendance.selfieRetentionHours" /> hours after they reach the office. An older day shows when somebody arrived and no longer shows their face — that is expected, not a fault.
+
+## The verdict
+
+| Verdict | It means |
+|---|---|
+| <Pill tone="success">present</Pill> | Worked at least <Setting k="mbos.attendance.fullDayHours" /> hours. |
+| <Pill tone="warn">half day</Pill> | Worked at least <Setting k="mbos.attendance.halfDayHours" /> hours but less than a full day. |
+| <Pill tone="brand">on leave</Pill> | Approved leave covers the day, and too little was worked to count. |
+| <Pill tone="brand">holiday</Pill> | A holiday that applies to him, and too little was worked to count. |
+| <Pill tone="danger">absent</Pill> | None of the above. |
+| <Pill tone="warn">not measured</Pill> | He punched in and nothing records when he stopped — the day is still being worked, or it was never closed. No verdict is guessed. |
+
+Work comes first: a man who worked a full day on a holiday is **present**.
+
+## Checking a day
+
+<Steps>
+<Step title="Find who needs checking">
+*Photographs to check* counts the ones nobody has answered. The **Day check** button on each row says how many are waiting for that person.
+</Step>
+<Step title="Open the day check">
+It lists the day in the order it happened — he arrived, he set off, he got there, he broke for lunch — with each photograph large enough to read a face and the four digits of a meter.
+</Step>
+<Step title="Accept or decline each one">
+Accepting is one press. Declining asks you to say why, and the salesman is told. A meter reading typed wrong can be corrected here too, unless that day's expense claim has already been decided.
+</Step>
+</Steps>
+
+## Off site, and corrections
+
+A punch-in more than <Setting k="mbos.attendance.geofenceRadiusM" /> metres from the office location is **flagged, never blocked**: the day still starts and the distance is recorded. A salesman who starts his day at a customer's factory is doing his job, and a refused check-in is a day's work with no record of it.
+
+If he wants a day corrected — he was off site for a reason, or forgot to punch out — he says why on the handset, and the row shows **Correction asked for** with his words.
+
+## Missed punch-outs
+
+*Missed, 30d* counts, over the last <Setting k="mbos.attendance.missedPunchOutWindowDays" /> days, how many of the days he punched in to he never punched out of. It turns amber when that is half or more of his days. A missed day now and then is a man who forgot; most of his days is a man who does not know the button is there — a conversation, not a correction. The same figure is on his handset.
+
+From <Setting k="mbos.attendance.punchOutPromptHour" />:00 a salesman still punched in is shown *Punch out* as the main button and gets a phone reminder, with a second one <Setting k="mbos.attendance.punchOutSecondReminderMinutes" /> minutes later.
+
+## Common questions
+
+<Faq q="Somebody is missing from the list.">
+The list is everybody who holds the Salesman App and is active, narrowed to your team. A salesman nobody has been granted the app to is not on it — grant it on the Access screen.
+</Faq>
+<Faq q="A day says 'closed for them'. Are the hours real?">
+The day was closed at the last thing he did — the last activity filed or visit closed, or his last position if there was nothing else. No hour is invented. If nothing at all was recorded, the day stays open and reads <i>not measured</i>.
+</Faq>
+<Faq q="Why is there no photograph on last week's days?">
+They were deleted after the retention window. The dashed <i>gone</i> box says a photograph was taken.
+</Faq>
+<Faq q="Can a salesman see a colleague's photographs?">
+No. A photograph opens for the person in it, and for managers who hold Attendance and have him in their team.
+</Faq>

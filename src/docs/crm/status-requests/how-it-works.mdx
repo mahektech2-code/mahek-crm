@@ -1,0 +1,143 @@
+Close/Reopen exists because **closing a customer account is a decision, not a measurement**. Everything else about a customer's status is worked out by the system from what they buy; *deactivated* is the one status a person chooses. So it is split into two acts — somebody who knows the account **asks**, with a reason, and somebody who can decide **decides** — and the decision sticks until a person reverses it.
+
+This tab explains the rules, why each exists, and who can do what.
+
+## Three statuses, two authors
+
+A customer's status is one of three values. Two belong to the system; one belongs to a person.
+
+<Flow caption="Who moves a customer between statuses" chart={`
+flowchart TD
+  A["Active"] -- "no order for N x their own cycle<br/>(nightly inactivity check)" --> I["Inactive"]
+  I -- "an order arrives<br/>(automatic)" --> A
+  A -- "manager approves a close" --> D["Deactivated"]
+  I -- "manager approves a close" --> D
+  D -- "manager approves a reopen" --> A
+  D -. "an order arrives" .-> D
+`} />
+
+<Rule title="Inactive is derived. Deactivated is decided.">
+**Inactive** is the inactivity engine's own output: a customer who has gone <Setting k="inactive.cycleMultiplier" />× their own buying cycle without an order is marked inactive, and an order marks them active again — nobody types it. **Deactivated** is never written by that engine, and never cleared by it. A deactivated customer is skipped entirely when inactivity is worked out, and an order from them changes nothing.
+</Rule>
+
+<Callout kind="why">
+An order does not undo a deactivation because the deactivation was somebody's judgement — the shop shut, the record was a duplicate, the account was closed on purpose. If an automatic rule could reverse it, the next stray order would quietly put a closed account back on somebody's Call Log, and nobody could tell a decision from an accident. The way back is a request, the same shape as the way out.
+</Callout>
+
+## The two-step: ask, then decide
+
+<Flow caption="A close request, from the Call Log to the decision" chart={`
+sequenceDiagram
+  autonumber
+  actor T as Telecaller
+  participant S as MahekOne
+  actor M as Manager
+  T->>S: Request deactivation, with a reason
+  S->>S: every customer named must be in the asker's book
+  S->>S: flag the request, store reason, who asked, when
+  S-->>M: notification "Deactivation requested"
+  Note over T: customer stays on the list, unchanged
+  M->>S: Approve (or Reject) on Close/Reopen
+  alt Approve
+    S->>S: status = deactivated, who, when, reason<br/>mark the status as decided by a person
+    S->>S: audit row, re-check inactivity
+  else Reject
+    S->>S: clear the flag and the reason, audit row
+  end
+`} />
+
+<Rule title="Asking needs a reason, and nothing changes until somebody decides">
+Every request — close or reopen — must carry a reason; an empty one is refused. While a request waits, the customer is exactly as they were: still on the Call Log, still chased for money, still visible everywhere. Only approval changes the status.
+</Rule>
+
+<Rule title="You can only ask about customers in your own book">
+A close request is checked against the asker's book before anything is written. A bulk request that includes even **one** customer outside it is refused whole — *Some of those customers are not in your book.* A manager's book is their team's; an admin's is everyone's.
+</Rule>
+
+<Callout kind="why">
+Refusing the whole batch rather than flagging the ones that match is deliberate. A bulk action that silently flags nineteen of twenty and reports success is worse than one that refuses: nobody re-reads a list they have been told went through.
+</Callout>
+
+<Rule title="Only a closed customer can be asked back">
+A reopen request names only deactivated customers. If none of the selection is deactivated it is refused (*That customer is not deactivated, so there is nothing to bring back.*); if some are, only those are flagged and the message says how many — *Reactivation requested for 2 of 5 - the rest were not deactivated*.
+</Rule>
+
+## Who can decide
+
+Deciding a request — in either direction — needs the **Deactivate customers** permission. It is a manager's power:
+
+<CapabilityGrid names={["customer.deactivate"]} />
+
+In practice that is a **manager on the CRM** or on the **Sales Dashboard**, and every **administrator**. An Accounts manager does not hold it.
+
+The screen itself is the module <ModuleRef k="crm.deactivations" />. Two checks guard it, because they answer different questions:
+
+| Check | Question | If it fails |
+|---|---|---|
+| The module grant | Was this person given the screen? | Redirected to the first CRM screen they hold |
+| The permission | Can this person decide what the screen queues? | Redirected to the CRM dashboard |
+
+<Callout kind="why" title="Why the permission check as well as the module">
+A module nobody has narrowed reaches **everybody** who holds the CRM — "no module rows means every module". Without the second check, every telecaller would see an approval queue holding their own requests. The sidebar link and its count badge follow the same permission, so a telecaller never sees either.
+</Callout>
+
+Withholding the module from one manager does not stop requests reaching the others — the ask still notifies everybody who might decide.
+
+## What approval does
+
+### Approving a close
+
+- The status becomes **deactivated**, and the record keeps **who** closed it, **when**, and **why** (the asker's reason, unless the decider supplies another).
+- The request flag is cleared.
+- The status is marked as **decided by a person** — see below.
+- An audit entry records the change and which of the decider's roles authorised it.
+- The customer leaves the **Call Log**, the **collections worklist** and the **inactive watch** (their watch row is cleared on the re-check that follows).
+- **Nothing is deleted** and **nothing is written off**. Calls, orders, bills and the balance remain.
+
+<Callout kind="money" title="Closing an account that owes money">
+The debt stays on the books and on the customer's statement. What stops is the chasing: a deactivated customer is not on the Payment Follow-up worklist, so nobody will be prompted to ring about it again. That is why the screen counts **Owing money** in red, and the confirmation names the amount before you approve.
+</Callout>
+
+### Approving a reopen
+
+- The status becomes **active** and every deactivation field — date, who, reason — is **cleared**, along with the request.
+- The inactivity check runs straight away. A customer who has been quiet for months goes **straight back to inactive** rather than reading as freshly active — coming back does not fake activity.
+- The customer returns to the Call Log on their own buying cycle.
+
+<Callout kind="why" title="Why the old reason is cleared">
+A stale reason left on a live account is how a screen ends up explaining a deactivation that was reversed in March. The audit log keeps both decisions; the customer record describes the state the customer is in.
+</Callout>
+
+### Rejecting
+
+Rejecting a close clears the request **and the reason that came with it**. Rejecting a reopen clears that request and its reason. The customer's status does not change. Either way, an audit entry is written.
+
+## The order sheet cannot overrule a decision
+
+The customer master in the order spreadsheet has its own status column, and an account marked **Deactive** there is closed when the sheet syncs. Once a manager has decided an account's status here — **either way** — that account is marked as decided, and the sheet stops speaking for its status from then on.
+
+<Callout kind="why">
+It used to work in one direction only. The sync already refused to reopen an account closed in the CRM, but an account somebody had deliberately brought **back** was closed again on the next pass, for as long as the cell said Deactive. The mark now covers both directions. Where the sheet still disagrees, the disagreement is recorded as a sync conflict so somebody can correct the spreadsheet, rather than the two fighting silently.
+</Callout>
+
+## Notifications
+
+| Event | Who is told | Where the notification leads |
+|---|---|---|
+| A close is requested | Every user whose highest level anywhere is manager or admin | The **Customers** list |
+| A reopen is requested | The same people | The **Close/Reopen** screen |
+| A request is approved or rejected | **Nobody** | — |
+
+## Where the code and the intent disagree today
+
+<Callout kind="warn" title="Found while writing this page">
+These are listed so nobody is surprised; each is a candidate for a fix.
+</Callout>
+
+- **The person who asked is never told the answer.** Neither decision sends a notification; the confirmation itself says "whoever asked will need to be told why".
+- **A close-request notification points at the Customers list**, not at Close/Reopen; a reopen request points at Close/Reopen.
+- **Notifications go to everyone whose widest level is manager or admin**, including managers who cannot decide (an Accounts or Reports manager), rather than to holders of the deciding permission.
+- **The request dialogs promise the reason "is kept on the record either way"** — but rejecting a close clears it.
+- **Reopen requests are not checked against the asker's book**, unlike close requests.
+- **The Accounts app's customer list draws Approve/Reject for any manager**, including an Accounts manager who will be refused by the server.
+- **A second close request overwrites the first** — the reason, the asker and the date are replaced, not kept. The screens grey the item out, but the server does not refuse it.

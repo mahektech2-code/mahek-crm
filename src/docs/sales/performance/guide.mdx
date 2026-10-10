@@ -1,0 +1,118 @@
+Two screens answer "how is the month going" for the field team. **Performance** scores each person out of 100 against the target you published for them. **Cost & return** sets what the field brought in against what it cost to send them out. Both work a calendar month at a time.
+
+The score itself — the six things measured, the weights, the mix bands and the forecast — is the same engine the CRM uses, explained on [Performance in the CRM](/docs/crm/performance). This page covers the two Sales Dashboard screens.
+
+## Performance at a glance
+
+<Wireframe url="/sales/performance" nav={["Today", "#Overview", "Live map", "Territory", "Performance", "Sales Targets", "Cost & return"]} active="Performance" caption="Performance for one month, with both banners showing">
+  <WfBar>
+    <WfTitle sub="October 2026 · scored out of 100 · click a name for detail">Performance</WfTitle>
+    <WfSpacer />
+    <WfButton>← Back to targets</WfButton><WfButton>‹ Oct 2026 ›</WfButton><WfButton>Export</WfButton>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfCard tone="warn"><WfText>Salesman A is at target on revenue but not on volume</WfText><Hotspot n={2} /></WfCard>
+  <WfCard><WfText>₹3,40,000 from 12 customers with no salesperson counts towards nobody</WfText><Hotspot n={3} /></WfCard>
+  <WfBar>
+    <WfCard title="Revenue excl. GST"><WfText>₹42.6L</WfText></WfCard>
+    <WfCard title="Volume"><WfText>18,400 L · ₹1.2L unmatched</WfText></WfCard>
+    <WfCard title="Collection"><WfText>64%</WfText></WfCard>
+    <WfCard title="New customers"><WfText>9</WfText></WfCard>
+    <WfCard title="Working days"><WfText>14 of 26</WfText></WfCard>
+    <Hotspot n={4} />
+  </WfBar>
+  <WfTable columns={["Person", "Score", "Revenue", "Volume", "Mix", "New", "Collected", "Activity"]} rows={[
+    [<span key="a"><b>Salesman A</b> <Hotspot n={5} /><br />Revenue up, litres not</span>, "72 · Good", "₹9.1L · 104%", "2,100 L · 81%", "92%", "3", "₹1.8L · 70%", "88%"],
+    ["Salesman B", "55 · Behind", "₹5.4L · 61%", "1,900 L · 70%", "60%", "0", "₹0.6L · 30%", "95%"],
+    ["Back office C", "No target set", "₹2.2L", "800 L", "—", "1", "—", "—"],
+  ]} />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Month and export.</b> Step between months; export the table as a spreadsheet. <i>Back to targets</i> opens Sales Targets for the same month.</span>,
+  <span key="2"><b>Revenue but not volume.</b> Somebody hit their money target while selling fewer litres than asked — the month a price rise flatters.</span>,
+  <span key="3"><b>Unattributed money.</b> Orders from customers with nobody in the sales seat. It counts towards nobody's score until somebody is given the account.</span>,
+  <span key="4"><b>The team's month.</b> Totals across everybody shown, and how much of the month has been worked.</span>,
+  <span key="5"><b>A person.</b> Click the name for the full breakdown: each component, the mix by formulation, the forecast and what wants attention.</span>,
+]} />
+
+### Who is on the list
+
+Everybody with a **published** target for the month, and everybody who **sold something** without one. A person with sales and no target shows their figures with *No target set* and no score.
+
+### Reading a row
+
+| Column | Means |
+|---|---|
+| **Score** | Out of 100, against what was actually asked. With the rating word under it. |
+| **Revenue** | Approved orders credited to the person, excluding GST, and how much of the target that is. |
+| **Volume** | Litres, from each product's pack size. Money whose product name matched nothing counts as revenue but adds no litres. |
+| **Mix** | How close the formulation mix is to the bands you set. |
+| **New** | Customers whose first order landed this month. |
+| **Collected** | Confirmed money received against what was **already overdue at the start of the month**. |
+| **Activity** | Visits and calls against the activity target. |
+
+Under the name, **what wants attention** — for example *behind pace*, *mix below minimum*, *no new customers* — so the reason is read with the person it is about.
+
+<Callout kind="note">
+A component nobody set a target for is **dropped**, and its weight is shared among the rest. It is never scored 0% or 100%. The detail panel names what was dropped.
+</Callout>
+
+## Cost & return at a glance
+
+<Wireframe url="/sales/roi" caption="Cost and return for one month">
+  <WfTitle sub="What the field brought in against what it cost. These are REVENUE ratios, not profit ratios.">Cost and return</WfTitle>
+  <WfCard tone="warn"><WfText>₹18,400 claimed and not yet decided</WfText><Hotspot n={1} /></WfCard>
+  <WfBar>
+    <WfCard title="Revenue"><WfText>₹42.6L</WfText></WfCard>
+    <WfCard title="Field spend"><WfText>₹1.1L · approved expenses — pay is in HRMS</WfText></WfCard>
+    <WfCard title="Expense to sales"><WfText>2.6%</WfText></WfCard>
+    <WfCard title="Best sales per km"><WfText>Salesman A · ₹1,240 a km</WfText></WfCard>
+    <Hotspot n={2} />
+  </WfBar>
+  <WfBar><WfPill>Travel</WfPill><WfPill>Food</WfPill><WfPill>Hotel</WfPill><WfPill>Local transport</WfPill><WfPill>Other</WfPill><Hotspot n={3} /></WfBar>
+  <WfBar><WfCard title="Cost of a new customer"><WfText>₹4,200</WfText></WfCard><WfCard title="Cost of servicing one"><WfText>₹310</WfText></WfCard><WfCard title="Spending against no customer"><WfText>₹9,800</WfText></WfCard><Hotspot n={4} /></WfBar>
+  <WfTable columns={["Salesman", "Revenue", "Distance", "Visits", "New customers", "Sales per km", "Sales per visit", "Travel to sales", "Field spend", "Revenue to spend"]} rows={[
+    ["Salesman A", "₹9.1L", "740 km", "96", "3", "₹1,240", "₹9,500", "2.1%", "₹21,000", "43×"],
+  ]} />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Undecided claims.</b> Cost counts approved expenses only, so until these are decided the month reads cheaper than it was.</span>,
+  <span key="2"><b>Headline.</b> Revenue, approved field spend, spend as a share of sales, and the best sales per kilometre — which does not change when you sort the table.</span>,
+  <span key="3"><b>Where the money went.</b> Spend broken into travel, food, hotels, local transport and other.</span>,
+  <span key="4"><b>Per customer.</b> Spend on winning new customers, spend on serving existing ones, and spend recorded against no customer at all.</span>,
+]} />
+
+<Callout kind="warn" title="Revenue, never margin">
+MahekOne holds no product costs, so nothing here is profit. *Revenue to spend* of 43× means revenue was 43 times field spend, not that the trip made 43 times its cost.
+</Callout>
+
+## Common tasks
+
+<Steps>
+<Step title="Find who needs a conversation">
+Open Performance. Read the banner first, then the lines under each name. Click the name for the breakdown.
+</Step>
+<Step title="Fix money that counts towards nobody">
+The blue banner names how much and how many customers. Give those accounts a salesperson (accounts do this — it moves revenue), then the figure moves on the next rebuild.
+</Step>
+<Step title="Compare who travels well">
+Open Cost & return and sort by *Sales per km* or *Revenue to spend*.
+</Step>
+</Steps>
+
+## Questions people ask
+
+<Faq q="Somebody's revenue here is lower than their orders on Today.">
+Today counts orders as they are taken. Performance counts only orders accounts approved.
+</Faq>
+<Faq q="Why is a back-office person on the Performance list?">
+A customer with no salesperson is credited to the back-office person who works it. If they sold something, they are listed.
+</Faq>
+<Faq q="Where is salary?">
+Not on the Sales Dashboard. Pay is kept in HRMS; Cost & return counts approved expenses only.
+</Faq>
+<Faq q="Does a reported payment count towards collection?">
+No. Only money accounts have confirmed against the bank counts.
+</Faq>

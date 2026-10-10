@@ -1,0 +1,88 @@
+MBOS is the field team's half of MahekOne. It is not a separate system with its own customers: it holds a **copy of the salesman's own part of the book** on the phone, lets him work on it with no signal, and sends what he does back into the same database the CRM, Accounts and the Sales Dashboard read. This tab explains the shape of that arrangement and the rules that hold it together.
+
+## Who may sign in
+
+Three things decide it, all set in the office:
+
+1. **An open MahekOne account.** A closed account is refused by name, and the salesman is told nothing on the phone is lost.
+2. **The Salesman App grant.** In Access it is the app called *Salesman App*; its only module is <ModuleRef k="field.home" />. Granting it gives a phone a way in and the browser nothing — there is no web screen behind it.
+3. **A territory**, for a field salesman. Without one he can sign in, but his book is empty and the phone says *No area set for you yet*. Managers and admins are exempt. See [Customers on the phone](/docs/mbos/customers/how-it-works).
+
+The level on the grant matters: a **manager** level on the Salesman App sees a team's book; an **associate** sees his own.
+
+## Offline first, in one picture
+
+<Flow caption="Where a salesman's work lives, and how it reaches the office" chart={`
+flowchart TD
+  S["Salesman presses Save"] --> L["Written to the phone's own database<br/>(the screen updates at once)"]
+  L --> O["Queued in the outbox<br/>one entry per change"]
+  O -- "signal" --> P["Sent to MahekOne<br/>in batches"]
+  P --> V{"Office checks it again"}
+  V -- "accepted" --> DB["MahekOne database<br/>CRM · Accounts · Sales Dashboard"]
+  V -- "refused, with a reason" --> R["Not accepted list on the phone"]
+  V -- "server busy" --> O
+  DB --> Q["Changes since last time<br/>(the book, prices, tasks, decisions)"]
+  Q --> L
+`} />
+
+Three rules make that safe:
+
+<Rule title="The phone never waits for the network">
+Every save writes locally and returns. The screen says whether it is *sending now* or *will send when you have signal*, and never claims the office has heard before it has.
+</Rule>
+
+<Rule title="The office re-checks everything">
+A handset is a device somebody carries, so nothing it says is trusted on its own. Scope, credit, prices, the check-in distance and the visit cap are all decided again on the server when the entry arrives.
+</Rule>
+
+<Rule title="A refusal is shown, never swallowed">
+An entry the office refuses goes to **Not accepted** on the phone with the office's own sentence, and a task is raised for whoever needs to act. An entry that failed for a passing reason — a timeout, a busy server — is retried on its own.
+</Rule>
+
+<Callout kind="why">
+A salesman whose work is refused at the counter stops recording work. The app is built so that the only things it ever refuses outright are the ones where saying no is the point — a credit-blocked customer, a check-in from the wrong street. Everything else is recorded and flagged for a manager.
+</Callout>
+
+The details of the outbox, retries and the pull are on [Sync and sending to the office](/docs/mbos/sync).
+
+## What the phone holds
+
+| On the phone | Where it comes from | Can the salesman change it? |
+|---|---|---|
+| His customers and leads | The office, narrowed to his scope and territory | Some fields, through a request the office checks |
+| Products and his price list | The office | No |
+| Thirteen-ish months of bills and receipts per shop | The office, a window set by <Setting k="mbos.sync.statementMonths" /> months | No |
+| His journey days and stops | The office proposes, he answers and picks | His answer and his picks |
+| His visits, orders, payments, leads, expenses, attendance | Him | Yes — they are his work |
+| Tasks, notifications, targets, salary, leave balance | The office | He completes tasks and answers requests |
+
+What he authored is **never deleted by a sync**. What the office owns is replaced as the office changes it, and a shop that leaves his book is removed from the phone on the next pull.
+
+## A salesman's day, and what the office sees
+
+| On the phone | In the office |
+|---|---|
+| Punches in with a selfie | Sales Dashboard → Attendance, with the selfie for a limited time |
+| The phone records his route while he is punched in | Live map, today's trail |
+| Agrees a proposed day and picks shops | Journeys & visits |
+| Checks in at a shop within the radius | The visit, verified or not, with the distance |
+| Takes an order | Accounts → Order approvals, *pending approval* |
+| Collects a payment | Accounts → Payments to confirm |
+| Adds a shop as a lead | Lead management |
+| Punches out with a selfie | The day closes; hours become Present / Half Day |
+
+## How it relates to the rest of MahekOne
+
+- **One database.** An order taken on the phone is the same `orders` row a telecaller's order is, and it waits for the same accounts approval.
+- **The Sales Dashboard is the office end.** Everything a manager decides about a salesman — his territory, his days, his targets, his approvals — is set there and reaches the phone on the next pull. See [Sales Dashboard overview](/docs/sales/overview).
+- **The CRM sees field work.** Visits, orders and payments land on the customer's timeline, so a telecaller ringing a shop can see the salesman was there this morning.
+- **Releasing the app** is a platform job: see [Releasing the handset app](/docs/platform/handset-release).
+
+## Settings that shape the app as a whole
+
+<SettingsTable keys={["mbos.sync.offlineLoginValidityDays", "mbos.devices.onePerPerson", "mbos.sync.statementMonths", "mbos.sync.maxItemsPerRequest", "mbos.sync.currentAppVersion", "mbos.location.trackWhileWorking", "mbos.location.startOfDayGate"]} />
+
+## Where the code and the intent disagree today
+
+- The Salesman App's modules are a single entry, <ModuleRef k="field.home" />. Nothing inside the handset can be narrowed per screen from Access — every granted salesman gets every screen.
+- AGENTS.md describes the Customers tab as three chips (Everything / Customers / Leads); the phone ships a two-way switch, **Customers / Leads**. See [Customers](/docs/mbos/customers/how-it-works).

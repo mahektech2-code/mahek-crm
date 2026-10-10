@@ -1,0 +1,154 @@
+Everything MahekOne says about selling is read off one order book — the `orders` and `bills` the CRM, Accounts, targets and the owner's figures all share. The ERP keeps far more detail about an order than that book does: lots allocated, readiness, billing line by line, dispatch scans, the lorry. This page explains how the two meet: one switch, <Setting k="erp.orders.live" />, decides whether the ERP or the order sheet writes the book, and what everything downstream reads once it does.
+
+## Why there has to be one book
+
+<Callout kind="why">
+Targets, the Call Log's reorder dates, the buying cycle, outstanding, collections and the owner's five KPIs are all computed from `orders` and `bills`. An ERP that kept its orders to itself would be a second order book that none of them could see: the godown would dispatch and bill, and the Call Log would go on ringing the customer to ask for the order they placed on Monday. And two sources writing the same book would count every order twice.
+</Callout>
+
+<Rule title="Exactly one author at a time">
+Off, the ERP writes nothing into the book: the ERP runs on its own, and orders and bills keep arriving from the Taken Order and Order Details sheets. On, every ERP order is written into the book, and the sheet projection writes **no** order and **no** bill — it still updates customers from the party sheet, because the sheet is simply right about those.
+</Rule>
+
+## What the switch changes
+
+| | Off | On |
+|---|---|---|
+| Who writes `orders` and `bills` | The order sheet projection | The ERP, after every change to an order |
+| A Pending customer's order | The ERP's own "Approved By Admin" (the approve-party power) | The Accounts approval queue, like any order needing a check |
+| Who is held off the Call Log for an open order | Open lines on the Taken Order tab | ERP lines not cancelled and not yet dispatch-verified |
+| Targets, buying cycle, outstanding, KPIs | Read the sheet's orders | Read the ERP's orders |
+
+## An ERP order in the book
+
+<Flow caption="From ERP order lines to one order and one bill" chart={`
+flowchart TD
+  L["ERP order lines<br/>one order number, many SKUs"] --> S{"Every line cancelled?"}
+  S -- "Yes" --> C["Book order: cancelled<br/>an unpaid bill is removed"]
+  S -- "No" --> D{"Accounts declined it?"}
+  D -- "Yes" --> X["Book order: declined"]
+  D -- "No" --> P{"A live line's customer is Pending<br/>and Accounts has not approved?"}
+  P -- "Yes" --> PA["Book order: pending approval<br/>in the Accounts queue"]
+  P -- "No" --> V{"Every live line<br/>dispatch-verified?"}
+  V -- "No" --> CF["Book order: confirmed"]
+  V -- "Yes" --> T["Book order: dispatched,<br/>in transit or delivered<br/>from the transport stage"]
+  L --> B{"Any live line<br/>dispatch-verified?"}
+  B -- "Yes" --> BL["One bill: stated, owed<br/>value of the lines that left"]
+  B -- "No" --> NB["No bill<br/>(an unpaid one is removed)"]
+`} />
+
+<Rule title="One order number is one order, and one bill">
+However many lines and SKUs an ERP order has, the book holds one order for it, keyed `ERP-` and the order number, and — once anything has left — one bill keyed separately. The keys are the ERP's own, never the sheet's, so the sheet projection can never overwrite them.
+</Rule>
+
+<Rule title="The book's copy is rewritten whole, never edited">
+After any ERP write that can change an order's lines, status, value or dispatch, the book's copy of that order is rebuilt from the ERP's lines. It is a projection, so it cannot drift into a second opinion; an edit made to it in Accounts would be overwritten.
+</Rule>
+
+### What the order says
+
+| Field | From the ERP |
+|---|---|
+| Customer | The billing customer; a different delivery customer is kept beside it |
+| Taken by | Whoever created the ERP order |
+| Ordered on | The ERP order date, at 10:00 in the business's time zone |
+| Lines | Each live line: SKU, cans, rate and its value |
+| Value | Per line: amount (cans, or litres for a drum, × rate) less discount, plus freight, plus GST — summed |
+| Net value | Amount less discount, before freight and GST |
+| Credit days | The billing customer's own credit term |
+| Expected dispatch | The earliest planned dispatch date on its lines |
+
+### Where the order stands
+
+The status comes from the ERP's lines, with two decisions that the ERP cannot undo:
+
+- **Declined by Accounts** stays declined. Nothing the godown does afterwards turns a declined order back into a sale.
+- **Pending approval** holds while any live line's customer is Pending and Accounts has not approved the order.
+- Once every live line is dispatch-verified, the transport record's material stage decides between **dispatched**, **in transit** and **delivered** ("Close - Received to Party" is delivered).
+- Otherwise the order is **confirmed**.
+
+<Callout kind="note" title="Only a Pending customer's order goes to Accounts">
+An ERP order from an **active** customer is confirmed in the book as soon as it is taken, and counts as a sale from then on. Unlike an order logged on a CRM call, it does not wait in the Accounts queue: in the ERP the customer's activation by an admin or the office is the check, and Accounts sees only the orders of customers who have not had it.
+</Callout>
+
+## The bill
+
+<Rule title="A bill appears when goods leave, and it is owed">
+The first time a line of the order is dispatch-verified, one bill is written for the order: its value is what has left so far, its date the earliest dispatch date among those lines. It is **stated** — a real invoice the business raised, owed until money is recorded against it, and therefore on outstanding, aging and the collections worklist.
+</Rule>
+
+<Callout kind="money">
+Sheet bills arrive "unstated" — neither paid nor owed — because nobody vouched for them. An ERP bill is different in kind: the ERP itself billed and dispatched it. That is why it lands owed. Payment against it is recorded and confirmed in Accounts exactly as for any bill; see [Bills](/docs/crm/bills) and [Outstanding](/docs/crm/outstanding).
+</Callout>
+
+<Rule title="A bill number is never taken from another bill">
+The bill takes the Tally number the order desk entered. Bill numbers are unique across MahekOne, so where that number is already held — usually by a bill the sheet wrote — it falls back to the Tally number followed by `/ERP` and the order number, then to `ERP-` and the order number. It is the same fall-back chain the sheet itself uses.
+</Rule>
+
+<Rule title="An unpaid bill follows its lines; a paid one stays">
+If every verified line is un-verified or cancelled again, a bill with **no** money recorded against it is removed with the lines that made it. A bill with any payment against it is never removed by the ERP.
+</Rule>
+
+After every rewrite, the buying cycle, outstanding and the follow-up stage are recomputed for each customer the order touched.
+
+## Accounts and a Pending customer
+
+<Flow caption="A Pending customer's order, with the ERP live" chart={`
+sequenceDiagram
+  autonumber
+  participant OD as Order desk (ERP)
+  participant Book as Order book
+  participant AC as Accounts
+  participant ERP as ERP order lines
+  OD->>ERP: order taken for a Pending customer
+  ERP->>Book: rewritten as ERP-n, pending approval
+  AC->>Book: approve (or decline with a reason)
+  Book->>ERP: approve: lines become Approved By Admin
+  Book->>ERP: decline: Pending lines cancelled, reason added to the remark
+  ERP->>Book: next rewrite keeps confirmed, or declined
+`} />
+
+<Callout kind="why">
+In Mahek Plus a pending party's order was approved by the admin inside the ERP. With the ERP live, Accounts already has a queue for exactly this decision, so the ERP's own button is withdrawn: one door means an order cannot be approved twice, or approved in one place and declined in the other.
+</Callout>
+
+## The Call Log hold
+
+<Rule title="A customer with an open ERP order is not chased for one">
+With the switch on, a customer is held off the Call Log's order chasing while any ERP line billed to them is neither cancelled nor dispatch-verified, and released when the last one leaves. Every customer is rewritten on every pass, so a hold can only say what the ERP currently says — the same rule the Taken Order tab followed. See [the Call Log](/docs/crm/call-log/how-it-works).
+</Rule>
+
+The hold is rebuilt by the scheduled passes (the Taken Order sync, which now reads the ERP, and the nightly recompute), not by each ERP save.
+
+## Going live
+
+<Steps>
+<Step title="Stop the sheet">
+The order desk stops typing orders into the Taken Order sheet at an agreed time.
+</Step>
+<Step title="Turn the switch on">
+<Setting k="erp.orders.live" /> in Admin Console → Settings → ERP → Production & orders.
+</Step>
+<Step title="Run the ERP book sync once">
+It writes every ERP order already in the ERP into the book (two hundred at a time) and rebuilds the Call Log holds. While the switch is off the job writes nothing and says so.
+</Step>
+</Steps>
+
+<Callout kind="warn">
+Never turn the switch on while the team is still typing orders into the sheet. Orders taken on the sheet before the switch stay in the book as they were; the ERP's own orders are added beside them under their own keys.
+</Callout>
+
+## Who can do what
+
+| Act | Who |
+|---|---|
+| Turn the switch on or off | Whoever may edit ERP settings in the Admin Console |
+| Approve or decline a Pending customer's order (live) | Accounts, from Order approvals |
+| Approve a Pending customer's order (not live) | Holders of the ERP's "Approve orders from pending customers" power |
+| Edit an order's lines, billing, dispatch | The ERP's Orders and Dispatch screens — never the book |
+
+## Where the code and the intent disagree today
+
+- The Call Log hold is not rebuilt when an ERP order is saved, only by the scheduled passes, so a customer can be chased for an order they placed until the next pass.
+- Before an order's billing details exist, its value in the book assumes 18% GST on every line; the GST actually billed replaces it only once the line has billing details. The 18% is written in the code rather than taken from a setting.
+- The ERP book sync has no button in the Admin Console; on a deployment without shell access it cannot be run on go-live day.

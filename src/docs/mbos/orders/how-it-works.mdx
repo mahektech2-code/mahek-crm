@@ -1,0 +1,92 @@
+An order taken on the phone is the **same order** a telecaller takes in the CRM: one row in `orders`, waiting for accounts to approve it, counted the same way in every figure. What is different is where it is taken — at a counter, often with no signal — so the phone does its own credit check against what it last heard, and the office checks everything again against today when the order arrives. The accounts side is the Accounts app's Order approvals screen; a manager's approvals for over-limit orders are on [Approvals](/docs/sales/approvals) on the Sales Dashboard.
+
+## The order's path
+
+<Flow caption="From the counter to accounts" chart={`
+flowchart TD
+  C["Salesman builds the order<br/>cans per SKU"] --> A{"Credit check on the phone"}
+  A -- "credit-blocked" --> B["Cannot be taken"]
+  A -- "within limit or allowance" --> S["Saved as submitted"]
+  A -- "over the limit" --> AP["Saved pending approval<br/>manager or senior"]
+  S --> O["Outbox"]
+  AP --> O
+  O --> SV{"Office re-checks:<br/>scope · block · products · minimum ·<br/>price · credit today"}
+  SV -- "refused" --> NA["Not accepted on the phone<br/>with the reason"]
+  SV -- "accepted" --> PA["orders row · pending_approval<br/>last order date moves now"]
+  PA --> AC{"Accounts decide"}
+  AC -- "approve" --> OK["Counts as a sale<br/>salesman notified"]
+  AC -- "decline + reason" --> DC["Salesman notified with the reason"]
+`} />
+
+## Quantities, catalogue and prices
+
+- **Quantity is cans**, the way the customer says it. Litres and boxes are derived from the SKU's own packing; storing litres would make "six" unrecoverable the day a pack size changed.
+- **Only a SKU can be ordered.** The catalogue on the phone is the office's product master; a name that does not resolve to a SKU cannot go on an order.
+- **The usual products** are the office's own answer — the same aggregation the CRM's order form uses — fetched per shop when there is signal and remembered for offline.
+- **Value depends on the price source.** <Setting k="products.priceSource" /> says where a rate comes from. Until one is confirmed, the phone does not value orders at all and says so — a confident zero on a target screen is worse than a blank. On a price list, the **biller's** list is used: a shop served through a distributor pays what the distributor's list says.
+
+## Credit on the phone
+
+<Rule title="Credit-blocked is the only outright block">
+Everything else in MBOS either flags for a manager or routes to an approver. A credit block is the one case where saying no is the point: accounts have already decided this customer gets no goods until something is settled, and letting the order through would mean ringing the shop later to take it back.
+</Rule>
+
+Available credit is the limit minus what they owe minus **orders already placed and not yet invoiced** — leaving that out is how four orders in a morning, each fitting on its own, take a customer three lakh past the limit.
+
+| Over the limit by | Phone's answer |
+|---|---|
+| Nothing | Within the limit |
+| Up to <Setting k="mbos.orders.approvalThresholdPaise" /> paise | Allowed — no approval |
+| More than that | Needs the manager's approval |
+| More than <Setting k="mbos.orders.secondTierThresholdPaise" /> paise | Needs a senior's approval |
+| No limit on file, or the order cannot be valued | Goes, and says the limit was not checked |
+
+<Callout kind="why">
+**Over the limit is an approval, not a refusal.** A salesman standing in a shop is holding a conversation, and an app that says no has ended it on his behalf. The order is taken, the customer is told it is subject to approval, and somebody with the authority decides.
+</Callout>
+
+## What the office checks again
+
+When the order arrives the office repeats the checks with **today's** figures, because the phone's may be hours old:
+
+1. **The customer is in his book.** The delivery shop is deliberately *not* scope-checked — it is an address on somebody else's order and often sits in another salesman's book.
+2. **Not credit-blocked**, with the block reason in the refusal.
+3. **Real products, at least <Setting k="mbos.orders.minimumQuantityCans" /> cans.**
+4. **The quoted rate is still the list rate.** A changed price is refused with the new rate, so the salesman confirms it with the shop rather than accounts discovering it.
+5. **Credit today**, when <Setting k="mbos.credit.blockOnLimitExceeded" /> is on. If the phone's outstanding was older than <Setting k="mbos.credit.outstandingStaleHours" /> hours and differed from today's, the refusal says "the limit moved under you" rather than "you went over it" — they send him to different people.
+
+<Callout kind="money">
+With <Setting k="mbos.credit.blockOnLimitExceeded" /> on, an order that would take the customer over the limit **at the office** is refused outright, even where the phone treated the same overshoot as an approval. With it off, the phone's approval route stands.
+</Callout>
+
+A resend of the same order from the same salesman is accepted as itself, never as a duplicate: the id is minted on the phone, and a slow answer that made the phone send again must not put the order on his Not accepted list while it sits in accounts' queue.
+
+## After it is accepted
+
+- **`pending_approval`** until accounts decide. "Did the customer order" is true now — the last order date moves on capture, so the Call Log stops chasing a shop that ordered this morning. "Did we sell anything" is true only once approved.
+- **Approving is accounts' alone.** The person chasing a target must not sign off the orders that hit it — see the capability below.
+- **Declining needs a reason**, and the salesman who took the order is notified with the reason in the message — they have to ring the customer and say something. An approval is notified too. Both open **Orders** on the phone.
+- **A lead converts on its second order.** An order on a lead is never refused for the lead's stage; the second counting order promotes it to a customer through the same conversion the CRM uses.
+
+<CapabilityGrid names={["order.approve"]} />
+
+## Editing, changes and delivery
+
+| When | What he can do |
+|---|---|
+| Before accounts decide | Edit the lines himself; the office re-checks against the same bar as a new order |
+| After accounts decide | Send a change request with a reason; accounts decide |
+
+An order carries three parties' words: **status** is ours (accepted, dispatched, in transit, delivered), **customer confirmed** is the shop agreeing to what was written, **delivery confirmed** is the shop saying the goods came. A **delivery discrepancy** notifies the office and does not raise a complaint — a complaint is the customer's, and inventing one from a delivery note would put words in their mouth. A declined order cannot be marked delivered, whatever a stale phone believes.
+
+## Settings
+
+<SettingsTable keys={["products.priceSource", "mbos.orders.approvalThresholdPaise", "mbos.orders.secondTierThresholdPaise", "mbos.orders.minimumQuantityCans", "mbos.orders.numberSeriesPrefix", "mbos.credit.blockOnLimitExceeded", "mbos.credit.outstandingStaleHours", "products.starterListCount", "products.frequentCount"]} />
+
+## Where the code and the intent disagree today
+
+- AGENTS.md says a lead becomes a customer on the **first** order; the code converts on the **second** (`src/lib/services/lead-conversion-service.ts` `convertLeadOnSecondOrder`, called from `handleOrder`).
+- AGENTS.md says a decline notification carries **no** handset link; the code sends `/orders`, which exists on the phone (`src/lib/services/order-approval-service.ts` `tellTheAuthor`).
+- <Setting k="mbos.credit.overdueDaysBlockOrders" /> is on the Settings screen but nothing reads it — overdue bills never block an order.
+- The server accepts delivery and customer confirmations on an order update (`handleOrderProgress`), but no screen on the phone sends one.
+- The phone's credit engine says over-limit is "an approval, never a refusal"; with <Setting k="mbos.credit.blockOnLimitExceeded" /> on, the office refuses the same order outright.

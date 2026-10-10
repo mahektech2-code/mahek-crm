@@ -1,0 +1,140 @@
+The two levels screens are four ordinary ERP list modules built by two factories in `screens/movement.ts` — `rmLevelList("rmLevels" | "reorderRm")` and `fgLevelList("fgLevels" | "reorderFg")`. The figures are pure functions in `engines/production.ts`, availability comes from the stock ledger in `stock.ts`, and suggestions from `suggest.ts`. Every block below is cut from the source this deployment was built from.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Registry | `src/lib/erp/registry.ts` | `rmLevels` (tabs `reorderRm`, `rmLevels`) and `fgLevels` (tabs `reorderFg`, `fgLevels`) under the Stock group |
+| Page | `src/app/erp/[slug]/page.tsx` | The generic list page: checks `ctx.screens`, picks the tab from `?view=`, calls the module's `load` |
+| Screen modules | `src/lib/erp/screens/movement.ts` | `rmLevelList`, `fgLevelList`, forms, `saveRmLevel`, `saveFgLevel`, `applyRm`, `applyFg`, `rmReorderRows`, `fgReorderRows`, `reorderDepartment` |
+| Availability | `src/lib/erp/stock.ts` | `rmLevelAvailable`, `fgLevelAvailable` (read the lot ledger) |
+| Figures (pure) | `src/lib/erp/engines/production.ts` | `rmReorderPercent`, `rmRequired`, `fgReorderPercent`, `suggestLevel` |
+| Suggestions | `src/lib/erp/suggest.ts` | `levelSuggestions` — the four "use" queries |
+| Raise a requirement | `src/lib/erp/screens/purchase-flow.ts` | `requisitionForm`, opened by the `raise` form loader |
+| Alerts | `src/lib/erp/alerts.ts`, `engines/alerts.ts` | `belowLevel` candidates from `rmReorderRows` + `fgReorderRows`; `tellRequisitioners` |
+| Writes | `src/lib/actions/erp.ts` | `erpRunAction`, `erpRunBulk`, `erpSubmitForm`, `erpLoadForm` — the four doors every list screen uses |
+
+## A request, end to end
+
+<Flow caption="Opening Raw-material levels, then raising a requisition from a row" chart={`
+sequenceDiagram
+  autonumber
+  participant Page as erp/[slug]/page.tsx
+  participant Mod as movement.ts rmLevelList
+  participant Stock as stock.ts
+  participant Sug as suggest.ts
+  participant Act as actions/erp.ts
+  participant PF as purchase-flow.ts
+  Page->>Page: erpContext() and ctx.screens.has("rmLevels")
+  Page->>Mod: screenModule("reorderRm").load(ctx)
+  Mod->>Stock: rmLevelAvailable()
+  Mod->>Sug: levelSuggestions()
+  Mod->>Mod: rmRequired, rmReorderPercent, filter Follow and required above 0
+  Mod-->>Page: spec and rows (read only, raise action)
+  Page->>Act: erpLoadForm("reorderRm", "raise", id)
+  Act->>Mod: formLoaders.raise(ctx, id)
+  Mod->>PF: requisitionForm(ctx, godown, type, item, required, For Stock, department)
+  PF-->>Page: the new purchase-requirement form, pre-filled
+`} />
+
+## The figures
+
+<Code file="src/lib/erp/engines/production.ts" symbol="rmReorderPercent" />
+<Code file="src/lib/erp/engines/production.ts" symbol="rmRequired" />
+<Code file="src/lib/erp/engines/production.ts" symbol="fgReorderPercent" />
+
+### What counts as available
+
+<Code file="src/lib/erp/stock.ts" symbol="rmLevelAvailable" />
+<Code file="src/lib/erp/stock.ts" symbol="fgLevelAvailable" />
+
+### Which rows are "below"
+
+The two filters are the whole of the Below minimum tabs, the `below` flag and the alert:
+
+<Code file="src/lib/erp/screens/movement.ts" symbol="rmReorderRows" />
+<Code file="src/lib/erp/screens/movement.ts" symbol="fgReorderRows" />
+
+<Callout kind="warn" title="rmReorderRows filters on required, not on min">
+`required` is `max − available`, so a followed raw-material level is "below" anywhere under its maximum. The `noDataLine` and the registry's sub-title say minimum. Changing the predicate changes three readers at once: the tab, `currentCandidates` in `alerts.ts`, and the Ask the ERP `reorder` tool.
+</Callout>
+
+## The screen module
+
+<Code file="src/lib/erp/screens/movement.ts" symbol="rmLevelList" collapsed />
+
+<Code file="src/lib/erp/screens/movement.ts" symbol="saveRmLevel" collapsed />
+
+The `raise` loader sends the row's department through `reorderDepartment`:
+
+<Code file="src/lib/erp/screens/movement.ts" symbol="reorderDepartment" />
+
+## Suggestions
+
+<Code file="src/lib/erp/engines/production.ts" symbol="suggestLevel" />
+
+<Code file="src/lib/erp/suggest.ts" symbol="levelSuggestions" collapsed />
+
+`rm(type, …)` reads the **can** map for `Can`, the **box** map for `Box`, and the **chemical** map for everything else — which is why `Drum` and `Stationary` never match a row. `applyFg` writes only `min_qty`.
+
+<Code file="src/lib/erp/screens/movement.ts" symbol="applyRm" />
+
+## Tables
+
+<DbTable name="erp_rm_levels" note={{
+  material_type: "Chemical, Can, Drum, Box or Stationary — decides which availability and which suggestion map is read.",
+  min_qty: "erpQty numeric. Never above max_qty (checked in saveRmLevel).",
+  status: "Follow or UnFollow. UnFollow silences the tab, the flag and the alert.",
+  updated_by_id: "Last person to set it; shown as 'Updated by' on the row.",
+}} />
+
+<DbTable name="erp_fg_levels" note={{
+  product_id: "The SKU (products.id).",
+  min_qty: "Cans for a loose SKU, boxes for a boxed one — the unit is the SKU's, not the form's.",
+}} />
+
+Both carry a unique index on `(godown_id, item)`; the insert uses `onConflictDoNothing` and answers *Duplicate Entry!* when nothing was inserted.
+
+## Access
+
+- **Modules:** <ModuleRef k="erp.rmLevels" /> and <ModuleRef k="erp.fgLevels" />. Each screen's tabs come with it (`erpKeysOf`); a tab is never granted on its own.
+- **Writes** go through `requireErpWrite(screen)` in `actions/erp.ts`: the screen must be held, and a preview ("view ERP as") refuses every write.
+- **No ERP power** is needed to set or change a level.
+- The **raise** form opens under the levels screen (`requireErpForm`); its submit goes to the Purchase requirements screen and is checked there.
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/erp/engines/production.test.ts` | `rmReorderPercent` at and below the midpoint, `rmRequired` blank at or above max, `fgReorderPercent` |
+| `npm run test` | `src/lib/erp/registry.test.ts` | `erpLink("reorderRm")` lands on `/erp/rm-levels` |
+| `npm run test:integration` | `src/lib/erp/erp-production.test.ts` | Levels for cans and boxes, the duplicate refusal, a filled batch moving a can level onto `reorderRm` |
+| `npm run test:integration` | `src/lib/erp/erp-ai.test.ts` — `suggested levels (AI-7)` | A suggestion is cover days of recent use, applied only when a person presses it |
+
+## Changing levels safely
+
+<Steps>
+<Step title="Keep the arithmetic in engines/production.ts">
+The tab, the alert and Ask the ERP all read `rmReorderRows` / `fgReorderRows`, which read the engine. A second copy of "what is below" in a screen will disagree with the alert inside a release.
+</Step>
+<Step title="Read availability from stock.ts">
+Never subtract fills or packing again in a level — lot stock is already net of them, and counting twice is the bug the comment in `rmLevelAvailable` exists to prevent.
+</Step>
+<Step title="Make thresholds settings">
+Cover days and look-back are `erp.ai.reorder.*`. A new knob is a registry key with a `Config` type entry, read through `getConfig()`.
+</Step>
+<Step title="Never apply a suggestion without a press">
+`applyRm` / `applyFg` are the only writers of a suggested value, and both are actions a person runs.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| Raw-material "Below minimum" lists anything below the **maximum**; the sub-title, empty sentence and alert title say minimum | `screens/movement.ts` `rmReorderRows`; `registry.ts` `rmLevels` sub |
+| The `belowLevel` alert sentence quotes the minimum even when stock is above it | `engines/alerts.ts` `belowLevel` |
+| `Drum` and `Stationary` levels never get a suggestion (they look up the chemical map) | `suggest.ts` `levelSuggestions` `rm()` |
+| Drum availability is company-wide, so a drum level ignores its godown | `stock.ts` `rmLevelAvailable` |
+| Box use is matched to raw materials by name (`lower(m.name) = lower(pk.box_type)`), so a renamed box material silently loses its suggestion | `suggest.ts` |
+| Finished-goods rows offer no **Raise** action and nothing routes a short SKU to production | `screens/movement.ts` `fgLevelList` |

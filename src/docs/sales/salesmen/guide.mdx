@@ -1,0 +1,96 @@
+**Salesmen** (the screen is titled *The team*) lists everybody who can sign in to the MBOS handset, with how many shops are in their book, whether their phone is syncing, where they work, and their hometown. Open a person to see **everything MBOS has recorded for them** — visits, orders, money, attendance, leave, expenses, samples, leads and tasks — and to check any single day photograph by photograph.
+
+## The team list
+
+<Wireframe url="/sales/people" nav={["#Administration", "Salesmen", "App preferences", "Login history", "Sync health", "Send a notification", "Audit trail"]} active="Salesmen" caption="The team">
+  <WfBar><WfTitle sub="Everybody who can sign in to a handset. Open somebody to see everything MBOS has recorded for them.">The team</WfTitle></WfBar>
+  <WfCard tone="danger"><WfBar><WfText>2 handsets showing no customers — No area is set for Salesman B, Salesman C, so their customer list is empty.</WfText><Hotspot n={1} /></WfBar></WfCard>
+  <WfCard tone="warn"><WfBar><WfText>3 salesmen with no hometown</WfText></WfBar></WfCard>
+  <WfBar><WfPill tone="brand">Everybody 11</WfPill><WfPill>Hometown not set 3</WfPill><WfPill>Hometown set 8</WfPill></WfBar>
+  <WfTable columns={["Name", "Work number", "Customers", "Handset", "Works", "Hometown", "Last signed in", ""]} rows={[
+    ["Salesman A", "98xxxxxxxx", "214 shops", <span key="a">Synced 10 Oct 09:42 <Hotspot n={2} /></span>, <span key="b">Nagpur, Wardha <Hotspot n={3} /></span>, <span key="c">Nagpur ▾ <Hotspot n={4} /></span>, "10 Oct", <span key="d">⋯ <Hotspot n={5} /></span>],
+    ["Salesman B", "98xxxxxxxx", <span key="e"><WfText muted>Empty book</WfText></span>, "Bound, never synced", <WfText key="f" muted>No area set</WfText>, "—", "Never", "⋯"],
+  ]} />
+  <WfCard title="Managers and the regions they cover"><WfText muted>Who oversees which states — no regions means every region.</WfText><Hotspot n={6} /></WfCard>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Handsets showing no customers.</b> A salesman with no area allocated sees no shops at all on his phone — said here so an empty handset is not mistaken for a broken sync.</span>,
+  <span key="2"><b>Handset.</b> When his phone last synced, or that it is bound and has never synced, or that he has never signed in on a handset.</span>,
+  <span key="3"><b>Works.</b> The states, cities or beats he is allocated. <i>Where they work</i> changes them.</span>,
+  <span key="4"><b>Hometown.</b> Where he lives. Meals are paid only on days away from it.</span>,
+  <span key="5"><b>Row menu.</b> Release his handset (needs a reason). A platform administrator also sees <i>Send a password-reset link</i> and <i>Sign them out everywhere</i>.</span>,
+  <span key="6"><b>Managers.</b> Which regions each manager oversees — this is what narrows what they see across the Sales Dashboard.</span>,
+]} />
+
+## Where a salesman works
+
+<Steps>
+<Step title="Open Where they work on his row">
+A tree of the places in your book — states, then cities, then beats — with a shop count on each, biggest first.
+</Step>
+<Step title="Pick the narrowest place you mean">
+Picking Maharashtra and then Pune inside it means **Pune**, not all of Maharashtra. The narrowest pick in a branch is the allocation; the ones above it are the path to it. Different branches add up: Pune and Nashik is both.
+</Step>
+<Step title="Save">
+His phone shows only his own shops inside those places from the next sync. Shops that leave his area are removed from his phone.
+</Step>
+</Steps>
+
+<Callout kind="warn" title="No area means no shops">
+A salesman with no area allocated sees **no customers** on his handset — his phone says "no area set for you yet". Managers and administrators are not affected. Allocating an area is what gives a new salesman his book.
+</Callout>
+
+An area **narrows** his book, it never widens it: he sees only shops that are already his, never another salesman's.
+
+## Releasing a handset
+
+Each account is bound to one phone. If a salesman changes phones, the new one cannot sign in until the old binding is released. **Release their handset** asks for a reason — whoever holds the old phone could otherwise bind it again. See [Login history](/docs/sales/administration) for every binding and release.
+
+## A salesman's record
+
+Open a name to see his record. The header shows his email, work number, how many shops are in his book, and when his handset last synced. Below are this month's figures — orders taken, order value, collected, visits, new shops, days worked — beside last month's, and ten tabs:
+
+| Tab | Shows |
+|---|---|
+| **Visits** | Every visit, with check-in and check-out times; a visit that never closed is marked. |
+| **Orders** | Orders taken on his handset and their state. |
+| **Money** | Collections he reported, cash held and deposited. |
+| **Attendance** | His days: in, out, hours, off-site flags. |
+| **Day check** | One day, photograph by photograph — check-in selfies and meter readings — to accept or decline. The tab counts what nobody has answered. |
+| **Leave** | What he asked for and what was decided. |
+| **Expenses** | His claims and their state. |
+| **Samples** | Samples he asked for. |
+| **Leads** | The leads in his name. |
+| **Tasks** | What is open on him. |
+
+**Export** downloads the month as a spreadsheet.
+
+## Handset health
+
+Why a salesman's phone is not reporting is explained on the [Live map](/docs/sales/live-map)'s team list, in plain words — not "no fix today", but which of these it is:
+
+| You see | It means | What to do |
+|---|---|---|
+| **Location switched off on the phone** | Location is off in the phone's own settings. | Ask him to switch it on. |
+| **Location only while the app is open** | The trail will have gaps whenever the app is closed. | Set MahekOne's location permission to *Allow all the time*. |
+| **Location refused for MahekOne** | Permission was refused outright. | A different conversation — he has to allow it. |
+| **His phone stopped the tracker** | The phone's battery manager killed the recorder. | Allow MahekOne to autostart and set its battery use to unrestricted. |
+| **No position all day — checked in … ago** | Checked in, and not one position since. | As above; then check out and back in. |
+| **Battery 8% — read 12 min ago** | The battery at the phone's last contact. | There is no live battery reading — the age is part of the figure. |
+| **Not heard from for 2 hours** | The phone has not synced. A phone with no signal cannot say so — silence is the only evidence. | Wait, or ring him. |
+| **Running MBOS 1.4 — 1.5 is out** | An older app build than the one the office has published. | Ask him to update. |
+
+A healthy phone says nothing at all.
+
+## Common questions
+
+<Faq q="A new salesman's phone shows no customers.">
+Two possible reasons, both on this screen: he has no area allocated (<i>Works</i> is empty), or no customer names him as their salesperson (<i>Empty book</i>).
+</Faq>
+<Faq q="Why can I not send a password reset?">
+Handing out credentials is an account decision, kept for platform administrators. Releasing a handset is yours.
+</Faq>
+<Faq q="Somebody is missing from the team.">
+The list is narrowed to your team, and to people who hold the Salesman App. Grant the app on the Access screen in the Admin Console.
+</Faq>

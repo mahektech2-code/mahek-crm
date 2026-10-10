@@ -1,0 +1,102 @@
+Sales Bills is the ledger of what Mahek billed. Bills arrive from the order sheet (a sales bill **is** the order), from accounts entering them, and from Tally's receivables report. What a bill is worth is the sheet's; what has been paid against it is only ever the app's, rebuilt from confirmed receipts. This tab explains where bills come from, how they are numbered, how paid and owed are decided, and how the ledger is cut and paged.
+
+## A sales bill is the order
+
+<Rule title="One bill per order, valued as the sum of its lines">
+Bills are projected from the order sheet's Order Details tab, one per order. The amount is the **sum of every line's final amount** — final amount is per line, and about half of orders have more than one line. The bill date is the dispatch date, or the order date where there is none. Opening a bill number shows the order's lines.
+</Rule>
+
+<Callout kind="why">
+The Order Details tab carries a Tally bill number on almost every line and the amount on all of them; that ledger is what Sales Bills is meant to show. Sourcing bills from the Payment Status tab alone left the screen empty whenever that tab had not been pulled — bills missing because of a second document rather than because there were none.
+</Callout>
+
+## Numbering
+
+A bill number must be unique across the **whole** table, not just within one import.
+
+<Flow caption="How a sheet order gets its bill number" chart={`
+flowchart TD
+  T{"Tally number on the order?"} -- "No" --> O["ORD-order number"]
+  T -- "Yes" --> U{"Used by only one order<br/>in this sheet?"}
+  U -- "Yes" --> N["The Tally number"]
+  U -- "No" --> NO["Tally number / order number"]
+  N --> H{"Already held by a<br/>different bill in the table?"}
+  NO --> H
+  O --> H
+  H -- "No" --> W["Write it"]
+  H -- "Yes" --> F["Fall back: Tally / order number,<br/>then ORD-order number"]
+  F --> H2{"Still held?"}
+  H2 -- "No" --> W
+  H2 -- "Yes" --> S["Skip and count it —<br/>never renamed, never thrown"]
+`} />
+
+<Callout kind="why">
+The import used to decide numbering by counting Tally numbers inside its own batch, blind to a bill somebody typed in, one the Payment Status path wrote, or one a half-finished run left behind. The insert threw after thousands of rows had already landed. Reading existing numbers first means one unusable number cannot cost the other ten thousand rows.
+</Callout>
+
+## Paid, owed, and the payment position
+
+<Callout kind="money" title="The sheet never writes money">
+No receipt, no paid amount, no status, no outstanding — not in any column, not by any path. Whether money arrived is the app's to record and nobody else's.
+</Callout>
+
+| Field | Who writes it | How |
+|---|---|---|
+| Amount | The sheet (or accounts entering a bill) | As billed |
+| Paid amount | The app only | Rebuilt from **confirmed** receipts every time, never incremented |
+| Status | The app only | Unpaid, partly paid or paid, from paid against amount |
+| Payment position | The sheet on **insert only**; afterwards the app | *stated* (owed) or *unstated* |
+
+<Rule title="Where nobody has said, a bill past its due date is owed">
+A bill the order sheet creates lands **stated**: its whole amount is open and it ages from its due date like any other bill. The one exception is the sheet's Payment Status tab saying **Received** — that bill lands **unstated**, held out of outstanding, aging, collections, the slow-payer flag and reminders, because the office has written down that the money came. Confirming it is still accounts' job.
+</Rule>
+
+<Rule title="A person, not a sheet, settles a bill">
+Recording or confirming a receipt against a bill marks it stated and records when somebody decided. A later sheet pass never moves it back — the position is written on insert and never on update.
+</Rule>
+
+### The due date
+
+The bill's own due date, or the bill date plus the credit period in force: the term agreed on the order, then the customer's standing term, then <Setting k="bills.defaultCreditDays" /> days.
+
+## Cut by financial year
+
+<Rule title="One financial year at a time, current by default">
+Ten thousand bills across three years is not a list anybody scrolls, and Mahek's own bill numbers already carry the year. The ledger is filtered to one April-to-March year on the server; the year list runs from the first bill on record to today.
+</Rule>
+
+<Rule title="The totals describe the year, the table is a page">
+Paging is over what is filtered in. The figures across the top, the aging strip and the export all describe the **whole filtered year**; only the table is cut into pages. A page that changed the totals under it would show a different figure on every click.
+</Rule>
+
+<Rule title="A paged read needs a tie-breaker">
+Thousands of bills share a bill date. Every sort ends with the bill's id, so a bill never appears on two pages and another on none.
+</Rule>
+
+## Aging
+
+The open balance is banded by days past the due date, using <Setting k="bills.agingBuckets" /> as the lower bounds. The same bands are used on Outstanding and in collections, and they are meant to line up with the follow-up stages so two screens never disagree about how late an account is. Clicking a band filters the table to exactly the bills the band counted.
+
+## Recording money from the ledger
+
+The row's **Record a payment** writes a receipt against that bill. Somebody holding `payment.confirm` is confirmed as they write it; everybody else reports, and the bill does not move until accounts confirm. The form offers the bill's whole unconfirmed balance — money merely reported against it is never subtracted from what can be recorded.
+
+<CapabilityGrid names={["payment.record", "payment.confirm"]} />
+
+## Who sees which bills
+
+A telecaller sees bills of customers in their own book; a manager on team scope sees their team's. Export is drawn for CRM managers.
+
+## Every setting that shapes the ledger
+
+<SettingsTable keys={["bills.defaultCreditDays", "bills.agingBuckets", "bills.creditDayOptions", "customers.defaultCreditDays"]} />
+
+## Where the code and the intent disagree today
+
+<Callout kind="warn" title="The ledger does not say which bills are not stated">
+The top *Outstanding* figure, the *Overdue bills* count and each row's balance include **unstated** bills as if they were owed, and nothing on the ledger marks them. Outstanding and Payment Follow-up leave them out, so the ledger's open total is higher than the same book's outstanding.
+</Callout>
+
+- **The ledger's "Collected" is paid amount on the year's bills**, which is confirmed money — correct — but it is money against bills **raised** that year, not money received that year.
+- **Export is decided by "manager in the CRM", not by the right to export customers**, and the export address belongs to the Accounts app.
+- **Bills, Outstanding and Payment Follow-up describe "not stated" in old words.** Since October 2026 an unstated sheet bill means *the Payment Status tab says received*, not *nobody has spoken*.

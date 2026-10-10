@@ -1,0 +1,79 @@
+Today is a read-only screen: it writes nothing. Its job is to put the field team's day and the manager's backlog on one page, from figures that mean exactly what they say. This tab explains where each number comes from and why it is counted that way.
+
+## One day, in the business zone
+
+Every figure on Today is for **one business day in Asia/Kolkata**. A visit at 00:30 belongs to the day it happened in India, whatever zone the server runs in. The day switcher moves one calendar day at a time; nothing on the screen averages across days.
+
+<Rule title="A day, not a period">
+Today is a day view on purpose. Trends belong on [Performance](/docs/sales/performance); the morning question is "who is out right now", and a week's average answers it worse.
+</Rule>
+
+## Who is on the team list
+
+<Rule title="Holding the Salesman App, inside your patch">
+Everyone with the Salesman App (MBOS) grant, narrowed by your patch — the same narrowing every Sales Dashboard screen uses (see [Overview](/docs/sales/overview/how-it-works)). Disabled accounts are kept, marked *Account closed* and sorted last: a salesman who left mid-month still has a day worth reading.
+</Rule>
+
+The default order is: active first, then by check-in time (earliest first), then name. Names sort naturally, so "Person 2" comes before "Person 10".
+
+## The figures, and why each is counted that way
+
+### Out now
+
+Salesmen whose day has a check-in and no check-out, out of the **active** salesmen. On a past day the label becomes *Punched in* and counts anybody who started at all.
+
+### Visits and planned stops
+
+Visits are counted by their **check-in time**. Planned stops are the shops on that day's agreed route; walked stops are those marked visited.
+
+<Callout kind="why" title="Why unverified visits still count">
+A visit that failed a check — checked in away from the shop's pin, for example — still happened, and the salesman said why. Dropping it would hide work and teach people to stop recording. The row says how many were unverified so a manager can read them on the Visit log.
+</Callout>
+
+### Orders
+
+Orders the handset sent, counted by their order date and valued at what was typed.
+
+<Rule title="An order is the customer saying yes, not the business">
+A field order waits at *pending approval* until accounts decide. Today shows it the moment it was taken — that is what tells a manager the day is going well. Revenue, targets and the buying cycle count only approved orders; see [Performance](/docs/sales/performance).
+</Rule>
+
+### Collected
+
+Payment receipts the handset reported for this day, **excluding rejected ones**.
+
+<Rule title="Reported is not confirmed">
+Money a salesman says he collected is not money the business has seen. It reduces nobody's outstanding until accounts confirm it against the bank. The card says *Reported, not yet confirmed* so nobody reads it as cash in hand.
+</Rule>
+
+## What is waiting on you
+
+Each card is a count over **your patch** of something only a person can move:
+
+| Card | Counted from |
+|---|---|
+| Orders over the credit limit | Field orders at `pending_approval` |
+| Expense claims | Expense claims waiting in the approvals table |
+| Samples awaiting feedback | Samples with a pending verdict whose follow-up date is before the day shown |
+| Leave requests | Leave waiting, excluding requests the salesman withdrew |
+| Days he will not walk | Plan days the salesman refused, dated on or after the day shown |
+| Salesmen with nothing tomorrow | Active salesmen with no plan row for the day after the one shown |
+
+<Callout kind="why" title="Why a card disappears at zero">
+A card that reads 0 is noise on the screen people open first. Only what is actually waiting is drawn, and the **Review** button vanishes when nothing is.
+</Callout>
+
+<Callout kind="why" title="Why 'nothing tomorrow' is counted at all">
+A salesman with no day planned decides for himself where to go. That is not always wrong, but it is the one gap a manager can close the evening before rather than discover the morning after.
+</Callout>
+
+## Who may see it
+
+Today is the module <ModuleRef k="sales.today" />. Because it is the app's root, it is guarded on the page itself rather than by a folder layout. Reading it needs only the module; it decides nothing.
+
+## Where the code and the intent disagree today
+
+- **"Orders over the credit limit" counts every field order waiting for accounts**, not only those over a credit limit. The card's label claims more than the count checks.
+- **The Review button adds every card together** and opens Approvals, which lists only approval requests. Refused days, unplanned tomorrows, orders and overdue samples are counted in the button but are not on that screen.
+- **Collected is counted by the receipt's date**, Orders and Visits by their timestamp in India. A receipt keyed in late for an earlier day shows on the earlier day.
+- **Half the waiting cards move with the day switcher and half do not.** Refused days, tomorrow's unplanned salesmen and overdue samples are counted relative to the day you are looking at; orders, leave and expense claims are whatever is waiting right now. On a past day the row mixes the two.

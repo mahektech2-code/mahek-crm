@@ -1,0 +1,104 @@
+The purchase flow is **Requirement → Purchase method → Vendor or quotation → Approval → Purchase order → Receipt**, and no purchase is completed without a PO. This page covers the first three steps: who may ask for what, how the method is decided, and how a vendor is chosen. [Purchase orders](/docs/erp/purchase-orders/how-it-works) and [Goods receipt](/docs/erp/goods-receipt-and-testing/how-it-works) cover the rest.
+
+<Flow caption="Where a requirement goes" chart={`
+flowchart TD
+  R["Requirement raised<br/>the item's purchase rule is copied on"] --> M{"Purchase rule"}
+  M -- "Buyer decision" --> B["Buyer decides<br/>direct or quotation"]
+  M -- "Direct purchase" --> V{"Default vendor?"}
+  M -- "Quotation" --> Q["Collect quotations"]
+  B -- "Direct" --> V
+  B -- "Quotation" --> Q
+  V -- "Yes" --> P["Ready for PO"]
+  V -- "No" --> SV["Select vendor"] --> P
+  Q --> QC{"At least the minimum<br/>number of quotations in?"}
+  QC -- "No" --> Q
+  QC -- "Yes" --> CQ["Compare and select<br/>lowest landed cost, or a reason"] --> P
+  P --> PO["Purchase order<br/>for approval"]
+`} />
+
+## The requirement
+
+<Rule title="One requirement, every item, one save">
+A department's monthly list is a hundred items, so a requirement carries as many as it needs (up to five hundred) under one number, `REQ-n`. Each item is its own record — its method, quotations, vendor and PO line are decided item by item — but they are written together: a bad line refuses the whole save and names the line, so a requirement is never half raised.
+</Rule>
+
+<Rule title="It says when, where and how badly">
+A date, a **required-by** date that cannot be before it, a department, the godown to deliver to, and a priority — Urgent, Medium or For Stock. A requirement past its required-by date while still in flight is flagged "Past its required date", and Urgent ones are counted on the dashboard.
+</Rule>
+
+<Rule title="Finished goods are never bought">
+Only the item master's categories may be asked for. An item may appear once per requirement: a second line for the same item is refused and points at the first.
+</Rule>
+
+### Pasting a list
+
+<Rule title="A pasted row is matched, never guessed">
+The quantity is the last number on the row; everything before it names the item. It matches an item exactly (ignoring capitals), or the one item that contains what was typed. A row that names nothing — or that could be two items — is shown back as unmatched, and an item already on the requirement is reported as a duplicate instead of becoming a second line.
+</Rule>
+
+## Departments
+
+<Rule title="A requirement is raised for one of four teams, and the team decides the categories">
+Mixing & Blending asks for chemicals; Refilling for cans and drums; Packing for boxes and packing stationery; the Production Head for all of them. Somebody whose ERP designation puts them in a department raises for their own department only, sees only their department's requirements and the ones they raised, and cannot cancel another department's. Somebody in no department picks one of the four, and that team's categories apply.
+</Rule>
+
+<Callout kind="why">
+The form used to offer a free list of departments — Production, Godown / Store, Quality, Dispatch, Office, Maintenance — each of which could ask for anything at all. That is the opposite of what departments are for. Requirements raised under the old labels keep them, and editing such a requirement without changing its department is not refused.
+</Callout>
+
+## The purchase rule decides the method
+
+<Rule title="The rule is copied onto the requirement when it is raised">
+Changing an item's rule later never re-routes a requirement already in flight.
+</Rule>
+
+| Item's rule | What happens on raise |
+|---|---|
+| **Direct purchase** | Method is direct. With a default vendor, the vendor is set at once and the requirement is Ready for PO |
+| **Quotation** | Method is quotation; collect quotations |
+| **Buyer decision** | No method yet. Only somebody with the buyer power chooses direct or quotation, with an optional note "read by whoever picks it up next" |
+
+## Quotations
+
+<Rule title="A quotation is required only where the rule says so">
+A quotation requirement is not ready for a PO until one quotation is **selected**, and one can be selected only once <Setting k="erp.purchase.minQuotations" /> quotations are in. One vendor quotes once per requirement.
+</Rule>
+
+<Rule title="Compared on landed cost">
+Each quotation is costed for the quantity required: rate × quantity, plus GST on that, plus the vendor's freight. They are ranked cheapest first; an **expired** quotation (valid-until in the past) is ranked after every live one, can never be the lowest, and cannot be selected.
+</Rule>
+
+<Rule title="Not the lowest? Say why">
+Selecting anything other than the lowest landed cost needs the reason in words. It is stored on the requirement, because that is exactly the decision an auditor asks about.
+</Rule>
+
+<Rule title="The PO takes the selected quotation's rate">
+The PO line for a quotation requirement must be at the selected quotation's rate; a different rate is refused with "change the quotation, not the PO". Any negotiation is recorded on the quotation, not hidden on the PO.
+</Rule>
+
+Adding, editing, removing and selecting quotations all need the **purchase money** power, because they are prices. The selected quotation cannot be removed — select another first — and nothing about a requirement's quotations can change once it is on a PO.
+
+## Who may do what to an item
+
+<Rule title="Named duties narrow; empty duties keep the old rule">
+If an ERP administrator has named who may **request** a material, only those people or teams are offered it on the form and may save a requirement for it. Otherwise anyone holding the screen may. The same goes for **raising its PO** — Create PO is greyed out with the name of whoever the duty belongs to. See [Masters](/docs/erp/masters/how-it-works).
+</Rule>
+
+## The stage is derived, never typed
+
+A requirement's stage is worked out from its own record each time it is read: its method, vendor, quotations and the PO it is on, with what that PO has ordered and received. The stored status moves only with the flow — Pending, then **Order Placed** when its PO is approved, then **Received** — and there is no button to type one. A status somebody types can say Received with nothing at the gate.
+
+Requirements raised before purchase orders existed show their old status with "(before POs)" and are flagged "Before POs"; nothing back-fills a PO for them.
+
+## Present quantity
+
+Each requirement shows the **present quantity** the godown's re-order level counts as available for the item. Where no level is set at that godown it is blank — said in words on the record rather than shown as zero.
+
+## Settings
+
+<SettingsTable keys={["erp.purchase.minQuotations"]} />
+
+## Where the code and the intent disagree today
+
+- **Select vendor** on a direct purchase is open to anyone holding the screen; neither the request duty nor the raise-PO duty is checked there, although the vendor decides who the PO goes to.
+- Raw material names are unique across every category, so the "name · category" labels the form is built to show never appear.

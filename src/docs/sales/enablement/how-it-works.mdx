@@ -1,0 +1,66 @@
+The document library and the training centre are how the office puts material into a salesman's pocket. Both follow the same three rules: **publishing is a decision**, **withdrawing is the same decision reversed**, and **nothing is ever deleted**.
+
+## Publishing and withdrawing
+
+<Rule title="Withdrawn, never deleted">
+Withdrawing a document or a course switches it off: it leaves the handsets on their next sync, and it can be published again. A policy a salesman quoted to a customer in March is a fact about March, and somebody half way through a course does not become unfinished because the material was taken down.
+</Rule>
+
+<Rule title="A document must have a file; a course need not">
+A document with nothing behind it is a row the handset lists and cannot open, and that failure — a tap that does nothing — says nothing about why. So publishing a document without a file is refused, and if the file cannot be attached the document is removed again rather than left half-published. A course can be a briefing delivered in a meeting: still worth recording and ticking off, with no file at all.
+</Rule>
+
+<Rule title="A deadline belongs to a compulsory course">
+A due date on an optional course means nothing, so it is refused. A pass mark, where given, is a percentage from 1 to 100.
+</Rule>
+
+## How a phone finds out something stopped
+
+<Callout kind="why" title="A sync says what exists. Only a tombstone says what stopped.">
+A handset pulls everything that is published for it. A withdrawn document simply stops being in that list — and a list that no longer mentions something cannot tell the phone to delete its copy. So withdrawing writes a **tombstone**: a small record saying "this document is gone", which the next pull carries to every phone and the phone acts on.
+</Callout>
+
+<Flow caption="Tagging, untagging and withdrawing a document" chart={`
+flowchart TD
+  A["Document published<br/>for everybody, or tagged"] --> B["Next pull: the row reaches<br/>every phone it is for"]
+  A --> C{"What changes?"}
+  C -- "Withdrawn" --> D["Tombstone for everybody"]
+  C -- "Somebody untagged" --> E["Tombstone for that person only"]
+  C -- "Somebody tagged back" --> F["Their tombstone removed,<br/>row re-sent, they are notified"]
+  C -- "Published again" --> G["Tombstone removed, row re-sent"]
+  D --> H["Next pull: phones delete their copy"]
+  E --> H
+`} />
+
+<Rule title="Tagging narrows, it never widens">
+A document's audience is everybody in the field (empty list) or the named people. Only people who hold the Salesman App can be tagged — an id that names nobody on a handset would make a document that reaches nobody while reading as tagged. Untagging writes a tombstone for that person only, so nobody else's phone is touched.
+</Rule>
+
+<Rule title="Tagged back between two syncs">
+A phone applies the rows of a pull before its tombstones. Somebody untagged and tagged back between two of his syncs would receive the document and delete it in the same breath — so tagging somebody back removes his tombstone first.
+</Rule>
+
+## Documents from HRMS
+
+The same library holds documents published from HRMS (staff policies and the like). They appear here marked **Set in HRMS**: who they are for is HRMS's question, answered on HRMS's own screen, and a second door onto it from the Sales Dashboard would be a second answer.
+
+## On the handset
+
+A salesman opens a document **inside MBOS**. It used to be handed to "whatever on this phone opens it", which on the phones the field team carries was often nothing — a price list he cannot open in front of a customer is not a price list. Now a PDF is drawn page by page by the phone's own renderer, with zoom buttons and a double tap, and works with no signal once downloaded. *Open in another app* stays available for sharing and printing.
+
+A course's progress — started, completed, quiz score, passed — is recorded per salesman and is what the Knowledge screen's *Done* column counts.
+
+## Who can do what
+
+| Action | Needs |
+|---|---|
+| Publish, edit, tag, withdraw a document | The **Documents** module, at a manager's level |
+| Publish or withdraw a course | The **Knowledge** module, at a manager's level |
+| Open a document's file in the office | The same module |
+
+Every publish, tag change and withdrawal is written to the audit trail.
+
+## Where the code and the intent disagree today
+
+- **Republishing a course does not remove its tombstone.** A document published again has its "withdrawn" tombstone removed; a course does not, so a phone can receive the republished course and delete it again on the same pull.
+- **A course's file is not checked when it is attached.** A document refuses to publish if its file cannot be bound; a course is published either way.

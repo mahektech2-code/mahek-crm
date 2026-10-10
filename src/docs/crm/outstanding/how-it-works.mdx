@@ -1,0 +1,73 @@
+The bill ledger answers *what did we bill*. Outstanding answers the question a telecaller and an accounts clerk both start their day with: **who owes us money, and against what**. One row per customer; the bills behind the figure on the same row, because the follow-up to "how much" is always "against which bills", and making somebody move to another screen for it is what makes a chase call go quiet.
+
+## What is counted
+
+<Flow caption="From bills to a row" chart={`
+flowchart TD
+  B["Every bill in your book<br/>with amount above paid"] --> P{"Payment position"}
+  P -- "stated" --> S["Counted: Outstanding,<br/>Open bills, Oldest, Past due"]
+  P -- "unstated" --> U["Listed and counted apart:<br/>Not stated — never added to debt"]
+  S --> R["One row per customer"]
+  U --> R
+  R --> O["Ordered: most owed, then most not stated, then name<br/>(or oldest debt, or name)"]
+`} />
+
+<Rule title="Paid means confirmed">
+A bill's paid amount is rebuilt from **confirmed** receipts only. Reported and held money, and money accounts rejected, leave the balance where it was.
+</Rule>
+
+<Rule title="A bill nobody has stated is shown, counted and never added up">
+A bill with payment position *unstated* is not debt, so it stays out of the outstanding figure exactly as the customer's stored outstanding leaves it out. It is still listed, given its own column, its own total and a sentence, and its balance is drawn as "Not stated" rather than as a figure.
+</Rule>
+
+<Callout kind="why">
+Hiding such a bill would make a bill that is open on the ledger and absent here read as a screen that lost it. Adding it would put money we have a record of receiving on a collections list. Rendering an unknown beside real balances is the original mistake in different clothes.
+</Callout>
+
+<Rule title="Past due means a stated bill past its due date">
+An unstated bill cannot make somebody overdue. The due date is the bill's own, or the bill date plus the credit period — the order's term, then the customer's, then <Setting k="bills.defaultCreditDays" /> days.
+</Rule>
+
+## Not cut by financial year
+
+<Callout kind="why">
+The Sales Bills ledger is cut by financial year because ten thousand bills across three years is not a list anybody scrolls. Outstanding deliberately is not: the oldest debt on an account is usually last year's, and that is the first row anybody works.
+</Callout>
+
+## One reading, two apps
+
+<Rule title="The CRM and Accounts read the same function through the same scope">
+Both apps' Outstanding screens are built from one paged read and one grouping, so the two can never quote a customer two different balances. What differs is where a name leads: the CRM opens the customer record and WhatsApp, where a chase happens; Accounts opens the customer's account statement.
+</Rule>
+
+The customer's balance here is also the same figure as `customers.outstanding` on every other screen — both count stated bills only, after confirmed payments.
+
+## Paging, sorting and the totals
+
+- The page shows 25 customers; the totals above it describe **every** customer the search and past-due filter match, counted in the database, not the page.
+- Sorting is done in the database with a final tie-break on the customer, so a customer never appears on two pages or on none.
+- **Most owed** is: what is owed, then what is merely not stated, then name. Somebody who owes nothing stated is work of a different kind — somebody has to go and state those bills — not work of no kind, so they sort below, not out.
+- Inside a row, stated bills come first, oldest due date first.
+
+## Aging
+
+The *Oldest* column is coloured by the aging band of the customer's oldest stated bill. Bands are <Setting k="bills.agingBuckets" />, the same bands the Sales Bills ledger and Payment Follow-up use.
+
+## Who sees what
+
+A telecaller sees the customers in their own book; a manager on team scope sees their team's. The book is the single definition every CRM list uses, including the back-office seat — an account somebody works as back office is on their list.
+
+<CapabilityGrid names={["customer.read", "customer.export"]} />
+
+## Every setting that shapes Outstanding
+
+<SettingsTable keys={["bills.defaultCreditDays", "bills.agingBuckets", "customers.defaultCreditDays"]} />
+
+## Where the code and the intent disagree today
+
+<Callout kind="warn" title="'Not stated' now means 'the sheet says received'">
+The screen's words — *nothing recorded either way*, *bills nobody has spoken for* — describe the old rule, under which every bill the order sheet imported was neither paid nor owed until a person spoke. In October 2026 that was reversed: a sheet bill now lands **owed** from its due date, and is held *not stated* only when the Payment Status tab says **Received**. The figures are right; the sentences describe a different set of bills.
+</Callout>
+
+- **Export ignores the sort and the scope check of the screen's module.** The file is written in "most owed" order whatever sort was chosen, and the export address belongs to the Accounts app: it checks only that the reader holds the CRM or Accounts, not that they were given the Outstanding screen or the right to export customers.
+- **Two screens, not one.** The CRM and Accounts render separate screen components over the same read; they agree on figures today but can drift in what they show.

@@ -1,0 +1,87 @@
+A task is one thing one salesman owes, with a date. It can be asked for by a manager, raised by MahekOne when something happens that only a person in the field can fix, or written by the salesman for himself. All of them land in one table and one list, so a manager sees the field's whole backlog in one place.
+
+## One table for every source
+
+| Source | Raised when | Raised once? |
+|---|---|---|
+| A manager | Assigned on this screen — one person or many, one shop or many, always as an assignment | One per salesman and shop |
+| A refused order | Accounts decline an order the salesman took | Yes, per order |
+| Reorder due | A customer passes their own **measured** reorder date | Yes — the open task is the guard |
+| Lead validation, verification, nurture | Steps on the lead ladder | Yes, keyed on the lead |
+| Sample in transit, sample review | A sample dispatched, then received | Yes, on the transition |
+| Negotiation visit | A lead reaches negotiation | Yes |
+| The salesman himself | Added on his phone | — |
+
+<Rule title="A task raised by MahekOne is raised once">
+Every automatic task is keyed on what caused it, and nothing is raised while one is still open for the same cause. Thirty rows for one quiet shop is a list people stop reading.
+</Rule>
+
+<Callout kind="why" title="Why a refused order makes a task">
+The salesman stood in the shop and told the customer the order was placed. Accounts declining it is news the shop has to hear from him.
+</Callout>
+
+<Callout kind="why" title="Why reorders use measured cycles only">
+A default cycle is a guess. Chasing on a guess rings a quarterly buyer every month, so a customer whose rhythm has not been measured is never given a reorder task.
+</Callout>
+
+## Assignments: one job, many tasks
+
+<Flow caption="Assigning one job to many shops" chart={`
+flowchart TD
+  A["Title, due date, priority, optional form"] --> B["Who it reaches:<br/>no shop · shops I pick · shops matching a filter"]
+  B --> C{"Linked customer-data questions?"}
+  C -- "Yes" --> D["Skip shops whose record already holds every answer"]
+  C -- "No" --> E["Every shop"]
+  D --> F["Pair each shop with a salesman:<br/>the one who carries it, or each one picked"]
+  E --> F
+  F --> G["Drop salesmen outside your team,<br/>count shops nobody carries"]
+  G --> H{"Same number you reviewed?"}
+  H -- "No" --> R["Refused — check again"]
+  H -- "Yes" --> W["One transaction: the assignment and every task"]
+  W --> N["Each salesman told"]
+`} />
+
+<Rule title="What is created is what was reviewed">
+The dialog previews the exact number of tasks. If the book moved between review and save — an import landed, a shop was reassigned — the save is refused rather than quietly sending a different number. An assignment is capped at 3,000 tasks.
+</Rule>
+
+<Rule title="Only to your own team">
+Salesmen are drawn from your patch, and a shop is paired only with a salesman inside it. Shops nobody carries cannot go to "the shop's salesman" and are counted rather than dropped silently.
+</Rule>
+
+### Answers that write back to the record
+
+A question can be **linked** to a field on the customer record. Two modes:
+
+- **Collect where missing** — a shop that already holds the answer is not sent the task, and a task completes itself if somebody fills the field in elsewhere. A blank on the record is filled; an existing value is kept.
+- **Check and correct** — the phone shows what the record holds and whatever the salesman confirms or corrects is written back.
+
+Every answer on the assignment page says what happened to it: *Written to the customer record*, *The record already said exactly this*, *The record already had a value and this task only fills blanks*, and so on.
+
+## Closing a task
+
+<Rule title="A completion note, when required">
+Whether closing a task needs a note is <Setting k="mbos.tasks.requireCompletionNote" />. A task with a form counts its answers as the note. A task closed with nothing said is refused on the phone with *"… was closed with nothing said about how. A completion note is required — reopen it and write one line."*
+</Rule>
+
+A salesman can attach a photograph when he closes a task, and **snooze** a task to a later date with a reason.
+
+## Overdue and escalation
+
+<Rule title="Overdue the day after the due date">
+The list counts days late from the due date in the business zone.
+</Rule>
+
+<Rule title="Escalation is once, and hourly">
+An open task still open <Setting k="mbos.tasks.escalationHours" /> hours after the start of its due date is marked escalated and the salesman is told. Marking is what makes it run once; re-running changes nothing.
+</Rule>
+
+## Who may do what
+
+Assigning, reminding, closing an assignment and drafting with AI all need the manager level in the Sales Dashboard and <ModuleRef k="sales.tasks" />. Reading the list needs the module; it is narrowed to your patch.
+
+## Where the code and the intent disagree today
+
+- **Escalation tells the salesman his manager has been told — and tells nobody else.** No manager is notified; the task is marked escalated and the salesman receives a message saying otherwise.
+- **Only `open` tasks escalate.** A task marked *in progress* and left there past its date never escalates.
+- **An older single-task action is still in the code with no screen calling it.** Everything goes through assignments; the old action does not check that its shop belongs to the salesman.

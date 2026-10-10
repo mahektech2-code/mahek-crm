@@ -1,0 +1,72 @@
+Transport is the part of a sale after the goods leave the godown and before the customer says they arrived. It is deliberately small: one record per bill, opened automatically by dispatch, with an LR number and a stage that people move forward, and nothing that pretends to know where a lorry is without somebody saying so.
+
+## One record per bill, opened by dispatch
+
+<Rule title="Dispatch opens the transport record, once">
+When the **first** line of an order number is dispatch-verified, a transport record is written for that bill. It copies, from the order line: the bill date (the dispatch date), the billing party, the Tally bill number, the transporter (the line's, or the delivery party's), the area, the payment type (the billing party's freight term) and any extra expense already entered. Later lines of the same order do not open a second record — a unique index on the order number makes "once" hold.
+</Rule>
+
+<Callout kind="why">
+Mahek Plus asked somebody to create the follow-up row by hand. A record that depends on somebody remembering is the record that is missing for exactly the bill a customer rings about.
+</Callout>
+
+## Where a consignment is
+
+| Stage | On the road? |
+|---|---|
+| Dispatched | Only once it has an LR |
+| In Transit | Yes, with an LR |
+| On the way to Destination area | Yes, with an LR |
+| Reached Destination Area | Yes, with an LR |
+| Close - Received to Party | No — closed |
+
+<Rule title="On the road is derived, not ticked">
+A bill is **on the road** when it has an LR and its stage is not *Close - Received to Party*. Mahek Plus also asked people to set *Track / Don't Track*, which could only ever agree with those two facts or contradict them. The ERP still writes the old field for the record, but every list reads the two facts.
+</Rule>
+
+<Callout kind="why" title="Why one 'Dispatched' stage">
+The source system's first two stages were *Dispatch from* one godown and *Dispatch from* another — a godown written into a list, so a third godown needed a code change. There is one *Dispatched* stage now, and the screen names the godown from the order.
+</Callout>
+
+A stage change also updates the order in MahekOne's order book, so the CRM and the customer record can say where the goods are — see [the order book](/docs/erp/order-book).
+
+## Reminder calls
+
+The **Reminder call** date is a note-to-self: on and after that date, until the bill is closed as received, the row is flagged. Nothing rings anybody; the flag is on the screen for whoever works the transport list.
+
+## LR numbers from a photograph
+
+The photo-reading helper reads the LR number, transporter and date off a lorry receipt. What it reads is checked by rules, not by the model:
+
+- **Transporter** — if the receipt's transporter name is not close to the bill's, the review warns: *The receipt is from "…", but the bill goes by ….*
+- **Repeated LR** — if the number is already on another bill, the review says so in red, and saving it is refused.
+
+Nothing is written until a person saves the review; the reading is logged with what the person did with it (accepted as read, edited, or rejected). The feature needs <Setting k="erp.ai.photos.enabled" />, an OpenAI key (it reads images), and to be under <Setting k="erp.ai.photos.monthlyCap" /> readings this month. More on [Alerts and the AI helpers](/docs/erp/alerts-and-ai).
+
+## Paid freight
+
+<Rule title="Freight is entered once, and it costs the line">
+For a billing party whose freight term is **Paid**, the company pays the transporter. The freight is entered as the line's **extra expense** — once; a second entry is refused. It is added to the line's lot-code costing, so it comes off the margin on [Orders](/docs/erp/orders), and it is copied onto the bill's transport record if that has none.
+</Rule>
+
+## Alerts
+
+The hourly ERP checks raise an **LR missing** alert for any bill that left more than <Setting k="erp.ai.alerts.stuckLrDays" /> days ago with no LR. It resolves itself the moment an LR is entered. See [Alerts and the AI helpers](/docs/erp/alerts-and-ai).
+
+<SettingsTable keys={["erp.ai.photos.enabled", "erp.ai.photos.monthlyCap", "erp.ai.alerts.stuckLrDays"]} />
+
+## Who can do what
+
+| Act | Needs |
+|---|---|
+| Open Transport and its four tabs | The Transport screen |
+| Enter or update an LR, stage, reminder, note | The Transport screen |
+| Read and review an LR photo | The Transport screen, with photo reading available |
+| Enter paid freight | The Transport screen (Paid freight tab), or the Orders screen (Billing & dispatch) |
+| See monthly sales | *See sales amounts* |
+
+## Where the code and the intent disagree today
+
+- **A reminder date reached is labelled "Transferred today".** The row flag reuses the Item transfers screen's flag, so the words do not say "reminder due".
+- **A typed LR is not checked for repeats.** Only a reading from a photograph refuses an LR number already on another bill.
+- **Recording an LR alone does not update the order book.** Only a change of stage does; an LR entered from a photograph changes nothing there either.

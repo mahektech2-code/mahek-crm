@@ -1,0 +1,110 @@
+Sign-in is split the way everything in MBOS is: the **deciding** is pure (`mbos-app/src/engines/sign-in.ts`, `src/lib/services/mbos-service.ts`), the **doing** is in files that touch the keychain, SQLite and the network (`mbos-app/src/data/session.ts`, `src/lib/actions/mbos.ts`). Phone setup is the same: `engines/phone-readiness.ts` and `engines/setup-walkthrough.ts` decide, three screens draw.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Sign-in screen | `mbos-app/app/index.tsx` | The form, the OTP path, step-by-step progress, refusals drawn where `loginStepFor` says |
+| Session (doing) | `mbos-app/src/data/session.ts` | `signIn`, `signInOnce`, `signInOffline`, `rememberForOffline`, `forgetLastPerson`, `signOut` |
+| Session (deciding) | `mbos-app/src/engines/sign-in.ts` | `loginStepFor`, `authLostReasonFor`, `handoverVerdict`, `DEVICE_KV_KEYS`, the offline window |
+| HTTP | `mbos-app/src/sync/api.ts` | `login`, `deviceId`, tokens in secure storage, `ApiError` / `NoAnswerError` / `AuthLostError` |
+| Server route | `src/app/api/mbos/auth/login/route.ts` | Parses, calls `mbosLogin`, maps the outcome to a status |
+| Server rules | `src/lib/actions/mbos.ts` `mbosLogin`; `src/lib/services/mbos-service.ts` | `runLoginChecks`, `checkDeviceBinding`, `loadPrincipal`, `authenticate` |
+| Setup screens | `mbos-app/app/setup.tsx`, `phone-setup.tsx`, `tracking-setup.tsx` | Walkthrough after sign-in; the punch-in gate ("Before you start"); Keep tracking on |
+| Setup rules | `mbos-app/src/engines/setup-walkthrough.ts`, `setup-steps.ts`, `phone-readiness.ts`, `oem-keepalive.ts` | The five steps, which entry shows which, what blocks, per-OEM words |
+| Gate | `mbos-app/src/data/day-gate.ts` | `mayOpenDay` → the unforgeable `DayMayOpen` token `checkIn` requires |
+| Native | `mbos-app/src/native/permissions.ts`, `phone-setup.ts`, `keepalive.ts`, `push.ts` | Asking the OS, opening Settings pages, battery exemption |
+
+## The server checks
+
+<Code file="src/lib/services/mbos-service.ts" symbol="runLoginChecks" collapsed />
+
+<Code file="src/lib/services/mbos-service.ts" symbol="checkDeviceBinding" collapsed />
+
+The `step` each refusal carries is never shown; the handset maps it to **where** the sentence is drawn:
+
+<Code file="mbos-app/src/engines/sign-in.ts" symbol="loginStepFor" />
+
+| `step` | HTTP | Drawn on |
+|---|---|---|
+| `bad_password`, `bad_otp` | 401 | the credential field |
+| `inactive` | 403 | the full-width banner |
+| `no_app_access` | 403 | the territory line |
+| `device_bound` | 409 | the banner |
+| `not_configured`, `bootstrap_failed` | 503 | the banner |
+| `validation` | 400 | the mobile field |
+
+## The handset flow
+
+<Code file="mbos-app/src/data/session.ts" symbol="signInOnce" collapsed />
+
+Points worth knowing before touching it:
+
+- **Hand-over is checked twice** — once on the typed number before the server is asked (asking re-binds the device), and again on the account id the server returns (which settles a sign-in by email or a number written two ways).
+- **Any `ApiError` stops.** A server that answered and refused is never followed by the offline path. Only `NoAnswerError` with no response at all falls back to `signInOffline`; a timeout reports `network`.
+- **Storage failures are `payload`**, their own answer. They used to fall into the offline path, which succeeded against an empty database.
+- **The bootstrap cursor is stored** (`pullCursor`) before the session is persisted, or the first delta asks for "everything since nothing" and wipes the expense policy the bootstrap just delivered.
+
+<Code file="mbos-app/src/engines/sign-in.ts" symbol="handoverVerdict" />
+
+<Code file="mbos-app/src/engines/sign-in.ts" symbol="DEVICE_KV_KEYS" />
+
+When a session ends from the server's side, `authLostReasonFor` decides it is permanent rather than one refused request, and the banner says which:
+
+<Code file="mbos-app/src/engines/sign-in.ts" symbol="authLostReasonFor" />
+
+## Phone readiness and the gate
+
+<Code file="mbos-app/src/engines/phone-readiness.ts" symbol="phoneReadiness" />
+
+The gate's answer is not a boolean a hurried caller could hand `checkIn`. `DayMayOpen` carries a property keyed on a `unique symbol` that only `day-gate.ts` can write, so leaving the gate out does not compile:
+
+<Code file="mbos-app/src/data/day-gate.ts" symbol="DayMayOpen" collapsed />
+
+<Code file="mbos-app/src/data/day-gate.ts" symbol="mayOpenDay" collapsed />
+
+The three setup screens read **one** list of five steps (`readSetupSteps` → `stepsForEntry(entry, steps)`), so a salesman sent from the gate to Keep tracking on reads the same titles. Every step is re-read on `AppState` becoming active, because going to Settings leaves the app rather than the screen and a row still reading "not allowed" after he allowed it is the most damaging thing these screens can show.
+
+<Code file="mbos-app/src/engines/setup-steps.ts" symbol="stepsForEntry" />
+
+## What the server stores about the phone
+
+<DbTable name="mbos_devices" only={["device_id", "user_id", "active", "released_at", "release_reason", "app_version", "app_version_changed_at", "background_location_granted", "location_permission", "location_services_enabled", "battery_exemption", "tracker_stalled_at"]} note={{
+  background_location_granted: "Kept and still written because old builds send only this. Its false renders as restricted.",
+  location_permission: "always · while_in_use · denied · undetermined, from the OS. Null is never reported.",
+  battery_exemption: "exempt · optimised · unknown, where the phone answered.",
+  tracker_stalled_at: "Set when the trail watchdog decided the recorder had died.",
+}} />
+
+The punch-in carries `setupReady`, `setupAcknowledgedAt` and `setupUnverified`, landing in `mbos_attendance_days.setup_ready`, `setup_acknowledged_at` and `setup_unverified`.
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `cd mbos-app && npm test` | `src/engines/sign-in.test.ts` | Refusal placement, auth-lost reasons, hand-over verdicts, offline window |
+| `cd mbos-app && npm test` | `src/engines/phone-readiness.test.ts` | What blocks and what does not; dead ends |
+| `cd mbos-app && npm test` | `src/engines/setup-walkthrough.test.ts`, `setup-steps.test.ts`, `oem-keepalive.test.ts` | Step order, entry-specific views, per-OEM words |
+| `cd mbos-app && npm test` | `src/engines/rebootstrap.test.ts` | When a new build re-fetches the book |
+
+## Changing it safely
+
+<Steps>
+<Step title="Add a refusal on the server with a new step">
+Give it its own `step`, a sentence naming who can fix it, and a status. Then teach `loginStepFor` where to draw it — an unknown step falls to the banner, which is safe but rarely right.
+</Step>
+<Step title="Never make an unreadable fact block a day">
+New readiness rows that the OS cannot answer must be `unknowable`, not `todo`. Only evidence gates.
+</Step>
+<Step title="Keep the gate unforgeable">
+Never add a second way to construct `DayMayOpen`, and never give `checkIn` an optional token.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| Route header says five checks; code is four checks + binding + bootstrap | `src/app/api/mbos/auth/login/route.ts` |
+| `unknown_user` is handled by the phone but no longer sent at sign-in | `mbos-service.ts` `runLoginChecks`; `engines/sign-in.ts` |
+| Autostart can never be verified; the gate relies on a standing claim plus yesterday's trail | `engines/phone-readiness.ts` `autostartItem` |

@@ -1,0 +1,190 @@
+Backups are two shell scripts on the droplet — `deploy/backup.sh` and `deploy/restore.sh` — run by the deploy user's crontab, plus DigitalOcean's own daily droplet snapshot. `backup.sh` dumps every database in the Postgres container with `pg_dump`, gzips, sanity-checks, encrypts with `gpg` to a public key, uploads with a throwaway `rclone` container to an R2 bucket, prunes by age, and pings a healthcheck. `restore.sh` fetches, decrypts (with a private key brought in for the purpose), empties the database and loads the dump. None of this is application code; the app has no role in it.
+
+## Map of the pieces
+
+| Piece | Where | What it does |
+|---|---|---|
+| `backup.sh` | `/opt/mahekone/backup.sh` (from `deploy/backup.sh`) | Modes: default (nightly), `--intraday`, `--verify`, `--install-cron` |
+| `restore.sh` | `/opt/mahekone/restore.sh` | `--list-r2`, `--from-r2 <prefix/file>`, a local file, `--key <private key>` |
+| Local copies | `/opt/mahekone/backups/` | `mahekone_<stamp>.sql.gz`, `mahekone_<stamp>_intraday.sql.gz`, `db-<name>_<stamp>…` |
+| Log | `/opt/mahekone/backups/backup.log` | One line per step, `[timestamp] mode: …` |
+| Offsite | R2 bucket `R2_BUCKET` | `daily/`, `intraday/`, `monthly/` |
+| Encryption | `BACKUP_GPG_RECIPIENT_FILE` | A public key file on the droplet; the private key is never there |
+| Alert | `BACKUP_HEALTHCHECK_URL` | healthchecks.io: `/start`, success, `/fail` |
+| Snapshot | DigitalOcean droplet backups | Whole machine, daily; the only copy of `.env` |
+
+### Environment it reads (from `/opt/mahekone/.env`)
+
+| Variable | Required | Without it |
+|---|---|---|
+| `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ENDPOINT`, `R2_BUCKET` | For offsite | Logs "R2 not configured — this backup exists ONLY on the droplet" |
+| `BACKUP_GPG_RECIPIENT_FILE` | For encryption | Logs "the R2 copy is NOT encrypted" and uploads plaintext |
+| `BACKUP_HEALTHCHECK_URL` | For alerts | No pings; nobody is told about a failure |
+
+## A nightly run
+
+<Flow caption="backup.sh (daily or intraday)" chart={`
+sequenceDiagram
+  autonumber
+  participant Cron as crontab (UTC)
+  participant B as backup.sh
+  participant HC as healthchecks.io
+  participant PG as postgres container
+  participant G as gpg
+  participant R as rclone container
+  participant R2 as R2 bucket
+  Cron->>B: 20:45 UTC (02:15 IST)
+  B->>B: flock - another run? step aside, exit 0
+  B->>HC: /start
+  B->>PG: pg_dump mahekone --clean --if-exists | gzip -9
+  B->>B: at least 1 MB? gzip -t complete?
+  B->>PG: list other databases, dump each (failures noted, run continues)
+  loop each file
+    B->>G: encrypt to the public key
+    B->>R: copy file.gpg to MODE/
+    opt daily on the 1st (UTC)
+      B->>R: also copy to monthly/
+    end
+  end
+  B->>R: delete by age: daily 30d, intraday 7d, monthly 400d
+  B->>B: delete local: nightly over 7d, intraday over 2d
+  alt any step failed
+    B->>HC: /fail with the reason
+  else
+    B->>HC: success
+  end
+`} />
+
+| Detail | Behaviour |
+|---|---|
+| Lock | `flock` on `/tmp/mahekone-backup.lock`; an overlapping run exits 0 quietly |
+| Size floor | A dump under 1,000,000 bytes is refused as "too small to be the database" |
+| Integrity | `gzip -t` on every file before it is kept |
+| Other databases | Found at run time (`pg_database` minus `postgres`, `mahekone`, the verify scratch DB); one failing does not stop the others, but the run ends failed and names it |
+| Encrypted temp files | `<file>.gpg` is removed from the droplet after upload; the local plaintext `.sql.gz` stays for the local retention |
+| Monthly | `date -u +%d = 01` at 20:45 UTC — i.e. the run in the early hours of the 2nd, IST |
+| Exit | Any failed step trips the `EXIT` trap, which pings `/fail` with `REASON` and deletes a half-written dump |
+
+## The verify run
+
+`backup.sh --verify` (Sunday 22:30 UTC, Monday 04:00 IST):
+
+1. Picks the newest `mahekone_*.sql.gz` on the droplet; fails if there is none or it is more than 36 hours old.
+2. Drops and recreates the scratch database `restore_verify`, restores the dump into it, and times it.
+3. Compares `count(*)` for `customers`, `orders`, `bills`, `payment_receipts`, `calls`, `users`, `audit_log`, `attachments` against live; a restored count below 90% of a non-empty live count is `SHORT` and fails the run.
+4. If R2 is configured, lists `daily/` for anything newer than 36 hours; fails if empty.
+5. Drops `restore_verify` whatever happened.
+
+## Installing the schedule
+
+```bash
+ssh deploy@one.mahekindia.com 'bash /opt/mahekone/backup.sh --install-cron'
+```
+
+It replaces any existing `backup.sh` lines and leaves the rest of the crontab alone:
+
+| UTC | IST | Line |
+|---|---|---|
+| `45 20 * * *` | 02:15 daily | `backup.sh` |
+| `45 2,8,14 * * *` | 08:15, 14:15, 20:15 | `backup.sh --intraday` |
+| `30 22 * * 0` | 04:00 Monday | `backup.sh --verify` |
+
+## One-time setup
+
+<Steps>
+<Step title="Make the key on your own machine">
+```bash
+gpg --quick-gen-key "MahekOne backups" rsa4096 encr never
+gpg --armor --export "MahekOne backups"             > backup-public.asc
+gpg --armor --export-secret-keys "MahekOne backups" > backup-private.asc
+```
+Store `backup-private.asc` and its passphrase in the password manager with a second person able to reach them. Copy only the public half to the droplet and set `BACKUP_GPG_RECIPIENT_FILE=/opt/mahekone/backup-public.asc` in `.env`.
+</Step>
+<Step title="Create the alert">
+A healthchecks.io check, period 6 hours, grace 1 hour, two email recipients; its ping URL as `BACKUP_HEALTHCHECK_URL`.
+</Step>
+<Step title="Lock the bucket">
+R2 → the backup bucket → Settings → Bucket lock rules: `daily/` 30 days, `intraday/` 7 days, `monthly/` 365 days. Add object lifecycle rules deleting at the same ages plus a day. Once locked, `backup.sh`'s own prune is silently refused until objects age out — expected.
+</Step>
+<Step title="Prove it">
+`bash backup.sh --intraday` should end `uploaded` with a `.gpg` file in `restore.sh --list-r2`; `bash backup.sh --verify` should list eight tables `ok`; the healthcheck should show both.
+</Step>
+</Steps>
+
+## Restoring
+
+```bash
+cd /opt/mahekone
+bash restore.sh --list-r2
+bash restore.sh backups/mahekone_<stamp>.sql.gz                    # a local copy, no key
+bash restore.sh --from-r2 daily/<file>.sql.gz.gpg --key /tmp/backup-private.asc
+```
+
+What `restore.sh` does:
+
+1. With `--from-r2`, copies the object into `backups/`.
+2. If it ends in `.gpg`, imports `--key` into a temporary keyring, prompts for the passphrase, decrypts beside it, and reminds you to delete the key from the box.
+3. Prints the file, size and date and requires you to type `replace`.
+4. `docker compose stop app`.
+5. Drops the `drizzle` and `public` schemas and recreates `public` — so the result is exactly the dump, with no leftover tables.
+6. Loads the dump with `ON_ERROR_STOP=1`, then `docker compose start app`.
+
+<Callout kind="warn" title="Keep the private key off the droplet if you can">
+Better than `scp`-ing the key to `/tmp` and `shred -u`-ing it afterwards: fetch and `gpg --decrypt` on your own machine, then copy the plain `.sql.gz` to the droplet and restore that. The private key then never touches the server.
+</Callout>
+
+Restore another database (they were dumped with `--clean`):
+
+```bash
+gunzip -c backups/db-<name>_<stamp>.sql.gz \
+  | docker compose exec -T postgres psql -U mahek -d <name>
+```
+
+## The restore drill
+
+```bash
+ssh deploy@one.mahekindia.com
+cd /opt/mahekone
+bash backup.sh
+docker compose exec postgres psql -U mahek -d mahekone \
+  -c "create table drill as select 1 as x"
+bash restore.sh --list-r2
+bash restore.sh --from-r2 <the file you just made> --key <key>
+docker compose exec postgres psql -U mahek -d mahekone \
+  -c "select * from drill"          # must say: relation does not exist
+```
+
+If `drill` is gone, the restore replaced the database and the backups work. If it is still there, nothing was restored — stop and find out why.
+
+## What a backup does not hold
+
+| Not in the dump | Where it is instead |
+|---|---|
+| `/opt/mahekone/.env` | DigitalOcean snapshot only — keep a copy in the password manager |
+| Attachment bytes in an R2 attachments bucket | That bucket (see [Storage](/docs/platform/storage-r2/developer)) |
+| Caddy's certificates (`caddy_data` volume) | Re-issued automatically on a new box |
+| The APK and `mbos.json` in `/opt/mahekone/downloads` | Every APK is archived in R2 by the release workflow |
+
+## Changing it safely
+
+<Steps>
+<Step title="Re-install the cron after editing backup.sh">
+`--install-cron` rewrites only its own lines. `backup.sh` is not shipped by any workflow — copy it to the droplet by hand.
+</Step>
+<Step title="Keep the prune in line with the bucket lock">
+The script's `KEEP_REMOTE_*` ages and the lock rules should match; a script age shorter than the lock just fails quietly, a longer one leaves objects the lifecycle rule removes first.
+</Step>
+<Step title="Never let cleanup.sh delete dumps">
+`deploy/cleanup.sh` deliberately leaves `backups/*.sql.gz` alone — one owner of the retention policy.
+</Step>
+</Steps>
+
+## Known gaps
+
+| Gap | Where |
+|---|---|
+| Neither `backup.sh` nor `restore.sh` is shipped by a workflow (only `sheet-sync.sh` is); a change on `main` does not reach the droplet until copied by hand | `.github/workflows/ship-sync-schedule.yml` |
+| Without `BACKUP_GPG_RECIPIENT_FILE` the upload proceeds unencrypted with only a log warning; without `BACKUP_HEALTHCHECK_URL` that warning is never seen | `deploy/backup.sh` |
+| `--verify` checks R2 only when `R2_ACCESS_KEY_ID` is set; otherwise it passes on the local dump alone | `deploy/backup.sh` verify block |
+| `monthly/` is pruned by the script at 400 days while the documented lock is 365 days | `deploy/backup.sh` `KEEP_REMOTE_MONTHLY_DAYS`; `DEPLOY.md` |
+| The prune also deletes objects at the bucket root older than 30 days, a leftover from before the folders existed | `deploy/backup.sh` |

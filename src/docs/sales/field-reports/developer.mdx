@@ -1,0 +1,108 @@
+Field reports is a read-only page over five sources, each defined once as a FROM-clause in `src/lib/services/field-reports-service.ts` and read twice — by its own list and by the single query that counts all five tabs. Activity history is `activityHistory()` in `src/lib/services/sales-service.ts`, which merges MBOS visits with staged rows from the retired EMP 2.0 app. Those rows are pulled by `src/lib/services/field-activity-sync-service.ts`, matched by the pure `decideCustomerMatch` in `src/lib/field-activity-match.ts`, decided by people through `src/lib/actions/field-activity.ts`, and projected onto `timeline_events` by `src/lib/services/field-activity-projection-service.ts`.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Module guards | `src/app/sales/field-reports/layout.tsx`, `src/app/sales/activity-history/layout.tsx` | `sales.field-reports`, `sales.activity-history` |
+| Field reports page | `src/app/sales/field-reports/page.tsx` | Five tabs, photos through `/api/attachments/[id]` |
+| Field reports reads | `src/lib/services/field-reports-service.ts` | `fieldComplaints`, `fieldCompetitors`, `fieldNotes`, `fieldTours`, `fieldOrderChanges`, `fieldReportCounts` |
+| Activity page | `src/app/sales/activity-history/page.tsx`, `activity-table.tsx` | Filters, merged table, the shop decision panel |
+| Re-parse | `src/app/sales/activity-history/reparse-button.tsx` | `triggerJob("field-activity-reparse")`, platform admin only |
+| Activity read | `src/lib/services/sales-service.ts` | `activityHistory`, `activityHistoryCounts`, `activityHistorySalesmen` |
+| Sheet parse (pure) | `src/lib/field-activity-parse.ts` | Columns and cells to typed values |
+| Shop match (pure) | `src/lib/field-activity-match.ts` | `decideCustomerMatch`, name folding |
+| Sync | `src/lib/services/field-activity-sync-service.ts` | `syncFieldActivitySheet` (append / reconcile), `rematchFieldActivitySalesmen`, `rematchFieldActivityCustomers`, `rejudgeShopName`, `reparseFieldActivityDates` |
+| Decisions | `src/lib/actions/field-activity.ts` | `activityShopChoices`, `searchActivityShops`, `decideActivityShop`, `undoActivityShopDecision` |
+| Projection | `src/lib/services/field-activity-projection-service.ts` | `projectFieldActivityTimeline` |
+| Schedule | `/api/sheets/sync` modes, `scripts/field-activity-sync-trigger.gs`, `deploy/sheet-sync.sh`, nightly `field-activity-shops` | |
+
+## Field reports
+
+<Code file="src/lib/services/field-reports-service.ts" symbol="fieldReportCounts" collapsed />
+
+<Code file="src/lib/services/field-reports-service.ts" symbol="fieldNotes" collapsed />
+
+`fieldNotes` returns `body` only when the note is unrestricted, the viewer wrote it, or one of the viewer's roles (their Sales Dashboard level, plus `admin` for a platform administrator) is in `visible_to_roles`.
+
+## The EMP 2.0 pipeline
+
+<Flow caption="From the old app's sheet to a customer's timeline" chart={`
+sequenceDiagram
+  autonumber
+  participant G as Activity tab (Google Sheet)
+  participant Y as field-activity-sync-service.ts
+  participant M as field-activity-match.ts
+  participant DB as Postgres
+  participant P as projection service
+  G->>Y: append pass (watermark) or reconcile pass (full hash compare)
+  Y->>Y: parse rows, drop rows on or after fieldActivity.cutoverDate
+  Y->>DB: upsert sheet_field_activity_rows by activity_id and row_hash
+  Y->>DB: exact salesman match on the folded name
+  Y->>M: decideCustomerMatch(exact, near, decision)
+  M-->>Y: matched, ambiguous or unmatched, with a note
+  Y->>DB: write the match onto the staged row
+  P->>DB: every matched, unprojected row becomes a timeline_events visit`} />
+
+The sheet id is a constant in the sync service, overridable by an environment variable for a staging copy; the Google credential stays in the environment. API modes: `?mode=field-activity` (append), `field-activity-reconcile`, `field-activity-project`, plus rematch and reparse.
+
+<Code file="src/lib/field-activity-match.ts" symbol="decideCustomerMatch" />
+
+<Code file="src/lib/actions/field-activity.ts" symbol="requireDecider" />
+
+<Code file="src/lib/actions/field-activity.ts" symbol="decideActivityShop" collapsed />
+
+<Code file="src/lib/services/field-activity-projection-service.ts" symbol="projectFieldActivityTimeline" collapsed />
+
+The projection writes `eventType: "visit"` through the same constant live MBOS check-ins use; the summary sentence is what says it is history. It runs after each sync cycle and in the nightly `field-activity-shops` step, after the customer re-match.
+
+## Tables
+
+<DbTable name="sheet_field_activity_rows" only={["activity_id", "row_hash", "status", "employee_name", "matched_salesman_id", "salesman_match_status", "customer_name", "matched_customer_id", "customer_match_status", "match_note", "visit_date", "meeting_note", "meeting_purpose", "timeline_event_written"]} note={{
+  activity_id: "The sheet's own Activity ID — unique, the natural key.",
+  row_hash: "Hash of the row's cells. An unchanged row is never rewritten.",
+  salesman_match_status: "Exact match on the folded name. Re-run by rematchFieldActivitySalesmen when somebody gets an account.",
+  customer_match_status: "matched · ambiguous · unmatched — from decideCustomerMatch.",
+  match_note: "Why: the shortlist, 'Linked by a person', or 'A person decided this shop is not on MahekOne'.",
+  timeline_event_written: "Set by the projection; a re-judged row has its entry taken back.",
+}} />
+
+<DbTable name="field_activity_customer_decisions" note={{
+  name_key: "The folded shop name. One decision per name moves every row typed under it.",
+  customer_id: "Null means a person decided it is not on MahekOne.",
+}} />
+
+## Access
+
+- **Modules:** <ModuleRef k="sales.field-reports" />, <ModuleRef k="sales.activity-history" />.
+- **Deciding a shop:** manager level and `sales.activity-history` (`requireDecider` → `salesGateRefusal`).
+- **Scope:** field report tabs narrow by `managerScope` on whoever filed the item; Activity history narrows matched rows to the manager's salesmen and shows unmatched rows to everybody.
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/field-activity-match.test.ts` | The five match rules; close names never linked |
+| `npm run test` | `src/lib/field-activity-parse.test.ts` | Cells to values, dates |
+| `npm run test:integration` | `src/lib/activity-history.test.ts` | The merged history, cutover, projection |
+
+## Changing it safely
+
+<Steps>
+<Step title="Change the match rule only in decideCustomerMatch">
+Then run the re-match: a hash-driven sync never re-asks an unchanged row.
+</Step>
+<Step title="Never auto-link a close name">
+A wrong link is a visit on somebody else's timeline, read as fact.
+</Step>
+<Step title="Add a field report tab as one FROM-clause">
+Read it in both its list and `fieldReportCounts`, narrowed with `onlyMine`.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| `fieldActivity.cutoverDate` is filed under the location settings category | `src/lib/config/registry.ts` |
+| The order-changes tab shows accounts' answer but links nowhere to decide it | `src/app/sales/field-reports/page.tsx` |

@@ -1,0 +1,87 @@
+The Sales Dashboard's Performance screen is a team view of the same score the CRM shows one person at a time. The engine — six components, configurable weights, a formulation mix, working-day forecasting — is explained in full on [Performance in the CRM](/docs/crm/performance/how-it-works). This tab covers what is specific to the team view and to Cost & return.
+
+## Who is scored
+
+<Rule title="Everybody with a published target, and everybody who sold something">
+Somebody with a target and no sales is the person a manager most needs to see; somebody selling with no target is a target nobody published. Showing neither is how a dashboard comes to describe a smaller company than the one that exists. A draft target is never scored — only what the person can see on their own phone.
+</Rule>
+
+## Whose number it is
+
+<Rule title="One person per account, and the fall-through is written once">
+Revenue is credited to the salesperson on the account, and where there is none, to the back-office person who works it. **Not both** — the team's revenue must add up to the company's. The account's owner is deliberately not in the chain for a customer: on an imported book that is whoever ran the import. A **lead** is the one exception — it has no sales seat, so it is credited to its owner, which matters when its first order becomes a new customer.
+</Rule>
+
+<Rule title="Money nobody is credited with is counted and printed">
+A customer with neither seat filled is *unattributed*. Its revenue is shown in a banner — *"… with no salesperson counts towards nobody"* — rather than silently missing. Fixing it is accounts' job, because moving an account between people moves revenue.
+</Rule>
+
+## The alert this screen was built for
+
+<Rule title="Revenue at target, volume behind">
+A price rise moves every rupee figure without one extra can leaving the godown. When somebody's revenue is at or above target while their litres are more than <Setting k="performance.volumeDivergencePoints" /> points behind, the month came from the price list. The banner names them, because they are exactly who would otherwise be congratulated.
+</Rule>
+
+The other reasons a row can want attention — behind pace, mix below its minimum, no new customers, collection behind, activity behind — come from the same engine and are listed under each name.
+
+## Components on this screen
+
+| Component | Counted from | Deliberately not counted |
+|---|---|---|
+| Revenue | Approved orders, excluding GST | Pending or declined orders; anything from the catalogue's (absent) prices |
+| Volume | Cans × each product's pack size | Lines whose product name matched nothing — reported as *unmatched* |
+| Mix | Share of value by formulation, against minimum / target / stretch bands | — |
+| New customers | Accounts whose first counting order lands this month | Leads created |
+| Collection | Confirmed money received against what was **overdue at the start of the month** | Reported or held money; credit notes; bills nobody has spoken for |
+| Activity | Visits and calls, by the server's clock | The phone's own timestamp, which its owner can set |
+
+<Callout kind="why" title="Why collection is measured against the opening overdue">
+A rupee target for collection rewards whoever happens to be owed most. Measured as a share of what was already overdue on the 1st, the target means the same thing for a large book and a small one.
+</Callout>
+
+## The month
+
+- **Working days, never dates.** Holidays and the working week decide how much of the month has gone; today is not counted as elapsed. The tile shows *14 of 26*.
+- **The score is live on this screen.** It is computed from the ledger when the page opens. The handset reads a cached copy rebuilt hourly and nightly, and says when it was computed.
+
+## Cost & return
+
+Cost & return is about the **field's cost**, and it is careful about what it can honestly say.
+
+<Rule title="Revenue ratios, not profit">
+MahekOne holds no product costs, so no margin can be worked out. Every figure is revenue against spend — sales per kilometre, sales per visit, travel as a share of sales, revenue to spend.
+</Rule>
+
+<Rule title="Cost counts approved expenses only">
+The same way outstanding counts confirmed money only. Expenses claimed and not yet decided are shown in a banner, because until they are decided the month reads cheaper than it was.
+</Rule>
+
+<Rule title="Pay is not in it">
+Salary and allowances are held in HRMS and are not part of *Field spend*. A figure that silently mixed pay with reimbursements would be neither.
+</Rule>
+
+<Rule title="Headlines do not follow the sort">
+*Best sales per km* is worked out over the whole team, not the sorted table, so it names the same person whatever column you click.
+</Rule>
+
+The three per-customer figures split spend by what it was for: **winning** new customers, **servicing** existing ones, and **spending against no customer** — a claim with no shop on it, which is the one to ask about.
+
+## Who sees what
+
+Performance is <ModuleRef k="sales.performance" /> and Cost & return is <ModuleRef k="sales.roi" />. Cost & return is narrowed to your patch. Both are read-only; setting a target is [Sales Targets](/docs/sales/targets).
+
+## Settings
+
+<SettingsTable keys={[
+  "performance.volumeDivergencePoints",
+  "performance.ratingBands",
+  "performance.revisionReasons",
+]} />
+
+The weights and the mix bands are on the [CRM performance page](/docs/crm/performance/how-it-works).
+
+## Where the code and the intent disagree today
+
+- **Performance is not narrowed to your patch.** It reads every published target and every credited sale in the company; a regional manager sees the whole country's scores. Every other Sales Dashboard list narrows by region.
+- **The unattributed banner is company-wide** for the same reason.
+- **There is no salary screen.** The project notes describe the Sales Dashboard reading salary from HRMS beside days worked and reimbursements; that screen is not in this build.

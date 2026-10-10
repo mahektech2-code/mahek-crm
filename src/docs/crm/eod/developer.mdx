@@ -1,0 +1,123 @@
+The EOD Report is a server page over **one metrics function**, `eodMetricsForRange`, whose output feeds a pure engine that turns it into table lines and a WhatsApp message. Submitting is one action that re-checks the reminder gate and upserts `eod_reports`; a nightly step writes reports for anybody who did not. The same metrics function feeds the Dashboard, which is where the span-before comparison lives. Everything below is cut from the source this deployment was built from.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Route guard | `src/app/crm/eod/layout.tsx` | `requireModule(user.id, "crm.eod")` |
+| Page | `src/app/crm/eod/page.tsx` | Resolves the period (`eodPeriodRange`), `eodFor` for today, `eodMetricsForRange` otherwise, `eodPreflightFor`, `storedEodReport`, `teamEod` when `team.report` **and** a CRM manager |
+| Screen | `src/app/crm/eod/eod-screen.tsx` | Period picker, due-today gate, figures, message, Submit, team table |
+| Periods | `src/lib/business-date.ts` | `EodPeriod`, `eodPeriodRange`, `periodRange`, `previousRange`, `rangeBoundaryWindow` |
+| Service | `src/lib/services/eod-service.ts` | `eodMetricsForRange`, `eodMetricsFor`, `eodFor`, `eodPreflightFor`, `teamEod`, `storedEodReport`, `autoGenerateEodReports` |
+| Engine (pure) | `src/lib/engines/eod.ts` | `EodInput`, `eodLines`, `aggregateEod`, `eodPreflight`, `aggregateTeamEod` |
+| Action | `src/lib/actions/crm.ts` | `submitEod` |
+| Job | `src/lib/jobs.ts` | Nightly *auto-eod* step → `autoGenerateEodReports(yesterday)` |
+| Comparison | `src/app/crm/dashboard/page.tsx` | `previousRange(range, workingDay)` over the same metrics |
+
+## A request, end to end
+
+<Flow caption="GET /crm/eod?period=…" chart={`
+sequenceDiagram
+  autonumber
+  participant P as eod/page.tsx
+  participant B as business-date.ts
+  participant S as eod-service.ts
+  participant E as engines/eod.ts
+  participant DB as Postgres
+  P->>B: eodPeriodRange(today, period, workingDay, custom)
+  alt period is today
+    P->>S: eodFor(user, today)
+    S->>S: eodMetricsForRange(user, from today to today)
+    S->>E: aggregateEod — lines + whatsappText
+  else any other period
+    P->>S: eodMetricsForRange(user, range)
+    P->>E: eodLines(metrics)
+  end
+  P->>S: eodPreflightFor(user, REAL today) — open reminders due today
+  P->>S: storedEodReport(user, today)
+  opt team.report AND CRM manager
+    P->>S: teamEod(range) — every active user in scope
+  end
+`} />
+
+## The periods
+
+<Code file="src/lib/business-date.ts" symbol="eodPeriodRange" />
+
+<Code file="src/lib/business-date.ts" symbol="previousRange" />
+
+`previousRange` is read by the Dashboard, not by this page.
+
+## The metrics
+
+<Code file="src/lib/services/eod-service.ts" symbol="eodMetricsForRange" collapsed />
+
+Windows come from `rangeBoundaryWindow` (two instants with `+05:30`), bound as `::timestamptz`. `payments.paid_at` is a **date** and is compared against the range's dates, inclusive. The month window for the target line is a half-open window rather than `extract()`, so it can use `orders_ordered_idx` and does not depend on the session zone.
+
+<Code file="src/lib/engines/eod.ts" symbol="EodInput" collapsed />
+
+<Code file="src/lib/engines/eod.ts" symbol="eodLines" />
+
+<Code file="src/lib/engines/eod.ts" symbol="aggregateEod" collapsed />
+
+## The gate and submitting
+
+<Code file="src/lib/engines/eod.ts" symbol="eodPreflight" />
+
+<Code file="src/lib/actions/crm.ts" symbol="submitEod" />
+
+<Code file="src/lib/services/eod-service.ts" symbol="autoGenerateEodReports" />
+
+<DbTable name="eod_reports" note={{
+  day: "The business date. Unique with user_id — one report per person per day.",
+  body: "The WhatsApp message as submitted (or generated).",
+  metrics: "The table lines at the time — a record, not a cache.",
+  auto_generated: "True when the nightly job wrote it because nobody submitted.",
+  finalised_at: "Set by Submit EOD. Null on an auto-generated report.",
+}} />
+
+## Permissions
+
+<CapabilityGrid names={["team.report", "reminder.close"]} />
+
+- <ModuleRef k="crm.eod" /> guards the route.
+- `teamEod` itself asks `requireCapability("team.report")`; the page asks the same capability **and** `managesHere(user, "crm")` first, so a person holding `team.report` through another app is not drawn a team of one and the page never crashes on the refusal.
+- `submitEod` runs `resolveScope()` and re-checks `eodPreflightFor` server-side.
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/engines/engines.test.ts` (E6) | Lines, the message format, the preflight gate, the team roll-up |
+| `npm run test` | `src/lib/business-date.test.ts` | Periods, previous working day, equal-span comparison |
+| `npm run test:integration` | `src/lib/journeys.test.ts` | EOD figures from logged calls; the reminder gate |
+| `npm run test:integration` | `src/lib/queue-progress.test.ts` | Dashboard and Call Log progress agree |
+
+## Changing it safely
+
+<Steps>
+<Step title="Add a figure to eodMetricsForRange and nowhere else">
+The Dashboard and the team table read it for free. A second query for "the same number" is how two screens come to disagree.
+</Step>
+<Step title="Count sales with orderCountsSql">
+Replace a status literal list with `orderCountsSql("o")` and value with `orderValueSql("o")` when touching these subqueries.
+</Step>
+<Step title="Keep the message pure">
+WhatsApp formatting lives in `aggregateEod`. Test it there; short lines, no tables.
+</Step>
+<Step title="Never overwrite a submitted report from a job">
+`autoGenerateEodReports` checks `storedEodReport` first. Keep it that way.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| Approved orders counted as `status in ('captured','confirmed','dispatched')`, missing `in_transit` and `delivered` from `PURCHASE_STATUSES` | `eod-service.ts` `eodMetricsForRange` (`orders_count`, `orders_value`, `target_achieved`) |
+| "Payments confirmed" sums `payments` by `recorded_by_id` without checking the receipt's status | `eod-service.ts` `payments_confirmed` |
+| Target line joins on `customers.owner_id`, not `ASSIGNED_TO_SQL` or `CREDITED_TO_SQL` | `eod-service.ts` `target_amount`, `target_achieved` |
+| Order value is `total_amount`, not `orderValueSql` (net of GST) | `eod-service.ts` |
+| "Order Calls" in the message is `callsAttempted / queuePending` | `engines/eod.ts` `aggregateEod` |
+| Auto-EOD archives the previous calendar day, for every active user | `jobs.ts` auto-eod; `autoGenerateEodReports` |
+| `teamEod` runs `eodMetricsForRange` once per person (about twenty subqueries each) | `eod-service.ts` `teamEod` |

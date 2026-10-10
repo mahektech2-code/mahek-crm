@@ -1,0 +1,105 @@
+Two screens decide when a salesman is not expected to work. **Leave** is where you answer the leave your team asks for on their handsets. **Holidays** is the calendar of days off — company-wide, for a state or a city, or for named people — and it decides whether a day reads as absent, what leave costs, and what each salesman's phone shows.
+
+## Leave
+
+<Wireframe url="/sales/leave" nav={["#People", "Attendance", "Leave", "Holidays", "Expenses"]} active="Leave" caption="Leave, opened on what is waiting">
+  <WfBar><WfTitle sub="Leave the field team has asked for on the handset. Approve or refuse it here — the answer reaches their phone on the next sync.">Leave</WfTitle></WfBar>
+  <WfCard tone="warn"><WfBar><WfText>1 request overlaps somebody else's leave — Salesman A (14 Oct) with Salesman B</WfText><Hotspot n={1} /></WfBar></WfCard>
+  <WfBar>
+    <WfCard title="Waiting"><WfText>3</WfText></WfCard>
+    <WfCard title="Days asked for"><WfText>7</WfText></WfCard>
+    <WfCard title="Overlapping"><WfText>1</WfText></WfCard>
+    <WfCard title="Approved"><WfText>24</WfText></WfCard>
+    <WfCard title="Not asked this year"><WfText>2</WfText></WfCard>
+  </WfBar>
+  <WfBar><WfPill tone="brand">Waiting 3</WfPill><WfPill>Approved 24</WfPill><WfPill>Everything 29</WfPill></WfBar>
+  <WfTable columns={["Salesman", "Kind", "When", "Days", "Why", "Also off", "State", ""]} rows={[
+    ["Salesman A", "Casual", "14 Oct – 16 Oct", "2", "Family function", <span key="a">Salesman B <Hotspot n={2} /></span>, <WfPill key="b" tone="warn">Waiting</WfPill>, <span key="c"><WfButton>Refuse</WfButton> <WfButton primary>Approve</WfButton> <Hotspot n={3} /></span>],
+    ["Salesman C", "Sick", "9 Oct", "1", "Fever", "—", <span key="d"><WfPill tone="success">Approved</WfPill><br/><WfText muted>by a manager · 9 Oct</WfText></span>, ""],
+  ]} />
+  <WfCard title="Who has taken leave this year"><WfTable columns={["Salesman", "Days taken", "Kind", "Requests"]} rows={[["Salesman A", "6", "Casual 4 · Sick 2", "1 request waiting"], ["Salesman D", "—", "—", "None this year"]]} /><Hotspot n={4} /></WfCard>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Overlaps.</b> Two people off on the same days leave those shops unworked. The banner names every overlap so you can see the first request while answering the second.</span>,
+  <span key="2"><b>Also off.</b> Somebody else in the field whose leave overlaps this request.</span>,
+  <span key="3"><b>Decide.</b> Approve, or refuse with a reason. The answer reaches his phone on the next sync.</span>,
+  <span key="4"><b>This year.</b> Days taken per person, by kind, and who has not asked for any. Approved days only — the allowance itself is kept in HRMS.</span>,
+]} />
+
+### Answering a request
+
+<Steps>
+<Step title="Check the overlap">
+If *Also off* names somebody, decide whether the patch can be covered before approving.
+</Step>
+<Step title="Approve or refuse">
+Approving is one press. Refusing asks you to **say why** — he has to be able to do something differently, and cannot work it out from the word alone.
+</Step>
+<Step title="He sees it on his phone">
+The decision reaches the handset on its next sync, with your note.
+</Step>
+</Steps>
+
+| State | It means |
+|---|---|
+| <Pill tone="warn">Waiting</Pill> | Nobody has answered yet. |
+| <Pill tone="success">Approved</Pill> | Approved, with who decided and when. |
+| <Pill tone="danger">Refused</Pill> | Refused, with the reason. |
+| <Pill>Withdrawn</Pill> | He took it back. There is nothing to decide. |
+
+**Days** counts only his working days: a Friday-to-Monday request across a Sunday off is three days, not four, and a holiday that applies to him is not counted. A half day applies only to a single-day request.
+
+## Holidays
+
+<Wireframe url="/sales/holidays" active="Holidays" caption="The holiday calendar for a year">
+  <WfBar><WfTitle sub="Company-wide, state, district, city and area holidays, and days given to named people.">Holidays</WfTitle><WfSpacer /><WfButton primary>Add a holiday</WfButton><Hotspot n={1} /></WfBar>
+  <WfBar>
+    <WfCard title="Holidays in 2026"><WfText>18 · 4 still ahead</WfText></WfCard>
+    <WfCard title="Company-wide"><WfText>10</WfText></WfCard>
+    <WfCard title="State & regional"><WfText>6</WfText></WfCard>
+    <WfCard title="Named people"><WfText>2</WfText></WfCard>
+    <WfCard title="Team"><WfText>11</WfText></WfCard>
+  </WfBar>
+  <WfTabs items={["Calendar", "By level", "By employee"]} active="Calendar" />
+  <WfTable columns={["Date", "Day", "Holiday", "Who it is for", "Reaches", ""]} rows={[
+    ["2 Oct", "Friday", "Gandhi Jayanti", "Company-wide", "11 people", "⋯"],
+    ["14 Jun", "Sunday", "Raja Parba", <span key="a">State — Odisha <Hotspot n={2} /></span>, "2 people", <span key="b">⋯ <Hotspot n={3} /></span>],
+  ]} />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Add a holiday.</b> A date, a name, and who it is for: company-wide, a state, district, city or area, or named people. You can also give it to or take it from individuals, with a reason.</span>,
+  <span key="2"><b>Who it is for.</b> The level and the places picked; <i>Reaches</i> is how many of your team that comes to.</span>,
+  <span key="3"><b>Row menu.</b> Edit, <i>Who gets it</i> (the people it reaches, and anyone given or taken by name), or Remove.</span>,
+]} />
+
+### Who gets a holiday
+
+| Level | Reaches |
+|---|---|
+| **Company-wide** | Everybody on the field team, except anybody it was taken from. |
+| **State, district, city, area** | The salesmen who work in the places you pick. |
+| **Named people** | Exactly the people you name — a community's festival, a family occasion. |
+
+On any holiday you can **give** it to somebody it would not otherwise reach, or **take** it from somebody it would — say why; he will ask. The *By employee* view shows each salesman's holidays for the year and is where this is done.
+
+A change reaches the handsets on their next sync. Holidays are also copied to HRMS for the same people.
+
+## Common questions
+
+<Faq q="Can I change how many days of leave somebody is allowed?">
+No. Allowances are kept in HRMS. This screen shows days taken, never days left.
+</Faq>
+<Faq q="A request I approved has gone from Waiting but he says he never asked.">
+If he withdrew it, it shows <i>Withdrawn</i>. Approving a withdrawn request is refused.
+</Faq>
+<Faq q="Can I answer my own leave?">
+No. Somebody else has to — that is what makes it an approval.
+</Faq>
+<Faq q="It says the holiday is already on the calendar.">
+A holiday with the same name on the same date already exists. Edit that one instead — two entries would be two answers to who is off.
+</Faq>
+<Faq q="A state holiday does not show for one of my salesmen.">
+He is not allocated a place in that state. Allocate his territory on <a href="/docs/sales/salesmen">Salesmen</a>, or give him the day by name.
+</Faq>

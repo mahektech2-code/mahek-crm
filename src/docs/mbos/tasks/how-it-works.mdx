@@ -1,0 +1,74 @@
+A task is a job with a due date on one person's phone. The office raises most of them — from the Sales Dashboard's [Tasks](/docs/sales/tasks/how-it-works) screen, from a task campaign with a form attached, or from the rules (a validation call after a lead is qualified, a review chase on a sample). The handset raises some itself (a call after a bounced cheque). Notifications are how the office tells somebody it **decided** something; push is how that reaches a phone in a pocket.
+
+## Closing a task says how
+
+<Rule title="A closed task carries what was done">
+While <Setting k="mbos.tasks.requireCompletionNote" /> is on, the office refuses a completed task with no note. A task with a **form** is answered by the form — the answers stand in for the note and are written out as one, so every screen that reads a completed task's note reads the answers.
+</Rule>
+
+<Callout kind="why">
+"Done" with nothing behind it is a tick nobody can check. The note is what a manager reads, and a photograph is optional so that a slow upload never stops the work being recorded. The phone once sent every Done with an empty note: the office refused it, it came back as open on the next pull and was resent every few hours with a fresh bell — so the phone now asks first.
+</Callout>
+
+## Moving a task
+
+A move needs a new day and a reason, and every move is kept (appended, never replaced). A move can never land **before** the day the task is already due — "snooze" once dragged a task due on the 20th forward to tomorrow.
+
+## Overdue and escalation
+
+<Rule title="Overdue tasks escalate once">
+An open task more than <Setting k="mbos.tasks.escalationHours" /> hours past the midnight of its due date is marked escalated, the salesman gets *Task overdue — your manager has been told*, and the manager sees it on their screen. It happens once per task.
+</Rule>
+
+The office runs this sweep **hourly**. The handset marks the same tasks escalated locally at start-up so the phone's list agrees before the next sync.
+
+<Callout kind="note">
+The due date is a date, so "past its date" is measured from **midnight India time** on that date — never from whichever time zone a database connection happens to be in.
+</Callout>
+
+## Task forms
+
+A campaign can attach up to 40 questions (text, numbers, choices, photos, a birthday, a location, a phone). Questions can depend on earlier answers, and some are **linked** to the shop's record — answering them updates the contact or the address. The handset expands linked questions against the shop exactly as the office does, so the answer keys match at both ends.
+
+## Notifications: the record
+
+<Flow caption="How a decision reaches a salesman" chart={`
+flowchart TD
+  D["Something decided at the office<br/>order approved · leave answered · task escalated"] --> N["A notification row<br/>for that person"]
+  N --> P["Next sync: the bell on the phone"]
+  N --> X{"Push switched on?"}
+  X -- "yes" --> E["Sent through Expo<br/>to the phone's token"]
+  E --> L["Lock screen / banner"]
+  L --> T["Tap: opens the screen it names,<br/>or the bell list"]
+`} />
+
+<Rule title="The bell is the record; push is a courtesy">
+Every decision is a notification row first. Push never fails the write it rides on. A push that fails, or a phone that is off, loses nothing — the message is in the bell on the next sync.
+</Rule>
+
+### Where a tap goes
+
+The office stores **two** links on a notification: one for the web and one for the phone. The phone only follows a link to a screen **it has**. Anything else — including a web route — opens the notifications list, where the message is. A tab (Home, Journey) is returned to rather than stacked a second time.
+
+<Callout kind="why">
+A wrong deep link drops somebody on a screen that has nothing to do with what they tapped, which is worse than the list where the message definitely is. A refused order is a deliberate example: it opens the list, not *Not accepted* — that screen shows the phone's own refused sends, and an order declined by accounts synced perfectly well days earlier.
+</Callout>
+
+### Push settings
+
+| Setting | What it does |
+|---|---|
+| <Setting k="mbos.push.enabled" /> | Push on or off for the whole field team |
+| <Setting k="mbos.push.expoProjectId" /> | Which Expo project tokens are minted against — read from configuration so it can change without a new app |
+| <Setting k="mbos.push.quietHours" /> | Inside these hours a push is delivered **silently** (no sound, normal priority), never held back |
+| <Setting k="mbos.push.failureRetentionDays" /> | How long failed deliveries are kept for the office to read |
+
+A phone whose app was uninstalled has its token removed automatically the first time Expo reports it gone, so the office does not see an unbroken run of "successes" to a dead phone.
+
+## Who sees what
+
+A salesman sees only tasks assigned to him. His manager sees escalations for their team. Notifications are per person; nobody reads another's bell.
+
+## Where the code and the intent disagree today
+
+- **The handset's local escalation tells nobody.** It only sets a flag on the phone; the manager is told by the office's hourly sweep (`mbos-app/src/data/tasks.ts` `escalateOverdue`, `src/lib/mbos-jobs.ts` `escalateOverdueTasks`). The phone also compares whole days (due date before the date of now minus the window), so for a window that is not a multiple of 24 hours the two ends mark a task escalated at different times.

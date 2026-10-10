@@ -1,0 +1,99 @@
+Signing in to MBOS is deliberately stricter than signing in to the website: a phone carries a copy of somebody's customer book into the street, it works without the office being able to see it, and whatever it sends is filed against whoever is signed in. This tab explains the checks, the one-phone rule, offline sign-in, and why the app will not start a day on a phone that cannot record it.
+
+## The sign-in checks, in order
+
+<Flow caption="What the office checks when a phone signs in" chart={`
+flowchart TD
+  A["Phone: is the last person's work all sent?"] -- "no" --> X1["Refused on the phone<br/>before asking the office"]
+  A -- "yes" --> B{"Account found and<br/>password or code right?"}
+  B -- "no" --> X2["One sentence for both:<br/>number and password do not match"]
+  B -- "yes" --> C{"Account open?"}
+  C -- "no" --> X3["Account closed — ask your manager"]
+  C -- "yes" --> D{"Salesman App granted?"}
+  D -- "no" --> X4["Not given Mahek MBOS"]
+  D -- "yes" --> E{"This phone free,<br/>and no other phone active?"}
+  E -- "no" --> X5["Release the old phone first"]
+  E -- "yes" --> F{"Book loads?"}
+  F -- "no" --> X6["Signed in, but your book could not be loaded"]
+  F -- "yes" --> OK["Signed in · book on the phone"]
+`} />
+
+<Callout kind="why">
+**The order is the point.** Telling somebody "no territory" when the real problem is their password sends them to the wrong person; telling a leaver "wrong password" sends them round a loop that cannot end. Each refusal names the one person who can fix it.
+</Callout>
+
+<Rule title="No account and wrong password read the same">
+An unknown number and a wrong password get the same sentence, word for word. A sign-in screen that said "no account uses this number" would be a way to find out which numbers belong to staff. A password shorter than eight characters is refused before the account is even looked up, so its answer cannot depend on whether the account exists. Failed attempts count against the same allowance as the web sign-in — a phone is not a second door with fresh guesses.
+</Rule>
+
+<Rule title="Loading the book is part of signing in">
+A sign-in that succeeds and then opens an empty app has failed somewhere nobody was told about. So the office prepares the whole book before it says yes, and the phone writes its session only after the book is stored. A phone whose storage refuses says so, rather than quietly signing in to an empty database.
+</Rule>
+
+## One phone per person, one person per phone
+
+Two different rules, and only one can be switched off.
+
+| Rule | Can it be changed? | Why |
+|---|---|---|
+| **A phone belongs to one person.** A phone actively bound to somebody else refuses everyone else. | No | A shared handset is how one salesman's visits are filed under another's name, and how a leaver's phone keeps a live copy of the book. |
+| **A person has one phone.** Signing in on a second phone is refused while the first is active. | Yes — <Setting k="mbos.devices.onePerPerson" /> | Usually right. But a business may need to suspend it, and a rule with no way out is a rule people work around by sharing a login. |
+
+The way back in is a manager **releasing** the old phone on the Sales Dashboard (see [Administration](/docs/sales/administration)). Releasing frees the physical phone too, so it can be handed to somebody new.
+
+### Handing a phone to somebody else
+
+The phone itself refuses a **different person** while anything the last person did is still waiting to send. Everything goes up under whoever is signed in when it sends, so a phone passed on with yesterday's orders inside would file those orders against the new person. This is checked **before** the office is asked — asking would bind the phone to the new person and lock the last one out of sending their own work.
+
+When a different person does sign in, the last person's data is cleared from the phone; only handset settings (sounds, the app lock, setup answers) are kept.
+
+## Offline sign-in
+
+After a successful sign-in with a password, the phone keeps a **stretched hash** of it — never the password — so the same person can sign in again with no signal.
+
+- Only the **last person** who signed in on this phone, with the **same number**.
+- Only within <Setting k="mbos.sync.offlineLoginValidityDays" /> days of the phone last reaching MahekOne.
+- Never with a one-time code (there is nothing to check it against), and never if the salesman chose not to be remembered.
+
+<Callout kind="note">
+A slow office is not "no signal". If the request reached MahekOne and timed out, the phone says so rather than falling back to the offline path — an offline sign-in on a phone that can actually reach the office would hide a real refusal.
+</Callout>
+
+## Signed out in the middle of a day
+
+Some refusals mean the session is over until a person acts: the sign-in expired, the office released the phone, the account was closed, or the app was taken away. When the phone hears one of these it shows a banner saying which, and stops burning retries — a queue that silently fails all day while Home looks normal is the worst outcome. Signing back in as the same person resends what was waiting at once.
+
+## Phone setup: why a day can be refused
+
+A salesman's attendance is only worth something if the route behind it was recorded. Every Android maker in this market ships a battery manager that kills background apps, and **the app is never told** — the operating system says tracking started, and then nothing arrives. A salesman once punched in before dawn and posted not one position all day, with every permission reading granted.
+
+So punch-in passes through a **gate**. It checks five things:
+
+| Check | Readable by the app? | Blocks the day? |
+|---|---|---|
+| Location switched on | Yes | Yes |
+| Location permission (while using) | Yes | Yes |
+| Location permission (all the time) | Yes | Yes |
+| Battery saver will stop the app | Yes, on most phones | Yes, when the phone says so |
+| Autostart / auto-launch | **No** — no Android API reports it | No, unless the phone's last working day produced no route |
+
+<Rule title="Evidence gates a day; an unverifiable claim never does">
+What blocks is what the phone can read and fix in seconds. What nobody can read — an autostart switch, a battery query that came back unknown — never blocks on its own. Instead the salesman confirms he has done it, and the day carries that claim to the office together with the only evidence there is: whether a route then appeared.
+</Rule>
+
+How hard the gate is is a setting: <Setting k="mbos.location.startOfDayGate" />. `block` refuses the day; `warn` lets it open and marks it; `off` skips the gate.
+
+<Callout kind="why">
+**There is no skip button.** The attendance selfie lost its "start without a photo" button for the same reason: a day started past a warning and a day started properly are two kinds of day with nothing on the record saying which, and once the first exists the second is worthless.
+</Callout>
+
+Every punch-in sends the gate's reading with it — whether everything checkable was in order, whether he claimed the unverifiable steps, and what was outstanding — so the office can answer a support call about a blocked or a silent day. See [Attendance on the Sales Dashboard](/docs/sales/attendance).
+
+## Settings
+
+<SettingsTable keys={["mbos.devices.onePerPerson", "mbos.sync.offlineLoginValidityDays", "mbos.sync.accessTokenMinutes", "mbos.devices.appLockGraceSeconds", "mbos.location.startOfDayGate", "mbos.location.trackingSetupRemindDays", "mbos.sync.currentAppVersion"]} />
+
+## Where the code and the intent disagree today
+
+- The login route's header describes "five checks"; the code runs four account checks, then device binding, then treats loading the book as the fifth (`src/app/api/mbos/auth/login/route.ts`, `mbos-service.ts` `runLoginChecks`).
+- `unknown_user` is still a step the phone understands, but the server no longer sends it for a sign-in — an unknown number answers `bad_password` with the shared sentence (`mbos-service.ts` `runLoginChecks`).
