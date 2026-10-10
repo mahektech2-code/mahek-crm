@@ -24,6 +24,12 @@
  *             slugs them, for the "On this page" rail.
  *   search    each section's heading and plain text, for ⌘K.
  *
+ * And a second file, `ask.json`, for "Ask the docs": every section's FULL text
+ * (search's is cut at 2,400 characters because it ships to every browser), with
+ * each `<Setting k="…"/>` kept as `{setting:…}` so the assistant knows which
+ * setting a sentence quotes and can read its live value. It is read by the
+ * server alone and never sent to a browser.
+ *
  * Settings are NOT read here. A setting's value is a fact about the database a
  * deployment is connected to, not about the source, and the docs read it live
  * (`<Setting k="…"/>`) so prod quotes prod.
@@ -37,6 +43,7 @@ import { codeToHtml } from "shiki";
 const ROOT = process.cwd();
 const DOCS = join(ROOT, "src/docs");
 const OUT = join(DOCS, "_generated/index.json");
+const ASK_OUT = join(DOCS, "_generated/ask.json");
 const verify = process.argv.includes("--verify");
 
 function walk(dir) {
@@ -143,10 +150,19 @@ function plain(md) {
     .trim();
 }
 
+/** What the assistant reads: `plain`, keeping which setting and which code a sentence names. */
+function plainForAsk(md) {
+  return plain(
+    md
+      .replace(/<Setting\b[^>]*?\bk="([^"]+)"[^>]*\/>/g, " {setting:$1} ")
+      .replace(/<Code\b[^>]*?\bfile="([^"]+)"[^>]*?\bsymbol="([^"]+)"[^>]*\/>/g, " (code: $1 › $2) "),
+  );
+}
+
 function sections(body) {
   const slugger = new GithubSlugger();
   const toc = [];
-  const out = [{ heading: null, id: null, text: [] }];
+  const out = [{ heading: null, id: null, depth: 1, text: [] }];
   let fenced = false;
   for (const line of body.split("\n")) {
     if (line.startsWith("```")) fenced = !fenced;
@@ -155,12 +171,15 @@ function sections(body) {
       const text = h[2].replace(/[`*_]/g, "");
       const id = slugger.slug(text);
       toc.push({ depth: h[1].length, text, id });
-      out.push({ heading: text, id, text: [] });
+      out.push({ heading: text, id, depth: h[1].length, text: [] });
     } else {
       out[out.length - 1].text.push(line);
     }
   }
-  return { toc, sections: out.map((s) => ({ ...s, text: plain(s.text.join("\n")).slice(0, 2400) })) };
+  return {
+    toc,
+    sections: out.map((s) => ({ ...s, ask: plainForAsk(s.text.join("\n")), text: plain(s.text.join("\n")).slice(0, 2400) })),
+  };
 }
 
 /* ------------------------------------------------------------------- run */
@@ -169,6 +188,7 @@ const files = walk(DOCS).sort();
 const excerpts = {};
 const toc = {};
 const search = [];
+const ask = [];
 const failures = [];
 
 for (const path of files) {
@@ -202,6 +222,7 @@ for (const path of files) {
   for (const s of parsed.sections) {
     if (!s.text && !s.heading) continue;
     search.push({ app, slug, tab: tab ?? null, heading: s.heading, id: s.id, text: s.text });
+    if (s.ask) ask.push({ app, slug, tab: tab ?? null, heading: s.heading, id: s.id, text: s.ask });
   }
 }
 
@@ -217,5 +238,6 @@ if (verify) {
 } else {
   mkdirSync(dirname(OUT), { recursive: true });
   writeFileSync(OUT, next);
+  writeFileSync(ASK_OUT, JSON.stringify({ sections: ask }) + "\n");
   console.log(`docs-index: wrote ${Object.keys(excerpts).length} excerpts, ${files.length} pages.`);
 }

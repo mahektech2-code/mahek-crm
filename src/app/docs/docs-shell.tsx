@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { cx } from "@/components/ui/primitives";
 import { AppFrame } from "@/components/shell/app-frame";
@@ -10,15 +9,19 @@ import { Icon } from "@/components/shell/icons";
 import { SignOutButton } from "@/components/shell/sign-out-button";
 import { FeedbackButton } from "@/components/shell/feedback-button";
 import type { AppDefinition } from "@/lib/apps";
-import { DOC_APPS, DOC_TABS, pageHref, type DocTab } from "@/docs/registry";
+import { SalesIcon } from "@/components/console/icons";
+import { DOC_TABS, docApp, pageHref, type DocTab } from "@/docs/registry";
+import { DocsSidebar } from "./docs-sidebar";
+import { AskPanel, type AskPlace } from "./ask-panel";
 
 /* ---------------------------------------------------------------------------
  * The Documentation app's shell: the suite's frame and header, a sidebar that
  * is the table of contents, and ⌘K search across every page.
  *
- * The sidebar lists EVERY page, written or not. A page still to be written is
- * drawn muted with a dot, not hidden — a missing entry reads as "this screen
- * has no documentation and never will", and a muted one reads as what it is.
+ * The sidebar is one app at a time — see `docs-sidebar.tsx`. "Ask the docs"
+ * is docked on the right (`ask-panel.tsx`) and is told which page the reader
+ * is on, so a question that does not name an app is read as being about the
+ * one they are reading. ⌘K hands a question it cannot match to the panel.
  * ------------------------------------------------------------------------- */
 
 export type SearchEntry = {
@@ -45,6 +48,8 @@ export function DocsShell({
   const pathname = usePathname();
   const [collapsed, setCollapsed] = React.useState(false);
   const [searching, setSearching] = React.useState(false);
+  const [asking, setAsking] = React.useState(false);
+  const [askRequest, setAskRequest] = React.useState<{ id: number; text: string } | null>(null);
 
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -57,7 +62,13 @@ export function DocsShell({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const [, , currentApp, currentSlug] = pathname.split("/");
+  const [, , currentApp, currentSlug, currentTab] = pathname.split("/");
+  const place: AskPlace =
+    currentApp && docApp(currentApp) ? { app: currentApp, slug: currentSlug ?? null, tab: currentTab ?? null } : null;
+  const askAbout = (text: string) => {
+    setAsking(true);
+    setAskRequest({ id: Date.now(), text });
+  };
 
   return (
     <AppFrame
@@ -81,6 +92,18 @@ export function DocsShell({
             <kbd className="rounded-[3px] border border-line bg-surface px-1.5 font-mono text-[11px]">⌘K</kbd>
           </button>
           <span className="flex-1" />
+          <button
+            type="button"
+            onClick={() => setAsking((a) => !a)}
+            aria-pressed={asking}
+            className={cx(
+              "inline-flex h-8 flex-none cursor-pointer items-center gap-[7px] rounded-[4px] border border-brand-softer px-3 text-[13px] font-medium text-[#5223E0] transition-colors duration-100 hover:bg-brand-softer",
+              asking ? "bg-brand-softer" : "bg-brand-soft",
+            )}
+          >
+            <SalesIcon name="spark" size={14} />
+            Ask the docs
+          </button>
           <FeedbackButton />
           <span className="mx-1 h-6 w-px flex-none bg-divider" />
           <div className="flex flex-none items-center gap-2">
@@ -99,70 +122,26 @@ export function DocsShell({
         <aside
           className={cx(
             "flex flex-none flex-col border-r border-line bg-surface transition-[width] duration-150",
-            collapsed ? "w-0 overflow-hidden border-r-0" : "w-[clamp(220px,18vw,268px)]",
+            collapsed ? "w-0 overflow-hidden border-r-0" : "w-[clamp(232px,18vw,280px)]",
           )}
         >
-          <nav aria-label="Documentation" className="flex-1 overflow-y-auto px-2 pt-3 pb-6">
-            <Link
-              href="/docs"
-              className={cx(
-                "mb-3 flex h-8 items-center gap-2 rounded-[4px] px-2.5 text-[13px] no-underline hover:bg-canvas hover:no-underline",
-                pathname === "/docs" ? "bg-brand-soft font-medium text-brand-hover" : "text-body",
-              )}
-            >
-              <Icon name="book" size={16} />
-              All apps
-            </Link>
-            {DOC_APPS.map((app) => (
-              <div key={app.app} className="mb-4">
-                <Link
-                  href={`/docs/${app.app}`}
-                  className={cx(
-                    "flex items-center gap-2 rounded-[4px] px-2.5 py-1.5 text-[13px] font-semibold no-underline hover:bg-canvas hover:no-underline",
-                    currentApp === app.app && !currentSlug ? "text-brand-hover" : "text-ink",
-                  )}
-                >
-                  {app.title}
-                </Link>
-                {app.groups.map((group) => {
-                  const pages = app.pages.filter((p) => p.group === group);
-                  if (!pages.length) return null;
-                  return (
-                    <div key={group} className="mt-2">
-                      <div className="px-2.5 pb-1 text-[10px] font-semibold tracking-[0.07em] text-faint uppercase">{group}</div>
-                      {pages.map((p) => {
-                        const active = currentApp === app.app && currentSlug === p.slug;
-                        const written = p.written.length > 0;
-                        return (
-                          <Link
-                            key={p.slug}
-                            href={pageHref(app.app, p.slug)}
-                            aria-current={active ? "page" : undefined}
-                            className={cx(
-                              "relative flex h-7 items-center gap-2 rounded-[4px] border-l-2 pr-2 pl-2.5 text-[13px] no-underline hover:no-underline",
-                              active
-                                ? "border-l-brand bg-brand-soft font-medium text-brand-hover"
-                                : cx("border-l-transparent hover:bg-canvas", written ? "text-body" : "text-faint"),
-                            )}
-                          >
-                            <span className="min-w-0 flex-1 truncate">{p.title}</span>
-                            {!written ? (
-                              <span title="Not written yet" className="h-1.5 w-1.5 flex-none rounded-full bg-line-strong" />
-                            ) : null}
-                          </Link>
-                        );
-                      })}
-                    </div>
-                  );
-                })}
-              </div>
-            ))}
-          </nav>
+          <DocsSidebar pathname={pathname} />
         </aside>
       }
     >
-      {children}
-      {searching ? <SearchDialog entries={search} onClose={() => setSearching(false)} /> : null}
+      {/* The page moves aside for the docked panel rather than sitting under it. */}
+      <div className={cx(asking && "pr-[min(440px,calc(100vw-48px))]")}>{children}</div>
+      {asking ? (
+        <AskPanel
+          place={place}
+          request={askRequest}
+          onClose={() => {
+            setAsking(false);
+            setAskRequest(null);
+          }}
+        />
+      ) : null}
+      {searching ? <SearchDialog entries={search} onClose={() => setSearching(false)} onAsk={askAbout} /> : null}
     </AppFrame>
   );
 }
@@ -191,7 +170,16 @@ function snippet(text: string, words: string[]): string {
   return (at > 0 ? "…" : "") + text.slice(at, at + 150) + (at + 150 < text.length ? "…" : "");
 }
 
-function SearchDialog({ entries, onClose }: { entries: SearchEntry[]; onClose: () => void }) {
+function SearchDialog({
+  entries,
+  onClose,
+  onAsk,
+}: {
+  entries: SearchEntry[];
+  onClose: () => void;
+  /** Hand the typed words to "Ask the docs" as a question. */
+  onAsk: (question: string) => void;
+}) {
   const router = useRouter();
   const [q, setQ] = React.useState("");
   const [cursor, setCursor] = React.useState(0);
@@ -205,6 +193,10 @@ function SearchDialog({ entries, onClose }: { entries: SearchEntry[]; onClose: (
         .map((r) => r.e)
     : [];
 
+  const askIt = () => {
+    onClose();
+    onAsk(q.trim());
+  };
   const go = (e: SearchEntry) => {
     const href = pageHref(e.app, e.slug, (e.tab ?? undefined) as DocTab | undefined) + (e.id ? `#${e.id}` : "");
     onClose();
@@ -227,13 +219,16 @@ function SearchDialog({ entries, onClose }: { entries: SearchEntry[]; onClose: (
               if (e.key === "Escape") onClose();
               if (e.key === "ArrowDown") {
                 e.preventDefault();
-                setCursor((c) => Math.min(c + 1, results.length - 1));
+                setCursor((c) => Math.min(c + 1, results.length));
               }
               if (e.key === "ArrowUp") {
                 e.preventDefault();
                 setCursor((c) => Math.max(c - 1, 0));
               }
-              if (e.key === "Enter" && results[cursor]) go(results[cursor]);
+              if (e.key === "Enter") {
+                if (results[cursor]) go(results[cursor]);
+                else if (q.trim()) askIt();
+              }
             }}
             placeholder="Why is a customer not on my Call Log?"
             className="h-12 flex-1 bg-transparent text-[15px] text-ink outline-none placeholder:text-faint"
@@ -244,7 +239,7 @@ function SearchDialog({ entries, onClose }: { entries: SearchEntry[]; onClose: (
           {words.length === 0 ? (
             <p className="px-4 py-6 text-center text-[13px] text-muted">Type a screen, a rule or a question.</p>
           ) : results.length === 0 ? (
-            <p className="px-4 py-6 text-center text-[13px] text-muted">Nothing in the written pages matches that yet.</p>
+            <p className="px-4 pt-6 pb-3 text-center text-[13px] text-muted">No page title or heading matches that.</p>
           ) : (
             results.map((e, i) => (
               <button
@@ -263,6 +258,25 @@ function SearchDialog({ entries, onClose }: { entries: SearchEntry[]; onClose: (
               </button>
             ))
           )}
+          {words.length ? (
+            <button
+              type="button"
+              onMouseEnter={() => setCursor(results.length)}
+              onClick={askIt}
+              className={cx(
+                "flex w-full cursor-pointer items-center gap-2 border-t border-divider px-4 py-3 text-left text-[13px]",
+                cursor === results.length && "bg-brand-soft",
+              )}
+            >
+              <span className="flex text-[#5223E0]">
+                <SalesIcon name="spark" size={14} />
+              </span>
+              <span className="min-w-0 flex-1 truncate text-ink">
+                Ask the docs: <span className="font-medium">“{q.trim()}”</span>
+              </span>
+              <span className="text-[11px] text-muted">Answered from every page</span>
+            </button>
+          ) : null}
         </div>
       </div>
     </div>

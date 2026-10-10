@@ -8278,6 +8278,33 @@ and use placeholders — "Customer A" — never seed or production names.
 A `url` that is not a web path ("MBOS · Pay") draws a handset screen in a phone
 frame instead of a browser window.
 
+**THE SIDEBAR IS ONE APP AT A TIME.** It listed every app's every page down
+one column, so a reader could not tell from it which app they were in. Now the
+front page's sidebar is the list of apps; inside an app a switcher names it and
+opens onto the others, and below it are only that app's sections, folding,
+with the reader's own section open and the page's tabs under it, plus a filter
+over the app's page names (`app/docs/docs-sidebar.tsx`). Each `DocApp` carries
+an `icon` for it.
+
+**ASK THE DOCS ANSWERS FROM THE PAGES, WITH LINKS, OR SAYS IT CANNOT.** The
+header's "Ask the docs" docks a chat on the right (`app/docs/ask-panel.tsx`) —
+docked rather than modal, so following a citation keeps the conversation — and
+⌘K offers any typed words to it. `/api/docs/ask` (behind the `docs` grant)
+streams `askDocsStream` (`services/docs-ask-service.ts`): the model is given
+the contents, a first search already run, and three tools — `search_docs` and
+`read_section` over `_generated/ask.json` (every section's FULL text, written
+by `docs-index.mjs` beside the search index and never sent to a browser), and
+`read_setting`, which reads the live value of a setting some page names, so an
+answer quotes this deployment's number exactly as the page would. Ranking is
+`lib/docs-ask/retrieve.ts`, pure BM25 with the page title and heading counted
+again, nudged towards the page the reader is on. "Search in" above the box
+asks ONE app's documentation or all of it: it starts on the app being read and
+follows the reader until they pick, and a one-app question is held to that
+app's sections in the first search and in both tools, not merely asked nicely.
+It is OpenAI only, on
+`openai.apiKey`, and the `docsAsk.*` settings sit on Admin Console → Settings →
+AI assistants.
+
 **A page describes the code as it stands.** Where the code and the intent
 disagree, the How it works and Developer tabs say so under "Where the code and
 the intent disagree today", rather than documenting the intent as if it shipped.
