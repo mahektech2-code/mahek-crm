@@ -38,6 +38,12 @@ import {
  * would. Only settings some page names may be read: the panel answers
  * questions about the docs, and the docs already show those.
  *
+ * IT ANSWERS WITH PICTURES WHERE A PICTURE IS CLEARER: a Mermaid flowchart,
+ * a wireframe in the pages' own `<Wireframe>` markup, a table, or an SVG
+ * image, as fenced blocks the panel draws. The index carries the pages' own
+ * diagrams and wireframes as source, so the usual case is the page's own
+ * drawing, trimmed, rather than one the model made up.
+ *
  * IT CITES OR IT SAYS IT DOES NOT KNOW. Every claim carries a link to the
  * section it came from, and a question the pages do not cover is answered
  * with exactly that, rather than with what the model believes about software
@@ -97,7 +103,16 @@ How to answer:
 - Short and direct: the answer first, then only the detail that matters. Plain words, the screen's own names. Use short bullet lists for steps.
 - Cite every fact with a markdown link to the section it came from, using the exact "link" you were given, e.g. [Call Log › Why a customer is missing](/docs/crm/call-log#why-a-customer-is-missing). Never invent a link.
 - If the documentation does not cover it, say so plainly in one sentence and point to the nearest page that does exist. Never answer from general knowledge, and never describe a screen or a rule the documentation does not describe.
-- Write in the language of the question.`;
+- Write in the language of the question.
+
+Showing, not only telling — pick whatever answers best, and always say it in words as well:
+- A FLOWCHART, sequence or state diagram for a process, a decision or who-does-what-when: a fenced block \`\`\`mermaid … \`\`\`. Mermaid syntax: "flowchart TD", "sequenceDiagram" or "stateDiagram-v2"; put every node label in double quotes; use <br/> for a line break; never use a semicolon. If the documentation already has a diagram of it (you will see \`\`\`mermaid blocks in what you read), reuse it — trimmed to what the question needs — rather than drawing a new one.
+- A WIREFRAME to show where something is on a screen: a fenced block \`\`\`wireframe … \`\`\` holding the same markup the pages use. Copy and trim the page's own wireframe where one exists (you will see \`\`\`wireframe blocks). The only tags are:
+  <Wireframe url="/crm/call-log" nav={["Dashboard", "#Group heading", "Call Log"]} active="Call Log" caption="…"> (a url not starting with "/" draws a phone screen, e.g. url="MBOS · Pay"),
+  <WfBar>, <WfSpacer />, <WfTitle sub="…">, <WfText muted>, <WfButton primary>, <WfInput placeholder="…" wide />, <WfTabs items={["A","B"]} active="A" />, <WfPill tone="neutral|brand|success|warn|danger|info">, <WfBlock label="…" h={40} />, <WfCard title="…" tone="warn|brand">, <WfTable columns={["…"]} rows={[["…"]]} highlight={0} /> (cells are plain strings), <WfPanel title="…" side>, <WfField label="…">, <Hotspot n={1} />, <Hotspots items={["what 1 is", "what 2 is"]} /> (after the Wireframe). Props are strings in quotes or JSON in braces — no expressions, no other HTML. Use placeholder names like "Customer A", never a real person or business.
+- A TABLE (markdown) to compare things side by side.
+- An IMAGE only when none of those fits, e.g. a simple illustration: a fenced block \`\`\`svg … \`\`\` holding one self-contained <svg> with a viewBox, at most 640 wide, in the brand's purple (#6835fb) and greys, with no scripts, links or external references.
+- Plain text alone when the answer is a sentence. A picture is for when it is clearer than words, not decoration; one or two per answer at most.`;
 
 function hitLine(h: SearchHit, query: string, chars: number): string {
   const s = h.section;
@@ -220,7 +235,7 @@ export async function askDocsStream(
             if (scope && s.app !== scope.app) return { error: `That section is outside the ${scope.title} documentation the reader asked about.` };
             emit({ type: "step", text: `Read ${pageTitle(s)}${s.heading ? ` › ${s.heading}` : ""}` });
             cite(s);
-            return `ref: ${refOf(s)}\nlink: ${hrefOf(s, firstTab(s))}\n\n${s.text.slice(0, 12000)}`;
+            return `ref: ${refOf(s)}\nlink: ${hrefOf(s, firstTab(s))}\n\n${s.text.slice(0, 16000)}`;
           },
         }),
         read_setting: tool({

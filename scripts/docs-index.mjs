@@ -27,7 +27,8 @@
  * And a second file, `ask.json`, for "Ask the docs": every section's FULL text
  * (search's is cut at 2,400 characters because it ships to every browser), with
  * each `<Setting k="…"/>` kept as `{setting:…}` so the assistant knows which
- * setting a sentence quotes and can read its live value. It is read by the
+ * setting a sentence quotes and can read its live value, and each diagram and
+ * wireframe kept as its source so an answer can draw them. It is read by the
  * server alone and never sent to a browser.
  *
  * Settings are NOT read here. A setting's value is a fact about the database a
@@ -150,13 +151,27 @@ function plain(md) {
     .trim();
 }
 
-/** What the assistant reads: `plain`, keeping which setting and which code a sentence names. */
+/**
+ * What the assistant reads: `plain`, keeping which setting and which code a
+ * sentence names — and the page's own DIAGRAMS and WIREFRAMES as source, so an
+ * answer can draw the same flowchart or screen the page draws rather than
+ * inventing one. They are lifted out before `plain` (which folds whitespace,
+ * and Mermaid needs its line breaks) and put back after.
+ */
 function plainForAsk(md) {
-  return plain(
-    md
-      .replace(/<Setting\b[^>]*?\bk="([^"]+)"[^>]*\/>/g, " {setting:$1} ")
-      .replace(/<Code\b[^>]*?\bfile="([^"]+)"[^>]*?\bsymbol="([^"]+)"[^>]*\/>/g, " (code: $1 › $2) "),
-  );
+  const figures = [];
+  const hold = (text) => `\u27E6FIG${figures.push(text) - 1}\u27E7`;
+  const lifted = md
+    .replace(/<Flow\b([^>]*?)\bchart=\{`([\s\S]*?)`\}([^>]*?)\/>/g, (_, a, chart, b) => {
+      const caption = attr(a + b, "caption");
+      return hold(`\n\`\`\`mermaid\n${chart.trim()}\n\`\`\`${caption ? `\n(diagram: ${caption})` : ""}\n`);
+    })
+    .replace(/<Wireframe\b[\s\S]*?<\/Wireframe>/g, (w) =>
+      hold(`\n\`\`\`wireframe\n${w.replace(/^[ \t]+/gm, "").replace(/\{\/\*[\s\S]*?\*\/\}/g, "")}\n\`\`\`\n`),
+    )
+    .replace(/<Setting\b[^>]*?\bk="([^"]+)"[^>]*\/>/g, " {setting:$1} ")
+    .replace(/<Code\b[^>]*?\bfile="([^"]+)"[^>]*?\bsymbol="([^"]+)"[^>]*\/>/g, " (code: $1 › $2) ");
+  return plain(lifted).replace(/\u27E6FIG(\d+)\u27E7/g, (_, n) => figures[Number(n)]);
 }
 
 function sections(body) {

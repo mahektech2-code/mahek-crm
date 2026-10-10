@@ -49,6 +49,7 @@ export function DocsShell({
   const [collapsed, setCollapsed] = React.useState(false);
   const [searching, setSearching] = React.useState(false);
   const [asking, setAsking] = React.useState(false);
+  const [wide, setWide] = React.useState(false);
   const [askRequest, setAskRequest] = React.useState<{ id: number; text: string } | null>(null);
 
   React.useEffect(() => {
@@ -130,11 +131,13 @@ export function DocsShell({
       }
     >
       {/* The page moves aside for the docked panel rather than sitting under it. */}
-      <div className={cx(asking && "pr-[min(440px,calc(100vw-48px))]")}>{children}</div>
+      <div className={cx(asking && (wide ? "pr-[min(760px,calc(100vw-48px))]" : "pr-[min(440px,calc(100vw-48px))]"))}>{children}</div>
       {asking ? (
         <AskPanel
           place={place}
           request={askRequest}
+          wide={wide}
+          onWide={setWide}
           onClose={() => {
             setAsking(false);
             setAskRequest(null);

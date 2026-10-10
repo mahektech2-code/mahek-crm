@@ -5,6 +5,7 @@ import Link from "next/link";
 import { cx } from "@/components/ui/primitives";
 import { SalesIcon } from "@/components/console/icons";
 import { DOC_APPS, docApp } from "@/docs/registry";
+import { AnswerBody } from "./answer-blocks";
 
 /* ---------------------------------------------------------------------------
  * "Ask the docs" — the Documentation app's chat, docked on the right.
@@ -17,6 +18,9 @@ import { DOC_APPS, docApp } from "@/docs/registry";
  *
  * `/api/docs/ask` streams one JSON line per event: each lookup ("Searched for
  * …", "Read Call Log › The quiet window"), each section read, then the words.
+ * An answer may be a picture as well as words — a flowchart, a wireframe, a
+ * table or an image — drawn by `answer-blocks.tsx`; "Wider" gives one room.
+ *
  * The thread is a conversation while the panel is open, so "and on the
  * handset?" means something, and it is NOT kept: closing clears it.
  *
@@ -62,9 +66,14 @@ const CHIPS: Record<string, string[]> = {
 export function AskPanel({
   place,
   request,
+  wide,
+  onWide,
   onClose,
 }: {
   place: AskPlace;
+  /** Wide gives a diagram or a wireframe room; the shell moves the page aside by the same amount. */
+  wide: boolean;
+  onWide: (wide: boolean) => void;
   /** A question handed over from elsewhere (⌘K) — asked as soon as it arrives. */
   request: { id: number; text: string } | null;
   onClose: () => void;
@@ -174,7 +183,11 @@ export function AskPanel({
   return (
     <aside
       aria-label="Ask the docs"
-      className="animate-fade-in fixed top-14 right-0 bottom-0 z-40 flex w-[min(440px,calc(100vw-48px))] flex-col border-l border-line bg-surface shadow-[-8px_0_24px_rgba(22,22,22,0.06)] print:hidden"
+      className={cx(
+        "animate-fade-in fixed top-14 right-0 bottom-0 z-40 flex flex-col transition-[width] duration-150",
+        "border-l border-line bg-surface shadow-[-8px_0_24px_rgba(22,22,22,0.06)] print:hidden",
+        wide ? "w-[min(760px,calc(100vw-48px))]" : "w-[min(440px,calc(100vw-48px))]",
+      )}
     >
       <div className="flex flex-none items-start justify-between gap-3 border-b border-line px-4 py-3">
         <div className="min-w-0">
@@ -202,6 +215,14 @@ export function AskPanel({
               New chat
             </button>
           ) : null}
+          <button
+            type="button"
+            onClick={() => onWide(!wide)}
+            className="h-7 cursor-pointer rounded-[4px] px-2 text-[12px] text-muted hover:bg-canvas hover:text-ink"
+            title={wide ? "Make the panel narrower" : "Make the panel wider, for diagrams and wireframes"}
+          >
+            {wide ? "Narrower" : "Wider"}
+          </button>
           <button
             type="button"
             onClick={onClose}
@@ -340,7 +361,7 @@ function AiAnswer({ m }: { m: Extract<Message, { role: "ai" }> }) {
 
       {m.text ? (
         <div className="text-[13px] leading-[20px] text-ink">
-          <Markdown text={m.text} />
+          <AnswerBody text={m.text} />
           {writing ? <span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse bg-brand-softer align-middle" /> : null}
         </div>
       ) : null}
@@ -374,100 +395,4 @@ function AiAnswer({ m }: { m: Extract<Message, { role: "ai" }> }) {
       ) : null}
     </div>
   );
-}
-
-/* --------------------------------------------------------------- markdown */
-
-/**
- * The little markdown an answer uses: paragraphs, bullet and numbered lists,
- * a heading line, **bold**, `code` and links. A link into the documentation
- * is followed in the app; any other link is shown as its words, because the
- * model is told to cite the docs and nothing else.
- */
-function Markdown({ text }: { text: string }) {
-  const blocks: React.ReactNode[] = [];
-  let list: { ordered: boolean; items: string[] } | null = null;
-  const flush = () => {
-    if (!list) return;
-    const items = list.items.map((it, i) => (
-      <li key={i} className="mb-0.5">
-        <Inline text={it} />
-      </li>
-    ));
-    blocks.push(
-      list.ordered ? (
-        <ol key={blocks.length} className="mb-2 list-decimal pl-5">
-          {items}
-        </ol>
-      ) : (
-        <ul key={blocks.length} className="mb-2 list-disc pl-5">
-          {items}
-        </ul>
-      ),
-    );
-    list = null;
-  };
-  for (const raw of text.split("\n")) {
-    const line = raw.trimEnd();
-    const bullet = /^\s*[-*•]\s+(.*)$/.exec(line);
-    const numbered = /^\s*\d+[.)]\s+(.*)$/.exec(line);
-    if (bullet || numbered) {
-      const ordered = !!numbered;
-      if (list && list.ordered !== ordered) flush();
-      list ??= { ordered, items: [] };
-      list.items.push((bullet ?? numbered)![1]);
-      continue;
-    }
-    flush();
-    if (!line.trim()) continue;
-    const heading = /^#{1,4}\s+(.*)$/.exec(line);
-    blocks.push(
-      heading ? (
-        <p key={blocks.length} className="mt-2 mb-1 font-semibold text-heading">
-          <Inline text={heading[1]} />
-        </p>
-      ) : (
-        <p key={blocks.length} className="mb-2">
-          <Inline text={line} />
-        </p>
-      ),
-    );
-  }
-  flush();
-  return <>{blocks}</>;
-}
-
-function Inline({ text }: { text: string }) {
-  const parts: React.ReactNode[] = [];
-  const re = /\[([^\]]+)\]\(([^)\s]+)\)|\*\*([^*]+)\*\*|`([^`]+)`/g;
-  let at = 0;
-  for (const m of text.matchAll(re)) {
-    if (m.index! > at) parts.push(text.slice(at, m.index));
-    if (m[1] !== undefined) {
-      parts.push(
-        m[2].startsWith("/docs/") ? (
-          <Link key={m.index} href={m[2]} className={cx("font-medium text-brand-hover underline decoration-brand-softer underline-offset-2")}>
-            {m[1]}
-          </Link>
-        ) : (
-          m[1]
-        ),
-      );
-    } else if (m[3] !== undefined) {
-      parts.push(
-        <strong key={m.index} className="font-semibold">
-          {m[3]}
-        </strong>,
-      );
-    } else {
-      parts.push(
-        <code key={m.index} className="rounded-[3px] bg-canvas px-1 font-mono text-[12px]">
-          {m[4]}
-        </code>,
-      );
-    }
-    at = m.index! + m[0].length;
-  }
-  if (at < text.length) parts.push(text.slice(at));
-  return <>{parts}</>;
 }
