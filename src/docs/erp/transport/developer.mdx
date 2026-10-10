@@ -56,52 +56,50 @@ The `update` action still writes `track_status` (`Track` / `Don't Track`) from `
 
 <Code file="src/lib/erp/ai-photos.ts" symbol="applyLr" />
 
+## The logistics flow
+
+<Code file="src/lib/erp/engines/logistics.ts" symbol="phaseOf" />
+
+<Code file="src/lib/erp/engines/logistics.ts" symbol="rankForLr" collapsed />
+
+<Code file="src/lib/erp/engines/logistics.ts" symbol="attachRefusal" />
+
+<Code file="src/lib/erp/engines/logistics.ts" symbol="customerMessage" collapsed />
+
+<Code file="src/lib/erp/logistics.ts" symbol="attachLr" collapsed />
+
+<Code file="src/lib/erp/logistics.ts" symbol="notifyCustomers" collapsed />
+
+- **Page:** `src/app/erp/transport/page.tsx` (a static route ahead of `[slug]`), tabs in `src/app/erp/transport/parts/`, one consignment at `/erp/transport/[id]`, the upload at `/erp/transport/upload`, the public link at `/track/[token]`.
+- **Writes:** `src/lib/actions/erp-logistics.ts`, each through `requireErpWrite("transport")`; the upload also accepts the Dispatch desk.
+- **Wati ticks:** `applyWatiEvent` hands an `etmsg_` id to `applyLogisticsWatiEvent`.
+
 ## Tables
 
 <DbTable name="erp_transports" note={{
-  id: "The id of the first order line verified for the bill.",
   order_no: "Unique: one record per bill.",
-  bill_date: "The dispatch date the first line was verified with.",
-  payment_type: "The billing party's freight term at dispatch (Paid, To pay…).",
-  extra_expense_paise: "Copied from the line on dispatch, or by setExtra when it is entered later.",
-  track_status: "Track or Don't Track — written, never read; onTheRoad derives it.",
-  material_stage: "One of MATERIAL_STAGES.",
-  reminder_date: "Flags the row on and after this date until the stage is Close - Received to Party.",
+  material_stage: "One of STAGES in engines/logistics.ts; 'At transport' added by 0250.",
+  lr_id: "The uploaded LR it travels under; lr_no mirrors its number.",
+  reminder_date: "The next call to the transporter.",
+  track_token: "The customer's tracking link.",
 }} />
+
+<DbTable name="erp_lrs" />
+
+<DbTable name="erp_transport_events" />
+
+<DbTable name="erp_transport_messages" />
+
+<DbTable name="erp_transporters" />
 
 ## Access
 
-- **Module:** <ModuleRef k="erp.transport" />; its four tabs come with it.
-- **Powers:** only `viewSalesAmounts`, for the Monthly sales column.
-- Writes go through `requireErpWrite(<tab key>)`.
+- **Module:** <ModuleRef k="erp.transport" />; every tab comes with it. Upload LRs also opens for <ModuleRef k="erp.dispatch" />.
+- **Powers:** only `viewSalesAmounts`, for the Monthly sales column of All bills.
 
 ## Tests that pin this
 
 | Suite | File | What it pins |
 |---|---|---|
-| `npm run test:integration` | `src/lib/erp/erp-logistics.test.ts` — `dispatch opens the transport record (§18)` | One record per bill; an LR puts a consignment on the road and takes it off Pending LR, and reaching the party takes it off the road; paid freight lists a line until its extra expense is entered, and the transport record follows |
-| `npm run test:integration` | `src/lib/erp/erp-ai-reading.test.ts` — `LR and test photos (AI-8)` | An LR reading is checked against the bill's transporter, and saving records it |
-| `npm run test` | `src/lib/erp/engines/alerts.test.ts` | The alert rules, LR missing among them |
-
-## Changing it safely
-
-<Steps>
-<Step title="Open the record only from verify">
-A second writer of `erp_transports` would race the unique index and lose the copied figures.
-</Step>
-<Step title="Derive, do not store, where the goods are">
-Add a stage to `MATERIAL_STAGES`; keep `onTheRoad` the only reading of "on the road".
-</Step>
-<Step title="Sync the order book on anything the CRM shows">
-`syncBookOrders` is called on a stage change. Anything new that the book projects needs the same call.
-</Step>
-</Steps>
-
-## Known gaps, with file references
-
-| Gap | Where |
-|---|---|
-| The reminder flag is `today`, whose label is "Transferred today" | `screens/logistics.ts` `transportList` flags; `ui.ts` `FLAG.today` |
-| The `update` action does not refuse an LR number already on another bill; only `applyLr` does | `screens/logistics.ts` `update`; `ai-photos.ts` `applyLr` |
-| An LR recorded without a stage change, and every `applyLr`, skip `syncBookOrders` | `screens/logistics.ts` `update`; `ai-photos.ts` `applyLr` |
-| `track_status` is written and never read | `screens/logistics.ts` `update` |
+| `npm run test` | `src/lib/erp/engines/logistics.test.ts` | Phases, due words, LR suggestions, one LR one party, customer messages built only from facts |
+| `npm run test:integration` | `src/lib/erp/erp-logistics.test.ts` | The whole road: due, at the transporter, upload, attach, update, problem, delivered, reopen; what the customer is told and what the public link hides |

@@ -24,6 +24,7 @@ import {
   erpFgEntries,
   erpOrders,
   erpProductPacking,
+  erpTransporters,
   erpTransports,
   finishedGoods,
   productBrands,
@@ -34,6 +35,7 @@ import {
 import { setTestUser } from "@/lib/auth";
 import { erpContext } from "@/lib/erp/access";
 import { screenModule } from "@/lib/erp/screens";
+import * as L from "@/lib/erp/logistics";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const tag = randomUUID().slice(0, 6);
@@ -77,7 +79,7 @@ async function dispatch(date: string, qty: number, bill: string, dispatched: str
 before(async () => {
   await db.execute(sql`
     truncate users, customers, erp_customer_profiles, erp_orders, erp_batch_codes, erp_order_details, erp_fg_entries,
-             erp_pack_entries, erp_transports, erp_requests, erp_followups, erp_credits, erp_expenses, erp_videos,
+             erp_pack_entries, erp_transports, erp_lrs, erp_transport_events, erp_transport_messages, erp_transporters, erp_requests, erp_followups, erp_credits, erp_expenses, erp_videos,
              erp_user_powers, erp_godown_staff, erp_user_settings, audit_log restart identity cascade`);
   await db.execute(sql`update erp_series set last = 0`);
   admin = await makeUser("Kavita Admin", "admin");
@@ -112,21 +114,115 @@ describe("dispatch opens the transport record (§18)", () => {
     assert.equal(t.paymentType, "Paid");
   });
 
-  test("an LR puts a consignment on the road and takes it off Pending LR; reaching the party takes it off the road", async () => {
+  test("the bill opens with its boxes, its tracking link and the first line of its timeline", async () => {
+    const [t] = await db.select().from(erpTransports);
+    assert.equal(t.packages, 10, "ten loose cans are ten packages");
+    assert.equal(Number(t.litres), 10);
+    assert.match(t.trackToken ?? "", /^[a-z0-9]{20}$/);
+    const ev = await L.eventsFor([t.id]);
+    assert.deepEqual(ev.map((e) => e.kind), ["opened"]);
+    const [c] = await L.consignments({ ids: [t.id] });
+    assert.equal(c.phase, "toTransport");
+  });
+
+  test("the whole road: to the transporter, the LR uploaded and attached, tracked, a problem, delivered — the customer told at each step", async () => {
     const ctx = await as(admin);
     const [t] = await db.select().from(erpTransports);
-    assert.equal(t.materialStage, "Dispatched");
-    assert.ok((await mod("pendingLr").actions!.update(ctx, t.id, { stage: "In Transit" })).ok);
-    assert.equal((await mod("pendingLr").load(ctx)).rows.length, 1, "no LR yet");
-    assert.equal((await mod("trackLr").load(ctx)).rows.length, 0, "nothing to follow without an LR");
-    assert.ok((await mod("pendingLr").actions!.update(ctx, t.id, { lr: "LR-7781", stage: "In Transit" })).ok);
-    assert.equal((await mod("pendingLr").load(ctx)).rows.length, 0);
-    assert.equal((await mod("trackLr").load(ctx)).rows.length, 1);
-    const all = (await mod("transport").load(ctx)).rows[0];
-    assert.match(String(all.v.stage), /In Transit/);
-    assert.ok((await mod("trackLr").actions!.update(ctx, t.id, { lr: "LR-7781", stage: "Close - Received to Party" })).ok);
-    assert.equal((await mod("trackLr").load(ctx)).rows.length, 0);
-    assert.ok((await mod("trackLr").actions!.update(ctx, t.id, { lr: "LR-7781", stage: "In Transit" })).ok);
+    assert.ok((await L.setTransportDue(ctx, [t.id], "2026-08-03")).ok);
+    assert.ok((await L.markAtTransport(ctx, [t.id], { [t.id]: 1 })).ok);
+    let [c] = await L.consignments({ ids: [t.id] });
+    assert.equal(c.phase, "lrPending");
+    assert.equal(c.packages, 1, "the box count logistics corrected");
+    assert.equal(msg(await L.markAtTransport(ctx, [t.id])), "None of these is still on its way to the transporter.");
+
+    /* The dispatch team uploads two LRs at once; a number already on the desk is refused. */
+    const up = await L.uploadLrs(ctx, [{ lrNo: "lr-7781", lrDate: "2026-08-03", transporter: "VRL", destination: "Pune", packages: 1 }, { lrNo: "LR-9", transporter: "VRL" }]);
+    assert.ok(up.ok, msg(up));
+    assert.equal(msg(await L.uploadLrs(ctx, [{ lrNo: "LR-7781", transporter: "vrl" }])), "Row 1: LR LR-7781 of vrl is already uploaded");
+    assert.equal(msg(await L.uploadLrs(ctx, [{ lrNo: " " }])), "Row 1: the LR number is required");
+    const lrs = await L.uploadedLrs();
+    assert.equal(lrs.length, 2);
+    const lr = lrs.find((l) => l.lrNo === "LR-7781")!;
+    assert.equal(L.suggestBills(lr, await L.consignments())[0].id, t.id);
+    assert.ok((await L.voidLr(ctx, lrs.find((l) => l.lrNo === "LR-9")!.id, "duplicate photo")).ok);
+    assert.ok((await db.select().from(erpTransporters)).some((x) => x.name === "VRL"), "a transporter named on an upload joins the directory");
+
+    /* Logistics attaches it: the bill goes on the road and the party is told. */
+    const att = await L.attachLr(ctx, lr.id, [t.id], { expectedOn: "2026-08-06" });
+    assert.ok(att.ok, msg(att));
+    [c] = await L.consignments({ ids: [t.id] });
+    assert.equal(c.phase, "onRoad");
+    assert.equal(c.lrNo, "LR-7781");
+    assert.equal(c.stage, "In Transit");
+    assert.equal(c.expectedDeliveryOn, "2026-08-06");
+    assert.ok(c.nextCallOn, "the next call to the transporter is booked");
+    let out = await L.messages();
+    assert.equal(out.length, 1);
+    assert.equal(out[0].kind, "lr");
+    assert.equal(out[0].status, "to_send", "no Wati template is named, so it waits to be sent by hand");
+    assert.match(out[0].why ?? "", /No logistics template/);
+    assert.match(out[0].body, /LR no LR-7781/);
+    assert.match(out[0].body, /1 box\./);
+    assert.equal(out[0].phone, "919876500001");
+    assert.equal(msg(await L.attachLr(ctx, lr.id, [t.id], {})), "These bills are already under this LR.");
+    assert.ok((await L.markMessageSent(ctx, out[0].id)).ok);
+    assert.equal((await L.messages({ waitingOnly: true })).length, 0);
+
+    /* A call that moves nothing books the next one and tells nobody; a stage that moves is shared. */
+    assert.ok((await L.updateConsignment(ctx, [t.id], { note: "driver on leave" })).ok);
+    assert.equal((await L.messages()).length, 1);
+    assert.ok((await L.updateConsignment(ctx, [t.id], { stage: "Reached Destination Area", note: "at Pune godown" })).ok);
+    out = await L.messages();
+    assert.equal(out.length, 2);
+    assert.match(out[0].body, /has reached your area/);
+    assert.equal(msg(await L.updateConsignment(ctx, [t.id], { stage: "Close - Received to Party" })), "Pick where the goods are");
+
+    /* A problem, solved. */
+    assert.equal(msg(await L.raiseIssue(ctx, [t.id], { issue: "Other" })), "Say what the problem is");
+    assert.ok((await L.raiseIssue(ctx, [t.id], { issue: "Delayed", note: "lorry broke down", notify: false })).ok);
+    [c] = await L.consignments({ ids: [t.id] });
+    assert.equal(c.issue, "Delayed");
+    assert.ok((await L.clearIssue(ctx, [t.id], "repaired")).ok);
+
+    /* Delivered: closed, the party told, the book follows. */
+    assert.equal(msg(await L.markDelivered(ctx, [t.id], { date: "2026-08-01" })), `Order ${t.orderNo} left on 2026-08-02; it cannot arrive before that`);
+    assert.ok((await L.markDelivered(ctx, [t.id], { date: "2026-08-05", receivedBy: "Ramesh" })).ok);
+    [c] = await L.consignments({ ids: [t.id] });
+    assert.equal(c.phase, "delivered");
+    assert.equal(c.nextCallOn, null);
+    assert.match((await L.messages())[0].body, /received by Ramesh/);
+    assert.equal(msg(await L.detachLr(ctx, t.id, "wrong bill")), "A delivered bill keeps its LR.");
+
+    /* The customer's link names the steps and never a call note. */
+    const pub = await L.publicTracking(c.trackToken!);
+    assert.ok(pub);
+    assert.equal(pub.lrNo, "LR-7781");
+    assert.equal(pub.stage, "Close - Received to Party");
+    assert.ok(!JSON.stringify(pub).includes("driver on leave"));
+    assert.ok(!JSON.stringify(pub).includes("lorry broke down"));
+    assert.equal(await L.publicTracking("nope"), null);
+
+    /* Reopened by mistake: back on the road with a call due today, nobody messaged. */
+    assert.ok((await L.reopen(ctx, t.id, "party says short")).ok);
+    [c] = await L.consignments({ ids: [t.id] });
+    assert.equal(c.phase, "onRoad");
+    assert.ok((await L.detachLr(ctx, t.id, "wrong bill")).ok);
+    [c] = await L.consignments({ ids: [t.id] });
+    assert.equal(c.phase, "lrPending");
+    assert.equal((await L.uploadedLrs()).length, 1, "an LR left carrying nothing is back on the desk");
+    assert.ok((await L.attachLr(ctx, lr.id, [t.id], { notify: false })).ok);
+    assert.ok((await L.markDelivered(ctx, [t.id], { date: "2026-08-05", notify: false })).ok);
+  });
+
+  test("a customer who may not be messaged is recorded as skipped, with the reason", async () => {
+    const ctx = await as(admin);
+    await db.update(customers).set({ whatsappDnd: true }).where(eq(customers.id, "cus_shree"));
+    const [t] = await db.select().from(erpTransports);
+    await L.notifyCustomers(ctx, "stage", [t.id], null);
+    const [m] = await L.messages();
+    assert.equal(m.status, "skipped");
+    assert.match(m.why ?? "", /DND/);
+    await db.update(customers).set({ whatsappDnd: false }).where(eq(customers.id, "cus_shree"));
   });
 
   test("paid freight lists the line until its extra expense is entered, and the transport record follows", async () => {

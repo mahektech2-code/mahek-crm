@@ -1,0 +1,166 @@
+import Link from "next/link";
+import { notFound, redirect } from "next/navigation";
+import { erpContext } from "@/lib/erp/access";
+import { erpScreenBySlug } from "@/lib/erp/registry";
+import { screenModule } from "@/lib/erp/screens";
+import { getConfig } from "@/lib/config/store";
+import { consignments, messages, transporters, uploadedLrs } from "@/lib/erp/logistics";
+import { today as businessToday } from "@/lib/erp/screens/common";
+import { Button, cx } from "@/components/ui/primitives";
+import { ListScreen, type ListTab } from "../_ui/list-screen";
+import { Page } from "../_ui/page-head";
+import { LrDesk } from "./parts/lr-desk";
+import { Messages } from "./parts/messages";
+import { OnRoad } from "./parts/on-road";
+import { Delivered, Overview } from "./parts/overview";
+import { ToTransport } from "./parts/to-transport";
+import { Transporters } from "./parts/transporters";
+
+/**
+ * THE LOGISTICS DESK — the whole road from the factory gate to the party's
+ * door, one tab per step:
+ *
+ *   Today            the pipeline, the calls owed and what needs attention
+ *   To transporter   dispatched bills on their way to the transporter's godown
+ *   LR desk          LRs the dispatch team uploaded, attached to their bills
+ *   On the road      one card per LR: ring, update, report a problem, deliver
+ *   Delivered        closed, with how long it took
+ *   Customer messages every WhatsApp the flow wrote, and those to send by hand
+ *   Transporters     who to ring, and their tracking page
+ *   All bills / Paid freight   the registers, as lists
+ *
+ * The rules are `lib/erp/engines/logistics.ts`, the reads and writes
+ * `lib/erp/logistics.ts`. Holding the Transport screen opens every tab.
+ */
+export const dynamic = "force-dynamic";
+
+const BOARD = new Set(["transport", "toTransport", "pendingLr", "trackLr", "delivered", "lrMessages", "transporters"]);
+
+export default async function LogisticsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  const ctx = await erpContext();
+  if (!ctx.screens.has("transport")) redirect("/erp");
+  const raw = await searchParams;
+  const one = (k: string) => (typeof raw[k] === "string" ? (raw[k] as string) : undefined);
+  const screen = erpScreenBySlug("transport")!;
+  const views = screen.views ?? [];
+  const known = new Set(views.map((v) => v.key));
+  const view = one("view") && known.has(one("view")!) ? one("view")! : "transport";
+  const at = (k: string) => (k === views[0]?.key ? "/erp/transport" : `/erp/transport?view=${k}`);
+  const canWrite = !ctx.viewingAs;
+
+  /* The two registers are ordinary lists, drawn as every other ERP list is. */
+  if (!BOARD.has(view)) {
+    const mod = screenModule(view);
+    if (!mod) notFound();
+    const { spec, rows } = await mod.load(ctx);
+    const f = one("f");
+    const tabs: ListTab[] = views.map((v) => ({ key: v.key, label: v.label, href: at(v.key), active: v.key === view }));
+    return (
+      <ListScreen
+        key={`${view}|${f ?? ""}`}
+        initialNew={null}
+        spec={spec}
+        rows={rows}
+        label={screen.label}
+        sub={screen.sub}
+        tabs={tabs}
+        toggle={null}
+        initialOpen={one("open") ?? null}
+        filter={f ? { label: one("fl") ?? "Filtered", ids: f.split(",") } : null}
+        godowns={ctx.assignedGodowns.map((g) => ({ v: g.name, l: g.name }))}
+      />
+    );
+  }
+
+  const today = businessToday();
+  const cfg = await getConfig();
+  const [all, lrs, outbox, dir] = await Promise.all([
+    consignments(),
+    view === "pendingLr" || view === "transport" ? uploadedLrs() : Promise.resolve([]),
+    view === "lrMessages" || view === "transport" ? messages({ limit: view === "transport" ? 500 : 300 }) : Promise.resolve([]),
+    view === "transporters" || view === "pendingLr" ? transporters() : Promise.resolve([]),
+  ]);
+  /* A dashboard tile opens a tab narrowed to the bills it counted. */
+  const ids = one("f")?.split(",");
+  const rows = ids ? all.filter((c) => ids.includes(c.id)) : all;
+  const counts = {
+    toTransport: rows.filter((c) => c.phase === "toTransport").length,
+    pendingLr: rows.filter((c) => c.phase === "lrPending").length,
+    trackLr: new Set(rows.filter((c) => c.phase === "onRoad").map((c) => c.lrId ?? c.id)).size,
+    lrMessages: outbox.filter((m) => m.status === "to_send" || m.status === "failed").length,
+  } as Record<string, number>;
+  const waitingMessages = outbox.filter((m) => m.status === "to_send" || m.status === "failed").length;
+  const filter = one("filter");
+
+  return (
+    <Page
+      title={screen.label}
+      sub={screen.sub}
+      actions={
+        canWrite ? (
+          <Link href="/erp/transport/upload">
+            <Button variant="primary">Upload LRs</Button>
+          </Link>
+        ) : null
+      }
+    >
+      <nav className="-mt-2 mb-4 flex flex-wrap items-center gap-0 border-b border-line">
+        {views.map((v) => (
+          <Link
+            key={v.key}
+            href={at(v.key)}
+            className={cx("-mb-px border-b-2 px-3.5 py-2.5 text-sm whitespace-nowrap no-underline hover:no-underline", v.key === view ? "border-brand font-medium text-ink" : "border-transparent text-muted hover:text-body")}
+          >
+            {v.label}
+            {counts[v.key] ? <span className={cx("ml-1.5 rounded-full px-1.5 text-[11px]", v.key === "lrMessages" || v.key === "pendingLr" ? "bg-warn-soft text-warn-ink" : "bg-canvas text-muted")}>{counts[v.key]}</span> : null}
+          </Link>
+        ))}
+      </nav>
+      {ids ? (
+        <div className="mb-3 flex items-center gap-2 text-[13px] text-muted">
+          Showing {ids.length} bill{ids.length === 1 ? "" : "s"}: {one("fl") ?? "filtered"} · <Link href={at(view)}>Show everything</Link>
+        </div>
+      ) : null}
+
+      {view === "transport" ? <Overview rows={rows} lrsWaiting={lrs.length} messagesWaiting={waitingMessages} today={today} lateAfterDays={cfg["erp.logistics.lateAfterDays"]} /> : null}
+      {view === "toTransport" ? <ToTransport rows={rows.filter((c) => c.phase === "toTransport")} today={today} canWrite={canWrite} /> : null}
+      {view === "pendingLr" ? (
+        <LrDesk
+          lrs={lrs}
+          waiting={rows.filter((c) => c.phase === "lrPending")}
+          onTheWay={rows.filter((c) => c.phase === "toTransport")}
+          today={today}
+          transporters={dir.filter((t) => t.active).map((t) => t.name)}
+          callEveryDays={cfg["erp.logistics.callEveryDays"]}
+          notifyOn={cfg["erp.logistics.notifyCustomers"]}
+          canWrite={canWrite}
+        />
+      ) : null}
+      {view === "trackLr" ? (
+        <OnRoad
+          rows={rows.filter((c) => c.phase === "onRoad")}
+          today={today}
+          callEveryDays={cfg["erp.logistics.callEveryDays"]}
+          lateAfterDays={cfg["erp.logistics.lateAfterDays"]}
+          notifyOn={cfg["erp.logistics.notifyCustomers"]}
+          canWrite={canWrite}
+          initialFilter={filter === "calls" || filter === "late" || filter === "issue" ? filter : undefined}
+        />
+      ) : null}
+      {view === "delivered" ? <Delivered rows={rows.filter((c) => c.phase === "delivered")} canWrite={canWrite} /> : null}
+      {view === "lrMessages" ? <Messages rows={outbox} canWrite={canWrite} wati={cfg["erp.logistics.watiTemplate"].trim() || null} /> : null}
+      {view === "transporters" ? (
+        <Transporters
+          rows={dir}
+          canWrite={canWrite}
+          load={Object.fromEntries(
+            dir.map((t) => {
+              const mine = all.filter((c) => c.phase !== "delivered" && (c.transporter ?? "").toLowerCase() === t.name.toLowerCase());
+              return [t.name.toLowerCase(), { active: mine.length, road: mine.filter((c) => c.phase === "onRoad").length }];
+            }),
+          )}
+        />
+      ) : null}
+    </Page>
+  );
+}

@@ -312,21 +312,25 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
     const n = rows.filter((r) => r.l.billing.freightTerm === "Paid" && r.d.extraExpensesPaise == null).length;
     logistics.push({ l: "Paid freight without extra expense", v: String(n), href: tileHref("paidFreight", null, "") });
   }
-  if (["pendingLr", "trackLr", "transport"].some(has)) {
-    const rows = await q(sql`select id, lr_no as lr, track_status as track, material_stage as stage, reminder_date::text as reminder from erp_transports`);
-    if (has("pendingLr")) {
-      const n = rows.filter((r) => !r.lr).length;
-      logistics.push({ l: "Pending LR", v: String(n), tone: n ? "warn" : undefined, href: tileHref("pendingLr", null, "") });
-    }
-    if (has("trackLr")) {
-      const by = new Map<string, string[]>();
-      rows.filter((r) => r.lr && r.stage !== "Close - Received to Party").forEach((r) => by.set(String(r.stage), [...(by.get(String(r.stage)) ?? []), String(r.id)]));
-      for (const [stage, ids] of by) logistics.push({ l: `Tracking · ${stage}`, v: String(ids.length), href: tileHref("trackLr", ids, stage) });
-    }
-    if (has("transport")) {
-      const due = rows.filter((r) => r.reminder && String(r.reminder) <= day && r.stage !== "Close - Received to Party").map((r) => String(r.id));
-      logistics.push({ l: "Reminder calls due", v: String(due.length), tone: due.length ? "warn" : undefined, href: tileHref("transport", due, "Reminder due") });
-    }
+  if (has("transport")) {
+    /* The logistics flow's four steps, each opening its tab of the desk. */
+    const { phaseOf, CLOSED } = await import("./engines/logistics");
+    const rows = await q(sql`select id, lr_no as lr, material_stage as stage, reminder_date::text as reminder, transport_due_on::text as due, issue from erp_transports where material_stage <> ${"Close - Received to Party"}`);
+    const phase = (r: Row) => phaseOf({ lrNo: (r.lr as string | null) ?? null, materialStage: String(r.stage) });
+    const toT = rows.filter((r) => phase(r) === "toTransport");
+    const dueT = toT.filter((r) => r.due && String(r.due) <= day).map((r) => String(r.id));
+    logistics.push({ l: "Going to the transporter", v: String(toT.length), sub: dueT.length ? `${dueT.length} due today or late` : undefined, tone: dueT.length ? "warn" : undefined, href: tileHref("toTransport", null, "") });
+    const lrP = rows.filter((r) => phase(r) === "lrPending").map((r) => String(r.id));
+    const [{ n: lrs }] = (await q(sql`select count(*)::int as n from erp_lrs where status = 'unassigned'`)) as { n: number }[];
+    logistics.push({ l: "Waiting for the LR", v: String(lrP.length), sub: Number(lrs) ? `${lrs} LR${Number(lrs) === 1 ? "" : "s"} uploaded to attach` : undefined, tone: Number(lrs) ? "warn" : undefined, href: tileHref("pendingLr", null, "") });
+    const road = rows.filter((r) => phase(r) === "onRoad");
+    logistics.push({ l: "On the road", v: String(road.length), href: tileHref("trackLr", null, "") });
+    const due = road.filter((r) => r.reminder && String(r.reminder) <= day && r.stage !== CLOSED).map((r) => String(r.id));
+    logistics.push({ l: "Transporter calls due", v: String(due.length), tone: due.length ? "warn" : undefined, href: tileHref("trackLr", due, "Call due") });
+    const issues = road.filter((r) => r.issue).map((r) => String(r.id));
+    if (issues.length) logistics.push({ l: "Problems on the road", v: String(issues.length), tone: "danger", href: tileHref("trackLr", issues, "With a problem") });
+    const [{ n: msgs }] = (await q(sql`select count(*)::int as n from erp_transport_messages where status in ('to_send', 'failed')`)) as { n: number }[];
+    if (Number(msgs)) logistics.push({ l: "Customer messages to send", v: String(msgs), tone: "warn", href: tileHref("lrMessages", null, "") });
   }
   push("Logistics", logistics);
 

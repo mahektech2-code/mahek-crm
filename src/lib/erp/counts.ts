@@ -1,4 +1,5 @@
 import "server-only";
+import { APP_TIMEZONE } from "@/lib/business-date";
 import { and, isNull, eq, or, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { erpInward, erpPurchases, erpTests } from "@/db/schema";
@@ -71,10 +72,23 @@ export async function unverifiedIds(): Promise<string[]> {
   return (await detailRows()).rows.filter((r) => !r.d.verification || r.d.verification === "Pending").map((r) => r.l.o.id);
 }
 
-/** Bills without an LR, requests awaiting a decision, expenses awaiting verification. */
+/**
+ * The Logistics badge is the work waiting on the desk right now: LRs uploaded
+ * and not attached, calls to a transporter owed today, and customer messages
+ * to send by hand. Requests awaiting a decision and expenses awaiting
+ * verification ride on the same pass.
+ */
 export async function logisticsCounts() {
   const [lr, req, exp] = await Promise.all([
-    db.execute(sql`select id from erp_transports where lr_no is null or lr_no = ''`) as unknown as Promise<{ id: string }[]>,
+    db.execute(sql`
+      select id from erp_lrs where status = 'unassigned'
+      union all
+      select id from erp_transports
+       where material_stage <> 'Close - Received to Party' and coalesce(lr_no, '') <> ''
+         and reminder_date <= (now() at time zone ${APP_TIMEZONE})::date
+      union all
+      select id from erp_transport_messages where status in ('to_send', 'failed')
+    `) as unknown as Promise<{ id: string }[]>,
     db.execute(sql`select id from complaints where status = 'open'`) as unknown as Promise<{ id: string }[]>,
     db.execute(sql`select id from erp_expenses where status = 'Pending'`) as unknown as Promise<{ id: string }[]>,
   ]);

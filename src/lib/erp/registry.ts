@@ -186,10 +186,17 @@ export const ERP_GROUPS: ErpGroup[] = [
     label: "Logistics",
     icon: "truck",
     screens: [
-      s("transport", "transport", "Transport", "Every dispatched bill, its LR and where the consignment is.", true, [
-        v("pendingLr", "Pending LR"),
+      /* The key and slug stay `transport` so every grant and bookmark holds;
+         the screen is the whole logistics flow now (src/app/erp/transport). */
+      s("transport", "transport", "Logistics", "From the factory gate to the party's door: reaching the transporter, the LR, the road and the delivery — with the customer told at every step.", true, [
+        v("transport", "Today"),
+        v("toTransport", "To transporter"),
+        v("pendingLr", "LR desk"),
         v("trackLr", "On the road"),
-        v("transport", "All bills"),
+        v("delivered", "Delivered"),
+        v("lrMessages", "Customer messages"),
+        v("transporters", "Transporters"),
+        v("allBills", "All bills"),
         v("paidFreight", "Paid freight"),
       ]),
     ],

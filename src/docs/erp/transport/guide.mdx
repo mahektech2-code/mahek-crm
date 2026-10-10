@@ -1,113 +1,75 @@
-The **Transport** screen follows every bill after it leaves the godown: which lorry receipt (LR) it went on, where the consignment is now, and when to ring to check it arrived. A bill appears here by itself the moment its first line is dispatch-verified — nobody has to add it.
+The **Logistics** screen follows every bill from the factory gate to the party's door: on its way to the transporter's godown at Bhiwandi, waiting for its lorry receipt (LR), on the road, and delivered. The customer gets a WhatsApp at every step. A bill appears here by itself the moment its first line is dispatch-verified — nobody has to add it.
 
-## The screen at a glance
+## The flow, step by step
 
-<Wireframe url="/erp/transport" nav={["Dashboard", "Alerts", "#Orders", "Orders", "Dispatch desk", "#Logistics", "Transport"]} active="Transport" caption="Transport, on its Pending LR tab">
+<Steps>
+<Step title="1. To transporter — follow the goods to Bhiwandi">
+Every bill that has left the factory, grouped by transporter. Tick bills and say when they reach the transporter: **Reaches today**, **Reaches tomorrow**, or a day. Correct the **Boxes** count if it is wrong (it is read off the bill's lines). When the transporter has them, press **Reached transporter** — or **All reached** for a whole transporter.
+</Step>
+<Step title="2. The dispatch team uploads the LRs">
+Once the goods are with the transporter, the dispatch team collects the LRs and uploads them on **Upload LRs** (also on the Dispatch desk): a photo of each and its number, transporter, destination and box count. **Add several photos** makes one row per photo. Nothing is attached to a bill yet.
+</Step>
+<Step title="3. LR desk — attach each LR to its bills">
+On the left, the LRs waiting to be attached. Pick one: the bills it most likely carries rise to the top, with why (same transporter, destination matches, box count). Tick the bills, set the expected delivery and the next call to the transporter, and press **Attach LR & tell customer**. The customer gets a WhatsApp with the LR number, the transporter, the boxes and a tracking link.
+</Step>
+<Step title="4. On the road — ring and update">
+One card per LR, with the transporter's number. **Call today** lists the ones owed a call. After the call press **Update status** (In transit, Near destination, At destination — the customer is told), **Called — no change** (the next call is booked, nobody is messaged) or **Report a problem** (delayed, damaged, short…).
+</Step>
+<Step title="5. Delivered">
+When the party has the goods, press **Delivered ✓**, give the day and who received it. The customer gets a thank-you message, and the bill moves to **Delivered**.
+</Step>
+</Steps>
+
+<Wireframe url="/erp/transport?view=pendingLr" nav={["Dashboard", "#Orders", "Dispatch desk", "#Logistics", "Logistics"]} active="Logistics" caption="The LR desk: an uploaded LR on the left, the bills it carries on the right">
   <WfBar>
-    <WfTitle sub="Every dispatched bill, its LR and where the consignment is.">Transport</WfTitle>
+    <WfTitle sub="From the factory gate to the party's door.">Logistics</WfTitle>
   </WfBar>
-  <WfTabs items={["Pending LR", "On the road", "All bills", "Paid freight"]} active="Pending LR" />
+  <WfTabs items={["Today", "To transporter", "LR desk", "On the road", "Delivered", "Customer messages", "Transporters"]} active="LR desk" />
   <Hotspot n={1} />
   <WfTable
     highlight={0}
-    columns={["Order no", "Bill date", "Billing party", "Bill no", "LR no", "Transporter", "Material stage", "Reminder call"]}
+    columns={["", "Bill", "Goes to", "Transporter", "Boxes", "Why"]}
     rows={[
-      ["1256", "10 Oct", <b key="a">Customer A</b>, "T-1119", "", "Transporter X", <span key="b">Dispatched from Godown A <Hotspot n={2} /></span>, ""],
-      ["1251", "9 Oct", <b key="c">Customer B</b>, "T-1112", "", "Transporter Y", "Dispatched from Godown A", "12 Oct"],
+      ["☑", "T-1119", <b key="a">Customer A</b>, "Transporter X", "12", <span key="b">same transporter <Hotspot n={2} /></span>],
+      ["☐", "T-1112", <b key="c">Customer B</b>, "Transporter Y", "4", "at the transporter"],
     ]}
   />
-  <WfPanel title="Customer A · bill T-1119" side>
-    <WfText muted>Transporter X · Dispatched from Godown A</WfText>
-    <WfBar><WfButton primary>Enter LR</WfButton><WfButton>Read LR photo</WfButton><Hotspot n={3} /></WfBar>
-  </WfPanel>
+  <WfBar><WfButton primary>Attach LR & tell customer</WfButton><Hotspot n={3} /></WfBar>
 </Wireframe>
 
 <Hotspots items={[
-  <span key="1"><b>Tabs.</b> What still needs an LR, what is on the road, every bill, and paid-freight lines still waiting for their freight figure.</span>,
-  <span key="2"><b>Material stage.</b> Where the consignment is. A freshly dispatched bill names the godown it left from.</span>,
-  <span key="3"><b>Enter LR.</b> Type the LR number and the stage. Or photograph the lorry receipt and let the ERP read the number for you.</span>,
+  <span key="1"><b>Tabs.</b> One per step of the flow, plus the customer messages, the transporter list and the two registers.</span>,
+  <span key="2"><b>Why.</b> The reasons this bill is suggested for the LR you picked. A suggestion only — you tick.</span>,
+  <span key="3"><b>Attach.</b> Puts the bills on the road, books the next call, and messages the customer.</span>,
 ]} />
 
 ## The tabs
 
-| Tab | What it lists |
+| Tab | What it is for |
 |---|---|
-| **Pending LR** | Every dispatched bill that has no LR number yet. Grouped by transporter. |
-| **On the road** | Bills with an LR that have not reached the party. Grouped by transporter. |
-| **All bills** | Every dispatched bill, grouped by bill date. |
-| **Paid freight** | Billed lines for customers whose freight is **Paid**, still waiting for the freight amount to be entered. |
-
-A bill moves between the first two tabs on its own: entering the LR takes it off **Pending LR** and puts it **on the road**; setting the stage to **Close - Received to Party** takes it off the road.
-
-## Reading a row
-
-| Column | What it means |
-|---|---|
-| **Order no / Bill no** | The order number, and the Tally bill number from the order. |
-| **Bill date** | The dispatch date the bill was verified with. |
-| **LR no** | The lorry receipt number, once entered. |
-| **Transporter / Area** | Copied from the order when it was dispatched. |
-| **On the road** | **Yes** once there is an LR and the goods have not reached the party. |
-| **Payment type** | Who pays freight, from the billing party. |
-| **Extra expense** | The freight entered for a *Paid* bill. Blank on other payment types. |
-| **Material stage** | Where it is: *Dispatched* (shown as *Dispatched from* the godown), *In Transit*, *On the way to Destination area*, *Reached Destination Area*, *Close - Received to Party*. |
-| **Reminder call** | A date you set to ring and check on it. The row is flagged on and after that day until the bill is closed. |
-| **Tag sales man** | The customer's salesperson. |
-| **Monthly sales** | The customer's sales in the bill's month. Only for people who can see sales amounts. |
-
-## Entering an LR and keeping a consignment up to date
-
-<Steps>
-<Step title="Open the bill and press Enter LR">
-(Once it has an LR, the button reads **Update consignment**.)
-</Step>
-<Step title="Fill in what you know">
-**Despatch LR no**, the **Material stage** (required), a **Reminder call** date if you want to be reminded to ring, and a **Note** — you can speak it into the microphone.
-</Step>
-<Step title="Save">
-*LR 4471 recorded* the first time, *Consignment updated* after. When the stage changes, the order's record in MahekOne is updated too, so the CRM sees where the goods are.
-</Step>
-</Steps>
-
-### Reading the LR from a photograph
-
-If the photo-reading feature is on, a bill with no LR offers **Read LR photo**.
-
-<Steps>
-<Step title="Photograph the lorry receipt">
-The ERP reads the LR number, the transporter and the date off the photo.
-</Step>
-<Step title="Review the reading">
-The row now offers **Review LR reading**. It shows the photo, the number it read (marked if it is unsure), and checks: whether the transporter on the receipt matches the bill's, and whether that LR number is already on another order. Correct the number if you need to.
-</Step>
-<Step title="Save, or reject">
-**Save the LR** records it on the bill. A number already on another order is refused. **Reject LR reading** throws the reading away and changes nothing.
-</Step>
-</Steps>
-
-## Paid freight
-
-For a customer whose freight is **Paid**, the company pays the transporter and that cost belongs on the bill. The **Paid freight** tab lists every such billed line still without its freight figure.
-
-Press **Extra Expenses** on a line — or select several and use the bulk button — and type the amount. It is recorded once: a line that already has one is refused. The same figure is copied onto the bill's transport record if that has none yet, and it counts in the order line's cost and margin on [Orders → Billing & dispatch](/docs/erp/orders).
+| **Today** | The four steps as counts, the calls owed today, and what needs attention: problems, lorries running late, bills at the transporter two days with no LR, messages not sent. |
+| **To transporter** | Bills on their way to the transporter's godown. |
+| **LR desk** | Uploaded LRs, attached to their bills. |
+| **On the road** | One card per LR until delivery. |
+| **Delivered** | Closed in the last 45 days, with how long each took. **Reopen** if one was closed by mistake. |
+| **Customer messages** | Every WhatsApp the flow wrote. Those that could not go through Wati wait here: **Open in WhatsApp** (the text is already typed), send, then **Mark sent**. |
+| **Transporters** | Who to ring, their godown, and their online tracking page. A card on the road links to it. |
+| **All bills / Paid freight** | The registers as lists. Paid freight is where the freight amount for *Paid* bills is entered. |
 
 ## Questions people ask
 
 <Faq q="A bill I dispatched is not here.">
 A bill appears once its first line is **dispatch-verified** (Do Verified on Orders or at the Dispatch desk). Billing alone is not enough.
 </Faq>
-<Faq q="The row says 'Transferred today'.">
-That flag means your **Reminder call** date has arrived. It stays until the bill is closed as received.
+<Faq q="The customer did not get the WhatsApp.">
+Open **Customer messages**. It says why: no Wati template is set for logistics, WhatsApp is switched off by the founder, the number is not a mobile, or the customer is on DND. Send it by hand from there.
 </Faq>
-<Faq q="I typed an LR number that is already on another bill and it saved.">
-Only a reading from a photograph is checked for a repeated number. When typing it by hand, check the number yourself.
+<Faq q="One LR carries three bills of the same party.">
+Tick all three on the LR desk. The customer gets one message naming the three bills.
 </Faq>
-<Faq q="Why is Extra expense blank on some bills?">
-It is only shown when the payment type is **Paid**.
+<Faq q="I attached the wrong bill to an LR.">
+Open the bill (click its number) — or use the consignment's page — and take it off the LR with a reason. It goes back to waiting for its LR.
 </Faq>
-<Faq q="Can a bill have two LRs?">
-No. A bill has one transport record and one LR. A bill split across two lorries is recorded with one LR and a note.
-</Faq>
-<Faq q="Read LR photo is not offered.">
-Reading photos is switched off, there is no provider key, or this month's allowance is used up — or the bill already has an LR.
+<Faq q="What does the customer's tracking link show?">
+The bill, the LR, the transporter and the steps so far. Never prices, call notes or staff names.
 </Faq>

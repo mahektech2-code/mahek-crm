@@ -199,7 +199,7 @@ const nextConfig: NextConfig = {
       { source: "/erp/pack-log", destination: "/erp/stock?view=packLog", permanent: true },
       { source: "/erp/reorder-rm", destination: "/erp/rm-levels", permanent: true },
       { source: "/erp/reorder-fg", destination: "/erp/fg-levels", permanent: true },
-      { source: "/erp/pending-lr", destination: "/erp/transport", permanent: true },
+      { source: "/erp/pending-lr", destination: "/erp/transport?view=pendingLr", permanent: true },
       { source: "/erp/track-lr", destination: "/erp/transport?view=trackLr", permanent: true },
       { source: "/erp/paid-freight", destination: "/erp/transport?view=paidFreight", permanent: true },
       { source: "/erp/credits", destination: "/erp/expenses?view=credits", permanent: true },

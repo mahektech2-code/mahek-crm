@@ -18,6 +18,7 @@ import { godownIdByName, godownOptions, has, today, type Col } from "./common";
 import { customerForm, loadCustomers, phoneContacts, saveCustomerDetails } from "./masters";
 import { detailRows } from "./sales";
 import { syncBookOrders } from "../book";
+import { CLOSED, STAGES } from "../engines/logistics";
 
 /* ---------------------------------------------------------------------------
  * Logistics, customer requests and credit notes, order follow-up, petty cash,
@@ -30,8 +31,7 @@ import { syncBookOrders } from "../book";
  * godown needed a code change (spec A-26). It is one "Dispatched" stage now,
  * and the screen names the godown from the order.
  */
-export const MATERIAL_STAGES = ["Dispatched", "In Transit", "On the way to Destination area", "Reached Destination Area", "Close - Received to Party"];
-const CLOSED = "Close - Received to Party";
+export const MATERIAL_STAGES: string[] = [...STAGES];
 
 /**
  * On the road: it has an LR and has not reached the party. Mahek Plus asked for
@@ -45,9 +45,16 @@ const MODES = ["Bank Cash", "Cash", "Other"];
 
 type TransportScope = "transport" | "pendingLr" | "trackLr";
 
-function transportList(scope: TransportScope): ScreenModule {
+/**
+ * The register of every bill in logistics, as a list. The Logistics desk
+ * (src/app/erp/transport) is where the flow is worked; "All bills" is this list
+ * read-only, and `pendingLr` / `trackLr` are kept as modules so a dashboard
+ * tile, an alert or the AI LR reading that names them still resolves.
+ */
+function transportList(scope: TransportScope, key: string = scope): ScreenModule {
+  const register = key === "allBills";
   return {
-    key: scope,
+    key,
     async load(ctx) {
       const [rows, details] = await Promise.all([
         db
@@ -88,11 +95,11 @@ function transportList(scope: TransportScope): ScreenModule {
       const monthly = details.monthly;
       return {
         spec: {
-          screen: scope,
+          screen: key,
           cols,
           hidden,
           groups: scope === "transport" ? ["billDate"] : ["transporter"],
-          readOnly: false,
+          readOnly: register,
           noDataLine:
             scope === "pendingLr" ? "Every dispatched bill has its LR number." : scope === "trackLr" ? "No consignment is being tracked." : "Nothing dispatched yet. A bill appears here once its first line is dispatch-verified.",
         },
@@ -124,7 +131,7 @@ function transportList(scope: TransportScope): ScreenModule {
             flags: t.reminderDate && t.reminderDate <= today() && t.materialStage !== "Close - Received to Party" ? ["today"] : [],
             title: `${r.party} · bill ${t.billNo ?? t.orderNo}`,
             header: `${t.transporter ?? "No transporter"} · ${stageWord(t)}`,
-            actions: [
+            actions: register ? [] : [
               ...(pendingLr.has(t.id)
                 ? [
                     { id: "aiLr", l: "Review LR reading", ai: true, primary: true, loadsForm: true } as ActionSpec,
@@ -591,6 +598,7 @@ const videos: ScreenModule = {
 
 export const LOGISTICS_SCREENS: ScreenModule[] = [
   transportList("transport"),
+  transportList("transport", "allBills"),
   transportList("pendingLr"),
   transportList("trackLr"),
   paidFreight,
