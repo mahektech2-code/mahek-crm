@@ -2,10 +2,9 @@ import "server-only";
 import { randomBytes } from "node:crypto";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { customers, erpLrs, erpRefValues, erpTransportEvents, erpTransportMessages, erpTransporterContacts, erpTransporterGodowns, erpTransporters, erpTransports, places } from "@/db/schema";
+import { customers, erpLrs, erpRefValues, erpTransportEvents, erpTransportMessages, erpTransporterContacts, erpTransporterGodowns, erpTransporters, erpTransports } from "@/db/schema";
 import { checkGstin } from "@/lib/engines/lead-scan";
-import type { PlaceKind } from "@/lib/place-parse";
-import { cleanGodowns, mirrorsFrom, type Godown, type GodownInput, type PlaceOption } from "./transporter-godowns";
+import { cleanGodowns, mirrorsFrom, type Godown, type GodownInput } from "./transporter-godowns";
 import { getConfig } from "@/lib/config/store";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { whatsappNumberFor } from "@/lib/customer-contacts";
@@ -305,7 +304,7 @@ export async function messages(opts: { waitingOnly?: boolean; transportId?: stri
 }
 
 /** A godown as the screens draw it: its town and the people there. */
-export type TransporterGodown = { id: string; label: string | null; placeId: string | null; address: string | null; contacts: { id: string; name: string | null; role: string | null; phones: string[] }[] };
+export type TransporterGodown = { id: string; label: string | null; town: string | null; address: string | null; contacts: { id: string; name: string | null; role: string | null; phones: string[] }[] };
 
 /** A transporter, with its godowns in order and the people at each. */
 export type Transporter = typeof erpTransporters.$inferSelect & { godowns: TransporterGodown[] };
@@ -335,15 +334,9 @@ export async function transporters(): Promise<Transporter[]> {
   for (const g of gds)
     byTransporter.set(g.transporterId, [
       ...(byTransporter.get(g.transporterId) ?? []),
-      { id: g.id, label: g.label, placeId: g.placeId, address: g.address, contacts: byGodown.get(g.id) ?? [] },
+      { id: g.id, label: g.label, town: g.town, address: g.address, contacts: byGodown.get(g.id) ?? [] },
     ]);
   return rows.map((r) => ({ ...r, godowns: byTransporter.get(r.id) ?? [] }));
-}
-
-/** The whole reviewed place tree, for the godown picker. A few thousand rows of four columns. */
-export async function placeOptions(): Promise<PlaceOption[]> {
-  const rows = await db.select({ id: places.id, kind: places.kind, name: places.name, parentId: places.parentId }).from(places);
-  return rows.map((r) => ({ ...r, kind: r.kind as PlaceKind }));
 }
 
 export type TransportEvent = { id: string; kind: string; stage: string | null; note: string | null; shared: boolean; at: string; by: string | null };
@@ -838,9 +831,7 @@ export async function saveTransporter(
   if (clash) return fieldErr("name", `${name} is already in the list`);
   let godowns: Godown[] | null = null;
   if (input.godowns) {
-    const wanted = input.godowns.map((g) => g.placeId).filter((p): p is string => !!p);
-    const known = new Set(wanted.length ? (await db.select({ id: places.id }).from(places).where(inArray(places.id, wanted))).map((r) => r.id) : []);
-    const c = cleanGodowns(input.godowns, (id) => known.has(id));
+    const c = cleanGodowns(input.godowns);
     if (!c.ok) return fieldErr(c.field, c.message);
     godowns = c.godowns;
   }
@@ -913,7 +904,7 @@ async function writeGodowns(tx: Tx, transporterId: string, godowns: Godown[]) {
   const usedPeople = new Set<string>();
   for (const [gi, g] of godowns.entries()) {
     const godownId = g.id && ownGodowns.has(g.id) ? (ownGodowns.delete(g.id), g.id) : erpId("etg");
-    await tx.insert(erpTransporterGodowns).values({ id: godownId, transporterId, label: g.label, placeId: g.placeId, address: g.address, sortOrder: gi });
+    await tx.insert(erpTransporterGodowns).values({ id: godownId, transporterId, label: g.label, town: g.town, address: g.address, sortOrder: gi });
     if (g.contacts.length)
       await tx.insert(erpTransporterContacts).values(
         g.contacts.map((c, ci) => ({ id: c.id && ownPeople.has(c.id) && !usedPeople.has(c.id) ? (usedPeople.add(c.id), c.id) : erpId("etc"), godownId, name: c.name, role: c.role, phones: c.phones, sortOrder: ci })),

@@ -12708,7 +12708,9 @@ export const erpTransporterGodowns = pgTable(
       .references(() => erpTransporters.id, { onDelete: "cascade" }),
     /** What they call it — "Main godown", "Booking office". */
     label: text("label"),
-    /** The town (a city or an area node). Null for a godown typed before towns were picked. */
+    /** The town, as typed. */
+    town: text("town"),
+    /** A town picked from the place tree while the form offered one (0253–0258). Read by nothing now; kept so no history is dropped. */
     placeId: text("place_id").references(() => places.id, { onDelete: "set null" }),
     /** Street, landmark — the part no tree can hold. */
     address: text("address"),
