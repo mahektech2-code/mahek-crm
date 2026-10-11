@@ -96,6 +96,37 @@ export function fileBadge(kind: string | null): string {
 
 /* --------------------------------------------------------------- filters */
 
+/**
+ * The name a shared file goes out under.
+ *
+ * On the phone the file is called after the attachment it came from
+ * (`mbos-doc-att_3f9…pdf`), which is right for finding it again and wrong for
+ * the customer who receives it on WhatsApp: that name is all he sees in the
+ * chat, and "mbos-doc-att_3f9" tells him nothing about what he was sent. So it
+ * goes out under the document's TITLE, made safe for a file name, with the
+ * extension its type says — a name WhatsApp and the receiving phone both read.
+ */
+export function shareFileName(title: string | null | undefined, kind: string | null): string {
+  const ext = SHARE_EXTENSION[kind ?? ''] ?? '';
+  const stem = (title ?? '')
+    .normalize('NFKC')
+    .replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[. ]+$/g, '')
+    .slice(0, 80)
+    .trim();
+  const base = stem || 'Document';
+  return base.toLowerCase().endsWith(ext) ? base : base + ext;
+}
+
+const SHARE_EXTENSION: Record<string, string> = {
+  'application/pdf': '.pdf',
+  'image/jpeg': '.jpg',
+  'image/png': '.png',
+  'image/webp': '.webp',
+};
+
 export type LibraryFilter = 'all' | 'new' | 'offline' | `cat:${string}`;
 
 export type FilterChip = { value: LibraryFilter; label: string };
