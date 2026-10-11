@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cleanGodowns, lookup, mirrorsFrom, pickRung, placeChain, placeChoices, placePath, type PlaceOption } from "./transporter-godowns";
+import { cleanGodowns, godownPlace, lookup, mirrorsFrom, pickRung, placeChain, placeChoices, placePath, type PlaceOption } from "./transporter-godowns";
 
 const nodes: PlaceOption[] = [
   { id: "mh", kind: "state", name: "Maharashtra", parentId: null },
@@ -21,6 +21,14 @@ test("four pickers, each narrowed by the one above", () => {
   assert.deepEqual(placeChain("narpoli", byId), { area: "narpoli", city: "bhiwandi", district: "thane", state: "mh" });
   assert.deepEqual(placeChain(null, byId), {});
   assert.equal(placePath("bhiwandi", byId), "Bhiwandi, Thane, Maharashtra");
+});
+
+test("a godown saved at a city or an area reads as its district", () => {
+  assert.equal(godownPlace("narpoli", byId), "thane");
+  assert.equal(godownPlace("bhiwandi", byId), "thane");
+  assert.equal(godownPlace("thane", byId), "thane");
+  assert.equal(godownPlace("gj", byId), "gj");
+  assert.equal(godownPlace(null, byId), null);
 });
 
 test("the place is the narrowest pick, and clearing a rung falls back to the one above", () => {

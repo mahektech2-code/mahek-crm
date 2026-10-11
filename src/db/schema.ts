@@ -12710,12 +12710,18 @@ export const erpTransporterGodowns = pgTable(
     label: text("label"),
     /** The town (a city or an area node). Null for a godown typed before towns were picked. */
     placeId: text("place_id").references(() => places.id, { onDelete: "set null" }),
-    /** Street, landmark — the part no tree can hold. */
+    /** Street, landmark. No longer asked for; kept where a godown had one. */
     address: text("address"),
+    /** Where the godown is, as a map pin: picked on the map, typed, or read off a device standing in it. Both or neither. */
+    lat: doublePrecision("lat"),
+    lng: doublePrecision("lng"),
     sortOrder: integer("sort_order").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("erp_transporter_godowns_transporter_idx").on(t.transporterId, t.sortOrder)],
+  (t) => [
+    index("erp_transporter_godowns_transporter_idx").on(t.transporterId, t.sortOrder),
+    check("erp_transporter_godowns_pin_check", sql`(${t.lat} is null) = (${t.lng} is null)`),
+  ],
 );
 
 /** A person at a transporter's godown, with up to three numbers to ring. */

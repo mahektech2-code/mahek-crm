@@ -4,23 +4,38 @@ import { PLACE_KINDS, type PlaceKind } from "@/lib/place-parse";
  * A transporter's godowns and the people at each — the rule, PURE and
  * client-safe, so the form checks what the save checks.
  *
- * A godown is ONE place on the reviewed place tree, picked State → District →
- * City → Area on the godown's own row (the narrowest pick is the place), its
- * street address as typed, and the people there with up to three numbers
- * each. A single searchable list of every town in the country was too long to
- * find one in; four short lists, each narrowed by the one above, are not.
+ * A godown is ONE place on the reviewed place tree, picked State → District
+ * on the godown's own row (the narrowest pick is the place), its pin on the
+ * map, and the people there with up to three numbers each. City and area are
+ * not asked: a district is as fine as anybody files a transporter's godown,
+ * and a godown saved at a city or an area reads as its district. A single
+ * searchable list of every town in the country was too long to find one in;
+ * two short lists, the second narrowed by the first, are not.
  * ------------------------------------------------------------------------- */
 
 export const MAX_PHONES = 3;
+
+/** The rungs a godown is picked on. */
+export const GODOWN_PLACE_KINDS = ["state", "district"] as const satisfies readonly PlaceKind[];
+
+/** A place as a godown files it: a city or an area reads as the district above it (else the state). */
+export function godownPlace(id: string | null, byId: PlaceLookup): string | null {
+  let at = id ? byId.get(id) : undefined;
+  for (let i = 0; at && i < 6; i++) {
+    if (at.kind === "district" || at.kind === "state") return at.id;
+    at = at.parentId ? byId.get(at.parentId) : undefined;
+  }
+  return id && byId.has(id) ? null : id;
+}
 
 export type PlaceOption = { id: string; kind: PlaceKind; name: string; parentId: string | null };
 export type PlaceLookup = Map<string, PlaceOption>;
 
 export type ContactInput = { id?: string | null; name?: string | null; role?: string | null; phones?: (string | null)[] };
-export type GodownInput = { id?: string | null; label?: string | null; placeId?: string | null; address?: string | null; contacts?: ContactInput[] };
+export type GodownInput = { id?: string | null; label?: string | null; placeId?: string | null; address?: string | null; lat?: number | null; lng?: number | null; contacts?: ContactInput[] };
 
 export type Contact = { id: string | null; name: string | null; role: string | null; phones: string[] };
-export type Godown = { id: string | null; label: string | null; placeId: string | null; address: string | null; contacts: Contact[] };
+export type Godown = { id: string | null; label: string | null; placeId: string | null; address: string | null; lat: number | null; lng: number | null; contacts: Contact[] };
 
 export function lookup(nodes: PlaceOption[]): PlaceLookup {
   return new Map(nodes.map((n) => [n.id, n]));
@@ -100,9 +115,13 @@ export function cleanGodowns(input: GodownInput[], knownPlace: (id: string) => b
     const label = tidy(g.label);
     const address = tidy(g.address);
     if (!placeId && !label && !address && !contacts.length) continue;
-    if (placeId && !knownPlace(placeId)) return { ok: false, field: `${at}.placeId`, message: "That place is no longer on the list. Pick it again." };
+    if (placeId && !knownPlace(placeId)) return { ok: false, field: `${at}.placeId`, message: "That place is no longer on the list. Pick the state and district again." };
     if (!placeId && !address) return { ok: false, field: `${at}.placeId`, message: `Pick the place for godown ${gi + 1}` };
-    out.push({ id: g.id ?? null, label, placeId, address, contacts });
+    const hasLat = g.lat != null && Number.isFinite(g.lat);
+    const hasLng = g.lng != null && Number.isFinite(g.lng);
+    if (hasLat !== hasLng) return { ok: false, field: `${at}.pin`, message: "A pin is a latitude and a longitude — give both, or neither" };
+    if (hasLat && (Math.abs(g.lat as number) > 90 || Math.abs(g.lng as number) > 180)) return { ok: false, field: `${at}.pin`, message: "That pin is not on the map — latitude is −90 to 90, longitude −180 to 180" };
+    out.push({ id: g.id ?? null, label, placeId, address, lat: hasLat ? (g.lat as number) : null, lng: hasLng ? (g.lng as number) : null, contacts });
   }
   return { ok: true, godowns: out };
 }

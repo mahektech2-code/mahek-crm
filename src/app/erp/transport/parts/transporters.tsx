@@ -7,9 +7,10 @@ import { Badge, Button, Card, cx } from "@/components/ui/primitives";
 import { erpLogisticsTransporter } from "@/lib/actions/erp-logistics";
 import { checkGstin } from "@/lib/engines/lead-scan";
 import type { Transporter, TransporterGodown } from "@/lib/erp/logistics";
-import { MAX_PHONES, lookup, pickRung, placeChain, placeChoices, placePath, type PlaceLookup, type PlaceOption } from "@/lib/erp/transporter-godowns";
+import { GODOWN_PLACE_KINDS, MAX_PHONES, godownPlace, lookup, pickRung, placeChain, placeChoices, placePath, type PlaceLookup, type PlaceOption } from "@/lib/erp/transporter-godowns";
 import { PLACE_FILTER_LABELS } from "@/lib/place-filters";
 import { PLACE_KINDS } from "@/lib/place-parse";
+import { PinField, parsePin } from "../../_ui/pin-field";
 import { CallLink, Empty, useAct } from "./common";
 
 /**
@@ -190,7 +191,13 @@ function TransporterDetails({
                       <div className="border-b border-divider bg-canvas px-3 py-2">
                         <div className="text-sm font-medium text-ink">{g.label || `Godown ${i + 1}`}</div>
                         <div className="text-[12px] text-muted">{placePath(g.placeId, byId) || "Town not picked"}</div>
-                        {g.address ? <div className="mt-0.5 text-[12px] text-body">{g.address}</div> : null}
+                        {g.lat != null && g.lng != null ? (
+                          <a href={`https://www.google.com/maps?q=${g.lat},${g.lng}`} target="_blank" rel="noreferrer" className="mt-0.5 block text-[12px]">
+                            Pin {g.lat.toFixed(5)}, {g.lng.toFixed(5)} — open the map
+                          </a>
+                        ) : (
+                          <div className="mt-0.5 text-[12px] text-muted">No pin yet</div>
+                        )}
                       </div>
                       {g.contacts.length ? (
                         <ul className="divide-y divide-divider">
@@ -242,12 +249,19 @@ function Fact({ k, children }: { k: string; children: React.ReactNode }) {
 /* --------------------------------------------------------------- editing */
 
 type DraftPerson = { key: string; id: string | null; name: string; role: string; phones: string[] };
-type DraftGodown = { key: string; id: string | null; label: string; placeId: string | null; address: string; people: DraftPerson[] };
+/** `address` is not on the form any more; a godown that has one keeps it, unseen, so saving loses nothing. `pin` is "lat, lng" as typed. */
+type DraftGodown = { key: string; id: string | null; label: string; placeId: string | null; address: string; pin: string; people: DraftPerson[] };
 
 let seq = 0;
 const k = () => `d${++seq}`;
 const blankPerson = (): DraftPerson => ({ key: k(), id: null, name: "", role: "", phones: [""] });
-const blankGodown = (): DraftGodown => ({ key: k(), id: null, label: "", placeId: null, address: "", people: [blankPerson()] });
+const blankGodown = (): DraftGodown => ({ key: k(), id: null, label: "", placeId: null, address: "", pin: "", people: [blankPerson()] });
+
+/** A typed pin as the save takes it. An unreadable one never gets here — `save` stops on it first. */
+function pinOf(text: string): { lat: number | null; lng: number | null } {
+  const p = text.trim() ? parsePin(text) : null;
+  return p ? { lat: p.lat, lng: p.lng } : { lat: null, lng: null };
+}
 
 function EditTransporter({
   t,
@@ -270,8 +284,9 @@ function EditTransporter({
           key: k(),
           id: g.id,
           label: g.label ?? "",
-          placeId: g.placeId,
+          placeId: godownPlace(g.placeId, byId),
           address: g.address ?? "",
+          pin: g.lat != null && g.lng != null ? `${g.lat.toFixed(6)}, ${g.lng.toFixed(6)}` : "",
           people: g.contacts.length ? g.contacts.map((c) => ({ key: k(), id: c.id, name: c.name ?? "", role: c.role ?? "", phones: c.phones.length ? c.phones : [""] })) : [blankPerson()],
         }))
       : [blankGodown()],
@@ -288,8 +303,10 @@ function EditTransporter({
   const setP = (gKey: string, pKey: string, patch: Partial<DraftPerson>) =>
     setGodowns((gs) => gs.map((g) => (g.key === gKey ? { ...g, people: g.people.map((p) => (p.key === pKey ? { ...p, ...patch } : p)) } : g)));
 
-  const save = () =>
-    run(
+  const save = () => {
+    const bad = godowns.findIndex((g) => g.pin.trim() && !parsePin(g.pin));
+    if (bad >= 0) return setProblem({ field: `g${bad + 1}.pin`, message: "Write the pin as latitude, longitude — like 19.209400, 73.093900 — or pick it on the map" });
+    return run(
       () =>
         erpLogisticsTransporter({
           id: t?.id ?? null,
@@ -300,6 +317,7 @@ function EditTransporter({
             label: g.label,
             placeId: g.placeId,
             address: g.address,
+            ...pinOf(g.pin),
             contacts: g.people.map((p) => ({ id: p.id, name: p.name, role: p.role, phones: p.phones })),
           })),
         }),
@@ -308,6 +326,7 @@ function EditTransporter({
         else setProblem(r.fieldErrors?.[0] ? { field: r.fieldErrors[0].field, message: r.fieldErrors[0].message } : null);
       },
     );
+  };
 
   const errAt = (field: string) => (problem && problem.field.startsWith(field) ? problem.message : null);
 
@@ -405,11 +424,12 @@ function EditTransporter({
         </section>
 
         <section>
-          <SectionTitle hint="One place each — state, district, city, area — and the people to ring there. Up to three numbers a person.">Godowns</SectionTitle>
+          <SectionTitle hint="One place each — state and district, with its pin on the map — and the people to ring there. Up to three numbers a person.">Godowns</SectionTitle>
           <div className="space-y-3">
             {godowns.map((g, gi) => {
               const at = `g${gi + 1}`;
               const townErr = errAt(`${at}.placeId`);
+              const pinErr = errAt(`${at}.pin`);
               return (
                 <div key={g.key} className={cx("rounded-[6px] border", townErr ? "border-danger" : "border-line")}>
                   <div className="flex items-center justify-between border-b border-divider bg-canvas px-3 py-2">
@@ -426,8 +446,8 @@ function EditTransporter({
                       <input value={g.label} onChange={(e) => setG(g.key, { label: e.target.value })} placeholder="e.g. Main godown" className={cls} />
                     </label>
                     <div>
-                      <div className="grid grid-cols-4 gap-2">
-                        {PLACE_KINDS.map((kind) => {
+                      <div className="grid grid-cols-2 gap-2">
+                        {GODOWN_PLACE_KINDS.map((kind) => {
                           const chain = placeChain(g.placeId, byId);
                           const opts = placeChoices(tree, kind, chain);
                           const above = PLACE_KINDS[PLACE_KINDS.indexOf(kind) - 1];
@@ -442,7 +462,7 @@ function EditTransporter({
                                 onChange={(e) => setG(g.key, { placeId: pickRung(chain, kind, e.target.value || null) })}
                                 className={cx(cls, "pr-7 disabled:bg-canvas disabled:text-muted", townErr && !chain[kind] && !off && "border-danger")}
                               >
-                                <option value="">{off ? `Pick the ${PLACE_FILTER_LABELS[above].toLowerCase()} first` : opts.length ? `Pick ${kind === "area" ? "an area" : `a ${kind}`}` : "None listed"}</option>
+                                <option value="">{off ? `Pick the ${PLACE_FILTER_LABELS[above].toLowerCase()} first` : opts.length ? `Pick a ${kind}` : "None listed"}</option>
                                 {opts.map((o) => (
                                   <option key={o.id} value={o.id}>
                                     {o.name}
@@ -455,10 +475,11 @@ function EditTransporter({
                       </div>
                       {townErr ? <span className="mt-1 block text-danger">{townErr}</span> : null}
                     </div>
-                    <label className="block">
-                      Address
-                      <input value={g.address} onChange={(e) => setG(g.key, { address: e.target.value })} placeholder="Building, street, landmark" className={cls} />
-                    </label>
+                    <div>
+                      <div className="mb-1">Location pin</div>
+                      <PinField value={g.pin} error={!!pinErr} onChange={(pin) => setG(g.key, { pin })} />
+                      {pinErr ? <span className="mt-1 block text-danger">{pinErr}</span> : <span className="mt-1 block text-[12px] text-muted">Latitude, longitude — pick it on the map, type it, or use this device&apos;s location when standing in the godown.</span>}
+                    </div>
 
                     <div>
                       <div className="mb-1.5 text-[12px] font-medium text-body">People at this godown</div>
