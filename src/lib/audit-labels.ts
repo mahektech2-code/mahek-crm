@@ -698,13 +698,22 @@ const DESCRIBE: Record<string, Describer> = {
   "expense_policy.set.activate": () => ({ says: ["switched an expense policy on"], changes: false }),
   "expense_policy.set.deactivate": () => ({ says: ["switched an expense policy off"], changes: false }),
   "expense_policy.set.delete": (c) => ({ says: ["deleted the expense policy", strong(str(c.b.name) ?? "")], changes: false }),
-  "expense_policy.hometown": (c) => ({
-    says: [
-      "set a salesman's hometown to",
-      strong(str(c.a.city) ? `${str(c.a.city)}${str(c.a.state) ? `, ${str(c.a.state)}` : ""}` : "nothing"),
-    ],
-    changes: false,
-  }),
+  "expense_policy.hometown": (c) => {
+    /* A row is one town ({city, state}) before a salesman could have several,
+       and the whole set ({towns: [...]}) after. */
+    const town = (t: Record<string, unknown>) =>
+      str(t.city) ? `${str(t.city)}${str(t.state) ? `, ${str(t.state)}` : ""}` : null;
+    const towns = Array.isArray(c.a.towns)
+      ? (c.a.towns as Record<string, unknown>[]).map(town).filter((t): t is string => !!t)
+      : [town(c.a)].filter((t): t is string => !!t);
+    return {
+      says: [
+        towns.length > 1 ? "set a salesman's hometowns to" : "set a salesman's hometown to",
+        strong(towns.length ? towns.join("; ") : "nothing"),
+      ],
+      changes: false,
+    };
+  },
   "expense_policy.set.assign": () => ({ says: ["changed which expense policy salesmen are on"], changes: false }),
   "job.run": (c) => ({ says: ["ran the job", strong(words(str(c.a.job) ?? str(c.e.entityId) ?? ""))], changes: false }),
   "job.dry_run": (c) => ({ says: ["tried the job", strong(words(str(c.a.job) ?? str(c.e.entityId) ?? "")), "without saving anything"], changes: false }),

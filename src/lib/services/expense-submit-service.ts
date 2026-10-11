@@ -286,16 +286,16 @@ async function writeLineFigures(answer: NonNullable<Awaited<ReturnType<typeof pr
  *
  * A day with no record yet is left alone: nothing has happened on it.
  */
-/** Where the day went, against his hometown. See `lib/expense-hometown.ts`. */
+/** Where the day went, against his hometowns. See `lib/expense-hometown.ts`. */
 async function awayOnDay(
   userId: string,
   day: string,
   d: { destinationCity: string | null; overnight: boolean; departedFromHometown: boolean },
 ): Promise<boolean> {
-  const [home] = await db.execute<{ city: string }>(
-    sql`select city from expense_hometowns where user_id = ${userId} limit 1`,
+  const homes = await db.execute<{ city: string }>(
+    sql`select city from expense_hometowns where user_id = ${userId}`,
   );
-  if (!home) return d.departedFromHometown;
+  if (homes.length === 0) return d.departedFromHometown;
   const visits = await db.execute<{ city: string | null }>(sql`
     select ${placeNameSql("c", "city", "city")} as city
       from mbos_visits v
@@ -305,7 +305,7 @@ async function awayOnDay(
        and v.check_in_at < (${day}::date + 1)::timestamp at time zone ${APP_TIMEZONE}
   `);
   return awayFromHometown({
-    hometown: home.city,
+    hometowns: homes.map((h) => h.city),
     visitCities: visits.map((v) => v.city),
     destinationCity: d.destinationCity,
     overnight: d.overnight,

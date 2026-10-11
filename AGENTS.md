@@ -6749,14 +6749,25 @@ Typed, a hometown was a string the pay rule compared against shop towns read
 through `placeNameSql`, so "Nagpur " or "nagpur city" matched nothing and made
 every day an away day. It is now a city node of `places` (state › district ›
 city), stored as `expense_hometowns.place_id` with the name and state beside it
-(`0245`; a typed row that names exactly one city was adopted, the rest show as
+(`0246`; a typed row that names exactly one city was adopted, the rest show as
 "Typed"). It is set on the Sales Dashboard's Salesmen screen (`/sales/people`,
-a Hometown column, a "Hometown not set" filter and a banner counting the
-backlog) and on each salesman's page, through `setSalesmanHometown`
+a Hometowns column, a "Hometown not set" filter and a banner counting the
+backlog) and on each salesman's page, through `setSalesmanHometowns`
 (`sales.people`, his manager's team), and on the Admin Console's "Who is on
-which" through `setExpenseHometown` (`expense.policy.write`). Both doors are
-`HometownPicker` and both write through `writeHometown` in
+which" through `setExpenseHometowns` (`expense.policy.write`). Both doors are
+`HometownPicker` and both write through `writeHometowns` in
 `services/hometown-service.ts`, which refuses anything that is not a city.
+
+**A SALESMAN MAY HAVE SEVERAL HOMETOWNS, and a day in any of them is a day at
+home.** He lives in one town and his family in another, or two towns run into
+each other, and one hometown made every day in the second an away day.
+`expense_hometowns` is one row per town, keyed on (user, town) since `0252`;
+`awayFromHometown` takes the list and calls a day away only where it reached a
+town that is none of them. The picker ticks towns across states and saves the
+WHOLE set, so unticking a town takes it off and an empty set clears them. A
+town typed before the picker stays only while the picker is told to keep it
+(`keepTyped`), and that is never a way to type a new one in. Two picked towns
+of one name are one hometown, because the rule compares names.
 
 **A LOGGED BILL IS WORTH ITS OWN FIGURE.** `DayComputation.lineEligiblePaise`
 is per line, and `writeLineFigures` reads it; it used to share the day's

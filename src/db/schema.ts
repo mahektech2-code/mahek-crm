@@ -7624,11 +7624,16 @@ export const expensePolicyAssignments = pgTable(
 
 /**
  * Where a salesman lives, for the expense policy's "away from his hometown".
- * No row means not set, and the day keeps what the handset recorded.
+ * One row per town: a salesman may have SEVERAL hometowns (he lives in one
+ * and his family in another, or two towns run into each other), and a day in
+ * any of them is a day at home. No row means not set, and the day keeps what
+ * the handset recorded.
  */
-export const expenseHometowns = pgTable("expense_hometowns", {
+export const expenseHometowns = pgTable(
+  "expense_hometowns",
+  {
   userId: text("user_id")
-    .primaryKey()
+    .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
   /** The town's name — what the pay rule compares the visited shops' towns against. */
   city: text("city").notNull(),
@@ -7638,7 +7643,9 @@ export const expenseHometowns = pgTable("expense_hometowns", {
   state: text("state"),
   setAt: timestamp("set_at", { withTimezone: true }).notNull().defaultNow(),
   setById: text("set_by_id").references(() => users.id),
-});
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.city] })],
+);
 
 /**
  * The grades a policy may name.

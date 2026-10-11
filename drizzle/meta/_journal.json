@@ -1749,7 +1749,14 @@
       "idx": 249,
       "version": "7",
       "when": 1792532024442,
-      "tag": "0252_erp_inventory_accuracy",
+      "tag": "0252_many_hometowns",
+      "breakpoints": true
+    },
+    {
+      "idx": 250,
+      "version": "7",
+      "when": 1792532025442,
+      "tag": "0253_erp_inventory_accuracy",
       "breakpoints": true
     }
   ]

@@ -181,8 +181,8 @@ export function SalesmanScreen({
           </span>
         </div>
         <div className="flex min-w-0 items-center gap-2">
-          <span className="text-muted">Hometown</span>
-          <HometownPicker door="sales" salesman={{ id: s.id, name: s.name }} hometown={s.hometown} tree={towns} />
+          <span className="text-muted">{s.hometowns.length > 1 ? "Hometowns" : "Hometown"}</span>
+          <HometownPicker door="sales" salesman={{ id: s.id, name: s.name }} hometowns={s.hometowns} tree={towns} />
         </div>
       </div>
 

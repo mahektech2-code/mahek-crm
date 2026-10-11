@@ -60,7 +60,7 @@ import {
   restorePolicyRevision,
   savePolicySet,
   setPolicySetActive,
-  setExpenseHometown,
+  setExpenseHometowns,
 } from "@/lib/actions/expense-policy-sets";
 import { policyPeople, policySetRevisions, readPolicySet } from "@/lib/services/expense-policy-set-service";
 import { hometownTree } from "@/lib/services/hometown-service";
@@ -70,7 +70,7 @@ import { priceDay } from "@/lib/services/expense-service";
 import { refreshDayMoney } from "@/lib/services/expense-submit-service";
 import { expenseLines } from "@/lib/services/expense-claims-service";
 import { resolveException } from "@/lib/actions/expenses";
-import { decideExpense, setSalesmanHometown } from "@/lib/actions/sales";
+import { decideExpense, setSalesmanHometowns } from "@/lib/actions/sales";
 import { expenseStateSql, paidPaiseSql } from "@/lib/expense-money-sql";
 import { duplicateWarnings } from "@/lib/services/expense-service";
 import { simulatePolicy } from "@/lib/services/expense-simulator-service";
@@ -1168,29 +1168,27 @@ describe("a hometown", () => {
       [{ id: city.id, district: district.name }],
     );
 
-    const set = await setExpenseHometown({ userId: salesman.id, placeId: city.id });
+    const set = await setExpenseHometowns({ userId: salesman.id, placeIds: [city.id] });
     assert.ok(set.ok, set.ok ? "" : set.error);
     const [row] = await db.execute<{ city: string; state: string; placeId: string }>(sql`
       select city, state, place_id as "placeId" from expense_hometowns where user_id = ${salesman.id}
     `);
     assert.deepEqual(row, { city: city.name, state: state.name, placeId: city.id });
 
-    const again = await setExpenseHometown({ userId: salesman.id, placeId: city.id });
+    const again = await setExpenseHometowns({ userId: salesman.id, placeIds: [city.id] });
     assert.ok(again.ok);
     assert.equal(again.message, "Nothing changed.");
 
     const people = await policyPeople();
-    assert.deepEqual(people.find((p) => p.userId === salesman.id)!.hometown, {
-      city: city.name,
-      state: state.name,
-      placeId: city.id,
-    });
+    assert.deepEqual(people.find((p) => p.userId === salesman.id)!.hometowns, [
+      { city: city.name, state: state.name, placeId: city.id },
+    ]);
     const [audited] = await db.execute<{ n: number }>(sql`
       select count(*)::int as n from audit_log where action = 'expense_policy.hometown' and entity_id = ${salesman.id}
     `);
     assert.equal(audited!.n, 1, "a no-op is not audited");
 
-    assert.ok((await setExpenseHometown({ userId: salesman.id, placeId: null })).ok);
+    assert.ok((await setExpenseHometowns({ userId: salesman.id, placeIds: [] })).ok);
     const [gone] = await db.execute<{ n: number }>(sql`
       select count(*)::int as n from expense_hometowns where user_id = ${salesman.id}
     `);
@@ -1199,32 +1197,80 @@ describe("a hometown", () => {
 
   test("a place that is not a city is refused, and so is anybody without the policy capability", async () => {
     const { district, city } = await branch();
-    const wrong = await setExpenseHometown({ userId: salesman.id, placeId: district.id });
+    const wrong = await setExpenseHometowns({ userId: salesman.id, placeIds: [district.id] });
     assert.equal(wrong.ok, false, "a district is not a town");
 
     setTestUser(salesman);
-    await assert.rejects(() => setExpenseHometown({ userId: salesman.id, placeId: city.id }));
+    await assert.rejects(() => setExpenseHometowns({ userId: salesman.id, placeIds: [city.id] }));
   });
 
   test("a salesman's own manager sets it from the Salesmen screen, through the same writer", async () => {
     const { city } = await branch();
     setTestUser(await salesManager());
-    const set = await setSalesmanHometown({ salesmanId: salesman.id, placeId: city.id });
+    const set = await setSalesmanHometowns({ salesmanId: salesman.id, placeIds: [city.id] });
     assert.ok(set.ok, set.ok ? "" : set.error);
     const team = await fieldTeam();
-    assert.equal(team.find((t) => t.id === salesman.id)!.hometown?.placeId, city.id);
+    assert.deepEqual(team.find((t) => t.id === salesman.id)!.hometowns.map((h) => h.placeId), [city.id]);
   });
 
   test("a hometown picked from the tree is what the meal rule compares the day against", async () => {
     const { city } = await branch();
     const day = "2026-06-24";
     const dayId = await openDay(day, { departedAt: at(day, hhmm(6)), returnedAt: at(day, hhmm(23)) });
-    assert.ok((await setExpenseHometown({ userId: salesman.id, placeId: city.id })).ok);
+    assert.ok((await setExpenseHometowns({ userId: salesman.id, placeIds: [city.id] })).ok);
     await refreshDayMoney(salesman.id, day);
     assert.equal((await priceDay(salesman.id, day))!.computation!.foodPaise, 0, "a day at home");
 
     await db.update(mbosExpenseDays).set({ destinationCity: "Wardha" }).where(eq(mbosExpenseDays.id, dayId));
     await refreshDayMoney(salesman.id, day);
     assert.equal((await priceDay(salesman.id, day))!.computation!.foodPaise, 45000, "a trip elsewhere");
+  });
+
+  test("he may have several, and a day in any of them is a day at home", async () => {
+    const { state, city } = await branch();
+    const second = { id: id("pl"), name: `Wardha ${randomUUID().slice(0, 6)}` };
+    await db.execute(sql`
+      insert into places (id, kind, name, key, parent_id)
+      values (${second.id}, 'city', ${second.name}, ${second.id}, ${state.id})
+    `);
+    const day = "2026-06-25";
+    const dayId = await openDay(day, { departedAt: at(day, hhmm(6)), returnedAt: at(day, hhmm(23)) });
+
+    const both = await setExpenseHometowns({ userId: salesman.id, placeIds: [city.id, second.id] });
+    assert.ok(both.ok, both.ok ? "" : both.error);
+    assert.match(both.message ?? "", /Hometowns set to/);
+    const people = await policyPeople();
+    assert.deepEqual(
+      people.find((p) => p.userId === salesman.id)!.hometowns.map((h) => h.placeId).sort(),
+      [city.id, second.id].sort(),
+    );
+
+    await db.update(mbosExpenseDays).set({ destinationCity: second.name }).where(eq(mbosExpenseDays.id, dayId));
+    await refreshDayMoney(salesman.id, day);
+    assert.equal((await priceDay(salesman.id, day))!.computation!.foodPaise, 0, "the second hometown is home too");
+
+    /* The whole set is saved: leaving a town out takes it off. */
+    assert.ok((await setExpenseHometowns({ userId: salesman.id, placeIds: [city.id] })).ok);
+    await refreshDayMoney(salesman.id, day);
+    assert.equal((await priceDay(salesman.id, day))!.computation!.foodPaise, 45000, "no longer home");
+  });
+
+  test("a town typed before the picker stays until it is removed, and cannot be typed in new", async () => {
+    const { city } = await branch();
+    await db.execute(sql`insert into expense_hometowns (user_id, city) values (${salesman.id}, 'Old Typed Town')`);
+
+    assert.ok(
+      (await setExpenseHometowns({ userId: salesman.id, placeIds: [city.id], keepTyped: ["Old Typed Town", "Invented"] })).ok,
+    );
+    const rows = await db.execute<{ city: string }>(sql`
+      select city from expense_hometowns where user_id = ${salesman.id} order by city
+    `);
+    assert.deepEqual(rows.map((r) => r.city).sort(), [city.name, "Old Typed Town"].sort(), "kept, and nothing new typed in");
+
+    assert.ok((await setExpenseHometowns({ userId: salesman.id, placeIds: [city.id] })).ok);
+    const [left] = await db.execute<{ n: number }>(sql`
+      select count(*)::int as n from expense_hometowns where user_id = ${salesman.id}
+    `);
+    assert.equal(left!.n, 1, "the typed town is gone once it is not kept");
   });
 });
