@@ -30,6 +30,9 @@ export const ERP_POWERS = [
   "approveSfgQc",
   "dispatchOverride",
   "stockControl",
+  "scrapSell",
+  "scrapControl",
+  "scrapReceipts",
 ] as const;
 
 export type ErpPower = (typeof ERP_POWERS)[number];
@@ -102,6 +105,18 @@ export const ERP_POWER_LABEL: Record<ErpPower, { label: string; source: string }
   stockControl: {
     label: "Resolve stock discrepancies and approve adjustments",
     source: "Inventory Accuracy Control: resolves a red-flagged count, approves or rejects a stock adjustment, and approves an urgent purchase while a discrepancy is open. Nobody approves an adjustment or exception they asked for, unless they are an ERP administrator (new in MahekOne).",
+  },
+  scrapSell: {
+    label: "Sell scrap and return vendor drums",
+    source: "Records scrap sales (empty drums allocated oldest first, plastic, cardboard and other scrap) and the outward of vendor-returnable drums to their supplier. Production staff who only weigh empty drums do not need it (new in MahekOne).",
+  },
+  scrapControl: {
+    label: "Correct empty drums and cancel scrap sales",
+    source: "Decides who owns a lot's drums where the GRN did not say, corrects a drum's weight or cancels its record with a reason, lets a weight outside the limits through, and cancels a scrap sale nothing has been paid against. Every correction keeps the original (new in MahekOne).",
+  },
+  scrapReceipts: {
+    label: "Match scrap receipts (accountant)",
+    source: "Records a scrap buyer's cash or bank receipt and matches it to their scrap sales, which is what reduces what they owe. Selling scrap never marks it paid (new in MahekOne).",
   },
 };
 

@@ -1,0 +1,42 @@
+Scrap & empty drums is one pure engine, a small service for the scale page, one screen module with nine tabs, and six tables. Every balance is derived on read.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Rules (pure) | `src/lib/erp/engines/scrap.ts` | `parseDrumCode`, `routeDrum`, `pickDrumSeq`, `weightCheck`, `tareVariance`, `fifoPick`, `salePayState`, `outstanding`, `allocationRefusal`, `spreadOldestFirst`, `ageingBucket`, `otherScrapBalance` |
+| Scale service | `src/lib/erp/scrap.ts` | `lookupDrumLot`, `recordEmptyDrum`, `recentEmptyDrums`, `scrapSummary` |
+| Scale page | `src/app/erp/empty-drums/` | `page.tsx`, `scale.tsx`; actions in `src/lib/actions/erp-scrap.ts` |
+| Screen | `src/lib/erp/screens/scrap.ts` | `emptyDrums`, `drumStock`, `returnableDrums`, `drumReturns`, `scrapSales`, `otherScrap`, `scrapBuyers`, `scrapReceipts`, `tareVariance` |
+| Dashboard | `src/lib/erp/dashboard.ts` | the "Scrap & empty drums" section |
+| Badges | `src/lib/erp/counts.ts` | `emptyDrums` (ownership to decide), `scrapReceipts` (unmatched) |
+| Powers | `src/lib/erp/powers.ts` | `scrapSell`, `scrapControl`, `scrapReceipts` |
+| Migration | `drizzle/0256_erp_scrap_and_empty_drums.sql` | the tables, `erp_purchases.drum_ownership`, four series |
+
+<ModuleRef k="erp.scrap" />
+
+## Tables
+
+<DbTable name="erp_empty_drums" />
+
+<DbTable name="erp_scrap_sales" />
+
+<DbTable name="erp_scrap_receipts" />
+
+<DbTable name="erp_scrap_allocations" />
+
+## The drum
+
+<Code file="src/lib/erp/engines/scrap.ts" symbol="pickDrumSeq" />
+
+`recordEmptyDrum` takes the purchase row `for update`, re-reads the seqs already recorded and picks inside the transaction, so two people weighing one lot get two numbers. `erp_empty_drums_drum_key (purchase_id, seq)` is the backstop. `erp_empty_drums_route_check` makes a status impossible without the owner it needs.
+
+## FIFO
+
+<Code file="src/lib/erp/engines/scrap.ts" symbol="fifoPick" />
+
+The sale locks every available Mahek drum (`for update`), picks, and updates `where status = 'available'`, refusing if fewer rows moved than were picked. Other scrap takes an advisory lock on `scrap:<category>:<unit>` and re-reads the balance.
+
+## Settings
+
+<SettingsTable prefix="erp.scrap." />
