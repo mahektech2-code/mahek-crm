@@ -168,6 +168,16 @@ describe("filling", () => {
     const refused = await mod("sfgBatches").actions!.qcApprove(await as(clerk), line.id, {});
     assert.equal(refused.ok, false, "a clerk without the QC power cannot approve");
     assert.equal(fieldMsg(await mod("sfgBatches").actions!.qcReject(await as(admin), line.id, {})), "Say why the lot failed QC");
+    /* The bulk path: a clerk is refused and is not even offered it; a reject
+       needs its reason; approving two lines of one batch decides its ONE lot. */
+    assert.equal((await mod("sfgBatches").load(await as(clerk))).spec.bulk, undefined, "no bulk QC for somebody without the power");
+    assert.ok((await mod("sfgBatches").load(await as(admin))).spec.bulk?.some((b) => b.id === "qcApprove"));
+    assert.equal((await mod("sfgBatches").bulk!.qcApprove(await as(clerk), [line.id], {})).ok, false);
+    assert.equal(fieldMsg(await mod("sfgBatches").bulk!.qcReject(await as(admin), [line.id], {})), "Say why the lots failed QC");
+    const all = await db.select().from(erpSfgLines);
+    const bulk = await mod("sfgBatches").bulk!.qcReject(await as(admin), all.map((l) => l.id), { note: "Hazy" });
+    assert.ok(bulk.ok, JSON.stringify(bulk));
+    assert.equal((await mod("sfgBatches").bulk!.qcReject(await as(admin), all.map((l) => l.id), { note: "Hazy" })).ok, false, "already rejected");
     const ok = await mod("sfgBatches").actions!.qcApprove(await as(admin), line.id, { note: "Viscosity 18 s, clear" });
     assert.ok(ok.ok, JSON.stringify(ok));
     const after = await mod("fgFill").load(await as(admin));

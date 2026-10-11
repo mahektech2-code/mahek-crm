@@ -627,6 +627,20 @@ export function ListScreen({
 
       {bulkOn ? (
         <SelectionBar count={chosen.length} onClear={() => setSel({})}>
+          {/* The header box takes this page; this takes everything the
+              search, chips and godown filter leave, across every page. */}
+          {chosen.length < total ? (
+            <button
+              onClick={() => {
+                const n = { ...sel };
+                grouped.list.forEach((r) => (n[r.id] = true));
+                setSel(n);
+              }}
+              className="cursor-pointer text-[13px] text-line-strong underline-offset-2 hover:text-white hover:underline"
+            >
+              Select all {nf(total)}
+            </button>
+          ) : null}
           {spec.bulk!.map((b) => (
             <Button key={b.id} variant="dark" size="sm" onClick={() => ui.bulk(spec.screen, b, chosen, () => setSel({}))}>
               {b.l}
