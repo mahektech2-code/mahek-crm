@@ -638,6 +638,12 @@ export const attachmentParentEnum = pgEnum("attachment_parent", [
   /** Retired with the petty cash module (0249). Postgres cannot drop an enum
       value, so it stays declared; nothing writes it. */
   "erp_petty",
+  /** A vendor return's photographs and documents, a return outward's (0258). */
+  "erp_vendor_return",
+  /** A customer return's photographs and transport papers (0258). */
+  "erp_customer_return",
+  /** A waste disposal's certificate or receipt (0258). */
+  "erp_waste",
   /* HRMS parents: read under the HRMS screen the record lives on (see
      lib/hrms/attachments.ts), never under a customer's scope. */
   "hrms_attendance",
@@ -14917,4 +14923,345 @@ export const factoryDowntime = pgTable(
     recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("factory_downtime_at_idx").on(t.godownId, t.recordedAt), check("factory_downtime_minutes_check", sql`${t.minutes} > 0`)],
+);
+
+/* ---- ERP material returns (0258) ------------------------------------------
+ * Financial documents adjust the ledger; physical transactions adjust stock.
+ * A debit note and a credit note move no stock. A confirmed goods return
+ * outward is an OUTFLOW of its raw-material lot (read by `rmLots`), and a
+ * customer return sits in quarantine — on its own record, outside every
+ * saleable stock — until QC disposes of it into the existing FG, SFG and
+ * scrap ledgers or to waste.
+ * ------------------------------------------------------------------------- */
+
+/** A purchase return against one GRN lot of the purchase register. */
+export const erpPurchaseReturns = pgTable(
+  "erp_purchase_returns",
+  {
+    id: text("id").primaryKey(),
+    returnNo: integer("return_no").notNull(),
+    returnDate: date("return_date").notNull(),
+    purchaseId: text("purchase_id")
+      .notNull()
+      .references(() => erpPurchases.id),
+    supplierId: text("supplier_id")
+      .notNull()
+      .references(() => erpSuppliers.id),
+    rawMaterialId: text("raw_material_id")
+      .notNull()
+      .references(() => erpRawMaterials.id),
+    lotNo: text("lot_no").notNull(),
+    prNumber: integer("pr_number").notNull(),
+    /** In the lot's purchase unit (Kg | Litre | Pcs). */
+    quantity: erpQty("quantity").notNull(),
+    unit: text("unit").notNull(),
+    /** The same quantity in the stock ledger's unit (litres or pieces). */
+    stockQty: erpQty("stock_qty").notNull(),
+    ratePaise: bigint("rate_paise", { mode: "number" }),
+    gstBp: integer("gst_bp").notNull().default(1800),
+    amountPaise: bigint("amount_paise", { mode: "number" }),
+    taxPaise: bigint("tax_paise", { mode: "number" }),
+    totalPaise: bigint("total_paise", { mode: "number" }),
+    /** quality_defect | damaged | wrong_material | wrong_spec | other. */
+    reasonCode: text("reason_code").notNull(),
+    remarks: text("remarks"),
+    /** pending | approved | rejected | cancelled. */
+    status: text("status").notNull().default("pending"),
+    /** Above `erp.returns.ownerApprovalPaise`: the owner approves it as well. */
+    needsOwner: boolean("needs_owner").notNull().default(false),
+    approvedById: text("approved_by_id").references(() => users.id),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    ownerApprovedById: text("owner_approved_by_id").references(() => users.id),
+    ownerApprovedAt: timestamp("owner_approved_at", { withTimezone: true }),
+    decisionNote: text("decision_note"),
+    cancelReason: text("cancel_reason"),
+    cancelledById: text("cancelled_by_id").references(() => users.id),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("erp_purchase_returns_no_key").on(t.returnNo),
+    index("erp_purchase_returns_lot_idx").on(t.purchaseId),
+    check("erp_purchase_returns_qty_check", sql`${t.quantity} > 0 AND ${t.stockQty} > 0`),
+    check("erp_purchase_returns_status_check", sql`${t.status} in ('pending', 'approved', 'rejected', 'cancelled')`),
+    check("erp_purchase_returns_reason_check", sql`${t.reasonCode} in ('quality_defect', 'damaged', 'wrong_material', 'wrong_spec', 'other')`),
+  ],
+);
+
+/** The debit note an approved purchase return generates. Moves no stock. */
+export const erpDebitNotes = pgTable(
+  "erp_debit_notes",
+  {
+    id: text("id").primaryKey(),
+    noteNo: integer("note_no").notNull(),
+    noteDate: date("note_date").notNull(),
+    purchaseReturnId: text("purchase_return_id")
+      .notNull()
+      .references(() => erpPurchaseReturns.id),
+    supplierId: text("supplier_id")
+      .notNull()
+      .references(() => erpSuppliers.id),
+    purchaseId: text("purchase_id")
+      .notNull()
+      .references(() => erpPurchases.id),
+    prNumber: integer("pr_number").notNull(),
+    /** The supplier's bill (the purchase invoice) the lot came on. */
+    billNumber: text("bill_number"),
+    lotNo: text("lot_no").notNull(),
+    rawMaterialId: text("raw_material_id")
+      .notNull()
+      .references(() => erpRawMaterials.id),
+    quantity: erpQty("quantity").notNull(),
+    unit: text("unit").notNull(),
+    ratePaise: bigint("rate_paise", { mode: "number" }).notNull(),
+    gstBp: integer("gst_bp").notNull(),
+    amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+    taxPaise: bigint("tax_paise", { mode: "number" }).notNull(),
+    totalPaise: bigint("total_paise", { mode: "number" }).notNull(),
+    reasonCode: text("reason_code").notNull(),
+    /** issued | cancelled. */
+    status: text("status").notNull().default("issued"),
+    cancelReason: text("cancel_reason"),
+    cancelledById: text("cancelled_by_id").references(() => users.id),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("erp_debit_notes_no_key").on(t.noteNo),
+    uniqueIndex("erp_debit_notes_live_key").on(t.purchaseReturnId).where(sql`${t.status} = 'issued'`),
+    check("erp_debit_notes_status_check", sql`${t.status} in ('issued', 'cancelled')`),
+    check("erp_debit_notes_total_check", sql`${t.totalPaise} > 0`),
+  ],
+);
+
+/** The physical return to the vendor. Stock leaves only when it is CONFIRMED. */
+export const erpReturnOutwards = pgTable(
+  "erp_return_outwards",
+  {
+    id: text("id").primaryKey(),
+    outwardNo: integer("outward_no").notNull(),
+    purchaseReturnId: text("purchase_return_id")
+      .notNull()
+      .references(() => erpPurchaseReturns.id),
+    supplierId: text("supplier_id")
+      .notNull()
+      .references(() => erpSuppliers.id),
+    rawMaterialId: text("raw_material_id")
+      .notNull()
+      .references(() => erpRawMaterials.id),
+    lotNo: text("lot_no").notNull(),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    quantity: erpQty("quantity").notNull(),
+    unit: text("unit").notNull(),
+    stockQty: erpQty("stock_qty").notNull(),
+    packing: text("packing"),
+    transporter: text("transporter"),
+    vehicleNo: text("vehicle_no"),
+    lrNo: text("lr_no"),
+    dispatchDate: date("dispatch_date").notNull(),
+    note: text("note"),
+    /** draft | confirmed | cancelled. */
+    status: text("status").notNull().default("draft"),
+    confirmedById: text("confirmed_by_id").references(() => users.id),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+    cancelReason: text("cancel_reason"),
+    cancelledById: text("cancelled_by_id").references(() => users.id),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("erp_return_outwards_no_key").on(t.outwardNo),
+    uniqueIndex("erp_return_outwards_live_key").on(t.purchaseReturnId).where(sql`${t.status} <> 'cancelled'`),
+    index("erp_return_outwards_lot_idx").on(t.lotNo, t.godownId),
+    check("erp_return_outwards_status_check", sql`${t.status} in ('draft', 'confirmed', 'cancelled')`),
+    check("erp_return_outwards_qty_check", sql`${t.stockQty} > 0`),
+  ],
+);
+
+/** A customer's return against one dispatched order line and the lot that went on it. */
+export const erpCustomerReturns = pgTable(
+  "erp_customer_returns",
+  {
+    id: text("id").primaryKey(),
+    returnNo: integer("return_no").notNull(),
+    returnDate: date("return_date").notNull(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id),
+    orderId: text("order_id")
+      .notNull()
+      .references(() => erpOrders.id),
+    batchCodeId: text("batch_code_id")
+      .notNull()
+      .references(() => erpBatchCodes.id),
+    skuId: text("sku_id")
+      .notNull()
+      .references(() => products.id),
+    finishedGoodId: text("finished_good_id").references(() => finishedGoods.id),
+    /** fg (cans) | pack (boxes) — the unit the lot was allocated in. */
+    lotFrom: text("lot_from").notNull(),
+    lotCode: text("lot_code").notNull(),
+    quantity: erpQty("quantity").notNull(),
+    /** Cans | Boxes. */
+    unit: text("unit").notNull(),
+    litres: erpQty("litres").notNull(),
+    ratePaise: bigint("rate_paise", { mode: "number" }),
+    discountBp: integer("discount_bp"),
+    gstBp: integer("gst_bp").notNull().default(1800),
+    totalPaise: bigint("total_paise", { mode: "number" }),
+    reasonCode: text("reason_code").notNull(),
+    customerRemarks: text("customer_remarks"),
+    transporter: text("transporter"),
+    vehicleNo: text("vehicle_no"),
+    lrNo: text("lr_no"),
+    /** open | rejected | cancelled — the stage is derived from what was received and decided. */
+    status: text("status").notNull().default("open"),
+    receivedQty: erpQty("received_qty"),
+    receivedGodownId: text("received_godown_id").references(() => erpGodowns.id),
+    receivedById: text("received_by_id").references(() => users.id),
+    receivedAt: timestamp("received_at", { withTimezone: true }),
+    needsOwner: boolean("needs_owner").notNull().default(false),
+    approvedById: text("approved_by_id").references(() => users.id),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    ownerApprovedById: text("owner_approved_by_id").references(() => users.id),
+    ownerApprovedAt: timestamp("owner_approved_at", { withTimezone: true }),
+    /** The complaint that carries the credit note to Accounts. */
+    complaintId: text("complaint_id").references(() => complaints.id),
+    decisionNote: text("decision_note"),
+    cancelReason: text("cancel_reason"),
+    cancelledById: text("cancelled_by_id").references(() => users.id),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("erp_customer_returns_no_key").on(t.returnNo),
+    index("erp_customer_returns_order_idx").on(t.orderId),
+    index("erp_customer_returns_lot_idx").on(t.lotFrom, t.lotCode),
+    check("erp_customer_returns_qty_check", sql`${t.quantity} > 0`),
+    check("erp_customer_returns_received_check", sql`${t.receivedQty} is null or (${t.receivedQty} > 0 and ${t.receivedQty} <= ${t.quantity})`),
+    check("erp_customer_returns_status_check", sql`${t.status} in ('open', 'rejected', 'cancelled')`),
+    check("erp_customer_returns_lot_check", sql`${t.lotFrom} in ('fg', 'pack')`),
+    check("erp_customer_returns_reason_check", sql`${t.reasonCode} in ('quality_defect', 'damaged', 'wrong_product', 'wrong_spec', 'excess', 'other')`),
+  ],
+);
+
+/** QC's decision on part (or all) of a customer return. Reversed, never deleted. */
+export const erpReturnDispositions = pgTable(
+  "erp_return_dispositions",
+  {
+    id: text("id").primaryKey(),
+    customerReturnId: text("customer_return_id")
+      .notNull()
+      .references(() => erpCustomerReturns.id),
+    /** reuse | rework | scrap | waste. */
+    kind: text("kind").notNull(),
+    /** In the return's unit (cans or boxes). */
+    quantity: erpQty("quantity").notNull(),
+    litres: erpQty("litres").notNull(),
+    godownId: text("godown_id").references(() => erpGodowns.id),
+    scrapKg: erpQty("scrap_kg"),
+    scrapEntryId: text("scrap_entry_id").references(() => erpScrapEntries.id),
+    note: text("note"),
+    /** active | reversed. */
+    status: text("status").notNull().default("active"),
+    decidedById: text("decided_by_id").references(() => users.id),
+    decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow(),
+    reverseReason: text("reverse_reason"),
+    reversedById: text("reversed_by_id").references(() => users.id),
+    reversedAt: timestamp("reversed_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("erp_return_dispositions_return_idx").on(t.customerReturnId),
+    check("erp_return_dispositions_kind_check", sql`${t.kind} in ('reuse', 'rework', 'scrap', 'waste')`),
+    check("erp_return_dispositions_status_check", sql`${t.status} in ('active', 'reversed')`),
+    check("erp_return_dispositions_qty_check", sql`${t.quantity} > 0`),
+  ],
+);
+
+/** Returned liquid reworked through the existing SFG process. Completing it posts its own SFG lot. */
+export const erpReworkOrders = pgTable(
+  "erp_rework_orders",
+  {
+    id: text("id").primaryKey(),
+    reworkNo: integer("rework_no").notNull(),
+    dispositionId: text("disposition_id")
+      .notNull()
+      .references(() => erpReturnDispositions.id),
+    customerReturnId: text("customer_return_id")
+      .notNull()
+      .references(() => erpCustomerReturns.id),
+    formulationId: text("formulation_id")
+      .notNull()
+      .references(() => productFormulations.id),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    inputLitres: erpQty("input_litres").notNull(),
+    outputLitres: erpQty("output_litres"),
+    lossLitres: erpQty("loss_litres"),
+    sfgLotCode: text("sfg_lot_code").notNull(),
+    operator: text("operator"),
+    reworkDate: date("rework_date"),
+    note: text("note"),
+    /** open | completed | cancelled. */
+    status: text("status").notNull().default("open"),
+    completedById: text("completed_by_id").references(() => users.id),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    cancelReason: text("cancel_reason"),
+    cancelledById: text("cancelled_by_id").references(() => users.id),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("erp_rework_orders_no_key").on(t.reworkNo),
+    uniqueIndex("erp_rework_orders_lot_key").on(t.sfgLotCode),
+    check("erp_rework_orders_status_check", sql`${t.status} in ('open', 'completed', 'cancelled')`),
+    check("erp_rework_orders_output_check", sql`${t.outputLitres} is null or (${t.outputLitres} >= 0 and ${t.outputLitres} <= ${t.inputLitres})`),
+  ],
+);
+
+/** Returned material that can be neither reused nor sold as scrap, and its disposal. */
+export const erpWasteDisposals = pgTable(
+  "erp_waste_disposals",
+  {
+    id: text("id").primaryKey(),
+    wasteNo: integer("waste_no").notNull(),
+    dispositionId: text("disposition_id")
+      .notNull()
+      .references(() => erpReturnDispositions.id),
+    customerReturnId: text("customer_return_id")
+      .notNull()
+      .references(() => erpCustomerReturns.id),
+    litres: erpQty("litres").notNull(),
+    reason: text("reason").notNull(),
+    /** pending | disposed | cancelled. */
+    status: text("status").notNull().default("pending"),
+    disposalDate: date("disposal_date"),
+    method: text("method"),
+    responsible: text("responsible"),
+    agency: text("agency"),
+    costPaise: bigint("cost_paise", { mode: "number" }),
+    note: text("note"),
+    disposedById: text("disposed_by_id").references(() => users.id),
+    disposedAt: timestamp("disposed_at", { withTimezone: true }),
+    cancelReason: text("cancel_reason"),
+    cancelledById: text("cancelled_by_id").references(() => users.id),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("erp_waste_disposals_no_key").on(t.wasteNo),
+    check("erp_waste_disposals_status_check", sql`${t.status} in ('pending', 'disposed', 'cancelled')`),
+    check("erp_waste_disposals_cost_check", sql`${t.costPaise} is null or ${t.costPaise} >= 0`),
+  ],
 );

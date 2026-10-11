@@ -81,6 +81,21 @@ export async function resolveTrace(raw: string): Promise<{ kind: TraceKind; code
 export async function traceCode(raw: string): Promise<TraceResult | null> {
   const r = await resolveTrace(raw);
   if (!r) return null;
+  const res = await traceByKind(r);
+  if (res) {
+    const returns = await returnsFor(res);
+    if (returns.length) res.forward.push({ stage: "Material returns", rows: returns });
+  }
+  return res;
+}
+
+/** Every purchase return of a raw-material lot, and every customer return of an FG or packing lot or order — so a batch is traced through its returns too. */
+async function returnsFor(res: TraceResult): Promise<{ text: string; sub?: string; href?: string; tone?: "ok" | "warn" | "bad" }[]> {
+  const { returnRowsForTrace } = await import("./returns");
+  return returnRowsForTrace(res.kind, res.code);
+}
+
+async function traceByKind(r: { kind: TraceKind; code: string; ids?: string[] }): Promise<TraceResult | null> {
   switch (r.kind) {
     case "unit":
       return traceUnit(r.code);
@@ -422,7 +437,7 @@ async function traceSfg(lot: string): Promise<TraceResult> {
 
 async function traceRm(lot: string): Promise<TraceResult> {
   const back = await backward({ rm: [lot] });
-  const sfgLines = await q(sql`select distinct lot_code as lot, sfg_no as no, batch_date::text as date from erp_sfg_lines where rm_lot_no = ${lot} order by batch_date`);
+  const sfgLines = await q(sql`select distinct lot_code as lot, sfg_no as no, batch_date::text as date from erp_sfg_lines where rm_lot_no = ${lot} order by 3, 1`);
   const sfgLots = uniq(sfgLines.map((l) => s(l.lot)));
   const fills = sfgLots.length ? await q(sql`select distinct lot_code as lot from erp_fg_fills where sfg_lot_code in ${sfgLots}`) : [];
   const fwd = await forwardFromFg(uniq(fills.map((f) => s(f.lot))));

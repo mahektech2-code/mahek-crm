@@ -1127,10 +1127,10 @@ async function savePack(ctx: ErpContext, h: Record<string, string>): Promise<Res
 async function entryOrphans(table: "sfg" | "fg" | "pack"): Promise<Set<string>> {
   const q =
     table === "sfg"
-      ? sql`select e.id from erp_sfg_entries e where (e.source_type = 'sfg' and not exists (select 1 from erp_sfg_lines l where l.id = e.source_id)) or (e.source_type = 'transfer' and not exists (select 1 from erp_transfers t where t.id = e.source_id))`
+      ? sql`select e.id from erp_sfg_entries e where (e.source_type = 'sfg' and not exists (select 1 from erp_sfg_lines l where l.id = e.source_id)) or (e.source_type = 'transfer' and not exists (select 1 from erp_transfers t where t.id = e.source_id)) or (e.source_type = 'rework' and not exists (select 1 from erp_rework_orders w where w.id = e.source_id and w.status = 'completed'))`
       : table === "fg"
-        ? sql`select e.id from erp_fg_entries e where (e.source_type = 'fill' and not exists (select 1 from erp_fg_fills f where f.id = e.source_id)) or (e.source_type = 'transfer' and not exists (select 1 from erp_transfers t where t.id = e.source_id))`
-        : sql`select e.id from erp_pack_entries e where (e.source_type = 'batch' and not exists (select 1 from erp_pack_lines l where l.batch_no = e.source_id)) or (e.source_type = 'transfer' and not exists (select 1 from erp_transfers t where t.id = e.source_id))`;
+        ? sql`select e.id from erp_fg_entries e where (e.source_type = 'fill' and not exists (select 1 from erp_fg_fills f where f.id = e.source_id)) or (e.source_type = 'transfer' and not exists (select 1 from erp_transfers t where t.id = e.source_id)) or (e.source_type = 'return' and not exists (select 1 from erp_return_dispositions d where d.id = e.source_id and d.status = 'active'))`
+        : sql`select e.id from erp_pack_entries e where (e.source_type = 'batch' and not exists (select 1 from erp_pack_lines l where l.batch_no = e.source_id)) or (e.source_type = 'transfer' and not exists (select 1 from erp_transfers t where t.id = e.source_id)) or (e.source_type = 'return' and not exists (select 1 from erp_return_dispositions d where d.id = e.source_id and d.status = 'active'))`;
   return new Set(((await db.execute(q)) as unknown as { id: string }[]).map((r) => r.id));
 }
 
@@ -1328,7 +1328,8 @@ function logScreen(key: "sfgLog" | "fgLog" | "packLog"): ScreenModule {
             : sql`select e.id, e.entry_date::text as date, e.source_type as type, e.source_id as source, p.name as item, e.batch_no as lot, e.boxes::float8 as qty, g.name as godown, e.posted_at as "postedAt"
                     from erp_pack_entries e join products p on p.id = e.sku_id join erp_godowns g on g.id = e.godown_id order by e.entry_date desc, e.posted_at desc, e.id desc`;
       const rows = (await db.execute(q)) as unknown as { id: string; date: string; type: string; source: string; item: string; lot: string; qty: number; godown: string; postedAt: Date }[];
-      const typeLabel = (t: string) => (t === "transfer" ? "Transfer" : table === "sfg" ? "Semi Finished" : table === "fg" ? "Finish Goods" : "FG Packing");
+      const typeLabel = (t: string) =>
+        t === "transfer" ? "Transfer" : t === "return" ? "Customer return (reused)" : t === "rework" ? "Rework" : table === "sfg" ? "Semi Finished" : table === "fg" ? "Finish Goods" : "FG Packing";
       const cols: ColSpec[] = [
         { k: "date", l: "Date", t: "d" },
         { k: "type", l: "Entry", t: "s" },

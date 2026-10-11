@@ -5,3 +5,4 @@ import "./trace";
 import "./purchase-flow";
 import "./stock-check";
 import "./scrap";
+import "./returns";

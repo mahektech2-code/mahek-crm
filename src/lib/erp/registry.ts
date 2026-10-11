@@ -221,6 +221,24 @@ export const ERP_GROUPS: ErpGroup[] = [
     ],
   },
   {
+    id: "returns",
+    label: "Material returns",
+    icon: "swap",
+    screens: [
+      s("vendorReturns", "vendor-returns", "Vendor returns", "Material sent back to a supplier after its GRN: the purchase return, its approval, the debit note — which moves no stock — and the goods return outward, which takes the lot out of stock only once the dispatch is confirmed.", true, [
+        v("vendorReturns", "Purchase returns"),
+        v("debitNotes", "Debit notes"),
+        v("returnOutwards", "Return outward"),
+      ]),
+      s("customerReturns", "customer-returns", "Customer returns", "Material a customer sends back against a dispatched order line. It waits in quarantine, outside saleable stock; the credit note goes to Accounts; QC decides whether it is reused, reworked, sold as chemical scrap or disposed of as waste.", true, [
+        v("customerReturns", "Returns"),
+        v("returnQc", "Quarantine & QC"),
+        v("reworkOrders", "Rework"),
+        v("wasteDisposals", "Waste disposal"),
+      ]),
+    ],
+  },
+  {
     id: "scrap",
     label: "Empty drums & scrap",
     icon: "can",

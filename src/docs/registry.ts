@@ -883,6 +883,14 @@ export const DOC_APPS: DocApp[] = [
         written: ALL,
       },
       {
+        slug: "material-returns",
+        title: "Material returns, debit and credit notes",
+        summary: "Goods back to a vendor (purchase return, debit note, return outward) and back from a customer (return inward, quarantine, credit note, QC decision: reuse, rework, chemical scrap or waste).",
+        group: "Money",
+        modules: ["erp.vendorReturns", "erp.customerReturns"],
+        written: ALL,
+      },
+      {
         slug: "empty-drums-scrap",
         title: "Empty drums, scrap sale and vendor returns",
         summary: "Drums recorded empty off their GRN label and weighed; Mahek's sold as scrap oldest first, suppliers' returned; scrap receivables matched in Petty Cash/Bank.",

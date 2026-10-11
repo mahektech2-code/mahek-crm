@@ -345,6 +345,26 @@ const DESCRIBE: Record<string, Describer> = {
   "erp.receipt.allocate": () => ["matched a receipt to a scrap sale"],
   "erp.receipt.unallocate": () => ["undid a receipt's match to a scrap sale"],
   "erp.receipt.void": () => ["voided a Petty Cash/Bank receipt"],
+  /* ---- material returns */
+  "erp.purchaseReturn.create": () => ["raised a purchase return"],
+  "erp.purchaseReturn.approve": () => ["approved a purchase return"],
+  "erp.purchaseReturn.ownerApprove": () => ["gave the owner's approval to a purchase return"],
+  "erp.purchaseReturn.reject": () => ["rejected a purchase return"],
+  "erp.purchaseReturn.cancel": () => ["cancelled a purchase return"],
+  "erp.returnOutward.create": () => ["prepared a goods return outward"],
+  "erp.returnOutward.confirm": () => ["confirmed goods returned to a vendor"],
+  "erp.returnOutward.cancel": () => ["cancelled a goods return outward"],
+  "erp.returnOutward.reverse": () => ["reversed goods returned to a vendor"],
+  "erp.customerReturn.create": () => ["recorded a customer return"],
+  "erp.customerReturn.receive": () => ["received a customer return into quarantine"],
+  "erp.customerReturn.reject": () => ["rejected a customer return"],
+  "erp.customerReturn.approve": () => ["approved a credit note on a customer return"],
+  "erp.customerReturn.ownerApprove": () => ["gave the owner's approval to a customer return's credit note"],
+  "erp.customerReturn.decide": () => ["recorded a QC decision on returned material"],
+  "erp.customerReturn.reverseDecision": () => ["reversed a QC decision on returned material"],
+  "erp.customerReturn.cancel": () => ["cancelled a customer return"],
+  "erp.rework.complete": () => ["completed a rework of returned material"],
+  "erp.waste.dispose": () => ["recorded a waste disposal"],
   /* ---- money */
   "payment.record": (c) => ({
     says: [

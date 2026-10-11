@@ -329,6 +329,12 @@ export const ST_TONE: Record<string, Tone> = {
   "Part matched": "info", Void: "muted", Recorded: "success", "Mahek owned": "brand", "Vendor returnable": "info",
   "Not recorded": "warn", "1–7": "warn", "8–15": "warn", "16–30": "danger", "31–60": "danger", "60+": "danger",
   Current: "success", "0–30 days": "neutral", "31–60 days": "warn", "61–90 days": "danger", "90+ days": "danger",
+  "Awaiting approval": "warn", "Awaiting owner approval": "warn", "Debit note issued · to dispatch": "info",
+  "Outward prepared · not confirmed": "brand", Issued: "success", Draft: "neutral", Confirmed: "success",
+  "Awaiting receipt": "warn", "In quarantine · awaiting QC": "danger", "Partly decided by QC": "warn",
+  "With accounts": "info", "Not raised": "neutral", Refused: "danger", Reversed: "muted", Disposed: "success",
+  Completed: "success", "Reusable as is": "success", Rework: "info", "Chemical scrap": "warn", "Waste disposal": "danger",
+  "To dispose": "warn", "In rework": "info",
 };
 
 /** Named row states (the source's format rules), and how each is labelled. */
@@ -391,6 +397,10 @@ export const FLAG: Record<string, [string, Tone]> = {
   drumWeightException: ["Weight outside limits, approved", "warn"],
   drumOpening: ["Opening stock — no GRN", "neutral"],
   unmatched: ["Not matched to a sale", "warn"],
+  ownerApproval: ["Owner approval needed", "warn"],
+  quarantine: ["In quarantine", "danger"],
+  noRate: ["No rate — no debit note yet", "warn"],
+  creditRaised: ["Credit note with accounts", "info"],
 };
 
 /* -------------------------------------------------------------- formatting */
