@@ -1,7 +1,7 @@
 import "server-only";
 import { getConfig } from "@/lib/config/store";
 import { recipeLinesByProduct, recipeMap, recipeQtyByName } from "./recipes";
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   erpFgEntries,
@@ -253,6 +253,16 @@ const sfgBatches: ScreenModule = {
         groups: ["sfgNo"],
         groupHead: ["date", "product", "batches", "godown", "lotCode", "qc", "sfgRate"],
         agg: { k: "total", l: "litres used" },
+        /* QC is a verdict on a LOT, and a batch's lines share one lot, so
+           ticking any line of a batch decides that batch; "Select all" on a
+           group header takes the whole batch and the header box the page. */
+        groupSel: qcApprover,
+        bulk: qcApprover
+          ? [
+              { id: "qcApprove", l: "QC approve", prompt: { title: "Approve the selected SFG lots", sub: "Every batch with a ticked line is approved. Once approved a lot can be filled into cans and drums.", submit: "Approve", fields: [{ k: "note", l: "QC note (readings, remarks)", t: "area", mic: true }] } },
+              { id: "qcReject", l: "QC reject", prompt: { title: "Reject the selected SFG lots", sub: "Every batch with a ticked line is rejected and cannot be filled. What has already been filled stays traceable to it.", submit: "Reject", fields: [{ k: "note", l: "Why they failed", t: "area", req: true, mic: true }] } },
+            ]
+          : undefined,
         godownKey: "godown",
         newForm: await sfgForm(ctx),
         newLabel: "New SFG batch",
@@ -380,6 +390,16 @@ const sfgBatches: ScreenModule = {
       });
     },
   },
+  bulk: {
+    async qcApprove(ctx, ids, values) {
+      return decideQcMany(ctx, ids, "Approved", text(values.note));
+    },
+    async qcReject(ctx, ids, values) {
+      const note = text(values.note);
+      if (!note) return fieldErr("note", "Say why the lots failed QC");
+      return decideQcMany(ctx, ids, "Rejected", note);
+    },
+  },
   actions: {
     async qcApprove(ctx, id, values) {
       return decideQc(ctx, id, "Approved", text(values.note));
@@ -421,6 +441,31 @@ async function decideQc(ctx: ErpContext, lineId: string, status: "Approved" | "R
   await db.transaction((tx) => setSfgQc(tx, l.lot, status, note, ctx.user.id));
   await erpAudit(ctx, status === "Approved" ? "erp.sfg.qcApprove" : "erp.sfg.qcReject", "erp_sfg_qc", l.lot, { status: before }, { status, note });
   return okVoid(status === "Approved" ? `SFG lot ${l.lot} approved · it can be filled now` : `SFG lot ${l.lot} rejected · it cannot be filled`);
+}
+
+/**
+ * The same decision over a selection. Lines are read back to their LOTS — a
+ * batch of three lines is one lot, decided once — and a lot already at the
+ * verdict is skipped and counted rather than refusing the rest.
+ */
+async function decideQcMany(ctx: ErpContext, lineIds: string[], status: "Approved" | "Rejected", note: string | null): Promise<Result<unknown>> {
+  if (!ctx.powers.has("approveSfgQc")) return err("Only the SFG QC approver decides QC.", "not_permitted");
+  const lines = await db.select({ lot: erpSfgLines.lotCode }).from(erpSfgLines).where(inArray(erpSfgLines.id, lineIds));
+  const lots = Array.from(new Set(lines.map((l) => l.lot).filter((l): l is string => !!l)));
+  if (!lots.length) return err("Those batch lines no longer exist.", "not_found");
+  const qc = await sfgQcMap();
+  const todo = lots.filter((lot) => (qc.get(lot)?.status ?? "Pending") !== status);
+  const already = lots.length - todo.length;
+  if (!todo.length) return err(`${lots.length === 1 ? `SFG lot ${lots[0]} is` : `All ${lots.length} lots are`} already ${status}.`, "rule_violation");
+  await db.transaction(async (tx) => {
+    for (const lot of todo) await setSfgQc(tx, lot, status, note, ctx.user.id);
+  });
+  for (const lot of todo)
+    await erpAudit(ctx, status === "Approved" ? "erp.sfg.qcApprove" : "erp.sfg.qcReject", "erp_sfg_qc", lot, { status: qc.get(lot)?.status ?? "Pending" }, { status, note, bulk: true });
+  const verb = status === "Approved" ? "approved" : "rejected";
+  const named = todo.length <= 4 ? ` (${todo.join(", ")})` : "";
+  const skipped = already ? ` · ${already} already ${verb}` : "";
+  return okVoid(`${todo.length} SFG ${todo.length === 1 ? "lot" : "lots"} ${verb}${named}${skipped}${status === "Approved" ? " · they can be filled now" : ""}`);
 }
 
 async function saveSfg(ctx: ErpContext, h: Record<string, string>, lines: Record<string, string>[]): Promise<Result<unknown>> {
