@@ -24,9 +24,12 @@ import {
   erpFgEntries,
   erpOrders,
   erpProductPacking,
+  erpRefValues,
+  erpTransporterPlaces,
   erpTransporters,
   erpTransports,
   finishedGoods,
+  places,
   productBrands,
   productFormulations,
   products,
@@ -317,5 +320,36 @@ describe("my customers", () => {
     assert.equal(msg(await mod("myCustomers").forms!.edit(c, { name: "Mine now" }, [], "cus_other")), "That customer is not tagged to you.");
     const [other] = await db.select().from(customers).where(eq(customers.id, "cus_other"));
     assert.equal(other.name, "Other Paints");
+  });
+});
+
+describe("transporters", () => {
+  test("a GST number is checked, godowns are places pruned to the narrowest pick, and a new consignment name joins the list", async () => {
+    const ctx = await as(admin);
+    const st = id("plc"), di = id("plc"), ci = id("plc"), other = id("plc");
+    await db.insert(places).values([
+      { id: st, kind: "state", name: `Tstate ${tag}`, key: `tstate${tag}`, parentId: null },
+      { id: di, kind: "district", name: `Tdist ${tag}`, key: `tdist${tag}`, parentId: st },
+      { id: ci, kind: "city", name: `Tcity ${tag}`, key: `tcity${tag}`, parentId: di },
+      { id: other, kind: "state", name: `Ostate ${tag}`, key: `ostate${tag}`, parentId: null },
+    ]);
+
+    assert.equal(msg(await L.saveTransporter(ctx, { name: `Road ${tag}`, gstin: "27ABCDE1234F1Z9" })), "That GST number does not check out — it is 15 characters, like 27ABCDE1234F1Z5");
+
+    assert.ok((await L.saveTransporter(ctx, { name: `Road ${tag}`, gstin: "27aapcs1234a1zn", consignmentLabel: "  docket   number ", placeIds: [st, di, ci, other] })).ok);
+    const [t] = await db.select().from(erpTransporters).where(eq(erpTransporters.name, `Road ${tag}`));
+    assert.equal(t.gstin, "27AAPCS1234A1ZN");
+    assert.equal(t.consignmentLabel, "docket number");
+    const links = (await db.select().from(erpTransporterPlaces).where(eq(erpTransporterPlaces.transporterId, t.id))).map((l) => l.placeId).sort();
+    assert.deepEqual(links, [ci, other].sort());
+    const list = await db.select().from(erpRefValues).where(sql`${erpRefValues.listKey} = 'consignmentLabel' and lower(${erpRefValues.value}) = 'docket number'`);
+    assert.equal(list.length, 1);
+    assert.ok((await L.transporters()).find((x) => x.id === t.id)?.placeIds.includes(ci));
+
+    /* A known name keeps the list's spelling and adds nothing; leaving placeIds out leaves the godowns alone. */
+    assert.ok((await L.saveTransporter(ctx, { id: t.id, name: `Road ${tag}`, consignmentLabel: "gr number" })).ok);
+    const [again] = await db.select().from(erpTransporters).where(eq(erpTransporters.id, t.id));
+    assert.equal(again.consignmentLabel, "GR Number");
+    assert.equal((await db.select().from(erpTransporterPlaces).where(eq(erpTransporterPlaces.transporterId, t.id))).length, 2);
   });
 });
