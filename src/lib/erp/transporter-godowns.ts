@@ -1,20 +1,55 @@
+import type { PlaceKind } from "@/lib/place-parse";
+
 /* ---------------------------------------------------------------------------
  * A transporter's godowns and the people at each — the rule, PURE and
  * client-safe, so the form checks what the save checks.
  *
- * A godown is a TOWN AS TYPED, its street address, and the people there with
- * up to three numbers each. The town was picked from the reviewed place tree
- * for a while; every city and area in India is far too long a list to scroll
- * for the one town a transporter's godown is in, so it is typed again.
+ * A godown is ONE town on the reviewed place tree (a city, or an area inside
+ * one), its street address as typed, and the people there with up to three
+ * numbers each. It replaced four cascading state/district/city/area pickers,
+ * which made a company with godowns in two states a puzzle of which district
+ * belonged to which city; a godown per row says the same thing plainly.
  * ------------------------------------------------------------------------- */
 
 export const MAX_PHONES = 3;
 
+export type PlaceOption = { id: string; kind: PlaceKind; name: string; parentId: string | null };
+export type PlaceLookup = Map<string, PlaceOption>;
+
 export type ContactInput = { id?: string | null; name?: string | null; role?: string | null; phones?: (string | null)[] };
-export type GodownInput = { id?: string | null; label?: string | null; town?: string | null; address?: string | null; contacts?: ContactInput[] };
+export type GodownInput = { id?: string | null; label?: string | null; placeId?: string | null; address?: string | null; contacts?: ContactInput[] };
 
 export type Contact = { id: string | null; name: string | null; role: string | null; phones: string[] };
-export type Godown = { id: string | null; label: string | null; town: string | null; address: string | null; contacts: Contact[] };
+export type Godown = { id: string | null; label: string | null; placeId: string | null; address: string | null; contacts: Contact[] };
+
+export function lookup(nodes: PlaceOption[]): PlaceLookup {
+  return new Map(nodes.map((n) => [n.id, n]));
+}
+
+/** "Bhiwandi, Thane, Maharashtra" — the place and the path above it. */
+export function placePath(id: string | null, byId: PlaceLookup): string {
+  const out: string[] = [];
+  let at = id ? byId.get(id) : undefined;
+  while (at && !out.includes(at.name) && out.length < 6) {
+    out.push(at.name);
+    at = at.parentId ? byId.get(at.parentId) : undefined;
+  }
+  return out.join(", ");
+}
+
+/** The towns a godown can be in — every city and area, named with the path above it. */
+export function townOptions(nodes: PlaceOption[], byId: PlaceLookup): { id: string; label: string }[] {
+  const seen = new Map<string, number>();
+  return nodes
+    .filter((n) => n.kind === "city" || n.kind === "area")
+    .map((n) => ({ id: n.id, label: placePath(n.id, byId) }))
+    .sort((a, b) => a.label.localeCompare(b.label))
+    .map((o) => {
+      const n = (seen.get(o.label) ?? 0) + 1;
+      seen.set(o.label, n);
+      return n === 1 ? o : { ...o, label: `${o.label} (${n})` };
+    });
+}
 
 const tidy = (s: string | null | undefined) => (s ?? "").trim().replace(/\s+/g, " ") || null;
 const digits = (s: string) => s.replace(/\D/g, "").length;
@@ -24,7 +59,7 @@ const digits = (s: string) => s.replace(/\D/g, "").length;
  * named by its place on the form (`g2.c1.phones`). Wholly empty rows are
  * dropped rather than refused — an untouched "Add contact" is not a mistake.
  */
-export function cleanGodowns(input: GodownInput[]): { ok: true; godowns: Godown[] } | { ok: false; field: string; message: string } {
+export function cleanGodowns(input: GodownInput[], knownPlace: (id: string) => boolean): { ok: true; godowns: Godown[] } | { ok: false; field: string; message: string } {
   const out: Godown[] = [];
   for (const [gi, g] of input.entries()) {
     const at = `g${gi + 1}`;
@@ -41,12 +76,13 @@ export function cleanGodowns(input: GodownInput[]): { ok: true; godowns: Godown[
       if (!name && !phones.length) return { ok: false, field: `${field}.name`, message: "Give the person a name or a number" };
       contacts.push({ id: c.id ?? null, name, role, phones });
     }
-    const town = tidy(g.town);
+    const placeId = g.placeId || null;
     const label = tidy(g.label);
     const address = tidy(g.address);
-    if (!town && !label && !address && !contacts.length) continue;
-    if (!town && !address) return { ok: false, field: `${at}.town`, message: `Type the town for godown ${gi + 1}` };
-    out.push({ id: g.id ?? null, label, town, address, contacts });
+    if (!placeId && !label && !address && !contacts.length) continue;
+    if (placeId && !knownPlace(placeId)) return { ok: false, field: `${at}.placeId`, message: "That town is no longer on the list. Pick it again." };
+    if (!placeId && !address) return { ok: false, field: `${at}.placeId`, message: `Pick the town for godown ${gi + 1}` };
+    out.push({ id: g.id ?? null, label, placeId, address, contacts });
   }
   return { ok: true, godowns: out };
 }
