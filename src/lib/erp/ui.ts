@@ -320,12 +320,21 @@ export const ST_TONE: Record<string, Tone> = {
   "Partly received": "warn", "Closed short": "muted", Closed: "muted", Cancelled: "muted",
   "Direct purchase": "neutral", Quotation: "info", "Pending approval": "warn", Approved: "success",
   Sent: "info", Selected: "success", "Not selected": "muted",
+  "To count": "info", "Red flag": "danger", "Recount out": "warn", Investigating: "warn", "Stock discrepancy": "danger",
+  "Count stock": "info", "Confirm quantity": "warn", "Exception requested": "warn",
   "In stock": "success", "Scanned for dispatch": "brand", "On hold": "warn", Returned: "info", "Written off": "danger",
 };
 
 /** Named row states (the source's format rules), and how each is labelled. */
 export const FLAG: Record<string, [string, Tone]> = {
   rateMissing: ["Purchase rate empty", "warn"],
+  countOverdue: ["Count overdue", "danger"],
+  recount: ["Independent recount", "brand"],
+  forPurchase: ["Holds a purchase", "warn"],
+  adjustmentPending: ["Adjustment waiting", "warn"],
+  shortage: ["Shortage", "danger"],
+  surplus: ["Surplus", "info"],
+  stockHeld: ["Held by the stock check", "warn"],
   incomplete: ["Packing batch incomplete", "warn"],
   orphan: ["Source deleted", "danger"],
   inactive: ["Inactive", "muted"],

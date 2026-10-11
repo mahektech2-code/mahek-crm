@@ -117,6 +117,7 @@ const ERP_ASSISTANT: Record<string, string> = {
   ask: "Ask the ERP",
   photos: "LR and test photos",
   qc: "Quality checks",
+  stockCheck: "Stock discrepancies",
   visionModel: "Models",
   textModel: "Models",
 };
@@ -214,6 +215,7 @@ const RULES: Rule[] = [
   { test: /^erp\.(production|orders|dispatch)\./, page: "erp", tab: "general", group: "Production and orders" },
   { test: /^erp\.location\./, page: "erp", tab: "general", group: "Working location" },
   { test: /^erp\.logistics\./, page: "erp", tab: "general", group: "Logistics" },
+  { test: /^erp\.stockCheck\./, page: "erp", tab: "general", group: "Inventory accuracy" },
   { test: /^erp\.ai\.alerts\.enabled$/, page: "erp", tab: "alerts", group: "Switch" },
   { test: /^erp\.ai\.alerts\./, page: "erp", tab: "alerts", group: "Thresholds" },
   { test: /^erp\.ai\./, page: "erp", tab: "assistants", group: (k) => ERP_ASSISTANT[k.split(".")[2]] ?? "Other" },

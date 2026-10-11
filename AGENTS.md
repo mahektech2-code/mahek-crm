@@ -44,6 +44,8 @@ npm run jobs -- taken-order-sync           # pull the Taken Order tab, then
                            # rebuild who is held back from order chasing
 npm run jobs -- erp-seed-profiles          # ERP customer profiles from the Sales
                            # Party sheet — fills blanks only, re-runnable
+npm run jobs -- erp-cycle-counts           # today's ABC cycle counts (Inventory
+                           # Accuracy Control) — they also open hourly
 npm run jobs -- erp-alerts                 # the ERP's unusual-activity checks —
                            # they also run hourly
 npm run jobs -- erp-digest                 # yesterday's owner summary — it also
@@ -2067,6 +2069,77 @@ asking, so an answer can never hold a row or column their screen would not.
 a tablet at the godown gate — and every other app keeps it. It was lost once
 in a header refactor and every ERP page sat at 1100px; below 1280px the ERP
 header draws Feedback and the account chip as icons so it fits a tablet.
+
+## Inventory Accuracy Control
+
+**NO PURCHASE ON A BOOK NOBODY HAS COUNTED.** A raw-material requirement raised
+while `erp.stockCheck.onRequirement` is on opens a BLIND count of its item at
+its godown in the same transaction (`openRequirementCounts`), and the flow is
+Requirement → **Stock check** → Purchase method → Vendor / quotation → Approval
+→ PO → Receipt. The setting is COPIED onto the row (`stock_check_required`),
+like the purchase rule, so nothing raised before it was held up. The rules are
+pure in `engines/stock-check.ts`; `stock-check.ts` hands them the ledgers'
+figures; `screens/stock-check.ts` is the Stock accuracy screen (To count · Red
+flags · Adjustments · Missing records · Every count).
+
+**THE GATE IS ON THE STAGE, so every reader sees it.** `requirementViews`
+computes `ReqView.stock` (`gatesFor`) and `stageOf` hands it to
+`requirementStage` — the list, "ready for PO", the dashboard tiles and the
+badge all hold without a change of their own — and every buying handler asks
+`heldByStock` again, because a server action is a URL. A requirement reads the
+counts raised for it, any later count of its shelf, and any count of its shelf
+still UNRESOLVED: an open discrepancy blocks every purchase for that shelf, and
+`approvalRefusal` refuses a PO whose shelf has one even if the PO came first.
+Only an urgent exception approved by `stockControl` (not its requester) lets a
+held requirement through; the count still has to be finished.
+
+**THE COUNT IS BLIND.** Nothing on To count, its prompt or its drawer shows the
+book; Every count blanks it on an open row. The book is read and SNAPSHOTTED
+(`book_qty`, `pending_in`) inside the submit's transaction and only then shown
+back. It is compared with the RECONCILED book — ledger + goods at the gate,
+under test or unposted for want of a rate — because a drum waiting for its test
+is paperwork in progress, not a discrepancy. Tolerance: the item's
+`count_tolerance_percent`, else `erp.stockCheck.tolerancePercent`, never below
+`toleranceFloor`.
+
+**A RED FLAG IS RECOUNTED BY SOMEBODY ELSE.** A recount is a child count
+(`recount_of_id`); only ROOT counts carry the check's state. `recountOutcome`
+compares it with the book and with the first count carried to today's book:
+book → resolved (`book_confirmed`); first count → `investigating`; neither →
+flagged again. The first counter may not count it (refused on the server).
+
+**CAUSES ARE SUGGESTED, NEVER ENTERED.** `causeCandidates` lists only records
+that exist (`shelfFacts`), marks one likely when its quantity accounts for the
+gap, and names a shortage nothing explains a missing PHYSICAL item. The
+assistant (`erp.ai.stockCheck.*`) only ranks those records; anything it names
+that is not on the list is dropped. "The missing record is entered" re-reads
+the book and refuses unless it now agrees.
+
+**NEVER A SILENT ADJUSTMENT.** `erp_stock_adjustments`: a coded reason and a
+sentence, one pending per count, posted only when somebody OTHER than the
+requester with `stockControl` approves it. A shortage is transfers to Item Lost
+Record, oldest lot first, refused if the lots do not hold it (no negative
+stock); a surplus is an `erp_rm_entries` row with `source_type = 'adjustment'`
+on the newest lot. Lots are locked under BOTH spellings the ERP uses (`rm`,
+`Purchase`) and read again under the locks.
+
+**EVEN A MATCHING COUNT MUST JUSTIFY THE QUANTITY.** `reorderJustification`:
+up to the maximum level is justified; more than that by
+`erp.stockCheck.unexpectedQtyPercent` holds the requirement at "Confirm
+quantity" until a person confirms it in words or recounts.
+
+**CYCLE COUNTS ARE OPENED HOURLY, ONCE A DAY'S WORTH.** `erp-cycle-counts`
+(`planCycleCounts`) ranks shelves by ABC (value moved over 90 days, 80/95),
+how overdue against the class's cycle (halved after a discrepancy), movement
+and past discrepancies, up to `erp.stockCheck.dailyCount` per day. One open
+count per shelf (a partial unique index); `openCount` answers with the open
+one rather than opening a second.
+
+**MISSING RECORDS ARE A LIST, NOT A FIX.** `missingRecords` finds SFG lines
+without an SFG entry, fills without an FG entry, register lots not in stock,
+inward lines two days old with no register row, transfers whose destination
+has no entry, and packing batches whose cans do not match their boxes. Each
+opens its record; nothing is created.
 
 **PRODUCTION & DISPATCH ARE TRACEABLE, BOX BY BOX.** SFG lot → refill (FG
 filling) lot → packing batch → BOX → order → customer, and back. The lots
@@ -8098,7 +8171,7 @@ under it. Every step writes `erp_transport_events`, append-only.
 (a city or an area), the street address as typed. `erp_transporter_contacts`
 is a person there, with up to three numbers (a check constraint holds the
 three). It replaced four cascading state/district/city/area pickers (0253),
-which made two states' worth of godowns a puzzle; `0254` carried each picked
+which made two states' worth of godowns a puzzle; `0255` carried each picked
 place in as a godown and the old contact columns in as its first person.
 `lib/erp/transporter-godowns.ts` is the rule, pure: the form and
 `saveTransporter` both run `cleanGodowns`. The godowns are saved WHOLE, ids

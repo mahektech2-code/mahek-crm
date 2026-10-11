@@ -1,0 +1,96 @@
+Inventory Accuracy Control is one pure engine, one service that hands it figures from the ledgers, one screen module with five tabs, and a gate threaded through the purchase flow. Nothing in it moves stock except an approved adjustment, which posts through the same ledgers every other movement uses.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Rules (pure) | `src/lib/erp/engines/stock-check.ts` | `toleranceFor`, `judgeCount`, `recountOutcome`, `abcClasses`, `cycleDaysFor`, `pickCycleCounts`, `reorderJustification`, `causeCandidates`, `stockGate`, `gateCountStatus`, `controlStep`, the labels |
+| Service | `src/lib/erp/stock-check.ts` | `shelfFacts`, `judgeOnShelf`, `openCount`, `gatesFor`, `missingRecords`, `planCycleCounts`, `openGodownCounts`, `fullCountDue`, `controlWork`, `heldRequirements` |
+| Screen | `src/lib/erp/screens/stock-check.ts` | `countTasks`, `stockFlags`, `stockAdjustments`, `missingRecords`, `stockCounts`; `submitCount`, `explainCount`, `decideAdjustment`, `postAdjustment`; `openRequirementCounts`, `confirmRequirementQty` |
+| Drawer | `src/app/erp/_ui/panels/stock-check.tsx` | the `stockCount` panel |
+| Purchase gate | `src/lib/erp/engines/purchase-flow.ts`, `src/lib/erp/screens/purchase-flow.ts` | `FLOW_STEPS` gains "Stock check"; `requirementStage` reads `gate`; `ReqView.stock`; `heldByStock`; `stockActions`, `stockFacts`; `approvalRefusal` |
+| Dashboard | `src/lib/erp/dashboard.ts`, `src/app/erp/page.tsx` | the "Inventory accuracy" section; `accuracyFlow` and the flow strip |
+| Badges | `src/lib/erp/counts.ts` | `countTasks`, `stockFlags`, `stockAdjustments` |
+| Job | `src/lib/jobs.ts` | `erp-cycle-counts`, hourly and by hand |
+| Power | `src/lib/erp/powers.ts` | `stockControl` |
+| AI | `src/lib/erp/ai.ts` | feature `stockCheck` — switch and monthly cap |
+
+<ModuleRef k="erp.stockCheck" />
+
+## The verdict
+
+<Code file="src/lib/erp/engines/stock-check.ts" symbol="judgeCount" />
+
+<Code file="src/lib/erp/engines/stock-check.ts" symbol="recountOutcome" />
+
+## The gate
+
+<Code file="src/lib/erp/engines/stock-check.ts" symbol="stockGate" />
+
+`gatesFor` decides which counts a requirement reads: counts raised for it, any later count of its shelf, and any count of its shelf still unresolved. Only ROOT counts carry the state — a recount is a child (`recount_of_id`) and moves its root.
+
+<Code file="src/lib/erp/stock-check.ts" symbol="gatesFor" collapsed />
+
+`requirementViews` computes `ReqView.stock` for every row and `stageOf` hands `gate` to `requirementStage`, so every reader of the stage — the list, the PO form's "ready for PO", the dashboard tiles and the badge — sees the hold with no change of its own. Each buying handler asks `heldByStock` again.
+
+<Code file="src/lib/erp/screens/purchase-flow.ts" symbol="heldByStock" />
+
+## A count, end to end
+
+<Flow caption="erpRunAction('countTasks', 'count', id, { qty })" chart={`
+sequenceDiagram
+  autonumber
+  participant A as countTasks.actions.count
+  participant S as stock-check.ts
+  participant E as engines/stock-check.ts
+  participant DB as Postgres
+  A->>DB: inTx · select the count for update (must be open)
+  opt a recount
+    A->>DB: select the root for update · refuse the first counter
+  end
+  A->>S: shelfFacts(item, godown, tx) - book, pending in, records
+  A->>E: judgeCount - reconciled, difference, tolerance, verdict
+  A->>DB: write counted, book snapshot, difference, status matched or flagged
+  opt a recount
+    A->>E: recountOutcome(first carried to today's book, second)
+    A->>DB: root resolved, investigating, or flagged again
+  end
+  A->>DB: commit · erpAudit erp.stockCount.submit
+`} />
+
+## Posting an adjustment
+
+<Code file="src/lib/erp/screens/stock-check.ts" symbol="postAdjustment" collapsed />
+
+Every lot of the item at the godown is locked under both lock spellings the ERP uses for raw material (`rm` from production, `Purchase` from transfers), the lots are read again under the locks, and only then is anything written.
+
+## Cycle counting
+
+<Code file="src/lib/erp/engines/stock-check.ts" symbol="pickCycleCounts" />
+
+`planCycleCounts` counts the cycle counts already due today against `erp.stockCheck.dailyCount`, so the hourly job opens a day's allowance once.
+
+## Tables
+
+<DbTable name="erp_stock_counts" note={{
+  kind: "reorder · cycle · recount · event · full.",
+  status: "open · matched · flagged · recount (a recount is out) · investigating · resolved · cancelled. A unique partial index allows one OPEN count per shelf.",
+  recount_of_id: "Set on a recount: the root count it checks. Only roots carry the check's state.",
+  book_qty: "The ledger book snapshotted at submit. Never recomputed.",
+  pending_in: "Goods on the shelf not yet in the ledger, at submit.",
+  difference: "Counted − (book + pending in − pending out).",
+  ai_causes: "The assistant's last reading — a suggestion.",
+}} />
+
+<DbTable name="erp_stock_adjustments" note={{
+  quantity: "Signed. Below zero writes off; above zero enters.",
+  reason_code: "damage · spillage · evaporation · theft · unrecorded_issue · unrecorded_receipt · measurement · other.",
+  status: "pending · approved · rejected. One pending per count.",
+  posted: "What approving wrote: the transfer ids, or the entry id.",
+}} />
+
+`erp_requisitions` gains `stock_check_required` (copied on raise), the urgent-purchase columns `stock_exception_*`, and the quantity confirmation `qty_confirm_*`. `erp_raw_materials.count_tolerance_percent` overrides the tolerance per item. `erp_rm_entries.source_type` may now be `adjustment`.
+
+## Tests
+
+`src/lib/erp/engines/stock-check.test.ts` pins the verdict, the recount, ABC, the cycle picks, the quantity justification, the causes and the gate; `purchase-flow.test.ts` pins that a blocking gate holds a requirement at "Stock check" and never pulls back one already on a PO.

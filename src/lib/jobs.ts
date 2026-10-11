@@ -156,6 +156,8 @@ export type JobName =
   | "hrms-leave-credit"
   | "erp-digest"
   | "erp-inbox"
+  /** Inventory Accuracy Control: today's cycle counts, by ABC class — idempotent, runs hourly. */
+  | "erp-cycle-counts"
   /**
    * The ERP's orders into MahekOne's order book, all of them, and the Call
    * Log's hold rebuilt from the ERP's open lines. The step to run the day
@@ -631,6 +633,17 @@ async function erpAlertsStep() {
   return { recordsAffected: r.raised + r.resolved, detail: r.skipped ? `skipped: ${r.skipped}` : `${r.raised} raised · ${r.resolved} resolved · ${r.open} open` };
 }
 
+/**
+ * Inventory Accuracy Control: opens today's cycle counts. Hourly rather than
+ * nightly so a new day has its counts by the first shift whenever the night
+ * pass runs; a day's allowance is opened once, however often this fires.
+ */
+async function erpCycleCountStep() {
+  const { planCycleCounts } = await import("./erp/stock-check");
+  const r = await planCycleCounts(null);
+  return { recordsAffected: r.opened, detail: r.skipped ? `skipped: ${r.skipped}` : `${r.opened} cycle count${r.opened === 1 ? "" : "s"} opened` };
+}
+
 /** AI-2: new WhatsApp replies screened into the ERP's order inbox, as drafts nobody has accepted. */
 async function erpInboxStep() {
   const { screenWhatsApp } = await import("./erp/ai-orders");
@@ -654,6 +667,7 @@ export async function runHourly(triggeredById?: string): Promise<JobResult[]> {
 
   results.push(await run("erp-alerts", erpAlertsStep, triggeredById));
   results.push(await run("erp-inbox", erpInboxStep, triggeredById));
+  results.push(await run("erp-cycle-counts", erpCycleCountStep, triggeredById));
 
   results.push(await run("mbos-hourly", mbosHourly, triggeredById));
 
@@ -1085,6 +1099,8 @@ export async function runJob(
       ];
     case "erp-inbox":
       return [await run("erp-inbox", erpInboxStep, triggeredById)];
+    case "erp-cycle-counts":
+      return [await run("erp-cycle-counts", erpCycleCountStep, triggeredById)];
     case "erp-book-sync":
       return [
         await run(

@@ -1762,8 +1762,15 @@
     {
       "idx": 251,
       "version": "7",
-      "when": 1792532203442,
-      "tag": "0254_transporter_godown_contacts",
+      "when": 1792532144442,
+      "tag": "0254_erp_inventory_accuracy",
+      "breakpoints": true
+    },
+    {
+      "idx": 252,
+      "version": "7",
+      "when": 1792532263442,
+      "tag": "0255_transporter_godown_contacts",
       "breakpoints": true
     }
   ]
