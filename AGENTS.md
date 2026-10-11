@@ -8354,8 +8354,11 @@ Once attached, the LR is the unit on the road: every update moves every bill
 under it. Every step writes `erp_transport_events`, append-only.
 
 **A TRANSPORTER'S GODOWNS ARE ROWS, ONE TOWN EACH, WITH THEIR OWN PEOPLE.**
-`erp_transporter_godowns` is a godown: a name, ONE town on the reviewed tree
-(a city or an area), the street address as typed. `erp_transporter_contacts`
+`erp_transporter_godowns` is a godown: a name, ONE place on the reviewed tree
+picked State → District → City → Area on the godown's row (four short
+dropdowns, each listing only what is under the pick above it; the narrowest
+pick is the place), the street address as typed. A single searchable list of
+every city and area in the country, tried for a while, was too long to use. `erp_transporter_contacts`
 is a person there, with up to three numbers (a check constraint holds the
 three). It replaced four cascading state/district/city/area pickers (0253),
 which made two states' worth of godowns a puzzle; `0255` carried each picked

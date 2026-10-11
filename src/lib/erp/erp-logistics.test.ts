@@ -367,7 +367,7 @@ describe("transporters", () => {
     ]);
 
     assert.equal(msg(await L.saveTransporter(ctx, { name: `Road ${tag}`, gstin: "27ABCDE1234F1Z9" })), "That GST number does not check out — it is 15 characters, like 27ABCDE1234F1Z5");
-    assert.equal(msg(await L.saveTransporter(ctx, { name: `Road ${tag}`, godowns: [{ label: "Main" }] })), "Pick the town for godown 1");
+    assert.equal(msg(await L.saveTransporter(ctx, { name: `Road ${tag}`, godowns: [{ label: "Main" }] })), "Pick the place for godown 1");
     assert.equal(
       msg(await L.saveTransporter(ctx, { name: `Road ${tag}`, godowns: [{ placeId: ci, contacts: [{ name: "Ravi", phones: ["9820011001", "9820011002", "9820011003", "9820011004"] }] }] })),
       "A person takes up to 3 numbers",

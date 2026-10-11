@@ -1,14 +1,15 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ComboBox } from "@/components/ui/combo-box";
 import { Modal } from "@/components/ui/modal";
 import { Drawer, DrawerHeader } from "@/components/ui/overlays";
 import { Badge, Button, Card, cx } from "@/components/ui/primitives";
 import { erpLogisticsTransporter } from "@/lib/actions/erp-logistics";
 import { checkGstin } from "@/lib/engines/lead-scan";
 import type { Transporter, TransporterGodown } from "@/lib/erp/logistics";
-import { MAX_PHONES, lookup, placePath, townOptions, type PlaceLookup, type PlaceOption } from "@/lib/erp/transporter-godowns";
+import { MAX_PHONES, lookup, pickRung, placeChain, placeChoices, placePath, type PlaceLookup, type PlaceOption } from "@/lib/erp/transporter-godowns";
+import { PLACE_FILTER_LABELS } from "@/lib/place-filters";
+import { PLACE_KINDS } from "@/lib/place-parse";
 import { CallLink, Empty, useAct } from "./common";
 
 /**
@@ -24,7 +25,6 @@ const COLS = "grid-cols-[minmax(180px,1.4fr)_minmax(150px,1.2fr)_minmax(170px,1.
 
 export function Transporters({ rows, tree, labels, load, canWrite }: { rows: Transporter[]; tree: PlaceOption[]; labels: string[]; load: Record<string, Load>; canWrite: boolean }) {
   const byId = useMemo(() => lookup(tree), [tree]);
-  const towns = useMemo(() => townOptions(tree, byId), [tree, byId]);
   const [edit, setEdit] = useState<Transporter | "new" | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const seen = rows.find((t) => t.id === open) ?? null;
@@ -109,7 +109,7 @@ export function Transporters({ rows, tree, labels, load, canWrite }: { rows: Tra
           key={edit === "new" ? "new" : edit.id}
           t={edit === "new" ? null : edit}
           labels={labels}
-          towns={towns}
+          tree={tree}
           byId={byId}
           onClose={() => setEdit(null)}
         />
@@ -242,23 +242,23 @@ function Fact({ k, children }: { k: string; children: React.ReactNode }) {
 /* --------------------------------------------------------------- editing */
 
 type DraftPerson = { key: string; id: string | null; name: string; role: string; phones: string[] };
-type DraftGodown = { key: string; id: string | null; label: string; town: string; placeId: string | null; address: string; people: DraftPerson[] };
+type DraftGodown = { key: string; id: string | null; label: string; placeId: string | null; address: string; people: DraftPerson[] };
 
 let seq = 0;
 const k = () => `d${++seq}`;
 const blankPerson = (): DraftPerson => ({ key: k(), id: null, name: "", role: "", phones: [""] });
-const blankGodown = (): DraftGodown => ({ key: k(), id: null, label: "", town: "", placeId: null, address: "", people: [blankPerson()] });
+const blankGodown = (): DraftGodown => ({ key: k(), id: null, label: "", placeId: null, address: "", people: [blankPerson()] });
 
 function EditTransporter({
   t,
   labels,
-  towns,
+  tree,
   byId,
   onClose,
 }: {
   t: Transporter | null;
   labels: string[];
-  towns: { id: string; label: string }[];
+  tree: PlaceOption[];
   byId: PlaceLookup;
   onClose: () => void;
 }) {
@@ -270,7 +270,6 @@ function EditTransporter({
           key: k(),
           id: g.id,
           label: g.label ?? "",
-          town: g.placeId ? placePath(g.placeId, byId) : "",
           placeId: g.placeId,
           address: g.address ?? "",
           people: g.contacts.length ? g.contacts.map((c) => ({ key: k(), id: c.id, name: c.name ?? "", role: c.role ?? "", phones: c.phones.length ? c.phones : [""] })) : [blankPerson()],
@@ -280,8 +279,6 @@ function EditTransporter({
   const [problem, setProblem] = useState<{ field: string; message: string } | null>(null);
   const [adding, setAdding] = useState(false);
   const labelOptions = v.consignmentLabel && !labels.includes(v.consignmentLabel) ? [...labels, v.consignmentLabel] : labels;
-  const idOfTown = useMemo(() => new Map(towns.map((o) => [o.label, o.id])), [towns]);
-  const townLabels = useMemo(() => towns.map((o) => o.label), [towns]);
 
   const cls = "mt-1 block h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand";
   const gst = checkGstin(v.gstin);
@@ -408,7 +405,7 @@ function EditTransporter({
         </section>
 
         <section>
-          <SectionTitle hint="One town each, and the people to ring there. Up to three numbers a person.">Godowns</SectionTitle>
+          <SectionTitle hint="One place each — state, district, city, area — and the people to ring there. Up to three numbers a person.">Godowns</SectionTitle>
           <div className="space-y-3">
             {godowns.map((g, gi) => {
               const at = `g${gi + 1}`;
@@ -424,30 +421,39 @@ function EditTransporter({
                     ) : null}
                   </div>
                   <div className="space-y-3 px-3 py-3">
-                    <div className="grid grid-cols-[1fr_1.4fr] gap-3">
-                      <label>
-                        Godown name
-                        <input value={g.label} onChange={(e) => setG(g.key, { label: e.target.value })} placeholder="e.g. Main godown" className={cls} />
-                      </label>
-                      <div>
-                        Town
-                        <div className="mt-1 [&_input]:h-9 [&_input]:w-full">
-                          <ComboBox
-                            value={g.town}
-                            options={townLabels}
-                            label={`Town for godown ${gi + 1}`}
-                            placeholder="Search a city or area"
-                            emptyHint="No town by that name on the list"
-                            className="block w-full"
-                            onChange={(text) => setG(g.key, { town: text, placeId: idOfTown.get(text) ?? null })}
-                          />
-                        </div>
-                        {townErr ? (
-                          <span className="mt-1 block text-danger">{townErr}</span>
-                        ) : g.town && !g.placeId ? (
-                          <span className="mt-1 block text-warn">Pick the town from the list.</span>
-                        ) : null}
+                    <label className="block">
+                      Godown name
+                      <input value={g.label} onChange={(e) => setG(g.key, { label: e.target.value })} placeholder="e.g. Main godown" className={cls} />
+                    </label>
+                    <div>
+                      <div className="grid grid-cols-4 gap-2">
+                        {PLACE_KINDS.map((kind) => {
+                          const chain = placeChain(g.placeId, byId);
+                          const opts = placeChoices(tree, kind, chain);
+                          const above = PLACE_KINDS[PLACE_KINDS.indexOf(kind) - 1];
+                          const off = !!above && !chain[above];
+                          return (
+                            <label key={kind} className="min-w-0">
+                              {PLACE_FILTER_LABELS[kind]}
+                              <select
+                                value={chain[kind] ?? ""}
+                                disabled={off}
+                                aria-label={`${PLACE_FILTER_LABELS[kind]} for godown ${gi + 1}`}
+                                onChange={(e) => setG(g.key, { placeId: pickRung(chain, kind, e.target.value || null) })}
+                                className={cx(cls, "pr-7 disabled:bg-canvas disabled:text-muted", townErr && !chain[kind] && !off && "border-danger")}
+                              >
+                                <option value="">{off ? `Pick the ${PLACE_FILTER_LABELS[above].toLowerCase()} first` : opts.length ? `Pick ${kind === "area" ? "an area" : `a ${kind}`}` : "None listed"}</option>
+                                {opts.map((o) => (
+                                  <option key={o.id} value={o.id}>
+                                    {o.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          );
+                        })}
                       </div>
+                      {townErr ? <span className="mt-1 block text-danger">{townErr}</span> : null}
                     </div>
                     <label className="block">
                       Address

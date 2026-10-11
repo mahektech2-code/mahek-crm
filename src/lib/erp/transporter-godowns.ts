@@ -1,14 +1,14 @@
-import type { PlaceKind } from "@/lib/place-parse";
+import { PLACE_KINDS, type PlaceKind } from "@/lib/place-parse";
 
 /* ---------------------------------------------------------------------------
  * A transporter's godowns and the people at each — the rule, PURE and
  * client-safe, so the form checks what the save checks.
  *
- * A godown is ONE town on the reviewed place tree (a city, or an area inside
- * one), its street address as typed, and the people there with up to three
- * numbers each. It replaced four cascading state/district/city/area pickers,
- * which made a company with godowns in two states a puzzle of which district
- * belonged to which city; a godown per row says the same thing plainly.
+ * A godown is ONE place on the reviewed place tree, picked State → District →
+ * City → Area on the godown's own row (the narrowest pick is the place), its
+ * street address as typed, and the people there with up to three numbers
+ * each. A single searchable list of every town in the country was too long to
+ * find one in; four short lists, each narrowed by the one above, are not.
  * ------------------------------------------------------------------------- */
 
 export const MAX_PHONES = 3;
@@ -37,18 +37,38 @@ export function placePath(id: string | null, byId: PlaceLookup): string {
   return out.join(", ");
 }
 
-/** The towns a godown can be in — every city and area, named with the path above it. */
-export function townOptions(nodes: PlaceOption[], byId: PlaceLookup): { id: string; label: string }[] {
-  const seen = new Map<string, number>();
-  return nodes
-    .filter((n) => n.kind === "city" || n.kind === "area")
-    .map((n) => ({ id: n.id, label: placePath(n.id, byId) }))
-    .sort((a, b) => a.label.localeCompare(b.label))
-    .map((o) => {
-      const n = (seen.get(o.label) ?? 0) + 1;
-      seen.set(o.label, n);
-      return n === 1 ? o : { ...o, label: `${o.label} (${n})` };
-    });
+/** The picked rung of each kind on the way down to `id`: what the four pickers show. */
+export function placeChain(id: string | null, byId: PlaceLookup): Partial<Record<PlaceKind, string>> {
+  const out: Partial<Record<PlaceKind, string>> = {};
+  let at = id ? byId.get(id) : undefined;
+  for (let i = 0; at && i < 6; i++) {
+    if (!out[at.kind]) out[at.kind] = at.id;
+    at = at.parentId ? byId.get(at.parentId) : undefined;
+  }
+  return out;
+}
+
+/**
+ * What one picker offers: the places of its kind under the rung picked above
+ * it, by name. A rung with nothing picked above offers nothing — except the
+ * state, which is the top.
+ */
+export function placeChoices(nodes: PlaceOption[], kind: PlaceKind, chain: Partial<Record<PlaceKind, string>>): PlaceOption[] {
+  const above = PLACE_KINDS[PLACE_KINDS.indexOf(kind) - 1];
+  const parent = above ? chain[above] : null;
+  if (above && !parent) return [];
+  return nodes.filter((n) => n.kind === kind && (above ? n.parentId === parent : true)).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** The place a godown is in once a rung is picked (or cleared): the narrowest pick left, with every rung below it cleared. */
+export function pickRung(chain: Partial<Record<PlaceKind, string>>, kind: PlaceKind, id: string | null): string | null {
+  const at = PLACE_KINDS.indexOf(kind);
+  if (id) return id;
+  for (let i = at - 1; i >= 0; i--) {
+    const v = chain[PLACE_KINDS[i]];
+    if (v) return v;
+  }
+  return null;
 }
 
 const tidy = (s: string | null | undefined) => (s ?? "").trim().replace(/\s+/g, " ") || null;
@@ -80,8 +100,8 @@ export function cleanGodowns(input: GodownInput[], knownPlace: (id: string) => b
     const label = tidy(g.label);
     const address = tidy(g.address);
     if (!placeId && !label && !address && !contacts.length) continue;
-    if (placeId && !knownPlace(placeId)) return { ok: false, field: `${at}.placeId`, message: "That town is no longer on the list. Pick it again." };
-    if (!placeId && !address) return { ok: false, field: `${at}.placeId`, message: `Pick the town for godown ${gi + 1}` };
+    if (placeId && !knownPlace(placeId)) return { ok: false, field: `${at}.placeId`, message: "That place is no longer on the list. Pick it again." };
+    if (!placeId && !address) return { ok: false, field: `${at}.placeId`, message: `Pick the place for godown ${gi + 1}` };
     out.push({ id: g.id ?? null, label, placeId, address, contacts });
   }
   return { ok: true, godowns: out };
