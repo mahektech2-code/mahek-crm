@@ -17,6 +17,8 @@ type Loader = () => Promise<{ default: ComponentType }>;
 export const CONTENT: Record<string, Loader> = {
   "platform/architecture/developer": () => import("./platform/architecture/developer.mdx"),
   "platform/architecture/how-it-works": () => import("./platform/architecture/how-it-works.mdx"),
+  "platform/notifications/developer": () => import("./platform/notifications/developer.mdx"),
+  "platform/notifications/how-it-works": () => import("./platform/notifications/how-it-works.mdx"),
   "platform/backups/developer": () => import("./platform/backups/developer.mdx"),
   "platform/backups/how-it-works": () => import("./platform/backups/how-it-works.mdx"),
   "platform/configuration/developer": () => import("./platform/configuration/developer.mdx"),

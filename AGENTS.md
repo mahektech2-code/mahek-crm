@@ -4441,6 +4441,20 @@ null falls through to `/notifications`, which carries the reason in the body —
 the honest default `notify.ts` names, and better than a deep link that is
 confidently pointed at nothing.
 
+**EACH APP'S BELL IS THAT APP'S, AND THE APP IS READ OFF THE LINK.** The bell
+used to be one list per person in every header, so the ERP's badge on a godown
+tablet counted CRM leads. A notification belongs to the app its `href` opens —
+`notificationAppOf` in `lib/notification-apps.ts`, pure, over the same
+`APP_ROUTES` (`lib/app-routes.ts`) the proxy names a request's app with — and
+`notificationAppSql` is the same rule as SQL for the badge, the list and "Mark
+all read"; `notification-apps.db.test.ts` fails if the two disagree. It is
+DERIVED, never stored: a dozen writers insert their own rows, and a column each
+had to fill would be empty on the one that forgot. No link, or a link into no
+app, is GENERAL and shows in every bell; a handset-only row is `field`. An
+app's bell counts and pops its own and the general ones; "All apps" is one tab
+away and "Unread in other apps" says what waits where. Give a new notification
+the right `href` and it lands in the right bell.
+
 **A NOTIFICATION CARRIES TWO ADDRESSES, AND BOTH ARE STORED.** `href` is the
 web route and `mbos_href` the handset's. The second used to ride on the push
 alone, so the phone's bell list — filled from this table on every pull — was

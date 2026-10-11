@@ -2,6 +2,7 @@ import "server-only";
 import { cache } from "react";
 import { and, asc, desc, eq, inArray, isNull, lte, or, sql, type Column, type SQL } from "drizzle-orm";
 import { db } from "@/db";
+import { notificationAppSql } from "@/lib/notification-app-sql";
 import { APP_TIMEZONE, asDate, calendarDate } from "@/lib/business-date";
 import type { TrackedMessage } from "@/lib/whatsapp-status";
 import {
@@ -2125,29 +2126,60 @@ export async function listNotifications(userId: string) {
 }
 
 /**
- * The live bell's answer: the newest thirty, and the TRUE unread count —
- * the badge used to count unread among the thirty it had, so a person with
- * forty unread was told thirty, or fewer once some of the thirty were read.
+ * The live bell's answer, FOR ONE APP: the newest thirty of that app's
+ * notifications (general ones included) and the TRUE unread count among them
+ * — the badge used to count unread among the thirty it had, so a person with
+ * forty unread was told thirty. Beside it, the newest across every app and
+ * the unread per app, so the bell can say what is waiting elsewhere without a
+ * second request.
+ *
+ * `app` null is a screen in no app: everything, as the bell always was.
  */
-export async function notificationFeed(userId: string) {
-  const [items, [counted]] = await Promise.all([
-    listNotifications(userId),
+export async function notificationFeed(userId: string, app: string | null = null) {
+  const appExpr = notificationAppSql();
+  const mine = eq(notifications.userId, userId);
+  const inApp = app === null ? undefined : or(sql`${appExpr} = ${app}`, sql`${appExpr} is null`);
+  const pick = {
+    id: notifications.id,
+    title: notifications.title,
+    body: notifications.body,
+    kind: notifications.kind,
+    href: notifications.href,
+    read: notifications.read,
+    createdAt: notifications.createdAt,
+    app: sql<string | null>`${appExpr}`,
+  };
+  const newest = (where: SQL | undefined) =>
+    db.select(pick).from(notifications).where(where).orderBy(desc(notifications.createdAt), desc(notifications.id)).limit(30);
+  const [items, all, byApp] = await Promise.all([
+    newest(and(mine, inApp)),
+    app === null ? Promise.resolve(null) : newest(mine),
     db
-      .select({ unread: sql<number>`count(*)::int` })
+      .select({ app: sql<string | null>`${appExpr}`, unread: sql<number>`count(*)::int` })
       .from(notifications)
-      .where(and(eq(notifications.userId, userId), eq(notifications.read, false))),
+      .where(and(mine, eq(notifications.read, false)))
+      .groupBy(sql`1`),
   ]);
-  return {
-    items: items.map((n) => ({
+  const shape = (rows: typeof items) =>
+    rows.map((n) => ({
       id: n.id,
       title: n.title,
       body: n.body,
       kind: n.kind,
       href: n.href,
+      app: n.app ?? null,
       read: n.read,
       createdAt: n.createdAt.toISOString(),
-    })),
-    unread: Number(counted?.unread ?? 0),
+    }));
+  const counts = byApp.map((r) => ({ app: r.app ?? null, unread: Number(r.unread) }));
+  const unread = counts
+    .filter((r) => app === null || r.app === null || r.app === app)
+    .reduce((t, r) => t + r.unread, 0);
+  return {
+    items: shape(items),
+    unread,
+    all: all === null ? shape(items) : shape(all),
+    byApp: counts,
     now: new Date().toISOString(),
   };
 }

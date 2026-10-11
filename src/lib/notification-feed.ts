@@ -23,14 +23,22 @@ export type FeedItem = {
   body: string;
   kind: string;
   href: string | null;
+  /** The app its link opens (`notificationAppOf`), or null for a general one. */
+  app: string | null;
   read: boolean;
   /** ISO instant. */
   createdAt: string;
 };
 
 export type FeedAnswer = {
+  /** The newest of THIS app's notifications, general ones included. */
   items: FeedItem[];
+  /** Unread among them — the badge. */
   unread: number;
+  /** The newest across every app, for the bell's "All apps" view. */
+  all: FeedItem[];
+  /** Unread in every app, null being general. */
+  byApp: { app: string | null; unread: number }[];
   /** The server's clock, so "fresh" is not measured against a laptop's. */
   now: string;
 };

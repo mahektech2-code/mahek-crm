@@ -1,5 +1,6 @@
 "use client";
 
+import { NotificationBell } from "@/components/shell/notification-bell";
 import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -241,6 +242,7 @@ export function AccountsShell({
 
             <div className="flex min-w-0 flex-none items-center gap-2">
               {feedback}
+              <NotificationBell />
               <button
                 onClick={() => setShortcutsOpen(true)}
                 title="Keyboard shortcuts"
