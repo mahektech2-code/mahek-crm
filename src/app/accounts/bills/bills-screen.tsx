@@ -7,6 +7,8 @@ import { cx } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
 import { BillDetailPanel } from "@/components/bills/bill-detail-panel";
 import { longDate, money } from "@/lib/format";
+import { YearFilter } from "@/components/ui/year-filter";
+import { yearLabel, yearSpanLabel } from "@/lib/year-period";
 import {
   AgingStrip,
   Cell,
@@ -61,7 +63,8 @@ export function BillsScreen({
   buckets,
   openBills,
   years,
-  financialYear,
+  year,
+  today,
 }: {
   /** ONE PAGE of the year. The figures beside it describe all of it. */
   rows: BillRow[];
@@ -72,8 +75,11 @@ export function BillsScreen({
   buckets: Bucket[];
   /** How many bills are still open in this year — the strip's own row count. */
   openBills: number;
-  years: string[];
-  financialYear: string;
+  /** The years with bills in them, both ways of counting. */
+  years: { fy: string[]; cy: string[] };
+  /** "26-27" (financial) or "2026" (calendar) — see year-period.ts. */
+  year: string;
+  today: string;
 }) {
   const router = useRouter();
   const { push } = useToast();
@@ -102,7 +108,7 @@ export function BillsScreen({
 
   const go = (next: { page?: number; per?: number }) => {
     const params = new URLSearchParams();
-    params.set("fy", financialYear);
+    params.set("year", year);
     params.set("page", String(next.page ?? page));
     params.set("per", String(next.per ?? perPage));
     router.push(`/accounts/bills?${params.toString()}`);
@@ -113,7 +119,7 @@ export function BillsScreen({
       <div className="max-w-[1400px]">
         <ScreenHeader
           title="Bills"
-          subtitle="Every bill raised, cut by financial year. The totals, the aging strip and the export describe the whole year — only the table is paged."
+          subtitle="Every bill raised, cut by financial or calendar year. The totals, the aging strip and the export describe the whole year — only the table is paged."
           actions={
             /*
              * THE WHOLE YEAR, BUILT ON THE SERVER.
@@ -129,7 +135,7 @@ export function BillsScreen({
              * straight back out again.
              */
             <a
-              href={`/accounts/bills/export?fy=${encodeURIComponent(financialYear)}`}
+              href={`/accounts/bills/export?year=${encodeURIComponent(year)}`}
               onClick={() => push("Building the file — the whole year, not this page")}
               className="inline-flex h-9 cursor-pointer items-center rounded-[4px] border border-line-strong bg-surface px-3.5 text-sm font-medium text-body no-underline hover:bg-canvas"
             >
@@ -138,29 +144,21 @@ export function BillsScreen({
           }
         />
 
-        <div className="mb-4 flex items-center gap-2">
-          <span className="text-[13px] text-muted">Financial year</span>
-          {years.map((y) => (
-            <button
-              key={y}
-              /* A different year starts at its first page — carrying page 7
-                 across would land on an empty table in a year that has six. */
-              onClick={() => router.push(`/accounts/bills?fy=${y}&page=1&per=${perPage}`)}
-              className={cx(
-                "h-7.5 cursor-pointer rounded-[4px] border px-3 text-[13px]",
-                y === financialYear
-                  ? "border-brand bg-brand-soft font-medium text-[#5223E0]"
-                  : "border-line bg-surface text-body hover:bg-canvas",
-              )}
-            >
-              {y}
-            </button>
-          ))}
-        </div>
+        {/*
+          A different year starts at its first page — carrying page 7 across
+          would land on an empty table in a year that has six.
+        */}
+        <YearFilter
+          className="mb-4"
+          value={year}
+          options={years}
+          today={today}
+          onChange={(y) => router.push(`/accounts/bills?year=${y}&page=1&per=${perPage}`)}
+        />
 
         <MetricRow
           metrics={[
-            { label: "Billed", value: money(billed), sub: `in ${financialYear}` },
+            { label: "Billed", value: money(billed), sub: `in ${yearLabel(year)}` },
             { label: "Received", value: money(received), sub: "confirmed only" },
             {
               label: "Still open",
@@ -185,7 +183,7 @@ export function BillsScreen({
         {rows.length === 0 ? (
           <Empty
             title="No bills in this year"
-            body="Nothing was billed between 1 April and 31 March. Try another financial year, or run the sheet import if this year should have bills in it."
+            body={`Nothing was billed in ${yearLabel(year)} (${yearSpanLabel(year)}). Try another year, or run the sheet import if this year should have bills in it.`}
           />
         ) : (
           <div className="overflow-hidden rounded-[6px] border border-line bg-surface">

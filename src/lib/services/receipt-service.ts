@@ -1752,7 +1752,14 @@ export type LedgerLink = {
 export type CustomerLedger = {
   customerId: string;
   customerName: string;
+  /** What was owed before the range opened (confirmed money only). */
   openingBalance: number;
+  /**
+   * What was owed at the end of the range — the opening balance plus what was
+   * billed less what was received inside it. With no range it is the balance
+   * after the last entry on the account.
+   */
+  closingBalance: number;
   entries: LedgerEntry[];
   totals: { billed: number; received: number; outstanding: number; onAccount: number };
   /** Reported but undecided — shown apart, because it is not money yet. */
@@ -2021,13 +2028,16 @@ export async function ledgerForCustomer(
   const entries: LedgerEntry[] = [];
   let balance = 0;
 
+  let closing = 0;
   for (const r of rows) {
     balance += r.debit - r.credit;
     if (from && r.at < from) {
       opening = balance;
+      closing = balance;
       continue;
     }
     if (to && r.at > to) continue;
+    closing = balance;
     const { sort: _sort, ...entry } = r;
     void _sort;
     entries.push({ ...entry, balance });
@@ -2051,6 +2061,7 @@ export async function ledgerForCustomer(
     customerId,
     customerName: customer.name,
     openingBalance: opening,
+    closingBalance: closing,
     entries: shown,
     totals: {
       billed,
@@ -2063,6 +2074,20 @@ export async function ledgerForCustomer(
       amount: awaitingRows.reduce((s, r) => s + Number(r.receipt.amount), 0),
     },
   };
+}
+
+/**
+ * The first date anything happened on an account — its oldest bill or
+ * receipt — so the statement offers only years the account has entries in.
+ */
+export async function earliestLedgerDate(customerId: string): Promise<string | null> {
+  const [row] = await db.execute<{ d: string | null }>(sql`
+    select least(
+      (select min(bill_date) from bills where customer_id = ${customerId}),
+      (select min(received_at) from payment_receipts where customer_id = ${customerId})
+    )::text as d
+  `);
+  return row?.d ?? null;
 }
 
 /** Money received and not yet spent against a bill. */
