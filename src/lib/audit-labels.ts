@@ -324,6 +324,27 @@ const strong = (s: string): Piece => ({ strong: s });
  * not enough.
  */
 const DESCRIBE: Record<string, Describer> = {
+  /* ---- empty drums, scrap sale and scrap receipts */
+  "erp.drum.empty": () => ["recorded an empty drum, weighed"],
+  "erp.drum.classify": () => ["decided who owns an empty drum"],
+  "erp.drum.weight": () => ["corrected an empty drum's weight"],
+  "erp.drum.cancel": () => ["cancelled an empty-drum entry"],
+  "erp.drum.adjust.request": () => ["asked for a drum correction"],
+  "erp.drum.adjust.approve": () => ["approved a drum correction"],
+  "erp.drum.adjust.reject": () => ["rejected a drum correction"],
+  "erp.drum.return": () => ["returned empty drums to their supplier"],
+  "erp.drum.return.cancel": () => ["cancelled a returnable drum outward"],
+  "erp.scrap.sale": () => ["recorded a scrap sale"],
+  "erp.scrap.sale.cancel": () => ["cancelled a scrap sale"],
+  "erp.scrap.entry": () => ["recorded scrap"],
+  "erp.scrap.entry.cancel": () => ["cancelled a scrap entry"],
+  "erp.scrapBuyer.create": () => ["added a scrap buyer"],
+  "erp.scrapBuyer.retire": () => ["retired a scrap buyer"],
+  "erp.scrapBuyer.restore": () => ["restored a scrap buyer"],
+  "erp.receipt.create": () => ["recorded a Petty Cash/Bank receipt"],
+  "erp.receipt.allocate": () => ["matched a receipt to a scrap sale"],
+  "erp.receipt.unallocate": () => ["undid a receipt's match to a scrap sale"],
+  "erp.receipt.void": () => ["voided a Petty Cash/Bank receipt"],
   /* ---- money */
   "payment.record": (c) => ({
     says: [
@@ -926,12 +947,6 @@ export const VERBS: Record<string, string> = {
   sendBack: "sent back",
   select: "selected",
   decideMethod: "decided how to buy",
-  /* Scrap & empty drums. */
-  record: "recorded",
-  correct: "corrected the weight of",
-  ownership: "decided who owns the drums of",
-  allocate: "matched a receipt to a sale on",
-  unmatch: "unmatched a sale from",
   /* Inventory Accuracy Control. */
   exceptionRequest: "asked for an urgent purchase of",
   exceptionApprove: "approved an urgent purchase of",
@@ -1071,12 +1086,6 @@ export const NOUNS: Record<string, string> = {
   pack: "packing entry",
   requisition: "purchase requirement",
   stockCount: "stock count",
-  emptyDrum: "empty drum",
-  drumReturn: "return of drums to a vendor",
-  scrapSale: "scrap sale",
-  scrapBuyer: "scrap buyer",
-  scrapReceipt: "scrap receipt",
-  scrapStock: "batch of scrap",
   stockAdjustment: "stock adjustment",
   quotation: "quotation",
   purchaseOrder: "purchase order",

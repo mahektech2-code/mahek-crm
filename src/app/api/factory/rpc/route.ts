@@ -31,6 +31,8 @@ const OPS = {
   reportProblem: A.factoryReportProblem,
   requestCorrection: A.factoryRequestCorrection,
   decide: A.factoryDecide,
+  drumLookup: A.factoryDrumLookup,
+  emptyDrum: A.factoryEmptyDrum,
 } as const;
 
 export type FactoryOp = keyof typeof OPS;

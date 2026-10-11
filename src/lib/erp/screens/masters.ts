@@ -54,6 +54,7 @@ import { rmTotalsByItem } from "../stock";
 import { PURCHASE_METHODS, methodByLabel, methodLabel, type PurchaseMethod } from "../engines/purchase-flow";
 import { DUTY_LABEL, MATERIAL_DUTIES, dutyApplies, type DutyHolders, type MaterialDuty } from "../material-duties";
 import { dutiesOf, dutyCandidates, dutyFieldsFor, replaceMaterialDuties } from "../material-duties-server";
+import { OWNERSHIP_LABEL, ownershipByLabel, type DrumOwnership } from "../engines/drums";
 
 /* ---------------------------------------------------------------------------
  * Masters (spec §4): raw materials, suppliers, products, customers, godowns,
@@ -387,6 +388,7 @@ async function supplierForm(id?: string): Promise<FormSpec> {
         grade: r.grade ?? "",
         email: r.email ?? "",
         gstin: r.gstin ?? "",
+        drumOwnership: r.drumOwnership ? OWNERSHIP_LABEL[r.drumOwnership as DrumOwnership] : DRUM_UNKNOWN,
       };
     }
   }
@@ -411,9 +413,19 @@ async function supplierForm(id?: string): Promise<FormSpec> {
       { k: "grade", l: "Grade", t: "text" },
       { k: "email", l: "Party email", t: "text" },
       { k: "gstin", l: "GSTIN", t: "text" },
+      {
+        k: "drumOwnership",
+        l: "Their drums are",
+        t: "select",
+        opts: [DRUM_UNKNOWN, OWNERSHIP_LABEL.mahek, OWNERSHIP_LABEL.returnable],
+        def: DRUM_UNKNOWN,
+        hint: "Copied onto each GRN line as it is received. Returnable drums go back to this supplier once empty; an unknown answer sends each emptied drum to the Production Head.",
+      },
     ],
   };
 }
+
+const DRUM_UNKNOWN = "Not recorded";
 
 const suppliers: ScreenModule = {
   key: "suppliers",
@@ -453,6 +465,7 @@ const suppliers: ScreenModule = {
           { l: "WhatsApp", v: r.whatsapp || "—" },
           { l: "Location", v: r.location || "—" },
           { l: "GSTIN", v: r.gstin || "—" },
+          { l: "Their drums are", v: r.drumOwnership ? OWNERSHIP_LABEL[r.drumOwnership as DrumOwnership] : DRUM_UNKNOWN },
           { l: "Purchases", v: `${purchases.get(r.id) ?? 0} purchases`, der: true },
         ],
         contacts: phoneContacts(r.mobile, r.email),
@@ -514,6 +527,7 @@ async function saveSupplier(ctx: ErpContext, h: Record<string, string>, id?: str
     grade: text(h.grade),
     email: text(h.email),
     gstin: text(h.gstin),
+    drumOwnership: ownershipByLabel(h.drumOwnership),
     updatedAt: new Date(),
     updatedById: ctx.user.id,
   };

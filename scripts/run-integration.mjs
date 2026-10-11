@@ -56,8 +56,9 @@ const files = [
   // flag is recounted by somebody else; stock moves only through an approved
   // adjustment; missing records and the daily cycle count.
   "src/lib/erp/erp-stock-check.test.ts",
-  // Scrap & empty drums: a drum weighed empty against its GRN lot, once; Mahek
-  // and vendor stock kept apart; sales and returns oldest first; receipts.
+  // Empty drums, scrap sale and vendor-returnable drums: the PRD's acceptance
+  // tests — FIFO allocation, strict separation, receivables matched from
+  // Petty Cash/Bank, corrections approved by somebody else.
   "src/lib/erp/erp-scrap.test.ts",
   "src/lib/erp/erp-material-duties.test.ts",
   // Purchase and production, department by department.

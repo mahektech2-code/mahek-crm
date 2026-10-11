@@ -109,7 +109,6 @@ function Control({
     );
   }
   if (f.t === "scan") return <ScanField value={value} opts={opts} error={error} onChange={onChange} />;
-  if (f.t === "pick") return <ScanField value={value} opts={opts} error={error} onChange={onChange} words placeholder={f.hint ? "Pick from the list, or type a new one" : undefined} />;
   if (f.t === "suggest") {
     const has = !!derived;
     return (
@@ -281,22 +280,7 @@ function Combo({ value, opts, error, onChange }: { value: string; opts: string[]
  * draws itself: a narrow floating box, offset from the field and covering the
  * hint beneath it. Free text is kept; the list is a shortcut, not a rule.
  */
-function ScanField({
-  value,
-  opts,
-  error,
-  onChange,
-  words = false,
-  placeholder,
-}: {
-  value: string;
-  opts: string[];
-  error: boolean;
-  onChange: (v: string) => void;
-  /** A name rather than a code: spaces are part of it, and there is nothing to scan. */
-  words?: boolean;
-  placeholder?: string;
-}) {
+function ScanField({ value, opts, error, onChange }: { value: string; opts: string[]; error: boolean; onChange: (v: string) => void }) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
   const listId = useId();
@@ -318,12 +302,12 @@ function ScanField({
         aria-expanded={open}
         aria-controls={listId}
         aria-autocomplete="list"
-        placeholder={placeholder ?? (words ? "Pick from the list, or type a new one" : "Scan or type the lot label")}
+        placeholder="Scan or type the lot label"
         onFocus={() => setOpen(true)}
         onClick={() => setOpen(true)}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
         onChange={(e) => {
-          onChange(words ? e.target.value.replace(/^\s+/, "") : e.target.value.trim());
+          onChange(e.target.value.trim());
           setOpen(true);
           setActive(-1);
         }}
@@ -345,13 +329,11 @@ function ScanField({
             setActive((i) => (i + step + shown.length) % shown.length);
           }
         }}
-        className={control(error, cx(!words && "pr-8", value && !words ? "font-mono" : ""))}
+        className={control(error, cx("pr-8", value ? "font-mono" : ""))}
       />
-      {words ? null : (
-        <span className="pointer-events-none absolute top-2 right-2.5 flex text-muted">
-          <Icon n="scan" />
-        </span>
-      )}
+      <span className="pointer-events-none absolute top-2 right-2.5 flex text-muted">
+        <Icon n="scan" />
+      </span>
       {open && opts.length ? (
         <span id={listId} role="listbox" className="absolute top-10 right-0 left-0 z-50 block max-h-[300px] overflow-y-auto rounded-[6px] border border-line bg-surface py-1 shadow-[0_8px_24px_rgba(22,22,22,0.12)]">
           {shown.map((x, i) => (
@@ -365,7 +347,7 @@ function ScanField({
                 e.preventDefault();
                 pick(x);
               }}
-              className={cx("block min-h-8.5 w-full cursor-pointer px-3 py-[7px] text-left text-sm text-ink", !words && "font-mono", x === value ? "bg-brand-soft" : i === active ? "bg-canvas" : "hover:bg-canvas")}
+              className={cx("block min-h-8.5 w-full cursor-pointer px-3 py-[7px] text-left font-mono text-sm text-ink", x === value ? "bg-brand-soft" : i === active ? "bg-canvas" : "hover:bg-canvas")}
             >
               {x}
             </button>

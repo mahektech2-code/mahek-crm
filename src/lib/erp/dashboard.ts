@@ -2,7 +2,7 @@ import "server-only";
 import { eq, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { customers } from "@/db/schema";
-import { calendarDate } from "@/lib/business-date";
+import { APP_TIMEZONE, calendarDate } from "@/lib/business-date";
 import type { ErpContext } from "./access";
 import { visibleAlerts } from "./alerts";
 import { incompletePackIds } from "./counts";
@@ -19,7 +19,6 @@ import { detailRows, orderLines, ORDER_STATUSES } from "./screens/sales";
 import { fgLots, packLots, rmLots, sfgLots } from "./stock";
 import { controlWork, fullCountDue, type ControlWork } from "./stock-check";
 import { adjustmentReasonLabel } from "./engines/stock-check";
-import { scrapSummary } from "./scrap";
 import type { Tone } from "./ui";
 import { nf } from "./ui";
 
@@ -395,6 +394,46 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
   }
   push("Requests and credit notes", req);
 
+  /* ================================================= empty drums and scrap */
+  if (has("emptyDrums") || has("drumReturns") || has("scrapSales")) {
+    const scrap: Tile[] = [];
+    const drums = await q(sql`select id, status, godown, supplier, recorded_on as on from (
+      select d.id, d.status, g.name as godown, s.name as supplier, (d.recorded_at at time zone ${APP_TIMEZONE})::date::text as recorded_on
+        from erp_empty_drums d join erp_godowns g on g.id = d.godown_id left join erp_suppliers s on s.id = d.supplier_id) x`);
+    if (has("emptyDrums")) {
+      const avail = drums.filter((d) => d.status === "available" && inG(d.godown)).map((d) => String(d.id));
+      scrap.push({ l: "Mahek-owned empty drums available", v: String(avail.length), sub: godownName ? `at ${godownName}` : "every godown", href: tileHref("emptyDrums", null, "") });
+      const review = drums.filter((d) => d.status === "review").map((d) => String(d.id));
+      if (review.length) scrap.push({ l: "Empty drums to classify", v: String(review.length), sub: "ownership not recorded", tone: "warn", href: tileHref("drumReview", null, "") });
+    }
+    if (has("emptyDrums") || has("drumReturns")) {
+      const ret = drums.filter((d) => d.status === "returnable");
+      const oldest = ret.map((d) => String(d.on)).sort()[0];
+      scrap.push({
+        l: "Vendor-returnable drums pending",
+        v: String(ret.length),
+        sub: oldest ? `oldest waiting since ${oldest.slice(8, 10)}/${oldest.slice(5, 7)} · ${new Set(ret.map((d) => d.supplier)).size} supplier${new Set(ret.map((d) => d.supplier)).size === 1 ? "" : "s"}` : "nothing waiting",
+        tone: oldest && Date.parse(day) - Date.parse(oldest) > 60 * 86_400_000 ? "warn" : undefined,
+        href: tileHref(has("drumReturns") ? "drumPending" : "drumReturnable", null, ""),
+      });
+    }
+    if (has("scrapSales")) {
+      const [m] = await q(sql`
+        select count(*)::int as n, coalesce(sum(amount_paise), 0)::float8 as v,
+               coalesce(sum(case when category = 'Empty Metal Drum' then quantity else 0 end), 0)::float8 as drums
+          from erp_scrap_sales where status = 'confirmed' and to_char(sale_date, 'YYYY-MM') = ${month}`);
+      scrap.push({ l: "Scrap sold this month", v: rupees(Number(m?.v ?? 0)), sub: `${plural(Number(m?.n ?? 0), "sale")} · ${nf(Number(m?.drums ?? 0))} drums`, href: tileHref("scrapSales", null, "") });
+      const [o] = await q(sql`
+        select coalesce(sum(greatest(s.amount_paise - coalesce((select sum(a.amount_paise) from erp_scrap_allocations a where a.sale_id = s.id and a.voided_at is null), 0), 0)), 0)::float8 as v,
+               count(*) filter (where s.amount_paise > coalesce((select sum(a.amount_paise) from erp_scrap_allocations a where a.sale_id = s.id and a.voided_at is null), 0)
+                                  and coalesce(s.due_date, s.sale_date) < ${day}::date)::int as late
+          from erp_scrap_sales s where s.status = 'confirmed'`);
+      const late = Number(o?.late ?? 0);
+      scrap.push({ l: "Scrap receivables outstanding", v: rupees(Number(o?.v ?? 0)), sub: late ? `${plural(late, "sale")} past due` : "nothing past due", tone: late ? "danger" : undefined, href: tileHref("scrapReceivables", null, "") });
+    }
+    push("Empty drums and scrap", scrap);
+  }
+
   /* ======================================================== petty cash */
   if (has("expenses") || has("credits")) {
     const [credits, expenses] = await Promise.all([
@@ -412,27 +451,7 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
       const pend = expenses.filter((e) => e.status === "Pending").map((e) => String(e.id));
       tiles.push({ l: "Expenses pending verification", v: String(pend.length), href: tileHref("expenses", pend, "Pending") });
     }
-    push("Petty cash", tiles);
-  }
-
-  /* ================================================ scrap & empty drums */
-  if (has("emptyDrums")) {
-    const sc = await scrapSummary();
-    const tiles: Tile[] = [
-      { l: "Mahek-owned empty drums", v: nf(sc.mahekAvailable), sub: "available to sell as scrap", href: tileHref("drumStock", null, "") },
-      {
-        l: "Vendor drums to return",
-        v: nf(sc.vendorPending),
-        sub: sc.oldestPendingReturn ? `oldest waiting since ${sc.oldestPendingReturn.since} · ${sc.oldestPendingReturn.supplier}` : "none waiting",
-        tone: sc.oldestPendingReturn && sc.oldestPendingReturn.since < calendarDate(new Date(Date.now() - 30 * 86_400_000)) ? "warn" : undefined,
-        href: tileHref("returnableDrums", null, ""),
-      },
-    ];
-    if (sc.review) tiles.push({ l: "Drums whose owner is not recorded", v: nf(sc.review), sub: "the Production Head decides, lot by lot", tone: "warn", href: tileHref("emptyDrums", null, "") });
-    tiles.push({ l: "Scrap sold this month", v: rupees(sc.saleValueThisMonth), sub: `${nf(sc.soldDrumsThisMonth)} drums among it`, href: tileHref("scrapSales", null, "") });
-    tiles.push({ l: "Scrap receivable outstanding", v: rupees(sc.outstanding), sub: sc.overdue ? `${rupees(sc.overdue)} of it past due` : "nothing past due", tone: sc.overdue ? "danger" : undefined, href: tileHref("scrapBuyers", null, "") });
-    if (sc.highVariance) tiles.push({ l: "Drums with a high tare variance", v: nf(sc.highVariance), sub: "actual empty weight against the supplier's declared tare", tone: "warn", href: tileHref("tareVariance", null, "") });
-    push("Scrap & empty drums", tiles);
+    push("Petty Cash/Bank", tiles);
   }
 
   /* ========================================================= customers */

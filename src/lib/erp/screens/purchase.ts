@@ -52,6 +52,10 @@ import { bindErpFiles } from "../attachments";
 import { dutyKit } from "../material-duties-server";
 import { godownIdByName, godownOptions, has, today, type Col, type Tx } from "./common";
 import { RECEIVABLE_PO, poLabel, receivableQuantity } from "../engines/purchase-flow";
+import { OWNERSHIP_LABEL, ownershipByLabel } from "../engines/drums";
+
+/** The GRN line's drum ownership: the supplier's usual answer unless the line says otherwise. */
+const DRUM_OWNER_OPTS = ["As the supplier's master says", OWNERSHIP_LABEL.mahek, OWNERSHIP_LABEL.returnable];
 import { poOption, purchaseOrderViews, receivedByLine, refreshPurchaseOrder, type PoView } from "./purchase-flow";
 
 /* ---------------------------------------------------------------------------
@@ -400,6 +404,8 @@ async function inwardForm(ctx: ErpContext, init?: Record<string, string>, opts: 
       /* A kg item is weighed on the drum; a litre item is measured, so the gross weight is optional there. */
       { k: "weight", l: "Weight with drum (kg)", t: "num", min: 0, when: { k: "type", eq: "Chemical" }, reqWhen: { k: "item", map: "unitIs", has: "Kg" } },
       { k: "emptyDrum", l: "Empty drum weight (kg, per drum)", t: "num", min: 0, when: { k: "type", eq: "Chemical" }, reqWhen: { k: "item", map: "unitIs", has: "Kg" } },
+      /* Whose the drums are decides where they go once emptied: our scrap, or back to the supplier. */
+      { k: "drumOwner", l: "Drums belong to", t: "select", opts: DRUM_OWNER_OPTS, def: DRUM_OWNER_OPTS[0], when: { k: "type", eq: "Chemical" }, hint: "Returnable drums go back to the supplier once empty and are never sold as scrap." },
       /* A kg chemical's net is the scale's answer, never typed; anything measured or counted is typed. */
       { k: "net", l: "Weight without drum", t: "derived", calc: "inward.net", when: { k: "item", map: "qtyBy", has: "scale" } },
       { k: "qty", l: "Quantity received", t: "num", req: true, min: 0.001, when: { k: "item", map: "qtyBy", has: "typed" }, fillBy: { by: ["po", "poLine"], map: rx.qtyOf }, hint: "Starts at what is pending on the PO — type what actually arrived." },
@@ -441,6 +447,7 @@ const inward: ScreenModule = {
       { k: "drums", l: "Drums", t: "n" },
       { k: "weight", l: "Weight with drum", t: "n" },
       { k: "emptyDrum", l: "Empty drum weight", t: "n" },
+      { k: "drumOwner", l: "Drums belong to", t: "s" },
       { k: "qty", l: "Weight without drum", t: "n" },
       { k: "unit", l: "Unit", t: "t" },
       { k: "godown", l: "Godown", t: "t" },
@@ -517,6 +524,7 @@ const inward: ScreenModule = {
             drums: x.r.drums,
             weight: x.r.weightWithDrum,
             emptyDrum: x.r.emptyDrumWeight,
+            drumOwner: x.r.materialType !== "Chemical" ? null : x.r.drumOwnership ? OWNERSHIP_LABEL[x.r.drumOwnership as "mahek" | "returnable"] : "Not recorded",
             qty: x.r.quantity,
             unit: x.r.unit,
             godown: x.godown,
@@ -601,6 +609,8 @@ const inward: ScreenModule = {
        * failing the whole delivery.
        */
       const sent = { testing: 0, register: 0, stuck: [] as string[] };
+      const [sup] = await db.select({ own: erpSuppliers.drumOwnership }).from(erpSuppliers).where(eq(erpSuppliers.id, po.po.supplierId));
+      const supplierDrumOwnership = sup?.own ?? null;
       await db.transaction(async (tx) => {
         if (fixed != null) pr = fixed;
         else {
@@ -627,6 +637,8 @@ const inward: ScreenModule = {
             drums: m.materialType === "Chemical" ? int(l.drums) : null,
             weightWithDrum: m.materialType === "Chemical" ? num(l.weight) : null,
             emptyDrumWeight: m.materialType === "Chemical" ? num(l.emptyDrum) : null,
+            /* Copied from the supplier at save unless the line says otherwise; unknown stays unknown. */
+            drumOwnership: m.materialType === "Chemical" ? (ownershipByLabel(l.drumOwner) ?? supplierDrumOwnership) : null,
             quantity: qty,
             unit,
             remark: text(l.remark),

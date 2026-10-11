@@ -25,6 +25,8 @@ type Ops = {
   reportProblem: typeof Actions.factoryReportProblem;
   requestCorrection: typeof Actions.factoryRequestCorrection;
   decide: typeof Actions.factoryDecide;
+  drumLookup: typeof Actions.factoryDrumLookup;
+  emptyDrum: typeof Actions.factoryEmptyDrum;
 };
 
 export class NotReceived extends Error {}

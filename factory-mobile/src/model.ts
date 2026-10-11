@@ -18,6 +18,7 @@ import type { Lang } from "@/lib/factory/i18n";
 import type { ScanMeta, ScanPurpose, ScanResult } from "@/lib/factory/rules";
 import type { Draft, FactoryData, Proc, SubmitResult, Task } from "@/lib/factory/types";
 import type { Me, Who } from "./types";
+import type { DrumLotView, DrumSaved } from "@/lib/factory/types";
 
 export type Net = "online" | "weak" | "offline";
 export type Flow = { task: Task; step: number; d: Draft; key: string };
@@ -49,6 +50,8 @@ export type KpSheet = {
   maxL?: string;
   quick?: { l: string; v: number }[];
   allowZero?: boolean;
+  /** Takes a decimal point — a weight in kg, where every other count is whole. */
+  decimals?: boolean;
   set: (n: number) => void;
 };
 export type PeopleSheet = { type: "people"; role: "owner" | "op" | "helpers" | "ver"; multi: boolean; sel: string[]; area: string; onDone?: (sel: string[]) => void };
@@ -92,6 +95,8 @@ export type State = {
   busy: boolean;
   clock: string;
   cam: "wait" | "live" | "none" | "denied";
+  /** Empty drum entry: the lot scanned, the weight typed, and what the server answered. */
+  drum: DrumEntry | null;
 };
 
 /* ------------------------------------------------------------ the phone's memory */
@@ -207,4 +212,22 @@ export function forget(me: string) {
     for (const k of keys) if (k.startsWith(pre) && !k.endsWith(".queue")) kvSet(k, null);
     kvSet("mahek.factory.me", null);
   } catch {}
+}
+
+/** Empty drum entry on the phone. The server decides everything; this holds what it said. */
+export type DrumEntry = {
+  lot: DrumLotView;
+  limits: { minKg: number; maxKg: number };
+  kg: number | null;
+  /** Minted when the drum is scanned; a resend of the same save answers with the first. */
+  key: string;
+  /** The server asked "is this a different drum of the same lot?". */
+  ask: string | null;
+  err: { title: string; text: string; fix: string } | null;
+  saving: boolean;
+  saved: DrumSaved | null;
+};
+
+export function mintDrumKey(): string {
+  return "DRM-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
 }

@@ -1,1431 +1,1436 @@
 import "server-only";
-import { sql } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { erpDrumReturns, erpScrapAllocations, erpScrapBuyers, erpScrapCollections, erpScrapReceipts, erpScrapSales } from "@/db/schema";
+import { erpDrumAdjustments, erpGodowns, erpScrapBuyers, erpScrapEntries, erpSuppliers, users } from "@/db/schema";
 import { getConfig } from "@/lib/config/store";
-import { calendarDate } from "@/lib/business-date";
+import { APP_TIMEZONE, calendarDate } from "@/lib/business-date";
 import { err, fieldErr, okVoid, type Result } from "@/lib/result";
 import type { ErpContext } from "../access";
-import { powerRefusal } from "../access";
+import { refValues } from "../refs";
+import { erpAudit, erpId, int, num, paise, stampLine, text, type ScreenModule } from "../server";
+import type { ActionSpec, ColSpec, FieldSpec, FormSpec, ListRow } from "../ui";
+import { fd, inr, nf } from "../ui";
+import { godownIdByName, godownOptions, today } from "./common";
 import {
-  AGEING_BUCKETS,
-  CATEGORY_LABEL,
-  CATEGORY_UNITS,
+  AGE_BUCKETS,
+  DRUM_CATEGORY,
   DRUM_STATUS_LABEL,
   OWNERSHIP_LABEL,
-  VENDOR_DRUM_REFUSAL,
-  ageingBucket,
-  allocationRefusal,
-  categoryByLabel,
-  daysBetween,
-  drumMoveRefusal,
-  fifoPick,
-  highVariance,
-  invoiceRefusal,
-  otherScrapBalance,
-  outstanding,
-  routeDrum,
-  saleAmount,
-  salePayState,
-  spreadOldestFirst,
+  RETURNABLE_NOT_FOR_SALE,
+  RETURN_BUCKETS,
+  drumLabel,
+  drumReturnLabel,
+  ownershipByLabel,
+  paymentState,
+  receiptLabel,
+  receivableBucket,
+  returnBucket,
+  scrapSaleLabel,
+  suggestAllocation,
   tareVariance,
-  type AgeingBucket,
+  varianceIsHigh,
   type DrumOwnership,
-  type DrumStatus,
-  type ScrapCategory,
-} from "../engines/scrap";
-import { erpLink } from "../registry";
-import { drumNoLabel, receiptNoLabel, returnNoLabel, saleNoLabel } from "../scrap";
-import { erpAudit, erpId, int, nextNumber, num, paise, stampLine, text, type ScreenModule } from "../server";
-import type { ActionSpec, ColSpec, FieldSpec, FormSpec, ListRow, ToolSpec } from "../ui";
-import { inr, nf } from "../ui";
-import { godownIdByName, godownOptions, inTx, refuse, type Tx } from "./common";
+} from "../engines/drums";
+import {
+  RECEIPT_MODES,
+  allocateReceipt,
+  allocationRows,
+  availableDrums,
+  cancelDrumEntry,
+  cancelDrumReturn,
+  cancelScrapEntry,
+  cancelScrapSale,
+  classifyDrum,
+  correctDrumWeight,
+  decideDrumAdjustment,
+  drumHistories,
+  drumRows,
+  findDrumLot,
+  lotRefusal,
+  receiptRows,
+  recordEmptyDrum,
+  recordReceipt,
+  recordScrapEntry,
+  requestDrumAdjustment,
+  returnDrums,
+  saleRows,
+  scrapStock,
+  sellScrap,
+  voidAllocation,
+  voidReceipt,
+  type Actor,
+  type DrumHistoryLine,
+  type DrumRow,
+  type SaleRow,
+} from "../drums";
 
 /* ---------------------------------------------------------------------------
- * SCRAP & EMPTY DRUMS — one screen, nine tabs:
+ * EMPTY DRUMS AND SCRAP — the ERP screens.
  *
- *   Empty drums · Mahek stock · Vendor drums · Returns · Scrap sales ·
- *   Other scrap · Buyers · Receipts · Tare variance
+ *   Empty drums            Mahek stock · Vendor returnable · Needs review ·
+ *                          Tare variance · Corrections · All drums
+ *   Returnable drum outward  Outwards · Pending by supplier
+ *   Scrap sales            Sales · Receivables & ageing · Scrap stock ·
+ *                          Scrap buyers
+ *   Petty Cash/Bank        Receipts (the tab beside Expenses and Funds given)
  *
- * A drum is registered at the scale (`/erp/empty-drums`) against its GRN lot.
- * Every balance here — drums available, drums pending return, what a buyer
- * owes — is read off the transactions and never typed.
+ * Who may do what is a POWER, checked in each handler: recording an empty
+ * drum is the screen's (production staff); selling and returning is
+ * `scrapSale` (the Production Head); matching money is `scrapAccounts` (the
+ * accountant); corrections are `scrapApprove`, and never by whoever asked.
  * ------------------------------------------------------------------------- */
 
-const today = () => calendarDate(new Date());
-const kg = (x: number | null) => (x == null ? null : Math.round(x * 1000) / 1000);
-const signedKg = (x: number | null) => (x == null ? "—" : `${x > 0 ? "+" : ""}${nf(x)} kg`);
-const plural = (n: number, one: string, many = `${one}s`) => `${nf(n)} ${n === 1 ? one : many}`;
+const actorOf = (ctx: ErpContext): Actor => ({ id: ctx.user.id, name: ctx.user.name, app: "erp", level: ctx.level });
+const can = (ctx: ErpContext, p: "scrapSale" | "scrapAccounts" | "scrapApprove") => ctx.powers.has(p);
+const why = (ctx: ErpContext, p: "scrapSale" | "scrapAccounts" | "scrapApprove") =>
+  can(ctx, p) ? "" : p === "scrapSale" ? "The Production Head does this" : p === "scrapAccounts" ? "The accountant matches money" : "Somebody who approves drum corrections does this";
+const refused = (p: "scrapSale" | "scrapAccounts" | "scrapApprove"): Result =>
+  err(p === "scrapSale" ? "Only the Production Head sells scrap and returns drums." : p === "scrapAccounts" ? "Only the accountant records and matches Petty Cash/Bank receipts." : "Only somebody who approves drum corrections may do this.", "not_permitted");
 
-const sells = (ctx: ErpContext) => ctx.powers.has("scrapSell");
-const controls = (ctx: ErpContext) => ctx.powers.has("scrapControl");
-const matches = (ctx: ErpContext) => ctx.powers.has("scrapReceipts");
+const ownLabel = (o: DrumOwnership | null) => (o ? OWNERSHIP_LABEL[o] : "Not recorded");
+const kgText = (n: number | null | undefined) => (n == null ? "—" : `${nf(n)} kg`);
+const signedKg = (n: number | null | undefined) => (n == null ? "—" : `${n > 0 ? "+" : ""}${nf(n)} kg`);
+const reasonField = (l = "Reason"): FieldSpec => ({ k: "reason", l, t: "area", req: true, mic: true, hint: "Kept in the drum's history with your name." });
 
-const RECORD_TOOL: ToolSpec = { id: "record", l: "Record empty drum", primary: true, href: "/erp/empty-drums" };
-
-/* ============================================================ the drums */
-
-type DrumRow = {
-  id: string;
-  drumNo: number;
-  seq: number;
-  lot: string;
-  pr: number;
-  status: DrumStatus;
-  ownership: DrumOwnership | null;
-  declared: number | null;
-  weight: number;
-  first: number;
-  weightNote: string | null;
-  statusNote: string | null;
-  supplier: string;
-  supplierId: string;
-  item: string;
-  godown: string;
-  lotDrums: number | null;
-  grnDate: string;
-  purchaseId: string;
-  emptiedAt: Date;
-  updatedAt: Date;
-  by: string | null;
-  saleNo: number | null;
-  saleDate: string | null;
-  buyer: string | null;
-  returnNo: number | null;
-  returnDate: string | null;
+/** The drawer panel every scrap record draws: figures, then lines of history. */
+export type ScrapPanel = {
+  figures: { l: string; v: string; tone?: "danger" | "success" | "muted" }[];
+  sections: { title: string; empty?: string; lines: { text: string; sub?: string; tone?: "danger" | "success" | "muted" }[] }[];
+  note?: string;
 };
 
-async function drumRows(where = sql`true`): Promise<DrumRow[]> {
-  const rows = (await db.execute(sql`
-    select d.id, d.drum_no as "drumNo", d.seq, d.lot_no as lot, d.pr_number as pr, d.status, d.ownership,
-           d.declared_tare_kg::float8 as declared, d.weight_kg::float8 as weight, d.first_weight_kg::float8 as first,
-           d.weight_note as "weightNote", d.status_note as "statusNote",
-           s.name as supplier, s.id as "supplierId", m.name as item, g.name as godown,
-           coalesce(p.drums, i.drums) as "lotDrums", p.purchase_date::text as "grnDate", d.purchase_id as "purchaseId",
-           d.emptied_at as "emptiedAt", d.updated_at as "updatedAt", u.name as by,
-           ss.sale_no as "saleNo", ss.sale_date::text as "saleDate", b.name as buyer,
-           rr.return_no as "returnNo", rr.return_date::text as "returnDate"
-      from erp_empty_drums d
-      join erp_suppliers s on s.id = d.supplier_id
-      join erp_raw_materials m on m.id = d.raw_material_id
-      join erp_godowns g on g.id = d.godown_id
-      join erp_purchases p on p.id = d.purchase_id
-      left join erp_inward i on i.id = p.inward_id
-      left join users u on u.id = d.emptied_by_id
-      left join erp_scrap_sales ss on ss.id = d.sale_id
-      left join erp_scrap_buyers b on b.id = ss.buyer_id
-      left join erp_drum_returns rr on rr.id = d.return_id
-     where ${where}
-     order by d.emptied_at desc, d.drum_no desc
-     limit 10000
-  `)) as unknown as DrumRow[];
-  return rows.map((r) => ({
-    ...r,
-    drumNo: Number(r.drumNo),
-    seq: Number(r.seq),
-    pr: Number(r.pr),
-    declared: r.declared == null ? null : Number(r.declared),
-    weight: Number(r.weight),
-    first: Number(r.first),
-    lotDrums: r.lotDrums == null ? null : Number(r.lotDrums),
-    saleNo: r.saleNo == null ? null : Number(r.saleNo),
-    returnNo: r.returnNo == null ? null : Number(r.returnNo),
-  }));
+function drumPanel(d: DrumRow, varianceLimits: { alertKg: number; alertPercent: number }, hist: DrumHistoryLine[]): ScrapPanel {
+  const v = tareVariance(d.actualKg, d.declaredTareKg);
+  return {
+    figures: [
+      { l: "Declared tare (GRN)", v: kgText(d.declaredTareKg) },
+      { l: "Actual empty", v: kgText(d.actualKg) },
+      { l: "Variance", v: v ? `${signedKg(v.kg)}${v.pct != null ? ` (${v.pct > 0 ? "+" : ""}${v.pct}%)` : ""}` : "—", tone: varianceIsHigh(v, varianceLimits) ? "danger" : undefined },
+    ],
+    sections: [
+      {
+        title: "History",
+        empty: "Nothing recorded yet.",
+        lines: hist.map((h) => ({ text: h.text, sub: `${new Date(h.at).toLocaleString("en-IN", { timeZone: APP_TIMEZONE, day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}${h.by ? " · " + h.by : ""}${h.note ? " · " + h.note : ""}` })),
+      },
+    ],
+    note: d.source === "opening" ? "Opening stock: this drum was here before MahekOne recorded drums, so it has no GRN behind it." : undefined,
+  };
 }
 
-const OWNERSHIP_PROMPT = (r: DrumRow, sub: string): ActionSpec["prompt"] => ({
-  title: `Who owns the drums of lot ${r.lot}?`,
-  sub,
-  submit: "Save",
-  fields: [
-    { k: "ownership", l: "Owner", t: "select", req: true, opts: [OWNERSHIP_LABEL.mahek, OWNERSHIP_LABEL.vendor], def: r.ownership ? OWNERSHIP_LABEL[r.ownership] : "" },
-    { k: "reason", l: r.ownership ? "Why it is changing" : "How you know (optional)", t: "area", req: !!r.ownership },
-  ],
-});
+async function varianceLimits() {
+  const c = await getConfig();
+  return { alertKg: c["erp.drums.varianceAlertKg"], alertPercent: c["erp.drums.varianceAlertPercent"] };
+}
+
+/* ============================================================ recording an empty drum */
+
+/** Lots still holding drums that are not yet recorded empty, for the scan field's suggestions. */
+async function lotOptions(): Promise<string[]> {
+  const rows = (await db.execute(sql`
+    select p.lot_no as lot from erp_purchases p left join erp_inward i on i.id = p.inward_id
+      join erp_raw_materials m on m.id = p.raw_material_id
+     where m.material_type = 'Chemical'
+       and coalesce(p.drums, i.drums, 0) > (select count(*) from erp_empty_drums d where d.purchase_id = p.id and d.status <> 'cancelled')
+     order by p.purchase_date desc limit 400`)) as unknown as { lot: string }[];
+  return rows.map((r) => r.lot);
+}
+
+async function emptyForm(ctx: ErpContext): Promise<FormSpec> {
+  const [lots, gds, c] = await Promise.all([lotOptions(), godownOptions(ctx, { lost: false }), getConfig()]);
+  const approver = can(ctx, "scrapApprove");
+  return {
+    screen: "emptyDrums",
+    id: "empty",
+    title: "Record an empty drum",
+    sub: "Scan the drum's GRN/lot label while it is still readable, and weigh the drum completely empty. The GRN, supplier, material and lot come from the label — nothing else is typed.",
+    submit: "Save empty drum",
+    init: { godown: ctx.workingGodown?.name ?? "", different: "No" },
+    header: [
+      { k: "code", l: "Drum label (lot)", t: "scan", req: true, opts: lots, hint: "Scan with the barcode scanner, or type the lot number printed on the label." },
+      { k: "kg", l: "Actual empty weight (kg)", t: "num", req: true, min: 0.001, hint: `Expected between ${c["erp.drums.minEmptyKg"]} and ${c["erp.drums.maxEmptyKg"]} kg.` },
+      { k: "godown", l: "Where the drum is now", t: "select", opts: gds.map((g) => g.name) },
+      { k: "different", l: "A drum of this lot was just recorded — is this a different drum?", t: "select", opts: ["No", "Yes, a different drum"], hint: `Asked only when another drum of the same lot was recorded in the last ${c["erp.drums.sameLotMinutes"]} minutes.` },
+      ...(approver
+        ? [{ k: "weightException", l: "Approve a weight outside the limits (why it is right)", t: "area" as const, hint: "Only for a weight outside the limits. Leave empty otherwise." }]
+        : []),
+    ],
+  };
+}
+
+async function saveEmpty(ctx: ErpContext, h: Record<string, string>): Promise<Result> {
+  const godownId = await godownIdByName(text(h.godown));
+  const r = await recordEmptyDrum(
+    actorOf(ctx),
+    { code: text(h.code) ?? "", kg: num(h.kg), source: "desk", godownId, confirmDifferent: (h.different ?? "").startsWith("Yes"), weightException: text(h.weightException) },
+    { mayApproveWeight: can(ctx, "scrapApprove") },
+  );
+  if (!r.ok) {
+    if (r.refusal?.kind === "confirm") return fieldErr("different", r.refusal.message);
+    if (r.refusal?.kind === "lot" && r.refusal.existing?.length)
+      return fieldErr("code", `${r.refusal.message} Already recorded: ${r.refusal.existing.map((e) => `${drumLabel(e.drumNo)} (drum ${e.seq ?? "?"}, ${DRUM_STATUS_LABEL[e.status].toLowerCase()})`).join(", ")}.`);
+    if (r.refusal?.kind === "weight") return fieldErr(r.fieldErrors?.[0]?.field ?? "kg", r.refusal.message);
+    return r;
+  }
+  const d = r.data;
+  return okVoid(`${d.label} · drum ${d.seq ?? "?"}${d.drums ? ` of ${d.drums}` : ""} of ${d.lotNo} · ${d.statusLabel}${d.varianceKg != null ? ` · variance ${signedKg(d.varianceKg)}` : ""}`);
+}
+
+/* ============================================================ drum rows */
+
+function drumCols(extra: ColSpec[] = []): ColSpec[] {
+  /* Order is priority: a narrow screen keeps the first columns and folds the rest into the drawer. */
+  return [
+    { k: "drum", l: "Drum", t: "mono" },
+    { k: "material", l: "Material", t: "b" },
+    ...extra,
+    { k: "kg", l: "Actual empty", t: "n", u: " kg" },
+    { k: "variance", l: "Variance", t: "n", u: " kg" },
+    { k: "lot", l: "Lot", t: "mono" },
+    { k: "supplier", l: "Supplier", t: "t" },
+    { k: "emptied", l: "Emptied", t: "d" },
+    { k: "godown", l: "Godown", t: "t" },
+    { k: "grn", l: "GRN (PR)", t: "mono" },
+    { k: "by", l: "Recorded by", t: "t" },
+    { k: "f", l: "Flags", t: "f" },
+  ];
+}
+
+function drumValues(d: DrumRow) {
+  const v = tareVariance(d.actualKg, d.declaredTareKg);
+  return {
+    drum: drumLabel(d.drumNo),
+    material: d.material ?? (d.source === "opening" ? "Opening stock" : "—"),
+    supplier: d.supplier,
+    lot: d.lotNo,
+    kg: d.actualKg,
+    variance: v?.kg ?? null,
+    emptied: d.emptiedOn,
+    godown: d.godown,
+    grn: d.prNumber == null ? null : `PR ${d.prNumber}`,
+    by: d.by,
+    ownership: ownLabel(d.ownership),
+    status: DRUM_STATUS_LABEL[d.status],
+    drumOf: d.seq ? `${d.seq}${d.drums ? ` of ${d.drums}` : ""}` : null,
+  };
+}
+
+function drumRow(ctx: ErpContext, d: DrumRow, limits: { alertKg: number; alertPercent: number }, hist: Map<string, DrumHistoryLine[]>, extraActions: ActionSpec[] = []): ListRow {
+  const v = tareVariance(d.actualKg, d.declaredTareKg);
+  const live = d.status === "available" || d.status === "returnable" || d.status === "review";
+  const flags: string[] = [];
+  if (varianceIsHigh(v, limits)) flags.push("drumVariance");
+  if (d.status === "review") flags.push("drumReview");
+  if (d.weightException) flags.push("drumWeightException");
+  if (d.source === "opening") flags.push("drumOpening");
+  const actions: ActionSpec[] = [...extraActions];
+  if (live) {
+    actions.push(
+      {
+        id: "owner",
+        l: "Change owner",
+        why: d.status === "review" ? "Classify it on Needs review" : "",
+        prompt: {
+          title: `Change who owns ${drumLabel(d.drumNo)}`,
+          sub: "Asked for here, approved by somebody else. Until then the drum stays as it is.",
+          submit: "Ask for approval",
+          fields: [{ k: "ownership", l: "It belongs to", t: "select", req: true, opts: [OWNERSHIP_LABEL.mahek, OWNERSHIP_LABEL.returnable] }, reasonField()],
+        },
+      },
+      ...(d.source !== "opening"
+        ? [
+            {
+              id: "weight",
+              l: "Correct weight",
+              why: why(ctx, "scrapApprove"),
+              prompt: { title: `Correct ${drumLabel(d.drumNo)}'s weight`, sub: `Recorded at ${kgText(d.actualKg)}. The original stays in its history.`, submit: "Correct", fields: [{ k: "kg", l: "Correct weight (kg)", t: "num" as const, req: true, min: 0.001 }, reasonField()] },
+            },
+          ]
+        : []),
+      {
+        id: "cancel",
+        l: "Cancel entry",
+        why: why(ctx, "scrapApprove"),
+        prompt: { title: `Cancel ${drumLabel(d.drumNo)}?`, sub: "For an entry made in error — the wrong lot scanned, or one drum scanned twice. Kept, marked cancelled, and its drum number freed.", submit: "Cancel entry", fields: [reasonField()] },
+      },
+    );
+  }
+  return {
+    id: d.id,
+    v: { ...drumValues(d), f: null },
+    flags,
+    title: `${drumLabel(d.drumNo)} · ${d.material ?? "Opening stock"}${d.lotNo ? ` · ${d.lotNo}` : ""}`,
+    header: `${DRUM_STATUS_LABEL[d.status]} · ${ownLabel(d.ownership)}`,
+    fields: [
+      { l: "Drum of the lot", v: d.seq ? `${d.seq}${d.drums ? ` of ${d.drums}` : " (the GRN records no drum count)"}` : "—" },
+      { l: "Ownership", v: ownLabel(d.ownership) },
+      { l: "Status", v: DRUM_STATUS_LABEL[d.status] },
+      ...(d.reviewReason ? [{ l: "Why it needs review", v: d.reviewReason }] : []),
+      ...(d.weightException ? [{ l: "Weight outside limits", v: d.weightException }] : []),
+      ...(d.saleNo ? [{ l: "Sold on", v: scrapSaleLabel(d.saleNo) }] : []),
+      ...(d.returnNo ? [{ l: "Returned on", v: drumReturnLabel(d.returnNo) }] : []),
+      { l: "How it was recorded", v: d.source === "scan" ? "Scanned on the factory phone" : d.source === "desk" ? "Entered in the ERP" : "Opening stock" },
+    ],
+    actions,
+    by: stampLine(d.by, d.recordedAt),
+    panel: { kind: "scrap", data: drumPanel(d, limits, hist.get(d.id) ?? []) },
+  };
+}
+
+const drumActions: ScreenModule["actions"] = {
+  async owner(ctx, id, v) {
+    const own = ownershipByLabel(v.ownership);
+    if (!own) return fieldErr("ownership", "Choose who the drum belongs to.");
+    return requestDrumAdjustment(actorOf(ctx), { kind: "ownership", drumId: id, newOwnership: own, reason: v.reason ?? "" });
+  },
+  async weight(ctx, id, v) {
+    if (!can(ctx, "scrapApprove")) return refused("scrapApprove");
+    return correctDrumWeight(actorOf(ctx), id, num(v.kg) ?? 0, v.reason ?? "");
+  },
+  async cancel(ctx, id, v) {
+    if (!can(ctx, "scrapApprove")) return refused("scrapApprove");
+    return cancelDrumEntry(actorOf(ctx), id, v.reason ?? "");
+  },
+  async classify(ctx, id, v) {
+    if (!can(ctx, "scrapSale") && !can(ctx, "scrapApprove")) return refused("scrapSale");
+    const own = ownershipByLabel(v.ownership);
+    if (!own) return fieldErr("ownership", "Choose who the drum belongs to.");
+    return classifyDrum(actorOf(ctx), id, own, v.note ?? "");
+  },
+  /** Test 7: a returnable drum is never sold, whatever button was pressed. */
+  async sellReturnable() {
+    return err(RETURNABLE_NOT_FOR_SALE, "rule_violation");
+  },
+};
+
+/* ============================================================ selling scrap */
+
+const REF_KIND = { invoice: "External invoice", challan: "Challan / other genuine reference", none: "No external invoice" } as const;
+const refKindByLabel = (l: string | undefined) => (Object.entries(REF_KIND).find(([, v]) => v === l)?.[0] ?? null) as keyof typeof REF_KIND | null;
+
+async function buyerOptions(): Promise<{ id: string; name: string }[]> {
+  return db.select({ id: erpScrapBuyers.id, name: erpScrapBuyers.name }).from(erpScrapBuyers).where(eq(erpScrapBuyers.active, true)).orderBy(asc(erpScrapBuyers.name));
+}
+
+async function saleForm(ctx: ErpContext): Promise<FormSpec> {
+  const [buyers, cats, gds, have] = await Promise.all([buyerOptions(), refValues("scrapCategory"), godownOptions(ctx, { lost: false }), availableDrums()]);
+  return {
+    screen: "scrapSales",
+    id: "new",
+    title: "New scrap sale",
+    sub: `Enter how many were sold — empty drums are allocated oldest first (${have} Mahek-owned empty drum${have === 1 ? "" : "s"} available). Vendor-returnable drums are never offered.`,
+    submit: "Save sale",
+    init: { date: today(), category: "", quantity: "", refKind: REF_KIND.invoice, unit: "Kg" },
+    header: [
+      { k: "date", l: "Sale date", t: "date", req: true },
+      { k: "buyer", l: "Scrap buyer", t: "select", req: true, opts: buyers.map((b) => b.name), hint: buyers.length ? undefined : "Add the buyer on Scrap buyers first." },
+      { k: "category", l: "Scrap category", t: "select", req: true, opts: [DRUM_CATEGORY, ...cats] },
+      { k: "godown", l: "From godown (optional)", t: "select", opts: gds.map((g) => g.name), hint: "Empty it to take drums or scrap from any godown." },
+      { k: "quantity", l: "Quantity sold", t: "num", req: true, min: 0.001 },
+      { k: "unit", l: "Unit", t: "select", opts: ["Kg", "Pcs"], when: { k: "category", in: cats } },
+      { k: "rate", l: "Rate (₹ per drum, kg or piece)", t: "num", req: true, min: 0 },
+      { k: "refKind", l: "Invoice / external reference", t: "select", req: true, opts: Object.values(REF_KIND), hint: "A sale with no external invoice is recorded by its own sale number. No invoice number is made up for it." },
+      { k: "externalRef", l: "Invoice / external reference no.", t: "text", when: { k: "refKind", in: [REF_KIND.invoice, REF_KIND.challan] }, reqWhen: { k: "refKind", in: [REF_KIND.invoice, REF_KIND.challan] } },
+      { k: "dueDate", l: "Payment due by (optional)", t: "date" },
+      { k: "remark", l: "Remarks", t: "area", mic: true },
+    ],
+  };
+}
+
+/** The sale form for one particular drum, built from the general one so a list of drums asks the database once. */
+function oneDrumSale(base: FormSpec, d: DrumRow): FormSpec {
+  return {
+    ...base,
+    screen: "emptyDrums",
+    id: "sell",
+    recordId: d.id,
+    title: `Sell ${drumLabel(d.drumNo)} as scrap`,
+    sub: "This one drum is sold. Its GRN, supplier and lot stay linked to the sale.",
+    init: { ...base.init, category: DRUM_CATEGORY, quantity: "1" },
+    header: base.header.map((f) => (f.k === "category" || f.k === "quantity" ? { ...f, readOnly: true } : f)),
+  };
+}
+
+async function saveSale(ctx: ErpContext, h: Record<string, string>, drumId?: string): Promise<Result> {
+  if (!can(ctx, "scrapSale")) return refused("scrapSale");
+  const buyers = await buyerOptions();
+  const buyer = buyers.find((b) => b.name === h.buyer);
+  if (!buyer) return fieldErr("buyer", "Choose the scrap buyer.");
+  const category = drumId ? DRUM_CATEGORY : (text(h.category) ?? "");
+  const cats = await refValues("scrapCategory");
+  if (category !== DRUM_CATEGORY && !cats.includes(category)) return fieldErr("category", "Choose a scrap category.");
+  const kind = refKindByLabel(h.refKind);
+  if (!kind) return fieldErr("refKind", "Say whether an external invoice was issued.");
+  const ratePaise = paise(h.rate);
+  if (ratePaise == null) return fieldErr("rate", "Enter the rate.");
+  const godownId = await godownIdByName(text(h.godown));
+  const r = await sellScrap(actorOf(ctx), {
+    date: text(h.date) ?? today(),
+    buyerId: buyer.id,
+    category,
+    quantity: drumId ? 1 : (num(h.quantity) ?? 0),
+    unit: category === DRUM_CATEGORY ? "Pcs" : h.unit === "Pcs" ? "Pcs" : "Kg",
+    ratePaise,
+    refKind: kind,
+    externalRef: kind === "none" ? null : text(h.externalRef),
+    dueDate: text(h.dueDate),
+    remark: text(h.remark),
+    godownId,
+    drumIds: drumId ? [drumId] : undefined,
+  });
+  return r.ok ? okVoid(r.message) : r;
+}
+
+/* ============================================================ the modules */
 
 const emptyDrums: ScreenModule = {
   key: "emptyDrums",
   async load(ctx) {
-    const config = await getConfig();
-    const alert = config["erp.scrap.varianceAlertKg"];
-    const rows = await drumRows();
-    const cols: ColSpec[] = [
-      { k: "drum", l: "Drum", t: "mono", w: 96 },
-      { k: "status", l: "Status", t: "s" },
-      { k: "item", l: "Material", t: "b" },
-      { k: "supplier", l: "Supplier", t: "t" },
-      { k: "lot", l: "GRN lot", t: "mono" },
-      { k: "of", l: "Drum of lot", t: "t" },
-      { k: "weight", l: "Empty weight", t: "n", u: " kg" },
-      { k: "declared", l: "Declared tare", t: "n", u: " kg" },
-      { k: "variance", l: "Variance", t: "n", u: " kg" },
-      { k: "emptied", l: "Emptied", t: "d" },
-      { k: "by", l: "Weighed by", t: "t" },
-      { k: "godown", l: "Godown", t: "t" },
-      { k: "ownership", l: "Ownership", t: "s" },
-      { k: "f", l: "Flags", t: "f" },
-    ];
+    const [all, limits, form, base] = await Promise.all([drumRows(), varianceLimits(), emptyForm(ctx), saleForm(ctx)]);
+    const rows = all.filter((d) => d.status === "available");
+    const hist = await drumHistories(rows.map((d) => d.id));
+    const sellWhy = why(ctx, "scrapSale");
     return {
       spec: {
         screen: "emptyDrums",
+        cols: drumCols(),
+        hidden: [],
+        groups: ["material", "supplier", "godown"],
+        godownKey: "godown",
+        sortDefault: ["emptied", 1],
+        newForm: form,
+        newLabel: "Record empty drum",
+        tools: [{ id: "sell", l: "Sell drums", href: "/erp/scrap-sales", why: sellWhy }],
+        noDataLine: "No Mahek-owned empty drums in stock. Drums appear here once they are scanned empty and weighed.",
+      },
+      rows: rows.map((d) => drumRow(ctx, d, limits, hist, [{ id: "sell", l: "Sell as scrap", primary: true, why: sellWhy, form: oneDrumSale(base, d) }])),
+    };
+  },
+  forms: {
+    empty: saveEmpty,
+    async sell(ctx, h, _l, id) {
+      if (!id) return err("Pick the drum to sell.");
+      return saveSale(ctx, h, id);
+    },
+  },
+  actions: drumActions,
+};
+
+const drumReturnable: ScreenModule = {
+  key: "drumReturnable",
+  async load(ctx) {
+    const [all, limits] = await Promise.all([drumRows(), varianceLimits()]);
+    const rows = all.filter((d) => d.status === "returnable");
+    const hist = await drumHistories(rows.map((d) => d.id));
+    const day = today();
+    return {
+      spec: {
+        screen: "drumReturnable",
+        cols: drumCols([{ k: "age", l: "Waiting", t: "s" }]),
+        hidden: [],
+        groups: ["supplier", "material"],
+        chips: "age",
+        godownKey: "godown",
+        sortDefault: ["emptied", 1],
+        tools: [{ id: "return", l: "Return drums", href: "/erp/drum-returns", primary: true, why: why(ctx, "scrapSale") }],
+        noDataLine: "No supplier-owned drums waiting to be returned.",
+      },
+      rows: rows.map((d) => {
+        const row = drumRow(ctx, d, limits, hist, [{ id: "sellReturnable", l: "Sell as scrap", why: RETURNABLE_NOT_FOR_SALE }]);
+        row.v.age = returnBucket(d.emptiedOn, day);
+        return row;
+      }),
+    };
+  },
+  actions: drumActions,
+};
+
+const drumReview: ScreenModule = {
+  key: "drumReview",
+  async load(ctx) {
+    const [all, limits] = await Promise.all([drumRows(), varianceLimits()]);
+    const rows = all.filter((d) => d.status === "review");
+    const hist = await drumHistories(rows.map((d) => d.id));
+    const w = can(ctx, "scrapSale") || can(ctx, "scrapApprove") ? "" : "The Production Head decides";
+    return {
+      spec: {
+        screen: "drumReview",
+        cols: drumCols([{ k: "reason", l: "Why", t: "t" }]),
+        hidden: [],
+        groups: ["supplier"],
+        noDataLine: "Nothing waiting. A drum lands here when its GRN and its supplier say nothing about who owns it, or the GRN has no drum count.",
+      },
+      rows: rows.map((d) => {
+          const row = drumRow(ctx, d, limits, hist, [
+            {
+              id: "classify",
+              l: "Classify",
+              primary: true,
+              why: w,
+              prompt: {
+                title: `Whose is ${drumLabel(d.drumNo)}?`,
+                sub: `${d.supplier ?? "No supplier"} · ${d.lotNo ?? ""}. Decide from the purchase terms or the supplier — never by guess.`,
+                submit: "Save",
+                fields: [{ k: "ownership", l: "It belongs to", t: "select", req: true, opts: [OWNERSHIP_LABEL.mahek, OWNERSHIP_LABEL.returnable] }, { k: "note", l: "How you know", t: "area", req: true, mic: true }],
+              },
+            },
+          ]);
+          row.v.reason = d.reviewReason;
+          return row;
+        }),
+    };
+  },
+  actions: drumActions,
+};
+
+const drumVariance: ScreenModule = {
+  key: "drumVariance",
+  async load() {
+    const [all, limits] = await Promise.all([drumRows(), varianceLimits()]);
+    const rows = all.filter((d) => d.actualKg != null && d.status !== "cancelled");
+    const cols: ColSpec[] = [
+      { k: "drum", l: "Drum", t: "mono" },
+      { k: "supplier", l: "Supplier", t: "b" },
+      { k: "material", l: "Material", t: "t" },
+      { k: "grn", l: "GRN (PR)", t: "mono" },
+      { k: "lot", l: "Lot", t: "mono" },
+      { k: "declared", l: "Declared tare", t: "n", u: " kg" },
+      { k: "kg", l: "Actual empty", t: "n", u: " kg" },
+      { k: "variance", l: "Variance", t: "n", u: " kg" },
+      { k: "pct", l: "Variance %", t: "n", u: "%" },
+      { k: "verdict", l: "Verdict", t: "s" },
+      { k: "emptied", l: "Emptied", t: "d" },
+    ];
+    return {
+      spec: {
+        screen: "drumVariance",
         cols,
         hidden: [],
-        chips: "status",
-        groups: ["supplier", "lot"],
-        agg: { k: "weight", l: "kg" },
-        godownKey: "godown",
-        tools: [RECORD_TOOL],
+        groups: ["supplier", "material", "grn", "lot"],
+        agg: { k: "variance", l: "kg average variance", t: "avg" },
+        chips: "verdict",
+        readOnly: true,
         download: true,
-        sortDefault: ["drum", -1],
-        noDataLine: "No drum has been recorded as empty yet. When a drum's material is used up, weigh it and record it — Record empty drum, above.",
+        sortDefault: ["variance", -1],
+        noDataLine: "No weighed empty drums yet.",
       },
-      rows: rows.map((r): ListRow => {
-        const v = tareVariance(r.weight, r.declared);
-        const flags: string[] = [];
-        if (r.status === "review") flags.push("ownershipReview");
-        if (r.status !== "cancelled" && highVariance(v, alert)) flags.push("tareHigh");
-        if (r.weightNote) flags.push("weightException");
-        if (r.weight !== r.first) flags.push("corrected");
-        const moveWhy = (to: "cancelled" | "decide" | "correct") => drumMoveRefusal(r.status, to) ?? (controls(ctx) ? "" : powerRefusal("scrapControl"));
-        const actions: ActionSpec[] = [];
-        if (r.status === "review")
-          actions.push({ id: "ownership", l: "Decide ownership for this lot", primary: true, why: moveWhy("decide"), prompt: OWNERSHIP_PROMPT(r, "The GRN did not record it. Your answer applies to every drum of this lot — the ones already emptied and the ones still to come.") });
-        else if (r.status === "available" || r.status === "returnable")
-          actions.push({ id: "ownership", l: "Change ownership for this lot", why: moveWhy("correct"), prompt: OWNERSHIP_PROMPT(r, "Moves every unsold, unreturned drum of this lot to the other stock. The change and its reason are kept.") });
-        actions.push(
+      rows: rows.map((d) => {
+        const v = tareVariance(d.actualKg, d.declaredTareKg);
+        const high = varianceIsHigh(v, limits);
+        return {
+          id: d.id,
+          v: {
+            drum: drumLabel(d.drumNo),
+            supplier: d.supplier,
+            material: d.material,
+            grn: d.prNumber == null ? null : `PR ${d.prNumber}`,
+            lot: d.lotNo,
+            declared: d.declaredTareKg,
+            kg: d.actualKg,
+            variance: v?.kg ?? null,
+            pct: v?.pct ?? null,
+            verdict: !v ? "No declared tare" : high ? "Above limit" : "Within limit",
+            emptied: d.emptiedOn,
+          },
+          flags: high ? ["drumVariance"] : [],
+          title: `${drumLabel(d.drumNo)} · ${d.supplier ?? ""}`,
+          header: v ? `${signedKg(v.kg)} against ${kgText(d.declaredTareKg)} declared` : "The GRN declared no empty-drum weight",
+          fields: [{ l: "Limits", v: `${limits.alertKg} kg or ${limits.alertPercent}% either way` }],
+        };
+      }),
+    };
+  },
+};
+
+const drumRegister: ScreenModule = {
+  key: "drumRegister",
+  async load(ctx) {
+    const [all, limits] = await Promise.all([drumRows(), varianceLimits()]);
+    const hist = await drumHistories(all.map((d) => d.id));
+    return {
+      spec: {
+        screen: "drumRegister",
+        cols: drumCols([{ k: "ownership", l: "Ownership", t: "s" }, { k: "status", l: "Status", t: "s" }]),
+        hidden: [],
+        groups: ["status", "ownership", "supplier", "material"],
+        chips: "status",
+        godownKey: "godown",
+        download: true,
+        noDataLine: "No drums recorded empty yet.",
+      },
+      rows: all.map((d) => drumRow(ctx, d, limits, hist)),
+    };
+  },
+  actions: drumActions,
+};
+
+/* ------------------------------------------------------------ corrections */
+
+const ADJ_KIND = { opening: "Opening stock (drums already here)", write_off: "Write off (drums gone or damaged)", ownership: "Change of owner" } as const;
+
+async function supplierNames(): Promise<{ id: string; name: string }[]> {
+  return db.select({ id: erpSuppliers.id, name: erpSuppliers.name }).from(erpSuppliers).orderBy(asc(erpSuppliers.name));
+}
+
+const drumAdjustments: ScreenModule = {
+  key: "drumAdjustments",
+  async load(ctx) {
+    const [rows, sups, gds] = await Promise.all([
+      db
+        .select({ a: erpDrumAdjustments, supplier: erpSuppliers.name, godown: erpGodowns.name, by: users.name })
+        .from(erpDrumAdjustments)
+        .leftJoin(erpSuppliers, eq(erpSuppliers.id, erpDrumAdjustments.supplierId))
+        .leftJoin(erpGodowns, eq(erpGodowns.id, erpDrumAdjustments.godownId))
+        .leftJoin(users, eq(users.id, erpDrumAdjustments.requestedById))
+        .orderBy(sql`${erpDrumAdjustments.requestedAt} desc`),
+      supplierNames(),
+      godownOptions(ctx, { lost: false }),
+    ]);
+    const deciders = await db.select({ id: users.id, name: users.name }).from(users).where(sql`${users.id} in (select decided_by_id from erp_drum_adjustments where decided_by_id is not null)`);
+    const nameOf = new Map(deciders.map((u) => [u.id, u.name]));
+    const drumNos = new Map(
+      ((await db.execute(sql`select id, drum_no as n from erp_empty_drums where id in (select drum_id from erp_drum_adjustments where drum_id is not null)`)) as unknown as { id: string; n: number }[]).map((r) => [r.id, Number(r.n)]),
+    );
+    const form: FormSpec = {
+      screen: "drumAdjustments",
+      id: "new",
+      title: "Ask for a drum correction",
+      sub: "Opening stock adds drums that were here before MahekOne recorded them; a write-off takes away drums that are gone, oldest first. Somebody else approves it before any drum moves.",
+      submit: "Ask for approval",
+      header: [
+        { k: "kind", l: "What", t: "select", req: true, opts: [ADJ_KIND.opening, ADJ_KIND.write_off] },
+        { k: "ownership", l: "Whose drums", t: "select", req: true, opts: [OWNERSHIP_LABEL.mahek, OWNERSHIP_LABEL.returnable] },
+        { k: "supplier", l: "Supplier they belong to", t: "select", opts: sups.map((s) => s.name), when: { k: "ownership", eq: OWNERSHIP_LABEL.returnable }, reqWhen: { k: "ownership", eq: OWNERSHIP_LABEL.returnable } },
+        { k: "godown", l: "Godown", t: "select", opts: gds.map((g) => g.name), reqWhen: { k: "kind", eq: ADJ_KIND.opening }, hint: "For a write-off, empty takes the oldest drums anywhere." },
+        { k: "quantity", l: "How many drums", t: "num", req: true, min: 1 },
+        reasonField("Why"),
+      ],
+    };
+    return {
+      spec: {
+        screen: "drumAdjustments",
+        cols: [
+          { k: "asked", l: "Asked", t: "d" },
+          { k: "kind", l: "What", t: "b" },
+          { k: "detail", l: "Detail", t: "t" },
+          { k: "reason", l: "Why", t: "t" },
+          { k: "status", l: "Status", t: "s" },
+          { k: "by", l: "Asked by", t: "t" },
+          { k: "decidedBy", l: "Decided by", t: "t" },
+        ],
+        hidden: [],
+        chips: "status",
+        newForm: form,
+        newLabel: "Ask for a correction",
+        noDataLine: "No corrections asked for.",
+      },
+      rows: rows.map((r) => {
+        const a = r.a;
+        const mine = a.requestedById === ctx.user.id && !ctx.administrator;
+        const decideWhy = a.status !== "pending" ? "Already decided" : !can(ctx, "scrapApprove") ? why(ctx, "scrapApprove") : mine ? "Somebody other than you approves your own request" : "";
+        const detail =
+          a.kind === "ownership"
+            ? `${drumNos.has(a.drumId!) ? drumLabel(drumNos.get(a.drumId!)!) : "Drum"} → ${OWNERSHIP_LABEL[a.newOwnership as DrumOwnership]}`
+            : `${a.quantity} drum${a.quantity === 1 ? "" : "s"} · ${OWNERSHIP_LABEL[a.ownership as DrumOwnership]}${r.supplier ? ` · ${r.supplier}` : ""}${r.godown ? ` · ${r.godown}` : ""}`;
+        return {
+          id: a.id,
+          v: {
+            asked: calendarDate(a.requestedAt),
+            kind: ADJ_KIND[a.kind as keyof typeof ADJ_KIND],
+            detail,
+            reason: a.reason,
+            status: a.status === "pending" ? "Pending approval" : a.status === "approved" ? "Approved" : "Rejected",
+            by: r.by,
+            decidedBy: a.decidedById ? (nameOf.get(a.decidedById) ?? null) : null,
+          },
+          flags: a.status === "pending" ? ["awaitingApproval"] : [],
+          title: `${ADJ_KIND[a.kind as keyof typeof ADJ_KIND]} · ${detail}`,
+          fields: [{ l: "Why", v: a.reason }, ...(a.decisionNote ? [{ l: "Decision note", v: a.decisionNote }] : []), ...(a.posted?.drums?.length ? [{ l: "Drums it moved", v: String(a.posted.drums.length) }] : [])],
+          actions: [
+            { id: "approve", l: "Approve", primary: true, why: decideWhy, prompt: { title: "Approve this correction?", sub: detail, submit: "Approve", fields: [{ k: "note", l: "Note (optional)", t: "text" }] } },
+            { id: "reject", l: "Reject", why: decideWhy, prompt: { title: "Reject this correction?", submit: "Reject", fields: [{ k: "note", l: "Why it is rejected", t: "area", req: true }] } },
+          ],
+          by: stampLine(r.by, a.requestedAt),
+        };
+      }),
+    };
+  },
+  forms: {
+    async new(ctx, h) {
+      const kind = h.kind === ADJ_KIND.opening ? "opening" : h.kind === ADJ_KIND.write_off ? "write_off" : null;
+      if (!kind) return fieldErr("kind", "Choose what this is.");
+      const own = ownershipByLabel(h.ownership);
+      if (!own) return fieldErr("ownership", "Choose whose drums.");
+      const sup = (await supplierNames()).find((s) => s.name === h.supplier);
+      const qty = int(h.quantity);
+      return requestDrumAdjustment(actorOf(ctx), { kind, ownership: own, supplierId: sup?.id ?? null, godownId: await godownIdByName(text(h.godown)), quantity: qty ?? 0, reason: h.reason ?? "" });
+    },
+  },
+  actions: {
+    async approve(ctx, id, v) {
+      if (!can(ctx, "scrapApprove")) return refused("scrapApprove");
+      return decideDrumAdjustment(actorOf(ctx), id, true, v.note ?? "", { administrator: ctx.administrator });
+    },
+    async reject(ctx, id, v) {
+      if (!can(ctx, "scrapApprove")) return refused("scrapApprove");
+      return decideDrumAdjustment(actorOf(ctx), id, false, v.note ?? "", { administrator: ctx.administrator });
+    },
+  },
+};
+
+/* ------------------------------------------------------------ vendor returns */
+
+async function pendingBySupplier(): Promise<{ id: string; name: string; pending: number; oldest: string | null; buckets: Record<string, number>; returned: number }[]> {
+  const day = today();
+  const drums = (await drumRows()).filter((d) => d.supplierId && (d.status === "returnable" || d.status === "returned"));
+  const sups = new Map<string, { id: string; name: string; pending: number; oldest: string | null; buckets: Record<string, number>; returned: number }>();
+  for (const d of drums) {
+    const s = sups.get(d.supplierId!) ?? { id: d.supplierId!, name: d.supplier ?? "", pending: 0, oldest: null, buckets: Object.fromEntries(RETURN_BUCKETS.map((b) => [b, 0])), returned: 0 };
+    if (d.status === "returned") s.returned++;
+    else {
+      s.pending++;
+      const on = d.emptiedOn;
+      if (!s.oldest || on < s.oldest) s.oldest = on;
+      s.buckets[returnBucket(on, day)]++;
+    }
+    sups.set(s.id, s);
+  }
+  return [...sups.values()];
+}
+
+async function returnForm(ctx: ErpContext, supplier?: string): Promise<FormSpec> {
+  const pend = (await pendingBySupplier()).filter((s) => s.pending > 0);
+  return {
+    screen: "drumReturns",
+    id: "new",
+    title: "Returnable drum outward",
+    sub: "Enter how many drums went back. The oldest of that supplier's waiting drums are allocated — nobody has to find each drum.",
+    submit: "Save outward",
+    init: { date: today(), supplier: supplier ?? "" },
+    header: [
+      { k: "supplier", l: "Supplier", t: "select", req: true, opts: pend.map((s) => s.name), hint: pend.length ? pend.map((s) => `${s.name}: ${s.pending} waiting`).join(" · ") : "No supplier has drums waiting to be returned." },
+      { k: "date", l: "Return date", t: "date", req: true },
+      { k: "quantity", l: "Drums returned", t: "num", req: true, min: 1 },
+      { k: "challan", l: "Challan / return reference no.", t: "text" },
+      { k: "remark", l: "Remarks", t: "area", mic: true },
+    ],
+  };
+}
+
+async function saveReturn(ctx: ErpContext, h: Record<string, string>): Promise<Result> {
+  if (!can(ctx, "scrapSale")) return refused("scrapSale");
+  const sup = (await supplierNames()).find((s) => s.name === h.supplier);
+  if (!sup) return fieldErr("supplier", "Choose the supplier.");
+  const r = await returnDrums(actorOf(ctx), { supplierId: sup.id, date: text(h.date) ?? today(), quantity: int(h.quantity) ?? 0, challanRef: text(h.challan), remark: text(h.remark) });
+  return r.ok ? okVoid(r.message) : r;
+}
+
+const drumReturns: ScreenModule = {
+  key: "drumReturns",
+  async load(ctx) {
+    const rows = (await db.execute(sql`
+      select r.id, r.return_no as no, r.return_date::text as date, s.name as supplier, r.quantity, r.challan_ref as challan, r.remark, r.status,
+             r.cancel_reason as "cancelReason", u.name as by, r.created_at::text as at
+        from erp_drum_returns r join erp_suppliers s on s.id = r.supplier_id left join users u on u.id = r.created_by_id
+       order by r.return_date desc, r.return_no desc`)) as unknown as { id: string; no: number; date: string; supplier: string; quantity: number; challan: string | null; remark: string | null; status: string; cancelReason: string | null; by: string | null; at: string }[];
+    const drums = await drumRows();
+    return {
+      spec: {
+        screen: "drumReturns",
+        cols: [
+          { k: "no", l: "Outward", t: "mono" },
+          { k: "date", l: "Return date", t: "d" },
+          { k: "supplier", l: "Supplier", t: "b" },
+          { k: "qty", l: "Drums", t: "n" },
+          { k: "challan", l: "Challan / reference", t: "mono" },
+          { k: "status", l: "Status", t: "s" },
+          { k: "by", l: "Recorded by", t: "t" },
+        ],
+        hidden: [],
+        groups: ["supplier"],
+        agg: { k: "qty", l: "drums" },
+        newForm: can(ctx, "scrapSale") ? await returnForm(ctx) : undefined,
+        newLabel: "Return drums",
+        noDataLine: "No drums returned to suppliers yet.",
+      },
+      rows: rows.map((r) => {
+        const mine = drums.filter((d) => d.returnId === r.id);
+        return {
+          id: r.id,
+          v: { no: drumReturnLabel(Number(r.no)), date: r.date, supplier: r.supplier, qty: Number(r.quantity), challan: r.challan, status: r.status === "confirmed" ? "Returned" : "Cancelled", by: r.by },
+          flags: [],
+          title: `${drumReturnLabel(Number(r.no))} · ${r.quantity} drums to ${r.supplier}`,
+          fields: [{ l: "Remarks", v: r.remark ?? "—" }, ...(r.cancelReason ? [{ l: "Cancelled because", v: r.cancelReason }] : [])],
+          actions: [
+            { id: "cancel", l: "Cancel outward", why: r.status !== "confirmed" ? "Already cancelled" : why(ctx, "scrapApprove"), prompt: { title: `Cancel ${drumReturnLabel(Number(r.no))}?`, sub: "Its drums go back to waiting for return.", submit: "Cancel outward", fields: [reasonField()] } },
+          ],
+          by: stampLine(r.by, r.at),
+          panel: {
+            kind: "scrap",
+            data: {
+              figures: [{ l: "Drums", v: String(r.quantity) }],
+              sections: [{ title: "Drums allocated (oldest first)", empty: "None — the outward is cancelled.", lines: mine.map((d) => ({ text: `${drumLabel(d.drumNo)} · ${d.material ?? ""}`, sub: `${d.lotNo ?? ""} · PR ${d.prNumber ?? "—"} · emptied ${fd(d.emptiedOn)}` })) }],
+              note: "Allocated by the system, oldest first, for traceability — not a record that each drum was checked at the gate.",
+            } satisfies ScrapPanel,
+          },
+        };
+      }),
+    };
+  },
+  forms: { new: saveReturn },
+  actions: {
+    async cancel(ctx, id, v) {
+      if (!can(ctx, "scrapApprove")) return refused("scrapApprove");
+      return cancelDrumReturn(actorOf(ctx), id, v.reason ?? "");
+    },
+  },
+};
+
+const drumPending: ScreenModule = {
+  key: "drumPending",
+  async load(ctx) {
+    const sups = await pendingBySupplier();
+    return {
+      spec: {
+        screen: "drumPending",
+        cols: [
+          { k: "supplier", l: "Supplier", t: "b" },
+          { k: "pending", l: "Waiting to return", t: "n" },
+          { k: "oldest", l: "Oldest waiting since", t: "d" },
+          ...RETURN_BUCKETS.map((b, i) => ({ k: `b${i}`, l: b, t: "n" as const })),
+          { k: "returned", l: "Returned so far", t: "n" },
+        ],
+        hidden: [],
+        agg: { k: "pending", l: "waiting" },
+        readOnly: true,
+        sortDefault: ["oldest", 1],
+        noDataLine: "No supplier-owned drums recorded empty yet.",
+      },
+      rows: await Promise.all(
+        sups.map(async (s) => ({
+          id: s.id,
+          v: { supplier: s.name, pending: s.pending, oldest: s.oldest, ...Object.fromEntries(RETURN_BUCKETS.map((b, i) => [`b${i}`, s.buckets[b]])), returned: s.returned },
+          flags: s.buckets["90+ days"] > 0 ? ["late"] : [],
+          title: `${s.name} · ${s.pending} drums waiting`,
+          actions: [{ id: "return", l: "Return drums", primary: true, why: s.pending ? why(ctx, "scrapSale") : "Nothing waiting", form: await returnForm(ctx, s.name) }],
+        })),
+      ),
+    };
+  },
+  forms: { new: saveReturn },
+};
+
+/* ------------------------------------------------------------ scrap sales */
+
+function salePanel(s: SaleRow, allocs: Awaited<ReturnType<typeof allocationRows>>, drums: DrumRow[]): ScrapPanel {
+  const live = allocs.filter((a) => !a.voidedAt);
+  return {
+    figures: [
+      { l: "Sale value", v: inr(s.amountPaise) },
+      { l: "Received", v: inr(s.matchedPaise), tone: s.matchedPaise > 0 ? "success" : undefined },
+      { l: "Outstanding", v: inr(s.outstandingPaise), tone: s.outstandingPaise > 0 ? "danger" : "success" },
+    ],
+    sections: [
+      {
+        title: "Petty Cash/Bank receipts matched",
+        empty: "Nothing matched yet. Money is matched by the accountant from Petty Cash/Bank → Receipts.",
+        lines: allocs.map((a) => ({
+          text: `${inr(a.amountPaise)} from ${receiptLabel(a.receiptNo)} (${a.mode}, ${fd(a.receiptDate)})`,
+          sub: a.voidedAt ? `Undone — ${a.voidReason}` : `Matched by ${a.by ?? "—"}`,
+          tone: a.voidedAt ? ("muted" as const) : undefined,
+        })),
+      },
+      ...(drums.length
+        ? [{ title: `Drums allocated (${drums.length}, oldest first)`, lines: drums.map((d) => ({ text: `${drumLabel(d.drumNo)} · ${d.material ?? "Opening stock"} · ${d.supplier ?? ""}`, sub: `${d.lotNo ?? "no lot"} · PR ${d.prNumber ?? "—"} · ${kgText(d.actualKg)}` })) }]
+        : []),
+    ],
+    note: live.length ? undefined : drums.length ? "Drums are allocated by the system, oldest first, for traceability — not a record that each drum was checked at dispatch." : undefined,
+  };
+}
+
+/* Order is priority: what a sale is worth and what is still owed stay on screen at any width. */
+const saleCols: ColSpec[] = [
+  { k: "no", l: "Sale", t: "mono" },
+  { k: "buyer", l: "Scrap buyer", t: "b" },
+  { k: "amount", l: "Sale amount", t: "m" },
+  { k: "outstanding", l: "Outstanding", t: "m" },
+  { k: "state", l: "Payment", t: "s" },
+  { k: "date", l: "Date", t: "d" },
+  { k: "category", l: "Category", t: "t" },
+  { k: "qty", l: "Quantity", t: "n" },
+  { k: "received", l: "Received", t: "m" },
+  { k: "rate", l: "Rate", t: "m" },
+  { k: "ref", l: "Invoice / reference", t: "mono" },
+  { k: "due", l: "Due", t: "d" },
+];
+
+function saleValues(s: SaleRow) {
+  return {
+    no: scrapSaleLabel(s.saleNo),
+    date: s.date,
+    buyer: s.buyer,
+    category: s.category,
+    qty: `${nf(s.quantity)} ${s.category === DRUM_CATEGORY ? "drums" : s.unit}`,
+    rate: s.ratePaise,
+    amount: s.amountPaise,
+    received: s.matchedPaise,
+    outstanding: s.outstandingPaise,
+    state: s.status === "cancelled" ? "Cancelled" : paymentState(s.amountPaise, s.matchedPaise),
+    ref: s.refKind === "none" ? "No external invoice" : s.externalRef,
+    due: s.dueDate,
+  };
+}
+
+async function openReceiptsFor(buyerId: string) {
+  return (await receiptRows()).filter((r) => r.status === "active" && r.leftPaise > 0 && (!r.buyerId || r.buyerId === buyerId));
+}
+const receiptOption = (r: { receiptNo: number; date: string; mode: string; leftPaise: number; payer: string | null; buyer: string | null }) =>
+  `${receiptLabel(r.receiptNo)} · ${fd(r.date)} · ${r.mode} · ${inr(r.leftPaise)} unmatched${r.buyer || r.payer ? ` · ${r.buyer ?? r.payer}` : ""}`;
+
+async function saleRowsFor(ctx: ErpContext, rows: SaleRow[]): Promise<ListRow[]> {
+  const [allocs, drums] = await Promise.all([allocationRows(), drumRows()]);
+  const day = today();
+  return Promise.all(
+    rows.map(async (s) => {
+      const open = s.status === "confirmed" && s.outstandingPaise > 0;
+      const receipts = open && can(ctx, "scrapAccounts") ? await openReceiptsFor(s.buyerId) : [];
+      const matchWhy = !open ? (s.status === "cancelled" ? "The sale is cancelled" : "Nothing outstanding") : why(ctx, "scrapAccounts") || (receipts.length ? "" : "No unmatched receipt from this buyer — record it on Petty Cash/Bank → Receipts first");
+      const hasMatches = allocs.some((a) => a.saleId === s.id && !a.voidedAt);
+      return {
+        id: s.id,
+        v: { ...saleValues(s), bucket: open ? receivableBucket(s.dueDate, s.date, day) : null },
+        flags: open && receivableBucket(s.dueDate, s.date, day) !== "Current" ? ["late"] : [],
+        title: `${scrapSaleLabel(s.saleNo)} · ${s.buyer} · ${inr(s.amountPaise)}`,
+        header: s.status === "cancelled" ? `Cancelled — ${s.cancelReason}` : `${paymentState(s.amountPaise, s.matchedPaise)} · ${inr(s.outstandingPaise)} outstanding`,
+        fields: [
+          { l: "Category", v: s.category },
+          { l: "Quantity × rate", v: `${nf(s.quantity)} ${s.unit} × ${inr(s.ratePaise)}`, der: true },
+          { l: "Invoice / reference", v: s.refKind === "none" ? `No external invoice — traced by ${scrapSaleLabel(s.saleNo)}` : `${s.refKind === "invoice" ? "Invoice" : "Reference"} ${s.externalRef}` },
+          { l: "From godown", v: s.godown ?? "Any" },
+          { l: "Remarks", v: s.remark ?? "—" },
+        ],
+        actions: [
           {
-            id: "correct",
-            l: "Correct the weight",
-            why: moveWhy("correct"),
+            id: "match",
+            l: "Match a receipt",
+            primary: true,
+            why: matchWhy,
             prompt: {
-              title: `Correct the weight of ${drumNoLabel(r.drumNo)}`,
-              sub: `First recorded as ${nf(r.first)} kg. The first figure is kept; this records the corrected one and why.`,
-              submit: "Save correction",
+              title: `Match money to ${scrapSaleLabel(s.saleNo)}`,
+              sub: `${inr(s.outstandingPaise)} outstanding. Never more than the receipt has left, nor more than is owed.`,
+              submit: "Match",
               fields: [
-                { k: "weight", l: "Empty weight (kg)", t: "num", req: true, min: 0.1, def: String(r.weight) },
-                { k: "reason", l: "Why", t: "area", req: true },
+                { k: "receipt", l: "Petty Cash/Bank receipt", t: "select", req: true, opts: receipts.map(receiptOption) },
+                { k: "amount", l: "Amount to match (₹)", t: "num", req: true, min: 0.01, max: s.outstandingPaise / 100 },
               ],
             },
           },
           {
             id: "cancel",
-            l: "Cancel this drum record",
-            why: moveWhy("cancelled"),
-            prompt: { title: `Cancel ${drumNoLabel(r.drumNo)}`, sub: "Takes it out of stock. The record stays, marked cancelled, with your reason.", submit: "Cancel record", fields: [{ k: "reason", l: "Why", t: "area", req: true }] },
+            l: "Cancel sale",
+            why: s.status !== "confirmed" ? "Already cancelled" : hasMatches ? "Money is matched to it — the accountant undoes the match first" : why(ctx, "scrapApprove"),
+            prompt: { title: `Cancel ${scrapSaleLabel(s.saleNo)}?`, sub: s.category === DRUM_CATEGORY ? "Its drums go back to Mahek stock." : "Its quantity goes back to scrap stock.", submit: "Cancel sale", fields: [reasonField()] },
           },
-        );
-        if (r.saleNo != null) actions.push({ id: "sale", l: `Open ${saleNoLabel(r.saleNo)}`, href: erpLink("scrapSales", { open: `sale:${r.saleNo}` }) });
-        if (r.returnNo != null) actions.push({ id: "ret", l: `Open ${returnNoLabel(r.returnNo)}`, href: erpLink("drumReturns", { open: `ret:${r.returnNo}` }) });
-        return {
-          id: r.id,
-          v: {
-            drum: drumNoLabel(r.drumNo),
-            status: DRUM_STATUS_LABEL[r.status],
-            item: r.item,
-            supplier: r.supplier,
-            lot: r.lot,
-            of: r.lotDrums ? `${r.seq} of ${r.lotDrums}` : String(r.seq),
-            weight: r.weight,
-            declared: r.declared,
-            variance: v?.kg ?? null,
-            emptied: calendarDate(new Date(r.emptiedAt)),
-            by: r.by,
-            godown: r.godown,
-            ownership: r.ownership ? OWNERSHIP_LABEL[r.ownership] : "Not recorded",
-          },
-          flags,
-          title: `${drumNoLabel(r.drumNo)} · ${r.item}`,
-          header: `Drum ${r.seq}${r.lotDrums ? ` of ${r.lotDrums}` : ""} of GRN lot ${r.lot} (PR ${r.pr}, ${r.grnDate}) from ${r.supplier} · ${DRUM_STATUS_LABEL[r.status]}`,
-          fields: [
-            { l: "Ownership", v: r.ownership ? OWNERSHIP_LABEL[r.ownership] : "Not recorded on the GRN — waiting for the Production Head" },
-            { l: "Empty weight", v: `${nf(r.weight)} kg${r.weight !== r.first ? ` (first recorded ${nf(r.first)} kg)` : ""}` },
-            { l: "Supplier-declared tare", v: r.declared == null ? "Not on the GRN" : `${nf(r.declared)} kg` },
-            { l: "Variance", v: v ? `${signedKg(v.kg)}${v.pct != null ? ` (${v.pct > 0 ? "+" : ""}${v.pct}%)` : ""}` : "—", der: true },
-            ...(r.weightNote ? [{ l: "Weight let through because", v: r.weightNote }] : []),
-            ...(r.saleNo != null ? [{ l: "Sold on", v: `${saleNoLabel(r.saleNo)} · ${r.saleDate} · ${r.buyer} (allocated oldest first)` }] : []),
-            ...(r.returnNo != null ? [{ l: "Returned on", v: `${returnNoLabel(r.returnNo)} · ${r.returnDate} (allocated oldest first)` }] : []),
-            ...(r.statusNote ? [{ l: "Note", v: r.statusNote }] : []),
-          ],
-          actions,
-          by: `Weighed ${stampLine(r.by, r.emptiedAt).replace(/^Created /, "")}`,
-        };
-      }),
-    };
-  },
-  actions: {
-    async ownership(ctx, id, values) {
-      if (!controls(ctx)) return err(powerRefusal("scrapControl"), "not_permitted");
-      const owner: DrumOwnership | null = values.ownership === OWNERSHIP_LABEL.mahek ? "mahek" : values.ownership === OWNERSHIP_LABEL.vendor ? "vendor" : null;
-      if (!owner) return fieldErr("ownership", "Choose who owns the drums.");
-      const reason = text(values.reason);
-      let lot = "";
-      let moved = 0;
-      let before: DrumOwnership | null = null;
-      const res = await inTx(async (tx) => {
-        const [d] = (await tx.execute(sql`select purchase_id as "purchaseId", lot_no as lot, status from erp_empty_drums where id = ${id}`)) as unknown as { purchaseId: string; lot: string; status: DrumStatus }[];
-        if (!d) return refuse(err("No such drum.", "not_found"));
-        const [p] = (await tx.execute(sql`select drum_ownership as ownership from erp_purchases where id = ${d.purchaseId} for update`)) as unknown as { ownership: DrumOwnership | null }[];
-        before = p?.ownership ?? null;
-        lot = d.lot;
-        if (before === owner) return refuse(err(`Lot ${d.lot}'s drums are already ${OWNERSHIP_LABEL[owner].toLowerCase()}.`, "rule_violation"));
-        if (before && !reason) return refuse(fieldErr("reason", "Say why the ownership is changing."));
-        await tx.execute(sql`update erp_purchases set drum_ownership = ${owner}, drum_ownership_set_by_id = ${ctx.user.id}, drum_ownership_set_at = now(), updated_at = now() where id = ${d.purchaseId}`);
-        /* Everything of the lot still in the building moves with the decision; a drum sold or returned stays where it went. */
-        const r = (await tx.execute(sql`
-          update erp_empty_drums set ownership = ${owner}, status = ${routeDrum(owner)}, status_note = ${reason}, updated_at = now(), updated_by_id = ${ctx.user.id}
-           where purchase_id = ${d.purchaseId} and status in ('review', 'available', 'returnable')
-          returning id
-        `)) as unknown as { id: string }[];
-        moved = r.length;
-        return okVoid("");
-      });
-      if (!res.ok) return res;
-      await erpAudit(ctx, "erp.emptyDrum.ownership", "erp_purchase", lot, { ownership: before }, { ownership: owner, drumsMoved: moved, reason });
-      return okVoid(`Lot ${lot}: drums are ${OWNERSHIP_LABEL[owner].toLowerCase()} · ${plural(moved, "drum")} moved to ${owner === "mahek" ? "Mahek stock" : "vendor-returnable stock"}`);
-    },
-    async correct(ctx, id, values) {
-      if (!controls(ctx)) return err(powerRefusal("scrapControl"), "not_permitted");
-      const weight = num(values.weight);
-      const reason = text(values.reason);
-      if (weight == null || weight <= 0) return fieldErr("weight", "Enter the empty weight in kg.");
-      if (!reason) return fieldErr("reason", "Say why the weight is being corrected.");
-      let label = "";
-      let before = 0;
-      const res = await inTx(async (tx) => {
-        const [d] = (await tx.execute(sql`select drum_no as "drumNo", status, weight_kg::float8 as weight from erp_empty_drums where id = ${id} for update`)) as unknown as { drumNo: number; status: DrumStatus; weight: number }[];
-        if (!d) return refuse(err("No such drum.", "not_found"));
-        const why = drumMoveRefusal(d.status, "correct");
-        if (why) return refuse(err(why, "rule_violation"));
-        label = drumNoLabel(Number(d.drumNo));
-        before = Number(d.weight);
-        await tx.execute(sql`update erp_empty_drums set weight_kg = ${kg(weight)}, status_note = ${reason}, updated_at = now(), updated_by_id = ${ctx.user.id} where id = ${id}`);
-        return okVoid("");
-      });
-      if (!res.ok) return res;
-      await erpAudit(ctx, "erp.emptyDrum.correct", "erp_empty_drum", label, { weightKg: before }, { weightKg: kg(weight), reason });
-      return okVoid(`${label}: weight corrected from ${nf(before)} kg to ${nf(weight)} kg`);
-    },
-    async cancel(ctx, id, values) {
-      if (!controls(ctx)) return err(powerRefusal("scrapControl"), "not_permitted");
-      const reason = text(values.reason);
-      if (!reason) return fieldErr("reason", "Say why the record is being cancelled.");
-      let label = "";
-      let before: DrumStatus = "available";
-      const res = await inTx(async (tx) => {
-        const [d] = (await tx.execute(sql`select drum_no as "drumNo", status from erp_empty_drums where id = ${id} for update`)) as unknown as { drumNo: number; status: DrumStatus }[];
-        if (!d) return refuse(err("No such drum.", "not_found"));
-        const why = drumMoveRefusal(d.status, "cancelled");
-        if (why) return refuse(err(why, "rule_violation"));
-        label = drumNoLabel(Number(d.drumNo));
-        before = d.status;
-        await tx.execute(sql`update erp_empty_drums set status = 'cancelled', status_note = ${reason}, updated_at = now(), updated_by_id = ${ctx.user.id} where id = ${id}`);
-        return okVoid("");
-      });
-      if (!res.ok) return res;
-      await erpAudit(ctx, "erp.emptyDrum.cancel", "erp_empty_drum", label, { status: before }, { status: "cancelled", reason });
-      return okVoid(`${label} cancelled and taken out of stock`);
-    },
-  },
-};
-
-/* ============================================== Mahek drum stock (ledger) */
-
-const drumStock: ScreenModule = {
-  key: "drumStock",
-  async load(ctx) {
-    /* Every movement of a Mahek-owned drum: emptied in (by day), sold out (by sale), cancelled out (by day). */
-    const rows = (await db.execute(sql`
-      select 'in' as kind, (d.emptied_at at time zone 'Asia/Kolkata')::date::text as day, count(*)::int as qty, null::int as "saleNo", null::text as buyer,
-             string_agg(distinct m.name, ', ') as detail, min(d.emptied_at) as at
-        from erp_empty_drums d join erp_raw_materials m on m.id = d.raw_material_id
-       where d.ownership = 'mahek'
-       group by 2
-      union all
-      select 'cancel', (d.updated_at at time zone 'Asia/Kolkata')::date::text, count(*)::int, null, null, string_agg(distinct d.status_note, '; '), max(d.updated_at)
-        from erp_empty_drums d
-       where d.ownership = 'mahek' and d.status = 'cancelled'
-       group by 2
-      union all
-      select 'sale', s.sale_date::text, (select count(*) from erp_empty_drums x where x.sale_id = s.id)::int, s.sale_no, b.name, null, s.created_at
-        from erp_scrap_sales s join erp_scrap_buyers b on b.id = s.buyer_id
-       where s.category = 'drum' and s.status = 'active'
-    `)) as unknown as { kind: "in" | "cancel" | "sale"; day: string; qty: number; saleNo: number | null; buyer: string | null; detail: string | null; at: Date }[];
-    const ordered = [...rows].sort((a, b) => (a.day === b.day ? new Date(a.at).getTime() - new Date(b.at).getTime() : a.day < b.day ? -1 : 1));
-    let balance = 0;
-    const lines = ordered.map((r, i) => {
-      const delta = r.kind === "in" ? Number(r.qty) : -Number(r.qty);
-      balance += delta;
-      return { ...r, i, delta, balance };
-    });
-    const cols: ColSpec[] = [
-      { k: "date", l: "Date", t: "d" },
-      { k: "type", l: "Transaction", t: "s" },
-      { k: "qty", l: "Quantity", t: "n" },
-      { k: "balance", l: "Balance", t: "n" },
-      { k: "ref", l: "Reference", t: "mono" },
-      { k: "detail", l: "Detail", t: "t", w: 220 },
-    ];
-    return {
-      spec: {
-        screen: "drumStock",
-        cols,
-        hidden: [],
-        chips: "type",
-        readOnly: true,
-        download: true,
-        tools: [RECORD_TOOL, ...(sells(ctx) ? [{ id: "sell", l: "Sell drums", href: erpLink("scrapSales", { new: "1", category: CATEGORY_LABEL.drum }) } as ToolSpec] : [])],
-        sortDefault: ["date", -1],
-        scopedLine: `${plural(balance, "Mahek-owned empty drum")} available now · read off the transactions below, never typed. Vendor-returnable drums are never in this stock.`,
-        noDataLine: "No Mahek-owned drum has been emptied yet.",
-      },
-      rows: lines.reverse().map((r) => ({
-        id: `${r.kind}:${r.day}:${r.saleNo ?? r.i}`,
-        v: {
-          date: r.day,
-          type: r.kind === "in" ? "Emptied" : r.kind === "sale" ? "Scrap sale" : "Cancelled",
-          qty: r.delta,
-          balance: r.balance,
-          ref: r.saleNo != null ? saleNoLabel(r.saleNo) : null,
-          detail: r.kind === "sale" ? r.buyer : r.detail,
-        },
-        flags: [],
-        title: r.kind === "sale" ? `${saleNoLabel(r.saleNo!)} · ${r.buyer}` : `${r.kind === "in" ? "Emptied" : "Cancelled"} on ${r.day}`,
-        actions: r.kind === "sale" ? [{ id: "open", l: `Open ${saleNoLabel(r.saleNo!)}`, primary: true, href: erpLink("scrapSales", { open: `sale:${r.saleNo}` }) }] : [{ id: "open", l: "See the drums", primary: true, href: erpLink("emptyDrums") }],
-      })),
-    };
-  },
-};
-
-/* ===================================================== vendor returnable */
-
-type Pending = { supplierId: string; supplier: string; pending: number; returned: number; oldest: Date | null; lots: string | null; mobile: string | null };
-
-async function pendingBySupplier(): Promise<Pending[]> {
-  const rows = (await db.execute(sql`
-    select s.id as "supplierId", s.name as supplier, s.mobile,
-           count(*) filter (where d.status = 'returnable')::int as pending,
-           count(*) filter (where d.status = 'returned')::int as returned,
-           min(d.emptied_at) filter (where d.status = 'returnable') as oldest,
-           string_agg(distinct d.lot_no, ', ') filter (where d.status = 'returnable') as lots
-      from erp_empty_drums d join erp_suppliers s on s.id = d.supplier_id
-     where d.ownership = 'vendor' and d.status in ('returnable', 'returned')
-     group by s.id, s.name, s.mobile
-     order by min(d.emptied_at) filter (where d.status = 'returnable') nulls last
-  `)) as unknown as Pending[];
-  return rows.map((r) => ({ ...r, pending: Number(r.pending), returned: Number(r.returned) }));
-}
-
-const returnFields = (supplierOpts: string[], fixed?: string): FieldSpec[] => [
-  ...(fixed ? [] : [{ k: "supplier", l: "Supplier", t: "select" as const, req: true, opts: supplierOpts }]),
-  { k: "quantity", l: "Drums returned", t: "num", req: true, min: 1 },
-  { k: "date", l: "Return date", t: "date", req: true, def: today() },
-  { k: "challan", l: "Challan / return reference", t: "text", hint: "The supplier's challan or our gate pass number, if there is one." },
-  { k: "remark", l: "Remark", t: "area" },
-];
-
-const returnableDrums: ScreenModule = {
-  key: "returnableDrums",
-  async load(ctx) {
-    const now = today();
-    const rows = await pendingBySupplier();
-    const open = rows.filter((r) => r.pending > 0);
-    const cols: ColSpec[] = [
-      { k: "supplier", l: "Supplier", t: "b" },
-      { k: "pending", l: "Pending return", t: "n" },
-      { k: "oldest", l: "Oldest pending", t: "d" },
-      { k: "age", l: "Days waiting", t: "n" },
-      { k: "ageing", l: "Ageing", t: "s" },
-      { k: "returned", l: "Returned so far", t: "n" },
-      { k: "lots", l: "Lots pending", t: "t", w: 200 },
-      { k: "mobile", l: "Phone", t: "ph" },
-    ];
-    return {
-      spec: {
-        screen: "returnableDrums",
-        cols,
-        hidden: [],
-        chips: "ageing",
-        agg: { k: "pending", l: "drums" },
-        download: true,
-        sortDefault: ["age", -1],
-        tools: [RECORD_TOOL],
-        newForm:
-          sells(ctx) && open.length
-            ? {
-                screen: "returnableDrums",
-                id: "return",
-                title: "Return drums to a vendor",
-                sub: "Enter how many went back. The oldest of that supplier's pending drums are marked returned — nobody has to pick out each drum.",
-                submit: "Record return",
-                header: returnFields(open.map((r) => r.supplier)),
-              }
-            : undefined,
-        newLabel: "Return drums",
-        noDataLine: "No vendor-returnable drum is waiting. A drum whose lot is vendor-owned lands here the moment it is weighed empty.",
-      },
-      rows: rows
-        .filter((r) => r.pending > 0)
-        .map((r): ListRow => {
-          const since = r.oldest ? calendarDate(new Date(r.oldest)) : null;
-          const age = since ? daysBetween(since, now) : 0;
-          return {
-            id: r.supplierId,
-            v: { supplier: r.supplier, pending: r.pending, oldest: since, age, ageing: ageingBucket(age) === "Current" ? "Today" : `${ageingBucket(age)} days`, returned: r.returned, lots: r.lots, mobile: r.mobile },
-            flags: age > 30 ? ["returnOverdue"] : [],
-            title: r.supplier,
-            header: `${plural(r.pending, "drum")} waiting to go back · oldest since ${since}`,
-            fields: [
-              { l: "Lots pending", v: r.lots ?? "—" },
-              { l: "Returned so far", v: plural(r.returned, "drum") },
-            ],
-            contacts: r.mobile ? [{ l: "Call", href: `tel:${r.mobile}` }] : [],
-            actions: [
-              {
-                id: "return",
-                l: "Return drums",
-                primary: true,
-                why: sells(ctx) ? "" : powerRefusal("scrapSell"),
-                prompt: { title: `Return drums to ${r.supplier}`, sub: `${plural(r.pending, "drum")} pending. The oldest are marked returned first.`, submit: "Record return", fields: returnFields([], r.supplier), init: { quantity: String(r.pending) } },
-              },
-              { id: "drums", l: "See the drums", href: erpLink("emptyDrums") },
-            ],
-          };
-        }),
-    };
-  },
-  actions: {
-    return: (ctx, id, values) => recordReturn(ctx, id, values),
-  },
-  forms: {
-    async return(ctx, header) {
-      const [s] = (await db.execute(sql`select id from erp_suppliers where name = ${header.supplier ?? ""}`)) as unknown as { id: string }[];
-      if (!s) return fieldErr("supplier", "Choose the supplier.");
-      return recordReturn(ctx, s.id, header);
-    },
-  },
-};
-
-async function recordReturn(ctx: ErpContext, supplierId: string, values: Record<string, string>): Promise<Result<unknown>> {
-  if (!sells(ctx)) return err(powerRefusal("scrapSell"), "not_permitted");
-  const qty = int(values.quantity);
-  const date = text(values.date) ?? today();
-  if (qty == null || qty <= 0 || String(qty) !== String(num(values.quantity))) return fieldErr("quantity", "Enter a whole number of drums.");
-  if (date > today()) return fieldErr("date", "A return cannot be dated in the future.");
-  let no = 0;
-  let supplier = "";
-  const res = await inTx(async (tx) => {
-    const pending = (await tx.execute(sql`
-      select d.id, d.drum_no as "drumNo", d.emptied_at as "emptiedAt", s.name as supplier
-        from erp_empty_drums d join erp_suppliers s on s.id = d.supplier_id
-       where d.supplier_id = ${supplierId} and d.status = 'returnable'
-       for update of d
-    `)) as unknown as { id: string; drumNo: number; emptiedAt: Date; supplier: string }[];
-    supplier = pending[0]?.supplier ?? "";
-    if (!pending.length) return refuse(err("This supplier has no drums waiting to be returned.", "rule_violation"));
-    const pick = fifoPick(
-      pending.map((p) => ({ ...p, drumNo: Number(p.drumNo) })),
-      qty,
-    );
-    if ("refusal" in pick) return refuse(fieldErr("quantity", `${pick.refusal.replace("available", "pending return")} for ${supplier}.`));
-    no = await nextNumber(tx, "drumReturn");
-    const id = erpId("erpdrt");
-    await tx.insert(erpDrumReturns).values({ id, returnNo: no, returnDate: date, supplierId, quantity: qty, challan: text(values.challan), remark: text(values.remark), createdById: ctx.user.id });
-    const ids = pick.picked.map((p) => p.id);
-    await tx.execute(sql`update erp_empty_drums set status = 'returned', return_id = ${id}, updated_at = now(), updated_by_id = ${ctx.user.id} where id in ${ids} and status = 'returnable'`);
-    return okVoid("");
-  });
-  if (!res.ok) return res;
-  await erpAudit(ctx, "erp.drumReturn.create", "erp_drum_return", returnNoLabel(no), null, { supplier, quantity: qty, date, challan: text(values.challan) });
-  return okVoid(`${returnNoLabel(no)}: ${plural(qty, "drum")} returned to ${supplier}`);
-}
-
-const drumReturns: ScreenModule = {
-  key: "drumReturns",
-  async load() {
-    const rows = (await db.execute(sql`
-      select r.id, r.return_no as no, r.return_date::text as date, s.name as supplier, r.quantity, r.challan, r.remark, r.created_at as "createdAt", u.name as by,
-             (select string_agg(x.lot_no || ' (' || x.n || ')', ', ' order by x.lot_no) from (select lot_no, count(*) as n from erp_empty_drums where return_id = r.id group by lot_no) x) as lots,
-             (select string_agg('ED-' || drum_no, ', ' order by drum_no) from erp_empty_drums where return_id = r.id) as drums
-        from erp_drum_returns r join erp_suppliers s on s.id = r.supplier_id left join users u on u.id = r.created_by_id
-       order by r.return_date desc, r.return_no desc
-    `)) as unknown as { id: string; no: number; date: string; supplier: string; quantity: number; challan: string | null; remark: string | null; createdAt: Date; by: string | null; lots: string | null; drums: string | null }[];
-    const cols: ColSpec[] = [
-      { k: "no", l: "Return", t: "mono", w: 96 },
-      { k: "date", l: "Date", t: "d" },
-      { k: "supplier", l: "Supplier", t: "b" },
-      { k: "qty", l: "Drums", t: "n" },
-      { k: "challan", l: "Challan / reference", t: "mono" },
-      { k: "lots", l: "From lots", t: "t", w: 200 },
-      { k: "by", l: "Recorded by", t: "t" },
-    ];
-    return {
-      spec: { screen: "drumReturns", cols, hidden: [], readOnly: true, download: true, groups: ["supplier"], agg: { k: "qty", l: "drums" }, sortDefault: ["date", -1], noDataLine: "No drums have been returned to a vendor yet." },
-      rows: rows.map((r) => ({
-        id: `ret:${r.no}`,
-        v: { no: returnNoLabel(Number(r.no)), date: r.date, supplier: r.supplier, qty: Number(r.quantity), challan: r.challan, lots: r.lots, by: r.by },
-        flags: [],
-        title: `${returnNoLabel(Number(r.no))} · ${r.supplier}`,
-        header: `${plural(Number(r.quantity), "drum")} returned on ${r.date}`,
-        fields: [
-          { l: "Drums (allocated oldest first)", v: r.drums ?? "—" },
-          { l: "From lots", v: r.lots ?? "—" },
-          ...(r.remark ? [{ l: "Remark", v: r.remark }] : []),
         ],
-        by: stampLine(r.by, r.createdAt),
-      })),
-    };
-  },
-};
-
-/* ============================================================ scrap sales */
-
-type SaleRow = {
-  id: string;
-  no: number;
-  date: string;
-  buyerId: string;
-  buyer: string;
-  category: ScrapCategory;
-  categoryNote: string | null;
-  quantity: number;
-  unit: string;
-  rate: number;
-  amount: number;
-  invoiceKind: "invoice" | "none";
-  ref: string | null;
-  due: string | null;
-  remark: string | null;
-  status: "active" | "cancelled";
-  cancelReason: string | null;
-  received: number;
-  createdAt: Date;
-  by: string | null;
-};
-
-async function saleRows(where = sql`true`): Promise<SaleRow[]> {
-  const rows = (await db.execute(sql`
-    select s.id, s.sale_no as no, s.sale_date::text as date, s.buyer_id as "buyerId", b.name as buyer, s.category, s.category_note as "categoryNote",
-           s.quantity::float8 as quantity, s.unit, s.rate_paise::float8 as rate, s.amount_paise::float8 as amount, s.invoice_kind as "invoiceKind",
-           s.external_ref as ref, s.due_date::text as due, s.remark, s.status, s.cancel_reason as "cancelReason",
-           coalesce((select sum(a.amount_paise) from erp_scrap_allocations a where a.sale_id = s.id and a.voided_at is null), 0)::float8 as received,
-           s.created_at as "createdAt", u.name as by
-      from erp_scrap_sales s join erp_scrap_buyers b on b.id = s.buyer_id left join users u on u.id = s.created_by_id
-     where ${where}
-     order by s.sale_date desc, s.sale_no desc
-  `)) as unknown as SaleRow[];
-  return rows.map((r) => ({ ...r, no: Number(r.no), quantity: Number(r.quantity), rate: Number(r.rate), amount: Number(r.amount), received: Number(r.received) }));
-}
-
-const categoryText = (c: ScrapCategory, note: string | null) => (c === "other" && note ? `Other: ${note}` : CATEGORY_LABEL[c]);
-const INVOICE_YES = "External invoice issued";
-const INVOICE_NO = "No external invoice";
-
-async function buyerNames(): Promise<string[]> {
-  const rows = (await db.execute(sql`select name from erp_scrap_buyers where active order by name`)) as unknown as { name: string }[];
-  return rows.map((r) => r.name);
-}
-
-async function saleForm(ctx: ErpContext): Promise<FormSpec> {
-  const [buyers, avail, other] = await Promise.all([
-    buyerNames(),
-    db.execute(sql`select count(*)::int as n from erp_empty_drums where status = 'available'`) as unknown as Promise<{ n: number }[]>,
-    otherBalances(),
-  ]);
-  const drums = Number(avail[0]?.n ?? 0);
-  const otherLine = [...other.entries()]
-    .filter(([, q]) => q > 0)
-    .map(([k, q]) => {
-      const [c, u] = k.split("|");
-      return `${CATEGORY_LABEL[c as ScrapCategory]} ${nf(q)} ${u}`;
-    })
-    .join(" · ");
-  const unitMap: Record<string, string[]> = Object.fromEntries((Object.keys(CATEGORY_UNITS) as ScrapCategory[]).map((c) => [CATEGORY_LABEL[c], CATEGORY_UNITS[c]]));
-  return {
-    screen: "scrapSales",
-    id: "new",
-    title: "New scrap sale",
-    sub: `Mahek-owned empty drums available: ${nf(drums)}. ${otherLine ? `Other scrap in hand: ${otherLine}.` : "No other scrap recorded as collected."} Drums are allocated oldest first; vendor-returnable drums are never offered.`,
-    submit: "Save sale",
-    header: [
-      { k: "date", l: "Sale date", t: "date", req: true, def: today() },
-      { k: "buyer", l: "Scrap buyer", t: "pick", req: true, opts: buyers, hint: "Pick one, or type a new buyer's name to add them." },
-      { k: "category", l: "Scrap category", t: "select", req: true, opts: Object.values(CATEGORY_LABEL), def: CATEGORY_LABEL.drum },
-      { k: "categoryNote", l: "What is it", t: "text", when: { k: "category", eq: CATEGORY_LABEL.other }, reqWhen: { k: "category", eq: CATEGORY_LABEL.other } },
-      { k: "quantity", l: "Quantity", t: "num", req: true, min: 0.001 },
-      { k: "unit", l: "Unit", t: "select", req: true, optsBy: { by: "category", map: unitMap } },
-      { k: "rate", l: "Rate (₹ per unit)", t: "num", req: true, min: 0 },
-      { k: "invoice", l: "Invoice", t: "select", req: true, opts: [INVOICE_YES, INVOICE_NO], def: INVOICE_NO, sec: "Invoice and payment" },
-      {
-        k: "ref",
-        l: "Invoice / External Reference No.",
-        t: "text",
-        reqWhen: { k: "invoice", eq: INVOICE_YES },
-        hint: "The external invoice number, or a genuine challan or reference if no invoice was issued. Leave it empty rather than make one up — the SS number identifies the sale.",
-      },
-      { k: "due", l: "Payment due", t: "date", hint: "Leave empty where it is due on the day." },
-      { k: "remark", l: "Remark", t: "area" },
-    ],
-    init: { category: CATEGORY_LABEL.drum, unit: "Drums" },
-    confirm: "Save a sale of {quantity} {unit} of {category} to {buyer} at ₹{rate} each?",
-    data: { by: ctx.user.id },
-  };
-}
-
-async function otherBalances(tx?: Tx): Promise<Map<string, number>> {
-  const ex = tx ?? db;
-  const [collected, sold] = await Promise.all([
-    ex.execute(sql`select category, unit, quantity::float8 as quantity from erp_scrap_collections`) as unknown as Promise<{ category: string; unit: string; quantity: number }[]>,
-    ex.execute(sql`select category, unit, quantity::float8 as quantity from erp_scrap_sales where status = 'active' and category <> 'drum'`) as unknown as Promise<{ category: string; unit: string; quantity: number }[]>,
-  ]);
-  return otherScrapBalance(
-    collected.map((r) => ({ ...r, quantity: Number(r.quantity) })),
-    sold.map((r) => ({ ...r, quantity: Number(r.quantity) })),
+        by: stampLine(s.by, s.createdAt),
+        panel: { kind: "scrap", data: salePanel(s, allocs.filter((a) => a.saleId === s.id), drums.filter((d) => d.saleId === s.id)) },
+      };
+    }),
   );
 }
 
-/** A buyer by name, made on the spot when somebody types a new one. */
-async function buyerFor(tx: Tx, name: string, ctx: ErpContext): Promise<{ id: string; name: string; created: boolean }> {
-  const [b] = (await tx.execute(sql`select id, name from erp_scrap_buyers where lower(name) = lower(${name})`)) as unknown as { id: string; name: string }[];
-  if (b) return { ...b, created: false };
-  const id = erpId("erpsbu");
-  await tx.insert(erpScrapBuyers).values({ id, name, createdById: ctx.user.id });
-  return { id, name, created: true };
-}
-
-async function createSale(ctx: ErpContext, h: Record<string, string>): Promise<Result<unknown>> {
-  if (!sells(ctx)) return err(powerRefusal("scrapSell"), "not_permitted");
-  const category = categoryByLabel(h.category ?? "");
-  if (!category) return fieldErr("category", "Choose the scrap category.");
-  const buyerName = text(h.buyer);
-  if (!buyerName) return fieldErr("buyer", "Name the scrap buyer.");
-  const date = text(h.date) ?? today();
-  if (date > today()) return fieldErr("date", "A sale cannot be dated in the future.");
-  const unit = text(h.unit) ?? "";
-  if (!(CATEGORY_UNITS[category] as string[]).includes(unit)) return fieldErr("unit", `${CATEGORY_LABEL[category]} is sold in ${CATEGORY_UNITS[category].join(", ")}.`);
-  const quantity = num(h.quantity);
-  if (quantity == null || quantity <= 0) return fieldErr("quantity", "Enter the quantity sold.");
-  if (category === "drum" && !Number.isInteger(quantity)) return fieldErr("quantity", "Drums are sold in whole numbers.");
-  const rate = paise(h.rate);
-  if (rate == null || rate < 0) return fieldErr("rate", "Enter the rate per unit.");
-  const note = category === "other" ? text(h.categoryNote) : null;
-  if (category === "other" && !note) return fieldErr("categoryNote", "Say what the scrap is.");
-  const invoiceKind = h.invoice === INVOICE_YES ? "invoice" : "none";
-  const ref = text(h.ref);
-  const invoiceWhy = invoiceRefusal(invoiceKind, ref);
-  if (invoiceWhy) return fieldErr("ref", invoiceWhy);
-  const due = text(h.due);
-  if (due && due < date) return fieldErr("due", "Payment cannot be due before the sale.");
-  const amount = saleAmount(quantity, rate);
-  let no = 0;
-  let buyer = "";
-  let drums: string[] = [];
-  const res = await inTx(async (tx) => {
-    const b = await buyerFor(tx, buyerName, ctx);
-    buyer = b.name;
-    no = await nextNumber(tx, "scrapSale");
-    const id = erpId("erpssl");
-    if (category === "drum") {
-      const avail = (await tx.execute(sql`
-        select id, drum_no as "drumNo", emptied_at as "emptiedAt" from erp_empty_drums where status = 'available' and ownership = 'mahek' for update
-      `)) as unknown as { id: string; drumNo: number; emptiedAt: Date }[];
-      const pick = fifoPick(
-        avail.map((a) => ({ ...a, drumNo: Number(a.drumNo) })),
-        quantity,
-      );
-      if ("refusal" in pick) {
-        const returnable = (await tx.execute(sql`select count(*)::int as n from erp_empty_drums where status = 'returnable'`)) as unknown as { n: number }[];
-        const more = Number(returnable[0]?.n ?? 0) > 0 && quantity <= avail.length + Number(returnable[0]?.n ?? 0) ? ` ${VENDOR_DRUM_REFUSAL}` : "";
-        return refuse(fieldErr("quantity", `${pick.refusal.replace("available", "Mahek-owned and available")}${more}`));
-      }
-      await tx.insert(erpScrapSales).values({ id, saleNo: no, saleDate: date, buyerId: b.id, category, categoryNote: note, quantity, unit, ratePaise: rate, amountPaise: amount, invoiceKind, externalRef: ref, dueDate: due, remark: text(h.remark), createdById: ctx.user.id });
-      drums = pick.picked.map((p) => p.id);
-      const done = (await tx.execute(sql`update erp_empty_drums set status = 'sold', sale_id = ${id}, updated_at = now(), updated_by_id = ${ctx.user.id} where id in ${drums} and status = 'available' returning id`)) as unknown as { id: string }[];
-      if (done.length !== drums.length) return refuse(err("Some of those drums were taken by another sale a moment ago. Try again.", "conflict"));
-    } else {
-      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`scrap:${category}:${unit}`}))`);
-      const have = (await otherBalances(tx)).get(`${category}|${unit}`) ?? 0;
-      if (quantity > have + 1e-9)
-        return refuse(fieldErr("quantity", have > 0 ? `Only ${nf(have)} ${unit} of ${CATEGORY_LABEL[category].toLowerCase()} is recorded as collected.` : `No ${CATEGORY_LABEL[category].toLowerCase()} is recorded as collected in ${unit}. Record it on Other scrap first.`));
-      await tx.insert(erpScrapSales).values({ id, saleNo: no, saleDate: date, buyerId: b.id, category, categoryNote: note, quantity, unit, ratePaise: rate, amountPaise: amount, invoiceKind, externalRef: ref, dueDate: due, remark: text(h.remark), createdById: ctx.user.id });
-    }
-    return okVoid("");
-  });
-  if (!res.ok) return res;
-  await erpAudit(ctx, "erp.scrapSale.create", "erp_scrap_sale", saleNoLabel(no), null, { buyer, category, quantity, unit, ratePaise: rate, amountPaise: amount, invoiceKind, ref, drums: drums.length });
-  return okVoid(`${saleNoLabel(no)} saved · ${nf(quantity)} ${unit} to ${buyer} · ${inr(amount)}${category === "drum" ? " · oldest drums allocated" : ""}`);
-}
+const saleActions: ScreenModule["actions"] = {
+  async match(ctx, id, v) {
+    if (!can(ctx, "scrapAccounts")) return refused("scrapAccounts");
+    const no = Number(/^RCPT-(\d+)/.exec(v.receipt ?? "")?.[1]);
+    const rc = (await receiptRows()).find((r) => r.receiptNo === no);
+    if (!rc) return fieldErr("receipt", "Choose the receipt.");
+    const amount = paise(v.amount);
+    if (amount == null) return fieldErr("amount", "Enter the amount.");
+    return allocateReceipt(actorOf(ctx), rc.id, id, amount);
+  },
+  async cancel(ctx, id, v) {
+    if (!can(ctx, "scrapApprove")) return refused("scrapApprove");
+    return cancelScrapSale(actorOf(ctx), id, v.reason ?? "");
+  },
+};
 
 const scrapSales: ScreenModule = {
   key: "scrapSales",
   async load(ctx) {
-    const now = today();
-    const [rows, form, drumsBySale, allocs] = await Promise.all([
-      saleRows(),
-      sells(ctx) ? saleForm(ctx) : Promise.resolve(undefined),
-      db.execute(sql`
-        select sale_id as "saleId", count(*)::int as n,
-               string_agg(distinct lot_no, ', ') as lots,
-               string_agg(distinct s.name, ', ') as suppliers
-          from erp_empty_drums d join erp_suppliers s on s.id = d.supplier_id
-         where sale_id is not null group by sale_id
-      `) as unknown as Promise<{ saleId: string; n: number; lots: string; suppliers: string }[]>,
-      db.execute(sql`
-        select a.sale_id as "saleId", a.amount_paise::float8 as amount, r.receipt_no as no, r.receipt_date::text as date, r.mode
-          from erp_scrap_allocations a join erp_scrap_receipts r on r.id = a.receipt_id
-         where a.voided_at is null order by r.receipt_date
-      `) as unknown as Promise<{ saleId: string; amount: number; no: number; date: string; mode: string }[]>,
-    ]);
-    const drumMap = new Map(drumsBySale.map((d) => [d.saleId, d]));
-    const cols: ColSpec[] = [
-      { k: "no", l: "Sale", t: "mono", w: 90 },
-      { k: "date", l: "Date", t: "d" },
-      { k: "buyer", l: "Scrap buyer", t: "b" },
-      { k: "status", l: "Payment", t: "s" },
-      { k: "amount", l: "Sale amount", t: "m" },
-      { k: "owed", l: "Outstanding", t: "m" },
-      { k: "category", l: "Category", t: "t" },
-      { k: "qty", l: "Quantity", t: "n" },
-      { k: "unit", l: "Unit", t: "t" },
-      { k: "received", l: "Received", t: "m" },
-      { k: "rate", l: "Rate", t: "m" },
-      { k: "ref", l: "Invoice / reference", t: "mono" },
-      { k: "due", l: "Due", t: "d" },
-      { k: "f", l: "Flags", t: "f" },
-    ];
+    const rows = await saleRows();
     return {
       spec: {
         screen: "scrapSales",
-        cols,
+        cols: saleCols,
         hidden: [],
-        chips: "status",
-        groups: ["buyer"],
-        agg: { k: "owed", l: "outstanding" },
+        groups: ["buyer", "category", "state"],
+        agg: { k: "amount", l: "sold" },
+        chips: "state",
         download: true,
-        sortDefault: ["no", -1],
-        newForm: form,
+        newForm: can(ctx, "scrapSale") ? await saleForm(ctx) : undefined,
         newLabel: "New scrap sale",
-        noDataLine: sells(ctx) ? "No scrap sold yet. New scrap sale, above." : "No scrap sold yet.",
+        noDataLine: "No scrap sold yet.",
       },
-      rows: rows.map((r): ListRow => {
-        const cancelled = r.status === "cancelled";
-        const owed = cancelled ? 0 : outstanding(r.amount, r.received);
-        const state = salePayState(r.amount, r.received, cancelled);
-        const dueOn = r.due ?? r.date;
-        const late = !cancelled && owed > 0 && dueOn < now;
-        const d = drumMap.get(r.id);
-        const mine = allocs.filter((a) => a.saleId === r.id);
-        const actions: ActionSpec[] = [];
-        if (!cancelled && owed > 0) actions.push({ id: "pay", l: "Match a receipt", primary: matches(ctx), href: erpLink("scrapReceipts") });
-        actions.push({
-          id: "cancel",
-          l: "Cancel this sale",
-          why: cancelled ? "This sale is already cancelled." : r.received > 0 ? "Money has been matched to this sale. Unmatch it on Receipts first." : controls(ctx) ? "" : powerRefusal("scrapControl"),
-          prompt: { title: `Cancel ${saleNoLabel(r.no)}`, sub: r.category === "drum" ? "Its drums go back into Mahek stock as available. The sale stays, marked cancelled, with your reason." : "The scrap goes back into the balance in hand. The sale stays, marked cancelled, with your reason.", submit: "Cancel sale", fields: [{ k: "reason", l: "Why", t: "area", req: true }] },
-        });
-        return {
-          id: `sale:${r.no}`,
-          v: {
-            no: saleNoLabel(r.no),
-            date: r.date,
-            buyer: r.buyer,
-            status: state,
-            category: categoryText(r.category, r.categoryNote),
-            qty: r.quantity,
-            unit: r.unit,
-            amount: r.amount,
-            received: r.received,
-            owed,
-            rate: r.rate,
-            ref: r.invoiceKind === "invoice" ? r.ref : r.ref ? `No invoice · ${r.ref}` : "No invoice",
-            due: r.due,
-          },
-          flags: late ? ["overdueSale"] : [],
-          title: `${saleNoLabel(r.no)} · ${r.buyer}`,
-          header: `${nf(r.quantity)} ${r.unit} of ${categoryText(r.category, r.categoryNote).toLowerCase()} at ${inr(r.rate)} on ${r.date} · ${state}`,
-          fields: [
-            { l: "Sale amount", v: `${inr(r.amount)} (${nf(r.quantity)} × ${inr(r.rate)})`, der: true },
-            { l: "Received (matched receipts)", v: inr(r.received), der: true },
-            { l: "Outstanding", v: inr(owed), der: true },
-            { l: "Invoice", v: r.invoiceKind === "invoice" ? `External invoice ${r.ref}` : `No external invoice — identified by ${saleNoLabel(r.no)}${r.ref ? ` · reference ${r.ref}` : ""}` },
-            ...(r.due ? [{ l: "Payment due", v: r.due }] : []),
-            ...(d ? [{ l: "Drums allocated (oldest first)", v: `${plural(Number(d.n), "drum")} · lots ${d.lots} · from ${d.suppliers}` }] : []),
-            ...mine.map((a) => ({ l: `${receiptNoLabel(Number(a.no))} · ${a.date}`, v: `${inr(a.amount)} by ${a.mode.toLowerCase()}` })),
-            ...(r.remark ? [{ l: "Remark", v: r.remark }] : []),
-            ...(cancelled && r.cancelReason ? [{ l: "Cancelled because", v: r.cancelReason }] : []),
-          ],
-          actions,
-          by: stampLine(r.by, r.createdAt),
-        };
-      }),
+      rows: await saleRowsFor(ctx, rows),
     };
   },
-  forms: {
-    new: (ctx, header) => createSale(ctx, header),
-  },
-  actions: {
-    async cancel(ctx, id, values) {
-      if (!controls(ctx)) return err(powerRefusal("scrapControl"), "not_permitted");
-      const reason = text(values.reason);
-      if (!reason) return fieldErr("reason", "Say why the sale is being cancelled.");
-      const no = Number(id.replace(/^sale:/, ""));
-      let freed = 0;
-      const res = await inTx(async (tx) => {
-        const [s] = (await tx.execute(sql`select id, status from erp_scrap_sales where sale_no = ${no} for update`)) as unknown as { id: string; status: string }[];
-        if (!s) return refuse(err("No such sale.", "not_found"));
-        if (s.status === "cancelled") return refuse(err("This sale is already cancelled.", "rule_violation"));
-        const [paid] = (await tx.execute(sql`select count(*)::int as n from erp_scrap_allocations where sale_id = ${s.id} and voided_at is null`)) as unknown as { n: number }[];
-        if (Number(paid?.n ?? 0) > 0) return refuse(err("Money has been matched to this sale. Unmatch it on Receipts first.", "rule_violation"));
-        const back = (await tx.execute(sql`update erp_empty_drums set status = 'available', sale_id = null, updated_at = now(), updated_by_id = ${ctx.user.id} where sale_id = ${s.id} returning id`)) as unknown as { id: string }[];
-        freed = back.length;
-        await tx.execute(sql`update erp_scrap_sales set status = 'cancelled', cancel_reason = ${reason}, cancelled_at = now(), cancelled_by_id = ${ctx.user.id} where id = ${s.id}`);
-        return okVoid("");
-      });
-      if (!res.ok) return res;
-      await erpAudit(ctx, "erp.scrapSale.cancel", "erp_scrap_sale", saleNoLabel(no), { status: "active" }, { status: "cancelled", reason, drumsFreed: freed });
-      return okVoid(`${saleNoLabel(no)} cancelled${freed ? ` · ${plural(freed, "drum")} back in Mahek stock` : ""}`);
-    },
-  },
+  forms: { new: (ctx, h) => saveSale(ctx, h) },
+  actions: saleActions,
 };
 
-/* ============================================================ other scrap */
-
-const otherScrap: ScreenModule = {
-  key: "otherScrap",
+const scrapReceivables: ScreenModule = {
+  key: "scrapReceivables",
   async load(ctx) {
-    const [collected, sold, godowns] = await Promise.all([
-      db.execute(sql`
-        select c.id, c.collected_date::text as date, c.category, c.category_note as note2, c.quantity::float8 as qty, c.unit, g.name as godown, c.note, c.created_at as "createdAt", u.name as by
-          from erp_scrap_collections c left join erp_godowns g on g.id = c.godown_id left join users u on u.id = c.created_by_id
-      `) as unknown as Promise<{ id: string; date: string; category: ScrapCategory; note2: string | null; qty: number; unit: string; godown: string | null; note: string | null; createdAt: Date; by: string | null }[]>,
-      saleRows(sql`s.status = 'active' and s.category <> 'drum'`),
-      godownOptions(ctx, { lost: false }),
+    const rows = (await saleRows()).filter((s) => s.status === "confirmed" && s.outstandingPaise > 0);
+    return {
+      spec: {
+        screen: "scrapReceivables",
+        cols: [...saleCols, { k: "bucket", l: "Ageing (days past due)", t: "s" }],
+        hidden: [],
+        groups: ["buyer", "bucket"],
+        agg: { k: "outstanding", l: "outstanding" },
+        chips: "bucket",
+        download: true,
+        sortDefault: ["due", 1],
+        noDataLine: "Nothing outstanding on scrap sales.",
+      },
+      rows: (await saleRowsFor(ctx, rows)).sort((a, b) => AGE_BUCKETS.indexOf(b.v.bucket as never) - AGE_BUCKETS.indexOf(a.v.bucket as never)),
+    };
+  },
+  actions: saleActions,
+};
+
+/* ------------------------------------------------------------ scrap stock */
+
+const scrapStockScreen: ScreenModule = {
+  key: "scrapStock",
+  async load(ctx) {
+    const [stock, gds, drumsAt] = await Promise.all([
+      scrapStock(),
+      db.select({ id: erpGodowns.id, name: erpGodowns.name }).from(erpGodowns),
+      db.execute(sql`select g.name as godown, count(*)::int as n from erp_empty_drums d join erp_godowns g on g.id = d.godown_id where d.status = 'available' group by g.name`) as unknown as Promise<{ godown: string; n: number }[]>,
     ]);
-    const balance = otherScrapBalance(
-      collected.map((c) => ({ category: c.category, unit: c.unit, quantity: Number(c.qty) })),
-      sold.map((s) => ({ category: s.category, unit: s.unit, quantity: s.quantity })),
-    );
-    const inHand = [...balance.entries()].filter(([, q]) => q !== 0).map(([k, q]) => {
-      const [c, u] = k.split("|");
-      return `${CATEGORY_LABEL[c as ScrapCategory]}: ${nf(q)} ${u}`;
-    });
-    const cols: ColSpec[] = [
-      { k: "date", l: "Date", t: "d" },
-      { k: "type", l: "Transaction", t: "s" },
-      { k: "category", l: "Category", t: "b" },
-      { k: "qty", l: "Quantity", t: "n" },
-      { k: "unit", l: "Unit", t: "t" },
-      { k: "group", l: "Stock", t: "t" },
-      { k: "ref", l: "Reference", t: "mono" },
-      { k: "godown", l: "Godown", t: "t" },
-      { k: "note", l: "Note", t: "t" },
-    ];
+    const gName = new Map(gds.map((g) => [g.id, g.name]));
+    const cats = await refValues("scrapCategory");
+    const gOpts = await godownOptions(ctx, { lost: false });
     const rows: ListRow[] = [
-      ...collected.map((c) => ({
-        id: c.id,
-        v: { date: c.date, type: "Collected", category: categoryText(c.category, c.note2), qty: Number(c.qty), unit: c.unit, group: `${CATEGORY_LABEL[c.category]} · ${c.unit}`, ref: null, godown: c.godown, note: c.note },
+      ...drumsAt.map((d) => ({
+        id: `drum:${d.godown}`,
+        v: { category: DRUM_CATEGORY, godown: d.godown, onHand: Number(d.n), unit: "Pcs" },
         flags: [],
-        title: `${categoryText(c.category, c.note2)} collected · ${c.date}`,
-        by: stampLine(c.by, c.createdAt),
+        title: `${DRUM_CATEGORY} · ${d.godown}`,
+        header: "Mahek-owned empty drums only. Vendor-returnable drums are never scrap.",
+        actions: [{ id: "open", l: "Open the drums", href: "/erp/empty-drums" }],
       })),
-      ...sold.map((s) => ({
-        id: `sale:${s.no}`,
-        v: { date: s.date, type: "Sold", category: categoryText(s.category, s.categoryNote), qty: -s.quantity, unit: s.unit, group: `${CATEGORY_LABEL[s.category]} · ${s.unit}`, ref: saleNoLabel(s.no), godown: null, note: s.buyer },
-        flags: [],
-        title: `${saleNoLabel(s.no)} · ${s.buyer}`,
-        actions: [{ id: "open", l: `Open ${saleNoLabel(s.no)}`, primary: true, href: erpLink("scrapSales", { open: `sale:${s.no}` }) }],
-      })),
+      ...stock
+        .filter((s) => s.available !== 0)
+        .map((s) => ({
+          id: `${s.category}|${s.unit}|${s.godownId}`,
+          v: { category: s.category, godown: s.godownId ? (gName.get(s.godownId) ?? "") : "Any", onHand: s.available, unit: s.unit },
+          flags: s.available < 0 ? ["below"] : [],
+          title: `${s.category} · ${s.godownId ? gName.get(s.godownId) : "Any"}`,
+          header: "Recorded, less what was sold.",
+        })),
     ];
     return {
       spec: {
-        screen: "otherScrap",
-        cols,
+        screen: "scrapStock",
+        cols: [
+          { k: "category", l: "Category", t: "b" },
+          { k: "onHand", l: "On hand", t: "n" },
+          { k: "unit", l: "Unit", t: "t" },
+          { k: "godown", l: "Godown", t: "t" },
+        ],
         hidden: [],
-        chips: "type",
-        groups: ["group"],
-        agg: { k: "qty", l: "in hand" },
-        download: true,
-        sortDefault: ["date", -1],
-        scopedLine: inHand.length ? `In hand: ${inHand.join(" · ")}` : "Nothing in hand. Plastic, cardboard and other scrap is recorded here in batches as it is collected — no bag or box needs a record of its own.",
+        groups: ["category"],
+        godownKey: "godown",
         newForm: {
-          screen: "otherScrap",
-          id: "collect",
-          title: "Record scrap collected",
-          sub: "A batch of plastic, cardboard or other scrap set aside for sale. Drums are not recorded here — they are weighed one by one against their GRN.",
+          screen: "scrapStock",
+          id: "new",
+          title: "Record scrap",
+          sub: "Plastic bags, cardboard and other scrap are recorded by category, a batch at a time — no record per bag or box. Empty drums are recorded from their label on Empty drums.",
           submit: "Save",
+          init: { date: today(), godown: ctx.workingGodown?.name ?? "", unit: "Kg" },
           header: [
-            { k: "date", l: "Date", t: "date", req: true, def: today() },
-            { k: "category", l: "Category", t: "select", req: true, opts: [CATEGORY_LABEL.plastic, CATEGORY_LABEL.cardboard, CATEGORY_LABEL.other] },
-            { k: "categoryNote", l: "What is it", t: "text", when: { k: "category", eq: CATEGORY_LABEL.other }, reqWhen: { k: "category", eq: CATEGORY_LABEL.other } },
+            { k: "date", l: "Date", t: "date", req: true },
+            { k: "category", l: "Category", t: "select", req: true, opts: cats },
+            { k: "godown", l: "Godown", t: "select", req: true, opts: gOpts.map((g) => g.name) },
             { k: "quantity", l: "Quantity", t: "num", req: true, min: 0.001 },
-            { k: "unit", l: "Unit", t: "select", req: true, opts: ["Kg", "Bags", "Pcs"], def: "Kg" },
-            { k: "godown", l: "Godown", t: "select", opts: godowns.map((g) => g.name), def: ctx.workingGodown?.name ?? "" },
-            { k: "note", l: "Note", t: "area" },
+            { k: "unit", l: "Unit", t: "select", req: true, opts: ["Kg", "Pcs"] },
+            { k: "note", l: "Note", t: "area", mic: true },
           ],
         },
-        newLabel: "Record scrap collected",
-        noDataLine: "No plastic, cardboard or other scrap recorded yet.",
+        newLabel: "Record scrap",
+        noDataLine: "No scrap on hand.",
       },
       rows,
     };
   },
   forms: {
-    async collect(ctx, h) {
-      const category = categoryByLabel(h.category ?? "");
-      if (!category || category === "drum") return fieldErr("category", "Choose plastic, cardboard or other scrap.");
-      const quantity = num(h.quantity);
-      if (quantity == null || quantity <= 0) return fieldErr("quantity", "Enter the quantity.");
-      const unit = text(h.unit) ?? "";
-      if (!["Kg", "Bags", "Pcs"].includes(unit)) return fieldErr("unit", "Choose Kg, Bags or Pcs.");
-      const note = category === "other" ? text(h.categoryNote) : null;
-      if (category === "other" && !note) return fieldErr("categoryNote", "Say what the scrap is.");
-      const date = text(h.date) ?? today();
-      if (date > today()) return fieldErr("date", "Cannot be dated in the future.");
-      const id = erpId("erpscl");
-      await db.insert(erpScrapCollections).values({ id, collectedDate: date, category, categoryNote: note, quantity, unit, godownId: await godownIdByName(text(h.godown)), note: text(h.note), createdById: ctx.user.id });
-      await erpAudit(ctx, "erp.scrapStock.create", "erp_scrap_collection", id, null, { category, quantity, unit, date });
-      return okVoid(`${nf(quantity)} ${unit} of ${CATEGORY_LABEL[category].toLowerCase()} recorded`);
+    async new(ctx, h) {
+      const godownId = await godownIdByName(text(h.godown));
+      if (!godownId) return fieldErr("godown", "Choose the godown.");
+      const cats = await refValues("scrapCategory");
+      if (!cats.includes(h.category ?? "")) return fieldErr("category", "Choose a category.");
+      return recordScrapEntry(actorOf(ctx), { date: text(h.date) ?? today(), category: h.category!, godownId, quantity: num(h.quantity) ?? 0, unit: h.unit === "Pcs" ? "Pcs" : "Kg", note: text(h.note) });
     },
   },
 };
 
-/* ======================================================== buyer ledger */
+const scrapEntries: ScreenModule = {
+  key: "scrapEntries",
+  async load(ctx) {
+    const rows = await db
+      .select({ e: erpScrapEntries, godown: erpGodowns.name, by: users.name })
+      .from(erpScrapEntries)
+      .innerJoin(erpGodowns, eq(erpGodowns.id, erpScrapEntries.godownId))
+      .leftJoin(users, eq(users.id, erpScrapEntries.createdById))
+      .orderBy(sql`${erpScrapEntries.entryDate} desc`);
+    return {
+      spec: {
+        screen: "scrapEntries",
+        cols: [
+          { k: "date", l: "Date", t: "d" },
+          { k: "category", l: "Category", t: "b" },
+          { k: "qty", l: "Quantity", t: "n" },
+          { k: "unit", l: "Unit", t: "t" },
+          { k: "godown", l: "Godown", t: "t" },
+          { k: "status", l: "Status", t: "s" },
+          { k: "by", l: "Recorded by", t: "t" },
+        ],
+        hidden: [],
+        groups: ["category", "godown"],
+        agg: { k: "qty", l: "recorded" },
+        godownKey: "godown",
+        noDataLine: "No scrap recorded yet.",
+      },
+      rows: rows.map((r) => ({
+        id: r.e.id,
+        v: { date: r.e.entryDate, category: r.e.category, qty: r.e.quantity, unit: r.e.unit, godown: r.godown, status: r.e.status === "active" ? "Recorded" : "Cancelled", by: r.by },
+        flags: [],
+        title: `${nf(r.e.quantity)} ${r.e.unit} of ${r.e.category}`,
+        fields: [{ l: "Note", v: r.e.note ?? "—" }, ...(r.e.cancelReason ? [{ l: "Cancelled because", v: r.e.cancelReason }] : [])],
+        actions: [{ id: "cancel", l: "Cancel entry", why: r.e.status !== "active" ? "Already cancelled" : why(ctx, "scrapApprove"), prompt: { title: "Cancel this scrap entry?", submit: "Cancel entry", fields: [reasonField()] } }],
+        by: stampLine(r.by, r.e.createdAt),
+      })),
+    };
+  },
+  actions: {
+    async cancel(ctx, id, v) {
+      if (!can(ctx, "scrapApprove")) return refused("scrapApprove");
+      return cancelScrapEntry(actorOf(ctx), id, v.reason ?? "");
+    },
+  },
+};
+
+/* ------------------------------------------------------------ scrap buyers */
 
 const scrapBuyers: ScreenModule = {
   key: "scrapBuyers",
   async load(ctx) {
-    const now = today();
-    const [buyers, sales, receipts] = await Promise.all([
-      db.execute(sql`select id, name, mobile, gstin, address, created_at as "createdAt" from erp_scrap_buyers order by name`) as unknown as Promise<{ id: string; name: string; mobile: string | null; gstin: string | null; address: string | null; createdAt: Date }[]>,
-      saleRows(sql`s.status = 'active'`),
-      db.execute(sql`
-        select r.buyer_id as "buyerId", r.receipt_no as no, r.receipt_date::text as date, r.amount_paise::float8 as amount, r.mode,
-               coalesce((select sum(a.amount_paise) from erp_scrap_allocations a where a.receipt_id = r.id and a.voided_at is null), 0)::float8 as allocated,
-               (select string_agg('SS-' || s.sale_no, ', ') from erp_scrap_allocations a join erp_scrap_sales s on s.id = a.sale_id where a.receipt_id = r.id and a.voided_at is null) as sales
-          from erp_scrap_receipts r where r.status = 'active'
-      `) as unknown as Promise<{ buyerId: string; no: number; date: string; amount: number; mode: string; allocated: number; sales: string | null }[]>,
-    ]);
-    const bucketKey: Record<AgeingBucket, string> = { Current: "b0", "1–7": "b1", "8–15": "b2", "16–30": "b3", "31–60": "b4", "60+": "b5" };
-    const cols: ColSpec[] = [
-      { k: "buyer", l: "Scrap buyer", t: "b" },
-      { k: "owed", l: "Outstanding", t: "m" },
-      { k: "sold", l: "Sold", t: "m" },
-      { k: "received", l: "Received", t: "m" },
-      ...AGEING_BUCKETS.map((b): ColSpec => ({ k: bucketKey[b], l: b === "Current" ? "Current" : `${b} days`, t: "m" })),
-      { k: "unallocated", l: "Received, not matched", t: "m" },
-      { k: "oldest", l: "Oldest due", t: "d" },
-      { k: "sales", l: "Sales", t: "n" },
-      { k: "mobile", l: "Phone", t: "ph" },
-    ];
+    const [buyers, sales, allocs] = await Promise.all([db.select().from(erpScrapBuyers).orderBy(asc(erpScrapBuyers.name)), saleRows(), allocationRows()]);
+    const day = today();
+    const form: FormSpec = {
+      screen: "scrapBuyers",
+      id: "new",
+      title: "New scrap buyer",
+      submit: "Add buyer",
+      header: [
+        { k: "name", l: "Name", t: "text", req: true },
+        { k: "phone", l: "Phone", t: "text" },
+        { k: "gstin", l: "GSTIN", t: "text" },
+        { k: "address", l: "Address", t: "area" },
+      ],
+    };
     return {
       spec: {
         screen: "scrapBuyers",
-        cols,
+        cols: [
+          { k: "name", l: "Scrap buyer", t: "b" },
+          { k: "phone", l: "Phone", t: "ph" },
+          { k: "sales", l: "Sales", t: "n" },
+          { k: "sold", l: "Sold", t: "m" },
+          { k: "received", l: "Received", t: "m" },
+          { k: "outstanding", l: "Outstanding", t: "m" },
+          ...AGE_BUCKETS.map((b, i) => ({ k: `a${i}`, l: b, t: "m" as const })),
+        ],
         hidden: [],
-        download: true,
-        agg: { k: "owed", l: "outstanding" },
-        sortDefault: ["owed", -1],
-        newForm: sells(ctx) || matches(ctx)
-          ? {
-              screen: "scrapBuyers",
-              id: "new",
-              title: "Add a scrap buyer",
-              submit: "Add buyer",
-              header: [
-                { k: "name", l: "Name", t: "text", req: true },
-                { k: "mobile", l: "Mobile", t: "text" },
-                { k: "gstin", l: "GSTIN", t: "text" },
-                { k: "address", l: "Address", t: "area" },
-              ],
-            }
-          : undefined,
-        newLabel: "Add buyer",
-        noDataLine: "No scrap buyers yet. A buyer is added the first time a sale names them.",
+        agg: { k: "outstanding", l: "outstanding" },
+        newForm: can(ctx, "scrapSale") || can(ctx, "scrapAccounts") ? form : undefined,
+        newLabel: "New scrap buyer",
+        noDataLine: "No scrap buyers yet.",
       },
-      rows: buyers.map((b): ListRow => {
-        const mine = sales.filter((s) => s.buyerId === b.id);
-        const mineR = receipts.filter((r) => r.buyerId === b.id);
-        const buckets: Record<string, number> = { b0: 0, b1: 0, b2: 0, b3: 0, b4: 0, b5: 0 };
-        let owed = 0;
-        let oldest: string | null = null;
-        for (const s of mine) {
-          const o = outstanding(s.amount, s.received);
-          if (o <= 0) continue;
-          owed += o;
-          const due = s.due ?? s.date;
-          buckets[bucketKey[ageingBucket(daysBetween(due, now))]] += o;
-          if (!oldest || due < oldest) oldest = due;
-        }
-        const unallocated = mineR.reduce((n, r) => n + Math.max(0, r.amount - r.allocated), 0);
-        const ledger = [
-          ...mine.map((s) => ({ date: s.date, sort: `${s.date}a${s.no}`, l: `${s.date} · ${saleNoLabel(s.no)}`, v: `Sale ${inr(s.amount)} · ${nf(s.quantity)} ${s.unit} ${categoryText(s.category, s.categoryNote).toLowerCase()}` })),
-          ...mineR.map((r) => ({ date: r.date, sort: `${r.date}b${r.no}`, l: `${r.date} · ${receiptNoLabel(Number(r.no))}`, v: `Received ${inr(r.amount)} by ${r.mode.toLowerCase()}${r.sales ? ` · matched to ${r.sales}` : ""}${r.amount - r.allocated > 0 ? ` · ${inr(r.amount - r.allocated)} not matched` : ""}` })),
-        ].sort((a, b) => (a.sort < b.sort ? -1 : 1));
+      rows: buyers.map((b) => {
+        const mine = sales.filter((s) => s.buyerId === b.id && s.status === "confirmed");
+        const buckets = Object.fromEntries(AGE_BUCKETS.map((x) => [x, 0])) as Record<string, number>;
+        for (const s of mine) if (s.outstandingPaise > 0) buckets[receivableBucket(s.dueDate, s.date, day)] += s.outstandingPaise;
+        /* The ledger: each sale a debit, each match a credit, in date order, with the running balance. */
+        const entries = [
+          ...mine.map((s) => ({ at: s.date, text: `${scrapSaleLabel(s.saleNo)} · ${s.category} · ${nf(s.quantity)} ${s.unit}${s.dueDate ? ` · due ${fd(s.dueDate)}` : ""}`, debit: s.amountPaise, credit: 0 })),
+          ...allocs.filter((a) => !a.voidedAt && mine.some((s) => s.id === a.saleId)).map((a) => ({ at: a.receiptDate, text: `${receiptLabel(a.receiptNo)} (${a.mode}) against ${scrapSaleLabel(a.saleNo)}`, debit: 0, credit: a.amountPaise })),
+        ].sort((x, y) => x.at.localeCompare(y.at) || y.debit - x.debit);
+        let bal = 0;
+        const sold = mine.reduce((t, s) => t + s.amountPaise, 0);
+        const received = mine.reduce((t, s) => t + s.matchedPaise, 0);
+        const outstandingNow = mine.reduce((t, s) => t + s.outstandingPaise, 0);
         return {
           id: b.id,
-          v: {
-            buyer: b.name,
-            owed,
-            sold: mine.reduce((n, s) => n + s.amount, 0),
-            received: mine.reduce((n, s) => n + s.received, 0),
-            ...buckets,
-            unallocated,
-            oldest,
-            sales: mine.length,
-            mobile: b.mobile,
-          },
-          flags: buckets.b4 + buckets.b5 > 0 ? ["overdueSale"] : [],
+          v: { name: b.name, phone: b.phone, sales: mine.length, sold, received, outstanding: outstandingNow, ...Object.fromEntries(AGE_BUCKETS.map((x, i) => [`a${i}`, buckets[x] || null])) },
+          flags: b.active ? [] : ["inactive"],
           title: b.name,
-          header: `Outstanding ${inr(owed)} on ${plural(mine.filter((s) => outstanding(s.amount, s.received) > 0).length, "sale")}`,
-          fields: [
-            ...(b.gstin ? [{ l: "GSTIN", v: b.gstin }] : []),
-            ...(b.address ? [{ l: "Address", v: b.address }] : []),
-            ...(ledger.length ? ledger.map((x) => ({ l: x.l, v: x.v })) : [{ l: "Ledger", v: "Nothing sold or received yet." }]),
-          ],
-          contacts: b.mobile ? [{ l: "Call", href: `tel:${b.mobile}` }] : [],
-          actions: [
-            { id: "sales", l: "See their sales", primary: true, href: erpLink("scrapSales") },
-            { id: "receipts", l: "Record a receipt", href: erpLink("scrapReceipts", { new: matches(ctx) ? "1" : null, buyer: b.name }) },
-          ],
-          by: stampLine(null, b.createdAt).replace("Created", "Added"),
+          fields: [{ l: "GSTIN", v: b.gstin ?? "—" }, { l: "Address", v: b.address ?? "—" }],
+          contacts: b.phone ? [{ l: "Call", href: `tel:${b.phone}` }] : [],
+          actions: [b.active ? { id: "retire", l: "Retire", why: why(ctx, "scrapSale") } : { id: "restore", l: "Restore", why: why(ctx, "scrapSale") }],
+          by: stampLine(null, b.createdAt),
+          panel: {
+            kind: "scrap",
+            data: {
+              figures: [
+                { l: "Sold", v: inr(sold) },
+                { l: "Received", v: inr(received), tone: "success" },
+                { l: "Outstanding", v: inr(outstandingNow), tone: outstandingNow > 0 ? "danger" : "success" },
+              ],
+              sections: [
+                {
+                  title: "Ledger",
+                  empty: "No sales yet.",
+                  lines: entries.map((e) => {
+                    bal += e.debit - e.credit;
+                    return { text: `${e.debit ? "Debit " + inr(e.debit) : "Credit " + inr(e.credit)} · ${e.text}`, sub: `${fd(e.at)} · balance ${inr(bal)}`, tone: e.credit ? ("success" as const) : undefined };
+                  }),
+                },
+              ],
+            } satisfies ScrapPanel,
+          },
         };
       }),
     };
   },
   forms: {
     async new(ctx, h) {
-      if (!sells(ctx) && !matches(ctx)) return err(powerRefusal("scrapSell"), "not_permitted");
+      if (!can(ctx, "scrapSale") && !can(ctx, "scrapAccounts")) return refused("scrapSale");
       const name = text(h.name);
-      if (!name) return fieldErr("name", "Name the buyer.");
-      const [dup] = (await db.execute(sql`select 1 from erp_scrap_buyers where lower(name) = lower(${name})`)) as unknown as unknown[];
-      if (dup) return fieldErr("name", "There is already a buyer by that name.");
-      const id = erpId("erpsbu");
-      await db.insert(erpScrapBuyers).values({ id, name, mobile: text(h.mobile), gstin: text(h.gstin)?.toUpperCase() ?? null, address: text(h.address), createdById: ctx.user.id });
+      if (!name) return fieldErr("name", "Enter the buyer's name.");
+      const [dup] = (await db.execute(sql`select id from erp_scrap_buyers where lower(name) = lower(${name})`)) as unknown as { id: string }[];
+      if (dup) return fieldErr("name", "A scrap buyer of that name already exists.");
+      const id = erpId("sbuy");
+      await db.insert(erpScrapBuyers).values({ id, name, phone: text(h.phone), gstin: text(h.gstin)?.toUpperCase() ?? null, address: text(h.address), createdById: ctx.user.id });
       await erpAudit(ctx, "erp.scrapBuyer.create", "erp_scrap_buyer", id, null, { name });
       return okVoid(`${name} added`);
     },
   },
+  actions: {
+    async retire(ctx, id) {
+      if (!can(ctx, "scrapSale")) return refused("scrapSale");
+      await db.update(erpScrapBuyers).set({ active: false }).where(eq(erpScrapBuyers.id, id));
+      await erpAudit(ctx, "erp.scrapBuyer.retire", "erp_scrap_buyer", id);
+      return okVoid("Retired");
+    },
+    async restore(ctx, id) {
+      if (!can(ctx, "scrapSale")) return refused("scrapSale");
+      await db.update(erpScrapBuyers).set({ active: true }).where(eq(erpScrapBuyers.id, id));
+      await erpAudit(ctx, "erp.scrapBuyer.restore", "erp_scrap_buyer", id);
+      return okVoid("Restored");
+    },
+  },
 };
 
-/* ============================================================== receipts */
+/* ------------------------------------------------------------ Petty Cash/Bank receipts */
 
-type ReceiptRow = { id: string; no: number; date: string; buyerId: string; buyer: string; mode: string; amount: number; reference: string | null; note: string | null; status: "active" | "void"; voidReason: string | null; allocated: number; createdAt: Date; by: string | null };
-
-async function receiptRows(): Promise<ReceiptRow[]> {
-  const rows = (await db.execute(sql`
-    select r.id, r.receipt_no as no, r.receipt_date::text as date, r.buyer_id as "buyerId", b.name as buyer, r.mode, r.amount_paise::float8 as amount,
-           r.reference, r.note, r.status, r.void_reason as "voidReason",
-           coalesce((select sum(a.amount_paise) from erp_scrap_allocations a where a.receipt_id = r.id and a.voided_at is null), 0)::float8 as allocated,
-           r.created_at as "createdAt", u.name as by
-      from erp_scrap_receipts r join erp_scrap_buyers b on b.id = r.buyer_id left join users u on u.id = r.created_by_id
-     order by r.receipt_date desc, r.receipt_no desc
-  `)) as unknown as ReceiptRow[];
-  return rows.map((r) => ({ ...r, no: Number(r.no), amount: Number(r.amount), allocated: Number(r.allocated) }));
-}
-
-const APPLY_OLDEST = "Match to their oldest sales first";
-const APPLY_LATER = "Leave unmatched for now";
-
-const openSaleLabel = (s: SaleRow) => `${saleNoLabel(s.no)} · ${s.date} · ${inr(outstanding(s.amount, s.received))} owed`;
-
-const scrapReceipts: ScreenModule = {
-  key: "scrapReceipts",
+const cashReceipts: ScreenModule = {
+  key: "cashReceipts",
   async load(ctx) {
-    const [rows, buyers, open, allocs] = await Promise.all([
-      receiptRows(),
-      buyerNames(),
-      saleRows(sql`s.status = 'active'`),
-      db.execute(sql`
-        select a.id, a.receipt_id as "receiptId", a.amount_paise::float8 as amount, s.sale_no as no, a.created_at as at, u.name as by
-          from erp_scrap_allocations a join erp_scrap_sales s on s.id = a.sale_id left join users u on u.id = a.created_by_id
-         where a.voided_at is null order by a.created_at
-      `) as unknown as Promise<{ id: string; receiptId: string; amount: number; no: number; at: Date; by: string | null }[]>,
-    ]);
-    const cols: ColSpec[] = [
-      { k: "no", l: "Receipt", t: "mono", w: 90 },
-      { k: "date", l: "Date", t: "d" },
-      { k: "buyer", l: "Scrap buyer", t: "b" },
-      { k: "status", l: "Matched", t: "s" },
-      { k: "amount", l: "Amount", t: "m" },
-      { k: "allocated", l: "Matched to sales", t: "m" },
-      { k: "left", l: "Not matched", t: "m" },
-      { k: "mode", l: "Cash / bank", t: "s" },
-      { k: "ref", l: "Reference", t: "mono" },
-      { k: "sales", l: "Sales", t: "t" },
-    ];
-    const can = matches(ctx);
+    const [rows, buyers, sales, allocs] = await Promise.all([receiptRows(), buyerOptions(), saleRows(), allocationRows()]);
+    const acc = can(ctx, "scrapAccounts");
+    const form: FormSpec = {
+      screen: "cashReceipts",
+      id: "new",
+      title: "Record a receipt",
+      sub: "Money that came into petty cash or the bank from a scrap buyer. Match it to the sales it pays for once it is recorded.",
+      submit: "Save receipt",
+      init: { date: today(), mode: "Bank transfer" },
+      header: [
+        { k: "date", l: "Received on", t: "date", req: true },
+        { k: "mode", l: "Mode", t: "select", req: true, opts: RECEIPT_MODES },
+        { k: "amount", l: "Amount (₹)", t: "num", req: true, min: 0.01 },
+        { k: "buyer", l: "Scrap buyer", t: "select", opts: buyers.map((b) => b.name), hint: "Leave empty if the bank line does not say who — name the payer instead." },
+        { k: "payer", l: "Payer as on the bank line", t: "text" },
+        { k: "reference", l: "UTR / cheque no. / slip", t: "text" },
+        { k: "note", l: "Note", t: "area" },
+      ],
+    };
     return {
       spec: {
-        screen: "scrapReceipts",
-        cols,
+        screen: "cashReceipts",
+        cols: [
+          { k: "no", l: "Receipt", t: "mono" },
+          { k: "date", l: "Received", t: "d" },
+          { k: "from", l: "From", t: "b" },
+          { k: "mode", l: "Mode", t: "s" },
+          { k: "amount", l: "Amount", t: "m" },
+          { k: "matched", l: "Matched", t: "m" },
+          { k: "left", l: "Unmatched", t: "m" },
+          { k: "reference", l: "Reference", t: "mono" },
+          { k: "state", l: "State", t: "s" },
+        ],
         hidden: [],
-        chips: "status",
-        groups: ["buyer"],
-        agg: { k: "left", l: "not matched" },
-        download: true,
-        sortDefault: ["no", -1],
-        newForm: can
-          ? {
-              screen: "scrapReceipts",
-              id: "new",
-              title: "Record a scrap receipt",
-              sub: "Money a scrap buyer paid, as it reached petty cash or the bank. Matching it to their sales is what reduces what they owe.",
-              submit: "Save receipt",
-              header: [
-                { k: "date", l: "Received on", t: "date", req: true, def: today() },
-                { k: "buyer", l: "Scrap buyer", t: "select", req: true, opts: buyers },
-                { k: "mode", l: "Cash or bank", t: "select", req: true, opts: ["Bank", "Cash"], def: "Bank" },
-                { k: "amount", l: "Amount (₹)", t: "num", req: true, min: 0.01 },
-                { k: "reference", l: "UTR / cheque / voucher", t: "text" },
-                { k: "apply", l: "Match it", t: "select", req: true, opts: [APPLY_OLDEST, APPLY_LATER], def: APPLY_OLDEST, hint: "Oldest first never puts more on a sale than it owes; anything left stays here to match later." },
-                { k: "note", l: "Note", t: "area" },
-              ],
-            }
-          : undefined,
+        groups: ["from", "mode", "state"],
+        chips: "state",
+        agg: { k: "left", l: "unmatched" },
+        newForm: acc ? form : undefined,
         newLabel: "Record receipt",
-        noDataLine: can ? "No scrap receipts yet. Record one when a buyer's money reaches petty cash or the bank." : "No scrap receipts yet. The accountant records them.",
+        noDataLine: "No receipts recorded. A scrap buyer's payment is recorded here, then matched to the sales it pays for.",
       },
-      rows: rows.map((r): ListRow => {
-        const left = r.status === "void" ? 0 : r.amount - r.allocated;
+      rows: rows.map((r) => {
+        const live = r.status === "active";
+        const open = sales.filter((s) => s.status === "confirmed" && s.outstandingPaise > 0 && (!r.buyerId || s.buyerId === r.buyerId));
         const mine = allocs.filter((a) => a.receiptId === r.id);
-        const buyerOpen = open.filter((s) => s.buyerId === r.buyerId && outstanding(s.amount, s.received) > 0);
-        const actions: ActionSpec[] =
-          r.status === "void"
-            ? []
-            : [
-                {
-                  id: "allocate",
-                  l: "Match to a sale",
-                  primary: left > 0,
-                  why: !can ? powerRefusal("scrapReceipts") : left <= 0 ? "Nothing on this receipt is left to match." : !buyerOpen.length ? `${r.buyer} owes nothing on any sale.` : "",
-                  prompt: {
-                    title: `Match ${receiptNoLabel(r.no)} to a sale`,
-                    sub: `${inr(left)} of this receipt is not matched yet.`,
-                    submit: "Match",
-                    fields: [
-                      { k: "sale", l: "Sale", t: "select", req: true, opts: buyerOpen.map(openSaleLabel) },
-                      { k: "amount", l: "Amount (₹)", t: "num", req: true, min: 0.01 },
-                    ],
-                    init: buyerOpen[0] ? { sale: openSaleLabel(buyerOpen[0]), amount: String(Math.min(left, outstanding(buyerOpen[0].amount, buyerOpen[0].received)) / 100) } : {},
-                  },
-                },
-                {
-                  id: "unmatch",
-                  l: "Unmatch from a sale",
-                  why: !can ? powerRefusal("scrapReceipts") : !mine.length ? "Nothing is matched yet." : "",
-                  prompt: {
-                    title: `Unmatch part of ${receiptNoLabel(r.no)}`,
-                    sub: "The match is kept, marked undone, with your reason.",
-                    submit: "Unmatch",
-                    fields: [
-                      { k: "allocation", l: "Match", t: "select", req: true, opts: mine.map((a) => `${saleNoLabel(Number(a.no))} · ${inr(a.amount)}`) },
-                      { k: "reason", l: "Why", t: "area", req: true },
-                    ],
-                  },
-                },
-                {
-                  id: "void",
-                  l: "Void this receipt",
-                  why: can ? "" : powerRefusal("scrapReceipts"),
-                  prompt: { title: `Void ${receiptNoLabel(r.no)}`, sub: "Its matches are undone too, so the sales owe again. The receipt stays, marked void, with your reason.", submit: "Void receipt", fields: [{ k: "reason", l: "Why", t: "area", req: true }] },
-                },
-              ];
+        const liveMatches = mine.filter((a) => !a.voidedAt);
+        const matchWhy = !live ? "This receipt is void" : r.leftPaise <= 0 ? "Fully matched" : !open.length ? "No outstanding scrap sale for this buyer" : why(ctx, "scrapAccounts");
+        const plan = suggestAllocation(r.leftPaise, open.map((s) => ({ id: s.id, due: s.dueDate ?? s.date, outstandingPaise: s.outstandingPaise })));
         return {
           id: r.id,
           v: {
-            no: receiptNoLabel(r.no),
+            no: receiptLabel(r.receiptNo),
             date: r.date,
-            buyer: r.buyer,
-            status: r.status === "void" ? "Void" : left <= 0 ? "Fully matched" : r.allocated > 0 ? "Partly matched" : "Not matched",
-            amount: r.amount,
-            allocated: r.allocated,
-            left,
+            from: r.buyer ?? r.payer ?? "—",
             mode: r.mode,
-            ref: r.reference,
-            sales: mine.map((a) => saleNoLabel(Number(a.no))).join(", ") || null,
+            amount: r.amountPaise,
+            matched: r.matchedPaise,
+            left: r.leftPaise,
+            reference: r.reference,
+            state: !live ? "Void" : r.leftPaise <= 0 ? "Matched" : r.matchedPaise > 0 ? "Part matched" : "Not matched",
           },
-          flags: r.status === "active" && left > 0 ? ["unallocated"] : [],
-          title: `${receiptNoLabel(r.no)} · ${r.buyer}`,
-          header: `${inr(r.amount)} by ${r.mode.toLowerCase()} on ${r.date}${r.status === "void" ? " · void" : ""}`,
-          fields: [
-            ...mine.map((a) => ({ l: `Matched to ${saleNoLabel(Number(a.no))}`, v: `${inr(a.amount)} · ${stampLine(a.by, a.at).replace(/^Created /, "")}` })),
-            ...(r.reference ? [{ l: "Reference", v: r.reference }] : []),
-            ...(r.note ? [{ l: "Note", v: r.note }] : []),
-            ...(r.voidReason ? [{ l: "Voided because", v: r.voidReason }] : []),
+          flags: live && r.leftPaise > 0 ? ["unmatched"] : [],
+          title: `${receiptLabel(r.receiptNo)} · ${inr(r.amountPaise)} · ${r.buyer ?? r.payer ?? ""}`,
+          fields: [{ l: "Note", v: r.note ?? "—" }],
+          actions: [
+            {
+              id: "match",
+              l: "Match to a sale",
+              primary: true,
+              why: matchWhy,
+              prompt: {
+                title: `Match ${receiptLabel(r.receiptNo)}`,
+                sub: `${inr(r.leftPaise)} of it is not yet matched.`,
+                submit: "Match",
+                fields: [
+                  { k: "sale", l: "Scrap sale", t: "select", req: true, opts: open.map((s) => `${scrapSaleLabel(s.saleNo)} · ${s.buyer} · ${inr(s.outstandingPaise)} outstanding`) },
+                  { k: "amount", l: "Amount (₹)", t: "num", req: true, min: 0.01, max: r.leftPaise / 100 },
+                ],
+              },
+            },
+            {
+              id: "auto",
+              l: "Match oldest due first",
+              why: matchWhy,
+              confirm: plan.length ? `Match ${plan.map((p) => `${inr(p.amountPaise)} to ${scrapSaleLabel(open.find((s) => s.id === p.saleId)!.saleNo)}`).join(", ")}?` : undefined,
+            },
+            {
+              id: "unmatch",
+              l: "Undo a match",
+              why: !liveMatches.length ? "Nothing matched" : why(ctx, "scrapAccounts"),
+              prompt: {
+                title: "Undo a match",
+                sub: "The sale becomes outstanding again by that amount. The match is kept, marked undone.",
+                submit: "Undo",
+                fields: [{ k: "alloc", l: "Match", t: "select", req: true, opts: liveMatches.map((a) => `${scrapSaleLabel(a.saleNo)} · ${inr(a.amountPaise)}`) }, reasonField()],
+              },
+            },
+            { id: "void", l: "Void receipt", why: !live ? "Already void" : liveMatches.length ? "Undo its matches first" : why(ctx, "scrapAccounts"), prompt: { title: `Void ${receiptLabel(r.receiptNo)}?`, sub: "For a receipt recorded in error. Kept, marked void.", submit: "Void", fields: [reasonField()] } },
           ],
-          actions,
           by: stampLine(r.by, r.createdAt),
+          panel: {
+            kind: "scrap",
+            data: {
+              figures: [
+                { l: "Received", v: inr(r.amountPaise) },
+                { l: "Matched", v: inr(r.matchedPaise), tone: "success" },
+                { l: "Unmatched", v: inr(r.leftPaise), tone: r.leftPaise > 0 ? "danger" : undefined },
+              ],
+              sections: [
+                {
+                  title: "Matched to",
+                  empty: "Not matched to any sale yet.",
+                  lines: mine.map((a) => ({ text: `${inr(a.amountPaise)} → ${scrapSaleLabel(a.saleNo)}`, sub: a.voidedAt ? `Undone — ${a.voidReason}` : `by ${a.by ?? "—"} · ${new Date(a.at).toLocaleDateString("en-IN", { timeZone: APP_TIMEZONE })}`, tone: a.voidedAt ? ("muted" as const) : undefined })),
+                },
+              ],
+            } satisfies ScrapPanel,
+          },
         };
       }),
     };
   },
   forms: {
     async new(ctx, h) {
-      if (!matches(ctx)) return err(powerRefusal("scrapReceipts"), "not_permitted");
+      if (!can(ctx, "scrapAccounts")) return refused("scrapAccounts");
+      const buyer = (await buyerOptions()).find((b) => b.name === h.buyer);
       const amount = paise(h.amount);
-      if (amount == null || amount <= 0) return fieldErr("amount", "Enter the amount received.");
-      const mode = h.mode === "Cash" ? "Cash" : h.mode === "Bank" ? "Bank" : null;
-      if (!mode) return fieldErr("mode", "Choose cash or bank.");
-      const date = text(h.date) ?? today();
-      if (date > today()) return fieldErr("date", "A receipt cannot be dated in the future.");
-      let no = 0;
-      let buyer = "";
-      let matched = 0;
-      const res = await inTx(async (tx) => {
-        const [b] = (await tx.execute(sql`select id, name from erp_scrap_buyers where name = ${h.buyer ?? ""}`)) as unknown as { id: string; name: string }[];
-        if (!b) return refuse(fieldErr("buyer", "Choose the scrap buyer."));
-        buyer = b.name;
-        no = await nextNumber(tx, "scrapReceipt");
-        const id = erpId("erpsrc");
-        await tx.insert(erpScrapReceipts).values({ id, receiptNo: no, receiptDate: date, buyerId: b.id, mode, amountPaise: amount, reference: text(h.reference), note: text(h.note), createdById: ctx.user.id });
-        if (h.apply !== APPLY_LATER) {
-          const open = (await tx.execute(sql`
-            select s.id, s.amount_paise::float8 - coalesce((select sum(a.amount_paise) from erp_scrap_allocations a where a.sale_id = s.id and a.voided_at is null), 0)::float8 as owed
-              from erp_scrap_sales s where s.buyer_id = ${b.id} and s.status = 'active'
-             order by coalesce(s.due_date, s.sale_date), s.sale_no
-               for update of s
-          `)) as unknown as { id: string; owed: number }[];
-          const spread = spreadOldestFirst(
-            amount,
-            open.map((o) => ({ id: o.id, owedPaise: Math.max(0, Number(o.owed)) })),
-          );
-          for (const s of spread) {
-            await tx.insert(erpScrapAllocations).values({ id: erpId("erpsal"), receiptId: id, saleId: s.saleId, amountPaise: s.amountPaise, createdById: ctx.user.id });
-            matched += s.amountPaise;
-          }
-        }
-        return okVoid("");
-      });
-      if (!res.ok) return res;
-      await erpAudit(ctx, "erp.scrapReceipt.create", "erp_scrap_receipt", receiptNoLabel(no), null, { buyer, amountPaise: amount, mode, reference: text(h.reference), matchedPaise: matched });
-      return okVoid(`${receiptNoLabel(no)}: ${inr(amount)} from ${buyer}${matched ? ` · ${inr(matched)} matched to their oldest sales` : ""}${amount - matched > 0 && h.apply !== APPLY_LATER ? ` · ${inr(amount - matched)} left to match` : ""}`);
+      if (amount == null) return fieldErr("amount", "Enter the amount received.");
+      const r = await recordReceipt(actorOf(ctx), { date: text(h.date) ?? today(), mode: h.mode ?? "", amountPaise: amount, buyerId: buyer?.id ?? null, payer: text(h.payer), reference: text(h.reference), note: text(h.note) });
+      return r.ok ? okVoid(r.message) : r;
     },
   },
   actions: {
-    async allocate(ctx, id, values) {
-      if (!matches(ctx)) return err(powerRefusal("scrapReceipts"), "not_permitted");
-      const saleNo = Number((values.sale ?? "").match(/^SS-(\d+)/)?.[1] ?? NaN);
-      if (!Number.isFinite(saleNo)) return fieldErr("sale", "Choose the sale.");
-      const amount = paise(values.amount);
-      if (amount == null) return fieldErr("amount", "Enter the amount to match.");
-      let label = "";
-      const res = await inTx(async (tx) => {
-        const [r] = (await tx.execute(sql`
-          select r.receipt_no as no, r.buyer_id as "buyerId", r.status, r.amount_paise::float8 - coalesce((select sum(a.amount_paise) from erp_scrap_allocations a where a.receipt_id = r.id and a.voided_at is null), 0)::float8 as left
-            from erp_scrap_receipts r where r.id = ${id} for update
-        `)) as unknown as { no: number; buyerId: string; status: string; left: number }[];
-        if (!r) return refuse(err("No such receipt.", "not_found"));
-        if (r.status === "void") return refuse(err("This receipt is void.", "rule_violation"));
-        const [s] = (await tx.execute(sql`
-          select s.id, s.buyer_id as "buyerId", s.status, s.amount_paise::float8 - coalesce((select sum(a.amount_paise) from erp_scrap_allocations a where a.sale_id = s.id and a.voided_at is null), 0)::float8 as owed
-            from erp_scrap_sales s where s.sale_no = ${saleNo} for update
-        `)) as unknown as { id: string; buyerId: string; status: string; owed: number }[];
-        if (!s || s.status !== "active") return refuse(fieldErr("sale", "That sale is not open."));
-        if (s.buyerId !== r.buyerId) return refuse(fieldErr("sale", "That sale is another buyer's."));
-        const why = allocationRefusal(amount, Number(r.left), Math.max(0, Number(s.owed)));
-        if (why) return refuse(fieldErr("amount", why));
-        await tx.insert(erpScrapAllocations).values({ id: erpId("erpsal"), receiptId: id, saleId: s.id, amountPaise: amount, createdById: ctx.user.id });
-        label = receiptNoLabel(Number(r.no));
-        return okVoid("");
-      });
-      if (!res.ok) return res;
-      await erpAudit(ctx, "erp.scrapReceipt.allocate", "erp_scrap_receipt", label, null, { sale: saleNoLabel(saleNo), amountPaise: amount });
-      return okVoid(`${inr(amount)} of ${label} matched to ${saleNoLabel(saleNo)}`);
+    async match(ctx, id, v) {
+      if (!can(ctx, "scrapAccounts")) return refused("scrapAccounts");
+      const no = Number(/^SCR-(\d+)/.exec(v.sale ?? "")?.[1]);
+      const sale = (await saleRows()).find((s) => s.saleNo === no);
+      if (!sale) return fieldErr("sale", "Choose the sale.");
+      const amount = paise(v.amount);
+      if (amount == null) return fieldErr("amount", "Enter the amount.");
+      return allocateReceipt(actorOf(ctx), id, sale.id, amount);
     },
-    async unmatch(ctx, id, values) {
-      if (!matches(ctx)) return err(powerRefusal("scrapReceipts"), "not_permitted");
-      const reason = text(values.reason);
-      if (!reason) return fieldErr("reason", "Say why.");
-      const saleNo = Number((values.allocation ?? "").match(/^SS-(\d+)/)?.[1] ?? NaN);
-      if (!Number.isFinite(saleNo)) return fieldErr("allocation", "Choose the match to undo.");
-      let label = "";
-      let amount = 0;
-      const res = await inTx(async (tx) => {
-        const [a] = (await tx.execute(sql`
-          select a.id, a.amount_paise::float8 as amount, r.receipt_no as no
-            from erp_scrap_allocations a join erp_scrap_sales s on s.id = a.sale_id join erp_scrap_receipts r on r.id = a.receipt_id
-           where a.receipt_id = ${id} and s.sale_no = ${saleNo} and a.voided_at is null
-           order by a.created_at desc limit 1 for update of a
-        `)) as unknown as { id: string; amount: number; no: number }[];
-        if (!a) return refuse(fieldErr("allocation", "That match is not there any more."));
-        await tx.execute(sql`update erp_scrap_allocations set voided_at = now(), voided_by_id = ${ctx.user.id}, void_reason = ${reason} where id = ${a.id}`);
-        label = receiptNoLabel(Number(a.no));
-        amount = Number(a.amount);
-        return okVoid("");
-      });
-      if (!res.ok) return res;
-      await erpAudit(ctx, "erp.scrapReceipt.unmatch", "erp_scrap_receipt", label, { sale: saleNoLabel(saleNo), amountPaise: amount }, { reason });
-      return okVoid(`${inr(amount)} of ${label} unmatched from ${saleNoLabel(saleNo)}`);
+    async auto(ctx, id) {
+      if (!can(ctx, "scrapAccounts")) return refused("scrapAccounts");
+      const rc = (await receiptRows()).find((r) => r.id === id);
+      if (!rc) return err("That receipt is gone.", "not_found");
+      const open = (await saleRows()).filter((s) => s.status === "confirmed" && s.outstandingPaise > 0 && (!rc.buyerId || s.buyerId === rc.buyerId));
+      const plan = suggestAllocation(rc.leftPaise, open.map((s) => ({ id: s.id, due: s.dueDate ?? s.date, outstandingPaise: s.outstandingPaise })));
+      if (!plan.length) return err("Nothing to match.", "rule_violation");
+      let n = 0;
+      for (const p of plan) {
+        const r = await allocateReceipt(actorOf(ctx), id, p.saleId, p.amountPaise);
+        if (!r.ok) return n ? okVoid(`${n} matched; then: ${r.error}`) : r;
+        n++;
+      }
+      return okVoid(`Matched to ${n} sale${n === 1 ? "" : "s"}, oldest due first`);
     },
-    async void(ctx, id, values) {
-      if (!matches(ctx)) return err(powerRefusal("scrapReceipts"), "not_permitted");
-      const reason = text(values.reason);
-      if (!reason) return fieldErr("reason", "Say why the receipt is being voided.");
-      let label = "";
-      const res = await inTx(async (tx) => {
-        const [r] = (await tx.execute(sql`select receipt_no as no, status from erp_scrap_receipts where id = ${id} for update`)) as unknown as { no: number; status: string }[];
-        if (!r) return refuse(err("No such receipt.", "not_found"));
-        if (r.status === "void") return refuse(err("This receipt is already void.", "rule_violation"));
-        label = receiptNoLabel(Number(r.no));
-        await tx.execute(sql`update erp_scrap_allocations set voided_at = now(), voided_by_id = ${ctx.user.id}, void_reason = ${`Receipt voided: ${reason}`} where receipt_id = ${id} and voided_at is null`);
-        await tx.execute(sql`update erp_scrap_receipts set status = 'void', void_reason = ${reason}, voided_at = now(), voided_by_id = ${ctx.user.id} where id = ${id}`);
-        return okVoid("");
-      });
-      if (!res.ok) return res;
-      await erpAudit(ctx, "erp.scrapReceipt.void", "erp_scrap_receipt", label, null, { reason });
-      return okVoid(`${label} voided`);
+    async unmatch(ctx, id, v) {
+      if (!can(ctx, "scrapAccounts")) return refused("scrapAccounts");
+      const live = (await allocationRows({ receiptId: id })).filter((a) => !a.voidedAt);
+      const a = live.find((x) => `${scrapSaleLabel(x.saleNo)} · ${inr(x.amountPaise)}` === v.alloc);
+      if (!a) return fieldErr("alloc", "Choose the match to undo.");
+      return voidAllocation(actorOf(ctx), a.id, v.reason ?? "");
+    },
+    async void(ctx, id, v) {
+      if (!can(ctx, "scrapAccounts")) return refused("scrapAccounts");
+      return voidReceipt(actorOf(ctx), id, v.reason ?? "");
     },
   },
 };
 
-/* ========================================================= tare variance */
+/* The lot behind a typed code, for screens that want to say what it is before saving. */
+export async function describeLot(code: string): Promise<string> {
+  const lot = await findDrumLot(code);
+  if (!lot) return "Not a lot in the purchase register.";
+  return lotRefusal(lot) ?? `${lot.material} from ${lot.supplier}, PR ${lot.prNumber} — ${lot.registered.length} of ${lot.drums ?? "?"} drums recorded empty.`;
+}
 
-const tareVarianceScreen: ScreenModule = {
-  key: "tareVariance",
-  async load() {
-    const config = await getConfig();
-    const alert = config["erp.scrap.varianceAlertKg"];
-    const rows = await drumRows(sql`d.status <> 'cancelled'`);
-    const cols: ColSpec[] = [
-      { k: "drum", l: "Drum", t: "mono", w: 96 },
-      { k: "supplier", l: "Supplier", t: "b" },
-      { k: "item", l: "Material", t: "t" },
-      { k: "variance", l: "Variance", t: "n", u: " kg" },
-      { k: "pct", l: "Variance %", t: "n", u: "%" },
-      { k: "declared", l: "Declared tare", t: "n", u: " kg" },
-      { k: "actual", l: "Actual empty", t: "n", u: " kg" },
-      { k: "lot", l: "GRN lot", t: "mono" },
-      { k: "pr", l: "PR", t: "mono" },
-      { k: "emptied", l: "Emptied", t: "d" },
-      { k: "f", l: "Flags", t: "f" },
-    ];
-    return {
-      spec: {
-        screen: "tareVariance",
-        cols,
-        hidden: [],
-        readOnly: true,
-        download: true,
-        groups: ["supplier", "item"],
-        agg: { k: "variance", l: "kg average", t: "avg" },
-        sortDefault: ["variance", -1],
-        scopedLine: `Actual empty weight − the supplier's declared tare from the GRN. The GRN's figure is never changed. Flagged at ${nf(alert)} kg or more either way (Settings → ERP).`,
-        noDataLine: "No drum with a declared tare has been weighed empty yet.",
-      },
-      rows: rows
-        .filter((r) => r.declared != null)
-        .map((r) => {
-          const v = tareVariance(r.weight, r.declared)!;
-          return {
-            id: r.id,
-            v: { drum: drumNoLabel(r.drumNo), supplier: r.supplier, item: r.item, variance: v.kg, pct: v.pct, declared: r.declared, actual: r.weight, lot: r.lot, pr: String(r.pr), emptied: calendarDate(new Date(r.emptiedAt)) },
-            flags: highVariance(v, alert) ? ["tareHigh"] : [],
-            title: `${drumNoLabel(r.drumNo)} · ${r.supplier}`,
-            header: `${signedKg(v.kg)} against a declared ${nf(r.declared!)} kg`,
-            actions: [{ id: "open", l: "Open the drum", primary: true, href: erpLink("emptyDrums", { open: r.id }) }],
-          };
-        }),
-    };
-  },
-};
-
-export const SCRAP_SCREENS: ScreenModule[] = [emptyDrums, drumStock, returnableDrums, drumReturns, scrapSales, otherScrap, scrapBuyers, scrapReceipts, tareVarianceScreen];
+export const SCRAP_SCREENS: ScreenModule[] = [
+  emptyDrums,
+  drumReturnable,
+  drumReview,
+  drumVariance,
+  drumAdjustments,
+  drumRegister,
+  drumReturns,
+  drumPending,
+  scrapSales,
+  scrapReceivables,
+  scrapStockScreen,
+  scrapEntries,
+  scrapBuyers,
+  cashReceipts,
+];

@@ -153,16 +153,18 @@ export async function erpNavCounts(ctx: ErpContext): Promise<Record<string, numb
         if (ctx.powers.has("stockControl")) out.stockAdjustments = Number(r[0]?.adj ?? 0);
       }),
     );
-  /* Scrap: drums whose owner nobody recorded, and — for the accountant — receipts not yet matched to a sale. */
-  if (ctx.screens.has("emptyDrums"))
+  /* Empty drums: drums whose owner nobody has recorded, corrections waiting for an approver, and receipts not yet matched. */
+  if (["drumReview", "drumAdjustments", "cashReceipts"].some((k) => ctx.screens.has(k)))
     jobs.push(
       (db.execute(sql`
         select (select count(*) from erp_empty_drums where status = 'review')::int as review,
-               (select count(*) from erp_scrap_receipts r where r.status = 'active'
-                  and r.amount_paise > coalesce((select sum(a.amount_paise) from erp_scrap_allocations a where a.receipt_id = r.id and a.voided_at is null), 0))::int as unmatched
-      `) as unknown as Promise<{ review: number; unmatched: number }[]>).then((r) => {
-        out.emptyDrums = Number(r[0]?.review ?? 0);
-        if (ctx.powers.has("scrapReceipts")) out.scrapReceipts = Number(r[0]?.unmatched ?? 0);
+               (select count(*) from erp_drum_adjustments where status = 'pending')::int as adj,
+               (select count(*) from erp_cash_receipts r where r.status = 'active'
+                   and r.amount_paise > coalesce((select sum(a.amount_paise) from erp_scrap_allocations a where a.receipt_id = r.id and a.voided_at is null), 0))::int as unmatched
+      `) as unknown as Promise<{ review: number; adj: number; unmatched: number }[]>).then((r) => {
+        if (ctx.screens.has("drumReview")) out.drumReview = Number(r[0]?.review ?? 0);
+        if (ctx.screens.has("drumAdjustments") && ctx.powers.has("scrapApprove")) out.drumAdjustments = Number(r[0]?.adj ?? 0);
+        if (ctx.screens.has("cashReceipts") && ctx.powers.has("scrapAccounts")) out.cashReceipts = Number(r[0]?.unmatched ?? 0);
       }),
     );
   await Promise.all(jobs);

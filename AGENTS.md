@@ -2254,52 +2254,73 @@ customer and what is still on a shelf. With nothing searched it is the
 traceability dashboard: today's production and dispatch, and every exception.
 A link that is missing is said to be missing, never guessed.
 
-## Scrap & empty drums
+## Empty drums and scrap
 
-**SCRAP IS A DIFFERENT KIND OF ORDER, and it is one ERP screen with nine tabs.**
-`/erp/scrap` (`erp.scrap`): Empty drums, Mahek stock, Vendor drums, Returns,
-Scrap sales, Other scrap, Buyers, Receipts, Tare variance. The scale's own page
-is `/erp/empty-drums`. Rules are pure in `lib/erp/engines/scrap.ts`; reads and
-the scale's writes in `lib/erp/scrap.ts`; the screens in
-`lib/erp/screens/scrap.ts`; migration `0256`.
+**A DRUM IS REGISTERED WHEN IT IS EMPTY, OFF ITS EXISTING GRN LABEL.** The GRN
+is not redesigned and never edited: production scans the drum's lot label
+(the purchase register's `lot_no`, or its id) once the material is used up,
+weighs the empty drum, and `recordEmptyDrum` (`lib/erp/drums.ts`) writes an
+`erp_empty_drums` row that COPIES the GRN, supplier, material, lot and the
+declared empty weight (`erp_inward.empty_drum_weight`). From then on the
+record carries the link, so a label that tears or falls off in the yard costs
+nothing. The rules are pure in `engines/drums.ts`; the screens are
+`screens/scrap.ts`; the phone's Empty drum entry is two factory ops,
+`drumLookup` and `emptyDrum`, and the `drum` route in both factory apps. Who
+on the floor sees it is `erp.drums.factoryDepartments` plus every supervisor.
 
-**A DRUM IS REGISTERED WHEN IT IS EMPTIED, against its GRN lot, and never
-typed.** Scanning the lot label (`LOT` or `LOT/3`) reads the supplier,
-material, PR and declared tare off the GRN; the person enters only the actual
-empty weight. The GRN records a COUNT of drums per lot and no drum ids, so a
-drum is the lot plus its number (`erp_empty_drums.seq`, unique per purchase),
-and a code naming only the lot takes the lowest number not yet weighed. A drum
-already registered is refused with its record. A weight outside
-`erp.scrap.drumWeightMinKg`/`MaxKg` needs `scrapControl` and a note.
+**OWNERSHIP IS READ, NEVER GUESSED.** `erp_inward.drum_ownership` (the GRN
+line's "Drums belong to", copied from the supplier at save) wins over
+`erp_suppliers.drum_ownership` ("Their drums are"); null on both is a drum in
+`review`, which the Production Head classifies with a sentence. A lot whose
+owner a person decided under the first version of this module
+(`erp_purchases.drum_ownership`, carried by `0257` with every drum, sale and
+receipt 0256 recorded) wins over both. Changing an
+already-classified drum's owner is an `erp_drum_adjustments` row of kind
+`ownership`, approved by somebody else holding `scrapApprove`.
 
-**OWNERSHIP IS DECIDED PER LOT, BY A PERSON, AND NEVER GUESSED.** The GRN does
-not say whether a drum is ours or the vendor's, so `erp_purchases.drum_ownership`
-is null until somebody with `scrapControl` decides it; until then every drum of
-that lot sits at "Owner to decide" and is in NEITHER stock. Deciding moves the
-whole lot; changing a decision already made needs a reason, and drums already
-sold or returned do not move. A check constraint ties the status to the owner.
+**ONE RECORD PER DRUM OF A LOT.** A label names a lot and a lot brings
+`drums` drums, so each emptied drum takes the next `seq` of its lot under an
+advisory lock, held at the database by a partial unique index on
+`(purchase_id, seq)`; a fifth drum off a four-drum lot is refused with the four
+already recorded. A second drum of the same lot within
+`erp.drums.sameLotMinutes` is saved only after the person says it is a
+different drum. A GRN with no drum count cannot be checked, so its drums go to
+review. The phone's `DRM-…` key is `client_key`: a resend answers from the
+first save. The weight must sit between `erp.drums.minEmptyKg` and
+`maxEmptyKg` unless a `scrapApprove` holder writes why it is right.
 
-**MAHEK DRUMS ARE SOLD, VENDOR DRUMS GO BACK, both by quantity, oldest first.**
-`fifoPick` picks the oldest emptied and refuses rather than part-fills. A
-vendor drum is never in a scrap sale — the sale refuses with
-`VENDOR_DRUM_REFUSAL`. Mahek stock is a ledger read off the drums, never a
-typed balance. Other scrap (plastic, cardboard) is collected and sold by
-quantity against its own balance.
+**MAHEK'S DRUMS AND A SUPPLIER'S NEVER MIX.** Status is the stock: `available`
+is Mahek's scrap, `returnable` a supplier's drum waiting to go back. A scrap
+sale draws only `available` drums and a returnable outward only that
+supplier's `returnable` ones, both BY QUANTITY and OLDEST FIRST (`fifoPick`,
+over a pool selected `for update`). The allocation is stored on the drums
+(`scrap_sale_id`, `return_id`) for traceability; it does not claim anybody
+checked those physical drums. A returnable drum named in a sale is refused
+with "This drum is vendor-returnable. Please use Returnable Drum Outward."
+whatever button sent it. Nothing holds a balance: every stock figure is a
+count of records, and every change is a row in `erp_drum_events`, which a
+trigger makes append-only.
 
-**A SCRAP SALE IS INVOICED OR IT IS NOT, and an un-invoiced one carries no
-invented number.** `invoice_kind = 'none'` is identified by its own SS-number;
-a challan may be recorded as a reference. Outstanding is the sale less matched
-receipts, never typed. A sale with money matched cannot be cancelled until it
-is unmatched.
+**A SCRAP SALE IS A RECEIVABLE, AND ONLY THE ACCOUNTANT CLEARS IT.** What is
+owed is the sale less its live `erp_scrap_allocations`, read and never stored.
+Money arrives as an `erp_cash_receipts` row on Petty Cash/Bank → Receipts
+(`scrapAccounts`) and is matched to one or more sales; `allocateReceipt` locks
+both rows and refuses more than the receipt has left or the sale owes. A wrong
+match is voided with a reason, never deleted. Production cannot mark a sale
+paid. `ref_kind = 'none'` is a sale with no external invoice: it carries NO
+reference — a check constraint refuses one — and is traced by its `sale_no`.
 
-**RECEIPTS ARE THE SCRAP SCREEN'S, because Petty cash records no money in.**
-`erp_scrap_receipts` (Bank or Cash) is matched to sales by the `scrapReceipts`
-holder — oldest first or line by line — and allocations are voided with a
-reason, never deleted. Buyers age by days past due.
+**NON-DRUM SCRAP IS A BATCH, NOT A RECORD PER BAG.** Plastic, cardboard and
+the rest of the `scrapCategory` reference list are `erp_scrap_entries` by
+category, unit and godown, and a sale is refused above recorded less sold.
 
-**Three powers**: `scrapSell` (sales, returns), `scrapControl` (ownership,
-corrections, cancellations, weight exceptions), `scrapReceipts` (money). Every
-correction is a `erpAudit` line with a reason.
+**CORRECTIONS ARE SOMEBODY ELSE'S.** Opening stock (drums here before
+MahekOne, with no GRN — `source = 'opening'`, the one kind of drum the link
+check allows), write-offs and owner changes are asked for by one person and
+approved by another holding `scrapApprove`, an ERP administrator excepted.
+Weight corrections, cancelled entries, cancelled sales (only with nothing
+matched) and cancelled outwards need `scrapApprove` and a reason, and keep the
+original in the drum's history.
 
 ## Layout
 

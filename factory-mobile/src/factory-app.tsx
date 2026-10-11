@@ -28,7 +28,7 @@ import { Btn, Div, Input, Root, Span } from "./web";
 import { art, ic, qr } from "./art";
 import { avStyle, btn, card, initials, mono, msg, MsgBox, Pill, artWell, type Msg } from "./kit";
 import { CameraScanner, shrinkPhoto } from "./camera";
-import { dropPhoto, forget, keepPhoto, keptPhoto, load, mintKey, readNet, save, watchNet, type Flow, type KpSheet, type Net, type PeopleSheet, type QItem, type ReasonSheet, type Res, type State, type TilesSheet } from "./model";
+import { dropPhoto, forget, keepPhoto, keptPhoto, load, mintKey, readNet, save, watchNet, type Flow, type KpSheet, type Net, type PeopleSheet, type QItem, type ReasonSheet, type Res, type State, type TilesSheet, mintDrumKey } from "./model";
 
 /* ---------------------------------------------------------------------------
  * THE FACTORY APP — "Mahek Factory App" from the design, screen for screen.
@@ -114,6 +114,7 @@ export class FactoryApp extends Component<Props, State> {
       busy: false,
       clock: hhmm(new Date()),
       cam: "wait",
+      drum: null,
       ...(signed ? this.restore(signed.key) : null),
     };
   }
@@ -451,6 +452,10 @@ export class FactoryApp extends Component<Props, State> {
     const add = (code: string, what: string, good: unknown) => out.push({ code, what, good: !!good });
     const lots = Object.values(db.lots);
     if (P === "badge") return out;
+    if (P === "drum") {
+      lots.filter((x) => x.type === "rm").slice(0, 8).forEach((x) => add(x.code, (db.rm[x.item]?.n ?? x.item) + " drum", 1));
+      return out;
+    }
     if (P === "home") {
       const me = st.me!;
       this.tasks().filter((t) => (me.head || t.proc === me.area) && t.status !== "done").slice(0, 4).forEach((t) => add(taskCode(t), taskName(db, t).slice(0, 22), 1));
@@ -491,6 +496,20 @@ export class FactoryApp extends Component<Props, State> {
   async doScan(code: string, manual?: boolean) {
     const st = this.state, sc = st.scan;
     if (!sc || sc.res) return;
+    if (sc.purpose === "drum") {
+      try {
+        const r = await call("drumLookup", code);
+        if (r.ok) {
+          this.setState({ scan: null, route: "drum", drum: { lot: r.lot, limits: r.limits, kg: null, key: mintDrumKey(), ask: null, err: null, saving: false, saved: null } });
+        } else {
+          const seen = r.existing?.length ? " Recorded: " + r.existing.map((e) => e.label + (e.seq ? " (drum " + e.seq + ")" : "")).join(", ") + "." : "";
+          this.setState({ scan: { ...sc, res: { ok: false, code, title: r.title, text: r.text + seen, fix: r.fix } } });
+        }
+      } catch {
+        this.setState({ scan: { ...sc, res: { ok: false, code, title: "No network", text: "We could not check this label.", fix: "Check the Wi-Fi, then scan again. Nothing was saved." } } });
+      }
+      return;
+    }
     if (sc.purpose === "badge") {
       try {
         const r = await call("findBadge", code);
@@ -561,6 +580,148 @@ export class FactoryApp extends Component<Props, State> {
       return;
     }
     this.setState({ flow: f, scan: null });
+  }
+
+  /* ================================================================ empty drums */
+
+  openDrum() {
+    this.setState({ sheet: null, route: "drum", drum: null }, () => this.openScan("drum"));
+  }
+
+  drumWeight() {
+    const d = this.state.drum;
+    if (!d) return;
+    this.openKp({
+      l: "Weight of the empty drum", unit: "kg", v: d.kg, decimals: true,
+      set: (v) => this.setState({ drum: { ...d, kg: v, err: null, ask: null } }),
+    });
+  }
+
+  async saveDrum(different?: boolean) {
+    const d = this.state.drum;
+    if (!d || d.saving) return;
+    if (d.kg == null) return this.drumWeight();
+    this.setState({ drum: { ...d, saving: true, err: null } });
+    try {
+      const r = await call("emptyDrum", { code: d.lot.code, kg: d.kg, key: d.key, different: !!different });
+      const now = this.state.drum ?? d;
+      if (r.ok) {
+        this.setState({ drum: { ...now, saving: false, saved: r.drum, ask: null } });
+        this.toast(r.drum.label + " saved · " + r.drum.statusLabel);
+        return;
+      }
+      if (r.kind === "confirm") return this.setState({ drum: { ...now, saving: false, ask: r.text } });
+      this.setState({ drum: { ...now, saving: false, err: { title: r.title, text: r.text, fix: r.fix } } });
+    } catch (e) {
+      const now = this.state.drum ?? d;
+      this.setState({ drum: { ...now, saving: false, err: { title: "No network", text: "The drum is not saved yet.", fix: "Check the Wi-Fi and press Save again. It is safe — the drum will not be counted twice." } } });
+      if (!(e instanceof NotReceived)) throw e;
+    }
+  }
+
+  renderDrum(): ReactNode {
+    const st = this.state, T = this.T(), d = st.drum;
+    const fact = (l: string, v: string, tone?: string) => (
+      <Div key={l} style={{ display: "flex", justifyContent: "space-between", gap: "12px", padding: "10px 0", borderBottom: "1px solid #EDEFF3" }}>
+        <Span style={{ fontSize: "15px", color: "#6B7385" }}>{l}</Span>
+        <Span style={{ fontSize: "15px", fontWeight: 700, color: tone ?? "#1A1E28", textAlign: "right" }}>{v}</Span>
+      </Div>
+    );
+    const scanBtn = (l: string) => (
+      <Btn onClick={() => this.openScan("drum")} style={{ background: "#6835FB", border: "none", borderRadius: "20px", padding: "18px 20px", color: "#FFFFFF", display: "flex", alignItems: "center", gap: "16px", textAlign: "left", cursor: "pointer", minHeight: "104px" }}>
+        <Span style={{ width: "68px", height: "68px", flex: "none", borderRadius: "18px", background: "rgba(255,255,255,0.14)", display: "flex", alignItems: "center", justifyContent: "center" }}>{ic("qr", 40, "#FFFFFF")}</Span>
+        <Span style={{ flex: 1 }}>
+          <Span style={{ display: "block", fontSize: "22px", lineHeight: "28px", fontWeight: 700 }}>{l}</Span>
+          <Span style={{ display: "block", fontSize: "15px", color: "#DDD2FF", marginTop: "4px" }}>Scan it while the label can still be read</Span>
+        </Span>
+      </Btn>
+    );
+    const head = (
+      <Div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+        <Btn onClick={() => this.setState({ route: st.me?.head ? "today" : "home", drum: null })} aria-label={T.back} style={{ width: "44px", height: "44px", borderRadius: "50%", border: "none", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{ic("back", 22, "#5223E0")}</Btn>
+        <Span style={{ fontSize: "20px", fontWeight: 700 }}>Empty drum entry</Span>
+      </Div>
+    );
+    if (!d) {
+      return (
+        <Div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "16px", display: "flex", flexDirection: "column", gap: "14px" }}>
+          {head}
+          {scanBtn("Scan the empty drum")}
+          <Div style={{ ...card, padding: "14px", fontSize: "15px", lineHeight: "22px", color: "#3D4453" }}>
+            When a drum is completely empty: scan its GRN label, weigh the empty drum, enter the weight and save. The GRN, supplier, material and lot come from the label. If the label is torn, keep the drum aside and tell the Production Head.
+          </Div>
+        </Div>
+      );
+    }
+    const l = d.lot, sv = d.saved;
+    const ownTone = l.ownership === "returnable" ? "#2B5CBF" : l.ownership === "mahek" ? "#1D7A45" : "#8A5C05";
+    if (sv) {
+      const varTxt = sv.varianceKg == null ? "No declared weight on the GRN" : (sv.varianceKg > 0 ? "+" : "") + nf(sv.varianceKg) + " kg";
+      return (
+        <Div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "16px", display: "flex", flexDirection: "column", gap: "14px" }}>
+          {head}
+          <Div style={{ ...card, padding: "16px" }}>
+            <Div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+              <Span style={{ width: "52px", height: "52px", flex: "none", borderRadius: "50%", background: "#E9F5EE", display: "flex", alignItems: "center", justifyContent: "center" }}>{ic("check", 28, "#1D7A45")}</Span>
+              <Span style={{ flex: 1 }}>
+                <Span style={{ display: "block", fontSize: "22px", fontWeight: 700 }}>{sv.label + " saved"}</Span>
+                <Span style={{ display: "block", fontSize: "15px", color: "#6B7385" }}>{sv.statusLabel}</Span>
+              </Span>
+            </Div>
+            {fact("Material", sv.material)}
+            {fact("Lot", sv.lotNo + (sv.seq ? " · drum " + sv.seq + (sv.drums ? " of " + sv.drums : "") : ""))}
+            {fact("Supplier", sv.supplier)}
+            {fact("Empty weight", nf(sv.actualKg) + " kg")}
+            {fact("Against the GRN", varTxt)}
+            {sv.reviewReason && <Div style={{ marginTop: "10px", padding: "12px", borderRadius: "12px", background: "#FDF6E7", color: "#8A5C05", fontSize: "15px", lineHeight: "21px" }}>{"The Production Head will check it: " + sv.reviewReason + "."}</Div>}
+          </Div>
+          {scanBtn("Scan the next drum")}
+        </Div>
+      );
+    }
+    return (
+      <Div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "16px", display: "flex", flexDirection: "column", gap: "14px" }}>
+        {head}
+        <Div style={{ ...card, padding: "16px" }}>
+          <Span style={{ display: "block", fontSize: "21px", lineHeight: "26px", fontWeight: 700 }}>{l.material}</Span>
+          <Span style={{ display: "block", ...mono, fontSize: "14px", fontWeight: 600, color: "#3D4453", marginTop: "2px" }}>{l.lotNo}</Span>
+          {fact("Supplier", l.supplier)}
+          {fact("GRN", "PR " + l.pr)}
+          {fact("This drum", "Drum " + l.nextSeq + (l.drums ? " of " + l.drums : ""))}
+          {fact("Belongs to", l.ownershipLabel, ownTone)}
+          {fact("Declared empty weight", l.declaredKg == null ? "Not on the GRN" : nf(l.declaredKg) + " kg")}
+        </Div>
+        <Btn onClick={() => this.drumWeight()} style={{ ...card, padding: "16px", display: "flex", alignItems: "center", justifyContent: "space-between", border: "2px solid " + (d.kg == null ? "#6835FB" : "#DDE1E8"), cursor: "pointer", textAlign: "left" }}>
+          <Span>
+            <Span style={{ display: "block", fontSize: "15px", color: "#6B7385" }}>Weight of the empty drum</Span>
+            <Span style={{ display: "block", fontSize: "13px", color: "#9BA3B2", marginTop: "2px" }}>{"Usually " + nf(d.limits.minKg) + "–" + nf(d.limits.maxKg) + " kg"}</Span>
+          </Span>
+          <Span style={{ fontSize: d.kg == null ? "18px" : "30px", fontWeight: 700, color: d.kg == null ? "#6835FB" : "#1A1E28", textAlign: "right" }}>{d.kg == null ? "Tap to enter" : nf(d.kg) + " kg"}</Span>
+        </Btn>
+        {d.ask && (
+          <Div style={{ padding: "14px", borderRadius: "14px", background: "#FDF6E7", border: "1px solid #F9E9C4" }}>
+            <Div style={{ fontSize: "16px", lineHeight: "23px", color: "#8A5C05", fontWeight: 600 }}>{d.ask}</Div>
+            <Div style={{ display: "flex", gap: "10px", marginTop: "12px" }}>
+              <Btn onClick={() => this.setState({ drum: null })} style={{ ...btn("s", 54), flex: 1 }}>No, same drum</Btn>
+              <Btn onClick={() => void this.saveDrum(true)} style={{ ...btn("p", 54), flex: 1 }}>Yes, a different drum</Btn>
+            </Div>
+          </Div>
+        )}
+        {d.err && (
+          <Div style={{ padding: "14px", borderRadius: "14px", background: "#FCECEC" }}>
+            <Div style={{ fontSize: "17px", fontWeight: 700, color: "#B3261E" }}>{d.err.title}</Div>
+            <Div style={{ fontSize: "15px", lineHeight: "22px", color: "#1A1E28", marginTop: "6px" }}>{d.err.text}</Div>
+            <Div style={{ fontSize: "15px", lineHeight: "22px", color: "#1A1E28", marginTop: "6px" }}><Span style={{ fontWeight: 700 }}>What to do: </Span>{d.err.fix}</Div>
+          </Div>
+        )}
+        {!d.ask && (
+          <Div style={{ display: "flex", gap: "10px" }}>
+            <Btn onClick={() => this.openScan("drum")} style={{ ...btn("s", 58), flex: 1 }}>{T.scanAgain}</Btn>
+            <Btn onClick={() => void this.saveDrum()} style={{ ...btn(d.kg == null || d.saving ? "off" : "p", 58), flex: 2 }}>{d.saving ? "Saving…" : "Save empty drum"}</Btn>
+          </Div>
+        )}
+      </Div>
+    );
   }
 
   manualPick() {
@@ -933,6 +1094,7 @@ export class FactoryApp extends Component<Props, State> {
           {isResult && this.renderResult()}
           {shell && R === "sync" && this.renderSync()}
           {shell && R === "help" && this.renderHelp()}
+          {shell && R === "drum" && this.renderDrum()}
           {shell && head && R === "today" && this.renderToday()}
           {shell && head && R === "review" && this.renderReview()}
           {shell && head && R === "teams" && this.renderTeams()}
@@ -1133,6 +1295,15 @@ export class FactoryApp extends Component<Props, State> {
             <Span style={{ display: "block", fontSize: "15px", color: "#DDD2FF", marginTop: "4px" }}>{T.scanAny}</Span>
           </Span>
         </Btn>
+        {me.drums && (
+          <Btn onClick={() => this.openDrum()} style={{ ...card, padding: "14px 16px", display: "flex", alignItems: "center", gap: "12px", textAlign: "left", cursor: "pointer" }}>
+            <Span style={{ width: "44px", height: "44px", borderRadius: "12px", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{ic("box", 22, "#5223E0")}</Span>
+            <Span style={{ flex: 1 }}>
+              <Span style={{ display: "block", fontSize: "17px", fontWeight: 700 }}>Empty drum entry</Span>
+              <Span style={{ display: "block", fontSize: "13px", color: "#6B7385", marginTop: "1px" }}>Scan and weigh a drum once it is empty</Span>
+            </Span>
+          </Btn>
+        )}
         <Div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginTop: "4px" }}>
           <Span style={{ fontSize: "20px", fontWeight: 700 }}>{T.myTasks}</Span>
           <Span style={{ fontSize: "14px", color: "#6B7385" }}>{open.length + " / " + mine.length}</Span>
@@ -1186,8 +1357,8 @@ export class FactoryApp extends Component<Props, State> {
     const st = this.state, T = this.T(), sc = st.scan!, f = st.flow, m = sc.meta, P = sc.purpose, r = sc.res;
     const db = st.db;
     const rmName = m.item && db?.rm[m.item] ? db.rm[m.item].n : "";
-    const title = { badge: T.scanBadge, home: T.scanQR, rm: rmName, sfg: "Base liquid", pm: "Empty cans", fg: "Filled cans", load: f ? (f.task.order ?? "") : "" }[P] || T.scanQR;
-    const hint = { badge: "Show your company badge", home: "Scan a task sheet, order or lot label", rm: "Scan the " + rmName + " drum", sfg: "Scan the base-liquid tank", pm: "Scan the empty-can stack", fg: "Scan the filled-can pallet", load: "Scan each pallet before loading" }[P];
+    const title = { badge: T.scanBadge, home: T.scanQR, rm: rmName, sfg: "Base liquid", pm: "Empty cans", fg: "Filled cans", load: f ? (f.task.order ?? "") : "", drum: "Empty drum" }[P] || T.scanQR;
+    const hint = { badge: "Show your company badge", home: "Scan a task sheet, order or lot label", rm: "Scan the " + rmName + " drum", sfg: "Scan the base-liquid tank", pm: "Scan the empty-can stack", fg: "Scan the filled-can pallet", load: "Scan each pallet before loading", drum: "Scan the GRN label on the empty drum" }[P];
     const hasManual = ["rm", "sfg", "pm", "fg", "load"].indexOf(P) > -1;
     const noCam = st.cam === "none" || st.cam === "denied";
     const labels = noCam && (DEV || st.cam === "none") ? this.scanLabels() : [];
@@ -2170,7 +2341,7 @@ export class FactoryApp extends Component<Props, State> {
       body = (
         <Div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
           <Div style={{ display: "flex", alignItems: "center", gap: "10px", height: "80px", padding: "0 18px", borderRadius: "18px", border: "2px solid " + (err ? "#B3261E" : "#6835FB"), background: "#F7F4FF", cursor: "text" }}>
-            <Input value={v} onChange={(e) => this.setState({ sheet: { ...sh, v: String(e.target.value).replace(/[^\d]/g, "").slice(0, 6) } })} inputMode="numeric" autoFocus placeholder="0" aria-label={sh.l} style={{ flex: 1, minWidth: 0, border: "none", outline: "none", background: "transparent", fontSize: "40px", fontWeight: 700, color: "#1A1E28", textAlign: "right" }} />
+            <Input value={v} onChange={(e) => this.setState({ sheet: { ...sh, v: sh.decimals ? String(e.target.value).replace(/[^\d.]/g, "").replace(/(\..*)\./g, "$1").slice(0, 7) : String(e.target.value).replace(/[^\d]/g, "").slice(0, 6) } })} inputMode={sh.decimals ? "decimal" : "numeric"} autoFocus placeholder="0" aria-label={sh.l} style={{ flex: 1, minWidth: 0, border: "none", outline: "none", background: "transparent", fontSize: "40px", fontWeight: 700, color: "#1A1E28", textAlign: "right" }} />
             <Span style={{ fontSize: "18px", color: "#6B7385", flex: "none" }}>{sh.unit}</Span>
           </Div>
           {err && <Div style={{ fontSize: "15px", lineHeight: "21px", fontWeight: 700, color: "#B3261E", textAlign: "center" }}>{err}</Div>}
@@ -2306,6 +2477,7 @@ export class FactoryApp extends Component<Props, State> {
           {row("Work place", db.loc + " · " + db.shift.split(" · ")[0], "pin", () => this.toast("Your supervisor sets your work place"))}
           {row(T.sync, pendN + " waiting", "sync", () => this.setState({ sheet: null, route: "sync" }))}
           {row(T.help, "Short videos and audio", "help", () => this.setState({ sheet: null, route: "help" }))}
+          {me.drums && row("Empty drum entry", "Scan and weigh a drum once it is empty", "box", () => this.openDrum())}
           {row("Change my PIN", "4 numbers you sign in with", "badge", () => this.setState({ sheet: null, signStep: "newpin", newPin: "", newPin1: "", pinErr: "" }))}
           {DEV && row("Network (preview only)", (T as Record<string, string>)[st.net] + " — tap to change", st.net === "offline" ? "wifioff" : "wifi", () => { const nx = ({ online: "weak", weak: "offline", offline: "online" } as const)[st.net]; this.setNet(nx); this.toast((T as Record<string, string>)[nx]); })}
           {row(T.signOut, "Unsent work stays on this phone", "out", () => {

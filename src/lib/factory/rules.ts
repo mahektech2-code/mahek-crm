@@ -15,7 +15,7 @@ import { CHECK_ITEMS, STEPS } from "./types";
 
 export const nf = (n: number | null | undefined) => Number(n || 0).toLocaleString("en-IN");
 
-export type ScanPurpose = "badge" | "home" | "rm" | "sfg" | "pm" | "fg" | "load";
+export type ScanPurpose = "badge" | "home" | "rm" | "sfg" | "pm" | "fg" | "load" | "drum";
 export type ScanMeta = { item?: string; idx?: number };
 export type ScanResult =
   | { ok: false; code: string; title: string; text: string; fix: string }

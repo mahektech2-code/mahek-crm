@@ -400,7 +400,7 @@ export function Input({ value, onChange, onKeyDown, inputMode, type, maxLength, 
       value={value}
       onChangeText={(v) => onChange({ target: { value: v } })}
       onSubmitEditing={() => onKeyDown?.({ key: "Enter" })}
-      keyboardType={inputMode === "numeric" ? "number-pad" : "default"}
+      keyboardType={inputMode === "numeric" ? "number-pad" : inputMode === "decimal" ? "decimal-pad" : "default"}
       secureTextEntry={type === "password"}
       maxLength={maxLength}
       autoFocus={autoFocus}

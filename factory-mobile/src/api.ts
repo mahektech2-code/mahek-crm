@@ -14,7 +14,7 @@
  * ------------------------------------------------------------------------- */
 import Constants from "expo-constants";
 import { Platform } from "react-native";
-import type { FactoryData, Proc, Submission, SubmitResult, Team } from "@/lib/factory/types";
+import type { DrumLookup, DrumSave, FactoryData, Proc, Submission, SubmitResult, Team } from "@/lib/factory/types";
 import type { Me, Who } from "./types";
 import { kvGet, kvSet } from "./model";
 
@@ -42,6 +42,8 @@ type Ops = {
   reportProblem: (taskId: string, reason: string, label: string) => Done;
   requestCorrection: (taskId: string, reason: string, label: string, rej?: number | null) => Done;
   decide: (id: string, act: string, actIndex: number, reason: string, helpers?: string[]) => Done;
+  drumLookup: (code: string) => DrumLookup;
+  emptyDrum: (input: { code: string; kg: number | null; key: string; different?: boolean }) => DrumSave;
 };
 
 export class NotReceived extends Error {}
