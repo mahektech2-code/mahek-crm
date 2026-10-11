@@ -134,6 +134,7 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
           callEveryDays={cfg["erp.logistics.callEveryDays"]}
           notifyOn={cfg["erp.logistics.notifyCustomers"]}
           canWrite={canWrite}
+          canRead={kit?.canRead ?? false}
         />
       ) : null}
       {view === "trackLr" ? (

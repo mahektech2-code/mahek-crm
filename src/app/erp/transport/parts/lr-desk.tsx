@@ -25,6 +25,7 @@ export function LrDesk({
   callEveryDays,
   notifyOn,
   canWrite,
+  canRead = false,
 }: {
   lrs: UploadedLr[];
   waiting: Consignment[];
@@ -34,6 +35,8 @@ export function LrDesk({
   callEveryDays: number;
   notifyOn: boolean;
   canWrite: boolean;
+  /** Whether a photo is read into the form as it uploads — the same answer the header's Upload LRs gets. */
+  canRead?: boolean;
 }) {
   const { run, pending } = useAct();
   const [pick, setPick] = useState<string | null>(lrs[0]?.id ?? null);
@@ -221,7 +224,7 @@ export function LrDesk({
       </Card>
 
       <Modal open={upload} onClose={() => setUpload(false)} title="Upload LRs" width={860}>
-        <LrUpload today={today} transporters={transporters} onDone={() => setUpload(false)} />
+        <LrUpload today={today} transporters={transporters} canRead={canRead} onDone={() => setUpload(false)} />
       </Modal>
 
       {editing ? <EditLr key={editing.id} lr={editing} transporters={transporters} today={today} onClose={() => setEditing(null)} /> : null}
