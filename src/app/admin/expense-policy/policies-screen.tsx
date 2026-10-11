@@ -66,7 +66,7 @@ export type PersonRow = {
   setInactive: boolean;
   assignedAt: string | null;
   assignedByName: string | null;
-  hometown: { city: string; state: string | null; placeId: string | null } | null;
+  hometowns: { city: string; state: string | null; placeId: string | null }[];
 };
 
 const STANDARD = "__standard";
@@ -473,7 +473,7 @@ function PeopleTab({
     <Card className="mt-4 overflow-hidden">
       <CardHeader
         title="Who is on which policy"
-        hint="Everybody who holds the Salesman App. Change a row's policy and it is saved at once, re-works today's allowances and tells him on his phone. A hometown, picked from the place list, decides which days count as away from home — with none set, every day he records as away is. It is the same hometown the Sales Dashboard sets on its Salesmen screen."
+        hint="Everybody who holds the Salesman App. Change a row's policy and it is saved at once, re-works today's allowances and tells him on his phone. His hometowns — one or several, picked from the place list — decide which days count as away from home: a day in any of them is a day at home, and with none set, every day he records as away is. It is the same hometown the Sales Dashboard sets on its Salesmen screen."
       />
       <div className="flex flex-wrap items-end gap-3 border-b border-divider px-5 py-3">
         <Field label="Search" className="w-[260px]">
@@ -527,7 +527,7 @@ function PeopleTab({
                 <Th style={{ width: 260 }}>Person</Th>
                 <Th style={{ width: 200 }}>Position</Th>
                 <Th style={{ width: 290 }}>Expense policy</Th>
-                <Th style={{ width: 190 }}>Hometown</Th>
+                <Th style={{ width: 190 }}>Hometowns</Th>
                 <Th style={{ width: 190 }}>Since</Th>
               </tr>
             </thead>
@@ -583,7 +583,7 @@ function PeopleTab({
                       compact
                       door="admin"
                       salesman={{ id: p.userId, name: p.name }}
-                      hometown={p.hometown}
+                      hometowns={p.hometowns}
                       tree={towns}
                       canWrite={canWrite}
                       refuse={refuseTitle(canWrite)}

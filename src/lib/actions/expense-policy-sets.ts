@@ -25,7 +25,7 @@ import {
 } from "@/lib/expense-policy-sets";
 import { daysStampedWith, ensureStandardSet, readPolicySet } from "@/lib/services/expense-policy-set-service";
 import { ensurePolicyRow } from "@/lib/services/expense-policy-service";
-import { repriceRecentExpenseDays, writeHometown } from "@/lib/services/hometown-service";
+import { repriceRecentExpenseDays, writeHometowns } from "@/lib/services/hometown-service";
 import { notifyUsers } from "@/lib/notify";
 import { err as fail, ok, okVoid, type Result } from "@/lib/result";
 import { ADMIN } from "@/lib/admin-routes";
@@ -496,19 +496,30 @@ export async function assignPolicySet(input: z.input<typeof assignSchema>): Prom
 
 const hometownSchema = z.object({
   userId: z.string().min(1),
-  /** A city node of the reviewed place tree. Null clears it, and the day keeps what the handset recorded. */
-  placeId: z.string().min(1).nullable(),
+  /**
+   * City nodes of the reviewed place tree — the WHOLE set. Empty clears them,
+   * and the day keeps what the handset recorded.
+   */
+  placeIds: z.array(z.string().min(1)).max(20, "That is more hometowns than anybody has."),
+  /** Towns typed before the picker that are to stay. */
+  keepTyped: z.array(z.string().min(1)).max(20).default([]),
 });
 
 /**
  * Where a salesman lives, for the policy's "away from his hometown" — the same
  * record the Sales Dashboard's Salesmen screen sets, through the same writer.
+ * He may have several; a day in any of them is a day at home.
  */
-export async function setExpenseHometown(input: z.input<typeof hometownSchema>): Promise<Result> {
+export async function setExpenseHometowns(input: z.input<typeof hometownSchema>): Promise<Result> {
   const user = await author();
   const parsed = hometownSchema.safeParse(input);
   if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "That is not a town.", "validation");
-  const result = await writeHometown(user.id, parsed.data.userId, parsed.data.placeId);
+  const result = await writeHometowns(
+    user.id,
+    parsed.data.userId,
+    parsed.data.placeIds,
+    parsed.data.keepTyped,
+  );
   if (result.ok) {
     refresh();
     try {

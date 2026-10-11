@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { awayFromHometown } from "./expense-hometown";
 
 const base = {
-  hometown: "Nagpur",
+  hometowns: ["Nagpur"],
   visitCities: [],
   destinationCity: null,
   overnight: false,
@@ -12,11 +12,11 @@ const base = {
 
 test("no hometown keeps what the handset recorded", () => {
   assert.equal(
-    awayFromHometown({ ...base, hometown: null, recorded: true }),
+    awayFromHometown({ ...base, hometowns: [], recorded: true }),
     true,
   );
   assert.equal(
-    awayFromHometown({ ...base, hometown: "  ", recorded: false }),
+    awayFromHometown({ ...base, hometowns: ["  ", null], recorded: false }),
     false,
   );
 });
@@ -51,9 +51,22 @@ test("a town typed as a whole address is home when it names the hometown", () =>
   assert.equal(
     awayFromHometown({
       ...base,
-      hometown: "Thane",
+      hometowns: ["Thane"],
       visitCities: ["06, Mahadev Towers, LBS Marg, Thane, Maharashtra"],
     }),
     false,
+  );
+});
+
+test("with several hometowns, a day across any of them is a day at home", () => {
+  const two = { ...base, hometowns: ["Nagpur", "Kamptee"] };
+  assert.equal(awayFromHometown({ ...two, visitCities: ["Nagpur", "Kamptee"] }), false);
+  assert.equal(awayFromHometown({ ...two, destinationCity: "kamptee" }), false);
+});
+
+test("with several hometowns, a town that is none of them is a day away", () => {
+  assert.equal(
+    awayFromHometown({ ...base, hometowns: ["Nagpur", "Kamptee"], visitCities: ["Kamptee", "Wardha"] }),
+    true,
   );
 });

@@ -17,7 +17,7 @@ Expense money lives in `mbos_expenses`: a logged expense is a row the handset (o
 | Hometown | `src/lib/expense-hometown.ts` | `awayFromHometown` (pure) |
 | Writes | `src/lib/actions/sales.ts` | `decideExpense`, `addExpenseFor`, `recordExpensePayout`, `voidExpensePayout`, `decideApproval` |
 | Flag answers | `src/lib/actions/expenses.ts` | `resolveException` |
-| Policy writes | `src/lib/actions/expense-policy-sets.ts` | `savePolicySet`, `assignPolicySet`, `setExpenseHometown`, `resetStandardToDefaults` (Admin Console) |
+| Policy writes | `src/lib/actions/expense-policy-sets.ts` | `savePolicySet`, `assignPolicySet`, `setExpenseHometowns`, `resetStandardToDefaults` (Admin Console) |
 | Sync | `src/lib/actions/mbos.ts` | `handleExpense`, `handleExpenseDay`, `handleExpenseDaySubmit` |
 
 ## Pricing a day
@@ -139,5 +139,5 @@ It holds the own-request, scope and reason rules.
 | `listExceptions` takes no scope | `services/expense-service.ts` `listExceptions` |
 | `approval_route` (auto-approve, escalation) is computed by `routeDay` and never applied | `engines/expense-policy.ts` `routeDay`; `expense-service.ts` `priceDay` |
 | `client_disagreement` is declared and never raised | `engines/expense-policy.ts` `EXCEPTION_KINDS` |
-| Two hometown setters with different guards: `setSalesmanHometown` (`sales.people`, manager) and `setExpenseHometown` (`expense.policy.write`) | `actions/sales.ts`; `actions/expense-policy-sets.ts` |
+| Two hometown setters with different guards: `setSalesmanHometowns` (`sales.people`, manager) and `setExpenseHometowns` (`expense.policy.write`), both writing the whole set through `writeHometowns` | `actions/sales.ts`; `actions/expense-policy-sets.ts` |
 | Empty state still says "a day is flagged when it is sent" | `exceptions/page.tsx` |

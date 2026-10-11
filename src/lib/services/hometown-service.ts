@@ -1,6 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { eq, sql } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLog, expenseHometowns } from "@/db/schema";
 import { addDays } from "@/lib/business-date";
@@ -19,9 +19,10 @@ import { refreshDayMoney } from "./expense-submit-service";
  * "nagpur city" is a town no shop is in, and every day of his would read as a
  * day away.
  *
- * It is set on the Sales Dashboard's Salesmen screen, beside where he works,
- * and on the Admin Console's "Who is on which" — both write through
- * `writeHometown`, so the two cannot disagree about what a hometown is.
+ * He may have several — a day in any of them is a day at home. They are set on
+ * the Sales Dashboard's Salesmen screen, beside where he works, and on the
+ * Admin Console's "Who is on which" — both write through `writeHometowns`, so
+ * the two cannot disagree about what a hometown is.
  * ------------------------------------------------------------------------- */
 
 export type HometownCity = {
@@ -88,88 +89,120 @@ export async function hometownTree(): Promise<HometownState[]> {
   return list.sort((a, b) => b.shops - a.shops || a.name.localeCompare(b.name));
 }
 
-/** A city node, with the state it sits in — or null where the id is not a city. */
-async function cityNode(
-  placeId: string,
-): Promise<{ id: string; name: string; state: string | null } | null> {
-  const [row] = await db.execute<{
-    id: string;
-    name: string;
-    state: string | null;
-  }>(sql`
+/** The city nodes among `placeIds`, each with the state it sits in. */
+async function cityNodes(
+  placeIds: readonly string[],
+): Promise<{ id: string; name: string; state: string | null }[]> {
+  if (placeIds.length === 0) return [];
+  return db.execute<{ id: string; name: string; state: string | null }>(sql`
     select c.id, c.name, s.name as state
       from places c
       left join places d on d.id = c.parent_id and d.kind = 'district'
       left join places s on s.id = coalesce(d.parent_id, c.parent_id) and s.kind = 'state'
-     where c.id = ${placeId} and c.kind = 'city'
+     where c.id in (${sql.join(
+       placeIds.map((id) => sql`${id}`),
+       sql`, `,
+     )})
+       and c.kind = 'city'
   `);
-  return row ?? null;
 }
 
-/**
- * Set or clear one salesman's hometown. The CALLER decides who may — this
- * only knows what a hometown is. Today's and yesterday's allowances are
- * re-worked so the effect is on the next screen anybody opens.
- */
-export async function writeHometown(
-  actorId: string,
-  userId: string,
-  placeId: string | null,
-): Promise<Result> {
-  const node = placeId ? await cityNode(placeId) : null;
-  if (placeId && !node) return err("Pick a town from the list.", "validation");
+/** "Nagpur, Maharashtra" — the way a hometown is said on a screen and in a toast. */
+const said = (h: { city: string; state: string | null }) =>
+  h.state ? `${h.city}, ${h.state}` : h.city;
 
-  const [before] = await db
+/** The towns a salesman lives in, as they stand. */
+export async function hometownsOf(userId: string) {
+  return db
     .select({
       city: expenseHometowns.city,
       state: expenseHometowns.state,
       placeId: expenseHometowns.placeId,
+      setAt: expenseHometowns.setAt,
+      setById: expenseHometowns.setById,
     })
     .from(expenseHometowns)
     .where(eq(expenseHometowns.userId, userId))
-    .limit(1);
-  const unchanged = node
-    ? before?.placeId === node.id && before.city === node.name
-    : !before;
-  if (unchanged) return okVoid("Nothing changed.");
+    .orderBy(asc(expenseHometowns.setAt), asc(expenseHometowns.city));
+}
 
-  if (node) {
-    const values = {
-      city: node.name,
-      state: node.state,
-      placeId: node.id,
-      setById: actorId,
-      setAt: new Date(),
-    };
-    await db
-      .insert(expenseHometowns)
-      .values({ userId, ...values })
-      .onConflictDoUpdate({ target: expenseHometowns.userId, set: values });
-  } else {
-    await db
-      .delete(expenseHometowns)
-      .where(eq(expenseHometowns.userId, userId));
+/**
+ * Set one salesman's hometowns — the WHOLE set, so a town left out of
+ * `placeIds` is a town taken off, and an empty list clears them. He may have
+ * several: a day in any of them is a day at home. The CALLER decides who may —
+ * this only knows what a hometown is. Today's and yesterday's allowances are
+ * re-worked so the effect is on the next screen anybody opens.
+ */
+export async function writeHometowns(
+  actorId: string,
+  userId: string,
+  placeIds: readonly string[],
+  /**
+   * Towns typed before the picker existed that are to STAY — named, because a
+   * typed town has no place to be picked as, and saving the picker must not
+   * quietly drop one nobody has re-picked yet.
+   */
+  keepTyped: readonly string[] = [],
+): Promise<Result> {
+  const wanted = [...new Set(placeIds.filter(Boolean))];
+  const nodes = await cityNodes(wanted);
+  if (nodes.length !== wanted.length) return err("Pick each town from the list.", "validation");
+  /* The rule compares town NAMES, so two towns of one name are one hometown. */
+  const byName = new Map<string, (typeof nodes)[number]>();
+  for (const id of wanted) {
+    const n = nodes.find((x) => x.id === id)!;
+    if (!byName.has(n.name)) byName.set(n.name, n);
   }
+  const before = await hometownsOf(userId);
+  /* A typed town stays only where it was already his and is still wanted —
+     this is never a way to type a new one in. */
+  const typed = before
+    .filter((b) => !b.placeId && keepTyped.includes(b.city) && !byName.has(b.city))
+    .map((b) => ({ id: null as string | null, name: b.city, state: b.state }));
+  const next = [...byName.values(), ...typed];
 
-  await db.insert(auditLog).values({
-    id: `aud_${randomUUID().slice(0, 12)}`,
-    actorId,
-    action: "expense_policy.hometown",
-    entityType: "expense_policy",
-    entityId: userId,
-    beforeState: (before
-      ? { city: before.city, state: before.state }
-      : { city: null }) as never,
-    afterState: (node
-      ? { city: node.name, state: node.state, placeId: node.id }
-      : { city: null }) as never,
+  const key = (h: { city: string; placeId: string | null }) => `${h.placeId ?? ""}|${h.city}`;
+  const was = new Set(before.map(key));
+  const now = new Set(next.map((n) => key({ city: n.name, placeId: n.id })));
+  if (was.size === now.size && [...now].every((k) => was.has(k))) return okVoid("Nothing changed.");
+
+  await db.transaction(async (tx) => {
+    await tx.delete(expenseHometowns).where(eq(expenseHometowns.userId, userId));
+    if (next.length > 0) {
+      /* A town he already had keeps who set it and when. */
+      const kept = new Map(before.map((b) => [key(b), b] as const));
+      await tx.insert(expenseHometowns).values(
+        next.map((n) => {
+          const old = kept.get(key({ city: n.name, placeId: n.id }));
+          return {
+            userId,
+            city: n.name,
+            state: n.state,
+            placeId: n.id,
+            setById: old ? old.setById : actorId,
+            setAt: old ? old.setAt : new Date(),
+          };
+        }),
+      );
+    }
+    await tx.insert(auditLog).values({
+      id: `aud_${randomUUID().slice(0, 12)}`,
+      actorId,
+      action: "expense_policy.hometown",
+      entityType: "expense_policy",
+      entityId: userId,
+      beforeState: { towns: before.map((b) => ({ city: b.city, state: b.state })) } as never,
+      afterState: {
+        towns: next.map((n) => ({ city: n.name, state: n.state, placeId: n.id })),
+      } as never,
+    });
   });
   await repriceRecentExpenseDays([userId]);
 
+  if (next.length === 0) return okVoid("Hometowns cleared.");
+  const list = next.map((n) => said({ city: n.name, state: n.state }));
   return okVoid(
-    node
-      ? `Hometown set to ${node.name}${node.state ? `, ${node.state}` : ""}.`
-      : "Hometown cleared.",
+    list.length === 1 ? `Hometown set to ${list[0]}.` : `Hometowns set to ${list.join("; ")}.`,
   );
 }
 
