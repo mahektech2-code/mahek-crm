@@ -8366,7 +8366,9 @@ an area up to its district, and the form reads one the same way
 keeps it unseen. A single searchable list of every city and area in the
 country, tried for a while, was too long to use. The ERP's pin fields fetch
 the tile key from `/api/erp/map-key` (anybody holding the ERP; the live key in
-the pool), which is also what gives the ERP's own godown pin "Pick on map".
+the pool), which is also what gives the ERP's own godown pin its map. "Find in map" opens the map in a pop-up; a click
+or a drag writes the pin into the field at once. A person at a godown is a
+name and one phone number on the form (more numbers saved earlier are kept).
 `erp_transporter_contacts`
 is a person there, with up to three numbers (a check constraint holds the
 three). It replaced four cascading state/district/city/area pickers (0253),

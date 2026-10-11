@@ -7,7 +7,7 @@ import { Badge, Button, Card, cx } from "@/components/ui/primitives";
 import { erpLogisticsTransporter } from "@/lib/actions/erp-logistics";
 import { checkGstin } from "@/lib/engines/lead-scan";
 import type { Transporter, TransporterGodown } from "@/lib/erp/logistics";
-import { GODOWN_PLACE_KINDS, MAX_PHONES, godownPlace, lookup, pickRung, placeChain, placeChoices, placePath, type PlaceLookup, type PlaceOption } from "@/lib/erp/transporter-godowns";
+import { GODOWN_PLACE_KINDS, godownPlace, lookup, pickRung, placeChain, placeChoices, placePath, type PlaceLookup, type PlaceOption } from "@/lib/erp/transporter-godowns";
 import { PLACE_FILTER_LABELS } from "@/lib/place-filters";
 import { PLACE_KINDS } from "@/lib/place-parse";
 import { PinField, parsePin } from "../../_ui/pin-field";
@@ -205,7 +205,6 @@ function TransporterDetails({
                             <li key={c.id} className="flex items-start justify-between gap-3 px-3 py-2">
                               <span className="min-w-0">
                                 <span className="block text-[13px] font-medium text-ink">{c.name || "No name"}</span>
-                                {c.role ? <span className="block text-[12px] text-muted">{c.role}</span> : null}
                               </span>
                               <span className="flex shrink-0 flex-col items-end gap-0.5">
                                 {c.phones.length ? c.phones.map((p) => <CallLink key={p} phone={p} name={c.name} />) : <span className="text-[12px] text-muted">No number</span>}
@@ -424,7 +423,7 @@ function EditTransporter({
         </section>
 
         <section>
-          <SectionTitle hint="One place each — state and district, with its pin on the map — and the people to ring there. Up to three numbers a person.">Godowns</SectionTitle>
+          <SectionTitle hint="One place each — state and district, with its pin on the map — and the people to ring there.">Godowns</SectionTitle>
           <div className="space-y-3">
             {godowns.map((g, gi) => {
               const at = `g${gi + 1}`;
@@ -487,10 +486,18 @@ function EditTransporter({
                         {g.people.map((p, pi) => {
                           const pErr = errAt(`${at}.c${pi + 1}`);
                           return (
-                            <div key={p.key} className={cx("rounded-[4px] border bg-surface p-2", pErr ? "border-danger" : "border-divider")}>
+                            <div key={p.key}>
                               <div className="grid grid-cols-[1fr_1fr_auto] items-start gap-2">
-                                <input value={p.name} onChange={(e) => setP(g.key, p.key, { name: e.target.value })} placeholder="Name" aria-label="Name" className={cx(cls, "mt-0")} />
-                                <input value={p.role} onChange={(e) => setP(g.key, p.key, { role: e.target.value })} placeholder="Looks after (booking, delivery…)" aria-label="Looks after" className={cx(cls, "mt-0")} />
+                                <input value={p.name} onChange={(e) => setP(g.key, p.key, { name: e.target.value })} placeholder="Name" aria-label="Name" className={cx(cls, "mt-0", pErr && "border-danger")} />
+                                {/* One number on the form; any further numbers a person was saved with ride along unseen. */}
+                                <input
+                                  value={p.phones[0] ?? ""}
+                                  onChange={(e) => setP(g.key, p.key, { phones: [e.target.value, ...p.phones.slice(1)] })}
+                                  inputMode="tel"
+                                  placeholder="Phone number"
+                                  aria-label="Phone number"
+                                  className={cx(cls, "mt-0", pErr && "border-danger")}
+                                />
                                 <button
                                   type="button"
                                   onClick={() => setG(g.key, { people: g.people.filter((x) => x.key !== p.key) })}
@@ -500,35 +507,6 @@ function EditTransporter({
                                 >
                                   ×
                                 </button>
-                              </div>
-                              <div className="mt-2 flex flex-wrap items-center gap-2">
-                                {p.phones.map((ph, i) => (
-                                  <span key={i} className="flex items-center">
-                                    <input
-                                      value={ph}
-                                      onChange={(e) => setP(g.key, p.key, { phones: p.phones.map((x, j) => (j === i ? e.target.value : x)) })}
-                                      inputMode="tel"
-                                      placeholder={`Phone ${i + 1}`}
-                                      aria-label={`Phone ${i + 1}`}
-                                      className={cx(cls, "mt-0 w-[150px]")}
-                                    />
-                                    {p.phones.length > 1 ? (
-                                      <button
-                                        type="button"
-                                        onClick={() => setP(g.key, p.key, { phones: p.phones.filter((_, j) => j !== i) })}
-                                        className="px-1 text-muted hover:text-danger"
-                                        aria-label={`Remove phone ${i + 1}`}
-                                      >
-                                        ×
-                                      </button>
-                                    ) : null}
-                                  </span>
-                                ))}
-                                {p.phones.length < MAX_PHONES ? (
-                                  <button type="button" onClick={() => setP(g.key, p.key, { phones: [...p.phones, ""] })} className="text-[12px] font-medium text-brand">
-                                    + Another number
-                                  </button>
-                                ) : null}
                               </div>
                               {pErr ? <span className="mt-1 block text-danger">{pErr}</span> : null}
                             </div>
