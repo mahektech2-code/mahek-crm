@@ -141,8 +141,9 @@ export const ERP_GROUPS: ErpGroup[] = [
         v("fgStock", "Finished goods", { key: "fgLog", label: "Show every entry", back: "Show available stock" }),
         v("packStock", "Packed", { key: "packLog", label: "Show every entry", back: "Show available stock" }),
       ]),
-      s("stockCheck", "stock-check", "Stock accuracy", "Inventory Accuracy Control: a blind count before every purchase and every day, a red flag held until it is recounted and resolved, and stock that moves only through an approved adjustment.", true, [
+      s("stockCheck", "stock-check", "Stock accuracy", "Inventory Accuracy Control: a blind count before every purchase and every day, a stock check of anything by anybody on the floor, a red flag held until it is recounted and resolved, and stock that moves only through an approved adjustment.", true, [
         v("countTasks", "To count"),
+        v("floorChecks", "Stock checks"),
         v("stockFlags", "Red flags"),
         v("stockAdjustments", "Adjustments"),
         v("missingRecords", "Missing records"),

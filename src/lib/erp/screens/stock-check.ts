@@ -26,6 +26,7 @@ import { erpLink } from "../registry";
 import { erpAudit, erpId, num, stampLine, text, type ScreenModule } from "../server";
 import { countLabel, judgeOnShelf, missingRecords, openCount, openGodownCounts, planCycleCounts, shelfFacts, type ShelfFacts } from "../stock-check";
 import { lockLot, rmLots } from "../stock";
+import { checkableItems, floorCheckRows, recordFloorCheck, STAGE_LABEL, type CheckStage, type FloorCheckRow } from "../floor-checks";
 import type { ActionSpec, ColSpec, FieldSpec, ListRow } from "../ui";
 import { nf } from "../ui";
 import { godownOptions, inTx, materials, refuse, type Tx } from "./common";
@@ -352,7 +353,7 @@ const countTasks: ScreenModule = {
  * check it belongs to: the book confirmed, the difference confirmed, or two
  * counts that agree with nothing and a third needed.
  */
-async function submitCount(ctx: ErpContext, id: string, v: Record<string, string>): Promise<Result<unknown>> {
+export async function submitCount(ctx: ErpContext, id: string, v: Record<string, string>): Promise<Result<unknown>> {
   const qty = num(v.qty);
   if (qty == null || qty < 0) return fieldErr("qty", "Enter what you counted — zero if the shelf is empty");
   let message = "";
@@ -891,7 +892,148 @@ const stockCounts: ScreenModule = {
   },
 };
 
-export const STOCK_CHECK_SCREENS: ScreenModule[] = [countTasks, stockFlags, stockAdjustments, missingRecordsScreen, stockCounts];
+
+/* ------------------------------------------------------------ Stock checks */
+
+const CHECK_RESULT = { mismatch: "Mismatch", reviewed: "Mismatch · reviewed", matched: "Matched" } as const;
+const resultOf = (c: FloorCheckRow) => (c.matched ? CHECK_RESULT.matched : c.reviewedAt ? CHECK_RESULT.reviewed : CHECK_RESULT.mismatch);
+const STAGE_BY_LABEL = Object.fromEntries(Object.entries(STAGE_LABEL).map(([k, v]) => [v, k])) as Record<string, CheckStage>;
+
+/**
+ * STOCK CHECKS — anybody, any time, any kind of stock, from the factory phone
+ * or from here. Blind like a count: the book is read when the figure arrives.
+ * A mismatch waits here (and on the dashboard) until somebody who runs counts
+ * has looked at it; a raw-material mismatch can be raised into a formal count,
+ * whose red flag and approved adjustment are the only way the book moves.
+ */
+const floorChecks: ScreenModule = {
+  key: "floorChecks",
+  async load(ctx) {
+    const [rows, gds] = await Promise.all([floorCheckRows(sql`f.counted_at > now() - interval '90 days'`, 2000), godownOptions(ctx, { lost: false })]);
+    const items = gds.length ? await checkableItems(gds[0].id) : [];
+    const byStage: Record<string, string[]> = {};
+    for (const i of items) (byStage[STAGE_LABEL[i.stage]] ??= []).push(i.name);
+    const cols: ColSpec[] = [
+      { k: "item", l: "Item", t: "b" },
+      { k: "result", l: "Result", t: "s" },
+      { k: "date", l: "Checked", t: "d" },
+      { k: "godown", l: "Godown", t: "t" },
+      { k: "counted", l: "Counted", t: "n" },
+      { k: "book", l: "Book", t: "n" },
+      { k: "diff", l: "Difference", t: "n" },
+      { k: "reason", l: "Their reason", t: "t", w: 220 },
+      { k: "counter", l: "Checked by", t: "t" },
+      { k: "unit", l: "Unit", t: "t" },
+      { k: "kind", l: "Kind", t: "t" },
+      { k: "from", l: "From", t: "t" },
+    ];
+    const header: FieldSpec[] = [
+      { k: "kind", l: "Kind of stock", t: "select", req: true, opts: Object.values(STAGE_LABEL), def: STAGE_LABEL.rm },
+      { k: "item", l: "Item", t: "select", req: true, optsBy: { by: "kind", map: byStage } },
+      { k: "godown", l: "Godown", t: "select", req: true, opts: gds.map((g) => g.name), def: ctx.workingGodown?.name },
+      { k: "qty", l: "Counted", t: "num", req: true, min: 0, hint: "The book is shown only after you save." },
+      { k: "bin", l: "Where", t: "text", hint: "Bay, rack or bin." },
+      { k: "reason", l: "If it differs, why (optional)", t: "area", mic: true },
+    ];
+    return {
+      spec: {
+        screen: "floorChecks",
+        cols,
+        hidden: [],
+        groups: ["result", "godown"],
+        chips: "result",
+        godownKey: "godown",
+        sortDefault: ["date", -1],
+        newForm: { screen: "floorChecks", id: "new", title: "Record a stock check", sub: "Count any item at a godown. The figure is compared with the book the moment it is saved; a mismatch lands here and on the dashboard.", submit: "Save check", header },
+        newLabel: "Record a stock check",
+        noDataLine: "No stock checks in the last 90 days. The floor records them from the factory app (Stock check), and anybody here can record one.",
+      },
+      rows: rows.map((c): ListRow => {
+        const result = resultOf(c);
+        const actions: ActionSpec[] = [];
+        if (!c.matched && !c.reviewedAt && runsCounts(ctx)) {
+          actions.push({ id: "review", l: "Mark reviewed", primary: true, prompt: { title: "Mark this mismatch reviewed", sub: `${c.item} at ${c.godown}: counted ${nf(c.counted)}, book ${nf(c.book)} ${c.unit}`, submit: "Mark reviewed", fields: [{ k: "note", l: "What you found or did", t: "area", mic: true }] } });
+          if (c.stage === "rm" && !c.stockCountId)
+            actions.push({ id: "escalate", l: "Open a formal count", prompt: { title: "Open a formal count", sub: "A blind count of this item at this godown, with the red flag, recount and approved adjustment that come with it. The check is marked reviewed.", submit: "Open count", fields: [] } });
+        }
+        return {
+          id: c.id,
+          v: {
+            date: calendarDate(new Date(c.countedAt)),
+            result,
+            kind: STAGE_LABEL[c.stage],
+            item: c.item,
+            godown: c.godown,
+            counted: c.counted,
+            book: c.book,
+            diff: c.difference,
+            unit: c.unit,
+            reason: c.reason,
+            counter: c.counter,
+            from: c.source === "factory" ? "Factory app" : "ERP",
+          },
+          /* The Result column already says it; a flag would only repeat it. */
+          flags: [],
+          title: `${c.item} · ${c.godown}`,
+          header: `${STAGE_LABEL[c.stage]} · ${result}${c.bin ? ` · ${c.bin}` : ""}`,
+          fields: [
+            { l: "Counted", v: `${nf(c.counted)} ${c.unit}` },
+            { l: "Book when checked", v: `${nf(c.book)} ${c.unit}` },
+            { l: "Difference", v: `${c.difference > 0 ? "+" : ""}${nf(c.difference)} ${c.unit} (tolerance ${nf(c.tolerance)})` },
+            ...(c.reason ? [{ l: "Their reason", v: c.reason }] : []),
+            ...(c.reviewedAt ? [{ l: "Reviewed", v: `${c.reviewer ?? ""}${c.reviewNote ? ` — ${c.reviewNote}` : ""}` }] : []),
+            ...(c.stockCountNo ? [{ l: "Formal count", v: countLabel(c.stockCountNo) }] : []),
+          ],
+          actions,
+          by: stampLine(c.counter, c.countedAt),
+        };
+      }),
+    };
+  },
+  forms: {
+    async new(ctx, h) {
+      const stage = STAGE_BY_LABEL[text(h.kind) ?? ""];
+      if (!stage) return fieldErr("kind", "Pick the kind of stock");
+      const gds = await godownOptions(ctx, { lost: false });
+      const g = gds.find((x) => x.name === text(h.godown));
+      if (!g) return fieldErr("godown", "Pick the godown");
+      const item = (await checkableItems(g.id)).find((i) => i.stage === stage && i.name === text(h.item));
+      if (!item) return fieldErr("item", "Pick the item");
+      const qty = num(h.qty);
+      if (qty == null || qty < 0) return fieldErr("qty", "Enter what you counted — zero if there is none");
+      const r = await recordFloorCheck(ctx.user.id, { stage, itemId: item.id, godownId: g.id, qty, bin: text(h.bin), reason: text(h.reason), source: "erp" });
+      if (!r.ok) return fieldErr(r.field, r.error);
+      const c = r.check;
+      await erpAudit(ctx, "erp.floorCheck.record", "erp_floor_check", c.id, null, { item: c.item, godown: c.godown, counted: c.counted, matched: c.matched });
+      return okVoid(c.matched ? `Matches the book: counted ${nf(c.counted)}, book ${nf(c.book)} ${c.unit}` : `Mismatch: counted ${nf(c.counted)}, book ${nf(c.book)} ${c.unit} (${c.difference > 0 ? "+" : ""}${nf(c.difference)})`);
+    },
+  },
+  actions: {
+    async review(ctx, id, v) {
+      if (!runsCounts(ctx)) return err("A manager or somebody who controls stock accuracy reviews a mismatch.", "not_permitted");
+      const r = (await db.execute(sql`
+        update erp_floor_checks set reviewed_by_id = ${ctx.user.id}, reviewed_at = now(), review_note = ${text(v.note)}
+         where id = ${id} and not matched and reviewed_at is null returning id`)) as unknown as { id: string }[];
+      if (!r.length) return err("That check has already been reviewed.", "conflict");
+      await erpAudit(ctx, "erp.floorCheck.review", "erp_floor_check", id, null, { note: text(v.note) });
+      return okVoid("Marked reviewed");
+    },
+    async escalate(ctx, id) {
+      if (!runsCounts(ctx)) return err("A manager or somebody who controls stock accuracy opens counts.", "not_permitted");
+      const [c] = await floorCheckRows(sql`f.id = ${id}`, 1);
+      if (!c || c.stage !== "rm" || c.matched || c.stockCountId) return err("Only an unresolved raw-material mismatch is raised into a formal count.", "conflict");
+      const opened = await db.transaction(async (tx) => {
+        const o = await openCount(tx, { kind: "event", rawMaterialId: c.itemId, godownId: c.godownId, reason: `Stock check by ${c.counter} found ${c.difference > 0 ? "+" : ""}${nf(c.difference)} ${c.unit}${c.reason ? ` — "${c.reason}"` : ""}`, byId: ctx.user.id });
+        await tx.execute(sql`update erp_floor_checks set stock_count_id = ${o.id}, reviewed_by_id = ${ctx.user.id}, reviewed_at = now(), review_note = coalesce(review_note, ${`Raised into ${countLabel(o.countNo)}`}) where id = ${id}`);
+        return o;
+      });
+      await erpAudit(ctx, "erp.floorCheck.escalate", "erp_floor_check", id, null, { count: opened.id });
+      return okVoid(opened.created ? `${countLabel(opened.countNo)} opened` : `${countLabel(opened.countNo)} was already open for that shelf — linked to it`);
+    },
+  },
+};
+
+export const STOCK_CHECK_SCREENS: ScreenModule[] = [countTasks, floorChecks, stockFlags, stockAdjustments, missingRecordsScreen, stockCounts];
 
 /* -------------------------------------------- requirements, from outside */
 

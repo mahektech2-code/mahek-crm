@@ -11,9 +11,10 @@ import { accountKey, clearSignInFailures, clientAddress, recordSignInFailure, si
 import { erpId } from "@/lib/erp/server";
 import { eq } from "drizzle-orm";
 import { bootstrap, contextFor, factoryAudit, factoryContext, type FactoryCtx } from "@/lib/factory/server";
+import { saveCheckReason, saveOfficeCount, saveStockCheck, stockKit } from "@/lib/factory/counts";
 import { submitJob } from "@/lib/factory/post";
 import { assignTask, changeTeam, decideReview, reportProblem, requestCorrection } from "@/lib/factory/head";
-import type { BoxInfo, BoxScan, DrumExisting, DrumLookup, DrumSave, FactoryData, LoadBoard, LrFields, LrKit, LrReading, LrSave, Proc, Submission, SubmitResult, Team } from "@/lib/factory/types";
+import type { BoxInfo, BoxScan, CountInput, DrumExisting, StockCheckInput, StockKit, StockSave, DrumLookup, DrumSave, FactoryData, LoadBoard, LrFields, LrKit, LrReading, LrSave, Proc, Submission, SubmitResult, Team } from "@/lib/factory/types";
 import { boxInfo, loadBoard, lrKit, readLr, saveLr, scanBox, unloadBox } from "@/lib/factory/dispatch";
 import { findDrumLot, lotRefusal, recordEmptyDrum, type DrumLot } from "@/lib/erp/drums";
 import { DRUM_STATUS_LABEL, OWNERSHIP_LABEL, drumLabel } from "@/lib/erp/engines/drums";
@@ -45,6 +46,8 @@ export type Me = {
   drums?: boolean;
   /** Loads boxes and uploads LRs. Absent on an older server: neither is offered. */
   dispatch?: boolean;
+  /** Checks stock — every department. Absent on an older server: no Stock check screen is offered. */
+  counts?: boolean;
 };
 export type Who = { key: string; n: string; ini: string; ph: string; hasPin: boolean };
 type Fail = { ok: false; error: string };
@@ -54,7 +57,7 @@ const NOT_FOUND = "notFound";
 const INACTIVE = "inactive";
 
 function meOf(fc: FactoryCtx): Me {
-  return { key: fc.user.id, n: fc.user.name, ini: initialsOf(fc.user.name), head: fc.head, area: fc.area, lang: fc.lang, scope: fc.scope, drums: fc.drums, dispatch: fc.dispatch };
+  return { key: fc.user.id, n: fc.user.name, ini: initialsOf(fc.user.name), head: fc.head, area: fc.area, lang: fc.lang, scope: fc.scope, drums: fc.drums, dispatch: fc.dispatch, counts: true };
 }
 
 async function whoFor(user: User, typed: string): Promise<{ ok: true; who: Who } | Fail> {
@@ -337,4 +340,34 @@ export async function factorySaveLr(input: LrFields & { fileId: string | null; r
   const fc = await factoryContext();
   if (!fc) return { ok: false, ...SIGNED_OUT };
   return saveLr(fc, input);
+}
+
+/* ------------------------------------------------------------ stock checks */
+
+/** The office's counts and every item at this godown. Never the book — the check is blind. */
+export async function factoryStockKit(): Promise<StockKit> {
+  const fc = await factoryContext();
+  if (!fc) return { ok: false, title: "Please sign in again", text: "The stock list could not be shown.", fix: "Sign in, then open Stock check again." };
+  return stockKit(fc);
+}
+
+/** One check of an item the person chose. Safe to send twice — the key answers a resend. */
+export async function factoryStockCheck(input: StockCheckInput): Promise<StockSave> {
+  const fc = await factoryContext();
+  if (!fc) return { ok: false, kind: "signedOut", title: "Please sign in again", text: "The check was not saved.", fix: "Sign in, then count it again." };
+  return saveStockCheck(fc, input);
+}
+
+/** One count the office asked for, through the ERP's own submit. */
+export async function factoryCountSave(input: CountInput): Promise<StockSave> {
+  const fc = await factoryContext();
+  if (!fc) return { ok: false, kind: "signedOut", title: "Please sign in again", text: "The count was not saved.", fix: "Sign in, then count it again." };
+  return saveOfficeCount(fc, input);
+}
+
+/** The optional reason after a mismatch. */
+export async function factoryCheckReason(kind: "check" | "count", id: string, reason: string): Promise<{ ok: boolean }> {
+  const fc = await factoryContext();
+  if (!fc) return { ok: false };
+  return saveCheckReason(fc, kind === "count" ? "count" : "check", String(id ?? ""), String(reason ?? ""));
 }

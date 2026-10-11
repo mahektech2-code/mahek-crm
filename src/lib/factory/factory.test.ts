@@ -439,3 +439,40 @@ describe("staffed from Admin Console → Access, with department-level permissio
     assert.ok(new Set(all.tasks.map((t) => t.proc)).size > 1);
   });
 });
+
+describe("stock check, from every department", () => {
+  test("any item of any kind is listed blind, checked, judged against the book, and a mismatch takes a reason", async () => {
+    const { stockKit, saveStockCheck, saveOfficeCount, saveCheckReason } = await import("./counts");
+    const { fc } = await as("anil");
+    const kit = await stockKit(fc);
+    assert.ok(kit.ok);
+    for (const stage of ["rm", "sfg", "fg", "pack"] as const) assert.ok(kit.items.some((i) => i.stage === stage && i.here), `${stage} is listed`);
+    assert.ok(kit.items.every((i) => !("book" in i)), "the list never carries the book");
+
+    const fgItem = kit.items.find((i) => i.stage === "fg" && i.here)!;
+    const k = "CHK-" + randomUUID().slice(0, 8);
+    const r = await saveStockCheck(fc, { stage: "fg", itemId: fgItem.id, qty: 0, key: k });
+    assert.ok(r.ok && r.kind === "check" && r.unit === "Cans" && !r.matched && (r.book ?? 0) > 0, JSON.stringify(r));
+    const again = await saveStockCheck(fc, { stage: "fg", itemId: fgItem.id, qty: 0, key: k });
+    assert.ok(again.ok && again.replay && again.id === r.id);
+    assert.ok((await saveCheckReason(fc, "check", r.id, "Not entered yet")).ok);
+    const after = await stockKit(fc);
+    assert.ok(after.ok && after.items.find((i) => i.stage === "fg" && i.id === fgItem.id)?.checkedToday?.matched === false);
+
+    const packItem = kit.items.find((i) => i.stage === "pack" && i.here)!;
+    const p0 = await saveStockCheck(fc, { stage: "pack", itemId: packItem.id, qty: 0, key: "CHK-" + randomUUID().slice(0, 8) });
+    assert.ok(p0.ok && p0.unit === "Boxes");
+    const p1 = await saveStockCheck(fc, { stage: "pack", itemId: packItem.id, qty: p0.book!, key: "CHK-" + randomUUID().slice(0, 8) });
+    assert.ok(p1.ok && p1.matched, "counting what the book holds matches");
+
+    const rmItem = kit.items.find((i) => i.stage === "rm" && i.here)!;
+    const { openCount } = await import("@/lib/erp/stock-check");
+    const opened = await db.transaction((tx) => openCount(tx, { kind: "event", rawMaterialId: rmItem.id, godownId: fc.godown.id, reason: "A spill", byId: fc.user.id }));
+    const kit2 = await stockKit(fc);
+    assert.ok(kit2.ok && kit2.office.some((t) => t.id === opened.id), "the office's count is offered");
+    const c = await saveOfficeCount(fc, { id: opened.id, qty: 0 });
+    assert.ok(c.ok && c.kind === "count" && c.no, JSON.stringify(c));
+    const resent = await saveOfficeCount(fc, { id: opened.id, qty: 0 });
+    assert.ok(resent.ok && resent.replay, "a resend of a saved count is not an error");
+  });
+});

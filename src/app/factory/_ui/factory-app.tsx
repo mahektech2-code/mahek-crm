@@ -17,14 +17,14 @@ import {
   type ScanPurpose,
   type ScanResult,
 } from "@/lib/factory/rules";
-import { CHECK_ITEMS, DOWN, OFFLINE_HOURS, REJ, STEPS, SUBMISSION_VERSION, type Draft, type FactoryData, type Lot, type Proc, type SubmitResult, type Task, type Team } from "@/lib/factory/types";
+import { CHECK_ITEMS, DOWN, OFFLINE_HOURS, REJ, STEPS, SUBMISSION_VERSION, type CheckStage, type CheckUnit, type Draft, type FactoryData, type Lot, type Proc, type SubmitResult, type Task, type Team } from "@/lib/factory/types";
 import { hhmm } from "@/lib/factory/time";
 import type { Me } from "@/lib/actions/factory";
 import { call, NotReceived, PAGE_BUILD, watchBuild } from "./api";
 import { art, ic, qr } from "./art";
 import { avStyle, btn, card, initials, mono, msg, MsgBox, Pill, artWell, type Msg } from "./kit";
 import { CameraScanner, shrinkPhoto } from "./camera";
-import { dropPhoto, forget, keepPhoto, keptPhoto, load, mintKey, readNet, save, type Flow, type KpSheet, type Net, type PeopleSheet, type QItem, type ReasonSheet, type Res, type State, type TilesSheet, mintDrumKey } from "./model";
+import { dropPhoto, forget, keepPhoto, keptPhoto, load, mintKey, readNet, save, type Flow, type KpSheet, type Net, type PeopleSheet, type QItem, type ReasonSheet, type Res, type State, type TilesSheet, mintDrumKey, type StockEntry, mintCheckKey } from "./model";
 
 /* ---------------------------------------------------------------------------
  * THE FACTORY APP — "Mahek Factory App" from the design, screen for screen.
@@ -40,6 +40,13 @@ import { dropPhoto, forget, keepPhoto, keptPhoto, load, mintKey, readNet, save, 
  * ------------------------------------------------------------------------- */
 
 type Props = { initialMe: Me | null; initialData: FactoryData | null; dev: boolean };
+
+
+/* Stock check: how a unit and a kind of stock are said on the floor. */
+const UNIT_WORD: Record<CheckUnit, string> = { Ltr: "litres", Pcs: "pieces", Cans: "cans", Boxes: "boxes" };
+const UNIT_SHORT: Record<CheckUnit, string> = { Ltr: "L", Pcs: "pcs", Cans: "cans", Boxes: "boxes" };
+const STAGE_WORD: Record<CheckStage, string> = { rm: "Raw material", sfg: "Semi-finished", fg: "Filled cans", pack: "Packed boxes" };
+const MISMATCH_REASONS = ["Not entered yet", "Used in production", "Moved to another place", "Damaged or leaked", "Counted wrong before", "Not sure"];
 
 const PC: Record<Proc, string> = { mixing: "flask", filling: "fill", packing: "box", dispatch: "truck" };
 const LI: Record<Lang, number> = { en: 0, hi: 1, mr: 2 };
@@ -96,6 +103,7 @@ export class FactoryApp extends Component<Props, State> {
       clock: "",
       cam: "wait",
       drum: null,
+      stock: null,
       newBuild: false,
     };
   }
@@ -584,6 +592,274 @@ export class FactoryApp extends Component<Props, State> {
       return;
     }
     this.setState({ flow: f, scan: null });
+  }
+
+  /* ================================================================ stock check */
+
+  openStock() {
+    const blank: StockEntry = { loading: true, err: null, godown: "", office: [], items: [], stage: "rm", search: "", pick: null, qty: null, bin: "", key: "", saving: false, saved: null, reason: "", reasonSaving: false, reasonSaved: false };
+    this.setState({ sheet: null, route: "stock", stock: blank }, () => void this.loadStock());
+  }
+
+  /** Merges onto the LATEST stock state: a list reload landing after Back must not put the old pick back. */
+  setStock(p: Partial<StockEntry>) {
+    this.setState((st) => (st.stock ? { stock: { ...st.stock, ...p } } : null));
+  }
+
+  async loadStock() {
+    if (!this.state.stock) return;
+    this.setStock({ loading: true, err: null });
+    try {
+      const r = await call("stockKit");
+      if (r.ok) this.setStock({ loading: false, godown: r.godown, office: r.office, items: r.items });
+      else this.setStock({ loading: false, err: { title: r.title, text: r.text, fix: r.fix } });
+    } catch (e) {
+      this.setStock({ loading: false, err: { title: "No network", text: "The stock list could not be loaded.", fix: "Check the Wi-Fi and tap Try again. A stock check needs the network — your count is compared with the book the moment it arrives." } });
+      if (!(e instanceof NotReceived)) throw e;
+    }
+  }
+
+  pickStock(pick: NonNullable<StockEntry["pick"]>) {
+    this.setStock({ pick, qty: null, bin: "", key: mintCheckKey(), saving: false, saved: null, err: null, reason: "", reasonSaving: false, reasonSaved: false });
+  }
+
+  stockQty() {
+    const s = this.state.stock;
+    if (!s?.pick) return;
+    const unit = s.pick.kind === "count" ? s.pick.task.unit : s.pick.item.unit;
+    this.openKp({
+      l: "How many " + UNIT_WORD[unit] + " did you count?", unit: UNIT_WORD[unit], v: s.qty, decimals: unit === "Ltr", allowZero: true, quick: [{ l: "None here", v: 0 }],
+      set: (v) => this.setStock({ qty: v, err: null }),
+    });
+  }
+
+  async saveStock() {
+    const s = this.state.stock;
+    if (!s?.pick || s.saving) return;
+    if (s.qty == null) return this.stockQty();
+    this.setStock({ saving: true, err: null });
+    try {
+      const r = s.pick.kind === "count"
+        ? await call("countSave", { id: s.pick.task.id, qty: s.qty, bin: s.bin || null })
+        : await call("stockCheck", { stage: s.pick.item.stage, itemId: s.pick.item.id, qty: s.qty, bin: s.bin || null, key: s.key });
+      if (r.ok) {
+        this.setStock({ saving: false, saved: r });
+        this.toast(r.matched ? "Saved · matches the book" : "Saved · does not match the book");
+        return;
+      }
+      this.setStock({ saving: false, err: { title: r.title, text: r.text, fix: r.fix } });
+    } catch (e) {
+      this.setStock({ saving: false, err: { title: "No network", text: "The count is not saved yet.", fix: "Check the Wi-Fi and press Save again. It is safe — it will not be saved twice." } });
+      if (!(e instanceof NotReceived)) throw e;
+    }
+  }
+
+  async saveStockReason() {
+    const s = this.state.stock, sv = s?.saved;
+    if (!s || !sv || !s.reason.trim() || s.reasonSaving) return;
+    this.setStock({ reasonSaving: true });
+    try {
+      const r = await call("checkReason", sv.kind, sv.id, s.reason.trim());
+      this.setStock({ reasonSaving: false, reasonSaved: r.ok });
+      this.toast(r.ok ? "Reason saved" : "The office has already looked at it");
+    } catch (e) {
+      this.setStock({ reasonSaving: false });
+      this.toast("No network — the reason is not saved yet");
+      if (!(e instanceof NotReceived)) throw e;
+    }
+  }
+
+  /** Back from a count to the list — reloading it, so what was just counted shows as done. */
+  stockBack() {
+    const s = this.state.stock;
+    if (s?.pick) {
+      const reload = !!s.saved;
+      this.setStock({ pick: null, saved: null, err: null });
+      if (reload) void this.loadStock();
+      return;
+    }
+    this.setState({ route: this.state.me?.head ? "today" : "home", stock: null });
+  }
+
+  renderStock(): ReactNode {
+    const st = this.state, T = this.T(), s = st.stock;
+    const fact = (l: string, v: string, tone?: string) => (
+      <div key={l} style={{ display: "flex", justifyContent: "space-between", gap: "12px", padding: "10px 0", borderBottom: "1px solid #EDEFF3" }}>
+        <span style={{ fontSize: "15px", color: "#6B7385" }}>{l}</span>
+        <span style={{ fontSize: "15px", fontWeight: 700, color: tone ?? "#1A1E28", textAlign: "right", flex: 1 }}>{v}</span>
+      </div>
+    );
+    const errBox = (e: { title: string; text: string; fix: string }) => (
+      <div style={{ padding: "14px", borderRadius: "14px", background: "#FCECEC" }}>
+        <div style={{ fontSize: "17px", fontWeight: 700, color: "#B3261E" }}>{e.title}</div>
+        <div style={{ fontSize: "15px", lineHeight: "22px", color: "#1A1E28", marginTop: "6px" }}>{e.text}</div>
+        <div style={{ fontSize: "15px", lineHeight: "22px", color: "#1A1E28", marginTop: "6px" }}><span style={{ fontWeight: 700 }}>What to do: </span>{e.fix}</div>
+      </div>
+    );
+    const round = { width: "44px", height: "44px", borderRadius: "50%", border: "none", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" } as CSSProperties;
+    const head = (
+      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+        <button onClick={() => this.stockBack()} aria-label={T.back} style={round}>{ic("back", 22, "#5223E0")}</button>
+        <span style={{ flex: 1 }}>
+          <span style={{ display: "block", fontSize: "20px", fontWeight: 700 }}>Stock check</span>
+          {!!s?.godown && <span style={{ display: "block", fontSize: "13px", color: "#6B7385" }}>{s.godown}</span>}
+        </span>
+        {!s?.pick && <button onClick={() => void this.loadStock()} aria-label="Refresh" style={round}>{ic("sync", 22, "#5223E0")}</button>}
+      </div>
+    );
+    const wrap = (kids: ReactNode) => <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "16px", display: "flex", flexDirection: "column", gap: "14px" }}>{head}{kids}</div>;
+    if (!s) return wrap(null);
+    const inputStyle: CSSProperties = { width: "100%", height: "48px", minHeight: "48px", boxSizing: "border-box", border: "1.5px solid #DDE1E8", borderRadius: "12px", padding: "0 12px", fontSize: "17px", color: "#1A1E28", background: "#FFFFFF" };
+    const p = s.pick;
+
+    /* ---- the answer: matched, or a mismatch and an optional reason */
+    if (p && s.saved) {
+      const sv = s.saved, u = UNIT_SHORT[sv.unit];
+      const ok = sv.matched;
+      const diff = sv.difference == null ? null : (sv.difference > 0 ? "+" : "") + nf(sv.difference) + " " + u;
+      return wrap(
+        <>
+          <div style={{ ...card, padding: "16px", border: "2px solid " + (ok ? "#BFE3CC" : "#F6CFCF") }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+              <span style={{ width: "52px", height: "52px", flex: "none", borderRadius: "50%", background: ok ? "#E9F5EE" : "#FCECEC", display: "flex", alignItems: "center", justifyContent: "center" }}>{ic(ok ? "check" : "alert", 28, ok ? "#1D7A45" : "#B3261E")}</span>
+              <span style={{ flex: 1 }}>
+                <span style={{ display: "block", fontSize: "22px", fontWeight: 700, color: ok ? "#1D7A45" : "#B3261E" }}>{ok ? "Matches the book" : "Does not match the book"}</span>
+                <span style={{ display: "block", fontSize: "15px", color: "#6B7385" }}>{(sv.no ? sv.no + " · " : "") + sv.item}</span>
+              </span>
+            </div>
+            {fact("You counted", nf(sv.qty) + " " + u)}
+            {sv.book != null && fact("The book says", nf(sv.book) + " " + u)}
+            {!ok && diff && fact("Difference", diff + (sv.difference! > 0 ? " more on the shelf" : " short on the shelf"), "#B3261E")}
+            {sv.kind === "count" && <div style={{ marginTop: "10px", fontSize: "14px", lineHeight: "20px", color: "#3D4453" }}>{sv.message}</div>}
+          </div>
+          {!ok && (
+            <div style={{ ...card, padding: "16px", display: "flex", flexDirection: "column", gap: "10px" }}>
+              <span style={{ fontSize: "17px", fontWeight: 700 }}>Why might it differ? <span style={{ fontWeight: 400, color: "#6B7385" }}>(optional)</span></span>
+              <span style={{ fontSize: "14px", color: "#6B7385" }}>The office has been told either way. A reason helps them find it faster.</span>
+              {s.reasonSaved ? (
+                <div style={{ padding: "12px", borderRadius: "12px", background: "#E9F5EE", color: "#1D7A45", fontSize: "15px" }}>{"Reason saved: " + s.reason}</div>
+              ) : (
+                <>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+                    {MISMATCH_REASONS.map((r) => (
+                      <button key={r} onClick={() => this.setStock({ reason: r })} style={{ padding: "8px 12px", borderRadius: "16px", border: "1.5px solid " + (s.reason === r ? "#6835FB" : "#DDE1E8"), background: s.reason === r ? "#F1ECFF" : "#FFFFFF", fontSize: "14px", color: "#1A1E28", cursor: "pointer" }}>{r}</button>
+                    ))}
+                  </div>
+                  <input value={s.reason} onChange={(e) => this.setStock({ reason: String(e.target.value).slice(0, 300) })} maxLength={300} placeholder="Or say it in your words" aria-label="Why it might differ" style={inputStyle} />
+                  <button onClick={() => void this.saveStockReason()} style={btn(!s.reason.trim() || s.reasonSaving ? "off" : "p", 54)}>{s.reasonSaving ? "Saving…" : "Save reason"}</button>
+                </>
+              )}
+            </div>
+          )}
+          <button onClick={() => this.stockBack()} style={btn(ok || s.reasonSaved ? "p" : "s", 58)}>Check the next item</button>
+        </>,
+      );
+    }
+
+    /* ---- counting one item */
+    if (p) {
+      const name = p.kind === "count" ? p.task.item : p.item.name;
+      const unit = p.kind === "count" ? p.task.unit : p.item.unit;
+      const blocked = p.kind === "count" ? p.task.blocked : null;
+      return wrap(
+        <>
+          <div style={{ ...card, padding: "16px" }}>
+            <span style={{ display: "block", fontSize: "21px", lineHeight: "26px", fontWeight: 700 }}>{name}</span>
+            {p.kind === "count" && <span style={{ display: "block", ...mono, fontSize: "14px", fontWeight: 600, color: "#3D4453", marginTop: "2px" }}>{p.task.no + " · asked by the office"}</span>}
+            {fact("Kind", p.kind === "count" ? STAGE_WORD.rm : STAGE_WORD[p.item.stage])}
+            {fact("Godown", p.kind === "count" ? p.task.godown : s.godown)}
+            {fact("Count in", UNIT_WORD[unit])}
+            {p.kind === "count" && fact("Why", p.task.reason)}
+            {p.kind === "count" && p.task.recount && fact("Recount", "Somebody else's count differed from the book", "#8A5C05")}
+          </div>
+          {blocked ? errBox({ title: "Not yours to count", text: blocked, fix: "Leave it for somebody else." }) : (
+            <>
+              <div style={{ fontSize: "14px", lineHeight: "20px", color: "#6B7385" }}>Count every drum, can or box of it here. The book figure is shown only after you save.</div>
+              <button onClick={() => this.stockQty()} style={{ ...card, padding: "16px", display: "flex", alignItems: "center", justifyContent: "space-between", border: "2px solid " + (s.qty == null ? "#6835FB" : "#DDE1E8"), cursor: "pointer", textAlign: "left" }}>
+                <span>
+                  <span style={{ display: "block", fontSize: "15px", color: "#6B7385" }}>What you counted</span>
+                  <span style={{ display: "block", fontSize: "13px", color: "#9BA3B2", marginTop: "2px" }}>Zero if there is none</span>
+                </span>
+                <span style={{ fontSize: s.qty == null ? "18px" : "30px", fontWeight: 700, color: s.qty == null ? "#6835FB" : "#1A1E28", textAlign: "right" }}>{s.qty == null ? "Tap to enter" : nf(s.qty) + " " + UNIT_SHORT[unit]}</span>
+              </button>
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                <span style={{ fontSize: "15px", color: "#6B7385" }}>Where (optional)</span>
+                <input value={s.bin} onChange={(e) => this.setStock({ bin: String(e.target.value).slice(0, 120) })} maxLength={120} placeholder="Bay, rack or bin" aria-label="Where" style={inputStyle} />
+              </div>
+              {s.err && errBox(s.err)}
+              <button onClick={() => void this.saveStock()} style={btn(s.qty == null || s.saving ? "off" : "p", 60)}>{s.saving ? "Saving…" : "Save count"}</button>
+            </>
+          )}
+        </>,
+      );
+    }
+
+    /* ---- the list */
+    const q = s.search.trim().toLowerCase();
+    const ofStage = s.items.filter((i) => i.stage === s.stage);
+    const shown = ofStage.filter((i) => !q || i.name.toLowerCase().includes(q));
+    const hereN = ofStage.filter((i) => i.here).length;
+    const doneN = ofStage.filter((i) => i.here && i.checkedToday).length;
+    const misN = s.items.filter((i) => i.checkedToday && !i.checkedToday.matched).length;
+    return wrap(
+      <>
+        {s.err && errBox(s.err)}
+        {s.err && <button onClick={() => void this.loadStock()} style={btn("s", 54)}>Try again</button>}
+        {misN > 0 && (
+          <div style={{ padding: "12px 14px", borderRadius: "14px", background: "#FCECEC", display: "flex", alignItems: "center", gap: "10px" }}>
+            {ic("alert", 22, "#B3261E")}
+            <span style={{ flex: 1, fontSize: "15px", color: "#B3261E", fontWeight: 600 }}>{misN + (misN === 1 ? " item does" : " items do") + " not match the book today. The office has been told."}</span>
+          </div>
+        )}
+        {s.office.length > 0 && (
+          <>
+            <span style={{ fontSize: "18px", fontWeight: 700 }}>Asked by the office</span>
+            {s.office.map((t) => (
+              <button key={t.id} onClick={() => this.pickStock({ kind: "count", task: t })} style={{ ...card, padding: "14px 16px", display: "flex", flexDirection: "column", alignItems: "stretch", gap: "6px", textAlign: "left", cursor: "pointer", border: "1px solid " + (t.overdue ? "#F6CFCF" : "#DDE1E8"), opacity: t.blocked ? 0.6 : 1 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span style={{ fontSize: "17px", fontWeight: 700, flex: 1 }}>{t.item}</span>
+                  <span style={{ ...mono, fontSize: "13px", color: "#6B7385" }}>{t.no}</span>
+                </div>
+                <span style={{ fontSize: "14px", color: "#3D4453" }}>{t.godown + " · " + (t.overdue ? "overdue since " : "due ") + t.due}</span>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                  <Pill l={t.kind} bg="#EDEFF3" fg="#3D4453" />
+                  {t.recount && <Pill l="Recount" bg="#FDF6E7" fg="#8A5C05" />}
+                  {t.forPurchase && <Pill l="Before a purchase" bg="#EAF0FB" fg="#2B5CBF" />}
+                  {t.overdue && <Pill l="Overdue" bg="#FCECEC" fg="#B3261E" />}
+                </div>
+                {t.blocked && <span style={{ fontSize: "13px", color: "#8A5C05" }}>{t.blocked}</span>}
+              </button>
+            ))}
+          </>
+        )}
+        <span style={{ fontSize: "18px", fontWeight: 700 }}>Check any stock</span>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+          {(["rm", "sfg", "fg", "pack"] as CheckStage[]).map((k) => (
+            <button key={k} onClick={() => this.setStock({ stage: k })} style={{ padding: "10px 14px", borderRadius: "18px", border: "none", background: s.stage === k ? "#6835FB" : "#F1ECFF", color: s.stage === k ? "#FFFFFF" : "#5223E0", fontSize: "15px", fontWeight: 600, cursor: "pointer" }}>{STAGE_WORD[k]}</button>
+          ))}
+        </div>
+        <input value={s.search} onChange={(e) => this.setStock({ search: String(e.target.value).slice(0, 60) })} placeholder="Search by name" aria-label="Search" style={inputStyle} />
+        {hereN > 0 && <span style={{ fontSize: "14px", color: "#6B7385" }}>{doneN + " of " + hereN + " on the book here checked today"}</span>}
+        {s.loading && !s.items.length && <div style={{ ...card, padding: "28px 20px", textAlign: "center", fontSize: "16px", color: "#6B7385" }}>Loading the stock…</div>}
+        {!s.loading && !shown.length && <div style={{ ...card, padding: "28px 20px", textAlign: "center", fontSize: "16px", color: "#6B7385" }}>{q ? "Nothing by that name." : "Nothing of this kind yet."}</div>}
+        {shown.slice(0, 200).map((i) => {
+          const c = i.checkedToday;
+          return (
+            <button key={i.stage + i.id} onClick={() => this.pickStock({ kind: "check", item: i })} style={{ ...card, padding: "12px 14px", display: "flex", alignItems: "center", gap: "10px", textAlign: "left", cursor: "pointer", border: "1px solid " + (c && !c.matched ? "#F6CFCF" : "#DDE1E8") }}>
+              <span style={{ width: "10px", height: "10px", borderRadius: "5px", flex: "none", background: i.here ? "#6835FB" : "#DDE1E8" }} />
+              <span style={{ flex: 1 }}>
+                <span style={{ display: "block", fontSize: "16px", fontWeight: 600 }}>{i.name}</span>
+                <span style={{ display: "block", fontSize: "13px", color: c ? (c.matched ? "#1D7A45" : "#B3261E") : "#6B7385" }}>
+                  {c ? (c.matched ? "Checked today · matched" : "Checked today · does not match") + " · " + c.by : (i.here ? "On the book here" : "Not on the book here") + " · in " + UNIT_WORD[i.unit]}
+                </span>
+              </span>
+              {c ? ic(c.matched ? "check" : "alert", 22, c.matched ? "#1D7A45" : "#B3261E") : ic("chev", 22)}
+            </button>
+          );
+        })}
+        {shown.length > 200 && <span style={{ fontSize: "14px", color: "#6B7385", textAlign: "center" }}>{"Showing 200 of " + shown.length + " — search to find the rest."}</span>}
+      </>,
+    );
   }
 
   /* ================================================================ empty drums */
@@ -1106,6 +1382,7 @@ export class FactoryApp extends Component<Props, State> {
           {shell && R === "sync" && this.renderSync()}
           {shell && R === "help" && this.renderHelp()}
           {shell && R === "drum" && this.renderDrum()}
+          {shell && R === "stock" && this.renderStock()}
           {shell && head && R === "today" && this.renderToday()}
           {shell && head && R === "review" && this.renderReview()}
           {shell && head && R === "teams" && this.renderTeams()}
@@ -1306,6 +1583,15 @@ export class FactoryApp extends Component<Props, State> {
             <span style={{ display: "block", fontSize: "15px", color: "#DDD2FF", marginTop: "4px" }}>{T.scanAny}</span>
           </span>
         </button>
+        {me.counts && (
+          <button onClick={() => this.openStock()} style={{ ...card, padding: "14px 16px", display: "flex", alignItems: "center", gap: "12px", textAlign: "left", cursor: "pointer" }}>
+            <span style={{ width: "44px", height: "44px", borderRadius: "12px", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{ic("chart", 22, "#5223E0")}</span>
+            <span style={{ flex: 1 }}>
+              <span style={{ display: "block", fontSize: "17px", fontWeight: 700 }}>Stock check</span>
+              <span style={{ display: "block", fontSize: "13px", color: "#6B7385", marginTop: "1px" }}>Count any stock here and check it against the book</span>
+            </span>
+          </button>
+        )}
         {me.drums && (
           <button onClick={() => this.openDrum()} style={{ ...card, padding: "14px 16px", display: "flex", alignItems: "center", gap: "12px", textAlign: "left", cursor: "pointer" }}>
             <span style={{ width: "44px", height: "44px", borderRadius: "12px", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{ic("box", 22, "#5223E0")}</span>
@@ -2488,6 +2774,7 @@ export class FactoryApp extends Component<Props, State> {
           {row("Work place", db.loc + " · " + db.shift.split(" · ")[0], "pin", () => this.toast("Your supervisor sets your work place"))}
           {row(T.sync, pendN + " waiting", "sync", () => this.setState({ sheet: null, route: "sync" }))}
           {row(T.help, "Short videos and audio", "help", () => this.setState({ sheet: null, route: "help" }))}
+          {me.counts && row("Stock check", "Count any stock and check it against the book", "chart", () => this.openStock())}
           {me.drums && row("Empty drum entry", "Scan and weigh a drum once it is empty", "box", () => this.openDrum())}
           {row("Change my PIN", "4 numbers you sign in with", "badge", () => this.setState({ sheet: null, signStep: "newpin", newPin: "", newPin1: "", pinErr: "" }))}
           {this.props.dev && row("Network (preview only)", (T as Record<string, string>)[st.net] + " — tap to change", st.net === "offline" ? "wifioff" : "wifi", () => { const nx = ({ online: "weak", weak: "offline", offline: "online" } as const)[st.net]; this.setNet(nx); this.toast((T as Record<string, string>)[nx]); })}

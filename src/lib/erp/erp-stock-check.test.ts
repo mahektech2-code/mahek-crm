@@ -282,3 +282,43 @@ describe("missing records, the cycle count and the dashboard", () => {
     assert.ok(work.toCount.length >= first.opened);
   });
 });
+
+describe("a stock check of anything, by anybody", () => {
+  test("a matching check is just a record; a mismatch waits for the office and can be raised into a count", async () => {
+    await db.insert(erpRawMaterials).values({ id: "rm_fc", serialNo: 40, name: "Butanol", code: "BUT", unit: "Litre", materialType: "Chemical", purchaseMethod: "direct", preferredSupplierId: "sup_a" });
+    await stock("rm_fc", "AS-BUT-1", 120);
+    const { recordFloorCheck, setFloorCheckReason, openMismatches, checkableItems } = await import("@/lib/erp/floor-checks");
+
+    const items = await checkableItems(BHW);
+    const but = items.find((i) => i.stage === "rm" && i.id === "rm_fc");
+    assert.ok(but && but.here && !but.checkedToday);
+    assert.ok(!("book" in but), "the list never carries the book");
+
+    const ok = await recordFloorCheck(store1.id, { stage: "rm", itemId: "rm_fc", godownId: BHW, qty: 120.5, key: "CHK-a", source: "factory" });
+    assert.ok(ok.ok && ok.check.matched && ok.check.book === 120);
+    const again = await recordFloorCheck(store1.id, { stage: "rm", itemId: "rm_fc", godownId: BHW, qty: 120.5, key: "CHK-a", source: "factory" });
+    assert.ok(again.ok && again.check.replay && again.check.id === ok.check.id, "a resend answers with the first save");
+
+    const bad = await recordFloorCheck(store1.id, { stage: "rm", itemId: "rm_fc", godownId: BHW, qty: 90, key: "CHK-b", source: "factory" });
+    assert.ok(bad.ok && !bad.check.matched && bad.check.difference === -30);
+    assert.ok((await openMismatches()).some((m) => m.id === bad.check.id));
+    assert.equal(await setFloorCheckReason(store2.id, bad.check.id, "not mine"), false, "only the counter gives the reason");
+    assert.equal(await setFloorCheckReason(store1.id, bad.check.id, "Used in production"), true);
+    assert.equal((await checkableItems(BHW)).find((i) => i.id === "rm_fc")?.checkedToday?.matched, false);
+
+    const screen = mod("floorChecks");
+    const load = await screen.load(await as(controller));
+    const row = load.rows.find((r) => r.id === bad.check.id);
+    assert.ok(row && row.v.result === "Mismatch" && row.v.reason === "Used in production");
+    assert.ok(!(await screen.actions!.review(await as(store2), bad.check.id, {})).ok, "a store hand does not review");
+    const esc = await screen.actions!.escalate(await as(controller), bad.check.id, {});
+    assert.ok(esc.ok, esc.ok ? "" : esc.error);
+    const formal = await rootCount("rm_fc");
+    assert.equal(formal.status, "open");
+    assert.ok(!(await openMismatches()).some((m) => m.id === bad.check.id), "raising it reviews it");
+
+    const viaErp = await screen.forms!.new(await as(store2), { kind: "Raw material", item: "Butanol", godown: "Bhiwandi", qty: "120", reason: "" }, []);
+    assert.ok(viaErp.ok, viaErp.ok ? "" : viaErp.error);
+    assert.match(viaErp.message ?? "", /Matches the book/);
+  });
+});

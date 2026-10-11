@@ -2167,6 +2167,20 @@ inward lines two days old with no register row, transfers whose destination
 has no entry, and packing batches whose cans do not match their boxes. Each
 opens its record; nothing is created.
 
+**ANYBODY ON THE FLOOR CHECKS ANY STOCK, ANY TIME.** Stock check on the
+factory app (every department — `Me.counts`) lists every raw material,
+semi-finished product, filled-can SKU and packed SKU at the person's godown,
+with the office's open counts on top. The list never carries a quantity; the
+book is read when the figure arrives (`lib/erp/floor-checks.ts`, judged by the
+same `judgeCount` and tolerance as a formal count) and stored beside it in
+`erp_floor_checks`. A mismatch is said on the phone with the book and the
+difference, asks for an optional reason, and waits for the office on the
+dashboard tile and ERP → Stock accuracy → Stock checks until it is reviewed
+or, on a raw material, raised into a formal count. A check moves no stock.
+It needs the network on purpose: a figure queued for hours would be judged
+against a book that has moved. An office count from the phone goes through
+the ERP's own `submitCount`.
+
 **PRODUCTION & DISPATCH ARE TRACEABLE, BOX BY BOX.** SFG lot → refill (FG
 filling) lot → packing batch → BOX → order → customer, and back. The lots
 already chained to each other; what `0237_erp_traceability` added is a QC

@@ -313,3 +313,74 @@ export type LrReading =
 export type LrSave =
   | { ok: true; id: string; msg: string; replay?: boolean; recent: LrRecent[] }
   | { ok: false; title: string; text: string; fix: string; field?: string };
+
+/* ---------------------------------------------------------------- stock checks
+ * ANYBODY ON THE FLOOR CHECKS ANY STOCK, AT ANY TIME, BLIND. The phone lists
+ * every item at the person's godown — raw materials, semi-finished, filled
+ * cans, packed boxes — and the counts the office asked for on top. Nothing
+ * about the book is sent before the figure: the server reads and snapshots
+ * the book at the moment of saving (`lib/erp/floor-checks.ts`, and the ERP's
+ * own `submitCount` for an office count), says whether the two match, and on
+ * a mismatch asks — optionally — why. A mismatch waits for the office on the
+ * ERP dashboard and on Stock accuracy → Stock checks.
+ * ------------------------------------------------------------------------- */
+
+export type CheckStage = "rm" | "sfg" | "fg" | "pack";
+export type CheckUnit = "Ltr" | "Pcs" | "Cans" | "Boxes";
+
+/** A count the office asked for (ERP → Stock accuracy → To count). */
+export type CountTask = {
+  id: string;
+  /** SC-12 */
+  no: string;
+  item: string;
+  godown: string;
+  unit: CheckUnit;
+  /** YYYY-MM-DD */
+  due: string;
+  overdue: boolean;
+  kind: string;
+  reason: string;
+  /** An independent recount of a red flag. */
+  recount: boolean;
+  /** Opened because somebody asked to buy this item. */
+  forPurchase: boolean;
+  /** Why this person may not count it, said in words; null when they may. */
+  blocked: string | null;
+};
+
+/** Any item the floor may check. `here` only orders the list — it never carries a quantity. */
+export type CheckItem = {
+  stage: CheckStage;
+  id: string;
+  name: string;
+  unit: CheckUnit;
+  here: boolean;
+  checkedToday: { matched: boolean; by: string; at: string } | null;
+};
+
+export type StockKit =
+  | { ok: true; godown: string; office: CountTask[]; items: CheckItem[] }
+  | { ok: false; title: string; text: string; fix: string };
+
+export type StockCheckInput = { stage: CheckStage; itemId: string; qty: number | null; bin?: string | null; key: string };
+export type CountInput = { id: string; qty: number | null; bin?: string | null; lot?: string | null };
+
+export type StockSave =
+  | {
+      ok: true;
+      /** `check` — a check the person chose; `count` — a count the office asked for. */
+      kind: "check" | "count";
+      id: string;
+      no: string | null;
+      item: string;
+      unit: CheckUnit;
+      qty: number;
+      /** The book it was held against, read when the figure arrived. */
+      book: number | null;
+      difference: number | null;
+      matched: boolean;
+      message: string;
+      replay?: boolean;
+    }
+  | { ok: false; kind: "qty" | "notOpen" | "notAllowed" | "signedOut" | "item"; title: string; text: string; fix: string };

@@ -16,7 +16,7 @@ import { Platform } from "react-native";
 import type { ReactNode } from "react";
 import type { Lang } from "@/lib/factory/i18n";
 import type { ScanMeta, ScanPurpose, ScanResult } from "@/lib/factory/rules";
-import type { Draft, FactoryData, Proc, SubmitResult, Task } from "@/lib/factory/types";
+import type { Draft, FactoryData, Proc, SubmitResult, Task, CheckItem, CheckStage, CountTask, StockSave } from "@/lib/factory/types";
 import type { Me, Who } from "./types";
 import type { DrumLotView, DrumSaved, LoadBoard, LrFields, LrRecent } from "@/lib/factory/types";
 
@@ -99,6 +99,8 @@ export type State = {
   cam: "wait" | "live" | "none" | "denied";
   /** Empty drum entry: the lot scanned, the weight typed, and what the server answered. */
   drum: DrumEntry | null;
+  /** Stock check: the office's counts, every item here, the one being counted, and what the server answered. */
+  stock: StockEntry | null;
   /** The order being loaded: its boxes as the ERP holds them. */
   board: LoadBoard | null;
   /** Upload LR: the photo, what was read off it, and what the server answered. */
@@ -257,4 +259,35 @@ export type DrumEntry = {
 
 export function mintDrumKey(): string {
   return "DRM-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+}
+
+/**
+ * Stock check on the phone. Online only, on purpose: the book is read and
+ * snapshotted the moment the server receives the figure, so a figure sent
+ * hours later would be judged against a book that has since moved.
+ */
+export type StockEntry = {
+  loading: boolean;
+  err: { title: string; text: string; fix: string } | null;
+  godown: string;
+  office: CountTask[];
+  items: CheckItem[];
+  stage: CheckStage;
+  search: string;
+  /** What is being counted now. */
+  pick: { kind: "count"; task: CountTask } | { kind: "check"; item: CheckItem } | null;
+  qty: number | null;
+  bin: string;
+  /** Minted when an item is picked; a resend of the same save answers with the first. */
+  key: string;
+  saving: boolean;
+  saved: Extract<StockSave, { ok: true }> | null;
+  /** The optional reason after a mismatch. */
+  reason: string;
+  reasonSaving: boolean;
+  reasonSaved: boolean;
+};
+
+export function mintCheckKey(): string {
+  return "CHK-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
 }
