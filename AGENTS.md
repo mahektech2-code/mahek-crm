@@ -8144,8 +8144,13 @@ attention. Rules are pure in `engines/logistics.ts`; reads and writes in
 bill moved past Dispatched with no LR is still waiting for its LR.
 
 **COLLECTING AN LR AND ATTACHING IT ARE TWO JOBS.** The dispatch team uploads
-(`erp_lrs`, `/erp/transport/upload`, also linked from the Dispatch desk and
-open to its holders); logistics attaches on the LR desk. An upload is never
+(`erp_lrs`) through the Upload LRs MODAL on the Logistics screen and the
+Dispatch desk (`parts/upload-lrs-button.tsx`; the old `/erp/transport/upload`
+only redirects to a desk with it open); logistics attaches on the LR desk.
+**No upload field is required** (`lrRowHasAnything`): a photo alone is an LR,
+so `lr_no` is nullable (`0251`), and the number is demanded at ATTACH instead,
+because the customer's message quotes it — the desk marks such an LR "Number
+not typed" and Edit adds it. An upload is never
 deleted — voided with a reason. One LR is one delivery party (`attachRefusal`).
 Once attached, the LR is the unit on the road: every update moves every bill
 under it. Every step writes `erp_transport_events`, append-only.

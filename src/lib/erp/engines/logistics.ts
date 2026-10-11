@@ -314,3 +314,18 @@ export function trackingLink(template: string | null | undefined, lrNo: string |
 export function packagesOf(lines: { qtyCans: number; cansPerBox: number | null; boxed: boolean }[]): number {
   return lines.reduce((n, l) => n + (l.boxed && (l.cansPerBox ?? 0) > 1 ? Math.ceil(l.qtyCans / (l.cansPerBox as number)) : l.qtyCans), 0);
 }
+
+/**
+ * Whether an upload row is an LR at all. No field is required, so a photo, a
+ * number or any one detail is enough — and a row with nothing in it is skipped
+ * rather than refused, because "+ Another LR" leaves one empty behind.
+ */
+export function lrRowHasAnything(r: { lrNo?: string | null; fileId?: string | null; transporter?: string | null; destination?: string | null; packages?: number | null; freightTerm?: string | null; freightRupees?: number | null; note?: string | null }): boolean {
+  const t = (v: string | null | undefined) => !!(v ?? "").trim();
+  return t(r.lrNo) || t(r.fileId) || t(r.transporter) || t(r.destination) || r.packages != null || t(r.freightTerm) || r.freightRupees != null || t(r.note);
+}
+
+/** An uploaded LR by name — one uploaded with only its photo has no number yet. */
+export function lrUploadName(lrNo: string | null | undefined): string {
+  return lrNo ? `LR ${lrNo}` : "LR (number not typed)";
+}
