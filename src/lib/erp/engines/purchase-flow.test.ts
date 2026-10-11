@@ -132,3 +132,15 @@ test("a pasted list: the last number is the quantity, names match exactly or uni
   assert.deepEqual(r.duplicates, ["MEK"]);
   assert.deepEqual(parsePastedLines("Toluene 5", labels, ["Toluene"]).duplicates, ["Toluene"]);
 });
+
+test("a stock check that blocks holds the requirement before its purchase method", () => {
+  const held = requirementStage({ ...base, gate: { blocks: true, stage: "Stock discrepancy", next: "Resolve it." } });
+  assert.equal(FLOW_STEPS[held.step], "Stock check");
+  assert.equal(held.stage, "Stock discrepancy");
+  assert.equal(held.readyForPo, false);
+  const clear = requirementStage({ ...base, gate: { blocks: false, stage: null, next: null } });
+  assert.deepEqual(clear, requirementStage(base), "a clear check changes nothing");
+  /* A PO already raised is never pulled back by a later count. */
+  const onPo = requirementStage({ ...base, po: { status: "Sent", ordered: 10, received: 0 }, gate: { blocks: true, stage: "Count stock", next: null } });
+  assert.equal(onPo.stage, "PO sent");
+});

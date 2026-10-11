@@ -1,0 +1,115 @@
+**Stock accuracy** is where the ERP checks that what is on the shelf is what the book says. It is the screen behind **Inventory Accuracy Control**: before anything is bought, somebody counts the item on the shelf without seeing the book; if the count and the book disagree, the purchase waits until the difference is recounted, explained and resolved. Stock is never changed quietly — only through an adjustment somebody else approves.
+
+<Flow caption="From a purchase requirement to a purchase that can continue" chart={`
+flowchart LR
+  R[Purchase requirement] --> C[Blind count]
+  C --> M{Matches the book?}
+  M -- yes --> J[Quantity justified?]
+  M -- no --> F[Red flag]
+  F --> RC[Independent recount]
+  RC -- matches the book --> J
+  RC -- confirms the difference --> I[Investigate: pending and missing records]
+  I --> X[Missing record entered]
+  I --> A[Adjustment requested]
+  A --> AP[Approved by somebody else]
+  X --> J
+  AP --> J
+  J -- yes --> P[Quotation if required, PO, GRN]
+  J -- more than justified --> Q[Confirm the quantity]
+  Q --> P
+`} />
+
+## The five tabs
+
+<Wireframe url="/erp/stock-check" nav={["Dashboard", "#Stock", "Stock", "Stock accuracy", "Boxes & labels", "Item transfers"]} active="Stock accuracy" caption="Stock accuracy → To count">
+  <WfBar>
+    <WfTitle sub="Inventory Accuracy Control: a blind count before every purchase and every day, a red flag held until it is recounted and resolved, and stock that moves only through an approved adjustment.">Stock accuracy</WfTitle>
+    <WfSpacer />
+    <WfButton primary>Ask for a count</WfButton>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfTabs items={["To count", "Red flags", "Adjustments", "Missing records", "Every count"]} active="To count" />
+  <WfTable
+    highlight={0}
+    columns={["Count", "Due", "Kind", "Item", "Godown", "Unit", "Why", "Counter"]}
+    rows={[
+      ["SC-14", "11 Oct", <WfPill key="a" tone="warn">Before purchase</WfPill>, <b key="b">Toluene</b>, "Godown A", "Ltr", "Before purchase — REQ-31", <span key="c">Anybody at the godown <Hotspot n={2} /></span>],
+      ["SC-15", "11 Oct", <WfPill key="d" tone="info">Cycle count</WfPill>, <b key="e">Xylene</b>, "Godown A", "Ltr", "Daily cycle count — class A, every 30 days", "Anybody at the godown"],
+    ]}
+  />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Ask for a count.</b> A manager, or somebody with the stock-control power, opens counts: one item at a godown (after a spill, a move, a doubt), every item at a godown (the full count), or today's cycle counts.</span>,
+  <span key="2"><b>No book column.</b> Nothing on this tab, its prompt or its drawer shows what the book says. The book is shown only after the count is submitted.</span>,
+]} />
+
+| Tab | What it lists |
+|---|---|
+| **To count** | Counts waiting for somebody to count them, oldest due first. A recount is marked **Independent recount**. |
+| **Red flags** | Checks whose count differs from the book beyond the item's tolerance, until they are resolved. |
+| **Adjustments** | Every adjustment ever requested — waiting, approved or rejected — with its reason. |
+| **Missing records** | Batches, fills, receipts and transfers across the ERP that should have a stock entry and do not. |
+| **Every count** | The full history, with who counted, the book at the time and how each was resolved. |
+
+## Counting
+
+<Steps>
+<Step title="Open the count and press Count it">
+Go to the shelf. Count every drum, can or box of the item, in litres or pieces as the prompt says.
+</Step>
+<Step title="Enter what you counted">
+Write the figure — zero if the shelf is empty — where on the floor you counted, and any lot numbers you saw. A recount is counted in the same place.
+</Step>
+<Step title="Submit">
+Only now is the book shown: "Counted 480 Ltr · book 500. Red flag: −20 Ltr, beyond the 10 tolerance — a recount by somebody else comes next." A count within tolerance says "Matches the book" and a requirement waiting on it continues.
+</Step>
+</Steps>
+
+<Callout kind="note">
+A recount is always counted by **somebody other than whoever counted first**. Its **Count it** button is drawn disabled for the first counter, and the server refuses it too.
+</Callout>
+
+## A red flag
+
+Open the row on **Red flags**. Its drawer shows the count against the book, every count of it in order, and the **possible causes** the records suggest — goods at the gate not yet in stock, a lot under test, a batch issue, a write-off — each with a link to the record.
+
+<Steps>
+<Step title="Ask for a recount">
+Opens an independent recount on **To count**. Its result decides what happens next: matching the book resolves the check ("the first count was wrong"); agreeing with the first count confirms the difference and moves the check to **Investigating**; agreeing with neither sends it back for another recount.
+</Step>
+<Step title="Suggest causes (AI)">
+The discrepancy assistant ranks the records the rules found and explains, in a sentence each, whether a **record** looks missing (the goods are there, the paperwork is not) or the **goods** themselves look missing. It is a suggestion; nothing is entered for you.
+</Step>
+<Step title="Resolve it">
+Either enter the missing record on its own screen and press **The missing record is entered** — the book is read again and must now agree with the count — or **Request an adjustment** with a reason. Resolving needs the stock-control power.
+</Step>
+</Steps>
+
+## Adjustments
+
+An adjustment changes the book to what was counted. It is requested with a reason (damaged, spillage, evaporation, theft or loss, issued or received and never recorded, a measuring difference, other) and a sentence saying what happened, and it posts **only when somebody else approves it**:
+
+| Adjustment | Posts as |
+|---|---|
+| A shortage | Transfers to **Item Lost Record**, oldest lot first — refused if the lots do not hold it, because stock never goes below zero |
+| A surplus | A stock entry on the newest lot, shown in the raw-material entry log as **Stock adjustment** |
+
+Rejecting sends the check back to **Investigating**.
+
+## On a purchase requirement
+
+A requirement raised while the stock check is switched on waits at **Stock check** in its flow. Its drawer says where the check stands, what is on the shelf and how much the count justifies buying.
+
+| Stage | What to do |
+|---|---|
+| **Count stock** | Press **Count the stock** — it opens the count. |
+| **Stock discrepancy** | Open the count and resolve it; vendor, quotations and the PO wait. |
+| **Exception requested** | Somebody with the stock-control power decides the urgent purchase (not the person who asked). |
+| **Confirm quantity** | The count matched, but more is asked for than the shelf justifies. Confirm the quantity with why, or **Recount the shelf**. |
+
+**Request urgent purchase** lets a requirement go ahead before its count is finished, with a reason and an authorised person's approval. The count still has to be finished.
+
+## On the dashboard
+
+The **Inventory Accuracy Control** strip at the top of the dashboard shows what is waiting at each step — held requirements, counts to do, red flags, recounts, investigations, approvals, and requirements cleared to buy — and every number opens the records behind it. The **Inventory accuracy** section adds missing records, how often counts are right first time, the most frequent cause of adjustments, and when the next full count is due.
