@@ -13,6 +13,7 @@ import { err, fieldErr, ok, okVoid, type Result } from "@/lib/result";
 import { waNumber } from "@/lib/whatsapp-delivery";
 import type { ErpContext } from "./access";
 import { bindErpFiles } from "./attachments";
+import { lrReadingOn, settleLrReadings } from "./lr-upload-read";
 import { syncBookOrders } from "./book";
 import {
   addDays,
@@ -313,10 +314,11 @@ export type Transporter = typeof erpTransporters.$inferSelect & { godowns: Trans
 export type RecentLr = Pick<UploadedLr, "id" | "lrNo" | "lrDate" | "transporter" | "destination" | "fileId" | "status" | "uploadedBy" | "bills">;
 
 /** Everything the Upload LRs modal needs, read once by whichever desk opens it. */
-export async function lrUploadKit(): Promise<{ transporters: string[]; recent: RecentLr[] }> {
-  const [recent, dir] = await Promise.all([uploadedLrs({ status: "all" }), transporters()]);
+export async function lrUploadKit(): Promise<{ transporters: string[]; recent: RecentLr[]; canRead: boolean }> {
+  const [recent, dir, canRead] = await Promise.all([uploadedLrs({ status: "all" }), transporters(), lrReadingOn()]);
   return {
     transporters: dir.filter((t) => t.active).map((t) => t.name),
+    canRead,
     recent: recent.slice(0, 25).map(({ id, lrNo, lrDate, transporter, destination, fileId, status, uploadedBy, bills }) => ({ id, lrNo, lrDate, transporter, destination, fileId, status, uploadedBy, bills })),
   };
 }
@@ -487,6 +489,8 @@ export type LrInput = {
   freightTerm?: string | null;
   fileId?: string | null;
   note?: string | null;
+  /** The photo reading that filled this row, if one did (`lr-upload-read.ts`). */
+  readingId?: string | null;
 };
 
 export const FREIGHT_TERMS = ["Paid", "To pay", "TBB"];
@@ -522,10 +526,17 @@ export async function uploadLrs(ctx: ErpContext, items: LrInput[]): Promise<Resu
   const dup = clean.find((i) => i.lrNo && existing.some((e) => key({ transporter: e.transporter, lrNo: e.lrNo.toUpperCase() }) === key(i)));
   if (dup) return fieldErr(`l${dup.idx + 1}.lrNo`, `Row ${dup.idx + 1}: LR ${dup.lrNo}${dup.transporter ? ` of ${dup.transporter}` : ""} is already uploaded`);
   const ids: string[] = [];
+  const readings: { readingId: string; lrId: string; final: Record<string, unknown> }[] = [];
   await db.transaction(async (tx) => {
     for (const i of clean) {
       const id = erpId("elr");
       ids.push(id);
+      if (i.readingId)
+        readings.push({
+          readingId: i.readingId,
+          lrId: id,
+          final: { lrNo: i.lrNo || null, lrDate: day(i.lrDate) ?? null, transporter: i.transporter, destination: (i.destination ?? "").trim() || null, packages: i.packages ?? null, freightTerm: i.freightTerm || null, freightRupees: i.freightRupees ?? null },
+        });
       await tx.insert(erpLrs).values({
         id,
         lrNo: i.lrNo || null,
@@ -544,6 +555,8 @@ export async function uploadLrs(ctx: ErpContext, items: LrInput[]): Promise<Resu
       if (i.transporter) await tx.insert(erpTransporters).values({ id: erpId("etr"), name: i.transporter, updatedById: ctx.user.id }).onConflictDoNothing();
     }
   });
+  /* How the photo readings fared — after the LRs are safe, and never at their cost. */
+  await settleLrReadings(ctx, readings).catch((e) => console.error("LR upload: settling photo readings failed:", e instanceof Error ? e.message : e));
   await erpAudit(ctx, "erp.logistics.lrUpload", "erp_lr", ids.join(","), null, { lrs: clean.map((i) => i.lrNo || null) });
   return ok({ ids }, `${ids.length} LR${ids.length === 1 ? "" : "s"} uploaded — logistics will attach ${ids.length === 1 ? "it" : "them"} to the bills`);
 }

@@ -63,6 +63,24 @@ export async function erpLogisticsUploadLrs(items: L.LrInput[]) {
   }
 }
 
+/**
+ * Reads an LR photo or PDF the person just uploaded into the row's fields —
+ * a suggestion, nothing saved. Open to whoever may upload LRs.
+ */
+export async function erpLogisticsReadLr(fileId: string) {
+  try {
+    const ctx = await erpContext();
+    if (ctx.viewingAs) return err(previewRefusal(ctx.viewingAs), "not_permitted");
+    const screen = ctx.screens.has("transport") ? "transport" : "dispatch";
+    const checked = await requireErpWrite(screen);
+    if (typeof fileId !== "string" || !fileId) return err("No file to read.", "validation");
+    const { readUploadedLr } = await import("@/lib/erp/lr-upload-read");
+    return await readUploadedLr(checked, fileId);
+  } catch (e) {
+    return refused(e);
+  }
+}
+
 export async function erpLogisticsEditLr(lrId: string, input: L.LrInput) {
   return run((ctx) => L.editLr(ctx, lrId, input));
 }

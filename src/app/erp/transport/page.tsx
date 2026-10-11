@@ -101,7 +101,7 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
       title={screen.label}
       sub={screen.sub}
       actions={
-        kit ? <UploadLrsButton key={one("upload") ?? ""} today={today} transporters={kit.transporters} recent={kit.recent} initialOpen={one("upload") === "1"} /> : null
+        kit ? <UploadLrsButton key={one("upload") ?? ""} today={today} transporters={kit.transporters} recent={kit.recent} canRead={kit.canRead} initialOpen={one("upload") === "1"} /> : null
       }
     >
       <nav className="-mt-2 mb-4 flex flex-wrap items-center gap-0 border-b border-line">
