@@ -4618,6 +4618,39 @@ export const SETTINGS = [
     default: true,
   },
   {
+    key: "erp.labels.dotsPerMm",
+    type: "integer",
+    category: "erp",
+    label: "Label printer · dots per millimetre",
+    description:
+      "How fine the label printers print: 8 for a 203 dpi printer, which is what most are, and 12 for a 300 dpi one. It is printed on the printer's own self-test label. Labels sent straight to the printer are drawn at exactly this, so the wrong figure prints every label at two thirds or one and a half times its size.",
+    default: 8,
+    min: 6,
+    max: 24,
+  },
+  {
+    key: "erp.labels.gapMm",
+    type: "decimal",
+    category: "erp",
+    label: "Label printer · gap between labels",
+    description:
+      "Millimetres of backing paper between one label and the next on the roll. The printer finds the top of each label from it, so a figure that does not match the roll makes the print creep down the label, a little further each time.",
+    default: 3,
+    min: 0,
+    max: 10,
+  },
+  {
+    key: "erp.labels.direction",
+    type: "integer",
+    category: "erp",
+    label: "Label printer · which way up",
+    description:
+      "0 or 1: which edge of the label leaves the printer first. If labels sent straight to the printer come out upside down for the way they are peeled and stuck, change this to the other value. It has no effect on the browser's own print dialog.",
+    default: 1,
+    min: 0,
+    max: 1,
+  },
+  {
     key: "erp.logistics.notifyCustomers",
     type: "boolean",
     category: "erp",
@@ -6275,6 +6308,9 @@ export type Config = {
   "erp.factory.shift": string;
   "erp.factory.dispatchDue": string;
   "erp.dispatch.requireScan": boolean;
+  "erp.labels.dotsPerMm": number;
+  "erp.labels.gapMm": number;
+  "erp.labels.direction": number;
   "erp.logistics.notifyCustomers": boolean;
   "erp.logistics.watiTemplate": string;
   "erp.logistics.signature": string;

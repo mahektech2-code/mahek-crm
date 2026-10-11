@@ -88,7 +88,7 @@ export default async function ErpDispatch({ searchParams }: { searchParams: Prom
       actions={
         <div className="flex gap-3 text-[13px]">
           <Link href="/erp/dispatch">← Queue</Link>
-          <Link href={erpLabelsHref({ order: board.orderNo })}>Dispatch stickers</Link>
+          <Link href={erpLabelsHref({ order: board.orderNo })}>Dispatch labels</Link>
           <Link href={erpTraceHref(`ORDER-${board.orderNo}`)}>Trace</Link>
         </div>
       }

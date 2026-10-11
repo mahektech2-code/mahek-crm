@@ -279,6 +279,7 @@ const sfgBatches: ScreenModule = {
           actions.unshift({ id: "qcApprove", l: "QC approve", primary: qcStatus === "Pending", why: noQcPower, prompt: { title: `Approve SFG lot ${x.l.lotCode}`, sub: "Once approved the lot can be filled into cans and drums.", submit: "Approve", fields: [{ k: "note", l: "QC note (readings, remarks)", t: "area", mic: true }] } });
         if (qcStatus !== "Rejected")
           actions.push({ id: "qcReject", l: qcStatus === "Approved" ? "Withdraw QC approval (reject)" : "QC reject", why: noQcPower, prompt: { title: `Reject SFG lot ${x.l.lotCode}`, sub: "A rejected lot cannot be filled. What has already been filled from it stays traceable to it.", submit: "Reject", fields: [{ k: "note", l: "Why it failed", t: "area", req: true, mic: true }] } });
+        actions.push({ id: "label", l: "Print SFG label", href: erpLabelsHref({ sfg: x.l.lotCode, godown: x.l.godownId }) });
         actions.push({ id: "trace", l: "Trace this lot", href: erpTraceHref(x.l.lotCode) });
         return {
           id: x.l.id,
@@ -1177,7 +1178,10 @@ const sfgStock: ScreenModule = {
         flags: [],
         title: `${l.product} · ${l.lotCode}`,
         header: `${nf(l.stock)} Ltr at ${l.godown}`,
-        actions: [{ id: "trace", l: "Trace this lot", href: erpTraceHref(l.lotCode) }],
+        actions: [
+          { id: "label", l: "Print SFG label", primary: true, href: erpLabelsHref({ sfg: l.lotCode, godown: l.godownId }) },
+          { id: "trace", l: "Trace this lot", href: erpTraceHref(l.lotCode) },
+        ],
       })),
     };
   },
