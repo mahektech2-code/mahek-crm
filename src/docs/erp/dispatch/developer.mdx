@@ -12,7 +12,7 @@ The desk is a bespoke route, `src/app/erp/dispatch`, not a generic list. Its rul
 | Writes | `src/lib/actions/erp-trace.ts` | `erpDispatchScan`, `erpDispatchUnscan`, `erpDispatchRequestOverride`, `erpDispatchDecideOverride`, `erpDispatchVerify` |
 | Verify | `src/lib/erp/screens/sales.ts` | `orderDetails.bulk.verify` → `verify`, which calls `scanGateFor` and `markDispatched` |
 | Hand allocation | `src/lib/erp/screens/sales.ts` | `allocateForm` / `saveAllocation`, opened by the desk as `ui.act("orders", { id: "allocate" })` |
-| Stickers | `src/app/erp/print-labels/page.tsx` | `?order=` → stickers for units `scanned` or `dispatched` on the order |
+| Dispatch labels | `src/app/erp/print-labels/page.tsx`, `src/lib/erp/label-data.ts` | `?order=` → `dispatchLabels`: one 80 mm label per `labelCount` of every line not cancelled, each carrying `lotSize` over the order |
 
 ## A scan, end to end
 

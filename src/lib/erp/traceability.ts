@@ -470,7 +470,7 @@ async function traceOrders(where: ReturnType<typeof sql>, kind: "order" | "bill"
     facts: [],
     links: [
       { l: "Dispatch desk", v: "Open", href: `/erp/dispatch?order=${first ? n(first.orderNo) : code}` },
-      { l: "Dispatch stickers", v: "Print", href: erpLabelsHref({ order: first ? n(first.orderNo) : code }) },
+      { l: "Dispatch labels", v: "Print", href: erpLabelsHref({ order: first ? n(first.orderNo) : code }) },
     ],
     back: back.back,
     forward,

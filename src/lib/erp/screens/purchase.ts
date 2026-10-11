@@ -18,6 +18,7 @@ import {
 import { err, fieldErr, okVoid, type Result } from "@/lib/result";
 import type { ErpContext } from "../access";
 import { refValues } from "../refs";
+import { erpLabelsHref } from "../trace-links";
 import {
   erpAudit,
   erpId,
@@ -1486,6 +1487,7 @@ const register: ScreenModule = {
         }
         actions.push({ id: "edit", l: "Edit", loadsForm: true });
         actions.push({ id: "addMore", l: "Add More", loadsForm: true });
+        actions.push({ id: "label", l: "Print drum label", href: erpLabelsHref({ purchase: p.id }) });
         const moneyFields = money
           ? [
               { l: "Litre rate", v: f.literRatePaise == null ? "—" : inr(f.literRatePaise), der: true },
@@ -1827,6 +1829,7 @@ const barcode: ScreenModule = {
           },
           flags: [],
           title: `${shortLabel(r.item, pairs)} · ${r.p.lotNo}`,
+          actions: [{ id: "label", l: "Print drum label", primary: true, href: erpLabelsHref({ purchase: r.p.id }) }],
           by: stampLine(r.by, r.p.createdAt),
         };
       }),

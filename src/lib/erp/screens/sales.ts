@@ -475,7 +475,7 @@ function orderList(scope: Scope): ScreenModule {
         rows: shown.map((l): ListRow => {
           const blockers = billBlockers(l);
           const actions: ActionSpec[] = labels
-            ? []
+            ? [{ id: "labels", l: `Print dispatch labels · order ${l.o.orderNo}`, primary: true, href: erpLabelsHref({ order: l.o.orderNo }) }]
             : [
                 ...(l.o.status !== "Ready" ? [{ id: "ready", l: "Ready", primary: true } as ActionSpec] : [{ id: "underProcess", l: "Under Process" } as ActionSpec]),
                 ...(l.inDetails
@@ -487,6 +487,7 @@ function orderList(scope: Scope): ScreenModule {
                 { id: "select", l: "Select Order Number", href: erpLink(scope, { f: (byNo.get(l.o.orderNo) ?? []).join(","), fl: `Order ${l.o.orderNo}` }) },
                 { id: "customer", l: "View customer", href: `/erp/customers?open=${l.billing.id}` },
                 ...(l.o.status === "Ready" && !l.dispatched ? [{ id: "scan", l: "Scan boxes at dispatch", href: `/erp/dispatch?order=${l.o.orderNo}` } as ActionSpec] : []),
+                ...(l.o.status !== "Cancel" ? [{ id: "labels", l: "Print dispatch labels", href: erpLabelsHref({ order: l.o.orderNo }) } as ActionSpec] : []),
                 { id: "trace", l: "Trace this order", href: erpTraceHref(`ORDER-${l.o.orderNo}`) },
                 {
                   id: "delete",
@@ -1135,7 +1136,7 @@ const orderDetails: ScreenModule = {
             { id: "select", l: "Select Order Number", href: erpLink("orderDetails", { f: (byNo.get(l.o.orderNo) ?? []).join(","), fl: `Order ${l.o.orderNo}` }) },
             { id: "view", l: "View order", href: erpLink("orders", { open: l.o.id }) },
             { id: "scan", l: gate ? "Scan its boxes" : "Dispatch desk", primary: !!gate, href: `/erp/dispatch?order=${l.o.orderNo}` },
-            { id: "stickers", l: "Dispatch stickers", href: erpLabelsHref({ order: l.o.orderNo }) },
+            { id: "stickers", l: "Print dispatch labels", href: erpLabelsHref({ order: l.o.orderNo }) },
             { id: "trace", l: "Trace this order", href: erpTraceHref(`ORDER-${l.o.orderNo}`) },
           ];
           const credit = l.billing.creditDays ?? null;
