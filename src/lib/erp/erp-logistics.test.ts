@@ -142,13 +142,23 @@ describe("dispatch opens the transport record (§18)", () => {
     const up = await L.uploadLrs(ctx, [{ lrNo: "lr-7781", lrDate: "2026-08-03", transporter: "VRL", destination: "Pune", packages: 1 }, { lrNo: "LR-9", transporter: "VRL" }]);
     assert.ok(up.ok, msg(up));
     assert.equal(msg(await L.uploadLrs(ctx, [{ lrNo: "LR-7781", transporter: "vrl" }])), "Row 1: LR LR-7781 of vrl is already uploaded");
-    assert.equal(msg(await L.uploadLrs(ctx, [{ lrNo: " " }])), "Row 1: the LR number is required");
+    assert.equal(msg(await L.uploadLrs(ctx, [{ lrNo: " " }])), "Fill in at least one LR — a photo is enough.");
     const lrs = await L.uploadedLrs();
     assert.equal(lrs.length, 2);
     const lr = lrs.find((l) => l.lrNo === "LR-7781")!;
     assert.equal(L.suggestBills(lr, await L.consignments())[0].id, t.id);
     assert.ok((await L.voidLr(ctx, lrs.find((l) => l.lrNo === "LR-9")!.id, "duplicate photo")).ok);
     assert.ok((await db.select().from(erpTransporters)).some((x) => x.name === "VRL"), "a transporter named on an upload joins the directory");
+
+    /* No field is required: two LRs with no number from one transporter both land, an empty row is skipped,
+       and one with no number cannot be attached until logistics types it off the photo. */
+    const bare = await L.uploadLrs(ctx, [{ transporter: "Gati" }, {}, { transporter: "Gati", note: "photo only" }]);
+    assert.ok(bare.ok, msg(bare));
+    const numberless = (await L.uploadedLrs()).filter((l) => !l.lrNo);
+    assert.equal(numberless.length, 2);
+    assert.equal(msg(await L.attachLr(ctx, numberless[0].id, [t.id], {})), "Type the LR number off the photo first (Edit) — the customer is told it.");
+    assert.ok((await L.editLr(ctx, numberless[0].id, { lrNo: "G-1", transporter: "Gati" })).ok);
+    for (const l of numberless) assert.ok((await L.voidLr(ctx, l.id, "test rows")).ok);
 
     /* Logistics attaches it: the bill goes on the road and the party is told. */
     const att = await L.attachLr(ctx, lr.id, [t.id], { expectedOn: "2026-08-06" });

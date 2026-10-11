@@ -224,6 +224,11 @@ export function LeadFilterBar({
        scrolls under it leaves it pointing at nothing. */
     const onScroll = (e: Event) => {
       if (panelRef.current?.contains(e.target as Node)) return;
+      /* The same reason as the click above: a MultiSelect inside the panel
+         portals its option list into the body, so scrolling down a list of
+         districts is a scroll outside this panel's subtree. Shutting on it
+         closed the whole panel the moment anybody scrolled a list. */
+      if ((e.target as Element).closest?.("[role='listbox']")) return;
       close();
     };
     document.addEventListener("mousedown", onDown);
@@ -391,7 +396,7 @@ export function LeadFilterBar({
               style={{ top: at.top, left: at.left, width: 560, maxHeight: at.maxHeight }}
               className="animate-fade-in fixed z-[95] flex flex-col overflow-hidden rounded-[6px] border border-line bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
             >
-              <div className="flex-1 overflow-y-auto px-4 py-3">
+              <div className="flex-1 overflow-y-auto overscroll-contain px-4 py-3">
                 {GROUPS.map((group) => {
                   const inGroup = group.columns.filter((c) => columns.includes(c));
                   if (!inGroup.length) return null;

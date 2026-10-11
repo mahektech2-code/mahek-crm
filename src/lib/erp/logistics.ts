@@ -20,6 +20,8 @@ import {
   CLOSED,
   customerMessage,
   ISSUES,
+  lrRowHasAnything,
+  lrUploadName,
   phaseOf,
   rankForLr,
   ROAD_STAGES,
@@ -195,7 +197,8 @@ export async function consignmentsOnLr(lrId: string): Promise<Consignment[]> {
 
 export type UploadedLr = {
   id: string;
-  lrNo: string;
+  /** Null for an LR uploaded with only its photograph. */
+  lrNo: string | null;
   lrDate: string | null;
   transporter: string | null;
   destination: string | null;
@@ -225,7 +228,7 @@ export async function uploadedLrs(opts: { status?: "unassigned" | "all" } = {}):
   `)) as unknown as Row[];
   return rows.map((r) => ({
     id: String(r.id),
-    lrNo: String(r.lrNo),
+    lrNo: s(r.lrNo),
     lrDate: s(r.lrDate),
     transporter: s(r.transporter),
     destination: s(r.destination),
@@ -302,6 +305,18 @@ export async function messages(opts: { waitingOnly?: boolean; transportId?: stri
 
 /** A transporter, with the places on the tree where it keeps godowns. */
 export type Transporter = typeof erpTransporters.$inferSelect & { placeIds: string[] };
+
+/** What the Upload LRs modal lists under "Uploaded lately" — only what a row draws. */
+export type RecentLr = Pick<UploadedLr, "id" | "lrNo" | "lrDate" | "transporter" | "destination" | "fileId" | "status" | "uploadedBy" | "bills">;
+
+/** Everything the Upload LRs modal needs, read once by whichever desk opens it. */
+export async function lrUploadKit(): Promise<{ transporters: string[]; recent: RecentLr[] }> {
+  const [recent, dir] = await Promise.all([uploadedLrs({ status: "all" }), transporters()]);
+  return {
+    transporters: dir.filter((t) => t.active).map((t) => t.name),
+    recent: recent.slice(0, 25).map(({ id, lrNo, lrDate, transporter, destination, fileId, status, uploadedBy, bills }) => ({ id, lrNo, lrDate, transporter, destination, fileId, status, uploadedBy, bills })),
+  };
+}
 
 export async function transporters(): Promise<Transporter[]> {
   const [rows, links] = await Promise.all([
@@ -453,7 +468,7 @@ export async function setPackages(ctx: ErpContext, id: string, packages: number 
 /* ------------------------------------------------------------- the LRs */
 
 export type LrInput = {
-  lrNo: string;
+  lrNo?: string | null;
   lrDate?: string | null;
   transporter?: string | null;
   destination?: string | null;
@@ -468,15 +483,17 @@ export const FREIGHT_TERMS = ["Paid", "To pay", "TBB"];
 
 /**
  * Step 3 — the dispatch team uploads the LRs it collected, several at once.
- * Each needs its number; the photo is what logistics reads it against. Nothing
- * is attached here: which bills an LR carries is logistics' decision.
+ * No field is required: a row with only a photograph is an LR whose number
+ * logistics reads off it on the desk. A row with nothing in it is not an LR and
+ * is skipped. Nothing is attached here: which bills an LR carries is
+ * logistics' decision, and that is where the number becomes required.
  */
 export async function uploadLrs(ctx: ErpContext, items: LrInput[]): Promise<Result<{ ids: string[] }>> {
-  if (!items.length) return err("Add at least one LR.", "validation");
   if (items.length > 50) return err("Upload up to 50 LRs at a time.", "validation");
-  const clean = items.map((i, idx) => ({ ...i, idx, lrNo: (i.lrNo ?? "").trim().toUpperCase(), transporter: (i.transporter ?? "").trim() || null }));
-  const missing = clean.find((i) => !i.lrNo);
-  if (missing) return fieldErr(`l${missing.idx + 1}.lrNo`, `Row ${missing.idx + 1}: the LR number is required`);
+  const clean = items
+    .map((i, idx) => ({ ...i, idx, lrNo: (i.lrNo ?? "").trim().toUpperCase(), transporter: (i.transporter ?? "").trim() || null }))
+    .filter((i) => lrRowHasAnything(i));
+  if (!clean.length) return err("Fill in at least one LR — a photo is enough.", "validation");
   const bad = clean.find((i) => i.lrDate && !day(i.lrDate));
   if (bad) return fieldErr(`l${bad.idx + 1}.lrDate`, `Row ${bad.idx + 1}: the date is not a date`);
   const term = clean.find((i) => i.freightTerm && !FREIGHT_TERMS.includes(i.freightTerm));
@@ -484,11 +501,15 @@ export async function uploadLrs(ctx: ErpContext, items: LrInput[]): Promise<Resu
   const key = (i: { transporter: string | null; lrNo: string }) => `${(i.transporter ?? "").toLowerCase()}|${i.lrNo}`;
   const seen = new Set<string>();
   for (const i of clean) {
+    if (!i.lrNo) continue;
     if (seen.has(key(i))) return fieldErr(`l${i.idx + 1}.lrNo`, `Row ${i.idx + 1}: LR ${i.lrNo} is in this upload twice`);
     seen.add(key(i));
   }
-  const existing = (await db.execute(sql`select lr_no as "lrNo", transporter from erp_lrs where status <> 'void' and upper(lr_no) in ${clean.map((i) => i.lrNo)}`)) as unknown as { lrNo: string; transporter: string | null }[];
-  const dup = clean.find((i) => existing.some((e) => key({ transporter: e.transporter, lrNo: e.lrNo.toUpperCase() }) === key(i)));
+  const numbered = clean.filter((i) => i.lrNo).map((i) => i.lrNo);
+  const existing = numbered.length
+    ? ((await db.execute(sql`select lr_no as "lrNo", transporter from erp_lrs where status <> 'void' and upper(lr_no) in ${numbered}`)) as unknown as { lrNo: string; transporter: string | null }[])
+    : [];
+  const dup = clean.find((i) => i.lrNo && existing.some((e) => key({ transporter: e.transporter, lrNo: e.lrNo.toUpperCase() }) === key(i)));
   if (dup) return fieldErr(`l${dup.idx + 1}.lrNo`, `Row ${dup.idx + 1}: LR ${dup.lrNo}${dup.transporter ? ` of ${dup.transporter}` : ""} is already uploaded`);
   const ids: string[] = [];
   await db.transaction(async (tx) => {
@@ -497,7 +518,7 @@ export async function uploadLrs(ctx: ErpContext, items: LrInput[]): Promise<Resu
       ids.push(id);
       await tx.insert(erpLrs).values({
         id,
-        lrNo: i.lrNo,
+        lrNo: i.lrNo || null,
         lrDate: day(i.lrDate) ?? today(),
         transporter: i.transporter,
         destination: (i.destination ?? "").trim() || null,
@@ -513,17 +534,20 @@ export async function uploadLrs(ctx: ErpContext, items: LrInput[]): Promise<Resu
       if (i.transporter) await tx.insert(erpTransporters).values({ id: erpId("etr"), name: i.transporter, updatedById: ctx.user.id }).onConflictDoNothing();
     }
   });
-  await erpAudit(ctx, "erp.logistics.lrUpload", "erp_lr", ids.join(","), null, { lrs: clean.map((i) => i.lrNo) });
+  await erpAudit(ctx, "erp.logistics.lrUpload", "erp_lr", ids.join(","), null, { lrs: clean.map((i) => i.lrNo || null) });
   return ok({ ids }, `${ids.length} LR${ids.length === 1 ? "" : "s"} uploaded — logistics will attach ${ids.length === 1 ? "it" : "them"} to the bills`);
 }
 
 export async function editLr(ctx: ErpContext, lrId: string, input: LrInput): Promise<Result<unknown>> {
   const [lr] = await db.select().from(erpLrs).where(eq(erpLrs.id, lrId));
   if (!lr || lr.status === "void") return err("That LR is not on the desk.", "not_found");
-  const lrNo = (input.lrNo ?? "").trim().toUpperCase();
-  if (!lrNo) return fieldErr("lrNo", "The LR number is required");
+  const lrNo = (input.lrNo ?? "").trim().toUpperCase() || null;
+  /* The bills under an attached LR carry its number, and the customer was told it. */
+  if (!lrNo && lr.status === "assigned") return fieldErr("lrNo", "This LR is attached to bills, so it needs its number");
   const transporter = (input.transporter ?? "").trim() || null;
-  const [dup] = (await db.execute(sql`select id from erp_lrs where status <> 'void' and id <> ${lrId} and upper(lr_no) = ${lrNo} and lower(coalesce(transporter, '')) = ${(transporter ?? "").toLowerCase()}`)) as unknown as { id: string }[];
+  const [dup] = lrNo
+    ? ((await db.execute(sql`select id from erp_lrs where status <> 'void' and id <> ${lrId} and upper(lr_no) = ${lrNo} and lower(coalesce(transporter, '')) = ${(transporter ?? "").toLowerCase()}`)) as unknown as { id: string }[])
+    : [];
   if (dup) return fieldErr("lrNo", `LR ${lrNo} is already on the desk`);
   const after = {
     lrNo,
@@ -543,7 +567,7 @@ export async function editLr(ctx: ErpContext, lrId: string, input: LrInput): Pro
     await tx.update(erpTransports).set({ lrNo, ...(transporter ? { transporter } : {}), updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpTransports.lrId, lrId));
   });
   await erpAudit(ctx, "erp.logistics.lrEdit", "erp_lr", lrId, lr, after);
-  return okVoid(`LR ${lrNo} saved`);
+  return okVoid(lrNo ? `LR ${lrNo} saved` : "LR saved");
 }
 
 /** A wrong upload is voided with its reason, never deleted — and only while it carries nothing. */
@@ -556,7 +580,7 @@ export async function voidLr(ctx: ErpContext, lrId: string, reason: string): Pro
   if (carrying) return err("This LR is attached to bills. Take them off it first.", "rule_violation");
   await db.update(erpLrs).set({ status: "void", voidReason: why }).where(eq(erpLrs.id, lrId));
   await erpAudit(ctx, "erp.logistics.lrVoid", "erp_lr", lrId, { status: lr.status }, { status: "void", reason: why });
-  return okVoid(`LR ${lr.lrNo} voided`);
+  return okVoid(`${lrUploadName(lr.lrNo)} voided`);
 }
 
 /**
@@ -572,6 +596,8 @@ export async function attachLr(
 ): Promise<Result<{ notified: NotifyOutcome }>> {
   const [lr] = await db.select().from(erpLrs).where(eq(erpLrs.id, lrId));
   if (!lr || lr.status === "void") return err("That LR is not on the desk.", "not_found");
+  if (!lr.lrNo) return fieldErr("lrNo", "Type the LR number off the photo first (Edit) — the customer is told it.");
+  const lrNo = lr.lrNo;
   const ts = await load([...new Set(transportIds)]);
   if (ts.length !== new Set(transportIds).size) return err("A bill you ticked is no longer in logistics. Refresh and try again.", "conflict");
   const delivery = await deliveryParties(ts.map((t) => t.orderNo));
@@ -594,7 +620,7 @@ export async function attachLr(
         .update(erpTransports)
         .set({
           lrId,
-          lrNo: lr.lrNo,
+          lrNo,
           transporter: lr.transporter ?? t.transporter,
           trackStatus: "Track",
           materialStage: stageStep(t.materialStage) < 2 ? "In Transit" : t.materialStage,
@@ -606,12 +632,12 @@ export async function attachLr(
         })
         .where(eq(erpTransports.id, t.id));
     await tx.update(erpLrs).set({ status: "assigned", assignedById: ctx.user.id, assignedAt: new Date() }).where(eq(erpLrs.id, lrId));
-    eventId = await addEvent(tx as unknown as typeof db, ctx, fresh.map((t) => t.id), "lr", "In Transit", `LR ${lr.lrNo}${lr.transporter ? ` · ${lr.transporter}` : ""}`);
+    eventId = await addEvent(tx as unknown as typeof db, ctx, fresh.map((t) => t.id), "lr", "In Transit", `LR ${lrNo}${lr.transporter ? ` · ${lr.transporter}` : ""}`);
   });
-  await erpAudit(ctx, "erp.logistics.lrAttach", "erp_lr", lrId, null, { lrNo: lr.lrNo, bills: fresh.map((t) => t.orderNo) });
+  await erpAudit(ctx, "erp.logistics.lrAttach", "erp_lr", lrId, null, { lrNo, bills: fresh.map((t) => t.orderNo) });
   await syncBookOrders([...new Set(fresh.map((t) => t.orderNo))]);
   const notified = opts.notify === false ? NO_NOTIFY : await notifyCustomers(ctx, "lr", fresh.map((t) => t.id), eventId);
-  return ok({ notified }, `LR ${lr.lrNo} attached to ${fresh.length} bill${fresh.length === 1 ? "" : "s"}${notifyWords(notified)}`);
+  return ok({ notified }, `LR ${lrNo} attached to ${fresh.length} bill${fresh.length === 1 ? "" : "s"}${notifyWords(notified)}`);
 }
 
 /** Taking a bill off an LR — the wrong bill was ticked. It goes back to waiting for its LR. */
