@@ -306,6 +306,8 @@ export function powerRefusal(power: ErpPower): string {
     scrapSale: "Only the Production Head sells scrap, returns vendor drums and classifies a drum in review.",
     scrapAccounts: "Only the accountant records Petty Cash/Bank receipts and matches them to scrap sales.",
     scrapApprove: "Only somebody who approves drum corrections may do this.",
+    returnApprove: "Only somebody who approves material returns may do this.",
+    returnQc: "Only somebody who decides returned material (QC) may do this.",
   };
   return map[power];
 }

@@ -167,6 +167,20 @@ export async function erpNavCounts(ctx: ErpContext): Promise<Record<string, numb
         if (ctx.screens.has("cashReceipts") && ctx.powers.has("scrapAccounts")) out.cashReceipts = Number(r[0]?.unmatched ?? 0);
       }),
     );
+  /* Material returns: returns waiting for an approver, outwards prepared and not confirmed, and material waiting in quarantine for QC. */
+  if (["vendorReturns", "returnOutwards", "returnQc"].some((k) => ctx.screens.has(k)))
+    jobs.push(
+      (db.execute(sql`
+        select (select count(*) from erp_purchase_returns where status = 'pending')::int as approve,
+               (select count(*) from erp_return_outwards where status = 'draft')::int as outward,
+               (select count(*) from erp_customer_returns r where r.status = 'open' and r.received_qty is not null and r.received_qty > coalesce((
+                  select sum(d.quantity) from erp_return_dispositions d where d.customer_return_id = r.id and d.status = 'active'), 0))::int as qc
+      `) as unknown as Promise<{ approve: number; outward: number; qc: number }[]>).then((r) => {
+        if (ctx.screens.has("vendorReturns") && (ctx.administrator || ctx.powers.has("returnApprove"))) out.vendorReturns = Number(r[0]?.approve ?? 0);
+        if (ctx.screens.has("returnOutwards")) out.returnOutwards = Number(r[0]?.outward ?? 0);
+        if (ctx.screens.has("returnQc") && (ctx.administrator || ctx.powers.has("returnQc"))) out.returnQc = Number(r[0]?.qc ?? 0);
+      }),
+    );
   await Promise.all(jobs);
   return out;
 }

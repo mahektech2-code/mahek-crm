@@ -4392,6 +4392,16 @@ export const SETTINGS = [
     max: 10,
   },
   {
+    key: "erp.returns.ownerApprovalPaise",
+    type: "integer",
+    category: "erp",
+    label: "Material return needing the owner's approval (paise)",
+    description:
+      "A purchase return or customer return worth more than this, with GST, needs the owner (an ERP administrator) to approve it as well, after the ordinary approval. 0 switches the second approval off. In paise: 1,00,00,000 is ₹1,00,000.",
+    default: 10_000_000,
+    min: 0,
+  },
+  {
     key: "erp.stockCheck.onRequirement",
     type: "boolean",
     category: "erp",
@@ -6252,6 +6262,7 @@ export type Config = {
   "erp.purchase.ownVehicleRatePerKmPaise": number;
   "erp.purchase.minQuotations": number;
   "erp.purchase.receiptTolerancePercent": number;
+  "erp.returns.ownerApprovalPaise": number;
   "erp.stockCheck.onRequirement": boolean;
   "erp.stockCheck.tolerancePercent": number;
   "erp.stockCheck.toleranceFloor": number;

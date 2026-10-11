@@ -13,6 +13,7 @@ import { today } from "./screens/common";
 import { purchaseOrderViews, requirementWork } from "./screens/purchase-flow";
 import { poTotals } from "./engines/purchase-flow";
 import { requestStatus } from "./screens/complaints";
+import { returnsSummary } from "./returns";
 import { loadCustomers, partyStatus } from "./screens/masters";
 import { fgReorderRows, rmReorderRows } from "./screens/movement";
 import { detailRows, orderLines, ORDER_STATUSES } from "./screens/sales";
@@ -432,6 +433,25 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
       scrap.push({ l: "Scrap receivables outstanding", v: rupees(Number(o?.v ?? 0)), sub: late ? `${plural(late, "sale")} past due` : "nothing past due", tone: late ? "danger" : undefined, href: tileHref("scrapReceivables", null, "") });
     }
     push("Empty drums and scrap", scrap);
+  }
+
+  /* ================================================== material returns */
+  if (has("vendorReturns") || has("customerReturns")) {
+    const m = await returnsSummary();
+    const money = ctx.administrator || pw("viewPurchaseMoney") || pw("returnApprove");
+    const t: Tile[] = [];
+    if (has("vendorReturns")) {
+      t.push({ l: "Purchase returns pending", v: String(m.vendor.pending), sub: `${plural(m.vendor.completed, "return")} sent back · ${nf(m.vendor.qty)} returned`, tone: m.vendor.pending ? "warn" : undefined, href: tileHref("vendorReturns", null, "") });
+      if (money) t.push({ l: "Debit notes issued", v: rupees(m.vendor.debitNotePaise), sub: "taken off vendor payouts", href: tileHref("debitNotes", null, "") });
+    }
+    if (has("customerReturns")) {
+      t.push({ l: "Customer returns awaiting QC", v: String(m.customer.pendingQc), sub: `${nf(m.customer.litres)} L on open returns · in quarantine, not saleable`, tone: m.customer.pendingQc ? "warn" : undefined, href: tileHref("returnQc", null, "") });
+      if (money) t.push({ l: "Credit notes issued on returns", v: rupees(m.customer.creditNotePaise), sub: plural(m.customer.total, "customer return"), href: tileHref("customerReturns", null, "") });
+      t.push({ l: "Recovered from returns", v: `${nf(m.customer.recoveredLitres)} L`, sub: `reused or reworked · ${nf(m.customer.reworkedLitres)} L sent to rework`, href: tileHref("reworkOrders", null, "") });
+      t.push({ l: "Chemical scrap from returns", v: `${nf(m.customer.scrapKg)} kg`, sub: money ? `${rupees(m.customer.scrapSalesPaise)} of Chemical Scrap sold` : "sellable from Scrap sales", href: tileHref("customerReturns", null, "") });
+      t.push({ l: "Waste from returns", v: `${nf(m.customer.wasteLitres)} L`, sub: money ? `${rupees(m.customer.wasteCostPaise)} disposal cost` : "disposed of, never saleable", href: tileHref("wasteDisposals", null, "") });
+    }
+    push("Material returns", t);
   }
 
   /* ======================================================== petty cash */

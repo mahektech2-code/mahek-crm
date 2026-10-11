@@ -1,0 +1,47 @@
+Returns follow one principle: **financial documents adjust the ledger, and physical transactions adjust stock.** A debit note and a credit note are financial. A goods return outward, a return inward and a QC decision are physical. Keeping the two apart is what lets accounts settle a claim before the goods move, and stores move the goods without touching the account.
+
+## The rules
+
+<Rule title="Every return names its original">
+A purchase return is raised against a GRN lot, and a customer return against a dispatched order line and the lot that went out on it. Nothing is returned without that link, which is what keeps every batch traceable through its returns.
+</Rule>
+
+<Rule title="You cannot return more than came in, or more than is there">
+A purchase return may not exceed what the lot received less what earlier returns took, nor what is still on a shelf. A customer return may not exceed what was dispatched on that line less what was already returned.
+</Rule>
+
+<Rule title="A debit note never moves stock">
+It is issued when the last approval is given, valued at the lot's purchase rate and GST at that moment. It comes off the vendor's unpaid purchase payout on Accounts → Cash flow → Payables. Cancelling it gives the amount back.
+</Rule>
+
+<Rule title="Stock leaves only when the outward is confirmed">
+A prepared outward changes nothing. Confirming it locks the lot, reads its stock again, refuses a shortfall, and reduces stock by the quantity in litres (or pieces).
+</Rule>
+
+<Rule title="Returned goods are quarantined, never saleable">
+A customer return sits on its own record until QC decides. Its box and can labels show **returned**, and dispatch refuses them.
+</Rule>
+
+<Rule title="QC posts into the existing ledgers">
+Reuse posts to the same FG or packing lot. Rework posts to the SFG ledger under a new lot, which waits for SFG QC. Scrap posts to the scrap ledger under **Chemical Scrap**. Waste goes to the waste list. No parallel inventory is created.
+</Rule>
+
+<Rule title="High-value returns need the owner">
+A return worth more than the owner-approval limit — <Setting k="erp.returns.ownerApprovalPaise" /> paise, set on Admin Console → Settings → ERP — needs a second approval from an ERP administrator. Whoever raised a return cannot approve it, and the owner's approval must come from somebody other than the first approver.
+</Rule>
+
+## Who does what
+
+| Job | Needs |
+|---|---|
+| Raise a purchase return or record a customer return | the **Vendor returns** or **Customer returns** screen |
+| Approve, reject, cancel, reverse a dispatch | **Approve material returns** (`returnApprove`) |
+| Confirm or cancel an outward | that power, or manager level on the ERP |
+| QC decisions, rework, waste disposal | **Decide returned material (QC)** (`returnQc`) |
+| Owner approval | an ERP administrator |
+| Issue the credit note | Accounts (`creditnote.issue`) |
+
+## Where the code and the intent disagree today
+
+- The credit note is issued by Accounts through the complaint the return raises. The ERP approves it and Accounts issue it, so there are two steps where the PRD draws one.
+- Rework records input, output and loss. Any extra raw material used in a rework is recorded on an ordinary SFG batch, not on the rework order.

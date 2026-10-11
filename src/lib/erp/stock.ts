@@ -14,8 +14,9 @@ import { landingFigures, shareInwardCost } from "./engines/purchase";
  * stage's entries (its own documents, and transfers in). Outflows are read
  * from the documents that consume stock, never written as entries:
  *
- *   RM   ← transfers out · SFG consumption · cans filled and empty boxes
- *          packed, taken from the item's lots at the godown oldest first
+ *   RM   ← transfers out · SFG consumption · confirmed returns to the vendor ·
+ *          cans filled and empty boxes packed, taken from the item's lots at
+ *          the godown oldest first
  *   SFG  ← transfers out · FG filling
  *   FG   ← transfers out · packing lines · lot allocations to orders
  *   Pack ← transfers out · lot allocations to orders
@@ -123,6 +124,9 @@ export async function rmLots(ex: Ex = db): Promise<RmLot[]> {
         select lot_no, from_godown_id as godown_id, quantity as qty from erp_transfers where item_type = 'Purchase'
         union all
         select rm_lot_no, godown_id, total_use from erp_sfg_lines
+        union all
+        /* A goods return outward takes its lot only once the dispatch is CONFIRMED. */
+        select lot_no, godown_id, stock_qty from erp_return_outwards where status = 'confirmed'
       ) o group by 1, 2
     ),
     latest as (

@@ -60,6 +60,7 @@ const files = [
   // tests — FIFO allocation, strict separation, receivables matched from
   // Petty Cash/Bank, corrections approved by somebody else.
   "src/lib/erp/erp-scrap.test.ts",
+  "src/lib/erp/erp-returns.test.ts",
   "src/lib/erp/erp-material-duties.test.ts",
   // Purchase and production, department by department.
   "src/lib/erp/erp-departments.test.ts",
