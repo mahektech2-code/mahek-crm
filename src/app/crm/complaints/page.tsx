@@ -11,7 +11,12 @@ import { ComplaintsScreen } from "./complaints-screen";
 
 export const metadata = { title: "Complaints - MahekOne CRM" };
 
-export default async function ComplaintsPage() {
+export default async function ComplaintsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ open?: string }>;
+}) {
+  const { open } = await searchParams;
   const user = await requireUser();
   /* A manager OF THE CRM — `isManager` was the widest level held in any app. */
   const managerHere = await managesHere(user, "crm");
@@ -36,6 +41,8 @@ export default async function ComplaintsPage() {
       // list in the Admin Console without a deploy.
       categories={config["complaints.categories"]}
       maxImages={config["attachments.maxPerComplaint"]}
+      openId={open}
+      key={open ?? "list"}
     />
   );
 }

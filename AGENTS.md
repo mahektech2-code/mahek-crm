@@ -1699,6 +1699,32 @@ date and name last, with a `promptCacheKey` per visibility, so OpenAI reads the
 long prefix from its own cache. All of it is in memory and re-derivable — losing
 it costs a slower answer, never a wrong one.
 
+**ONE HEADER BOX FINDS A THING OR ASKS ABOUT IT, in the ERP, the CRM and the
+Sales Dashboard.** `components/shell/smart-search.tsx` searches as it
+is typed and answers with one flat list grouped by what each row is
+(`SearchHit` in `lib/search-hit.ts`): customers, leads, bills, orders,
+complaints, salesmen, products and the screens this person holds — built by
+`lib/services/app-search-service.ts` through `/api/crm/search` and
+`/api/sales/search` (the ERP's rows are `erpSearch`, through `/api/erp/search`), narrowed by `scopedToUsers` or `managerScope`, and a kind
+of record is searched only where its screen is held. ↑ ↓ and Enter work it.
+What reads as a question (`looksLikeQuestion`: a trailing "?", or a sentence
+starting with a question word) puts "Ask AI" first, and choosing it opens the
+app's Ask AI drawer with the answer already coming. `/api/search` keeps its
+three sections for the two pickers that read them.
+
+**ASK AI IS ONE DRAWER AND ONE ENGINE, and an app joins with a catalog.**
+`components/shell/ask-panel.tsx` (the "Ask AI" header button) streams from the
+app's endpoint; `team-ask-service.ts`'s `answerStream` is the model, the one
+`run_sql` tool and the caches for every app. The CRM's catalog is
+`team-ask/crm-catalog.ts`: the same temporary-view rule, with `{S}` the people
+`resolveScope()` puts in the asker's book, the customers `scopedToUsers` would
+list, and a table only where a CRM screen that shows it is held.
+`crmAsk.enabled` / `crmAsk.model` switch and choose it; its limits and caches
+are the `salesAsk.*` ones. The ERP keeps its own engine — tools that call each
+screen's loader, `lib/erp/ai-ask.ts` — behind `/api/erp/ask`, which speaks the
+same stream and adds the records it read as links. The next app is an
+endpoint that streams those events and an `AskSetup` in `ask-setups.ts`.
+
 ## The ERP (operations app)
 
 **The ERP is the client's AppSheet "Mahek Plus" rebuilt as a MahekOne app**

@@ -12,7 +12,7 @@ The Sales Dashboard is the App Router tree under `src/app/sales/`, one layout th
 | Scope | `src/lib/services/sales-service.ts` | `managerScope`, `onlyMine`, `placeScope`, `mineByPlace`, `leadsVisible` |
 | Pure gate rules | `src/lib/sales-gate.ts` | `salesGateRefusal`, `scopeStanding`, `scopeCovers` |
 | Writes | `src/lib/actions/sales.ts` | `requireSalesAccess`, `salesmanOutsideScope`, `tell`, every manager decision |
-| Ask drawer | `src/app/sales/ask-panel.tsx`, `src/app/api/sales/ask` | Streams model reads limited to the asker's own access |
+| Ask drawer | `src/components/shell/ask-panel.tsx`, `src/app/api/sales/ask` | Streams model reads limited to the asker's own access |
 | Handset writes | `src/lib/actions/mbos.ts` | `dispatchItem` and one handler per entity type |
 | Scheduled work | `src/lib/mbos-jobs.ts`, `src/lib/jobs.ts` | Escalations, reorder follow-ups, nurture tasks, copy-forward targets |
 

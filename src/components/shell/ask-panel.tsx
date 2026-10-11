@@ -1,32 +1,63 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { BodyPortal } from "@/components/ui/body-portal";
 import { SalesIcon } from "@/components/console/icons";
 
 /* ---------------------------------------------------------------------------
- * "Ask about the team" — the design's right-hand drawer, to its own numbers.
+ * ASK AI — one drawer for every MahekOne app that answers questions from its
+ * own data. The Sales Dashboard's "Ask about the team" was the first; the CRM's
+ * "Ask the CRM" is the second, and an app joins by giving it an endpoint that
+ * streams the same events (`team-ask-service.ts`'s `AskEvent`).
  *
- * 520px wide, capped at `100vw - 48px`; a 45% scrim over #1A1E28; the drawer
- * slides 24px and the scrim fades, both on 150–200ms of the console's own
- * easing. Those are the design's values and not approximations of them.
+ * The design's right-hand drawer, to its own numbers: 520px wide, capped at
+ * `100vw - 48px`; a 45% scrim over #1A1E28; the drawer slides 24px and the
+ * scrim fades, both on 150–200ms of the console's own easing.
  *
- * IT READS THE DATABASE NOW, not a summary. `/api/sales/ask` streams one JSON
- * line per event: each read the model makes ("Leave Mahesh took this year"),
- * then the answer's words as they are written. The reads are drawn as they
- * happen so the manager watches it work instead of a spinner; they collapse
- * to a count once the answer lands. What it may read is the asker's own
- * access — see `team-ask/catalog.ts`.
+ * IT READS THE DATABASE, not a summary. The endpoint streams one JSON line per
+ * event: each read the model makes, then the answer's words as they are
+ * written. The reads are drawn as they happen so the person watches it work
+ * instead of a spinner; they collapse to a count once the answer lands. What
+ * it may read is the asker's own access.
  *
  * THE THREAD IS A CONVERSATION while the drawer is open: earlier turns ride
  * along so "and last month?" means something. It is NOT persisted — closing
  * the drawer clears it, because a stored answer is a month-old sentence about
  * a number that has since moved.
  *
+ * THE HEADER SEARCH ASKS IT TOO. Typing a question into the search box and
+ * choosing "Ask AI" fires `askAi(question)`, which opens this drawer with the
+ * question already asked — one box to find a thing or ask about it, the way
+ * the ERP's header works.
+ *
  * OPENING THE DRAWER WARMS IT: the server resolves and remembers what this
  * person may read before they have typed, so the first question starts
  * immediately.
  * ------------------------------------------------------------------------- */
+
+const ASK_EVENT = "mahek:ask-ai";
+
+/** Open this app's Ask AI drawer with a question already asked. */
+export function askAi(question: string) {
+  window.dispatchEvent(new CustomEvent<string>(ASK_EVENT, { detail: question }));
+}
+
+export type AskSetup = {
+  /** The streaming endpoint, e.g. `/api/crm/ask`. */
+  endpoint: string;
+  /** The drawer's heading, e.g. "Ask the CRM". */
+  title: string;
+  /** The line under the heading. */
+  intro: string;
+  /** Starting questions — each one answerable from what the asker may read. */
+  chips: string[];
+  placeholder: string;
+  /** Over each answer: where it came from, e.g. "From your book". */
+  source: string;
+  /** The header button's words. */
+  button?: string;
+};
 
 type Message =
   | { role: "user"; text: string }
@@ -34,6 +65,8 @@ type Message =
       role: "ai";
       text: string;
       steps: string[];
+      /** Records the answer read, to open — the ERP's answers carry them. */
+      links?: Array<{ label: string; href: string }>;
       done: boolean;
       meta?: { queries: number; dbQueries: number; cached: boolean; ms: number };
     };
@@ -41,20 +74,23 @@ type Message =
 type AskEvent =
   | { type: "step"; text: string }
   | { type: "delta"; text: string }
+  | { type: "links"; links: Array<{ label: string; href: string }> }
   | { type: "done"; queries: number; dbQueries: number; cached: boolean; ms: number }
   | { type: "error"; message: string };
 
-/** Starting questions — each one answerable from what a manager may read. */
-const CHIPS = [
-  "Who has not punched in today?",
-  "Who is on leave today, and who has leave coming up this week?",
-  "Who is behind on target this month and by how much?",
-  "Which shops did each salesman visit yesterday?",
-  "How many salesmen do I have, and where does each one work?",
-];
+export function AskPanel({ setup }: { setup: AskSetup }) {
+  /* Each opening is a fresh drawer: `n` changes its key, `initial` is the
+     question it opens on (null when opened from the button). */
+  const [open, setOpen] = React.useState<{ n: number; initial: string | null } | null>(null);
 
-export function AskPanel() {
-  const [open, setOpen] = React.useState(false);
+  React.useEffect(() => {
+    const onAsk = (e: Event) => {
+      const q = (e as CustomEvent<string>).detail?.trim();
+      setOpen((o) => ({ n: (o?.n ?? 0) + 1, initial: q || null }));
+    };
+    window.addEventListener(ASK_EVENT, onAsk);
+    return () => window.removeEventListener(ASK_EVENT, onAsk);
+  }, []);
 
   return (
     <>
@@ -66,18 +102,19 @@ export function AskPanel() {
       */}
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={() => setOpen((o) => ({ n: (o?.n ?? 0) + 1, initial: null }))}
+        title={`${setup.title} — or type a question into the search box`}
         className="inline-flex h-8 flex-none cursor-pointer items-center gap-[7px] rounded-[4px] border border-brand-softer bg-brand-soft px-3 text-[13px] font-medium text-[#5223E0] transition-colors duration-100 hover:bg-brand-softer"
       >
         <SalesIcon name="spark" size={14} />
-        Ask about the team
+        {setup.button ?? "Ask AI"}
       </button>
 
       {/* On <body>: the header is `relative z-2`, which trapped this drawer
           under the Live map's controls — see body-portal.tsx. */}
       {open ? (
         <BodyPortal>
-          <Drawer onClose={() => setOpen(false)} />
+          <Drawer key={open.n} setup={setup} initial={open.initial} onClose={() => setOpen(null)} />
         </BodyPortal>
       ) : null}
     </>
@@ -89,10 +126,14 @@ export function AskPanel() {
  * itself in an effect — the React Compiler rule every drawer in this codebase
  * follows.
  */
-function Drawer({ onClose }: { onClose: () => void }) {
-  const [thread, setThread] = React.useState<Message[]>([]);
+function Drawer({ setup, initial, onClose }: { setup: AskSetup; initial: string | null; onClose: () => void }) {
+  /* Opened on a question, the drawer starts mid-answer: the thread and the
+     spinner are its initial state, and the mount effect only starts reading. */
+  const [thread, setThread] = React.useState<Message[]>(() =>
+    initial ? [{ role: "user", text: initial }, { role: "ai", text: "", steps: [], done: false }] : [],
+  );
   const [q, setQ] = React.useState("");
-  const [thinking, setThinking] = React.useState(false);
+  const [thinking, setThinking] = React.useState(Boolean(initial));
   const [problem, setProblem] = React.useState<string | null>(null);
   const bottom = React.useRef<HTMLDivElement>(null);
   const abort = React.useRef<AbortController | null>(null);
@@ -100,12 +141,16 @@ function Drawer({ onClose }: { onClose: () => void }) {
   // Warm the server's memory of what this person may read, and stop any
   // answer still streaming when the drawer closes.
   React.useEffect(() => {
-    fetch("/api/sales/ask", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ warm: true }),
-    }).catch(() => undefined);
+    if (initial) void run(initial, []);
+    else
+      fetch(setup.endpoint, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ warm: true }),
+      }).catch(() => undefined);
     return () => abort.current?.abort();
+    // Once, on mount: the drawer is keyed per opening.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const scroll = () => requestAnimationFrame(() => bottom.current?.scrollIntoView({ block: "end" }));
@@ -131,12 +176,16 @@ function Drawer({ onClose }: { onClose: () => void }) {
     setThread((t) => [...t, { role: "user", text }, { role: "ai", text: "", steps: [], done: false }]);
     setThinking(true);
     scroll();
+    await run(text, history);
+  };
 
+  /** Read the answer into the last message. Every state change waits on the network. */
+  async function run(text: string, history: Array<{ role: "user" | "assistant"; text: string }>) {
     const controller = new AbortController();
     abort.current = controller;
     let failed: string | null = null;
     try {
-      const res = await fetch("/api/sales/ask", {
+      const res = await fetch(setup.endpoint, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ question: text, history }),
@@ -162,6 +211,7 @@ function Drawer({ onClose }: { onClose: () => void }) {
             const e = JSON.parse(line) as AskEvent;
             if (e.type === "step") patchLast((m) => ({ ...m, steps: [...m.steps, e.text] }));
             else if (e.type === "delta") patchLast((m) => ({ ...m, text: m.text + e.text }));
+            else if (e.type === "links") patchLast((m) => ({ ...m, links: e.links }));
             else if (e.type === "done")
               patchLast((m) => ({ ...m, done: true, meta: { queries: e.queries, dbQueries: e.dbQueries, cached: e.cached, ms: e.ms } }));
             else if (e.type === "error") failed = e.message;
@@ -190,7 +240,7 @@ function Drawer({ onClose }: { onClose: () => void }) {
       patchLast((m) => ({ ...m, done: true }));
     }
     scroll();
-  };
+  }
 
   const empty = thread.length === 0;
 
@@ -200,7 +250,7 @@ function Drawer({ onClose }: { onClose: () => void }) {
       className="animate-fade-in fixed inset-0 z-60 flex justify-end bg-[rgba(26,30,40,0.45)]"
       role="dialog"
       aria-modal="true"
-      aria-label="Ask about the team"
+      aria-label={setup.title}
     >
       <div
         onClick={(e) => e.stopPropagation()}
@@ -209,11 +259,13 @@ function Drawer({ onClose }: { onClose: () => void }) {
         {/* ---------------------------------------------------------- head */}
         <div className="flex flex-none items-start justify-between gap-3 border-b border-line px-5 py-4">
           <div>
-            <div className="text-lg font-semibold text-ink">Ask about the team</div>
-            <div className="mt-0.5 text-[13px] text-muted">
-              Ask anything — attendance, leave, visits, routes, orders, collections,
-              targets — answered from the data your access lets you see.
+            <div className="flex items-center gap-2 text-lg font-semibold text-ink">
+              <span className="flex text-[#5223E0]">
+                <SalesIcon name="spark" size={16} />
+              </span>
+              {setup.title}
             </div>
+            <div className="mt-0.5 text-[13px] text-muted">{setup.intro}</div>
           </div>
           <button
             type="button"
@@ -232,7 +284,7 @@ function Drawer({ onClose }: { onClose: () => void }) {
               <div className="mb-2.5 text-xs font-medium tracking-[0.04em] text-muted uppercase">
                 Try one of these
               </div>
-              {CHIPS.map((c) => (
+              {setup.chips.map((c) => (
                 <button
                   key={c}
                   type="button"
@@ -253,7 +305,7 @@ function Drawer({ onClose }: { onClose: () => void }) {
                 </span>
               </div>
             ) : (
-              <AiAnswer key={i} m={m} />
+              <AiAnswer key={i} m={m} source={setup.source} onOpen={onClose} />
             ),
           )}
 
@@ -278,7 +330,8 @@ function Drawer({ onClose }: { onClose: () => void }) {
             value={q}
             onChange={(e) => setQ(e.target.value)}
             disabled={thinking}
-            placeholder="Ask anything about the team"
+            placeholder={setup.placeholder}
+            autoFocus
             className="h-10 min-w-0 flex-1 rounded-[6px] border border-line bg-surface px-3 text-sm text-ink outline-none focus:border-brand"
           />
           <button
@@ -295,7 +348,7 @@ function Drawer({ onClose }: { onClose: () => void }) {
 }
 
 /** One answer: the reads it is making, then the words as they arrive. */
-function AiAnswer({ m }: { m: Extract<Message, { role: "ai" }> }) {
+function AiAnswer({ m, source, onOpen }: { m: Extract<Message, { role: "ai" }>; source: string; onOpen: () => void }) {
   const writing = !m.done;
   return (
     <div className="mb-4">
@@ -304,7 +357,7 @@ function AiAnswer({ m }: { m: Extract<Message, { role: "ai" }> }) {
           <SalesIcon name="spark" size={14} />
         </span>
         <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-          From your team&apos;s data
+          {source}
         </span>
       </span>
 
@@ -330,6 +383,16 @@ function AiAnswer({ m }: { m: Extract<Message, { role: "ai" }> }) {
           {m.text}
           {writing ? <span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse bg-brand-softer align-middle" /> : null}
         </span>
+      ) : null}
+
+      {m.links?.length ? (
+        <div className="mt-2 flex flex-col items-start gap-1">
+          {m.links.map((l) => (
+            <Link key={l.href + l.label} href={l.href} onClick={onOpen} className="text-[13px] text-brand hover:underline">
+              {l.label} →
+            </Link>
+          ))}
+        </div>
       ) : null}
 
       {m.done && m.meta ? (
