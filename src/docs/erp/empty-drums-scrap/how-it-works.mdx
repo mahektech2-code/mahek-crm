@@ -1,0 +1,54 @@
+Drums are the one kind of scrap that must stay traceable one by one, because each came in on a GRN with a declared empty weight and some of them are not ours. So a drum gets a record the moment it is empty, and everything after that — the sale, the return, the variance, the receivable — is read off those records. Nothing holds a balance that could drift.
+
+## The rules
+
+<Rule title="A drum is registered when it is empty, never at the gate">
+The GRN is not changed. The record starts when production scans the drum's existing lot label and weighs it. It copies the GRN, the supplier, the material, the lot and the declared empty weight from the purchase, and keeps them whatever happens to the label.
+</Rule>
+
+<Rule title="Ownership is read, never guessed">
+The GRN line says who owns the drums (**Drums belong to**, copied from the supplier's master when the goods were received), else the supplier's master (**Their drums are**). Where neither says, the drum goes to **Needs review** and the Production Head decides — with a sentence on how they know.
+</Rule>
+
+<Rule title="Each drum of a lot is registered once">
+A label names a lot, and a lot brings a number of drums. Each emptied drum takes the next drum number of its lot — drum 1, 2, 3 of 4 — and a fifth is refused as a duplicate, showing the four already recorded. A second drum of the same lot within <Setting k="erp.drums.sameLotMinutes" /> minutes is saved only after the person says it is a different drum.
+</Rule>
+
+<Rule title="The weight must be believable">
+Between <Setting k="erp.drums.minEmptyKg" /> and <Setting k="erp.drums.maxEmptyKg" /> kg. Outside that, the drum is not saved unless somebody who approves drum corrections writes why the weight is right.
+</Rule>
+
+<Rule title="Variance is calculated, the GRN is not changed">
+Actual empty weight − declared tare. Beyond <Setting k="erp.drums.varianceAlertKg" /> kg or <Setting k="erp.drums.varianceAlertPercent" />% either way, the drum is flagged and an alert is raised for review.
+</Rule>
+
+<Rule title="Mahek's drums and a supplier's drums never mix">
+They are separate stocks. A scrap sale draws only from Mahek's; a returnable outward only from that supplier's. The server refuses a returnable drum in a sale whatever button was pressed.
+</Rule>
+
+<Rule title="Sale and return are by quantity, allocated oldest first">
+The person enters how many. The system picks the oldest eligible drum records and stores which ones — a system allocation for traceability, not a claim that each was checked at the gate. A quantity above what is available is refused, and a drum can be allocated to only one sale or return.
+</Rule>
+
+<Rule title="Outstanding is the sale less what the accountant matched">
+Never typed, never stored. A match can never exceed what is left of the receipt or what is owed on the sale. Undoing a match keeps it, marked undone, and the sale is outstanding again.
+</Rule>
+
+<Rule title="Corrections leave a trail">
+Opening stock, write-offs and owner changes are asked for by one person and approved by another who holds **Approve drum corrections**. Weight corrections and cancelled entries need that power and a reason. Every change is a line in the drum's history, which cannot be edited.
+</Rule>
+
+## Who does what
+
+| Job | Needs |
+|---|---|
+| Record an empty drum | the **Empty drums** screen (ERP), or a factory department named in <Setting k="erp.drums.factoryDepartments" /> or a supervisor (phone) |
+| Sell scrap, return drums, classify a drum in review | **Sell scrap and return vendor drums** (`scrapSale`) |
+| Record receipts and match them | **Match Petty Cash/Bank receipts to scrap sales** (`scrapAccounts`) |
+| Approve corrections, cancel a sale or outward | **Approve drum corrections and adjustments** (`scrapApprove`) |
+
+## Where the code and the intent disagree today
+
+- The PRD asks for attachments on sales and outwards. Remarks are stored; files are not yet attached to either.
+- Receipts are recorded in Petty Cash/Bank by hand. MahekOne has no bank-statement import, so a receipt is typed from the statement rather than imported from it.
+- On the phone, Empty drum entry needs the network: a drum is saved the moment it is weighed, not queued for later.

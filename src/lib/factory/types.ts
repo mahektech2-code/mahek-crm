@@ -212,3 +212,54 @@ export const STEPS: Record<Proc, string[]> = {
   packing: ["identify", "team", "fglot", "boxes", "review"],
   dispatch: ["order", "load", "checklist", "team", "review"],
 };
+
+/* ---------------------------------------------------------------- empty drums
+ * EMPTY DRUM ENTRY: the phone scans a drum's GRN/lot label once the drum is
+ * empty and sends its weight. The server decides everything — whose drum it
+ * is, which drum of the lot, whether the weight is believable — and these are
+ * the shapes it answers in (lib/erp/drums.ts does the work).
+ * ------------------------------------------------------------------------- */
+
+export type DrumLotView = {
+  code: string;
+  lotNo: string;
+  material: string;
+  supplier: string;
+  pr: number;
+  godown: string;
+  ownership: "mahek" | "returnable" | null;
+  ownershipLabel: string;
+  declaredKg: number | null;
+  /** Drums the GRN brought in; null where it recorded none. */
+  drums: number | null;
+  recorded: number;
+  nextSeq: number;
+  /** The last drum of this lot recorded empty, and whether that was recent enough to ask "a different drum?". */
+  last: { seq: number | null; at: string; by: string | null } | null;
+  recent: boolean;
+};
+
+export type DrumExisting = { label: string; seq: number | null; status: string; kg: number | null; at: string };
+
+export type DrumLookup =
+  | { ok: true; lot: DrumLotView; limits: { minKg: number; maxKg: number } }
+  | { ok: false; title: string; text: string; fix: string; existing?: DrumExisting[] };
+
+export type DrumSaved = {
+  label: string;
+  seq: number | null;
+  drums: number | null;
+  lotNo: string;
+  material: string;
+  supplier: string;
+  statusLabel: string;
+  ownership: "mahek" | "returnable" | null;
+  declaredKg: number | null;
+  actualKg: number;
+  varianceKg: number | null;
+  reviewReason: string | null;
+};
+
+export type DrumSave =
+  | { ok: true; drum: DrumSaved; replay?: boolean }
+  | { ok: false; kind: "confirm" | "weight" | "lot" | "notFound" | "signedOut" | "notAllowed"; title: string; text: string; fix: string; existing?: DrumExisting[] };

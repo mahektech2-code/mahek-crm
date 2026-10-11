@@ -1,0 +1,89 @@
+**Empty drums & scrap** follows a drum from the day it is emptied to the day it leaves the factory — sold as Mahek's scrap, or sent back to the supplier who owns it — and follows the money from a scrap sale until the accountant matches it in Petty Cash/Bank.
+
+<Flow caption="Two kinds of drum, two ways out" chart={`
+flowchart LR
+  G[Existing GRN and lot label] --> E[Drum used up]
+  E --> S[Scan the label and weigh the empty drum]
+  S --> O{Who owns it?}
+  O -- Mahek --> M[Mahek empty drum stock]
+  O -- Supplier --> V[Vendor returnable stock]
+  O -- Not recorded --> R[Needs review by the Production Head]
+  M --> SS[Scrap sale by quantity, oldest first]
+  SS --> RV[Scrap receivable]
+  RV --> PB[Receipt matched in Petty Cash/Bank]
+  V --> RO[Returnable drum outward, oldest first]
+`} />
+
+## Recording an empty drum
+
+The designated production person does this **when the drum becomes empty**, while its label can still be read. Afterwards the label may tear or fall off — that no longer matters, because the record carries the GRN, supplier, material and lot.
+
+<Steps>
+<Step title="Open Empty drum entry">
+On the factory phone: your name → **Empty drum entry**. In the ERP: **Empty drums → Record empty drum**.
+</Step>
+<Step title="Scan the drum's GRN label">
+The phone shows the material, the supplier, the GRN (PR number), which drum of the lot this is — "drum 3 of 4" — who owns it and the empty weight the supplier declared.
+</Step>
+<Step title="Weigh the completely empty drum and enter the weight">
+In kg. A weight outside the expected range is not saved: weigh it again, or ask the Production Head, who can save it from the ERP with a sentence saying why it is right.
+</Step>
+<Step title="Save">
+The drum is added to Mahek stock or to the supplier's returnable stock straight away. If another drum of the same lot was recorded a moment ago the phone asks **"Is this a different drum?"** — say yes only if it is.
+</Step>
+</Steps>
+
+<Callout kind="warn">
+A torn or missing label: keep the drum aside and tell the Production Head. Never record a drum without its label — there is no way to link it to its GRN afterwards.
+</Callout>
+
+## The Empty drums screen
+
+<Wireframe url="/erp/empty-drums" nav={["Dashboard", "#Empty drums & scrap", "Empty drums", "Returnable drum outward", "Scrap sales"]} active="Empty drums" caption="Empty drums → Mahek stock">
+  <WfBar>
+    <WfTitle sub="Every drum recorded empty off its GRN label and weighed.">Empty drums</WfTitle>
+    <WfSpacer />
+    <WfButton>Sell drums</WfButton>
+    <WfButton primary>Record empty drum</WfButton>
+  </WfBar>
+  <WfTabs items={["Mahek stock", "Vendor returnable", "Needs review", "Tare variance", "Corrections", "All drums"]} active="Mahek stock" />
+  <WfTable
+    highlight={0}
+    columns={["Drum", "Material", "Supplier", "Lot", "Actual empty", "Variance", "Emptied"]}
+    rows={[
+      ["DRM-12", <b key="a">Material A</b>, "Supplier A", "SUPA-TOL-31", "10 kg", <span key="b">+2 kg <Hotspot n={1} /></span>, "3 Oct"],
+      ["DRM-13", <b key="c">Material A</b>, "Supplier A", "SUPA-TOL-31", "8.2 kg", "+0.2 kg", "3 Oct"],
+    ]}
+  />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Variance.</b> Actual empty weight minus the empty weight the supplier declared on the GRN. Beyond the limits it is flagged, listed on Tare variance and raises an alert. The GRN's own figure is never changed.</span>,
+]} />
+
+| Tab | What it lists |
+|---|---|
+| **Mahek stock** | Mahek-owned empty drums in the factory — what can be sold as scrap. |
+| **Vendor returnable** | Suppliers' drums waiting to go back, with how long each has waited. They are never sold. |
+| **Needs review** | Drums whose GRN and supplier say nothing about who owns them. The Production Head classifies them. |
+| **Tare variance** | Declared tare against actual empty weight, by supplier, material, GRN and lot. |
+| **Corrections** | Opening stock, write-offs and changes of owner, each asked for by one person and approved by another. |
+| **All drums** | Every drum ever recorded, with its status: available, returnable, sold, returned, adjusted or cancelled. |
+
+## Selling scrap
+
+**Scrap sales → New scrap sale.** Pick the buyer and the category. For **Empty Metal Drum** enter only **how many** were sold — the system takes the oldest Mahek-owned drums in stock and keeps, in the background, which GRN, supplier and lot each came from. Nobody has to find each physical drum. Plastic, cardboard and other scrap are sold in kg or pieces from what was recorded on **Scrap stock**.
+
+Say whether an **external invoice** was issued. If none was, choose **No external invoice**: the sale is traced by its own number (SCR-12) and no invoice number is made up for it.
+
+Vendor-returnable drums never appear in a scrap sale. Pressing **Sell as scrap** on one says: *"This drum is vendor-returnable. Please use Returnable Drum Outward."*
+
+## Returning a supplier's drums
+
+**Returnable drum outward → Return drums.** Pick the supplier and enter how many went back, with the challan number if there is one. The oldest of that supplier's waiting drums are taken. **Pending by supplier** shows what is still owed back to each supplier and how long it has waited.
+
+## Getting paid
+
+A scrap sale stays outstanding until the **accountant** matches money to it. When the buyer pays, the accountant records the money on **Petty Cash/Bank → Receipts** and presses **Match to a sale** (or **Match oldest due first**). One receipt can pay several sales, and several receipts one sale. **Scrap sales → Receivables & ageing** lists what is still owed, by days past due; **Scrap buyers** opens each buyer's ledger.
+
+Production cannot mark a sale paid — selling the scrap is not the same as the money reaching the bank.

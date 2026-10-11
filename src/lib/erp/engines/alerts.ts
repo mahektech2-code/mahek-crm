@@ -25,7 +25,8 @@ export type AlertKind =
   | "packStuck"
   | "duplicateExpense"
   | "cashNegative"
-  | "belowLevel";
+  | "belowLevel"
+  | "drumVariance";
 
 export const ALERT_LABEL: Record<AlertKind, string> = {
   rateJump: "Purchase rate jump",
@@ -43,6 +44,7 @@ export const ALERT_LABEL: Record<AlertKind, string> = {
   duplicateExpense: "Duplicate-looking expense",
   cashNegative: "Petty cash below zero",
   belowLevel: "Stock below re-order level",
+  drumVariance: "Empty drum heavier or lighter than declared",
 };
 
 export type Candidate = {
@@ -332,4 +334,28 @@ export function belowLevel(rows: { id: string; screen: "reorderRm" | "reorderFg"
     values: { available: r.available, min: r.min, item: r.item, godown: r.godown },
     explanation: `${r.item} at ${r.godown}: ${r.available} available against a minimum of ${r.min}.`,
   }));
+}
+
+/* ============================================================ empty drums */
+
+/**
+ * An empty drum whose actual weight is off the supplier's declared tare by
+ * more than either limit. One alert per drum; it resolves on its own when the
+ * weight is corrected or the entry cancelled. The GRN's figure is never moved.
+ */
+export function drumVariances(
+  rows: { id: string; label: string; supplier: string; lot: string; declaredKg: number; actualKg: number }[],
+  limits: { alertKg: number; alertPercent: number },
+): Candidate[] {
+  return rows
+    .map((r) => ({ ...r, kg: Math.round((r.actualKg - r.declaredKg) * 1000) / 1000, pct: r.declaredKg > 0 ? Math.round(((r.actualKg - r.declaredKg) / r.declaredKg) * 1000) / 10 : null }))
+    .filter((r) => Math.abs(r.kg) > limits.alertKg || (r.pct != null && Math.abs(r.pct) > limits.alertPercent))
+    .map((r) => ({
+      kind: "drumVariance" as const,
+      subject: `drum:${r.id}`,
+      screen: "drumVariance",
+      recordIds: [r.id],
+      values: { declaredKg: r.declaredKg, actualKg: r.actualKg, varianceKg: r.kg, variancePct: r.pct, supplier: r.supplier, lot: r.lot },
+      explanation: `${r.label} from ${r.supplier} (lot ${r.lot}) weighed ${r.actualKg} kg empty against ${r.declaredKg} kg declared on the GRN — ${r.kg > 0 ? "+" : ""}${r.kg} kg${r.pct != null ? ` (${r.pct > 0 ? "+" : ""}${r.pct}%)` : ""}.`,
+    }));
 }

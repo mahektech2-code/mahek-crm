@@ -324,6 +324,27 @@ const strong = (s: string): Piece => ({ strong: s });
  * not enough.
  */
 const DESCRIBE: Record<string, Describer> = {
+  /* ---- empty drums, scrap sale and scrap receipts */
+  "erp.drum.empty": () => ["recorded an empty drum, weighed"],
+  "erp.drum.classify": () => ["decided who owns an empty drum"],
+  "erp.drum.weight": () => ["corrected an empty drum's weight"],
+  "erp.drum.cancel": () => ["cancelled an empty-drum entry"],
+  "erp.drum.adjust.request": () => ["asked for a drum correction"],
+  "erp.drum.adjust.approve": () => ["approved a drum correction"],
+  "erp.drum.adjust.reject": () => ["rejected a drum correction"],
+  "erp.drum.return": () => ["returned empty drums to their supplier"],
+  "erp.drum.return.cancel": () => ["cancelled a returnable drum outward"],
+  "erp.scrap.sale": () => ["recorded a scrap sale"],
+  "erp.scrap.sale.cancel": () => ["cancelled a scrap sale"],
+  "erp.scrap.entry": () => ["recorded scrap"],
+  "erp.scrap.entry.cancel": () => ["cancelled a scrap entry"],
+  "erp.scrapBuyer.create": () => ["added a scrap buyer"],
+  "erp.scrapBuyer.retire": () => ["retired a scrap buyer"],
+  "erp.scrapBuyer.restore": () => ["restored a scrap buyer"],
+  "erp.receipt.create": () => ["recorded a Petty Cash/Bank receipt"],
+  "erp.receipt.allocate": () => ["matched a receipt to a scrap sale"],
+  "erp.receipt.unallocate": () => ["undid a receipt's match to a scrap sale"],
+  "erp.receipt.void": () => ["voided a Petty Cash/Bank receipt"],
   /* ---- money */
   "payment.record": (c) => ({
     says: [

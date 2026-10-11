@@ -221,13 +221,39 @@ export const ERP_GROUPS: ErpGroup[] = [
     ],
   },
   {
+    id: "scrap",
+    label: "Empty drums & scrap",
+    icon: "can",
+    screens: [
+      s("emptyDrums", "empty-drums", "Empty drums", "Every drum recorded empty off its GRN label and weighed. Mahek's drums become scrap stock; a supplier's drums wait to go back. The GRN, supplier and lot stay linked even when the label is gone.", true, [
+        v("emptyDrums", "Mahek stock"),
+        v("drumReturnable", "Vendor returnable"),
+        v("drumReview", "Needs review"),
+        v("drumVariance", "Tare variance"),
+        v("drumAdjustments", "Corrections"),
+        v("drumRegister", "All drums"),
+      ]),
+      s("drumReturns", "drum-returns", "Returnable drum outward", "Supplier-owned empty drums sent back, by quantity. The oldest drums waiting for that supplier are taken first; nothing returnable is ever sold as scrap.", true, [
+        v("drumReturns", "Outwards"),
+        v("drumPending", "Pending by supplier"),
+      ]),
+      s("scrapSales", "scrap-sales", "Scrap sales", "Empty drums, plastic, cardboard and other scrap sold to scrap buyers, with what each still owes. Drums are sold by quantity, oldest first; money is matched from Petty Cash/Bank by the accountant.", true, [
+        v("scrapSales", "Sales"),
+        v("scrapReceivables", "Receivables & ageing"),
+        v("scrapStock", "Scrap stock", { key: "scrapEntries", label: "Entries", back: "On hand" }),
+        v("scrapBuyers", "Scrap buyers"),
+      ]),
+    ],
+  },
+  {
     id: "expenses",
-    label: "Petty cash",
+    label: "Petty Cash/Bank",
     icon: "wallet",
     screens: [
-      s("expenses", "expenses", "Petty cash", "Funds given to people and what they spent, per godown and mode, with what is left.", true, [
+      s("expenses", "expenses", "Petty Cash/Bank", "Funds given to people and what they spent, per godown and mode, with what is left — and money received into cash or bank, matched to what it pays for.", true, [
         v("expenses", "Expenses"),
         v("credits", "Funds given"),
+        v("cashReceipts", "Receipts"),
       ]),
     ],
   },

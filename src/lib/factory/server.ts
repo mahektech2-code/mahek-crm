@@ -53,6 +53,8 @@ export type FactoryCtx = {
   roleLabel: string | null;
   godown: { id: string; name: string };
   lang: "en" | "hi" | "mr";
+  /** May record empty drums from the phone: a supervisor, or a department named in `erp.drums.factoryDepartments`. */
+  drums: boolean;
 };
 
 export class FactoryNotPermitted extends Error {}
@@ -88,7 +90,9 @@ export async function contextFor(user: User): Promise<FactoryCtx | null> {
   const head = level !== "associate" || staff?.area === "head";
   const dept = staff?.area ?? null;
   const scope = head && dept && dept !== "head" && dept !== "qc" ? (dept as Proc) : null;
+  const drumDepts = (await getConfig())["erp.drums.factoryDepartments"].split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
   return {
+    drums: head || (!!dept && drumDepts.includes(dept)),
     user,
     level,
     head,

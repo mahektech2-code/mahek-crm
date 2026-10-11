@@ -4,5 +4,5 @@
 import type { Area, Proc } from "@/lib/factory/types";
 import type { Lang } from "@/lib/factory/i18n";
 
-export type Me = { key: string; n: string; ini: string; head: boolean; area: Area; lang: Lang; scope?: Proc | null };
+export type Me = { key: string; n: string; ini: string; head: boolean; area: Area; lang: Lang; scope?: Proc | null; drums?: boolean };
 export type Who = { key: string; n: string; ini: string; ph: string; hasPin: boolean };

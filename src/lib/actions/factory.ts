@@ -13,7 +13,10 @@ import { eq } from "drizzle-orm";
 import { bootstrap, contextFor, factoryAudit, factoryContext, type FactoryCtx } from "@/lib/factory/server";
 import { submitJob } from "@/lib/factory/post";
 import { assignTask, changeTeam, decideReview, reportProblem, requestCorrection } from "@/lib/factory/head";
-import type { FactoryData, Proc, Submission, SubmitResult, Team } from "@/lib/factory/types";
+import type { DrumExisting, DrumLookup, DrumSave, FactoryData, Proc, Submission, SubmitResult, Team } from "@/lib/factory/types";
+import { findDrumLot, lotRefusal, recordEmptyDrum, type DrumLot } from "@/lib/erp/drums";
+import { DRUM_STATUS_LABEL, OWNERSHIP_LABEL, drumLabel } from "@/lib/erp/engines/drums";
+import { getConfig } from "@/lib/config/store";
 import { initialsOf } from "@/lib/format";
 
 /* ---------------------------------------------------------------------------
@@ -28,7 +31,18 @@ import { initialsOf } from "@/lib/format";
  * PIN is still asked, so a badge found on the floor opens nothing.
  * ------------------------------------------------------------------------- */
 
-export type Me = { key: string; n: string; ini: string; head: boolean; area: FactoryCtx["area"]; lang: FactoryCtx["lang"]; /** A supervisor's one department; absent or null is the whole floor. */ scope?: FactoryCtx["scope"] };
+export type Me = {
+  key: string;
+  n: string;
+  ini: string;
+  head: boolean;
+  area: FactoryCtx["area"];
+  lang: FactoryCtx["lang"];
+  /** A supervisor's one department; absent or null is the whole floor. */
+  scope?: FactoryCtx["scope"];
+  /** Records empty drums from the phone. Absent on an older server: no drum entry is offered. */
+  drums?: boolean;
+};
 export type Who = { key: string; n: string; ini: string; ph: string; hasPin: boolean };
 type Fail = { ok: false; error: string };
 type SignedIn = { ok: true; me: Me; data: FactoryData; needPin: boolean };
@@ -37,7 +51,7 @@ const NOT_FOUND = "notFound";
 const INACTIVE = "inactive";
 
 function meOf(fc: FactoryCtx): Me {
-  return { key: fc.user.id, n: fc.user.name, ini: initialsOf(fc.user.name), head: fc.head, area: fc.area, lang: fc.lang, scope: fc.scope };
+  return { key: fc.user.id, n: fc.user.name, ini: initialsOf(fc.user.name), head: fc.head, area: fc.area, lang: fc.lang, scope: fc.scope, drums: fc.drums };
 }
 
 async function whoFor(user: User, typed: string): Promise<{ ok: true; who: Who } | Fail> {
@@ -204,4 +218,79 @@ export async function factoryDecide(id: string, act: string, actIndex: number, r
 /** For the OTP screen's sentence, without sending anything. */
 export async function factoryMasked(ph: string): Promise<string> {
   return maskNumber(ph);
+}
+
+/* ------------------------------------------------------------ empty drums */
+
+const existingOf = (lot: DrumLot): DrumExisting[] =>
+  lot.registered.map((r) => ({ label: drumLabel(r.drumNo), seq: r.seq, status: DRUM_STATUS_LABEL[r.status], kg: r.actualKg, at: r.recordedAt }));
+
+/** Step one of Empty drum entry: what the scanned label is, before anything is weighed. Writes nothing. */
+export async function factoryDrumLookup(code: string): Promise<DrumLookup> {
+  const fc = await factoryContext();
+  if (!fc) return { ok: false, title: "Please sign in again", text: "Nothing was saved.", fix: "Sign in, then scan the drum again." };
+  if (!fc.drums) return { ok: false, title: "Not your work", text: "Empty drums are recorded by the people the Production Head names.", fix: "Ask the Production Head." };
+  const lot = await findDrumLot(String(code ?? "").slice(0, 120));
+  if (!lot) return { ok: false, title: "We do not know this label", text: "It is not a lot in the purchase register.", fix: "Scan the white GRN label on the drum. If it is torn, keep the drum aside and tell the Production Head — do not record it without its label." };
+  const refusal = lotRefusal(lot);
+  if (refusal) return { ok: false, title: "Already recorded", text: refusal, fix: "This drum is already counted. Keep it with the other empty drums.", existing: existingOf(lot) };
+  const c = await getConfig();
+  const last = lot.registered[lot.registered.length - 1] ?? null;
+  const minutes = c["erp.drums.sameLotMinutes"];
+  return {
+    ok: true,
+    lot: {
+      code: lot.lotNo,
+      lotNo: lot.lotNo,
+      material: lot.material,
+      supplier: lot.supplier,
+      pr: lot.prNumber,
+      godown: lot.godown,
+      ownership: lot.ownership,
+      ownershipLabel: lot.ownership ? OWNERSHIP_LABEL[lot.ownership] : "Not recorded — the Production Head decides",
+      declaredKg: lot.declaredTareKg,
+      drums: lot.drums,
+      recorded: lot.registered.length,
+      nextSeq: lot.nextSeq ?? lot.registered.length + 1,
+      last: last ? { seq: last.seq, at: last.recordedAt, by: last.by } : null,
+      recent: !!last && minutes > 0 && Date.now() - Date.parse(last.recordedAt) < minutes * 60_000,
+    },
+    limits: { minKg: c["erp.drums.minEmptyKg"], maxKg: c["erp.drums.maxEmptyKg"] },
+  };
+}
+
+const drumSaveSchema = z.object({
+  code: z.string().min(1).max(120),
+  kg: z.number().finite().nullable(),
+  key: z.string().regex(/^DRM-[\w-]{3,60}$/),
+  different: z.boolean().optional(),
+});
+
+/** Step two: save the empty drum. Safe to send twice — the key answers a resend with the first save. */
+export async function factoryEmptyDrum(input: { code: string; kg: number | null; key: string; different?: boolean }): Promise<DrumSave> {
+  const fc = await factoryContext();
+  if (!fc) return { ok: false, kind: "signedOut", title: "Please sign in again", text: "The drum was not saved.", fix: "Sign in, then scan the drum again." };
+  if (!fc.drums) return { ok: false, kind: "notAllowed", title: "Not your work", text: "Empty drums are recorded by the people the Production Head names.", fix: "Ask the Production Head." };
+  const parsed = drumSaveSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, kind: "weight", title: "Enter the weight", text: "The weight could not be read.", fix: "Type the weight in kg, then save." };
+  const r = await recordEmptyDrum(
+    { id: fc.user.id, name: fc.user.name, app: "factory", level: fc.level },
+    { code: parsed.data.code, kg: parsed.data.kg, source: "scan", godownId: fc.godown.id, clientKey: parsed.data.key, confirmDifferent: !!parsed.data.different },
+    { mayApproveWeight: false },
+  );
+  if (!r.ok) {
+    const f = r.refusal;
+    if (f?.kind === "confirm") return { ok: false, kind: "confirm", title: "Is this a different drum?", text: f.message, fix: "Say yes only if this is another drum of the same lot.", existing: f.existing ? f.existing.map((e) => ({ label: drumLabel(e.drumNo), seq: e.seq, status: DRUM_STATUS_LABEL[e.status], kg: e.actualKg, at: e.recordedAt })) : undefined };
+    if (f?.kind === "weight" || f?.kind === "permission") return { ok: false, kind: "weight", title: "Check the weight", text: f.message, fix: "Weigh the empty drum again. If the weight is right, the Production Head saves it from the ERP." };
+    if (f?.kind === "lot") return { ok: false, kind: "lot", title: "Already recorded", text: f.message, fix: "Keep it with the other empty drums.", existing: f.existing ? f.existing.map((e) => ({ label: drumLabel(e.drumNo), seq: e.seq, status: DRUM_STATUS_LABEL[e.status], kg: e.actualKg, at: e.recordedAt })) : undefined };
+    if (f?.kind === "notFound") return { ok: false, kind: "notFound", title: "We do not know this label", text: f.message, fix: "Tell the Production Head." };
+    return { ok: false, kind: "weight", title: "Not saved", text: r.error, fix: "Try again." };
+  }
+  const d = r.data;
+  await factoryAudit(fc, "factory.drum.empty", null, `${d.label} · ${d.lotNo} · ${d.actualKg} kg`);
+  return {
+    ok: true,
+    replay: d.replay,
+    drum: { label: d.label, seq: d.seq, drums: d.drums, lotNo: d.lotNo, material: d.material, supplier: d.supplier, statusLabel: d.statusLabel, ownership: d.ownership, declaredKg: d.declaredTareKg, actualKg: d.actualKg, varianceKg: d.varianceKg, reviewReason: d.reviewReason },
+  };
 }

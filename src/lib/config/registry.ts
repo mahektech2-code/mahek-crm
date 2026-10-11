@@ -4538,6 +4538,69 @@ export const SETTINGS = [
     default: "17:00",
   },
   {
+    key: "erp.drums.minEmptyKg",
+    type: "decimal",
+    category: "erp",
+    label: "Empty drum · lightest weight accepted (kg)",
+    description:
+      "An empty drum weighed below this is not saved: it is weighed again, or saved only with the Production Head's approval written on it. Catches a scale left at zero or a typed 1.8 meant as 18.",
+    default: 2,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "erp.drums.maxEmptyKg",
+    type: "decimal",
+    category: "erp",
+    label: "Empty drum · heaviest weight accepted (kg)",
+    description:
+      "An empty drum weighed above this is not saved: a drum that heavy is usually not empty. Checked again, or saved only with the Production Head's approval written on it.",
+    default: 40,
+    min: 1,
+    max: 500,
+  },
+  {
+    key: "erp.drums.varianceAlertKg",
+    type: "decimal",
+    category: "erp",
+    label: "Empty drum · tare variance worth a look (kg)",
+    description:
+      "An empty drum heavier or lighter than the supplier declared on the GRN by more than this is flagged on the variance report and raises an alert. The GRN's own figure is never changed.",
+    default: 1.5,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "erp.drums.varianceAlertPercent",
+    type: "decimal",
+    category: "erp",
+    label: "Empty drum · tare variance worth a look (%)",
+    description: "The same, as a percentage of the declared tare. Either limit being passed flags the drum.",
+    default: 15,
+    min: 0,
+    max: 500,
+  },
+  {
+    key: "erp.drums.sameLotMinutes",
+    type: "integer",
+    category: "erp",
+    label: "Empty drum · ask \"is this a different drum?\" within (minutes)",
+    description:
+      "A label names a LOT, and a lot can bring several drums. A second drum of the same lot scanned within this many minutes of the last is saved only after the person confirms it is a different drum, so one drum scanned twice is not counted twice.",
+    default: 120,
+    min: 0,
+    max: 10080,
+  },
+  {
+    key: "erp.drums.factoryDepartments",
+    type: "text",
+    category: "erp",
+    label: "Factory app · departments that record empty drums",
+    description:
+      "Comma-separated factory departments whose people see Empty drum entry on the factory phone: mixing, filling, packing, dispatch, qc. A Production Head and any department supervisor always do.",
+    default: "mixing, qc",
+  },
+  {
     key: "erp.factory.shift",
     type: "text",
     category: "erp",
@@ -5424,6 +5487,11 @@ export function validateSetting(key: string, raw: unknown): ValidationResult {
 export function checkConsistency(config: Config): string[] {
   const problems: string[] = [];
 
+  /* A lightest weight above the heaviest would refuse every empty drum. */
+  if (config["erp.drums.minEmptyKg"] >= config["erp.drums.maxEmptyKg"]) {
+    problems.push("The lightest empty drum weight must be below the heaviest.");
+  }
+
   /* A cutover nobody can read is a cutover that hides everything or nothing,
      and which of the two depends on how Postgres happens to parse it. */
   if (!/^\d{4}-\d{2}-\d{2}$/.test(config["fieldActivity.cutoverDate"]) ||
@@ -6172,6 +6240,12 @@ export type Config = {
   "erp.production.recipeTolerancePercent": number;
   "erp.factory.packBatchBoxes": number;
   "erp.factory.mixTolerancePercent": number;
+  "erp.drums.minEmptyKg": number;
+  "erp.drums.maxEmptyKg": number;
+  "erp.drums.varianceAlertKg": number;
+  "erp.drums.varianceAlertPercent": number;
+  "erp.drums.sameLotMinutes": number;
+  "erp.drums.factoryDepartments": string;
   "erp.factory.shift": string;
   "erp.factory.dispatchDue": string;
   "erp.dispatch.requireScan": boolean;
