@@ -40,6 +40,7 @@ export function MultiSelect({
   placeholder = "All",
   className,
   title,
+  everythingIsAll = true,
 }: {
   /** Not drawn — read by screen readers and used as the trigger's accessible name. */
   label: string;
@@ -51,6 +52,12 @@ export function MultiSelect({
   placeholder?: string;
   className?: string;
   title?: string;
+  /**
+   * A filter reads every box ticked as no filter at all. A form picking
+   * things (a transporter's godowns) passes false, so ticking both states
+   * says "2 selected" rather than the placeholder.
+   */
+  everythingIsAll?: boolean;
 }) {
   const [at, setAt] = React.useState<{ top: number; left: number; width: number } | null>(
     null,
@@ -120,7 +127,7 @@ export function MultiSelect({
     : options;
 
   const summary =
-    selected.length === 0 || selected.length === options.length
+    selected.length === 0 || (everythingIsAll && selected.length === options.length)
       ? placeholder
       : selected.length === 1
         ? (options.find((o) => o.value === selected[0])?.label ?? placeholder)

@@ -1751,6 +1751,13 @@
       "when": 1792532024442,
       "tag": "0252_many_hometowns",
       "breakpoints": true
+    },
+    {
+      "idx": 250,
+      "version": "7",
+      "when": 1792532143442,
+      "tag": "0253_transporter_gst_and_godowns",
+      "breakpoints": true
     }
   ]
 }

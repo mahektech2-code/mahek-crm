@@ -12621,7 +12621,18 @@ export const erpTransporters = pgTable(
     phone: text("phone"),
     altPhone: text("alt_phone"),
     contactPerson: text("contact_person"),
-    /** Where its godown is — Bhiwandi for most. */
+    /** Its GST number, upper case, checked against the GSTIN checksum on save. */
+    gstin: text("gstin"),
+    /**
+     * What this company calls its consignment number — "LR Number", "GR
+     * Number", "G.C Number"… A value of the `consignmentLabel` reference list.
+     */
+    consignmentLabel: text("consignment_label"),
+    /**
+     * Where its godown is, as typed before godowns were picked from the place
+     * tree (`erp_transporter_places`). Read only as a fallback for a row
+     * nobody has picked places for yet.
+     */
     address: text("address"),
     /** Its tracking page, with {lr} where the LR number goes. */
     trackingUrl: text("tracking_url"),
@@ -12631,6 +12642,28 @@ export const erpTransporters = pgTable(
     updatedById: text("updated_by_id").references(() => users.id),
   },
   (t) => [uniqueIndex("erp_transporters_name_key").on(sql`lower(${t.name})`)],
+);
+
+/**
+ * Where a transporter keeps godowns: places on the reviewed tree, at any rung.
+ * Only the narrowest pick in a branch is stored — Maharashtra with Bhiwandi
+ * under it is Bhiwandi, the rule a territory follows.
+ */
+export const erpTransporterPlaces = pgTable(
+  "erp_transporter_places",
+  {
+    transporterId: text("transporter_id")
+      .notNull()
+      .references(() => erpTransporters.id, { onDelete: "cascade" }),
+    placeId: text("place_id")
+      .notNull()
+      .references(() => places.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.transporterId, t.placeId], name: "erp_transporter_places_pkey" }),
+    index("erp_transporter_places_place_idx").on(t.placeId),
+  ],
 );
 
 /**
