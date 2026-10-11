@@ -525,8 +525,8 @@ export async function fullCountDue(): Promise<{ last: string | null; due: boolea
 /* ------------------------------------------------------ the dashboard */
 
 export type ControlWork = {
-  toCount: { id: string; godown: string }[];
-  dueToday: number;
+  /** Open counts; `due` is whether it is due today or overdue. */
+  toCount: { id: string; godown: string; due: boolean }[];
   flags: { id: string; godown: string }[];
   recounts: { id: string; godown: string }[];
   investigating: { id: string; godown: string }[];
@@ -559,8 +559,7 @@ export async function controlWork(): Promise<ControlWork> {
   ]);
   const pick = (f: (c: (typeof counts)[number]) => boolean) => counts.filter(f).map((c) => ({ id: c.id, godown: c.godown }));
   return {
-    toCount: pick((c) => c.status === "open"),
-    dueToday: counts.filter((c) => c.status === "open" && c.due <= day).length,
+    toCount: counts.filter((c) => c.status === "open").map((c) => ({ id: c.id, godown: c.godown, due: c.due <= day })),
     flags: pick((c) => !c.parent && c.status === "flagged"),
     recounts: pick((c) => !c.parent && c.status === "recount"),
     investigating: pick((c) => !c.parent && c.status === "investigating"),

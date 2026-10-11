@@ -95,7 +95,8 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
     const ids = (l: { id: string; godown: string }[]) => l.filter((x) => inG(x.godown)).map((x) => x.id);
     const acc: Tile[] = [];
     const toCount = ids(w.toCount);
-    acc.push({ l: "Counts to do", v: String(toCount.length), sub: w.dueToday ? `${w.dueToday} due today or overdue · counted blind` : "counted blind — the book is shown after", tone: toCount.length ? "info" : undefined, href: tileHref("countTasks", null, "") });
+    const dueNow = w.toCount.filter((c) => c.due && inG(c.godown)).length;
+    acc.push({ l: "Counts to do", v: String(toCount.length), sub: dueNow ? `${dueNow} due today or overdue · counted blind` : "counted blind — the book is shown after", tone: toCount.length ? "info" : undefined, href: tileHref("countTasks", null, "") });
     acc.push({ l: "Red flags", v: String(ids(w.flags).length), sub: "count differs from the book — recount by somebody else", tone: ids(w.flags).length ? "danger" : undefined, href: tileHref("stockFlags", ids(w.flags), "Red flag") });
     if (ids(w.recounts).length) acc.push({ l: "Recounts out", v: String(ids(w.recounts).length), sub: "waiting for an independent count", tone: "warn", href: tileHref("stockFlags", ids(w.recounts), "Recount out") });
     acc.push({ l: "Under investigation", v: String(ids(w.investigating).length), sub: "the difference is confirmed — find the cause", tone: ids(w.investigating).length ? "warn" : undefined, href: tileHref("stockFlags", ids(w.investigating), "Investigating") });
@@ -111,7 +112,7 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
       acc.push({ l: "Counted right first time", v: `${Math.round((w.accuracy.matched / w.accuracy.counted) * 100)}%`, sub: `${w.accuracy.matched} of ${w.accuracy.counted} counts over 30 days`, href: tileHref("stockCounts", null, "") });
     if (w.repeatCauses.length)
       acc.push({ l: "Most frequent cause", v: String(w.repeatCauses[0].n), sub: `${adjustmentReasonLabel(w.repeatCauses[0].reason)} · approved adjustments over 90 days${w.repeatCauses.length > 1 ? `, then ${adjustmentReasonLabel(w.repeatCauses[1].reason).toLowerCase()}` : ""}`, tone: w.repeatCauses[0].n >= 3 ? "warn" : undefined, href: tileHref("stockAdjustments", null, "") });
-    if (full.due) acc.push({ l: "Full count due", v: full.last ? "Due" : "Never", sub: full.last ? `last full count ${full.last} · every ${full.everyDays} days` : `a full count is due every ${full.everyDays} days`, tone: "warn", href: tileHref("countTasks", null, "") });
+    if (full.due) acc.push({ l: "Full count due", v: "Due", sub: full.last ? `last full count ${full.last} · every ${full.everyDays} days` : `no full count yet · one is due every ${full.everyDays} days`, tone: "warn", href: tileHref("countTasks", null, "") });
     push("Inventory accuracy", acc);
   }
 
