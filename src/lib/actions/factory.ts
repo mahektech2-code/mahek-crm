@@ -10,12 +10,14 @@ import { findAccount, maskNumber, sendOtp, verifyOtp } from "@/lib/services/otp-
 import { accountKey, clearSignInFailures, clientAddress, recordSignInFailure, signInRefusal } from "@/lib/services/sign-in-throttle";
 import { erpId } from "@/lib/erp/server";
 import { eq } from "drizzle-orm";
-import { bootstrap, contextFor, factoryAudit, factoryContext, type FactoryCtx } from "@/lib/factory/server";
+import { bootstrap, contextFor, erpCtxFor, factoryAudit, factoryContext, type FactoryCtx } from "@/lib/factory/server";
 import { saveCheckReason, saveOfficeCount, saveStockCheck, stockKit } from "@/lib/factory/counts";
 import { submitJob } from "@/lib/factory/post";
 import { assignTask, changeTeam, decideReview, reportProblem, requestCorrection } from "@/lib/factory/head";
-import type { BoxInfo, BoxScan, CountInput, DrumExisting, StockCheckInput, StockKit, StockSave, DrumLookup, DrumSave, FactoryData, LoadBoard, LrFields, LrKit, LrReading, LrSave, Proc, Submission, SubmitResult, Team } from "@/lib/factory/types";
-import { boxInfo, loadBoard, lrKit, readLr, saveLr, scanBox, unloadBox } from "@/lib/factory/dispatch";
+import type { BoxInfo, BoxScan, CountInput, DrumExisting, StockCheckInput, StockKit, StockSave, DrumLookup, DrumSave, FactoryData, LoadBoard, LrFields, LrBatchSave, LrKit, LrReading, LrSave, Proc, Submission, SubmitResult, Team } from "@/lib/factory/types";
+import { boxInfo, loadBoard, lrKit, readLr, saveLr, saveLrPhotos, scanBox, unloadBox } from "@/lib/factory/dispatch";
+import { readStoredLrs } from "@/lib/erp/lr-upload-read";
+import { after } from "next/server";
 import { findDrumLot, lotRefusal, recordEmptyDrum, type DrumLot } from "@/lib/erp/drums";
 import { DRUM_STATUS_LABEL, OWNERSHIP_LABEL, drumLabel } from "@/lib/erp/engines/drums";
 import { getConfig } from "@/lib/config/store";
@@ -336,6 +338,25 @@ export async function factoryReadLr(fileId: string): Promise<LrReading> {
   if (!fc) return { ok: false, text: SIGNED_OUT.title };
   return readLr(fc, fileId);
 }
+/** Up to twenty LR photos stored at once; their reading runs after the answer, and never holds it up. */
+export async function factorySaveLrPhotos(fileIds: string[]): Promise<LrBatchSave> {
+  const fc = await factoryContext();
+  if (!fc) return { ok: false, ...SIGNED_OUT };
+  const r = await saveLrPhotos(fc, fileIds);
+  if (!r.ok) return r;
+  const { newIds, ...answer } = r;
+  if (newIds?.length) {
+    const job = () => readStoredLrs(erpCtxFor(fc), newIds).catch((e) => console.error("[factory] reading LR photos failed:", e instanceof Error ? e.message : e));
+    try {
+      after(job);
+    } catch {
+      /* Outside a request (a test, a script) there is nothing to run after: read now. */
+      await job();
+    }
+  }
+  return answer;
+}
+
 export async function factorySaveLr(input: LrFields & { fileId: string | null; readingId: string | null; note?: string | null }): Promise<LrSave> {
   const fc = await factoryContext();
   if (!fc) return { ok: false, ...SIGNED_OUT };

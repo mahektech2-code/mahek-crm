@@ -8626,6 +8626,28 @@ person exactly as for the browser. The page at `/factory` still works and is
 what a laptop opens; the queue, the 48 hours, the idempotency key and the old
 -version rules above are the server's and hold for both.
 
+**WORK IS ONE TAB, SETTINGS ANOTHER.** The name used to open one long sheet
+mixing the day's tools with the phone's settings. A worker's bar is Home ·
+More · Scan · Sending · Settings; the Production Head's is Today · Review ·
+Scan · Teams · More, with Machines and Sending inside More. More holds the work
+(Stock check, Empty drum entry, Upload LR); Settings holds who they are, the
+language, the PIN, Help and Sign out, and tapping the name opens it.
+
+**IN A COLUMN NOTHING SHRINKS (`web.tsx`).** The web never squeezes a box below
+its content in a column (`min-height: auto`); native has no such floor, so the
+old blanket `flexShrink: 1` crushed buttons, inputs and cards whenever a screen
+or sheet ran short of height. Items shrink only inside a row, and a scrolling
+box is the one thing in a column that gives way.
+
+**LRs COME IN STACKS.** Upload LR opens on Many photos: up to `LR_BATCH_MAX`
+(20) from the camera or the gallery, uploaded three at a time, and stored in
+one press by `saveLrPhotos` as photo-only LRs for the LR desk to match. A photo
+that fails stays in the tray to resend; a resend stores nothing twice; a file
+that is not the sender's own fresh upload is refused. Reading them is
+secondary: `readStoredLrs` runs after the answer (`after()`), only where
+`erp.ai.photos` is on, fills only blank fields, and leaves an unsure number, or
+one already on the desk, as a note for the desk instead of writing it.
+
 **A SCREEN CHANGE NEEDS A RELEASE; A RULE CHANGE DOES NOT.** The screens are
 in the APK now, so they reach the floor only through the Factory APK
 workflow (DEPLOY.md); what the server accepts and posts still changes with

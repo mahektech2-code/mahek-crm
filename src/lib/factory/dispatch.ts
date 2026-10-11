@@ -6,7 +6,8 @@ import { looksLikeUnitId, normaliseCode } from "@/lib/erp/engines/trace";
 import { FREIGHT_TERMS, uploadedLrs, uploadLrs, transporters as transporterDir, type UploadedLr } from "@/lib/erp/logistics";
 import { lrReadingOn, readUploadedLr } from "@/lib/erp/lr-upload-read";
 import { bootstrap, erpCtxFor, factoryAudit, orderKey, orderNoOf, type FactoryCtx } from "./server";
-import type { BoxInfo, BoxScan, LoadBoard, LrFields, LrKit, LrReading, LrRecent, LrSave } from "./types";
+import type { BoxInfo, BoxScan, LoadBoard, LrBatchSave, LrFields, LrKit, LrReading, LrRecent, LrSave } from "./types";
+import { LR_BATCH_MAX } from "./types";
 
 /* ---------------------------------------------------------------------------
  * THE FLOOR'S TWO DOORS INTO LOGISTICS, and neither decides anything itself.
@@ -183,4 +184,54 @@ export async function saveLr(fc: FactoryCtx, input: LrFields & { fileId: string 
   const id = res.data.ids[0];
   await factoryAudit(fc, "factory.dispatch.lr", null, `Uploaded LR ${(input.lrNo ?? "").toUpperCase() || "(photo only)"}${input.transporter ? " · " + input.transporter : ""}`, { lr: id });
   return { ok: true, id, msg: "LR uploaded. Logistics will attach it to the bills.", recent: recentOf(await uploadedLrs({ status: "all" })) };
+}
+
+/**
+ * MANY LRs IN ONE PRESS. The dispatch team comes back from the transporter
+ * with a stack of receipts, so the phone uploads up to twenty photos and this
+ * stores each as its own photo-only LR — the same row the ERP's Upload LRs
+ * writes — for logistics to match to the bills on the LR desk. Reading the
+ * photos is SECONDARY: the caller runs `readStoredLrs` after answering, and
+ * an LR it cannot read simply waits on the desk to be typed.
+ *
+ * Safe to send twice: a photo already on an LR answers as already stored. A
+ * file that is not this person's own fresh upload is refused, not stored.
+ */
+export async function saveLrPhotos(fc: FactoryCtx, fileIds: string[]): Promise<LrBatchSave & { newIds?: string[] }> {
+  if (!fc.dispatch) return { ok: false, ...NOT_YOURS };
+  const ids = [...new Set((Array.isArray(fileIds) ? fileIds : []).map((x) => String(x ?? "").trim()).filter(Boolean))];
+  if (!ids.length) return { ok: false, title: "Add the LR photos", text: "No photo came with this upload.", fix: "Add the photos, then upload." };
+  if (ids.length > LR_BATCH_MAX) return { ok: false, title: "Too many at once", text: `Upload up to ${LR_BATCH_MAX} LRs at a time.`, fix: `Send the first ${LR_BATCH_MAX}, then the rest.` };
+  const list = sql.join(ids.map((i) => sql`${i}`), sql`, `);
+  const had = (await db.execute(sql`select file_id as "fileId", id from erp_lrs where status <> 'void' and file_id in (${list})`)) as unknown as { fileId: string; id: string }[];
+  const already = new Set(had.map((h) => h.fileId));
+  const mine = (await db.execute(sql`
+    select id from attachments where id in (${list}) and uploaded_by_id = ${fc.user.id} and status = 'available' and parent_id is null`)) as unknown as { id: string }[];
+  const fresh = ids.filter((i) => !already.has(i) && mine.some((m) => m.id === i));
+  const refused = ids.length - already.size - fresh.length;
+  let newIds: string[] = [];
+  if (fresh.length) {
+    const res = await uploadLrs(ctxFor(fc), fresh.map((fileId) => ({ fileId })));
+    if (!res.ok) return { ok: false, title: "Not uploaded", text: res.error, fix: "Try again. The photos are kept on this phone." };
+    newIds = res.data.ids;
+    await factoryAudit(fc, "factory.dispatch.lrBatch", null, `Uploaded ${newIds.length} LR photo${newIds.length === 1 ? "" : "s"}`, { lrs: newIds });
+  }
+  const reading = newIds.length > 0 && (await lrReadingOn());
+  const stored = newIds.length;
+  const parts = [
+    stored ? `${stored} LR${stored === 1 ? "" : "s"} uploaded` : "",
+    already.size ? `${already.size} already uploaded` : "",
+    refused ? `${refused} could not be used — take ${refused === 1 ? "it" : "them"} again` : "",
+  ].filter(Boolean);
+  return {
+    ok: true,
+    ids: [...had.map((h) => h.id), ...newIds],
+    newIds,
+    stored,
+    already: already.size,
+    refused,
+    reading,
+    msg: parts.join(" · ") + (stored ? (reading ? ". The numbers are being read from the photos; logistics will attach them to the bills." : ". Logistics will read them and attach them to the bills.") : "."),
+    recent: recentOf(await uploadedLrs({ status: "all" })),
+  };
 }

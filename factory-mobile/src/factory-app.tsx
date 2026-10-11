@@ -1,5 +1,5 @@
 import { Component, type CSSProperties, type ReactNode } from "react";
-import { AppState, BackHandler, Linking, type NativeEventSubscription } from "react-native";
+import { AppState, BackHandler, Image, Linking, Pressable, Text, View, type NativeEventSubscription } from "react-native";
 import * as Speech from "expo-speech";
 import * as ImagePicker from "expo-image-picker";
 import { StatusBar } from "expo-status-bar";
@@ -21,7 +21,7 @@ import {
   type ScanPurpose,
   type ScanResult,
 } from "@/lib/factory/rules";
-import { CHECK_ITEMS, DOWN, OFFLINE_HOURS, REJ, STEPS, SUBMISSION_VERSION, type CheckStage, type CheckUnit, type Draft, type FactoryData, type LoadBoard, type LrFields, type Lot, type Proc, type SubmitResult, type Task, type Team } from "@/lib/factory/types";
+import { CHECK_ITEMS, DOWN, OFFLINE_HOURS, REJ, STEPS, SUBMISSION_VERSION, LR_BATCH_MAX, type CheckStage, type CheckUnit, type Draft, type FactoryData, type LoadBoard, type LrFields, type Lot, type Proc, type SubmitResult, type Task, type Team } from "@/lib/factory/types";
 import { hhmm } from "@/lib/factory/time";
 import { calendarDate } from "@/lib/business-date";
 import type { Me } from "./types";
@@ -114,6 +114,7 @@ export class FactoryApp extends Component<Props, State> {
       sheet: null,
       net: "online",
       toast: "",
+      toastTone: "ok",
       play: null,
       hf: "all",
       asg: null,
@@ -257,9 +258,10 @@ export class FactoryApp extends Component<Props, State> {
     return key ? (this.state.db?.emp[key]?.n ?? "—") : "—";
   }
 
-  toast(t: string) {
+  /** `warn` for a refusal or an instruction — a tick there would read as done. */
+  toast(t: string, tone: "ok" | "warn" = "ok") {
     clearTimeout(this.tt);
-    this.setState({ toast: t });
+    this.setState({ toast: t, toastTone: tone });
     this.tt = setTimeout(() => this.setState({ toast: "" }), 3200);
   }
 
@@ -743,6 +745,7 @@ export class FactoryApp extends Component<Props, State> {
       photo: null, fileId: null, uploading: false, reading: false, readingId: null, read: {}, check: false, notes: [],
       f: { lrNo: null, lrDate: calendarDay(0), transporter: null, destination: null, packages: null, freightTerm: null, freightRupees: null },
       err: null, saving: false, saved: null,
+      many: true, tray: [], batchBusy: false, batchMsg: null,
     };
     this.setState({ sheet: null, route: "lr", lr: blank });
     try {
@@ -851,9 +854,162 @@ export class FactoryApp extends Component<Props, State> {
     });
   }
 
+  /* ---------------------------------------------------------------- many LRs at once
+   * The floor brings back a stack of receipts, so the default is a tray of up
+   * to LR_BATCH_MAX photos: taken one after another or picked from the
+   * gallery in one go, uploaded a few at a time, and stored as photo-only LRs
+   * in one press. A photo that does not upload stays in the tray to be sent
+   * again; nothing is lost to a weak network. Reading the numbers happens on
+   * the server afterwards and never holds the upload up.
+   * ------------------------------------------------------------------------- */
+
+  lrRoom(): number {
+    return LR_BATCH_MAX - (this.state.lr?.tray.length ?? 0);
+  }
+
+  lrAddToTray(uris: string[]) {
+    if (!uris.length) return;
+    this.setLr((l) => ({ ...l, batchMsg: null, err: null, tray: [...l.tray, ...uris.slice(0, LR_BATCH_MAX - l.tray.length).map((uri) => ({ uri, fileId: null, state: "waiting" as const }))] }));
+    if (uris.length > this.lrRoom()) this.toast("Only " + LR_BATCH_MAX + " photos fit in one upload. Upload these, then add the rest.", "warn");
+  }
+
+  async lrTrayCamera() {
+    if (this.lrRoom() <= 0) return this.toast("The tray is full — upload these " + LR_BATCH_MAX + " first.", "warn");
+    try {
+      const perm = await ImagePicker.requestCameraPermissionsAsync();
+      if (!perm.granted) return this.toast("Allow the camera for this app, then try again.", "warn");
+      const r = await ImagePicker.launchCameraAsync({ mediaTypes: ["images"], quality: 0.85, allowsEditing: false, exif: false });
+      if (r.canceled || !r.assets?.[0]) return;
+      this.lrAddToTray([await shrinkPhoto(r.assets[0].uri, 2000)]);
+    } catch {
+      this.toast("The camera did not open. Try again.", "warn");
+    }
+  }
+
+  async lrTrayGallery() {
+    const room = this.lrRoom();
+    if (room <= 0) return this.toast("The tray is full — upload these " + LR_BATCH_MAX + " first.", "warn");
+    try {
+      const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], allowsMultipleSelection: true, selectionLimit: room, orderedSelection: true, quality: 0.85, exif: false });
+      if (r.canceled || !r.assets?.length) return;
+      const uris: string[] = [];
+      for (const a of r.assets.slice(0, room)) uris.push(await shrinkPhoto(a.uri, 2000));
+      this.lrAddToTray(uris);
+    } catch {
+      this.toast("The gallery did not open. Try again.", "warn");
+    }
+  }
+
+  lrTrayRemove(i: number) {
+    this.setLr((l) => (l.batchBusy ? l : { ...l, tray: l.tray.filter((_, j) => j !== i) }));
+  }
+
+  async lrSendTray() {
+    const l0 = this.state.lr;
+    if (!l0 || l0.batchBusy || !l0.tray.length) return;
+    this.setLr((l) => ({ ...l, batchBusy: true, err: null, batchMsg: null }));
+    const mark = (uri: string, p: Partial<LrEntry["tray"][number]>) => this.setLr((l) => ({ ...l, tray: l.tray.map((t) => (t.uri === uri ? { ...t, ...p } : t)) }));
+    /* Three at a time: quick on Wi-Fi, and a weak link is not asked for twenty at once. */
+    const todo = l0.tray.filter((t) => !t.fileId);
+    /* Kept here, not read back from state: React has not applied the last upload's update by the time the batch ends. */
+    const got = l0.tray.filter((t) => t.fileId).map((t) => t.fileId!);
+    let offline = false;
+    for (let i = 0; i < todo.length; i += 3) {
+      await Promise.all(
+        todo.slice(i, i + 3).map(async (t) => {
+          mark(t.uri, { state: "uploading" });
+          try {
+            const id = await uploadPhoto(t.uri, "lr.jpg");
+            if (id) got.push(id);
+            mark(t.uri, id ? { state: "up", fileId: id } : { state: "failed" });
+          } catch {
+            offline = true;
+            mark(t.uri, { state: "failed" });
+          }
+        }),
+      );
+    }
+    const ids = got;
+    if (!ids.length) {
+      return this.setLr((l) => ({ ...l, batchBusy: false, err: offline ? { title: "No network", text: "The photos are not uploaded yet.", fix: "Check the Wi-Fi and press Upload again. The photos are kept." } : { title: "The photos were refused", text: "They could not be read as pictures.", fix: "Take them again." } }));
+    }
+    try {
+      const r = await call("saveLrPhotos", ids);
+      if (!r.ok) return this.setLr((l) => ({ ...l, batchBusy: false, err: { title: r.title, text: r.text, fix: r.fix } }));
+      /* What is stored leaves the tray; anything that did not upload stays, to be sent again. */
+      this.setLr((l) => ({ ...l, batchBusy: false, recent: r.recent, batchMsg: r.msg, tray: l.tray.filter((t) => !t.fileId || !ids.includes(t.fileId)).map((t) => ({ ...t, state: "failed" as const })) }));
+      this.toast(r.stored ? r.stored + " LR" + (r.stored === 1 ? "" : "s") + " uploaded" : "Already uploaded");
+    } catch (e) {
+      this.setLr((l) => ({ ...l, batchBusy: false, err: { title: "No network", text: "The photos are uploaded but not yet saved as LRs.", fix: "Press Upload again — nothing will be saved twice." } }));
+      if (!(e instanceof NotReceived)) throw e;
+    }
+  }
+
+  renderLrTray(l: LrEntry, recent: ReactNode, errBox: ReactNode): ReactNode {
+    const n = l.tray.length;
+    const waiting = l.tray.filter((t) => t.state !== "up").length;
+    const done = l.tray.filter((t) => t.state === "up").length;
+    const addBtn = (label: string, icn: string, run: () => void) => (
+      <Btn onClick={run} style={{ flex: 1, height: "56px", borderRadius: "16px", border: "1.5px solid #DDD2FF", background: n >= LR_BATCH_MAX ? "#F7F8FA" : "#F7F4FF", color: n >= LR_BATCH_MAX ? "#9BA3B2" : "#5223E0", fontSize: "16px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", cursor: "pointer" }}>
+        {ic(icn, 22, n >= LR_BATCH_MAX ? "#9BA3B2" : "#5223E0")}
+        {label}
+      </Btn>
+    );
+    return (
+      <>
+        <Div style={{ ...card, padding: "16px", display: "flex", flexDirection: "column", gap: "12px" }}>
+          <Div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: "10px" }}>
+            <Span style={{ fontSize: "19px", lineHeight: "24px", fontWeight: 700 }}>LR photos</Span>
+            <Span style={{ fontSize: "15px", fontWeight: 700, color: n >= LR_BATCH_MAX ? "#8A5C05" : "#6B7385" }}>{n + " / " + LR_BATCH_MAX}</Span>
+          </Div>
+          <Span style={{ fontSize: "14px", lineHeight: "20px", color: "#6B7385" }}>{"One photo per receipt — the whole LR, flat, in good light. Up to " + LR_BATCH_MAX + " at a time."}</Span>
+          <Div style={{ display: "flex", gap: "10px" }}>
+            {addBtn("Camera", "camera", () => void this.lrTrayCamera())}
+            {addBtn("Gallery", "photo", () => void this.lrTrayGallery())}
+          </Div>
+          {n > 0 && (
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+              {l.tray.map((t, i) => {
+                const tone = t.state === "up" ? "#1D7A45" : t.state === "failed" ? "#B3261E" : t.state === "uploading" ? "#5223E0" : null;
+                return (
+                  <View key={t.uri} style={{ width: "31.5%", aspectRatio: 1, borderRadius: 12, overflow: "hidden", backgroundColor: "#EDEFF3", borderWidth: tone === "#B3261E" ? 2 : 0, borderColor: "#B3261E" }}>
+                    <Image source={{ uri: t.uri }} style={{ width: "100%", height: "100%" }} resizeMode="cover" />
+                    <View style={{ position: "absolute", left: 6, bottom: 6, minWidth: 24, height: 24, paddingHorizontal: 6, borderRadius: 12, backgroundColor: "rgba(26,30,40,0.72)", alignItems: "center", justifyContent: "center" }}>
+                      <Text style={{ color: "#FFFFFF", fontSize: 12, fontWeight: "700" }}>{String(i + 1)}</Text>
+                    </View>
+                    {tone && (
+                      <View style={{ position: "absolute", right: 6, bottom: 6, width: 26, height: 26, borderRadius: 13, backgroundColor: tone, alignItems: "center", justifyContent: "center" }}>
+                        {ic(t.state === "up" ? "check" : t.state === "failed" ? "alert" : "sync", 15, "#FFFFFF")}
+                      </View>
+                    )}
+                    {!l.batchBusy && t.state !== "up" && (
+                      <Pressable onPress={() => this.lrTrayRemove(i)} accessibilityRole="button" accessibilityLabel={"Remove photo " + (i + 1)} hitSlop={8} style={{ position: "absolute", right: 6, top: 6, width: 28, height: 28, borderRadius: 14, backgroundColor: "rgba(26,30,40,0.72)", alignItems: "center", justifyContent: "center" }}>
+                        <Text style={{ color: "#FFFFFF", fontSize: 16, fontWeight: "700", lineHeight: 18 }}>×</Text>
+                      </Pressable>
+                    )}
+                  </View>
+                );
+              })}
+            </View>
+          )}
+        </Div>
+        {l.batchMsg && <MsgBox m={msg(l.batchMsg, "ok")} />}
+        {l.tray.some((t) => t.state === "failed") && !l.batchBusy && <MsgBox m={msg("Photos marked red did not upload. They are kept — press Upload to send them again.", "warn")} />}
+        {errBox}
+        <Btn onClick={() => void this.lrSendTray()} style={btn(!n || l.batchBusy ? "off" : "p", 60)}>
+          {l.batchBusy ? "Uploading " + done + " of " + n + "…" : n ? "Upload " + waiting + " LR" + (waiting === 1 ? "" : "s") : "Add photos to upload"}
+        </Btn>
+        <Div style={{ fontSize: "14px", lineHeight: "20px", color: "#6B7385", textAlign: "center" }}>
+          {l.canRead ? "The LR numbers are read from the photos after upload. Logistics checks them and attaches each LR to its bills." : "Logistics reads each LR on the desk and attaches it to its bills."}
+        </Div>
+        {recent}
+      </>
+    );
+  }
+
   renderLr(): ReactNode {
     const st = this.state, T = this.T(), l = st.lr;
-    const home = () => this.setState({ route: st.me?.head ? "today" : "home", lr: null });
+    const home = () => this.setState({ route: "more", lr: null });
     const head = (
       <Div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
         <Btn onClick={home} aria-label={T.back} style={{ width: "44px", height: "44px", borderRadius: "50%", border: "none", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{ic("back", 22, "#5223E0")}</Btn>
@@ -898,6 +1054,16 @@ export class FactoryApp extends Component<Props, State> {
         </>,
       );
     }
+    const seg = (on: boolean, label: string, run: () => void) => (
+      <Btn onClick={run} style={{ flex: 1, height: "44px", borderRadius: "12px", border: "none", background: on ? "#FFFFFF" : "transparent", color: on ? "#1A1E28" : "#6B7385", fontSize: "15px", fontWeight: 700, boxShadow: on ? "0 1px 3px rgba(26,30,40,0.15)" : "none", cursor: "pointer" }}>{label}</Btn>
+    );
+    const modes = (
+      <Div style={{ display: "flex", gap: "4px", padding: "4px", borderRadius: "16px", background: "#EDEFF3" }}>
+        {seg(l.many, "Many photos", () => this.setLr((x) => ({ ...x, many: true, err: null })))}
+        {seg(!l.many, "One LR, typed", () => this.setLr((x) => (x.batchBusy ? x : { ...x, many: false, err: null })))}
+      </Div>
+    );
+    if (l.many) return page(<>{modes}{this.renderLrTray(l, recent, errBox)}</>);
     const f = l.f;
     const tag = (k: keyof LrFields) =>
       l.read[k] ? <Span style={{ marginLeft: "6px", padding: "1px 8px", borderRadius: "10px", fontSize: "12px", fontWeight: 700, background: k === "lrNo" && l.check ? "#FDF6E7" : "#F1ECFF", color: k === "lrNo" && l.check ? "#8A5C05" : "#5223E0" }}>{k === "lrNo" && l.check ? "check" : "read"}</Span> : null;
@@ -922,6 +1088,7 @@ export class FactoryApp extends Component<Props, State> {
     const dayWord = (d: string | null) => (!d ? null : d === days[0] ? "Today" : d === days[1] ? "Yesterday" : d.split("-").reverse().join("/"));
     return page(
       <>
+        {modes}
         <Btn onClick={() => void this.lrPhoto()} style={{ background: l.photo ? "#FFFFFF" : "#6835FB", border: l.photo ? "1px solid #DDE1E8" : "none", borderRadius: "20px", padding: "18px 20px", color: l.photo ? "#1A1E28" : "#FFFFFF", display: "flex", alignItems: "center", gap: "16px", textAlign: "left", cursor: "pointer", minHeight: "104px" }}>
           <Span style={{ width: "68px", height: "68px", flex: "none", borderRadius: "18px", background: l.photo ? "#E9F5EE" : "rgba(255,255,255,0.14)", display: "flex", alignItems: "center", justifyContent: "center" }}>{ic(l.photo ? "check" : "camera", 36, l.photo ? "#1D7A45" : "#FFFFFF")}</Span>
           <Span style={{ flex: 1 }}>
@@ -1030,7 +1197,7 @@ export class FactoryApp extends Component<Props, State> {
       if (reload) void this.loadStock();
       return;
     }
-    this.setState({ route: this.state.me?.head ? "today" : "home", stock: null });
+    this.setState({ route: "more", stock: null });
   }
 
   renderStock(): ReactNode {
@@ -1197,12 +1364,11 @@ export class FactoryApp extends Component<Props, State> {
         {shown.slice(0, 200).map((i) => {
           const c = i.checkedToday;
           return (
-            <Btn key={i.stage + i.id} onClick={() => this.pickStock({ kind: "check", item: i })} style={{ ...card, padding: "12px 14px", display: "flex", alignItems: "center", gap: "10px", textAlign: "left", cursor: "pointer", border: "1px solid " + (c && !c.matched ? "#F6CFCF" : "#DDE1E8") }}>
-              <Span style={{ width: "10px", height: "10px", borderRadius: "5px", flex: "none", background: i.here ? "#6835FB" : "#DDE1E8" }} />
+            <Btn key={i.stage + i.id} onClick={() => this.pickStock({ kind: "check", item: i })} style={{ ...card, minHeight: "64px", padding: "12px 14px", display: "flex", alignItems: "center", gap: "10px", textAlign: "left", cursor: "pointer", border: "1px solid " + (c && !c.matched ? "#F6CFCF" : "#DDE1E8") }}>
               <Span style={{ flex: 1 }}>
                 <Span style={{ display: "block", fontSize: "16px", fontWeight: 600 }}>{i.name}</Span>
                 <Span style={{ display: "block", fontSize: "13px", color: c ? (c.matched ? "#1D7A45" : "#B3261E") : "#6B7385" }}>
-                  {c ? (c.matched ? "Checked today · matched" : "Checked today · does not match") + " · " + c.by : (i.here ? "On the book here" : "Not on the book here") + " · in " + UNIT_WORD[i.unit]}
+                  {c ? (c.matched ? "Checked today · matched" : "Checked today · does not match") + " · " + c.by : "Count in " + UNIT_WORD[i.unit] + (i.here ? "" : " · none on the book here")}
                 </Span>
               </Span>
               {c ? ic(c.matched ? "check" : "alert", 22, c.matched ? "#1D7A45" : "#B3261E") : ic("chev", 22)}
@@ -1270,7 +1436,7 @@ export class FactoryApp extends Component<Props, State> {
     );
     const head = (
       <Div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-        <Btn onClick={() => this.setState({ route: st.me?.head ? "today" : "home", drum: null })} aria-label={T.back} style={{ width: "44px", height: "44px", borderRadius: "50%", border: "none", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{ic("back", 22, "#5223E0")}</Btn>
+        <Btn onClick={() => this.setState({ route: "more", drum: null })} aria-label={T.back} style={{ width: "44px", height: "44px", borderRadius: "50%", border: "none", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{ic("back", 22, "#5223E0")}</Btn>
         <Span style={{ fontSize: "20px", fontWeight: 700 }}>Empty drum entry</Span>
       </Div>
     );
@@ -1726,6 +1892,8 @@ export class FactoryApp extends Component<Props, State> {
           {isResult && this.renderResult()}
           {shell && R === "sync" && this.renderSync()}
           {shell && R === "help" && this.renderHelp()}
+          {shell && R === "more" && this.renderMore()}
+          {shell && R === "settings" && this.renderSettings()}
           {shell && R === "drum" && this.renderDrum()}
           {shell && R === "lr" && this.renderLr()}
           {shell && R === "stock" && this.renderStock()}
@@ -1737,8 +1905,8 @@ export class FactoryApp extends Component<Props, State> {
 
           {st.sheet && me && this.renderSheet()}
           {st.toast && (
-            <Div role="status" style={{ position: "absolute", left: "16px", right: "16px", bottom: "92px", zIndex: 60, display: "flex", alignItems: "center", gap: "10px", background: "#3D14A8", color: "#FFFFFF", borderRadius: "14px", padding: "14px 16px", fontSize: "15px", lineHeight: "20px", boxShadow: "0 8px 24px rgba(26,30,40,0.25)", animation: "fx-up 150ms cubic-bezier(0.2,0,0.2,1)" }}>
-              <Span style={{ width: "24px", height: "24px", borderRadius: "50%", background: "rgba(198,255,52,0.2)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{ic("check", 15, "#C6FF34")}</Span>
+            <Div role="status" style={{ position: "absolute", left: "16px", right: "16px", bottom: st.flow ? "132px" : "92px", zIndex: 60, display: "flex", alignItems: "center", gap: "10px", background: st.toastTone === "warn" ? "#8A5C05" : "#3D14A8", color: "#FFFFFF", borderRadius: "14px", padding: "14px 16px", fontSize: "15px", lineHeight: "20px", boxShadow: "0 8px 24px rgba(26,30,40,0.25)", animation: "fx-up 150ms cubic-bezier(0.2,0,0.2,1)" }}>
+              <Span style={{ width: "24px", height: "24px", borderRadius: "50%", background: st.toastTone === "warn" ? "rgba(255,231,168,0.25)" : "rgba(198,255,52,0.2)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{st.toastTone === "warn" ? ic("alert", 15, "#FFE7A8") : ic("check", 15, "#C6FF34")}</Span>
               <Span style={{ flex: 1 }}>{st.toast}</Span>
             </Div>
           )}
@@ -1869,7 +2037,7 @@ export class FactoryApp extends Component<Props, State> {
     const areaWord = (T as Record<string, string>)[me.area] ?? "";
     return (
       <Div style={{ flex: "none", display: "flex", alignItems: "center", gap: "10px", padding: "8px 16px 10px 16px", background: "#FFFFFF", borderBottom: "1px solid #EDEFF3" }}>
-        <Btn onClick={() => this.setState({ sheet: { type: "menu" } })} aria-label="Menu" style={this.av(me.key, 44)}>{me.ini}</Btn>
+        <Btn onClick={() => this.setState({ sheet: null, route: "settings" })} aria-label={T.settings} style={this.av(me.key, 44)}>{me.ini}</Btn>
         <Span style={{ flex: 1, minWidth: 0 }}>
           <Span style={{ display: "block", fontSize: "17px", fontWeight: 700, lineHeight: "22px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{me.n + (head && !me.scope ? "" : !areaWord ? "" : " · " + areaWord)}</Span>
           <Span style={{ display: "block", fontSize: "13px", color: "#6B7385", lineHeight: "17px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{db.loc + " · " + db.shift}</Span>
@@ -1885,17 +2053,21 @@ export class FactoryApp extends Component<Props, State> {
   renderNav(head: boolean): ReactNode {
     const st = this.state, T = this.T();
     const revN = st.db?.review.length ?? 0;
-    const navW: [string, string, string][] = [["home", "home", T.home], ["scan", "qr", T.scan], ["help", "help", T.help]];
-    const navH: [string, string, string][] = [["today", "list", T.today], ["review", "alert", T.review], ["scan", "qr", T.scan], ["teams", "people", T.teams], ["machines", "chart", T.machines]];
+    const navW: [string, string, string][] = [["home", "home", T.home], ["more", "list", T.more], ["scan", "qr", T.scan], ["sync", "sync", T.sync], ["settings", "badge", T.settings]];
+    const navH: [string, string, string][] = [["today", "list", T.today], ["review", "alert", T.review], ["scan", "qr", T.scan], ["teams", "people", T.teams], ["more", "chart", T.more]];
+    const pendN = st.queue.filter((q) => q.status === "pending").length;
+    /* A page reached from More or Settings keeps its tab lit. */
+    const tabOf: Record<string, string> = { help: "settings", stock: "more", drum: "more", lr: "more", machines: head ? "more" : "machines", sync: head ? "more" : "sync" };
     return (
       <Div style={{ flex: "none", height: "78px", background: "#FFFFFF", borderTop: "1px solid #EDEFF3", display: "flex", alignItems: "center", justifyContent: "space-around", padding: "0 6px 8px 6px" }}>
         {(head ? navH : navW).map(([k, icn, l]) => {
-          const on = st.route === k;
+          const on = (tabOf[st.route] ?? st.route) === k;
           const isScan = k === "scan";
           return (
             <Btn key={k} onClick={() => (isScan ? this.openScan("home") : this.setState({ route: k }))} style={{ flex: 1, height: "70px", border: "none", background: "transparent", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "4px", color: on ? "#5223E0" : "#6B7385", cursor: "pointer" }}>
               <Span style={isScan ? { width: "58px", height: "58px", marginTop: "-22px", borderRadius: "50%", background: "#6835FB", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 6px 16px rgba(104,53,251,0.35)", position: "relative" } : { width: "48px", height: "30px", borderRadius: "15px", background: on ? "#F1ECFF" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
                 {ic(icn, isScan ? 28 : 24, isScan ? "#FFFFFF" : undefined)}
+                {k === "sync" && pendN > 0 && <Span style={{ position: "absolute", top: "-4px", right: "-8px", minWidth: "18px", height: "18px", padding: "0 5px", borderRadius: "9px", background: "#B77B08", color: "#FFFFFF", fontSize: "11px", fontWeight: 700, lineHeight: "18px", textAlign: "center" }}>{pendN}</Span>}
                 {k === "review" && revN > 0 && <Span style={{ position: "absolute", top: "-4px", right: "-8px", minWidth: "18px", height: "18px", padding: "0 5px", borderRadius: "9px", background: "#B3261E", color: "#FFFFFF", fontSize: "11px", fontWeight: 700, lineHeight: "18px", textAlign: "center" }}>{revN}</Span>}
               </Span>
               <Span style={{ fontSize: "12px", fontWeight: 600 }}>{l}</Span>
@@ -1929,33 +2101,6 @@ export class FactoryApp extends Component<Props, State> {
             <Span style={{ display: "block", fontSize: "15px", color: "#DDD2FF", marginTop: "4px" }}>{T.scanAny}</Span>
           </Span>
         </Btn>
-        {me.counts && (
-          <Btn onClick={() => this.openStock()} style={{ ...card, padding: "14px 16px", display: "flex", alignItems: "center", gap: "12px", textAlign: "left", cursor: "pointer" }}>
-            <Span style={{ width: "44px", height: "44px", borderRadius: "12px", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{ic("chart", 22, "#5223E0")}</Span>
-            <Span style={{ flex: 1 }}>
-              <Span style={{ display: "block", fontSize: "17px", fontWeight: 700 }}>Stock check</Span>
-              <Span style={{ display: "block", fontSize: "13px", color: "#6B7385", marginTop: "1px" }}>Count any stock here and check it against the book</Span>
-            </Span>
-          </Btn>
-        )}
-        {me.dispatch && (
-          <Btn onClick={() => void this.openLr()} style={{ ...card, padding: "14px 16px", display: "flex", alignItems: "center", gap: "12px", textAlign: "left", cursor: "pointer" }}>
-            <Span style={{ width: "44px", height: "44px", borderRadius: "12px", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{ic("truck", 22, "#5223E0")}</Span>
-            <Span style={{ flex: 1 }}>
-              <Span style={{ display: "block", fontSize: "17px", fontWeight: 700 }}>Upload LR</Span>
-              <Span style={{ display: "block", fontSize: "13px", color: "#6B7385", marginTop: "1px" }}>Photograph the lorry receipt from the transporter</Span>
-            </Span>
-          </Btn>
-        )}
-        {me.drums && (
-          <Btn onClick={() => this.openDrum()} style={{ ...card, padding: "14px 16px", display: "flex", alignItems: "center", gap: "12px", textAlign: "left", cursor: "pointer" }}>
-            <Span style={{ width: "44px", height: "44px", borderRadius: "12px", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{ic("box", 22, "#5223E0")}</Span>
-            <Span style={{ flex: 1 }}>
-              <Span style={{ display: "block", fontSize: "17px", fontWeight: 700 }}>Empty drum entry</Span>
-              <Span style={{ display: "block", fontSize: "13px", color: "#6B7385", marginTop: "1px" }}>Scan and weigh a drum once it is empty</Span>
-            </Span>
-          </Btn>
-        )}
         <Div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginTop: "4px" }}>
           <Span style={{ fontSize: "20px", fontWeight: 700 }}>{T.myTasks}</Span>
           <Span style={{ fontSize: "14px", color: "#6B7385" }}>{open.length + " / " + mine.length}</Span>
@@ -2144,7 +2289,7 @@ export class FactoryApp extends Component<Props, State> {
       } else this.setState({ flow: { ...f, step: f.step - 1 } });
     };
     const next = () => {
-      if (block) return this.toast(block);
+      if (block) return this.toast(block, "warn");
       if (key === "review") return void this.submit();
       const flow = { ...f, step: f.step + 1 };
       this.setState({ flow, drafts: { ...st.drafts, [t.id]: flow } });
@@ -2184,7 +2329,15 @@ export class FactoryApp extends Component<Props, State> {
         </Div>
         <Div style={{ flex: "none", background: "#FFFFFF", borderTop: "1px solid #EDEFF3", padding: "10px 16px 16px 16px" }}>
           {block && <Div style={{ fontSize: "14px", lineHeight: "20px", color: "#8A5C05", fontWeight: 600, marginBottom: "8px", textAlign: "center" }}>{block}</Div>}
-          <Btn onClick={next} style={btn(block ? "off" : "p", 62)}>{key === "review" && st.sending ? T.sending : nextL}</Btn>
+          {key === "identify" ? (
+            /* Both answers to "is this the right product?" sit together — the "no" was hidden in the scroll. */
+            <Div style={{ display: "flex", gap: "10px" }}>
+              <Btn onClick={() => this.openReport(t)} style={{ ...btn("s", 62), flex: 1 }}>{T.wrong}</Btn>
+              <Btn onClick={next} style={{ ...btn(block ? "off" : "p", 62), flex: 2 }}>{nextL}</Btn>
+            </Div>
+          ) : (
+            <Btn onClick={next} style={btn(block ? "off" : "p", 62)}>{key === "review" && st.sending ? T.sending : nextL}</Btn>
+          )}
         </Div>
       </Div>
     );
@@ -2235,7 +2388,6 @@ export class FactoryApp extends Component<Props, State> {
           </Div>
         )}
         <Div style={{ fontSize: "19px", fontWeight: 700, textAlign: "center", marginTop: "4px" }}>{T.isRight}</Div>
-        <Btn onClick={() => this.openReport(t)} style={btn("s", 56)}>{T.wrong}</Btn>
       </Div>
     );
   }
@@ -2703,7 +2855,7 @@ export class FactoryApp extends Component<Props, State> {
             <Span style={{ display: "block", fontSize: "15px", lineHeight: "21px", marginTop: "2px" }}>{c[4]}</Span>
           </Span>
         </Div>
-        {!q.length && <Div style={{ ...card, padding: "24px 18px", textAlign: "center", fontSize: "16px", color: "#3D4453" }}>{T.allSaved}</Div>}
+        {!q.length && <Div style={{ fontSize: "15px", lineHeight: "21px", color: "#6B7385", textAlign: "center", padding: "6px 0" }}>Nothing is waiting to send.</Div>}
         {q.slice().reverse().map((x) => {
           const t = x.flow.task;
           const badge = x.status === "done" ? ["#E9F5EE", "#1D7A45", T.completed] : x.status === "held" ? ["#FDF6E7", "#8A5C05", "With supervisor"] : x.status === "failed" ? ["#FDF6E7", "#8A5C05", "Check it"] : ["#FDF6E7", "#8A5C05", T.pending];
@@ -2727,13 +2879,127 @@ export class FactoryApp extends Component<Props, State> {
     );
   }
 
+  /* ================================================================ More and Settings
+   * The name used to open one long sheet that mixed the day's work with the
+   * phone's settings. WORK is the More tab — what somebody does on the floor
+   * besides their tasks. SETTINGS is its own page — who they are, the
+   * language, the PIN, help and signing out — opened from the bottom bar or
+   * by tapping their name.
+   * ------------------------------------------------------------------------- */
+
+  menuRow(l: string, s: string, icn: string, run: () => void, tone?: "danger", badge?: number): ReactNode {
+    const red = tone === "danger";
+    return (
+      <Btn key={l} onClick={run} style={{ display: "flex", alignItems: "center", gap: "14px", width: "100%", minHeight: "68px", padding: "12px 14px", borderRadius: "16px", border: "1px solid " + (red ? "#F6CFCF" : "#DDE1E8"), background: "#FFFFFF", cursor: "pointer" }}>
+        <Span style={{ width: "44px", height: "44px", borderRadius: "12px", background: red ? "#FCECEC" : "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{ic(icn, 22, red ? "#B3261E" : "#5223E0")}</Span>
+        <Span style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+          <Span style={{ display: "block", fontSize: "17px", lineHeight: "22px", fontWeight: 700, color: red ? "#B3261E" : "#1A1E28" }}>{l}</Span>
+          {!!s && <Span style={{ display: "block", fontSize: "14px", lineHeight: "19px", color: "#6B7385", marginTop: "2px" }}>{s}</Span>}
+        </Span>
+        {!!badge && <Span style={{ minWidth: "26px", height: "26px", padding: "0 8px", borderRadius: "13px", background: "#FDF6E7", color: "#8A5C05", fontSize: "13px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{String(badge)}</Span>}
+        <Span style={{ display: "flex", flex: "none" }}>{ic("chev", 22, "#9BA3B2")}</Span>
+      </Btn>
+    );
+  }
+
+  pageHead(title: string, sub?: string, back?: () => void): ReactNode {
+    const T = this.T();
+    return (
+      <Div style={{ display: "flex", alignItems: "center", gap: "12px", minHeight: "48px" }}>
+        {back && <Btn onClick={back} aria-label={T.back} style={{ width: "44px", height: "44px", borderRadius: "22px", border: "none", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flex: "none" }}>{ic("back", 22, "#5223E0")}</Btn>}
+        <Span style={{ flex: 1, minWidth: 0 }}>
+          <Span style={{ display: "block", fontSize: "24px", lineHeight: "30px", fontWeight: 700 }}>{title}</Span>
+          {!!sub && <Span style={{ display: "block", fontSize: "14px", lineHeight: "19px", color: "#6B7385", marginTop: "2px" }}>{sub}</Span>}
+        </Span>
+      </Div>
+    );
+  }
+
+  sectionLabel(l: string): ReactNode {
+    return <Div style={{ fontSize: "13px", lineHeight: "18px", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "#6B7385", marginTop: "6px" }}>{l}</Div>;
+  }
+
+  renderMore(): ReactNode {
+    const st = this.state, T = this.T(), me = st.me!;
+    const pendN = st.queue.filter((q) => q.status === "pending").length;
+    const tools: ReactNode[] = [];
+    if (me.counts) tools.push(this.menuRow("Stock check", "Count any stock and check it against the book", "chart", () => this.openStock()));
+    if (me.drums) tools.push(this.menuRow("Empty drum entry", "Scan and weigh a drum once it is empty", "box", () => this.openDrum()));
+    if (me.dispatch) tools.push(this.menuRow("Upload LR", "Photograph the lorry receipt from the transporter", "truck", () => void this.openLr()));
+    return (
+      <Div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "16px 16px 24px 16px", display: "flex", flexDirection: "column", gap: "10px" }}>
+        {this.pageHead(T.more, "Work besides your tasks")}
+        {this.sectionLabel("Work")}
+        {tools.length ? tools : <Div style={{ ...card, padding: "20px", fontSize: "15px", lineHeight: "21px", color: "#6B7385", textAlign: "center" }}>Nothing else to do here. Your tasks are on Home.</Div>}
+        {me.head && this.menuRow(T.machines, "Machines and stoppages on the floor", "wrench", () => this.setState({ route: "machines" }))}
+        {me.head && this.menuRow(T.sync, pendN ? pendN + " waiting to send" : "Everything is sent", "sync", () => this.setState({ route: "sync" }), undefined, pendN)}
+        {me.head && this.sectionLabel(T.settings)}
+        {me.head && this.menuRow(T.settings, "Language, PIN, help and sign out", "badge", () => this.setState({ route: "settings" }))}
+      </Div>
+    );
+  }
+
+  pickLanguage() {
+    const T = this.T();
+    const LN: Record<Lang, string> = { en: "English", hi: "हिन्दी · Hindi", mr: "मराठी · Marathi" };
+    this.setState({
+      sheet: {
+        type: "reason", title: T.language, sub: "Buttons, steps and spoken help change to this language.", reasons: Object.values(LN), okL: T.ok, sel: LN[this.state.lang],
+        done: (r) => {
+          const k = (Object.keys(LN) as Lang[]).find((x) => LN[x] === r) ?? "en";
+          save(null, "lang", k);
+          void call("setLang", k);
+          this.setState({ lang: k, sheet: null });
+          this.toast(k === "en" ? "Language: English" : k === "hi" ? "भाषा: हिन्दी" : "भाषा: मराठी");
+        },
+      },
+    });
+  }
+
+  askSignOut() {
+    const T = this.T();
+    const pendN = this.state.queue.filter((q) => q.status === "pending").length;
+    if (pendN)
+      return this.setState({ sheet: { type: "reason", title: "Sign out with " + pendN + " job" + (pendN > 1 ? "s" : "") + " waiting?", sub: "It stays on this phone and sends later. No one else can change it.", reasons: ["Yes, sign out"], okL: T.signOut, danger: true, done: () => void this.signOut() } });
+    void this.signOut();
+  }
+
+  renderSettings(): ReactNode {
+    const st = this.state, T = this.T(), me = st.me!, db = this.db();
+    const emp = db.emp[me.key];
+    const LN: Record<Lang, string> = { en: "English", hi: "हिन्दी", mr: "मराठी" };
+    /* Role and badge, each once: "Production Head · production head · —" was three ways of saying one thing. */
+    const role = [emp?.role, emp?.id].filter((x): x is string => !!x && x !== "—" && x !== "-").filter((x, i, a) => a.findIndex((y) => y.toLowerCase() === x.toLowerCase()) === i).join(" · ");
+    return (
+      <Div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "16px 16px 24px 16px", display: "flex", flexDirection: "column", gap: "10px" }}>
+        {this.pageHead(T.settings)}
+        <Div style={{ ...card, padding: "16px", display: "flex", alignItems: "center", gap: "14px" }}>
+          <Span style={this.av(me.key, 56)}>{me.ini}</Span>
+          <Span style={{ flex: 1, minWidth: 0 }}>
+            <Span style={{ display: "block", fontSize: "19px", lineHeight: "24px", fontWeight: 700 }}>{me.n}</Span>
+            {!!role && <Span style={{ display: "block", fontSize: "14px", lineHeight: "19px", color: "#6B7385", marginTop: "2px" }}>{role}</Span>}
+            <Span style={{ display: "block", fontSize: "14px", lineHeight: "19px", color: "#6B7385", marginTop: "2px" }}>{db.loc + " · " + db.shift.split(" · ")[0]}</Span>
+          </Span>
+        </Div>
+        {this.sectionLabel("App")}
+        {this.menuRow(T.language, LN[st.lang], "globe", () => this.pickLanguage())}
+        {this.menuRow("Change my PIN", "4 numbers you sign in with", "badge", () => this.setState({ signStep: "newpin", newPin: "", newPin1: "", pinErr: "" }))}
+        {DEV && this.menuRow("Network (preview only)", (T as Record<string, string>)[st.net] + " — tap to change", st.net === "offline" ? "wifioff" : "wifi", () => { const nx = ({ online: "weak", weak: "offline", offline: "online" } as const)[st.net]; this.setNet(nx); this.toast((T as Record<string, string>)[nx]); })}
+        {this.menuRow(T.help, "Short videos and audio", "help", () => this.setState({ route: "help" }))}
+        {this.sectionLabel("Account")}
+        {this.menuRow(T.signOut, "Unsent work stays on this phone", "out", () => this.askSignOut(), "danger")}
+        <Div style={{ fontSize: "12px", lineHeight: "16px", color: "#9BA3B2", textAlign: "center", marginTop: "8px" }}>{"Mahek One Factory · " + APP_BUILD}</Div>
+      </Div>
+    );
+  }
+
   renderHelp(): ReactNode {
     const st = this.state, T = this.T(), area = st.me!.area;
     const list = HELP.filter((h) => ["scan", "sync"].indexOf(h[0]) > -1 || area === "head" || h[0] === area).concat(HELP.filter((h) => ["scan", "sync"].indexOf(h[0]) < 0 && h[0] !== area && area !== "head"));
     const p = st.play;
     return (
       <Div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "16px", display: "flex", flexDirection: "column", gap: "12px" }}>
-        <Div style={{ fontSize: "20px", fontWeight: 700 }}>{T.help}</Div>
+        {this.pageHead(T.help, "Short videos and audio", () => this.setState({ route: "settings" }))}
         {list.map((h) => {
           const on = !!p && p.id === h[0];
           const i = on ? Math.min(h[4].length - 1, Math.floor((p!.t / Math.max(1, p!.dur)) * h[4].length)) : 0;
@@ -2799,7 +3065,7 @@ export class FactoryApp extends Component<Props, State> {
             {kpis.filter((k) => !st.me?.scope || PROC[k.l] === st.me.scope).map((k) => (
               <Btn key={k.l} onClick={() => this.setState({ hf: k.l })} style={{ ...card, padding: "14px", textAlign: "left", cursor: "pointer" }}>
                 <Span style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", fontWeight: 700, color: "#3D4453" }}>{ic(k.icn, 16)}{k.l}</Span>
-                <Span style={{ display: "block", fontSize: "24px", lineHeight: "30px", fontWeight: 700, marginTop: "6px" }}>{nf(k.act) + " / " + nf(k.plan)}</Span>
+                <Span style={{ display: "block", fontSize: "24px", lineHeight: "30px", fontWeight: 700, marginTop: "6px" }}>{nf(k.act)}<Span style={{ fontSize: "15px", fontWeight: 600, color: "#6B7385" }}>{" / " + nf(k.plan)}</Span></Span>
                 <Span style={{ display: "block", fontSize: "13px", color: "#6B7385" }}>{k.unit}</Span>
                 <Span style={{ display: "block", height: "6px", borderRadius: "3px", background: "#EDEFF3", marginTop: "8px", overflow: "hidden" }}><Span style={{ display: "block", height: "6px", width: Math.min(100, pct(k.act, Math.max(1, k.plan))) + "%", background: "#6835FB", borderRadius: "3px" }} /></Span>
                 <Span style={{ display: "block", fontSize: "12px", color: "#6B7385", marginTop: "6px" }}>{k.sub}</Span>
@@ -2825,11 +3091,11 @@ export class FactoryApp extends Component<Props, State> {
               <Btn key={t.id} onClick={() => this.setState({ sheet: { type: "job", id: t.id } })} style={{ display: "flex", alignItems: "center", gap: "12px", width: "100%", padding: "12px", borderRadius: "18px", border: "1px solid " + (js[3] === "late" ? "#F6CFCF" : "#DDE1E8"), background: "#FFFFFF", cursor: "pointer", boxShadow: js[3] === "late" ? "inset 4px 0 0 #B3261E" : "none" }}>
                 <Span style={artWell(54, 14)}>{this.taskArt(t, 46)}</Span>
                 <Span style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+                  <Span style={{ display: "flex", marginBottom: "4px" }}><Pill l={js[0]} bg={js[1]} fg={js[2]} /></Span>
                   <Span style={{ display: "block", fontSize: "15px", lineHeight: "20px", fontWeight: 700 }}>{taskName(db, t)}</Span>
                   <Span style={{ display: "block", fontSize: "13px", color: "#6B7385", marginTop: "1px" }}>{(T as Record<string, string>)[t.proc] + " · " + t.id + " · " + (t.status === "done" ? nf(t.out?.good) + " " + t.out?.unit + " at " + t.out?.at : taskTarget(db, t).split(" · ")[0] + " · due " + t.due)}</Span>
                   <Span style={{ display: "block", fontSize: "13px", color: "#3D4453", marginTop: "1px" }}>{[tm.owner, tm.op, ...tm.helpers].filter(Boolean).map((k) => this.name(k).split(" ")[0]).join(" · ") + (tm.helpers.length ? "" : " · no helper")}</Span>
                 </Span>
-                <Pill l={js[0]} bg={js[1]} fg={js[2]} />
               </Btn>
             );
           })}
@@ -2900,11 +3166,11 @@ export class FactoryApp extends Component<Props, State> {
             <Div key={p} style={{ ...card, padding: "14px" }}>
               <Div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
                 <Span style={{ width: "40px", height: "40px", borderRadius: "12px", background: "#F1ECFF", color: "#5223E0", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{ic(PC[p], 22)}</Span>
-                <Span style={{ flex: 1 }}>
+                <Span style={{ flex: 1, minWidth: 0 }}>
                   <Span style={{ display: "block", fontSize: "17px", fontWeight: 700 }}>{(T as Record<string, string>)[p]}</Span>
                   <Span style={{ display: "block", fontSize: "13px", color: "#6B7385" }}>{done.length + " of " + all.length + " jobs done today"}</Span>
                 </Span>
-                <Span style={{ textAlign: "right" }}>
+                <Span style={{ textAlign: "right", flex: "none", maxWidth: "42%" }}>
                   <Span style={{ display: "block", fontSize: "22px", fontWeight: 700 }}>{nf(out)}</Span>
                   <Span style={{ display: "block", fontSize: "12px", color: "#6B7385" }}>{unit}</Span>
                 </Span>
@@ -2915,10 +3181,10 @@ export class FactoryApp extends Component<Props, State> {
                   <Div key={k} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 0", borderBottom: "1px solid #F3F4F7" }}>
                     <Span style={this.av(k, 36)}>{this.ini(k)}</Span>
                     <Span style={{ flex: 1, minWidth: 0 }}>
-                      <Span style={{ display: "block", fontSize: "15px", fontWeight: 700 }}>{this.name(k) + (db.emp[k]?.confirm ? " · to confirm" : "")}</Span>
-                      <Span style={{ display: "block", fontSize: "12px", color: "#6B7385" }}>{ppl[k].role}</Span>
+                      <Span style={{ display: "block", fontSize: "15px", lineHeight: "20px", fontWeight: 700 }}>{this.name(k)}</Span>
+                      <Span style={{ display: "block", fontSize: "13px", lineHeight: "18px", color: "#6B7385" }}>{ppl[k].role + (db.emp[k]?.confirm ? " · name to confirm" : "")}</Span>
+                      <Span style={{ display: "block", fontSize: "13px", lineHeight: "18px", color: "#3D4453" }}>{"In " + ppl[k].done + " of " + ppl[k].jobs + " jobs · " + (db.hours[k] != null ? db.hours[k] + " h" : "no check-in")}</Span>
                     </Span>
-                    <Span style={{ textAlign: "right", fontSize: "13px", color: "#3D4453" }}>{"In " + ppl[k].done + " of " + ppl[k].jobs + " jobs · " + (db.hours[k] != null ? db.hours[k] + " h" : "no check-in")}</Span>
                   </Div>
                 ))}
               </Div>
@@ -3098,57 +3364,6 @@ export class FactoryApp extends Component<Props, State> {
         { l: T.back, run: close, style: { ...btn("s", 58), flex: 1 } },
         { l: st.busy ? T.sending : sh.okL || "Send", run: () => { if (sh.sel && !st.busy) sh.done(sh.sel); }, style: { ...btn(sh.sel && !st.busy ? (sh.danger ? "d" : "p") : "off", 58), flex: 2 } },
       ];
-    }
-
-    if (sh.type === "menu") {
-      const me = st.me!;
-      const db = this.db();
-      const emp = db.emp[me.key];
-      const LN: Record<Lang, string> = { en: "English", hi: "हिन्दी · Hindi", mr: "मराठी · Marathi" };
-      const row = (l: string, s: string, icn: string, run: () => void) => (
-        <Btn key={l} onClick={run} style={{ display: "flex", alignItems: "center", gap: "12px", width: "100%", minHeight: "64px", padding: "8px 12px", borderRadius: "16px", border: "1px solid #DDE1E8", background: "#FFFFFF", cursor: "pointer" }}>
-          <Span style={{ width: "44px", height: "44px", borderRadius: "12px", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{ic(icn, 22, "#5223E0")}</Span>
-          <Span style={{ flex: 1, textAlign: "left" }}>
-            <Span style={{ display: "block", fontSize: "17px", fontWeight: 700 }}>{l}</Span>
-            {s && <Span style={{ display: "block", fontSize: "13px", color: "#6B7385", marginTop: "1px" }}>{s}</Span>}
-          </Span>
-          <Span style={{ color: "#9BA3B2", display: "flex" }}>{ic("chev", 24)}</Span>
-        </Btn>
-      );
-      const pendN = st.queue.filter((q) => q.status === "pending").length;
-      title = me.n;
-      sub = (emp?.role ?? "") + " · " + (emp?.id ?? "");
-      body = (
-        <>
-          {row(T.language, LN[st.lang], "globe", () =>
-            this.setState({
-              sheet: {
-                type: "reason", title: T.language, sub: "Buttons, steps and spoken help change to this language.", reasons: Object.values(LN), okL: T.ok, sel: LN[st.lang],
-                done: (r) => {
-                  const k = (Object.keys(LN) as Lang[]).find((x) => LN[x] === r) ?? "en";
-                  save(null, "lang", k);
-                  void call("setLang", k);
-                  this.setState({ lang: k, sheet: null });
-                  this.toast(k === "en" ? "Language: English" : k === "hi" ? "भाषा: हिन्दी" : "भाषा: मराठी");
-                },
-              },
-            }),
-          )}
-          {row("Work place", db.loc + " · " + db.shift.split(" · ")[0], "pin", () => this.toast("Your supervisor sets your work place"))}
-          {row(T.sync, pendN + " waiting", "sync", () => this.setState({ sheet: null, route: "sync" }))}
-          {row(T.help, "Short videos and audio", "help", () => this.setState({ sheet: null, route: "help" }))}
-          {me.counts && row("Stock check", "Count any stock and check it against the book", "chart", () => this.openStock())}
-          {me.drums && row("Empty drum entry", "Scan and weigh a drum once it is empty", "box", () => this.openDrum())}
-          {me.dispatch && row("Upload LR", "Photograph the lorry receipt from the transporter", "truck", () => void this.openLr())}
-          {row("Change my PIN", "4 numbers you sign in with", "badge", () => this.setState({ sheet: null, signStep: "newpin", newPin: "", newPin1: "", pinErr: "" }))}
-          {DEV && row("Network (preview only)", (T as Record<string, string>)[st.net] + " — tap to change", st.net === "offline" ? "wifioff" : "wifi", () => { const nx = ({ online: "weak", weak: "offline", offline: "online" } as const)[st.net]; this.setNet(nx); this.toast((T as Record<string, string>)[nx]); })}
-          {row(T.signOut, "Unsent work stays on this phone", "out", () => {
-            if (pendN)
-              return this.setState({ sheet: { type: "reason", title: "Sign out with " + pendN + " job" + (pendN > 1 ? "s" : "") + " waiting?", sub: "It stays on this phone and sends later. No one else can change it.", reasons: ["Yes, sign out"], okL: T.signOut, danger: true, done: () => void this.signOut() } });
-            void this.signOut();
-          })}
-        </>
-      );
     }
 
     if (sh.type === "job") body = this.jobSheet(sh.id, (t, s, b, a) => { title = t; sub = s; acts = a; return b; });

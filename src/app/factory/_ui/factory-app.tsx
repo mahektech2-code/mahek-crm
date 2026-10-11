@@ -91,6 +91,7 @@ export class FactoryApp extends Component<Props, State> {
       sheet: null,
       net: "online",
       toast: "",
+      toastTone: "ok",
       play: null,
       hf: "all",
       asg: null,
@@ -247,9 +248,10 @@ export class FactoryApp extends Component<Props, State> {
     return key ? (this.state.db?.emp[key]?.n ?? "—") : "—";
   }
 
-  toast(t: string) {
+  /** `warn` for a refusal or an instruction — a tick there would read as done. */
+  toast(t: string, tone: "ok" | "warn" = "ok") {
     clearTimeout(this.tt);
-    this.setState({ toast: t });
+    this.setState({ toast: t, toastTone: tone });
     this.tt = window.setTimeout(() => this.setState({ toast: "" }), 3200);
   }
 
@@ -678,7 +680,7 @@ export class FactoryApp extends Component<Props, State> {
       if (reload) void this.loadStock();
       return;
     }
-    this.setState({ route: this.state.me?.head ? "today" : "home", stock: null });
+    this.setState({ route: "more", stock: null });
   }
 
   renderStock(): ReactNode {
@@ -845,12 +847,11 @@ export class FactoryApp extends Component<Props, State> {
         {shown.slice(0, 200).map((i) => {
           const c = i.checkedToday;
           return (
-            <button key={i.stage + i.id} onClick={() => this.pickStock({ kind: "check", item: i })} style={{ ...card, padding: "12px 14px", display: "flex", alignItems: "center", gap: "10px", textAlign: "left", cursor: "pointer", border: "1px solid " + (c && !c.matched ? "#F6CFCF" : "#DDE1E8") }}>
-              <span style={{ width: "10px", height: "10px", borderRadius: "5px", flex: "none", background: i.here ? "#6835FB" : "#DDE1E8" }} />
+            <button key={i.stage + i.id} onClick={() => this.pickStock({ kind: "check", item: i })} style={{ ...card, minHeight: "64px", padding: "12px 14px", display: "flex", alignItems: "center", gap: "10px", textAlign: "left", cursor: "pointer", border: "1px solid " + (c && !c.matched ? "#F6CFCF" : "#DDE1E8") }}>
               <span style={{ flex: 1 }}>
                 <span style={{ display: "block", fontSize: "16px", fontWeight: 600 }}>{i.name}</span>
                 <span style={{ display: "block", fontSize: "13px", color: c ? (c.matched ? "#1D7A45" : "#B3261E") : "#6B7385" }}>
-                  {c ? (c.matched ? "Checked today · matched" : "Checked today · does not match") + " · " + c.by : (i.here ? "On the book here" : "Not on the book here") + " · in " + UNIT_WORD[i.unit]}
+                  {c ? (c.matched ? "Checked today · matched" : "Checked today · does not match") + " · " + c.by : "Count in " + UNIT_WORD[i.unit] + (i.here ? "" : " · none on the book here")}
                 </span>
               </span>
               {c ? ic(c.matched ? "check" : "alert", 22, c.matched ? "#1D7A45" : "#B3261E") : ic("chev", 22)}
@@ -918,7 +919,7 @@ export class FactoryApp extends Component<Props, State> {
     );
     const head = (
       <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-        <button onClick={() => this.setState({ route: st.me?.head ? "today" : "home", drum: null })} aria-label={T.back} style={{ width: "44px", height: "44px", borderRadius: "50%", border: "none", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{ic("back", 22, "#5223E0")}</button>
+        <button onClick={() => this.setState({ route: "more", drum: null })} aria-label={T.back} style={{ width: "44px", height: "44px", borderRadius: "50%", border: "none", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{ic("back", 22, "#5223E0")}</button>
         <span style={{ fontSize: "20px", fontWeight: 700 }}>Empty drum entry</span>
       </div>
     );
@@ -1381,6 +1382,8 @@ export class FactoryApp extends Component<Props, State> {
           {isResult && this.renderResult()}
           {shell && R === "sync" && this.renderSync()}
           {shell && R === "help" && this.renderHelp()}
+          {shell && R === "more" && this.renderMore()}
+          {shell && R === "settings" && this.renderSettings()}
           {shell && R === "drum" && this.renderDrum()}
           {shell && R === "stock" && this.renderStock()}
           {shell && head && R === "today" && this.renderToday()}
@@ -1391,8 +1394,8 @@ export class FactoryApp extends Component<Props, State> {
 
           {st.sheet && me && this.renderSheet()}
           {st.toast && (
-            <div role="status" style={{ position: "absolute", left: "16px", right: "16px", bottom: "92px", zIndex: 60, display: "flex", alignItems: "center", gap: "10px", background: "#3D14A8", color: "#FFFFFF", borderRadius: "14px", padding: "14px 16px", fontSize: "15px", lineHeight: "20px", boxShadow: "0 8px 24px rgba(26,30,40,0.25)", animation: "fx-up 150ms cubic-bezier(0.2,0,0.2,1)" }}>
-              <span style={{ width: "24px", height: "24px", borderRadius: "50%", background: "rgba(198,255,52,0.2)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{ic("check", 15, "#C6FF34")}</span>
+            <div role="status" style={{ position: "absolute", left: "16px", right: "16px", bottom: st.flow ? "132px" : "92px", zIndex: 60, display: "flex", alignItems: "center", gap: "10px", background: st.toastTone === "warn" ? "#8A5C05" : "#3D14A8", color: "#FFFFFF", borderRadius: "14px", padding: "14px 16px", fontSize: "15px", lineHeight: "20px", boxShadow: "0 8px 24px rgba(26,30,40,0.25)", animation: "fx-up 150ms cubic-bezier(0.2,0,0.2,1)" }}>
+              <span style={{ width: "24px", height: "24px", borderRadius: "50%", background: st.toastTone === "warn" ? "rgba(255,231,168,0.25)" : "rgba(198,255,52,0.2)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{st.toastTone === "warn" ? ic("alert", 15, "#FFE7A8") : ic("check", 15, "#C6FF34")}</span>
               <span style={{ flex: 1 }}>{st.toast}</span>
             </div>
           )}
@@ -1523,7 +1526,7 @@ export class FactoryApp extends Component<Props, State> {
     const areaWord = (T as Record<string, string>)[me.area] ?? "";
     return (
       <div style={{ flex: "none", display: "flex", alignItems: "center", gap: "10px", padding: "8px 16px 10px 16px", background: "#FFFFFF", borderBottom: "1px solid #EDEFF3" }}>
-        <button onClick={() => this.setState({ sheet: { type: "menu" } })} aria-label="Menu" style={this.av(me.key, 44)}>{me.ini}</button>
+        <button onClick={() => this.setState({ sheet: null, route: "settings" })} aria-label={T.settings} style={this.av(me.key, 44)}>{me.ini}</button>
         <span style={{ flex: 1, minWidth: 0 }}>
           <span style={{ display: "block", fontSize: "17px", fontWeight: 700, lineHeight: "22px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{me.n + (head && !me.scope ? "" : !areaWord ? "" : " · " + areaWord)}</span>
           <span style={{ display: "block", fontSize: "13px", color: "#6B7385", lineHeight: "17px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{db.loc + " · " + db.shift}</span>
@@ -1539,17 +1542,21 @@ export class FactoryApp extends Component<Props, State> {
   renderNav(head: boolean): ReactNode {
     const st = this.state, T = this.T();
     const revN = st.db?.review.length ?? 0;
-    const navW: [string, string, string][] = [["home", "home", T.home], ["scan", "qr", T.scan], ["help", "help", T.help]];
-    const navH: [string, string, string][] = [["today", "list", T.today], ["review", "alert", T.review], ["scan", "qr", T.scan], ["teams", "people", T.teams], ["machines", "chart", T.machines]];
+    const navW: [string, string, string][] = [["home", "home", T.home], ["more", "list", T.more], ["scan", "qr", T.scan], ["sync", "sync", T.sync], ["settings", "badge", T.settings]];
+    const navH: [string, string, string][] = [["today", "list", T.today], ["review", "alert", T.review], ["scan", "qr", T.scan], ["teams", "people", T.teams], ["more", "chart", T.more]];
+    const pendN = st.queue.filter((q) => q.status === "pending").length;
+    /* A page reached from More or Settings keeps its tab lit. */
+    const tabOf: Record<string, string> = { help: "settings", stock: "more", drum: "more", machines: head ? "more" : "machines", sync: head ? "more" : "sync" };
     return (
       <div style={{ flex: "none", height: "78px", background: "#FFFFFF", borderTop: "1px solid #EDEFF3", display: "flex", alignItems: "center", justifyContent: "space-around", padding: "0 6px 8px 6px" }}>
         {(head ? navH : navW).map(([k, icn, l]) => {
-          const on = st.route === k;
+          const on = (tabOf[st.route] ?? st.route) === k;
           const isScan = k === "scan";
           return (
             <button key={k} onClick={() => (isScan ? this.openScan("home") : this.setState({ route: k }))} style={{ flex: 1, height: "70px", border: "none", background: "transparent", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "4px", color: on ? "#5223E0" : "#6B7385", cursor: "pointer" }}>
               <span style={isScan ? { width: "58px", height: "58px", marginTop: "-22px", borderRadius: "50%", background: "#6835FB", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 6px 16px rgba(104,53,251,0.35)", position: "relative" } : { width: "48px", height: "30px", borderRadius: "15px", background: on ? "#F1ECFF" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
                 {ic(icn, isScan ? 28 : 24, isScan ? "#FFFFFF" : undefined)}
+                {k === "sync" && pendN > 0 && <span style={{ position: "absolute", top: "-4px", right: "-8px", minWidth: "18px", height: "18px", padding: "0 5px", borderRadius: "9px", background: "#B77B08", color: "#FFFFFF", fontSize: "11px", fontWeight: 700, lineHeight: "18px", textAlign: "center" }}>{pendN}</span>}
                 {k === "review" && revN > 0 && <span style={{ position: "absolute", top: "-4px", right: "-8px", minWidth: "18px", height: "18px", padding: "0 5px", borderRadius: "9px", background: "#B3261E", color: "#FFFFFF", fontSize: "11px", fontWeight: 700, lineHeight: "18px", textAlign: "center" }}>{revN}</span>}
               </span>
               <span style={{ fontSize: "12px", fontWeight: 600 }}>{l}</span>
@@ -1583,24 +1590,6 @@ export class FactoryApp extends Component<Props, State> {
             <span style={{ display: "block", fontSize: "15px", color: "#DDD2FF", marginTop: "4px" }}>{T.scanAny}</span>
           </span>
         </button>
-        {me.counts && (
-          <button onClick={() => this.openStock()} style={{ ...card, padding: "14px 16px", display: "flex", alignItems: "center", gap: "12px", textAlign: "left", cursor: "pointer" }}>
-            <span style={{ width: "44px", height: "44px", borderRadius: "12px", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{ic("chart", 22, "#5223E0")}</span>
-            <span style={{ flex: 1 }}>
-              <span style={{ display: "block", fontSize: "17px", fontWeight: 700 }}>Stock check</span>
-              <span style={{ display: "block", fontSize: "13px", color: "#6B7385", marginTop: "1px" }}>Count any stock here and check it against the book</span>
-            </span>
-          </button>
-        )}
-        {me.drums && (
-          <button onClick={() => this.openDrum()} style={{ ...card, padding: "14px 16px", display: "flex", alignItems: "center", gap: "12px", textAlign: "left", cursor: "pointer" }}>
-            <span style={{ width: "44px", height: "44px", borderRadius: "12px", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{ic("box", 22, "#5223E0")}</span>
-            <span style={{ flex: 1 }}>
-              <span style={{ display: "block", fontSize: "17px", fontWeight: 700 }}>Empty drum entry</span>
-              <span style={{ display: "block", fontSize: "13px", color: "#6B7385", marginTop: "1px" }}>Scan and weigh a drum once it is empty</span>
-            </span>
-          </button>
-        )}
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginTop: "4px" }}>
           <span style={{ fontSize: "20px", fontWeight: 700 }}>{T.myTasks}</span>
           <span style={{ fontSize: "14px", color: "#6B7385" }}>{open.length + " / " + mine.length}</span>
@@ -1789,7 +1778,7 @@ export class FactoryApp extends Component<Props, State> {
       } else this.setState({ flow: { ...f, step: f.step - 1 } });
     };
     const next = () => {
-      if (block) return this.toast(block);
+      if (block) return this.toast(block, "warn");
       if (key === "review") return void this.submit();
       const flow = { ...f, step: f.step + 1 };
       this.setState({ flow, drafts: { ...st.drafts, [t.id]: flow } });
@@ -1828,7 +1817,15 @@ export class FactoryApp extends Component<Props, State> {
         </div>
         <div style={{ flex: "none", background: "#FFFFFF", borderTop: "1px solid #EDEFF3", padding: "10px 16px 16px 16px" }}>
           {block && <div style={{ fontSize: "14px", lineHeight: "20px", color: "#8A5C05", fontWeight: 600, marginBottom: "8px", textAlign: "center" }}>{block}</div>}
-          <button onClick={next} style={btn(block ? "off" : "p", 62)}>{key === "review" && st.sending ? T.sending : nextL}</button>
+          {key === "identify" ? (
+            /* Both answers to "is this the right product?" sit together — the "no" was hidden in the scroll. */
+            <div style={{ display: "flex", gap: "10px" }}>
+              <button onClick={() => this.openReport(t)} style={{ ...btn("s", 62), flex: 1 }}>{T.wrong}</button>
+              <button onClick={next} style={{ ...btn(block ? "off" : "p", 62), flex: 2 }}>{nextL}</button>
+            </div>
+          ) : (
+            <button onClick={next} style={btn(block ? "off" : "p", 62)}>{key === "review" && st.sending ? T.sending : nextL}</button>
+          )}
         </div>
       </div>
     );
@@ -1879,7 +1876,6 @@ export class FactoryApp extends Component<Props, State> {
           </div>
         )}
         <div style={{ fontSize: "19px", fontWeight: 700, textAlign: "center", marginTop: "4px" }}>{T.isRight}</div>
-        <button onClick={() => this.openReport(t)} style={btn("s", 56)}>{T.wrong}</button>
       </div>
     );
   }
@@ -2340,7 +2336,7 @@ export class FactoryApp extends Component<Props, State> {
             <span style={{ display: "block", fontSize: "15px", lineHeight: "21px", marginTop: "2px" }}>{c[4]}</span>
           </span>
         </div>
-        {!q.length && <div style={{ ...card, padding: "24px 18px", textAlign: "center", fontSize: "16px", color: "#3D4453" }}>{T.allSaved}</div>}
+        {!q.length && <div style={{ fontSize: "15px", lineHeight: "21px", color: "#6B7385", textAlign: "center", padding: "6px 0" }}>Nothing is waiting to send.</div>}
         {q.slice().reverse().map((x) => {
           const t = x.flow.task;
           const badge = x.status === "done" ? ["#E9F5EE", "#1D7A45", T.completed] : x.status === "held" ? ["#FDF6E7", "#8A5C05", "With supervisor"] : x.status === "failed" ? ["#FDF6E7", "#8A5C05", "Check it"] : ["#FDF6E7", "#8A5C05", T.pending];
@@ -2364,13 +2360,126 @@ export class FactoryApp extends Component<Props, State> {
     );
   }
 
+  /* ================================================================ More and Settings
+   * The name used to open one long sheet that mixed the day's work with the
+   * phone's settings. WORK is the More tab — what somebody does on the floor
+   * besides their tasks. SETTINGS is its own page — who they are, the
+   * language, the PIN, help and signing out — opened from the bottom bar or
+   * by tapping their name.
+   * ------------------------------------------------------------------------- */
+
+  menuRow(l: string, s: string, icn: string, run: () => void, tone?: "danger", badge?: number): ReactNode {
+    const red = tone === "danger";
+    return (
+      <button key={l} onClick={run} style={{ display: "flex", alignItems: "center", gap: "14px", width: "100%", minHeight: "68px", padding: "12px 14px", borderRadius: "16px", border: "1px solid " + (red ? "#F6CFCF" : "#DDE1E8"), background: "#FFFFFF", cursor: "pointer" }}>
+        <span style={{ width: "44px", height: "44px", borderRadius: "12px", background: red ? "#FCECEC" : "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{ic(icn, 22, red ? "#B3261E" : "#5223E0")}</span>
+        <span style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+          <span style={{ display: "block", fontSize: "17px", lineHeight: "22px", fontWeight: 700, color: red ? "#B3261E" : "#1A1E28" }}>{l}</span>
+          {!!s && <span style={{ display: "block", fontSize: "14px", lineHeight: "19px", color: "#6B7385", marginTop: "2px" }}>{s}</span>}
+        </span>
+        {!!badge && <span style={{ minWidth: "26px", height: "26px", padding: "0 8px", borderRadius: "13px", background: "#FDF6E7", color: "#8A5C05", fontSize: "13px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{String(badge)}</span>}
+        <span style={{ display: "flex", flex: "none" }}>{ic("chev", 22, "#9BA3B2")}</span>
+      </button>
+    );
+  }
+
+  pageHead(title: string, sub?: string, back?: () => void): ReactNode {
+    const T = this.T();
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: "12px", minHeight: "48px" }}>
+        {back && <button onClick={back} aria-label={T.back} style={{ width: "44px", height: "44px", borderRadius: "22px", border: "none", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flex: "none" }}>{ic("back", 22, "#5223E0")}</button>}
+        <span style={{ flex: 1, minWidth: 0 }}>
+          <span style={{ display: "block", fontSize: "24px", lineHeight: "30px", fontWeight: 700 }}>{title}</span>
+          {!!sub && <span style={{ display: "block", fontSize: "14px", lineHeight: "19px", color: "#6B7385", marginTop: "2px" }}>{sub}</span>}
+        </span>
+      </div>
+    );
+  }
+
+  sectionLabel(l: string): ReactNode {
+    return <div style={{ fontSize: "13px", lineHeight: "18px", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "#6B7385", marginTop: "6px" }}>{l}</div>;
+  }
+
+  renderMore(): ReactNode {
+    const st = this.state, T = this.T(), me = st.me!;
+    const pendN = st.queue.filter((q) => q.status === "pending").length;
+    const tools: ReactNode[] = [];
+    if (me.counts) tools.push(this.menuRow("Stock check", "Count any stock and check it against the book", "chart", () => this.openStock()));
+    if (me.drums) tools.push(this.menuRow("Empty drum entry", "Scan and weigh a drum once it is empty", "box", () => this.openDrum()));
+    return (
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "16px 16px 24px 16px", display: "flex", flexDirection: "column", gap: "10px" }}>
+        {this.pageHead(T.more, "Work besides your tasks")}
+        {this.sectionLabel("Work")}
+        {tools.length ? tools : <div style={{ ...card, padding: "20px", fontSize: "15px", lineHeight: "21px", color: "#6B7385", textAlign: "center" }}>Nothing else to do here. Your tasks are on Home.</div>}
+        {me.head && this.menuRow(T.machines, "Machines and stoppages on the floor", "wrench", () => this.setState({ route: "machines" }))}
+        {me.head && this.menuRow(T.sync, pendN ? pendN + " waiting to send" : "Everything is sent", "sync", () => this.setState({ route: "sync" }), undefined, pendN)}
+        {me.head && this.sectionLabel(T.settings)}
+        {me.head && this.menuRow(T.settings, "Language, PIN, help and sign out", "badge", () => this.setState({ route: "settings" }))}
+      </div>
+    );
+  }
+
+  pickLanguage() {
+    const T = this.T();
+    const LN: Record<Lang, string> = { en: "English", hi: "हिन्दी · Hindi", mr: "मराठी · Marathi" };
+    this.setState({
+      sheet: {
+        type: "reason", title: T.language, sub: "Buttons, steps and spoken help change to this language.", reasons: Object.values(LN), okL: T.ok, sel: LN[this.state.lang],
+        done: (r) => {
+          const k = (Object.keys(LN) as Lang[]).find((x) => LN[x] === r) ?? "en";
+          save(null, "lang", k);
+          void call("setLang", k);
+          this.setState({ lang: k, sheet: null });
+          this.toast(k === "en" ? "Language: English" : k === "hi" ? "भाषा: हिन्दी" : "भाषा: मराठी");
+        },
+      },
+    });
+  }
+
+  askSignOut() {
+    const T = this.T();
+    const pendN = this.state.queue.filter((q) => q.status === "pending").length;
+    if (pendN)
+      return this.setState({ sheet: { type: "reason", title: "Sign out with " + pendN + " job" + (pendN > 1 ? "s" : "") + " waiting?", sub: "It stays on this phone and sends later. No one else can change it.", reasons: ["Yes, sign out"], okL: T.signOut, danger: true, done: () => void this.signOut() } });
+    void this.signOut();
+  }
+
+  renderSettings(): ReactNode {
+    const st = this.state, T = this.T(), me = st.me!, db = this.db();
+    const emp = db.emp[me.key];
+    const LN: Record<Lang, string> = { en: "English", hi: "हिन्दी", mr: "मराठी" };
+    /* Role and badge, each once: "Production Head · production head · —" was three ways of saying one thing. */
+    const role = [emp?.role, emp?.id].filter((x): x is string => !!x && x !== "—" && x !== "-").filter((x, i, a) => a.findIndex((y) => y.toLowerCase() === x.toLowerCase()) === i).join(" · ");
+    return (
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "16px 16px 24px 16px", display: "flex", flexDirection: "column", gap: "10px" }}>
+        {this.pageHead(T.settings)}
+        <div style={{ ...card, padding: "16px", display: "flex", alignItems: "center", gap: "14px" }}>
+          <span style={this.av(me.key, 56)}>{me.ini}</span>
+          <span style={{ flex: 1, minWidth: 0 }}>
+            <span style={{ display: "block", fontSize: "19px", lineHeight: "24px", fontWeight: 700 }}>{me.n}</span>
+            {!!role && <span style={{ display: "block", fontSize: "14px", lineHeight: "19px", color: "#6B7385", marginTop: "2px" }}>{role}</span>}
+            <span style={{ display: "block", fontSize: "14px", lineHeight: "19px", color: "#6B7385", marginTop: "2px" }}>{db.loc + " · " + db.shift.split(" · ")[0]}</span>
+          </span>
+        </div>
+        {this.sectionLabel("App")}
+        {this.menuRow(T.language, LN[st.lang], "globe", () => this.pickLanguage())}
+        {this.menuRow("Change my PIN", "4 numbers you sign in with", "badge", () => this.setState({ signStep: "newpin", newPin: "", newPin1: "", pinErr: "" }))}
+        {this.props.dev && this.menuRow("Network (preview only)", (T as Record<string, string>)[st.net] + " — tap to change", st.net === "offline" ? "wifioff" : "wifi", () => { const nx = ({ online: "weak", weak: "offline", offline: "online" } as const)[st.net]; this.setNet(nx); this.toast((T as Record<string, string>)[nx]); })}
+        {this.menuRow(T.help, "Short videos and audio", "help", () => this.setState({ route: "help" }))}
+        {this.sectionLabel("Account")}
+        {this.menuRow(T.signOut, "Unsent work stays on this phone", "out", () => this.askSignOut(), "danger")}
+        <div style={{ fontSize: "12px", lineHeight: "16px", color: "#9BA3B2", textAlign: "center", marginTop: "8px" }}>{"Mahek One Factory · " + PAGE_BUILD}</div>
+      </div>
+    );
+  }
+
   renderHelp(): ReactNode {
     const st = this.state, T = this.T(), area = st.me!.area;
     const list = HELP.filter((h) => ["scan", "sync"].indexOf(h[0]) > -1 || area === "head" || h[0] === area).concat(HELP.filter((h) => ["scan", "sync"].indexOf(h[0]) < 0 && h[0] !== area && area !== "head"));
     const p = st.play;
     return (
       <div className="fx-scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "16px", display: "flex", flexDirection: "column", gap: "12px" }}>
-        <div style={{ fontSize: "20px", fontWeight: 700 }}>{T.help}</div>
+        {this.pageHead(T.help, "Short videos and audio", () => this.setState({ route: "settings" }))}
         {list.map((h) => {
           const on = !!p && p.id === h[0];
           const i = on ? Math.min(h[4].length - 1, Math.floor((p!.t / Math.max(1, p!.dur)) * h[4].length)) : 0;
@@ -2436,7 +2545,7 @@ export class FactoryApp extends Component<Props, State> {
             {kpis.filter((k) => !st.me?.scope || PROC[k.l] === st.me.scope).map((k) => (
               <button key={k.l} onClick={() => this.setState({ hf: k.l })} style={{ ...card, padding: "14px", textAlign: "left", cursor: "pointer" }}>
                 <span style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", fontWeight: 700, color: "#3D4453" }}>{ic(k.icn, 16)}{k.l}</span>
-                <span style={{ display: "block", fontSize: "24px", lineHeight: "30px", fontWeight: 700, marginTop: "6px" }}>{nf(k.act) + " / " + nf(k.plan)}</span>
+                <span style={{ display: "block", fontSize: "24px", lineHeight: "30px", fontWeight: 700, marginTop: "6px" }}>{nf(k.act)}<span style={{ fontSize: "15px", fontWeight: 600, color: "#6B7385" }}>{" / " + nf(k.plan)}</span></span>
                 <span style={{ display: "block", fontSize: "13px", color: "#6B7385" }}>{k.unit}</span>
                 <span style={{ display: "block", height: "6px", borderRadius: "3px", background: "#EDEFF3", marginTop: "8px", overflow: "hidden" }}><span style={{ display: "block", height: "6px", width: Math.min(100, pct(k.act, Math.max(1, k.plan))) + "%", background: "#6835FB", borderRadius: "3px" }} /></span>
                 <span style={{ display: "block", fontSize: "12px", color: "#6B7385", marginTop: "6px" }}>{k.sub}</span>
@@ -2462,11 +2571,11 @@ export class FactoryApp extends Component<Props, State> {
               <button key={t.id} onClick={() => this.setState({ sheet: { type: "job", id: t.id } })} style={{ display: "flex", alignItems: "center", gap: "12px", width: "100%", padding: "12px", borderRadius: "18px", border: "1px solid " + (js[3] === "late" ? "#F6CFCF" : "#DDE1E8"), background: "#FFFFFF", cursor: "pointer", boxShadow: js[3] === "late" ? "inset 4px 0 0 #B3261E" : "none" }}>
                 <span style={artWell(54, 14)}>{this.taskArt(t, 46)}</span>
                 <span style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+                  <span style={{ display: "flex", marginBottom: "4px" }}><Pill l={js[0]} bg={js[1]} fg={js[2]} /></span>
                   <span style={{ display: "block", fontSize: "15px", lineHeight: "20px", fontWeight: 700 }}>{taskName(db, t)}</span>
                   <span style={{ display: "block", fontSize: "13px", color: "#6B7385", marginTop: "1px" }}>{(T as Record<string, string>)[t.proc] + " · " + t.id + " · " + (t.status === "done" ? nf(t.out?.good) + " " + t.out?.unit + " at " + t.out?.at : taskTarget(db, t).split(" · ")[0] + " · due " + t.due)}</span>
                   <span style={{ display: "block", fontSize: "13px", color: "#3D4453", marginTop: "1px" }}>{[tm.owner, tm.op, ...tm.helpers].filter(Boolean).map((k) => this.name(k).split(" ")[0]).join(" · ") + (tm.helpers.length ? "" : " · no helper")}</span>
                 </span>
-                <Pill l={js[0]} bg={js[1]} fg={js[2]} />
               </button>
             );
           })}
@@ -2537,11 +2646,11 @@ export class FactoryApp extends Component<Props, State> {
             <div key={p} style={{ ...card, padding: "14px" }}>
               <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
                 <span style={{ width: "40px", height: "40px", borderRadius: "12px", background: "#F1ECFF", color: "#5223E0", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{ic(PC[p], 22)}</span>
-                <span style={{ flex: 1 }}>
+                <span style={{ flex: 1, minWidth: 0 }}>
                   <span style={{ display: "block", fontSize: "17px", fontWeight: 700 }}>{(T as Record<string, string>)[p]}</span>
                   <span style={{ display: "block", fontSize: "13px", color: "#6B7385" }}>{done.length + " of " + all.length + " jobs done today"}</span>
                 </span>
-                <span style={{ textAlign: "right" }}>
+                <span style={{ textAlign: "right", flex: "none", maxWidth: "42%" }}>
                   <span style={{ display: "block", fontSize: "22px", fontWeight: 700 }}>{nf(out)}</span>
                   <span style={{ display: "block", fontSize: "12px", color: "#6B7385" }}>{unit}</span>
                 </span>
@@ -2552,10 +2661,10 @@ export class FactoryApp extends Component<Props, State> {
                   <div key={k} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 0", borderBottom: "1px solid #F3F4F7" }}>
                     <span style={this.av(k, 36)}>{this.ini(k)}</span>
                     <span style={{ flex: 1, minWidth: 0 }}>
-                      <span style={{ display: "block", fontSize: "15px", fontWeight: 700 }}>{this.name(k) + (db.emp[k]?.confirm ? " · to confirm" : "")}</span>
-                      <span style={{ display: "block", fontSize: "12px", color: "#6B7385" }}>{ppl[k].role}</span>
+                      <span style={{ display: "block", fontSize: "15px", lineHeight: "20px", fontWeight: 700 }}>{this.name(k)}</span>
+                      <span style={{ display: "block", fontSize: "13px", lineHeight: "18px", color: "#6B7385" }}>{ppl[k].role + (db.emp[k]?.confirm ? " · name to confirm" : "")}</span>
+                      <span style={{ display: "block", fontSize: "13px", lineHeight: "18px", color: "#3D4453" }}>{"In " + ppl[k].done + " of " + ppl[k].jobs + " jobs · " + (db.hours[k] != null ? db.hours[k] + " h" : "no check-in")}</span>
                     </span>
-                    <span style={{ textAlign: "right", fontSize: "13px", color: "#3D4453" }}>{"In " + ppl[k].done + " of " + ppl[k].jobs + " jobs · " + (db.hours[k] != null ? db.hours[k] + " h" : "no check-in")}</span>
                   </div>
                 ))}
               </div>
@@ -2735,56 +2844,6 @@ export class FactoryApp extends Component<Props, State> {
         { l: T.back, run: close, style: { ...btn("s", 58), flex: 1 } },
         { l: st.busy ? T.sending : sh.okL || "Send", run: () => { if (sh.sel && !st.busy) sh.done(sh.sel); }, style: { ...btn(sh.sel && !st.busy ? (sh.danger ? "d" : "p") : "off", 58), flex: 2 } },
       ];
-    }
-
-    if (sh.type === "menu") {
-      const me = st.me!;
-      const db = this.db();
-      const emp = db.emp[me.key];
-      const LN: Record<Lang, string> = { en: "English", hi: "हिन्दी · Hindi", mr: "मराठी · Marathi" };
-      const row = (l: string, s: string, icn: string, run: () => void) => (
-        <button key={l} onClick={run} style={{ display: "flex", alignItems: "center", gap: "12px", width: "100%", minHeight: "64px", padding: "8px 12px", borderRadius: "16px", border: "1px solid #DDE1E8", background: "#FFFFFF", cursor: "pointer" }}>
-          <span style={{ width: "44px", height: "44px", borderRadius: "12px", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{ic(icn, 22, "#5223E0")}</span>
-          <span style={{ flex: 1, textAlign: "left" }}>
-            <span style={{ display: "block", fontSize: "17px", fontWeight: 700 }}>{l}</span>
-            {s && <span style={{ display: "block", fontSize: "13px", color: "#6B7385", marginTop: "1px" }}>{s}</span>}
-          </span>
-          <span style={{ color: "#9BA3B2", display: "flex" }}>{ic("chev", 24)}</span>
-        </button>
-      );
-      const pendN = st.queue.filter((q) => q.status === "pending").length;
-      title = me.n;
-      sub = (emp?.role ?? "") + " · " + (emp?.id ?? "");
-      body = (
-        <>
-          {row(T.language, LN[st.lang], "globe", () =>
-            this.setState({
-              sheet: {
-                type: "reason", title: T.language, sub: "Buttons, steps and spoken help change to this language.", reasons: Object.values(LN), okL: T.ok, sel: LN[st.lang],
-                done: (r) => {
-                  const k = (Object.keys(LN) as Lang[]).find((x) => LN[x] === r) ?? "en";
-                  save(null, "lang", k);
-                  void call("setLang", k);
-                  this.setState({ lang: k, sheet: null });
-                  this.toast(k === "en" ? "Language: English" : k === "hi" ? "भाषा: हिन्दी" : "भाषा: मराठी");
-                },
-              },
-            }),
-          )}
-          {row("Work place", db.loc + " · " + db.shift.split(" · ")[0], "pin", () => this.toast("Your supervisor sets your work place"))}
-          {row(T.sync, pendN + " waiting", "sync", () => this.setState({ sheet: null, route: "sync" }))}
-          {row(T.help, "Short videos and audio", "help", () => this.setState({ sheet: null, route: "help" }))}
-          {me.counts && row("Stock check", "Count any stock and check it against the book", "chart", () => this.openStock())}
-          {me.drums && row("Empty drum entry", "Scan and weigh a drum once it is empty", "box", () => this.openDrum())}
-          {row("Change my PIN", "4 numbers you sign in with", "badge", () => this.setState({ sheet: null, signStep: "newpin", newPin: "", newPin1: "", pinErr: "" }))}
-          {this.props.dev && row("Network (preview only)", (T as Record<string, string>)[st.net] + " — tap to change", st.net === "offline" ? "wifioff" : "wifi", () => { const nx = ({ online: "weak", weak: "offline", offline: "online" } as const)[st.net]; this.setNet(nx); this.toast((T as Record<string, string>)[nx]); })}
-          {row(T.signOut, "Unsent work stays on this phone", "out", () => {
-            if (pendN)
-              return this.setState({ sheet: { type: "reason", title: "Sign out with " + pendN + " job" + (pendN > 1 ? "s" : "") + " waiting?", sub: "It stays on this phone and sends later. No one else can change it.", reasons: ["Yes, sign out"], okL: T.signOut, danger: true, done: () => void this.signOut() } });
-            void this.signOut();
-          })}
-        </>
-      );
     }
 
     if (sh.type === "job") body = this.jobSheet(sh.id, (t, s, b, a) => { title = t; sub = s; acts = a; return b; });

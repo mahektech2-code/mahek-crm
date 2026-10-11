@@ -59,7 +59,7 @@ export type KpSheet = {
 export type PeopleSheet = { type: "people"; role: "owner" | "op" | "helpers" | "ver"; multi: boolean; sel: string[]; area: string; onDone?: (sel: string[]) => void };
 export type TilesSheet = { type: "tiles"; title: string; sub?: string; groups: { title?: string; cols?: number; items: { l: string; sub?: string; art?: ReactNode; v: string }[] }[]; pick: (v: string) => void };
 export type ReasonSheet = { type: "reason"; title: string; sub?: string; reasons: string[]; okL?: string; sel?: string; danger?: boolean; done: (r: string) => void };
-export type Sheet = KpSheet | PeopleSheet | TilesSheet | ReasonSheet | { type: "menu" } | { type: "job"; id: string } | { type: "assign" };
+export type Sheet = KpSheet | PeopleSheet | TilesSheet | ReasonSheet | { type: "job"; id: string } | { type: "assign" };
 
 export type SignStep = "lang" | "id" | "pin" | "otp" | "newpin";
 
@@ -86,6 +86,8 @@ export type State = {
   sheet: Sheet | null;
   net: Net;
   toast: string;
+  /** `warn` draws the toast as a caution — a refusal is never shown with a tick. */
+  toastTone: "ok" | "warn";
   play: { id: string; t: number; dur: number; on: boolean } | null;
   hf: string;
   asg: { proc: Proc; item: string; qty: number; due: string } | null;
@@ -126,6 +128,12 @@ export type LrEntry = {
   err: { title: string; text: string; fix: string } | null;
   saving: boolean;
   saved: { id: string; msg: string; lrNo: string | null } | null;
+  /** Many photos at once — the default, because the floor uploads a stack. */
+  many: boolean;
+  /** The photos waiting to go, each with its upload's progress. */
+  tray: { uri: string; fileId: string | null; state: "waiting" | "uploading" | "up" | "failed" }[];
+  batchBusy: boolean;
+  batchMsg: string | null;
 };
 
 /* ------------------------------------------------------------ the phone's memory */

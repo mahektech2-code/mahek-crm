@@ -306,6 +306,13 @@ export type LrRecent = { id: string; lrNo: string | null; lrDate: string | null;
 
 export type LrKit = { ok: true; transporters: string[]; canRead: boolean; recent: LrRecent[]; terms: string[] } | { ok: false; title: string; text: string; fix: string };
 
+/** Up to `LR_BATCH_MAX` photos stored in one press — each its own photo-only LR on the desk. */
+export const LR_BATCH_MAX = 20;
+
+export type LrBatchSave =
+  | { ok: true; ids: string[]; stored: number; already: number; refused: number; reading: boolean; msg: string; recent: LrRecent[] }
+  | { ok: false; title: string; text: string; fix: string };
+
 export type LrReading =
   | { ok: true; readingId: string; fields: LrFields; check: boolean; notes: string[] }
   | { ok: false; text: string };

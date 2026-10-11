@@ -30,7 +30,7 @@ export const IC: Record<string, string> = {
   chart:'<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>', list:'<path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/>',
   wrench:'<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.5-.5-.5-2.5z"/>',
   plus:'<path d="M12 5v14M5 12h14"/>', minus:'<path d="M5 12h14"/>', del:'<path d="M9 5h11v14H9l-6-7z"/><path d="M12.5 9.5l5 5M17.5 9.5l-5 5"/>',
-  camera:'<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>', torch:'<path d="M8 3h8l-1 6H9zM9 9h6v4l-1 8h-4l-1-8z"/>',
+  camera:'<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>', photo:'<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="M21 15l-5-5-11 10"/>', torch:'<path d="M8 3h8l-1 6H9zM9 9h6v4l-1 8h-4l-1-8z"/>',
   globe:'<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"/>',
   out:'<path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"/>', pin:'<path d="M12 21s7-6.4 7-11.5A7 7 0 0 0 5 9.5C5 14.6 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/>',
   badge:'<rect x="5" y="3" width="14" height="18" rx="2"/><circle cx="12" cy="10" r="3"/><path d="M8.5 17a3.5 3.5 0 0 1 7 0"/>', bolt:'<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>'

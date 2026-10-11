@@ -406,7 +406,8 @@ export async function people(godownId: string): Promise<{ emp: Record<string, Em
       key: r.id,
       n: r.name,
       ph: "",
-      role: AREA_WORD[r.area] + (r.roleLabel ? " · " + r.roleLabel.toLowerCase() : ""),
+      /* "Production Head · production head" said the job twice. */
+      role: AREA_WORD[r.area] + (r.roleLabel && r.roleLabel.toLowerCase() !== AREA_WORD[r.area].toLowerCase() ? " · " + r.roleLabel.toLowerCase() : ""),
       area: r.area,
       id: r.code ?? "—",
       badge: r.badge ?? r.code ?? undefined,

@@ -286,6 +286,30 @@ describe("dispatch", () => {
     const mixing = await saveLr((await as("anil")).fc, { ...lr, lrNo: "BH 4472" });
     assert.equal((mixing as { title: string }).title, "Not your work");
   });
+
+  test("up to twenty LR photos are stored at once, each its own LR, and a resend stores nothing twice", async () => {
+    const { saveLrPhotos } = await import("./dispatch");
+    const { fc } = await as("imran");
+    const file = async (owner: string) => {
+      const id = "att_lrb_" + randomUUID().slice(0, 8);
+      await db.execute(sql`insert into attachments (id, filename, stored_ref, content_type, size_bytes, status, uploaded_by_id)
+                           values (${id}, 'lr.jpg', ${"ref/" + id}, 'image/jpeg', 1000, 'available', ${owner})`);
+      return id;
+    };
+    const mine = await Promise.all(Array.from({ length: 3 }, () => file(fc.user.id)));
+    const theirs = await file(floor.users.anil.id);
+    const r = await saveLrPhotos(fc, [...mine, theirs]);
+    assert.ok(r.ok, JSON.stringify(r));
+    assert.equal(r.stored, 3);
+    assert.equal(r.refused, 1, "somebody else's file is not stored");
+    const rows = await q<{ n: number }>(sql`select count(*)::int as n from erp_lrs where file_id in (${sql.join(mine.map((m) => sql`${m}`), sql`, `)}) and lr_no is null`);
+    assert.equal(rows[0].n, 3, "each photo is its own photo-only LR");
+    const again = await saveLrPhotos(fc, mine);
+    assert.ok(again.ok && again.stored === 0 && again.already === 3);
+    const tooMany = await saveLrPhotos(fc, Array.from({ length: 21 }, (_, i) => "att_x" + i));
+    assert.equal(tooMany.ok, false);
+    assert.equal((await saveLrPhotos((await as("anil")).fc, mine)).ok, false, "only dispatch uploads LRs");
+  });
 });
 
 describe("the Production Head", () => {
