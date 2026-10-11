@@ -1907,7 +1907,7 @@ const rmLog: ScreenModule = {
       },
       rows: rows.map((r) => ({
         id: r.id,
-        v: { date: r.date, type: r.sourceType === "purchase" ? "Purchase" : "Transfer", item: r.item, lot: r.lot, qty: Number(r.qty), godown: r.godown, source: r.sourceId },
+        v: { date: r.date, type: r.sourceType === "purchase" ? "Purchase" : r.sourceType === "adjustment" ? "Stock adjustment" : "Transfer", item: r.item, lot: r.lot, qty: Number(r.qty), godown: r.godown, source: r.sourceId },
         flags: r.orphan ? ["orphan"] : [],
         title: `${r.item} · ${r.lot}`,
         by: `Posted ${stampLine(null, r.postedAt).replace(/^Created /, "")}`,

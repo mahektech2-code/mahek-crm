@@ -17,8 +17,9 @@ import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { appAccess, erpDesignations, erpRawMaterials, erpRequisitions, erpSuppliers, erpUserDesignations, users } from "@/db/schema";
+import { appAccess, appSettings, erpDesignations, erpRawMaterials, erpRequisitions, erpSuppliers, erpUserDesignations, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
+import { invalidateConfig } from "@/lib/config/store";
 import { erpContext } from "@/lib/erp/access";
 import { screenModule } from "@/lib/erp/screens";
 import { erpNavCounts } from "@/lib/erp/counts";
@@ -68,6 +69,12 @@ const raise = async (u: typeof users.$inferSelect, department: string, type: str
   mod("requisitions").forms!.new(await as(u), { date: TODAY, requiredBy: "2026-10-20", department, godown: "Bhiwandi", type, item, required: qty, priority: "Medium" }, []);
 
 before(async () => {
+  /* This suite is about the flow after the stock check; the check has its own suite (erp-stock-check). */
+  await db
+    .insert(appSettings)
+    .values({ key: "erp.stockCheck.onRequirement", value: false, valueType: "boolean", category: "erp", label: "Count stock before every purchase requirement" })
+    .onConflictDoUpdate({ target: appSettings.key, set: { value: false } });
+  invalidateConfig();
   await db.execute(
     sql`truncate users, erp_designations, erp_raw_materials, erp_suppliers, erp_inward, erp_tests, erp_purchases, erp_rm_entries, erp_requisitions, erp_quotations, erp_purchase_orders, erp_po_lines, erp_user_powers, erp_godown_staff, erp_user_settings, audit_log restart identity cascade`,
   );

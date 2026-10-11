@@ -140,6 +140,19 @@ export async function erpNavCounts(ctx: ErpContext): Promise<Record<string, numb
         (r) => void (out.sfgBatches = Number(r[0]?.n ?? 0)),
       ),
     );
+  /* Inventory accuracy: counts due, red flags still open, and — for whoever approves them — adjustments waiting. */
+  if (["countTasks", "stockFlags", "stockAdjustments"].some((k) => ctx.screens.has(k)))
+    jobs.push(
+      (db.execute(sql`
+        select (select count(*) from erp_stock_counts where status = 'open' and due_date <= (now() at time zone 'Asia/Kolkata')::date)::int as due,
+               (select count(*) from erp_stock_counts where recount_of_id is null and status in ('flagged', 'investigating'))::int as flags,
+               (select count(*) from erp_stock_adjustments where status = 'pending')::int as adj
+      `) as unknown as Promise<{ due: number; flags: number; adj: number }[]>).then((r) => {
+        out.countTasks = Number(r[0]?.due ?? 0);
+        out.stockFlags = Number(r[0]?.flags ?? 0);
+        if (ctx.powers.has("stockControl")) out.stockAdjustments = Number(r[0]?.adj ?? 0);
+      }),
+    );
   await Promise.all(jobs);
   return out;
 }

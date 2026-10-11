@@ -1758,6 +1758,13 @@
       "when": 1792532143442,
       "tag": "0253_transporter_gst_and_godowns",
       "breakpoints": true
+    },
+    {
+      "idx": 251,
+      "version": "7",
+      "when": 1792532144442,
+      "tag": "0254_erp_inventory_accuracy",
+      "breakpoints": true
     }
   ]
 }
