@@ -35,7 +35,7 @@ export default async function ErpDispatch({ searchParams }: { searchParams: Prom
       <Page
         title="Dispatch desk"
         sub="Choose an order, then scan every box going onto the lorry. Each box is checked against the order's product, pack size and quantity as it is scanned."
-        actions={kit ? <UploadLrsButton key={upload} variant="secondary" today={today} transporters={kit.transporters} recent={kit.recent} initialOpen={upload === "1"} /> : null}
+        actions={kit ? <UploadLrsButton key={upload} variant="secondary" today={today} transporters={kit.transporters} recent={kit.recent} canRead={kit.canRead} initialOpen={upload === "1"} /> : null}
       >
         <form action="/erp/dispatch" method="get" className="mb-4 flex max-w-[420px] gap-2">
           <input name="order" inputMode="numeric" placeholder="Order number" autoFocus className="h-10 flex-1 rounded-[4px] border border-line bg-surface px-3 text-sm outline-none focus:border-brand" />

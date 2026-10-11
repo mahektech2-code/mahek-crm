@@ -249,6 +249,38 @@ describe("dispatch opens the transport record (§18)", () => {
   });
 });
 
+describe("reading an LR photo into the upload form", () => {
+  test("the model is told each transporter's label and earlier numbers, and a reading is settled against what was uploaded", async () => {
+    const ctx = await as(admin);
+    await db.insert(erpTransporters).values({ id: id("etr"), name: `Maruti ${tag}`, consignmentLabel: "GR Number", updatedById: admin.id }).onConflictDoNothing();
+    assert.ok((await L.uploadLrs(ctx, [{ lrNo: `77${tag.replace(/\D/g, "1").slice(0, 3)}01`, transporter: `Maruti ${tag}` }])).ok);
+    const { lrStyles, settleLrReadings } = await import("@/lib/erp/lr-upload-read");
+    const style = (await lrStyles()).find((t) => t.name === `Maruti ${tag}`)!;
+    assert.equal(style.label, "GR Number");
+    assert.equal(style.examples.length, 1, "its earlier number is its style");
+
+    const { logSuggestion } = await import("@/lib/erp/ai");
+    const { erpAiSuggestions } = await import("@/db/schema");
+    const proposed = { lrNo: "GR-501", lrDate: "2026-08-03", transporter: `Maruti ${tag}`, destination: "Pune", packages: 4, freightTerm: "To pay", freightRupees: null };
+    const accepted = await logSuggestion({ feature: "photos", recordType: "erp_lr", proposed, userId: ctx.actor.id });
+    const edited = await logSuggestion({ feature: "photos", recordType: "erp_lr", proposed: { ...proposed, lrNo: "GR-5O2" }, userId: ctx.actor.id });
+    const up = await L.uploadLrs(ctx, [
+      { ...proposed, readingId: accepted },
+      { ...proposed, lrNo: "GR-502", readingId: edited },
+    ]);
+    assert.ok(up.ok, msg(up));
+    const [a1] = await db.select().from(erpAiSuggestions).where(eq(erpAiSuggestions.id, accepted));
+    const [e1] = await db.select().from(erpAiSuggestions).where(eq(erpAiSuggestions.id, edited));
+    assert.equal(a1.outcome, "accepted");
+    assert.equal(a1.recordId, up.ok ? up.data.ids[0] : null, "the reading points at the LR it became");
+    assert.equal(e1.outcome, "edited", "the person corrected the number");
+
+    /* A reading is settled once, and only by the person it was read for. */
+    await settleLrReadings(ctx, [{ readingId: accepted, lrId: "elr_other", final: {} }]);
+    assert.equal((await db.select().from(erpAiSuggestions).where(eq(erpAiSuggestions.id, accepted)))[0].recordId, a1.recordId);
+  });
+});
+
 describe("complaints and credit notes are the CRM's complaints", () => {
   test("a credit-note request names a real bill and goods on it, lands as a CRM complaint, and only the office decides", async () => {
     /* The ERP is not live here, so the bill is one the sheet wrote — the bills Accounts credits against. */

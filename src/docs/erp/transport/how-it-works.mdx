@@ -25,6 +25,10 @@ It is read from the stage and the LR every time, so the desk, the old list and t
 The dispatch team collects the LRs from the transporters and uploads them (Logistics screen or Dispatch desk). Logistics decides which bills each carries. An uploaded LR is *unassigned* until attached; a wrong upload is **voided** with a reason, never deleted. An LR number is unique per transporter.
 </Rule>
 
+<Rule title="A photo is read against the transporter's own style">
+Each LR photo or PDF is read by OpenAI (<Setting k="erp.ai.visionModel" />) as soon as it is uploaded, while <Setting k="erp.ai.photos.enabled" /> is on, an OpenAI key is set and this month's <Setting k="erp.ai.photos.monthlyCap" /> readings are not used up. A receipt carries a phone, a GSTIN, an invoice number and a pin code beside the consignment number, so the model is told every transporter on the desk, what it calls its number (its *consignment label* — GR Number, G.C Number…) and what its last few numbers looked like. The answer is then checked by rules: the transporter is matched to the desk's own spelling, a number not shaped like that transporter's earlier ones is marked to check, and a date in the future or months old is not filled in. Only fields nobody has typed are filled, and Upload is still the only save. Whether each reading was accepted or edited is recorded against the LR it became.
+</Rule>
+
 <Rule title="One LR is one party">
 An LR is one consignment to one consignee, so the bills under it must go to one delivery party. A bill already under another LR, or delivered, cannot be attached.
 </Rule>

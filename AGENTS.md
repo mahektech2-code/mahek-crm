@@ -8085,6 +8085,14 @@ bill moved past Dispatched with no LR is still waiting for its LR.
 (`erp_lrs`) through the Upload LRs MODAL on the Logistics screen and the
 Dispatch desk (`parts/upload-lrs-button.tsx`; the old `/erp/transport/upload`
 only redirects to a desk with it open); logistics attaches on the LR desk.
+**A photo is READ as it uploads** (`lr-upload-read.ts`, OpenAI through
+`erp.ai.photos` and its cap): the model is given every transporter's
+`consignment_label` and its last few LR numbers, because a receipt carries half
+a dozen numbers and the transporter's own style is what picks the right one;
+`engines/lr-read.ts` matches the transporter to the desk's spelling, marks a
+number not shaped like its earlier ones to check, and drops an impossible date.
+It fills only fields nobody typed; Upload is still the save, and settles the
+reading accepted or edited.
 **No upload field is required** (`lrRowHasAnything`): a photo alone is an LR,
 so `lr_no` is nullable (`0251`), and the number is demanded at ATTACH instead,
 because the customer's message quotes it — the desk marks such an LR "Number
