@@ -263,3 +263,53 @@ export type DrumSaved = {
 export type DrumSave =
   | { ok: true; drum: DrumSaved; replay?: boolean }
   | { ok: false; kind: "confirm" | "weight" | "lot" | "notFound" | "signedOut" | "notAllowed"; title: string; text: string; fix: string; existing?: DrumExisting[] };
+
+/* ---------------------------------------------------------------- loading boxes
+ * A BOX LABEL ON THE LORRY. Packing prints a label per box (BX-…), and the
+ * ERP's Dispatch desk counts a box onto an order only when it is scanned. The
+ * loader scans it here instead of at the desk: the phone sends the code, the
+ * ERP's own `scanOntoOrder` judges it and writes it (lib/factory/dispatch.ts),
+ * so a box counted on the lorry is a box counted on the desk — one count.
+ * ------------------------------------------------------------------------- */
+
+export type LoadedBox = { id: string; lot: string; sku: string; at: string | null; by: string | null };
+
+/** The order's boxes as the ERP holds them: every one scanned onto it, and how many per lot. */
+export type LoadBoard = { order: string; boxes: LoadedBox[]; perLot: Record<string, number> };
+
+export type BoxScan =
+  | { ok: true; code: string; message: string; board: LoadBoard; data: FactoryData | null }
+  | { ok: false; code: string; title: string; text: string; fix: string; board: LoadBoard | null };
+
+/** What a box label is, for the home scan. */
+export type BoxInfo = { ok: true; line: string } | { ok: false; title: string; text: string; fix: string };
+
+/* ---------------------------------------------------------------- the LRs
+ * THE DISPATCH TEAM UPLOADS THE LR FROM THE PHONE IT IS STANDING WITH. The
+ * same register the ERP's Upload LRs button writes (lib/erp/logistics.ts
+ * `uploadLrs`): logistics attaches it to its bills on the LR desk, which is
+ * where a customer is told — never from the floor.
+ * ------------------------------------------------------------------------- */
+
+export type LrFields = {
+  lrNo: string | null;
+  /** YYYY-MM-DD */
+  lrDate: string | null;
+  transporter: string | null;
+  destination: string | null;
+  packages: number | null;
+  freightTerm: string | null;
+  freightRupees: number | null;
+};
+
+export type LrRecent = { id: string; lrNo: string | null; lrDate: string | null; transporter: string | null; destination: string | null; packages: number | null; status: string; bills: number; uploadedBy: string | null };
+
+export type LrKit = { ok: true; transporters: string[]; canRead: boolean; recent: LrRecent[]; terms: string[] } | { ok: false; title: string; text: string; fix: string };
+
+export type LrReading =
+  | { ok: true; readingId: string; fields: LrFields; check: boolean; notes: string[] }
+  | { ok: false; text: string };
+
+export type LrSave =
+  | { ok: true; id: string; msg: string; replay?: boolean; recent: LrRecent[] }
+  | { ok: false; title: string; text: string; fix: string; field?: string };

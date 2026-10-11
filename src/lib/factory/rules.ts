@@ -15,13 +15,28 @@ import { CHECK_ITEMS, STEPS } from "./types";
 
 export const nf = (n: number | null | undefined) => Number(n || 0).toLocaleString("en-IN");
 
-export type ScanPurpose = "badge" | "home" | "rm" | "sfg" | "pm" | "fg" | "load" | "drum";
+export type ScanPurpose = "badge" | "home" | "rm" | "sfg" | "pm" | "fg" | "load" | "drum" | "lr";
 export type ScanMeta = { item?: string; idx?: number };
 export type ScanResult =
   | { ok: false; code: string; title: string; text: string; fix: string }
   | { ok: true; code: string; kind: "emp"; emp: string }
   | { ok: true; code: string; kind: "task"; task: string }
   | { ok: true; code: string; kind: "info" | "lot"; lot: string };
+
+/**
+ * A box label (BX-yymmdd-nnnnnn, or LU- for a loose unit), read the way the
+ * ERP reads one — a QR may carry the whole tracking URL — or null. Only the
+ * server judges a box: the phone holds lots, never the boxes in them.
+ */
+export function boxCode(raw: string): string | null {
+  let s = String(raw ?? "").trim();
+  const slash = s.lastIndexOf("/");
+  if (/^https?:\/\//i.test(s) && slash >= 0) s = s.slice(slash + 1);
+  const q = s.indexOf("?");
+  if (q >= 0) s = s.slice(0, q);
+  s = s.trim().toUpperCase();
+  return /^(BX|LU)-\d{6}-\d{6}$/.test(s) ? s : null;
+}
 
 /* ------------------------------------------------------------- naming */
 

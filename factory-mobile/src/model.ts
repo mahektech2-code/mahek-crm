@@ -18,11 +18,13 @@ import type { Lang } from "@/lib/factory/i18n";
 import type { ScanMeta, ScanPurpose, ScanResult } from "@/lib/factory/rules";
 import type { Draft, FactoryData, Proc, SubmitResult, Task } from "@/lib/factory/types";
 import type { Me, Who } from "./types";
-import type { DrumLotView, DrumSaved } from "@/lib/factory/types";
+import type { DrumLotView, DrumSaved, LoadBoard, LrFields, LrRecent } from "@/lib/factory/types";
 
 export type Net = "online" | "weak" | "offline";
 export type Flow = { task: Task; step: number; d: Draft; key: string };
-export type Scan = { purpose: ScanPurpose; meta: ScanMeta; res: (ScanResult & { manual?: boolean }) | null; torch: boolean };
+/** A box label the server judged: loaded onto the order, or looked up from the home scan. */
+export type BoxOk = { ok: true; code: string; kind: "box"; name: string; text: string; facts: { l: string; v: string }[] };
+export type Scan = { purpose: ScanPurpose; meta: ScanMeta; res: ((ScanResult | BoxOk) & { manual?: boolean }) | null; torch: boolean };
 export type Res =
   | { kind: "sending"; key: string }
   | { kind: "pending"; key: string; task: string; proc: Proc }
@@ -97,6 +99,31 @@ export type State = {
   cam: "wait" | "live" | "none" | "denied";
   /** Empty drum entry: the lot scanned, the weight typed, and what the server answered. */
   drum: DrumEntry | null;
+  /** The order being loaded: its boxes as the ERP holds them. */
+  board: LoadBoard | null;
+  /** Upload LR: the photo, what was read off it, and what the server answered. */
+  lr: LrEntry | null;
+};
+
+export type LrEntry = {
+  transporters: string[];
+  terms: string[];
+  canRead: boolean;
+  recent: LrRecent[];
+  /** The photo on this phone, and its attachment once uploaded. */
+  photo: string | null;
+  fileId: string | null;
+  uploading: boolean;
+  reading: boolean;
+  readingId: string | null;
+  /** Fields the photo reading filled — drawn "read" until somebody changes them. */
+  read: Partial<Record<keyof LrFields, boolean>>;
+  check: boolean;
+  notes: string[];
+  f: LrFields;
+  err: { title: string; text: string; fix: string } | null;
+  saving: boolean;
+  saved: { id: string; msg: string; lrNo: string | null } | null;
 };
 
 /* ------------------------------------------------------------ the phone's memory */

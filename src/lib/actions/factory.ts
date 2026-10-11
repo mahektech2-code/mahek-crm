@@ -13,7 +13,8 @@ import { eq } from "drizzle-orm";
 import { bootstrap, contextFor, factoryAudit, factoryContext, type FactoryCtx } from "@/lib/factory/server";
 import { submitJob } from "@/lib/factory/post";
 import { assignTask, changeTeam, decideReview, reportProblem, requestCorrection } from "@/lib/factory/head";
-import type { DrumExisting, DrumLookup, DrumSave, FactoryData, Proc, Submission, SubmitResult, Team } from "@/lib/factory/types";
+import type { BoxInfo, BoxScan, DrumExisting, DrumLookup, DrumSave, FactoryData, LoadBoard, LrFields, LrKit, LrReading, LrSave, Proc, Submission, SubmitResult, Team } from "@/lib/factory/types";
+import { boxInfo, loadBoard, lrKit, readLr, saveLr, scanBox, unloadBox } from "@/lib/factory/dispatch";
 import { findDrumLot, lotRefusal, recordEmptyDrum, type DrumLot } from "@/lib/erp/drums";
 import { DRUM_STATUS_LABEL, OWNERSHIP_LABEL, drumLabel } from "@/lib/erp/engines/drums";
 import { getConfig } from "@/lib/config/store";
@@ -42,6 +43,8 @@ export type Me = {
   scope?: FactoryCtx["scope"];
   /** Records empty drums from the phone. Absent on an older server: no drum entry is offered. */
   drums?: boolean;
+  /** Loads boxes and uploads LRs. Absent on an older server: neither is offered. */
+  dispatch?: boolean;
 };
 export type Who = { key: string; n: string; ini: string; ph: string; hasPin: boolean };
 type Fail = { ok: false; error: string };
@@ -51,7 +54,7 @@ const NOT_FOUND = "notFound";
 const INACTIVE = "inactive";
 
 function meOf(fc: FactoryCtx): Me {
-  return { key: fc.user.id, n: fc.user.name, ini: initialsOf(fc.user.name), head: fc.head, area: fc.area, lang: fc.lang, scope: fc.scope, drums: fc.drums };
+  return { key: fc.user.id, n: fc.user.name, ini: initialsOf(fc.user.name), head: fc.head, area: fc.area, lang: fc.lang, scope: fc.scope, drums: fc.drums, dispatch: fc.dispatch };
 }
 
 async function whoFor(user: User, typed: string): Promise<{ ok: true; who: Who } | Fail> {
@@ -293,4 +296,45 @@ export async function factoryEmptyDrum(input: { code: string; kg: number | null;
     replay: d.replay,
     drum: { label: d.label, seq: d.seq, drums: d.drums, lotNo: d.lotNo, material: d.material, supplier: d.supplier, statusLabel: d.statusLabel, ownership: d.ownership, declaredKg: d.declaredTareKg, actualKg: d.actualKg, varianceKg: d.varianceKg, reviewReason: d.reviewReason },
   };
+}
+
+/* ------------------------------------------------------------ loading and LRs
+ * lib/factory/dispatch.ts does the work, through the ERP's own dispatch scan
+ * and LR register; these only say who is asking. */
+
+const SIGNED_OUT = { title: "Please sign in again", text: "Nothing was saved.", fix: "Sign in, then try again." };
+
+export async function factoryLoadBoard(order: string): Promise<LoadBoard | null> {
+  const fc = await factoryContext();
+  return fc ? loadBoard(fc, order) : null;
+}
+export async function factoryScanBox(order: string, code: string): Promise<BoxScan> {
+  const fc = await factoryContext();
+  if (!fc) return { ok: false, code: String(code ?? ""), ...SIGNED_OUT, board: null };
+  return scanBox(fc, order, code);
+}
+export async function factoryUnloadBox(order: string, unitId: string): Promise<BoxScan> {
+  const fc = await factoryContext();
+  if (!fc) return { ok: false, code: String(unitId ?? ""), ...SIGNED_OUT, board: null };
+  return unloadBox(fc, order, unitId);
+}
+export async function factoryBoxInfo(code: string): Promise<BoxInfo> {
+  const fc = await factoryContext();
+  if (!fc) return { ok: false, ...SIGNED_OUT };
+  return boxInfo(code);
+}
+export async function factoryLrKit(): Promise<LrKit> {
+  const fc = await factoryContext();
+  if (!fc) return { ok: false, ...SIGNED_OUT };
+  return lrKit(fc);
+}
+export async function factoryReadLr(fileId: string): Promise<LrReading> {
+  const fc = await factoryContext();
+  if (!fc) return { ok: false, text: SIGNED_OUT.title };
+  return readLr(fc, fileId);
+}
+export async function factorySaveLr(input: LrFields & { fileId: string | null; readingId: string | null; note?: string | null }): Promise<LrSave> {
+  const fc = await factoryContext();
+  if (!fc) return { ok: false, ...SIGNED_OUT };
+  return saveLr(fc, input);
 }

@@ -1368,8 +1368,8 @@ export class FactoryApp extends Component<Props, State> {
     const st = this.state, T = this.T(), sc = st.scan!, f = st.flow, m = sc.meta, P = sc.purpose, r = sc.res;
     const db = st.db;
     const rmName = m.item && db?.rm[m.item] ? db.rm[m.item].n : "";
-    const title = { badge: T.scanBadge, home: T.scanQR, rm: rmName, sfg: "Base liquid", pm: "Empty cans", fg: "Filled cans", load: f ? (f.task.order ?? "") : "", drum: "Empty drum" }[P] || T.scanQR;
-    const hint = { badge: "Show your company badge", home: "Scan a task sheet, order or lot label", rm: "Scan the " + rmName + " drum", sfg: "Scan the base-liquid tank", pm: "Scan the empty-can stack", fg: "Scan the filled-can pallet", load: "Scan each pallet before loading", drum: "Scan the GRN label on the empty drum" }[P];
+    const title = { badge: T.scanBadge, home: T.scanQR, rm: rmName, sfg: "Base liquid", pm: "Empty cans", fg: "Filled cans", load: f ? (f.task.order ?? "") : "", drum: "Empty drum", lr: "LR number" }[P] || T.scanQR;
+    const hint = { badge: "Show your company badge", home: "Scan a task sheet, order or lot label", rm: "Scan the " + rmName + " drum", sfg: "Scan the base-liquid tank", pm: "Scan the empty-can stack", fg: "Scan the filled-can pallet", load: "Scan each pallet before loading", drum: "Scan the GRN label on the empty drum", lr: "Scan the barcode printed on the LR" }[P];
     const hasManual = ["rm", "sfg", "pm", "fg", "load"].indexOf(P) > -1;
     const noCam = st.cam === "none" || st.cam === "denied";
     const labels = noCam && (this.props.dev || st.cam === "none") ? this.scanLabels() : [];

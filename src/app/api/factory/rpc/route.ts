@@ -33,6 +33,13 @@ const OPS = {
   decide: A.factoryDecide,
   drumLookup: A.factoryDrumLookup,
   emptyDrum: A.factoryEmptyDrum,
+  loadBoard: A.factoryLoadBoard,
+  scanBox: A.factoryScanBox,
+  unloadBox: A.factoryUnloadBox,
+  boxInfo: A.factoryBoxInfo,
+  lrKit: A.factoryLrKit,
+  readLr: A.factoryReadLr,
+  saveLr: A.factorySaveLr,
 } as const;
 
 export type FactoryOp = keyof typeof OPS;

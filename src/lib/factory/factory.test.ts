@@ -19,7 +19,8 @@ import { seedFactoryFloor, type SeededFloor } from "./demo-seed";
 import { bootstrap, contextFor, type FactoryCtx } from "./server";
 import { submitJob } from "./post";
 import { assignTask, decideReview, requestCorrection } from "./head";
-import { resolveScan } from "./rules";
+import { boxCode, resolveScan } from "./rules";
+import { boxInfo, loadBoard, lrKit, saveLr, scanBox, unloadBox } from "./dispatch";
 import { setAccess } from "@/lib/actions/access";
 import type { Draft, FactoryData, Submission, Task } from "./types";
 
@@ -65,7 +66,7 @@ before(async () => {
              erp_user_settings, erp_sfg_qc, erp_units, erp_unit_events, erp_orders, erp_batch_codes, erp_order_details,
              erp_recipes, products, finished_goods, product_brands, product_formulations,
              factory_staff, factory_team_defaults, factory_tasks, factory_task_members, factory_submissions,
-             factory_reviews, factory_downtime, audit_log restart identity cascade`);
+             factory_reviews, factory_downtime, erp_dispatch_scans, erp_lrs, audit_log restart identity cascade`);
   await db.execute(sql`update erp_series set last = 0`);
   await db.execute(sql`delete from erp_series where key = 'factoryTask'`);
   /* A packing batch of 20 boxes, so the seed's cans make one full batch and some over. */
@@ -217,6 +218,73 @@ describe("dispatch", () => {
   test("an order the office has not readied cannot be loaded", async () => {
     const { data } = await as("imran");
     assert.ok(data.tasks.some((t) => t.proc === "dispatch" && t.status === "blocked"));
+  });
+  test("a box label scanned on the lorry is counted by the ERP's own dispatch scan, once, and can be taken off", async () => {
+    const { fc, data } = await as("imran");
+    /* The order the test above checked: loaded, still not sent, so still on the floor. */
+    const t = data.tasks.find((x) => x.proc === "dispatch" && x.order && data.orders[x.order] && !data.orders[x.order].blocked)!;
+    const no = Number(t.order!.replace("SO-", ""));
+    const [bc] = await q<{ from: string; lot: string; godown: string; sku: string; cpb: number; fg: string | null }>(sql`
+      select b.lot_from as "from", b.lot_code as lot, b.godown_id as godown, o.sku_id as sku, coalesce(p.cans_per_box, 1) as cpb, b.finished_good_id as fg
+        from erp_batch_codes b join erp_orders o on o.id = b.order_id join products p on p.id = o.sku_id
+       where o.order_no = ${no} limit 1`);
+    /* Packing printed a label per box; take one of this lot's, or print one. */
+    const [had] = await q<{ id: string }>(sql`select id from erp_units where lot_from = ${bc.from} and lot_code = ${bc.lot} and status = 'available' order by id limit 1`);
+    const id = had?.id ?? (bc.from === "pack" ? "BX" : "LU") + "-991231-" + String(Date.now() % 1e6).padStart(6, "0");
+    if (!had)
+      await db.execute(sql`
+        insert into erp_units (id, kind, sku_id, lot_from, lot_code, finished_good_id, seq, cans, godown_id, status)
+        values (${id}, ${bc.from === "pack" ? "box" : "loose"}, ${bc.sku}, ${bc.from}, ${bc.lot}, ${bc.fg}, 1, ${bc.from === "pack" ? bc.cpb : 1}, ${bc.godown}, 'available')`);
+
+    assert.equal(boxCode("https://one.mahekindia.com/t/" + id.toLowerCase() + "?x=1"), id, "a QR carrying the tracking link reads as the box");
+    const first = await scanBox(fc, t.order!, id);
+    assert.equal(first.ok, true, JSON.stringify(first));
+    assert.equal(first.board?.boxes.length, 1);
+    assert.equal(first.board?.perLot[bc.lot], 1);
+    const [u] = await q<{ status: string; by: string }>(sql`select status, scanned_by_id as by from erp_units where id = ${id}`);
+    assert.deepEqual([u.status, u.by], ["scanned", fc.user.id], "the desk sees the same box, scanned by the loader");
+    const [log] = await q<{ n: number }>(sql`select count(*)::int as n from erp_dispatch_scans where code = ${id} and result = 'ok'`);
+    assert.equal(log.n, 1);
+
+    const again = await scanBox(fc, t.order!, id);
+    assert.equal(again.ok, false);
+    assert.equal((again as { title: string }).title, "Already scanned");
+    assert.equal((await loadBoard(fc, t.order!))?.boxes.length, 1, "scanned twice, counted once");
+
+    const info = await boxInfo(id);
+    assert.ok(info.ok && info.line.includes(t.order!), JSON.stringify(info));
+
+    const off = await unloadBox(fc, t.order!, id);
+    assert.equal(off.ok, true, JSON.stringify(off));
+    assert.equal(off.board?.boxes.length, 0);
+    const [back] = await q<{ status: string }>(sql`select status from erp_units where id = ${id}`);
+    assert.equal(back.status, "available");
+
+    const stranger = await scanBox((await as("anil")).fc, t.order!, id);
+    assert.equal(stranger.ok, false);
+    assert.equal((stranger as { title: string }).title, "Not your work", "mixing does not load lorries");
+    const elsewhere = await scanBox(fc, "SO-999999", id);
+    assert.equal((elsewhere as { title: string }).title, "This order is not here");
+  });
+
+  test("an LR uploaded from the phone lands in the register the LR desk reads, and only dispatch may upload one", async () => {
+    const { fc } = await as("imran");
+    const kit = await lrKit(fc);
+    assert.equal(kit.ok, true);
+    const none = await saveLr(fc, { lrNo: null, lrDate: null, transporter: null, destination: null, packages: null, freightTerm: null, freightRupees: null, fileId: null, readingId: null });
+    assert.equal(none.ok, false, "an LR needs its photo or its number");
+    const lr = { lrNo: "bh 4471", lrDate: null, transporter: "Shree Roadways", destination: "Nagpur", packages: 12, freightTerm: "To pay", freightRupees: 1450, fileId: null, readingId: null };
+    const saved = await saveLr(fc, lr);
+    assert.equal(saved.ok, true, JSON.stringify(saved));
+    const [row] = await q<{ lrNo: string; transporter: string; packages: number; freight: number; by: string; status: string }>(sql`
+      select lr_no as "lrNo", transporter, packages, freight_paise::int as freight, uploaded_by_id as by, status from erp_lrs`);
+    assert.deepEqual([row.lrNo, row.transporter, row.packages, row.freight, row.by], ["BH 4471", "Shree Roadways", 12, 145000, fc.user.id]);
+    assert.ok(saved.ok && saved.recent.some((r) => r.lrNo === "BH 4471"));
+    const dup = await saveLr(fc, lr);
+    assert.equal(dup.ok, false);
+    assert.match((dup as { text: string }).text, /already uploaded/);
+    const mixing = await saveLr((await as("anil")).fc, { ...lr, lrNo: "BH 4472" });
+    assert.equal((mixing as { title: string }).title, "Not your work");
   });
 });
 
