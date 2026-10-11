@@ -55,6 +55,8 @@ export type FactoryCtx = {
   lang: "en" | "hi" | "mr";
   /** May record empty drums from the phone: a supervisor, or a department named in `erp.drums.factoryDepartments`. */
   drums: boolean;
+  /** Loads lorries and uploads LRs: the dispatch department, or a supervisor over it. */
+  dispatch: boolean;
 };
 
 export class FactoryNotPermitted extends Error {}
@@ -93,6 +95,7 @@ export async function contextFor(user: User): Promise<FactoryCtx | null> {
   const drumDepts = (await getConfig())["erp.drums.factoryDepartments"].split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
   return {
     drums: head || (!!dept && drumDepts.includes(dept)),
+    dispatch: (head && (!scope || scope === "dispatch")) || dept === "dispatch",
     user,
     level,
     head,

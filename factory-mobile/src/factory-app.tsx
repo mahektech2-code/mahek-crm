@@ -6,6 +6,7 @@ import { StatusBar } from "expo-status-bar";
 import { SafeAreaInsetsContext } from "react-native-safe-area-context";
 import { L, STEP_T, type Lang, type Words } from "@/lib/factory/i18n";
 import {
+  boxCode,
   jobStatus,
   lotName,
   lotUnit,
@@ -20,15 +21,16 @@ import {
   type ScanPurpose,
   type ScanResult,
 } from "@/lib/factory/rules";
-import { CHECK_ITEMS, DOWN, OFFLINE_HOURS, REJ, STEPS, SUBMISSION_VERSION, type Draft, type FactoryData, type Lot, type Proc, type SubmitResult, type Task, type Team } from "@/lib/factory/types";
+import { CHECK_ITEMS, DOWN, OFFLINE_HOURS, REJ, STEPS, SUBMISSION_VERSION, type Draft, type FactoryData, type LoadBoard, type LrFields, type Lot, type Proc, type SubmitResult, type Task, type Team } from "@/lib/factory/types";
 import { hhmm } from "@/lib/factory/time";
+import { calendarDate } from "@/lib/business-date";
 import type { Me } from "./types";
 import { APP_BUILD, call, dropSession, NotReceived, SITE, uploadPhoto } from "./api";
 import { Btn, Div, Input, Root, Span } from "./web";
 import { art, ic, qr } from "./art";
 import { avStyle, btn, card, initials, mono, msg, MsgBox, Pill, artWell, type Msg } from "./kit";
 import { CameraScanner, shrinkPhoto } from "./camera";
-import { dropPhoto, forget, keepPhoto, keptPhoto, load, mintKey, readNet, save, watchNet, type Flow, type KpSheet, type Net, type PeopleSheet, type QItem, type ReasonSheet, type Res, type State, type TilesSheet, mintDrumKey } from "./model";
+import { dropPhoto, forget, keepPhoto, keptPhoto, load, mintKey, readNet, save, watchNet, type Flow, type KpSheet, type Net, type PeopleSheet, type QItem, type ReasonSheet, type Res, type State, type TilesSheet, mintDrumKey, type BoxOk, type LrEntry } from "./model";
 
 /* ---------------------------------------------------------------------------
  * THE FACTORY APP — "Mahek Factory App" from the design, screen for screen.
@@ -52,9 +54,12 @@ import { dropPhoto, forget, keepPhoto, keptPhoto, load, mintKey, readNet, save, 
  * ------------------------------------------------------------------------- */
 
 type Props = Record<string, never>;
+/** The calendar day n days ago, in the factory's zone — an LR's date. */
+const calendarDay = (n: number) => calendarDate(new Date(Date.now() - n * 86_400_000));
 const DEV = typeof __DEV__ !== "undefined" && __DEV__;
 
 const PC: Record<Proc, string> = { mixing: "flask", filling: "fill", packing: "box", dispatch: "truck" };
+const ONE: Record<string, string> = { boxes: "box", drums: "drum", cans: "can" };
 const LI: Record<Lang, number> = { en: 0, hi: 1, mr: 2 };
 const LANG_SPEECH: Record<Lang, string> = { en: "en-IN", hi: "hi-IN", mr: "mr-IN" };
 const HELP: [string, string, string, string, string[]][] = [
@@ -115,6 +120,8 @@ export class FactoryApp extends Component<Props, State> {
       clock: hhmm(new Date()),
       cam: "wait",
       drum: null,
+      board: null,
+      lr: null,
       ...(signed ? this.restore(signed.key) : null),
     };
   }
@@ -122,6 +129,8 @@ export class FactoryApp extends Component<Props, State> {
   /* ================================================================ life */
 
   componentDidMount() {
+    /* The browser preview has no camera: a development build lets a test hand the scanner a code. Never in a release. */
+    if (DEV && typeof window !== "undefined") (window as unknown as { __factoryScan?: (c: string) => void }).__factoryScan = (c) => void this.doScan(c);
     this.subs.push({ remove: watchNet((n) => this.setNet(n)) });
     /* Back to the app after a call or a break: send what waited, fetch new work. */
     this.subs.push(AppState.addEventListener("change", (a) => {
@@ -496,6 +505,15 @@ export class FactoryApp extends Component<Props, State> {
   async doScan(code: string, manual?: boolean) {
     const st = this.state, sc = st.scan;
     if (!sc || sc.res) return;
+    if (sc.purpose === "lr") {
+      const lr = st.lr;
+      const no = code.trim().toUpperCase().slice(0, 40);
+      if (lr) this.setState({ lr: { ...lr, f: { ...lr.f, lrNo: no }, read: { ...lr.read, lrNo: false }, err: null } });
+      this.setState({ scan: null });
+      return this.toast("LR number " + no);
+    }
+    const box = boxCode(code);
+    if (box && (sc.purpose === "load" || sc.purpose === "home")) return void this.scanBoxLabel(box);
     if (sc.purpose === "drum") {
       try {
         const r = await call("drumLookup", code);
@@ -530,6 +548,8 @@ export class FactoryApp extends Component<Props, State> {
   acceptScan() {
     const st = this.state, sc = st.scan!, r = sc.res!, P = sc.purpose, m = sc.meta;
     if (!r.ok) return;
+    /* A box is counted the moment the server says so: on the lorry the scanner stays open for the next one. */
+    if (r.kind === "box") return this.setState({ scan: P === "load" ? { ...sc, res: null } : null });
     if (r.kind === "emp") {
       const who = st.pinFor;
       return this.setState({ scan: null, pin: "", pinErr: "", signStep: who?.hasPin ? "pin" : "otp", phone: who?.ph ?? "" }, () => {
@@ -580,6 +600,342 @@ export class FactoryApp extends Component<Props, State> {
       return;
     }
     this.setState({ flow: f, scan: null });
+  }
+
+  /* ================================================================ loading boxes */
+
+  /** The order's boxes from the ERP, and the lots' loaded counts set from them — the server's count, never the phone's. */
+  applyBoard(board: LoadBoard | null, data?: FactoryData | null) {
+    if (data) this.setState({ db: data });
+    this.setState({ board });
+    const f = this.state.flow;
+    if (!board || !f || f.task.proc !== "dispatch" || f.task.order !== board.order) return;
+    const db = data ?? this.db();
+    const allocated = new Set((db.orders[board.order]?.lines ?? []).flatMap((ln) => ln.alloc.map((a) => a[0])));
+    const counted = Object.keys(board.perLot).filter((lot) => allocated.has(lot));
+    if (!counted.length) return;
+    this.setD((z) => {
+      z.loads = { ...(z.loads ?? {}) };
+      for (const lot of counted) z.loads[lot] = board.perLot[lot];
+    });
+  }
+
+  async refreshBoard() {
+    const order = this.state.flow?.task.order;
+    if (!order || this.state.net === "offline") return;
+    try {
+      this.applyBoard(await call("loadBoard", order));
+    } catch {
+      /* The list fills in on the next box scanned. */
+    }
+  }
+
+  /** A box label: on the lorry it is loaded onto the order; from the home scan it is looked up. */
+  async scanBoxLabel(code: string) {
+    const sc = this.state.scan;
+    if (!sc) return;
+    const fail = (title: string, text: string, fix: string) => this.setState({ scan: { ...sc, res: { ok: false, code, title, text, fix } } });
+    try {
+      if (sc.purpose === "home") {
+        const r = await call("boxInfo", code);
+        if (!r.ok) return fail(r.title, r.text, r.fix);
+        const ok: BoxOk = { ok: true, code, kind: "box", name: "Box label", text: r.line, facts: [] };
+        return this.setState({ scan: { ...sc, res: ok } });
+      }
+      const order = this.state.flow?.task.order;
+      if (!order) return fail("No order open", "Open the order you are loading first.", "Go back to your work and open the order.");
+      const r = await call("scanBox", order, code);
+      if (r.board) this.applyBoard(r.board, r.ok ? r.data : null);
+      if (!r.ok) return fail(r.title, r.text, r.fix);
+      const n = r.board.boxes.length;
+      const ok: BoxOk = { ok: true, code, kind: "box", name: "Box loaded", text: r.message, facts: [{ l: "On this order", v: n + (n === 1 ? " box" : " boxes") }, { l: "Order", v: order }] };
+      this.setState({ scan: { ...sc, res: ok } });
+    } catch (e) {
+      if (!(e instanceof NotReceived)) throw e;
+      fail("No network", "This box is not counted yet.", "Check the Wi-Fi, then scan the same box again. It will not be counted twice.");
+    }
+  }
+
+  async takeOffBox(id: string) {
+    const order = this.state.flow?.task.order;
+    if (!order) return;
+    const before = this.state.board;
+    try {
+      const r = await call("unloadBox", order, id);
+      if (r.board) this.applyBoard(r.board);
+      if (r.ok) {
+        /* A lot whose last box came off is not loaded any more. */
+        const gone = Object.keys(before?.perLot ?? {}).filter((lot) => r.board.perLot[lot] == null);
+        if (gone.length) this.setD((z) => { for (const lot of gone) if (z.loads && z.loads[lot] != null) z.loads[lot] = null; });
+        this.toast(r.message);
+      } else this.toast(r.title + ". " + r.fix);
+    } catch {
+      this.toast("No network. The box is still on the order — try again when it is back.");
+    }
+  }
+
+  boxesEl(t: Task): ReactNode {
+    const b = this.state.board;
+    if (!b || b.order !== t.order || !b.boxes.length) return null;
+    return (
+      <Div style={{ ...card, padding: "14px" }}>
+        <Div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+          <Span style={{ fontSize: "17px", fontWeight: 700 }}>Boxes on the lorry</Span>
+          <Span style={{ fontSize: "14px", color: "#6B7385" }}>{b.boxes.length + " scanned"}</Span>
+        </Div>
+        {b.boxes.map((x) => (
+          <Div key={x.id} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 0", borderTop: "1px solid #EDEFF3" }}>
+            <Span style={{ flex: 1, minWidth: 0 }}>
+              <Span style={{ display: "block", ...mono, fontSize: "14px", fontWeight: 600 }}>{x.id}</Span>
+              <Span style={{ display: "block", fontSize: "13px", color: "#6B7385", marginTop: "1px" }}>{x.sku + " · lot " + x.lot}</Span>
+            </Span>
+            <Btn onClick={() => void this.takeOffBox(x.id)} style={{ height: "40px", padding: "0 14px", borderRadius: "12px", border: "1px solid #F3C8C5", background: "#FFFFFF", color: "#B3261E", fontSize: "14px", fontWeight: 700, cursor: "pointer" }}>Take off</Btn>
+          </Div>
+        ))}
+      </Div>
+    );
+  }
+
+  renderBoxOk(r: BoxOk): ReactNode {
+    const T = this.T(), P = this.state.scan?.purpose;
+    return (
+      <Div>
+        <Div style={{ display: "flex", gap: "14px", alignItems: "center" }}>
+          <Span style={artWell(96, 18)}>{art("box", "#5223E0", "BX", 80)}</Span>
+          <Span style={{ flex: 1, minWidth: 0 }}>
+            <Span style={{ display: "inline-flex", alignItems: "center", gap: "4px", height: "24px", padding: "0 10px", borderRadius: "12px", background: "#E9F5EE", color: "#1D7A45", fontSize: "13px", fontWeight: 700 }}>{ic("check", 14, "#1D7A45")}{T.found}</Span>
+            <Span style={{ display: "block", fontSize: "20px", lineHeight: "25px", fontWeight: 700, marginTop: "6px" }}>{r.name}</Span>
+            <Span style={{ display: "block", ...mono, fontSize: "14px", fontWeight: 600, color: "#3D4453", marginTop: "2px" }}>{r.code}</Span>
+          </Span>
+        </Div>
+        <Div style={{ fontSize: "16px", lineHeight: "23px", color: "#1A1E28", marginTop: "12px" }}>{r.text}</Div>
+        {r.facts.length > 0 && (
+          <Div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginTop: "12px" }}>
+            {r.facts.map((x) => (
+              <Div key={x.l} style={{ background: "#F7F8FA", borderRadius: "12px", padding: "10px 12px" }}>
+                <Div style={{ fontSize: "12px", color: "#6B7385" }}>{x.l}</Div>
+                <Div style={{ fontSize: "17px", fontWeight: 700, marginTop: "2px" }}>{x.v}</Div>
+              </Div>
+            ))}
+          </Div>
+        )}
+        <Div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
+          {P === "load" && <Btn onClick={() => this.setState({ scan: null })} style={{ ...btn("s", 58), flex: 1 }}>Done</Btn>}
+          <Btn onClick={() => this.acceptScan()} style={{ ...btn("p", 58), flex: 2 }}>{P === "load" ? "Scan the next box" : T.ok}</Btn>
+        </Div>
+      </Div>
+    );
+  }
+
+  /* ================================================================ LRs */
+
+  async openLr() {
+    const blank: LrEntry = {
+      transporters: [], terms: ["Paid", "To pay", "TBB"], canRead: false, recent: [],
+      photo: null, fileId: null, uploading: false, reading: false, readingId: null, read: {}, check: false, notes: [],
+      f: { lrNo: null, lrDate: calendarDay(0), transporter: null, destination: null, packages: null, freightTerm: null, freightRupees: null },
+      err: null, saving: false, saved: null,
+    };
+    this.setState({ sheet: null, route: "lr", lr: blank });
+    try {
+      const k = await call("lrKit");
+      const now = this.state.lr;
+      if (!now) return;
+      if (!k.ok) return this.setState({ lr: { ...now, err: { title: k.title, text: k.text, fix: k.fix } } });
+      this.setState({ lr: { ...now, transporters: k.transporters, terms: k.terms, canRead: k.canRead, recent: k.recent } });
+    } catch {
+      const now = this.state.lr;
+      if (now) this.setState({ lr: { ...now, err: { title: "No network", text: "An LR needs the network to upload.", fix: "Check the Wi-Fi. You can still take the photo." } } });
+    }
+  }
+
+  /* From the queued state, not this.state: an upload and its reading land in the same tick. */
+  setLr(fn: (l: LrEntry) => LrEntry) {
+    this.setState((s) => (s.lr ? { lr: fn(s.lr) } : null));
+  }
+
+  /** One field changed by hand: it is no longer what the photo said. */
+  setLrField<K extends keyof LrFields>(k: K, v: LrFields[K]) {
+    this.setLr((l) => ({ ...l, f: { ...l.f, [k]: v }, read: { ...l.read, [k]: false }, err: null }));
+  }
+
+  async lrPhoto() {
+    let uri: string;
+    try {
+      const perm = await ImagePicker.requestCameraPermissionsAsync();
+      if (!perm.granted) return this.toast("Allow the camera for this app, then take the photo again.");
+      const r = await ImagePicker.launchCameraAsync({ mediaTypes: ["images"], quality: 0.85, allowsEditing: false, exif: false });
+      if (r.canceled || !r.assets?.[0]) return;
+      /* An LR is small print: kept larger than a truck photo so the number can be read. */
+      uri = await shrinkPhoto(r.assets[0].uri, 2000);
+    } catch {
+      return this.toast("The camera did not open. Try again.");
+    }
+    this.setLr((l) => ({ ...l, photo: uri, fileId: null, readingId: null, uploading: true, err: null, saved: null }));
+    let id: string | null;
+    try {
+      id = await uploadPhoto(uri, "lr.jpg");
+    } catch {
+      return this.setLr((l) => ({ ...l, uploading: false, err: { title: "No network", text: "The photo is not uploaded yet.", fix: "Check the Wi-Fi, then press Upload LR. The photo is kept." } }));
+    }
+    if (!id) return this.setLr((l) => ({ ...l, uploading: false, err: { title: "The photo was refused", text: "It could not be read as a picture.", fix: "Take the photo again." } }));
+    this.setLr((l) => ({ ...l, fileId: id, uploading: false }));
+    if (this.state.lr?.canRead) await this.lrRead(id);
+  }
+
+  /** The office's own reading: fills only what the person has not typed. */
+  async lrRead(fileId: string) {
+    this.setLr((l) => ({ ...l, reading: true }));
+    try {
+      const r = await call("readLr", fileId);
+      if (!r.ok) return this.setLr((l) => ({ ...l, reading: false, notes: [r.text] }));
+      this.setLr((l) => {
+        const f = { ...l.f }, read: LrEntry["read"] = {};
+        (Object.keys(r.fields) as (keyof LrFields)[]).forEach((k) => {
+          const v = r.fields[k];
+          const typed = l.read[k] === false && l.f[k] != null && k !== "lrDate";
+          if (v != null && !typed) {
+            (f as Record<string, unknown>)[k] = v;
+            read[k] = true;
+          }
+        });
+        return { ...l, reading: false, readingId: r.readingId, f, read: { ...l.read, ...read }, check: r.check, notes: r.notes };
+      });
+    } catch {
+      this.setLr((l) => ({ ...l, reading: false, notes: ["The photo could not be read just now. Type the details from the LR."] }));
+    }
+  }
+
+  async saveLr() {
+    const l = this.state.lr;
+    if (!l || l.saving || l.uploading) return;
+    if (l.photo && !l.fileId) return void this.retryLrUpload();
+    if (!l.fileId && !l.f.lrNo) return this.setLr((z) => ({ ...z, err: { title: "Take the LR photo", text: "An LR needs its photo or its number.", fix: "Press Take LR photo." } }));
+    this.setLr((z) => ({ ...z, saving: true, err: null }));
+    try {
+      const r = await call("saveLr", { ...l.f, fileId: l.fileId, readingId: l.readingId });
+      if (!r.ok) return this.setLr((z) => ({ ...z, saving: false, err: { title: r.title, text: r.text, fix: r.fix } }));
+      this.setLr((z) => ({ ...z, saving: false, saved: { id: r.id, msg: r.msg, lrNo: z.f.lrNo }, recent: r.recent }));
+      this.toast(r.msg);
+    } catch {
+      this.setLr((z) => ({ ...z, saving: false, err: { title: "No network", text: "The LR is not uploaded yet.", fix: "Check the Wi-Fi and press Upload LR again. It will not be uploaded twice." } }));
+    }
+  }
+
+  async retryLrUpload() {
+    const l = this.state.lr;
+    if (!l?.photo) return;
+    this.setLr((z) => ({ ...z, uploading: true, err: null }));
+    try {
+      const id = await uploadPhoto(l.photo, "lr.jpg");
+      this.setLr((z) => ({ ...z, uploading: false, fileId: id }));
+      if (id && this.state.lr?.canRead) await this.lrRead(id);
+    } catch {
+      this.setLr((z) => ({ ...z, uploading: false, err: { title: "No network", text: "The photo is not uploaded yet.", fix: "Check the Wi-Fi, then press Upload LR again." } }));
+    }
+  }
+
+  nextLr() {
+    const l = this.state.lr;
+    if (!l) return;
+    this.setState({
+      lr: { ...l, photo: null, fileId: null, readingId: null, read: {}, check: false, notes: [], err: null, saved: null, f: { lrNo: null, lrDate: calendarDay(0), transporter: null, destination: null, packages: null, freightTerm: null, freightRupees: null } },
+    });
+  }
+
+  renderLr(): ReactNode {
+    const st = this.state, T = this.T(), l = st.lr;
+    const home = () => this.setState({ route: st.me?.head ? "today" : "home", lr: null });
+    const head = (
+      <Div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+        <Btn onClick={home} aria-label={T.back} style={{ width: "44px", height: "44px", borderRadius: "50%", border: "none", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{ic("back", 22, "#5223E0")}</Btn>
+        <Span style={{ fontSize: "20px", fontWeight: 700 }}>Upload LR</Span>
+      </Div>
+    );
+    const page = (children: ReactNode) => <Div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "16px", display: "flex", flexDirection: "column", gap: "14px" }}>{head}{children}</Div>;
+    if (!l) return page(null);
+    const errBox = l.err && (
+      <Div style={{ padding: "14px", borderRadius: "14px", background: "#FCECEC" }}>
+        <Div style={{ fontSize: "17px", fontWeight: 700, color: "#B3261E" }}>{l.err.title}</Div>
+        <Div style={{ fontSize: "15px", lineHeight: "22px", color: "#1A1E28", marginTop: "6px" }}>{l.err.text}</Div>
+        <Div style={{ fontSize: "15px", lineHeight: "22px", color: "#1A1E28", marginTop: "6px" }}><Span style={{ fontWeight: 700 }}>What to do: </Span>{l.err.fix}</Div>
+      </Div>
+    );
+    const recent = l.recent.length > 0 && (
+      <Div style={{ ...card, padding: "14px" }}>
+        <Span style={{ display: "block", fontSize: "17px", fontWeight: 700 }}>Uploaded lately</Span>
+        {l.recent.slice(0, 8).map((x) => (
+          <Div key={x.id} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 0", borderTop: "1px solid #EDEFF3" }}>
+            <Span style={{ flex: 1, minWidth: 0 }}>
+              <Span style={{ display: "block", ...mono, fontSize: "14px", fontWeight: 600 }}>{x.lrNo ?? "No number yet"}</Span>
+              <Span style={{ display: "block", fontSize: "13px", color: "#6B7385", marginTop: "1px" }}>{[x.transporter, x.destination, x.packages != null ? x.packages + " boxes" : null].filter(Boolean).join(" · ") || "Photo only"}</Span>
+            </Span>
+            <Pill l={x.bills ? x.bills + " bill" + (x.bills === 1 ? "" : "s") : "Waiting"} bg={x.bills ? "#E9F5EE" : "#FDF6E7"} fg={x.bills ? "#1D7A45" : "#8A5C05"} />
+          </Div>
+        ))}
+      </Div>
+    );
+    if (l.saved) {
+      return page(
+        <>
+          <Div style={{ ...card, padding: "16px", display: "flex", alignItems: "center", gap: "12px" }}>
+            <Span style={{ width: "52px", height: "52px", flex: "none", borderRadius: "50%", background: "#E9F5EE", display: "flex", alignItems: "center", justifyContent: "center" }}>{ic("check", 28, "#1D7A45")}</Span>
+            <Span style={{ flex: 1 }}>
+              <Span style={{ display: "block", fontSize: "22px", fontWeight: 700 }}>{"LR " + (l.saved.lrNo ?? "") + " uploaded"}</Span>
+              <Span style={{ display: "block", fontSize: "15px", color: "#6B7385", marginTop: "2px" }}>{l.saved.msg}</Span>
+            </Span>
+          </Div>
+          <Btn onClick={() => this.nextLr()} style={btn("p", 58)}>Upload the next LR</Btn>
+          {recent}
+        </>,
+      );
+    }
+    const f = l.f;
+    const tag = (k: keyof LrFields) =>
+      l.read[k] ? <Span style={{ marginLeft: "6px", padding: "1px 8px", borderRadius: "10px", fontSize: "12px", fontWeight: 700, background: k === "lrNo" && l.check ? "#FDF6E7" : "#F1ECFF", color: k === "lrNo" && l.check ? "#8A5C05" : "#5223E0" }}>{k === "lrNo" && l.check ? "check" : "read"}</Span> : null;
+    const row = (k: keyof LrFields, label: string, value: string | null, open: () => void, empty = "Tap to choose") => (
+      <Btn key={k} onClick={open} style={{ ...card, padding: "14px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", cursor: "pointer", textAlign: "left" }}>
+        <Span style={{ fontSize: "15px", color: "#6B7385" }}>{label}{tag(k)}</Span>
+        <Span style={{ fontSize: "17px", fontWeight: 700, color: value ? "#1A1E28" : "#6835FB", textAlign: "right", flexShrink: 1 }}>{value ?? empty}</Span>
+      </Btn>
+    );
+    const text = (k: "lrNo" | "destination", label: string, placeholder: string, upper?: boolean) => (
+      <Div key={k} style={{ ...card, padding: "12px 16px" }}>
+        <Span style={{ display: "block", fontSize: "15px", color: "#6B7385" }}>{label}{tag(k)}</Span>
+        <Div style={{ display: "flex", alignItems: "center", gap: "10px", marginTop: "6px" }}>
+          <Input value={f[k] ?? ""} onChange={(e) => this.setLrField(k, (upper ? String(e.target.value).toUpperCase() : String(e.target.value)).slice(0, 40) || null)} maxLength={40} placeholder={placeholder} aria-label={label} style={{ flex: 1, minWidth: 0, height: "48px", border: "1.5px solid #DDE1E8", borderRadius: "12px", padding: "0 12px", fontSize: "19px", fontWeight: 600, color: "#1A1E28", background: "#FFFFFF" }} />
+          {k === "lrNo" && <Btn onClick={() => this.openScan("lr")} aria-label="Scan the LR barcode" style={{ width: "48px", height: "48px", flex: "none", borderRadius: "12px", border: "none", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{ic("qr", 24, "#5223E0")}</Btn>}
+        </Div>
+      </Div>
+    );
+    const pick = (title: string, items: string[], set: (v: string) => void) =>
+      this.setState({ sheet: { type: "tiles", title, groups: [{ cols: 1, items: items.map((v) => ({ l: v, v })) }], pick: (v) => { set(v); this.setState({ sheet: null }); } } });
+    const days = [0, 1, 2, 3].map((n) => calendarDay(n));
+    const dayWord = (d: string | null) => (!d ? null : d === days[0] ? "Today" : d === days[1] ? "Yesterday" : d.split("-").reverse().join("/"));
+    return page(
+      <>
+        <Btn onClick={() => void this.lrPhoto()} style={{ background: l.photo ? "#FFFFFF" : "#6835FB", border: l.photo ? "1px solid #DDE1E8" : "none", borderRadius: "20px", padding: "18px 20px", color: l.photo ? "#1A1E28" : "#FFFFFF", display: "flex", alignItems: "center", gap: "16px", textAlign: "left", cursor: "pointer", minHeight: "104px" }}>
+          <Span style={{ width: "68px", height: "68px", flex: "none", borderRadius: "18px", background: l.photo ? "#E9F5EE" : "rgba(255,255,255,0.14)", display: "flex", alignItems: "center", justifyContent: "center" }}>{ic(l.photo ? "check" : "camera", 36, l.photo ? "#1D7A45" : "#FFFFFF")}</Span>
+          <Span style={{ flex: 1 }}>
+            <Span style={{ display: "block", fontSize: "22px", lineHeight: "28px", fontWeight: 700 }}>{l.uploading ? "Uploading the photo…" : l.reading ? "Reading the LR…" : l.photo ? "LR photo taken" : "Take LR photo"}</Span>
+            <Span style={{ display: "block", fontSize: "15px", color: l.photo ? "#6B7385" : "#DDD2FF", marginTop: "4px" }}>{l.photo ? "Tap to take it again" : "The whole receipt, flat, in good light"}</Span>
+          </Span>
+        </Btn>
+        {l.notes.length > 0 && <MsgBox m={msg(l.notes.join(" "), l.check ? "warn" : "info")} />}
+        {(l.photo || f.lrNo) && <MsgBox m={msg("Check every value against the photo before you upload.", "info")} />}
+        {text("lrNo", "LR number", "Type or scan", true)}
+        {row("transporter", "Transporter", f.transporter, () => pick("Transporter", l.transporters.length ? l.transporters : f.transporter ? [f.transporter] : [], (v) => this.setLrField("transporter", v)))}
+        {text("destination", "Destination", "Town")}
+        {row("packages", "Boxes", f.packages != null ? nf(f.packages) : null, () => this.openKp({ l: "How many boxes on this LR?", unit: "boxes", v: f.packages, set: (v) => this.setLrField("packages", v) }), "Tap to enter")}
+        {row("lrDate", "LR date", dayWord(f.lrDate), () => pick("LR date", days.map((d) => dayWord(d)!), (v) => this.setLrField("lrDate", days.find((d) => dayWord(d) === v) ?? days[0])))}
+        {row("freightTerm", "Freight", f.freightTerm, () => pick("Freight", l.terms, (v) => this.setLrField("freightTerm", v)))}
+        {row("freightRupees", "Freight amount", f.freightRupees != null ? "₹ " + nf(f.freightRupees) : null, () => this.openKp({ l: "Freight on the LR", unit: "₹", v: f.freightRupees, decimals: true, set: (v) => this.setLrField("freightRupees", v) }), "Tap to enter")}
+        {errBox}
+        <Btn onClick={() => void this.saveLr()} style={btn(l.saving || l.uploading || l.reading || (!l.photo && !f.lrNo) ? "off" : "p", 60)}>{l.saving ? "Uploading…" : "Upload LR"}</Btn>
+        <Div style={{ fontSize: "14px", lineHeight: "20px", color: "#6B7385", textAlign: "center" }}>Logistics attaches the LR to its bills and tells the customer.</Div>
+        {recent}
+      </>,
+    );
   }
 
   /* ================================================================ empty drums */
@@ -754,7 +1110,7 @@ export class FactoryApp extends Component<Props, State> {
     if (!t) return;
     if (t.status === "blocked") return this.toast(this.db().orders[t.order!]?.blocked ?? "This order is not ready yet. Wait for the office.");
     const keep = st.drafts[id];
-    if (keep) return this.setState({ flow: { ...keep, task: { ...keep.task, ...t } } });
+    if (keep) return this.setState({ flow: { ...keep, task: { ...keep.task, ...t } } }, () => { if (STEPS[t.proc][keep.step] === "load") void this.refreshBoard(); });
     const db = this.db();
     const team = JSON.parse(JSON.stringify(t.team)) as Team;
     const d: Draft = { team, down: null, downR: null, downMin: null };
@@ -1095,6 +1451,7 @@ export class FactoryApp extends Component<Props, State> {
           {shell && R === "sync" && this.renderSync()}
           {shell && R === "help" && this.renderHelp()}
           {shell && R === "drum" && this.renderDrum()}
+          {shell && R === "lr" && this.renderLr()}
           {shell && head && R === "today" && this.renderToday()}
           {shell && head && R === "review" && this.renderReview()}
           {shell && head && R === "teams" && this.renderTeams()}
@@ -1295,6 +1652,15 @@ export class FactoryApp extends Component<Props, State> {
             <Span style={{ display: "block", fontSize: "15px", color: "#DDD2FF", marginTop: "4px" }}>{T.scanAny}</Span>
           </Span>
         </Btn>
+        {me.dispatch && (
+          <Btn onClick={() => void this.openLr()} style={{ ...card, padding: "14px 16px", display: "flex", alignItems: "center", gap: "12px", textAlign: "left", cursor: "pointer" }}>
+            <Span style={{ width: "44px", height: "44px", borderRadius: "12px", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{ic("truck", 22, "#5223E0")}</Span>
+            <Span style={{ flex: 1 }}>
+              <Span style={{ display: "block", fontSize: "17px", fontWeight: 700 }}>Upload LR</Span>
+              <Span style={{ display: "block", fontSize: "13px", color: "#6B7385", marginTop: "1px" }}>Photograph the lorry receipt from the transporter</Span>
+            </Span>
+          </Btn>
+        )}
         {me.drums && (
           <Btn onClick={() => this.openDrum()} style={{ ...card, padding: "14px 16px", display: "flex", alignItems: "center", gap: "12px", textAlign: "left", cursor: "pointer" }}>
             <Span style={{ width: "44px", height: "44px", borderRadius: "12px", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{ic("box", 22, "#5223E0")}</Span>
@@ -1357,8 +1723,8 @@ export class FactoryApp extends Component<Props, State> {
     const st = this.state, T = this.T(), sc = st.scan!, f = st.flow, m = sc.meta, P = sc.purpose, r = sc.res;
     const db = st.db;
     const rmName = m.item && db?.rm[m.item] ? db.rm[m.item].n : "";
-    const title = { badge: T.scanBadge, home: T.scanQR, rm: rmName, sfg: "Base liquid", pm: "Empty cans", fg: "Filled cans", load: f ? (f.task.order ?? "") : "", drum: "Empty drum" }[P] || T.scanQR;
-    const hint = { badge: "Show your company badge", home: "Scan a task sheet, order or lot label", rm: "Scan the " + rmName + " drum", sfg: "Scan the base-liquid tank", pm: "Scan the empty-can stack", fg: "Scan the filled-can pallet", load: "Scan each pallet before loading", drum: "Scan the GRN label on the empty drum" }[P];
+    const title = { badge: T.scanBadge, home: T.scanQR, rm: rmName, sfg: "Base liquid", pm: "Empty cans", fg: "Filled cans", load: f ? (f.task.order ?? "") : "", drum: "Empty drum", lr: "LR number" }[P] || T.scanQR;
+    const hint = { badge: "Show your company badge", home: "Scan a task sheet, order, lot or box label", rm: "Scan the " + rmName + " drum", sfg: "Scan the base-liquid tank", pm: "Scan the empty-can stack", fg: "Scan the filled-can pallet", load: "Scan each box label as it goes on the lorry", drum: "Scan the GRN label on the empty drum", lr: "Scan the barcode printed on the LR" }[P];
     const hasManual = ["rm", "sfg", "pm", "fg", "load"].indexOf(P) > -1;
     const noCam = st.cam === "none" || st.cam === "denied";
     const labels = noCam && (DEV || st.cam === "none") ? this.scanLabels() : [];
@@ -1403,7 +1769,7 @@ export class FactoryApp extends Component<Props, State> {
         {r && (
           <Div style={{ position: "absolute", inset: 0, background: "rgba(14,16,22,0.55)", display: "flex", alignItems: "flex-end", zIndex: 5 }}>
             <Div style={{ width: "100%", background: "#FFFFFF", color: "#1A1E28", borderRadius: "26px 26px 0 0", padding: "18px 18px 20px 18px", animation: "fx-up 200ms cubic-bezier(0.2,0,0.2,1)" }}>
-              {r.ok ? this.renderScanOk(r as Extract<ScanResult, { ok: true }> & { manual?: boolean }) : (
+              {r.ok && r.kind === "box" ? this.renderBoxOk(r) : r.ok ? this.renderScanOk(r as Extract<ScanResult, { ok: true }> & { manual?: boolean }) : (
                 <Div>
                   <Div style={{ display: "flex", gap: "12px", alignItems: "flex-start" }}>
                     <Span style={{ width: "52px", height: "52px", flex: "none", borderRadius: "50%", background: "#FCECEC", color: "#B3261E", display: "flex", alignItems: "center", justifyContent: "center" }}>{ic("x", 28, "#B3261E")}</Span>
@@ -1496,6 +1862,7 @@ export class FactoryApp extends Component<Props, State> {
       if (key === "review") return void this.submit();
       const flow = { ...f, step: f.step + 1 };
       this.setState({ flow, drafts: { ...st.drafts, [t.id]: flow } });
+      if (steps[f.step + 1] === "load") void this.refreshBoard();
     };
     const say: Record<string, string> = {
       identify: taskName(db, t) + ". " + taskTarget(db, t),
@@ -1663,6 +2030,7 @@ export class FactoryApp extends Component<Props, State> {
     const checks: { l: string; sub?: string; mark: ReactNode; flip: () => void; box: CSSProperties; style: CSSProperties }[] = [];
     const msgs: Msg[] = [];
     let sub = "", bar: { l: string; v: string; fill: CSSProperties } | null = null, down = false;
+    let boxes: ReactNode = null;
     const infoCard = (l: string, v: string, warn?: boolean) => ({ l, v, style: { background: warn ? "#FDF6E7" : "#FFFFFF", border: "1px solid #DDE1E8", borderRadius: "14px", padding: "10px 12px" } });
 
     if (key === "materials") {
@@ -1760,6 +2128,8 @@ export class FactoryApp extends Component<Props, State> {
     }
     if (key === "load") {
       const ord = db.orders[t.order!];
+      const bd = this.state.board;
+      const boxed = new Set(bd && bd.order === t.order ? Object.keys(bd.perLot) : []);
       let need = 0, got = 0;
       ord?.lines.forEach((ln) =>
         ln.alloc.forEach((a) => {
@@ -1769,13 +2139,16 @@ export class FactoryApp extends Component<Props, State> {
           const b = db.box[ln.sku], k = db.sku[b ? b.sku : ln.sku];
           lots.push({
             art: b ? art("box", k?.col, b.cpb + "×" + k?.tag, 52) : art(k?.kind ?? "can", k?.col, k?.tag, 52), name: a[0], need: "Load " + a[1] + " " + ln.unit + " · " + ln.label.split(" · ")[0],
-            lot: v !== undefined ? a[0] : null, scan: () => this.openScan("load"), qtyL: "Loaded", qtyV: v != null ? v + " " + ln.unit : "Tap to enter", qtyDone: v === a[1], done: v === a[1],
-            err: v != null && v !== a[1] ? (v > a[1] ? "Too many — the order takes " + a[1] : "Short by " + (a[1] - v) + ". Load " + a[1] + " or tell the dispatch head.") : "",
+            lot: v !== undefined ? a[0] : null, scan: () => this.openScan("load"), qtyL: "Loaded", qtyV: v != null ? v + " " + (v === 1 ? ONE[ln.unit] ?? ln.unit : ln.unit) : "Tap to enter", qtyDone: v === a[1], done: v === a[1],
+            /* Boxes scanned one by one are short until the last one: that is progress, not a mistake. */
+            err: v != null && v !== a[1] && !(boxed.has(a[0]) && v < a[1]) ? (v > a[1] ? "Too many — the order takes " + a[1] : "Short by " + (a[1] - v) + ". Load " + a[1] + " or tell the dispatch head.") : "",
             qtyOpen: () => this.openKp({ l: "How many did you load from " + a[0] + "?", unit: ln.unit, v, max: a[1], maxL: "This order takes " + a[1] + " from this lot", quick: [{ l: "All " + a[1], v: a[1] }], set: (q) => this.setD((z) => { z.loads = { ...(z.loads ?? {}), [a[0]]: q }; }) }),
           });
         }),
       );
       bar = { l: "Loaded", v: got + " / " + need, fill: { height: "12px", width: Math.round((got / Math.max(1, need)) * 100) + "%", background: got === need ? "#1D7A45" : "#6835FB", borderRadius: "6px" } };
+      sub = "Scan the label on each box as it goes on the lorry. Each box is counted in the office at once.";
+      boxes = this.boxesEl(t);
     }
     if (key === "checklist") {
       CHECK_ITEMS.forEach(([k, l]) => {
@@ -1829,6 +2202,7 @@ export class FactoryApp extends Component<Props, State> {
           </Div>
         ))}
         {lots.map((r, i) => this.lotRowEl(r, i))}
+        {boxes}
         {fields.map((f) => this.fieldEl(f))}
         {bar && (
           <Div style={{ ...card, padding: "14px" }}>
@@ -2478,6 +2852,7 @@ export class FactoryApp extends Component<Props, State> {
           {row(T.sync, pendN + " waiting", "sync", () => this.setState({ sheet: null, route: "sync" }))}
           {row(T.help, "Short videos and audio", "help", () => this.setState({ sheet: null, route: "help" }))}
           {me.drums && row("Empty drum entry", "Scan and weigh a drum once it is empty", "box", () => this.openDrum())}
+          {me.dispatch && row("Upload LR", "Photograph the lorry receipt from the transporter", "truck", () => void this.openLr())}
           {row("Change my PIN", "4 numbers you sign in with", "badge", () => this.setState({ sheet: null, signStep: "newpin", newPin: "", newPin1: "", pinErr: "" }))}
           {DEV && row("Network (preview only)", (T as Record<string, string>)[st.net] + " — tap to change", st.net === "offline" ? "wifioff" : "wifi", () => { const nx = ({ online: "weak", weak: "offline", offline: "online" } as const)[st.net]; this.setNet(nx); this.toast((T as Record<string, string>)[nx]); })}
           {row(T.signOut, "Unsent work stays on this phone", "out", () => {

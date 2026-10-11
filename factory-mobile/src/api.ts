@@ -14,7 +14,7 @@
  * ------------------------------------------------------------------------- */
 import Constants from "expo-constants";
 import { Platform } from "react-native";
-import type { DrumLookup, DrumSave, FactoryData, Proc, Submission, SubmitResult, Team } from "@/lib/factory/types";
+import type { BoxInfo, BoxScan, DrumLookup, DrumSave, FactoryData, LoadBoard, LrFields, LrKit, LrReading, LrSave, Proc, Submission, SubmitResult, Team } from "@/lib/factory/types";
 import type { Me, Who } from "./types";
 import { kvGet, kvSet } from "./model";
 
@@ -44,6 +44,13 @@ type Ops = {
   decide: (id: string, act: string, actIndex: number, reason: string, helpers?: string[]) => Done;
   drumLookup: (code: string) => DrumLookup;
   emptyDrum: (input: { code: string; kg: number | null; key: string; different?: boolean }) => DrumSave;
+  loadBoard: (order: string) => LoadBoard | null;
+  scanBox: (order: string, code: string) => BoxScan;
+  unloadBox: (order: string, unitId: string) => BoxScan;
+  boxInfo: (code: string) => BoxInfo;
+  lrKit: () => LrKit;
+  readLr: (fileId: string) => LrReading;
+  saveLr: (input: LrFields & { fileId: string | null; readingId: string | null; note?: string | null }) => LrSave;
 };
 
 export class NotReceived extends Error {}
@@ -96,15 +103,15 @@ export function dropSession() {
 }
 
 /**
- * The truck photo, uploaded from the file the camera wrote. Returns the
+ * A photo — the loaded truck, or an LR — uploaded from the file the camera wrote. Returns the
  * attachment id, null when the server refused the file (a refusal is not a
  * reason to lose the job), or throws NotReceived when nothing answered.
  */
-export async function uploadPhoto(uri: string): Promise<string | null> {
+export async function uploadPhoto(uri: string, name = "truck.jpg"): Promise<string | null> {
   const body = new FormData();
   /* A phone hands FormData the file by its path; the browser preview needs the bytes. */
-  if (Platform.OS === "web") body.append("file", await (await fetch(uri)).blob(), "truck.jpg");
-  else body.append("file", { uri, name: "truck.jpg", type: "image/jpeg" } as unknown as Blob);
+  if (Platform.OS === "web") body.append("file", await (await fetch(uri)).blob(), name);
+  else body.append("file", { uri, name, type: "image/jpeg" } as unknown as Blob);
   let r: Response;
   try {
     r = await fetch(SITE + "/api/factory/photo", { method: "POST", body, headers: sessionHeaders(), credentials: "omit" });
