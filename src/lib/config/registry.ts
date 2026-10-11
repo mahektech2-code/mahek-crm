@@ -5213,6 +5213,32 @@ export const SETTINGS = [
    * written pages through a tool and answers with links to the sections it
    * read; it never reads the database except to quote a setting's live value.
    */
+  /* ------------------------------------------------- ask the CRM
+   *
+   * The Telecaller CRM's Ask AI: the header search box and its drawer. Same
+   * engine as "Ask about the team" — the model writes read-only queries over
+   * views narrowed to the asker's own book — so the time limits and caches
+   * are the salesAsk.* ones; only whether it is on and which model reads are
+   * the CRM's own.
+   */
+  {
+    key: "crmAsk.enabled",
+    type: "boolean",
+    category: "voice",
+    label: "Ask the CRM",
+    description:
+      "Let anybody who holds the CRM ask a question in plain words — who owes the most, which customers are due to order, what was promised on a call — and have it answered from their own book. Off hides the answers immediately.",
+    default: true,
+  },
+  {
+    key: "crmAsk.model",
+    type: "text",
+    category: "voice",
+    label: "Ask the CRM · model",
+    description:
+      "The OpenAI model that reads the question and writes the queries. A faster model answers sooner; a stronger one handles harder questions.",
+    default: "gpt-5-mini",
+  },
   {
     key: "docsAsk.enabled",
     type: "boolean",
@@ -6301,6 +6327,8 @@ export type Config = {
   "salesAsk.resultCacheSeconds": number;
   "salesAsk.answerCacheSeconds": number;
   "salesAsk.contextCacheSeconds": number;
+  "crmAsk.enabled": boolean;
+  "crmAsk.model": string;
   "docsAsk.enabled": boolean;
   "docsAsk.model": string;
   "docsAsk.reasoningEffort": string;

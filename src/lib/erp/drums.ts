@@ -134,11 +134,11 @@ export async function findDrumLot(code: string): Promise<DrumLot | null> {
   const c = code.trim();
   if (!c) return null;
   const [p] = await q<{
-    id: string; lotNo: string; pr: number; inwardId: string | null; supplierId: string; supplier: string; sOwn: string | null; iOwn: string | null;
+    id: string; lotNo: string; pr: number; inwardId: string | null; supplierId: string; supplier: string; sOwn: string | null; iOwn: string | null; pOwn: string | null;
     rmId: string; material: string; mType: string; godownId: string; godown: string; drums: number | null; tare: number | null;
   }>(db, sql`
     select p.id, p.lot_no as "lotNo", p.pr_number as pr, p.inward_id as "inwardId", p.supplier_id as "supplierId", s.name as supplier,
-           s.drum_ownership as "sOwn", i.drum_ownership as "iOwn", p.raw_material_id as "rmId", m.name as material, m.material_type as "mType",
+           s.drum_ownership as "sOwn", i.drum_ownership as "iOwn", p.drum_ownership as "pOwn", p.raw_material_id as "rmId", m.name as material, m.material_type as "mType",
            p.godown_id as "godownId", g.name as godown, coalesce(p.drums, i.drums) as drums, i.empty_drum_weight::float8 as tare
       from erp_purchases p
       join erp_suppliers s on s.id = p.supplier_id
@@ -153,7 +153,8 @@ export async function findDrumLot(code: string): Promise<DrumLot | null> {
       from erp_empty_drums d left join users u on u.id = d.recorded_by_id
      where d.purchase_id = ${p.id} and d.status <> 'cancelled'
      order by d.recorded_at, d.drum_no`);
-  const ownership = ownershipOf(p.iOwn, p.sOwn);
+  // A lot decided by a person (kept from the first version of this module) wins.
+  const ownership = ownershipOf(p.pOwn ?? p.iOwn, p.sOwn);
   const drums = p.drums == null || Number(p.drums) <= 0 ? null : Number(p.drums);
   return {
     purchaseId: p.id,
@@ -170,7 +171,7 @@ export async function findDrumLot(code: string): Promise<DrumLot | null> {
     drums,
     declaredTareKg: p.tare == null ? null : Number(p.tare),
     ownership,
-    ownershipFrom: p.iOwn ? "the GRN line" : p.sOwn ? "the supplier's master" : "nowhere — the Production Head decides",
+    ownershipFrom: p.pOwn ? "the lot, decided earlier" : p.iOwn ? "the GRN line" : p.sOwn ? "the supplier's master" : "nowhere — the Production Head decides",
     registered: regs.map((r) => ({ id: r.id, drumNo: Number(r.drumNo), seq: r.seq == null ? null : Number(r.seq), status: r.status, actualKg: r.kg == null ? null : Number(r.kg), recordedAt: r.at, by: r.by })),
     nextSeq: nextDrumSeq(drums, regs.map((r) => Number(r.seq)).filter((n) => Number.isFinite(n))),
   };

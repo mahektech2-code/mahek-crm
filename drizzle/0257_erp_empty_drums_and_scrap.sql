@@ -23,6 +23,60 @@ ALTER TABLE "erp_inward" DROP CONSTRAINT IF EXISTS "erp_inward_drum_ownership_ch
 --> statement-breakpoint
 ALTER TABLE "erp_inward" ADD CONSTRAINT "erp_inward_drum_ownership_check" CHECK ("drum_ownership" is null or "drum_ownership" in ('mahek', 'returnable'));
 --> statement-breakpoint
+-- 0256 shipped a first version of this module (its own tables, under the same
+-- names for five of them). Those tables are set aside here, these are created,
+-- and everything 0256 recorded is copied across at the end of this file, so no
+-- drum, sale or receipt anybody entered is lost. Only the shape changes.
+DROP INDEX IF EXISTS "erp_scrap_buyers_name_key";
+--> statement-breakpoint
+DROP INDEX IF EXISTS "erp_scrap_sales_no_key";
+--> statement-breakpoint
+DROP INDEX IF EXISTS "erp_scrap_sales_buyer_idx";
+--> statement-breakpoint
+DROP INDEX IF EXISTS "erp_drum_returns_no_key";
+--> statement-breakpoint
+DROP INDEX IF EXISTS "erp_empty_drums_drum_key";
+--> statement-breakpoint
+DROP INDEX IF EXISTS "erp_empty_drums_no_key";
+--> statement-breakpoint
+DROP INDEX IF EXISTS "erp_empty_drums_status_idx";
+--> statement-breakpoint
+DROP INDEX IF EXISTS "erp_empty_drums_supplier_idx";
+--> statement-breakpoint
+DROP INDEX IF EXISTS "erp_scrap_receipts_no_key";
+--> statement-breakpoint
+DROP INDEX IF EXISTS "erp_scrap_allocations_sale_idx";
+--> statement-breakpoint
+DROP INDEX IF EXISTS "erp_scrap_allocations_receipt_idx";
+--> statement-breakpoint
+ALTER TABLE IF EXISTS "erp_scrap_allocations" RENAME TO "erp_scrap_allocations_v0256";
+--> statement-breakpoint
+ALTER TABLE IF EXISTS "erp_scrap_allocations_v0256" RENAME CONSTRAINT "erp_scrap_allocations_pkey" TO "erp_scrap_allocations_v0256_pkey";
+--> statement-breakpoint
+ALTER TABLE IF EXISTS "erp_scrap_receipts" RENAME TO "erp_scrap_receipts_v0256";
+--> statement-breakpoint
+ALTER TABLE IF EXISTS "erp_scrap_receipts_v0256" RENAME CONSTRAINT "erp_scrap_receipts_pkey" TO "erp_scrap_receipts_v0256_pkey";
+--> statement-breakpoint
+ALTER TABLE IF EXISTS "erp_empty_drums" RENAME TO "erp_empty_drums_v0256";
+--> statement-breakpoint
+ALTER TABLE IF EXISTS "erp_empty_drums_v0256" RENAME CONSTRAINT "erp_empty_drums_pkey" TO "erp_empty_drums_v0256_pkey";
+--> statement-breakpoint
+ALTER TABLE IF EXISTS "erp_scrap_collections" RENAME TO "erp_scrap_collections_v0256";
+--> statement-breakpoint
+ALTER TABLE IF EXISTS "erp_scrap_collections_v0256" RENAME CONSTRAINT "erp_scrap_collections_pkey" TO "erp_scrap_collections_v0256_pkey";
+--> statement-breakpoint
+ALTER TABLE IF EXISTS "erp_drum_returns" RENAME TO "erp_drum_returns_v0256";
+--> statement-breakpoint
+ALTER TABLE IF EXISTS "erp_drum_returns_v0256" RENAME CONSTRAINT "erp_drum_returns_pkey" TO "erp_drum_returns_v0256_pkey";
+--> statement-breakpoint
+ALTER TABLE IF EXISTS "erp_scrap_sales" RENAME TO "erp_scrap_sales_v0256";
+--> statement-breakpoint
+ALTER TABLE IF EXISTS "erp_scrap_sales_v0256" RENAME CONSTRAINT "erp_scrap_sales_pkey" TO "erp_scrap_sales_v0256_pkey";
+--> statement-breakpoint
+ALTER TABLE IF EXISTS "erp_scrap_buyers" RENAME TO "erp_scrap_buyers_v0256";
+--> statement-breakpoint
+ALTER TABLE IF EXISTS "erp_scrap_buyers_v0256" RENAME CONSTRAINT "erp_scrap_buyers_pkey" TO "erp_scrap_buyers_v0256_pkey";
+--> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "erp_scrap_buyers" (
   "id" text PRIMARY KEY NOT NULL,
   "name" text NOT NULL,
@@ -263,3 +317,154 @@ INSERT INTO "erp_ref_values" ("id", "list_key", "value", "sort_order") VALUES
   ('erprv_scrap_cardboard', 'scrapCategory', 'Cardboard/Packing Box Scrap', 2),
   ('erprv_scrap_other', 'scrapCategory', 'Other Scrap', 3)
 ON CONFLICT DO NOTHING;
+--> statement-breakpoint
+-- ---------------------------------------------------------------- 0256's data
+-- A lot's owner decided under 0256 is kept on the lot, where it still wins over
+-- the GRN line and the supplier. 0256 spelled a supplier's drums 'vendor'.
+ALTER TABLE "erp_purchases" ADD COLUMN IF NOT EXISTS "drum_ownership" text;
+--> statement-breakpoint
+ALTER TABLE "erp_purchases" ADD COLUMN IF NOT EXISTS "drum_ownership_set_by_id" text REFERENCES "users"("id");
+--> statement-breakpoint
+ALTER TABLE "erp_purchases" ADD COLUMN IF NOT EXISTS "drum_ownership_set_at" timestamp with time zone;
+--> statement-breakpoint
+ALTER TABLE "erp_purchases" DROP CONSTRAINT IF EXISTS "erp_purchases_drum_ownership_check";
+--> statement-breakpoint
+UPDATE "erp_purchases" SET "drum_ownership" = 'returnable' WHERE "drum_ownership" = 'vendor';
+--> statement-breakpoint
+ALTER TABLE "erp_purchases" ADD CONSTRAINT "erp_purchases_drum_ownership_check"
+  CHECK ("drum_ownership" is null or "drum_ownership" in ('mahek', 'returnable'));
+--> statement-breakpoint
+DO $$
+BEGIN
+  IF to_regclass('public.erp_scrap_buyers_v0256') IS NULL THEN RETURN; END IF;
+
+  INSERT INTO "erp_scrap_buyers" (id, name, phone, gstin, address, active, created_at, created_by_id)
+    SELECT id, name, mobile, gstin, address, active, created_at, created_by_id FROM "erp_scrap_buyers_v0256"
+    ON CONFLICT DO NOTHING;
+
+  INSERT INTO "erp_scrap_sales" (id, sale_no, sale_date, buyer_id, category, godown_id, quantity, unit, rate_paise, amount_paise,
+      ref_kind, external_ref, due_date, remark, status, cancel_reason, cancelled_by_id, cancelled_at, created_at, created_by_id)
+    SELECT id, sale_no, sale_date, buyer_id,
+      CASE category WHEN 'drum' THEN 'Empty Metal Drum' WHEN 'plastic' THEN 'Plastic Scrap'
+        WHEN 'cardboard' THEN 'Cardboard/Packing Box Scrap' ELSE 'Other Scrap' END,
+      NULL, quantity, CASE unit WHEN 'Drums' THEN 'Pcs' ELSE unit END, rate_paise, amount_paise,
+      CASE WHEN invoice_kind = 'invoice' AND external_ref IS NOT NULL THEN 'invoice' ELSE 'none' END,
+      CASE WHEN invoice_kind = 'invoice' THEN external_ref END,
+      due_date,
+      nullif(concat_ws(' · ', remark, category_note), ''),
+      CASE status WHEN 'cancelled' THEN 'cancelled' ELSE 'confirmed' END,
+      cancel_reason, cancelled_by_id,
+      CASE WHEN status = 'cancelled' THEN coalesce(cancelled_at, created_at) END,
+      created_at, created_by_id
+    FROM "erp_scrap_sales_v0256"
+    ON CONFLICT DO NOTHING;
+
+  INSERT INTO "erp_drum_returns" (id, return_no, supplier_id, return_date, quantity, challan_ref, remark, status, created_at, created_by_id)
+    SELECT id, return_no, supplier_id, return_date, quantity, challan, remark, 'confirmed', created_at, created_by_id
+    FROM "erp_drum_returns_v0256"
+    ON CONFLICT DO NOTHING;
+
+  INSERT INTO "erp_empty_drums" (id, drum_no, purchase_id, lot_no, inward_id, pr_number, supplier_id, raw_material_id, godown_id, seq,
+      ownership, declared_tare_kg, actual_kg, status, source, review_reason, scrap_sale_id, return_id, recorded_by_id, recorded_at, updated_at)
+    SELECT id, drum_no, purchase_id, lot_no, inward_id, pr_number, supplier_id, raw_material_id, godown_id, seq,
+      CASE ownership WHEN 'vendor' THEN 'returnable' ELSE ownership END,
+      declared_tare_kg, weight_kg, status, 'scan',
+      CASE WHEN status = 'review' THEN coalesce(status_note, 'Nobody recorded who owns this lot''s drums.') END,
+      sale_id, return_id, emptied_by_id, emptied_at, updated_at
+    FROM "erp_empty_drums_v0256"
+    ON CONFLICT DO NOTHING;
+
+  -- Each carried drum's history starts with where it came from; a weight
+  -- corrected under 0256 says what it was first weighed at.
+  INSERT INTO "erp_drum_events" (id, drum_id, kind, from_status, to_status, note, detail, by_id, at)
+    SELECT 'dre_v0256_' || id, id, 'emptied', NULL, status,
+      CASE WHEN first_weight_kg <> weight_kg
+        THEN 'Recorded before this version; first weighed at ' || first_weight_kg || ' kg' || coalesce(' (' || weight_note || ')', '') || '.'
+        ELSE 'Recorded before this version.' END,
+      jsonb_build_object('kg', weight_kg, 'firstKg', first_weight_kg, 'source', 'v0256'),
+      emptied_by_id, emptied_at
+    FROM "erp_empty_drums_v0256"
+    ON CONFLICT DO NOTHING;
+
+  -- Other scrap needs a godown now; a 0256 batch that named none goes to the
+  -- first godown that is not reserved, and says so.
+  INSERT INTO "erp_scrap_entries" (id, entry_date, category, godown_id, quantity, unit, note, created_at, created_by_id)
+    SELECT c.id, c.collected_date,
+      CASE c.category WHEN 'plastic' THEN 'Plastic Scrap' WHEN 'cardboard' THEN 'Cardboard/Packing Box Scrap' ELSE 'Other Scrap' END,
+      coalesce(c.godown_id, (SELECT g.id FROM "erp_godowns" g ORDER BY g.reserved, g.name LIMIT 1)),
+      c.quantity, CASE c.unit WHEN 'Kg' THEN 'Kg' ELSE 'Pcs' END,
+      nullif(concat_ws(' · ', c.note, c.category_note,
+        CASE WHEN c.unit = 'Bags' THEN 'counted in bags' END,
+        CASE WHEN c.godown_id IS NULL THEN 'no godown was recorded' END), ''),
+      c.created_at, c.created_by_id
+    FROM "erp_scrap_collections_v0256" c
+    WHERE EXISTS (SELECT 1 FROM "erp_godowns")
+    ON CONFLICT DO NOTHING;
+
+  INSERT INTO "erp_cash_receipts" (id, receipt_no, receipt_date, mode, amount_paise, buyer_id, reference, note, status,
+      void_reason, voided_by_id, voided_at, created_at, created_by_id)
+    SELECT id, receipt_no, receipt_date, CASE mode WHEN 'Bank' THEN 'Bank transfer' ELSE mode END, amount_paise, buyer_id,
+      reference, note, status, void_reason, voided_by_id, voided_at, created_at, created_by_id
+    FROM "erp_scrap_receipts_v0256"
+    ON CONFLICT DO NOTHING;
+
+  INSERT INTO "erp_scrap_allocations" (id, receipt_id, sale_id, amount_paise, by_id, at, voided_at, voided_by_id, void_reason)
+    SELECT id, receipt_id, sale_id, amount_paise, created_by_id, created_at, voided_at, voided_by_id,
+      CASE WHEN voided_at IS NOT NULL THEN coalesce(void_reason, 'Voided') END
+    FROM "erp_scrap_allocations_v0256"
+    ON CONFLICT DO NOTHING;
+
+  -- No number 0256 handed out is handed out again.
+  UPDATE "erp_series" s SET "last" = greatest(s."last", (SELECT coalesce(max(receipt_no), 0) FROM "erp_scrap_receipts_v0256"))
+    WHERE s."key" = 'cashReceipt';
+  UPDATE "erp_series" s SET "last" = greatest(s."last", (SELECT coalesce(max(drum_no), 0) FROM "erp_empty_drums_v0256"))
+    WHERE s."key" = 'emptyDrum';
+  UPDATE "erp_series" s SET "last" = greatest(s."last", (SELECT coalesce(max(sale_no), 0) FROM "erp_scrap_sales_v0256"))
+    WHERE s."key" = 'scrapSale';
+  UPDATE "erp_series" s SET "last" = greatest(s."last", (SELECT coalesce(max(return_no), 0) FROM "erp_drum_returns_v0256"))
+    WHERE s."key" = 'drumReturn';
+
+  DROP TABLE "erp_scrap_allocations_v0256";
+  DROP TABLE "erp_scrap_receipts_v0256";
+  DROP TABLE "erp_empty_drums_v0256";
+  DROP TABLE "erp_scrap_collections_v0256";
+  DROP TABLE "erp_drum_returns_v0256";
+  DROP TABLE "erp_scrap_sales_v0256";
+  DROP TABLE "erp_scrap_buyers_v0256";
+END $$;
+--> statement-breakpoint
+DELETE FROM "erp_series" WHERE "key" = 'scrapReceipt';
+--> statement-breakpoint
+-- 0256's one screen became three, and its three powers were renamed. Whoever
+-- was given them keeps what they had.
+INSERT INTO "app_module_access" ("id", "user_id", "app", "module", "granted_by_id", "created_at")
+  SELECT m.id || '_' || x.module, m.user_id, m.app, x.module, m.granted_by_id, m.created_at
+  FROM "app_module_access" m
+  CROSS JOIN (VALUES ('erp.emptyDrums'), ('erp.drumReturns'), ('erp.scrapSales')) AS x(module)
+  WHERE m.module = 'erp.scrap'
+ON CONFLICT DO NOTHING;
+--> statement-breakpoint
+DELETE FROM "app_module_access" WHERE "module" = 'erp.scrap';
+--> statement-breakpoint
+INSERT INTO "erp_designation_modules" ("designation_id", "module")
+  SELECT d.designation_id, x.module FROM "erp_designation_modules" d
+  CROSS JOIN (VALUES ('erp.emptyDrums'), ('erp.drumReturns'), ('erp.scrapSales')) AS x(module)
+  WHERE d.module = 'erp.scrap'
+ON CONFLICT DO NOTHING;
+--> statement-breakpoint
+DELETE FROM "erp_designation_modules" WHERE "module" = 'erp.scrap';
+--> statement-breakpoint
+INSERT INTO "erp_user_powers" ("user_id", "power", "granted_by_id", "granted_at")
+  SELECT user_id, CASE power WHEN 'scrapSell' THEN 'scrapSale' WHEN 'scrapControl' THEN 'scrapApprove' ELSE 'scrapAccounts' END,
+    granted_by_id, granted_at
+  FROM "erp_user_powers" WHERE "power" IN ('scrapSell', 'scrapControl', 'scrapReceipts')
+ON CONFLICT DO NOTHING;
+--> statement-breakpoint
+DELETE FROM "erp_user_powers" WHERE "power" IN ('scrapSell', 'scrapControl', 'scrapReceipts');
+--> statement-breakpoint
+INSERT INTO "erp_designation_powers" ("designation_id", "power")
+  SELECT designation_id, CASE power WHEN 'scrapSell' THEN 'scrapSale' WHEN 'scrapControl' THEN 'scrapApprove' ELSE 'scrapAccounts' END
+  FROM "erp_designation_powers" WHERE "power" IN ('scrapSell', 'scrapControl', 'scrapReceipts')
+ON CONFLICT DO NOTHING;
+--> statement-breakpoint
+DELETE FROM "erp_designation_powers" WHERE "power" IN ('scrapSell', 'scrapControl', 'scrapReceipts');

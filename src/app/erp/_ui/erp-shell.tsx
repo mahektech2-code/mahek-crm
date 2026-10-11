@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppFrame } from "@/components/shell/app-frame";
 import { AccountMenu } from "@/components/shell/account-menu";
@@ -12,7 +12,10 @@ import { NotificationBell } from "@/components/shell/notification-bell";
 import { cx } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/overlays";
 import { ToastProvider, useToast } from "@/components/ui/toast";
-import { erpAsk, erpLocateWorkingGodown, erpSearch, erpSetWorkingGodown, erpStartViewAs, erpStopViewAs, type ErpLocateResult, type ErpSearchHit } from "@/lib/actions/erp";
+import { erpLocateWorkingGodown, erpSetWorkingGodown, erpStartViewAs, erpStopViewAs, type ErpLocateResult } from "@/lib/actions/erp";
+import { SmartSearch } from "@/components/shell/smart-search";
+import { AskPanel } from "@/components/shell/ask-panel";
+import { ERP_ASK } from "@/components/shell/ask-setups";
 import type { ErpViewingAs } from "@/lib/erp/access";
 import type { PreviewTargets } from "@/lib/services/erp-designation-service";
 import type { Notification } from "@/db/schema";
@@ -207,12 +210,20 @@ export function ErpShell({
                 />
               </div>
 
-              <ErpSearch ask={ask} />
+              {/* The shared header box: find a customer, lot, PR, PO, box or
+                  order — or, typed as a question, ask the ERP in the drawer. */}
+              <SmartSearch
+                endpoint="/api/erp/search"
+                placeholder={ask ? "Search lots, PRs, POs, boxes, orders — or ask a question" : "Search customers, lots, PRs, POs, boxes, orders…"}
+                ask={ask ? ERP_ASK.title : undefined}
+                className="max-w-[440px]"
+              />
 
               <div className="flex-1" />
 
               <div className="flex flex-none items-center gap-2">
                 <WorkingAt godowns={godowns} working={working} locate={locate} />
+                {ask ? <AskPanel setup={ERP_ASK} /> : null}
                 {/* Below 1280px the header has a tablet's width to fit in: the
                     Feedback button and the account chip are drawn as icons. */}
                 <FeedbackButton compact className="xl:hidden" />
@@ -535,133 +546,3 @@ function WorkingAt({
   );
 }
 
-/** Header search, drawn as the CRM's. `/` focuses it; a question ending in ? is asked of the ERP. */
-function ErpSearch({ ask }: { ask: boolean }) {
-  const router = useRouter();
-  const [q, setQ] = useState("");
-  const [hits, setHits] = useState<ErpSearchHit[]>([]);
-  const [asked, setAsked] = useState("");
-  const [answer, setAnswer] = useState<{ q: string; text: string; records: { label: string; href: string }[]; readAt: string } | null>(null);
-  const [thinking, setThinking] = useState(false);
-  const runAsk = () => {
-    const question = q.trim();
-    if (question.length < 3 || thinking) return;
-    setThinking(true);
-    void erpAsk(question).then((r) => {
-      setThinking(false);
-      setAnswer(r.ok ? { q: question, text: r.answer.answer, records: r.answer.records, readAt: r.answer.readAt } : { q: question, text: r.error, records: [], readAt: "" });
-    });
-  };
-  const ref = useRef<HTMLInputElement>(null);
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const clear = () => {
-    setQ("");
-    setAnswer(null);
-  };
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const t = (e.target as HTMLElement | null)?.tagName ?? "";
-      if (e.key === "/" && t !== "INPUT" && t !== "TEXTAREA" && t !== "SELECT") {
-        e.preventDefault();
-        ref.current?.focus();
-      }
-      if (e.key === "Escape") clear();
-    };
-    const onDown = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) clear();
-    };
-    window.addEventListener("keydown", onKey);
-    document.addEventListener("mousedown", onDown);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      document.removeEventListener("mousedown", onDown);
-    };
-  }, []);
-  useEffect(() => {
-    const term = q.trim();
-    if (term.length < 2) return;
-    const t = setTimeout(() => {
-      void erpSearch(term).then((r) => {
-        setHits(r);
-        setAsked(term);
-      });
-    }, 180);
-    return () => clearTimeout(t);
-  }, [q]);
-  const openRes = q.trim().length >= 2 && asked === q.trim();
-  const go = (href: string) => {
-    clear();
-    router.push(href);
-  };
-  return (
-    <div ref={wrapRef} className="relative w-[400px] min-w-[180px] shrink">
-      <ShellIcon name="search" size={16} className="pointer-events-none absolute top-[9px] left-2.5 text-muted" />
-      <input
-        ref={ref}
-        value={q}
-        onChange={(e) => {
-          setQ(e.target.value);
-          setAnswer(null);
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && ask && q.trim().endsWith("?")) runAsk();
-        }}
-        placeholder={ask ? "Search, or ask a question ending in ?" : "Search customers, orders, lots, PRs, bills, LRs…"}
-        className="h-8.5 w-full rounded-[4px] border border-line bg-canvas pr-3 pl-8 text-sm text-ink outline-none focus:border-brand focus:bg-surface"
-      />
-      {openRes || answer || thinking ? (
-        <div className="animate-fade-in absolute top-10 left-0 z-40 w-full overflow-hidden rounded-[6px] border border-line bg-surface py-1.5 shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
-          {ask ? (
-            answer ? (
-              <div role="status" className="border-b border-divider bg-brand-soft/40 px-3 py-2.5">
-                <div className="text-[11px] font-medium tracking-[0.04em] text-[#5223E0] uppercase">Ask the ERP · {answer.q}</div>
-                <div className="mt-1 text-sm leading-5 text-ink">{answer.text}</div>
-                {answer.records.map((r) => (
-                  <button key={r.href + r.label} onClick={() => go(r.href)} className="block w-full cursor-pointer py-1 text-left text-[13px] text-brand hover:underline">
-                    {r.label} →
-                  </button>
-                ))}
-                {answer.readAt ? (
-                  <div className="mt-1 text-[11px] text-muted">
-                    Read from the ERP at {new Date(answer.readAt).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" })} · answers only, it cannot change anything
-                  </div>
-                ) : null}
-              </div>
-            ) : (
-              <button
-                onClick={runAsk}
-                disabled={thinking || q.trim().length < 3}
-                className="flex w-full cursor-pointer items-center gap-2.5 px-3 py-[7px] text-left text-sm text-[#5223E0] hover:bg-canvas disabled:cursor-default"
-              >
-                <Icon n="spark" />
-                {thinking ? "Reading the ERP…" : `Ask the ERP: “${q.trim()}”`}
-              </button>
-            )
-          ) : null}
-          {openRes && !answer && hits.length ? (
-            <div className={cx(ask && "mt-1.5 border-t border-divider")}>
-              {hits.map((r) => (
-                <button
-                  key={`${r.kind}:${r.href}`}
-                  onClick={() => go(r.href)}
-                  className="flex w-full cursor-pointer items-center justify-between gap-3 px-3 py-[7px] text-left hover:bg-canvas"
-                >
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-medium text-ink">{r.name}</span>
-                    <span className="block truncate text-[13px] text-muted">{r.meta}</span>
-                  </span>
-                  <span className="flex-none text-[11px] font-medium tracking-[0.04em] text-muted uppercase">{r.kind}</span>
-                </button>
-              ))}
-            </div>
-          ) : null}
-          {openRes && !answer && !hits.length ? (
-            <div className="px-3 py-5 text-center text-sm text-muted">
-              Nothing you can open matches “{q}”. Try a customer, order no, lot, PR, bill or LR{ask ? ", or ask it as a question" : ""}.
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  );
-}

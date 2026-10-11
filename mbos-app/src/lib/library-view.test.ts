@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   NEW_FOR_MS,
+  shareFileName,
   categoryLabel,
   fileBadge,
   fileKind,
@@ -155,4 +156,18 @@ test('three hundred documents are grouped quickly enough to redo on every keystr
   const t = performance.now();
   for (let i = 0; i < 20; i++) librarySections(many, { query: 'rates 1', filter: 'all', now: NOW });
   assert.ok(performance.now() - t < 500);
+});
+
+test('a shared file goes out under its title, with the extension its type says', () => {
+  assert.equal(shareFileName('Price list — October 2026', 'application/pdf'), 'Price list — October 2026.pdf');
+  assert.equal(shareFileName('Shop board', 'image/jpeg'), 'Shop board.jpg');
+  assert.equal(shareFileName('Rates.pdf', 'application/pdf'), 'Rates.pdf', 'not .pdf.pdf');
+});
+
+test('a title that cannot be a file name is made into one', () => {
+  assert.equal(shareFileName('Rates: Nagpur/Wardha?', 'application/pdf'), 'Rates Nagpur Wardha.pdf');
+  assert.equal(shareFileName('  ', 'application/pdf'), 'Document.pdf');
+  assert.equal(shareFileName(null, null), 'Document');
+  assert.equal(shareFileName('Trailing dots...', 'image/png'), 'Trailing dots.png');
+  assert.ok(shareFileName('x'.repeat(300), 'application/pdf').length <= 84);
 });
