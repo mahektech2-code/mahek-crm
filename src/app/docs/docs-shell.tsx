@@ -1,5 +1,6 @@
 "use client";
 
+import { NotificationBell } from "@/components/shell/notification-bell";
 import * as React from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { cx } from "@/components/ui/primitives";
@@ -95,6 +96,7 @@ export function DocsShell({
             Ask the docs
           </button>
           <FeedbackButton />
+          <NotificationBell />
           <span className="mx-1 h-6 w-px flex-none bg-divider" />
           <div className="flex flex-none items-center gap-2">
             <span className="flex h-7 w-7 flex-none items-center justify-center rounded-[4px] bg-brand-soft text-xs font-semibold text-brand-hover">

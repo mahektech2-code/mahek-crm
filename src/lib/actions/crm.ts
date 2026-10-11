@@ -8,9 +8,10 @@ import {
 } from "@/lib/services/customer-contact-service";
 import { cookies } from "next/headers";
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
+import { notificationAppSql } from "@/lib/notification-app-sql";
 import {
   auditLog,
   customers,
@@ -2077,12 +2078,24 @@ export async function submitEod(body: string): Promise<Result> {
  * path the person is waiting on. The read itself is committed before either
  * runs.
  */
-export async function markNotificationsRead(): Promise<Result> {
+/**
+ * `app` is the bell's view: "Mark all read" inside the ERP marks the ERP's
+ * notifications and the general ones, and leaves a CRM decision unread for the
+ * CRM's bell. Null is every app — the "All apps" view.
+ */
+export async function markNotificationsRead(app: string | null = null): Promise<Result> {
   const ctx = await resolveScope();
+  const appExpr = notificationAppSql();
   await db
     .update(notifications)
     .set({ read: true })
-    .where(eq(notifications.userId, ctx.user.id));
+    .where(
+      and(
+        eq(notifications.userId, ctx.user.id),
+        eq(notifications.read, false),
+        app === null ? undefined : or(sql`${appExpr} = ${app}`, sql`${appExpr} is null`),
+      ),
+    );
   return okVoid();
 }
 

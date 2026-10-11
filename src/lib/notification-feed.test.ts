@@ -20,6 +20,7 @@ const item = (id: string, minutesAgo: number, read = false, kind = "info"): Feed
   body: "",
   kind,
   href: null,
+  app: null,
   read,
   createdAt: new Date(Date.parse(NOW) - minutesAgo * 60_000).toISOString(),
 });

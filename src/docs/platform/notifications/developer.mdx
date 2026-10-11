@@ -1,0 +1,34 @@
+A notification's app is **derived from its link**, never stored. `notificationAppOf` (pure, client-safe) and `notificationAppSql` (server) are two readings of one rule, both built from `APP_ROUTES` — the prefix list `proxy.ts` uses to name a request's app — and `notification-apps.db.test.ts` runs both over the same links and fails if they ever disagree.
+
+## Map of the pieces
+
+| Piece | File | What it does |
+|---|---|---|
+| Prefix list | `src/lib/app-routes.ts` | `APP_ROUTES`, `appFor` — moved out of `proxy.ts` so the browser can ask too |
+| The rule | `src/lib/notification-apps.ts` | `notificationAppOf`, `shownIn`, `unreadElsewhere`, `notificationAppName` |
+| The rule, as SQL | `src/lib/notification-app-sql.ts` | `notificationAppSql()` — a `case` over the same prefixes |
+| The feed | `src/lib/queries.ts` | `notificationFeed(userId, app)` — this app's newest 30, the newest 30 overall, unread per app |
+| The endpoint | `src/app/api/notifications/route.ts` | `GET ?app=<id>`; an unknown app is "every app" |
+| Mark all read | `src/lib/actions/crm.ts` | `markNotificationsRead(app)` — narrows to the app and general ones |
+| Polling, pop-ups | `src/components/shell/notification-center.tsx` | Asks for the tab's app (from the path), starts `known` again when the app changes |
+| The bell | `src/components/shell/notification-bell.tsx` | Badge for this app, "This app" / "All apps" tabs, "Unread in other apps" |
+
+<Code file="src/lib/notification-apps.ts" symbol="notificationAppOf" />
+
+<Code file="src/lib/notification-app-sql.ts" symbol="notificationAppSql" collapsed />
+
+## Rules the code keeps
+
+- **Writers do nothing new.** Every `insert(notifications)` and `notifyUsers` call already names a link; that link decides the app. A new kind of notification needs no app field — give it the right `href`.
+- `href` decides first; a row with no `href` and an `mbos_href` is `field`; anything else is general (`null`) and shows in every bell.
+- A prefix matches a whole path segment (`/crm` and `/crm/…`, `?…`, `#…`; never `/crmx`).
+- `notificationAppSql` refuses a route whose prefix or app id is not plain lower-case letters, slashes and hyphens, because it is spliced into SQL.
+- An answer that arrives after the tab moved to another app is dropped (`asked !== appRef.current`), so the ERP header never paints the CRM's list.
+
+## Tests
+
+| Test | Pins |
+|---|---|
+| `src/lib/notification-apps.test.ts` | The rule: prefixes, handset-only, general, what is shown where, unread elsewhere |
+| `src/lib/notification-apps.db.test.ts` | SQL and browser agree on every link; the feed filters and counts per app; mark-all-read stays inside the app |
+| `src/lib/notification-feed.test.ts` | What pops, tones, dwell |

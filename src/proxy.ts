@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { appFor } from "@/lib/app-routes";
 
 /* ---------------------------------------------------------------------------
  * WHICH APP THIS REQUEST IS FOR, named once, at the edge of the request.
@@ -34,38 +35,10 @@ export const APP_HEADER = "x-mahek-app";
 export const FACTORY_SESSION_HEADER = "x-factory-session";
 const SESSION_COOKIE_NAME = "mahekone_session";
 
-/**
- * URL prefix → app id. The `field` app is deliberately absent: it is MBOS's
- * handset, it has no browser route, and the API the handset actually calls
- * carries its own principal from a bearer token rather than from a path.
- */
-const APP_ROUTES: ReadonlyArray<readonly [string, string]> = [
-  ["/crm", "crm"],
-  ["/accounts", "accounts"],
-  ["/orders", "accounts"], // the old slug, still redirected
-  ["/sales", "sales"],
-  /* The Sales Manager's lead pipeline. It is the Sales Dashboard's `sales.leads`
-     module drawn on its own route, and it has to resolve as that app: without
-     this line a request here names NO app, and scope falls back to the widest
-     level the account holds anywhere — which is a manager elsewhere and an
-     associate on the Sales Dashboard reading (and writing) as a manager. */
-  ["/sales-lead-pipeline", "sales"],
-  ["/people", "people"],
-  ["/reports", "reports"], // retired — next.config redirects it to /apps
-  ["/hrms", "hrms"],
-  ["/admin", "admin"],
-  ["/founder", "founder"],
-  ["/enquiries", "enquiries"],
-  ["/erp", "erp"],
-  ["/website", "website"],
-  ["/hire", "hire"],
-  ["/factory", "factory"],
-  /* The factory phone's own API: a station phone sends from a page that may
-     be days old, so the app it belongs to is named by the path, not left to
-     a Referer an offline-cached page may not carry. */
-  ["/api/factory", "factory"],
-  ["/docs", "docs"],
-];
+/* Which app a path belongs to lives in `lib/app-routes.ts`, pure, because the
+   notification bell asks the same question in the browser. */
+export { appFor };
+
 
 /**
  * WHICH WORKSPACE, where one app draws more than one scope.
@@ -86,13 +59,6 @@ export function workspaceFor(pathname: string): string | null {
   return pathname === CRM_SALES_MANAGER_PREFIX || pathname.startsWith(CRM_SALES_MANAGER_PREFIX + "/")
     ? CRM_SALES_MANAGER_WORKSPACE
     : null;
-}
-
-export function appFor(pathname: string): string | null {
-  for (const [prefix, app] of APP_ROUTES) {
-    if (pathname === prefix || pathname.startsWith(prefix + "/")) return app;
-  }
-  return null;
 }
 
 /**

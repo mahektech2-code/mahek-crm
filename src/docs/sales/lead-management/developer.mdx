@@ -11,7 +11,7 @@ The Sales Dashboard's lead routes are thin wrappers: each `page.tsx` under `src/
 | Sales Manager workspace | `src/app/sales-lead-pipeline/**` | Own layout: `sales` grant, then `requireModule("sales.lead-pipeline")`; dashboard, pipeline, list, record |
 | Shared screens | `src/components/leads/pages/*` | One body per screen, both apps |
 | Sidebar | `src/app/sales/nav.ts`, `sidebar-nav.tsx` | Four visible rows; seven `legacy` rows drawn only without All Leads |
-| Request app | `src/proxy.ts` | `APP_ROUTES` maps `/sales` and `/sales-lead-pipeline` to `sales`; `WORKSPACE_HEADER` marks the CRM's Sales Manager desk |
+| Request app | `src/lib/app-routes.ts`, `src/proxy.ts` | `APP_ROUTES` maps `/sales` and `/sales-lead-pipeline` to `sales`; `WORKSPACE_HEADER` marks the CRM's Sales Manager desk |
 | Scope | `src/lib/services/sales-service.ts` | `managerScope`, `leadsVisible`, `scopeNarrowing` |
 
 ## Paths and keys
@@ -47,7 +47,7 @@ sequenceDiagram
   B->>S: reads narrowed by leadsVisible(scope) — unowned leads included
 `} />
 
-<Code file="src/proxy.ts" symbol="APP_ROUTES" collapsed />
+<Code file="src/lib/app-routes.ts" symbol="APP_ROUTES" collapsed />
 
 <Code file="src/proxy.ts" symbol="workspaceFor" />
 

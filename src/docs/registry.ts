@@ -120,6 +120,15 @@ export const DOC_APPS: DocApp[] = [
         written: OWNER_AND_DEV,
       },
       {
+        slug: "notifications",
+        title: "Notifications, app by app",
+        summary: "The bell in every app's header: which notifications it shows, what it counts, what pops up, and where the rest are.",
+        group: "Start here",
+        modules: [],
+        tabs: OWNER_AND_DEV,
+        written: OWNER_AND_DEV,
+      },
+      {
         slug: "local-setup",
         title: "Setup and installation",
         summary: "From a fresh clone to the app running on a laptop: Node, Postgres, environment, migrations, seed data and the test suites.",

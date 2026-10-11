@@ -110,7 +110,7 @@ sequenceDiagram
 
 `src/proxy.ts` runs on every request. It does **not** authenticate — it names which app the request is in, from the URL prefix, and writes it into the `x-mahek-app` header after deleting any value the client sent.
 
-<Code file="src/proxy.ts" symbol="appFor" />
+<Code file="src/lib/app-routes.ts" symbol="appFor" />
 
 <Code file="src/proxy.ts" symbol="proxy" collapsed />
 
@@ -250,7 +250,7 @@ Credentials are separate (`app_secrets`, `readSecret`). See [Configuration](/doc
 Add them to `src/db/schema.ts` and hand-write the migration. Reference `customers` and `users` directly — never copy them.
 </Step>
 <Step title="Register the app">
-Add its id to `app_id` (a rename uses `ALTER TYPE … RENAME VALUE`; a new value cannot be used in the migration that adds it), its entry in `APPS` in `src/lib/apps.ts`, its URL prefix in `APP_ROUTES` in `src/proxy.ts`, its modules in `src/lib/modules.ts` and its row in the capability matrix.
+Add its id to `app_id` (a rename uses `ALTER TYPE … RENAME VALUE`; a new value cannot be used in the migration that adds it), its entry in `APPS` in `src/lib/apps.ts`, its URL prefix in `APP_ROUTES` in `src/lib/app-routes.ts`, its modules in `src/lib/modules.ts` and its row in the capability matrix.
 </Step>
 <Step title="Gate its layout">
 Call `listUserApps()` in `src/app/<app>/layout.tsx` the way `src/app/crm/layout.tsx` does, and `requireModule` in each module folder.
