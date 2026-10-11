@@ -14,7 +14,8 @@ import {
   openDocumentFile,
   type DocumentRow,
 } from '../src/data/library';
-import { categoryLabel, fileBadge, fileKind } from '../src/lib/library-view';
+import { categoryLabel, fileBadge, fileKind, shareFileName } from '../src/lib/library-view';
+import { shareAvailable, shareFile } from '../src/native/share';
 import { pdfPageCount, pdfPreviewAvailable, renderPdfPage } from '../src/native/pdf-preview';
 import { useStore } from '../src/state/store';
 import { dmy, isoDate } from '../src/lib/format';
@@ -40,9 +41,14 @@ import { dmy, isoDate } from '../src/lib/format';
  * A zoomed page is redrawn at the new width rather than stretched, so small
  * print on a rate card stays sharp.
  *
- * **"Open in another app" is always there**, because a person may want to
- * share it on WhatsApp or print it, and because a build without the viewer —
- * an APK from before it shipped — still needs a way to the file.
+ * **Share sends the file itself** — to WhatsApp, Gmail, Bluetooth, whatever
+ * the phone has — named after the document's title (`native/share.ts`). It is
+ * drawn only on a build that carries the native half, and is the main button
+ * there because handing a customer the price list is what this screen is for.
+ *
+ * **"Open in another app" is always there**, for printing, and because a build
+ * without the viewer or the share — an APK from before either shipped — still
+ * needs a way to the file.
  */
 
 type Phase =
@@ -88,6 +94,23 @@ export default function DocViewScreen() {
   const openElsewhere = React.useCallback(async () => {
     if (!doc || phase.at !== 'ready') return;
     const r = await openDocumentFile(phase.uri, mediaTypeOf({ kind: phase.kind }, phase.uri));
+    if (r.ok) return;
+    if (/no longer on this phone/.test(r.reason)) {
+      await forgetDocumentFile(doc.id);
+      setAttempt((n) => n + 1);
+    }
+    notify(r.reason, 'error');
+  }, [doc, phase, notify]);
+
+  const shareIt = React.useCallback(async () => {
+    if (!doc || phase.at !== 'ready') return;
+    const mediaType = mediaTypeOf({ kind: phase.kind }, phase.uri);
+    const r = await shareFile({
+      uri: phase.uri,
+      name: shareFileName(doc.title, mediaType),
+      mediaType,
+      dialogTitle: `Share ${doc.title}`,
+    });
     if (r.ok) return;
     if (/no longer on this phone/.test(r.reason)) {
       await forgetDocumentFile(doc.id);
@@ -165,7 +188,8 @@ export default function DocViewScreen() {
             borderTopColor: C.border,
             backgroundColor: C.surface,
           }}>
-          <SecondaryButton label="Open in another app" onPress={() => void openElsewhere()} />
+          {shareAvailable ? <PrimaryButton label="Share" onPress={() => void shareIt()} style={{ flex: 1 }} /> : null}
+          <SecondaryButton label="Open in another app" onPress={() => void openElsewhere()} style={{ flex: 1 }} />
         </View>
       ) : null}
     </AppFrame>

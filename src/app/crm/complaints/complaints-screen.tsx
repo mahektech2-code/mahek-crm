@@ -160,6 +160,7 @@ export function ComplaintsScreen({
   attachments,
   categories,
   maxImages,
+  openId,
 }: {
   scopeLabel: string;
   /**
@@ -179,12 +180,14 @@ export function ComplaintsScreen({
   categories: string[];
   /** `attachments.maxPerComplaint`, so the screen and the server agree. */
   maxImages: number;
+  /** A complaint to open on arrival — the header search links here with `?open=`. */
+  openId?: string;
 }) {
   const router = useRouter();
   const { run } = useToast();
 
-  const [tab, setTab] = React.useState<Tab>("open");
-  const [current, setCurrent] = React.useState<Row | null>(null);
+  const [tab, setTab] = React.useState<Tab>(openId ? "all" : "open");
+  const [current, setCurrent] = React.useState<Row | null>(() => (openId ? rows.find((r) => r.id === openId) ?? null : null));
   const [notes, setNotes] = React.useState("");
   const [told, setTold] = React.useState(false);
   const [notesError, setNotesError] = React.useState(false);

@@ -12653,6 +12653,11 @@ export const erpTransporters = pgTable(
   {
     id: text("id").primaryKey(),
     name: text("name").notNull(),
+    /**
+     * MIRRORS of the first godown's first person — their name and first two
+     * numbers — written by `saveTransporter` so the call buttons on bills and
+     * LRs, which read these, need no join. The godowns are the truth.
+     */
     phone: text("phone"),
     altPhone: text("alt_phone"),
     contactPerson: text("contact_person"),
@@ -12663,11 +12668,7 @@ export const erpTransporters = pgTable(
      * Number", "G.C Number"… A value of the `consignmentLabel` reference list.
      */
     consignmentLabel: text("consignment_label"),
-    /**
-     * Where its godown is, as typed before godowns were picked from the place
-     * tree (`erp_transporter_places`). Read only as a fallback for a row
-     * nobody has picked places for yet.
-     */
+    /** Where its godown was, as typed before godowns were rows. Carried into one by 0255; read by nothing. */
     address: text("address"),
     /** Its tracking page, with {lr} where the LR number goes. */
     trackingUrl: text("tracking_url"),
@@ -12680,24 +12681,48 @@ export const erpTransporters = pgTable(
 );
 
 /**
- * Where a transporter keeps godowns: places on the reviewed tree, at any rung.
- * Only the narrowest pick in a branch is stored — Maharashtra with Bhiwandi
- * under it is Bhiwandi, the rule a territory follows.
+ * A transporter's godown: ONE town on the reviewed place tree, the street
+ * address as typed, and the people there to ring. A company with godowns in
+ * Bhiwandi and Pune is two rows, each in one town — never a state, district,
+ * city and area picked separately.
  */
-export const erpTransporterPlaces = pgTable(
-  "erp_transporter_places",
+export const erpTransporterGodowns = pgTable(
+  "erp_transporter_godowns",
   {
+    id: text("id").primaryKey(),
     transporterId: text("transporter_id")
       .notNull()
       .references(() => erpTransporters.id, { onDelete: "cascade" }),
-    placeId: text("place_id")
+    /** What they call it — "Main godown", "Booking office". */
+    label: text("label"),
+    /** The town (a city or an area node). Null for a godown typed before towns were picked. */
+    placeId: text("place_id").references(() => places.id, { onDelete: "set null" }),
+    /** Street, landmark — the part no tree can hold. */
+    address: text("address"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("erp_transporter_godowns_transporter_idx").on(t.transporterId, t.sortOrder)],
+);
+
+/** A person at a transporter's godown, with up to three numbers to ring. */
+export const erpTransporterContacts = pgTable(
+  "erp_transporter_contacts",
+  {
+    id: text("id").primaryKey(),
+    godownId: text("godown_id")
       .notNull()
-      .references(() => places.id, { onDelete: "cascade" }),
+      .references(() => erpTransporterGodowns.id, { onDelete: "cascade" }),
+    name: text("name"),
+    /** What they look after — "Booking", "Delivery", "Owner". Free text. */
+    role: text("role"),
+    phones: text("phones").array().notNull().default(sql`'{}'::text[]`),
+    sortOrder: integer("sort_order").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    primaryKey({ columns: [t.transporterId, t.placeId], name: "erp_transporter_places_pkey" }),
-    index("erp_transporter_places_place_idx").on(t.placeId),
+    index("erp_transporter_contacts_godown_idx").on(t.godownId, t.sortOrder),
+    check("erp_transporter_contacts_phones_max", sql`cardinality(${t.phones}) <= 3`),
   ],
 );
 
@@ -12950,7 +12975,7 @@ export const erpStockAdjustments = pgTable(
 );
 
 /* ---------------------------------------------------------------------------
- * SCRAP & EMPTY DRUMS (0255). A drum is registered when it becomes EMPTY,
+ * SCRAP & EMPTY DRUMS (0256). A drum is registered when it becomes EMPTY,
  * against the GRN lot it arrived in — while its label can still be read — and
  * keeps that link for good. Mahek-owned drums are scrap stock, sold by
  * quantity and allocated oldest first; vendor-returnable drums wait to go back

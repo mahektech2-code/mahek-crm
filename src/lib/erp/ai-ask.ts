@@ -110,7 +110,12 @@ export function askTools(ctx: ErpContext, records: AskRecord[]) {
   };
 }
 
-export async function askErp(ctx: ErpContext, question: string): Promise<{ ok: true; answer: AskAnswer } | { ok: false; error: string }> {
+export async function askErp(
+  ctx: ErpContext,
+  question: string,
+  /** Earlier turns of the drawer's conversation, so "and last month?" means something. */
+  history: Array<{ role: "user" | "assistant"; text: string }> = [],
+): Promise<{ ok: true; answer: AskAnswer } | { ok: false; error: string }> {
   const state = await featureState("ask", true);
   if (!state.on) return { ok: false, error: state.reason };
   const q = question.trim();
@@ -131,7 +136,10 @@ export async function askErp(ctx: ErpContext, question: string): Promise<{ ok: t
         "Answer in one to three short sentences, in the language of the question, with the figure first.",
         `Today is ${today()}.`,
       ].join(" "),
-      prompt: q,
+      messages: [
+        ...history.slice(-8).map((t) => ({ role: t.role, content: t.text.slice(0, 4000) })),
+        { role: "user" as const, content: q },
+      ],
       tools: askTools(ctx, records),
       stopWhen: isStepCount(5),
       maxRetries: 1,

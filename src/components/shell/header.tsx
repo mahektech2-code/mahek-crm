@@ -2,7 +2,9 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { GlobalSearch } from "./global-search";
+import { SmartSearch } from "./smart-search";
+import { AskPanel } from "./ask-panel";
+import { CRM_ASK } from "./ask-setups";
 import { FeedbackButton } from "./feedback-button";
 import { HeaderLead } from "./header-lead";
 import { cx } from "@/components/ui/primitives";
@@ -14,7 +16,8 @@ import type { Notification, User } from "@/db/schema";
 import type { AppDefinition } from "@/lib/apps";
 
 const SHORTCUTS = [
-  { what: "Focus global search", key: "/" },
+  { what: "Focus search — type a name, or ask a question", key: "/" },
+  { what: "Move through search results", key: "↑ · ↓" },
   { what: "Move down / up the queue", key: "j · k" },
   { what: "Open the call panel for the selected row", key: "Enter" },
   { what: "Save the call and open the next customer", key: "Ctrl + Enter" },
@@ -80,7 +83,14 @@ export function Header({
         />
       </div>
 
-      <GlobalSearch />
+      {/* The ERP's header: one box that finds a customer, a lead, a bill, an
+          order, a complaint or a screen — or, typed as a question, asks the
+          CRM and opens the answer in the Ask AI drawer. */}
+      <SmartSearch
+        endpoint="/api/crm/search"
+        placeholder="Search customers, leads, bills, orders — or ask a question"
+        ask={CRM_ASK.title}
+      />
 
       <div className="flex-1" />
 
@@ -112,6 +122,8 @@ export function Header({
             ))}
           </div>
         ) : null}
+
+        <AskPanel setup={CRM_ASK} />
 
         <FeedbackButton />
 
