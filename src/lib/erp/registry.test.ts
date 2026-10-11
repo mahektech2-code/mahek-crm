@@ -45,9 +45,9 @@ test("a tab is never a module, and every link to one lands on its screen's tab",
       assert.equal(erpPlace(k)?.screen.key, sc.key);
     }
   }
-  assert.equal(erpLink("pendingLr"), "/erp/transport");
+  assert.equal(erpLink("pendingLr"), "/erp/transport?view=pendingLr");
   assert.equal(erpLink("trackLr", { f: "a,b", fl: "In Transit" }), "/erp/transport?view=trackLr&f=a%2Cb&fl=In+Transit");
-  assert.equal(erpLink("transport"), "/erp/transport?view=transport");
+  assert.equal(erpLink("transport"), "/erp/transport");
   assert.equal(erpLink("rmLog"), "/erp/stock?view=rmLog");
   assert.equal(erpLink("stock"), "/erp/stock");
   assert.equal(erpLink("reorderRm"), "/erp/rm-levels");

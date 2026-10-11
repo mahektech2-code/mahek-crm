@@ -4461,6 +4461,52 @@ export const SETTINGS = [
     default: true,
   },
   {
+    key: "erp.logistics.notifyCustomers",
+    type: "boolean",
+    category: "erp",
+    label: "Tell customers where their goods are",
+    description:
+      "On: attaching an LR to a bill, every status update logistics shares, a problem on the road and the delivery each write a WhatsApp to the party. It goes through Wati where the founder has WhatsApp switched on and a logistics template is named below; otherwise it waits under Logistics → Customer messages for somebody to send it by hand. Off: nothing is written for customers, and the updates stay inside MahekOne.",
+    default: true,
+  },
+  {
+    key: "erp.logistics.watiTemplate",
+    type: "text",
+    category: "erp",
+    label: "Logistics · Wati template",
+    description:
+      "The name of the APPROVED Wati template logistics messages go out as. It may use {{name}}, {{bill_no}}, {{lr_no}}, {{lr_date}}, {{transporter}}, {{boxes}}, {{status}}, {{expected}}, {{track_link}} and {{message}} (the whole update in one line). A template asking for anything else is not sent. Blank: every message is sent by hand.",
+    default: "",
+  },
+  {
+    key: "erp.logistics.signature",
+    type: "text",
+    category: "erp",
+    label: "Logistics · message signature",
+    description: "The line every customer message ends with.",
+    default: "Mahek Marketing India",
+  },
+  {
+    key: "erp.logistics.callEveryDays",
+    type: "integer",
+    category: "erp",
+    label: "Logistics · call the transporter every",
+    description: "Days after an update on the road that the next call to the transporter falls due, unless the person updating picks another day.",
+    default: 2,
+    min: 1,
+    max: 30,
+  },
+  {
+    key: "erp.logistics.lateAfterDays",
+    type: "integer",
+    category: "erp",
+    label: "Logistics · late after",
+    description: "Days on the road, counted from dispatch, after which a consignment with no expected delivery date is flagged as running late. One with an expected date is late the day after it.",
+    default: 7,
+    min: 1,
+    max: 60,
+  },
+  {
     key: "erp.location.autoDetect",
     type: "boolean",
     category: "erp",
@@ -5998,6 +6044,11 @@ export type Config = {
   "erp.factory.shift": string;
   "erp.factory.dispatchDue": string;
   "erp.dispatch.requireScan": boolean;
+  "erp.logistics.notifyCustomers": boolean;
+  "erp.logistics.watiTemplate": string;
+  "erp.logistics.signature": string;
+  "erp.logistics.callEveryDays": number;
+  "erp.logistics.lateAfterDays": number;
   "erp.ai.voice.enabled": boolean;
   "erp.ai.alerts.enabled": boolean;
   "erp.ai.alerts.rateJumpPct": number;

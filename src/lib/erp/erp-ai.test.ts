@@ -201,7 +201,7 @@ describe("the dashboard", () => {
     const a = await as(admin);
     const all = (await dashboardSections(a, null)).flatMap((s) => s.tiles);
     const labels = all.map((t) => t.l);
-    for (const l of ["Sales value this month", "Margin this month", "Purchase value this month", "Dispatched this month", "Pending LR"]) assert.ok(labels.includes(l), `admin sees ${l}`);
+    for (const l of ["Sales value this month", "Margin this month", "Purchase value this month", "Dispatched this month", "Waiting for the LR", "On the road"]) assert.ok(labels.includes(l), `admin sees ${l}`);
     assert.ok(!labels.includes("Calls due today"), "order follow-up is the CRM's, not a second prediction here");
     assert.ok(all.every((t) => t.href.startsWith("/erp")));
     const c = await as(clerk);

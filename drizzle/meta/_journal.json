@@ -1730,6 +1730,13 @@
       "when": 1792531962442,
       "tag": "0249_revert_petty_cash",
       "breakpoints": true
+    },
+    {
+      "idx": 247,
+      "version": "7",
+      "when": 1792531963442,
+      "tag": "0250_erp_logistics_flow",
+      "breakpoints": true
     }
   ]
 }

@@ -8054,6 +8054,45 @@ moves them; a reviewed or hand-picked place is never touched. The sheet's own
 read that shows a town goes through `placeNameSql`, the tree's name falling
 back to the typed one.
 
+## Logistics — from the factory gate to the party's door
+
+**THE ERP'S TRANSPORT SCREEN IS THE LOGISTICS DESK** (`/erp/transport`, key and
+slug kept so grants and bookmarks hold). One tab per step: **To transporter**
+(dispatched bills on their way to the transporter's godown at Bhiwandi — due
+today / tomorrow / a day, box count, "Reached transporter"), **LR desk** (LRs
+the dispatch team uploaded, attached to their bills), **On the road** (one card
+per LR: ring, update, report a problem, deliver), **Delivered**, **Customer
+messages** and **Transporters**; **Today** is the pipeline and what needs
+attention. Rules are pure in `engines/logistics.ts`; reads and writes in
+`lib/erp/logistics.ts`; actions in `lib/actions/erp-logistics.ts`.
+
+**THE PHASE IS DERIVED, NEVER STORED** — the stage plus whether there is an LR
+(`phaseOf`). "At transport" is the one new stage (0250 widened the check). A
+bill moved past Dispatched with no LR is still waiting for its LR.
+
+**COLLECTING AN LR AND ATTACHING IT ARE TWO JOBS.** The dispatch team uploads
+(`erp_lrs`, `/erp/transport/upload`, also linked from the Dispatch desk and
+open to its holders); logistics attaches on the LR desk. An upload is never
+deleted — voided with a reason. One LR is one delivery party (`attachRefusal`).
+Once attached, the LR is the unit on the road: every update moves every bill
+under it. Every step writes `erp_transport_events`, append-only.
+
+**THE CUSTOMER IS TOLD AT EVERY STEP THAT MOVES, from facts only.** LR attached,
+stage or expected day moved, a problem, delivered — `customerMessage` leaves out
+anything nobody entered. A call that moved nothing tells nobody. Messages live
+in `erp_transport_messages`, NOT `wa_messages`: a confirmed message there is
+contact and quiets the Call Log, and a lorry update must not. They go through
+Wati only with the founder's switch on and `erp.logistics.watiTemplate` naming
+an approved template that asks for nothing logistics cannot fill; otherwise
+they wait as "to send" with the reason, sent by hand from WhatsApp and marked.
+DND, do-not-contact, no mobile and a staff member's number are recorded as
+skipped with why. Wati's ticks reach them through `applyWatiEvent` (`etmsg_`).
+
+**THE CUSTOMER'S LINK NEEDS NO SIGN-IN AND SHOWS NOTHING INTERNAL.**
+`/track/<token>` (20 random characters per bill) shows the bill, the LR and
+the shared steps — never call notes, problem notes, prices or staff names,
+because a WhatsApp link gets forwarded.
+
 ## Hire — hiring and onboarding
 
 `/hire`, its own app. The PRD and functional spec are the client's; the

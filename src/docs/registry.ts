@@ -852,8 +852,8 @@ export const DOC_APPS: DocApp[] = [
       },
       {
         slug: "transport",
-        title: "Transport and LRs",
-        summary: "Every dispatched bill, its LR, where the consignment is, and paid freight.",
+        title: "Logistics and LRs",
+        summary: "From the factory to the party: reaching the transporter, uploading and attaching LRs, tracking the road, telling the customer, delivery.",
         group: "Sell and ship",
         modules: ["erp.transport"],
         written: ALL,

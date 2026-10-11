@@ -809,6 +809,21 @@ const APPS: Record<string, string> = {
 
 /** Past-tense verbs. A token found here, at the END of a code, is the verb. */
 export const VERBS: Record<string, string> = {
+  /* The logistics desk (erp.logistics.*). */
+  atTransport: "marked {} as reached the transporter",
+  delivered: "marked {} delivered",
+  due: "planned when {} reaches the transporter",
+  issue: "reported a problem on {}",
+  issueCleared: "cleared a problem on {}",
+  lrAttach: "attached an LR to {}",
+  lrDetach: "took {} off its LR",
+  lrEdit: "edited an LR on {}",
+  lrUpload: "uploaded LRs for {}",
+  lrVoid: "voided an LR on {}",
+  messageSent: "marked a customer message about {} sent",
+  messageSkipped: "decided not to send a customer message about {}",
+  packages: "corrected the boxes on {}",
+  transporter: "edited a transporter on {}",
   create: "added",
   created: "added",
   add: "added",
@@ -1009,6 +1024,7 @@ export const VERBS: Record<string, string> = {
 
 /** Nouns. A code's middle tokens are looked up here. */
 export const NOUNS: Record<string, string> = {
+  logistics: "consignment",
   rawMaterial: "raw material",
   supplier: "supplier",
   product: "product",

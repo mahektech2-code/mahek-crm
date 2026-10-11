@@ -633,6 +633,8 @@ export const attachmentParentEnum = pgEnum("attachment_parent", [
   "erp_video",
   /** A vendor's quotation, photographed or as its PDF. */
   "erp_quotation",
+  /** A lorry receipt the dispatch team uploaded to the Logistics LR desk (0250). */
+  "erp_lr",
   /** Retired with the petty cash module (0249). Postgres cannot drop an enum
       value, so it stays declared; nothing writes it. */
   "erp_petty",
@@ -12457,12 +12459,170 @@ export const erpTransports = pgTable(
     /** Track | Don't Track. */
     trackStatus: text("track_status").notNull().default("Don't Track"),
     materialStage: text("material_stage").notNull().default("Dispatched"),
+    /** The next call to the transporter about this consignment. */
     reminderDate: date("reminder_date"),
+    /* ---- 0250: the logistics flow. See "## Logistics" in AGENTS.md. ---- */
+    /** Boxes (packages) the bill left the factory as — read off its lines when it opened, corrected by logistics. */
+    packages: integer("packages"),
+    /** Litres on the bill, read off its lines when it opened. */
+    litres: numeric("litres", { precision: 12, scale: 2, mode: "number" }),
+    /** The day the material is expected to reach the transporter's godown. */
+    transportDueOn: date("transport_due_on"),
+    /** When logistics confirmed the transporter has it. */
+    atTransportAt: timestamp("at_transport_at", { withTimezone: true }),
+    /** The uploaded LR this bill travels under; `lr_no` mirrors its number. */
+    lrId: text("lr_id"),
+    /** The day the transporter expects it to reach the party. */
+    expectedDeliveryOn: date("expected_delivery_on"),
+    /** Closed: the day the party received it, and who signed for it. */
+    deliveredOn: date("delivered_on"),
+    receivedBy: text("received_by"),
+    /** An open problem on the road — Delayed, Damaged, Short, Held at transport, Wrong address, Other — and what was said. */
+    issue: text("issue"),
+    issueNote: text("issue_note"),
+    issueAt: timestamp("issue_at", { withTimezone: true }),
+    /** The unguessable part of the customer's tracking link (/track/<token>). */
+    trackToken: text("track_token"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     updatedById: text("updated_by_id").references(() => users.id),
   },
-  (t) => [uniqueIndex("erp_transports_order_key").on(t.orderNo)],
+  (t) => [
+    uniqueIndex("erp_transports_order_key").on(t.orderNo),
+    uniqueIndex("erp_transports_track_token_key").on(t.trackToken),
+    index("erp_transports_lr_idx").on(t.lrId),
+  ],
+);
+
+/**
+ * A lorry receipt as the dispatch team uploads it, BEFORE anybody has said
+ * which bills it carries. Logistics then attaches it to the bills on the LR
+ * desk (status `assigned`); a wrong upload is voided, never deleted. One LR is
+ * one physical consignment to one consignee, so it may carry several bills.
+ */
+export const erpLrs = pgTable(
+  "erp_lrs",
+  {
+    id: text("id").primaryKey(),
+    lrNo: text("lr_no").notNull(),
+    lrDate: date("lr_date"),
+    transporter: text("transporter"),
+    /** The destination printed on the LR. */
+    destination: text("destination"),
+    /** Articles / packages printed on the LR. */
+    packages: integer("packages"),
+    weightKg: numeric("weight_kg", { precision: 10, scale: 2, mode: "number" }),
+    freightPaise: bigint("freight_paise", { mode: "number" }),
+    /** Paid | To pay | TBB. */
+    freightTerm: text("freight_term"),
+    /** The photograph or PDF of the receipt (attachment parent `erp_lr`). */
+    fileId: text("file_id"),
+    godownId: text("godown_id").references(() => erpGodowns.id),
+    note: text("note"),
+    /** unassigned | assigned | void. */
+    status: text("status").notNull().default("unassigned"),
+    voidReason: text("void_reason"),
+    uploadedById: text("uploaded_by_id").references(() => users.id),
+    uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull().defaultNow(),
+    assignedById: text("assigned_by_id").references(() => users.id),
+    assignedAt: timestamp("assigned_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("erp_lrs_number_key").on(sql`lower(coalesce(${t.transporter}, ''))`, sql`upper(${t.lrNo})`).where(sql`${t.status} <> 'void'`),
+    index("erp_lrs_status_idx").on(t.status),
+    check("erp_lrs_status_check", sql`${t.status} in ('unassigned', 'assigned', 'void')`),
+  ],
+);
+
+/**
+ * Everything that happened to a consignment, append-only: it opened, it is due
+ * at the transporter, it reached them, its LR was attached, a call was made, its
+ * stage moved, a problem was raised or cleared, it was delivered. The customer's
+ * tracking page and the consignment's own page are both read from here.
+ */
+export const erpTransportEvents = pgTable(
+  "erp_transport_events",
+  {
+    id: text("id").primaryKey(),
+    transportId: text("transport_id")
+      .notNull()
+      .references(() => erpTransports.id, { onDelete: "cascade" }),
+    /** opened | due | at_transport | lr | lr_removed | call | stage | issue | issue_cleared | delivered | reopened | note | packages. */
+    kind: text("kind").notNull(),
+    /** The stage the consignment was at after this event. */
+    stage: text("stage"),
+    note: text("note"),
+    /** Shown on the customer's tracking page — a call note about a transporter's excuses is not. */
+    shared: boolean("shared").notNull().default(true),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+    byId: text("by_id").references(() => users.id),
+  },
+  (t) => [index("erp_transport_events_transport_idx").on(t.transportId, t.at)],
+);
+
+/**
+ * Every WhatsApp the logistics flow sent a customer, or has ready for a person
+ * to send. Kept apart from `wa_messages` on purpose: a confirmed message there
+ * is CONTACT, and quiets the customer on the Call Log — a note saying the goods
+ * are on a lorry is not a sales conversation and must not cost one.
+ */
+export const erpTransportMessages = pgTable(
+  "erp_transport_messages",
+  {
+    id: text("id").primaryKey(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id),
+    /** The bills this message speaks for. */
+    transportIds: text("transport_ids").array().notNull(),
+    lrId: text("lr_id"),
+    eventId: text("event_id"),
+    /** lr | stage | issue | delivered. */
+    kind: text("kind").notNull(),
+    phone: text("phone"),
+    body: text("body").notNull(),
+    /** sent | to_send | sent_by_hand | failed | skipped | delivered | read. */
+    status: text("status").notNull(),
+    /** Why it was not sent through Wati, or why it failed. */
+    why: text("why"),
+    providerRef: text("provider_ref"),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    sentById: text("sent_by_id").references(() => users.id),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    readAt: timestamp("read_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    index("erp_transport_messages_status_idx").on(t.status),
+    index("erp_transport_messages_customer_idx").on(t.customerId, t.createdAt),
+    check("erp_transport_messages_status_check", sql`${t.status} in ('sent', 'to_send', 'sent_by_hand', 'failed', 'skipped', 'delivered', 'read')`),
+  ],
+);
+
+/**
+ * The transport companies logistics rings. A name is what bills and LRs carry
+ * as text, so a transporter here is matched to them by name; the row adds the
+ * numbers to call and, where the company has one, its online tracking page.
+ */
+export const erpTransporters = pgTable(
+  "erp_transporters",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    phone: text("phone"),
+    altPhone: text("alt_phone"),
+    contactPerson: text("contact_person"),
+    /** Where its godown is — Bhiwandi for most. */
+    address: text("address"),
+    /** Its tracking page, with {lr} where the LR number goes. */
+    trackingUrl: text("tracking_url"),
+    active: boolean("active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedById: text("updated_by_id").references(() => users.id),
+  },
+  (t) => [uniqueIndex("erp_transporters_name_key").on(sql`lower(${t.name})`)],
 );
 
 /**

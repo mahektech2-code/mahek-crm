@@ -1278,6 +1278,8 @@ async function verify(ctx: ErpContext, ids: string[], values: Record<string, str
   });
   await erpAudit(ctx, "erp.detail.verify", "erp_order_detail", go.map((l) => l.o.id).join(","), null, { dispatchDate: date });
   await syncBookOrders([...new Set(go.map((l) => l.o.orderNo))]);
+  /* Logistics picks it up from here: boxes, tracking link, the first line of its timeline. */
+  await (await import("../logistics")).afterDispatch(ctx, [...new Set(go.map((l) => l.o.orderNo))]);
   return okVoid(go.length < ids.length ? `${plural(go.length)} verified · ${ids.length - go.length} not ready to verify${unscanned.length ? ` (${unscanned.length} still to scan)` : ""}` : `${plural(go.length)} verified and dispatched`);
 }
 

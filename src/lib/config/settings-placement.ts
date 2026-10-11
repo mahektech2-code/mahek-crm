@@ -213,6 +213,7 @@ const RULES: Rule[] = [
   { test: /^erp\.factory\./, page: "erp", tab: "general", group: "Factory app" },
   { test: /^erp\.(production|orders|dispatch)\./, page: "erp", tab: "general", group: "Production and orders" },
   { test: /^erp\.location\./, page: "erp", tab: "general", group: "Working location" },
+  { test: /^erp\.logistics\./, page: "erp", tab: "general", group: "Logistics" },
   { test: /^erp\.ai\.alerts\.enabled$/, page: "erp", tab: "alerts", group: "Switch" },
   { test: /^erp\.ai\.alerts\./, page: "erp", tab: "alerts", group: "Thresholds" },
   { test: /^erp\.ai\./, page: "erp", tab: "assistants", group: (k) => ERP_ASSISTANT[k.split(".")[2]] ?? "Other" },
