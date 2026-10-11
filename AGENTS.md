@@ -8166,6 +8166,20 @@ deleted — voided with a reason. One LR is one delivery party (`attachRefusal`)
 Once attached, the LR is the unit on the road: every update moves every bill
 under it. Every step writes `erp_transport_events`, append-only.
 
+**A TRANSPORTER'S GODOWNS ARE ROWS, ONE TOWN EACH, WITH THEIR OWN PEOPLE.**
+`erp_transporter_godowns` is a godown: a name, ONE town on the reviewed tree
+(a city or an area), the street address as typed. `erp_transporter_contacts`
+is a person there, with up to three numbers (a check constraint holds the
+three). It replaced four cascading state/district/city/area pickers (0253),
+which made two states' worth of godowns a puzzle; `0255` carried each picked
+place in as a godown and the old contact columns in as its first person.
+`lib/erp/transporter-godowns.ts` is the rule, pure: the form and
+`saveTransporter` both run `cleanGodowns`. The godowns are saved WHOLE, ids
+kept only where they were this transporter's own. `erp_transporters.phone`,
+`alt_phone` and `contact_person` are MIRRORS of the first person with a
+number (`mirrorsFrom`), written on save, because the call buttons on bills and
+LRs read the row.
+
 **THE CUSTOMER IS TOLD AT EVERY STEP THAT MOVES, from facts only.** LR attached,
 stage or expected day moved, a problem, delivered — `customerMessage` leaves out
 anything nobody entered. A call that moved nothing tells nobody. Messages live
