@@ -245,7 +245,12 @@ export function ListScreen({
   const chosen = Object.keys(sel).filter((id) => sel[id] && inView.has(id));
   const allOnPage = pageRows.length > 0 && pageRows.every((r) => sel[r.id]);
   const bulkOn = !!spec.bulk?.length;
-  const fit = fitColumns({ cols, avail, check: bulkOn, chosen: chosenCols });
+  /* Columns that are facts about the group are drawn once in its header while
+     grouped, so the rows carry only what differs from line to line. */
+  const headCols = gk && spec.groupHead ? spec.groupHead.map((k) => cols.find((c) => c.k === k)).filter((c): c is ColSpec => !!c) : [];
+  // The group's own key is the header's first word, so its rows need not repeat it.
+  const lineCols = headCols.length ? cols.filter((c) => !headCols.includes(c) && !gk?.includes(c.k)) : cols;
+  const fit = fitColumns({ cols: lineCols, avail, check: bulkOn, chosen: chosenCols });
   const shownCols = fit.shown;
 
   const exportCsv = () => {
@@ -412,7 +417,7 @@ export function ListScreen({
                 gk ? "border-brand bg-brand-soft font-medium text-[#5223E0]" : "border-line bg-surface text-body hover:bg-canvas",
               )}
             >
-              Group by {spec.groups.map((k) => colOf(k).l.toLowerCase()).join(" · ")}
+              Group by {spec.groups.map((k) => lowerFirst(colOf(k).l)).join(" · ")}
             </button>
           ) : null}
           {filter ? (
@@ -424,7 +429,7 @@ export function ListScreen({
             </span>
           ) : null}
           <span className="flex-1" />
-          {!spec.cards && cols.length > 1 ? <ColumnsMenu cols={cols} fit={fit} chosen={chosenCols} onChoose={setChosenCols} /> : null}
+          {!spec.cards && cols.length > 1 ? <ColumnsMenu cols={lineCols} fit={fit} chosen={chosenCols} onChoose={setChosenCols} /> : null}
           {spec.hidden.length ? (
             <span className="flex items-center gap-1.5 text-[13px] text-muted" title={`Not on your account: ${spec.hidden.map((x) => x.l).join(", ")}`}>
               <Icon n="lock" s={14} />
@@ -555,7 +560,10 @@ export function ListScreen({
                                 <span className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
                                   <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">{gk.map((k) => colOf(k).l).join(" · ")}</span>
                                   <span className="text-[13px] font-semibold text-ink">{g || "—"}</span>
-                                  <span className="text-xs text-muted">{aggText}</span>
+                                  {headCols.map((c) => (
+                                    <GroupFact key={c.k} c={c} v={rs[0]?.v[c.k]} />
+                                  ))}
+                                  <span className={cx("text-xs text-muted", headCols.length > 0 && "ml-auto")}>{aggText}</span>
                                   {spec.groupSel && bulkOn ? (
                                     <button
                                       onClick={() => {
@@ -629,6 +637,25 @@ export function ListScreen({
 
       {open ? <RecordDrawer key={open.id} screen={spec} kind={label} row={open} onClose={closeRec} /> : null}
     </div>
+  );
+}
+
+/** One fact about a group, in its header: the status as its badge, a name in
+    bold, anything else as label and value. A blank fact is left out. */
+/** "SFG no" reads "sfg no" lowercased whole; only a leading capital of an ordinary word is lowered. */
+function lowerFirst(s: string): string {
+  return /^[A-Z][a-z]/.test(s) ? s[0].toLowerCase() + s.slice(1) : s;
+}
+
+function GroupFact({ c, v }: { c: ColSpec; v: ListRow["v"][string] | undefined }) {
+  const text = cellText(c, v);
+  if (v == null || text === "" || text === "—") return null;
+  if (c.t === "s") return <StatusBadge value={String(v)} />;
+  if (c.t === "b") return <span className="text-[13px] font-semibold text-ink">{text}</span>;
+  return (
+    <span className="text-xs text-muted">
+      {c.l} <span className={cx("text-body", c.t === "mono" && "font-mono")}>{text}</span>
+    </span>
   );
 }
 

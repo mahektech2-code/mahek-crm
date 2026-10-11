@@ -259,6 +259,14 @@ export type ListSpec = {
   /** Aggregate on each group. */
   agg?: { k: string; l: string; t?: "avg" };
   groupSel?: boolean;
+  /**
+   * Columns that belong to the GROUP rather than the line — an SFG batch's
+   * date, product and QC are one fact about the batch, however many lots it
+   * drew. While grouped they are drawn once in the group's header and left
+   * out of its rows; ungrouped, the list is flat and carries them on every
+   * line as before.
+   */
+  groupHead?: string[];
   chips?: string;
   sortDefault?: [string, 1 | -1];
   bulk?: BulkSpec[];

@@ -7,7 +7,7 @@
   <WfCard tone="danger"><WfBar><WfText>2 handsets showing no customers — No area is set for Salesman B, Salesman C, so their customer list is empty.</WfText><Hotspot n={1} /></WfBar></WfCard>
   <WfCard tone="warn"><WfBar><WfText>3 salesmen with no hometown</WfText></WfBar></WfCard>
   <WfBar><WfPill tone="brand">Everybody 11</WfPill><WfPill>Hometown not set 3</WfPill><WfPill>Hometown set 8</WfPill></WfBar>
-  <WfTable columns={["Name", "Work number", "Customers", "Handset", "Works", "Hometown", "Last signed in", ""]} rows={[
+  <WfTable columns={["Name", "Work number", "Customers", "Handset", "Works", "Hometowns", "Last signed in", ""]} rows={[
     ["Salesman A", "98xxxxxxxx", "214 shops", <span key="a">Synced 10 Oct 09:42 <Hotspot n={2} /></span>, <span key="b">Nagpur, Wardha <Hotspot n={3} /></span>, <span key="c">Nagpur ▾ <Hotspot n={4} /></span>, "10 Oct", <span key="d">⋯ <Hotspot n={5} /></span>],
     ["Salesman B", "98xxxxxxxx", <span key="e"><WfText muted>Empty book</WfText></span>, "Bound, never synced", <WfText key="f" muted>No area set</WfText>, "—", "Never", "⋯"],
   ]} />
@@ -18,7 +18,7 @@
   <span key="1"><b>Handsets showing no customers.</b> A salesman with no area allocated sees no shops at all on his phone — said here so an empty handset is not mistaken for a broken sync.</span>,
   <span key="2"><b>Handset.</b> When his phone last synced, or that it is bound and has never synced, or that he has never signed in on a handset.</span>,
   <span key="3"><b>Works.</b> The states, cities or beats he is allocated. <i>Where they work</i> changes them.</span>,
-  <span key="4"><b>Hometown.</b> Where he lives. Meals are paid only on days away from it.</span>,
+  <span key="4"><b>Hometowns.</b> Where he lives — one town or several. Meals are paid only on days away from all of them.</span>,
   <span key="5"><b>Row menu.</b> Release his handset (needs a reason). A platform administrator also sees <i>Send a password-reset link</i> and <i>Sign them out everywhere</i>.</span>,
   <span key="6"><b>Managers.</b> Which regions each manager oversees — this is what narrows what they see across the Sales Dashboard.</span>,
 ]} />

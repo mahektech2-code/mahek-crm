@@ -69,8 +69,9 @@ export default async function Page({
 
   /* WHERE THEY LIVE, with the backlog counted and one click from being the
      whole list. A typed town is counted with the unset ones: it was never
-     picked from the tree, so it may match no shop's town. */
-  const homeless = (t: (typeof team)[number]) => !t.hometown?.placeId;
+     picked from the tree, so it may match no shop's town. He is set once at
+     least one of his hometowns was picked. */
+  const homeless = (t: (typeof team)[number]) => !t.hometowns.some((h) => h.placeId);
   const hometownFilter = params.hometown === "unset" || params.hometown === "set" ? params.hometown : "all";
   const unsetCount = team.filter((t) => t.active && homeless(t)).length;
   const shown =
@@ -172,12 +173,12 @@ export default async function Page({
           minWidth={1260}
           head={
             <>
-              {head("name", "Name", 200)}
+              {head("name", "Name", 190)}
               <HeadCell width={140}>Work number</HeadCell>
               {head("customers", "Customers", 110, "right")}
               {head("synced", "Handset", 180)}
               <HeadCell width={190}>Works</HeadCell>
-              {head("hometown", "Hometown", 150)}
+              {head("hometown", "Hometowns", 180)}
               {head("login", "Last signed in", 150)}
               <HeadCell />
             </>
@@ -231,7 +232,7 @@ export default async function Page({
                   compact
                   door="sales"
                   salesman={{ id: t.id, name: t.name }}
-                  hometown={t.hometown}
+                  hometowns={t.hometowns}
                   tree={towns}
                 />
               </Cell>
@@ -274,7 +275,7 @@ const COLUMNS: SortColumns<{
   customerCount: number;
   lastSeenAt: Date | null;
   lastLoginAt: Date | null;
-  hometown: { city: string } | null;
+  hometowns: { city: string }[];
 }> = {
   name: (t) => t.name,
   customers: (t) => t.customerCount,
@@ -283,5 +284,5 @@ const COLUMNS: SortColumns<{
   synced: (t) => (t.lastSeenAt ? new Date(t.lastSeenAt).getTime() : null),
   login: (t) => (t.lastLoginAt ? new Date(t.lastLoginAt).getTime() : null),
   /* Unset sorts last, so the backlog is at one end of the list. */
-  hometown: (t) => t.hometown?.city ?? null,
+  hometown: (t) => t.hometowns[0]?.city ?? null,
 };

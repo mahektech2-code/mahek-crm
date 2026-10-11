@@ -263,8 +263,8 @@ export type PolicyPerson = {
   setInactive: boolean;
   assignedAt: string | null;
   assignedByName: string | null;
-  /** Where he lives, for "away from his hometown". Null when not set. */
-  hometown: { city: string; state: string | null; placeId: string | null } | null;
+  /** Where he lives, for "away from his hometown" — one town or several. Empty when not set. */
+  hometowns: { city: string; state: string | null; placeId: string | null }[];
 };
 
 /**
@@ -279,14 +279,17 @@ export async function policyPeople(): Promise<PolicyPerson[]> {
     select u.id as "userId", u.name, u.email, e.position, u.active,
            a.set_id as "setId", s.name as "setName", coalesce(not s.active, false) as "setInactive",
            a.assigned_at as "assignedAt", ab.name as "assignedByName",
-           case when h.user_id is null then null
-                else json_build_object('city', h.city, 'state', h.state, 'placeId', h.place_id) end as "hometown"
+           coalesce((
+             select json_agg(json_build_object('city', h.city, 'state', h.state, 'placeId', h.place_id)
+                             order by h.set_at, h.city)
+               from expense_hometowns h
+              where h.user_id = u.id
+           ), '[]'::json) as "hometowns"
       from users u
       ${employeeLateral("u", "e")}
       left join expense_policy_assignments a on a.user_id = u.id
       left join expense_policy_sets s on s.id = a.set_id
       left join users ab on ab.id = a.assigned_by_id
-      left join expense_hometowns h on h.user_id = u.id
      where exists (select 1 from app_access g where g.user_id = u.id and g.app = 'field')
         or a.user_id is not null
      order by u.active desc, lower(u.name) asc

@@ -538,11 +538,12 @@ export type Salesman = {
     state: string;
   } | null;
   /**
-   * Where he LIVES, for the expense policy's "away from his hometown". Picked
-   * from the reviewed place tree; `placeId` is null on a town typed before the
-   * picker. Null where nobody has set one.
+   * Where he LIVES, for the expense policy's "away from his hometown" — one
+   * town or several, a day in any of them being a day at home. Picked from the
+   * reviewed place tree; `placeId` is null on a town typed before the picker.
+   * Empty where nobody has set one.
    */
-  hometown: { city: string; state: string | null; placeId: string | null } | null;
+  hometowns: { city: string; state: string | null; placeId: string | null }[];
 };
 
 /**
@@ -600,9 +601,12 @@ export async function fieldTeam(): Promise<Salesman[]> {
              where r.user_id = u.id
              order by r.server_created_at desc
              limit 1) as "areaAnswer",
-           (select json_build_object('city', h.city, 'state', h.state, 'placeId', h.place_id)
-              from expense_hometowns h
-             where h.user_id = u.id) as "hometown"
+           coalesce((
+             select json_agg(json_build_object('city', h.city, 'state', h.state, 'placeId', h.place_id)
+                             order by h.set_at, h.city)
+               from expense_hometowns h
+              where h.user_id = u.id
+           ), '[]'::json) as "hometowns"
       from users u
       join app_access a on a.user_id = u.id and a.app = 'field'
      where true ${onlyMine(scope, "u.id")}
