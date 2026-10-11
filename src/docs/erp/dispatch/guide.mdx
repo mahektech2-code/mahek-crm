@@ -70,6 +70,9 @@ From the queue, or from **Scan boxes at dispatch** on an order line.
 <Step title="Scan each box as it goes onto the lorry">
 A good box shows **✓ Matched** with the box id, the SKU and its lot. A box from a lot nobody had set aside for this order takes that lot onto the order — the message says *lot allocated* or *instead of* the lot it replaced.
 </Step>
+<Step title="Stock with only a lot label">
+Stock packed before box labels has no box QR — only its lot label (FP… for a packing batch, FG… for loose cans). Scan that label once. The lot the order was given shows **✓** with how many to load from it; a lot of the same product on a line not yet given one is allocated, as many as the line still needs. A lot whose boxes carry their own BX- labels asks you to scan the boxes instead.
+</Step>
 <Step title="Deal with anything stopped">
 A red panel says why. See [What stops a box](#what-stops-a-box) below.
 </Step>
@@ -86,7 +89,11 @@ Verifying is the office's step on **Orders → Billing & dispatch**. The desk of
 
 | What you see | Why | What to do |
 |---|---|---|
-| **✗ NOT ALLOWED** — *No box or label carries this code.* | The id is not a box the ERP made. | Check the label; re-scan. |
+| **✗ NOT ALLOWED** — *No box or label carries this code.* | The code is not a box or a lot the ERP made. | Check the label; re-scan. |
+| **✗ NOT ALLOWED** — *… is the lot label. Its boxes carry their own labels* | You scanned the lot label of stock whose boxes are labelled. | Scan each box's BX- label. |
+| **✗ NOT ALLOWED** — *… is a base-liquid lot, not packed stock* | A tank or drum label, not stock for the lorry. | Scan the label on the boxes or cans. |
+| **✗ NOT ALLOWED** — *… on this order is given lot …, not …* | The order was given another lot of the same product. | Load from the lot it names, or ask the office to change it. |
+| **✗ DISPATCH BLOCKED** — *Wrong stock. … This order wants …* | The lot is a different product or pack. | Do not load it. |
 | **✗ ALREADY SCANNED** — *… is already scanned onto this order.* | You scanned the same box twice. | Nothing — it already counts. |
 | **✗ ALREADY SCANNED** — *… has already been dispatched on order …* | The box left on another lorry. | Find out which box this really is. |
 | **✗ NOT ALLOWED** — *… is already scanned onto order …* | The box is on another order's lorry. | Take it off that order first. |

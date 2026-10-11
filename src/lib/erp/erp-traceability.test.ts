@@ -213,6 +213,34 @@ describe("the dispatch desk", () => {
   });
 });
 
+describe("a lot label at the desk (stock packed before box ids)", () => {
+  test("the lot's QR allocates and then matches; a lot with box labels and a base-liquid lot are refused", async () => {
+    const a = await as(admin);
+    /* FP5BH stands for stock packed before box ids: its units are taken away, so the lot label is the only QR on it. */
+    assert.ok((await mod("packBatches").forms!.new(a, { date: TODAY, godown: "Bhiwandi", fg: FG1, sku: BOX1, boxes: "2", lot: "FG1BH" }, [])).ok);
+    await db.execute(sql`delete from erp_unit_events where unit_id in (select id from erp_units where lot_code = 'FP5BH')`);
+    await db.execute(sql`delete from erp_units where lot_code = 'FP5BH'`);
+    assert.ok((await mod("orders").forms!.new(a, { date: TODAY, godown: "Bhiwandi", billing: "ABC Paints" }, [{ sku: BOX1, qty: "8", rate: "100" }])).ok);
+    const [o] = (await db.execute(sql`select id, order_no as no from erp_orders order by order_no desc limit 1`)) as unknown as { id: string; no: number }[];
+    assert.ok((await mod("orders").actions!.ready(a, o.id, {})).ok);
+
+    const c = await as(clerk);
+    const first = await scanOntoOrder(c, Number(o.no), "fp5bh");
+    assert.ok(first.ok && first.data.verdict.ok && first.data.verdict.allocation === "allocate" && first.data.verdict.qty === 2, JSON.stringify(first));
+    const alloc = (await db.execute(sql`select lot_code as lot, quantity::float8 as q from erp_batch_codes where order_id = ${o.id}`)) as unknown as { lot: string; q: number }[];
+    assert.deepEqual(alloc.map((x) => [x.lot, Number(x.q)]), [["FP5BH", 2]]);
+    const again = await scanOntoOrder(c, Number(o.no), "FP5BH");
+    assert.ok(again.ok && again.data.verdict.ok && again.data.verdict.allocation === "matched", JSON.stringify(again));
+
+    const labelled = await scanOntoOrder(c, Number(o.no), "FP1BH");
+    assert.match(labelled.ok && !labelled.data.verdict.ok ? labelled.data.verdict.message : "", /scan each box/);
+    const base = await scanOntoOrder(c, Number(o.no), "S1DRUM1");
+    assert.match(base.ok && !base.data.verdict.ok ? base.data.verdict.message : "", /base-liquid lot/);
+    const nothing = await scanOntoOrder(c, Number(o.no), "ZZ9NOPE");
+    assert.ok(nothing.ok && !nothing.data.verdict.ok && nothing.data.verdict.result === "unknown");
+  });
+});
+
 describe("tracing", () => {
   test("a box traces back to its batch, refill lot and SFG QC, and forward to the customer", async () => {
     const [b1] = await unitsOf("FP1BH");

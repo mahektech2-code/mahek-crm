@@ -106,7 +106,7 @@ export function DispatchDesk({ board, me, canDecide, administrator, canVerify, c
                 onChange={(e) => setCode(e.target.value)}
                 autoFocus
                 disabled={!open.length}
-                placeholder={open.length ? "Scan a box QR, or type its id and press Enter" : "Nothing on this order is Ready to dispatch"}
+                placeholder={open.length ? "Scan a box or lot QR, or type its code and press Enter" : "Nothing on this order is Ready to dispatch"}
                 className="h-12 flex-1 rounded-[4px] border-2 border-brand bg-surface px-3 font-mono text-lg text-ink outline-none"
               />
               <Button variant="primary" disabled={pending || !code.trim()} className="h-12">
@@ -136,7 +136,7 @@ export function DispatchDesk({ board, me, canDecide, administrator, canVerify, c
                   <div className="mt-1 font-mono text-[13px] text-muted">
                     <Link href={erpTraceHref(last.code)}>{last.code}</Link>
                   </div>
-                  {last.verdict.result === "mismatch" ? (
+                  {last.verdict.result === "mismatch" && last.verdict.mismatch ? (
                     <div className="mt-3 border-t border-divider pt-3">
                       <div className="mb-1 text-[13px] font-medium text-ink">Request an override</div>
                       <div className="mb-2 text-[12px] text-muted">Only somebody else holding the dispatch-override power can approve it. Once approved, scan the box again.</div>
