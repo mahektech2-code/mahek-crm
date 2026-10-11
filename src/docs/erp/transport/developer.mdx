@@ -72,6 +72,7 @@ The `update` action still writes `track_status` (`Track` / `Don't Track`) from `
 
 - **Page:** `src/app/erp/transport/page.tsx` (a static route ahead of `[slug]`), tabs in `src/app/erp/transport/parts/`, one consignment at `/erp/transport/[id]`, the Upload LRs modal in `parts/upload-lrs-button.tsx` (opened from the Logistics header and the Dispatch desk; `/erp/transport/upload` only redirects to it), the public link at `/track/[token]`.
 - **Writes:** `src/lib/actions/erp-logistics.ts`, each through `requireErpWrite("transport")`; the upload also accepts the Dispatch desk.
+- **Reading an LR photo:** `erpLogisticsReadLr(fileId)` → `readUploadedLr` in `src/lib/erp/lr-upload-read.ts` (only the uploader's own unfiled attachment; `featureState("photos", true)`; `readImages` with every transporter's `consignment_label` and last five LR numbers in the prompt), then `cleanLrReading` in `src/lib/erp/engines/lr-read.ts`. Logged as an `erp_ai_suggestions` row (`feature = photos`, `record_type = erp_lr`); `uploadLrs` settles it accepted/edited against what was saved via `settleLrReadings`.
 - **Wati ticks:** `applyWatiEvent` hands an `etmsg_` id to `applyLogisticsWatiEvent`.
 
 ## Tables
@@ -105,5 +106,6 @@ The `update` action still writes `track_status` (`Track` / `Don't Track`) from `
 
 | Suite | File | What it pins |
 |---|---|---|
+| `npm run test` | `src/lib/erp/engines/lr-read.test.ts` | Reading an LR photo: the number's shape against the transporter's earlier ones, the transporter matched to the desk's spelling, labels stripped, freight terms, dates refused |
 | `npm run test` | `src/lib/erp/engines/logistics.test.ts` | Phases, due words, LR suggestions, one LR one party, customer messages built only from facts |
 | `npm run test:integration` | `src/lib/erp/erp-logistics.test.ts` | The whole road: due, at the transporter, upload, attach, update, problem, delivered, reopen; what the customer is told and what the public link hides |

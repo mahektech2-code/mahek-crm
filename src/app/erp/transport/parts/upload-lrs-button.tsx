@@ -19,12 +19,15 @@ export function UploadLrsButton({
   today,
   transporters,
   recent,
+  canRead = false,
   variant = "primary",
   initialOpen = false,
 }: {
   today: string;
   transporters: string[];
   recent: RecentLr[];
+  /** Whether a photo is read into its row (OpenAI, `erp.ai.photos`). */
+  canRead?: boolean;
   variant?: "primary" | "secondary";
   initialOpen?: boolean;
 }) {
@@ -44,8 +47,12 @@ export function UploadLrsButton({
         Upload LRs
       </Button>
       <Modal open={open} onClose={close} title="Upload LRs" width={900}>
-        <p className="mb-3 text-[13px] text-muted">Photograph each lorry receipt collected from the transporters and type its number. Logistics attaches them to the bills and the customer is told.</p>
-        <LrUpload today={today} transporters={transporters} />
+        <p className="mb-3 text-[13px] text-muted">
+          {canRead
+            ? "Photograph each lorry receipt collected from the transporters. Its number, date, transporter and the rest are read off the photo — check them before uploading. Logistics attaches them to the bills and the customer is told."
+            : "Photograph each lorry receipt collected from the transporters and type its number. Logistics attaches them to the bills and the customer is told."}
+        </p>
+        <LrUpload today={today} transporters={transporters} canRead={canRead} />
         <h3 className="mt-6 mb-2 text-[13px] font-semibold text-ink">Uploaded lately</h3>
         <div className="max-h-[260px] overflow-y-auto rounded-[4px] border border-line">
           {recent.length ? (
