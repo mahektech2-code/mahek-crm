@@ -11,7 +11,8 @@ import type { AppDefinition } from "@/lib/apps";
 import type { Notification } from "@/db/schema";
 import { SalesSidebarNav, type SalesCounts } from "./sidebar-nav";
 import { SalesSearch } from "./search";
-import { AskPanel } from "./ask-panel";
+import { AskPanel } from "@/components/shell/ask-panel";
+import { SALES_ASK } from "@/components/shell/ask-setups";
 
 /* ---------------------------------------------------------------------------
  * The Manager Console's shell, from `MBOS Manager Console.dc.html`.
@@ -163,7 +164,7 @@ export function SalesShell({
             before the bell and the feedback control because it is the one thing
             in the header that answers a question rather than opening a list.
           */}
-          <AskPanel />
+          <AskPanel setup={SALES_ASK} />
 
           {feedback}
 

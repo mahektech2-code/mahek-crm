@@ -391,12 +391,14 @@ export type BuildInput = {
   modules: Set<string>;
   /** Real column names per table, from the database. */
   columns: Map<string, string[]>;
+  /** The catalog to build from — the Sales Dashboard's unless another app's is given. */
+  tables?: TableSpec[];
 };
 
 export type BuiltView = { table: string; about: string; columns: string[] };
 
-export function allowedTables(modules: Set<string>): TableSpec[] {
-  return TABLES.filter((t) => !t.modules.length || t.modules.some((m) => modules.has(m)));
+export function allowedTables(modules: Set<string>, tables: TableSpec[] = TABLES): TableSpec[] {
+  return tables.filter((t) => !t.modules.length || t.modules.some((m) => modules.has(m)));
 }
 
 /** The columns one person may see on one table. */
@@ -465,7 +467,7 @@ export function buildViews(input: BuildInput): { statements: string[]; views: Bu
     );
   }
   const views: BuiltView[] = [];
-  for (const spec of allowedTables(input.modules)) {
+  for (const spec of allowedTables(input.modules, input.tables)) {
     const all = input.columns.get(spec.table);
     if (!all?.length) continue;
     const cols = visibleColumns(spec, all, input.modules);
