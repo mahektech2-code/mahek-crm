@@ -425,9 +425,10 @@ step that must not be skipped.
 
 Publishing writes to two places, answering two questions: R2 keeps every
 release under a versioned name and outlives any one droplet, and the droplet
-holds the single stable file `/downloads/mbos.apk` that people are given a link
-to. Caddy serves that off the droplet's own disk — nothing serves `/downloads`
-from R2.
+holds the single stable file `/downloads/mbos.apk`. Caddy serves that off the
+droplet's own disk — nothing serves `/downloads` from R2. The link people are
+given is the page, `https://one.mahekindia.com/download/mbos`, which carries the
+download button, how to sign in and the version read from `mbos.json`.
 
 **Do not build a release by hand and `scp` it up.** It skips the signature
 check, the versioned archive and the record of what was shipped, and it puts
@@ -451,7 +452,7 @@ the MBOS release key and puts `factory.apk` and `factory.json` on the droplet
 beside `mbos.apk`. Every build's versionCode is 100 + the run number, so it
 installs over the earlier Trusted Web Activity build (same package, same key)
 as an update. Floor staff install it from
-`https://one.mahekindia.com/download?team=erp`.
+`https://one.mahekindia.com/download/factory`.
 
 ## Push notifications
 

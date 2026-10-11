@@ -8570,7 +8570,7 @@ photographs the truck; the ERP's verification, transport row and order book
 stay with the office (PRD §7.4.6).
 
 **THE ANDROID APP IS NATIVE, AND IT IS THE WEB APP'S SCREENS.** `factory-mobile/`
-is an Expo app — the APK on `/download?team=erp` — and it was first a Trusted
+is an Expo app — the APK on `/download/factory` — and it was first a Trusted
 Web Activity around `/factory`. Floor staff asked for an app rather than a
 website in one, so the screens moved onto the phone: `factory-mobile/src/
 factory-app.tsx` is `src/app/factory/_ui/factory-app.tsx` with its elements
