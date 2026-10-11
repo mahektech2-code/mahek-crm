@@ -4392,6 +4392,100 @@ export const SETTINGS = [
     max: 10,
   },
   {
+    key: "erp.stockCheck.onRequirement",
+    type: "boolean",
+    category: "erp",
+    label: "Count stock before every purchase requirement",
+    description:
+      "Every raw-material requirement raised from now waits for a blind physical count of the item at its godown before a vendor, quotation or PO. A count that differs from the book beyond its tolerance holds the purchase until it is recounted, investigated and resolved, or an urgent exception is approved. Requirements already raised are not affected.",
+    default: true,
+  },
+  {
+    key: "erp.stockCheck.tolerancePercent",
+    type: "decimal",
+    category: "erp",
+    label: "Count tolerance (% of the book)",
+    description:
+      "How far a physical count may sit from the reconciled book before it is a red flag, as a percentage of the book. An item can carry its own tolerance on its master record.",
+    default: 2,
+    min: 0,
+    max: 50,
+  },
+  {
+    key: "erp.stockCheck.toleranceFloor",
+    type: "decimal",
+    category: "erp",
+    label: "Smallest tolerance (litres or pieces)",
+    description:
+      "A tolerance never smaller than this, so an item whose book is near zero does not flag on a single can or a cupful.",
+    default: 1,
+    min: 0,
+    max: 1000,
+  },
+  {
+    key: "erp.stockCheck.unexpectedQtyPercent",
+    type: "integer",
+    category: "erp",
+    label: "Quantity above what the count justifies",
+    description:
+      "A requirement asking for more than the count justifies (up to the item's maximum level) by more than this percentage must have its quantity confirmed, with a reason, before it is bought.",
+    default: 25,
+    min: 0,
+    max: 1000,
+  },
+  {
+    key: "erp.stockCheck.dailyCount",
+    type: "integer",
+    category: "erp",
+    label: "Cycle counts a day",
+    description:
+      "How many items the daily cycle count picks, ranked by ABC class, how overdue, how much they move and how often they were wrong. Zero stops the daily cycle count.",
+    default: 10,
+    min: 0,
+    max: 500,
+  },
+  {
+    key: "erp.stockCheck.cycleDaysA",
+    type: "integer",
+    category: "erp",
+    label: "Count class A items every (days)",
+    description: "The items making up the first 80% of the value that moved over the last 90 days. Halved while an item has a recent discrepancy.",
+    default: 30,
+    min: 1,
+    max: 365,
+  },
+  {
+    key: "erp.stockCheck.cycleDaysB",
+    type: "integer",
+    category: "erp",
+    label: "Count class B items every (days)",
+    description: "The items making up the next 15% of the value that moved.",
+    default: 60,
+    min: 1,
+    max: 365,
+  },
+  {
+    key: "erp.stockCheck.cycleDaysC",
+    type: "integer",
+    category: "erp",
+    label: "Count class C items every (days)",
+    description: "Everything else, including items that did not move.",
+    default: 90,
+    min: 1,
+    max: 730,
+  },
+  {
+    key: "erp.stockCheck.fullCountDays",
+    type: "integer",
+    category: "erp",
+    label: "Full count every (days)",
+    description:
+      "A comprehensive count of every item with stock is due this often; the dashboard says when it is due. Zero turns the reminder off.",
+    default: 180,
+    min: 0,
+    max: 730,
+  },
+  {
     key: "erp.purchase.receiptTolerancePercent",
     type: "integer",
     category: "erp",
@@ -4903,6 +4997,26 @@ export const SETTINGS = [
     default: 3,
     min: 0,
     max: 100,
+  },
+  {
+    key: "erp.ai.stockCheck.enabled",
+    type: "boolean",
+    category: "erp-ai",
+    label: "ERP · discrepancy assistant",
+    description:
+      "Explains a red-flagged count in words: which pending or missing records could account for the difference, and whether a record or the goods themselves look missing. It ranks the records the rules found and never creates an entry.",
+    default: true,
+  },
+  {
+    key: "erp.ai.stockCheck.monthlyCap",
+    type: "integer",
+    category: "erp-ai",
+    label: "Discrepancy explanations a month",
+    description:
+      "Past this many explanations in a calendar month the assistant goes quiet and says so; the rules' own list of causes still shows.",
+    default: 500,
+    min: 0,
+    max: 100000,
   },
   {
     key: "erp.ai.complaints.monthlyCap",
@@ -5842,6 +5956,12 @@ export function checkConsistency(config: Config): string[] {
     );
   }
 
+  /* A class counted less often than the class below it inverts ABC: the
+     valuable shelf would be the one nobody looks at. */
+  if (!(config["erp.stockCheck.cycleDaysA"] <= config["erp.stockCheck.cycleDaysB"] && config["erp.stockCheck.cycleDaysB"] <= config["erp.stockCheck.cycleDaysC"])) {
+    problems.push("Class A items must be counted at least as often as class B, and B at least as often as C.");
+  }
+
   return problems;
 }
 
@@ -6064,6 +6184,17 @@ export type Config = {
   "erp.purchase.ownVehicleRatePerKmPaise": number;
   "erp.purchase.minQuotations": number;
   "erp.purchase.receiptTolerancePercent": number;
+  "erp.stockCheck.onRequirement": boolean;
+  "erp.stockCheck.tolerancePercent": number;
+  "erp.stockCheck.toleranceFloor": number;
+  "erp.stockCheck.unexpectedQtyPercent": number;
+  "erp.stockCheck.dailyCount": number;
+  "erp.stockCheck.cycleDaysA": number;
+  "erp.stockCheck.cycleDaysB": number;
+  "erp.stockCheck.cycleDaysC": number;
+  "erp.stockCheck.fullCountDays": number;
+  "erp.ai.stockCheck.enabled": boolean;
+  "erp.ai.stockCheck.monthlyCap": number;
   "erp.production.recipeTolerancePercent": number;
   "erp.factory.packBatchBoxes": number;
   "erp.factory.mixTolerancePercent": number;

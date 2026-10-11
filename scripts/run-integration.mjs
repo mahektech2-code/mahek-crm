@@ -52,6 +52,10 @@ const files = [
   "src/lib/erp/erp-foundation.test.ts",
   "src/lib/erp/erp-designations.test.ts",
   "src/lib/erp/erp-purchase.test.ts",
+  // Inventory Accuracy Control: a requirement waits for a blind count; a red
+  // flag is recounted by somebody else; stock moves only through an approved
+  // adjustment; missing records and the daily cycle count.
+  "src/lib/erp/erp-stock-check.test.ts",
   "src/lib/erp/erp-material-duties.test.ts",
   // Purchase and production, department by department.
   "src/lib/erp/erp-departments.test.ts",

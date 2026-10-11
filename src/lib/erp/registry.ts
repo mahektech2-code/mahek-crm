@@ -141,6 +141,13 @@ export const ERP_GROUPS: ErpGroup[] = [
         v("fgStock", "Finished goods", { key: "fgLog", label: "Show every entry", back: "Show available stock" }),
         v("packStock", "Packed", { key: "packLog", label: "Show every entry", back: "Show available stock" }),
       ]),
+      s("stockCheck", "stock-check", "Stock accuracy", "Inventory Accuracy Control: a blind count before every purchase and every day, a red flag held until it is recounted and resolved, and stock that moves only through an approved adjustment.", true, [
+        v("countTasks", "To count"),
+        v("stockFlags", "Red flags"),
+        v("stockAdjustments", "Adjustments"),
+        v("missingRecords", "Missing records"),
+        v("stockCounts", "Every count"),
+      ]),
       s("units", "boxes", "Boxes & labels", "Every box a packing batch made and every labelled loose can, by its own id: where it is, whether it has gone, and its label. Print labels for one box, a selection or a whole batch.", true, [
         v("units", "In stock & at dispatch"),
         v("allUnits", "Every box"),
