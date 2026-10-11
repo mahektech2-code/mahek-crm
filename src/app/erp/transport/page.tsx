@@ -4,9 +4,9 @@ import { erpContext } from "@/lib/erp/access";
 import { erpScreenBySlug } from "@/lib/erp/registry";
 import { screenModule } from "@/lib/erp/screens";
 import { getConfig } from "@/lib/config/store";
-import { consignments, messages, transporters, uploadedLrs } from "@/lib/erp/logistics";
+import { consignments, lrUploadKit, messages, transporters, uploadedLrs } from "@/lib/erp/logistics";
 import { today as businessToday } from "@/lib/erp/screens/common";
-import { Button, cx } from "@/components/ui/primitives";
+import { cx } from "@/components/ui/primitives";
 import { ListScreen, type ListTab } from "../_ui/list-screen";
 import { Page } from "../_ui/page-head";
 import { LrDesk } from "./parts/lr-desk";
@@ -15,6 +15,7 @@ import { OnRoad } from "./parts/on-road";
 import { Delivered, Overview } from "./parts/overview";
 import { ToTransport } from "./parts/to-transport";
 import { Transporters } from "./parts/transporters";
+import { UploadLrsButton } from "./parts/upload-lrs-button";
 
 /**
  * THE LOGISTICS DESK — the whole road from the factory gate to the party's
@@ -74,11 +75,12 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
 
   const today = businessToday();
   const cfg = await getConfig();
-  const [all, lrs, outbox, dir] = await Promise.all([
+  const [all, lrs, outbox, dir, kit] = await Promise.all([
     consignments(),
     view === "pendingLr" || view === "transport" ? uploadedLrs() : Promise.resolve([]),
     view === "lrMessages" || view === "transport" ? messages({ limit: view === "transport" ? 500 : 300 }) : Promise.resolve([]),
     view === "transporters" || view === "pendingLr" ? transporters() : Promise.resolve([]),
+    canWrite ? lrUploadKit() : Promise.resolve(null),
   ]);
   /* A dashboard tile opens a tab narrowed to the bills it counted. */
   const ids = one("f")?.split(",");
@@ -97,11 +99,7 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
       title={screen.label}
       sub={screen.sub}
       actions={
-        canWrite ? (
-          <Link href="/erp/transport/upload">
-            <Button variant="primary">Upload LRs</Button>
-          </Link>
-        ) : null
+        kit ? <UploadLrsButton key={one("upload") ?? ""} today={today} transporters={kit.transporters} recent={kit.recent} initialOpen={one("upload") === "1"} /> : null
       }
     >
       <nav className="-mt-2 mb-4 flex flex-wrap items-center gap-0 border-b border-line">
