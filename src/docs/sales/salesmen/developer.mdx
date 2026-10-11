@@ -1,4 +1,4 @@
-The team is `users` joined to `app_access` where `app = 'field'`, narrowed by `managerScope`. Each row adds the active `mbos_devices` binding, the territories in `mbos_user_territories`, and the hometown in `expense_hometowns`. The record at `/sales/people/[id]` is `salesmanRecord` plus `performance` for this month and last, plus `dayEvidence` for the chosen day. Handset health is a pure function, `handsetNotes`, drawn on the Live map.
+The team is `users` joined to `app_access` where `app = 'field'`, narrowed by `managerScope`. Each row adds the active `mbos_devices` binding, the territories in `mbos_user_territories`, and the hometowns in `expense_hometowns` (one row per town). The record at `/sales/people/[id]` is `salesmanRecord` plus `performance` for this month and last, plus `dayEvidence` for the chosen day. Handset health is a pure function, `handsetNotes`, drawn on the Live map.
 
 ## Map of the code
 
@@ -7,12 +7,12 @@ The team is `users` joined to `app_access` where `app = 'field'`, narrowed by `m
 | Route guard | `src/app/sales/people/layout.tsx` | `requireModule("sales.people")` |
 | Team page | `src/app/sales/people/page.tsx` | Banners (no area, no hometown), chips, rows, `COLUMNS` |
 | Row tools | `src/app/sales/people/territories.tsx`, `credentials.tsx`, `managers.tsx` | Where they work (tree), sign-in menu, managers' regions |
-| Hometown picker | `src/components/expenses/hometown-picker.tsx`, `src/lib/services/hometown-service.ts` | `hometownTree` |
+| Hometown picker | `src/components/expenses/hometown-picker.tsx`, `src/lib/services/hometown-service.ts` | `hometownTree`, `writeHometowns` |
 | Record | `src/app/sales/people/[id]/page.tsx`, `salesman-screen.tsx`, `day-check.tsx` | Ten tabs, month figures, `DayCheck` |
 | Reads | `src/lib/services/sales-service.ts` | `fieldTeam`, `salesmanRecord`, `performance`, `managers`, `knownPlaces`, `knownRegions`, `managerScope` |
 | Scope gate (pure) | `src/lib/sales-gate.ts` | `scopeStanding` |
 | Territory rules (pure) | `src/lib/territory-rules.ts` | `TERRITORY_KINDS`, `PARENT_KIND`, `territoryClause` |
-| Writes | `src/lib/actions/sales.ts` | `setSalesmanTerritories`, `setManagerTerritories`, `setSalesmanHometown`, `releaseDevice` |
+| Writes | `src/lib/actions/sales.ts` | `setSalesmanTerritories`, `setManagerTerritories`, `setSalesmanHometowns`, `releaseDevice` |
 | Credentials | `src/lib/actions/people.ts` | Reset link, end sessions — `requirePlatformAdminUser` |
 | Handset health (pure) | `src/lib/handset-health.ts` | `handsetNotes`, `buildIsBehind`, `trailIsDead`, `trackerStalled`, `ageWords` |
 | Device state in | `src/lib/mbos/device-state.ts`, `src/app/api/mbos/positions/route.ts` | Partial device reports, written only inside a session |
@@ -67,7 +67,7 @@ It refuses a child without its parent, prunes to the leaves on the server (a ser
 
 <ModuleRef k="sales.people" /> <ModuleRef k="sales.territory" />
 
-`setSalesmanTerritories` and `setManagerTerritories` accept `sales.people` or `sales.territory` at a manager's level; `setSalesmanHometown` needs `sales.people`. A salesman outside `managerScope` is simply absent from `fieldTeam`, so the record 404s.
+`setSalesmanTerritories` and `setManagerTerritories` accept `sales.people` or `sales.territory` at a manager's level; `setSalesmanHometowns` needs `sales.people`. A salesman outside `managerScope` is simply absent from `fieldTeam`, so the record 404s.
 
 ## Tests that pin this
 

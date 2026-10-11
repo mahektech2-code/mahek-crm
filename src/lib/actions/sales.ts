@@ -70,7 +70,7 @@ import {
 import { bookIdsIgnoringTerritory } from "@/lib/services/mbos-service";
 import { refreshDayMoney, repriceDay, rescoreLeg } from "@/lib/services/expense-submit-service";
 import { ensureDay } from "@/lib/services/expense-service";
-import { writeHometown } from "@/lib/services/hometown-service";
+import { writeHometowns } from "@/lib/services/hometown-service";
 import { ADMIN } from "@/lib/admin-routes";
 import { notifyUsers } from "../notify";
 import { announce } from "@/lib/services/announcement-service";
@@ -2058,13 +2058,16 @@ export async function setSalesmanTerritories(input: {
  *
  * Set beside where he works, because it is the same kind of fact, and picked
  * from the reviewed place tree so it matches the towns of the shops he visits.
- * The Admin Console's "Who is on which" writes the same record through the
- * same `writeHometown`; this door is the Salesmen screen's, so it asks what
+ * He may have several. The Admin Console's "Who is on which" writes the same
+ * record through the same `writeHometowns`; this door is the Salesmen screen's, so it asks what
  * that screen asks — the screen, and that he is in this manager's team.
  */
-export async function setSalesmanHometown(input: {
+export async function setSalesmanHometowns(input: {
   salesmanId: string;
-  placeId: string | null;
+  /** The WHOLE set of city nodes; empty clears them. */
+  placeIds: string[];
+  /** Towns typed before the picker that are to stay. */
+  keepTyped?: string[];
 }): Promise<Result<void>> {
   try {
     const user = await requireSalesAccess(SALES_MANAGER("sales.people"));
@@ -2076,7 +2079,15 @@ export async function setSalesmanHometown(input: {
       .limit(1);
     if (!person) return err("That account is not on MahekOne.", "not_found");
 
-    const result = await writeHometown(user.id, input.salesmanId, input.placeId || null);
+    if (!Array.isArray(input.placeIds) || input.placeIds.length > 20) {
+      return err("Pick each town from the list.", "validation");
+    }
+    const result = await writeHometowns(
+      user.id,
+      input.salesmanId,
+      input.placeIds,
+      Array.isArray(input.keepTyped) ? input.keepTyped : [],
+    );
     if (result.ok) {
       try {
         revalidatePath("/sales/people");
