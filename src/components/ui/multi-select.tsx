@@ -194,7 +194,7 @@ export function MultiSelect({
                   </button>
                 </div>
               ) : null}
-              <div className="flex-1 overflow-y-auto py-1">
+              <div className="flex-1 overflow-y-auto overscroll-contain py-1">
                 {matches.map((o) => (
                   <label
                     key={o.value}
