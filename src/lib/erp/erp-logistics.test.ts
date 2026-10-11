@@ -358,24 +358,28 @@ describe("my customers", () => {
 describe("transporters", () => {
   test("a GST number is checked, godowns are one town each with their people, and a new consignment name joins the list", async () => {
     const ctx = await as(admin);
-    const st = id("plc"), di = id("plc"), ci = id("plc"), ci2 = id("plc");
+    const st = id("plc"), di = id("plc"), di2 = id("plc"), ci = id("plc");
     await db.insert(places).values([
       { id: st, kind: "state", name: `Tstate ${tag}`, key: `tstate${tag}`, parentId: null },
       { id: di, kind: "district", name: `Tdist ${tag}`, key: `tdist${tag}`, parentId: st },
       { id: ci, kind: "city", name: `Tcity ${tag}`, key: `tcity${tag}`, parentId: di },
-      { id: ci2, kind: "city", name: `Ucity ${tag}`, key: `ucity${tag}`, parentId: di },
+      { id: di2, kind: "district", name: `Udist ${tag}`, key: `udist${tag}`, parentId: st },
     ]);
 
     assert.equal(msg(await L.saveTransporter(ctx, { name: `Road ${tag}`, gstin: "27ABCDE1234F1Z9" })), "That GST number does not check out — it is 15 characters, like 27ABCDE1234F1Z5");
-    assert.equal(msg(await L.saveTransporter(ctx, { name: `Road ${tag}`, godowns: [{ label: "Main" }] })), "Pick the town for godown 1");
+    assert.equal(msg(await L.saveTransporter(ctx, { name: `Road ${tag}`, godowns: [{ label: "Main" }] })), "Pick the place for godown 1");
     assert.equal(
-      msg(await L.saveTransporter(ctx, { name: `Road ${tag}`, godowns: [{ placeId: ci, contacts: [{ name: "Ravi", phones: ["9820011001", "9820011002", "9820011003", "9820011004"] }] }] })),
+      msg(await L.saveTransporter(ctx, { name: `Road ${tag}`, godowns: [{ placeId: di, contacts: [{ name: "Ravi", phones: ["9820011001", "9820011002", "9820011003", "9820011004"] }] }] })),
       "A person takes up to 3 numbers",
     );
 
+    /* A godown is filed at a state and a district; a city is not one of the two. A pin is both halves. */
+    assert.equal(msg(await L.saveTransporter(ctx, { name: `Road ${tag}`, godowns: [{ placeId: ci }] })), "That place is no longer on the list. Pick the state and district again.");
+    assert.equal(msg(await L.saveTransporter(ctx, { name: `Road ${tag}`, godowns: [{ placeId: di, lat: 19.2, lng: null }] })), "A pin is a latitude and a longitude — give both, or neither");
+
     const godowns = [
-      { label: "Main godown", placeId: ci, address: "Plot 4", contacts: [{ name: "Ravi", role: "Booking", phones: ["9820011001", "", "022 2567 1234"] }, { name: "Asha", phones: ["9820011009"] }] },
-      { placeId: ci2, contacts: [{ name: " ", phones: [""] }] },
+      { label: "Main godown", placeId: di, lat: 19.2094, lng: 73.0939, address: "Plot 4", contacts: [{ name: "Ravi", role: "Booking", phones: ["9820011001", "", "022 2567 1234"] }, { name: "Asha", phones: ["9820011009"] }] },
+      { placeId: di2, contacts: [{ name: " ", phones: [""] }] },
     ];
     assert.ok((await L.saveTransporter(ctx, { name: `Road ${tag}`, gstin: "27aapcs1234a1zn", consignmentLabel: "  docket   number ", godowns })).ok);
     const [t] = await db.select().from(erpTransporters).where(eq(erpTransporters.name, `Road ${tag}`));
@@ -386,7 +390,7 @@ describe("transporters", () => {
     const list = await db.select().from(erpRefValues).where(sql`${erpRefValues.listKey} = 'consignmentLabel' and lower(${erpRefValues.value}) = 'docket number'`);
     assert.equal(list.length, 1);
     const read = (await L.transporters()).find((x) => x.id === t.id)!;
-    assert.deepEqual(read.godowns.map((g) => [g.label, g.placeId, g.contacts.length]), [["Main godown", ci, 2], [null, ci2, 0]]);
+    assert.deepEqual(read.godowns.map((g) => [g.label, g.placeId, g.lat, g.lng, g.contacts.length]), [["Main godown", di, 19.2094, 73.0939, 2], [null, di2, null, null, 0]]);
     assert.deepEqual(read.godowns[0].contacts.map((c) => c.phones), [["9820011001", "022 2567 1234"], ["9820011009"]]);
 
     /* A known name keeps the list's spelling; leaving godowns out leaves them alone. */

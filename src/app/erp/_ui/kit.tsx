@@ -52,6 +52,7 @@ export const ERP_KIT: ScreenKit = {
   submitForm: erpSubmitForm,
   loadForm: erpLoadForm,
   uploadUrl: "/api/erp/attachments",
+  mapKeyUrl: "/api/erp/map-key",
   flags: FLAG,
   tones: ST_TONE,
   place: { one: "godown", many: "godowns" },

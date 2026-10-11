@@ -305,7 +305,7 @@ export async function messages(opts: { waitingOnly?: boolean; transportId?: stri
 }
 
 /** A godown as the screens draw it: its town and the people there. */
-export type TransporterGodown = { id: string; label: string | null; placeId: string | null; address: string | null; contacts: { id: string; name: string | null; role: string | null; phones: string[] }[] };
+export type TransporterGodown = { id: string; label: string | null; placeId: string | null; address: string | null; lat: number | null; lng: number | null; contacts: { id: string; name: string | null; role: string | null; phones: string[] }[] };
 
 /** A transporter, with its godowns in order and the people at each. */
 export type Transporter = typeof erpTransporters.$inferSelect & { godowns: TransporterGodown[] };
@@ -335,7 +335,7 @@ export async function transporters(): Promise<Transporter[]> {
   for (const g of gds)
     byTransporter.set(g.transporterId, [
       ...(byTransporter.get(g.transporterId) ?? []),
-      { id: g.id, label: g.label, placeId: g.placeId, address: g.address, contacts: byGodown.get(g.id) ?? [] },
+      { id: g.id, label: g.label, placeId: g.placeId, address: g.address, lat: g.lat, lng: g.lng, contacts: byGodown.get(g.id) ?? [] },
     ]);
   return rows.map((r) => ({ ...r, godowns: byTransporter.get(r.id) ?? [] }));
 }
@@ -839,7 +839,7 @@ export async function saveTransporter(
   let godowns: Godown[] | null = null;
   if (input.godowns) {
     const wanted = input.godowns.map((g) => g.placeId).filter((p): p is string => !!p);
-    const known = new Set(wanted.length ? (await db.select({ id: places.id }).from(places).where(inArray(places.id, wanted))).map((r) => r.id) : []);
+    const known = new Set(wanted.length ? (await db.select({ id: places.id }).from(places).where(and(inArray(places.id, wanted), inArray(places.kind, ["state", "district"])))).map((r) => r.id) : []);
     const c = cleanGodowns(input.godowns, (id) => known.has(id));
     if (!c.ok) return fieldErr(c.field, c.message);
     godowns = c.godowns;
@@ -913,7 +913,7 @@ async function writeGodowns(tx: Tx, transporterId: string, godowns: Godown[]) {
   const usedPeople = new Set<string>();
   for (const [gi, g] of godowns.entries()) {
     const godownId = g.id && ownGodowns.has(g.id) ? (ownGodowns.delete(g.id), g.id) : erpId("etg");
-    await tx.insert(erpTransporterGodowns).values({ id: godownId, transporterId, label: g.label, placeId: g.placeId, address: g.address, sortOrder: gi });
+    await tx.insert(erpTransporterGodowns).values({ id: godownId, transporterId, label: g.label, placeId: g.placeId, address: g.address, lat: g.lat, lng: g.lng, sortOrder: gi });
     if (g.contacts.length)
       await tx.insert(erpTransporterContacts).values(
         g.contacts.map((c, ci) => ({ id: c.id && ownPeople.has(c.id) && !usedPeople.has(c.id) ? (usedPeople.add(c.id), c.id) : erpId("etc"), godownId, name: c.name, role: c.role, phones: c.phones, sortOrder: ci })),

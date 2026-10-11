@@ -8353,9 +8353,23 @@ deleted — voided with a reason. One LR is one delivery party (`attachRefusal`)
 Once attached, the LR is the unit on the road: every update moves every bill
 under it. Every step writes `erp_transport_events`, append-only.
 
-**A TRANSPORTER'S GODOWNS ARE ROWS, ONE TOWN EACH, WITH THEIR OWN PEOPLE.**
-`erp_transporter_godowns` is a godown: a name, ONE town on the reviewed tree
-(a city or an area), the street address as typed. `erp_transporter_contacts`
+**A TRANSPORTER'S GODOWNS ARE ROWS, A DISTRICT AND A PIN EACH, WITH THEIR OWN PEOPLE.**
+`erp_transporter_godowns` is a godown: a name, ONE place on the reviewed tree
+picked State → District on the godown's row (two dropdowns, the second listing
+only what is under the first; the narrowest pick is the place), and its PIN —
+`lat`/`lng`, both or neither (a check constraint), picked on the map, typed,
+or read off the device standing in it. The pin is what matters: it is what a
+handset or the factory app can read and write without anybody choosing from a
+list. City and area are not asked; `0259` moved every godown saved at a city or
+an area up to its district, and the form reads one the same way
+(`godownPlace`). There is no address on the form; a godown that carried one
+keeps it unseen. A single searchable list of every city and area in the
+country, tried for a while, was too long to use. The ERP's pin fields fetch
+the tile key from `/api/erp/map-key` (anybody holding the ERP; the live key in
+the pool), which is also what gives the ERP's own godown pin its map. "Find in map" opens the map in a pop-up; a click
+or a drag writes the pin into the field at once. A person at a godown is a
+name and one phone number on the form (more numbers saved earlier are kept).
+`erp_transporter_contacts`
 is a person there, with up to three numbers (a check constraint holds the
 three). It replaced four cascading state/district/city/area pickers (0253),
 which made two states' worth of godowns a puzzle; `0255` carried each picked
