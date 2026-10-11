@@ -45,6 +45,8 @@ export type FieldType =
   | "multi" | "suggest"
   /** Free text that a barcode scanner types into, offering its options as it goes. */
   | "scan"
+  /** A name picked from the options as you type, or a new one typed in full (a scrap buyer). */
+  | "pick"
   /** A CSV file, read in the browser: the field's value is the file's text. */
   | "csv"
   /** A time of day, "HH:MM". */
@@ -323,6 +325,11 @@ export const ST_TONE: Record<string, Tone> = {
   "To count": "info", "Red flag": "danger", "Recount out": "warn", Investigating: "warn", "Stock discrepancy": "danger",
   "Count stock": "info", "Confirm quantity": "warn", "Exception requested": "warn",
   "In stock": "success", "Scanned for dispatch": "brand", "On hold": "warn", Returned: "info", "Written off": "danger",
+  Available: "success", "To return": "info", "Owner to decide": "warn", Sold: "neutral",
+  "Mahek owned": "brand", "Vendor returnable": "info", "Not recorded": "warn",
+  Emptied: "success", "Scrap sale": "neutral", Unpaid: "warn", "Partially paid": "info", Paid: "success",
+  Collected: "success", Bank: "info", Cash: "neutral", Void: "muted", "Not matched": "warn", "Partly matched": "info",
+  "Fully matched": "success", "1–7 days": "neutral", "8–15 days": "warn", "16–30 days": "warn", "31–60 days": "danger", "60+ days": "danger",
 };
 
 /** Named row states (the source's format rules), and how each is labelled. */
@@ -380,6 +387,13 @@ export const FLAG: Record<string, [string, Tone]> = {
   unitHold: ["Box on hold", "warn"],
   unlabelled: ["Label not printed", "neutral"],
   mismatch: ["Override used", "danger"],
+  ownershipReview: ["Owner to decide", "warn"],
+  tareHigh: ["High tare variance", "danger"],
+  weightException: ["Weight outside limits", "warn"],
+  corrected: ["Weight corrected", "neutral"],
+  overdueSale: ["Payment overdue", "danger"],
+  unallocated: ["Not matched to a sale", "warn"],
+  returnOverdue: ["Waiting over 30 days", "danger"],
 };
 
 /* -------------------------------------------------------------- formatting */

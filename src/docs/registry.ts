@@ -835,6 +835,14 @@ export const DOC_APPS: DocApp[] = [
         written: ALL,
       },
       {
+        slug: "scrap",
+        title: "Scrap and empty drums",
+        summary: "Weighing drums as they are emptied against their GRN lot, Mahek and vendor drum stock, scrap sales allocated oldest first, buyer receivables and the receipts matched to them.",
+        group: "Make and store",
+        modules: ["erp.scrap"],
+        written: ALL,
+      },
+      {
         slug: "stock-levels",
         title: "Minimum levels and reordering",
         summary: "Raw-material and finished-goods minimums, and raising a requirement from a shortfall.",

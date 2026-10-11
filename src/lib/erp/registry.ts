@@ -209,6 +209,24 @@ export const ERP_GROUPS: ErpGroup[] = [
     ],
   },
   {
+    id: "scrap",
+    label: "Scrap & empty drums",
+    icon: "can",
+    screens: [
+      s("scrap", "scrap", "Scrap & empty drums", "Every drum registered as it is emptied, against its GRN lot. Mahek-owned drums are sold as scrap oldest first, vendor drums go back to their supplier, and what scrap buyers owe is matched to their cash and bank receipts.", true, [
+        v("emptyDrums", "Empty drums"),
+        v("drumStock", "Mahek stock"),
+        v("returnableDrums", "Vendor drums"),
+        v("drumReturns", "Returns"),
+        v("scrapSales", "Scrap sales"),
+        v("otherScrap", "Other scrap"),
+        v("scrapBuyers", "Buyers"),
+        v("scrapReceipts", "Receipts"),
+        v("tareVariance", "Tare variance"),
+      ]),
+    ],
+  },
+  {
     id: "requests",
     label: "Complaints & credit notes",
     icon: "chat",

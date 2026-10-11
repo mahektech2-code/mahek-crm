@@ -303,6 +303,9 @@ export function powerRefusal(power: ErpPower): string {
     approveSfgQc: "Only the SFG QC approver decides an SFG lot's quality check.",
     dispatchOverride: "Only a dispatch-override approver lets a mismatched box go, or rejects or returns a box.",
     stockControl: "Only somebody who controls stock accuracy resolves a discrepancy, approves an adjustment or an urgent purchase.",
+    scrapSell: "Only somebody who sells scrap records a scrap sale or returns drums to a vendor.",
+    scrapControl: "Only the Production Head (or whoever controls scrap) corrects an empty drum, decides its ownership or cancels a scrap sale.",
+    scrapReceipts: "Only the accountant matches a cash or bank receipt to scrap sales.",
   };
   return map[power];
 }

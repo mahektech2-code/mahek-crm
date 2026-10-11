@@ -1,0 +1,51 @@
+Every figure on this screen is read off records: a drum is one row, a sale is one row, a receipt is one row and a match is one row. Nothing is a balance somebody typed, so the stock and the outstanding always agree with the transactions behind them.
+
+## The rules
+
+<Rule title="A drum is registered against its GRN lot, once">
+A drum label carries its lot number. A lot came in a known number of drums (the GRN's drum count), so a lot can have at most that many empty drums, and drum *n* of a lot can be recorded only once — a unique index holds it, not only the screen. The lot, PR, supplier and material are copied onto the drum, so the link survives the label.
+</Rule>
+
+<Rule title="Ownership is the lot's, and it is never guessed">
+A lot's drums are **Mahek owned** (scrap stock) or **Vendor returnable** (they go back). The GRN in use today records neither, so the first drum of a lot is saved as **Owner to decide**; the Production Head's answer is stored on the lot and moves every drum of it still in the building. Later drums of that lot route on their own. Changing an owner already decided needs a reason and is audited.
+</Rule>
+
+<Rule title="Weights outside the limits need somebody to stand behind them">
+An empty weight below <Setting k="erp.scrap.drumWeightMinKg" /> or above <Setting k="erp.scrap.drumWeightMaxKg" /> kg is refused at the scale. Somebody with **Correct empty drums and cancel scrap sales** can save it with a written reason, kept on the drum.
+</Rule>
+
+<Rule title="Variance = actual empty weight − declared tare">
+The declared tare is the GRN's empty-drum weight and is never changed. A drum differing by at least <Setting k="erp.scrap.varianceAlertKg" /> kg either way is flagged.
+</Rule>
+
+<Rule title="Sales and returns are quantities; the ERP picks the drums, oldest first">
+A sale of 20 drums takes the 20 Mahek-owned drums emptied longest ago and records which they were. A return of 10 takes that supplier's 10 oldest. This is a record of stock, not a claim that somebody checked each drum at the gate. A sale or return of more than there is is refused, never shortened.
+</Rule>
+
+<Rule title="Vendor drums are never scrap">
+A vendor-returnable drum is never in Mahek stock and never offered for sale. Asking to sell more drums than Mahek owns while vendor drums are waiting says so: *This drum is vendor-returnable. Please use Returnable Drum Outward.*
+</Rule>
+
+<Rule title="Outstanding = sale amount − receipts matched">
+Only the accountant (**Match scrap receipts**) records a receipt and matches it. A match may not exceed what the receipt has left or what the sale still owes. Unmatching and voiding keep the original rows, marked undone, with the reason.
+</Rule>
+
+<Rule title="A sale with no invoice carries no invoice number">
+Each sale has its own **SS** number. An invoiced sale must name its external invoice; a sale without one may carry a genuine challan or nothing.
+</Rule>
+
+## Who may do what
+
+| Power | What it lets somebody do |
+|---|---|
+| (holding the screen) | Weigh and record empty drums; record other scrap collected; read every tab. |
+| **Sell scrap and return vendor drums** | New scrap sale; return drums to a vendor; add a buyer. |
+| **Correct empty drums and cancel scrap sales** | Decide or change a lot's drum ownership; correct a weight; cancel a drum record; save a weight outside the limits; cancel a sale nothing has been paid against. |
+| **Match scrap receipts (accountant)** | Record, match, unmatch and void receipts. |
+
+## Where the code and the intent disagree today
+
+- The brief asks for the drum's owner to come from the GRN. The GRN has no such field, so it is decided once per lot here, by the Production Head. Adding it to the GRN would let most drums route on their own.
+- Labels are printed one per lot, not one per drum. A drum is told apart from its lot-mates by its number (`LOT/3`) where somebody writes it on; otherwise the next unrecorded number is taken.
+- Receipts are recorded on this screen rather than imported from a bank statement; the ERP's Petty cash keeps funds given and expenses, not money received.
+- There is no opening balance: drums emptied before this screen existed are not in stock unless they are recorded against their lot.

@@ -2254,6 +2254,53 @@ customer and what is still on a shelf. With nothing searched it is the
 traceability dashboard: today's production and dispatch, and every exception.
 A link that is missing is said to be missing, never guessed.
 
+## Scrap & empty drums
+
+**SCRAP IS A DIFFERENT KIND OF ORDER, and it is one ERP screen with nine tabs.**
+`/erp/scrap` (`erp.scrap`): Empty drums, Mahek stock, Vendor drums, Returns,
+Scrap sales, Other scrap, Buyers, Receipts, Tare variance. The scale's own page
+is `/erp/empty-drums`. Rules are pure in `lib/erp/engines/scrap.ts`; reads and
+the scale's writes in `lib/erp/scrap.ts`; the screens in
+`lib/erp/screens/scrap.ts`; migration `0256`.
+
+**A DRUM IS REGISTERED WHEN IT IS EMPTIED, against its GRN lot, and never
+typed.** Scanning the lot label (`LOT` or `LOT/3`) reads the supplier,
+material, PR and declared tare off the GRN; the person enters only the actual
+empty weight. The GRN records a COUNT of drums per lot and no drum ids, so a
+drum is the lot plus its number (`erp_empty_drums.seq`, unique per purchase),
+and a code naming only the lot takes the lowest number not yet weighed. A drum
+already registered is refused with its record. A weight outside
+`erp.scrap.drumWeightMinKg`/`MaxKg` needs `scrapControl` and a note.
+
+**OWNERSHIP IS DECIDED PER LOT, BY A PERSON, AND NEVER GUESSED.** The GRN does
+not say whether a drum is ours or the vendor's, so `erp_purchases.drum_ownership`
+is null until somebody with `scrapControl` decides it; until then every drum of
+that lot sits at "Owner to decide" and is in NEITHER stock. Deciding moves the
+whole lot; changing a decision already made needs a reason, and drums already
+sold or returned do not move. A check constraint ties the status to the owner.
+
+**MAHEK DRUMS ARE SOLD, VENDOR DRUMS GO BACK, both by quantity, oldest first.**
+`fifoPick` picks the oldest emptied and refuses rather than part-fills. A
+vendor drum is never in a scrap sale — the sale refuses with
+`VENDOR_DRUM_REFUSAL`. Mahek stock is a ledger read off the drums, never a
+typed balance. Other scrap (plastic, cardboard) is collected and sold by
+quantity against its own balance.
+
+**A SCRAP SALE IS INVOICED OR IT IS NOT, and an un-invoiced one carries no
+invented number.** `invoice_kind = 'none'` is identified by its own SS-number;
+a challan may be recorded as a reference. Outstanding is the sale less matched
+receipts, never typed. A sale with money matched cannot be cancelled until it
+is unmatched.
+
+**RECEIPTS ARE THE SCRAP SCREEN'S, because Petty cash records no money in.**
+`erp_scrap_receipts` (Bank or Cash) is matched to sales by the `scrapReceipts`
+holder — oldest first or line by line — and allocations are voided with a
+reason, never deleted. Buyers age by days past due.
+
+**Three powers**: `scrapSell` (sales, returns), `scrapControl` (ownership,
+corrections, cancellations, weight exceptions), `scrapReceipts` (money). Every
+correction is a `erpAudit` line with a reason.
+
 ## Layout
 
 ```

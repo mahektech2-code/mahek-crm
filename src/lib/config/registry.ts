@@ -4486,6 +4486,39 @@ export const SETTINGS = [
     max: 730,
   },
   {
+    key: "erp.scrap.drumWeightMinKg",
+    type: "decimal",
+    category: "erp",
+    label: "Lightest an empty drum may weigh (kg)",
+    description:
+      "An empty-drum weight below this is refused at the scale as a likely mistake. Somebody who controls scrap can still let it through with a reason.",
+    default: 2,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "erp.scrap.drumWeightMaxKg",
+    type: "decimal",
+    category: "erp",
+    label: "Heaviest an empty drum may weigh (kg)",
+    description:
+      "An empty-drum weight above this is refused at the scale — a drum this heavy is probably not empty. Somebody who controls scrap can still let it through with a reason.",
+    default: 40,
+    min: 1,
+    max: 500,
+  },
+  {
+    key: "erp.scrap.varianceAlertKg",
+    type: "decimal",
+    category: "erp",
+    label: "Tare variance worth a look (kg per drum)",
+    description:
+      "A drum whose actual empty weight differs from the supplier's declared tare by at least this much is flagged on the Tare variance report and the dashboard. Zero flags nothing.",
+    default: 1.5,
+    min: 0,
+    max: 50,
+  },
+  {
     key: "erp.purchase.receiptTolerancePercent",
     type: "integer",
     category: "erp",
@@ -6193,6 +6226,9 @@ export type Config = {
   "erp.stockCheck.cycleDaysB": number;
   "erp.stockCheck.cycleDaysC": number;
   "erp.stockCheck.fullCountDays": number;
+  "erp.scrap.drumWeightMinKg": number;
+  "erp.scrap.drumWeightMaxKg": number;
+  "erp.scrap.varianceAlertKg": number;
   "erp.ai.stockCheck.enabled": boolean;
   "erp.ai.stockCheck.monthlyCap": number;
   "erp.production.recipeTolerancePercent": number;
