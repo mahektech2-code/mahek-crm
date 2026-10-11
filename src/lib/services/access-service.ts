@@ -389,8 +389,8 @@ export type Candidate = {
 };
 
 /**
- * Everybody access could be given to: the employee master and the accounts
- * that already exist, merged on email or work number.
+ * Everybody access could be given to: the HRMS People directory, one row per
+ * employee, each with the account linked to it where there is one.
  *
  * Read fresh on every open of the dialog, so an employee added to the sheet
  * and synced a minute ago is pickable without anybody reloading the console.
@@ -405,6 +405,7 @@ export async function listCandidates(): Promise<Candidate[]> {
         email: users.email,
         phone: users.phone,
         active: users.active,
+        employeeId: users.employeeId,
       })
       .from(users)
       .orderBy(asc(users.name)),
@@ -422,28 +423,64 @@ export async function listCandidates(): Promise<Candidate[]> {
     rolesByUserApp.set(`${a.userId}:${a.app}`, (a.role as Role) ?? null);
   }
 
-  const userByEmail = new Map(
-    accounts.flatMap((u) => {
-      const k = emailKey(u.email);
-      return k ? ([[k, u]] as const) : [];
-    }),
-  );
-  const userByPhone = new Map(
-    accounts.flatMap((u) => {
-      const k = phoneKey(u.phone);
-      return k ? ([[k, u]] as const) : [];
-    }),
-  );
+  /*
+   * ONE ROW PER PERSON IN THE HRMS DIRECTORY, under the name HRMS gives them.
+   *
+   * The account behind a row is the one somebody LINKED to it
+   * (`users.employee_id`), and only failing that one matched on an email or a
+   * number — and only where that email or number is on exactly one employee
+   * and exactly one account. The sheet gives a shared company address
+   * (mahekmarketing1@gmail.com) to helpers and delivery staff alike, so a
+   * match on it named seven different employees after the one account that
+   * also used it, and picking any of them opened THAT account. An account is
+   * attached to one row at most.
+   *
+   * Accounts with nobody behind them in HRMS are not offered here: this is a
+   * list of the people who work here. They are still on the Access table and
+   * their own Manage access.
+   */
+  const countBy = (keys: (string | null)[]) => {
+    const n = new Map<string, number>();
+    for (const k of keys) if (k) n.set(k, (n.get(k) ?? 0) + 1);
+    return n;
+  };
+  const staffEmails = countBy(staff.map((e) => emailKey(e.email)));
+  const staffPhones = countBy(staff.map((e) => e.phone));
+  const accountEmails = countBy(accounts.map((u) => emailKey(u.email)));
+  const accountPhones = countBy(accounts.map((u) => phoneKey(u.phone)));
+  const staffIds = new Set(staff.map((e) => e.id));
 
   const claimed = new Set<string>();
+  const accountFor = new Map<string, (typeof accounts)[number]>();
+  // Deliberate links first, so a guess can never take an account somebody
+  // has already said belongs to a different employee.
+  for (const u of accounts) {
+    if (u.employeeId && staffIds.has(u.employeeId) && !accountFor.has(u.employeeId)) {
+      accountFor.set(u.employeeId, u);
+      claimed.add(u.id);
+    }
+  }
+  for (const e of staff) {
+    if (accountFor.has(e.id)) continue;
+    const em = emailKey(e.email);
+    const ph = e.phone;
+    const account =
+      (em && staffEmails.get(em) === 1 && accountEmails.get(em) === 1
+        ? accounts.find((u) => emailKey(u.email) === em)
+        : undefined) ??
+      (ph && staffPhones.get(ph) === 1 && accountPhones.get(ph) === 1
+        ? accounts.find((u) => phoneKey(u.phone) === ph)
+        : undefined);
+    if (account && !claimed.has(account.id) && !account.employeeId) {
+      accountFor.set(e.id, account);
+      claimed.add(account.id);
+    }
+  }
+
   const out: Candidate[] = [];
 
   for (const e of staff) {
-    const account =
-      userByEmail.get(emailKey(e.email) ?? "") ??
-      userByPhone.get(e.phone ?? "") ??
-      null;
-    if (account) claimed.add(account.id);
+    const account = accountFor.get(e.id) ?? null;
 
     // Only an active employee gets access. A leaver whose row is still in the
     // sheet, and somebody whose status cell nobody filled in, are both refused
@@ -463,9 +500,9 @@ export async function listCandidates(): Promise<Candidate[]> {
       userId: account?.id ?? null,
       employeeId: e.id,
       employeeCode: e.employeeCode,
-      name: account?.name ?? e.name,
-      email: account?.email ?? e.email,
-      phone: account?.phone ?? e.phone,
+      name: e.name,
+      email: e.email ?? account?.email ?? null,
+      phone: e.phone ?? account?.phone ?? null,
       department: e.department,
       position: e.position,
       office: e.officeName,
@@ -473,29 +510,6 @@ export async function listCandidates(): Promise<Candidate[]> {
       accountActive: account?.active ?? false,
       apps: account ? (appsByUser.get(account.id) ?? []) : [],
       blocked,
-    });
-  }
-
-  // Accounts with nobody behind them in HRMS. Several are real — an account
-  // created before the employee sheet existed, or somebody the sheet spells
-  // differently — so they are offered rather than dropped, and labelled so
-  // whoever grants knows the check that could not be made.
-  for (const u of accounts) {
-    if (claimed.has(u.id)) continue;
-    out.push({
-      userId: u.id,
-      employeeId: null,
-      employeeCode: null,
-      name: u.name,
-      email: u.email,
-      phone: u.phone,
-      department: null,
-      position: null,
-      office: null,
-      employeeStatus: null,
-      accountActive: u.active,
-      apps: appsByUser.get(u.id) ?? [],
-      blocked: u.active ? null : "This account is deactivated.",
     });
   }
 
