@@ -2,7 +2,10 @@ import "server-only";
 import { randomBytes } from "node:crypto";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { customers, erpLrs, erpTransportEvents, erpTransportMessages, erpTransporters, erpTransports } from "@/db/schema";
+import { customers, erpLrs, erpRefValues, erpTransportEvents, erpTransportMessages, erpTransporterPlaces, erpTransporters, erpTransports, places } from "@/db/schema";
+import { checkGstin } from "@/lib/engines/lead-scan";
+import type { PlaceKind } from "@/lib/place-parse";
+import { leaves, lookup, type PlaceOption } from "./transporter-places";
 import { getConfig } from "@/lib/config/store";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { whatsappNumberFor } from "@/lib/customer-contacts";
@@ -297,10 +300,23 @@ export async function messages(opts: { waitingOnly?: boolean; transportId?: stri
   }));
 }
 
-export type Transporter = typeof erpTransporters.$inferSelect;
+/** A transporter, with the places on the tree where it keeps godowns. */
+export type Transporter = typeof erpTransporters.$inferSelect & { placeIds: string[] };
 
 export async function transporters(): Promise<Transporter[]> {
-  return db.select().from(erpTransporters).orderBy(desc(erpTransporters.active), sql`lower(${erpTransporters.name})`);
+  const [rows, links] = await Promise.all([
+    db.select().from(erpTransporters).orderBy(desc(erpTransporters.active), sql`lower(${erpTransporters.name})`),
+    db.select().from(erpTransporterPlaces),
+  ]);
+  const by = new Map<string, string[]>();
+  for (const l of links) by.set(l.transporterId, [...(by.get(l.transporterId) ?? []), l.placeId]);
+  return rows.map((r) => ({ ...r, placeIds: by.get(r.id) ?? [] }));
+}
+
+/** The whole reviewed place tree, for the godown picker. A few thousand rows of four columns. */
+export async function placeOptions(): Promise<PlaceOption[]> {
+  const rows = await db.select({ id: places.id, kind: places.kind, name: places.name, parentId: places.parentId }).from(places);
+  return rows.map((r) => ({ ...r, kind: r.kind as PlaceKind }));
 }
 
 export type TransportEvent = { id: string; kind: string; stage: string | null; note: string | null; shared: boolean; at: string; by: string | null };
@@ -750,26 +766,84 @@ export async function reopen(ctx: ErpContext, transportId: string, reason: strin
 
 export async function saveTransporter(
   ctx: ErpContext,
-  input: { id?: string | null; name: string; phone?: string | null; altPhone?: string | null; contactPerson?: string | null; address?: string | null; trackingUrl?: string | null; active?: boolean },
+  input: {
+    id?: string | null;
+    name: string;
+    gstin?: string | null;
+    /** What they call the consignment number. A name not on the list yet is added to it. */
+    consignmentLabel?: string | null;
+    phone?: string | null;
+    altPhone?: string | null;
+    contactPerson?: string | null;
+    /** Places on the tree; pruned to the narrowest pick in each branch. Absent leaves them as they are. */
+    placeIds?: string[];
+    trackingUrl?: string | null;
+    active?: boolean;
+  },
 ): Promise<Result<unknown>> {
   const name = input.name.trim();
   if (!name) return fieldErr("name", "Name is required");
   const url = input.trackingUrl?.trim() || null;
   if (url && !/^https?:\/\//.test(url)) return fieldErr("trackingUrl", "The tracking page starts with https://");
+  const g = checkGstin(input.gstin);
+  if (g && g.check === "invalid") return fieldErr("gstin", "That GST number does not check out — it is 15 characters, like 27ABCDE1234F1Z5");
+  const gstin = g?.gstin ?? null;
   const [clash] = (await db.execute(sql`select id from erp_transporters where lower(name) = ${name.toLowerCase()} and id <> ${input.id ?? ""}`)) as unknown as { id: string }[];
   if (clash) return fieldErr("name", `${name} is already in the list`);
-  const values = { name, phone: input.phone?.trim() || null, altPhone: input.altPhone?.trim() || null, contactPerson: input.contactPerson?.trim() || null, address: input.address?.trim() || null, trackingUrl: url, active: input.active ?? true, updatedAt: new Date(), updatedById: ctx.user.id };
+  let placeIds: string[] | null = null;
+  if (input.placeIds) {
+    const wanted = [...new Set(input.placeIds)];
+    const known = wanted.length ? await db.select({ id: places.id, kind: places.kind, name: places.name, parentId: places.parentId }).from(places) : [];
+    const byId = lookup(known.map((r) => ({ ...r, kind: r.kind as PlaceKind })));
+    if (wanted.some((id) => !byId.has(id))) return fieldErr("placeIds", "One of those places is no longer on the list. Pick it again.");
+    placeIds = leaves(wanted, byId);
+  }
+  const consignmentLabel = await consignmentLabelFor(ctx, input.consignmentLabel);
+  const values = { name, gstin, consignmentLabel, phone: input.phone?.trim() || null, altPhone: input.altPhone?.trim() || null, contactPerson: input.contactPerson?.trim() || null, trackingUrl: url, active: input.active ?? true, updatedAt: new Date(), updatedById: ctx.user.id };
+  const id = input.id ?? erpId("etr");
   if (input.id) {
     const [before] = await db.select().from(erpTransporters).where(eq(erpTransporters.id, input.id));
     if (!before) return err("That transporter is gone.", "not_found");
-    await db.update(erpTransporters).set(values).where(eq(erpTransporters.id, input.id));
-    await erpAudit(ctx, "erp.logistics.transporter", "erp_transporter", input.id, before, values);
+    const beforePlaces = (await db.select().from(erpTransporterPlaces).where(eq(erpTransporterPlaces.transporterId, id))).map((r) => r.placeId);
+    await db.transaction(async (tx) => {
+      await tx.update(erpTransporters).set(values).where(eq(erpTransporters.id, id));
+      if (placeIds) await writePlaces(tx, id, placeIds);
+    });
+    await erpAudit(ctx, "erp.logistics.transporter", "erp_transporter", id, { ...before, placeIds: beforePlaces }, { ...values, placeIds });
   } else {
-    const id = erpId("etr");
-    await db.insert(erpTransporters).values({ id, ...values });
-    await erpAudit(ctx, "erp.logistics.transporter", "erp_transporter", id, null, values);
+    await db.transaction(async (tx) => {
+      await tx.insert(erpTransporters).values({ id, ...values });
+      if (placeIds) await writePlaces(tx, id, placeIds);
+    });
+    await erpAudit(ctx, "erp.logistics.transporter", "erp_transporter", id, null, { ...values, placeIds });
   }
   return okVoid(`${name} saved`);
+}
+
+/**
+ * The name as the list spells it, adding it to the list when it is new — so a
+ * "GC No." typed on one transporter is offered to the next one.
+ */
+async function consignmentLabelFor(ctx: ErpContext, raw: string | null | undefined): Promise<string | null> {
+  const label = raw?.trim().replace(/\s+/g, " ") ?? "";
+  if (!label) return null;
+  const list = await db.select().from(erpRefValues).where(eq(erpRefValues.listKey, "consignmentLabel"));
+  const same = list.find((r) => r.value.toLowerCase() === label.toLowerCase());
+  if (same) {
+    if (!same.active) await db.update(erpRefValues).set({ active: true }).where(eq(erpRefValues.id, same.id));
+    return same.value;
+  }
+  const sortOrder = Math.max(0, ...list.map((r) => r.sortOrder)) + 1;
+  await db.insert(erpRefValues).values({ id: erpId("erprv"), listKey: "consignmentLabel", value: label, sortOrder, createdById: ctx.user.id }).onConflictDoNothing();
+  return label;
+}
+
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/** The godowns replaced whole: a place taken off the picker is a godown taken off the list. */
+async function writePlaces(tx: Tx, transporterId: string, placeIds: string[]) {
+  await tx.delete(erpTransporterPlaces).where(eq(erpTransporterPlaces.transporterId, transporterId));
+  if (placeIds.length) await tx.insert(erpTransporterPlaces).values(placeIds.map((placeId) => ({ transporterId, placeId })));
 }
 
 /* ===================================================== telling the customer */

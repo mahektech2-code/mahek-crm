@@ -1737,6 +1737,13 @@
       "when": 1792531963442,
       "tag": "0250_erp_logistics_flow",
       "breakpoints": true
+    },
+    {
+      "idx": 248,
+      "version": "7",
+      "when": 1792531964442,
+      "tag": "0251_transporter_gst_and_godowns",
+      "breakpoints": true
     }
   ]
 }

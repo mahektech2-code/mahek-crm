@@ -4,7 +4,8 @@ import { erpContext } from "@/lib/erp/access";
 import { erpScreenBySlug } from "@/lib/erp/registry";
 import { screenModule } from "@/lib/erp/screens";
 import { getConfig } from "@/lib/config/store";
-import { consignments, messages, transporters, uploadedLrs } from "@/lib/erp/logistics";
+import { refValues } from "@/lib/erp/refs";
+import { consignments, messages, placeOptions, transporters, uploadedLrs } from "@/lib/erp/logistics";
 import { today as businessToday } from "@/lib/erp/screens/common";
 import { Button, cx } from "@/components/ui/primitives";
 import { ListScreen, type ListTab } from "../_ui/list-screen";
@@ -80,6 +81,7 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
     view === "lrMessages" || view === "transport" ? messages({ limit: view === "transport" ? 500 : 300 }) : Promise.resolve([]),
     view === "transporters" || view === "pendingLr" ? transporters() : Promise.resolve([]),
   ]);
+  const [tree, labels] = view === "transporters" ? await Promise.all([placeOptions(), refValues("consignmentLabel")]) : [[], []];
   /* A dashboard tile opens a tab narrowed to the bills it counted. */
   const ids = one("f")?.split(",");
   const rows = ids ? all.filter((c) => ids.includes(c.id)) : all;
@@ -152,6 +154,8 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
       {view === "transporters" ? (
         <Transporters
           rows={dir}
+          tree={tree}
+          labels={labels}
           canWrite={canWrite}
           load={Object.fromEntries(
             dir.map((t) => {
