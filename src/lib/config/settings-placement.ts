@@ -214,6 +214,7 @@ const RULES: Rule[] = [
   { test: /^erp\.factory\./, page: "erp", tab: "general", group: "Factory app" },
   { test: /^erp\.(production|orders|dispatch)\./, page: "erp", tab: "general", group: "Production and orders" },
   { test: /^erp\.location\./, page: "erp", tab: "general", group: "Working location" },
+  { test: /^erp\.labels\./, page: "erp", tab: "general", group: "Label printer" },
   { test: /^erp\.logistics\./, page: "erp", tab: "general", group: "Logistics" },
   { test: /^erp\.stockCheck\./, page: "erp", tab: "general", group: "Inventory accuracy" },
   { test: /^erp\.returns\./, page: "erp", tab: "general", group: "Material returns" },

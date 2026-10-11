@@ -124,12 +124,12 @@ If anything is missing, hovering the button says exactly what: *Needs a Tally bi
       ["7 Oct", "1249", <b key="c">Customer C</b>, "PU Sealer – 4 Liter (4 Can/Box)", "₹21,240", "8 Oct", "Verified", <WfPill key="d" tone="success">Sales target reached</WfPill>],
     ]}
   />
-  <WfBar><WfButton primary>Do Verified</WfButton><WfButton>Extra Expenses</WfButton><WfButton>Change GST</WfButton><WfButton>Dispatch stickers</WfButton><Hotspot n={2} /></WfBar>
+  <WfBar><WfButton primary>Do Verified</WfButton><WfButton>Extra Expenses</WfButton><WfButton>Change GST</WfButton><WfButton>Print dispatch labels</WfButton><Hotspot n={2} /></WfBar>
 </Wireframe>
 
 <Hotspots items={[
   <span key="1"><b>Boxes still to scan.</b> Every box on the line has to be scanned at the Dispatch desk before it can be verified.</span>,
-  <span key="2"><b>The line's actions.</b> Verify, add freight, change GST, print stickers, open the desk or trace the order.</span>,
+  <span key="2"><b>The line's actions.</b> Verify, add freight, change GST, print the dispatch labels, open the desk or trace the order.</span>,
 ]} />
 
 | Action | What it does |
@@ -138,7 +138,7 @@ If anything is missing, hovering the button says exactly what: *Needs a Tally bi
 | **Extra Expenses** | Records extra freight on the line, once. It is added to the line's cost. |
 | **Change GST** | 18% or 0%, until the line is verified. 18% bills from *Mahek Marketing India*, 0% from *Mylac*. |
 | **Not Verify** | ERP administrators only. Marks a line *Not Verify*. |
-| **Dispatch stickers** | Prints a sticker for every box scanned onto the order. |
+| **Print dispatch labels** | Opens the label sheet for the order: one 80 × 80 mm label for every box or can on it. |
 | **Scan its boxes / Dispatch desk** | Opens the order at the Dispatch desk. |
 | **Trace this order** | Opens [Traceability](/docs/erp/traceability) on the order. |
 
@@ -150,9 +150,32 @@ Besides the columns, a billed line shows the delivery party, litres dispatched, 
 
 ## Labels
 
-The **Labels** tab is a list for the label maker: every line being prepared, with its order id, parties, area, transporter, weight and **No of label** — one a box on a boxed line, one a can otherwise. Press download to take it as a file.
+The **Labels** tab is the list the labels are printed from: every line being prepared, with its order id, parties, area, transporter, weight and **No of label** — one a box on a boxed line, one a can otherwise. Open a line and press **Print dispatch labels** for the whole order's labels, or press download to take the list as a file.
 
-Printing the labels themselves — the QR labels on each box and the dispatch stickers — is done from the label sheet, reached from a packing batch, the Boxes & labels screen, or **Dispatch stickers** on a billed line.
+### The four labels
+
+Every label is drawn from the record. Nothing on a label is typed.
+
+| Label | Size | Printed from | What it carries |
+|---|---|---|---|
+| **Box label** | 50 × 50 mm | A packing batch, Boxes & labels, FG stock (loose units) | The box's QR and id, the pack size, cans per box, the product, the batch and box number, the packing date |
+| **SFG label** | 80 × 80 mm | SFG batches, Stock → Semi-finished | The product, the lot code (also the QR), batches, batch size, date, location, inventory id |
+| **Purchase label** | 80 × 80 mm | Purchase barcode, the purchase register | The item, the lot (also the QR), purchase date, quantity, litres, density, drums, litres per drum, PR number, PR bill no, testing id, remark. One per drum to begin with; change **Copies** for more or fewer. |
+| **Dispatch label** | 80 × 80 mm | Orders, the Labels tab, the Dispatch desk | Delivery party and area, billing party, the goods, order qty, type, weight, lot size, remark, transporter |
+
+A long name is set smaller so it fits; only a name too long for the smallest size is cut with "…".
+
+### Printing
+
+The label sheet offers three ways to paper, and all three print exactly what the sheet shows:
+
+- **Send to printer** — straight to a USB label printer, with no print dialog and no paper size to choose. It appears in Chrome and Edge. The first time, the browser asks which printer; after that it remembers one printer for 50 mm labels and one for 80 mm on that computer. **Change printer** asks again.
+- **Save print file** — the same printer commands as a `.prn` file, for a printer the browser cannot reach.
+- **Print…** — the browser's own print dialog, one label a page at the label's size.
+
+If **Send to printer** answers that the computer is keeping the printer for its own driver, that computer's Windows printer driver holds the USB port: use **Print…** there.
+
+Three settings under Admin Console → Settings → ERP → *Label printer* describe the printers: **dots per millimetre** (8 for a 203 dpi printer, 12 for 300 dpi), the **gap between labels** on the roll, and **which way up** the label leaves the printer. The printer must be loaded with stock the size of the label: 50 × 50 mm for box labels, 80 × 80 mm for the other three.
 
 ## The WhatsApp inbox
 

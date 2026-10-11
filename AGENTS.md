@@ -2242,10 +2242,48 @@ shipped. `erp.dispatch.requireScan` turns the wait off for a day the scanners
 are down; scanning is still checked. Billing still comes BEFORE dispatch
 verification, as it did: the Tally bill number is entered first.
 
-**LABELS ARE DRAWN FROM THE RECORD** (`/erp/print-labels`, not `/erp/labels`,
-which redirects to the Orders tab of that name): box labels by batch, lot or
-selection, and dispatch stickers for an order's scanned boxes, with the QR
-(`qrcode`, server-side SVG). Printing stamps `label_printed_at`.
+**LABELS ARE DRAWN FROM THE RECORD, FOUR OF THEM, AND NEVER TYPED**
+(`/erp/print-labels`, not `/erp/labels`, which redirects to the Orders tab of
+that name). The box label is 50 × 50 mm (`?batch=`, `?lot=`, `?ids=`): the
+box's QR and id, the pack size, cans per box, the product, and the batch, box
+number and packing date; printing stamps `label_printed_at`. The other three
+are 80 × 80 mm: the SFG lot's (`?sfg=`, from SFG batches and Semi-finished
+stock; QR = the lot code), the purchased lot's (`?purchase=`, from the Purchase
+barcode list and the register; QR = the lot number; one a drum unless
+`&copies=` says otherwise), and the dispatch label (`?order=`). `label-data.ts`
+reads each through the function its own list reads — `sfgLots`,
+`purchaseFigures`, `orderLines` — so a drum and the screen it was printed from
+cannot disagree.
+
+**A DISPATCH LABEL IS PER PIECE, NOT PER SCANNED BOX, and that is a
+reversal.** It was a sticker for each box already scanned onto the order,
+carrying the box's QR. It is now one label for every `labelCount` of every line
+not cancelled — a box on a boxed line, a can otherwise — printable before
+anything is scanned, with no QR (the box's own label is what the desk scans),
+and each carries the LOT SIZE: every label on the order added up (`lotSize`),
+so the pieces are counted on and off the lorry against one figure.
+
+**A VALUE THAT CAN BE LONG IS SIZED TO FIT, in `engines/labels.ts`.** A label
+is cut to size and nobody scrolls it, so `fitPt` steps a name down through set
+sizes against Helvetica Bold's own widths, a long product name on a box label
+takes two lines (`boxNameFit`), and the last line of a box label shortens to
+"Box 118/120" (`boxFoot`). The CSS ellipsis is the net under that, not the
+plan. `label-css.ts` is ONE stylesheet as a string, in millimetres and points.
+
+**THE LABEL PRINTER IS SENT A PICTURE OF THE LABEL ON THE PAGE.** The godown's
+printers speak TSPL. The printer team's samples set each line in the printer's
+own fonts, which ties a layout to one model, one firmware and one installed
+font file (`ROMAN.TTF`). `printer.tsx` instead rasterises each label's own
+markup under `LABEL_CSS` at `erp.labels.dotsPerMm` and `engines/tspl.ts` packs
+it as one `BITMAP` — so "Send to printer" (WebUSB, Chrome and Edge), "Save
+print file" (`.prn`) and the browser's print dialog cannot print three
+different labels. In TSPL a set bit is WHITE; `packBitmap` is the only place
+that is written. Each QR is redrawn from its modules on whole dots (`qrGrid`).
+The same label several times over is one picture and a count (`printRuns`,
+keyed on `data-key`). `erp.labels.gapMm` and `erp.labels.direction` are the
+other two printer settings. A Windows printer driver holds the USB port, so
+there WebUSB is refused and the screen says to use Print; the print dialog is
+never removed.
 
 **TRACE TAKES ANYTHING ON A LABEL** (`/erp/trace?q=`): a box id, an SFG,
 refill or raw-material lot, a packing batch, `ORDER-n` or a Tally bill — back

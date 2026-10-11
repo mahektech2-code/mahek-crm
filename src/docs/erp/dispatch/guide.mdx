@@ -32,7 +32,7 @@ An order reaches the queue the moment one of its lines is marked **Ready** on [O
 ## Scanning an order
 
 <Wireframe url="/erp/dispatch?order=1256" caption="Order 1256 at the desk, after a box of the wrong pack size was scanned">
-  <WfBar><WfTitle sub="Customer A · Area 1 · Transporter X · leaves 2026-10-10">Dispatch · order 1256</WfTitle><WfSpacer /><WfText muted>← Queue · Dispatch stickers · Trace</WfText></WfBar>
+  <WfBar><WfTitle sub="Customer A · Area 1 · Transporter X · leaves 2026-10-10">Dispatch · order 1256</WfTitle><WfSpacer /><WfText muted>← Queue · Dispatch labels · Trace</WfText></WfBar>
   <WfCard>
     <WfBar><WfInput placeholder="Scan a box QR, or type its id and press Enter" wide /><WfButton primary>Scan</WfButton><Hotspot n={1} /></WfBar>
     <WfBar><WfText>3 of 5 scanned</WfText><Hotspot n={2} /></WfBar>
@@ -132,9 +132,11 @@ A box scanned by mistake can be taken off the order before dispatch: press **Tak
 
 Stock packed before box ids existed has no label to scan. On such a line the badge reads **Scan optional**, and people who hold the Orders screen see **Allocate a lot by hand** — pick the lot and the quantity as you would have before. Do Verified does not wait for scans on these lines.
 
-## Printing dispatch stickers
+## Printing dispatch labels
 
-**Dispatch stickers** prints one sticker per box scanned onto the order, with the customer, the order and the same box id in its QR — so whichever sticker the lorry scan hits, it reads the same box. If nothing is scanned yet, the sheet says *No box is scanned onto this order yet.*
+**Dispatch labels** prints the 80 × 80 mm label that goes on each piece leaving on the order: one for every box on a boxed line and one for every can on a loose one. Each says who it is delivered to and their area, who is billed, the goods, the order quantity, the type, the weight, the remark and the transporter — and the **lot size**, which is the number of labels on the whole order, so the pieces can be counted on and off the lorry against one figure. A cancelled line gets no label. The dispatch label carries no QR: the box's own 50 mm label is what the desk scans.
+
+The label sheet has three buttons. **Send to printer** sends the labels straight to a USB label printer; **Save print file** saves the same printer commands as a `.prn` file; **Print…** opens the browser's print dialog. All three print exactly what the sheet shows. See [Orders → Labels](/docs/erp/orders) for how the label printer is set up.
 
 ## Questions people ask
 
