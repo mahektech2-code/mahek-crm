@@ -1262,7 +1262,7 @@ function WhoStep({ onPick }: { onPick: (c: Candidate) => void }) {
       <div className="flex items-center gap-2">
         <Input
           autoFocus
-          placeholder="Search the employee master and the accounts"
+          placeholder="Search the HRMS directory"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
@@ -1279,8 +1279,8 @@ function WhoStep({ onPick }: { onPick: (c: Candidate) => void }) {
         </Button>
       </div>
       <p className="mt-1.5 text-[13px] leading-[19px] text-muted">
-        Everybody HRMS knows about, and every account that exists. Only somebody active in
-        HRMS can be given access — a leaver is listed with the reason rather than hidden.
+        Everybody in the HRMS People directory, once each. Only somebody active in HRMS can be
+        given access — a leaver is listed with the reason rather than hidden.
       </p>
 
       {loadError ? (
@@ -1323,11 +1323,6 @@ function WhoStep({ onPick }: { onPick: (c: Candidate) => void }) {
                       no account
                     </span>
                   )}
-                  {c.employeeStatus === null ? (
-                    <span className="flex-none text-[11px] whitespace-nowrap text-muted">
-                      not in HRMS
-                    </span>
-                  ) : null}
                   <span className="w-[3.5rem] flex-none text-right text-[11px] whitespace-nowrap text-muted">
                     {c.apps.length
                       ? `${c.apps.length} app${c.apps.length === 1 ? "" : "s"}`

@@ -134,6 +134,7 @@ const files = [
   "src/lib/change-password.test.ts",
   "src/lib/otp.test.ts",
   "src/lib/either-identifier.test.ts",
+  "src/lib/access-candidates.test.ts",
   "src/lib/storage-fallback.test.ts",
   "src/lib/relationship-handover.test.ts",
   "src/lib/seat-mirrors.test.ts",
